@@ -76,6 +76,7 @@ export const BATCH_AUDIT_SITES = [
   // Engine-method defaults (used when caller doesn't supply auditSite).
   'addLinksBatch',
   'addTimelineEntriesBatch',
+  'addTakesBatch',
   'upsertChunks',
   // extract.ts per-site labels.
   'extract.links_inc',

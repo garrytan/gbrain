@@ -21,6 +21,8 @@ import type {
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
+import { executeRawJsonb } from './sql-query.ts';
+import { stripNul, buildLinkRows, buildTimelineRows, buildTakeRows } from './batch-rows.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import { verifySchema } from './schema-verify.ts';
@@ -2509,7 +2511,7 @@ export class PostgresEngine implements BrainEngine {
     await sql`
       INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, origin_page_id, origin_field)
       SELECT f.id, t.id, v.link_type, v.context, v.link_source, o.id, v.origin_field
-      FROM (VALUES (${from}, ${to}, ${linkType || ''}, ${context || ''}, ${src}, ${originSlug ?? null}, ${originField ?? null}, ${fromSrc}, ${toSrc}, ${originSrc}))
+      FROM (VALUES (${from}, ${to}, ${linkType || ''}, ${stripNul(context || '')}, ${src}, ${originSlug ?? null}, ${originField ?? null}, ${fromSrc}, ${toSrc}, ${originSrc}))
         AS v(from_slug, to_slug, link_type, context, link_source, origin_slug, origin_field, from_source_id, to_source_id, origin_source_id)
       JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id
       JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id
@@ -2526,42 +2528,33 @@ export class PostgresEngine implements BrainEngine {
   }
 
   private async _addLinksBatchOnce(links: LinkBatchInput[]): Promise<number> {
-    const sql = this.sql;
-    // unnest() pattern: 7 array-typed bound parameters regardless of batch size.
-    // Avoids the 65535-parameter cap and the postgres-js sql(rows, ...) helper's
-    // identifier-escape gotcha when used inside a (VALUES) subquery.
-    //
-    // v0.13: added link_source, origin_slug, origin_field. Defaults:
-    //   link_source  → 'markdown' (back-compat with pre-v0.13 callers)
-    //   origin_slug  → NULL (resolves to origin_page_id IS NULL via LEFT JOIN)
-    //   origin_field → NULL
-    const fromSlugs = links.map(l => l.from_slug);
-    const toSlugs = links.map(l => l.to_slug);
-    const linkTypes = links.map(l => l.link_type || '');
-    const contexts = links.map(l => l.context || '');
-    const linkSources = links.map(l => l.link_source || 'markdown');
-    const originSlugs = links.map(l => l.origin_slug || null);
-    const originFields = links.map(l => l.origin_field || null);
-    const fromSourceIds = links.map(l => l.from_source_id || 'default');
-    const toSourceIds = links.map(l => l.to_source_id || 'default');
-    const originSourceIds = links.map(l => l.origin_source_id || 'default');
-    // v0.41.18.0 (A10): link_kind column (v98). NULL = legacy/plain.
-    const linkKinds = links.map(l => l.link_kind ?? null);
-    const result = await sql`
-      INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, link_kind, origin_page_id, origin_field)
-      SELECT f.id, t.id, v.link_type, v.context, v.link_source, v.link_kind, o.id, v.origin_field
-      FROM unnest(
-        ${fromSlugs}::text[], ${toSlugs}::text[], ${linkTypes}::text[],
-        ${contexts}::text[], ${linkSources}::text[], ${originSlugs}::text[],
-        ${originFields}::text[], ${fromSourceIds}::text[], ${toSourceIds}::text[],
-        ${originSourceIds}::text[], ${linkKinds}::text[]
-      ) AS v(from_slug, to_slug, link_type, context, link_source, origin_slug, origin_field, from_source_id, to_source_id, origin_source_id, link_kind)
-      JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id
-      JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id
-      LEFT JOIN pages o ON o.slug = v.origin_slug AND o.source_id = v.origin_source_id
-      ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO NOTHING
-      RETURNING 1
-    `;
+    // #1861: pass the batch as one JSONB document via jsonb_to_recordset instead
+    // of N parallel unnest(${arr}::text[]). The old text[] array-literal path
+    // crashed Postgres ("malformed array literal") on free-text context strings
+    // (calendar/Zoom lines with commas, quotes, braces, em-dashes); JSONB encodes
+    // arbitrary text safely and dodges the 65535-param cap. Binding goes through
+    // executeRawJsonb (the audited cross-engine JSONB contract) with an OBJECT
+    // wrapper { rows } — a bare top-level array through postgres.js would re-enter
+    // the same array serializer this fix exists to avoid. Row construction +
+    // NUL-stripping + exact defaulting live in buildLinkRows (shared with PGLite).
+    const rows = buildLinkRows(links);
+    const result = await executeRawJsonb(
+      this,
+      `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, link_kind, origin_page_id, origin_field)
+       SELECT f.id, t.id, v.link_type, v.context, v.link_source, v.link_kind, o.id, v.origin_field
+       FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(
+         from_slug text, to_slug text, link_type text, context text, link_source text,
+         origin_slug text, origin_field text, from_source_id text, to_source_id text,
+         origin_source_id text, link_kind text
+       )
+       JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id
+       JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id
+       LEFT JOIN pages o ON o.slug = v.origin_slug AND o.source_id = v.origin_source_id
+       ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO NOTHING
+       RETURNING 1`,
+      [],
+      [{ rows }],
+    );
     return result.length;
   }
 
@@ -3202,22 +3195,24 @@ export class PostgresEngine implements BrainEngine {
   }
 
   private async _addTimelineEntriesBatchOnce(entries: TimelineBatchInput[]): Promise<number> {
-    const sql = this.sql;
-    const slugs = entries.map(e => e.slug);
-    const dates = entries.map(e => e.date);
-    const sources = entries.map(e => e.source || '');
-    const summaries = entries.map(e => e.summary);
-    const details = entries.map(e => e.detail || '');
-    const sourceIds = entries.map(e => e.source_id || 'default');
-    const result = await sql`
-      INSERT INTO timeline_entries (page_id, date, source, summary, detail)
-      SELECT p.id, v.date::date, v.source, v.summary, v.detail
-      FROM unnest(${slugs}::text[], ${dates}::text[], ${sources}::text[], ${summaries}::text[], ${details}::text[], ${sourceIds}::text[])
-        AS v(slug, date, source, summary, detail, source_id)
-      JOIN pages p ON p.slug = v.slug AND p.source_id = v.source_id
-      ON CONFLICT (page_id, date, summary, source) DO NOTHING
-      RETURNING 1
-    `;
+    // #1861: JSONB jsonb_to_recordset instead of unnest(${arr}::text[]). Meeting
+    // summary/detail/source are free text with the same array-literal crash
+    // hazard as link context. See _addLinksBatchOnce for the full rationale.
+    // `date` stays text in the recordset and is cast v.date::date in the SELECT,
+    // exactly as the old unnest shape did.
+    const rows = buildTimelineRows(entries);
+    const result = await executeRawJsonb(
+      this,
+      `INSERT INTO timeline_entries (page_id, date, source, summary, detail)
+       SELECT p.id, v.date::date, v.source, v.summary, v.detail
+       FROM jsonb_to_recordset(($1::jsonb)->'rows')
+         AS v(slug text, date text, source text, summary text, detail text, source_id text)
+       JOIN pages p ON p.slug = v.slug AND p.source_id = v.source_id
+       ON CONFLICT (page_id, date, summary, source) DO NOTHING
+       RETURNING 1`,
+      [],
+      [{ rows }],
+    );
     return result.length;
   }
 
@@ -3883,53 +3878,51 @@ export class PostgresEngine implements BrainEngine {
   // v0.28: Takes (typed/weighted/attributed claims) + synthesis_evidence
   // ============================================================
 
-  async addTakesBatch(rowsIn: TakeBatchInput[]): Promise<number> {
+  async addTakesBatch(rowsIn: TakeBatchInput[], opts?: BatchOpts): Promise<number> {
     if (rowsIn.length === 0) return 0;
-    const sql = this.sql;
-    let weightClamped = 0;
-    const pageIds   = rowsIn.map(r => r.page_id);
-    const rowNums   = rowsIn.map(r => r.row_num);
-    const claims    = rowsIn.map(r => r.claim);
-    const kinds     = rowsIn.map(r => r.kind);
-    const holders   = rowsIn.map(r => r.holder);
-    const weights   = rowsIn.map(r => {
-      const { weight, clamped } = normalizeWeightForStorage(r.weight);
-      if (clamped) weightClamped++;
-      return weight;
-    });
-    const sinces    = rowsIn.map(r => r.since_date ?? null);
-    const untils    = rowsIn.map(r => r.until_date ?? null);
-    const sources   = rowsIn.map(r => r.source ?? null);
-    const supersededBys = rowsIn.map(r => r.superseded_by ?? null);
-    // postgres-js needs boolean arrays passed as text[] then SQL-cast to boolean[],
-    // otherwise the driver mis-detects element type. Same pattern as how the
-    // existing batch methods handle bools.
-    const actives   = rowsIn.map(r => (r.active ?? true) ? 'true' : 'false');
+    // v0.42.26: takes is a batch primitive too — wrap in batchRetry so a
+    // Supavisor circuit-breaker blip doesn't silently drop takes the way it
+    // could before (links/timeline already had this; takes was the gap).
+    return this.batchRetry(opts?.auditSite ?? 'addTakesBatch', opts?.signal, () => this._addTakesBatchOnce(rowsIn), rowsIn.length);
+  }
+
+  private async _addTakesBatchOnce(rowsIn: TakeBatchInput[]): Promise<number> {
+    // #1861: JSONB jsonb_to_recordset instead of unnest(${arr}::text[]). `claim`
+    // is free LLM-extracted prose with the same array-literal crash hazard as
+    // link context. JSONB additionally lets us declare NATIVE recordset column
+    // types and emit JSON-native numbers/booleans, which retires the old
+    // postgres-js ${actives}::text[]::boolean[] element-type workaround entirely.
+    // Weight clamp/round + NUL-stripping live in buildTakeRows (shared w/ PGLite).
+    // NOTE: ON CONFLICT here is DO UPDATE (not DO NOTHING) — an intra-batch
+    // duplicate (page_id, row_num) errors, identical to the pre-#1861 unnest path.
+    const { rows, weightClamped } = buildTakeRows(rowsIn);
     if (weightClamped > 0) {
       process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: ${weightClamped} row(s) had weight outside [0,1]; clamped\n`);
     }
-    const result = await sql`
-      INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, superseded_by, active)
-      SELECT v.page_id::int, v.row_num::int, v.claim, v.kind, v.holder, v.weight::real,
-             v.since_date::text, v.until_date::text, v.source, v.superseded_by::int, v.active::boolean
-      FROM unnest(
-        ${pageIds}::int[], ${rowNums}::int[], ${claims}::text[], ${kinds}::text[],
-        ${holders}::text[], ${weights}::real[], ${sinces}::text[], ${untils}::text[],
-        ${sources}::text[], ${supersededBys}::int[], ${actives}::text[]::boolean[]
-      ) AS v(page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, superseded_by, active)
-      ON CONFLICT (page_id, row_num) DO UPDATE SET
-        claim         = EXCLUDED.claim,
-        kind          = EXCLUDED.kind,
-        holder        = EXCLUDED.holder,
-        weight        = EXCLUDED.weight,
-        since_date    = EXCLUDED.since_date,
-        until_date    = EXCLUDED.until_date,
-        source        = EXCLUDED.source,
-        superseded_by = EXCLUDED.superseded_by,
-        active        = EXCLUDED.active,
-        updated_at    = now()
-      RETURNING 1
-    `;
+    const result = await executeRawJsonb(
+      this,
+      `INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, superseded_by, active)
+       SELECT v.page_id, v.row_num, v.claim, v.kind, v.holder, v.weight,
+              v.since_date, v.until_date, v.source, v.superseded_by, v.active
+       FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(
+         page_id int, row_num int, claim text, kind text, holder text, weight real,
+         since_date text, until_date text, source text, superseded_by int, active boolean
+       )
+       ON CONFLICT (page_id, row_num) DO UPDATE SET
+         claim         = EXCLUDED.claim,
+         kind          = EXCLUDED.kind,
+         holder        = EXCLUDED.holder,
+         weight        = EXCLUDED.weight,
+         since_date    = EXCLUDED.since_date,
+         until_date    = EXCLUDED.until_date,
+         source        = EXCLUDED.source,
+         superseded_by = EXCLUDED.superseded_by,
+         active        = EXCLUDED.active,
+         updated_at    = now()
+       RETURNING 1`,
+      [],
+      [{ rows }],
+    );
     return result.length;
   }
 

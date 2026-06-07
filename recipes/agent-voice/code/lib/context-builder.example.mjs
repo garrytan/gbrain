@@ -24,9 +24,22 @@
  */
 
 import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 
 const MAX_CHARS = 2500;
+
+// #1851: a topic id is the ONLY thing that crosses the wire from a call link
+// (never the topic content itself — that would be prompt injection + a leak via
+// URLs/logs). The id indexes `$BRAIN_ROOT/topics/<topicId>.md` server-side, so
+// it must be a strict slug: lowercase alnum + dashes, no dots/slashes. This
+// regex alone rejects `../../SOUL` (no dots, no slashes); the resolve-under-dir
+// check below is defense-in-depth.
+const TOPIC_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+/** True iff `topicId` is a safe slug (see TOPIC_ID_RE). */
+export function isValidTopicId(topicId) {
+  return typeof topicId === 'string' && topicId.length <= 128 && TOPIC_ID_RE.test(topicId);
+}
 
 // Emotion-word filter. Content-agnostic — catches what's loaded in the
 // operator's OWN words without hardcoding names of people in their life.
@@ -150,6 +163,50 @@ export async function buildMarsContext({ brainRoot, timezone } = {}) {
   } catch {}
 
   return cap(scrub(ctx));
+}
+
+/**
+ * #1851 — Build TOPIC context: the recent conversation in the topic the agent
+ * was summoned into, so calling Mars/Venus from inside a thread boots them
+ * already knowing what you were just discussing.
+ *
+ * The server resolves this from `topicId` at connect time (the id is the only
+ * thing the call link carries). Reads `$BRAIN_ROOT/topics/<topicId>.md`. The
+ * operator's brain owns what lands in that file (recent turns + a 2-3 line
+ * synthesized summary is the intended shape — not a raw dump).
+ *
+ * Persona-agnostic: the SAME topic block is injected for Mars or Venus; only
+ * the persona identity (section 1 of the prompt) differs. Returns '' when
+ * there's no topic, the id is unsafe, or the file is missing — falling back to
+ * the generic per-persona live context (current behavior).
+ *
+ * @param {object} opts
+ * @param {string} opts.brainRoot
+ * @param {string} opts.topicId — strict slug; see {@link isValidTopicId}
+ * @returns {Promise<string>} ≤2500 chars, PII-scrubbed, or '' to degrade.
+ */
+export async function buildTopicContext({ brainRoot, topicId } = {}) {
+  if (!brainRoot || !topicId || !isValidTopicId(topicId)) return '';
+
+  // Defense-in-depth: confine the resolved path under <brainRoot>/topics even
+  // though the slug regex already forbids traversal characters.
+  const topicsDir = resolve(join(brainRoot, 'topics'));
+  const path = resolve(join(topicsDir, `${topicId}.md`));
+  if (path !== join(topicsDir, `${topicId}.md`) || !path.startsWith(topicsDir + sep)) {
+    return '';
+  }
+  if (!existsSync(path)) return '';
+
+  try {
+    const raw = readFileSync(path, 'utf8').trim();
+    if (!raw) return '';
+    let ctx = 'RECENT CONVERSATION IN THE TOPIC YOU WERE SUMMONED INTO.\n';
+    ctx += "Use this so you already know what was just being discussed. Don't recite it; let it inform you.\n\n";
+    ctx += raw;
+    return cap(scrub(ctx));
+  } catch {
+    return '';
+  }
 }
 
 /**

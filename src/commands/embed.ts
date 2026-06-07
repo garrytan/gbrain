@@ -9,6 +9,7 @@ import { loadConfig } from '../core/config.ts';
 import { slog, serr } from '../core/console-prefix.ts';
 import { filterOutEmbedSkipped } from '../core/embed-skip.ts';
 import { runSlidingPool } from '../core/worker-pool.ts';
+import { isAborted, anySignal } from '../core/abort-check.ts';
 
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
@@ -61,6 +62,15 @@ export interface EmbedOpts {
    * remediation submits on big stale backlogs.
    */
   catchUp?: boolean;
+  /**
+   * #1737: cooperative-abort signal from the Minions worker (wall-clock
+   * timeout, lock loss, SIGTERM). When it fires, the embed loops break
+   * cleanly with partial progress preserved so the autopilot cycle's
+   * finally can release `gbrain_cycle_locks` instead of running for the
+   * full 10-15 min embed phase after the job was already killed. Composed
+   * with the internal wall-clock budget timer via `anySignal`.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -187,8 +197,9 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
 
   if (opts.slugs && opts.slugs.length > 0) {
     for (const s of opts.slugs) {
+      if (isAborted(opts.signal)) break; // #1737: stop the per-slug loop on abort
       try {
-        await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId);
+        await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId, opts.signal);
       } catch (e: unknown) {
         serr(`  Error embedding ${s}: ${e instanceof Error ? e.message : e}`);
       }
@@ -200,11 +211,11 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
       batchSize: opts.batchSize,
       priority: opts.priority,
       catchUp: opts.catchUp,
-    });
+    }, opts.signal);
     return result;
   }
   if (opts.slug) {
-    await embedPage(engine, opts.slug, !!opts.dryRun, result, opts.sourceId);
+    await embedPage(engine, opts.slug, !!opts.dryRun, result, opts.sourceId, opts.signal);
     return result;
   }
   throw new Error('No embed target specified. Pass { slug }, { slugs }, { all }, or { stale }.');
@@ -309,6 +320,7 @@ async function embedPage(
   dryRun: boolean,
   result: EmbedResult,
   sourceId?: string,
+  signal?: AbortSignal,
 ) {
   const opts = sourceId ? { sourceId } : undefined;
   const page = await engine.getPage(slug, opts);
@@ -364,7 +376,7 @@ async function embedPage(
     return;
   }
 
-  const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text));
+  const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text), { abortSignal: signal });
   const embeddingMap = new Map<number, Float32Array>();
   for (let j = 0; j < toEmbed.length; j++) {
     embeddingMap.set(toEmbed[j].chunk_index, embeddings[j]);
@@ -405,6 +417,7 @@ async function embedAll(
     priority?: 'recent';
     catchUp?: boolean;
   },
+  signal?: AbortSignal,
 ) {
   // v0.41.31: current embedding provenance signature. Stamped onto pages
   // when their chunks are (re)embedded so a later model/dimension swap is
@@ -426,7 +439,8 @@ async function embedAll(
   if (staleOnly) {
     // D7: thread sourceId so `gbrain embed --stale --source X` actually scopes.
     // v0.41.18.0 (A13): thread batchSize/priority/catchUp into the stale path.
-    return await embedAllStale(engine, sourceId, dryRun, result, onProgress, staleOpts, signature);
+    // #1737: thread the external abort signal so the cycle embed phase bails.
+    return await embedAllStale(engine, sourceId, dryRun, result, onProgress, staleOpts, signature, signal);
   }
 
   // v0.31.12: when sourceId is set, scope listPages to that source.
@@ -455,6 +469,8 @@ async function embedAll(
   const CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
 
   async function embedOnePage(page: typeof pages[number]) {
+    // #1737: bail before doing any work for this page if the run was aborted.
+    if (isAborted(signal)) return;
     // v0.31.12: thread source_id from the page row so getChunks/upsertChunks
     // target the correct (source_id, slug) row, not the 'default' source.
     const pageSourceId = page.source_id;
@@ -519,6 +535,7 @@ async function embedAll(
   await runSlidingPool({
     items: pages,
     workers: CONCURRENCY,
+    ...(signal && { signal }), // #1737: pool stops claiming pages once aborted
     onItem: (page) => embedOnePage(page),
     failureLabel: (page) => page.slug,
   });
@@ -561,6 +578,7 @@ async function embedAllStale(
     catchUp?: boolean;
   },
   signature?: string,
+  externalSignal?: AbortSignal,
 ) {
   // D7: thread sourceId so source-scoped runs only count + visit
   // that source's NULL embeddings.
@@ -621,6 +639,12 @@ async function embedAllStale(
   const budgetController = new AbortController();
   const budgetTimer = setTimeout(() => budgetController.abort(), BUDGET_MS);
   const budgetSignal = budgetController.signal;
+  // #1737: the effective signal fires when EITHER the internal wall-clock
+  // budget OR the caller's abort (worker timeout / lock loss / SIGTERM) fires.
+  // Replaces bare budgetSignal at every loop/pool/embed check below so the
+  // autopilot cycle's embed phase stops within one batch (~2s) of being
+  // killed instead of running the full 10-15 min and wedging the cycle lock.
+  const effectiveSignal = anySignal(budgetSignal, externalSignal);
 
   // v0.41.18.0 (A13): --priority recent threads orderBy='updated_desc' to
   // listStaleChunks. Composite cursor tracks (updated_at, page_id, chunk_index)
@@ -640,9 +664,12 @@ async function embedAllStale(
   try {
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      if (budgetSignal.aborted) {
+      if (effectiveSignal.aborted) {
         if (!budgetExitNotified) {
-          serr(`\n  [embed] wall-clock budget (${BUDGET_MS}ms) exceeded; exiting cleanly. Re-run picks up via partial index.`);
+          const why = budgetSignal.aborted
+            ? `wall-clock budget (${BUDGET_MS}ms) exceeded`
+            : 'aborted by caller (job timeout / lock loss / shutdown)';
+          serr(`\n  [embed] ${why}; exiting cleanly. Re-run picks up via partial index.`);
           budgetExitNotified = true;
         }
         break;
@@ -691,7 +718,7 @@ async function embedAllStale(
         const keySourceId = stale[0]?.source_id ?? 'default';
         const slug = stale[0].slug;
         try {
-          const embeddings = await embedBatchWithBackoff(stale.map(c => c.chunk_text), { abortSignal: budgetSignal });
+          const embeddings = await embedBatchWithBackoff(stale.map(c => c.chunk_text), { abortSignal: effectiveSignal });
           // Re-fetch existing chunks and merge to avoid deleting non-stale chunks.
           const existing = await engine.getChunks(slug, { sourceId: keySourceId });
           const staleIdxToEmbedding = new Map<number, Float32Array>();
@@ -716,9 +743,9 @@ async function embedAllStale(
           }
           result.embedded += stale.length;
         } catch (e: unknown) {
-          // Budget-fired aborts are expected on the way out; don't spam
-          // per-page "Error embedding" lines when we're shutting down.
-          if (budgetSignal.aborted) return;
+          // Budget/abort-fired cancellations are expected on the way out; don't
+          // spam per-page "Error embedding" lines when we're shutting down.
+          if (effectiveSignal.aborted) return;
           serr(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
         }
         totalProcessedPages++;
@@ -736,7 +763,7 @@ async function embedAllStale(
       await runSlidingPool({
         items: keys,
         workers: CONCURRENCY,
-        signal: budgetSignal,
+        signal: effectiveSignal,
         onItem: (key) => embedOneKey(key),
         failureLabel: (key) => key,
       });

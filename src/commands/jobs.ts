@@ -112,7 +112,7 @@ function formatJobDetail(job: MinionJob): string {
   const lines = [
     `Job #${job.id}: ${job.name} (${job.status.toUpperCase()}${job.status === 'dead' ? ` after ${job.attempts_made} attempts` : ''})`,
     `  Queue: ${job.queue} | Priority: ${job.priority}`,
-    `  Attempts: ${job.attempts_made}/${job.max_attempts} (started: ${job.attempts_started})`,
+    `  Attempts: ${job.attempts_made}/${job.max_attempts} (started: ${job.attempts_started}, stalled: ${job.stalled_counter}/${job.max_stalled})`,
     `  Backoff: ${job.backoff_type} ${job.backoff_delay}ms (jitter: ${job.backoff_jitter})`,
   ];
   if (job.started_at) lines.push(`  Started: ${job.started_at.toISOString()}`);

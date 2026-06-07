@@ -16,6 +16,7 @@ import type {
 import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
 import { validateAttachment } from './attachments.ts';
 import { isProtectedJobName } from './protected-names.ts';
+import { defaultTimeoutMsFor } from './handler-timeouts.ts';
 import {
   withRetry, BULK_RETRY_OPTS, resolveBulkRetryOpts, computeNextDelay,
   isRetryableConnError,
@@ -278,7 +279,10 @@ export class MinionQueue {
         opts?.on_child_fail ?? 'fail_parent',
         depth,
         opts?.max_children ?? null,
-        opts?.timeout_ms ?? null,
+        // #1737: long handlers (subagent, embed-backfill, autopilot-cycle) get a
+        // sane long wall-clock default stamped at submit when the caller didn't
+        // pass one, so they aren't killed mid-progress by the short null-default.
+        opts?.timeout_ms ?? defaultTimeoutMsFor(jobName),
         opts?.remove_on_complete ?? false,
         opts?.remove_on_fail ?? false,
         opts?.idempotency_key ?? null,
@@ -719,6 +723,7 @@ export class MinionQueue {
         `UPDATE minion_jobs SET
           status = 'dead',
           error_text = 'wall-clock timeout exceeded',
+          attempts_made = attempts_made + 1,
           lock_token = NULL,
           lock_until = NULL,
           finished_at = now(),
@@ -1155,6 +1160,7 @@ export class MinionQueue {
       dead_lettered AS (
         UPDATE minion_jobs SET
           status = 'dead', stalled_counter = stalled_counter + 1,
+          attempts_made = attempts_made + 1,
           error_text = 'max stalled count exceeded',
           lock_token = NULL, lock_until = NULL, finished_at = now(), updated_at = now()
         WHERE id IN (SELECT id FROM stalled WHERE stalled_counter + 1 >= max_stalled)

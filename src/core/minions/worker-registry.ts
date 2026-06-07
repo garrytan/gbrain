@@ -75,6 +75,24 @@ export function currentBrainId(): string {
   }
 }
 
+/**
+ * The RAW database identity string (url or path), unhashed. Used as the
+ * authoritative key for the #1849 queue-scoped supervisor singleton DB lock:
+ * the protected resource is the (database, queue) pair, so the lock id must
+ * key on the real DB identity, not the lossy djb2 of {@link currentBrainId}
+ * (T2 — removes any hash-collision question). Reads config only (no DB
+ * connection), so it's safe to call before the engine connects. Falls back
+ * to 'default' so two unconfigured brains under one HOME still serialize.
+ */
+export function currentDbIdentity(): string {
+  try {
+    const cfg = loadConfig();
+    return cfg?.database_url ?? cfg?.database_path ?? 'default';
+  } catch {
+    return 'default';
+  }
+}
+
 function entryPath(pid: number): string {
   return join(workerRegistryDir(), `worker-${pid}.json`);
 }

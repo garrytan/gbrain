@@ -40,7 +40,7 @@ Every `put_page` runs `extractEntityRefs` on the markdown body. It matches:
 - Obsidian wikilinks: `[[wiki/people/garry-tan|Garry Tan]]`
 - Typed-link blockquotes: `> **Convention:** see [path](path).`
 
-Three regexes, zero LLM tokens, single SQL `addLinksBatch` call with `INSERT ... SELECT FROM unnest(...) JOIN pages ON CONFLICT DO NOTHING RETURNING 1`. The graph grows on every write at near-zero cost. On a 17K-page brain, full graph extract completes in seconds.
+Three regexes, zero LLM tokens, single SQL `addLinksBatch` call with `INSERT ... SELECT FROM jsonb_to_recordset(($1::jsonb)->'rows') JOIN pages ON CONFLICT DO NOTHING RETURNING 1` (free-text-safe; the prior `unnest(${arr}::text[])` form crashed on calendar/Zoom context per gbrain#1861). The graph grows on every write at near-zero cost. On a 17K-page brain, full graph extract completes in seconds.
 
 Heuristic link-type inference (`attended`, `works_at`, `invested_in`, `founded`, `advises`) fires from surrounding sentence context — also LLM-free. Power users who want richer types add them via the typed-link blockquote convention.
 
