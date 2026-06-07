@@ -1,6 +1,6 @@
 # Embedding providers
 
-GBrain ships with 16 embedding-provider recipes covering OpenAI, ZeroEntropy, Voyage, OpenRouter (single key, many hosted models), the major hosted alternatives, three local options, and a universal escape hatch (LiteLLM proxy). Run `gbrain providers list` to see the live registry; `gbrain providers explain --json` emits a machine-readable matrix for agents.
+GBrain ships with 17 embedding-provider recipes covering OpenAI, ZeroEntropy, Voyage, OpenRouter (single key, many hosted models), the major hosted alternatives, local options including Jina-compatible servers, and a universal escape hatch (LiteLLM proxy). Run `gbrain providers list` to see the live registry; `gbrain providers explain --json` emits a machine-readable matrix for agents.
 
 This page is the human-readable counterpart: capability per provider, env-var setup, dimensions, cost, and known constraints.
 
@@ -34,13 +34,14 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `zhipu` | `ZHIPUAI_API_KEY` | 1024 | varies | no | no |
 | `ollama` | (none — runs locally) | 768 | 0 | yes | no |
 | `llama-server` | (none — runs locally) | user-set | 0 | yes | no |
+| `jina` | `JINA_BASE_URL`, `JINA_API_KEY` (optional for hosted) | 1024 | varies | yes | no |
 | `litellm` | `LITELLM_API_KEY` (optional) | user-set | varies | yes (proxy) | no |
 | `together` | `TOGETHER_API_KEY` | 768 | varies | no | no |
 | `anthropic` | (no embedding model — chat only) | — | — | — | — |
 | `deepseek` | (no embedding model — chat only) | — | — | — | — |
 | `groq` | (no embedding model — chat only) | — | — | — | — |
 
-**Note on local providers.** Ollama and llama-server have no required API key, so they don't show up in env-detection auto-pick. Pick them explicitly with `--embedding-model ollama:<model>` to avoid silently routing to a daemon that may not be running.
+**Note on local providers.** Ollama, llama-server, and Jina-compatible local servers have no required API key, so they don't show up in env-detection auto-pick. Pick them explicitly with `--embedding-model ollama:<model>` or `--embedding-model jina:jinaai/jina-embeddings-v5-omni-small` to avoid silently routing to a daemon that may not be running.
 
 ## If first import fails
 
@@ -68,8 +69,8 @@ The doctor distinguishes two repair paths:
 - **One key for many hosted models**: OpenRouter. Set `OPENROUTER_API_KEY` and use `openrouter:<provider>/<model>` for chat against GPT-5.2, Claude 4.x, Gemini 3, DeepSeek, and dozens more without juggling per-provider keys. Embedding catalog includes OpenAI, Google, Qwen, BGE-M3.
 - **Enterprise compliance**: Azure OpenAI (data residency + private endpoints) or self-hosted via llama-server / Ollama.
 - **China region**: DashScope (Alibaba) or Zhipu (BigModel). DashScope's international endpoint at `dashscope-intl.aliyuncs.com`; override `provider_base_urls.dashscope` for the China endpoint.
-- **OSS local, full control**: llama-server (`llama.cpp`) for any GGUF model; Ollama for the curated catalog.
-- **Anything else**: LiteLLM proxy. Run LiteLLM in front of any provider (Bedrock, Vertex, Cohere, Jina, Fireworks, etc.) and point gbrain at it via `LITELLM_BASE_URL`.
+- **OSS local, full control**: Jina-compatible OpenAI embeddings for asymmetric retrieval models; llama-server (`llama.cpp`) for any GGUF model; Ollama for the curated catalog.
+- **Anything else**: LiteLLM proxy. Run LiteLLM in front of any provider (Bedrock, Vertex, Cohere, Fireworks, etc.) and point gbrain at it via `LITELLM_BASE_URL`.
 
 ## Per-provider details
 
@@ -149,9 +150,24 @@ Recipe ships with `nomic-embed-text` (768d, recommended), `mxbai-embed-large` (1
 
 User-driven models: launch llama-server with `--model <gguf-path> --embeddings`, then run `gbrain init --embedding-model llama-server:<your-id> --embedding-dimensions <N>`. The recipe refuses the implicit shorthand `--model llama-server` because there's no canonical first model.
 
+### Jina-compatible local embeddings
+
+OpenAI-compatible Jina retrieval servers, including local SentenceTransformers wrappers for `jinaai/jina-embeddings-v5-omni-small`. No API key is required for local servers. Optional `JINA_BASE_URL` defaults to `http://localhost:8081/v1`; set it to your service URL, for example:
+
+```bash
+export JINA_BASE_URL=http://endurance:8081/v1
+gbrain init --pglite \
+  --embedding-model jina:jinaai/jina-embeddings-v5-omni-small \
+  --embedding-dimensions 1024
+```
+
+Jina v5 retrieval models are asymmetric. GBrain sends `input_type=document` for indexed chunks and `input_type=query` for search queries. The embedding signature remains `jina:jinaai/jina-embeddings-v5-omni-small:1024`, so you can point `JINA_BASE_URL` at a temporary sidecar proxy and later point it directly at the same-compatible server without re-embedding.
+
+For hosted Jina, set `JINA_BASE_URL=https://api.jina.ai/v1` and `JINA_API_KEY`.
+
 ### LiteLLM proxy (universal escape hatch)
 
-Run [LiteLLM](https://docs.litellm.ai/docs/proxy/quick_start) in front of any provider — Bedrock, Vertex, Cohere, Jina, Fireworks, OctoAI, etc. The proxy normalizes everything to the OpenAI-compatible API; gbrain points at the proxy via `LITELLM_BASE_URL` and proxies the call.
+Run [LiteLLM](https://docs.litellm.ai/docs/proxy/quick_start) in front of any provider — Bedrock, Vertex, Cohere, Fireworks, OctoAI, etc. The proxy normalizes everything to the OpenAI-compatible API; gbrain points at the proxy via `LITELLM_BASE_URL` and proxies the call.
 
 This is the catch-all for "my provider isn't in the list above." Set up LiteLLM, then `gbrain init --embedding-model litellm:<your-model-id> --embedding-dimensions <N>`.
 

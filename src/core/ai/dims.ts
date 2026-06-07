@@ -65,6 +65,20 @@ export function isValidZeroEntropyDim(dims: number): boolean {
   return (ZEROENTROPY_VALID_DIMS as readonly number[]).includes(dims);
 }
 
+const JINA_V5_DIM_MODELS = new Set([
+  'jinaai/jina-embeddings-v5-omni-small',
+  'jina-embeddings-v5-text-small',
+]);
+export const JINA_V5_VALID_DIMS = [32, 64, 128, 256, 512, 768, 1024] as const;
+
+export function supportsJinaV5Dimension(modelId: string): boolean {
+  return JINA_V5_DIM_MODELS.has(modelId);
+}
+
+export function isValidJinaV5Dim(dims: number): boolean {
+  return (JINA_V5_VALID_DIMS as readonly number[]).includes(dims);
+}
+
 // v0.36.0.0 (D13): OpenAI text-embedding-3-* accepts arbitrary truncation via
 // Matryoshka — any positive integer up to the model's native size. When a
 // brain is configured with `embedding_dimensions` OUTSIDE that range, OpenAI
@@ -162,6 +176,27 @@ export function dimsProviderOptions(
           openaiCompatible: {
             dimensions: dims,
             input_type: inputType ?? 'document',
+          },
+        };
+      }
+      // Jina v5 retrieval models — Matryoshka dims + asymmetric
+      // `input_type: query|document`. The AI SDK's openai-compatible
+      // embedding path forwards `dimensions` and `user`, but drops arbitrary
+      // custom embedding fields. Use a reserved `user` sentinel that
+      // jinaCompatFetch rewrites to `input_type` immediately before fetch.
+      if (supportsJinaV5Dimension(modelId)) {
+        if (!isValidJinaV5Dim(dims)) {
+          throw new AIConfigError(
+            `Jina model "${modelId}" supports dimensions only in ` +
+            `{${JINA_V5_VALID_DIMS.join(', ')}}, got ${dims}.`,
+            `Set \`embedding_dimensions\` to one of ` +
+            `${JINA_V5_VALID_DIMS.join('/')} in your gbrain config.`,
+          );
+        }
+        return {
+          openaiCompatible: {
+            dimensions: dims,
+            user: `gbrain-input-type:${inputType ?? 'document'}`,
           },
         };
       }

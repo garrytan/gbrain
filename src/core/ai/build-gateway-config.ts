@@ -10,7 +10,7 @@
  *
  * The single ownership site for: (a) folding file-plane API keys
  * (openai/anthropic/zeroentropy) into the gateway env, and (b) threading
- * local-server `*_BASE_URL` env vars into base_urls. Both matter for the
+ * local/provider `*_BASE_URL` env vars into base_urls. Both matter for the
  * init-time embedding-key probe — without (a) it would false-warn on
  * config.json-keyed users, and without (b) a live probe could hit the wrong
  * endpoint (custom OpenAI base URL, llama-server, etc.).
@@ -52,6 +52,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   if (process.env.LMSTUDIO_BASE_URL) envBaseUrls['lmstudio'] = process.env.LMSTUDIO_BASE_URL;
   if (process.env.LITELLM_BASE_URL) envBaseUrls['litellm'] = process.env.LITELLM_BASE_URL;
   if (process.env.OPENROUTER_BASE_URL) envBaseUrls['openrouter'] = process.env.OPENROUTER_BASE_URL;
+  if (process.env.JINA_BASE_URL) envBaseUrls['jina'] = process.env.JINA_BASE_URL;
 
   return {
     embedding_model: c.embedding_model,

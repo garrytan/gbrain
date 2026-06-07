@@ -1096,6 +1096,40 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
   }
 }) as unknown as typeof fetch;
 
+/**
+ * Jina compatibility shim for OpenAI-compatible embeddings.
+ *
+ * The AI SDK forwards `dimensions` for embeddings, but drops arbitrary custom
+ * fields such as Jina's retrieval-side `input_type`. `dimsProviderOptions()`
+ * therefore smuggles the side through the SDK-supported `user` option as a
+ * reserved `gbrain-input-type:<side>` sentinel. This fetch shim rewrites that
+ * sentinel to Jina's actual `input_type: 'query' | 'document'` field and
+ * removes `user` before the request leaves gbrain.
+ */
+const jinaCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  if (init?.body && typeof init.body === 'string') {
+    try {
+      const parsed = JSON.parse(init.body);
+      if (parsed && typeof parsed === 'object' && typeof parsed.user === 'string') {
+        const prefix = 'gbrain-input-type:';
+        if (parsed.user.startsWith(prefix)) {
+          const side = parsed.user.slice(prefix.length);
+          if (side === 'query' || side === 'document') {
+            parsed.input_type = side;
+            delete parsed.user;
+            const headers = new Headers(init.headers ?? {});
+            headers.delete('content-length');
+            init = { ...init, body: JSON.stringify(parsed), headers };
+          }
+        }
+      }
+    } catch {
+      // Body wasn't JSON — pass through untouched.
+    }
+  }
+  return fetch(input, init);
+}) as unknown as typeof fetch;
+
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'embedding', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
@@ -1157,6 +1191,8 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
           ? voyageCompatFetch
           : recipe.id === 'zeroentropyai'
           ? zeroEntropyCompatFetch
+          : recipe.id === 'jina'
+          ? jinaCompatFetch
           : undefined);
       const client = createOpenAICompatible({
         name: recipe.id,
