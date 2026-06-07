@@ -640,3 +640,34 @@ describe('assessContentSanity — confidence split (Q1=A)', () => {
     expect(r.shouldFlag).toBe(false);
   });
 });
+
+// ─── REGRESSION: non-string title (#1939) ─────────────────────
+// The importer feeds the raw YAML-parsed frontmatter value. `title: 404`
+// parses as a number and `title: 2024-06-01` as a Date, so a bare
+// `opts.title.toLowerCase()` threw and skipped the page — wedging the source
+// bookmark (#1939) and forcing a never-converging full re-walk (#1794).
+describe('assessContentSanity — non-string title coercion (#1939)', () => {
+  test('numeric title does not throw', () => {
+    expect(() =>
+      // @ts-expect-error — simulate importer passing a YAML number
+      assessContentSanity({ compiled_truth: 'hello world', timeline: '', title: 404 }),
+    ).not.toThrow();
+  });
+
+  test('Date title does not throw', () => {
+    expect(() =>
+      // @ts-expect-error — simulate importer passing a YAML Date
+      assessContentSanity({ compiled_truth: 'hello world', timeline: '', title: new Date('2024-06-01') }),
+    ).not.toThrow();
+  });
+
+  test('null/undefined title does not throw', () => {
+    expect(() =>
+      // @ts-expect-error — simulate missing title
+      assessContentSanity({ compiled_truth: 'hello world', timeline: '', title: null }),
+    ).not.toThrow();
+    expect(() =>
+      assessContentSanity({ compiled_truth: 'hello world', timeline: '', title: undefined as unknown as string }),
+    ).not.toThrow();
+  });
+});

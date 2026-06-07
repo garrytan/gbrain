@@ -376,7 +376,13 @@ export function assessContentSanity(opts: {
   // doesn't repeat the lowercase per literal.
   const bodyHead = body.slice(0, SCAN_HEAD_BYTES);
   const bodyHeadLower = bodyHead.toLowerCase();
-  const titleLower = opts.title.toLowerCase();
+  // Defensive: `opts.title` is typed `string`, but the importer feeds the raw
+  // YAML-parsed frontmatter value. `title: 404` parses as a number and
+  // `title: 2024-06-01` as a Date, so a bare `.toLowerCase()` throws
+  // ("opts.title.toLowerCase is not a function") and the importer skips the
+  // page. A thrown importer error wedges the source bookmark (#1939), forcing a
+  // full re-walk that never converges (#1794). Coerce to string first.
+  const titleLower = String(opts.title ?? '').toLowerCase();
 
   const junk_pattern_matches: string[] = [];
   for (const p of BUILT_IN_JUNK_PATTERNS) {
