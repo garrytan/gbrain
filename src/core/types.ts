@@ -296,6 +296,14 @@ export interface PageFilters {
    */
   slugPrefix?: string;
   /**
+   * OAuth slug-prefix read binding — same TRUST semantics as
+   * `SearchOpts.restrict_slug_prefixes` (glob list from
+   * oauth_clients.bound_slug_prefixes, threaded by the op layer via
+   * `slugScopeOpts(ctx)`). Applied on top of `slugPrefix` (a caller-side
+   * scoping convenience), never instead of it. Empty array = no rows.
+   */
+  restrictSlugPrefixes?: string[];
+  /**
    * v0.26.5: include soft-deleted pages (rows with `deleted_at IS NOT NULL`).
    * Default false: hides soft-deleted pages from `list_pages` so agents see the
    * same set search returns. Set true to enumerate the recoverable set during
@@ -904,6 +912,17 @@ export interface SearchOpts {
    * though they're hard-excluded by default.
    */
   include_slug_prefixes?: string[];
+  /**
+   * OAuth slug-prefix read binding (oauth_clients.bound_slug_prefixes).
+   * When set, results are POSITIVELY confined to slugs matching the list —
+   * glob semantics of `matchesSlugAllowList` (`clients/*` = descendants,
+   * bare entry = exact slug). Unlike include/exclude above (ranking-policy
+   * knobs), this is a TRUST filter threaded by the op layer from
+   * `slugScopeOpts(ctx)`; engines apply it via `buildSlugAllowClause` in
+   * every search path. Empty array = fail-closed (no rows). Undefined =
+   * unrestricted.
+   */
+  restrict_slug_prefixes?: string[];
   detail?: 'low' | 'medium' | 'high';
   /**
    * v0.20.0 Cathedral II: filter by content_chunks.language (e.g., 'typescript',

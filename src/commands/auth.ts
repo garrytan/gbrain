@@ -344,6 +344,7 @@ interface RegisterClientArgs {
   scopes: string;
   sourceId: string;
   federatedRead: string[] | undefined;
+  boundSlugPrefixes: string[] | undefined;
   redirectUris: string[];
   tokenEndpointAuthMethod: string | undefined;
 }
@@ -354,6 +355,7 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
     scopes: 'read',
     sourceId: 'default',
     federatedRead: undefined,
+    boundSlugPrefixes: undefined,
     redirectUris: [],
     tokenEndpointAuthMethod: undefined,
   };
@@ -383,6 +385,14 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
         out.federatedRead = v.split(',').map(s => s.trim()).filter(Boolean);
         i += 2; break;
       }
+      case '--bound-slug-prefixes': {
+        // Read+write slug-prefix binding. Glob semantics of
+        // matchesSlugAllowList: `clients/*` = all descendants of clients/,
+        // a bare entry = exactly that slug. Omit for an unrestricted client.
+        const v = requireValue();
+        out.boundSlugPrefixes = v.split(',').map(s => s.trim()).filter(Boolean);
+        i += 2; break;
+      }
       case '--redirect-uri':
         out.redirectUris.push(requireValue());
         i += 2; break;
@@ -405,7 +415,7 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
 
 async function registerClient(name: string, args: string[]) {
   if (!name) {
-    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--bound-slug-prefixes P1,P2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
     process.exit(1);
   }
   let parsed: RegisterClientArgs;
@@ -413,17 +423,17 @@ async function registerClient(name: string, args: string[]) {
     parsed = parseRegisterClientArgs(args);
   } catch (e: any) {
     console.error(`Error: ${e.message}`);
-    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--bound-slug-prefixes P1,P2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
     process.exit(1);
   }
-  const { grantTypes, scopes, sourceId, federatedRead, redirectUris, tokenEndpointAuthMethod } = parsed;
+  const { grantTypes, scopes, sourceId, federatedRead, boundSlugPrefixes, redirectUris, tokenEndpointAuthMethod } = parsed;
 
   try {
     await withConfiguredSql(async (sql) => {
       const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
       const provider = new GBrainOAuthProvider({ sql });
       const { clientId, clientSecret } = await provider.registerClientManual(
-        name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod,
+        name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, boundSlugPrefixes,
       );
       const effectiveFederated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
       const effectiveAuthMethod = tokenEndpointAuthMethod || 'client_secret_post';
@@ -441,7 +451,8 @@ async function registerClient(name: string, args: string[]) {
         console.log(`  Redirect URIs:       ${redirectUris.join(', ')}`);
       }
       console.log(`  Write source:        ${sourceId}`);
-      console.log(`  Federated reads:     ${effectiveFederated.join(', ')}\n`);
+      console.log(`  Federated reads:     ${effectiveFederated.join(', ')}`);
+      console.log(`  Slug binding:        ${boundSlugPrefixes && boundSlugPrefixes.length > 0 ? boundSlugPrefixes.join(', ') : '<unrestricted>'}\n`);
       if (clientSecret) {
         console.log('Save the client secret — it will not be shown again.');
       } else {
@@ -524,6 +535,7 @@ Usage:
      --scopes "<read write admin>"                         (default: read)
      --source <id>                                         (default: default)
      --federated-read <id1,id2,...>                        (default: [source])
+     --bound-slug-prefixes <clients/*,people/*,...>        (default: unrestricted — confines READ + subagent-write to matching slugs)
      --redirect-uri <https://...>                          (v0.41.3+; repeatable; required for authorization_code)
      --token-endpoint-auth-method <method>                 (v0.41.3+; client_secret_post | client_secret_basic | none;
                                                             'none' = public PKCE-only client, no secret minted)

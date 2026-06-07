@@ -19,6 +19,7 @@ import type { BrainEngine, TakeHit, Take } from '../engine.ts';
 import { hybridSearch } from '../search/hybrid.ts';
 import type { SearchResult } from '../types.ts';
 import { sanitizeQueryForPrompt } from '../search/expansion.ts';
+import { matchesSlugAllowList } from '../operations.ts';
 
 export interface ThinkGatherOpts {
   question: string;
@@ -34,6 +35,15 @@ export interface ThinkGatherOpts {
   questionEmbedding?: Float32Array;
   /** When set, MCP-bound calls forward this allow-list to takes_search. Local CLI leaves unset. */
   takesHoldersAllowList?: string[];
+  /**
+   * OAuth slug-prefix read binding (oauth_clients.bound_slug_prefixes),
+   * threaded from the think op handler. Confines every gather stream:
+   * hybrid pages (SQL-side via SearchOpts), takes (post-filter on
+   * page_slug), and graph walk (post-filter on slugs). Without this thread
+   * a bound client could exfiltrate hidden-prefix content through think's
+   * synthesized answer.
+   */
+  restrictSlugPrefixes?: string[];
 }
 
 export interface ThinkGatherResult {
@@ -110,6 +120,9 @@ export async function runGather(
   const pagesPromise = hybridSearch(engine, opts.question, {
     limit: gatherLimit,
     expansion: false,  // think provides its own anchor + graph context; no need for re-expansion
+    ...(opts.restrictSlugPrefixes !== undefined
+      ? { restrict_slug_prefixes: opts.restrictSlugPrefixes }
+      : {}),
   }).catch((e) => {
     process.stderr.write(`[think.gather] hybrid stream failed: ${(e as Error).message}\n`);
     return [] as SearchResult[];
@@ -152,9 +165,18 @@ export async function runGather(
         })
     : Promise.resolve([] as string[]);
 
-  const [pages, takesKw, takesVec, graphSlugs] = await Promise.all([
+  let [pages, takesKw, takesVec, graphSlugs] = await Promise.all([
     pagesPromise, takesKwPromise, takesVecPromise, graphPromise,
   ]);
+
+  // OAuth slug-prefix read binding — post-filter the streams that don't go
+  // through SearchOpts (takes + graph). Same matcher as the op layer.
+  const bound = opts.restrictSlugPrefixes;
+  if (bound !== undefined) {
+    takesKw = takesKw.filter(t => matchesSlugAllowList(t.page_slug, bound));
+    takesVec = takesVec.filter(t => matchesSlugAllowList(t.page_slug, bound));
+    graphSlugs = graphSlugs.filter(sl => matchesSlugAllowList(sl, bound));
+  }
 
   // Fuse takes streams (keyword + vector). Key by (page_slug, row_num).
   const fusedTakes = fuseRanked(

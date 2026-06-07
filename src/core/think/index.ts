@@ -106,6 +106,13 @@ export interface RunThinkOpts {
    */
   allowedSources?: string[];
   /**
+   * OAuth slug-prefix read binding — projection of
+   * `OperationContext.auth.boundSlugPrefixes` via `slugScopeOpts(ctx)`.
+   * Confines every gather stream (pages, takes, graph) so a bound client
+   * can't exfiltrate hidden-prefix content through the synthesized answer.
+   */
+  boundSlugPrefixes?: string[];
+  /**
    * v0.40.2.0 — scalar projection of `OperationContext.remote`. When
    * true, trajectory queries apply `visibility='world'` filter (mirrors
    * the recall posture for untrusted callers). CLI defaults to false.
@@ -270,6 +277,7 @@ export async function runThink(
     anchor: opts.anchor,
     questionEmbedding,
     takesHoldersAllowList: opts.takesHoldersAllowList,
+    restrictSlugPrefixes: opts.boundSlugPrefixes,
   });
 
   // Render evidence blocks for the prompt

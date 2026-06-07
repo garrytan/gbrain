@@ -272,6 +272,25 @@ export interface AuthInfo {
    * case (back-compat).
    */
   allowedSources?: string[];
+  /**
+   * Slug-prefix read binding. Sourced from `oauth_clients.bound_slug_prefixes`
+   * (migration v85 — the agent-binding column). When set and non-empty, every
+   * read-side operation confines its results to slugs matching the list
+   * (same glob semantics as `matchesSlugAllowList`: `clients/*` matches all
+   * descendants of `clients/`, a bare entry matches exactly one slug).
+   *
+   * `undefined` (column NULL, legacy bearer token, or pre-v85 brain) means
+   * "unrestricted" — back-compat with every existing deployment. An empty
+   * array `[]` means "bound to nothing" and is enforced fail-closed (the
+   * client sees no pages): an attacker-controlled `[]` MUST NOT widen scope
+   * by being read as "no filter" — mirror of the `allowedSources` rule in
+   * `sourceScopeOpts`.
+   *
+   * Completes the binding feature read-side: `bound_slug_prefixes` already
+   * bounds what a client may delegate to subagents write-side (submit_agent).
+   * One column, one concept — the slug-prefix authority of the client.
+   */
+  boundSlugPrefixes?: string[];
 }
 
 export interface OperationContext {
@@ -426,6 +445,61 @@ export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sou
 }
 
 /**
+ * Read-side slug-prefix binding for the calling OAuth client — the slug-axis
+ * sibling of `sourceScopeOpts`. Returns the client's `bound_slug_prefixes`
+ * (glob semantics of `matchesSlugAllowList`) or `null` when the caller is
+ * unrestricted (local CLI, legacy token, or a client row with NULL binding).
+ *
+ * IMPORTANT: an empty array is returned AS-IS (not collapsed to null) —
+ * "bound to nothing" is fail-closed and must stay distinct from "unbound".
+ *
+ * Every read-side handler routes its results through this helper (SQL-side
+ * via SearchOpts/PageFilters threading where the engine supports it,
+ * post-filter via `filterRowsBySlugBinding` / `assertSlugReadable` where it
+ * doesn't) — drift between sites is a cross-prefix data leak, same bug class
+ * as a missed `sourceScopeOpts` thread.
+ */
+export function slugScopeOpts(ctx: OperationContext): string[] | null {
+  const bound = ctx.auth?.boundSlugPrefixes;
+  if (bound === undefined) return null;
+  return bound;
+}
+
+/**
+ * Throw-on-violation guard for single-slug read ops (get_page, get_chunks,
+ * get_backlinks target, ...). Deliberately throws `not_found` — NOT
+ * `permission_denied` — so an out-of-binding probe cannot be used as an
+ * existence oracle: the response is indistinguishable from a slug that
+ * doesn't exist.
+ */
+export function assertSlugReadable(ctx: OperationContext, slug: string): void {
+  const bound = slugScopeOpts(ctx);
+  if (bound === null) return;
+  if (!matchesSlugAllowList(slug, bound)) {
+    throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug.');
+  }
+}
+
+/**
+ * Post-filter for list-shaped read results (backlinks, timeline, graph nodes,
+ * resolve_slugs candidates, facts). Rows whose slug falls outside the
+ * caller's binding are silently dropped — the caller sees the brain as if
+ * out-of-binding pages did not exist.
+ */
+export function filterRowsBySlugBinding<T>(
+  ctx: OperationContext,
+  rows: T[],
+  slugOf: (row: T) => string | null | undefined,
+): T[] {
+  const bound = slugScopeOpts(ctx);
+  if (bound === null) return rows;
+  return rows.filter(r => {
+    const slug = slugOf(r);
+    return typeof slug === 'string' && matchesSlugAllowList(slug, bound);
+  });
+}
+
+/**
  * T4/D5 — resolve a per-call search-mode override. Honored ONLY for trusted/
  * local callers (ctx.remote === false) so a remote OAuth client can't escalate
  * to the costly tokenmax bundle. Local + unknown mode → loud reject; remote +
@@ -518,6 +592,9 @@ const get_page: Operation = {
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
+    // OAuth slug-prefix read binding: an out-of-binding slug is
+    // indistinguishable from a missing page (no existence oracle).
+    assertSlugReadable(ctx, slug);
     // v0.31.8 (D20): thread ctx.sourceId through read-side ops. Only pass
     // sourceId when it's set on ctx — when unset (local CLI default chain
     // resolves to no source), the engine two-branch query falls through to
@@ -536,7 +613,13 @@ const get_page: Operation = {
     let resolved_slug: string | undefined;
 
     if (!page && fuzzy) {
-      const candidates = await ctx.engine.resolveSlugs(slug, fuzzyScope);
+      // Slug binding applies to fuzzy candidates too — an out-of-binding
+      // candidate must neither be returned nor counted toward ambiguity.
+      const candidates = filterRowsBySlugBinding(
+        ctx,
+        await ctx.engine.resolveSlugs(slug, fuzzyScope),
+        c => c,
+      );
       if (candidates.length === 1) {
         page = await ctx.engine.getPage(candidates[0], { includeDeleted, ...sourceOpts });
         resolved_slug = candidates[0];
@@ -1250,6 +1333,9 @@ const list_pages: Operation = {
     // were ignored at this op handler and the engine returned every source's
     // pages indiscriminately.
     const scope = sourceScopeOpts(ctx);
+    // OAuth slug-prefix read binding — engine-level SQL filter, same trust
+    // posture as the source scope above.
+    const bound = slugScopeOpts(ctx);
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
@@ -1258,6 +1344,7 @@ const list_pages: Operation = {
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,
       ...scope,
+      ...(bound !== null ? { restrictSlugPrefixes: bound } : {}),
     });
     return pages.map(pg => ({
       slug: pg.slug,
@@ -1299,8 +1386,13 @@ const search: Operation = {
     // provider). Defaults to cheap-hybrid (D4/D15).
     const keywordOnly = (await ctx.engine.getConfig('search.mcp_keyword_only')) === 'true';
 
+    // OAuth slug-prefix read binding — threaded as a SearchOpts trust filter
+    // so the SQL layer confines every search path (keyword, vector, chunks).
+    const boundPrefixes = slugScopeOpts(ctx);
+    const restrict = boundPrefixes !== null ? { restrict_slug_prefixes: boundPrefixes } : {};
+
     if (keywordOnly) {
-      const raw = await ctx.engine.searchKeyword(queryText, { limit, offset, ...scope });
+      const raw = await ctx.engine.searchKeyword(queryText, { limit, offset, ...scope, ...restrict });
       const results = dedupResults(raw);
       stampEvidenceSafe(results);
       // #1699: the keyword-only opt-out must STILL surface the content_flag
@@ -1320,6 +1412,7 @@ const search: Operation = {
       offset,
       expansion: false,
       ...scope,
+      ...restrict,
       ...(perCallMode ? { mode: perCallMode } : {}),
       onMeta: (m) => { capturedMeta = m; },
     });
@@ -1446,6 +1539,12 @@ const query: Operation = {
           ? {}
           : { sourceId: sourceIdParam }
         : sourceScopeOpts(ctx);
+    // OAuth slug-prefix read binding. Deliberately NO per-call opt-out
+    // (unlike source_id='__all__' above, which is a routing convenience):
+    // the binding is a trust boundary, threaded unconditionally into every
+    // retrieval branch of this op.
+    const queryBound = slugScopeOpts(ctx);
+    const queryRestrict = queryBound !== null ? { restrict_slug_prefixes: queryBound } : {};
 
     // v0.27.1: image-similarity branch. Bypasses hybridSearch (which is
     // text-only); embeds the image via embedMultimodal and runs a direct
@@ -1464,6 +1563,7 @@ const query: Operation = {
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
         ...querySourceScope,
+        ...queryRestrict,
       });
       return results;
     }
@@ -1498,6 +1598,7 @@ const query: Operation = {
       nearSymbol: (p.near_symbol as string) || undefined,
       walkDepth: typeof p.walk_depth === 'number' ? (p.walk_depth as number) : undefined,
       ...querySourceScope,
+      ...queryRestrict,
       // v0.29.1 — agent-explicit recency + salience. Omitted = heuristic defaults.
       salience: p.salience as 'off' | 'on' | 'strong' | undefined,
       recency: p.recency as 'off' | 'on' | 'strong' | undefined,
@@ -1578,7 +1679,7 @@ const takes_list: Operation = {
     offset: { type: 'number', description: 'Skip first N rows' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.listTakes({
+    return filterRowsBySlugBinding(ctx, await ctx.engine.listTakes({
       page_slug: p.page_slug as string | undefined,
       holder: p.holder as string | undefined,
       kind: p.kind as never,
@@ -1590,7 +1691,7 @@ const takes_list: Operation = {
       // Per-token allow-list — server-side filter for MCP-bound calls.
       // Local CLI callers leave takesHoldersAllowList unset and see all holders.
       takesHoldersAllowList: ctx.takesHoldersAllowList,
-    });
+    }), t => t.page_slug);
   },
   cliHints: { name: 'takes-list' },
 };
@@ -1604,10 +1705,10 @@ const takes_search: Operation = {
     limit: { type: 'number', description: 'Max results (default 30, cap 100)' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.searchTakes(p.query as string, {
+    return filterRowsBySlugBinding(ctx, await ctx.engine.searchTakes(p.query as string, {
       limit: p.limit as number | undefined,
       takesHoldersAllowList: ctx.takesHoldersAllowList,
-    });
+    }), t => t.page_slug);
   },
   cliHints: { name: 'takes-search', positional: ['query'] },
 };
@@ -1712,6 +1813,11 @@ const think: Operation = {
       takesHoldersAllowList: ctx.takesHoldersAllowList,
       ...(scope.sourceId !== undefined ? { sourceId: scope.sourceId } : {}),
       ...(scope.sourceIds !== undefined ? { allowedSources: scope.sourceIds } : {}),
+      // OAuth slug-prefix read binding — confines think's internal gather.
+      ...((): { boundSlugPrefixes?: string[] } => {
+        const b = slugScopeOpts(ctx);
+        return b !== null ? { boundSlugPrefixes: b } : {};
+      })(),
       remote: ctx.remote === true,
     });
 
@@ -1783,6 +1889,7 @@ const get_tags: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
+    assertSlugReadable(ctx, p.slug as string);
     // v0.31.8 (D20): thread ctx.sourceId for read-side ops on multi-source brains.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
     return ctx.engine.getTags(p.slug as string, sourceOpts);
@@ -1850,10 +1957,17 @@ const get_links: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
+    assertSlugReadable(ctx, p.slug as string);
     // v0.31.8 (D16): thread ctx.sourceId. When unset, engine falls through
     // to cross-source view (back-compat).
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    return ctx.engine.getLinks(p.slug as string, sourceOpts);
+    // Out-of-binding link TARGETS are dropped: an edge into a hidden
+    // prefix must not reveal that the target exists.
+    return filterRowsBySlugBinding(
+      ctx,
+      await ctx.engine.getLinks(p.slug as string, sourceOpts),
+      l => l.to_slug,
+    );
   },
   scope: 'read',
 };
@@ -1865,8 +1979,15 @@ const get_backlinks: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
+    assertSlugReadable(ctx, p.slug as string);
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    return ctx.engine.getBacklinks(p.slug as string, sourceOpts);
+    // Out-of-binding link SOURCES are dropped: a backlink from a hidden
+    // prefix must not reveal the referrer's existence or its context line.
+    return filterRowsBySlugBinding(
+      ctx,
+      await ctx.engine.getBacklinks(p.slug as string, sourceOpts),
+      l => l.from_slug,
+    );
   },
   scope: 'read',
   cliHints: { name: 'backlinks', positional: ['slug'] },
@@ -1905,12 +2026,27 @@ const traverse_graph: Operation = {
     // traverseGraph / traversePaths happily followed edges into pages from
     // foreign sources, leaking topology + page metadata via the graph op.
     const scope = sourceScopeOpts(ctx);
+    // OAuth slug-prefix read binding: the walk root must be readable, and
+    // out-of-binding nodes/edges are dropped from the result. Edges of a
+    // VISIBLE node that point into a hidden prefix are also pruned so the
+    // node list can't leak hidden topology.
+    assertSlugReadable(ctx, slug);
+    const bound = slugScopeOpts(ctx);
     // Backward compat: when neither link_type nor direction is provided, return
     // the legacy GraphNode[] shape. Once either is set, switch to GraphPath[].
     if (linkType === undefined && direction === undefined) {
-      return ctx.engine.traverseGraph(slug, depth, scope);
+      const nodes = await ctx.engine.traverseGraph(slug, depth, scope);
+      if (bound === null) return nodes;
+      return filterRowsBySlugBinding(ctx, nodes, n => n.slug).map(n => ({
+        ...n,
+        links: n.links.filter(l => matchesSlugAllowList(l.to_slug, bound)),
+      }));
     }
-    return ctx.engine.traversePaths(slug, { depth, linkType, direction, ...scope });
+    const paths = await ctx.engine.traversePaths(slug, { depth, linkType, direction, ...scope });
+    if (bound === null) return paths;
+    return paths.filter(
+      e => matchesSlugAllowList(e.from_slug, bound) && matchesSlugAllowList(e.to_slug, bound),
+    );
   },
   scope: 'read',
   cliHints: { name: 'graph', positional: ['slug'] },
@@ -1968,6 +2104,7 @@ const get_timeline: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
+    assertSlugReadable(ctx, p.slug as string);
     // v0.31.8 (D20): thread ctx.sourceId.
     const sourceId = ctx.sourceId;
     return ctx.engine.getTimeline(p.slug as string, sourceId ? { sourceId } : undefined);
@@ -2204,6 +2341,7 @@ const get_versions: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
+    assertSlugReadable(ctx, p.slug as string);
     // v0.31.8 (D20): thread ctx.sourceId.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
     const versions = await ctx.engine.getVersions(p.slug as string, sourceOpts);
@@ -2297,6 +2435,7 @@ const get_raw_data: Operation = {
     source: { type: 'string', description: 'Filter by source' },
   },
   handler: async (ctx, p) => {
+    assertSlugReadable(ctx, p.slug as string);
     // v0.31.8 (D20 + D21): thread ctx.sourceId.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
     return ctx.engine.getRawData(p.slug as string, p.source as string | undefined, sourceOpts);
@@ -2313,7 +2452,13 @@ const resolve_slugs: Operation = {
     partial: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.resolveSlugs(p.partial as string);
+    // OAuth slug-prefix read binding: out-of-binding candidates are dropped
+    // so fuzzy resolution can't be used to enumerate hidden prefixes.
+    return filterRowsBySlugBinding(
+      ctx,
+      await ctx.engine.resolveSlugs(p.partial as string),
+      c => c,
+    );
   },
   scope: 'read',
 };
@@ -2325,6 +2470,7 @@ const get_chunks: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
+    assertSlugReadable(ctx, p.slug as string);
     // v0.31.8 (D20): thread ctx.sourceId.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
     return ctx.engine.getChunks(p.slug as string, sourceOpts);
@@ -2364,7 +2510,15 @@ const get_ingest_log: Operation = {
     limit: { type: 'number', description: 'Max entries (default 20)' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getIngestLog({ limit: clampSearchLimit(p.limit as number | undefined, 20, 50) });
+    const entries = await ctx.engine.getIngestLog({ limit: clampSearchLimit(p.limit as number | undefined, 20, 50) });
+    // OAuth slug-prefix read binding: prune out-of-binding slugs from each
+    // entry's pages_updated list.
+    const boundIngest = slugScopeOpts(ctx);
+    if (boundIngest === null) return entries;
+    return entries.map(e => ({
+      ...e,
+      pages_updated: e.pages_updated.filter(sl => matchesSlugAllowList(sl, boundIngest)),
+    }));
   },
   scope: 'read',
 };
@@ -2933,10 +3087,15 @@ const find_orphans: Operation = {
     // source-bound OAuth client's scope — a read leak in the v0.34.1
     // source-isolation class. Local CLI callers route through `gbrain
     // orphans --source` instead (ctx.remote === false → empty scope here).
-    return findOrphans(ctx.engine, {
+    const result = await findOrphans(ctx.engine, {
       includePseudo: (p.include_pseudo as boolean) || false,
       ...sourceScopeOpts(ctx),
     });
+    // OAuth slug-prefix read binding: drop out-of-binding orphan rows.
+    // Aggregate counts are left as-is (brain-shape metadata, not content).
+    const boundOrphans = slugScopeOpts(ctx);
+    if (boundOrphans === null) return result;
+    return { ...result, orphans: result.orphans.filter(o => matchesSlugAllowList(o.slug, boundOrphans)) };
   },
   cliHints: { name: 'orphans', hidden: true },
 };
@@ -2997,12 +3156,17 @@ const get_recent_salience: Operation = {
   },
   handler: async (ctx, p) => {
     const recencyBias = p.recency_bias === 'on' ? 'on' : 'flat';
-    return ctx.engine.getRecentSalience({
-      days: typeof p.days === 'number' ? p.days : undefined,
-      limit: typeof p.limit === 'number' ? p.limit : undefined,
-      slugPrefix: typeof p.slugPrefix === 'string' ? p.slugPrefix : undefined,
-      recency_bias: recencyBias,
-    });
+    // OAuth slug-prefix read binding: post-filter (salience rows are slug-keyed).
+    return filterRowsBySlugBinding(
+      ctx,
+      await ctx.engine.getRecentSalience({
+        days: typeof p.days === 'number' ? p.days : undefined,
+        limit: typeof p.limit === 'number' ? p.limit : undefined,
+        slugPrefix: typeof p.slugPrefix === 'string' ? p.slugPrefix : undefined,
+        recency_bias: recencyBias,
+      }),
+      r => r.slug,
+    );
   },
   cliHints: { name: 'salience' },
 };
@@ -3026,11 +3190,19 @@ const find_anomalies: Operation = {
     },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.findAnomalies({
+    const anomalies = await ctx.engine.findAnomalies({
       since: typeof p.since === 'string' ? p.since : undefined,
       lookback_days: typeof p.lookback_days === 'number' ? p.lookback_days : undefined,
       sigma: typeof p.sigma === 'number' ? p.sigma : undefined,
     });
+    // OAuth slug-prefix read binding: prune out-of-binding slugs from each
+    // cohort's example list (cohort-level counts stay — shape metadata).
+    const boundAnoms = slugScopeOpts(ctx);
+    if (boundAnoms === null) return anomalies;
+    return anomalies.map(a => ({
+      ...a,
+      page_slugs: a.page_slugs.filter(sl => matchesSlugAllowList(sl, boundAnoms)),
+    }));
   },
   cliHints: { name: 'anomalies' },
 };
@@ -3071,13 +3243,20 @@ const find_experts: Operation = {
     const { loadActivePackBestEffort, expertTypesFromPack } = await import('./schema-pack/index.ts');
     const pack = await loadActivePackBestEffort(ctx);
     const types = pack ? expertTypesFromPack(pack.manifest) : [];
-    return findExperts(ctx.engine, {
-      topic,
-      limit: typeof p.limit === 'number' ? p.limit : undefined,
-      explain: p.explain === true,
-      types: types as never,
-      ...sourceScopeOpts(ctx),
-    });
+    // OAuth slug-prefix read binding: post-filter (findExperts → hybridSearch
+    // internally; the binding also rides SearchOpts there, this is the
+    // belt-and-suspenders at the op boundary).
+    return filterRowsBySlugBinding(
+      ctx,
+      await findExperts(ctx.engine, {
+        topic,
+        limit: typeof p.limit === 'number' ? p.limit : undefined,
+        explain: p.explain === true,
+        types: types as never,
+        ...sourceScopeOpts(ctx),
+      }),
+      r => r.slug,
+    );
   },
   cliHints: { name: 'whoknows', positional: ['topic'] },
 };
@@ -3139,10 +3318,19 @@ const find_contradictions: Operation = {
       }
       return true;
     });
+    // OAuth slug-prefix read binding: a finding is visible only when BOTH
+    // sides are within the binding (one hidden side would leak its content
+    // via the contradiction excerpt).
+    const boundContra = slugScopeOpts(ctx);
+    const visible = boundContra === null
+      ? filtered
+      : filtered.filter(f =>
+          matchesSlugAllowList(f.a.slug, boundContra) && matchesSlugAllowList(f.b.slug, boundContra),
+        );
     return {
       run_id: latest.run_id,
       ran_at: latest.ran_at,
-      contradictions: filtered.slice(0, limit),
+      contradictions: visible.slice(0, limit),
       total_in_run: findings.length,
     };
   },
@@ -3188,6 +3376,8 @@ const find_trajectory: Operation = {
     if (typeof p.entity_slug !== 'string' || !p.entity_slug.trim()) {
       throw new Error('find_trajectory requires entity_slug (string)');
     }
+    // OAuth slug-prefix read binding: trajectory rows are keyed by entity.
+    assertSlugReadable(ctx, p.entity_slug);
     const metric = typeof p.metric === 'string' ? p.metric : undefined;
     const kind = (p.kind === 'metric' || p.kind === 'event' || p.kind === 'all')
       ? (p.kind as 'metric' | 'event' | 'all')
@@ -3609,6 +3799,11 @@ const recall: Operation = {
     }
 
     if (grep) rows = rows.filter(r => r.fact.toLowerCase().includes(grep));
+
+    // OAuth slug-prefix read binding: facts about out-of-binding entities are
+    // dropped (entity_slug NULL rows too — fail-closed for bound callers,
+    // since their provenance can't be verified against the binding).
+    rows = filterRowsBySlugBinding(ctx, rows, r => r.entity_slug);
 
     // v0.32: optional pending-consolidation count piggy-backed on the recall
     // response. Single round trip on thin-client; omitted when not requested

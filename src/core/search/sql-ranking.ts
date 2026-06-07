@@ -111,6 +111,38 @@ export function buildHardExcludeClause(slugColumn: string, prefixes: string[]): 
 }
 
 /**
+ * Build a POSITIVE slug allow-clause for OAuth slug-prefix read binding —
+ * the inverse of `buildHardExcludeClause`. A row survives only when its slug
+ * matches at least one entry of the caller's `bound_slug_prefixes`.
+ *
+ * Glob semantics mirror `matchesSlugAllowList` in operations.ts (the
+ * write-side enforcement): `clients/*` admits every descendant of `clients/`
+ * (but not the bare slug `clients` itself); a bare entry admits exactly that
+ * slug. The two sites MUST stay in lockstep — SQL-side filtering (search,
+ * list_pages) and TS-side post-filtering (backlinks, graph nodes) implement
+ * the same binding.
+ *
+ * Returns `'AND FALSE'` for an EMPTY list: an explicit empty binding means
+ * "bound to nothing" and must stay fail-closed (cf. AuthInfo.boundSlugPrefixes).
+ * Callers that mean "unrestricted" must not call this at all (binding null).
+ *
+ * @param slugColumn — qualified column reference (engine-supplied, trusted)
+ * @param prefixes   — the caller's bound_slug_prefixes (client-supplied; escaped)
+ * @returns raw SQL fragment (no leading space) — always non-empty
+ */
+export function buildSlugAllowClause(slugColumn: string, prefixes: string[]): string {
+  const terms = prefixes
+    .filter(p => p.length > 0)
+    .map(p =>
+      p.endsWith('/*')
+        ? `${slugColumn} LIKE ${buildLikePrefixLiteral(p.slice(0, -1))}`
+        : `${slugColumn} = '${escapeSqlLiteral(p)}'`,
+    );
+  if (!terms.length) return 'AND FALSE';
+  return `AND (${terms.join(' OR ')})`;
+}
+
+/**
  * v0.26.5 — Build the soft-delete + archived-source visibility filter.
  *
  * Two filters in one fragment:

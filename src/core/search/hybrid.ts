@@ -866,6 +866,10 @@ export async function hybridSearch(
     // ordering means we can't lazy-spread the full opts).
     sourceId: opts?.sourceId,
     sourceIds: opts?.sourceIds,
+    // OAuth slug-prefix read binding (trust filter) — same MUST-add rule as
+    // the source-scoping fields above: dropping it here would silently
+    // un-confine every bound client on the hybrid hot path.
+    restrict_slug_prefixes: opts?.restrict_slug_prefixes,
     // v0.36 (D11): pass the pre-validated descriptor into the engine so
     // it never has to read config. Engines normalize string-or-descriptor
     // via normalizeEngineColumn; the descriptor path is the strict one.
@@ -1563,7 +1567,12 @@ export async function hybridSearchCached(
     (opts?.walkDepth ?? 0) > 0 ||
     Boolean(opts?.nearSymbol) ||
     isNonDefaultColumn ||
-    adaptiveReturnOn;
+    adaptiveReturnOn ||
+    // OAuth slug-prefix read binding: a restricted result set must never be
+    // served to (or written for) a caller with a different binding — the
+    // cache key doesn't carry the binding, so restricted calls bypass the
+    // cache entirely (same posture as adaptiveReturn above).
+    Boolean(opts?.restrict_slug_prefixes);
 
   let cacheStatus: 'hit' | 'miss' | 'disabled' = skipCache ? 'disabled' : 'miss';
   let cacheSimilarity: number | undefined;
