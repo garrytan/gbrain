@@ -54,7 +54,26 @@ import { inspectLock } from '../core/db-lock.ts';
  */
 export function classifyReconnectError(err: unknown): 'recoverable' | 'unrecoverable' {
   const msg = (err instanceof Error ? err.message : String(err ?? '')).toLowerCase();
-  if (msg.includes('database_url') && (msg.includes('undefined') || msg.includes('missing') || msg.includes('empty') || msg.includes('not set'))) {
+  // #1720: a raw JS runtime TypeError (e.g. "undefined is not an object
+  // (evaluating 'config.database_url')", "x is not a function", "cannot read
+  // properties of undefined") is a PROGRAMMING error in the reconnect path, not
+  // a genuine user misconfiguration. Treat it as recoverable: a transient blip
+  // that tripped a code bug must not crash-loop the daemon forever, and the
+  // AUTOPILOT_MAX_RECONNECT_FAILS cap still bounds retries. This check runs
+  // FIRST because such a message can also contain "database_url".
+  if (
+    msg.includes('is not an object') ||
+    msg.includes('is not a function') ||
+    msg.includes('is not a constructor') ||
+    msg.includes('cannot read prop')
+  ) {
+    return 'recoverable';
+  }
+  // Genuine missing/empty database_url (a real config error surfaced as a
+  // GBrainError from db.ts / postgres-engine.ts) is unrecoverable — it won't
+  // fix itself on retry. "undefined" is deliberately NOT a trigger: its only
+  // producer was the JS TypeError handled above (#1720).
+  if (msg.includes('database_url') && (msg.includes('missing') || msg.includes('empty') || msg.includes('not set'))) {
     return 'unrecoverable';
   }
   if (msg.includes('invalid url') || msg.includes('malformed') || msg.includes('parse url')) {
@@ -72,6 +91,38 @@ export function classifyReconnectError(err: unknown): 'recoverable' | 'unrecover
     return 'unrecoverable';
   }
   return 'recoverable';
+}
+
+/**
+ * Reconnect the engine after a failed DB-health probe, then re-probe to prove
+ * the connection is actually restored before the caller clears its failure
+ * counter. #1720.
+ *
+ * PostgresEngine exposes reconnect() — it reuses its saved config, tears down
+ * and rebuilds the instance pool, and logs pool-recovery audits. The
+ * BrainEngine interface and PGLiteEngine do NOT have reconnect(); for those
+ * there is no in-process reconnect path, so the original probe error is
+ * rethrown into the caller's failure handler.
+ *
+ * This replaces a hand-rolled `disconnect()` + argless `connect()` that crashed
+ * with "undefined is not an object (evaluating 'config.database_url')" —
+ * connect() dereferences its config argument — and whose TypeError was then
+ * misclassified as a fatal config error, crash-looping the daemon.
+ *
+ * reconnect() can silently no-op (a concurrent reconnect already in flight, or
+ * no saved config) and resolve WITHOUT restoring the connection; the trailing
+ * getConfig() probe ensures such a no-op surfaces as a throw so the caller does
+ * not falsely reset its failure counter.
+ */
+export async function reconnectAndProbe(engine: BrainEngine, probeErr: unknown): Promise<void> {
+  const reconnectable = engine as Partial<{ reconnect: (ctx?: { error?: unknown }) => Promise<void> }>;
+  if (typeof reconnectable.reconnect === 'function') {
+    await reconnectable.reconnect({ error: probeErr });
+  } else {
+    throw probeErr;
+  }
+  // Prove health before the caller resets its failure counter.
+  await engine.getConfig('version');
 }
 
 function parseArg(args: string[], flag: string): string | undefined {
@@ -529,8 +580,11 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       autopilotReconnectFails = 0; // reset on success
     } catch (probeErr) {
       try {
-        await engine.disconnect();
-        await (engine as any).connect?.();
+        // #1720: route through the engine's own reconnect() (reuses saved
+        // config) instead of a hand-rolled disconnect()+argless connect() that
+        // crashed on undefined config and crash-looped the daemon. Re-probes
+        // health internally before we clear the failure counter.
+        await reconnectAndProbe(engine, probeErr);
         autopilotReconnectFails = 0;
       } catch (e) {
         logError('reconnect', e);

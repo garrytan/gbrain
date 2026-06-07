@@ -16,9 +16,23 @@ import { describe, test, expect } from 'bun:test';
 import { classifyReconnectError, generateLaunchdPlist } from '../src/commands/autopilot.ts';
 
 describe('classifyReconnectError (#1162)', () => {
-  test('database_url undefined → unrecoverable (the #1162 fingerprint)', () => {
-    const err = new Error('config.database_url undefined');
-    expect(classifyReconnectError(err)).toBe('unrecoverable');
+  // #1720 correction: a raw JS TypeError that merely MENTIONS config.database_url
+  // is a programming error in the reconnect path (an argless connect() that
+  // dereferenced an undefined config), NOT a real missing-config. It must be
+  // RECOVERABLE — classifying it unrecoverable crash-looped the autopilot for
+  // days. Genuine missing-config errors ("database_url is missing"/"is empty",
+  // below) stay unrecoverable because they won't fix themselves on retry.
+  test('JS TypeError mentioning config.database_url → recoverable (#1720 regression)', () => {
+    expect(classifyReconnectError(new Error("undefined is not an object (evaluating 'config.database_url')"))).toBe('recoverable');
+  });
+
+  test('other JS runtime TypeErrors → recoverable (#1720)', () => {
+    expect(classifyReconnectError(new TypeError('engine.connect is not a function'))).toBe('recoverable');
+    expect(classifyReconnectError(new TypeError("Cannot read properties of undefined (reading 'database_url')"))).toBe('recoverable');
+  });
+
+  test('bare "config.database_url undefined" text → recoverable (#1720; not a real config error)', () => {
+    expect(classifyReconnectError(new Error('config.database_url undefined'))).toBe('recoverable');
   });
 
   test('database_url empty → unrecoverable', () => {
@@ -65,7 +79,7 @@ describe('classifyReconnectError (#1162)', () => {
   });
 
   test('case-insensitive match', () => {
-    expect(classifyReconnectError(new Error('DATABASE_URL UNDEFINED'))).toBe('unrecoverable');
+    expect(classifyReconnectError(new Error('DATABASE_URL IS MISSING'))).toBe('unrecoverable');
     expect(classifyReconnectError(new Error('Password Authentication FAILED'))).toBe('unrecoverable');
   });
 });
