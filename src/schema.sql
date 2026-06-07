@@ -1202,7 +1202,7 @@ CREATE INDEX IF NOT EXISTS calibration_profiles_published_idx
   WHERE published = true;
 
 -- take_proposals: propose_takes phase queue. Idempotency cache via the
--- composite unique index (source_id, page_slug, content_hash, prompt_version)
+-- composite index (source_id, page_slug, content_hash, prompt_version)
 -- mirrors v0.23 dream_verdicts. proposal_run_id supports --rollback by run.
 CREATE TABLE IF NOT EXISTS take_proposals (
   id                          BIGSERIAL PRIMARY KEY,
@@ -1228,7 +1228,7 @@ CREATE TABLE IF NOT EXISTS take_proposals (
   predicted_brier             REAL,
   predicted_brier_bucket_n    INTEGER
 );
-CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_idempotency_idx
+CREATE INDEX IF NOT EXISTS take_proposals_idempotency_idx
   ON take_proposals (source_id, page_slug, content_hash, prompt_version);
 CREATE INDEX IF NOT EXISTS take_proposals_pending_idx
   ON take_proposals (source_id, status, proposed_at DESC)

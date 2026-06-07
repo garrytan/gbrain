@@ -411,12 +411,24 @@ CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_to
 -- ============================================================
 -- links: cross-references between pages
 -- ============================================================
--- Provenance model (v0.13, extended issue #972):
---   link_source       — 'markdown' | 'frontmatter' | 'manual' | 'wikilink-resolved' | NULL
---                       'wikilink-resolved' is the opt-in
---                       (link_resolution.global_basename) basename-match
---                       provenance — see issue #972 / migration v113.
---                       (NULL = legacy row written before v0.13; unknown source)
+-- Provenance model (v0.13; opened to kebab provenance in v114 / issue #1941):
+--   link_source       — open kebab-case provenance tag, NOT a closed allowlist.
+--                       Format gate (CHECK): ^[a-z][a-z0-9]*(-[a-z0-9]+)*\$ and
+--                       char_length <= 64. NULL = legacy row (pre-v0.13).
+--                       Reconciliation-managed built-ins written internally:
+--                         'markdown'         — body markdown links
+--                         'frontmatter'      — YAML frontmatter edges (see origin_*)
+--                         'mentions'         — auto-linked body-text mentions
+--                         'wikilink-resolved'— opt-in global-basename [[name]] (#972)
+--                       User/tool-facing:
+--                         'manual'           — hand- or tool-created edges (the
+--                                              add_link op default + CLI link-add)
+--                         '<your-tag>'       — external derivers, e.g. 'citation-graph',
+--                                              stamp their own kebab tag (no migration).
+--                       The add_link OP forbids callers from passing the four
+--                       managed built-ins (they imply reconciliation semantics a
+--                       hand-created row can't honor); the DB CHECK still admits
+--                       them because internal writers use them. See operations.ts.
 --   origin_page_id    — for link_source='frontmatter', the page whose YAML
 --                       frontmatter created this edge; scopes reconciliation
 --   origin_field      — the frontmatter field name (e.g. 'key_people')
@@ -424,21 +436,21 @@ CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_to
 -- The unique constraint includes link_source + origin_page_id so a manual edge
 -- and a frontmatter-derived edge with the same (from, to, type) tuple coexist.
 -- Reconciliation on put_page filters by (link_source='frontmatter' AND
--- origin_page_id = written_page) — never touches other pages' edges.
+-- origin_page_id = written_page) — never touches other pages' edges. (This is
+-- exactly why a CLI-forged 'frontmatter' row with NULL origin would be a phantom
+-- edge reconciliation never cleans — hence the op-layer guard.)
 CREATE TABLE IF NOT EXISTS links (
   id             SERIAL PRIMARY KEY,
   from_page_id   INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   to_page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   link_type      TEXT    NOT NULL DEFAULT '',
   context        TEXT    NOT NULL DEFAULT '',
-  -- v114 (#1941): link_source is an open kebab-case provenance, not a closed
-  -- allowlist — external derivers (e.g. 'citation-graph') stamp their own tag
-  -- without a gbrain migration. Format gate only: lowercase kebab, <=64 chars.
-  -- The reconciliation-managed built-ins ('markdown','frontmatter','mentions',
-  -- 'wikilink-resolved') still satisfy this and are written internally; the
-  -- add_link op forbids CALLERS from forging them (see operations.ts). 'manual'
-  -- is the user-facing default for hand/tool-created edges.
-  link_source    TEXT    CHECK (link_source IS NULL OR (link_source ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$' AND char_length(link_source) <= 64)),
+  -- v0.41.18.0: 'mentions' added for auto-linked body-text mentions
+  -- (gbrain extract links --by-mention). Filtered OUT of backlink-count
+  -- for search ranking; only counts toward orphan-ratio + graph traversal.
+  -- v0.40.8.2 (#972): 'wikilink-resolved' added for opt-in global-basename
+  -- wikilink resolution (bare [[name]] resolved by slug tail).
+  link_source    TEXT    CHECK (link_source IS NULL OR (link_source ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*\$' AND char_length(link_source) <= 64)),
   -- v0.41.18.0: nullable link_kind distinguishes "plain body mention" from
   -- "verb-pattern-derived typed link" within link_source='mentions'.
   -- Codex finding #12 design: keep link_source stable; add link_kind
@@ -675,8 +687,11 @@ CREATE TABLE IF NOT EXISTS op_checkpoints (
 CREATE INDEX IF NOT EXISTS op_checkpoints_updated_at_idx
   ON op_checkpoints (updated_at);
 
--- #1794: append-only delta storage (one row per completed path). FK cascade
--- drops children with the parent. Mirrors migration v115 + src/schema.sql.
+-- #1794: append-only delta storage. One row per completed path; sync's
+-- appendCompleted INSERTs only the delta instead of rewriting the whole
+-- completed_keys JSONB array each flush (O(N^2) -> O(delta)). FK cascade drops
+-- children with the parent (clearOpCheckpoint + 7-day purge). PK prefix
+-- (op,fingerprint) serves all reads; no separate index. Mirrors migration v115.
 CREATE TABLE IF NOT EXISTS op_checkpoint_paths (
   op          TEXT NOT NULL,
   fingerprint TEXT NOT NULL,
@@ -1191,7 +1206,7 @@ CREATE INDEX IF NOT EXISTS calibration_profiles_published_idx
   WHERE published = true;
 
 -- take_proposals: propose_takes phase queue. Idempotency cache via the
--- composite unique index (source_id, page_slug, content_hash, prompt_version)
+-- composite index (source_id, page_slug, content_hash, prompt_version)
 -- mirrors v0.23 dream_verdicts. proposal_run_id supports --rollback by run.
 CREATE TABLE IF NOT EXISTS take_proposals (
   id                          BIGSERIAL PRIMARY KEY,
@@ -1217,7 +1232,7 @@ CREATE TABLE IF NOT EXISTS take_proposals (
   predicted_brier             REAL,
   predicted_brier_bucket_n    INTEGER
 );
-CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_idempotency_idx
+CREATE INDEX IF NOT EXISTS take_proposals_idempotency_idx
   ON take_proposals (source_id, page_slug, content_hash, prompt_version);
 CREATE INDEX IF NOT EXISTS take_proposals_pending_idx
   ON take_proposals (source_id, status, proposed_at DESC)
