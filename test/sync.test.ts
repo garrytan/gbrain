@@ -104,20 +104,25 @@ describe('isSyncable', () => {
   // v0.36 walker drift fix (closes #923, #202): node_modules exclusion
   // ────────────────────────────────────────────────────────────────
 
-  test('CRITICAL latent-bug regression: rejects node_modules paths at any depth', () => {
+  test('CRITICAL latent-bug regression: rejects vendor paths at any depth', () => {
     // Pre-v0.36, isSyncable had no node_modules check. Any markdown file
-    // under a non-dot `node_modules` directory slipped through. This is
-    // the canonical latent-bug fix gated by IRON RULE per the wave plan.
+    // under a non-dot vendor directory slipped through. This is the
+    // canonical latent-bug fix gated by IRON RULE per the wave plan.
     expect(isSyncable('node_modules/some-pkg/README.md')).toBe(false);
     expect(isSyncable('node_modules/some-pkg/CHANGELOG.md')).toBe(false);
     expect(isSyncable('node_modules/some-pkg/docs/api.md')).toBe(false);
     expect(isSyncable('apps/web/node_modules/dep/notes.md')).toBe(false);
+    expect(isSyncable('venv/lib/python3.11/site-packages/pkg/main.py', { strategy: 'code' })).toBe(false);
+    expect(isSyncable('.venv/lib/python3.11/site-packages/pkg/main.py', { strategy: 'code' })).toBe(false);
+    expect(isSyncable('tools/venv/lib/python3.11/site-packages/pkg/main.py', { strategy: 'code' })).toBe(false);
   });
 });
 
 describe('pruneDir', () => {
-  test('blocks node_modules (no leading dot, the latent-bug case)', () => {
+  test('blocks vendor dirs (no leading dot, the latent-bug case)', () => {
     expect(pruneDir('node_modules')).toBe(false);
+    expect(pruneDir('venv')).toBe(false);
+    expect(pruneDir('.venv')).toBe(false);
   });
 
   test('blocks dot-prefix dirs (.git, .obsidian, .raw, .cache, etc.)', () => {

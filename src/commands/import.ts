@@ -11,6 +11,7 @@ import {
   isCodeFilePath,
   isMarkdownFilePath,
   isImageFilePath as isImageFilePathFromSync,
+  pruneDir,
   type SyncStrategy,
 } from '../core/sync.ts';
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
@@ -544,12 +545,6 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
       return;
     }
     for (const entry of entries) {
-      // Skip hidden dirs (.git, .claude, .raw, etc.) and `node_modules`/`ops`.
-      // Same set the legacy walkers honored, surfaced once at the top of
-      // every iteration.
-      if (entry.startsWith('.')) continue;
-      if (entry === 'node_modules' || entry === 'ops') continue;
-
       const full = join(d, entry);
       let stat;
       try {
@@ -565,6 +560,7 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
       }
 
       if (stat.isDirectory()) {
+        if (!pruneDir(entry, d)) continue;
         const inodeKey = `${stat.dev}:${stat.ino}`;
         if (visitedInodes.has(inodeKey)) {
           console.warn(`[gbrain] walker cycle detected at ${full}; skipping`);

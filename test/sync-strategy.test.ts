@@ -54,6 +54,9 @@ describe('isSyncable with strategy', () => {
   test('existing skip rules apply across all strategies', () => {
     // Hidden directories are always skipped
     expect(isSyncable('.git/config.js', { strategy: 'code' })).toBe(false);
+    // Virtualenv dependency trees are always skipped
+    expect(isSyncable('venv/lib/python3.11/site-packages/pkg/main.py', { strategy: 'code' })).toBe(false);
+    expect(isSyncable('.venv/lib/python3.11/site-packages/pkg/main.py', { strategy: 'code' })).toBe(false);
     // README.md is skipped under markdown
     expect(isSyncable('README.md', { strategy: 'markdown' })).toBe(false);
     // ops/ directory always skipped
