@@ -16,6 +16,8 @@
 import type { BrainEngine } from './engine.ts';
 import type { TakeBatchInput, TakeKind } from './engine.ts';
 import { chat, isAvailable } from './ai/gateway.ts';
+import { resolveModel } from './model-config.ts';
+import { normalizeModelId } from './model-id.ts';
 
 export const ALLOWED_PAGE_TYPES = [
   'concept', 'atom', 'lore', 'briefing', 'writing', 'originals',
@@ -48,7 +50,7 @@ export interface ExtractTakesFromPagesOpts {
   maxPages?: number;
   /** Owner identifier for the inserted takes. Default 'system'. */
   holder?: string;
-  /** Model override; defaults to facts.extraction_model. */
+  /** Model override; defaults to facts.extraction_model, then utility-tier config. */
   model?: string;
   /** Progress hook called per page. */
   onProgress?: (done: number, total: number, claims: number) => void;
@@ -73,7 +75,7 @@ interface PageRow {
 }
 
 /**
- * Pure helper: parse Haiku JSON output into typed claims. Returns []
+ * Pure helper: parse classifier JSON output into typed claims. Returns []
  * on any parse failure (caller treats as "no claims extracted").
  */
 export function parseClaimsJson(raw: string): Array<{ claim: string; kind: TakeKind; weight: number }> {
@@ -173,8 +175,13 @@ export async function extractTakesFromPages(
 
     let response: { text: string };
     try {
+      const configuredModel = opts.model ?? normalizeModelId(await resolveModel(engine, {
+        configKey: 'facts.extraction_model',
+        tier: 'utility',
+        fallback: 'anthropic:claude-haiku-4-5-20251001',
+      }));
       response = await chat({
-        model: opts.model ?? 'anthropic:claude-haiku-4-5',
+        model: configuredModel,
         system: CLASSIFIER_SYSTEM,
         messages: [
           {

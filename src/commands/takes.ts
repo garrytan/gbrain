@@ -580,7 +580,7 @@ Common flags:
 
 /**
  * v0.41.18.0 (A12, A24, T9) — `gbrain takes extract --from-pages` runs
- * Haiku over concept/atom/lore/briefing/writing/originals pages and
+ * the configured facts extraction model over concept/atom/lore/briefing/writing/originals pages and
  * lifts gradeable claims into the takes fence.
  *
  * Two-gate consent: requires `takes.bootstrap_enabled=true` in config
@@ -616,7 +616,7 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   }
   if (!dryRun && !skipConfirm) {
     process.stderr.write(
-      `[takes extract] sends concept/atom/lore/briefing/writing/originals page content to Haiku.\n` +
+      `[takes extract] sends concept/atom/lore/briefing/writing/originals page content to the configured facts extraction model.\n` +
       `Pass --yes to proceed (or --dry-run to preview).\n`,
     );
     process.exit(1);
