@@ -154,6 +154,39 @@ describe('runAutoPromote', () => {
       expect(rows).toHaveLength(1);
     });
   });
+  it('tries the next runner when the first runner returns an unparsable verdict', async () => {
+    await withEngine(async (engine) => {
+      await seedTargetPage(engine);
+      await seedEligibleCandidate(engine);
+      const calls: string[] = [];
+
+      const res = await runAutoPromote({
+        engine,
+        config: { ...defaultAutoPromoteConfig(), enabled: true },
+        now: NOW,
+        runner: { kind: 'claude_code' } as any,
+        runners: [{ kind: 'claude_code' }, { kind: 'codex' }] as any,
+        runnerExecutor: async (request) => {
+          calls.push(request.runner.kind);
+          if (request.runner.kind === 'claude_code') {
+            return {
+              status: 'succeeded' as const,
+              output: 'MBRAIN-PASS: no durable signal',
+              token_usage_json: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+              cost_estimate_usd: null,
+            };
+          }
+          return stubExecutor('promote', 0.95)(request);
+        },
+        contextLoader: (targetRef) => pageContext(engine, targetRef),
+        allow_canonical_page_writes: true,
+      });
+
+      expect(calls).toEqual(['claude_code', 'codex']);
+      expect(res.counts.auto_promoted).toBe(1);
+      expect((await engine.getMemoryCandidateEntry('cand-1'))?.status).toBe('promoted');
+    });
+  });
   it('excludes candidates with unresolved contradictions before judging by default', async () => {
     await withEngine(async (engine) => {
       await seedTargetPage(engine);

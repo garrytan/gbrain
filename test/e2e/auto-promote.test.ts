@@ -47,6 +47,7 @@ function makeStubExecutor(counter: { calls: number }) {
 }
 const stubContext = async () => '';
 const RUN_REAL = !!process.env.MBRAIN_E2E_REAL_CLI;
+const REAL_CLI_TIMEOUT_MS = 180_000;
 
 describe('auto-promote E2E pipeline (PGLite, stub runner)', () => {
   it('promotes low-risk, defers risky, excludes secret; counts + cache correct', async () => {
@@ -110,16 +111,27 @@ describe('auto-promote E2E pipeline (PGLite, stub runner)', () => {
 });
 
 describe('auto-promote real-CLI verdict (opt-in via MBRAIN_E2E_REAL_CLI)', () => {
-  it.skipIf(!RUN_REAL)('parses a real claude/codex verdict', async () => {
+  it.skipIf(!RUN_REAL)('parses a real verdict from at least one available CLI runner', async () => {
     const exec = createCliRunnerExecutor({});
-    const res = await exec({
-      runner: { kind: 'claude_code' } as any,
-      task_type: 'candidate_promotion_review' as any, source_scope: {} as any,
-      prompt: 'Return ONLY this JSON and nothing else: {"decision":"defer","confidence":0.5,"reasoning":"test","source_refs":[]}',
-      input: '', tool_policy: { status: 'allowed' } as any, allowed_tools: ['emit_promotion_verdict'] as any,
-    });
-    expect(res.status).toBe('succeeded');
-    const parsed = parsePromotionVerdict(res.output, 'real-1');
-    expect(parsed.ok).toBe(true);
-  });
+    const attempts: Array<{ runner: string; status: string; parse_ok: boolean }> = [];
+    let parsedOk = false;
+    for (const runner of [{ kind: 'claude_code' }, { kind: 'codex' }] as any[]) {
+      const res = await exec({
+        runner,
+        task_type: 'candidate_promotion_review' as any, source_scope: {} as any,
+        prompt: 'Return ONLY this JSON and nothing else: {"decision":"defer","confidence":0.5,"reasoning":"test","source_refs":[]}',
+        input: '', tool_policy: { status: 'allowed' } as any, allowed_tools: ['emit_promotion_verdict'] as any,
+      });
+      const parsed = res.status === 'succeeded'
+        ? parsePromotionVerdict(res.output, 'real-1')
+        : { ok: false as const };
+      attempts.push({ runner: runner.kind, status: res.status, parse_ok: parsed.ok });
+      if (parsed.ok) {
+        parsedOk = true;
+        break;
+      }
+    }
+    expect(parsedOk).toBe(true);
+    expect(attempts.length).toBeGreaterThanOrEqual(1);
+  }, REAL_CLI_TIMEOUT_MS);
 });

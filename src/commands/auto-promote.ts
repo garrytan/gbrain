@@ -41,8 +41,8 @@ export async function runAutoPromoteCommand(engine: BrainEngine, args: string[])
   }
 
   const availability = await detectRestrictedRunners({ priority: config.runner_priority });
-  const runner = selectSupportedRunner(availability.candidates, config.runner_priority);
-  if (!runner) {
+  const runners = selectSupportedRunners(availability.candidates, config.runner_priority);
+  if (runners.length === 0) {
     const msg = { status: 'no_runner', message: 'No restricted runner (claude/codex) available; nothing auto-promoted.' };
     console.log(parsed.json ? JSON.stringify(msg, null, 2) : msg.message);
     return;
@@ -52,7 +52,8 @@ export async function runAutoPromoteCommand(engine: BrainEngine, args: string[])
     engine,
     config,
     now: new Date().toISOString(),
-    runner,
+    runner: runners[0],
+    runners,
     runnerExecutor: createCliRunnerExecutor({ model: config.first_pass_model }),
     contextLoader: createPageContextLoader(engine),
     scope_id: parsed.scope_id,
@@ -65,7 +66,7 @@ export async function runAutoPromoteCommand(engine: BrainEngine, args: string[])
   } else {
     const c = result.counts;
     console.log(
-      `auto-promote (${config.dry_run ? 'dry-run' : 'apply'}, runner=${runner.kind}): promoted ${c.auto_promoted}, handoffs ${c.canonical_handoffs}, canonical_writes ${c.canonical_writes}, escalated ${c.escalated}, deferred ${c.deferred}, excluded ${c.excluded} (low_risk=${c.selected_low_risk}, risky=${c.selected_risky})`,
+      `auto-promote (${config.dry_run ? 'dry-run' : 'apply'}, runners=${runners.map((runner) => runner.kind).join(',')}): promoted ${c.auto_promoted}, handoffs ${c.canonical_handoffs}, canonical_writes ${c.canonical_writes}, escalated ${c.escalated}, deferred ${c.deferred}, excluded ${c.excluded} (low_risk=${c.selected_low_risk}, risky=${c.selected_risky})`,
     );
   }
 }
@@ -86,13 +87,14 @@ export function createAutoPromoteDreamDependency(engine: BrainEngine) {
       const config: AutoPromoteConfig = { ...base, dry_run: input.dry_run !== false };
       if (!config.enabled) return { counts: zeroCounts() };
       const availability = await detectRestrictedRunners({ priority: config.runner_priority });
-      const runner = selectSupportedRunner(availability.candidates, config.runner_priority);
-      if (!runner) return { counts: zeroCounts() };
+      const runners = selectSupportedRunners(availability.candidates, config.runner_priority);
+      if (runners.length === 0) return { counts: zeroCounts() };
       const result = await runAutoPromote({
         engine,
         config,
         now: input.now ?? new Date().toISOString(),
-        runner,
+        runner: runners[0],
+        runners,
         runnerExecutor: createCliRunnerExecutor({ model: config.first_pass_model }),
         contextLoader: createPageContextLoader(engine),
         scope_id: input.scope_id,
@@ -130,17 +132,18 @@ function zeroCounts() {
   };
 }
 
-function selectSupportedRunner(
+function selectSupportedRunners(
   candidates: RestrictedRunnerCandidate[],
   priority: AutoPromoteConfig['runner_priority'],
-): RestrictedRunnerCandidate | null {
+): RestrictedRunnerCandidate[] {
   const supported = new Set(['claude_code', 'codex']);
+  const runners: RestrictedRunnerCandidate[] = [];
   for (const kind of priority) {
     if (!supported.has(kind)) continue;
     const candidate = candidates.find((entry) => entry.kind === kind);
-    if (candidate?.available) return candidate;
+    if (candidate?.available) runners.push(candidate);
   }
-  return null;
+  return runners;
 }
 
 function hasFlag(args: string[], flag: string): boolean {

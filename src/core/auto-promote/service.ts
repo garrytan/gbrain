@@ -15,6 +15,7 @@ export interface RunAutoPromoteInput {
   config: AutoPromoteConfig;
   now: string;
   runner: RestrictedRunnerCandidate;
+  runners?: RestrictedRunnerCandidate[];
   runnerExecutor: RestrictedRunnerExecutor;
   contextLoader: (targetRef: string) => Promise<string | TargetContextSnapshot>;
   scope_id?: string;
@@ -145,23 +146,7 @@ async function judge(
 ): Promise<PromotionVerdict | null> {
   const targetContext = normalizeTargetContext(await input.contextLoader(c.target_object_id ?? ''));
   targetSnapshotHashes.set(c.id, targetContext.content_hash);
-  const contentHash = promptInputHash({
-    candidate_content: c.proposed_content,
-    source_refs: c.source_refs,
-    target_ref: c.target_object_id ?? '(unknown)',
-    target_context: targetContext.text,
-    runner_kind: input.runner.kind,
-    model: _model,
-    prompt_version: PROMPT_VERSION,
-  });
-  const key = { candidate_id: c.id, content_hash: contentHash, runner_kind: input.runner.kind, prompt_version: PROMPT_VERSION };
-  const cached = await input.engine.getAutoPromoteVerdict(key);
-  if (cached) {
-    // source_refs is empty: verdict cache doesn't persist them and the gate doesn't read them
-    return { candidate_id: c.id, decision: cached.decision as PromotionVerdict['decision'], confidence: cached.confidence, reasoning: cached.reasoning, source_refs: [] };
-  }
-  if (runnerBudget.calls >= runnerBudget.max) return null;
-  runnerBudget.calls += 1;
+  const runners = input.runners?.length ? input.runners : [input.runner];
   const prompt = buildPromotionReviewPrompt({
     candidate_content: c.proposed_content,
     target_ref: c.target_object_id ?? '(unknown)',
@@ -169,23 +154,44 @@ async function judge(
     source_refs: c.source_refs,
   });
   const toolPolicy = evaluateRunnerToolCall({ task_type: 'candidate_promotion_review', tool_name: 'emit_promotion_verdict' });
-  const exec = await input.runnerExecutor({
-    runner: input.runner,
-    task_type: 'candidate_promotion_review',
-    source_scope: {} as RunnerSourceScope,
-    prompt,
-    input: '',
-    tool_policy: toolPolicy,
-    allowed_tools: ['emit_promotion_verdict'],
-    model: _model,
-  });
-  if (exec.status !== 'succeeded') return null;
-  const parsed = parsePromotionVerdict(exec.output, c.id);
-  if (!parsed.ok) return null;
-  if (!input.config.dry_run) {
-    await input.engine.putAutoPromoteVerdict({ ...key, decision: parsed.verdict.decision, confidence: parsed.verdict.confidence, reasoning: parsed.verdict.reasoning, judged_at: input.now });
+
+  for (const runner of runners) {
+    const contentHash = promptInputHash({
+      candidate_content: c.proposed_content,
+      source_refs: c.source_refs,
+      target_ref: c.target_object_id ?? '(unknown)',
+      target_context: targetContext.text,
+      runner_kind: runner.kind,
+      model: _model,
+      prompt_version: PROMPT_VERSION,
+    });
+    const key = { candidate_id: c.id, content_hash: contentHash, runner_kind: runner.kind, prompt_version: PROMPT_VERSION };
+    const cached = await input.engine.getAutoPromoteVerdict(key);
+    if (cached) {
+      // source_refs is empty: verdict cache doesn't persist them and the gate doesn't read them
+      return { candidate_id: c.id, decision: cached.decision as PromotionVerdict['decision'], confidence: cached.confidence, reasoning: cached.reasoning, source_refs: [] };
+    }
+    if (runnerBudget.calls >= runnerBudget.max) return null;
+    runnerBudget.calls += 1;
+    const exec = await input.runnerExecutor({
+      runner,
+      task_type: 'candidate_promotion_review',
+      source_scope: {} as RunnerSourceScope,
+      prompt,
+      input: '',
+      tool_policy: toolPolicy,
+      allowed_tools: ['emit_promotion_verdict'],
+      model: _model,
+    });
+    if (exec.status !== 'succeeded') continue;
+    const parsed = parsePromotionVerdict(exec.output, c.id);
+    if (!parsed.ok) continue;
+    if (!input.config.dry_run) {
+      await input.engine.putAutoPromoteVerdict({ ...key, decision: parsed.verdict.decision, confidence: parsed.verdict.confidence, reasoning: parsed.verdict.reasoning, judged_at: input.now });
+    }
+    return parsed.verdict;
   }
-  return parsed.verdict;
+  return null;
 }
 
 function zeroCounts(): RunAutoPromoteResult['counts'] {
