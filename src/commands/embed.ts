@@ -73,6 +73,51 @@ export interface EmbedOpts {
   signal?: AbortSignal;
 }
 
+export const MAX_JS_TIMER_DELAY_MS = 2_147_483_647;
+
+export interface AbortTimerHandle {
+  clear(): void;
+}
+
+/**
+ * Schedule an AbortController deadline without ever passing an out-of-range
+ * delay to setTimeout. JS runtimes store timer delays as signed 32-bit
+ * milliseconds; larger values are clamped by Node/Bun and can fire at once.
+ *
+ * @internal exported for targeted regression tests.
+ */
+export function scheduleAbortAfterDelay(controller: AbortController, ms: number): AbortTimerHandle | undefined {
+  if (!Number.isFinite(ms)) return undefined;
+  if (ms <= 0) {
+    controller.abort();
+    return undefined;
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelled = false;
+  const startedAt = Date.now();
+
+  const arm = (remainingMs: number) => {
+    if (cancelled) return;
+    const delayMs = Math.min(MAX_JS_TIMER_DELAY_MS, Math.max(1, remainingMs));
+    timer = setTimeout(() => {
+      if (cancelled) return;
+      const stillRemaining = ms - (Date.now() - startedAt);
+      if (stillRemaining > 0) arm(stillRemaining);
+      else controller.abort();
+    }, delayMs);
+  };
+
+  arm(ms);
+
+  return {
+    clear() {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    },
+  };
+}
+
 /**
  * Structured result from a library-level embed run.
  *
@@ -630,14 +675,14 @@ async function embedAllStale(
 
   // D3 + D3a + D8: wall-clock budget. 30 min default; env override.
   // v0.41.18.0 (A13): --catch-up removes the wall-clock cap entirely so the
-  // handler runs until countStaleChunks() returns 0. Use Number.MAX_SAFE_INTEGER
-  // (effectively unbounded) instead of the 30-min default. The AbortController
-  // still wraps for SIGINT propagation; just the timer never fires.
+  // handler runs until countStaleChunks() returns 0. Do not emulate "forever"
+  // with a huge setTimeout value: JS timers are 32-bit signed millisecond
+  // delays, so Node/Bun clamp huge values down and abort almost immediately.
   const BUDGET_MS = staleOpts?.catchUp
-    ? Number.MAX_SAFE_INTEGER
+    ? Number.POSITIVE_INFINITY
     : parseInt(process.env.GBRAIN_EMBED_TIME_BUDGET_MS || `${30 * 60 * 1000}`, 10);
   const budgetController = new AbortController();
-  const budgetTimer = setTimeout(() => budgetController.abort(), BUDGET_MS);
+  const budgetTimer = scheduleAbortAfterDelay(budgetController, BUDGET_MS);
   const budgetSignal = budgetController.signal;
   // #1737: the effective signal fires when EITHER the internal wall-clock
   // budget OR the caller's abort (worker timeout / lock loss / SIGTERM) fires.
@@ -772,7 +817,7 @@ async function embedAllStale(
       if (batch.length < PAGE_SIZE) break;
     }
   } finally {
-    clearTimeout(budgetTimer);
+    budgetTimer?.clear();
   }
 
   slog(`Embedded ${result.embedded} chunks across ${totalProcessedPages} pages`);
