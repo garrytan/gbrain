@@ -6,6 +6,18 @@ import { verifySchema } from './schema-verify.ts';
 
 let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
+// #1720: the in-flight create's probe promise. Concurrent connect() callers
+// await THIS — not the not-yet-validated `sql` — so a latecomer never joins a
+// client whose SELECT 1 probe is still pending or about to fail. Null when no
+// create is in flight; resolves once `sql` is published (validated); rejects
+// (with the GBrainError) when the probe fails.
+let connecting: Promise<void> | null = null;
+// #1720: bumped by disconnect() (and by a new connect's teardown) to invalidate
+// an in-flight create. The creator captures this epoch before its probe and, if
+// it changed by the time the probe resolves, aborts WITHOUT publishing `sql` —
+// otherwise a disconnect() that raced the probe (saw `sql` still null, closed
+// nothing) would be silently undone when the probe later publishes a singleton.
+let connectEpoch = 0;
 
 /**
  * Default pool size for Postgres connections. Users on the Supabase transaction
@@ -161,25 +173,40 @@ export function getConnection(): ReturnType<typeof postgres> {
 
 /**
  * Connect the module-level singleton. Returns `true` iff THIS call created the
- * singleton, `false` if it joined an existing one.
+ * singleton, `false` if it joined an existing (or in-flight) one.
  *
- * #1471 ownership: the create-vs-join decision is made HERE, atomically. There
- * is no `await` between the `if (sql)` null-check below and the synchronous
- * `sql = postgres(url, opts)` assignment, so two concurrent module connects
- * cannot both observe `sql === null` and both create. Callers store the return
- * as their ownership token (`PostgresEngine._ownsModuleSingleton`); only the
- * creator may later tear the singleton down. Borrowers (probe engines created
- * while the singleton already exists) get `false` and must NOT disconnect it.
+ * #1471 + #1720 ownership/atomicity: the create-vs-join decision is made HERE,
+ * atomically across THREE states — live (`sql`), in-flight (`connecting`), and
+ * absent. The checks (`if (sql)`, `if (connecting)`) and the synchronous
+ * `connecting = (...)()` assignment run with NO `await` between them, so two
+ * concurrent module connects cannot both become the creator. The singleton
+ * `sql` is published ONLY after its `SELECT 1` probe validates the client, so a
+ * latecomer that arrives mid-probe awaits `connecting` instead of joining an
+ * unvalidated client that may be about to fail (the join-the-dead-client race).
+ * On probe failure every waiter throws and NO caller records ownership; on
+ * success exactly one caller (the creator) gets `true` and waiters get `false`.
+ * Callers store the return as their ownership token
+ * (`PostgresEngine._ownsModuleSingleton`); only the creator may tear it down.
  *
  * Back-compat: callers that ignore the return value are unaffected.
  */
 export async function connect(config: EngineConfig): Promise<boolean> {
+  // Fast path: a validated, live singleton already exists → borrower.
   if (sql) {
     // Warn if a different URL is passed — the old connection is still in use
     if (config.database_url && connectedUrl && config.database_url !== connectedUrl) {
       console.warn('[gbrain] connect() called with a different database_url but a connection already exists. Using existing connection.');
     }
     return false; // joined an existing singleton — caller is a borrower
+  }
+
+  // A create is in flight but not yet probe-validated. Await ITS promise rather
+  // than racing a second create: on success we are a borrower of the now-valid
+  // singleton; on failure the rejection propagates and we throw too. Neither
+  // outcome lets a waiter record ownership of an unvalidated client.
+  if (connecting) {
+    await connecting;
+    return false;
   }
 
   const url = config.database_url;
@@ -191,51 +218,93 @@ export async function connect(config: EngineConfig): Promise<boolean> {
     );
   }
 
-  try {
-    const prepare = resolvePrepare(url);
-    const timeouts = resolveSessionTimeouts();
-    const opts: Record<string, unknown> = {
-      max: resolvePoolSize(),
-      idle_timeout: 20,
-      connect_timeout: 10,
-      types: {
-        // Register pgvector type
-        bigint: postgres.BigInt,
-      },
-      // Silence postgres NOTICE-level messages by default ("relation already
-      // exists, skipping" floods stdout under idempotent CREATE statements
-      // during migrations + initSchema, and breaks stdout-parsing callers like
-      // `gbrain jobs submit --json | ...`). Opt back in with GBRAIN_PG_NOTICES=1.
-      onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
-    };
-    if (Object.keys(timeouts).length > 0) {
-      opts.connection = timeouts;
-    }
-    if (typeof prepare === 'boolean') {
-      opts.prepare = prepare;
-      if (!prepare) {
-        console.warn(
-          '[gbrain] Prepared statements disabled (PgBouncer transaction-mode convention on port 6543). Override with GBRAIN_PREPARE=true if your pooler runs in session mode.',
+  // Become the creator. Publish the in-flight promise SYNCHRONOUSLY (no await
+  // between the checks above and this assignment) so concurrent callers observe
+  // it and await rather than racing a second create.
+  connecting = (async () => {
+    // Capture the epoch BEFORE the probe. A disconnect() (or another teardown)
+    // that races us bumps it; we then refuse to publish a singleton that a
+    // completed disconnect already tore down.
+    const epoch = connectEpoch;
+    let client: ReturnType<typeof postgres> | null = null;
+    try {
+      const prepare = resolvePrepare(url);
+      const timeouts = resolveSessionTimeouts();
+      const opts: Record<string, unknown> = {
+        max: resolvePoolSize(),
+        idle_timeout: 20,
+        connect_timeout: 10,
+        types: {
+          // Register pgvector type
+          bigint: postgres.BigInt,
+        },
+        // Silence postgres NOTICE-level messages by default ("relation already
+        // exists, skipping" floods stdout under idempotent CREATE statements
+        // during migrations + initSchema, and breaks stdout-parsing callers like
+        // `gbrain jobs submit --json | ...`). Opt back in with GBRAIN_PG_NOTICES=1.
+        onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
+      };
+      if (Object.keys(timeouts).length > 0) {
+        opts.connection = timeouts;
+      }
+      if (typeof prepare === 'boolean') {
+        opts.prepare = prepare;
+        if (!prepare) {
+          console.warn(
+            '[gbrain] Prepared statements disabled (PgBouncer transaction-mode convention on port 6543). Override with GBRAIN_PREPARE=true if your pooler runs in session mode.',
+          );
+        }
+      }
+      client = postgres(url, opts);
+
+      // Validate BEFORE publishing as the singleton.
+      await client`SELECT 1`;
+      await setSessionDefaults(client);
+
+      // A disconnect() raced us during the probe — do NOT publish (it would undo
+      // a completed teardown). Fall through to the catch, which ends this client
+      // and rejects so waiters don't join a singleton that was torn down.
+      if (epoch !== connectEpoch) {
+        throw new GBrainError(
+          'Connection aborted',
+          'disconnect() ran while this connect() was still probing',
+          'Retry connect() — the database was torn down mid-connect.',
         );
       }
+
+      // Publish only now — a concurrent caller awaiting `connecting` becomes a
+      // borrower of a client that is proven live.
+      sql = client;
+      connectedUrl = url;
+    } catch (e: unknown) {
+      // #1720: end the half-open client before dropping the reference; a thrown
+      // probe (EMAXCONNSESSION at the session-mode pooler cap, ECONNREFUSED,
+      // etc.) would otherwise orphan a postgres.js client that holds a pooler
+      // client slot. `sql` was never published, so it stays null and a later
+      // connect() can retry; every waiter on `connecting` rethrows this error.
+      sql = null;
+      connectedUrl = null;
+      if (client) {
+        try { await client.end({ timeout: 5 }); } catch { /* best-effort */ }
+      }
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new GBrainError(
+        'Cannot connect to database',
+        msg,
+        'Check your connection URL in ~/.gbrain/config.json',
+      );
     }
-    sql = postgres(url, opts);
+  })();
 
-    // Test connection
-    await sql`SELECT 1`;
-    connectedUrl = url;
-
-    await setSessionDefaults(sql);
-    return true; // we created the singleton — caller is the owner
-  } catch (e: unknown) {
-    sql = null;
-    connectedUrl = null;
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new GBrainError(
-      'Cannot connect to database',
-      msg,
-      'Check your connection URL in ~/.gbrain/config.json',
-    );
+  try {
+    await connecting;
+    return true; // we created + validated the singleton — caller is the owner
+  } finally {
+    // Clear the in-flight marker once settled (success or failure). Waiters hold
+    // their own reference to the promise, so nulling it here does not affect
+    // them; new callers see either the live `sql` (borrow) or a clean slate
+    // (retry).
+    connecting = null;
   }
 }
 
@@ -251,6 +320,11 @@ export async function disconnect(): Promise<void> {
     // instance-pool callers go through here.
     logDbDisconnect('postgres', 'module');
   } catch { /* best-effort; never block disconnect on audit failure */ }
+  // #1720: invalidate any in-flight connect() probe so it refuses to publish a
+  // singleton after this teardown completes (see connectEpoch). Bump BEFORE the
+  // snapshot — it is synchronous, so an in-flight creator that resumes after us
+  // observes the new epoch and aborts.
+  connectEpoch += 1;
   // #1471 (codex #6): snapshot + null the singleton BEFORE awaiting end(), so a
   // concurrent module connect() can't observe a non-null `sql` mid-teardown and
   // join a pool that's already closing. Mirrors the v0.41.8.0 PGLite-disconnect
