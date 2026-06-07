@@ -449,6 +449,16 @@ function isCustomDimValidForProvider(
     };
   }
 
+  // Tier 2.5: user-provided-model recipes (litellm, llama-server) ship an
+  // empty `models` list — the operator supplies the model AND its output
+  // dimension, so gbrain has no fixed dim list to validate against. Trust the
+  // user-declared dims (already bounded to 1..PGVECTOR_COLUMN_MAX_DIMS by the
+  // caller). Without this, a valid `litellm:embed` with `--embedding-dimensions
+  // 2560` is wrongly rejected by the Tier 3 catch-all below.
+  if (recipe.touchpoints.embedding?.user_provided_models === true) {
+    return { valid: true, error: '' };
+  }
+
   // Tier 3: provider not known to support custom dims at all.
   return {
     valid: false,
