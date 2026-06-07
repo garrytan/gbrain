@@ -192,20 +192,43 @@ export class PostgresEngine implements BrainEngine {
       if (typeof prepare === 'boolean') {
         opts.prepare = prepare;
       }
-      this._sql = postgres(url, opts);
-      await this._sql`SELECT 1`;
-      await db.setSessionDefaults(this._sql);
-      this._connectionStyle = 'instance';
+      try {
+        // Mark instance intent BEFORE the awaited probe. reconnect() branches on
+        // `_connectionStyle !== 'instance'`; if the first connect's probe throws
+        // and this were still null, the next reconnect() would silently divert a
+        // poolSize-configured engine into module-singleton recovery (#1720
+        // follow-up, Data R1).
+        this._connectionStyle = 'instance';
+        this._sql = postgres(url, opts);
+        await this._sql`SELECT 1`;
+        await db.setSessionDefaults(this._sql);
 
-      // v0.30.1: instance-owned ConnectionManager wraps the read pool we just
-      // built. Parent inheritance (T5/X1): worker engines pass their parent's
-      // manager so kill-switch state and direct pool are shared.
-      this.connectionManager = new ConnectionManager({
-        url,
-        parent: config.parentConnectionManager,
-        readPoolOwnedExternally: true, // we own _sql; manager just routes
-      });
-      this.connectionManager.setReadPool(this._sql);
+        // v0.30.1: instance-owned ConnectionManager wraps the read pool we just
+        // built. Parent inheritance (T5/X1): worker engines pass their parent's
+        // manager so kill-switch state and direct pool are shared.
+        this.connectionManager = new ConnectionManager({
+          url,
+          parent: config.parentConnectionManager,
+          readPoolOwnedExternally: true, // we own _sql; manager just routes
+        });
+        this.connectionManager.setReadPool(this._sql);
+      } catch (err) {
+        // #1720 follow-up: a failed rebuild (e.g. the SELECT 1 probe throws
+        // EMAXCONNSESSION when the session-mode pooler is at its client cap, or
+        // ECONNREFUSED mid-reconnect) must NOT leave a half-open postgres.js
+        // client retained in _sql — it would hold a pooler client slot until the
+        // next reconnect()'s disconnect(), compounding connection pressure under
+        // a tight cap. Tear down whatever THIS call created, then rethrow.
+        // _connectionStyle / _savedConfig are intentionally left intact so the
+        // next reconnect() still routes through the instance path.
+        try { await this.connectionManager?.disconnect(); } catch { /* best-effort */ }
+        this.connectionManager = null;
+        if (this._sql) {
+          try { await this._sql.end({ timeout: 5 }); } catch { /* best-effort */ }
+          this._sql = null;
+        }
+        throw err;
+      }
     } else {
       // Module-level singleton (backward compat for CLI main engine).
       // #1471: db.connect() returns whether THIS call created the singleton —
