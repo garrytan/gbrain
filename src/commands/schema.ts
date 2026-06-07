@@ -48,6 +48,7 @@ import {
 import type { SchemaPackManifest, PackPrimitive } from '../core/schema-pack/manifest-v1.ts';
 import { PACK_PRIMITIVES } from '../core/schema-pack/manifest-v1.ts';
 import { gbrainPath, loadConfig, configPath } from '../core/config.ts';
+import { assertValidSourceId } from '../core/source-id.ts';
 
 export async function runSchema(args: string[]): Promise<void> {
   const sub = args[0];
@@ -163,19 +164,52 @@ Resolution chain (7-tier, tier 1 trust-gated):
 `);
 }
 
-async function runActive(_args: string[]): Promise<void> {
+async function runActive(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const source = validateParsedSource(flags);
   const cfg = loadConfig();
-  const resolution = resolveActivePackNameOnly({ cfg, remote: false });
-  const pack = await loadActivePack({ cfg, remote: false });
-  console.log(`Active pack: ${pack.manifest.name} v${pack.manifest.version}`);
-  console.log(`Source: ${resolution.source}`);
-  console.log(`Pack identity: ${pack.identity}`);
-  console.log(`Page types: ${pack.manifest.page_types.length}`);
-  console.log(`Link verbs: ${pack.manifest.link_types.length}`);
-  console.log(`Takes kinds: ${pack.manifest.takes_kinds.join(', ')}`);
-  if (pack.manifest.description) {
-    console.log(`\n${pack.manifest.description}`);
+
+  const emit = async (opts: {
+    dbConfig?: string;
+    perSourceDb?: ReadonlyMap<string, string>;
+  } = {}) => {
+    const resolution = resolveActivePackNameOnly({
+      cfg,
+      remote: false,
+      sourceId: source,
+      perSourceDb: opts.perSourceDb,
+      dbConfig: opts.dbConfig,
+    });
+    const pack = await loadActivePack({
+      cfg,
+      remote: false,
+      sourceId: source,
+      perSourceDb: opts.perSourceDb,
+      dbConfig: opts.dbConfig,
+    });
+    console.log(`Active pack: ${pack.manifest.name} v${pack.manifest.version}`);
+    console.log(`Source: ${resolution.source}`);
+    if (source) console.log(`Source id: ${source}`);
+    console.log(`Pack identity: ${pack.identity}`);
+    console.log(`Page types: ${pack.manifest.page_types.length}`);
+    console.log(`Link verbs: ${pack.manifest.link_types.length}`);
+    console.log(`Takes kinds: ${pack.manifest.takes_kinds.join(', ')}`);
+    if (pack.manifest.description) {
+      console.log(`\n${pack.manifest.description}`);
+    }
+  };
+
+  if (source) {
+    await withConnectedEngine(async (engine) => {
+      const dbConfig = await getConfigTrimmed(engine, 'schema_pack');
+      const perSourceValue = await getConfigTrimmed(engine, `schema_pack.source.${source}`);
+      const perSourceDb = perSourceValue ? new Map([[source, perSourceValue]]) : undefined;
+      await emit({ dbConfig, perSourceDb });
+    });
+    return;
   }
+
+  await emit();
 }
 
 function runList(_args: string[]): void {
@@ -333,10 +367,13 @@ function runValidate(args: string[]): void {
   }
 }
 
-function runUse(args: string[]): void {
-  const packName = args[0];
+function runUse(args: string[]): void | Promise<void> {
+  const flags = parseFlags(args);
+  const source = validateParsedSource(flags);
+  const { positional } = flags;
+  const packName = positional[0];
   if (!packName) {
-    console.error('Usage: gbrain schema use <pack-name>');
+    console.error('Usage: gbrain schema use <pack-name> [--source <id>]');
     process.exit(2);
   }
   const path = packPathByName(packName);
@@ -351,6 +388,15 @@ function runUse(args: string[]): void {
   } catch (e) {
     console.error(`Refusing to activate ${packName}: ${(e as Error).message}`);
     process.exit(1);
+  }
+  if (source) {
+    return withConnectedEngine(async (engine) => {
+      await engine.initSchema();
+      await engine.setConfig(`schema_pack.source.${source}`, packName);
+      console.log(`✓ Active schema pack for source ${source} set to: ${packName}`);
+      console.log(`  Written to DB config key: schema_pack.source.${source}`);
+      console.log(`\nRun \`gbrain schema active --source ${source}\` to verify resolution.`);
+    });
   }
   // Write to file-plane config (~/.gbrain/config.json schema_pack field).
   // Tier 6 in the resolution chain — tiers 1-5 (per-call, env, DB) can
@@ -412,23 +458,31 @@ import {
 
 interface ParsedFlags {
   json: boolean;
+  sourceSpecified: boolean;
   source: string | undefined;
   positional: string[];
 }
 
 function parseFlags(args: string[]): ParsedFlags {
   let json = false;
+  let sourceSpecified = false;
   let source: string | undefined;
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--json') { json = true; continue; }
-    if (a === '--source' || a === '--source-id') { source = args[++i]; continue; }
-    if (a.startsWith('--source=')) { source = a.slice('--source='.length); continue; }
-    if (a.startsWith('--source-id=')) { source = a.slice('--source-id='.length); continue; }
+    if (a === '--source' || a === '--source-id') { sourceSpecified = true; source = args[++i]; continue; }
+    if (a.startsWith('--source=')) { sourceSpecified = true; source = a.slice('--source='.length); continue; }
+    if (a.startsWith('--source-id=')) { sourceSpecified = true; source = a.slice('--source-id='.length); continue; }
     positional.push(a);
   }
-  return { json, source, positional };
+  return { json, sourceSpecified, source, positional };
+}
+
+function validateParsedSource(flags: Pick<ParsedFlags, 'sourceSpecified' | 'source'>): string | undefined {
+  if (!flags.sourceSpecified) return undefined;
+  assertValidSourceId(flags.source);
+  return flags.source;
 }
 
 async function withConnectedEngine<T>(fn: (engine: import('../core/engine.ts').BrainEngine) => Promise<T>): Promise<T> {
@@ -442,6 +496,7 @@ async function withConnectedEngine<T>(fn: (engine: import('../core/engine.ts').B
   const connectConfig: import('../core/types.ts').EngineConfig = {
     engine: engineKind,
     database_url: (cfg as { database_url?: string }).database_url,
+    database_path: (cfg as { database_path?: string }).database_path,
   };
   const engine = await createEngine(connectConfig);
   await engine.connect(connectConfig);
@@ -452,10 +507,24 @@ async function withConnectedEngine<T>(fn: (engine: import('../core/engine.ts').B
   }
 }
 
+async function getConfigTrimmed(
+  engine: import('../core/engine.ts').BrainEngine,
+  key: string,
+): Promise<string | undefined> {
+  try {
+    const value = await engine.getConfig(key);
+    return value?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // ------------- T2: schema detect ----------------------------------
 
 async function runDetectCmd(args: string[]): Promise<void> {
-  const { json, source } = parseFlags(args);
+  const flags = parseFlags(args);
+  const { json } = flags;
+  const source = validateParsedSource(flags);
   const result = await withConnectedEngine((engine) => runDetect(engine, { sourceId: source }));
   if (json) {
     console.log(JSON.stringify({ schema_version: 1, ...result }, null, 2));
@@ -478,7 +547,9 @@ async function runDetectCmd(args: string[]): Promise<void> {
 // ------------- T3: schema suggest ---------------------------------
 
 async function runSuggestCmd(args: string[]): Promise<void> {
-  const { json, source } = parseFlags(args);
+  const flags = parseFlags(args);
+  const { json } = flags;
+  const source = validateParsedSource(flags);
   const result = await withConnectedEngine((engine) => runSuggest(engine, { sourceId: source }));
   if (json) {
     console.log(JSON.stringify({ schema_version: 1, ...result }, null, 2));
@@ -498,7 +569,9 @@ async function runSuggestCmd(args: string[]): Promise<void> {
 // ------------- T4: schema review-candidates -----------------------
 
 async function runReviewCandidatesCmd(args: string[]): Promise<void> {
-  const { json, source, positional } = parseFlags(args);
+  const flags = parseFlags(args);
+  const { json, positional } = flags;
+  const source = validateParsedSource(flags);
   const applyIdx = positional.indexOf('--apply');
   const applySlug = applyIdx >= 0 ? positional[applyIdx + 1] : undefined;
   const result = await withConnectedEngine((engine) =>
@@ -775,7 +848,9 @@ async function runExplainCmd(args: string[]): Promise<void> {
 }
 
 async function runReviewOrphansCmd(args: string[]): Promise<void> {
-  const { json, source } = parseFlags(args);
+  const flags = parseFlags(args);
+  const { json } = flags;
+  const source = validateParsedSource(flags);
   const result = await withConnectedEngine((engine) =>
     runReviewOrphans(engine, { sourceId: source }),
   );
@@ -933,7 +1008,9 @@ function handleMutationError(err: unknown): never {
 }
 
 async function runStatsCmd(args: string[]): Promise<void> {
-  const { json, source } = parseFlags(args);
+  const flags = parseFlags(args);
+  const { json } = flags;
+  const source = validateParsedSource(flags);
   await withConnectedEngine(async (engine) => {
     const ctx = { engine, config: {}, logger: console, dryRun: false, remote: false, sourceId: source } as never;
     const result = await runStatsCore(ctx, source ? { sourceId: source } : {});
@@ -968,7 +1045,9 @@ async function runStatsCmd(args: string[]): Promise<void> {
 
 async function runSyncCmd(args: string[]): Promise<void> {
   const apply = args.includes('--apply');
-  const { json, source } = parseFlags(args);
+  const flags = parseFlags(args);
+  const { json } = flags;
+  const source = validateParsedSource(flags);
   await withConnectedEngine(async (engine) => {
     const ctx = { engine, config: {}, logger: console, dryRun: false, remote: false, sourceId: source } as never;
     const result = await runSyncCore(ctx, {

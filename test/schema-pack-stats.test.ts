@@ -131,6 +131,30 @@ describe('runStatsCore — single source', () => {
       expect(result.per_source[0]!.source_id).toBe('src-a');
     });
   });
+
+  it('uses the per-source schema_pack.source.<id> override for source-scoped pack stats', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      seedTinyPack('global-pack', [{ name: 'person', prefix: 'people/' }]);
+      const feedsDir = join(tmpDir, 'feeds-pack');
+      mkdirSync(feedsDir, { recursive: true });
+      const feedsPackPath = join(feedsDir, 'pack.yaml');
+      writeFileSync(feedsPackPath, `api_version: gbrain-schema-pack-v1\nname: feeds-pack\nversion: 1.0.0\ndescription: ""\ngbrain_min_version: 0.38.0\nextends: null\nborrow_from: []\npage_types:\n  - name: tweet\n    primitive: media\n    path_prefixes:\n      - tweets/\n    aliases: []\n    extractable: true\n    expert_routing: false\nlink_types: []\nfrontmatter_links: []\ntakes_kinds:\n  - fact\n  - take\n  - bet\n  - hunch\nenrichable_types: []\nfiling_rules: []\n`, 'utf-8');
+      __setPackLocatorForTests((name) => {
+        if (name === 'global-pack') return join(tmpDir, 'global-pack', 'pack.yaml');
+        if (name === 'feeds-pack') return feedsPackPath;
+        return null;
+      });
+      await engine.setConfig('schema_pack', 'global-pack');
+      await engine.setConfig('schema_pack.source.feeds', 'feeds-pack');
+      await seedPage('tweets/a', { type: 'tweet', sourceId: 'feeds', sourcePath: 'tweets/a.md' });
+      await seedPage('people/alice', { type: 'person', sourceId: 'kermit', sourcePath: 'people/alice.md' });
+
+      const result = await runStatsCore({ ...ctxOf(), sourceId: 'feeds' } as never, { sourceId: 'feeds' });
+
+      expect(result.pack_identity).toStartWith('feeds-pack@1.0.0+');
+      expect(result.dead_prefixes).toEqual([]);
+    });
+  });
 });
 
 describe('runStatsCore — federated', () => {

@@ -54,6 +54,7 @@ describe('v0.39 T6 — schema CLI contract', () => {
     expect(SCHEMA_TS).toContain('function parseFlags(args: string[]): ParsedFlags');
     expect(SCHEMA_TS).toContain('interface ParsedFlags');
     expect(SCHEMA_TS).toContain('json: boolean');
+    expect(SCHEMA_TS).toContain('sourceSpecified: boolean');
     expect(SCHEMA_TS).toContain('source: string | undefined');
     expect(SCHEMA_TS).toContain('positional: string[]');
   });

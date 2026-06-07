@@ -48,12 +48,39 @@ export async function loadActivePackBestEffort(
   ctx: OperationContext,
 ): Promise<ResolvedPack | null> {
   try {
+    const dbConfig = await getDbConfigBestEffort(ctx, 'schema_pack');
+    const perSourceDb = await getPerSourcePackConfigBestEffort(ctx, ctx.sourceId);
     return await loadActivePack({
       cfg: loadConfig(),
       remote: ctx.remote ?? true,
       sourceId: ctx.sourceId,
+      perSourceDb,
+      dbConfig,
     });
   } catch {
     return null;
+  }
+}
+
+async function getDbConfigBestEffort(ctx: OperationContext, key: string): Promise<string | undefined> {
+  try {
+    const value = await ctx.engine.getConfig(key);
+    return value?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function getPerSourcePackConfigBestEffort(
+  ctx: OperationContext,
+  sourceId: string | undefined,
+): Promise<ReadonlyMap<string, string> | undefined> {
+  if (!sourceId) return undefined;
+  try {
+    const value = await ctx.engine.getConfig(`schema_pack.source.${sourceId}`);
+    const pack = value?.trim();
+    return pack ? new Map([[sourceId, pack]]) : undefined;
+  } catch {
+    return undefined;
   }
 }

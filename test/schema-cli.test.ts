@@ -160,6 +160,54 @@ describe('gbrain schema use (Phase C, gap-fill T3)', () => {
     expect(cfg.schema_pack).toBe('gbrain-base');
   });
 
+  test('schema use --source writes per-source DB config and schema active --source resolves it', () => {
+    const init = gbrain(['init', '--pglite', '--no-embedding', '--yes'], { GBRAIN_HOME: home });
+    expect(init.code).toBe(0);
+    const packDir = join(home, '.gbrain', 'schema-packs', 'feeds-pack');
+    mkdirSync(packDir, { recursive: true });
+    writeFileSync(join(packDir, 'pack.yaml'), `api_version: gbrain-schema-pack-v1\nname: feeds-pack\nversion: 1.0.0\ndescription: feeds test pack\ngbrain_min_version: 0.38.0\nextends: null\nborrow_from: []\npage_types:\n  - name: tweet\n    primitive: media\n    path_prefixes:\n      - tweets/\n    aliases: []\n    extractable: true\n    expert_routing: false\nlink_types: []\nfrontmatter_links: []\ntakes_kinds:\n  - fact\n  - take\n  - bet\n  - hunch\nenrichable_types: []\nfiling_rules: []\n`, 'utf-8');
+
+    const use = gbrain(['schema', 'use', 'feeds-pack', '--source', 'feeds'], { GBRAIN_HOME: home });
+    expect(use.code).toBe(0);
+    expect(use.stdout).toContain('Active schema pack for source feeds set to: feeds-pack');
+
+    const active = gbrain(['schema', 'active', '--source', 'feeds'], { GBRAIN_HOME: home });
+    expect(active.code).toBe(0);
+    expect(active.stdout).toContain('Active pack: feeds-pack v1.0.0');
+    expect(active.stdout).toContain('Source: per-source-db');
+    expect(active.stdout).toContain('Source id: feeds');
+  });
+
+  test('schema use rejects missing or empty --source without changing global config', () => {
+    for (const sourceFlag of [['--source'], ['--source=']]) {
+      const testHome = mkdtempSync(join(tmpdir(), 'gbrain-schema-use-missing-source-'));
+      try {
+        const r = gbrain(['schema', 'use', 'gbrain-base', ...sourceFlag], { GBRAIN_HOME: testHome });
+        expect(r.code).toBe(1);
+        expect(r.stderr).toContain('Invalid source_id');
+        expect(existsSync(join(testHome, '.gbrain', 'config.json'))).toBe(false);
+      } finally {
+        rmSync(testHome, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test('source-aware schema verbs reject missing or empty explicit --source', () => {
+    for (const command of [
+      ['schema', 'active', '--source='],
+      ['schema', 'stats', '--source='],
+      ['schema', 'sync', '--apply', '--source='],
+      ['schema', 'detect', '--source='],
+      ['schema', 'suggest', '--source='],
+      ['schema', 'review-candidates', '--source='],
+      ['schema', 'review-orphans', '--source'],
+    ]) {
+      const r = gbrain(command, { GBRAIN_HOME: home });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('Invalid source_id');
+    }
+  });
+
   test('unknown pack rejected with exit 1 + paste-ready hint', () => {
     const r = gbrain(['schema', 'use', 'no-such-pack-xyz'], { GBRAIN_HOME: home });
     expect(r.code).toBe(1);
