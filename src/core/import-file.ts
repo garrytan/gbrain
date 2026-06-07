@@ -400,10 +400,16 @@ export async function importFromContent(
     // default, or reject (throw → sync-failure) when the operator opts in.
     const junkDisposition: 'quarantine' | 'reject' =
       cs.junk_disposition === 'reject' ? 'reject' : 'quarantine';
+    const sanityTitle =
+      typeof parsed.title === 'string'
+        ? parsed.title
+        : parsed.title == null
+          ? ''
+          : String(parsed.title);
     const sanityResult = assessContentSanity({
       compiled_truth: parsed.compiled_truth,
       timeline: parsed.timeline ?? '',
-      title: parsed.title,
+      title: sanityTitle,
       bytes_warn: cs.bytes_warn,
       bytes_block: cs.bytes_block,
       max_markup_ratio: cs.max_markup_ratio,

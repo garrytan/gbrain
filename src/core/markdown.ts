@@ -105,12 +105,12 @@ export function parseMarkdown(
 
   const { compiled_truth, timeline } = splitBody(body);
 
-  const type = (frontmatter.type as string) || (
+  const type = (typeof frontmatter.type === 'string' ? frontmatter.type : '') || (
     opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath)
   );
-  const title = (frontmatter.title as string) || inferTitle(filePath);
+  const title = frontmatter.title == null ? inferTitle(filePath) : String(frontmatter.title);
   const tags = extractTags(frontmatter);
-  const slug = (frontmatter.slug as string) || inferSlug(filePath);
+  const slug = (typeof frontmatter.slug === 'string' ? frontmatter.slug : '') || inferSlug(filePath);
 
   const cleanFrontmatter = { ...frontmatter };
   delete cleanFrontmatter.type;
