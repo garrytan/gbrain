@@ -23,6 +23,11 @@ export const ALLOWED_PAGE_TYPES = [
   'concept', 'atom', 'lore', 'briefing', 'writing', 'originals',
 ] as const;
 
+export const DEFAULT_EXCLUDED_SLUG_PATTERNS = [
+  'agent-skillpacks/%',
+  'resolver',
+] as const;
+
 const CLASSIFIER_SYSTEM = `You extract gradeable CLAIMS from longform writing.
 
 Output strict JSON: an array of objects with shape:
@@ -140,10 +145,11 @@ export async function extractTakesFromPages(
       WHERE type IN (${typesList})
         AND deleted_at IS NULL
         AND length(COALESCE(compiled_truth, '')) > 200
+        AND NOT (slug LIKE ANY($${params.length + 1}::text[]))
         ${sourceFilter}
       ORDER BY updated_at DESC
       LIMIT ${maxPages}`,
-    params,
+    [...params, DEFAULT_EXCLUDED_SLUG_PATTERNS],
   );
 
   let pagesScanned = 0;
