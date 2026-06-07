@@ -376,7 +376,11 @@ export function assessContentSanity(opts: {
   // doesn't repeat the lowercase per literal.
   const bodyHead = body.slice(0, SCAN_HEAD_BYTES);
   const bodyHeadLower = bodyHead.toLowerCase();
-  const titleLower = opts.title.toLowerCase();
+  // Defensive: although the type contract is `title: string`, YAML can
+  // coerce an unquoted numeric-looking frontmatter title to a number
+  // upstream. Coerce here so `.toLowerCase()` never throws on a non-string.
+  const titleStr = typeof opts.title === 'string' ? opts.title : String(opts.title ?? '');
+  const titleLower = titleStr.toLowerCase();
 
   const junk_pattern_matches: string[] = [];
   for (const p of BUILT_IN_JUNK_PATTERNS) {

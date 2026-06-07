@@ -105,12 +105,20 @@ export function parseMarkdown(
 
   const { compiled_truth, timeline } = splitBody(body);
 
-  const type = (frontmatter.type as string) || (
+  // YAML coerces unquoted scalar values to their natural type, so a
+  // frontmatter line like `title: 20260517_131712_214848` parses to a
+  // number, not a string. The `as string` cast is compile-time only and
+  // does NOT coerce at runtime, so downstream `.toLowerCase()` calls would
+  // throw "opts.title.toLowerCase is not a function". Coerce defensively.
+  const fmType = frontmatter.type;
+  const type = (typeof fmType === 'string' ? fmType : fmType != null ? String(fmType) : '') || (
     opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath)
   );
-  const title = (frontmatter.title as string) || inferTitle(filePath);
+  const fmTitle = frontmatter.title;
+  const title = (typeof fmTitle === 'string' ? fmTitle : fmTitle != null ? String(fmTitle) : '') || inferTitle(filePath);
   const tags = extractTags(frontmatter);
-  const slug = (frontmatter.slug as string) || inferSlug(filePath);
+  const fmSlug = frontmatter.slug;
+  const slug = (typeof fmSlug === 'string' ? fmSlug : fmSlug != null ? String(fmSlug) : '') || inferSlug(filePath);
 
   const cleanFrontmatter = { ...frontmatter };
   delete cleanFrontmatter.type;
