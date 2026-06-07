@@ -156,4 +156,24 @@ describe('runCycle last_full_cycle_at exit hook', () => {
       expect(new Date(second!).getTime()).toBeGreaterThan(new Date(first!).getTime());
     });
   });
+
+  test('repairs non-object PGLite source config while writing timestamp', async () => {
+    await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
+      await seedSource('epsilon');
+      await engine.executeRaw(
+        `UPDATE sources
+            SET config = $1::jsonb
+          WHERE id = 'epsilon'`,
+        [JSON.stringify([{ last_full_cycle_at: '2026-05-22T08:00:00.000Z' }])],
+      );
+
+      await runCycle(engine, { brainDir, sourceId: 'epsilon', phases: ['lint'] });
+
+      const sources = await engine.listAllSources();
+      const source = sources.find(x => x.id === 'epsilon');
+      expect(source).toBeDefined();
+      expect(Array.isArray(source!.config)).toBe(false);
+      expect(typeof source!.config?.last_full_cycle_at).toBe('string');
+    });
+  });
 });

@@ -13,6 +13,7 @@ import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import * as db from '../../src/core/db.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { parseMarkdown } from '../../src/core/markdown.ts';
+import { assertSafeE2EDatabaseUrl } from './db-safety.ts';
 
 // Load .env.testing if present
 const envPath = resolve(import.meta.dir, '../../.env.testing');
@@ -71,6 +72,7 @@ export async function setupDB(): Promise<PostgresEngine> {
   if (!DATABASE_URL) {
     throw new Error('DATABASE_URL not set. Copy .env.testing.example to .env.testing and configure it.');
   }
+  assertSafeE2EDatabaseUrl(DATABASE_URL);
 
   // Disconnect any prior connection (clean slate)
   await db.disconnect();

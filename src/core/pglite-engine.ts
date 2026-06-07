@@ -60,6 +60,24 @@ import { hasCJK, escapeLikePattern } from './cjk.ts';
 
 type PGLiteDB = PGlite;
 
+function normalizeSourceConfig(raw: unknown): Record<string, unknown> {
+  if (typeof raw === 'string') {
+    try {
+      return normalizeSourceConfig(JSON.parse(raw));
+    } catch {
+      return {};
+    }
+  }
+  if (Array.isArray(raw)) {
+    return raw.reduce<Record<string, unknown>>((acc, item) => ({
+      ...acc,
+      ...normalizeSourceConfig(item),
+    }), {});
+  }
+  if (!raw || typeof raw !== 'object') return {};
+  return raw as Record<string, unknown>;
+}
+
 // Tier 3 snapshot fast-restore. Reads a tar dump produced by
 // `bun run scripts/build-pglite-snapshot.ts`. Snapshot is matched against
 // the current MIGRATIONS hash via a sidecar `.version` file; on mismatch we
@@ -1210,22 +1228,29 @@ export class PGLiteEngine implements BrainEngine {
       name: r.name,
       local_path: r.local_path,
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at) : null,
-      config: typeof r.config === 'string'
-        ? JSON.parse(r.config) as Record<string, unknown>
-        : ((r.config as Record<string, unknown> | null) ?? {}),
+      config: normalizeSourceConfig(r.config),
     }));
   }
 
   async updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean> {
-    // v0.38: parity with postgres-engine.updateSourceConfig. JSONB `||`
-    // concat operator (overrides same-key, no deep merge). PGLite passes
-    // `JSON.stringify(patch)` as the param; cast to jsonb on the SQL side.
+    // v0.38: parity with postgres-engine.updateSourceConfig. PGLite's JSONB
+    // concat has drifted from Postgres for non-object legacy values, so merge
+    // in TypeScript and persist a plain object.
+    const current = await this.db.query<{ config: unknown }>(
+      `SELECT config FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    if (current.rows.length === 0) return false;
+    const nextConfig = {
+      ...normalizeSourceConfig(current.rows[0]?.config),
+      ...patch,
+    };
     const result = await this.db.query<{ id: string }>(
       `UPDATE sources
-          SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb
+          SET config = $1::jsonb
         WHERE id = $2
         RETURNING id`,
-      [JSON.stringify(patch), sourceId],
+      [JSON.stringify(nextConfig), sourceId],
     );
     return result.rows.length > 0;
   }

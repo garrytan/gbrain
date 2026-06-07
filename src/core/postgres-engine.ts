@@ -64,6 +64,24 @@ function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
 }
 
+function normalizeSourceConfig(raw: unknown): Record<string, unknown> {
+  if (typeof raw === 'string') {
+    try {
+      return normalizeSourceConfig(JSON.parse(raw));
+    } catch {
+      return {};
+    }
+  }
+  if (Array.isArray(raw)) {
+    return raw.reduce<Record<string, unknown>>((acc, item) => ({
+      ...acc,
+      ...normalizeSourceConfig(item),
+    }), {});
+  }
+  if (!raw || typeof raw !== 'object') return {};
+  return raw as Record<string, unknown>;
+}
+
 export function getPostgresSchema(
   dims: number = DEFAULT_EMBEDDING_DIMENSIONS,
   model: string = DEFAULT_EMBEDDING_MODEL,
@@ -1259,30 +1277,25 @@ export class PostgresEngine implements BrainEngine {
       name: (r.name as string | null) ?? null,
       local_path: (r.local_path as string | null) ?? null,
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at as string) : null,
-      config: typeof r.config === 'string' ? JSON.parse(r.config) : ((r.config as Record<string, unknown> | null) ?? {}),
+      config: normalizeSourceConfig(r.config),
     }));
   }
 
   async updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean> {
-    // v0.38: atomic JSONB merge. `||` is the Postgres concat operator —
-    // for jsonb, right-side keys overwrite left-side; nested object keys
-    // are NOT deep-merged (use jsonb_set for nested paths). The patch
-    // shape this autopilot wave uses is flat (`last_full_cycle_at`,
-    // `archive_*`, etc.) so concat is sufficient. Idempotent on re-run.
-    //
-    // MUST use sql.json(patch) inside the template tag — postgres-js's
-    // positional executeRaw + `$1::jsonb` cast DOUBLE-ENCODES the
-    // JSON.stringify'd string, producing a JSONB STRING shape instead
-    // of OBJECT. `||` between JSONB object + JSONB string yields a
-    // JSONB ARRAY (concat semantics for non-matching types), which
-    // wipes every existing config key. sql.json(...) inside the
-    // template tag is the canonical safe path — same pattern as
-    // putPage + submitJob elsewhere in this file. Empirically verified
-    // produces jsonb_typeof = 'object'.
     const sql = this.sql;
+    const rows = await sql`
+      SELECT config
+        FROM sources
+       WHERE id = ${sourceId}
+    `;
+    if (rows.length === 0) return false;
+    const nextConfig = {
+      ...normalizeSourceConfig(rows[0]?.config),
+      ...patch,
+    };
     const result = await sql`
       UPDATE sources
-         SET config = COALESCE(config, '{}'::jsonb) || ${sql.json(patch as Parameters<typeof sql.json>[0])}
+         SET config = ${sql.json(nextConfig as Parameters<typeof sql.json>[0])}
        WHERE id = ${sourceId}
     `;
     return (result.count ?? 0) > 0;
