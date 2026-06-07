@@ -177,6 +177,19 @@ describe('CLI version', () => {
     expect(VERSION).toBe(pkg.version);
   });
 
+  test('release metadata is aligned across package, manifests, VERSION, and changelog', () => {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
+    const skillsManifest = JSON.parse(readFileSync(new URL('../skills/manifest.json', import.meta.url), 'utf-8'));
+    const openclawManifest = JSON.parse(readFileSync(new URL('../openclaw.plugin.json', import.meta.url), 'utf-8'));
+    const versionFile = readFileSync(new URL('../VERSION', import.meta.url), 'utf-8').trim();
+    const changelog = readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf-8');
+
+    expect(versionFile).toBe(pkg.version);
+    expect(skillsManifest.version).toBe(pkg.version);
+    expect(openclawManifest.version).toBe(pkg.version);
+    expect(changelog).toContain(`## [${pkg.version}] - `);
+  });
+
   test('package exposes the focused agent trust verification script', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
     expect(pkg.scripts['test:agent-trust']).toBe(

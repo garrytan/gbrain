@@ -4,6 +4,38 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-07
+
+### Added
+
+- **Graph frontier retrieval can now be verified as a bounded recall booster.**
+  The new graph frontier planner, retrieval wiring, deterministic evaluation
+  fixture, and verification gate prove that graph expansion can improve recall
+  while keeping graph paths out of answer evidence.
+- **Agent trust setup now has a safer inspect-then-apply workflow.**
+  `mbrain setup-agent --preview` and `--diff` inspect managed changes without
+  writing files, `--apply` is the explicit mutating path, and `--uninstall`
+  removes only MBrain-managed setup surfaces.
+- **Installed-agent trust behavior is now explainable.**
+  `mbrain doctor --agent --explain` reports installed MCP/prompt/hook state,
+  answer-authority boundaries, hint-only surfaces, proof status, next actions,
+  and limitations.
+- **Authority-first memory behavior now has an integrated acceptance gate.**
+  The focused `bun run test:agent-trust` gate composes setup UX, doctor explain,
+  proof mode, graph frontier safety, episode capture, Dream guardrails, and
+  authority-first acceptance fixtures.
+
+### Changed
+
+- **MBrain's agent-facing memory boundary is stricter and easier to verify.**
+  `retrieve_context` remains a planning/probe surface, while `read_context`
+  remains the evidence boundary for factual answers. Candidates, graph paths,
+  raw episodes, and Dream outputs are treated as hint, provenance, or
+  orientation surfaces by default.
+- **Version metadata now reports `0.12.0`.** `VERSION`, `package.json`,
+  `skills/manifest.json`, and `openclaw.plugin.json` are aligned so the CLI,
+  skills manifest, and plugin bundle describe the same release.
+
 ## [0.11.2] - 2026-06-05
 
 ### Added
