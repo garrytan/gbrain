@@ -51,9 +51,23 @@ describe('chat touchpoint — recipe registry', () => {
     }
   });
 
-  test('embedding-only providers (voyage, ollama) do NOT declare chat', () => {
+  test('embedding-only providers (voyage) do NOT declare chat', () => {
+    // Voyage remains embedding-only. Ollama declared chat in v0.42.37
+    // (covers local Qwen/Llama/Mistral via openai-compat tier).
     expect(getRecipe('voyage')!.touchpoints.chat).toBeUndefined();
-    expect(getRecipe('ollama')!.touchpoints.chat).toBeUndefined();
+  });
+
+  test('ollama declares chat with user-driven model list (openai-compat)', () => {
+    const chat = getRecipe('ollama')!.touchpoints.chat;
+    expect(chat).toBeDefined();
+    // Empty curated list — openai-compat tier accepts arbitrary model ids
+    // at runtime (whatever the user has pulled locally).
+    expect(chat!.models).toEqual([]);
+    expect(chat!.supports_tools).toBe(true);
+    expect(chat!.supports_subagent_loop).toBe(false);
+    expect(chat!.supports_prompt_cache).toBe(false);
+    expect(chat!.cost_per_1m_input_usd).toBe(0);
+    expect(chat!.cost_per_1m_output_usd).toBe(0);
   });
 
   test('openai-compat chat recipes have base_url_default', () => {
@@ -110,8 +124,13 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
   test('assertTouchpoint rejects chat on embedding-only providers with a fix hint', () => {
     expect(() => assertTouchpoint(getRecipe('voyage')!, 'chat', 'voyage-3'))
       .toThrow(AIConfigError);
-    expect(() => assertTouchpoint(getRecipe('ollama')!, 'chat', 'nomic-embed-text'))
-      .toThrow(AIConfigError);
+  });
+
+  test('assertTouchpoint accepts chat for ollama with arbitrary model id', () => {
+    // openai-compat tier — Ollama serves whatever model the user pulled.
+    // Recipe declares models:[] so the resolver does not enforce a list.
+    expect(() => assertTouchpoint(getRecipe('ollama')!, 'chat', 'qwen2.5:14b')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('ollama')!, 'chat', 'llama3.1:8b')).not.toThrow();
   });
 
   test('assertTouchpoint rejects unknown native model with the model list in the fix hint', () => {
