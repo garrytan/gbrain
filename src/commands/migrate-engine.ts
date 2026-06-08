@@ -55,6 +55,23 @@ interface MigrateManifest {
   started_at: string;
 }
 
+interface SourceMigrationRow {
+  id: string;
+  name: string;
+  local_path: string | null;
+  last_commit: string | null;
+  last_sync_at: Date | string | null;
+  config: unknown;
+  chunker_version: string | null;
+  archived: boolean;
+  archived_at: Date | string | null;
+  archive_expires_at: Date | string | null;
+  contextual_retrieval_mode: string | null;
+  trust_frontmatter_overrides: boolean;
+  newest_content_at: Date | string | null;
+  created_at: Date | string;
+}
+
 function loadManifest(): MigrateManifest | null {
   const path = getManifestPath();
   if (!existsSync(path)) return null;
@@ -72,6 +89,89 @@ function saveManifest(manifest: MigrateManifest): void {
 function clearManifest(): void {
   const path = getManifestPath();
   if (existsSync(path)) unlinkSync(path);
+}
+
+function normalizeSourceConfig(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // fall through to empty config
+    }
+  }
+  return {};
+}
+
+function asIsoTimestamp(value: Date | string | null): string | null {
+  if (value === null) return null;
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+export async function copySourceRowsForMigration(
+  sourceEngine: BrainEngine,
+  targetEngine: BrainEngine,
+): Promise<number> {
+  const sourceRows = await sourceEngine.executeRaw<SourceMigrationRow>(
+    `SELECT id, name, local_path, last_commit, last_sync_at, config,
+            chunker_version, archived, archived_at, archive_expires_at,
+            contextual_retrieval_mode, trust_frontmatter_overrides,
+            newest_content_at, created_at
+       FROM sources
+      ORDER BY (id = 'default') DESC, id`,
+  );
+
+  for (const row of sourceRows) {
+    await targetEngine.executeRaw(
+      `INSERT INTO sources (
+         id, name, local_path, last_commit, last_sync_at, config,
+         chunker_version, archived, archived_at, archive_expires_at,
+         contextual_retrieval_mode, trust_frontmatter_overrides,
+         newest_content_at, created_at
+       ) VALUES (
+         $1, $2, $3, $4, $5::timestamptz, $6::jsonb,
+         $7, $8, $9::timestamptz, $10::timestamptz,
+         $11, $12, $13::timestamptz, $14::timestamptz
+       )
+       ON CONFLICT (id) DO UPDATE SET
+         name = EXCLUDED.name,
+         local_path = EXCLUDED.local_path,
+         last_commit = EXCLUDED.last_commit,
+         last_sync_at = EXCLUDED.last_sync_at,
+         config = EXCLUDED.config,
+         chunker_version = EXCLUDED.chunker_version,
+         archived = EXCLUDED.archived,
+         archived_at = EXCLUDED.archived_at,
+         archive_expires_at = EXCLUDED.archive_expires_at,
+         contextual_retrieval_mode = EXCLUDED.contextual_retrieval_mode,
+         trust_frontmatter_overrides = EXCLUDED.trust_frontmatter_overrides,
+         newest_content_at = EXCLUDED.newest_content_at,
+         created_at = EXCLUDED.created_at`,
+      [
+        row.id,
+        row.name,
+        row.local_path,
+        row.last_commit,
+        asIsoTimestamp(row.last_sync_at),
+        JSON.stringify(normalizeSourceConfig(row.config)),
+        row.chunker_version,
+        row.archived,
+        asIsoTimestamp(row.archived_at),
+        asIsoTimestamp(row.archive_expires_at),
+        row.contextual_retrieval_mode,
+        row.trust_frontmatter_overrides,
+        asIsoTimestamp(row.newest_content_at),
+        asIsoTimestamp(row.created_at),
+      ],
+    );
+  }
+
+  return sourceRows.length;
 }
 
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
@@ -125,6 +225,10 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     // tags / timeline_entries / page_versions via existing FKs.
     await targetEngine.executeRaw('DELETE FROM pages');
   }
+
+  console.log('Copying source rows...');
+  const sourceCount = await copySourceRowsForMigration(sourceEngine, targetEngine);
+  console.log(`Copied ${sourceCount} source rows.`);
 
   // Load or create manifest for resume
   let manifest = loadManifest();

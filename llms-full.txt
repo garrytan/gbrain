@@ -67,6 +67,29 @@ set by `src/cli.ts`) from **untrusted agent-facing callers** (`remote = true`, s
 confinement when `remote = true` and default to strict behavior when unset. If you are
 writing or reviewing an operation, consult `src/core/operations.ts` for the contract.
 
+## Sawyer fork / PR boundary
+
+Sawyer's fork is `uncfreak1255-code/gbrain`; upstream is `garrytan/gbrain`.
+Default to PRs that Sawyer can merge himself: push branches to `fork` and open
+PRs against `uncfreak1255-code/gbrain` unless Sawyer explicitly asks for an
+upstream PR to `garrytan/gbrain`.
+
+Before pushing a PR branch, run:
+
+```bash
+bun run check:pr-branch-base
+```
+
+Install the local pre-push guard once per checkout:
+
+```bash
+bun run install:pr-branch-hook
+```
+
+The guard fails when `origin/master` is not an ancestor of `HEAD`, which blocks
+fork-only or stale work-branch commits from leaking into a PR. If a branch fails,
+create a fresh branch from `origin/master` and cherry-pick only the keeper commits.
+
 ## Common tasks
 
 - **Configure:** [`docs/ENGINES.md`](./docs/ENGINES.md),
