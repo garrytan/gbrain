@@ -1,5 +1,59 @@
 import type { Recipe } from '../types.ts';
 
+const OPENROUTER_BASE_URL_DEFAULT = 'https://openrouter.ai/api/v1';
+
+export const OPENROUTER_ANTHROPIC_CACHE_SENTINEL =
+  'gbrain:openrouter:anthropic-cache-control:ephemeral';
+
+export function openrouterSupportsPromptCache(modelId: string): boolean {
+  const normalized = modelId.trim().toLowerCase();
+  // OpenRouter docs: OpenAI prompt caching is automatic for eligible OpenAI
+  // chat models. No request mutation is required; capability detection should
+  // not warn that OpenAI-routed subagent loops are uncached.
+  if (normalized.startsWith('openai/gpt-') || /^openai\/o\d/.test(normalized)) return true;
+
+  // OpenRouter docs: Anthropic Claude routes support prompt caching; Claude
+  // requires cache_control. Keep this family-scoped rather than marking every
+  // Anthropic namespace model as cacheable forever.
+  if (normalized.startsWith('anthropic/claude-')) return true;
+
+  return false;
+}
+
+export function openrouterRequiresExplicitPromptCache(modelId: string): boolean {
+  return modelId.trim().toLowerCase().startsWith('anthropic/claude-');
+}
+
+function rewriteOpenRouterAnthropicCacheControl(body: unknown): unknown {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  const record = body as Record<string, unknown>;
+  const model = typeof record.model === 'string' ? record.model : '';
+  if (!openrouterRequiresExplicitPromptCache(model)) return body;
+  if (record.prompt_cache_key !== OPENROUTER_ANTHROPIC_CACHE_SENTINEL) return body;
+
+  const next = { ...record };
+  delete next.prompt_cache_key;
+  next.cache_control = { type: 'ephemeral' };
+  return next;
+}
+
+export const openrouterCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  if (init?.body && typeof init.body === 'string') {
+    try {
+      const parsed = JSON.parse(init.body);
+      const rewritten = rewriteOpenRouterAnthropicCacheControl(parsed);
+      if (rewritten !== parsed) {
+        const headers = new Headers(init.headers ?? {});
+        headers.delete('content-length');
+        init = { ...init, body: JSON.stringify(rewritten), headers };
+      }
+    } catch {
+      // Non-JSON body: let fetch/provider surface the original problem.
+    }
+  }
+  return fetch(input, init);
+}) as unknown as typeof fetch;
+
 /**
  * OpenRouter — single-key fan-out to OpenAI, Anthropic, Google, DeepSeek, and
  * dozens of other providers via a single OpenAI-compatible endpoint at
@@ -42,7 +96,7 @@ export const openrouter: Recipe = {
   name: 'OpenRouter',
   tier: 'openai-compat',
   implementation: 'openai-compatible',
-  base_url_default: 'https://openrouter.ai/api/v1',
+  base_url_default: OPENROUTER_BASE_URL_DEFAULT,
   auth_env: {
     required: ['OPENROUTER_API_KEY'],
     optional: ['OPENROUTER_BASE_URL', 'OPENROUTER_REFERER', 'OPENROUTER_TITLE'],
@@ -59,6 +113,12 @@ export const openrouter: Recipe = {
       'X-OpenRouter-Title': title,
       // Back-compat alias documented as still-supported.
       'X-Title': title,
+    };
+  },
+  resolveOpenAICompatConfig(env, baseURLOverride) {
+    return {
+      baseURL: baseURLOverride ?? env.OPENROUTER_BASE_URL ?? OPENROUTER_BASE_URL_DEFAULT,
+      fetch: openrouterCompatFetch,
     };
   },
   touchpoints: {
@@ -93,7 +153,7 @@ export const openrouter: Recipe = {
       supports_tools: true,
       // Informational only — real gate is isAnthropicProvider() upstream.
       supports_subagent_loop: false,
-      supports_prompt_cache: false,
+      supports_prompt_cache: openrouterSupportsPromptCache,
       // No max_context_tokens: catalog spans 128K to 1M+; a single recipe-wide
       // value is either unsafe for smaller models or wasteful for larger ones.
       // Let upstream errors surface per-model.
