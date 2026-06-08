@@ -91,6 +91,133 @@ describe('migrate', () => {
     expect(schemaSource).toContain("'chunk_strategy', 'qwen3_token_recursive'");
   });
 
+  test('v51 assertion scope indexes are applied by migration after adding scope columns', async () => {
+    const schemaSource = readFileSync(
+      new URL('../src/schema.sql', import.meta.url),
+      'utf-8',
+    );
+    const embeddedSource = readFileSync(
+      new URL('../src/core/schema-embedded.ts', import.meta.url),
+      'utf-8',
+    );
+    const pgliteSchema = readFileSync(
+      new URL('../src/core/pglite-schema.ts', import.meta.url),
+      'utf-8',
+    );
+    const { freshSchemaMigrationSql } = await import('../src/core/migrate.ts');
+    const v51Sql = freshSchemaMigrationSql(50);
+    const v51IndexNames = [
+      'idx_assertions_scope_target_property',
+      'idx_assertion_evidence_scope_assertion',
+      'idx_assertion_links_scope_from',
+    ];
+
+    for (const indexName of v51IndexNames) {
+      expect(schemaSource).not.toContain(indexName);
+      expect(embeddedSource).not.toContain(indexName);
+      expect(pgliteSchema).not.toContain(indexName);
+      expect(v51Sql).toContain(indexName);
+    }
+
+    expect(v51Sql).toContain('ADD COLUMN IF NOT EXISTS scope_id');
+  });
+
+  test('initSchema upgrades existing v50 assertion tables before creating v51 scope indexes', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const engine = new PGLiteEngine();
+    const targetPath = join(tempHome, 'v50-assertion-upgrade.pglite');
+    let connected = false;
+
+    try {
+      await engine.connect({ engine: 'pglite', database_path: targetPath });
+      connected = true;
+      await engine.db.exec(`
+        CREATE TABLE IF NOT EXISTS config (
+          key   TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        INSERT INTO config (key, value) VALUES ('version', '50')
+        ON CONFLICT (key) DO UPDATE SET value = excluded.value;
+
+        CREATE TABLE IF NOT EXISTS assertions (
+          id                         TEXT PRIMARY KEY,
+          claim_type                 TEXT NOT NULL,
+          target_type                TEXT NOT NULL,
+          target_id                  TEXT NOT NULL,
+          target_slug                TEXT,
+          property                   TEXT NOT NULL,
+          value_json                 JSONB NOT NULL,
+          normalized_claim           TEXT NOT NULL,
+          authority_summary          JSONB NOT NULL DEFAULT '{}',
+          confidence                 REAL NOT NULL DEFAULT 0,
+          evidence_count             INTEGER NOT NULL DEFAULT 0,
+          authority_state            TEXT NOT NULL CHECK (authority_state IN ('unresolved', 'candidate', 'canonical', 'conflicted', 'rejected')),
+          lifecycle_state            TEXT NOT NULL CHECK (lifecycle_state IN ('active', 'stale', 'expired', 'archived', 'purged')),
+          valid_from                 TIMESTAMPTZ,
+          valid_until                TIMESTAMPTZ,
+          supersedes_assertion_id    TEXT,
+          superseded_by_assertion_id TEXT,
+          conflict_set_id            TEXT,
+          created_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at                 TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+        CREATE TABLE IF NOT EXISTS assertion_evidence (
+          id                  TEXT PRIMARY KEY,
+          assertion_id         TEXT NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
+          extracted_claim_id   TEXT NOT NULL,
+          source_id            TEXT NOT NULL,
+          source_item_id       TEXT NOT NULL,
+          source_chunk_id      TEXT NOT NULL,
+          session_id           TEXT,
+          task_event_id        TEXT,
+          contribution_type    TEXT NOT NULL CHECK (contribution_type IN ('supports', 'contradicts', 'supersedes', 'superseded_by', 'context', 'audit_only')),
+          evidence_authority   TEXT NOT NULL,
+          evidence_confidence  REAL NOT NULL,
+          valid_from           TIMESTAMPTZ,
+          valid_until          TIMESTAMPTZ,
+          revocation_state     TEXT NOT NULL DEFAULT 'active',
+          forgetting_state     TEXT NOT NULL DEFAULT 'retained',
+          created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+        CREATE TABLE IF NOT EXISTS assertion_links (
+          id                 TEXT PRIMARY KEY,
+          from_assertion_id  TEXT NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
+          to_assertion_id    TEXT NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
+          link_type          TEXT NOT NULL,
+          created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+          UNIQUE(from_assertion_id, to_assertion_id, link_type)
+        );
+      `);
+
+      await engine.initSchema();
+
+      expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+      const assertionColumns = await engine.db.query<{ column_name: string }>(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'assertions'
+      `);
+      expect(assertionColumns.rows.map(row => row.column_name)).toContain('scope_id');
+
+      const indexes = await engine.db.query<{ indexname: string }>(`
+        SELECT indexname
+        FROM pg_indexes
+        WHERE tablename IN ('assertions', 'assertion_evidence', 'assertion_links')
+      `);
+      expect(indexes.rows.map(row => row.indexname)).toEqual(expect.arrayContaining([
+        'idx_assertions_scope_target_property',
+        'idx_assertion_evidence_scope_assertion',
+        'idx_assertion_links_scope_from',
+      ]));
+    } finally {
+      if (connected) {
+        await engine.disconnect();
+      }
+    }
+  }, PGLITE_MIGRATION_TEST_TIMEOUT_MS);
+
   test('generated schemas stay aligned on page_embedding', () => {
     const embeddedSource = readFileSync(
       new URL('../src/core/schema-embedded.ts', import.meta.url),
