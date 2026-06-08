@@ -700,6 +700,67 @@ describe('runEmbed CLI flag wiring (--stale --source)', () => {
 });
 
 describe('embedAllStale wall-clock budget end-to-end (D3 + D3a)', () => {
+  test('timer scheduling chunks large finite budgets instead of overflowing JS timers', async () => {
+    const { MAX_JS_TIMER_DELAY_MS, scheduleAbortAfterDelay } = await import('../src/commands/embed.ts');
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    const delays: number[] = [];
+
+    try {
+      (globalThis as any).setTimeout = (_cb: () => void, delay?: number) => {
+        delays.push(Number(delay));
+        return { __fakeTimer: true };
+      };
+      (globalThis as any).clearTimeout = () => {};
+
+      const controller = new AbortController();
+      const handle = scheduleAbortAfterDelay(controller, MAX_JS_TIMER_DELAY_MS + 123_456);
+      handle?.clear();
+
+      expect(delays).toEqual([MAX_JS_TIMER_DELAY_MS]);
+      expect(controller.signal.aborted).toBe(false);
+    } finally {
+      (globalThis as any).setTimeout = originalSetTimeout;
+      (globalThis as any).clearTimeout = originalClearTimeout;
+    }
+  });
+
+  test('--catch-up does not schedule an overflowing budget timer and still embeds stale chunks', async () => {
+    const { MAX_JS_TIMER_DELAY_MS, runEmbedCore } = await import('../src/commands/embed.ts');
+    const originalSetTimeout = globalThis.setTimeout;
+    const seenDelays: number[] = [];
+
+    try {
+      (globalThis as any).setTimeout = ((cb: (...args: any[]) => void, delay?: number, ...args: any[]) => {
+        const numericDelay = Number(delay);
+        seenDelays.push(numericDelay);
+        if (numericDelay > MAX_JS_TIMER_DELAY_MS) {
+          throw new Error(`overflowing timer delay: ${numericDelay}`);
+        }
+        return originalSetTimeout(cb, delay as any, ...args);
+      }) as typeof setTimeout;
+
+      const stale = [
+        { slug: 'catch-up-page', chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 1 },
+      ];
+      const engine = mockEngine({
+        countStaleChunks: async () => 1,
+        listStaleChunks: async () => stale,
+        getChunks: async () => stale.map(s => ({ chunk_index: s.chunk_index, chunk_text: s.chunk_text, chunk_source: s.chunk_source, embedded_at: null, token_count: 1 })),
+        upsertChunks: async () => {},
+        setPageEmbeddingSignature: async () => {},
+      });
+
+      const result = await runEmbedCore(engine, { stale: true, catchUp: true, batchSize: 64 });
+
+      expect(result.embedded).toBe(1);
+      expect(result.pages_processed).toBe(1);
+      expect(seenDelays.every(d => d <= MAX_JS_TIMER_DELAY_MS)).toBe(true);
+    } finally {
+      (globalThis as any).setTimeout = originalSetTimeout;
+    }
+  });
+
   test('GBRAIN_EMBED_TIME_BUDGET_MS=N cuts the outer loop short on stuck workers', async () => {
     const { runEmbedCore } = await import('../src/commands/embed.ts');
     // Tiny budget: 100ms. Each embed call sleeps 50ms; with budget + multiple
