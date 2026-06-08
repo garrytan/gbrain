@@ -3,8 +3,10 @@
  * cycles. Closes codex round-1 P0-5 (write site for last_full_cycle_at
  * was unspecified pre-PR).
  *
- * Conditions for write:
- *   - opts.sourceId is set (legacy callers without sourceId skip the write)
+ * Conditions for write (keyed off `cycleSourceId` = opts.sourceId ?? the
+ * source resolved from brainDir, so the autopilot's inline cycle — brainDir
+ * set, no explicit sourceId — also advances the timestamp):
+ *   - a source resolves (explicit sourceId, or brainDir matches a source)
  *   - engine is non-null (no-DB path skips)
  *   - status is 'ok' | 'clean' | 'partial' (failed/skipped don't mark fresh)
  *   - dryRun is false
@@ -90,17 +92,45 @@ describe('runCycle last_full_cycle_at exit hook', () => {
     });
   });
 
-  test('legacy caller (no sourceId) does NOT write any source timestamp', async () => {
+  test('no explicit sourceId but brainDir resolves a source → writes the resolved source timestamp', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
-      await seedSource('default-like');
-      // No sourceId passed; should remain untouched.
+      // The autopilot's inline cycle sets brainDir but passes no sourceId.
+      // runCycle resolves the source from brainDir (local_path match) into
+      // cycleSourceId and stamps last_full_cycle_at for it — otherwise
+      // cycle_freshness reports the brain stale even while the autopilot
+      // cycles every interval.
+      await seedSource('resolved-from-dir'); // local_path = brainDir
+      expect(await readLastFullCycleAt('resolved-from-dir')).toBeNull();
+
+      const t0 = Date.now();
+      const report = await runCycle(engine, {
+        brainDir,
+        phases: ['lint'],
+      });
+      expect(['ok', 'clean']).toContain(report.status);
+
+      const after = await readLastFullCycleAt('resolved-from-dir');
+      expect(after).not.toBeNull();
+      expect(new Date(after!).getTime()).toBeGreaterThanOrEqual(t0);
+    });
+  });
+
+  test('no sourceId and brainDir matches no source → does not write', async () => {
+    await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
+      // A source exists but its local_path does NOT match brainDir, so
+      // resolveSourceForDir returns undefined, cycleSourceId is undefined,
+      // and no per-source timestamp is written.
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+         VALUES ('unmatched', 'unmatched', '/no/such/repo', '{}'::jsonb, false, NOW())
+         ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+        [],
+      );
       await runCycle(engine, {
         brainDir,
         phases: ['lint'],
       });
-      // No per-source write happens; default source's config stays empty.
-      const after = await readLastFullCycleAt('default-like');
-      expect(after).toBeNull();
+      expect(await readLastFullCycleAt('unmatched')).toBeNull();
     });
   });
 
