@@ -2,6 +2,24 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.36.0] - 2026-06-08
+
+**A huge `gbrain sync` that keeps getting killed now converges instead of restarting from zero.** On a high-write source — hundreds of thousands of files, a generator committing faster than each sync can drain — a full sync that ran past its launching session's timeout (SIGTERM) would lose 100% of its progress and re-import the entire backlog on the next run, forever. The bookmark never advanced, the source went quietly stale for hours while the importer burned CPU the whole time, and competing hourly launches stole each other's lock and raced. This release makes a large sync **resumable, durable, and single-flight** so it banks what it imports and picks up where it left off.
+
+Progress is now banked into an append-only checkpoint as files drain, written through a direct session connection so it survives connection-pool exhaustion (the exact condition that used to silently drop every checkpoint write). The write is a delta — one row per drained file — instead of rewriting the whole completed-set each flush, so banking stays cheap even at hundreds of thousands of files. The bookmark still only advances on true completion, so a killed run resumes from the checkpoint rather than re-walking from zero. And the per-source lock now heartbeats through the direct pool and refuses to steal a holder that's alive and actively refreshing — so a long sync that overruns into the next scheduled run is skipped, not break-locked into a thrashing race.
+
+### Fixed
+- **Resumable sync survives pool exhaustion (gbrain#1794).** Checkpoint reads/writes route through the direct session pool with bounded retry; `EMAXCONNSESSION` / `too_many_connections` are now classified retryable. A killed run banks its progress and the next run skips already-drained files.
+- **Guaranteed final flush on every exit path.** A cooperative timeout, an external SIGTERM (one-shot no-retry flush via the cleanup registry, ordered before lock release), and a clean finish all bank the in-flight delta. The bookmark is never advanced on a partial.
+- **Fail-loud instead of burning CPU.** If checkpoint persistence fails repeatedly (pool genuinely dead), the run aborts with a `checkpoint_unavailable` partial rather than importing work it can never bank. Every partial/blocked exit now logs how many files were banked, so a killed run is never misread as total loss.
+- **Lock thrash eliminated.** The import loop yields the event loop so the lock-refresh heartbeat fires mid-import; takeover refuses to steal a recently-refreshed (alive-but-starved) holder; a bare `gbrain sync` (no `--source`) now uses the refreshing lock too; and a cron sync that collides with a running one is reported as a skip, not a phase failure.
+
+### Added
+- **Append-only checkpoint storage** (`op_checkpoint_paths`, migration v115): one row per drained path; O(delta) writes instead of O(N²) full-set rewrites over a large sync.
+
+### To take advantage of v0.42.36.0
+- Nothing to do. `gbrain sync` is resumable by default — a killed sync now banks its progress and the next run converges. Five env knobs tune cadence, fail-loud threshold, event-loop yield, and lock-steal grace if you need them at incident time; see the "Sync resumability + lock tuning" section in CLAUDE.md.
+
 ## [0.42.35.0] - 2026-06-07
 
 **A bookmark left pointing at a rewritten-away commit no longer freezes your brain in an endless full re-walk.** When a source's history is rewritten — a force-push, a `master`→`main` consolidation, a squash — the commit gbrain recorded as "last synced" can fall outside the branch's current history. The old guard treated that the same as a missing commit and fell back to re-importing the entire repository on every run. On a large brain with a cross-region database that full walk never finishes inside the sync timeout, so the bookmark never advanced and the source went quietly stale with no error surfaced.
