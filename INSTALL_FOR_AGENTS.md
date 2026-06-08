@@ -40,19 +40,44 @@ restart the shell or add the PATH export to the shell profile.
 
 ## Step 2: API Keys
 
-Ask the user for these. gbrain defaults to the ZeroEntropy embedding + reranker stack
+> **TL;DR — if you want one key for many models, ask for `OPENROUTER_API_KEY` and stop here.**
+> A single OpenRouter key covers embeddings, chat, AND rerankers via 100+ upstream providers
+> (OpenAI, Anthropic, Google, DeepSeek, Meta, Qwen, ...). Skip straight to Step 3 — you can
+> add provider-direct keys later for cost optimization. See
+> [`docs/integrations/embedding-providers.md` › OpenRouter](./docs/integrations/embedding-providers.md#openrouter)
+> for the full recipe, model list, and per-provider pricing.
+
+Otherwise, ask the user for the keys below. gbrain defaults to the ZeroEntropy embedding + reranker stack
 (as of v0.36.2.0); OpenAI/Voyage are still supported as fallbacks via `gbrain config
 set embedding_model <provider:model>`.
 
 ```bash
-export ZEROENTROPY_API_KEY=ze-...     # default embedding + reranker (v0.36.2.0+)
-export OPENAI_API_KEY=sk-...          # fallback for vector search; also used for chat models
-export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality via query expansion
+export OPENROUTER_API_KEY=sk-or-v1-...   # one key for many models — recommended for new installs
+# OR pick a provider-direct stack (cheaper, but 3 separate vendors and bills):
+export ZEROENTROPY_API_KEY=ze-...        # default embedding + reranker (v0.36.2.0+)
+export OPENAI_API_KEY=sk-...             # fallback for vector search; also used for chat models
+export ANTHROPIC_API_KEY=sk-ant-...      # optional, improves search quality via query expansion
 ```
+
+**If the user provides `OPENROUTER_API_KEY`** (and no other keys), default the install to:
+- `embedding_model = openrouter:openai/text-embedding-3-small` (1536d, $0.02/1M)
+- `chat_model` stays unset (uses the gbrain default — usually Anthropic-direct for subagent
+  loops, since OpenRouter-routed Anthropic is rejected at submit time per the OpenRouter recipe)
+- For non-subagent chat, set `chat_model = openrouter:anthropic/claude-haiku-4.5` or
+  `openrouter:google/gemini-3-flash-preview` per user preference.
+
+**If the user provides a provider-direct stack**, follow the original defaults.
 
 Save to shell profile or `.env`. Keys are picked up by `gbrain config set` automatically
 or can be stored in `~/.gbrain/config.json` (file plane). Without any embedding provider,
 keyword search still works. Without Anthropic, search works but skips query expansion.
+
+**Optional attribution env** (OpenRouter only — set so the OR leaderboard credits the
+operator's deployment, not gbrain):
+```bash
+export OPENROUTER_REFERER=https://your-domain   # default https://gbrain.ai
+export OPENROUTER_TITLE=your-deployment-name    # default gbrain
+```
 
 ## Step 3: Create the Brain
 
