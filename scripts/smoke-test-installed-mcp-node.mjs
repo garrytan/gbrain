@@ -1,61 +1,87 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 /**
- * Smoke test: verify an installed mbrain command can serve MCP over stdio.
+ * Node-backed installed MCP smoke test.
  *
- * Usage:
- *   MBRAIN_SMOKE_COMMAND=mbrain bun run scripts/smoke-test-installed-mcp.ts
- *   MBRAIN_SMOKE_COMMAND="bun run src/cli.ts" bun run scripts/smoke-test-installed-mcp.ts
+ * The MCP SDK stdio client transport is Node-oriented. Running that transport
+ * directly inside Bun can hang in sandboxed environments where Bun child-stdin
+ * writes are blocked, so the Bun entrypoint delegates here for the actual MCP
+ * stdio exchange.
  */
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { mkdtempSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { fileURLToPath } from 'url';
-import { splitAgentCommand } from '../src/core/services/installed-agent-readiness-service.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
-const decoder = new TextDecoder();
-
-export const WRITEBACK_SMOKE_ARGUMENTS = {
+const WRITEBACK_SMOKE_ARGUMENTS = {
   content: 'Installed MCP smoke confirms route_memory_writeback availability.',
   evidence_kind: 'direct_user_statement',
   source_refs: ['Source: installed MCP smoke test, direct tool call, 2026-05-10 00:00 KST'],
   dry_run: true,
   apply: true,
-} as const;
+};
 
-function runCli(parts: string[], args: string[], env: Record<string, string>): void {
-  const result = Bun.spawnSync({
-    cmd: [...parts, ...args],
+function splitAgentCommand(command) {
+  const parts = [];
+  let current = '';
+  let quote = null;
+
+  for (const char of command.trim()) {
+    if ((char === '"' || char === "'") && quote === null) {
+      quote = char;
+      continue;
+    }
+    if (char === quote) {
+      quote = null;
+      continue;
+    }
+    if (/\s/.test(char) && quote === null) {
+      if (current.length > 0) {
+        parts.push(current);
+        current = '';
+      }
+      continue;
+    }
+    current += char;
+  }
+
+  if (current.length > 0) {
+    parts.push(current);
+  }
+  return parts;
+}
+
+function runCli(parts, args, env) {
+  const result = spawnSync(parts[0], [...parts.slice(1), ...args], {
     env,
-    stdout: 'pipe',
-    stderr: 'pipe',
+    encoding: 'utf8',
   });
 
-  if (result.exitCode !== 0) {
+  if (result.status !== 0) {
     throw new Error([
       `Command failed: ${[...parts, ...args].join(' ')}`,
-      `exit=${result.exitCode}`,
-      `stdout=${decoder.decode(result.stdout)}`,
-      `stderr=${decoder.decode(result.stderr)}`,
+      `exit=${result.status}`,
+      `stdout=${result.stdout ?? ''}`,
+      `stderr=${result.stderr ?? ''}`,
     ].join('\n'));
   }
 }
 
-function parseMcpText<T = any>(result: any): T {
+function parseMcpText(result) {
   if (result.isError) {
-    const text = result.content?.find((entry: any) => entry.type === 'text')?.text;
+    const text = result.content?.find(entry => entry.type === 'text')?.text;
     throw new Error(text || 'MCP tool call failed');
   }
 
-  const text = result.content?.find((entry: any) => entry.type === 'text')?.text;
+  const text = result.content?.find(entry => entry.type === 'text')?.text;
   if (typeof text !== 'string') {
     throw new Error('MCP result did not include text content');
   }
-  return JSON.parse(text) as T;
+  return JSON.parse(text);
 }
 
-export function assertWritebackSmokeResult(writeback: any): void {
+function assertWritebackSmokeResult(writeback) {
   if (writeback?.dry_run !== true) {
     throw new Error(`route_memory_writeback did not return dry_run true: ${JSON.stringify(writeback)}`);
   }
@@ -76,13 +102,13 @@ export function assertWritebackSmokeResult(writeback: any): void {
   }
 }
 
-function hasExactItems(actual: unknown, expected: readonly string[]): boolean {
+function hasExactItems(actual, expected) {
   return Array.isArray(actual)
     && actual.length === expected.length
     && expected.every((entry, index) => actual[index] === entry);
 }
 
-export async function main(): Promise<void> {
+async function main() {
   const commandText = process.env.MBRAIN_SMOKE_COMMAND || 'mbrain';
   const commandParts = splitAgentCommand(commandText);
   if (commandParts.length === 0) {
@@ -94,7 +120,7 @@ export async function main(): Promise<void> {
   const homeDir = join(rootDir, 'home');
   const configDir = join(homeDir, '.mbrain');
   const dbPath = join(configDir, 'brain.db');
-  const env: Record<string, string> = {
+  const env = {
     ...process.env,
     HOME: homeDir,
     MBRAIN_CONFIG_DIR: configDir,
@@ -105,7 +131,7 @@ export async function main(): Promise<void> {
     ANTHROPIC_API_KEY: '',
   };
 
-  let client: Client | null = null;
+  let client = null;
 
   try {
     console.log(`Using command: ${commandText}`);
@@ -143,13 +169,13 @@ export async function main(): Promise<void> {
     }
     console.log(`tools/list: ${tools.tools.length} tools`);
 
-    const health = parseMcpText<any>(await client.callTool({ name: 'get_health', arguments: {} }));
+    const health = parseMcpText(await client.callTool({ name: 'get_health', arguments: {} }));
     if (!health || typeof health !== 'object') {
       throw new Error('get_health did not return an object');
     }
     console.log('get_health: ok');
 
-    const writeback = parseMcpText<any>(await client.callTool({
+    const writeback = parseMcpText(await client.callTool({
       name: 'route_memory_writeback',
       arguments: WRITEBACK_SMOKE_ARGUMENTS,
     }));
@@ -171,7 +197,7 @@ export async function main(): Promise<void> {
       arguments: { slug, content },
     }));
 
-    const page = parseMcpText<any>(await client.callTool({
+    const page = parseMcpText(await client.callTool({
       name: 'get_page',
       arguments: { slug },
     }));
@@ -180,14 +206,14 @@ export async function main(): Promise<void> {
     }
     console.log('page lifecycle: write/read ok');
 
-    const searchResults = parseMcpText<any[]>(await client.callTool({
+    const searchResults = parseMcpText(await client.callTool({
       name: 'search',
       arguments: { query: 'Install smoke check' },
     }));
     if (!Array.isArray(searchResults)) {
       throw new Error('search did not return an array');
     }
-    const foundSmokePage = searchResults.some((entry: any) =>
+    const foundSmokePage = searchResults.some(entry =>
       entry?.slug === slug ||
       entry?.page?.slug === slug ||
       entry?.title === 'Install Check'
@@ -210,7 +236,7 @@ export async function main(): Promise<void> {
     try {
       await client?.close();
     } catch {
-      // Ignore cleanup failures so the root error remains visible.
+      // Keep the root error visible.
     }
     console.error(e instanceof Error ? e.message : String(e));
     process.exitCode = 1;
@@ -223,30 +249,4 @@ export async function main(): Promise<void> {
   }
 }
 
-function shouldDelegateToNodeSmoke(): boolean {
-  return typeof Bun !== 'undefined' && process.env.MBRAIN_SMOKE_NODE_DELEGATE !== '1';
-}
-
-function runNodeSmokeDelegate(): never {
-  const scriptPath = fileURLToPath(new URL('./smoke-test-installed-mcp-node.mjs', import.meta.url));
-  const result = Bun.spawnSync({
-    cmd: ['node', scriptPath],
-    env: {
-      ...process.env,
-      MBRAIN_SMOKE_NODE_DELEGATE: '1',
-    },
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-
-  process.stdout.write(decoder.decode(result.stdout));
-  process.stderr.write(decoder.decode(result.stderr));
-  process.exit(result.exitCode ?? 1);
-}
-
-if (import.meta.main) {
-  if (shouldDelegateToNodeSmoke()) {
-    runNodeSmokeDelegate();
-  }
-  await main();
-}
+await main();
