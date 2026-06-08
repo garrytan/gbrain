@@ -755,6 +755,53 @@ describe('embedAllStale wall-clock budget end-to-end (D3 + D3a)', () => {
     // workers to drain (1 worker × 80ms latency). Generous upper bound: 1500ms.
     expect(elapsed).toBeLessThan(1500);
   });
+
+  // #1946: pre-fix, --catch-up set BUDGET_MS to Number.MAX_SAFE_INTEGER, which
+  // overflows setTimeout's signed-32-bit ms cap and fires on the next tick —
+  // the loop aborted after the first batch. Regression: with catchUp, the
+  // run must process every batch through to countStaleChunks==0.
+  test('--catch-up does NOT abort after the first batch (32-bit setTimeout overflow)', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    process.env.GBRAIN_EMBED_CONCURRENCY = '1';
+
+    // 5 rows across 5 separate listStaleChunks calls (PAGE_SIZE=1 so each
+    // batch is one row and the outer loop ticks 5 times).
+    const allRows = Array.from({ length: 5 }, (_, i) => ({
+      slug: `c-${i}`,
+      chunk_index: 0,
+      chunk_text: `t${i}`,
+      chunk_source: 'compiled_truth' as const,
+      model: null,
+      token_count: 1,
+      source_id: 'default',
+      page_id: i + 1,
+    }));
+
+    const engine = mockEngine({
+      countStaleChunks: async () => allRows.length,
+      listStaleChunks: async (opts: { afterPageId?: number } = {}) => {
+        const startIdx = (opts.afterPageId ?? 0);
+        const idx = allRows.findIndex(r => r.page_id > startIdx);
+        if (idx === -1) return [];
+        return [allRows[idx]];
+      },
+      getChunks: async () => [],
+      upsertChunks: async () => {},
+    });
+
+    // Mild per-call latency so a falsely-armed sub-tick timer would cut us
+    // off long before the loop finishes.
+    embedBatchBehavior = async (texts) => {
+      await new Promise(r => setTimeout(r, 20));
+      return texts.map(() => new Float32Array(1536));
+    };
+
+    const result = await runEmbedCore(engine, { stale: true, catchUp: true, batchSize: 1 });
+
+    // Every page should be processed — no premature abort.
+    expect(result.pages_processed).toBe(5);
+    expect(result.embedded).toBe(5);
+  });
 });
 
 describe('embedAllStale --source threading (D7)', () => {
