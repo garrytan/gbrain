@@ -94,6 +94,25 @@ export function getPostgresSchema(
 export class PostgresEngine implements BrainEngine {
   readonly kind = 'postgres' as const;
   private _sql: ReturnType<typeof postgres> | null = null;
+  /**
+   * perf: process-lifetime config cache. A single search fires ~85
+   * getConfig() reads (loadConfigWithEngine x2 = 30 keys, plus mode/cache/
+   * intent/rerank/graph-signals resolvers). On a remote pooler each read is
+   * a round-trip; serial they dominate query latency (~5s) and can push the
+   * op handler past cli.ts's 10s disconnect force-exit, truncating stdout.
+   * First read batch-loads the whole `config` table into this Map; writes
+   * update it in place. TTL bounds staleness for multi-writer processes.
+   */
+  private _configCache: Map<string, string | null> | null = null;
+  private _configCacheLoadedAt = 0;
+  private get _configCacheTtlMs(): number {
+    const raw = process.env.GBRAIN_CONFIG_CACHE_TTL_MS;
+    if (raw !== undefined) {
+      const n = parseInt(raw, 10);
+      if (Number.isFinite(n) && n >= 0) return n;
+    }
+    return 30_000;
+  }
   /** Saved config for reconnection. */
   private _savedConfig: (EngineConfig & { poolSize?: number; parentConnectionManager?: ConnectionManager }) | null = null;
   /** Whether a reconnect is in progress (prevents concurrent reconnects). */
@@ -4765,9 +4784,27 @@ export class PostgresEngine implements BrainEngine {
 
   // Config
   async getConfig(key: string): Promise<string | null> {
-    const sql = this.sql;
-    const rows = await sql`SELECT value FROM config WHERE key = ${key}`;
-    return rows.length > 0 ? (rows[0].value as string) : null;
+    const ttl = this._configCacheTtlMs;
+    if (ttl === 0) {
+      const sql = this.sql;
+      const rows = await sql`SELECT value FROM config WHERE key = ${key}`;
+      return rows.length > 0 ? (rows[0].value as string) : null;
+    }
+    const fresh =
+      this._configCache !== null &&
+      Date.now() - this._configCacheLoadedAt < ttl;
+    if (!fresh) {
+      const sql = this.sql;
+      const rows = await sql<{ key: string; value: string }[]>`
+        SELECT key, value FROM config
+      `;
+      const map = new Map<string, string | null>();
+      for (const r of rows) map.set(r.key, r.value);
+      this._configCache = map;
+      this._configCacheLoadedAt = Date.now();
+    }
+    // Map.has distinguishes "known-absent" from "not yet loaded".
+    return this._configCache!.has(key) ? this._configCache!.get(key)! : null;
   }
 
   async setConfig(key: string, value: string): Promise<void> {
@@ -4776,11 +4813,15 @@ export class PostgresEngine implements BrainEngine {
       INSERT INTO config (key, value) VALUES (${key}, ${value})
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
     `;
+    // Write-through so a long-lived process never serves stale config.
+    if (this._configCache !== null) this._configCache.set(key, value);
   }
 
   async unsetConfig(key: string): Promise<number> {
     const sql = this.sql;
     const result = await sql`DELETE FROM config WHERE key = ${key}` as unknown as { count: number };
+    // Write-through: mark known-absent so the cache doesn't serve a stale value.
+    if (this._configCache !== null) this._configCache.set(key, null);
     return result.count ?? 0;
   }
 
