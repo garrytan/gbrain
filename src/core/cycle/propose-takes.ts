@@ -40,10 +40,10 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
+import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { GBrainError } from '../types.ts';
-import type { Page, PageFilters } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
@@ -156,6 +156,12 @@ export interface ProposeTakesResult {
   warnings: string[];
 }
 
+interface ProposeTakesPage {
+  slug: string;
+  source_id: string;
+  compiled_truth: string | null;
+}
+
 /**
  * Compute the content_hash key for the idempotency cache. SHA-256 of the
  * page body suffices — page slug + prompt_version are separate columns in
@@ -208,6 +214,43 @@ export function extractExistingTakesForDedup(pageBody: string): Array<{
     });
   }
   return rows;
+}
+
+function modelNeedsAnthropicKey(model?: string): boolean {
+  if (!model) return true;
+  const normalized = model.toLowerCase();
+  return normalized.startsWith('anthropic:') ||
+    normalized.startsWith('claude') ||
+    normalized === 'sonnet' ||
+    normalized === 'haiku' ||
+    normalized === 'opus';
+}
+
+async function listProposeTakesPages(
+  engine: BrainEngine,
+  scope: ScopedReadOpts,
+  limit: number,
+): Promise<ProposeTakesPage[]> {
+  const where = ['deleted_at IS NULL'];
+  const params: unknown[] = [];
+
+  if (scope.sourceIds && scope.sourceIds.length > 0) {
+    params.push(scope.sourceIds);
+    where.push(`source_id = ANY($${params.length}::text[])`);
+  } else if (scope.sourceId) {
+    params.push(scope.sourceId);
+    where.push(`source_id = $${params.length}`);
+  }
+
+  params.push(limit);
+  return await engine.executeRaw<ProposeTakesPage>(
+    `SELECT slug, source_id, compiled_truth
+     FROM pages
+     WHERE ${where.join(' AND ')}
+     ORDER BY updated_at DESC, id DESC
+     LIMIT $${params.length}`,
+    params,
+  );
 }
 
 /**
@@ -309,6 +352,24 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
+    if (!opts.extractor && modelNeedsAnthropicKey(opts.model) && !hasAnthropicKey()) {
+      return {
+        summary: 'propose_takes skipped: ANTHROPIC_API_KEY is unset',
+        details: {
+          reason: 'no_api_key',
+          pages_scanned: 0,
+          cache_hits: 0,
+          cache_misses: 0,
+          proposals_inserted: 0,
+          budget_exhausted: false,
+          warnings: [],
+          model: opts.model ?? 'claude-sonnet-4-6',
+          prompt_version: promptVersion,
+        },
+        status: 'skipped',
+      };
+    }
+
     const result: ProposeTakesResult = {
       pages_scanned: 0,
       cache_hits: 0,
@@ -318,13 +379,10 @@ class ProposeTakesPhase extends BaseCyclePhase {
       warnings: [],
     };
 
-    // Load pages eligible for proposal. Source-scoped per BaseCyclePhase.
-    const pageFilters: PageFilters = {
-      ...scope,
-      limit: pageLimit,
-      sort: 'updated_desc',
-    };
-    const pages: Page[] = await engine.listPages(pageFilters);
+    // Load only the columns this phase uses. This avoids pulling unrelated
+    // large/toasted page columns into the hot path and makes propose_takes
+    // resilient to corruption in non-essential projections.
+    const pages = await listProposeTakesPages(engine, scope, pageLimit);
 
     if (opts.reporter) {
       opts.reporter.start('propose_takes.pages' as never, pages.length);
@@ -471,4 +529,6 @@ export const __testing = {
   contentHash,
   hasCompleteFence,
   extractExistingTakesForDedup,
+  modelNeedsAnthropicKey,
+  listProposeTakesPages,
 };

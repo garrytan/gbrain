@@ -15,6 +15,9 @@
  */
 
 import { describe, test, expect } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   runPhaseProposeTakes,
   parseExtractorOutput,
@@ -22,6 +25,7 @@ import {
   hasCompleteFence,
   extractExistingTakesForDedup,
   PROPOSE_TAKES_PROMPT_VERSION,
+  __testing,
   type ProposeTakesExtractor,
   type ProposedTake,
 } from '../src/core/cycle/propose-takes.ts';
@@ -45,11 +49,18 @@ function buildMockEngine(opts: {
 
   const engine = {
     kind: 'pglite',
-    async listPages() {
+    async listPages(): Promise<Page[]> {
       return opts.pages;
     },
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       captured.push({ sql, params: params ?? [] });
+      if (sql.includes('SELECT slug, source_id, compiled_truth')) {
+        return opts.pages.map((p) => ({
+          slug: p.slug,
+          source_id: p.source_id,
+          compiled_truth: p.compiled_truth,
+        })) as T[];
+      }
       // SELECT idempotency check
       if (sql.includes('SELECT id FROM take_proposals')) {
         const [sourceId, slug, ch, pv] = params ?? [];
@@ -243,6 +254,39 @@ describe('extractExistingTakesForDedup', () => {
 // ─── Phase integration ──────────────────────────────────────────────
 
 describe('runPhaseProposeTakes — phase integration', () => {
+  test('default extractor skips cleanly when Anthropic is not configured', async () => {
+    const oldHome = process.env.GBRAIN_HOME;
+    const oldKey = process.env.ANTHROPIC_API_KEY;
+    const tempHome = mkdtempSync(join(tmpdir(), 'gbrain-propose-no-key-'));
+    process.env.GBRAIN_HOME = tempHome;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      const { engine, captured } = buildMockEngine({
+        pages: [buildPage({ slug: 'wiki/a', body: 'claim-ish prose' })],
+      });
+      const result = await runPhaseProposeTakes(buildCtx(engine));
+
+      expect(result.status).toBe('skipped');
+      expect(result.summary).toContain('ANTHROPIC_API_KEY is unset');
+      expect((result.details as Record<string, unknown>).reason).toBe('no_api_key');
+      expect(captured).toHaveLength(0);
+    } finally {
+      if (oldHome === undefined) delete process.env.GBRAIN_HOME;
+      else process.env.GBRAIN_HOME = oldHome;
+      if (oldKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = oldKey;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test('modelNeedsAnthropicKey preserves explicit non-Anthropic model overrides', () => {
+    expect(__testing.modelNeedsAnthropicKey()).toBe(true);
+    expect(__testing.modelNeedsAnthropicKey('claude-sonnet-4-6')).toBe(true);
+    expect(__testing.modelNeedsAnthropicKey('anthropic:claude-sonnet-4-6')).toBe(true);
+    expect(__testing.modelNeedsAnthropicKey('sonnet')).toBe(true);
+    expect(__testing.modelNeedsAnthropicKey('openai:gpt-5.2')).toBe(false);
+  });
+
   test('happy path: scans pages, extracts proposals, writes via INSERT', async () => {
     const pages = [buildPage({ slug: 'wiki/concepts/network-effects', body: 'Marketplaces with cold-start liquidity always win.' })];
     const { engine, captured } = buildMockEngine({ pages });
@@ -383,5 +427,17 @@ New prose appended here.`;
     expect(runIdA).toBe(runIdB);
     expect(typeof runIdA).toBe('string');
     expect((runIdA as string).startsWith('propose-')).toBe(true);
+  });
+
+  test('loads proposal candidates with a narrow page projection', async () => {
+    const pages = [buildPage({ slug: 'wiki/narrow', body: 'A narrow projection avoids unrelated page columns.' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => [];
+    await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    const pageSelect = captured.find(c => c.sql.includes('FROM pages'));
+    expect(pageSelect?.sql).toContain('SELECT slug, source_id, compiled_truth');
+    expect(pageSelect?.sql).not.toContain('SELECT p.*');
+    expect(pageSelect?.sql).not.toContain('search_vector');
   });
 });
