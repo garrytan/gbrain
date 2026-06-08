@@ -50,6 +50,25 @@ export interface ParsedMarkdown {
 }
 
 /**
+ * Coerce a raw YAML frontmatter value into a string.
+ *
+ * js-yaml parses unquoted scalars by type: `title: 2024-06-01` becomes a JS
+ * `Date`, `title: 1458` becomes a `number`. The old `(frontmatter.X as string)`
+ * cast was a compile-time lie — at runtime the value stayed a Date/number, so
+ * any downstream `.toLowerCase()` / `.trim()` threw and (via the importer's
+ * failure gate) could wedge sync indefinitely (issue #1939).
+ *
+ * Dates coerce to their UTC ISO date (`2024-06-01`) — deterministic across
+ * machines and matching the on-disk source token, unlike `String(date)` which
+ * renders a timezone-dependent long form. Everything else uses `String()`.
+ */
+export function coerceFrontmatterString(v: unknown): string {
+  if (v == null) return '';
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v);
+}
+
+/**
  * Parse a markdown file with YAML frontmatter into its components.
  *
  * Structure:
@@ -105,20 +124,12 @@ export function parseMarkdown(
 
   const { compiled_truth, timeline } = splitBody(body);
 
-  // YAML coerces unquoted scalar values to their natural type, so a
-  // frontmatter line like `title: 20260517_131712_214848` parses to a
-  // number, not a string. The `as string` cast is compile-time only and
-  // does NOT coerce at runtime, so downstream `.toLowerCase()` calls would
-  // throw "opts.title.toLowerCase is not a function". Coerce defensively.
-  const fmType = frontmatter.type;
-  const type = (typeof fmType === 'string' ? fmType : fmType != null ? String(fmType) : '') || (
+  const type = coerceFrontmatterString(frontmatter.type) || (
     opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath)
   );
-  const fmTitle = frontmatter.title;
-  const title = (typeof fmTitle === 'string' ? fmTitle : fmTitle != null ? String(fmTitle) : '') || inferTitle(filePath);
+  const title = coerceFrontmatterString(frontmatter.title).trim() || inferTitle(filePath);
   const tags = extractTags(frontmatter);
-  const fmSlug = frontmatter.slug;
-  const slug = (typeof fmSlug === 'string' ? fmSlug : fmSlug != null ? String(fmSlug) : '') || inferSlug(filePath);
+  const slug = coerceFrontmatterString(frontmatter.slug) || inferSlug(filePath);
 
   const cleanFrontmatter = { ...frontmatter };
   delete cleanFrontmatter.type;

@@ -127,10 +127,16 @@ export interface LinkBatchInput {
   link_type?: string;
   context?: string;
   /**
-   * Provenance (v0.13+). Pass 'frontmatter' for edges derived from YAML
-   * frontmatter, 'markdown' for [Name](path) refs, 'manual' for user-created.
-   * NULL means "legacy / unknown" and is only used by pre-v0.13 rows; new
-   * writes should always set this. Missing on input defaults to 'markdown'.
+   * Provenance (v0.13+; opened to kebab tags in v114 / #1941). Any lowercase
+   * kebab-case value <=64 chars is DB-valid (CHECK `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`),
+   * so external derivers stamp their own tag (e.g. 'citation-graph'). The
+   * reconciliation-managed built-ins are 'markdown' ([Name](path) refs),
+   * 'frontmatter' (YAML-derived, see origin_*), 'mentions', 'wikilink-resolved';
+   * 'manual' is for user/tool-created edges. NULL = legacy/unknown (pre-v0.13).
+   * Missing on this batch input defaults to 'markdown'. NOTE: the add_link OP
+   * (not this engine method) forbids callers from passing the four managed
+   * built-ins and defaults omitted to 'manual' — internal callers use the
+   * engine directly and keep writing the managed values.
    */
   link_source?: string;
   /** For link_source='frontmatter': slug of the page whose frontmatter created this edge. */
@@ -1137,6 +1143,16 @@ export interface BrainEngine {
    * applied to the to-page side of the join.
    */
   getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]>;
+  /**
+   * v114 (#1941): distinct link_source provenances with edge counts, for
+   * `gbrain link-sources`. Source-scoped via `{sourceId?, sourceIds?}` (both
+   * forms, so federated `allowedSources` reads don't leak cross-source counts).
+   * Deterministic order `count DESC, link_source ASC NULLS LAST` for PG/PGLite
+   * parity. `link_source` may be NULL (legacy/unknown rows).
+   */
+  listLinkSources(
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<{ link_source: string | null; count: number }[]>;
   /**
    * Fuzzy-match a display name to a page slug using pg_trgm similarity.
    * Zero embedding cost, zero LLM cost — designed for the v0.13 resolver used

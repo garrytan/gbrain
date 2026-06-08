@@ -2576,6 +2576,32 @@ export class PGLiteEngine implements BrainEngine {
     return rows as unknown as Link[];
   }
 
+  async listLinkSources(
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<{ link_source: string | null; count: number }[]> {
+    // v114 (#1941): distinct provenances + counts for `gbrain link-sources`.
+    // Scope by the FROM page's source (consistent with getLinks). Federated
+    // {sourceIds} takes precedence over scalar {sourceId}; neither = unscoped.
+    const params: unknown[] = [];
+    let where = '';
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      where = `JOIN pages f ON f.id = l.from_page_id WHERE f.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      where = `JOIN pages f ON f.id = l.from_page_id WHERE f.source_id = $${params.length}`;
+    }
+    const { rows } = await this.db.query(
+      `SELECT l.link_source, COUNT(*)::int AS count
+       FROM links l
+       ${where}
+       GROUP BY l.link_source
+       ORDER BY count DESC, l.link_source ASC NULLS LAST`,
+      params,
+    );
+    return rows as unknown as { link_source: string | null; count: number }[];
+  }
+
   async findByTitleFuzzy(
     name: string,
     dirPrefix?: string,

@@ -120,6 +120,17 @@ hashes match. If both a cron and `--watch` fire simultaneously, no conflict.
    server is down when a push happens, that sync is missed. Pair webhooks
    with a cron fallback that catches anything the webhook missed.
 
+4. **A single un-parseable file can't wedge all indexing.** When a file fails
+   to import (malformed YAML frontmatter, an unquoted colon, etc.), sync holds
+   the bookmark and tells you exactly which file broke — a *fresh* failure
+   fails closed so nothing is silently dropped. But a file that fails the same
+   way `GBRAIN_SYNC_AUTOSKIP_AFTER` consecutive syncs (default 3, set `0` to
+   disable) is auto-skipped so the rest of the brain keeps indexing past it.
+   Skipped files don't disappear: `gbrain doctor` keeps warning until you fix
+   or delete them, and fixing the file clears it on the next sync. A repository
+   history rewrite still hard-blocks even with `--skip-failed`. Run
+   `gbrain sync --skip-failed` to acknowledge a known-bad set yourself.
+
 ## How to Verify
 
 1. **Edit a file and search for the change.** Edit a brain markdown file,

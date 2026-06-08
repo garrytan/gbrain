@@ -2663,6 +2663,30 @@ export class PostgresEngine implements BrainEngine {
     return rows as unknown as Link[];
   }
 
+  async listLinkSources(
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<{ link_source: string | null; count: number }[]> {
+    const sql = this.sql;
+    // v114 (#1941): distinct provenances + counts for `gbrain link-sources`.
+    // Scope by the FROM page's source (consistent with getLinks). Federated
+    // {sourceIds} takes precedence over scalar {sourceId}; neither = unscoped.
+    const sourceCondition =
+      opts?.sourceIds && opts.sourceIds.length > 0
+        ? sql`WHERE f.source_id = ANY(${opts.sourceIds}::text[])`
+        : opts?.sourceId
+          ? sql`WHERE f.source_id = ${opts.sourceId}`
+          : sql``;
+    const rows = await sql`
+      SELECT l.link_source, COUNT(*)::int AS count
+      FROM links l
+      JOIN pages f ON f.id = l.from_page_id
+      ${sourceCondition}
+      GROUP BY l.link_source
+      ORDER BY count DESC, l.link_source ASC NULLS LAST
+    `;
+    return rows as unknown as { link_source: string | null; count: number }[];
+  }
+
   async findByTitleFuzzy(
     name: string,
     dirPrefix?: string,

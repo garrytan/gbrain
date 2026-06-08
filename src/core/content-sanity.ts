@@ -376,18 +376,18 @@ export function assessContentSanity(opts: {
   // doesn't repeat the lowercase per literal.
   const bodyHead = body.slice(0, SCAN_HEAD_BYTES);
   const bodyHeadLower = bodyHead.toLowerCase();
-  // Defensive: although the type contract is `title: string`, YAML can
-  // coerce an unquoted numeric-looking frontmatter title to a number
-  // upstream. Coerce here so `.toLowerCase()` never throws on a non-string.
-  const titleStr = typeof opts.title === 'string' ? opts.title : String(opts.title ?? '');
-  const titleLower = titleStr.toLowerCase();
+  // Defensive coercion (issue #1939): this is a pure exported fn; lint.ts and
+  // import-file both pass `parsed.title`, which a malformed YAML date/number
+  // title could make non-string. Never throw on a bad title.
+  const title = String(opts.title ?? '');
+  const titleLower = title.toLowerCase();
 
   const junk_pattern_matches: string[] = [];
   for (const p of BUILT_IN_JUNK_PATTERNS) {
     const scope = p.applies_to ?? 'both';
     let matched = false;
     if (scope === 'title' || scope === 'both') {
-      if (p.pattern.test(opts.title)) matched = true;
+      if (p.pattern.test(title)) matched = true;
     }
     if (!matched && (scope === 'body' || scope === 'both')) {
       if (p.pattern.test(bodyHead)) matched = true;

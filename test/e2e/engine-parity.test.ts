@@ -339,6 +339,31 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     }
   });
 
+  test('v114 (#1941) listLinkSources parity: same ordered provenance counts on both engines', async () => {
+    const mk = async (eng: BrainEngine) => {
+      for (const s of ['lsp-a', 'lsp-b', 'lsp-c']) {
+        await eng.putPage(s, { type: 'note', title: s, compiled_truth: 'b', timeline: '' });
+      }
+      // citation-graph:2, manual:1 — exercises count DESC + the kebab regex.
+      await eng.addLink('lsp-a', 'lsp-b', '', 'cites', 'citation-graph');
+      await eng.addLink('lsp-a', 'lsp-c', '', 'cites', 'citation-graph');
+      await eng.addLink('lsp-b', 'lsp-c', '', 'rel', 'manual');
+    };
+    await mk(pgEngine);
+    await mk(pgliteEngine);
+
+    const pg = await pgEngine.listLinkSources({ sourceId: 'default' });
+    const pglite = await pgliteEngine.listLinkSources({ sourceId: 'default' });
+
+    const norm = (rows: { link_source: string | null; count: number }[]) =>
+      rows.filter(r => r.link_source === 'citation-graph' || r.link_source === 'manual');
+    expect(norm(pg)).toEqual(norm(pglite));
+    // citation-graph (2) must order before manual (1) on both engines.
+    const cgIdx = pg.findIndex(r => r.link_source === 'citation-graph');
+    const mIdx = pg.findIndex(r => r.link_source === 'manual');
+    expect(cgIdx).toBeLessThan(mIdx);
+  });
+
   test('v0.41.19.0 resolveSlugsByPaths parity: same Map on both engines', async () => {
     const seedSql = `
       INSERT INTO pages (source_id, slug, source_path, type, title, compiled_truth, timeline, frontmatter)

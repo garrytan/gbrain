@@ -44,7 +44,7 @@ export interface RunImportResult {
 export async function runImport(
   engine: BrainEngine,
   args: string[],
-  opts: { commit?: string; strategy?: SyncStrategy; sourceId?: string } = {},
+  opts: { commit?: string; strategy?: SyncStrategy; sourceId?: string; managedBookmark?: boolean } = {},
 ): Promise<RunImportResult> {
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
@@ -438,13 +438,17 @@ export async function runImport(
     // Not a git repo or git not available
   }
 
-  if (gitHead) {
+  // issue #1939: when performFullSync drives runImport it owns the failure
+  // ledger + bookmark via the shared gate (applySyncFailureGate). Skipping the
+  // internal handling here prevents double-recording (which would double-count
+  // the auto-skip `attempts` streak) and a competing bookmark write.
+  if (gitHead && !opts.managedBookmark) {
     // Record failures into the central JSONL so doctor can surface them.
     // Use gitHead as the commit so a later sync can tell "same broken
-    // state as last time" from "new broken state."
+    // state as last time" from "new broken state." Source-scoped (#1939 #2).
     if (failures.length > 0) {
-      const { recordSyncFailures } = await import('../core/sync.ts');
-      recordSyncFailures(failures, gitHead);
+      const { recordFailures } = await import('../core/sync.ts');
+      recordFailures(opts.sourceId ?? 'default', failures, gitHead);
     }
     if (failures.length === 0) {
       await engine.setConfig('sync.last_commit', gitHead);

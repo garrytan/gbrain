@@ -569,29 +569,24 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     // remote doctor.
   }
 
-  // 4. Sync failures (file-plane state, not in-DB; see src/core/sync.ts).
-  // Read the JSONL file directly at the canonical path; cheap and engine-agnostic.
+  // 4. Sync failures (file-plane ledger; see src/core/sync-failure-ledger.ts).
+  // issue #1939: read via the shared loader + severity decision so this remote
+  // surface agrees with the local buildChecks emitter by construction. Stays
+  // subprocess-free (file read + Date.parse only, no git), preserving the remote
+  // trust boundary. Escalates to FAIL when a stuck bookmark has blocked past the
+  // sync-freshness fail cadence or unresolved count is large.
   try {
-    const { readFileSync, existsSync } = await import('fs');
-    const { gbrainPath } = await import('../core/config.ts');
-    const path = gbrainPath('sync-failures.jsonl');
-    let unacked = 0;
-    if (existsSync(path)) {
-      const lines = readFileSync(path, 'utf-8').split('\n').filter(l => l.trim());
-      for (const line of lines) {
-        try {
-          const entry = JSON.parse(line) as { acknowledged_at?: string | null };
-          if (!entry.acknowledged_at) unacked++;
-        } catch { /* skip malformed line */ }
-      }
-    }
-    checks.push({
-      name: 'sync_failures',
-      status: unacked === 0 ? 'ok' : 'warn',
-      message: unacked === 0
-        ? 'No unacked failures'
-        : `${unacked} unacked failure(s) — run \`gbrain sync --skip-failed\` on the host to acknowledge`,
-    });
+    const { loadSyncFailures, decideSyncFailureSeverity } = await import('../core/sync.ts');
+    const entries = loadSyncFailures();
+    const failHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', 72);
+    const sev = decideSyncFailureSeverity({ entries, nowMs: Date.now(), failHours });
+    const msg =
+      sev.unresolved === 0
+        ? 'No unresolved sync failures'
+        : `${sev.unresolved} unresolved sync failure(s)` +
+          (sev.auto_skipped > 0 ? ` (${sev.auto_skipped} auto-skipped — pages NOT indexed)` : '') +
+          ` — run \`gbrain sync --skip-failed\` on the host to acknowledge`;
+    checks.push({ name: 'sync_failures', status: sev.status, message: msg });
   } catch {
     checks.push({ name: 'sync_failures', status: 'ok', message: 'No failures recorded' });
   }
@@ -4396,19 +4391,25 @@ export async function buildChecks(
   // Without this doctor check, users see "sync blocked" and have no
   // surface showing which files to fix.
   try {
-    const { unacknowledgedSyncFailures, loadSyncFailures, summarizeFailuresByCode } = await import('../core/sync.ts');
-    const unacked = unacknowledgedSyncFailures();
+    const { unacknowledgedSyncFailures, loadSyncFailures, summarizeFailuresByCode, decideSyncFailureSeverity } = await import('../core/sync.ts');
     const all = loadSyncFailures();
-    if (unacked.length > 0) {
-      const codeSummary = summarizeFailuresByCode(unacked);
+    // issue #1939: "unresolved" = open + auto_skipped. Severity (ok/warn/fail)
+    // comes from the SAME shared decision the remote surface uses, so a stuck
+    // bookmark blocked past the fail cadence (or a large unresolved count)
+    // escalates to FAIL instead of staying a quiet WARN forever.
+    const unresolved = unacknowledgedSyncFailures();
+    if (unresolved.length > 0) {
+      const failHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', 72);
+      const sev = decideSyncFailureSeverity({ entries: all, nowMs: Date.now(), failHours });
+      const codeSummary = summarizeFailuresByCode(unresolved);
       const codeBreakdown = codeSummary.map(s => `${s.code}=${s.count}`).join(', ');
-      const preview = unacked.slice(0, 3).map(f => `${f.path} (${f.error.slice(0, 60)})`).join('; ');
+      const preview = unresolved.slice(0, 3).map(f => `${f.path} (${f.error.slice(0, 60)})`).join('; ');
       // v0.40.3.0 T8b (D8 + D12 Bug 3): emit a single sync-retry-failed
       // step. sync-skip-failed is DELIBERATELY NOT emitted as a remediation
       // — auto-skipping failed syncs hides data loss. Operators can still
       // run `gbrain sync --skip-failed` manually.
       const { makeRemediationStep } = await import('../core/remediation-step.ts');
-      const oldestTs = unacked.reduce(
+      const oldestTs = unresolved.reduce(
         (acc, f) => (acc === '' || f.ts < acc ? f.ts : acc),
         '',
       );
@@ -4417,18 +4418,20 @@ export async function buildChecks(
         job: 'sync-retry-failed',
         // Content-stable per codex D12 Bug 2: count + oldest_ts captures
         // the relevant state without using a real timestamp.
-        params: { failure_count: unacked.length, oldest_failure: oldestTs },
-        severity: unacked.length >= 10 ? 'high' : 'medium',
+        params: { failure_count: unresolved.length, oldest_failure: oldestTs },
+        severity: sev.status === 'fail' ? 'high' : 'medium',
         est_seconds: 30,
         est_usd_cost: 0,
-        rationale: `Retry ${unacked.length} unacked sync failure(s) (codes: ${codeBreakdown})`,
+        rationale: `Retry ${unresolved.length} unresolved sync failure(s) (codes: ${codeBreakdown})`,
       });
       checks.push({
         name: 'sync_failures',
-        status: 'warn',
+        status: sev.status,
         message:
-          `${unacked.length} unacknowledged sync failure(s) [${codeBreakdown}]. ${preview}` +
-          `${unacked.length > 3 ? `, and ${unacked.length - 3} more` : ''}. ` +
+          `${unresolved.length} unresolved sync failure(s) [${codeBreakdown}]` +
+          (sev.auto_skipped > 0 ? ` — ${sev.auto_skipped} auto-skipped (pages NOT indexed)` : '') +
+          `. ${preview}` +
+          `${unresolved.length > 3 ? `, and ${unresolved.length - 3} more` : ''}. ` +
           `Fix the file(s) and re-run 'gbrain sync', or use 'gbrain sync --skip-failed' to acknowledge.`,
         remediation: [retryStep],
         remediation_status: 'remediable',

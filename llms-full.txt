@@ -1373,6 +1373,7 @@ These apply to ALL brain-writing skills:
 | "enrich this article", "enrich brain pages", "batch enrich", "make brain pages useful" | `skills/article-enrichment/SKILL.md` |
 | "strategic reading", "read this through the lens of", "apply this to my problem", "what can I learn from this about", "extract a playbook from" | `skills/strategic-reading/SKILL.md` |
 | "concept synthesis", "synthesize my concepts", "find patterns across my notes", "build my intellectual map", "trace idea evolution" | `skills/concept-synthesis/SKILL.md` |
+| "idea lineage", "trace the lineage of this idea", "how my thinking about", "how has my thinking about", "what is my current version of", "show reversals in my thinking about", "where did this idea come from" | `skills/idea-lineage/SKILL.md` |
 | "perplexity research", "what's new about", "current state of", "web research", "what changed about" | `skills/perplexity-research/SKILL.md` |
 | "crawl my archive", "find gold in my archive", "archive crawler", "scan my dropbox for", "mine my old files for" | `skills/archive-crawler/SKILL.md` |
 | "verify this academic claim", "check this study", "academic verify", "validate citation", "is this study real" | `skills/academic-verify/SKILL.md` |
@@ -2615,6 +2616,17 @@ hashes match. If both a cron and `--watch` fire simultaneously, no conflict.
    instant sync, the receiving server must be running and reachable. If the
    server is down when a push happens, that sync is missed. Pair webhooks
    with a cron fallback that catches anything the webhook missed.
+
+4. **A single un-parseable file can't wedge all indexing.** When a file fails
+   to import (malformed YAML frontmatter, an unquoted colon, etc.), sync holds
+   the bookmark and tells you exactly which file broke — a *fresh* failure
+   fails closed so nothing is silently dropped. But a file that fails the same
+   way `GBRAIN_SYNC_AUTOSKIP_AFTER` consecutive syncs (default 3, set `0` to
+   disable) is auto-skipped so the rest of the brain keeps indexing past it.
+   Skipped files don't disappear: `gbrain doctor` keeps warning until you fix
+   or delete them, and fixing the file clears it on the next sync. A repository
+   history rewrite still hard-blocks even with `--skip-failed`. Run
+   `gbrain sync --skip-failed` to acknowledge a known-bad set yourself.
 
 ## How to Verify
 

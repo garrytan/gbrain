@@ -94,6 +94,25 @@ const CLI_ONLY_SELF_HELP = new Set([
   'connect',
 ]);
 
+// v114 (#1941): alias -> operation lookup, kept separate from `cliOps` so
+// aliases don't double-list in printHelp's auto-generated section. Collisions
+// with a primary CLI name, a CLI_ONLY command, or another alias throw at module
+// load — a silent route-shadow is worse than a loud boot failure. Placed after
+// CLI_ONLY so the collision check can see it.
+export const cliAliases = new Map<string, Operation>();
+for (const op of operations) {
+  if (op.cliHints?.hidden) continue;
+  for (const alias of op.cliHints?.aliases ?? []) {
+    if (cliOps.has(alias) || CLI_ONLY.has(alias) || cliAliases.has(alias)) {
+      throw new Error(
+        `CLI alias collision: '${alias}' (op '${op.name}') conflicts with an existing ` +
+        `command or alias. Rename the alias in src/core/operations.ts.`,
+      );
+    }
+    cliAliases.set(alias, op);
+  }
+}
+
 // v0.42 self-upgrade: commands that must NOT trigger the startup update-check
 // (they ARE the update path, or are trivial/no-DB) and which set
 // GBRAIN_SKIP_STARTUP_HOOKS for any children they spawn.
@@ -248,9 +267,9 @@ async function main() {
 
   // Per-command --help
   if (hasHelpFlag(subArgs)) {
-    const op = cliOps.get(command);
+    const op = cliOps.get(command) ?? cliAliases.get(command);
     if (op) {
-      printOpHelp(op);
+      printOpHelp(op, command);
       return;
     }
     if (CLI_ONLY.has(command) && !CLI_ONLY_SELF_HELP.has(command)) {
@@ -265,8 +284,8 @@ async function main() {
     return;
   }
 
-  // Shared operations
-  const op = cliOps.get(command);
+  // Shared operations (fall through to aliases, e.g. link-add -> add_link)
+  const op = cliOps.get(command) ?? cliAliases.get(command);
   if (!op) {
     console.error(`Unknown command: ${command}`);
     console.error('Run gbrain --help for available commands.');
@@ -2058,9 +2077,11 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
   return engine;
 }
 
-function printOpHelp(op: Operation) {
+export function printOpHelp(op: Operation, invokedName?: string) {
   const positional = (op.cliHints?.positional || []).map(p => `<${p}>`).join(' ');
-  const name = op.cliHints?.name || op.name;
+  // v114 (#1941): when invoked via an alias (e.g. `gbrain link-add --help`),
+  // show the alias the user typed, not the primary op name.
+  const name = invokedName || op.cliHints?.name || op.name;
   console.log(`Usage: gbrain ${name} ${positional} [options]\n`);
   console.log(op.description + '\n');
   const entries = Object.entries(op.params);
@@ -2125,8 +2146,11 @@ EMBEDDINGS
   embed [<slug>|--all|--stale]       Generate/refresh embeddings
 
 LINKS
-  link <from> <to> [--type T]        Create typed link
-  unlink <from> <to>                 Remove link
+  link <from> <to>                   Create typed link (alias: link-add)
+        [--link-type T] [--link-source S]   provenance defaults to 'manual'
+  unlink <from> <to>                 Remove link (alias: link-rm)
+        [--link-type T] [--link-source S]   filter which edges to remove
+  link-sources                       List provenances in use, with edge counts
   backlinks <slug>                   Incoming links
   graph <slug> [--depth N]           Traverse link graph (returns nodes)
   graph-query <slug> [--type T]      Edge-based traversal with type/direction filters
@@ -2222,7 +2246,12 @@ Run gbrain <command> --help for command-specific help.
 `);
 }
 
-main().catch(e => {
-  console.error(e.message || e);
-  process.exit(1);
-});
+// Only auto-run when invoked as the entry point (the compiled binary or
+// `bun src/cli.ts`). Guarded so tests can import cliAliases / printOpHelp
+// without triggering argv parsing + main(). v114 (#1941).
+if (import.meta.main) {
+  main().catch(e => {
+    console.error(e.message || e);
+    process.exit(1);
+  });
+}

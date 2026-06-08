@@ -431,12 +431,14 @@ CREATE TABLE IF NOT EXISTS links (
   to_page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   link_type      TEXT    NOT NULL DEFAULT '',
   context        TEXT    NOT NULL DEFAULT '',
-  -- v0.41.18.0: 'mentions' added for auto-linked body-text mentions
-  -- (gbrain extract links --by-mention). Filtered OUT of backlink-count
-  -- for search ranking; only counts toward orphan-ratio + graph traversal.
-  -- v0.40.8.2 (#972): 'wikilink-resolved' added for opt-in global-basename
-  -- wikilink resolution (bare [[name]] resolved by slug tail).
-  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions', 'wikilink-resolved')),
+  -- v114 (#1941): link_source is an open kebab-case provenance, not a closed
+  -- allowlist — external derivers (e.g. 'citation-graph') stamp their own tag
+  -- without a gbrain migration. Format gate only: lowercase kebab, <=64 chars.
+  -- The reconciliation-managed built-ins ('markdown','frontmatter','mentions',
+  -- 'wikilink-resolved') still satisfy this and are written internally; the
+  -- add_link op forbids CALLERS from forging them (see operations.ts). 'manual'
+  -- is the user-facing default for hand/tool-created edges.
+  link_source    TEXT    CHECK (link_source IS NULL OR (link_source ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$' AND char_length(link_source) <= 64)),
   -- v0.41.18.0: nullable link_kind distinguishes "plain body mention" from
   -- "verb-pattern-derived typed link" within link_source='mentions'.
   -- Codex finding #12 design: keep link_source stable; add link_kind

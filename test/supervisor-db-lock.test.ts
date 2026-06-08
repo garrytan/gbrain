@@ -10,6 +10,9 @@
  *   - refresh-failure past the threshold fails SAFE (exits non-zero) (F1A)
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
+import { existsSync, unlinkSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { tryAcquireDbLock } from '../src/core/db-lock.ts';
 import { MinionSupervisor, ExitCodes, supervisorLockId, classifySupervisorSingleton } from '../src/core/minions/supervisor.ts';
@@ -32,12 +35,16 @@ beforeEach(async () => {
 });
 
 describe('#1849 supervisorLockId', () => {
-  test('keys on DB identity AND queue', () => {
-    expect(supervisorLockId('default', 'postgres://x')).toBe('gbrain-supervisor:postgres://x:default');
-    expect(supervisorLockId('shell', 'postgres://x')).toBe('gbrain-supervisor:postgres://x:shell');
-    // Different DB identity → different lock even for the same queue.
-    expect(supervisorLockId('default', 'postgres://a'))
-      .not.toBe(supervisorLockId('default', 'postgres://b'));
+  test('keys on queue ONLY (DB scoping is physical — the lock row lives in the DB)', () => {
+    expect(supervisorLockId('default')).toBe('gbrain-supervisor:default');
+    expect(supervisorLockId('shell')).toBe('gbrain-supervisor:shell');
+    // Different queues → different locks.
+    expect(supervisorLockId('default')).not.toBe(supervisorLockId('shell'));
+    // Regression (the bug this fixes): the id must NOT depend on how the same
+    // physical DB was addressed. Two supervisors on one DB via different URLs
+    // must compute the SAME id so they collide on the one shared locks table.
+    // The function takes no DB-identity arg precisely so it can't diverge.
+    expect(supervisorLockId.length).toBe(1);
   });
 });
 
@@ -75,7 +82,7 @@ describe('#1849 classifySupervisorSingleton (doctor)', () => {
 
 describe('#1849 DB lock is the real singleton', () => {
   test('second acquire of the same (db, queue) lock is refused', async () => {
-    const id = supervisorLockId('default', 'pglite:test');
+    const id = supervisorLockId('default');
     const first = await tryAcquireDbLock(engine, id, 5);
     expect(first).not.toBeNull();
     // A second supervisor (different pidfile, same db+queue) gets null → exit 2.
@@ -89,13 +96,55 @@ describe('#1849 DB lock is the real singleton', () => {
   });
 
   test('different queues on the same DB do not collide', async () => {
-    const a = await tryAcquireDbLock(engine, supervisorLockId('default', 'pglite:test'), 5);
-    const b = await tryAcquireDbLock(engine, supervisorLockId('shell', 'pglite:test'), 5);
+    const a = await tryAcquireDbLock(engine, supervisorLockId('default'), 5);
+    const b = await tryAcquireDbLock(engine, supervisorLockId('shell'), 5);
     expect(a).not.toBeNull();
     expect(b).not.toBeNull();
     await a!.release();
     await b!.release();
   });
+});
+
+describe('#1849 LOCK_HELD path does not strand the pidfile', () => {
+  test('the pidfile-cleanup exit listener is installed BEFORE the DB-lock acquire', async () => {
+    // Supervisor A already holds the queue lock.
+    const holderA = await tryAcquireDbLock(engine, supervisorLockId('default'), 5);
+    expect(holderA).not.toBeNull();
+
+    const pidFile = join(tmpdir(), `gbrain-sup-stranded-${process.pid}-${Math.random().toString(36).slice(2)}.pid`);
+    const sup = new MinionSupervisor(engine, { cliPath: '/bin/sh', healthInterval: 0, json: true, pidFile });
+
+    // Capture the 'exit' listener start() registers (if any) and stop execution
+    // at the first process.exit (the LOCK_HELD path) the way the real exit would.
+    let exitListener: ((...a: unknown[]) => void) | null = null;
+    const onSpy = spyOn(process, 'on').mockImplementation(((event: string, cb: (...a: unknown[]) => void) => {
+      if (event === 'exit') exitListener = cb;
+      return process;
+    }) as never);
+    const exitSpy = spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    try {
+      try { await sup.start(); } catch { /* exit stub throws at LOCK_HELD */ }
+
+      expect(exitSpy).toHaveBeenCalledWith(ExitCodes.LOCK_HELD);
+      // The bug: the exit listener was registered AFTER the DB-lock exit, so
+      // start() threw before reaching it and the pidfile this process created
+      // is stranded. The fix installs it first → it's captured here.
+      expect(exitListener).not.toBeNull();
+      // And it actually cleans up the pidfile we created (contents match our pid).
+      expect(existsSync(pidFile)).toBe(true);
+      exitListener!();
+      expect(existsSync(pidFile)).toBe(false);
+    } finally {
+      onSpy.mockRestore();
+      exitSpy.mockRestore();
+      if (existsSync(pidFile)) unlinkSync(pidFile);
+      await holderA!.release();
+    }
+  });
+
 });
 
 describe('#1849 refresh-failure fails safe (F1A)', () => {

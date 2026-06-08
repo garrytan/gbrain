@@ -2,6 +2,45 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.32.0] - 2026-06-07
+
+**A single un-parseable note can no longer silently stop your brain from indexing anything new.** A page whose YAML frontmatter `title:` was a bare date (`title: 2024-06-01`) or number (`title: 1458`) parsed as a Date/number, not text — and the importer threw when it tried to lowercase it. That throw blocked the sync bookmark from advancing, so every later `gbrain sync` re-walked the whole repo, never reached HEAD, and quietly stopped indexing new commits. The page was committed and on GitHub, but `gbrain get` returned `page_not_found` with no surfaced error.
+
+Two fixes. First, a non-string title/slug/type now coerces deterministically at parse time — a YAML date becomes its UTC ISO string (`2024-06-01`), so the same page reads the same on every machine and the import never throws. Second, the importer gained a **bounded auto-skip safety valve**: a file that fails to import N consecutive syncs (default 3, `GBRAIN_SYNC_AUTOSKIP_AFTER`) is recorded and skipped so it can't wedge all indexing forever — while a *fresh* failure still fails closed (the bookmark holds and you're told what broke), and a repository history rewrite still hard-blocks even with `--skip-failed`. Skipped pages stay visible: `gbrain doctor` keeps warning until you fix them, and escalates to a hard failure when a real failure has blocked the bookmark past the staleness window.
+
+`gbrain doctor` now decides sync-failure severity through one shared rule on both the local and remote surfaces, so a stuck bookmark surfaces identically whether you run doctor on your own machine or against a remote brain.
+
+### Added
+- **Bounded auto-skip sync ledger.** A file that fails N consecutive syncs (`GBRAIN_SYNC_AUTOSKIP_AFTER`, default 3; set `0` to disable) is auto-skipped so one poison file can't freeze indexing for the whole brain. Skips are per-source, survive crashes (the bookmark advances before anything is marked skipped), and self-heal — fix or delete the file and the next sync clears it. `gbrain doctor` lists what was skipped and why.
+
+### Fixed
+- **Non-string frontmatter titles no longer wedge indexing (#1939).** `title: 2024-06-01` / `title: 1458` (and date/number `slug`/`type`) coerce to deterministic strings at parse time instead of throwing, so a handful of date-named notes can't silently stop your brain from indexing new commits.
+- **`gbrain doctor` sync-failure severity is now consistent across surfaces (#1939).** Local and remote doctor share one decision: a stuck bookmark escalates to FAIL once it has blocked past the staleness window (or many files are blocking), while already-skipped pages stay a visible warning.
+
+### To take advantage of v0.42.32.0
+Upgrade and run `gbrain sync` once. Any pages that previously wedged the importer (bare date/number titles) now import on their own. If a file still genuinely can't parse, sync tells you which one; fix it, or let the auto-skip valve move past it after a few runs and watch for it in `gbrain doctor`. Tune the threshold with `GBRAIN_SYNC_AUTOSKIP_AFTER` (set `0` to keep the strict fail-closed behavior).
+
+## [0.42.31.0] - 2026-06-07
+
+**You can now write typed graph edges with your own provenance straight from the CLI — `gbrain link-add a b --link-type relies-on --link-source citation-graph` — and an external edge-writer (a citation-graph ingester, an importer, a classifier) no longer needs a gbrain schema migration to register a new provenance.** Two ergonomics gaps for tools that compute edges out-of-band, filed by a downstream agent building a citation-graph ingester (#1941).
+
+Before this, `link_source` was a closed allowlist: anything outside `markdown`/`frontmatter`/`manual`/`mentions`/`wikilink-resolved` was rejected by a CHECK constraint, so a deriver had to either patch gbrain's schema or stamp its machine-derived edges `manual` — which made them indistinguishable from hand-entered ones. `link_source` is now an open, format-validated provenance: any lowercase kebab-case tag up to 64 chars (`citation-graph`, `relies-on-graph`, your-tag) is valid, no migration needed. The format gate still rejects garbage (uppercase, spaces, underscores, leading/trailing/double dashes).
+
+The CLI gap is closed too. `gbrain link` / `gbrain unlink` now take `--link-source` and `--link-type`, with `link-add` / `link-rm` aliases for discoverability. A new `gbrain link-sources` lists the distinct provenances a brain carries (with counts) — the read-side replacement for the discoverability the old allowlist gave you for free. CLI-created edges now record `manual` provenance by default instead of masquerading as parsed-from-`markdown`, and the reconciliation-managed provenances stay reserved for the writers that own their semantics.
+
+### Added
+- **`gbrain link-add` / `link-rm` / `link-sources`** plus `--link-source` and `--link-type` on the link ops. Write typed, provenance-tagged, source-scoped edges from the CLI and list which provenances a brain holds. Provenance is any kebab-case tag; removals can filter by provenance so machine-derived edges delete cleanly without touching hand-entered ones. (#1941)
+
+### Changed
+- **`link_source` is an open kebab-case provenance, not a closed allowlist (migration v114).** External edge-writers register a new provenance with no gbrain migration. Existing provenances are unaffected; the migration is lock-friendly on Postgres (validates without blocking writes) and applies automatically on upgrade. CLI-created links now default to `manual` provenance.
+
+### Fixed
+- **Supervisor queue-singleton hardening (follow-up to #1849).** Two supervisors pointed at the same database via different-but-equivalent connection strings could each acquire the "one per queue" lock; the lock is now keyed on the queue alone (its row already lives in the target database), so same-database + same-queue collides correctly. A supervisor that loses the lock race on startup also no longer leaves its pidfile behind to block the next start.
+
+### To take advantage of v0.42.31.0
+
+`gbrain upgrade`. The constraint migration runs automatically. To write edges from a tool or the CLI: `gbrain link-add <from> <to> --link-type <verb> --link-source <your-tag>`; `gbrain link-sources` shows what's in the graph; `gbrain link-rm <from> <to> --link-source <your-tag>` removes only that provenance's edges.
+
 ## [0.42.29.0] - 2026-06-07
 
 **The background-job queue stops thrashing on long jobs, the cycle stops wedging itself, and you can no longer run two supervisors against one queue by accident.** Three fixes plus a voice-agent feature.

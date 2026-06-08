@@ -47,6 +47,7 @@
     "skills/enrich",
     "skills/functional-area-resolver",
     "skills/idea-ingest",
+    "skills/idea-lineage",
     "skills/ingest",
     "skills/maintain",
     "skills/media-ingest",

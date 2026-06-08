@@ -11,10 +11,14 @@ import {
   isSyncable,
   unsyncableReason,
   resolveSlugForPath,
-  recordSyncFailures,
   unacknowledgedSyncFailures,
   acknowledgeSyncFailures,
+  loadSyncFailures,
   formatCodeBreakdown,
+  applySyncFailureGate,
+  isSkippablePath,
+  resolveAutoSkipThreshold,
+  DEFAULT_SOURCE_ID,
 } from '../core/sync.ts';
 import { estimateTokens, CHUNKER_VERSION } from '../core/chunkers/code.ts';
 import {
@@ -1472,6 +1476,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   };
 
   const pagesAffected: string[] = [];
+  // issue #1939: file paths that imported cleanly this run. The failure-ledger
+  // gate clears these so a previously-failing file's `attempts` streak resets
+  // on success (consecutive-failure semantics for the auto-skip valve).
+  const succeededPaths: string[] = [];
   let chunksCreated = 0;
   // v0.41.13.0 (T2): tracks add+modify files actually persisted so far.
   // Only bumped from inside importOnePath's success path. partial() reports
@@ -1811,6 +1819,11 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         // correct only when the gate compared HEAD == captured; under pinning a
         // forward delete must not block.
         await markCompleted(path);
+        // issue #1939 adversarial finding #1: a file that previously failed to
+        // parse (open ledger row) and is now gone from disk is resolved — clear
+        // its row so it can't age doctor to a permanent FAIL. (This covers the
+        // net-zero add-then-delete range where the path isn't in filtered.deleted.)
+        succeededPaths.push(path);
         progress.tick(1, `skip:${path}`);
         return;
       }
@@ -1831,6 +1844,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         if (result.status === 'imported') {
           chunksCreated += result.chunks;
           pagesAffected.push(result.slug);
+          // issue #1939: record the file path (not slug) so the gate clears any
+          // prior failure-ledger row — success resets the auto-skip attempt streak.
+          succeededPaths.push(path);
           // v0.41.13.0 (T2): bump filesImported on every successful
           // persist. partial() reports this so cron operators see how
           // much actually landed before --timeout fired.
@@ -1993,79 +2009,104 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   const elapsed = Date.now() - start;
 
-  // Bug 9 — gate the sync bookmark on success. If any per-file parse
-  // failed, record it to ~/.gbrain/sync-failures.jsonl and DO NOT advance
-  // sync.last_commit. The next sync re-walks the same diff and re-attempts
-  // the failed files. Escape hatches: --skip-failed acknowledges the
-  // current set, --retry-failed re-parses before running the normal sync.
-  if (failedFiles.length > 0) {
-    recordSyncFailures(failedFiles, pin);
-    // Emit structured summary grouped by error code so the operator
-    // can see *why* files failed, not just how many.
+  // issue #1939 — gate the bookmark through the shared failure ledger.
+  //   • Fresh failures still BLOCK (fail-closed): the next sync re-walks the
+  //     diff and re-attempts. Escape hatch: --skip-failed.
+  //   • A file that fails >= threshold consecutive syncs AUTO-SKIPS so a poison
+  //     file can't wedge all indexing forever (recorded, surfaced by doctor).
+  //   • A `<head>` SENTINEL (history rewrite) HARD-BLOCKS even with
+  //     --skip-failed — advancing would record a commit that no longer matches
+  //     the indexed tree.
+  // `advance` is the bookmark write; the gate runs it ONLY when advancing, and
+  // ALWAYS before marking anything auto-skipped/acknowledged (crash-atomic).
+  const advance = async (): Promise<void> => {
+    // v0.42.x (#1794): advance to the PINNED target (not live HEAD) — commits
+    // past the pin are the next sync's pin..HEAD diff. `commitTimeMs(pin)` stamps
+    // newest_content_at against the commit we drained to. `last_sync_at` is bumped
+    // HERE and ONLY here so the autopilot scheduler never sees a stuck source as
+    // "fresh". The checkpoint rows clear here — CONVERGENCE CONTRACT: sync
+    // convergence == IMPORT convergence; downstream extract/facts/embed is
+    // decoupled (its own resumable stale sweeps).
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(repoPath, pin));
+    await engine.setConfig('sync.last_run', new Date().toISOString());
+    await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
+    await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+    await clearOpCheckpoint(engine, ckpt.paths);
+    await clearOpCheckpoint(engine, ckpt.target);
+  };
+
+  // issue #1939 adversarial finding #1: a file that failed to parse (open ledger
+  // row) and is then deleted/renamed-away never re-enters failedFiles and never
+  // imports, so its row would never clear and would age doctor to a permanent
+  // FAIL. Treat removed paths as resolved so the ledger self-heals.
+  const resolvedPaths = [
+    ...succeededPaths,
+    ...filtered.deleted,
+    ...filtered.renamed.map(r => r.from),
+  ];
+
+  const gate = await applySyncFailureGate({
+    sourceId: opts.sourceId ?? DEFAULT_SOURCE_ID,
+    failedFiles,
+    succeededPaths: resolvedPaths,
+    commit: pin,
+    skipFailed: opts.skipFailed === true,
+    advance,
+  });
+
+  if (!gate.advanced) {
     const codeBreakdown = formatCodeBreakdown(failedFiles);
-    if (!opts.skipFailed) {
+    if (gate.sentinelBlocked) {
       serr(
-        `\nSync blocked: ${failedFiles.length} file(s) failed to parse:\n` +
+        `\nSync blocked: repository history changed during sync (force-push / reset).\n` +
         `${codeBreakdown}\n\n` +
-        `Fix the YAML frontmatter in the files above and re-run, or use ` +
-        `'gbrain sync --skip-failed' to acknowledge and move on.`,
+        `The pinned target is no longer an ancestor of HEAD; advancing would record ` +
+        `a commit that doesn't match the indexed tree. Re-run sync to re-pin against ` +
+        `current HEAD.`,
       );
-      // Update last_run + repo_path (progress on infra) but NOT last_commit.
-      // v0.42.x (#1794): the checkpoint is INTENTIONALLY left in place — the
-      // banked `completed` set (flushed above) lets the next run skip the files
-      // already drained and re-attempt only the failures.
-      await engine.setConfig('sync.last_run', new Date().toISOString());
-      await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
-      return {
-        status: 'blocked_by_failures',
-        fromCommit: lastCommit,
-        toCommit: pin,
-        added: filtered.added.length,
-        modified: filtered.modified.length,
-        deleted: filtered.deleted.length,
-        renamed: filtered.renamed.length,
-        chunksCreated,
-        embedded: 0,
-        pagesAffected,
-        failedFiles: failedFiles.length,
-      };
-    }
-    // --skip-failed: acknowledge the now-recorded set and proceed.
-    const acked = acknowledgeSyncFailures();
-    if (acked.count > 0) {
+    } else {
+      const fileFailCount = failedFiles.filter(f => isSkippablePath(f.path)).length;
       serr(
-        `  Acknowledged ${acked.count} failure(s) and advancing past them:\n` +
-        `${formatCodeBreakdown(acked.summary)}`,
+        `\nSync blocked: ${fileFailCount} file(s) failed to parse:\n` +
+        `${codeBreakdown}\n\n` +
+        `Fix the frontmatter and re-run, or use 'gbrain sync --skip-failed' to ` +
+        `acknowledge and move on. A file that keeps failing auto-skips after ` +
+        `${resolveAutoSkipThreshold()} consecutive syncs.`,
       );
     }
+    // Update last_run + repo_path (progress on infra) but NOT last_commit. The
+    // checkpoint is INTENTIONALLY left in place — the banked completed set lets
+    // the next run skip the drained files and re-attempt only the failures.
+    await engine.setConfig('sync.last_run', new Date().toISOString());
+    await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
+    return {
+      status: 'blocked_by_failures',
+      fromCommit: lastCommit,
+      toCommit: pin,
+      added: filtered.added.length,
+      modified: filtered.modified.length,
+      deleted: filtered.deleted.length,
+      renamed: filtered.renamed.length,
+      chunksCreated,
+      embedded: 0,
+      pagesAffected,
+      failedFiles: failedFiles.length,
+    };
   }
 
-  // Update sync state AFTER all changes succeed (source-scoped when
-  // opts.sourceId is set, global config otherwise). v0.42.x (#1794): advance to
-  // the PINNED target (not live HEAD) — commits past the pin are the next
-  // sync's pin..HEAD diff. `commitTimeMs(pin)` stamps newest_content_at against
-  // the commit we actually drained to. `last_sync_at` is bumped HERE and ONLY
-  // here (inside writeSyncAnchor) — never on a killed partial — so the
-  // autopilot scheduler never sees a stuck source as "fresh".
-  await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(repoPath, pin));
-  await engine.setConfig('sync.last_run', new Date().toISOString());
-  await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
-  // v0.20.0 Cathedral II Layer 12: persist the chunker version we just
-  // finished with so the next sync's up_to_date gate respects it. Only
-  // source-scoped syncs track this (see readChunkerVersion for rationale).
-  await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
-  // v0.42.x (#1794): import drained the full lastCommit..pin range — the anchor
-  // is advanced and both checkpoint rows clear here. CONVERGENCE CONTRACT: sync
-  // convergence == IMPORT convergence. Downstream (extract/facts/embed below)
-  // is DELIBERATELY decoupled from the anchor: it is size-gated (inline only for
-  // small syncs) and otherwise handled by its own resumable sweeps
-  // (extract --stale watermark, embed --stale / embed-backfill, the extract_facts
-  // + conversation_facts_backfill cycle phases). Coupling a 44k-page facts/embed
-  // pass into the anchor gate would re-introduce the exact non-convergence this
-  // fix exists to kill. A kill mid-downstream just means the banked pages get
-  // their links/embeddings/facts from the next stale sweep.
-  await clearOpCheckpoint(engine, ckpt.paths);
-  await clearOpCheckpoint(engine, ckpt.target);
+  // Advanced. Surface what the gate did past the failures.
+  if (gate.acknowledged > 0) {
+    serr(`  Acknowledged ${gate.acknowledged} failure(s) and advanced past them.`);
+  }
+  if (gate.autoSkipped.length > 0) {
+    serr(
+      `\n  Auto-skipped ${gate.autoSkipped.length} file(s) that failed >= ` +
+      `${resolveAutoSkipThreshold()} consecutive syncs:\n` +
+      gate.autoSkipped.map(p => `    ${p}`).join('\n') + '\n' +
+      `  Bookmark advanced; these pages are NOT indexed and remain in ` +
+      `sync-failures.jsonl. 'gbrain doctor' will warn until they're fixed.`,
+    );
+  }
 
   // Log ingest
   await engine.logIngest({
@@ -2263,55 +2304,80 @@ async function performFullSync(
     commit: headCommit,
     strategy: opts.strategy,
     sourceId: opts.sourceId,
+    // issue #1939: performFullSync owns the failure ledger + bookmark via the
+    // shared gate below; don't let runImport double-record or write its own.
+    managedBookmark: true,
   });
   serr(
     `[gbrain phase] sync.fullsync.import done ${Date.now() - _fullImportT0}ms ` +
     `imported=${result.imported} skipped=${result.skipped} errors=${result.errors}`,
   );
 
-  // Bug 9 — gate the full-sync bookmark on success. runImport already
-  // writes its own sync.last_commit conditionally (import.ts), but
-  // performFullSync is called on first-sync + force-full paths where
-  // the sync module owns the last_commit write. Respect the same gate.
-  if (result.failures.length > 0) {
-    recordSyncFailures(result.failures, headCommit);
-    const codeBreakdown = formatCodeBreakdown(result.failures);
-    if (!opts.skipFailed) {
-      serr(
-        `\nFull sync blocked: ${result.failures.length} file(s) failed:\n` +
-        `${codeBreakdown}\n\n` +
-        `Fix the YAML in those files and re-run, or use '--skip-failed'.`,
-      );
-      await engine.setConfig('sync.last_run', new Date().toISOString());
-      await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
-      return {
-        status: 'blocked_by_failures',
-        fromCommit: null,
-        toCommit: headCommit,
-        added: 0, modified: 0, deleted: 0, renamed: 0,
-        chunksCreated: result.chunksCreated,
-        embedded: 0,
-        pagesAffected: [],
-        failedFiles: result.failures.length,
-      };
-    }
-    const acked = acknowledgeSyncFailures();
-    if (acked.count > 0) {
-      serr(
-        `  Acknowledged ${acked.count} failure(s) and advancing past them:\n` +
-        `${formatCodeBreakdown(acked.summary)}`,
-      );
-    }
-  }
+  // issue #1939 — gate the full-sync bookmark through the SAME shared ledger as
+  // the incremental path (Codex #6: a wedge here on first/forced sync was
+  // previously unreachable by the valve). A full re-import is authoritative for
+  // the whole tree, so any previously-tracked failing path that ISN'T failing
+  // now has been resolved → clear it (resets its auto-skip streak); current
+  // failures still climb their attempts.
+  const fullSourceId = opts.sourceId ?? DEFAULT_SOURCE_ID;
+  const fullFailureSet = new Set(result.failures.map(f => f.path));
+  const fullSucceeded = loadSyncFailures()
+    .filter(e => e.source_id === fullSourceId && isSkippablePath(e.path) && !fullFailureSet.has(e.path))
+    .map(e => e.path);
+  const advanceFull = async (): Promise<void> => {
+    // Persist sync state so the next sync is incremental. Routed through
+    // writeSyncAnchor so --source pins the right sources row.
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(repoPath));
+    await engine.setConfig('sync.last_run', new Date().toISOString());
+    await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
+    await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+  };
 
-  // Persist sync state so next sync is incremental (C1 fix: was missing).
-  // v0.18.0 Step 5: routed through writeSyncAnchor so --source pins it
-  // to the right sources row rather than the global config.
-  await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(repoPath));
-  await engine.setConfig('sync.last_run', new Date().toISOString());
-  await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
-  // v0.20.0 Cathedral II Layer 12: persist chunker version for the gate.
-  await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+  const fullGate = await applySyncFailureGate({
+    sourceId: fullSourceId,
+    failedFiles: result.failures,
+    succeededPaths: fullSucceeded,
+    commit: headCommit,
+    skipFailed: opts.skipFailed === true,
+    advance: advanceFull,
+  });
+
+  if (!fullGate.advanced) {
+    const codeBreakdown = formatCodeBreakdown(result.failures);
+    if (fullGate.sentinelBlocked) {
+      serr(`\nFull sync blocked: repository history changed during sync.\n${codeBreakdown}`);
+    } else {
+      const fileFailCount = result.failures.filter(f => isSkippablePath(f.path)).length;
+      serr(
+        `\nFull sync blocked: ${fileFailCount} file(s) failed:\n` +
+        `${codeBreakdown}\n\n` +
+        `Fix the YAML in those files and re-run, or use '--skip-failed'. A file ` +
+        `that keeps failing auto-skips after ${resolveAutoSkipThreshold()} consecutive syncs.`,
+      );
+    }
+    await engine.setConfig('sync.last_run', new Date().toISOString());
+    await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
+    return {
+      status: 'blocked_by_failures',
+      fromCommit: null,
+      toCommit: headCommit,
+      added: 0, modified: 0, deleted: 0, renamed: 0,
+      chunksCreated: result.chunksCreated,
+      embedded: 0,
+      pagesAffected: [],
+      failedFiles: result.failures.length,
+    };
+  }
+  if (fullGate.acknowledged > 0) {
+    serr(`  Acknowledged ${fullGate.acknowledged} failure(s) and advanced past them.`);
+  }
+  if (fullGate.autoSkipped.length > 0) {
+    serr(
+      `\n  Auto-skipped ${fullGate.autoSkipped.length} file(s) that failed >= ` +
+      `${resolveAutoSkipThreshold()} consecutive syncs. These pages are NOT indexed; ` +
+      `'gbrain doctor' will warn until they're fixed.`,
+    );
+  }
 
   // Full sync doesn't track pagesAffected, so fall back to embed --stale.
   // v0.37 fix wave (Lane D.3 + CDX2-8): switched to runEmbedCore for the

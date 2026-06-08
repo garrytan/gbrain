@@ -44,7 +44,7 @@ import {
 import { dirname } from 'path';
 import type { BrainEngine } from '../engine.ts';
 import { tryAcquireDbLock, type DbLockHandle } from '../db-lock.ts';
-import { currentDbIdentity, currentBrainId } from './worker-registry.ts';
+import { currentBrainId } from './worker-registry.ts';
 
 export type SupervisorEvent =
   | 'started'
@@ -298,14 +298,20 @@ const SUPERVISOR_LOCK_REFRESH_MS = 60_000;
 const SUPERVISOR_LOCK_REFRESH_MAX_FAILURES = 3; // 3 × 60s = 180s < 5min TTL
 
 /**
- * #1849: the queue-scoped supervisor singleton lock id. Keyed on the raw DB
- * identity (T2) + queue so the mutex domain is the (database, queue) pair —
- * not the pidfile path. Exported so `gbrain doctor` queries the same row to
- * surface the holder + effective --max-rss. Pass an explicit dbIdentity
- * (defaults to `currentDbIdentity()`, which reads config without a DB connect).
+ * #1849: the queue-scoped supervisor singleton lock id. Keyed ONLY on the
+ * queue, because the lock ROW lives inside the target database — the (database)
+ * half of the mutex domain is physical, not part of the key. Keying on a
+ * config-derived DB identity (the prior `currentDbIdentity()`) was a bug: two
+ * supervisors pointed at the SAME physical database via different-but-equivalent
+ * URLs/config paths (pooler vs direct port, host alias, trailing params) hashed
+ * to different ids and BOTH acquired the "singleton" lock in the one shared
+ * locks table. Queue-only keying makes same-DB + same-queue collide correctly,
+ * while different physical databases never collide (separate locks tables).
+ * Exported so `gbrain doctor` queries the same row to surface the holder +
+ * effective --max-rss.
  */
-export function supervisorLockId(queue: string, dbIdentity: string = currentDbIdentity()): string {
-  return `gbrain-supervisor:${dbIdentity}:${queue}`;
+export function supervisorLockId(queue: string): string {
+  return `gbrain-supervisor:${queue}`;
 }
 
 /**
@@ -495,24 +501,13 @@ export class MinionSupervisor {
       process.exit(ExitCodes.PID_UNWRITABLE);
     }
 
-    // 1b. #1849: queue-scoped DB singleton lock — the REAL authority. A second
-    // supervisor with a different $HOME / --pid-file passes the pidfile check
-    // above but loses here, so it can't run a conflicting --max-rss worker on
-    // the same (db, queue). Keyed on the raw DB identity (not the lossy
-    // currentBrainId hash) per T2.
-    this.dbLock = await tryAcquireDbLock(this.engine, this.supervisorLockId(), SUPERVISOR_LOCK_TTL_MIN);
-    if (!this.dbLock) {
-      console.error(
-        `Supervisor already running for queue '${this.opts.queue}' on this database ` +
-        `(another supervisor holds the queue lock, regardless of pidfile path). Exiting.`,
-      );
-      process.exit(ExitCodes.LOCK_HELD);
-    }
-    // Refresh the lock on its own timer (independent of healthInterval, which
-    // can be 0/disabled) so the TTL never lapses while we're alive.
-    this.lockRefreshTimer = setInterval(() => { void this.refreshDbLock(); }, SUPERVISOR_LOCK_REFRESH_MS);
-
     // 2. Cleanup on process exit (covers any exit path including process.exit).
+    //    Installed BEFORE the DB-lock acquisition below: acquirePidLock just
+    //    wrote OUR pid into the pidfile, so any early `process.exit` after this
+    //    point (notably the LOCK_HELD path in 1b) MUST clean it up or it leaves
+    //    a stale pidfile that blocks the next start on this path. The listener
+    //    only unlinks when the file still holds our pid, so it's a no-op on the
+    //    'held'/'unwritable' paths above (those never created our pidfile).
     this.exitListener = () => {
       try {
         if (existsSync(this.opts.pidFile)) {
@@ -524,6 +519,24 @@ export class MinionSupervisor {
       } catch { /* best effort */ }
     };
     process.on('exit', this.exitListener);
+
+    // 1b. #1849: queue-scoped DB singleton lock — the REAL authority. A second
+    // supervisor with a different $HOME / --pid-file passes the pidfile check
+    // above but loses here, so it can't run a conflicting --max-rss worker on
+    // the same (db, queue). Keyed on the queue alone; the database half of the
+    // mutex is physical (the lock row lives in this DB).
+    this.dbLock = await tryAcquireDbLock(this.engine, this.supervisorLockId(), SUPERVISOR_LOCK_TTL_MIN);
+    if (!this.dbLock) {
+      console.error(
+        `Supervisor already running for queue '${this.opts.queue}' on this database ` +
+        `(another supervisor holds the queue lock, regardless of pidfile path). Exiting.`,
+      );
+      // The exit listener installed above removes the pidfile we just created.
+      process.exit(ExitCodes.LOCK_HELD);
+    }
+    // Refresh the lock on its own timer (independent of healthInterval, which
+    // can be 0/disabled) so the TTL never lapses while we're alive.
+    this.lockRefreshTimer = setInterval(() => { void this.refreshDbLock(); }, SUPERVISOR_LOCK_REFRESH_MS);
 
     // 3. Signal handlers (tracked refs; removed on shutdown for test lifecycle hygiene).
     this.sigtermListener = () => { void this.shutdown('SIGTERM', ExitCodes.CLEAN); };
