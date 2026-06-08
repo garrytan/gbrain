@@ -8,6 +8,7 @@ import { resolve, relative, sep } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
+import { loadConfig } from './config.ts';
 import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
@@ -1080,8 +1081,13 @@ const file_url: Operation = {
     if (rows.length === 0) {
       throw new OperationError('storage_error', `File not found: ${p.storage_path}`);
     }
-    // TODO: generate signed URL from Supabase Storage
-    return { storage_path: rows[0].storage_path, url: `gbrain:files/${rows[0].storage_path}` };
+    const config = loadConfig();
+    const storageConfig = config?.storage as { publicUrl?: string } | undefined;
+    const storagePath = rows[0].storage_path as string;
+    const url = storageConfig?.publicUrl
+      ? `${storageConfig.publicUrl.replace(/\/$/, '')}/${storagePath}`
+      : `gbrain:files/${storagePath}`;
+    return { storage_path: storagePath, url };
   },
 };
 

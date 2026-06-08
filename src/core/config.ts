@@ -58,12 +58,24 @@ export function loadConfig(): GBrainConfig | null {
   const inferredEngine: 'postgres' | 'pglite' = fileConfig?.engine
     || (fileConfig?.database_path ? 'pglite' : 'postgres');
 
+  // Build storage config from env vars (overrides config file if any env var is set)
+  const storageFromEnv = process.env.GBRAIN_STORAGE_BACKEND ? {
+    backend: process.env.GBRAIN_STORAGE_BACKEND,
+    bucket: process.env.GBRAIN_STORAGE_BUCKET,
+    endpoint: process.env.GBRAIN_STORAGE_ENDPOINT,
+    accessKeyId: process.env.GBRAIN_STORAGE_ACCESS_KEY_ID,
+    secretAccessKey: process.env.GBRAIN_STORAGE_SECRET_ACCESS_KEY,
+    region: process.env.GBRAIN_STORAGE_REGION || 'auto',
+    publicUrl: process.env.GBRAIN_STORAGE_PUBLIC_URL,
+  } : undefined;
+
   // Merge: env vars override config file
   const merged = {
     ...fileConfig,
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(storageFromEnv ? { storage: storageFromEnv } : {}),
   };
   return merged as GBrainConfig;
 }
