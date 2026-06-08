@@ -3650,10 +3650,26 @@ export class PostgresEngine implements BrainEngine {
     return { inserted: ids.length, ids };
   }
 
-  async deleteFactsForPage(slug: string, source_id: string): Promise<{ deleted: number }> {
+  async deleteFactsForPage(
+    slug: string,
+    source_id: string,
+    opts?: { excludeSourcePrefixes?: string[] },
+  ): Promise<{ deleted: number }> {
     const sql = this.sql;
+    const prefixes = opts?.excludeSourcePrefixes ?? [];
+    if (prefixes.length === 0) {
+      const result = await sql`
+        DELETE FROM facts WHERE source_id = ${source_id} AND source_markdown_slug = ${slug}
+      `;
+      return { deleted: result.count ?? 0 };
+    }
+    // #1928: each prefix becomes 'prefix%' for LIKE.
+    const patterns = prefixes.map(p => p + '%');
     const result = await sql`
-      DELETE FROM facts WHERE source_id = ${source_id} AND source_markdown_slug = ${slug}
+      DELETE FROM facts
+      WHERE source_id = ${source_id}
+        AND source_markdown_slug = ${slug}
+        AND NOT (source LIKE ANY(${patterns}::text[]))
     `;
     return { deleted: result.count ?? 0 };
   }

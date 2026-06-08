@@ -19,7 +19,12 @@
  * no fence go through delete-then-empty-insert — DB rows for that
  * page coordinate are wiped; legacy NULL-source_markdown_slug rows
  * survive because deleteFactsForPage targets source_markdown_slug =
- * slug only.
+ * slug only. #1928 — CLI-deposited rows (`source LIKE 'cli:%'`) also
+ * survive: `gbrain extract-conversation-facts` writes to transcript
+ * pages that carry no `## Facts` fence by design, so the wipe at the
+ * fence-reconcile coordinate must skip rows it doesn't own. The
+ * exclusion is passed at the call site via deleteFactsForPage's
+ * `excludeSourcePrefixes` option.
  *
  * Empty-fence guard (Codex R2-#7): the phase refuses to do its
  * destructive reconciliation pass when legacy rows (row_num IS NULL,
@@ -212,7 +217,14 @@ export async function runExtractFacts(
     // Wipe-and-reinsert per page. The deleteFactsForPage call targets
     // source_markdown_slug = slug only, so NULL-source_markdown_slug
     // legacy rows survive (the partial-UNIQUE-index keyspace).
-    const deleted = await engine.deleteFactsForPage(slug, sourceId);
+    // #1928: also exclude `cli:%`-sourced rows so out-of-band CLI deposits
+    // (e.g. `cli:extract-conversation-facts`, which write to conversation
+    // pages that carry no `## Facts` fence by design) survive the reconcile.
+    // Without this, a full-walk reconcile (which the cycle falls back to
+    // when sync fails — see cycle.ts) wipes every conversation-fact row.
+    const deleted = await engine.deleteFactsForPage(slug, sourceId, {
+      excludeSourcePrefixes: ['cli:'],
+    });
     result.factsDeleted += deleted.deleted;
 
     if (parsed.facts.length === 0) continue;
