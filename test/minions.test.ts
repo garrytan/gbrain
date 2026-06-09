@@ -270,6 +270,101 @@ describe('MinionQueue: Stall Detection', () => {
   });
 });
 
+// --- #1737 — honest attempt accounting on terminal dead-letter paths ---
+
+describe('MinionQueue: #1737 attempt accounting on dead-letter', () => {
+  test('wall-clock dead-letter increments attempts_made (no more 0/N (started:M))', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 2 });
+    // Per-job timeout so the wall-clock threshold is timeout_ms * 2 = 2s.
+    await engine.executeRaw('UPDATE minion_jobs SET timeout_ms = 1000 WHERE id = $1', [job.id]);
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    expect((await queue.getJob(job.id))!.attempts_made).toBe(0); // bug repro: started but not made
+
+    // Force cumulative wall-clock past timeout_ms * 2.
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET started_at = now() - interval '10 seconds' WHERE id = $1",
+      [job.id]
+    );
+    const dead = await queue.handleWallClockTimeouts(30000);
+    expect(dead.length).toBe(1);
+    expect(dead[0].status).toBe('dead');
+    expect(dead[0].error_text).toBe('wall-clock timeout exceeded');
+    // The fix: a job killed by wall-clock consumed an attempt.
+    expect(dead[0].attempts_made).toBe(1);
+    // Constraint chk_attempts_order (attempts_made <= attempts_started) holds.
+    expect(dead[0].attempts_made).toBeLessThanOrEqual(dead[0].attempts_started);
+  });
+
+  test('wall-clock dead-letter is terminal — does NOT retry even with attempts remaining', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 5 });
+    await engine.executeRaw('UPDATE minion_jobs SET timeout_ms = 1000 WHERE id = $1', [job.id]);
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET started_at = now() - interval '10 seconds' WHERE id = $1",
+      [job.id]
+    );
+    const dead = await queue.handleWallClockTimeouts(30000);
+    expect(dead.length).toBe(1);
+    // Even with 4 attempts left, wall-clock is terminal (non-idempotent handler safety).
+    expect(dead[0].status).toBe('dead');
+    expect(dead[0].status).not.toBe('delayed');
+  });
+
+  test('stall dead-letter increments attempts_made; requeue does NOT', async () => {
+    const job = await queue.add('sync', {}, { max_attempts: 3 });
+    await engine.executeRaw('UPDATE minion_jobs SET max_stalled = 2 WHERE id = $1', [job.id]);
+
+    // First stall: requeued, attempts_made stays 0 (lease-loss recovery, not an app attempt).
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id]
+    );
+    const r1 = await queue.handleStalled();
+    expect(r1.requeued.length).toBe(1);
+    expect(r1.requeued[0].attempts_made).toBe(0);
+
+    // Second stall: dead-lettered, attempts_made now increments.
+    await queue.claim('tok2', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id]
+    );
+    const r2 = await queue.handleStalled();
+    expect(r2.dead.length).toBe(1);
+    expect(r2.dead[0].error_text).toBe('max stalled count exceeded');
+    expect(r2.dead[0].attempts_made).toBe(1);
+    expect(r2.dead[0].attempts_made).toBeLessThanOrEqual(r2.dead[0].attempts_started);
+  });
+});
+
+// --- #1737 — per-handler default wall-clock budget at submit ---
+
+describe('MinionQueue: #1737 per-handler default timeout', () => {
+  test('long handler with no explicit timeout_ms gets the 30-min default stamped', async () => {
+    const job = await queue.add('embed-backfill', { sourceId: 'x' });
+    expect(job.timeout_ms).toBe(30 * 60 * 1000);
+  });
+
+  test('autopilot-cycle + subagent also get the long default', async () => {
+    const cycle = await queue.add('autopilot-cycle', {});
+    // subagent is a protected name → needs the trusted-submit flag (4th arg).
+    const sub = await queue.add('subagent', {}, undefined, { allowProtectedSubmit: true });
+    expect(cycle.timeout_ms).toBe(30 * 60 * 1000);
+    expect(sub.timeout_ms).toBe(30 * 60 * 1000);
+  });
+
+  test('explicit timeout_ms always wins over the default', async () => {
+    const job = await queue.add('embed-backfill', { sourceId: 'x' }, { timeout_ms: 5000 });
+    expect(job.timeout_ms).toBe(5000);
+  });
+
+  test('short handler keeps null timeout_ms (tight wall-clock default applies)', async () => {
+    const job = await queue.add('sync', {});
+    expect(job.timeout_ms).toBeNull();
+  });
+});
+
 // --- v0.13.1 #219 — max_stalled default + input surface ---
 
 describe('MinionQueue: v0.13.1 max_stalled schema default (#219)', () => {

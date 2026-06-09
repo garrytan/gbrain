@@ -35,8 +35,10 @@ import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import {
   extractPageLinks, parseTimelineEntries, inferLinkType, makeResolver,
-  extractFrontmatterLinks,
-  type UnresolvedFrontmatterRef,
+  extractFrontmatterLinks, isGlobalBasenameEnabled, LINK_EXTRACTOR_VERSION_TS,
+  WIKILINK_BASENAME_LINK_TYPE,
+  buildBasenameIndex, queryBasenameIndex, stripCodeBlocks,
+  type UnresolvedFrontmatterRef, type LinkCandidate,
 } from '../core/link-extraction.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -67,6 +69,71 @@ import { parseWorkers, resolveWorkersWithClamp } from '../core/sync-concurrency.
 // small (a malformed row aborts at most 100, not thousands).
 const BATCH_SIZE = 100;
 
+// v0.42.7 (#1696): keyset batch size for `extract --stale`. SMALL by design —
+// listStalePagesForExtraction returns page CONTENT (compiled_truth + timeline),
+// which is unbounded (25MB transcript pages exist). The LIMIT is the only memory
+// bound: the per-batch byte cap CDX-5 described can't run post-fetch (the fetch
+// itself is the OOM point), so a small default count is the real safety net —
+// 25 caps the worst case at ~625MB even if every page is a 25MB transcript.
+// Normal pages are KBs; raise via GBRAIN_EXTRACT_STALE_BATCH for throughput.
+const STALE_BATCH_SIZE = Math.max(1, Number(process.env.GBRAIN_EXTRACT_STALE_BATCH) || 25);
+// v0.42.7: wall-clock budget for one `extract --stale` invocation (default
+// 30 min). `--catch-up` removes the cap (loops until 0 stale). Mirrors
+// embedAllStale's time-budget shape.
+const STALE_TIME_BUDGET_MS = Math.max(1000, Number(process.env.GBRAIN_EXTRACT_TIME_BUDGET_MS) || 30 * 60 * 1000);
+
+/**
+ * v0.42.7 (#1696): best-effort extraction stamp for the source-correct write
+ * sites (inline sync, `extract --source db`). Wraps `markPagesExtractedBatch`
+ * and NEVER throws — a stamp failure here just means the page stays "stale" and
+ * gets swept by `extract --stale` later. Do NOT use this in the `--stale` sweep
+ * itself: there the stamp is the resume mechanism and a failure must surface
+ * (CDX-4 — see extractStaleFromDB).
+ */
+export async function stampExtracted(
+  engine: BrainEngine,
+  refs: Array<{ slug: string; source_id: string }>,
+  at: string = new Date().toISOString(),
+): Promise<void> {
+  if (refs.length === 0) return;
+  try {
+    await engine.markPagesExtractedBatch(refs, at);
+  } catch { /* best-effort: page stays stale, extract --stale re-sweeps it */ }
+}
+
+/**
+ * v0.42.7 (#1696): pure cross-source resolution for one extracted link
+ * candidate. Validates both endpoints exist (else the batch JOIN drops the row),
+ * then picks from_source_id / to_source_id: prefer the origin page's source,
+ * fall back to 'default', else skip (never push a wrong-source edge). Returns
+ * null when the candidate should be skipped. Shared by extractLinksFromDB and
+ * extractStaleFromDB so the F10 multi-source resolution can't drift.
+ */
+export function resolveCandidateSources(
+  c: LinkCandidate,
+  pageSlug: string,
+  pageSourceId: string,
+  allSlugs: Set<string>,
+  slugToSources: Map<string, string[]>,
+): { fromSlug: string; fromSourceId: string; toSourceId: string } | null {
+  const fromSlug = c.fromSlug ?? pageSlug;
+  if (!allSlugs.has(c.targetSlug)) return null;
+  if (!allSlugs.has(fromSlug)) return null;
+  const fromSources = slugToSources.get(fromSlug) ?? [];
+  const fromSourceId = fromSources.includes(pageSourceId) ? pageSourceId
+    : (fromSources.includes('default') ? 'default' : fromSources[0]);
+  const targetSources = slugToSources.get(c.targetSlug) ?? [];
+  let toSourceId: string;
+  if (targetSources.includes(fromSourceId)) {
+    toSourceId = fromSourceId;
+  } else if (targetSources.includes('default')) {
+    toSourceId = 'default';
+  } else {
+    return null;
+  }
+  return { fromSlug, fromSourceId, toSourceId };
+}
+
 // isRetryableConnError reference retained for any inline classification at
 // call sites. Engine-level retry uses the same predicate via core/retry.ts.
 void isRetryableConnError;
@@ -91,6 +158,11 @@ export interface ExtractedLink {
   to_slug: string;
   link_type: string;
   context: string;
+  // Issue #972: provenance for FS-source edges. Set to 'wikilink-resolved'
+  // on basename-matched bare wikilinks so the FS path tags them the same way
+  // the DB / put_page paths do. Undefined for ordinary markdown edges (the
+  // engine defaults those to 'markdown').
+  link_source?: string;
 }
 
 export interface ExtractedTimelineEntry {
@@ -209,6 +281,56 @@ export function resolveSlug(fileDir: string, relTarget: string, allSlugs: Set<st
 }
 
 /**
+ * Issue #972: return every slug whose basename matches `name` (the
+ * final path segment, with case-insensitive + slugified fallback keys).
+ * Pure-function variant of the resolver's `resolveBasenameMatches` that
+ * reads a pre-loaded Set directly — no engine call. Used by the
+ * FS-source path's `resolveSlugAll`.
+ *
+ * Matches are deterministically sorted (shortest-slug first, then
+ * lexical) so repeated runs over the same brain produce stable edges.
+ * Returns `[]` on empty input or no matches.
+ */
+export function resolveBasenameMatchesFromSlugs(
+  name: string, allSlugs: Set<string>,
+): string[] {
+  // Issue #972 (codex [P2] DRY): delegate to the shared matcher so the FS
+  // path keys + sorts identically to the resolver and doctor. (Per-call
+  // index build is O(N), the same cost as the prior inline scan.)
+  return queryBasenameIndex(buildBasenameIndex(allSlugs), name);
+}
+
+/**
+ * Issue #972: multi-match variant of `resolveSlug`. Always tries the
+ * existing ancestor walk first (preserving the v0.10.1 behavior); on
+ * miss, falls back to basename lookup against `allSlugs` when
+ * `opts.globalBasename === true`. Returns an array so the caller emits
+ * one graph edge per matching page.
+ *
+ * Return shape:
+ *   - Ancestor walk hits → `[ancestor_match]` (length 1)
+ *   - Ancestor walk misses + globalBasename off → `[]`
+ *   - Ancestor walk misses + globalBasename on + basename hits → all matches
+ *   - Ancestor walk misses + globalBasename on + no basename hits → `[]`
+ */
+export function resolveSlugAll(
+  fileDir: string, relTarget: string, allSlugs: Set<string>,
+  opts: { globalBasename?: boolean } = {},
+): string[] {
+  const direct = resolveSlug(fileDir, relTarget, allSlugs);
+  if (direct !== null) return [direct];
+  if (!opts.globalBasename) return [];
+  // Strip .md suffix + dirname so `[[struktura]]` (relTarget=`struktura.md`)
+  // and `[[notes/struktura]]` (relTarget=`notes/struktura.md`) both query
+  // for the basename `struktura`.
+  const targetNoExt = relTarget.endsWith('.md') ? relTarget.slice(0, -3) : relTarget;
+  const basename = targetNoExt.includes('/')
+    ? targetNoExt.slice(targetNoExt.lastIndexOf('/') + 1)
+    : targetNoExt;
+  return resolveBasenameMatchesFromSlugs(basename, allSlugs);
+}
+
+/**
  * Directory-based link-type inference for the fs-source path.
  *
  * FS-source operates without a BrainEngine. We have paths, not pages. This
@@ -254,20 +376,49 @@ function parseFrontmatterFromContent(content: string, relPath: string): Record<s
  */
 export async function extractLinksFromFile(
   content: string, relPath: string, allSlugs: Set<string>,
-  opts?: { includeFrontmatter?: boolean },
+  opts?: { includeFrontmatter?: boolean; globalBasename?: boolean },
 ): Promise<ExtractedLink[]> {
   const links: ExtractedLink[] = [];
   const slug = pathToSlug(relPath);
   const fileDir = dirname(relPath);
   const fm = parseFrontmatterFromContent(content, relPath);
+  // Issue #972: globalBasename routes bare `[[name]]` wikilinks through
+  // basename lookup against allSlugs when the ancestor walk fails. Off
+  // by default for back-compat with the v0.10.1 ancestor-only behavior.
+  const globalBasename = opts?.globalBasename ?? false;
 
-  for (const { name, relTarget } of extractMarkdownLinks(content)) {
-    const resolved = resolveSlug(fileDir, relTarget, allSlugs);
-    if (resolved !== null) {
+  // Issue #972 (codex [P2]): strip code fences before scanning so a
+  // `[[name]]` inside a code block doesn't create an FS edge. Mirrors the
+  // DB path, which goes through extractEntityRefs (which strips internally).
+  const scanContent = stripCodeBlocks(content);
+
+  for (const { name, relTarget } of extractMarkdownLinks(scanContent)) {
+    const resolvedSlugs = resolveSlugAll(fileDir, relTarget, allSlugs, { globalBasename });
+    if (resolvedSlugs.length === 0) continue;
+    // Single hit on the ancestor path → emit one edge with the inferred
+    // verb type. Multiple hits (only possible when globalBasename is on
+    // AND ancestor walk missed) → emit one edge per match, all tagged
+    // `wikilink_basename` so users can audit via `gbrain graph-query
+    // <slug> --type wikilink_basename`.
+    const isBasename = resolvedSlugs.length > 1
+      || (globalBasename && resolvedSlugs.length === 1
+          && resolveSlug(fileDir, relTarget, allSlugs) === null);
+    for (const target of resolvedSlugs) {
+      // Issue #972 (codex [P2]): drop a basename self-loop ([[own-tail]] on
+      // its own page resolving back to itself).
+      if (isBasename && target === slug) continue;
       links.push({
-        from_slug: slug, to_slug: resolved,
-        link_type: inferTypeByDir(fileDir, dirname(resolved), fm),
-        context: `markdown link: [${name}]`,
+        from_slug: slug,
+        to_slug: target,
+        link_type: isBasename
+          ? WIKILINK_BASENAME_LINK_TYPE
+          : inferTypeByDir(fileDir, dirname(target), fm),
+        context: isBasename
+          ? `wikilink (basename match): [${name}]`
+          : `markdown link: [${name}]`,
+        // Issue #972: tag basename edges so the FS path matches DB/put_page
+        // provenance and migration v112's widened CHECK is exercised here too.
+        link_source: isBasename ? 'wikilink-resolved' : undefined,
       });
     }
   }
@@ -458,6 +609,33 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
     return runExtractExplain(engine, args);
   }
 
+  // v0.42.7 (#1696): `gbrain extract --stale` — incremental link+timeline sweep
+  // over pages whose links_extracted_at watermark is stale. Intercepts BEFORE
+  // the links|timeline|all subcommand validation so `gbrain extract --stale`
+  // works with no subcommand (and `gbrain extract all --stale` too). DB-source
+  // only — reads page content from the DB so it runs on checkout-less brains.
+  if (args.includes('--stale')) {
+    const sIdx = args.indexOf('--source');
+    const src = (sIdx >= 0 && sIdx + 1 < args.length) ? args[sIdx + 1] : 'db';
+    if (src === 'fs') {
+      console.error(
+        `extract --stale is DB-source only (reads page content from the database\n` +
+        `so it works on checkout-less brains). Drop '--source fs' or pass '--source db'.`,
+      );
+      process.exit(1);
+    }
+    const sidIdx = args.indexOf('--source-id');
+    const staleSourceId = (sidIdx >= 0 && sidIdx + 1 < args.length) ? args[sidIdx + 1] : undefined;
+    await extractStaleFromDB(engine, {
+      dryRun: args.includes('--dry-run'),
+      jsonMode: args.includes('--json'),
+      includeFrontmatter: args.includes('--include-frontmatter'),
+      sourceIdFilter: staleSourceId,
+      catchUp: args.includes('--catch-up'),
+    });
+    return;
+  }
+
   const dirIdx = args.indexOf('--dir');
   const explicitDir = dirIdx >= 0 && dirIdx + 1 < args.length;
   // When --dir is not passed, resolve from the configured brain source
@@ -539,6 +717,12 @@ Extraction (existing):
   gbrain extract <links|timeline> --by-mention --source db
   gbrain extract <links|timeline|all> --ner --source db
   gbrain extract <timeline|all> --from-meetings
+
+Incremental sweep (v0.42.7):
+  gbrain extract --stale [--source-id <id>] [--catch-up] [--dry-run] [--json]
+      Re-extract links + timeline ONLY for pages whose extraction is stale
+      (never extracted, edited since, or extractor bumped). DB-source; safe to
+      cron. --catch-up loops past the 30-min wall-clock budget until 0 remain.
 
 Inspection (v0.42):
   gbrain extract --explain <kind> [--json]
@@ -691,7 +875,9 @@ Status (v0.42):
         }
       } else {
         if (subcommand === 'links' || subcommand === 'all') {
-          const r = await extractLinksFromDB(engine, dryRun, jsonMode, typeFilter, since, { includeFrontmatter, sourceIdFilter });
+          // C3 (D6): only stamp the combined links+timeline watermark when BOTH
+          // ran ('all'); a links-only run must not mark timeline fresh.
+          const r = await extractLinksFromDB(engine, dryRun, jsonMode, typeFilter, since, { includeFrontmatter, sourceIdFilter, stampWatermark: subcommand === 'all' });
           result.links_created = r.created;
           result.pages_processed = r.pages;
         }
@@ -760,6 +946,9 @@ async function extractForSlugs(
   let timelineCreated = 0;
   let pagesProcessed = 0;
 
+  // Issue #972: read the basename flag once per extract run.
+  const globalBasename = await isGlobalBasenameEnabled(engine);
+
   const linkBatch: LinkBatchInput[] = [];
   const timelineBatch: TimelineBatchInput[] = [];
 
@@ -812,7 +1001,7 @@ async function extractForSlugs(
         const content = readFileSync(fullPath, 'utf-8');
 
         if (doLinks) {
-          const links = await extractLinksFromFile(content, relPath, allSlugs);
+          const links = await extractLinksFromFile(content, relPath, allSlugs, { globalBasename });
           for (const link of links) {
             if (dryRun) {
               if (!jsonMode) console.log(`  ${link.from_slug} → ${link.to_slug} (${link.link_type})`);
@@ -863,6 +1052,11 @@ async function extractLinksFromDir(
   const files = walkMarkdownFiles(brainDir);
   const allSlugs = new Set(files.map(f => pathToSlug(f.relPath)));
 
+  // Issue #972: read once before the walk so the per-file calls don't
+  // re-query the DB. globalBasename = true emits one edge per basename
+  // match for bare wikilinks like `[[struktura]]`.
+  const globalBasename = await isGlobalBasenameEnabled(engine);
+
   // Progress stream on stderr (separate from the action-events --json writes
   // to stdout, which tests grep for). Rate-gated; respects global --quiet /
   // --progress-json flags.
@@ -898,7 +1092,7 @@ async function extractLinksFromDir(
     onItem: async (file) => {
       try {
         const content = readFileSync(file.path, 'utf-8');
-        const links = await extractLinksFromFile(content, file.relPath, allSlugs);
+        const links = await extractLinksFromFile(content, file.relPath, allSlugs, { globalBasename });
         for (const link of links) {
           if (dryRunSeen) {
             const key = `${link.from_slug}::${link.to_slug}::${link.link_type}`;
@@ -1007,14 +1201,16 @@ export async function extractLinksForSlugs(
   const linkOpts = opts?.sourceId
     ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId, originSourceId: opts.sourceId }
     : undefined;
+  // Issue #972: same flag as the standalone extract path.
+  const globalBasename = await isGlobalBasenameEnabled(engine);
   let created = 0;
   for (const slug of slugs) {
     const filePath = join(repoPath, slug + '.md');
     if (!existsSync(filePath)) continue;
     try {
       const content = readFileSync(filePath, 'utf-8');
-      for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs)) {
-        try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type, undefined, undefined, undefined, linkOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback when batch path declines a row
+      for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs, { globalBasename })) {
+        try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type, link.link_source, undefined, undefined, linkOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback when batch path declines a row
       }
     } catch { /* skip */ }
   }
@@ -1058,19 +1254,31 @@ async function extractLinksFromDB(
   jsonMode: boolean,
   typeFilter: PageType | undefined,
   since: string | undefined,
-  opts?: { includeFrontmatter?: boolean; sourceIdFilter?: string },
+  opts?: { includeFrontmatter?: boolean; sourceIdFilter?: string; stampWatermark?: boolean },
 ): Promise<{ created: number; pages: number; unresolved: UnresolvedFrontmatterRef[] }> {
   const includeFrontmatter = opts?.includeFrontmatter ?? false;
   const sourceIdFilter = opts?.sourceIdFilter;
+  // C3 (D6): the links_extracted_at watermark covers links AND timeline, so a
+  // links-ONLY run must NOT stamp it (that would hide timeline staleness for
+  // `gbrain extract links --source db`). Only stamp when the caller ran BOTH
+  // (subcommand 'all'). Caller passes stampWatermark accordingly.
+  const stampWatermark = opts?.stampWatermark ?? false;
   // Batch resolver: pg_trgm + exact only, NO search fallback. Dodges the
   // N-thousand API call trap on 46K-page brains. Resolver has a per-run
   // cache so duplicate names (same person appearing on many pages) resolve
-  // once, not once per mention.
-  const resolver = makeResolver(engine, { mode: 'batch' });
+  // once, not once per mention. Used for BOTH the frontmatter pass (gated
+  // by `includeFrontmatter` via `opts.skipFrontmatter` on extractPageLinks)
+  // AND the issue-#972 global-basename pass (gated by `globalBasename`).
+  // Replaces the pre-issue-#972 `nullResolver` ternary — that synthetic
+  // resolver lacked `resolveBasenameMatches`, so we always pass the real
+  // one and let extractPageLinks's opts gate which pass actually runs.
+  // Issue #972 (codex [P1]): scope basename resolution to the source being
+  // extracted so bare wikilinks don't resolve across unrelated sources.
+  const resolver = makeResolver(engine, { mode: 'batch', sourceId: sourceIdFilter });
   const unresolved: UnresolvedFrontmatterRef[] = [];
-  const nullResolver = {
-    resolve: async () => null as string | null,
-  };
+  // Issue #972: opt-in global-basename wikilink resolution. Read once
+  // per extract run; threaded into each extractPageLinks call.
+  const globalBasename = await isGlobalBasenameEnabled(engine);
   // v0.32.8: listAllPageRefs enumerates (slug, source_id) so we can thread
   // sourceId to getPage AND build a cross-source resolution map for link
   // disambiguation. Pre-fix used getAllSlugs() which collapsed
@@ -1105,6 +1313,10 @@ async function extractLinksFromDB(
     slugToSources.set(ref.slug, list);
   }
   let processed = 0, created = 0;
+  // v0.42.7 (#1696): pages whose links we extracted this run — stamped after
+  // the loop so a manual `gbrain extract links|all --source db` clears the
+  // links_extraction_lag doctor signal. Non-dry-run only.
+  const processedRefs: Array<{ slug: string; source_id: string }> = [];
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('extract.links_db', allRefs.length);
@@ -1143,42 +1355,22 @@ async function extractLinksFromDB(
     // --include-frontmatter default OFF in v0.13 (codex tension 5, back-compat).
     // Migration orchestrator explicitly enables it for the one-time backfill;
     // user-invoked `gbrain extract links` stays outgoing-only.
-    const activeResolver = includeFrontmatter ? resolver : nullResolver;
+    // Issue #972: globalBasename routes bare `[[name]]` wikilinks through
+    // basename lookup; off by default for back-compat.
     const extracted = await extractPageLinks(
-      slug, fullContent, page.frontmatter, page.type, activeResolver,
+      slug, fullContent, page.frontmatter, page.type, resolver,
+      { skipFrontmatter: !includeFrontmatter, globalBasename },
     );
     unresolved.push(...extracted.unresolved);
 
     for (const c of extracted.candidates) {
-      // Validate BOTH endpoints exist. Incoming frontmatter edges have
-      // fromSlug !== the page being processed; we need that page to exist
-      // too or the JOIN drops the row anyway.
-      const fromSlug = c.fromSlug ?? slug;
-      if (!allSlugs.has(c.targetSlug)) continue;
-      if (!allSlugs.has(fromSlug)) continue;
-
-      // v0.32.8 F10: cross-source link resolution.
-      // from_source_id = origin page's source_id (this loop's source_id, or
-      // the candidate's fromSlug source if it lives in a different source).
-      // to_source_id = priority: origin's source > 'default' > skip (don't
-      // silently push a wrong-source edge).
-      const fromSources = slugToSources.get(fromSlug) ?? [];
-      const fromSourceId = fromSources.includes(source_id) ? source_id
-        : (fromSources.includes('default') ? 'default' : fromSources[0]);
-      const targetSources = slugToSources.get(c.targetSlug) ?? [];
-      let toSourceId: string;
-      if (targetSources.includes(fromSourceId)) {
-        toSourceId = fromSourceId;
-      } else if (targetSources.includes('default')) {
-        toSourceId = 'default';
-      } else {
-        // Target exists ONLY in non-origin/non-default sources. Skip — don't
-        // silently push a wrong-source edge. Tracking this as an unresolved
-        // ref would require expanding UnresolvedFrontmatterRef; for v0.32.8
-        // a quiet skip is the conservative choice (matches existing
-        // "target missing" semantics where allSlugs.has() returns false).
-        continue;
-      }
+      // v0.32.8 F10 cross-source link resolution, extracted to the shared pure
+      // helper in v0.42.7 (#1696) so extract --stale reuses the exact same
+      // endpoint-validation + from/to source-id picking (null = skip: missing
+      // endpoint OR target only in a non-origin/non-default source).
+      const resolved = resolveCandidateSources(c, slug, source_id, allSlugs, slugToSources);
+      if (!resolved) continue;
+      const { fromSlug, fromSourceId, toSourceId } = resolved;
 
       if (dryRunSeen) {
         const key = `${fromSourceId}::${fromSlug}::${toSourceId}::${c.targetSlug}::${c.linkType}::${c.linkSource ?? 'markdown'}`;
@@ -1214,9 +1406,21 @@ async function extractLinksFromDB(
       }
     }
     processed++;
+    if (!dryRun) processedRefs.push({ slug, source_id });
     progress.tick(1);
   }
   await flush();
+  // v0.42.7 (#1696): stamp the extraction watermark for every page we
+  // processed (incl. zero-link pages — they WERE extracted). Chunked so the
+  // unnest UPDATE stays bounded on big brains. Best-effort (stampExtracted
+  // swallows): a stamp miss just leaves the page for extract --stale.
+  // C3 (D6): ONLY when both links + timeline ran (stampWatermark) — a
+  // links-only run leaves the combined watermark untouched.
+  if (!dryRun && stampWatermark) {
+    for (let i = 0; i < processedRefs.length; i += BATCH_SIZE) {
+      await stampExtracted(engine, processedRefs.slice(i, i + BATCH_SIZE));
+    }
+  }
   progress.finish();
 
   if (!jsonMode) {
@@ -1328,6 +1532,154 @@ async function extractTimelineFromDB(
     console.log(`Timeline: ${label} ${created} entries from ${processed} pages (db source)`);
   }
   return { created, pages: processed };
+}
+
+/**
+ * v0.42.7 (#1696) — `gbrain extract --stale`: incremental link + timeline
+ * extraction over pages whose `links_extracted_at` watermark is stale (NULL,
+ * older than LINK_EXTRACTOR_VERSION_TS, or older than the page's updated_at).
+ * DB-source (works on checkout-less Postgres/Supabase brains). Mirrors
+ * embedAllStale's count → keyset-list → flush → stamp shape.
+ *
+ * Crash-safety + CDX-4: per keyset batch we extract ALL links+timeline, flush
+ * them (NON-swallowing — a flush throw propagates and aborts the sweep), THEN
+ * stamp the batch's pages. A page is never stamped fresh with lost edges; a
+ * crash mid-sweep leaves the unflushed/unstamped pages stale and they
+ * re-extract next run (addLinksBatch ON CONFLICT DO NOTHING + timeline dedup
+ * make re-extraction idempotent). EVERY processed page is stamped, including
+ * zero-link pages — they WERE processed.
+ */
+async function extractStaleFromDB(
+  engine: BrainEngine,
+  opts: {
+    dryRun: boolean;
+    jsonMode: boolean;
+    includeFrontmatter: boolean;
+    sourceIdFilter?: string;
+    catchUp: boolean;
+  },
+): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number }> {
+  const { dryRun, jsonMode, includeFrontmatter, sourceIdFilter, catchUp } = opts;
+  const versionTs = LINK_EXTRACTOR_VERSION_TS;
+
+  // Pre-flight count — cheap indexed COUNT. dry-run reports and returns.
+  const totalStale = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs });
+  if (dryRun) {
+    if (jsonMode) {
+      process.stdout.write(JSON.stringify({ action: 'extract_stale_dry_run', stale_pages: totalStale }) + '\n');
+    } else {
+      console.log(`(dry run) ${totalStale} page(s) need link/timeline extraction. Run without --dry-run to extract.`);
+    }
+    return { linksCreated: 0, timelineCreated: 0, pagesProcessed: 0, staleRemaining: totalStale };
+  }
+  if (totalStale === 0) {
+    if (!jsonMode) console.log('No stale pages — extraction is up to date.');
+    return { linksCreated: 0, timelineCreated: 0, pagesProcessed: 0, staleRemaining: 0 };
+  }
+
+  // Resolver + cross-source resolution map built ONCE before the loop (the
+  // extractLinksFromDB:1069 precedent — avoids O(pages) rebuild per batch).
+  // Batch mode = pg_trgm + exact only, NO per-name search fallback. The
+  // resolution map sees ALL sources so qualified cross-source wikilinks resolve
+  // even when --source-id scopes the stale SCAN.
+  const resolver = makeResolver(engine, { mode: 'batch' });
+  const nullResolver = { resolve: async () => null as string | null };
+  const activeResolver = includeFrontmatter ? resolver : nullResolver;
+  const allRefs = await engine.listAllPageRefs();
+  const allSlugs = new Set<string>();
+  const slugToSources = new Map<string, string[]>();
+  for (const ref of allRefs) {
+    allSlugs.add(ref.slug);
+    const list = slugToSources.get(ref.slug) ?? [];
+    list.push(ref.source_id);
+    slugToSources.set(ref.slug, list);
+  }
+
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('extract.stale', totalStale);
+
+  const startMs = Date.now();
+  let afterPageId = 0;
+  let linksCreated = 0, timelineCreated = 0, pagesProcessed = 0;
+  let budgetHit = false;
+
+  for (;;) {
+    const rows = await engine.listStalePagesForExtraction({
+      batchSize: STALE_BATCH_SIZE, afterPageId, sourceId: sourceIdFilter, versionTs,
+    });
+    if (rows.length === 0) break;
+
+    const linkRows: LinkBatchInput[] = [];
+    const timelineRows: TimelineBatchInput[] = [];
+    const processedRefs: Array<{ slug: string; source_id: string; extractedAt: string }> = [];
+
+    for (const page of rows) {
+      const fullContent = page.compiled_truth + '\n' + page.timeline;
+      const extracted = await extractPageLinks(
+        page.slug, fullContent, page.frontmatter, page.type, activeResolver,
+      );
+      for (const c of extracted.candidates) {
+        const r = resolveCandidateSources(c, page.slug, page.source_id, allSlugs, slugToSources);
+        if (!r) continue;
+        linkRows.push({
+          from_slug: r.fromSlug, to_slug: c.targetSlug, link_type: c.linkType,
+          context: c.context, link_source: c.linkSource, origin_slug: c.originSlug,
+          origin_field: c.originField, from_source_id: r.fromSourceId,
+          to_source_id: r.toSourceId, origin_source_id: page.source_id,
+        });
+      }
+      for (const entry of parseTimelineEntries(fullContent)) {
+        timelineRows.push({ slug: page.slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
+      }
+      // EVERY processed page is stamped (incl. zero-link pages). D4 race fix:
+      // stamp with the row's READ updated_at, NOT now() — a concurrent edit
+      // landing between this SELECT and the stamp advances updated_at past the
+      // stamped value, so the page stays stale and re-extracts next run instead
+      // of being marked fresh-with-stale-content.
+      //
+      // #1768: stamp the FULL-µs `updated_at_iso` (projected via to_char), NOT
+      // `page.updated_at.toISOString()` — the JS Date is ms-truncated, so the
+      // µs-precision DB updated_at stayed strictly greater and the page never
+      // cleared on Postgres. Stamping the exact value makes them equal.
+      processedRefs.push({ slug: page.slug, source_id: page.source_id, extractedAt: page.updated_at_iso });
+    }
+
+    // Flush NON-swallowing (CDX-4): a throw here propagates out of the sweep so
+    // the batch's pages stay unstamped and re-extract next run. addLinksBatch is
+    // ON CONFLICT DO NOTHING + timeline dedups, so partial-chunk writes are
+    // idempotent on re-extraction.
+    for (let i = 0; i < linkRows.length; i += BATCH_SIZE) {
+      linksCreated += await engine.addLinksBatch(linkRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' }); // gbrain-allow-direct-insert: gbrain extract --stale — canonical link reconciliation from markdown body
+    }
+    for (let i = 0; i < timelineRows.length; i += BATCH_SIZE) {
+      timelineCreated += await engine.addTimelineEntriesBatch(timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });
+    }
+    // Stamp LAST, directly (not the swallowing stampExtracted) so a stamp
+    // failure surfaces instead of looping forever.
+    await engine.markPagesExtractedBatch(processedRefs, new Date().toISOString());
+
+    pagesProcessed += rows.length;
+    progress.tick(rows.length);
+    afterPageId = rows[rows.length - 1]!.id;
+
+    if (!catchUp && Date.now() - startMs > STALE_TIME_BUDGET_MS) { budgetHit = true; break; }
+  }
+
+  progress.finish();
+  const staleRemaining = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs });
+
+  if (!jsonMode) {
+    console.log(`Extract --stale: ${linksCreated} link(s) + ${timelineCreated} timeline entr(ies) from ${pagesProcessed} page(s).`);
+    if (budgetHit && staleRemaining > 0) {
+      console.log(`Time budget reached — ${staleRemaining} page(s) still stale. Re-run 'gbrain extract --stale' (or pass --catch-up) to continue.`);
+    }
+  } else {
+    process.stdout.write(JSON.stringify({
+      action: 'extract_stale_done', links_created: linksCreated, timeline_created: timelineCreated,
+      pages_processed: pagesProcessed, stale_remaining: staleRemaining, budget_hit: budgetHit,
+    }) + '\n');
+  }
+  return { linksCreated, timelineCreated, pagesProcessed, staleRemaining };
 }
 
 /**

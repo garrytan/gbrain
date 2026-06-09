@@ -28,7 +28,8 @@
  * separate JSON formatter needed.
  */
 
-import type { SearchResult } from '../types.ts';
+import type { SearchResult, HybridSearchMeta } from '../types.ts';
+import type { AutocutDecision } from './autocut.ts';
 
 /**
  * Format a single result with per-stage attribution. Returns a string
@@ -86,6 +87,13 @@ export function formatResultExplain(
     const arrow = result.reranker_delta > 0 ? '↑' : '↓';
     lines.push(`   ${arrow} reranker rank ${result.reranker_delta > 0 ? '+' : ''}${result.reranker_delta}`);
   }
+  // v0.42.3.0 — show the cross-encoder rerank score (the signal autocut cuts
+  // on). Surfacing it per result makes the autocut cliff legible: every kept
+  // result sits at or above the cut threshold.
+  if (result.rerank_score !== undefined) {
+    anyBoost = true;
+    lines.push(`   • rerank score=${fmt(result.rerank_score)}`);
+  }
 
   if (!anyBoost) {
     lines.push(`   no boosts applied`);
@@ -96,13 +104,31 @@ export function formatResultExplain(
 }
 
 /**
+ * v0.42.3.0 — one-line autocut summary for `--explain`. Returns null when
+ * autocut didn't run (no decision in meta) so callers can omit it cleanly.
+ */
+export function formatAutocutSummary(decision: AutocutDecision | undefined): string | null {
+  if (!decision) return null;
+  if (!decision.applied) {
+    return `autocut: no cut (signal=${decision.signal}, gap=${fmt(decision.gapRatio)} < threshold) — full ${decision.total} returned`;
+  }
+  return `autocut: cut at the rerank cliff (gap=${fmt(decision.gapRatio)}) — kept ${decision.kept}/${decision.total}`;
+}
+
+/**
  * Format a full result list. Caller passes the SearchResult[] directly;
  * the formatter handles enumeration. Returns a single string (multi-line
  * with trailing newline so callers can `process.stdout.write(out)`).
  */
-export function formatResultsExplain(results: SearchResult[]): string {
+export function formatResultsExplain(
+  results: SearchResult[],
+  meta?: HybridSearchMeta,
+): string {
   if (results.length === 0) return 'No results.\n';
-  return results.map((r, i) => formatResultExplain(r, i + 1)).join('\n\n') + '\n';
+  const body = results.map((r, i) => formatResultExplain(r, i + 1)).join('\n\n') + '\n';
+  // v0.42.3.0 — prepend the autocut summary when meta carries a decision.
+  const autocutLine = formatAutocutSummary(meta?.autocut);
+  return autocutLine ? `${autocutLine}\n\n${body}` : body;
 }
 
 /**

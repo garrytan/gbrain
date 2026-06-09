@@ -96,12 +96,50 @@ export interface GBrainConfig {
        */
       max_usd?: number;
     };
+    /**
+     * v0.42.x (#1685 GAP D) — extract_atoms backlog auto-drain. Default ON so a
+     * pack-gated silent backlog never piles up unseen; daily-spend-capped so the
+     * Haiku spend stays bounded. Read via the DB plane (`engine.getConfig`) at
+     * each autopilot tick. Disable with `gbrain config set autopilot.auto_drain.enabled false`.
+     */
+    auto_drain?: {
+      /** Master switch. Default true. */
+      enabled?: boolean;
+      /** Per-drain wallclock budget in seconds. Default 120. */
+      window_seconds?: number;
+      /** Backlog must exceed this to trigger a drain. Default 25. */
+      threshold?: number;
+      /** Daily spend cap (USD); bounds drains/day = floor(cap / ~$0.30). Default 2.0. */
+      max_usd_per_day?: number;
+    };
   };
   eval?: {
     /** false disables capture entirely. Defaults to true. */
     capture?: boolean;
     /** false disables PII scrubbing before insert. Defaults to true. */
     scrub_pii?: boolean;
+  };
+
+  /**
+   * v0.42 — self-upgrade settings (file plane; read on the hot path before any
+   * DB connect, so it must live here, not the DB plane). `mode` is the only
+   * knob most users touch: `notify` (default — emit a marker + 4-option prompt),
+   * `auto` (silent quiet-hours/idle upgrade; opt-in), `off` (never check).
+   * The rest are state the self-upgrade machinery manages.
+   */
+  self_upgrade?: {
+    mode?: 'auto' | 'notify' | 'off';
+    /** Set true once the upgrade-time consent prompt has been shown. */
+    mode_prompted?: boolean;
+    /** Quiet-hours window for the autopilot silent channel. */
+    quiet_hours?: { start?: number; end?: number; tz?: string };
+    /** Versions that failed a prior auto-upgrade; never auto-retried. */
+    failed_versions?: string[];
+    /** Pre-swap breadcrumb so a crash-on-launch version is attributable. */
+    attempting_version?: string;
+    /** Epoch ms of the last auto-channel check (24h throttle). */
+    last_check_ts?: number;
+    last_applied_version?: string;
   };
 
   /**
@@ -166,6 +204,18 @@ export interface GBrainConfig {
      *  loud stderr per page but lets everything through. Default: false.
      *  Env override: `GBRAIN_NO_SANITY=1` flips to true. */
     disabled?: boolean;
+    /** Disposition for high-confidence junk (Cloudflare/CAPTCHA pattern or
+     *  operator literal). `quarantine` (default) = page lands hidden +
+     *  reviewable; `reject` = hard-block (throw → sync-failure). Issue #1699.
+     *  No env override (a destructive flip belongs in explicit config). */
+    junk_disposition?: 'quarantine' | 'reject';
+    /** Max markup:total ratio before the fuzzy markup-heavy FLAG fires
+     *  (page stays searchable, agent warned). Default: 0.85. Env override:
+     *  `GBRAIN_MAX_MARKUP_RATIO`. */
+    max_markup_ratio?: number;
+    /** Master switch for the prose/markup pass. Default: true. When false,
+     *  no markup-heavy flagging happens (patterns + oversize still apply). */
+    prose_check_enabled?: boolean;
   };
 
   /**
@@ -401,6 +451,10 @@ export function loadConfig(): GBrainConfig | null {
   if (process.env.GBRAIN_NO_SANITY === '1') {
     envContentSanity.disabled = true;
   }
+  if (process.env.GBRAIN_MAX_MARKUP_RATIO) {
+    const n = parseFloat(process.env.GBRAIN_MAX_MARKUP_RATIO);
+    if (Number.isFinite(n) && n > 0 && n <= 1) envContentSanity.max_markup_ratio = n;
+  }
   // Only attach the field when at least one env var was set, so the
   // sparse-merge semantics elsewhere in loadConfigWithEngine work
   // (env presence => "this key already has a value, don't read DB").
@@ -524,6 +578,9 @@ export async function loadConfigWithEngine(
   const dbBlockBytes = await dbInt('content_sanity.bytes_block');
   const dbJunkEnabled = await dbBool('content_sanity.junk_patterns_enabled');
   const dbSanityDisabled = await dbBool('content_sanity.disabled');
+  const dbJunkDisposition = await dbStr('content_sanity.junk_disposition');
+  const dbMaxMarkupRatioStr = await dbStr('content_sanity.max_markup_ratio');
+  const dbProseCheckEnabled = await dbBool('content_sanity.prose_check_enabled');
 
   const existingCS = merged.content_sanity ?? {};
   const mergedCS: NonNullable<GBrainConfig['content_sanity']> = { ...existingCS };
@@ -538,6 +595,19 @@ export async function loadConfigWithEngine(
   }
   if (mergedCS.disabled === undefined && dbSanityDisabled !== undefined) {
     mergedCS.disabled = dbSanityDisabled;
+  }
+  if (
+    mergedCS.junk_disposition === undefined &&
+    (dbJunkDisposition === 'quarantine' || dbJunkDisposition === 'reject')
+  ) {
+    mergedCS.junk_disposition = dbJunkDisposition;
+  }
+  if (mergedCS.max_markup_ratio === undefined && dbMaxMarkupRatioStr !== undefined) {
+    const n = parseFloat(dbMaxMarkupRatioStr);
+    if (Number.isFinite(n) && n > 0 && n <= 1) mergedCS.max_markup_ratio = n;
+  }
+  if (mergedCS.prose_check_enabled === undefined && dbProseCheckEnabled !== undefined) {
+    mergedCS.prose_check_enabled = dbProseCheckEnabled;
   }
   if (Object.keys(mergedCS).length > 0) {
     merged.content_sanity = mergedCS;
@@ -693,13 +763,28 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'content_sanity.bytes_block',
   'content_sanity.junk_patterns_enabled',
   'content_sanity.disabled',
+  // Content-quality gate (v0.42, issue #1699)
+  'content_sanity.junk_disposition',
+  'content_sanity.max_markup_ratio',
+  'content_sanity.prose_check_enabled',
   // MCP skill-catalog publishing (PR1)
   'mcp.publish_skills',
   'mcp.publish_skills_prompted',
   'mcp.skills_dir',
+  // Self-upgrade (v0.42; file plane, read on the hot path)
+  'self_upgrade.mode',
+  'self_upgrade.mode_prompted',
+  'self_upgrade.quiet_hours',
+  'self_upgrade.failed_versions',
+  'self_upgrade.attempting_version',
+  'self_upgrade.last_check_ts',
+  'self_upgrade.last_applied_version',
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',
+  // Link resolution (issue #972)
+  'link_resolution',
+  'link_resolution.global_basename',
 ];
 
 /**
@@ -716,6 +801,8 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'provider_base_urls.', // per-provider base URL overrides
   'content_sanity.',    // v0.41 content-sanity tunables
   'mcp.',               // mcp.publish_skills, mcp.skills_dir (PR1 skill catalog)
+  'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
+  'self_upgrade.',      // v0.42 self-upgrade (mode, quiet_hours, state)
 ];
 
 export function saveConfig(config: GBrainConfig): void {

@@ -23,9 +23,13 @@ import {
   getSourceStatus,
   recloneIfMissing,
   isPathContained,
+  isOwnedClone,
+  unownedHint,
   defaultCloneDir,
   SourceOpError,
 } from '../src/core/sources-ops.ts';
+import { readdirSync } from 'fs';
+import { runSources } from '../src/commands/sources.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -504,6 +508,273 @@ describe('recloneIfMissing — T4 restore + autopurge recovery', () => {
       await addSource(engine, { id: 't4-no-url', localPath: '/tmp/anywhere' });
       const recloned = await recloneIfMissing(engine, 't4-no-url');
       expect(recloned).toBe(false);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1881 — ownership guard: recloneIfMissing must NEVER delete a user working
+// tree. Ownership (config.managed_clone OR default-location equality), not
+// path-containment.
+// ---------------------------------------------------------------------------
+
+describe('isOwnedClone — ownership predicate', () => {
+  test('marker config.managed_clone:true → owned (even at an external path)', async () => {
+    await withEnv2(async () => {
+      expect(
+        isOwnedClone({
+          id: 'x',
+          local_path: '/some/external/path',
+          config: { remote_url: 'https://github.com/example/repo', managed_clone: true },
+        }),
+      ).toBe(true);
+    });
+  });
+
+  test('default-location clone, no marker → owned (back-compat equality)', async () => {
+    await withEnv2(async () => {
+      expect(
+        isOwnedClone({
+          id: 'legacy',
+          local_path: defaultCloneDir('legacy'),
+          config: { remote_url: 'https://github.com/example/repo' },
+        }),
+      ).toBe(true);
+    });
+  });
+
+  test('external path, no marker → NOT owned (the #1881 federated shape)', async () => {
+    await withEnv2(async () => {
+      expect(
+        isOwnedClone({
+          id: 'gstack-code-app-abc',
+          local_path: '/Users/dev/tt-flutter-app',
+          config: { remote_url: 'https://github.com/example/repo', federated: true },
+        }),
+      ).toBe(false);
+    });
+  });
+
+  test('null local_path → NOT owned', async () => {
+    await withEnv2(async () => {
+      expect(isOwnedClone({ id: 'x', local_path: null, config: {} })).toBe(false);
+    });
+  });
+
+  test('config as JSON string (DB shape) is parsed', async () => {
+    await withEnv2(async () => {
+      expect(
+        isOwnedClone({
+          id: 'x',
+          local_path: '/external',
+          config: JSON.stringify({ managed_clone: true }),
+        }),
+      ).toBe(true);
+    });
+  });
+});
+
+describe('unownedHint — healthy vs degraded guidance', () => {
+  test('healthy: read-only guidance, no "missing clone" framing', () => {
+    const msg = unownedHint({ id: 'x', local_path: '/Users/dev/repo' }, 'healthy');
+    expect(msg).toMatch(/read-only/);
+    expect(msg).toMatch(/drop config\.remote_url/);
+    expect(msg).not.toMatch(/not a usable git repo/);
+  });
+
+  test('degraded: names the state and does not suggest dropping remote_url alone recovers it', () => {
+    const msg = unownedHint({ id: 'x', local_path: '/Users/dev/repo' }, 'no-git');
+    expect(msg).toMatch(/not a usable git repo/);
+    expect(msg).toMatch(/no-git/);
+  });
+});
+
+describe('recloneIfMissing — refuses to delete an unowned working tree (#1881)', () => {
+  test('external local_path + remote_url, no marker → throws unmanaged_path, tree survives', async () => {
+    await withEnv2(async () => {
+      // Simulate the gstack orchestrator's federated row: remote_url set, but
+      // local_path points at a live user working tree (no .git → no-git state),
+      // and NO managed_clone marker.
+      const userTree = join(FAKE_GIT_DIR, 'user-working-tree');
+      rmSync(userTree, { recursive: true, force: true });
+      mkdirSync(userTree, { recursive: true });
+      const sentinel = join(userTree, 'KEEP_ME.txt');
+      writeFileSync(sentinel, 'two unpushed commits live here');
+
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config)
+           VALUES ('gstack-code-app-abc', 'flutter', $1,
+                   '{"remote_url":"https://github.com/example/repo","federated":true}'::jsonb)`,
+        [userTree],
+      );
+
+      let threw: SourceOpError | null = null;
+      try {
+        await recloneIfMissing(engine, 'gstack-code-app-abc');
+      } catch (e) {
+        threw = e as SourceOpError;
+      }
+      expect(threw).toBeInstanceOf(SourceOpError);
+      expect(threw?.code).toBe('unmanaged_path');
+      // The working tree and its sentinel MUST survive untouched.
+      expect(existsSync(userTree)).toBe(true);
+      expect(existsSync(sentinel)).toBe(true);
+    });
+  });
+
+  test('sync-shape: same refusal surfaces before any filesystem op', async () => {
+    await withEnv2(async () => {
+      // A degraded unowned path (the path does not exist at all → missing).
+      const ghost = join(FAKE_GIT_DIR, 'ghost-tree');
+      rmSync(ghost, { recursive: true, force: true });
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config)
+           VALUES ('ghost', 'g', $1,
+                   '{"remote_url":"https://github.com/example/repo"}'::jsonb)`,
+        [ghost],
+      );
+      await expect(recloneIfMissing(engine, 'ghost')).rejects.toThrow(/unmanaged_path|not a clone gbrain created/);
+    });
+  });
+});
+
+describe('recloneIfMissing — symlink TOCTOU + EXDEV-safe swap', () => {
+  test('symlink at an owned default-location path → symlink_escape, target untouched', async () => {
+    await withEnv2(async () => {
+      // Owned by equality: local_path === defaultCloneDir(id). But the path is a
+      // symlink to a real dir → reclone must refuse rather than rename through it.
+      const id = 'sym-owned';
+      const target = join(FAKE_GIT_DIR, 'sym-target');
+      rmSync(target, { recursive: true, force: true });
+      mkdirSync(target, { recursive: true });
+      const targetSentinel = join(target, 'precious.txt');
+      writeFileSync(targetSentinel, 'do not delete');
+
+      mkdirSync(CLONE_ROOT, { recursive: true });
+      const clonePath = defaultCloneDir(id); // = CLONE_ROOT/sym-owned
+      symlinkSync(target, clonePath);
+
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config)
+           VALUES ($1, 's', $2,
+                   '{"remote_url":"https://github.com/example/repo"}'::jsonb)`,
+        [id, clonePath],
+      );
+
+      let threw: SourceOpError | null = null;
+      try {
+        await recloneIfMissing(engine, id);
+      } catch (e) {
+        threw = e as SourceOpError;
+      }
+      expect(threw?.code).toBe('symlink_escape');
+      // Symlink target and its contents survive.
+      expect(existsSync(targetSentinel)).toBe(true);
+    });
+  });
+
+  test('owned no-git clone reclones; no .gbrain-reclone-* / .old-* residue left', async () => {
+    await withEnv2(async () => {
+      const row = await addSource(engine, {
+        id: 'swap-clean',
+        remoteUrl: 'https://github.com/example/repo',
+      });
+      // Degrade to no-git so reclone fires.
+      rmSync(join(row.local_path!, '.git'), { recursive: true, force: true });
+
+      const recloned = await recloneIfMissing(engine, 'swap-clean');
+      expect(recloned).toBe(true);
+      expect(existsSync(join(row.local_path!, '.git'))).toBe(true);
+
+      // Parent (CLONE_ROOT) must hold no swap residue.
+      const residue = readdirSync(CLONE_ROOT).filter(
+        (e) => e.startsWith('.gbrain-reclone-') || e.includes('.old-'),
+      );
+      expect(residue).toEqual([]);
+    });
+  });
+});
+
+describe('sources restore — unowned source (CV3)', () => {
+  test('restore of an unowned remote_url row: DB row restored, tree survives, correct guidance', async () => {
+    await withEnv2(async () => {
+      // Archived federated row: remote_url set, local_path = a live user tree
+      // (no .git, no managed_clone marker). Restore calls recloneIfMissing,
+      // which now throws unmanaged_path; runRestore must catch it, keep the tree,
+      // and NOT print the misleading "missing clone, try sync to recover" hint.
+      const userTree = join(FAKE_GIT_DIR, 'restore-user-tree');
+      rmSync(userTree, { recursive: true, force: true });
+      mkdirSync(userTree, { recursive: true });
+      const sentinel = join(userTree, 'KEEP_ME.txt');
+      writeFileSync(sentinel, 'live repo');
+
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config, archived)
+           VALUES ('restore-unowned', 'flutter', $1,
+                   '{"remote_url":"https://github.com/example/repo","federated":false}'::jsonb,
+                   true)`,
+        [userTree],
+      );
+
+      const errs: string[] = [];
+      const origErr = console.error;
+      console.error = (...a: unknown[]) => { errs.push(a.join(' ')); };
+      try {
+        // Real CLI dispatch → runRestore. Must not throw.
+        await runSources(engine, ['restore', 'restore-unowned']);
+      } finally {
+        console.error = origErr;
+      }
+
+      // DB row un-archived (restore succeeded).
+      const rows = await engine.executeRaw<{ archived: boolean }>(
+        `SELECT archived FROM sources WHERE id = 'restore-unowned'`,
+      );
+      expect(rows[0].archived).toBe(false);
+      // Working tree untouched.
+      expect(existsSync(userTree)).toBe(true);
+      expect(existsSync(sentinel)).toBe(true);
+      // Guidance is the read-only one, NOT the misleading "missing clone" hint.
+      const joined = errs.join('\n');
+      expect(joined).toMatch(/read-only/);
+      expect(joined).not.toMatch(/on-disk clone is missing/);
+    });
+  });
+});
+
+describe('addSource --url — writes ownership marker', () => {
+  test('config carries managed_clone:true', async () => {
+    await withEnv2(async () => {
+      await addSource(engine, {
+        id: 'marked',
+        remoteUrl: 'https://github.com/example/repo',
+      });
+      const rows = await engine.executeRaw<{ config: unknown }>(
+        `SELECT config FROM sources WHERE id = 'marked'`,
+      );
+      const cfg =
+        typeof rows[0].config === 'string'
+          ? JSON.parse(rows[0].config as string)
+          : (rows[0].config as Record<string, unknown>);
+      expect(cfg.managed_clone).toBe(true);
+    });
+  });
+
+  test('--clone-dir clone (external path) is owned via marker and reclones', async () => {
+    await withEnv2(async () => {
+      const externalClone = join(FAKE_GIT_DIR, 'custom-clone-dir');
+      rmSync(externalClone, { recursive: true, force: true });
+      const row = await addSource(engine, {
+        id: 'cdir',
+        remoteUrl: 'https://github.com/example/repo',
+        cloneDir: externalClone,
+      });
+      expect(row.local_path).toBe(externalClone);
+      // Remove the leaf → reclone must succeed (owned via marker, NOT containment).
+      rmSync(externalClone, { recursive: true, force: true });
+      const recloned = await recloneIfMissing(engine, 'cdir');
+      expect(recloned).toBe(true);
+      expect(existsSync(join(externalClone, '.git'))).toBe(true);
     });
   });
 });

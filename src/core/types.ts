@@ -330,6 +330,12 @@ export interface PageFilters {
 export interface GetPageOpts {
   /** Filter to a specific source. When omitted, getPage returns the first slug match across sources (pre-existing semantics). */
   sourceId?: string;
+  /**
+   * Filter to a federated set of sources (the caller's allowedSources grant).
+   * Takes precedence over `sourceId` when non-empty. Closes the #1393 leak: the
+   * get_page exact path must honor a federated grant, not just scalar sourceId.
+   */
+  sourceIds?: string[];
   /** Include soft-deleted pages. Default false. See PageFilters.includeDeleted. */
   includeDeleted?: boolean;
 }
@@ -432,6 +438,70 @@ export interface SalienceResult {
 }
 
 /**
+ * v0.41.39 (issue #1700) — `gbrain enrich --thin` candidate selection.
+ *
+ * One source-aware SQL query enumerates thin (stub) pages of the given
+ * types, computes a source-correct inbound-link count per page, applies an
+ * optional re-enrich recency guard, orders by the chosen signal, and slices
+ * to `limit`. Returns a LIGHTWEIGHT projection (no page bodies) so a 100K-
+ * page brain doesn't pull every stub body into memory just to rank them.
+ *
+ * Why a dedicated engine method instead of composing `listPages` +
+ * `getBacklinkCounts` in memory:
+ *   - `getBacklinkCounts` groups by bare `slug`, so the same slug in two
+ *     sources collapses/contaminates the count. This query counts inbound
+ *     links per page row (`to_page_id = p.id`), which is source-correct by
+ *     construction.
+ *   - `listPages` returns full `Page` rows (bodies). 500 stub bodies per
+ *     type per source is not a memory guarantee. This projection carries
+ *     only `body_len`, never the body.
+ */
+export interface EnrichCandidatesOpts {
+  /** Page types to consider (e.g. ['person', 'company']). Empty → no rows. */
+  types: PageType[];
+  /** Body-length (chars) below which a page is "thin". */
+  thinThreshold: number;
+  /** Ordering signal. Whitelisted via ENRICH_ORDER_SQL. */
+  order: 'inbound-links' | 'updated' | 'salience';
+  /** Max rows to return. */
+  limit: number;
+  /**
+   * Skip pages whose frontmatter `enriched_at` is newer than
+   * `now - reenrichAfterMs`. Omitted/0 → no recency guard (every thin page
+   * is eligible). Pages never enriched (no `enriched_at`) are always eligible.
+   */
+  reenrichAfterMs?: number;
+  /** Single-source scope (canonical scalar form). */
+  sourceId?: string;
+  /** Federated read scope (array form, wins over scalar). */
+  sourceIds?: string[];
+}
+
+/** v0.41.39 — one row per enrich candidate. Lightweight: NO page body. */
+export interface EnrichCandidate {
+  slug: string;
+  source_id: string;
+  title: string;
+  type: PageType;
+  /** char_length(compiled_truth) + char_length(timeline). */
+  body_len: number;
+  /** Source-correct inbound-link count (excludes `link_source='mentions'`). */
+  inbound_count: number;
+}
+
+/**
+ * v0.41.39 — whitelisted ORDER BY fragments for EnrichCandidatesOpts.order.
+ * No SQL-injection risk: callers pass the enum, engines map to these literal
+ * fragments. Every fragment ends with the (source_id, slug) tiebreaker so
+ * tied scores produce a deterministic order across engines and runs.
+ */
+export const ENRICH_ORDER_SQL: Record<EnrichCandidatesOpts['order'], string> = {
+  'inbound-links': 'inbound_count DESC, p.source_id ASC, p.slug ASC',
+  'updated':       'p.updated_at DESC, p.source_id ASC, p.slug ASC',
+  'salience':      'p.emotional_weight DESC, inbound_count DESC, p.source_id ASC, p.slug ASC',
+};
+
+/**
  * v0.29 — Anomaly detection: cohorts (tag, type) with unusually-high activity in a window.
  * Cohort baseline is computed over `lookback_days` excluding `since`; current count is
  * the number of distinct pages touched on `since`. A cohort is anomalous when its
@@ -526,6 +596,35 @@ export interface StaleChunkRow {
   page_id: number;
 }
 
+/**
+ * v0.42.7 (#1696) — a page that needs link/timeline extraction, returned by
+ * `listStalePagesForExtraction`. Carries the page CONTENT (compiled_truth +
+ * timeline + frontmatter) so `gbrain extract --stale` extracts in ~1 query per
+ * batch instead of an N+1 `getPage` per page (mirrors how StaleChunkRow carries
+ * chunk_text). `id` is the keyset cursor; `updated_at` lets callers reason about
+ * the edited-since-extract staleness arm.
+ */
+export interface StalePageRow {
+  id: number;
+  slug: string;
+  source_id: string;
+  type: string;
+  title: string;
+  compiled_truth: string;
+  timeline: string;
+  frontmatter: Record<string, unknown>;
+  updated_at: Date;
+  /**
+   * Full-precision (microsecond) UTC ISO string of `updated_at`, projected
+   * straight from the DB via `to_char(... AT TIME ZONE 'UTC', '...US"Z"')`.
+   * `updated_at` (a JS `Date`) is millisecond-truncated, so stamping it back as
+   * `links_extracted_at` left the row permanently stale on Postgres (#1768).
+   * `extractStaleFromDB` stamps THIS instead, so `links_extracted_at` equals the
+   * DB `updated_at` exactly and the staleness predicate clears.
+   */
+  updated_at_iso: string;
+}
+
 export interface ChunkInput {
   chunk_index: number;
   chunk_text: string;
@@ -578,6 +677,16 @@ export interface SearchResult {
   score: number;
   stale: boolean;
   /**
+   * v0.42 (issue #1699) content-quality gate agent-warning channel. Set
+   * when the result's page carries a `frontmatter.content_flag` marker
+   * (fuzzy markup-heavy or oversize). The page is still searchable — this
+   * is the "this looks odd, examine if you expected real content" signal
+   * the agent reads to decide whether to trust the page. Stamped post-
+   * fusion by `stampContentFlags` (the v0.41.34 stampEvidence precedent).
+   * Absent when the page is clean.
+   */
+  content_flag?: { reason: string; detail: string };
+  /**
    * v0.36 (cross-modal wave): the chunk's modality discriminator from
    * content_chunks.modality. 'text' for the existing text-embedding rows,
    * 'image' for rows populated by importImageFile. Surfaced so callers /
@@ -617,6 +726,20 @@ export interface SearchResult {
   /** Slug prefix used for the session-diversification grouping. */
   graph_session_prefix?: string;
   /**
+   * v0.43 relational recall arm — set when this result was surfaced by
+   * typed-edge traversal (not lexical/vector). Drives `gbrain search
+   * --explain` attribution ("surfaced via invested_in edge from widget-co").
+   * Absent for organic keyword/vector results.
+   */
+  /** Edge types the result was reached by (e.g. ['invested_in']). */
+  relational_via_link_types?: string[];
+  /** The resolved seed entity slug the traversal started from. */
+  relational_seed?: string;
+  /** Shortest hop distance from the seed (1 = direct neighbor). */
+  relational_hop?: number;
+  /** Shortest connecting slug path seed→…→result (for "how I know this"). */
+  relational_path?: string[];
+  /**
    * v0.40.4 full attribution (D12=A) — per-stage score deltas for the
    * `gbrain search --explain` formatter. Every boost stage stamps its
    * contribution so the formatter can reconstruct the score derivation.
@@ -645,6 +768,11 @@ export interface SearchResult {
    *  Undefined when no reranker fired. The raw reranker relevance score
    *  is separately stamped as `rerank_score` for back-compat. */
   reranker_delta?: number;
+  /** Raw cross-encoder relevance score stamped by applyReranker on the
+   *  reranked head (undefined when no reranker fired). Distinct from `score`
+   *  (RRF + boosts). v0.42.3.0 autocut cuts on this — the trustworthy
+   *  separatrix — never on RRF/cosine. */
+  rerank_score?: number;
   /**
    * v0.42 (T19, plan D6) — multiplier applied by applyAliasResolvedBoost
    * (1.0 = unchanged; default 1.05x). Fires when the result's slug is
@@ -763,6 +891,14 @@ export interface SearchOpts {
    * See src/core/search/return-policy.ts.
    */
   adaptiveReturn?: import('./search/return-policy.ts').AdaptiveReturnInput;
+  /**
+   * v0.42.3.0 — autocut (score-discontinuity result-sizing). Default-ON in
+   * reranked modes (the floor). Pass `false` to force the full top-K for breadth
+   * / exploration (the ceiling override). Cuts the ranked set at the largest
+   * cross-encoder rerank-score cliff; no-op without a reranker. Only fires when
+   * offset===0. See src/core/search/autocut.ts.
+   */
+  autocut?: import('./search/autocut.ts').AutocutInput;
   type?: PageType;
   /**
    * v0.33: multi-type filter. When set, search results are filtered to
@@ -775,9 +911,11 @@ export interface SearchOpts {
   types?: PageType[];
   exclude_slugs?: string[];
   /**
-   * Slug-prefix excludes — additive over DEFAULT_HARD_EXCLUDES (test/, archive/,
+   * Slug-prefix excludes — additive over DEFAULT_HARD_EXCLUDES (test/,
    * attachments/, .raw/) and the GBRAIN_SEARCH_EXCLUDE env var. Stacks with
    * `exclude_slugs` (exact match) — a row is filtered if it matches either set.
+   * NOTE (issue #1777): `archive/` is NOT hard-excluded; it is demoted (0.5x)
+   * via DEFAULT_SOURCE_BOOSTS so archived content stays findable by default.
    */
   exclude_slug_prefixes?: string[];
   /**
@@ -971,6 +1109,14 @@ export interface SearchOpts {
    * would resolve to the same mode default and the gate would be a no-op.
    */
   graph_signals?: boolean;
+  /**
+   * v0.43 — relational recall arm per-call override. Per-call wins over the
+   * `search.relational_retrieval` config key wins over the mode bundle. Eval
+   * A/B gates need explicit per-call control or both branches resolve to the
+   * same mode default. `relationalRetrievalDepth` caps traversal hops (1..3).
+   */
+  relationalRetrieval?: boolean;
+  relationalRetrievalDepth?: number;
 }
 
 /**
@@ -1057,6 +1203,43 @@ export interface GraphPath {
   context: string;
   /** Depth of `to_slug` from the root (1 for direct neighbors). */
   depth: number;
+}
+
+/**
+ * One reached node from a typed-edge relational fan-out (v0.43). The recall
+ * arm hydrates these into SearchResult rows and injects them as a fourth RRF
+ * arm. Aggregated to the page level: `hop` is the shortest distance from any
+ * seed, `edge_count` is a connection-richness proxy (distinct edge types via
+ * which the node is reached), `via_link_types` names them, `path` is the
+ * shortest connecting slug chain (for --explain), and `canonical_chunk_id` is
+ * the page's lowest-ordinal chunk (null for frontmatter-only entity pages).
+ */
+export interface RelationalFanoutRow {
+  source_id: string;
+  slug: string;
+  hop: number;
+  edge_count: number;
+  via_link_types: string[];
+  path: string[];
+  canonical_chunk_id: number | null;
+}
+
+/** Options for BrainEngine.relationalFanout. */
+export interface RelationalFanoutOpts {
+  /** Edge types to traverse; null/empty = type-agnostic. */
+  linkTypes?: string[] | null;
+  /** Direction from each seed. Default 'both'. */
+  direction?: 'in' | 'out' | 'both';
+  /** Max hops. Default 2, hard-capped at 3. */
+  depth?: number;
+  /** Include `link_source='mentions'` edges. Default false (typed edges only). */
+  includeMentions?: boolean;
+  /** Single-source scope. */
+  sourceId?: string;
+  /** Federated scope; traversal stays WITHIN each seed's own source. */
+  sourceIds?: string[];
+  /** Hard cap on returned candidate nodes. Default 50. */
+  limit?: number;
 }
 
 // Timeline
@@ -1298,6 +1481,12 @@ export interface HybridSearchMeta {
    * Omitted when the gate is off. Surfaced for `gbrain search --explain`.
    */
   adaptive_return?: import('./search/return-policy.ts').AdaptiveReturnDecision;
+  /**
+   * v0.42.3.0 — autocut decision (signal, cut point, kept/total, gapRatio).
+   * Omitted when autocut didn't run (no reranker). Surfaced for
+   * `gbrain search --explain`.
+   */
+  autocut?: import('./search/autocut.ts').AutocutDecision;
   /**
    * v0.32.x (search-lite): token budget enforcement metadata. Omitted when
    * no budget was applied (backward-compatible with pre-search-lite

@@ -2139,3 +2139,43 @@ describe('migrate v89 — round-trip on PGLite', () => {
   });
 });
 
+// v0.42.7 (#1696): pages_links_extracted_at watermark migration.
+describe('v112 — pages_links_extracted_at', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  }, 60_000);
+  afterAll(async () => { if (engine) await engine.disconnect(); }, 60_000);
+
+  test('v112 entry exists with the documented name + transaction:false + handler', () => {
+    const m = MIGRATIONS.find(x => x.version === 112);
+    expect(m).toBeDefined();
+    expect(m!.name).toBe('pages_links_extracted_at');
+    expect(m!.transaction).toBe(false);
+    expect(typeof m!.handler).toBe('function');
+  });
+
+  test('LATEST_VERSION is at or above 112', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(112);
+  });
+
+  test('links_extracted_at column exists after initSchema, nullable, TIMESTAMPTZ', async () => {
+    const rows = await engine.executeRaw<{ is_nullable: string; data_type: string }>(
+      `SELECT is_nullable, data_type FROM information_schema.columns
+        WHERE table_name = 'pages' AND column_name = 'links_extracted_at'`, [],
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].is_nullable).toBe('YES');
+    expect(rows[0].data_type.toLowerCase()).toContain('timestamp');
+  });
+
+  test('composite index pages_links_extracted_at_idx exists after initSchema', async () => {
+    const rows = await engine.executeRaw<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes WHERE tablename = 'pages' AND indexname = 'pages_links_extracted_at_idx'`, [],
+    );
+    expect(rows.length).toBe(1);
+  });
+});
+

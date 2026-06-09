@@ -17,8 +17,17 @@
  * inline as bare literals.
  */
 
-/** Escape `%`, `_`, and `\` so a string can be used as a LIKE prefix literal. */
-function escapeLikePattern(s: string): string {
+import { quarantineFilterFragment } from '../quarantine.ts';
+
+/**
+ * Escape `%`, `_`, and `\` so a string can be used as a LIKE prefix literal.
+ *
+ * Exported (issue #1777) so callers that build parameterized LIKE clauses with
+ * `ESCAPE '\'` (e.g. the `hidden_by_search_policy` doctor check) reuse this one
+ * escaper instead of re-implementing it. Pair with `ESCAPE '\'` in the SQL so
+ * the backslash this inserts is treated as the escape char, not a literal.
+ */
+export function escapeLikePattern(s: string): string {
   return s.replace(/[%_\\]/g, '\\$&');
 }
 
@@ -123,10 +132,27 @@ export function buildHardExcludeClause(slugColumn: string, prefixes: string[]): 
  * @param sourceAlias — source table alias (e.g. `'s'`); the caller is
  *                      responsible for joining `sources` so this alias resolves.
  *
- * @returns raw SQL fragment, e.g. `AND p.deleted_at IS NULL AND NOT s.archived`
+ * v0.42 (issue #1699) — also hides QUARANTINED pages (high-confidence junk
+ * the content-quality gate flagged with `frontmatter.quarantine`). Primary
+ * protection is that quarantine writes zero chunks, so a chunk-less page is
+ * already invisible to keyword/vector search; this clause is the
+ * belt-and-suspenders cover for residual chunk paths (stale/orphan chunk
+ * queries, CJK ILIKE fallback). FLAGGED pages (`content_flag`) are NOT
+ * excluded — they stay searchable by design; the agent gets a warning via
+ * `SearchResult.content_flag`.
+ *
+ * @param pageAlias   — page table alias (e.g. `'p'`)
+ * @param sourceAlias — source table alias (e.g. `'s'`); the caller is
+ *                      responsible for joining `sources` so this alias resolves.
+ *
+ * @returns raw SQL fragment, e.g.
+ *   `AND p.deleted_at IS NULL AND NOT s.archived AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine')`
  */
 export function buildVisibilityClause(pageAlias: string, sourceAlias: string): string {
-  return `AND ${pageAlias}.deleted_at IS NULL AND NOT ${sourceAlias}.archived`;
+  // Single source of truth for the quarantine SQL lives in quarantine.ts so
+  // the marker key + filter can't drift from the search filter (#1699).
+  const quarantine = quarantineFilterFragment(pageAlias);
+  return `AND ${pageAlias}.deleted_at IS NULL AND NOT ${sourceAlias}.archived AND ${quarantine}`;
 }
 
 // ============================================================

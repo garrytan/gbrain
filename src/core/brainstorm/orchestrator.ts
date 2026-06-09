@@ -46,7 +46,7 @@ import {
   type JudgeConfig,
   type ChatFn,
 } from './judges.ts';
-import { ANTHROPIC_PRICING } from '../anthropic-pricing.ts';
+import { canonicalLookup } from '../model-pricing.ts';
 
 // ---------------------------------------------------------------------------
 // BudgetExhausted is the canonical typed error (Q2) used by every cost
@@ -264,7 +264,7 @@ export function estimateCost(profile: BrainstormProfile, model: string): number 
   const judgeIn = ideas * 350;
   const judgeOut = ideas * 200;
 
-  const pricing = ANTHROPIC_PRICING[model] ?? { input: 3, output: 15 };
+  const pricing = canonicalLookup(model) ?? { input: 3, output: 15 };
   const inCost = ((inTokens + judgeIn) / 1_000_000) * pricing.input;
   const outCost = ((outTokens + judgeOut) / 1_000_000) * pricing.output;
   return inCost + outCost;
@@ -771,7 +771,7 @@ async function _runBrainstormInner(
       crossModel = result.model;
       // Mid-run cost guard: if running spend already exceeds the projected
       // ceiling or the strict-budget multiplier, abort the remaining crosses.
-      const runningPricing = ANTHROPIC_PRICING[result.model] ?? { input: 3, output: 15 };
+      const runningPricing = canonicalLookup(result.model) ?? { input: 3, output: 15 };
       const runningUsd =
         (totalUsage.input_tokens / 1_000_000) * runningPricing.input +
         (totalUsage.output_tokens / 1_000_000) * runningPricing.output;
@@ -897,7 +897,7 @@ async function _runBrainstormInner(
   // Cost actuals (codex r2 #10).
   const totalIn = totalUsage.input_tokens + judgeUsage.input_tokens;
   const totalOut = totalUsage.output_tokens + judgeUsage.output_tokens;
-  const pricing = ANTHROPIC_PRICING[crossModel] ?? { input: 3, output: 15 };
+  const pricing = canonicalLookup(crossModel) ?? { input: 3, output: 15 };
   const actual = (totalIn / 1_000_000) * pricing.input + (totalOut / 1_000_000) * pricing.output;
   stderr(`[${profile.label}] actual cost: ${fmtUsd(actual)} (estimated ${fmtUsd(estimate)}) — in=${totalIn} out=${totalOut} tokens\n`);
 

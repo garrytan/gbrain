@@ -54,6 +54,15 @@ gbrain sync --watch               # live-sync a git repo (autopilot mode)
 gbrain autopilot --install        # background daemon for nightly enrichment
 ```
 
+**Wire this same local brain into your coding agent** — zero server, zero token:
+
+```bash
+claude mcp add gbrain -- gbrain serve    # Claude Code
+codex  mcp add gbrain -- gbrain serve    # Codex
+```
+
+The agent spawns `gbrain serve` as a stdio subprocess against your local brain. Full walkthrough (both this local path and connecting to a remote brain), plus the brain-first protocol to paste into `CLAUDE.md` / `AGENTS.md`: **[Give your coding agent a memory](tutorials/connect-coding-agent.md)**.
+
 ## 3. MCP server (any MCP client)
 
 ```bash
@@ -61,9 +70,21 @@ gbrain serve                      # stdio MCP (Claude Desktop / Code / Cursor)
 gbrain serve --http               # HTTP MCP with OAuth 2.1 + admin dashboard
 ```
 
+**Wire a coding agent to a remote brain in one command** (when you have an HTTP
+server + a bearer token): `gbrain connect` prints a paste-ready setup block, or
+`--install` runs it and smoke-tests the token.
+
+```bash
+gbrain auth create "claude-code"
+gbrain connect https://your-host/mcp --token gbrain_xxx                      # Claude Code (default)
+gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex        # Codex (env-var bearer)
+gbrain connect https://your-host/mcp --agent perplexity --oauth --register   # Perplexity (OAuth)
+```
+
 Per-client setup guides live in [`docs/mcp/`](mcp/):
 
 - [`docs/mcp/CLAUDE_CODE.md`](mcp/CLAUDE_CODE.md)
+- [`docs/mcp/CODEX.md`](mcp/CODEX.md)
 - [`docs/mcp/CLAUDE_DESKTOP.md`](mcp/CLAUDE_DESKTOP.md)
 - [`docs/mcp/CHATGPT.md`](mcp/CHATGPT.md)
 - [`docs/mcp/PERPLEXITY.md`](mcp/PERPLEXITY.md)

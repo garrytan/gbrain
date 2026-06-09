@@ -74,6 +74,12 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       graph_signals: false,
       ...CR_DISABLED_DEFAULT,
       contextual_retrieval: 'none',
+      // v0.42.3.0 — autocut OFF for conservative (no reranker).
+      autocut: false,
+      autocut_jump: 0.2,
+      // v0.43 — relational recall OFF for conservative.
+      relationalRetrieval: false,
+      relational_retrieval_depth: 2,
     });
   });
 
@@ -90,7 +96,8 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       searchLimit: 25,
       reranker_enabled: true,
       reranker_model: 'zeroentropyai:zerank-2',
-      reranker_top_n_in: 30,
+      // v0.42.3.0 D4: topNIn = searchLimit (25), was 30.
+      reranker_top_n_in: 25,
       reranker_top_n_out: null,
       reranker_timeout_ms: 5000,
       floor_ratio: undefined,
@@ -99,6 +106,12 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       graph_signals: true,
       ...CR_DISABLED_DEFAULT,
       contextual_retrieval: 'title',
+      // v0.42.3.0 — autocut ON.
+      autocut: true,
+      autocut_jump: 0.2,
+      // v0.43 — relational recall ON for balanced.
+      relationalRetrieval: true,
+      relational_retrieval_depth: 2,
     });
   });
 
@@ -113,7 +126,8 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       searchLimit: 50,
       reranker_enabled: true,
       reranker_model: 'zeroentropyai:zerank-2',
-      reranker_top_n_in: 30,
+      // v0.42.3.0 D4: topNIn = searchLimit (50), was 30.
+      reranker_top_n_in: 50,
       reranker_top_n_out: null,
       reranker_timeout_ms: 5000,
       floor_ratio: undefined,
@@ -122,6 +136,12 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       graph_signals: true,
       ...CR_DISABLED_DEFAULT,
       contextual_retrieval: 'per_chunk_synopsis',
+      // v0.42.3.0 — autocut ON.
+      autocut: true,
+      autocut_jump: 0.2,
+      // v0.43 — relational recall ON for tokenmax.
+      relationalRetrieval: true,
+      relational_retrieval_depth: 2,
     });
   });
 
@@ -376,10 +396,14 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // written when the brain was on balanced (title-only) — different
     // embedding spaces. Sequenced behind salem's v=4 graph-signals work.
     // v0.41.22.0 (type-unification): bumped 5→6 for the new alias_resolved
-    // post-fusion boost stage. A query against a brain with slug_aliases
-    // populated must not be served from a cache row written before the
-    // boost stage existed.
-    expect(KNOBS_HASH_VERSION).toBe(7);
+    // post-fusion boost stage. T2: bumped 6→7 for title_boost. v0.42.3.0:
+    // bumped 7→8 for autocut (ac=/acj=). issue #1777: bumped 8→9 for the
+    // archive/ demote (search-exclude policy change isn't in the hash, so the
+    // version bump is what invalidates archive-excluded cache rows). A query
+    // must not be served from a cache row written before the policy change.
+    // v0.43: bumped 9→10 for the relational recall arm (rel=/reld=) — a
+    // relational-on write must not be served to a relational-off lookup.
+    expect(KNOBS_HASH_VERSION).toBe(10);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -540,5 +564,112 @@ describe('v0.40.4 — graph_signals knob', () => {
     const attr = attributeKnob('graph_signals', input, resolved);
     expect(attr.source).toBe('mode');
     expect(attr.value).toBe(true);
+  });
+});
+
+describe('v0.42.3.0 — autocut knobs', () => {
+  test('KNOBS_HASH_VERSION is 10 (9→10 relational recall arm, v0.43)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(10);
+  });
+
+  test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {
+    expect(MODE_BUNDLES.conservative.autocut).toBe(false);
+    expect(MODE_BUNDLES.balanced.autocut).toBe(true);
+    expect(MODE_BUNDLES.tokenmax.autocut).toBe(true);
+    for (const m of ['conservative', 'balanced', 'tokenmax'] as const) {
+      expect(MODE_BUNDLES[m].autocut_jump).toBe(0.2);
+    }
+  });
+
+  test('D4: reranked modes set top_n_in = searchLimit (no unscored tail)', () => {
+    expect(MODE_BUNDLES.balanced.reranker_top_n_in).toBe(MODE_BUNDLES.balanced.searchLimit);
+    expect(MODE_BUNDLES.tokenmax.reranker_top_n_in).toBe(MODE_BUNDLES.tokenmax.searchLimit);
+    expect(MODE_BUNDLES.balanced.reranker_top_n_in).toBe(25);
+    expect(MODE_BUNDLES.tokenmax.reranker_top_n_in).toBe(50);
+  });
+
+  test('resolveSearchMode threads autocut: per-call > config > bundle', () => {
+    // per-call wins
+    expect(resolveSearchMode({ mode: 'balanced', perCall: { autocut: false } }).autocut).toBe(false);
+    // config override wins over bundle
+    expect(resolveSearchMode({ mode: 'balanced', overrides: { autocut: false } }).autocut).toBe(false);
+    // per-call beats config
+    expect(
+      resolveSearchMode({ mode: 'balanced', overrides: { autocut: false }, perCall: { autocut: true } }).autocut,
+    ).toBe(true);
+    // jump knob threads too
+    expect(resolveSearchMode({ mode: 'balanced', perCall: { autocut_jump: 0.5 } }).autocut_jump).toBe(0.5);
+  });
+
+  test('loadOverridesFromConfig reads search.autocut + search.autocut_jump', () => {
+    const ov = loadOverridesFromConfig({ 'search.autocut': 'false', 'search.autocut_jump': '0.35' });
+    expect(ov.autocut).toBe(false);
+    expect(ov.autocut_jump).toBe(0.35);
+  });
+
+  test('SEARCH_MODE_CONFIG_KEYS includes the autocut keys', () => {
+    expect(SEARCH_MODE_CONFIG_KEYS).toContain('search.autocut');
+    expect(SEARCH_MODE_CONFIG_KEYS).toContain('search.autocut_jump');
+  });
+
+  test('knobsHash includes ac= / acj= — autocut-on vs off differ', () => {
+    const on = knobsHash(resolveSearchMode({ mode: 'balanced' })); // autocut true
+    const off = knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { autocut: false } }));
+    expect(on).not.toBe(off);
+  });
+
+  test('knobsHash differs on jump sensitivity', () => {
+    const a = knobsHash(resolveSearchMode({ mode: 'balanced' }));
+    const b = knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { autocut_jump: 0.5 } }));
+    expect(a).not.toBe(b);
+  });
+
+  test('attributeKnob reports autocut source', () => {
+    const input = { mode: 'balanced', perCall: { autocut: false } };
+    const resolved = resolveSearchMode(input);
+    const attr = attributeKnob('autocut', input, resolved);
+    expect(attr.source).toBe('per-call');
+    expect(attr.value).toBe(false);
+  });
+});
+
+describe('v0.43 — relational recall knobs', () => {
+  test('bundle defaults: conservative off, balanced/tokenmax on; depth 2', () => {
+    expect(MODE_BUNDLES.conservative.relationalRetrieval).toBe(false);
+    expect(MODE_BUNDLES.balanced.relationalRetrieval).toBe(true);
+    expect(MODE_BUNDLES.tokenmax.relationalRetrieval).toBe(true);
+    for (const m of ['conservative', 'balanced', 'tokenmax'] as const) {
+      expect(MODE_BUNDLES[m].relational_retrieval_depth).toBe(2);
+    }
+  });
+
+  test('per-call relationalRetrieval:false overrides bundle/config true', () => {
+    // bundle default true (balanced); per-call false wins
+    expect(resolveSearchMode({ mode: 'balanced', perCall: { relationalRetrieval: false } }).relationalRetrieval).toBe(false);
+    // config override true on conservative (bundle false); then per-call false beats config
+    expect(
+      resolveSearchMode({ mode: 'conservative', overrides: { relationalRetrieval: true }, perCall: { relationalRetrieval: false } }).relationalRetrieval,
+    ).toBe(false);
+    // config override alone flips conservative on
+    expect(resolveSearchMode({ mode: 'conservative', overrides: { relationalRetrieval: true } }).relationalRetrieval).toBe(true);
+  });
+
+  test('loadOverridesFromConfig reads search.relational_retrieval(+_depth)', () => {
+    const ov = loadOverridesFromConfig({ 'search.relational_retrieval': 'true', 'search.relational_retrieval_depth': '3' });
+    expect(ov.relationalRetrieval).toBe(true);
+    expect(ov.relational_retrieval_depth).toBe(3);
+    // out-of-range depth is ignored (falls through to bundle)
+    expect(loadOverridesFromConfig({ 'search.relational_retrieval_depth': '9' }).relational_retrieval_depth).toBeUndefined();
+  });
+
+  test('SEARCH_MODE_CONFIG_KEYS includes the relational keys', () => {
+    expect(SEARCH_MODE_CONFIG_KEYS).toContain('search.relational_retrieval');
+    expect(SEARCH_MODE_CONFIG_KEYS).toContain('search.relational_retrieval_depth');
+  });
+
+  test('knobsHash: relational-on vs off differ (cache isolation)', () => {
+    const on = knobsHash(resolveSearchMode({ mode: 'balanced' })); // relational true
+    const off = knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { relationalRetrieval: false } }));
+    expect(on).not.toBe(off);
   });
 });

@@ -670,3 +670,244 @@ describe('sync auto-embed arguments', () => {
     expect(buildAutoEmbedArgs(['people/alice'])).toEqual(['--slugs', 'people/alice']);
   });
 });
+
+// #1970: sync silently full-walks forever when last_commit is unreachable.
+// The bookmark can point at a commit orphaned by a history rewrite (force-push,
+// master→main consolidation, squash). The old guard sent BOTH "object missing"
+// AND "not an ancestor" to a blind full re-walk that never advanced the bookmark.
+// The fix: only a truly-absent object forces a full reconcile; a present-but-
+// non-ancestor bookmark is diffed tree-to-tree directly (`git diff A..B` needs
+// no ancestry). Plus F-A (full-sync delete reconcile), F-B (oversized-diff
+// fallback), F-C (rename-to-unsyncable deletes the old page).
+describe('#1970: unreachable last_commit bookmark recovery', () => {
+  let engine: PGLiteEngine;
+  const repos: string[] = [];
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await resetPgliteState(engine);
+  });
+
+  afterEach(() => {
+    while (repos.length) {
+      const d = repos.pop();
+      if (d) rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  function personMd(title: string, body: string): string {
+    return ['---', 'type: person', `title: ${title}`, '---', '', body].join('\n');
+  }
+
+  /** Create a temp git repo seeded with the given files + an initial commit. */
+  function mkRepo(files: Record<string, string>): string {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-1970-'));
+    repos.push(dir);
+    execSync('git init', { cwd: dir, stdio: 'pipe' });
+    execSync('git config user.email "test@test.com"', { cwd: dir, stdio: 'pipe' });
+    execSync('git config user.name "Test"', { cwd: dir, stdio: 'pipe' });
+    for (const [rel, content] of Object.entries(files)) {
+      mkdirSync(join(dir, rel, '..'), { recursive: true });
+      writeFileSync(join(dir, rel), content);
+    }
+    execSync('git add -A && git commit -m "initial"', { cwd: dir, stdio: 'pipe' });
+    return dir;
+  }
+
+  const SYNC_OPTS = { noPull: true, noEmbed: true, noExtract: true, sourceId: 'default' } as const;
+
+  async function bookmark(): Promise<string | null> {
+    const rows = await engine.executeRaw<{ last_commit: string | null }>(
+      `SELECT last_commit FROM sources WHERE id = 'default'`,
+    );
+    return rows[0]?.last_commit ?? null;
+  }
+
+  async function captureLog<T>(fn: () => Promise<T>): Promise<{ result: T; out: string }> {
+    const lines: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+    try {
+      const result = await fn();
+      return { result, out: lines.join('\n') };
+    } finally {
+      console.log = origLog;
+    }
+  }
+
+  test('orphan-present (not an ancestor): diffs tree-to-tree, imports only the delta, advances bookmark', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({
+      'people/alice.md': personMd('Alice', 'Alice is a person.'),
+      'people/bob.md': personMd('Bob', 'Bob is a person.'),
+    });
+
+    const first = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(first.status).toBe('first_sync');
+    const orphan = await bookmark();
+    expect(orphan).not.toBeNull();
+
+    // Rewrite history: amend the only commit (adds delta.md). The previous tip
+    // is now orphaned but still on disk — cat-file succeeds, is-ancestor fails.
+    writeFileSync(join(repo, 'people/carol.md'), personMd('Carol', 'Carol joins.'));
+    execSync('git add -A && git commit --amend -m "amended with carol"', { cwd: repo, stdio: 'pipe' });
+
+    // Sanity: the stored bookmark is present but no longer an ancestor of HEAD.
+    expect(execSync(`git cat-file -t ${orphan}`, { cwd: repo }).toString().trim()).toBe('commit');
+    let isAncestor = true;
+    try { execSync(`git merge-base --is-ancestor ${orphan} HEAD`, { cwd: repo, stdio: 'pipe' }); }
+    catch { isAncestor = false; }
+    expect(isAncestor).toBe(false);
+
+    const { result, out } = await captureLog(() => performSync(engine, { repoPath: repo, ...SYNC_OPTS }));
+
+    // Incremental diff path (status 'synced'), NOT a full re-walk ('first_sync').
+    expect(result.status).toBe('synced');
+    expect(result.added).toBe(1);
+    expect(out).toContain('not an ancestor of HEAD');
+    expect(await engine.getPage('people/carol')).not.toBeNull();
+    // Bookmark advanced off the orphan onto the rewritten HEAD.
+    const advanced = await bookmark();
+    expect(advanced).not.toBe(orphan);
+    expect(advanced).toBe(execSync('git rev-parse HEAD', { cwd: repo }).toString().trim());
+  });
+
+  test('orphan-absent (object gc\'d): falls back to a full reconcile', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/alice.md': personMd('Alice', 'Alice is a person.') });
+
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    // Simulate an orphaned-AND-pruned bookmark: a valid-shaped SHA with no object.
+    await engine.executeRaw(
+      `UPDATE sources SET last_commit = $1 WHERE id = 'default'`,
+      ['deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'],
+    );
+    writeFileSync(join(repo, 'people/bob.md'), personMd('Bob', 'Bob is a person.'));
+    execSync('git add -A && git commit -m "add bob"', { cwd: repo, stdio: 'pipe' });
+
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    // Object absent → authoritative full reconcile.
+    expect(result.status).toBe('first_sync');
+    expect(await engine.getPage('people/bob')).not.toBeNull();
+    expect(await engine.getPage('people/alice')).not.toBeNull();
+  });
+
+  test('divergence: a file present in the orphan tree but dropped from HEAD is deleted', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({
+      'people/alice.md': personMd('Alice', 'Alice is a person.'),
+      'people/bob.md': personMd('Bob', 'Bob is a person.'),
+    });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(await engine.getPage('people/bob')).not.toBeNull();
+
+    // Rewrite the tip: drop bob, edit alice. Orphans the prior tip (still on disk).
+    execSync('git rm people/bob.md', { cwd: repo, stdio: 'pipe' });
+    writeFileSync(join(repo, 'people/alice.md'), personMd('Alice', 'Alice was corrected.'));
+    execSync('git add -A && git commit --amend -m "drop bob, edit alice"', { cwd: repo, stdio: 'pipe' });
+
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(result.status).toBe('synced');
+    expect(await engine.getPage('people/bob')).toBeNull();          // deleted
+    const alice = await engine.getPage('people/alice');
+    expect(alice!.compiled_truth).toContain('corrected');           // updated
+  });
+
+  test('F-C: a rename whose destination is unsyncable deletes the old page', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/carol.md': personMd('Carol', 'Carol is a person.') });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(await engine.getPage('people/carol')).not.toBeNull();
+
+    // git mv keeps content identical → classified as a 100% rename (R100).
+    // The destination .txt is unsyncable, so without the F-C fix the old page
+    // would linger (the rename drops out of both `renamed` and `deleted`).
+    execSync('git mv people/carol.md people/carol.txt', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "rename carol to txt"', { cwd: repo, stdio: 'pipe' });
+
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(result.status).toBe('synced');
+    expect(await engine.getPage('people/carol')).toBeNull();
+  });
+
+  test('F-A: full reconcile purges stale file-backed pages but spares manual + metafile pages', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({
+      'people/alice.md': personMd('Alice', 'Alice is a person.'),
+      'people/bob.md': personMd('Bob', 'Bob is a person.'),
+    });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    // A manually-curated page (put_page) — source_path stays NULL.
+    await engine.putPage('manual/note', {
+      type: 'note', title: 'Manual Note', compiled_truth: 'Hand-authored, not from a file.',
+    }, { sourceId: 'default' });
+    // A metafile-backed page (e.g. an older import or direct put_page of log.md).
+    // Its source_path is unsyncable, so the reconcile must NOT delete it (#1433).
+    await engine.putPage('people/log', {
+      type: 'note', title: 'Log', compiled_truth: 'metafile page', source_path: 'people/log.md',
+    }, { sourceId: 'default' });
+
+    // Delete bob's backing file, then force a full reconcile.
+    execSync('git rm people/bob.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "remove bob"', { cwd: repo, stdio: 'pipe' });
+
+    const result = await performSync(engine, { repoPath: repo, full: true, ...SYNC_OPTS });
+    expect(result.status).toBe('first_sync');
+    expect(result.deleted).toBeGreaterThanOrEqual(1);
+
+    expect(await engine.getPage('people/bob')).toBeNull();          // stale file-backed → purged
+    expect(await engine.getPage('people/alice')).not.toBeNull();    // still present → kept
+    expect(await engine.getPage('manual/note')).not.toBeNull();     // null source_path → spared
+    expect(await engine.getPage('people/log')).not.toBeNull();      // metafile source_path → spared
+  });
+
+  test('F-B: an undiffable-but-present bookmark falls back to a full reconcile instead of throwing', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/alice.md': personMd('Alice', 'Alice is a person.') });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    // A blob SHA: cat-file -t succeeds ("blob", so objectPresent=true), but
+    // `git diff <blob>..HEAD` errors — the same failure shape as an oversized
+    // post-rewrite diff hitting git()'s timeout/buffer limits. Must fall back,
+    // not throw.
+    const blob = execSync('git rev-parse HEAD:people/alice.md', { cwd: repo }).toString().trim();
+    await engine.executeRaw(`UPDATE sources SET last_commit = $1 WHERE id = 'default'`, [blob]);
+
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(result.status).toBe('first_sync');                       // fell back cleanly
+    expect(await engine.getPage('people/alice')).not.toBeNull();
+  });
+
+  test('convergence: after orphan recovery, a later commit syncs incrementally to up_to_date', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/alice.md': personMd('Alice', 'Alice is a person.') });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    // Orphan + recover.
+    writeFileSync(join(repo, 'people/bob.md'), personMd('Bob', 'Bob is a person.'));
+    execSync('git add -A && git commit --amend -m "amended with bob"', { cwd: repo, stdio: 'pipe' });
+    const recovered = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(recovered.status).toBe('synced');
+
+    // A subsequent ordinary commit now syncs incrementally (bookmark is sane).
+    writeFileSync(join(repo, 'people/carol.md'), personMd('Carol', 'Carol joins.'));
+    execSync('git add -A && git commit -m "add carol"', { cwd: repo, stdio: 'pipe' });
+    const next = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(next.status).toBe('synced');
+    expect(next.added).toBe(1);
+
+    // No further changes → up_to_date (converged).
+    const settled = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(settled.status).toBe('up_to_date');
+  });
+});

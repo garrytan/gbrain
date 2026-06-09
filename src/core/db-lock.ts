@@ -34,6 +34,105 @@ export interface DbLockHandle {
 const DEFAULT_TTL_MINUTES = 30;
 
 /**
+ * v0.42 (#1780 Gap 3): grace window before a same-host dead-pid lock is
+ * eligible for automatic takeover. Matches `runBreakLock`'s `age >= 60_000`
+ * gate so the two paths agree. Defends against PID reuse: the OS can recycle
+ * a crashed holder's PID, so we refuse takeover until the lock is older than
+ * this window.
+ */
+export const HOLDER_TAKEOVER_GRACE_MS = 60_000;
+
+/**
+ * v0.42.x (#1794): heartbeat-aware steal grace. A holder whose
+ * `last_refreshed_at` is within this window is treated as ALIVE and is NOT
+ * stolen even if its `ttl_expires_at` has lapsed — defending a live, actively
+ * refreshing holder whose refresh tick was briefly starved (the #1794 thrash,
+ * where a CPU-bound import let the TTL expire and a competing launch stole the
+ * live lock). A genuinely dead holder stops refreshing, ages past the grace,
+ * and becomes stealable again (TTL stays the ultimate backstop). Derived from
+ * the TTL so it scales with the refresh cadence; override with
+ * GBRAIN_LOCK_STEAL_GRACE_SECONDS.
+ */
+export const DEFAULT_STEAL_GRACE_SECONDS = 600;
+
+export function resolveStealGraceSeconds(ttlMinutes: number): number {
+  const raw = process.env.GBRAIN_LOCK_STEAL_GRACE_SECONDS;
+  if (raw) {
+    const n = Number(raw);
+    if (Number.isInteger(n) && n > 0) return n;
+  }
+  // Refresh fires ~ttl/6; protect a holder that refreshed within ~2 ticks.
+  const refreshSec = Math.max(15, (ttlMinutes * 60) / 6);
+  return Math.max(Math.floor(refreshSec * 2), 60);
+}
+
+/**
+ * Liveness classification of a lock holder, from the perspective of the
+ * current host. Shared by `isHolderDeadLocally` (auto-takeover in
+ * `tryAcquireDbLock`) and `gbrain sync --break-lock`'s safe path so the two
+ * never drift.
+ *
+ *   - `cross_host`     — holder is on a different host; `process.kill` is
+ *                        meaningless remotely, never take over.
+ *   - `alive`          — the PID exists (probe succeeded) OR the probe got
+ *                        EPERM (the PID exists but isn't ours). EPERM-as-ALIVE
+ *                        is load-bearing: stealing a live lock is the worst case.
+ *   - `too_young`      — PID is provably dead (ESRCH) but the lock is younger
+ *                        than the grace window (possible PID reuse).
+ *   - `dead_eligible`  — PID is provably dead AND the lock is old enough.
+ *   - `unknown`        — the probe threw something other than ESRCH/EPERM;
+ *                        conservative, treat as NOT eligible.
+ */
+export type HolderLiveness = 'cross_host' | 'alive' | 'too_young' | 'dead_eligible' | 'unknown';
+
+export interface HolderLivenessOpts {
+  /** Grace window in ms (default HOLDER_TAKEOVER_GRACE_MS). */
+  graceMs?: number;
+  /** Override the local hostname (test seam; default `os.hostname()`). */
+  localHost?: string;
+  /** Override the liveness probe (test seam; default `process.kill`). */
+  processKill?: (pid: number, signal: number) => void;
+}
+
+export function classifyHolderLiveness(
+  holderPid: number,
+  holderHost: string,
+  ageMs: number,
+  opts: HolderLivenessOpts = {},
+): HolderLiveness {
+  const localHost = opts.localHost ?? hostname();
+  if (holderHost !== localHost) return 'cross_host';
+
+  const probe = opts.processKill ?? ((p: number, s: number) => process.kill(p, s));
+  let probeResult: 'alive' | 'dead' | 'eperm' | 'unknown';
+  try {
+    probe(holderPid, 0);
+    probeResult = 'alive';
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException)?.code;
+    probeResult = code === 'ESRCH' ? 'dead' : code === 'EPERM' ? 'eperm' : 'unknown';
+  }
+
+  // EPERM → the PID exists but isn't ours: treat as ALIVE, never steal.
+  if (probeResult === 'alive' || probeResult === 'eperm') return 'alive';
+  if (probeResult === 'unknown') return 'unknown';
+
+  // Provably dead (ESRCH). Gate on the grace window to defend against PID reuse.
+  const grace = opts.graceMs ?? HOLDER_TAKEOVER_GRACE_MS;
+  return ageMs < grace ? 'too_young' : 'dead_eligible';
+}
+
+/** Convenience boolean: is the holder provably dead, same-host, and past the grace window? */
+export function isHolderDeadLocally(
+  holderPid: number,
+  holderHost: string,
+  ageMs: number,
+  opts: HolderLivenessOpts = {},
+): boolean {
+  return classifyHolderLiveness(holderPid, holderHost, ageMs, opts) === 'dead_eligible';
+}
+
+/**
  * Try to acquire a named DB lock.
  *
  * Returns a handle on success. Returns `null` if another live holder has
@@ -55,6 +154,9 @@ export async function tryAcquireDbLock(
 ): Promise<DbLockHandle | null> {
   const pid = process.pid;
   const host = hostname();
+  // v0.42.x (#1794): a holder that refreshed within this window is protected
+  // from the ON CONFLICT steal even if its TTL lapsed (starved-but-alive).
+  const stealGraceSeconds = resolveStealGraceSeconds(ttlMinutes);
 
   // Engine-agnostic: prefer the engine's raw escape hatch (`sql` for postgres-js,
   // `db.query` for PGLite). Mirrors cycle.ts's pattern so behavior stays identical.
@@ -71,6 +173,7 @@ export async function tryAcquireDbLock(
   // registration for free (single ownership site per outside-voice F11).
   const { registerCleanup } = await import('./process-cleanup.ts');
 
+  const acquireOnce = async (): Promise<DbLockHandle | null> => {
   if (engine.kind === 'postgres' && maybePG.sql) {
     const sql = maybePG.sql as any;
     const ttl = `${ttlMinutes} minutes`;
@@ -90,6 +193,8 @@ export async function tryAcquireDbLock(
             ttl_expires_at = NOW() + ${ttl}::interval,
             last_refreshed_at = NOW()
         WHERE gbrain_cycle_locks.ttl_expires_at < NOW()
+          AND (gbrain_cycle_locks.last_refreshed_at IS NULL
+               OR gbrain_cycle_locks.last_refreshed_at < NOW() - ${stealGraceSeconds} * INTERVAL '1 second')
       RETURNING id
     `;
     if (rows.length === 0) return null;
@@ -103,14 +208,16 @@ export async function tryAcquireDbLock(
       id: lockId,
       refresh: async () => {
         // v0.41.13.0: bump BOTH ttl_expires_at AND last_refreshed_at.
-        // Without last_refreshed_at, --max-age would steal healthy locks
-        // whose acquired_at is old but whose holder is alive and refreshing.
-        await sql`
-          UPDATE gbrain_cycle_locks
-            SET ttl_expires_at = NOW() + ${ttl}::interval,
-                last_refreshed_at = NOW()
-          WHERE id = ${lockId} AND holder_pid = ${pid}
-        `;
+        // v0.42.x (#1794): route through the DIRECT session pool, not the
+        // transaction pool, so a Supavisor pooler exhaustion (EMAXCONNSESSION)
+        // can't kill the heartbeat and let the live lock get stolen.
+        await engine.executeRawDirect(
+          `UPDATE gbrain_cycle_locks
+              SET ttl_expires_at = NOW() + ($1)::interval,
+                  last_refreshed_at = NOW()
+            WHERE id = $2 AND holder_pid = $3`,
+          [ttl, lockId, pid],
+        );
       },
       release: async () => {
         deregister();
@@ -135,8 +242,10 @@ export async function tryAcquireDbLock(
              ttl_expires_at = NOW() + $4::interval,
              last_refreshed_at = NOW()
          WHERE gbrain_cycle_locks.ttl_expires_at < NOW()
+           AND (gbrain_cycle_locks.last_refreshed_at IS NULL
+                OR gbrain_cycle_locks.last_refreshed_at < NOW() - $5 * INTERVAL '1 second')
        RETURNING id`,
-      [lockId, pid, host, ttl],
+      [lockId, pid, host, ttl, stealGraceSeconds],
     );
     if (rows.length === 0) return null;
     const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
@@ -167,6 +276,32 @@ export async function tryAcquireDbLock(
   }
 
   throw new Error(`Unknown engine kind for db-lock: ${engine.kind}`);
+  };
+
+  const first = await acquireOnce();
+  if (first) return first;
+
+  // v0.42 (#1780 Gap 3): the lock is held and its TTL hasn't expired (the
+  // upsert's ON CONFLICT ... WHERE ttl_expires_at < NOW() returned no row).
+  // If the holder is on THIS host, provably dead, and past the grace window,
+  // reclaim it: guarded DELETE then retry the normal upsert ONCE. The retry
+  // returns the normal DbLockHandle (refresh/release intact) — no hand-rolled
+  // handle. TTL-expired holders are NOT handled here (the upsert already takes
+  // them); cross-host holders stay TTL-only. Best-effort: any error falls
+  // through to `return null` (busy), exactly as the pre-takeover behavior.
+  try {
+    const snap = await inspectLock(engine, lockId);
+    if (snap && !snap.ttl_expired && isHolderDeadLocally(snap.holder_pid, snap.holder_host, snap.age_ms)) {
+      const { deleted } = await deleteLockRow(engine, lockId, snap.holder_pid);
+      if (deleted) {
+        const second = await acquireOnce();
+        if (second) return second;
+      }
+    }
+  } catch {
+    // Auto-takeover is best-effort; never throw from the acquire path.
+  }
+  return null;
 }
 
 /**
@@ -546,30 +681,32 @@ export async function withRefreshingLock<T>(
   const interval = setInterval(() => {
     void (async () => {
       try {
-        // A4 heartbeat: SELECT 1 against the engine's connection pool.
-        // Honest limit: this checks a connection is responsive in general,
-        // not the SPECIFIC backend running `work()`. The full X1 fix
-        // (lock-refresh on the work-pinned connection via withReservedConnection)
-        // is layered in by callers that pass the work backend's sql in.
-        // For migrate.ts (transactional DDL), the engine.transaction() path
-        // pins the backend; the heartbeat against engine.sql is a useful
-        // proxy for "Postgres is reachable" even if it can race the actual
-        // backend's wedge state. Lane B's primary win is the auto-refresh
-        // itself; the precise-backend-bind heartbeat is a Lane B follow-up.
-        const probe = engineSelectOne(engine);
+        // v0.42.x (#1794, V1): the refresh IS the heartbeat. handle.refresh()
+        // routes through the DIRECT session pool (postgres), so it survives a
+        // transaction-pool exhaustion (EMAXCONNSESSION) that would otherwise
+        // kill renewal and let the live lock be stolen. The pre-v0.42 code first
+        // probed `SELECT 1` on the READ pool and clearInterval'd on probe
+        // failure — that's exactly how an exhausted read pool stopped renewal
+        // even though the lock was alive. We no longer gate renewal on read-pool
+        // health, and we do NOT clearInterval on a transient failure: a blip
+        // self-heals on the next tick; the TTL is the backstop if the pool stays
+        // genuinely dead (at which point a steal is correct).
         const timeout = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('heartbeat_timeout')), heartbeatTimeoutMs)
+          setTimeout(() => reject(new Error('refresh_timeout')), heartbeatTimeoutMs)
         );
-        await Promise.race([probe, timeout]);
-        await handle.refresh();
+        await Promise.race([handle.refresh(), timeout]);
+        healthOk = true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`[lock-refresh] ${lockId}: ${msg}; lock will auto-expire\n`);
+        process.stderr.write(`[lock-refresh] ${lockId}: ${msg}; will retry next tick\n`);
         healthOk = false;
-        clearInterval(interval);
       }
     })();
   }, refreshIntervalMs);
+  // #1633: don't let the refresh timer keep the process alive on its own. The
+  // finally clearInterval is the primary cleanup; unref is belt-and-suspenders
+  // so a missed clear can't pin the event loop open past real work completion.
+  (interval as unknown as { unref?: () => void }).unref?.();
 
   try {
     return await work();
@@ -582,24 +719,6 @@ export async function withRefreshingLock<T>(
       process.stderr.write(`[lock-refresh] ${lockId}: completed with degraded heartbeat\n`);
     }
   }
-}
-
-/** Internal: SELECT 1 on the engine's connection. */
-async function engineSelectOne(engine: BrainEngine): Promise<void> {
-  const maybePG = engine as unknown as { sql?: (...args: unknown[]) => Promise<unknown> };
-  const maybePGLite = engine as unknown as {
-    db?: { query: (sql: string) => Promise<{ rows: unknown[] }> };
-  };
-  if (engine.kind === 'postgres' && maybePG.sql) {
-    const sql = maybePG.sql as any;
-    await sql`SELECT 1`;
-    return;
-  }
-  if (engine.kind === 'pglite' && maybePGLite.db) {
-    await maybePGLite.db.query('SELECT 1');
-    return;
-  }
-  throw new Error(`Unknown engine kind for heartbeat: ${engine.kind}`);
 }
 
 /**

@@ -242,6 +242,37 @@ export interface ModeBundle {
    * regresses post-deploy.
    */
   contextual_retrieval_disabled: boolean;
+
+  /**
+   * v0.42.3.0 — autocut (score-discontinuity result-sizing). Default OFF for
+   * conservative (no reranker → no trustworthy cliff signal; would no-op
+   * anyway), ON for balanced + tokenmax. When on AND a reranker scored ≥2
+   * items, hybridSearch cuts the ranked set at the largest cross-encoder
+   * rerank-score gap (instead of returning the full top-K). No-op without a
+   * reranker. Override path: per-call SearchOpts.autocut → `search.autocut`
+   * config → mode bundle. See src/core/search/autocut.ts.
+   */
+  autocut: boolean;
+  /**
+   * v0.42.3.0 — autocut sensitivity: the minimum normalized score gap (as a
+   * fraction of the top score) that counts as a cliff. Default 0.20. Lower =
+   * cuts more aggressively (tighter sets); higher = only cuts on dramatic
+   * cliffs. Eval-derived starting point, calibrated by the PrecisionMemBench
+   * run. Override: `search.autocut_jump` config → mode bundle.
+   */
+  autocut_jump: number;
+  /**
+   * v0.43 — relational recall arm. When on, a relational query ("who invested
+   * in widget-co", "what connects fund-a and fund-b") resolves its seed
+   * entity and walks the typed-edge graph, injecting edge-derived candidates
+   * as a fourth RRF arm. Pure no-op for non-relational queries. Default OFF
+   * for conservative; ON for balanced/tokenmax. Override path: per-call
+   * SearchOpts.relationalRetrieval → `search.relational_retrieval` config →
+   * mode bundle. See src/core/search/relational-recall.ts.
+   */
+  relationalRetrieval: boolean;
+  /** v0.43 — max hops for relational traversal. Default 2, hard-capped at 3. */
+  relational_retrieval_depth: number;
 }
 
 /**
@@ -287,6 +318,14 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // v0.40.3.0 contextual retrieval — none for conservative (minimum surface).
     contextual_retrieval: 'none' as CRMode,
     contextual_retrieval_disabled: false,
+    // v0.42.3.0 — autocut OFF: conservative has no reranker, so no trustworthy
+    // cliff signal exists (autocut would no-op). Explicit for clarity.
+    autocut: false,
+    // v0.43 — relational recall OFF for conservative (cost-sensitive tier,
+    // matches graph_signals posture). Power users opt in per-call.
+    relationalRetrieval: false,
+    relational_retrieval_depth: 2,
+    autocut_jump: 0.2,
   }),
   balanced: Object.freeze({
     cache_enabled: true,
@@ -306,7 +345,11 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // `gbrain config set search.reranker.enabled false`.
     reranker_enabled: true,
     reranker_model: 'zeroentropyai:zerank-2',
-    reranker_top_n_in: 30,
+    // v0.42.3.0 D4: topNIn = searchLimit (25) so the cross-encoder scores
+    // every result the limit slice will return — no unscored tail for autocut
+    // to wrongly drop (Codex #2). Was 30; tracking searchLimit is the
+    // correctness precondition for autocut.
+    reranker_top_n_in: 25,
     reranker_top_n_out: null,
     reranker_timeout_ms: 5000,
     // v0.35.6.0 — undefined for all three bundles; the per-corpus ablation
@@ -334,6 +377,13 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // per the cost-tier philosophy.
     contextual_retrieval: 'title' as CRMode,
     contextual_retrieval_disabled: false,
+    // v0.42.3.0 — autocut ON (reranker fires; cliff signal is trustworthy).
+    autocut: true,
+    // v0.43 — relational recall ON (contingent on the no-regression gate;
+    // ships default-false everywhere if the gate flags any regression).
+    relationalRetrieval: true,
+    relational_retrieval_depth: 2,
+    autocut_jump: 0.2,
   }),
   tokenmax: Object.freeze({
     cache_enabled: true,
@@ -350,7 +400,11 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // tier's $700/mo @ Opus pairing per CLAUDE.md cost matrix.
     reranker_enabled: true,
     reranker_model: 'zeroentropyai:zerank-2',
-    reranker_top_n_in: 30,
+    // v0.42.3.0 D4: topNIn = searchLimit (50) so every returned result is
+    // cross-encoder scored — closes the Codex #2 recall gap where autocut
+    // would drop the deliberately-preserved un-reranked tail (results 31-50).
+    // Was 30. Reranking 50 docs vs 30 is cheap vs the downstream LLM.
+    reranker_top_n_in: 50,
     reranker_top_n_out: null,
     reranker_timeout_ms: 5000,
     // v0.35.6.0 — undefined for all three bundles; the per-corpus ablation
@@ -375,6 +429,12 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // 10K-page brain; documented in the post-upgrade cost prompt.
     contextual_retrieval: 'per_chunk_synopsis' as CRMode,
     contextual_retrieval_disabled: false,
+    // v0.42.3.0 — autocut ON.
+    autocut: true,
+    // v0.43 — relational recall ON for tokenmax (max-recall tier).
+    relationalRetrieval: true,
+    relational_retrieval_depth: 2,
+    autocut_jump: 0.2,
   }),
 });
 
@@ -423,6 +483,12 @@ export interface SearchKeyOverrides {
   // v0.40.3.0 contextual retrieval. CRMode override + soft kill switch.
   contextual_retrieval?: CRMode;
   contextual_retrieval_disabled?: boolean;
+  // v0.42.3.0 — autocut overrides.
+  autocut?: boolean;
+  // v0.43 — relational recall overrides.
+  relationalRetrieval?: boolean;
+  relational_retrieval_depth?: number;
+  autocut_jump?: number;
 }
 
 /**
@@ -463,6 +529,15 @@ export interface SearchPerCallOpts {
   // v0.40.3.0 contextual retrieval per-call overrides.
   contextual_retrieval?: CRMode;
   contextual_retrieval_disabled?: boolean;
+  // v0.42.3.0 — autocut per-call overrides. NOTE: the boolean per-call
+  // autocut toggle from SearchOpts is handled at the hybrid.ts boundary
+  // (it's an AutocutInput, not a plain bool here); autocut_jump is the
+  // numeric per-call knob threaded through the bundle.
+  autocut?: boolean;
+  autocut_jump?: number;
+  // v0.43 — relational recall per-call overrides.
+  relationalRetrieval?: boolean;
+  relational_retrieval_depth?: number;
 }
 
 /**
@@ -552,6 +627,12 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     // v0.40.3.0 contextual retrieval — resolved via the same pick chain.
     contextual_retrieval: pick('contextual_retrieval'),
     contextual_retrieval_disabled: pick('contextual_retrieval_disabled'),
+    // v0.42.3.0 — autocut resolved via the same pick chain.
+    autocut: pick('autocut'),
+    autocut_jump: pick('autocut_jump'),
+    // v0.43 — relational recall resolved via the same pick chain.
+    relationalRetrieval: pick('relationalRetrieval'),
+    relational_retrieval_depth: pick('relational_retrieval_depth'),
     resolved_mode,
     mode_valid: valid,
   };
@@ -642,7 +723,22 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // stage that multiplies title-phrase-matching results. A title-boost-on write
 // must NOT be served to a title-boost-off lookup (ranking shifts). Same
 // one-time miss-spike pattern; fills within cache.ttl_seconds.
-export const KNOBS_HASH_VERSION = 7;
+//
+// v0.42.3.0 bump 7→8: autocut (score-discontinuity result-sizing) adds `ac`
+// + `acj` parts. Default-ON in reranked modes trims the returned set, so an
+// autocut-on write must NOT be served to an autocut-off lookup. ONE-TIME
+// global cache cold-miss on upgrade — EVERY query_cache row invalidates,
+// including conservative/no-reranker calls where autocut is a no-op (the hash
+// is global, not per-mode). Refills within cache.ttl_seconds (3600s default).
+//
+// bump 8→9 (issue #1777): `archive/` moved from DEFAULT_HARD_EXCLUDES to a 0.5
+// source-boost demote. The source-boost / hard-exclude policy is NOT part of the
+// knobs hash, so without a version bump cached rows would keep returning the old
+// archive-excluded result set for up to cache.ttl_seconds. Bumping forces the fix
+// to take effect immediately (one-time global cache cold-miss on upgrade; refills
+// within cache.ttl_seconds). Same cache-key-contamination convention as the
+// autocut / title_boost / graph_signals bumps above.
+export const KNOBS_HASH_VERSION = 10;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -740,6 +836,24 @@ export function knobsHash(
     `crd=${knobs.contextual_retrieval_disabled ? 1 : 0}`,
     // v=7 addition (append-only) — T2 title-phrase boost (retrieval-maxpool).
     `tib=${knobs.title_boost === undefined ? 'none' : knobs.title_boost.toFixed(4)}`,
+    // v=8 additions (v0.42.3.0, append-only): autocut. An autocut-on write
+    // (trimmed result set) must not be served to an autocut-off lookup, and a
+    // sensitivity change (jumpRatio) shifts where the cut lands. Conservative
+    // (autocut off) hashes differently from balanced/tokenmax (autocut on),
+    // which is correct — the result sets differ.
+    `ac=${knobs.autocut ? 1 : 0}`,
+    // `?? 0.2` mirrors the module's defensive read of other knobs (graph_signals
+    // etc.) so a partial-knobs caller (tests passing a minimal literal) can't
+    // crash the hash. Typed callers always carry the field.
+    `acj=${(knobs.autocut_jump ?? 0.2).toFixed(2)}`,
+    // v=10 additions (v0.43, append-only): relational recall arm. A
+    // relational-on write (edge-seeded result set) must NOT be served to a
+    // relational-off lookup — same contamination class as graph_signals. The
+    // depth changes the candidate set too, so it folds in as well. ONE-TIME
+    // cold-miss on upgrade as v=9 rows become unreachable; pinned by
+    // test/model-pricing.test.ts-style drift guards and the mode tests.
+    `rel=${knobs.relationalRetrieval ? 1 : 0}`,
+    `reld=${knobs.relational_retrieval_depth ?? 2}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -894,6 +1008,30 @@ export function loadOverridesFromConfig(
     out.graph_signals = gs === '1' || gs.toLowerCase() === 'true';
   }
 
+  // v0.42.3.0 — autocut. `search.autocut` is the master toggle (the ceiling
+  // override agents use to force the full top-K); `search.autocut_jump` tunes
+  // sensitivity (clamped to (0, 1] — out-of-range falls through to the bundle).
+  const ac = get('search.autocut');
+  if (ac !== undefined) {
+    out.autocut = ac === '1' || ac.toLowerCase() === 'true';
+  }
+  const acj = get('search.autocut_jump');
+  if (acj !== undefined) {
+    const n = parseFloat(acj);
+    if (Number.isFinite(n) && n > 0 && n <= 1) out.autocut_jump = n;
+  }
+
+  // v0.43 — relational recall arm.
+  const rel = get('search.relational_retrieval');
+  if (rel !== undefined) {
+    out.relationalRetrieval = rel === '1' || rel.toLowerCase() === 'true';
+  }
+  const reld = get('search.relational_retrieval_depth');
+  if (reld !== undefined) {
+    const n = parseInt(reld, 10);
+    if (Number.isFinite(n) && n >= 1 && n <= 3) out.relational_retrieval_depth = n;
+  }
+
   return out;
 }
 
@@ -930,6 +1068,12 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   // override at the per-key level without flipping the global mode.
   'search.contextual_retrieval',
   'search.contextual_retrieval_disabled',
+  // v0.42.3.0 autocut
+  'search.autocut',
+  // v0.43 relational recall
+  'search.relational_retrieval',
+  'search.relational_retrieval_depth',
+  'search.autocut_jump',
 ]);
 
 /**

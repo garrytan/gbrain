@@ -239,14 +239,23 @@ silently mutate a skill other people depend on. Two ways to handle that:
 ```bash
 # See the proposed improvement without touching SKILL.md (works for ANY skill):
 gbrain skillopt meeting-prep --split 1:1:1 --no-mutate
-# → writes skills/meeting-prep/skillopt/best.md, prints its path. Copy what you want.
+# → writes skills/meeting-prep/skillopt/best.md (the proposed rewrite), prints its path. Copy what you want.
 
-# Actually rewrite a bundled skill (explicit opt-in):
-gbrain skillopt brain-ops --split 1:1:1 --allow-mutate-bundled
+# Actually rewrite a bundled skill (explicit opt-in + an independent held-out set):
+gbrain skillopt brain-ops --split 1:1:1 --allow-mutate-bundled \
+  --held-out skills/brain-ops/held-out.jsonl
 ```
 
-Rule of thumb: `--no-mutate` when you want to read the diff before trusting it;
-`--allow-mutate-bundled` only when you intend to commit a change to a shared skill.
+Rewriting a bundled skill in place now requires BOTH `--allow-mutate-bundled` AND
+`--held-out <path>` (a JSONL with the same shape as your benchmark, but at least 5
+tasks whose IDs don't appear in the benchmark). The held-out set is how the run
+proves the edit didn't just learn the benchmark: a candidate that climbs the
+benchmark but slips on the held-out tasks is refused. Drop `--held-out` and the
+run hard-refuses and points you at `proposed.md` instead.
+
+Rule of thumb: `--no-mutate` when you want to read the diff before trusting it
+(no held-out needed); `--allow-mutate-bundled --held-out` only when you intend to
+commit a proven change to a shared skill.
 
 ## Step 6: Iterate
 

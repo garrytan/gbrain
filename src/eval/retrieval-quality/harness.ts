@@ -33,6 +33,15 @@ export interface NamedThingQuestion {
   /** slugs that must NOT appear in top-k (hard-negative family). */
   forbidden?: string[];
   notes?: string;
+  /**
+   * v0.43 relational metadata (graph-relationship family). Optional, typed
+   * (not buried in `notes`) so the relational parser/path/determinism tests
+   * can machine-check the parse. `seed` is the entity the answer relates to;
+   * `linkTypes` the edge(s) expected; `kind` the archetype.
+   */
+  seed?: string;
+  linkTypes?: string[];
+  kind?: 'who_rel' | 'who_at' | 'connects' | 'intro';
 }
 
 /** Ranked slugs for a query, best-first. */
@@ -46,6 +55,11 @@ export interface QuestionResult {
   reciprocal_rank: number; // 0 if no relevant slug in results
   /** hard-negative only: true when NO forbidden slug appeared in top-3. */
   negative_clean?: boolean;
+  /** v0.43 — fraction of relevant slugs found in top-K (K=3). 0 for hard-negative. */
+  recall_at_k: number;
+  /** v0.43 — fraction of relevant slugs found in top-10. The relational
+   *  headline metric (a relationship query often has several valid answers). */
+  recall_at_10: number;
 }
 
 export interface FamilyReport {
@@ -54,6 +68,9 @@ export interface FamilyReport {
   hit_at_1: number; // rate
   hit_at_3: number; // rate
   mrr: number;
+  /** v0.43 — mean recall@K / recall@10 across the family's questions. */
+  recall_at_k: number;
+  recall_at_10: number;
 }
 
 export interface RetrievalQualityReport {
@@ -71,14 +88,20 @@ export function scoreQuestion(q: NamedThingQuestion, ranked: string[]): Question
     const forbidden = new Set(q.forbidden ?? []);
     const topK = ranked.slice(0, K);
     const clean = !topK.some(s => forbidden.has(s));
-    return { family: q.family, query: q.query, hit_at_1: clean, hit_at_3: clean, reciprocal_rank: clean ? 1 : 0, negative_clean: clean };
+    return { family: q.family, query: q.query, hit_at_1: clean, hit_at_3: clean, reciprocal_rank: clean ? 1 : 0, negative_clean: clean, recall_at_k: 0, recall_at_10: 0 };
   }
   const relevant = new Set(q.relevant ?? []);
   const firstRelevantIdx = ranked.findIndex(s => relevant.has(s));
   const hit1 = firstRelevantIdx === 0;
   const hit3 = firstRelevantIdx >= 0 && firstRelevantIdx < K;
   const rr = firstRelevantIdx >= 0 ? 1 / (firstRelevantIdx + 1) : 0;
-  return { family: q.family, query: q.query, hit_at_1: hit1, hit_at_3: hit3, reciprocal_rank: rr };
+  const recallAt = (k: number): number => {
+    if (relevant.size === 0) return 0;
+    const top = ranked.slice(0, k);
+    const found = top.filter(s => relevant.has(s)).length;
+    return found / relevant.size;
+  };
+  return { family: q.family, query: q.query, hit_at_1: hit1, hit_at_3: hit3, reciprocal_rank: rr, recall_at_k: recallAt(K), recall_at_10: recallAt(10) };
 }
 
 export async function runRetrievalQuality(
@@ -106,6 +129,8 @@ export async function runRetrievalQuality(
       hit_at_1: n ? list.filter(r => r.hit_at_1).length / n : 0,
       hit_at_3: n ? list.filter(r => r.hit_at_3).length / n : 0,
       mrr: n ? list.reduce((s, r) => s + r.reciprocal_rank, 0) / n : 0,
+      recall_at_k: n ? list.reduce((s, r) => s + r.recall_at_k, 0) / n : 0,
+      recall_at_10: n ? list.reduce((s, r) => s + r.recall_at_10, 0) / n : 0,
     });
   }
   families.sort((a, b) => a.family.localeCompare(b.family));

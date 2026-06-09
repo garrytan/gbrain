@@ -38,6 +38,7 @@
     "build:llms": "bun run scripts/build-llms.ts",
     "build:pglite-snapshot": "bun run scripts/build-pglite-snapshot.ts",
     "test": "bash scripts/run-unit-parallel.sh",
+    "eval:autocut": "bun test test/search/autocut-eval.test.ts",
     "test:full": "bun run verify && bash scripts/run-unit-parallel.sh && bun run test:slow && ([ -n \"$DATABASE_URL\" ] && bash scripts/run-e2e.sh || echo '[test:full] skipped E2E (no DATABASE_URL); run docker-compose -f docker-compose.ci.yml up + bun run test:e2e to include' 1>&2)",
     "verify": "bash scripts/run-verify-parallel.sh",
     "check:source-config-leak": "scripts/check-source-config-leak.sh",
@@ -46,9 +47,10 @@
     "check:system-of-record": "scripts/check-system-of-record.sh",
     "check:admin-scope-drift": "scripts/check-admin-scope-drift.sh",
     "check:cli-exec": "scripts/check-cli-executable.sh",
-    "check:all": "scripts/check-privacy.sh && scripts/check-proposal-pii.sh && scripts/check-test-real-names.sh && scripts/check-jsonb-pattern.sh && scripts/check-source-id-projection.sh && scripts/check-source-config-leak.sh && scripts/check-progress-to-stdout.sh && scripts/check-no-legacy-getconnection.sh && scripts/check-test-isolation.sh && scripts/check-trailing-newline.sh && scripts/check-wasm-embedded.sh && scripts/check-exports-count.sh && scripts/check-admin-build.sh && scripts/check-admin-scope-drift.sh && scripts/check-cli-executable.sh && scripts/check-skill-brain-first.sh && scripts/check-operations-filter-bypass.sh && scripts/check-gateway-routed-no-direct-anthropic.sh && scripts/check-worker-pool-atomicity.sh && scripts/check-no-double-retry.sh && scripts/check-batch-audit-site.sh",
+    "check:all": "scripts/check-privacy.sh && scripts/check-proposal-pii.sh && scripts/check-test-real-names.sh && scripts/check-jsonb-pattern.sh && scripts/check-source-id-projection.sh && scripts/check-source-config-leak.sh && scripts/check-progress-to-stdout.sh && scripts/check-no-legacy-getconnection.sh && scripts/check-test-isolation.sh && scripts/check-trailing-newline.sh && scripts/check-wasm-embedded.sh && scripts/check-exports-count.sh && scripts/check-admin-build.sh && scripts/check-admin-scope-drift.sh && scripts/check-cli-executable.sh && scripts/check-skill-brain-first.sh && scripts/check-operations-filter-bypass.sh && scripts/check-gateway-routed-no-direct-anthropic.sh && scripts/check-worker-pool-atomicity.sh && scripts/check-key-files-current-state.sh && scripts/check-no-double-retry.sh && scripts/check-batch-audit-site.sh",
     "check:gateway-routed": "scripts/check-gateway-routed-no-direct-anthropic.sh",
     "check:worker-pool-atomicity": "scripts/check-worker-pool-atomicity.sh",
+    "check:doc-history": "scripts/check-key-files-current-state.sh",
     "check:resolver": "bun src/cli.ts check-resolvable --strict --skills-dir skills/",
     "check:skill-brain-first": "scripts/check-skill-brain-first.sh",
     "check:wasm": "scripts/check-wasm-embedded.sh",
@@ -141,5 +143,5 @@
     "bun": ">=1.3.10"
   },
   "license": "MIT",
-  "version": "0.42.1.0"
+  "version": "0.42.37.0"
 }

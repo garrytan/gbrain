@@ -161,6 +161,29 @@ After this step:
 If a user has a very large brain (>10K pages), `extract --source db` is idempotent
 and supports `--since YYYY-MM-DD` for incremental runs.
 
+### Obsidian-style bare wikilinks (opt-in)
+
+If the user imported an Obsidian or Notion vault that uses **bare** `[[note-name]]`
+wikilinks — where `[[struktura]]` written in one folder means the page that lives
+at `projects/struktura.md` in another — GBrain does NOT connect those by default.
+Out of the box it only resolves path-qualified refs like `[[projects/struktura]]`,
+so a vault full of bare links shows up as a thin, broken graph. Turn on basename
+resolution so the cross-folder links connect:
+
+```bash
+gbrain config set link_resolution.global_basename true
+gbrain extract links --source db          # re-run so the new edges land
+```
+
+`gbrain doctor` surfaces a `link_resolution_opportunity` hint with the exact count
+("47 of 60 bare wikilinks would resolve") so you know whether it's worth enabling
+before you flip it. When a bare name matches more than one page (`[[struktura]]` →
+both `projects/struktura` and `archive/struktura`), GBrain emits one edge to each
+rather than guessing a winner — review and prune the duplicates with
+`gbrain graph-query <slug>`. The mode is also honored on the filesystem-walk path
+(`gbrain extract links` with no `--source db`) and by auto-link on every future
+`put_page`.
+
 ## Step 5: Load Skills
 
 If you're running an agent platform (OpenClaw, Hermes, or any repo with a workspace),

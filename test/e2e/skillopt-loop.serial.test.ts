@@ -134,7 +134,30 @@ interface Fixture {
   cleanup: () => void;
 }
 
-function setupFixture(skillBody: string = SKILL_PEOPLE_ONLY): Fixture {
+/** 50 tasks all checking `contains: Citations` — baseline People-only fails them all. */
+const CITATIONS_BENCHMARK = Array.from({ length: 50 }, (_, i) => {
+  const n = String(i + 1).padStart(3, '0');
+  return {
+    task_id: `cit-${n}`,
+    task: `Process task ${i + 1}`,
+    judge: { kind: 'rule' as const, checks: [{ op: 'contains' as const, arg: 'Citations' }] },
+  };
+});
+
+/** Held-out set checking `contains: People` — baseline passes, a People-dropping candidate fails. */
+const PEOPLE_HELDOUT = Array.from({ length: 6 }, (_, i) => {
+  const n = String(i + 1).padStart(3, '0');
+  return {
+    task_id: `ho-${n}`,
+    task: `Held-out task ${i + 1}`,
+    judge: { kind: 'rule' as const, checks: [{ op: 'contains' as const, arg: 'People' }] },
+  };
+});
+
+function setupFixture(
+  skillBody: string = SKILL_PEOPLE_ONLY,
+  benchmark: ReadonlyArray<{ task_id: string; task: string; judge: unknown }> = SAMPLE_BENCHMARK,
+): Fixture {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'skillopt-loop-e2e-'));
   const skillDir = path.join(tmp, SKILL);
   fs.mkdirSync(skillDir, { recursive: true });
@@ -142,7 +165,7 @@ function setupFixture(skillBody: string = SKILL_PEOPLE_ONLY): Fixture {
   const benchmarkPath = path.join(skillDir, 'skillopt-benchmark.jsonl');
   fs.writeFileSync(
     benchmarkPath,
-    SAMPLE_BENCHMARK.map((t) => JSON.stringify(t)).join('\n') + '\n',
+    benchmark.map((t) => JSON.stringify(t)).join('\n') + '\n',
   );
   return {
     skillsDir: tmp,
@@ -151,6 +174,13 @@ function setupFixture(skillBody: string = SKILL_PEOPLE_ONLY): Fixture {
       try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ }
     },
   };
+}
+
+/** Write a held-out JSONL into the fixture's skill dir; return its path. */
+function writeHeldOut(fixture: Fixture, tasks: ReadonlyArray<{ task_id: string; task: string; judge: unknown }>): string {
+  const p = path.join(fixture.skillsDir, SKILL, 'held-out.jsonl');
+  fs.writeFileSync(p, tasks.map((t) => JSON.stringify(t)).join('\n') + '\n');
+  return p;
 }
 
 // ─── Stub builder ───────────────────────────────────────────────────────────
@@ -176,10 +206,17 @@ interface StubOpts {
    * fast against a tight cap).
    */
   perCallUsage?: { input: number; output: number };
+  /** Raw body returned for ONE-SHOT REWRITE optimizer calls (optimizerMode test). */
+  oneShotBody?: string;
+  /** Counters incremented as the stub observes each call kind (ablation tests). */
+  stats?: { successReflectCalls: number; oneShotCalls: number };
 }
 
-const REFLECT_OPTIMIZER_PREFIX = "You are SkillOpt's optimizer.";
+// No trailing period: matches the FAILURE/SUCCESS reflect systems ("...optimizer.")
+// AND the one-shot system ("...optimizer in ONE-SHOT REWRITE mode.").
+const REFLECT_OPTIMIZER_PREFIX = "You are SkillOpt's optimizer";
 const FAILURE_REFLECT_MARKER = 'FAILURE TRAJECTORIES';
+const ONE_SHOT_MARKER = 'ONE-SHOT REWRITE';
 
 function defaultTargetText(skillText: string): string {
   // Faithful agent: read the skill's body, emit sections that exist there.
@@ -219,10 +256,16 @@ function installStub(opts: StubOpts): void {
 
     if (isOptimizerCall) {
       const model = chatOpts.model ?? 'anthropic:claude-opus-4-7';
+      // ONE-SHOT REWRITE mode returns a raw body, not edits JSON.
+      if (sys.includes(ONE_SHOT_MARKER)) {
+        if (opts.stats) opts.stats.oneShotCalls += 1;
+        return makeChatResult(opts.oneShotBody ?? '', model, usage);
+      }
       if (opts.optimizerRaw !== undefined) {
         return makeChatResult(opts.optimizerRaw, model, usage);
       }
       const isFailureMode = sys.includes(FAILURE_REFLECT_MARKER);
+      if (!isFailureMode && opts.stats) opts.stats.successReflectCalls += 1;
       const edit = isFailureMode ? opts.failureEdit : opts.successEdit;
       const text = JSON.stringify({ edits: edit ? [edit] : [] });
       return makeChatResult(text, model, usage);
@@ -245,6 +288,12 @@ interface RunOptsOverride {
   maxCostUsd?: number;
   epochs?: number;
   batchSize?: number;
+  noMutate?: boolean;
+  heldOutPath?: string;
+  optimizerMode?: 'reflect' | 'one-shot-rewrite';
+  reflectMode?: 'both' | 'failure-only';
+  disableValidationGate?: boolean;
+  maxRuntimeMin?: number;
 }
 
 async function runOnce(fixture: Fixture, over: RunOptsOverride = {}) {
@@ -263,13 +312,17 @@ async function runOnce(fixture: Fixture, over: RunOptsOverride = {}) {
     judgeModel: 'anthropic:claude-sonnet-4-6',
     mode: 'patch',
     dryRun: false,
-    noMutate: false,
+    noMutate: over.noMutate ?? false,
     allowMutateBundled: true,
     bootstrapReviewed: false,
     json: true,
     maxCostUsd: over.maxCostUsd ?? 100,
-    maxRuntimeMin: 1,
+    maxRuntimeMin: over.maxRuntimeMin ?? 1,
     force: true, // bypass dirty-tree (tempdir isn't a git repo)
+    ...(over.heldOutPath ? { heldOutPath: over.heldOutPath } : {}),
+    ...(over.optimizerMode ? { optimizerMode: over.optimizerMode } : {}),
+    ...(over.reflectMode ? { reflectMode: over.reflectMode } : {}),
+    ...(over.disableValidationGate ? { disableValidationGate: over.disableValidationGate } : {}),
   });
 }
 
@@ -627,5 +680,269 @@ describe('skillopt full-loop E2E (happy path + broken cases)', () => {
     } finally {
       fixture.cleanup();
     }
+  });
+});
+
+// ─── T3: held-out gate + ablation opts + no-DB-pollution ─────────────────────
+
+describe('skillopt T3 — F11 held-out gate, ablation opts, no-DB-pollution', () => {
+  test('F11 held-out BLOCKS: candidate passes D_sel but regresses held-out → no commit', async () => {
+    // baseline People-only fails the Citations benchmark; the failure edit
+    // REPLACES People with Citations → candidate passes D_sel (Citations) but
+    // tanks the held-out (People) → held-out gate refuses the commit.
+    const fixture = setupFixture(SKILL_PEOPLE_ONLY, CITATIONS_BENCHMARK);
+    const heldOutPath = writeHeldOut(fixture, PEOPLE_HELDOUT);
+    try {
+      installStub({
+        failureEdit: {
+          op: 'replace',
+          target: '## People\nList people mentioned.',
+          replacement: '## Citations\nCite the source.',
+          reason: 'swap People for Citations to pass the benchmark',
+        },
+        successEdit: null,
+      });
+      try {
+        await withEnv({ GBRAIN_AUDIT_DIR: fixture.skillsDir }, async () => {
+          const result = await runOnce(fixture, { heldOutPath });
+          // Held-out gate blocked the promotion.
+          expect(result.outcome).toBe('no_improvement');
+          // SKILL.md unchanged: still People-only, never swapped to Citations.
+          const skill = fs.readFileSync(skillPath(fixture.skillsDir, SKILL), 'utf8');
+          expect(skill).toContain('## People');
+          expect(skill).not.toContain('## Citations');
+          // No committed history row.
+          expect(loadHistory(fixture.skillsDir, SKILL).filter((r) => r.status === 'committed')).toHaveLength(0);
+        });
+      } finally { uninstallStub(); }
+    } finally { fixture.cleanup(); }
+  });
+
+  test('F11 held-out ALLOWS: candidate improves D_sel AND holds held-out → commit', async () => {
+    // ADD Citations (keep People): passes D_sel (Citations) and keeps held-out
+    // (People) at baseline → held-out gate allows → commit.
+    const fixture = setupFixture(SKILL_PEOPLE_ONLY, CITATIONS_BENCHMARK);
+    const heldOutPath = writeHeldOut(fixture, PEOPLE_HELDOUT);
+    try {
+      installStub({
+        failureEdit: { op: 'add', anchor: 'People', content: '## Citations\nCite the source.', reason: 'add Citations' },
+        successEdit: null,
+      });
+      try {
+        await withEnv({ GBRAIN_AUDIT_DIR: fixture.skillsDir }, async () => {
+          const result = await runOnce(fixture, { heldOutPath });
+          expect(result.outcome).toBe('accepted');
+          const skill = fs.readFileSync(skillPath(fixture.skillsDir, SKILL), 'utf8');
+          expect(skill).toContain('## People');
+          expect(skill).toContain('## Citations');
+          expect(loadHistory(fixture.skillsDir, SKILL).filter((r) => r.status === 'committed')).toHaveLength(1);
+        });
+      } finally { uninstallStub(); }
+    } finally { fixture.cleanup(); }
+  });
+
+  test('--no-mutate writes proposed.md (best.md), leaves SKILL.md untouched', async () => {
+    const fixture = setupFixture(SKILL_PEOPLE_ONLY, CITATIONS_BENCHMARK);
+    try {
+      installStub({
+        failureEdit: { op: 'add', anchor: 'People', content: '## Citations\nCite the source.', reason: 'add Citations' },
+        successEdit: null,
+      });
+      try {
+        await withEnv({ GBRAIN_AUDIT_DIR: fixture.skillsDir }, async () => {
+          const result = await runOnce(fixture, { noMutate: true });
+          expect(result.outcome).toBe('accepted');
+          expect(result.mutatedSkillFile).toBe(false);
+          expect(result.proposedPath).toBeDefined();
+          // proposed.md (best.md) exists and carries the improvement.
+          expect(fs.existsSync(result.proposedPath!)).toBe(true);
+          expect(fs.readFileSync(result.proposedPath!, 'utf8')).toContain('## Citations');
+          // SKILL.md on disk is UNCHANGED (still People-only).
+          const skill = fs.readFileSync(skillPath(fixture.skillsDir, SKILL), 'utf8');
+          expect(skill).not.toContain('## Citations');
+        });
+      } finally { uninstallStub(); }
+    } finally { fixture.cleanup(); }
+  });
+
+  test('optimizerMode one-shot-rewrite: single rewrite, no epoch loop, receipt records mode', async () => {
+    const fixture = setupFixture(SKILL_PEOPLE_ONLY, CITATIONS_BENCHMARK);
+    const stats = { successReflectCalls: 0, oneShotCalls: 0 };
+    try {
+      installStub({
+        stats,
+        // Body-only rewrite (frontmatter re-attached by the orchestrator).
+        oneShotBody: '# E2E Loop Test Skill\n\nProduce a structured output.\n\n## People\nList people.\n\n## Citations\nCite the source.\n',
+      });
+      try {
+        await withEnv({ GBRAIN_AUDIT_DIR: fixture.skillsDir }, async () => {
+          const result = await runOnce(fixture, { optimizerMode: 'one-shot-rewrite' });
+          expect(result.outcome).toBe('accepted');
+          expect(result.receipt.optimizer_mode).toBe('one-shot-rewrite');
+          // Exactly ONE optimizer rewrite call — no epoch loop.
+          expect(stats.oneShotCalls).toBe(1);
+          expect(result.receipt.total_steps).toBe(1);
+          const skill = fs.readFileSync(skillPath(fixture.skillsDir, SKILL), 'utf8');
+          expect(skill).toContain('## Citations');
+          // Frontmatter preserved (D5).
+          expect(skill).toContain('name: e2e-loop-skill');
+        });
+      } finally { uninstallStub(); }
+    } finally { fixture.cleanup(); }
+  });
+
+  test('reflectMode failure-only SKIPS the success reflect call; default fires it', async () => {
+    // Mixed benchmark → baseline has both successes (People tasks) and failures
+    // (Citations tasks), so default mode WOULD fire the success reflect.
+    const failOnly = { successReflectCalls: 0, oneShotCalls: 0 };
+    const fixtureA = setupFixture(SKILL_PEOPLE_ONLY, SAMPLE_BENCHMARK);
+    try {
+      installStub({
+        stats: failOnly,
+        failureEdit: { op: 'add', anchor: 'People', content: '## Citations\nCite.', reason: 'add' },
+        successEdit: { op: 'add', anchor: 'People', content: '<!-- success note -->', reason: 'note' },
+      });
+      try {
+        await withEnv({ GBRAIN_AUDIT_DIR: fixtureA.skillsDir }, async () => {
+          await runOnce(fixtureA, { reflectMode: 'failure-only' });
+          expect(failOnly.successReflectCalls).toBe(0);
+        });
+      } finally { uninstallStub(); }
+    } finally { fixtureA.cleanup(); }
+
+    const both = { successReflectCalls: 0, oneShotCalls: 0 };
+    const fixtureB = setupFixture(SKILL_PEOPLE_ONLY, SAMPLE_BENCHMARK);
+    try {
+      installStub({
+        stats: both,
+        failureEdit: { op: 'add', anchor: 'People', content: '## Citations\nCite.', reason: 'add' },
+        successEdit: { op: 'add', anchor: 'People', content: '<!-- success note -->', reason: 'note' },
+      });
+      try {
+        await withEnv({ GBRAIN_AUDIT_DIR: fixtureB.skillsDir }, async () => {
+          await runOnce(fixtureB);
+          expect(both.successReflectCalls).toBeGreaterThan(0);
+        });
+      } finally { uninstallStub(); }
+    } finally { fixtureB.cleanup(); }
+  });
+
+  test('disableValidationGate greedy-accepts a no-improvement edit the gate would reject', async () => {
+    // BOTH_SECTIONS already scores 1.0; a benign success edit yields delta 0,
+    // which the D12 gate rejects — unless disableValidationGate greedy-accepts.
+    const benignEdit = { op: 'add' as const, anchor: 'Citations', content: 'Extra note.', reason: 'benign' };
+
+    const fixtureGated = setupFixture(SKILL_BOTH_SECTIONS, SAMPLE_BENCHMARK);
+    try {
+      installStub({ successEdit: benignEdit, failureEdit: null });
+      try {
+        await withEnv({ GBRAIN_AUDIT_DIR: fixtureGated.skillsDir }, async () => {
+          const result = await runOnce(fixtureGated);
+          expect(result.outcome).toBe('no_improvement'); // gate rejected
+        });
+      } finally { uninstallStub(); }
+    } finally { fixtureGated.cleanup(); }
+
+    const fixtureGreedy = setupFixture(SKILL_BOTH_SECTIONS, SAMPLE_BENCHMARK);
+    try {
+      installStub({ successEdit: benignEdit, failureEdit: null });
+      try {
+        await withEnv({ GBRAIN_AUDIT_DIR: fixtureGreedy.skillsDir }, async () => {
+          const result = await runOnce(fixtureGreedy, { disableValidationGate: true });
+          expect(result.outcome).toBe('accepted'); // greedy
+          expect(result.receipt.validation_gate_disabled).toBe(true);
+        });
+      } finally { uninstallStub(); }
+    } finally { fixtureGreedy.cleanup(); }
+  });
+
+  test('D2 no-DB-pollution: subagent_messages count unchanged across a full run', async () => {
+    const fixture = setupFixture(SKILL_PEOPLE_ONLY, CITATIONS_BENCHMARK);
+    const countMessages = async (): Promise<number> => {
+      const r = await engine.executeRaw('SELECT COUNT(*) AS c FROM subagent_messages', []);
+      const rows = Array.isArray(r) ? r : ((r as { rows?: unknown[] }).rows ?? []);
+      return Number((rows[0] as { c?: number | string })?.c ?? 0);
+    };
+    try {
+      const before = await countMessages();
+      installStub({
+        failureEdit: { op: 'add', anchor: 'People', content: '## Citations\nCite the source.', reason: 'add' },
+        successEdit: null,
+      });
+      try {
+        await withEnv({ GBRAIN_AUDIT_DIR: fixture.skillsDir }, async () => {
+          await runOnce(fixture);
+        });
+      } finally { uninstallStub(); }
+      const after = await countMessages();
+      // Rollouts use gateway.toolLoop with no-op persistence (D2) → zero rows written.
+      expect(after).toBe(before);
+    } finally { fixture.cleanup(); }
+  });
+});
+
+// ─── T3 (review follow-ups): maxRuntimeMin abort + receipt honesty ───────────
+
+describe('skillopt T3 — runtime deadline + receipt score honesty', () => {
+  test('maxRuntimeMin deadline aborts cleanly with no commit', async () => {
+    const fixture = setupFixture(SKILL_PEOPLE_ONLY, CITATIONS_BENCHMARK);
+    try {
+      installStub({
+        failureEdit: { op: 'add', anchor: 'People', content: '## Citations\nCite the source.', reason: 'add' },
+        successEdit: null,
+      });
+      try {
+        await withEnv({ GBRAIN_AUDIT_DIR: fixture.skillsDir }, async () => {
+          // maxRuntimeMin:0 → deadline == run start; the first step's deadline
+          // check fires after the baseline eval has already elapsed → abort.
+          const result = await runOnce(fixture, { maxRuntimeMin: 0 });
+          expect(result.outcome).toBe('aborted');
+          // No commit: SKILL.md unchanged, no committed history row.
+          const skill = fs.readFileSync(skillPath(fixture.skillsDir, SKILL), 'utf8');
+          expect(skill).not.toContain('## Citations');
+          expect(loadHistory(fixture.skillsDir, SKILL).filter((r) => r.status === 'committed')).toHaveLength(0);
+        });
+      } finally { uninstallStub(); }
+    } finally { fixture.cleanup(); }
+  });
+
+  test('receipt records the REAL baseline_sel_score + final-test scores (regression: was hardcoded 0)', async () => {
+    // BOTH_SECTIONS already scores ~1.0 on the alternating benchmark, so a real
+    // baseline read is ~1.0 — a hardcoded-0 receipt would fail this immediately.
+    const fixture = setupFixture(SKILL_BOTH_SECTIONS, SAMPLE_BENCHMARK);
+    try {
+      installStub({ successEdit: null, failureEdit: null }); // baseline already perfect; no edits
+      try {
+        await withEnv({ GBRAIN_AUDIT_DIR: fixture.skillsDir }, async () => {
+          const r = (await runOnce(fixture)).receipt;
+          // Real baseline, not the old hardcoded 0.
+          expect(r.baseline_sel_score).toBeGreaterThan(0.9);
+          // Final-test eval populated both test scores (D_test non-empty under 4:1:5).
+          expect(typeof r.test_score).toBe('number');
+          expect(typeof r.baseline_test_score).toBe('number');
+          expect(r.baseline_test_score!).toBeGreaterThan(0.9);
+        });
+      } finally { uninstallStub(); }
+    } finally { fixture.cleanup(); }
+  });
+});
+
+describe('skillopt T3 — held-out independence guard', () => {
+  test('held-out sharing task_ids with the benchmark is rejected (gaming defense)', async () => {
+    const fixture = setupFixture(SKILL_PEOPLE_ONLY, CITATIONS_BENCHMARK);
+    // Held-out file reuses benchmark task_ids (cit-001..006) → must be rejected
+    // before any optimization, since an overlapping held-out can't catch overfit.
+    const heldOutPath = writeHeldOut(fixture, CITATIONS_BENCHMARK.slice(0, 6));
+    try {
+      installStub({
+        failureEdit: { op: 'add', anchor: 'People', content: '## Citations\nCite.', reason: 'add' },
+        successEdit: null,
+      });
+      try {
+        await withEnv({ GBRAIN_AUDIT_DIR: fixture.skillsDir }, async () => {
+          await expect(runOnce(fixture, { heldOutPath })).rejects.toThrow(/independent|shares .* task_id/i);
+        });
+      } finally { uninstallStub(); }
+    } finally { fixture.cleanup(); }
   });
 });

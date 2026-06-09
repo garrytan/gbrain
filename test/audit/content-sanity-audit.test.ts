@@ -39,15 +39,22 @@ function makeResult(opts: {
     reasons.push('literal_substring');
     reason_messages.push(`PAGE_JUNK_PATTERN: literal ${literal_substring_matches.join(', ')}`);
   }
+  const shouldQuarantine = !!opts.hard || junk_pattern_matches.length > 0 || literal_substring_matches.length > 0;
+  const shouldSkipEmbed = !!opts.soft && !shouldQuarantine;
   return {
     bytes: opts.bytes ?? 1000,
     oversize: !!opts.soft,
     junk_pattern_matches,
     literal_substring_matches,
+    prose_chars: null,
+    markup_ratio: null,
     reasons,
     reason_messages,
-    shouldHardBlock: !!opts.hard || junk_pattern_matches.length > 0 || literal_substring_matches.length > 0,
-    shouldSkipEmbed: !!opts.soft && !opts.hard && junk_pattern_matches.length === 0 && literal_substring_matches.length === 0,
+    shouldQuarantine,
+    shouldHardBlock: shouldQuarantine,
+    shouldFlag: shouldSkipEmbed,
+    flag_reason: shouldSkipEmbed ? 'oversized' : null,
+    shouldSkipEmbed,
   };
 }
 
@@ -172,19 +179,21 @@ describe('summarizeContentSanityEvents', () => {
   test('empty input returns zero summary', () => {
     const s = summarizeContentSanityEvents([]);
     expect(s.total_events).toBe(0);
-    expect(s.by_type).toEqual({ hard_block: 0, soft_block: 0, warn: 0 });
+    expect(s.by_type).toEqual({ hard_block: 0, quarantine: 0, reject: 0, flag: 0, soft_block: 0, warn: 0 });
     expect(s.top_patterns).toEqual([]);
   });
 
-  test('counts by type', () => {
+  test('counts by type (v0.42 quarantine/reject/flag)', () => {
     const s = summarizeContentSanityEvents([
-      event({ event_type: 'hard_block' }),
-      event({ event_type: 'hard_block' }),
+      event({ event_type: 'quarantine' }),
+      event({ event_type: 'quarantine' }),
+      event({ event_type: 'reject' }),
+      event({ event_type: 'flag' }),
       event({ event_type: 'soft_block' }),
       event({ event_type: 'warn' }),
     ]);
-    expect(s.by_type).toEqual({ hard_block: 2, soft_block: 1, warn: 1 });
-    expect(s.total_events).toBe(4);
+    expect(s.by_type).toEqual({ hard_block: 0, quarantine: 2, reject: 1, flag: 1, soft_block: 1, warn: 1 });
+    expect(s.total_events).toBe(6);
   });
 
   test('counts by source', () => {

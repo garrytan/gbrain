@@ -171,6 +171,20 @@ export function acceptCandidate(input: AcceptInput): AcceptResult {
 }
 
 /**
+ * Write the candidate to `best.md` (which doubles as `proposed.md`) WITHOUT
+ * touching SKILL.md or the history ledger. Used by the `--no-mutate` /
+ * bundled-without-allow paths: the optimizer found a better candidate but the
+ * caller opted out of in-place mutation, so we surface it for human review.
+ * Returns the path written. Atomic (.tmp + rename).
+ */
+export function writeProposed(skillsDir: string, skillName: string, candidateText: string): string {
+  const p = bestPath(skillsDir, skillName);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  atomicWrite(p, candidateText);
+  return p;
+}
+
+/**
  * Crash-recovery: walk history.json, find any row with `status: 'pending'`
  * whose committed counterpart doesn't exist, and revert:
  *  - Delete the snapshot file.

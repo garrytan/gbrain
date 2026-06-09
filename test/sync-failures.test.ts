@@ -40,7 +40,11 @@ afterEach(() => {
 });
 
 describe('Bug 9 — sync-failures JSONL helpers', () => {
-  test('recordSyncFailures appends one line per failure with dedup', async () => {
+  // issue #1939: recordSyncFailures now upserts by (source_id, path) and
+  // increments `attempts` (consecutive failed runs) instead of appending a row
+  // per (path, commit, error). One row per failing path; the attempt counter
+  // drives the bounded auto-skip valve.
+  test('recordSyncFailures upserts per path, incrementing attempts', async () => {
     const { recordSyncFailures, loadSyncFailures, syncFailuresPath } = await import('../src/core/sync.ts');
 
     recordSyncFailures([
@@ -51,21 +55,28 @@ describe('Bug 9 — sync-failures JSONL helpers', () => {
     expect(existsSync(syncFailuresPath())).toBe(true);
     const entries = loadSyncFailures();
     expect(entries.length).toBe(2);
-    expect(entries[0].path).toBe('people/alice.md');
-    expect(entries[0].commit).toBe('abc123def456');
-    expect(entries[0].acknowledged).toBeUndefined();
+    const alice = entries.find(e => e.path === 'people/alice.md')!;
+    expect(alice.commit).toBe('abc123def456');
+    expect(alice.state).toBe('open');
+    expect(alice.attempts).toBe(1);
+    expect(alice.acknowledged).toBe(false);
 
-    // Same failure on same commit should NOT re-append.
+    // Same path again (same commit) → still ONE row, attempts climbs.
     recordSyncFailures([
       { path: 'people/alice.md', error: 'YAML: unexpected colon in title' },
     ], 'abc123def456');
     expect(loadSyncFailures().length).toBe(2);
+    expect(loadSyncFailures().find(e => e.path === 'people/alice.md')!.attempts).toBe(2);
 
-    // Different commit → new entry.
+    // Different commit → still upserted (not appended), attempts keeps climbing.
     recordSyncFailures([
       { path: 'people/alice.md', error: 'YAML: unexpected colon in title' },
     ], 'zzz999');
-    expect(loadSyncFailures().length).toBe(3);
+    const after = loadSyncFailures();
+    expect(after.length).toBe(2);
+    const alice2 = after.find(e => e.path === 'people/alice.md')!;
+    expect(alice2.attempts).toBe(3);
+    expect(alice2.commit).toBe('zzz999');
   });
 
   test('acknowledgeSyncFailures marks unacked entries, leaves acked alone', async () => {
@@ -129,6 +140,18 @@ describe('Bug 9 — doctor surfaces sync failures', () => {
     expect(source).toContain('unacknowledgedSyncFailures');
     expect(source).toContain("'gbrain sync --skip-failed'");
   });
+
+  // issue #1939: BOTH doctor surfaces (local buildChecks + remote
+  // doctorReportRemote) must decide severity through the one shared helper so
+  // they can never drift. The remote surface must no longer hand-roll an
+  // `acknowledged_at` count (the old field-split that caused drift).
+  test('both doctor surfaces use the shared decideSyncFailureSeverity', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const occurrences = source.split('decideSyncFailureSeverity').length - 1;
+    expect(occurrences).toBeGreaterThanOrEqual(2); // local + remote
+    // remote no longer counts `!entry.acknowledged_at` by hand.
+    expect(source).not.toContain('if (!entry.acknowledged_at) unacked++');
+  });
 });
 
 describe('Bug 9 — sync.ts CLI flag wiring', () => {
@@ -169,23 +192,25 @@ describe('Bug 9 — sync.ts CLI flag wiring', () => {
     expect(unacknowledgedSyncFailures().length).toBe(0);
   });
 
-  test('performSync gates sync.last_commit on failedFiles.length', async () => {
+  test('performSync gates the bookmark through the shared failure ledger', async () => {
     const source = await Bun.file(new URL('../src/commands/sync.ts', import.meta.url)).text();
-    // The gate exists and references the failure set.
-    expect(source).toContain('failedFiles.length > 0');
+    // issue #1939: the gate is now the shared applySyncFailureGate orchestrator.
+    expect(source).toContain('applySyncFailureGate');
     expect(source).toContain('blocked_by_failures');
   });
 
-  test('performFullSync gates on result.failures from runImport', async () => {
+  test('performFullSync routes failures through the same shared gate', async () => {
     const source = await Bun.file(new URL('../src/commands/sync.ts', import.meta.url)).text();
-    expect(source).toContain('result.failures.length > 0');
+    expect(source).toContain('result.failures');
+    expect(source).toContain('applySyncFailureGate');
   });
 
-  test('runImport returns RunImportResult with failures list', async () => {
+  test('runImport returns RunImportResult and records via the ledger', async () => {
     const source = await Bun.file(new URL('../src/commands/import.ts', import.meta.url)).text();
     expect(source).toContain('RunImportResult');
     expect(source).toContain('failures: Array<{ path: string; error: string }>');
-    expect(source).toContain('recordSyncFailures');
+    // issue #1939: import records source-scoped via recordFailures (sourceId, …).
+    expect(source).toContain('recordFailures');
   });
 });
 

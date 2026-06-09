@@ -40,6 +40,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import { buildSpawnInvocation, detectTini } from './spawn-helpers.ts';
 import { classifyWorkerExit } from './exit-classification.ts';
 import { calculateBackoffMs } from './supervisor.ts';
+import { WORKER_EXIT_RSS_WATCHDOG } from './worker-exit-codes.ts';
 
 export type ChildSupervisorEvent =
   | { kind: 'worker_spawned'; pid: number; tini: boolean }
@@ -56,11 +57,11 @@ export type ChildSupervisorEvent =
       kind: 'backoff';
       ms: number;
       crashCount: number;
-      reason: 'clean_exit' | 'crash' | 'budget_exceeded';
+      reason: 'clean_exit' | 'crash' | 'budget_exceeded' | 'rss_watchdog' | 'wedge_restart';
     }
   | {
       kind: 'health_warn';
-      reason: 'clean_restart_budget_exceeded';
+      reason: 'clean_restart_budget_exceeded' | 'rss_watchdog_loop';
       count: number;
       windowMs: number;
     };
@@ -92,6 +93,26 @@ export interface ChildWorkerSupervisorOpts {
   cleanRestartBudgetBackoffMs?: number;
 
   /**
+   * v0.42.5.0 (issue #1678) — RSS-watchdog loop breaker, cause-keyed and
+   * INDEPENDENT of crashCount/max_crashes. A watchdog drain
+   * (WORKER_EXIT_RSS_WATCHDOG) means the worker hit its memory cap, not that
+   * the code is defective — so it does NOT count toward max_crashes (that
+   * would stop ALL job processing, worse than slow-looping). Instead we
+   * always apply `watchdogBackoffMs` (so an instant-OOM-on-startup can't
+   * hot-loop) and, when more than `watchdogLoopBudget` watchdog exits land
+   * inside `watchdogLoopWindowMs`, emit a loud `rss_watchdog_loop` health_warn
+   * so the operator sees "raise --max-rss" instead of chasing a phantom
+   * connection/lock failure. NOTE: the stable-run reset that defeats
+   * max_crashes for >5-min runs is exactly why a SEPARATE window is required
+   * here — routing watchdog exits through the crash path would never trip.
+   */
+  watchdogLoopBudget?: number;
+  /** Sliding window for the watchdog-loop breaker. Default 10 minutes. */
+  watchdogLoopWindowMs?: number;
+  /** Backoff applied after every watchdog drain. Default 30 seconds. */
+  watchdogBackoffMs?: number;
+
+  /**
    * Test-only override: minimum backoff in ms between child respawns.
    * Tests pass `1` to make crash-loops finish in < 1s. Not exposed via CLI.
    * @internal
@@ -114,6 +135,9 @@ const DEFAULTS = {
   cleanRestartBudget: 10,
   cleanRestartWindowMs: 60_000,
   cleanRestartBudgetBackoffMs: 1_000,
+  watchdogLoopBudget: 3,
+  watchdogLoopWindowMs: 10 * 60 * 1000,
+  watchdogBackoffMs: 30_000,
 } as const;
 
 export class ChildWorkerSupervisor {
@@ -122,9 +146,18 @@ export class ChildWorkerSupervisor {
   private _crashCount = 0;
   private _lastExitCode: number | null = null;
   private _cleanRestartTimestamps: number[] = [];
+  /** Sliding window of RSS-watchdog exit timestamps (issue #1678). Separate
+   *  from crashCount so the >5-min stable-run reset can't defeat the breaker. */
+  private _watchdogExitTimestamps: number[] = [];
   private _child: ChildProcess | null = null;
   private _inBackoff = false;
   private _lastStartTime = 0;
+  /** issue #1801: set by restartCurrentChild() before a deliberate wedge
+   *  SIGTERM so the exit handler skips crash accounting. Cleared on exit. */
+  private _intentionalRestart = false;
+  /** issue #1801: carried from the exit handler to applyBackoff so a wedge
+   *  self-heal respawns immediately (ms:0) instead of paying crash backoff. */
+  private _lastWasIntentionalRestart = false;
 
   constructor(opts: ChildWorkerSupervisorOpts) {
     this.opts = opts;
@@ -151,9 +184,17 @@ export class ChildWorkerSupervisor {
    * shutdown paths. Idempotent — `kill('SIGTERM')` on a dead child is a no-op.
    */
   killChild(signal: NodeJS.Signals): void {
-    if (this._child && !this._child.killed) {
+    // Gate on LIVENESS, not `.killed`. Node's `child.killed` flips true the
+    // moment a signal has been *sent*, not when the process exits — so a guard
+    // of `!this._child.killed` makes a follow-up SIGKILL (after an ignored
+    // SIGTERM) a silent no-op. That bug bit both the wedge escalation AND the
+    // existing shutdown() drain (issue #1801, Codex #1). Checking exitCode /
+    // signalCode === null means "still running," so SIGKILL actually lands on a
+    // process that ignored SIGTERM.
+    const child = this._child;
+    if (child && child.exitCode === null && child.signalCode === null) {
       try {
-        this._child.kill(signal);
+        child.kill(signal);
       } catch {
         /* already dead */
       }
@@ -173,7 +214,17 @@ export class ChildWorkerSupervisor {
    */
   awaitChildExit(timeoutMs: number): Promise<void> {
     if (!this._child) return Promise.resolve();
-    const child = this._child;
+    return this._awaitExit(this._child, timeoutMs);
+  }
+
+  /**
+   * awaitChildExit, bound to a SPECIFIC captured child reference rather than
+   * `this._child`. The wedge-restart path (issue #1801) must wait on the child
+   * it SIGTERMed, not whatever `this._child` points at later — by the time the
+   * grace window elapses, `run()` may have respawned a fresh child, and a
+   * `this._child`-based wait/kill would hit the replacement (Codex #2).
+   */
+  private _awaitExit(child: ChildProcess, timeoutMs: number): Promise<void> {
     // Already exited? `exitCode` becomes non-null once Node has seen the
     // child terminate. `signalCode` is the symmetric flag for kill-signal
     // termination — checked too so a SIGKILLed child also short-circuits.
@@ -195,6 +246,42 @@ export class ChildWorkerSupervisor {
         resolve();
       }, timeoutMs);
     });
+  }
+
+  /**
+   * Intentional restart of the CURRENT child — the supervisor's wedge watchdog
+   * (issue #1801) calls this when a worker is alive but making no forward
+   * progress (dead pool, stuck handler). Captures the live child reference,
+   * SIGTERMs it, waits up to `graceMs` on THAT captured ref, then SIGKILLs THAT
+   * ref if it ignored SIGTERM. Operating on the captured reference (never
+   * `this._child`) closes the race where `run()` respawns a fresh child during
+   * the grace window (Codex #2). The exit is flagged intentional so it does NOT
+   * count toward crashCount / max_crashes (Codex #3) — a deliberate self-heal,
+   * not a worker defect; the caller bounds repetition via its wedge-restart
+   * loop budget. `run()` respawns a fresh worker (and a fresh DB pool) on exit.
+   */
+  async restartCurrentChild(graceMs: number): Promise<void> {
+    const child = this._child;
+    if (!child) return;
+    this._intentionalRestart = true;
+    // SIGTERM the captured child (liveness-gated, same fix as killChild).
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        /* already dead */
+      }
+    }
+    await this._awaitExit(child, graceMs);
+    // Escalate to SIGKILL only if the CAPTURED child is still alive — never the
+    // respawned one.
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* already dead */
+      }
+    }
   }
 
   /**
@@ -291,7 +378,29 @@ export class ChildWorkerSupervisor {
         // through the shared `classifyWorkerExit` helper so doctor.ts and
         // jobs.ts (audit-log consumers) read the same rule.
         this._lastExitCode = code;
-        if (classifyWorkerExit({ code }) === 'clean_exit') {
+        if (this._intentionalRestart) {
+          // issue #1801: deliberate wedge self-heal (restartCurrentChild). Leave
+          // crashCount UNTOUCHED — like the RSS watchdog — so a recurring wedge
+          // never trips max_crashes and kills the daemon. A SIGTERM exit has
+          // code=null, which classifyWorkerExit() (correctly) treats as a crash,
+          // so without this guard the wedge restart would increment crashCount
+          // (Codex #3). The supervisor's wedgeRestartLoopBudget bounds repetition.
+          this._intentionalRestart = false;
+          this._lastWasIntentionalRestart = true;
+        } else if (code === WORKER_EXIT_RSS_WATCHDOG) {
+          // issue #1678: RSS-watchdog drain. NOT a code defect — leave
+          // crashCount untouched so it never trips max_crashes (which would
+          // stop ALL job processing). Tracked in its own window so the
+          // breaker survives the >5-min stable-run reset that defeats the
+          // generic crash path.
+          const nowMs = this.now();
+          this._watchdogExitTimestamps.push(nowMs);
+          const windowMs = this.opts.watchdogLoopWindowMs ?? DEFAULTS.watchdogLoopWindowMs;
+          const cutoff = nowMs - windowMs;
+          this._watchdogExitTimestamps = this._watchdogExitTimestamps.filter(
+            (t) => t > cutoff,
+          );
+        } else if (classifyWorkerExit({ code }) === 'clean_exit') {
           const nowMs = this.now();
           this._cleanRestartTimestamps.push(nowMs);
           const windowMs = this.opts.cleanRestartWindowMs ?? DEFAULTS.cleanRestartWindowMs;
@@ -311,10 +420,18 @@ export class ChildWorkerSupervisor {
 
         // Likely-cause heuristic, kept verbatim from MinionSupervisor.
         let likelyCause: string;
-        if (signal === 'SIGKILL') {
+        if (this._lastWasIntentionalRestart) {
+          // issue #1801: a deliberate wedge restart. Label it as such even
+          // though the kill signal was SIGTERM/SIGKILL, so the audit summary
+          // (supervisor-audit.ts CLEAN_EXIT_CAUSES) counts it as a self-heal,
+          // not a crash.
+          likelyCause = 'wedge_restart';
+        } else if (signal === 'SIGKILL') {
           likelyCause = 'oom_or_external_kill';
         } else if (signal === 'SIGTERM') {
           likelyCause = 'graceful_shutdown';
+        } else if (code === WORKER_EXIT_RSS_WATCHDOG) {
+          likelyCause = 'rss_watchdog';
         } else if (code === 1) {
           likelyCause = 'runtime_error';
         } else if (code === 0) {
@@ -339,6 +456,20 @@ export class ChildWorkerSupervisor {
 
   /** Compute and apply backoff based on the most recent exit classifier. */
   private async applyBackoff(): Promise<void> {
+    if (this._lastWasIntentionalRestart) {
+      // issue #1801: a deliberate wedge restart. Respawn immediately (a fresh
+      // pool is the whole point of the self-heal) — no crash backoff, no
+      // budget accounting (the supervisor's wedgeRestartLoopBudget owns that).
+      this._lastWasIntentionalRestart = false;
+      this.opts.onEvent({
+        kind: 'backoff',
+        ms: 0,
+        crashCount: this._crashCount,
+        reason: 'wedge_restart',
+      });
+      return;
+    }
+
     if (this._lastExitCode === 0) {
       // D2: check the clean-restart budget. If exceeded, emit health_warn
       // and apply a fixed cooldown so the next spawn isn't instant. This
@@ -378,6 +509,42 @@ export class ChildWorkerSupervisor {
         crashCount: this._crashCount,
         reason: 'clean_exit',
       });
+      return;
+    }
+
+    // issue #1678: RSS-watchdog drain. Always back off (so an instant-OOM on
+    // startup can't hot-loop) and, when more than `watchdogLoopBudget` drains
+    // land inside the window, emit the loud `rss_watchdog_loop` alert. crashCount
+    // is untouched (the worker is fine; the cap is too low), so this branch
+    // never trips max_crashes — the workload keeps running, just paced + loud.
+    if (this._lastExitCode === WORKER_EXIT_RSS_WATCHDOG) {
+      const count = this._watchdogExitTimestamps.length;
+      const budget = this.opts.watchdogLoopBudget ?? DEFAULTS.watchdogLoopBudget;
+      const windowMs = this.opts.watchdogLoopWindowMs ?? DEFAULTS.watchdogLoopWindowMs;
+      if (count > budget) {
+        this.opts.onEvent({
+          kind: 'health_warn',
+          reason: 'rss_watchdog_loop',
+          count,
+          windowMs,
+        });
+      }
+      const watchdogBackoff =
+        this.opts._backoffFloorMs !== undefined
+          ? this.opts._backoffFloorMs
+          : this.opts.watchdogBackoffMs ?? DEFAULTS.watchdogBackoffMs;
+      this.opts.onEvent({
+        kind: 'backoff',
+        ms: Math.round(watchdogBackoff),
+        crashCount: this._crashCount,
+        reason: 'rss_watchdog',
+      });
+      this._inBackoff = true;
+      try {
+        await this.sleep(watchdogBackoff);
+      } finally {
+        this._inBackoff = false;
+      }
       return;
     }
 
