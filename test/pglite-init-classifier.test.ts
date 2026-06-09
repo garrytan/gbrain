@@ -71,6 +71,11 @@ Original error: Aborted(). Build with -sASSERTIONS for more info.`;
     expect(classifyPgliteInitError(msg, 'win32')).toBe('windows-pglite-unknown');
   });
 
+  test('windows apostrophe path without shell wrapper stays generic', () => {
+    const msg = `PGLite failed to initialize its WASM runtime at C:\\Users\\quote-test'\\.gbrain. Original error: Aborted().`;
+    expect(classifyPgliteInitError(msg, 'win32')).toBe('windows-pglite-unknown');
+  });
+
   test('unknown verdict for generic / unrecognized errors', () => {
     const msg = 'TypeError: cannot read property of undefined at PGlite.create';
     expect(classifyPgliteInitError(msg)).toBe('unknown');
