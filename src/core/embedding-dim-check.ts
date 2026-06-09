@@ -449,6 +449,14 @@ function isCustomDimValidForProvider(
     };
   }
 
+  // User-provided OpenAI-compatible recipes (litellm, llama-server) require the
+  // operator to declare the provider's native dimension. Treat that declaration
+  // as schema sizing, not a custom-dimension request; the first embed still
+  // validates the actual returned vector width before storage.
+  if (recipe.touchpoints.embedding?.user_provided_models === true) {
+    return { valid: true, error: '' };
+  }
+
   // Tier 3: provider not known to support custom dims at all.
   return {
     valid: false,

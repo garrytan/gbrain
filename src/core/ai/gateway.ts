@@ -704,12 +704,16 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
     };
   }
 
-  // Openai-compat recipes with empty models list require a user-provided model.
+  // OpenAI-compatible recipes with empty model lists require a concrete
+  // provider:model string, but an already-parsed non-empty modelId satisfies
+  // that contract. The old check rejected every litellm/llama-server model,
+  // including valid values like litellm:text-embedding-qwen3-embedding-0.6b.
   const isUserProvided = (tp as any).user_provided_models === true;
   if (
     Array.isArray(tp.models) &&
     tp.models.length === 0 &&
-    (recipe.id === 'litellm' || isUserProvided)
+    (recipe.id === 'litellm' || isUserProvided) &&
+    !parsed.modelId
   ) {
     return {
       ok: false,
