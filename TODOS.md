@@ -1,5 +1,24 @@
 # TODOS
 
+## gbrain#1972 job-layer follow-up (v0.43+)
+
+Filed from the #1972 fix (stale-lock reaper + bounded disconnect + complete
+cooperative-abort). One item was deliberately gated, not deferred blindly. See plan +
+GSTACK REVIEW REPORT at `~/.claude/plans/system-instruction-you-are-working-curious-pike.md`.
+
+- [ ] **P2 — `findBacklinkGaps` sync→async refactor (gated on telemetry).** The backlinks
+  phase does its heavy work in a single synchronous call (`findBacklinkGaps`,
+  `src/commands/backlinks.ts:71` — nested `readdirSync` double-walk, no `await` seam), so it
+  cannot be cooperatively aborted: a >30s run on a huge brain blocks the event loop and gets
+  force-evicted. lint was made yield-able this wave (it was already async); backlinks needs
+  `findBacklinkGaps` converted to async-with-periodic-yields, threaded through
+  `runBacklinksCore` + `runPhaseBacklinks`. **Why gated:** the trigger is UNCONFIRMED — we
+  don't know backlinks ever exceeds 30s. This wave added the phase-duration force-evict
+  attribution log (`FORCE_EVICT_DEADLINE_MS` in `src/core/cycle.ts`), which names any phase
+  that crosses the deadline. Do this refactor only if a production 24h pull shows backlinks
+  crossing it; otherwise it's a hot-loop rewrite for a non-occurring case. **Where:**
+  `src/commands/backlinks.ts`, `src/core/cycle.ts` (runPhaseBacklinks signal threading).
+
 ## gbrain#1881 sync reclone ownership follow-ups (v0.43+)
 
 Filed from the #1881 fix (`gbrain sync --strategy code` deleted a user's working

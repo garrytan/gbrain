@@ -2,6 +2,25 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.38.0] - 2026-06-09
+
+**Three independent job-layer bugs that left autopilot wedged or swallowed a command's output are fixed, each traced to source.** A triage of the job/lock/teardown layer (gbrain#1972) pulled them into one wave.
+
+A crashed sync (OOM, a recycle, a kill) used to strand its lock row: the source looked "syncing" forever because reclaim only happened when something else came along and contended for the same lock. There was no background sweep, so a low-traffic source could sit falsely locked for a long time. Now every cycle reaps locks whose holder process is provably dead on this host — scoped to the sync/cycle lock namespaces, never to elections or the worker supervisor, and guarded against PID reuse so a recycled PID can never clear a live lock. `gbrain doctor --fix` runs the same reaper for brains that don't run autopilot.
+
+Short one-shot CLI calls also got their full latency and output back. Database teardown could block for the full force-exit deadline against a transaction-mode pooler and then exit hard mid-write, which truncated the command's real output — the reason a relational query could come back empty even though the query itself worked. Teardown is now bounded by gbrain's own deadline instead of the connection driver's, so a short command returns in milliseconds with its output intact.
+
+And the cooperative-abort work started in v0.42.29 (which only covered the embed phase) now covers every long phase a cycle runs — extract, fact extraction, and consolidation all check for cancellation between batches, so a cancelled cycle relinquishes its worker promptly instead of being force-evicted. A cancelled cycle also no longer records itself as a completed full run.
+
+### Fixed
+- **Stale dead-holder locks are reaped automatically (gbrain#1972, adjacent to #1470).** A background, host-scoped sweep at cycle start deletes `gbrain-sync:*` / `gbrain-cycle*` locks whose holder PID is dead, with a snapshot-matched delete that's safe against PID reuse and a 60s grace window. Other lock namespaces (elections, supervisor, reindex) keep their existing TTL behavior, untouched. `gbrain doctor --fix` reaps too, for no-autopilot brains.
+- **One-shot CLI calls no longer hang on teardown or lose their output (gbrain#1959).** Pool disconnect is bounded by a gbrain-owned deadline (both pools closed concurrently) instead of blocking until the hard force-exit fired and truncated stdout. A short command returns promptly with intact output.
+- **Cooperative abort now covers every long cycle phase (gbrain#1737 follow-up).** `extract` (incremental + full-walk), `extract_facts` (including its per-page embed and the phantom-redirect lock-retry), and `consolidate` check the abort signal between batches; `lint` yields periodically so it can be cancelled too. A cycle aborted mid-phase no longer stamps `last_full_cycle_at` as a completed run, and a new per-phase duration warning names any phase that overruns the worker's force-evict deadline.
+
+### To take advantage of v0.42.38.0
+
+`gbrain upgrade`. No configuration needed — the lock reaper, bounded teardown, and abort coverage are all on by default. If a source has looked stuck "syncing" with no live process, the next cycle (or `gbrain doctor --fix`) clears it automatically.
+
 ## [0.42.37.0] - 2026-06-08
 
 **Cross-source reads now honor the caller's grant everywhere, a single bad frontmatter value no longer wedges a whole `lint`/`sync` run, and a handful of long-standing papercuts are gone.** A triage of the open issue backlog pulled the highest-impact bugs into one wave.
