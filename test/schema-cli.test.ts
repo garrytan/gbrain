@@ -58,11 +58,13 @@ describe('gbrain schema CLI (Phase C)', () => {
     expect(r.stdout + r.stderr).toMatch(/schema|active|list|show|validate|use/i);
   });
 
-  test('schema list shows gbrain-base bundled', () => {
+  test('schema list shows all bundled packs', () => {
     const r = gbrain(['schema', 'list']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('Bundled packs:');
     expect(r.stdout).toContain('gbrain-base');
+    expect(r.stdout).toContain('gbrain-recommended');
+    expect(r.stdout).toContain('gbrain-base-v2');
   });
 
   test('schema show gbrain-base prints manifest details', () => {
@@ -78,6 +80,15 @@ describe('gbrain schema CLI (Phase C)', () => {
     expect(r.stdout).toContain('Takes kinds: fact, take, bet, hunch');
     expect(r.stdout).toContain('person :: entity');
     expect(r.stdout).toContain('company :: entity');
+  });
+
+  test('schema show gbrain-base-v2 prints bundled successor manifest', () => {
+    const r = gbrain(['schema', 'show', 'gbrain-base-v2']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('gbrain-base-v2 v1.0.0');
+    expect(r.stdout).toContain('Page types (15)');
+    expect(r.stdout).toContain('person :: entity');
+    expect(r.stdout).toContain('note :: concept');
   });
 
   test('schema validate gbrain-base passes', () => {
