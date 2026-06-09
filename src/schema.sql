@@ -683,6 +683,21 @@ CREATE TABLE IF NOT EXISTS op_checkpoints (
 CREATE INDEX IF NOT EXISTS op_checkpoints_updated_at_idx
   ON op_checkpoints (updated_at);
 
+-- #1794: append-only delta storage. One row per completed path; sync's
+-- appendCompleted INSERTs only the delta instead of rewriting the whole
+-- completed_keys JSONB array each flush (O(N^2) -> O(delta)). FK cascade drops
+-- children with the parent (clearOpCheckpoint + 7-day purge). PK prefix
+-- (op,fingerprint) serves all reads; no separate index. Mirrors migration v115.
+CREATE TABLE IF NOT EXISTS op_checkpoint_paths (
+  op          TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  path        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (op, fingerprint, path),
+  CONSTRAINT op_checkpoint_paths_parent_fk
+    FOREIGN KEY (op, fingerprint) REFERENCES op_checkpoints (op, fingerprint) ON DELETE CASCADE
+);
+
 -- migration_impact_log moved BELOW minion_jobs (was here, lines 645-676)
 -- because its `job_id BIGINT REFERENCES minion_jobs(id)` FK requires
 -- minion_jobs to exist FIRST during SCHEMA_SQL replay. v0.41.25.0 fix.

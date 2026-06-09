@@ -394,7 +394,14 @@ async function runRestore(engine: BrainEngine, args: string[]): Promise<void> {
       console.log(`  re-cloned from remote_url (clone dir was missing).`);
     }
   } catch (e) {
-    if (e instanceof SourceOpError) {
+    if (e instanceof SourceOpError && e.code === 'unmanaged_path') {
+      // #1881: local_path is the user's own working tree, not a clone gbrain
+      // created. gbrain won't re-clone over it, and `gbrain sync` will refuse it
+      // too — so the generic "missing clone, try sync to recover" guidance below
+      // would be actively misleading. Surface the real situation instead.
+      console.error(`  WARN: ${e.message}`);
+      console.error(`  The DB row is restored; gbrain syncs this path read-only.`);
+    } else if (e instanceof SourceOpError) {
       console.error(`  WARN: could not re-clone: ${e.message}`);
       console.error(`  The DB row is restored but the on-disk clone is missing.`);
       console.error(`  Try \`gbrain sync --source ${id}\` to recover, or remove + re-add.`);

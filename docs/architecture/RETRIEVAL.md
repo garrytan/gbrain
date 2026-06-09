@@ -123,6 +123,7 @@ expansion (if enabled)
 hybrid search:
    ├── vector  (HNSW on chunk embeddings)
    ├── keyword (BM25 via tsvector)
+   ├── relational (v0.42.34.0: typed-edge recall arm — relational queries only)
    ├── source-aware re-rank (CASE in SQL)
    └── RRF fusion → top 30
        │

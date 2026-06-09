@@ -931,6 +931,20 @@ CREATE TABLE IF NOT EXISTS op_checkpoints (
 CREATE INDEX IF NOT EXISTS op_checkpoints_updated_at_idx
   ON op_checkpoints (updated_at);
 
+-- #1794: append-only delta storage (one row per completed path). FK cascade
+-- drops children with the parent. PK prefix (op,fingerprint) serves all reads.
+-- Mirrors migration v115 + src/schema.sql. Placed after op_checkpoints so the
+-- FK target exists in the top-to-bottom replay.
+CREATE TABLE IF NOT EXISTS op_checkpoint_paths (
+  op          TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  path        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (op, fingerprint, path),
+  CONSTRAINT op_checkpoint_paths_parent_fk
+    FOREIGN KEY (op, fingerprint) REFERENCES op_checkpoints (op, fingerprint) ON DELETE CASCADE
+);
+
 -- ============================================================
 -- migration_impact_log (v0.41.18.0 — gbrain onboard wave)
 -- ============================================================

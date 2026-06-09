@@ -830,13 +830,19 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   // Pages CRUD
-  async getPage(slug: string, opts?: { sourceId?: string; includeDeleted?: boolean }): Promise<Page | null> {
+  async getPage(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeDeleted?: boolean }): Promise<Page | null> {
     // v0.26.5: hide soft-deleted by default; opt-in via opts.includeDeleted.
     const includeDeleted = opts?.includeDeleted === true;
     const sourceId = opts?.sourceId;
+    const sourceIds = opts?.sourceIds;
     const where: string[] = ['slug = $1'];
     const params: unknown[] = [slug];
-    if (sourceId) {
+    // #1393: federated grant (sourceIds[]) wins over scalar sourceId so the
+    // exact-match read honors allowedSources, not just one source.
+    if (sourceIds && sourceIds.length > 0) {
+      params.push(sourceIds);
+      where.push(`source_id = ANY($${params.length}::text[])`);
+    } else if (sourceId) {
       params.push(sourceId);
       where.push(`source_id = $${params.length}`);
     }
@@ -2857,6 +2863,90 @@ export class PGLiteEngine implements BrainEngine {
       });
     }
     return result;
+  }
+
+  async relationalFanout(
+    seeds: string[],
+    opts?: import('./types.ts').RelationalFanoutOpts,
+  ): Promise<import('./types.ts').RelationalFanoutRow[]> {
+    if (!seeds || seeds.length === 0) return [];
+    const depth = Math.min(Math.max(1, opts?.depth ?? 2), 3);
+    const direction = opts?.direction ?? 'both';
+    const limit = Math.min(Math.max(1, opts?.limit ?? 50), 200);
+    const types = opts?.linkTypes && opts.linkTypes.length > 0 ? opts.linkTypes : null;
+
+    // $1=seeds, $2=depth, $3=limit; optional scope/type params appended.
+    const params: unknown[] = [seeds, depth, limit];
+    const useSourceIds = opts?.sourceIds && opts.sourceIds.length > 0;
+    let seedScope = '';
+    if (useSourceIds) {
+      params.push(opts!.sourceIds);
+      seedScope = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      seedScope = `AND p.source_id = $${params.length}`;
+    }
+    let typeFilter = '';
+    if (types) {
+      params.push(types);
+      typeFilter = `AND l.link_type = ANY($${params.length}::text[])`;
+    }
+    const mentionsFilter = opts?.includeMentions ? '' : `AND l.link_source IS DISTINCT FROM 'mentions'`;
+
+    const recurStep =
+      direction === 'out'
+        ? `JOIN links l ON l.from_page_id = w.id JOIN pages p2 ON p2.id = l.to_page_id`
+        : direction === 'in'
+          ? `JOIN links l ON l.to_page_id = w.id JOIN pages p2 ON p2.id = l.from_page_id`
+          : `JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
+             JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END`;
+
+    const sql = `
+      WITH RECURSIVE walk AS (
+        SELECT p.id, p.slug, p.source_id, 0::int AS depth,
+               ARRAY[p.id] AS visited, ARRAY[p.slug] AS path,
+               p.source_id AS seed_source, NULL::text AS last_link_type
+        FROM pages p
+        WHERE p.slug = ANY($1::text[]) ${seedScope} AND p.deleted_at IS NULL
+        UNION ALL
+        SELECT p2.id, p2.slug, p2.source_id, w.depth + 1,
+               w.visited || p2.id, w.path || p2.slug,
+               w.seed_source, l.link_type
+        FROM walk w
+        ${recurStep}
+        WHERE w.depth < $2
+          AND NOT (p2.id = ANY(w.visited))
+          AND p2.source_id = w.seed_source
+          AND p2.deleted_at IS NULL
+          ${mentionsFilter}
+          ${typeFilter}
+      )
+      SELECT n.source_id, n.slug,
+             MIN(n.depth) AS hop,
+             COUNT(DISTINCT n.last_link_type) AS edge_count,
+             array_agg(DISTINCT n.last_link_type)
+               FILTER (WHERE n.last_link_type IS NOT NULL) AS via_link_types,
+             (array_agg(array_to_string(n.path, chr(9))
+               ORDER BY n.depth ASC, array_length(n.path, 1) ASC))[1] AS path_str,
+             (SELECT cc.id FROM content_chunks cc
+               WHERE cc.page_id = n.id ORDER BY cc.chunk_index ASC LIMIT 1) AS canonical_chunk_id
+      FROM walk n
+      WHERE n.depth > 0
+      GROUP BY n.source_id, n.slug, n.id
+      ORDER BY hop ASC, edge_count DESC, n.source_id ASC, n.slug ASC
+      LIMIT $3
+    `;
+
+    const { rows } = await this.db.query(sql, params);
+    return (rows as Record<string, unknown>[]).map(r => ({
+      source_id: r.source_id as string,
+      slug: r.slug as string,
+      hop: Number(r.hop),
+      edge_count: Number(r.edge_count),
+      via_link_types: Array.isArray(r.via_link_types) ? (r.via_link_types as string[]) : [],
+      path: r.path_str ? String(r.path_str).split('\t') : [],
+      canonical_chunk_id: r.canonical_chunk_id == null ? null : Number(r.canonical_chunk_id),
+    }));
   }
 
   async getBacklinkCounts(slugs: string[]): Promise<Map<string, number>> {

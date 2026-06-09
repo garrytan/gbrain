@@ -45,6 +45,7 @@ const FRONTMATTER_RULE_NAMES: Record<ParseValidationCode, string> = {
   SLUG_MISMATCH: 'frontmatter-slug-mismatch',
   NULL_BYTES: 'frontmatter-null-bytes',
   NESTED_QUOTES: 'frontmatter-nested-quotes',
+  NON_STRING_FIELD: 'frontmatter-non-string-field',
   EMPTY_FRONTMATTER: 'frontmatter-empty',
 };
 

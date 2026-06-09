@@ -326,12 +326,48 @@ function availableBrainTools(ctx: OperationContext): string[] {
 // Frontmatter projection + description
 // ---------------------------------------------------------------------------
 
-/** Parse a single-line `description:` from raw frontmatter (best-effort). */
+/**
+ * Parse a `description:` from raw frontmatter (best-effort).
+ *
+ * #1711: handles YAML block scalars. `description: |` (literal) and
+ * `description: >` (folded), with optional chomping/indent indicators
+ * (`|-`, `>+`, `|2`), are parsed by reading the following indented lines and
+ * folding them into a single line for the one-line catalog. Pre-fix the regex
+ * captured the bare `|`/`>` indicator as the description, so block-scalar skills
+ * showed a literal "|" in the catalog instead of their text.
+ */
 function parseDescriptionField(raw: string): string | undefined {
-  const m = raw.match(/^description:\s*["']?(.+?)["']?\s*$/m);
-  if (!m) return undefined;
-  const v = m[1].trim();
-  return v.length > 0 ? v : undefined;
+  const lines = raw.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^description:[ \t]*(.*)$/);
+    if (!m) continue;
+    const inline = m[1].trim();
+
+    // Block scalar indicator (`|`, `>`, with optional chomp `+`/`-` and indent digit).
+    if (/^[|>][+-]?\d*$/.test(inline)) {
+      const block: string[] = [];
+      let baseIndent: number | null = null;
+      for (let j = i + 1; j < lines.length; j++) {
+        const line = lines[j];
+        if (line.trim().length === 0) { block.push(''); continue; }
+        const indent = line.length - line.trimStart().length;
+        if (baseIndent === null) {
+          if (indent === 0) break;   // no indented continuation
+          baseIndent = indent;
+        }
+        if (indent < baseIndent) break;  // dedent ends the block
+        block.push(line.slice(baseIndent));
+      }
+      // Catalog descriptions are one line; collapse literal/folded whitespace.
+      const folded = block.join(' ').replace(/\s+/g, ' ').trim();
+      return folded.length > 0 ? folded : undefined;
+    }
+
+    // Inline scalar: strip a matching pair of surrounding quotes.
+    const unq = inline.replace(/^(['"])([\s\S]*)\1$/, '$2').trim();
+    return unq.length > 0 ? unq : undefined;
+  }
+  return undefined;
 }
 
 /** Strip the leading `---\n...\n---` fence; return the prose body. */

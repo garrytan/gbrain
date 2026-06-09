@@ -2,7 +2,7 @@ import type {
   Page, PageInput, PageFilters, GetPageOpts,
   Chunk, ChunkInput, StaleChunkRow, StalePageRow,
   SearchResult, SearchOpts,
-  Link, GraphNode, GraphPath,
+  Link, GraphNode, GraphPath, RelationalFanoutRow, RelationalFanoutOpts,
   TimelineEntry, TimelineInput, TimelineOpts,
   RawData,
   PageVersion,
@@ -1197,6 +1197,30 @@ export interface BrainEngine {
     slug: string,
     opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[] },
   ): Promise<GraphPath[]>;
+  /**
+   * Typed-edge relational fan-out for the relational recall arm (v0.43).
+   *
+   * Generalizes traversePaths to a SEED ARRAY and aggregates to ranked NODES
+   * (not edges): for each reached page, the shortest hop from any seed, a
+   * connection-richness count, the edge types it was reached by, the shortest
+   * connecting slug path, and the page's canonical (lowest-ordinal) chunk id.
+   *
+   * Invariants:
+   * - WITHIN-SOURCE: a walk never crosses a source boundary (each branch
+   *   stays in its seed's own source), even when multiple sources are in
+   *   scope. Cross-source edge traversal is a separate, security-reviewed
+   *   feature.
+   * - `link_source='mentions'` edges are EXCLUDED by default (noisy + the
+   *   densest fan-out source); opt in via `includeMentions`.
+   * - `deleted_at IS NULL` at seed, every neighbor, and every returned node.
+   * - Deterministic ordering: hop ASC, edge_count DESC, source_id, slug.
+   * Must move in lockstep with the PGLite implementation
+   * (test/e2e/engine-parity.test.ts).
+   */
+  relationalFanout(
+    seeds: string[],
+    opts?: RelationalFanoutOpts,
+  ): Promise<RelationalFanoutRow[]>;
   /**
    * For a list of slugs, return how many inbound links each has.
    * Used by hybrid search backlink boost. Single SQL query, not N+1.

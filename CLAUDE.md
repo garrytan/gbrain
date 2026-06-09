@@ -149,6 +149,7 @@ project resolves through `src/core/search/mode.ts`.
 | `intentWeighting`             | true           | true       | true           |
 | `tokenBudget`                 | **4000**       | **12000**  | **off**        |
 | `expansion` (LLM multi-query) | false          | false      | **true**       |
+| `relationalRetrieval`         | false          | **true**   | **true**       |
 | `searchLimit` default         | 10             | 25         | 50             |
 
 **Cost anchors (downstream agent input cost — gbrain itself is rounding error).**
@@ -206,6 +207,19 @@ through `embedding_voyage` (1024d Voyage) can't be served a cache row
 written against `embedding` (1536d OpenAI). Existing v=2 rows become
 unreachable on first re-query (one-time miss spike on upgrade);
 `mode.ts:KNOBS_HASH_VERSION` is the single source of truth.
+
+**v0.42.34.0 knobs_hash v=9 → v=10.** Folds the `relationalRetrieval` knob +
+depth into the cache key so a relational-on result set can't be served to a
+relational-off lookup (same contamination class as graph_signals). One-time
+miss spike on upgrade.
+
+**Relational retrieval (v0.42.34.0).** `relationalRetrieval` (on for
+balanced/tokenmax) adds a fourth recall arm: a relational query ("who invested
+in X", "what connects A and B") resolves its seed entity and walks the typed-edge
+graph (`src/core/search/relational-recall.ts` + `relational-intent.ts`,
+`engine.relationalFanout`), injecting edge-derived answers into RRF. Within-source,
+deterministic, mentions-excluded by default, pure no-op for non-relational queries.
+The `query` op's `relational` flag forces it on/off per call.
 
 **Three CLI surfaces:**
 
@@ -355,6 +369,24 @@ Apply the same pattern to any long-running command whose exit code matters:
 For background tasks (`run_in_background: true`), the harness captures the exit
 file separately — use it via the bg task's `<id>.exit` file, not the streamed
 output.
+
+## Sync resumability + lock tuning (v0.42.x, #1794)
+
+`gbrain sync` is resumable and converges under pool exhaustion + repeated kills.
+Progress banks into the append-only `op_checkpoint_paths` table (one row per drained
+path, written via the direct session pool so it survives `EMAXCONNSESSION`); a killed
+run resumes from the checkpoint and `last_commit` only advances on true completion. The
+per-source lock heartbeats through the direct pool and refuses to steal a live,
+recently-refreshed holder. Five env knobs tune it (all env-only, incident-time escape
+hatches — no config-dashboard surface by design):
+
+| Env var | Default | What it does |
+|---|---|---|
+| `GBRAIN_SYNC_CHECKPOINT_EVERY` | 1000 | Flush the checkpoint every N drained files. |
+| `GBRAIN_SYNC_CHECKPOINT_SECONDS` | 10 | Also flush every N seconds (whichever comes first) — bounds worst-case loss regardless of throughput. Flush also fires after the first file. |
+| `GBRAIN_SYNC_MAX_CHECKPOINT_FAILURES` | 3 | Consecutive failed flushes (each already retried ~12s) before the run aborts with `reason: 'checkpoint_unavailable'` instead of importing work it can never bank. |
+| `GBRAIN_SYNC_YIELD_EVERY` | 64 | Yield the event loop (`setTimeout(0)`, NOT `setImmediate` — Bun starves the timers phase under a tight setImmediate loop) every N files so the lock-refresh `setInterval` heartbeat fires mid-import. |
+| `GBRAIN_LOCK_STEAL_GRACE_SECONDS` | derived (~600 at 30min TTL) | A holder that refreshed within this window is NOT stolen even if its TTL lapsed (starved-but-alive). Dead holders stop refreshing, age past the grace, and become stealable; TTL stays the backstop. |
 
 ## Build
 

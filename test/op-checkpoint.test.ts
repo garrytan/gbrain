@@ -4,6 +4,7 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import {
   loadOpCheckpoint,
   recordCompleted,
+  appendCompleted,
   clearOpCheckpoint,
   resumeFilter,
   purgeStaleCheckpoints,
@@ -139,6 +140,88 @@ describe('loadOpCheckpoint / recordCompleted / clearOpCheckpoint', () => {
     await clearOpCheckpoint(engine, { op: 'never-written', fingerprint: 'nope' });
     const after = await loadOpCheckpoint(engine, { op: 'never-written', fingerprint: 'nope' });
     expect(after).toEqual([]);
+  });
+});
+
+// #1794: append-only delta storage (op_checkpoint_paths). recordCompleted keeps
+// REPLACE semantics for the 9 non-sync consumers; appendCompleted is the
+// additive path sync uses to avoid O(N²) full-set rewrites.
+describe('appendCompleted (delta) + union read', () => {
+  async function pathRowCount(op: string, fp: string): Promise<number> {
+    const rows = await engine.executeRaw<{ n: string | number }>(
+      `SELECT count(*)::text AS n FROM op_checkpoint_paths WHERE op = $1 AND fingerprint = $2`,
+      [op, fp],
+    );
+    return Number(rows[0]?.n ?? 0);
+  }
+
+  test('appendCompleted returns true and load reflects the delta', async () => {
+    const key = { op: 'sync', fingerprint: 'fp-append' };
+    expect(await appendCompleted(engine, key, ['a.md', 'b.md'])).toBe(true);
+    expect((await loadOpCheckpoint(engine, key)).sort()).toEqual(['a.md', 'b.md']);
+  });
+
+  test('re-appending an already-banked path inserts 0 new rows (delta, not full rewrite)', async () => {
+    const key = { op: 'sync', fingerprint: 'fp-delta' };
+    await appendCompleted(engine, key, ['a.md', 'b.md']);
+    expect(await pathRowCount('sync', 'fp-delta')).toBe(2);
+    // Second flush re-sends one banked + one new path; ON CONFLICT DO NOTHING
+    // means only the genuinely-new row lands.
+    await appendCompleted(engine, key, ['b.md', 'c.md']);
+    expect(await pathRowCount('sync', 'fp-delta')).toBe(3);
+    expect((await loadOpCheckpoint(engine, key)).sort()).toEqual(['a.md', 'b.md', 'c.md']);
+  });
+
+  test('empty delta is a no-op (returns true, writes nothing)', async () => {
+    const key = { op: 'sync', fingerprint: 'fp-empty' };
+    expect(await appendCompleted(engine, key, [])).toBe(true);
+    expect(await pathRowCount('sync', 'fp-empty')).toBe(0);
+  });
+
+  test('union read across legacy completed_keys array AND appended child rows', async () => {
+    // Simulates an in-flight upgrade: a pre-existing parent row carries the
+    // legacy array, then the new code appends child rows to the same key.
+    const key = { op: 'sync', fingerprint: 'fp-union' };
+    await engine.executeRaw(
+      `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+       VALUES ('sync', 'fp-union', '["legacy-1","legacy-2"]'::jsonb, now())`,
+    );
+    await appendCompleted(engine, key, ['new-1']);
+    expect((await loadOpCheckpoint(engine, key)).sort()).toEqual(['legacy-1', 'legacy-2', 'new-1']);
+  });
+
+  test('clearOpCheckpoint cascades to child rows', async () => {
+    const key = { op: 'sync', fingerprint: 'fp-clear' };
+    await appendCompleted(engine, key, ['a.md', 'b.md']);
+    expect(await pathRowCount('sync', 'fp-clear')).toBe(2);
+    await clearOpCheckpoint(engine, key);
+    expect(await pathRowCount('sync', 'fp-clear')).toBe(0);
+    expect(await loadOpCheckpoint(engine, key)).toEqual([]);
+  });
+
+  test('recordCompleted still REPLACES (sync appendCompleted does not)', async () => {
+    // Guards V3: recordCompleted must remove stale keys, not append them.
+    const key = { op: 'embed', fingerprint: 'fp-replace' };
+    await recordCompleted(engine, key, ['x', 'y']);
+    await recordCompleted(engine, key, ['x']);
+    expect((await loadOpCheckpoint(engine, key)).sort()).toEqual(['x']);
+  });
+
+  test('purge of a stale parent cascades to its child rows', async () => {
+    // The FK guarantees children always have a parent, so deleting the stale
+    // parent cascade-drops its children. (A standalone orphan is impossible to
+    // create — the FK rejects it — so there is no separate orphan sweep.)
+    await engine.executeRaw(
+      `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+       VALUES ('sync', 'fp-stale', '[]'::jsonb, now() - interval '10 days')`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO op_checkpoint_paths (op, fingerprint, path, created_at)
+       VALUES ('sync', 'fp-stale', 'old.md', now() - interval '10 days')`,
+    );
+    const purged = await purgeStaleCheckpoints(engine, 7);
+    expect(purged).toBe(1); // counts the parent; child cascades silently
+    expect(await pathRowCount('sync', 'fp-stale')).toBe(0);
   });
 });
 

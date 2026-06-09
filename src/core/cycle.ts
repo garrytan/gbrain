@@ -900,6 +900,21 @@ async function runPhaseSync(
       pagesAffected: result.pagesAffected,
     };
   } catch (e) {
+    // v0.42.x (#1794): a single-flight collision — another sync already holds
+    // the per-source lock — is NOT a phase failure. The other run is doing the
+    // work; surfacing 'fail' would paint a healthy cron contention red and (with
+    // the heartbeat-aware takeover) this is now the expected outcome when a long
+    // sync overruns into the next cron tick. Report it as a skip.
+    const { SyncLockBusyError } = await import('../commands/sync.ts');
+    if (e instanceof SyncLockBusyError) {
+      return {
+        phase: 'sync',
+        status: 'skipped',
+        duration_ms: 0,
+        summary: 'sync already in progress elsewhere — skipped',
+        details: { syncStatus: 'lock_busy' },
+      };
+    }
     return {
       phase: 'sync',
       status: 'fail',

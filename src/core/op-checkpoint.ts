@@ -1,5 +1,52 @@
 import { createHash } from 'crypto';
 import type { BrainEngine } from './engine.ts';
+import { withRetry, BULK_RETRY_OPTS, RetryAbortError } from './retry.ts';
+
+/** Max paths per append-INSERT round-trip; bounds the param-array size. */
+const APPEND_CHUNK = 1000;
+
+/**
+ * Single writable-CTE statement (one round-trip): ensure the parent
+ * op_checkpoints row exists (FK target) and bump its updated_at so the 7-day
+ * purge tracks activity, then INSERT the delta child rows. `ON CONFLICT DO
+ * NOTHING` makes re-appending an already-banked path a no-op. $3 binds a JS
+ * string[] to a Postgres text[] (NOT a jsonb param), which postgres.js + PGLite
+ * both handle natively — so it sidesteps executeRawJsonb's array rejection.
+ */
+const APPEND_PATHS_SQL = `WITH parent AS (
+  INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+  VALUES ($1, $2, '[]'::jsonb, now())
+  ON CONFLICT (op, fingerprint) DO UPDATE SET updated_at = now()
+)
+INSERT INTO op_checkpoint_paths (op, fingerprint, path)
+SELECT $1, $2, unnest($3::text[])
+ON CONFLICT (op, fingerprint, path) DO NOTHING`;
+
+/**
+ * v0.42.x (#1794): every checkpoint write routes through the DIRECT session
+ * pool (`executeRawDirect`) wrapped in `withRetry(BULK_RETRY_OPTS)`. Rationale:
+ * under Supavisor transaction-pooler exhaustion (`EMAXCONNSESSION` / SQLSTATE
+ * 53300) the write competes with import workers for the same dead pool. The
+ * direct pool bypasses that, and retry rides out the 5-10s recovery window.
+ * Returns `true` if the write landed, `false` if it failed after retries (the
+ * caller — sync's fail-loud counter — decides whether to abort). A
+ * `RetryAbortError` (signal mid-sleep) is re-thrown, NOT counted as a failure.
+ */
+async function durableWrite(
+  engine: BrainEngine,
+  key: OpCheckpointKey,
+  label: string,
+  fn: () => Promise<unknown>,
+): Promise<boolean> {
+  try {
+    await withRetry(fn, BULK_RETRY_OPTS);
+    return true;
+  } catch (e) {
+    if (e instanceof RetryAbortError) throw e;
+    console.error(`[op-checkpoint] ${label} failed (${key.op}, ${key.fingerprint}):`, (e as Error).message);
+    return false;
+  }
+}
 
 /**
  * Shared checkpoint primitive for long-running ops (embed, extract, lint,
@@ -69,17 +116,25 @@ export async function loadOpCheckpoint(
   key: OpCheckpointKey,
 ): Promise<string[]> {
   try {
-    const rows = await engine.executeRaw<{ completed_keys: unknown }>(
-      `SELECT completed_keys FROM op_checkpoints
-       WHERE op = $1 AND fingerprint = $2`,
+    // v0.42.x (#1794): union the new append-only child rows (op_checkpoint_paths)
+    // with the legacy `completed_keys` JSONB array (recordCompleted consumers +
+    // pre-upgrade rows). UNION ALL — not UNION — because the JS Set below already
+    // dedupes, so we skip a server-side dedup sort over up to 204K rows on every
+    // resume. `jsonb_array_elements_text` expands the legacy array server-side,
+    // which also removes the old postgres.js-vs-PGLite string/array handling.
+    const rows = await engine.executeRaw<{ ckey: unknown }>(
+      `SELECT path AS ckey FROM op_checkpoint_paths
+         WHERE op = $1 AND fingerprint = $2
+       UNION ALL
+       SELECT jsonb_array_elements_text(completed_keys) AS ckey FROM op_checkpoints
+         WHERE op = $1 AND fingerprint = $2`,
       [key.op, key.fingerprint],
     );
-    if (rows.length === 0) return [];
-    const raw = rows[0]?.completed_keys;
-    // postgres.js returns JSONB as JS arrays; PGLite returns strings. Handle both.
-    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((k): k is string => typeof k === 'string');
+    const set = new Set<string>();
+    for (const r of rows) {
+      if (typeof r.ckey === 'string') set.add(r.ckey);
+    }
+    return [...set];
   } catch (e) {
     console.error(`[op-checkpoint] load failed (${key.op}, ${key.fingerprint}):`, (e as Error).message);
     return [];
@@ -98,22 +153,72 @@ export async function recordCompleted(
   engine: BrainEngine,
   key: OpCheckpointKey,
   keys: string[],
-): Promise<void> {
-  try {
-    // Sorted serialization keeps diff-based debug output stable and tests
-    // deterministic across insertion order shuffles.
-    const sorted = [...keys].sort();
-    await engine.executeRaw(
+): Promise<boolean> {
+  // REPLACE semantics (kept deliberately — #1794 V3). Callers like
+  // extract-conversation-facts serialize a MUTABLE map through here and rely on
+  // stale keys being REMOVED; an append would make them unremovable. The full
+  // set lands in the parent `completed_keys` JSONB column via a single UPSERT —
+  // exactly as before. JSON.stringify into `$3::jsonb` is correct (the text→jsonb
+  // cast yields a proper array; NOT the double-encode trap, which is the template
+  // form). Sync uses `appendCompleted` (below) instead, never this.
+  const sorted = [...keys].sort();
+  return durableWrite(engine, key, 'write', () =>
+    engine.executeRawDirect(
       `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
        VALUES ($1, $2, $3::jsonb, now())
        ON CONFLICT (op, fingerprint) DO UPDATE
          SET completed_keys = EXCLUDED.completed_keys,
              updated_at     = now()`,
       [key.op, key.fingerprint, JSON.stringify(sorted)],
-    );
+    ));
+}
+
+/**
+ * v0.42.x (#1794): ADDITIVE delta append — used ONLY by resumable sync. INSERTs
+ * just the new paths into `op_checkpoint_paths` (one row each) instead of
+ * rewriting the whole set, killing the O(N²) write amplification of a 204K-file
+ * sync. A single writable-CTE statement (one round-trip) ensures the parent
+ * `op_checkpoints` row exists (FK target) and bumps its `updated_at` so the
+ * 7-day purge tracks activity, then inserts the children. `ON CONFLICT DO
+ * NOTHING` makes re-appending an already-banked path a no-op, so a cold resume
+ * that re-sends a banked batch costs nothing. Returns false if any chunk's write
+ * fails after retries (caller's fail-loud counter decides whether to abort).
+ */
+export async function appendCompleted(
+  engine: BrainEngine,
+  key: OpCheckpointKey,
+  deltaKeys: string[],
+): Promise<boolean> {
+  if (deltaKeys.length === 0) return true;
+  for (let i = 0; i < deltaKeys.length; i += APPEND_CHUNK) {
+    const chunk = deltaKeys.slice(i, i + APPEND_CHUNK);
+    const ok = await durableWrite(engine, key, 'append', () =>
+      engine.executeRawDirect(APPEND_PATHS_SQL, [key.op, key.fingerprint, chunk]));
+    if (!ok) return false;
+  }
+  return true;
+}
+
+/**
+ * v0.42.x (#1794): NO-RETRY single-shot variant of appendCompleted for the
+ * SIGTERM cleanup path. The process-cleanup registry kills callbacks at a 3s
+ * deadline, which is shorter than withRetry's ~12s budget — a retrying flush
+ * would be cut off mid-retry and bank nothing. This does ONE direct write of
+ * the whole delta (no chunking, no retry) so it banks what it can inside the
+ * shutdown window. Best-effort: returns false (logged) on failure.
+ */
+export async function appendCompletedOnce(
+  engine: BrainEngine,
+  key: OpCheckpointKey,
+  deltaKeys: string[],
+): Promise<boolean> {
+  if (deltaKeys.length === 0) return true;
+  try {
+    await engine.executeRawDirect(APPEND_PATHS_SQL, [key.op, key.fingerprint, deltaKeys]);
+    return true;
   } catch (e) {
-    console.error(`[op-checkpoint] write failed (${key.op}, ${key.fingerprint}):`, (e as Error).message);
-    /* non-fatal: lost checkpoint just means re-walk on next run */
+    console.error(`[op-checkpoint] sigterm-append failed (${key.op}, ${key.fingerprint}):`, (e as Error).message);
+    return false;
   }
 }
 
@@ -128,15 +233,21 @@ export async function clearOpCheckpoint(
   engine: BrainEngine,
   key: OpCheckpointKey,
 ): Promise<void> {
-  try {
-    await engine.executeRaw(
+  // Delete the parent (FK ON DELETE CASCADE drops the child rows), then a
+  // belt-and-suspenders child delete for any rows whose parent was somehow
+  // absent. Both routed through the direct pool + retry so a clean-exit clear
+  // survives pool exhaustion (a swallowed clear would make the next run skip
+  // already-cleared files).
+  await durableWrite(engine, key, 'clear', () =>
+    engine.executeRawDirect(
       `DELETE FROM op_checkpoints WHERE op = $1 AND fingerprint = $2`,
       [key.op, key.fingerprint],
-    );
-  } catch (e) {
-    console.error(`[op-checkpoint] clear failed (${key.op}, ${key.fingerprint}):`, (e as Error).message);
-    /* non-fatal */
-  }
+    ));
+  await durableWrite(engine, key, 'clear-children', () =>
+    engine.executeRawDirect(
+      `DELETE FROM op_checkpoint_paths WHERE op = $1 AND fingerprint = $2`,
+      [key.op, key.fingerprint],
+    ));
 }
 
 /**
@@ -351,6 +462,9 @@ export async function purgeStaleCheckpoints(
   ttlDays = 7,
 ): Promise<number> {
   try {
+    // Delete stale parents; the op_checkpoint_paths FK (ON DELETE CASCADE)
+    // drops their child rows automatically. The FK also guarantees no child
+    // can exist without a parent, so there are no orphans to sweep separately.
     const rows = await engine.executeRaw<{ count: string | number }>(
       `WITH deleted AS (
          DELETE FROM op_checkpoints

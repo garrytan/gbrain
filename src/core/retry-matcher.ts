@@ -31,6 +31,16 @@ const CONN_PATTERNS = [
   // explicit match it was only accidentally caught by /connection.*closed/i.
   // Match the message form too for wrappers that fold the code into the text.
   /CONNECTION_ENDED/i,
+  // v0.42.x (#1794): Supavisor transaction-pooler session exhaustion. When all
+  // upstream connections are checked out the pooler rejects new sessions
+  // ("MaxClientsInSessionMode" / EMAXCONNSESSION) and Postgres raises SQLSTATE
+  // 53300 (too_many_connections). Both are transient under load — without a
+  // retry, the checkpoint write (and every other pool-contending write) is
+  // dropped during the exact spike #1794's resumable sync must survive.
+  /EMAXCONNSESSION/i,
+  /too many clients already/i,
+  /max.*clients?.*in session mode/i,
+  /remaining connection slots are reserved/i,
 ];
 
 interface PgError {
@@ -102,6 +112,10 @@ export function isRetryableConnError(err: unknown): boolean {
   // v0.42.5.0 (issue #1678): postgres.js's library-level connection-ended
   // code. Not an 08xxx SQLSTATE, so the /^08/ test above misses it.
   if (code === 'CONNECTION_ENDED') return true;
+  // v0.42.x (#1794): SQLSTATE 53300 too_many_connections — pool/pooler
+  // exhaustion. Starts with 53 not 08, so the /^08/ test above misses it.
+  // Transient: the spike clears as in-flight queries release connections.
+  if (code === '53300') return true;
   // v0.41.2.1: typed-shape match for gbrain's own GBrainError
   // (problem === 'No database connection'). Avoids brittle string match
   // when the error wrapper is gbrain-internal.

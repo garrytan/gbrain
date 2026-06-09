@@ -629,15 +629,20 @@ async function embedAllStale(
   const CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
 
   // D3 + D3a + D8: wall-clock budget. 30 min default; env override.
-  // v0.41.18.0 (A13): --catch-up removes the wall-clock cap entirely so the
-  // handler runs until countStaleChunks() returns 0. Use Number.MAX_SAFE_INTEGER
-  // (effectively unbounded) instead of the 30-min default. The AbortController
-  // still wraps for SIGINT propagation; just the timer never fires.
-  const BUDGET_MS = staleOpts?.catchUp
-    ? Number.MAX_SAFE_INTEGER
+  // #1946: --catch-up removes the wall-clock cap. The prior code set BUDGET_MS =
+  // Number.MAX_SAFE_INTEGER and passed it to setTimeout — but setTimeout's delay
+  // is a 32-bit signed int, so MAX_SAFE_INTEGER (9e15) overflows and the timer
+  // fires almost immediately, aborting catch-up after a single batch. The fix is
+  // to NOT arm the timer in catch-up at all: the keyset pass below terminates on
+  // its own (the (page_id, chunk_index) cursor advances monotonically), and
+  // SIGINT / worker-abort still propagate via externalSignal.
+  const BUDGET_MS: number | null = staleOpts?.catchUp
+    ? null
     : parseInt(process.env.GBRAIN_EMBED_TIME_BUDGET_MS || `${30 * 60 * 1000}`, 10);
   const budgetController = new AbortController();
-  const budgetTimer = setTimeout(() => budgetController.abort(), BUDGET_MS);
+  const budgetTimer = BUDGET_MS != null
+    ? setTimeout(() => budgetController.abort(), BUDGET_MS)
+    : undefined;
   const budgetSignal = budgetController.signal;
   // #1737: the effective signal fires when EITHER the internal wall-clock
   // budget OR the caller's abort (worker timeout / lock loss / SIGTERM) fires.
@@ -660,6 +665,10 @@ async function embedAllStale(
   let afterUpdatedAt: string | null = null;
   let totalChunksLoaded = 0;
   let budgetExitNotified = false;
+  // #1946 (OV2a): track chunks that errored out so a catch-up pass that finishes
+  // with stale chunks still remaining (un-embeddable for a non-transient reason)
+  // surfaces that loudly instead of looking like a clean run.
+  let embedFailures = 0;
 
   try {
     // eslint-disable-next-line no-constant-condition
@@ -746,6 +755,7 @@ async function embedAllStale(
           // Budget/abort-fired cancellations are expected on the way out; don't
           // spam per-page "Error embedding" lines when we're shutting down.
           if (effectiveSignal.aborted) return;
+          embedFailures++;
           serr(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
         }
         totalProcessedPages++;
@@ -772,10 +782,23 @@ async function embedAllStale(
       if (batch.length < PAGE_SIZE) break;
     }
   } finally {
-    clearTimeout(budgetTimer);
+    if (budgetTimer) clearTimeout(budgetTimer);
   }
 
   slog(`Embedded ${result.embedded} chunks across ${totalProcessedPages} pages`);
+
+  // #1946 (OV2a): a catch-up pass that completed without being aborted but left
+  // chunks unembedded means those chunks are stuck (a non-transient embed
+  // failure), not that we ran out of time. Surface it loudly so it doesn't read
+  // as a clean run — re-running won't help until the underlying failure is fixed.
+  if (staleOpts?.catchUp && !effectiveSignal.aborted && embedFailures > 0) {
+    const remaining = await engine.countStaleChunks(
+      signature ? { signature, ...(sourceId ? { sourceId } : {}) } : (sourceId ? { sourceId } : undefined),
+    );
+    if (remaining > 0) {
+      serr(`\n  [embed] catch-up finished but ${remaining} chunk(s) remain stale after ${embedFailures} embed failure(s). These are not embeddable as-is; re-running won't clear them until the underlying error is resolved.`);
+    }
+  }
 }
 
 /**

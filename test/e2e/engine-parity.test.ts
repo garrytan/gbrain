@@ -544,3 +544,71 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(pg.find((r) => r.slug === 'ep/ec-alice')!.inbound_count).toBe(2);
   });
 });
+
+// ── relationalFanout parity (v0.43) ─────────────────────────────────────
+async function seedRelational(eng: BrainEngine) {
+  const pages: Array<[string, 'company' | 'person']> = [
+    ['companies/ep-widget', 'company'],
+    ['companies/ep-other', 'company'],
+    ['people/ep-inv-a', 'person'],
+    ['people/ep-inv-b', 'person'],
+    ['people/ep-emp-c', 'person'],
+    ['people/ep-mentioner', 'person'],
+  ];
+  for (const [slug, type] of pages) {
+    await eng.putPage(slug, { type, title: slug, compiled_truth: `${slug} body`, timeline: '' });
+  }
+  await eng.upsertChunks('people/ep-inv-b', [{
+    chunk_index: 0, chunk_text: 'b', chunk_source: 'compiled_truth',
+    embedding: basisEmbedding(2), token_count: 1,
+  }] satisfies ChunkInput[]);
+  await eng.addLink('people/ep-inv-a', 'companies/ep-widget', '', 'invested_in', 'manual');
+  await eng.addLink('people/ep-inv-b', 'companies/ep-widget', '', 'invested_in', 'manual');
+  await eng.addLink('people/ep-emp-c', 'companies/ep-widget', '', 'works_at', 'manual');
+  await eng.addLink('people/ep-mentioner', 'companies/ep-widget', '', 'mentions', 'mentions');
+  await eng.addLink('people/ep-inv-a', 'companies/ep-other', '', 'invested_in', 'manual');
+}
+
+describeBoth('Engine parity — relationalFanout', () => {
+  let pgEngine: BrainEngine;
+  let pgliteEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    pgEngine = await setupDB();
+    await seedRelational(pgEngine);
+    pgliteEngine = new PGLiteEngine();
+    await pgliteEngine.connect({});
+    await pgliteEngine.initSchema();
+    await seedRelational(pgliteEngine);
+  }, 90_000);
+
+  afterAll(async () => {
+    await pgliteEngine.disconnect();
+    await teardownDB();
+  }, 30_000);
+
+  const shape = (rows: Awaited<ReturnType<BrainEngine['relationalFanout']>>) =>
+    rows.map(r => `${r.source_id}:${r.slug}:${r.hop}:${r.edge_count}:${r.via_link_types.join(',')}:${r.path.join('>')}:${r.canonical_chunk_id ?? 'null'}`);
+
+  test('typed-edge fan-out is identical across engines', async () => {
+    const opts = { direction: 'in' as const, linkTypes: ['invested_in'] };
+    const pg = await pgEngine.relationalFanout(['companies/ep-widget'], opts);
+    const pglite = await pgliteEngine.relationalFanout(['companies/ep-widget'], opts);
+    expect(shape(pg)).toEqual(shape(pglite));
+    expect(pg.map(r => r.slug).sort()).toEqual(['people/ep-inv-a', 'people/ep-inv-b']);
+  });
+
+  test('type-agnostic + mentions-exclusion identical across engines', async () => {
+    const pg = await pgEngine.relationalFanout(['companies/ep-widget'], { direction: 'in' });
+    const pglite = await pgliteEngine.relationalFanout(['companies/ep-widget'], { direction: 'in' });
+    expect(shape(pg)).toEqual(shape(pglite));
+    expect(pg.map(r => r.slug)).not.toContain('people/ep-mentioner');
+  });
+
+  test('connects (multi-seed, both) identical across engines', async () => {
+    const seeds = ['companies/ep-widget', 'companies/ep-other'];
+    const pg = await pgEngine.relationalFanout(seeds, { direction: 'both' });
+    const pglite = await pgliteEngine.relationalFanout(seeds, { direction: 'both' });
+    expect(shape(pg)).toEqual(shape(pglite));
+  });
+});

@@ -89,7 +89,7 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 9 (8→9 archive-demote invalidates archive-excluded cache rows, #1777)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(9);
+  it('is 10 (9→10 relational recall arm invalidates rel-off cache rows, v0.43)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(10);
   });
 });

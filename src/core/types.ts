@@ -330,6 +330,12 @@ export interface PageFilters {
 export interface GetPageOpts {
   /** Filter to a specific source. When omitted, getPage returns the first slug match across sources (pre-existing semantics). */
   sourceId?: string;
+  /**
+   * Filter to a federated set of sources (the caller's allowedSources grant).
+   * Takes precedence over `sourceId` when non-empty. Closes the #1393 leak: the
+   * get_page exact path must honor a federated grant, not just scalar sourceId.
+   */
+  sourceIds?: string[];
   /** Include soft-deleted pages. Default false. See PageFilters.includeDeleted. */
   includeDeleted?: boolean;
 }
@@ -720,6 +726,20 @@ export interface SearchResult {
   /** Slug prefix used for the session-diversification grouping. */
   graph_session_prefix?: string;
   /**
+   * v0.43 relational recall arm — set when this result was surfaced by
+   * typed-edge traversal (not lexical/vector). Drives `gbrain search
+   * --explain` attribution ("surfaced via invested_in edge from widget-co").
+   * Absent for organic keyword/vector results.
+   */
+  /** Edge types the result was reached by (e.g. ['invested_in']). */
+  relational_via_link_types?: string[];
+  /** The resolved seed entity slug the traversal started from. */
+  relational_seed?: string;
+  /** Shortest hop distance from the seed (1 = direct neighbor). */
+  relational_hop?: number;
+  /** Shortest connecting slug path seed→…→result (for "how I know this"). */
+  relational_path?: string[];
+  /**
    * v0.40.4 full attribution (D12=A) — per-stage score deltas for the
    * `gbrain search --explain` formatter. Every boost stage stamps its
    * contribution so the formatter can reconstruct the score derivation.
@@ -1089,6 +1109,14 @@ export interface SearchOpts {
    * would resolve to the same mode default and the gate would be a no-op.
    */
   graph_signals?: boolean;
+  /**
+   * v0.43 — relational recall arm per-call override. Per-call wins over the
+   * `search.relational_retrieval` config key wins over the mode bundle. Eval
+   * A/B gates need explicit per-call control or both branches resolve to the
+   * same mode default. `relationalRetrievalDepth` caps traversal hops (1..3).
+   */
+  relationalRetrieval?: boolean;
+  relationalRetrievalDepth?: number;
 }
 
 /**
@@ -1175,6 +1203,43 @@ export interface GraphPath {
   context: string;
   /** Depth of `to_slug` from the root (1 for direct neighbors). */
   depth: number;
+}
+
+/**
+ * One reached node from a typed-edge relational fan-out (v0.43). The recall
+ * arm hydrates these into SearchResult rows and injects them as a fourth RRF
+ * arm. Aggregated to the page level: `hop` is the shortest distance from any
+ * seed, `edge_count` is a connection-richness proxy (distinct edge types via
+ * which the node is reached), `via_link_types` names them, `path` is the
+ * shortest connecting slug chain (for --explain), and `canonical_chunk_id` is
+ * the page's lowest-ordinal chunk (null for frontmatter-only entity pages).
+ */
+export interface RelationalFanoutRow {
+  source_id: string;
+  slug: string;
+  hop: number;
+  edge_count: number;
+  via_link_types: string[];
+  path: string[];
+  canonical_chunk_id: number | null;
+}
+
+/** Options for BrainEngine.relationalFanout. */
+export interface RelationalFanoutOpts {
+  /** Edge types to traverse; null/empty = type-agnostic. */
+  linkTypes?: string[] | null;
+  /** Direction from each seed. Default 'both'. */
+  direction?: 'in' | 'out' | 'both';
+  /** Max hops. Default 2, hard-capped at 3. */
+  depth?: number;
+  /** Include `link_source='mentions'` edges. Default false (typed edges only). */
+  includeMentions?: boolean;
+  /** Single-source scope. */
+  sourceId?: string;
+  /** Federated scope; traversal stays WITHIN each seed's own source. */
+  sourceIds?: string[];
+  /** Hard cap on returned candidate nodes. Default 50. */
+  limit?: number;
 }
 
 // Timeline

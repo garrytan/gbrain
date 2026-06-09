@@ -23,6 +23,7 @@ import {
   type AdaptiveReturnDecision,
 } from './return-policy.ts';
 import { applyAutocut, type AutocutDecision } from './autocut.ts';
+import { buildRelationalArm } from './relational-recall.ts';
 import { loadConfigWithEngine } from '../config.ts';
 import { dedupResults } from './dedup.ts';
 import { applyReranker } from './rerank.ts';
@@ -664,6 +665,9 @@ export async function applyAliasHop(
 
 export interface HybridSearchOpts extends SearchOpts {
   expansion?: boolean;
+  /** v0.43 — observability sink for the relational recall arm (fired/no-op,
+   *  kind, seeds resolved, candidates, errored). Best-effort. */
+  onRelationalMeta?: (meta: import('./relational-recall.ts').RelationalArmMeta) => void;
   /**
    * T4/D5 — per-call search-mode selector (one of SEARCH_MODES). Selects the
    * whole mode bundle for this call, overriding the server-configured mode.
@@ -806,6 +810,11 @@ export async function hybridSearch(
       // Non-boolean AutocutInput shapes (Partial) aren't a v1 per-call surface,
       // so only the boolean toggle threads here.
       autocut: typeof opts?.autocut === 'boolean' ? opts.autocut : undefined,
+      // v0.43 — relational recall per-call thread-through. Per-call wins over
+      // config override wins over mode bundle; without this the A/B eval gate
+      // would be a no-op (both branches resolve to the same mode default).
+      relationalRetrieval: opts?.relationalRetrieval,
+      relational_retrieval_depth: opts?.relationalRetrievalDepth,
     },
   });
 
@@ -972,6 +981,23 @@ export async function hybridSearch(
     titleBoost: resolvedMode.title_boost,
   };
 
+  // v0.43 — build the relational recall arm ONCE here, before any return
+  // path, so typed-edge answers contribute on ALL THREE paths: the
+  // no-embedding-provider path, the embed-failed keyword fallback, and the
+  // main RRF path. Parsed from the original query (deterministic); empty for
+  // non-relational queries → pure no-op. (Modality gate lives on the main
+  // path; the parser only matches text-shaped relational queries anyway.)
+  let relationalList: SearchResult[] = [];
+  if (resolvedMode.relationalRetrieval) {
+    relationalList = await buildRelationalArm(engine, query, {
+      sourceId: opts?.sourceId,
+      sourceIds: opts?.sourceIds,
+      depth: resolvedMode.relational_retrieval_depth,
+      limit: opts?.limit ?? resolvedMode.searchLimit,
+      onMeta: opts?.onRelationalMeta,
+    });
+  }
+
   // Skip vector search entirely if the gateway has no embedding provider configured (Codex C3).
   // v0.36 (D10): ask "is the RESOLVED column's provider reachable?" rather
   // than "is the global default reachable?" — otherwise an unreachable
@@ -980,13 +1006,24 @@ export async function hybridSearch(
   const { isAvailable } = await import('../ai/gateway.ts');
   const providerProbe = resolvedCol.embeddingModel || undefined;
   if (!isAvailable('embedding', providerProbe)) {
-    if (keywordResults.length > 0) {
-      await runPostFusionStages(engine, keywordResults, postFusionOpts);
-      keywordResults.sort((a, b) => b.score - a.score);
+    // v0.43 — fuse the relational arm with keyword so typed-edge answers
+    // survive on the no-embedding-provider path (the relational win is most
+    // valuable exactly when vector is unavailable).
+    let noEmbedResults = keywordResults;
+    if (relationalList.length > 0) {
+      const fk = opts?.rrfK ?? RRF_K;
+      noEmbedResults = rrfFusionWeighted(
+        [{ list: keywordResults, k: fk }, { list: relationalList, k: fk }],
+        detailResolved !== 'high',
+      );
+    }
+    if (noEmbedResults.length > 0) {
+      await runPostFusionStages(engine, noEmbedResults, postFusionOpts);
+      noEmbedResults.sort((a, b) => b.score - a.score);
     }
     // T3/T4 — alias hop + evidence stamp even without an embedding provider
     // (the named-thing fix is most valuable exactly when vector is unavailable).
-    const noEmbedHopped = await applyAliasHop(engine, dedupResults(keywordResults), query, {
+    const noEmbedHopped = await applyAliasHop(engine, dedupResults(noEmbedResults), query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
     });
@@ -1204,11 +1241,21 @@ export async function hybridSearch(
     // v0.29.1 codex pass-2 #4: this is the third return path. Apply
     // post-fusion stages here too — without it, salience='on' silently
     // does nothing on embed failures.
-    if (keywordResults.length > 0) {
-      await runPostFusionStages(engine, keywordResults, postFusionOpts);
-      keywordResults.sort((a, b) => b.score - a.score);
+    // v0.43: fuse the relational arm with keyword via RRF so typed-edge
+    // answers survive even when vector is unavailable.
+    let fallbackResults = keywordResults;
+    if (relationalList.length > 0) {
+      const fk = opts?.rrfK ?? RRF_K;
+      fallbackResults = rrfFusionWeighted(
+        [{ list: keywordResults, k: fk }, { list: relationalList, k: fk }],
+        detail !== 'high',
+      );
     }
-    const kwHopped = await applyAliasHop(engine, dedupResults(keywordResults), query, {
+    if (fallbackResults.length > 0) {
+      await runPostFusionStages(engine, fallbackResults, postFusionOpts);
+      fallbackResults.sort((a, b) => b.score - a.score);
+    }
+    const kwHopped = await applyAliasHop(engine, dedupResults(fallbackResults), query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
     });
@@ -1266,6 +1313,16 @@ export async function hybridSearch(
       ...vectorLists.map(list => ({ list, k: vectorK })),
       { list: keywordResults, k: keywordK },
     ];
+
+  // v0.43 — relational recall arm (fourth RRF arm), built above so it also
+  // contributes on the keyword-only fallback path. Neutral weight (baseRrfK):
+  // competes evenly with keyword/vector, not dominating. Empty for
+  // non-relational queries → pure no-op. Rides every downstream stage (cosine
+  // re-score, post-fusion boosts, dedup, reranker, autocut, token budget).
+  if (relationalList.length > 0 && effectiveModality !== 'image') {
+    allLists.push({ list: relationalList, k: baseRrfK });
+  }
+
   let fused = rrfFusionWeighted(allLists, detail !== 'high');
 
   // Cosine re-scoring before dedup so semantically better chunks survive.
@@ -1511,6 +1568,11 @@ export async function hybridSearchCached(
       // this, an `autocut:false` (full top-K) call could be served a trimmed
       // autocut-on cache row, or vice versa.
       autocut: typeof opts?.autocut === 'boolean' ? opts.autocut : undefined,
+      // v0.43 — relational recall per-call thread-through. Per-call wins over
+      // config override wins over mode bundle; without this the A/B eval gate
+      // would be a no-op (both branches resolve to the same mode default).
+      relationalRetrieval: opts?.relationalRetrieval,
+      relational_retrieval_depth: opts?.relationalRetrievalDepth,
     },
   });
   // v0.36 (D8 / CDX-2 + codex /ship #4): resolve column for the cache
@@ -1607,7 +1669,7 @@ export async function hybridSearchCached(
   }
 
   if (!skipCache && queryEmbedding && cacheStatus !== 'disabled') {
-    const hit = await cache.lookup(queryEmbedding, { sourceId: opts?.sourceId, knobsHash: cacheKnobsHash });
+    const hit = await cache.lookup(queryEmbedding, { sourceId: cacheScopeKey(opts), knobsHash: cacheKnobsHash });
     if (hit.hit && hit.results) {
       cacheStatus = 'hit';
       cacheSimilarity = hit.similarity;
@@ -1708,12 +1770,48 @@ export async function hybridSearchCached(
   ) {
     trackCacheWrite(
       cache
-        .store(query, queryEmbedding, results, finalMeta, { sourceId: opts?.sourceId, knobsHash: cacheKnobsHash })
+        .store(query, queryEmbedding, results, finalMeta, { sourceId: cacheScopeKey(opts), knobsHash: cacheKnobsHash })
         .catch(() => { /* swallow */ }),
     );
   }
 
   return budgeted;
+}
+
+/**
+ * RRF/dedup identity for a result row, at chunk granularity.
+ *
+ * Includes `source_id` so two same-slug pages in different federated sources
+ * don't collapse into one fusion entry (the same composite-key discipline
+ * `dedup.ts:pageKey` already uses at page granularity). Pre-fix the key was
+ * `slug:chunk_id`, which silently merged cross-source rows and let a
+ * synthetic chunkless row (chunk_id null) key on a text prefix; the
+ * `(source_id, slug, chunk_id)` shape is collision-safe for both.
+ */
+function rrfKey(r: SearchResult): string {
+  const source = r.source_id ?? 'default';
+  return `${source}:${r.slug}:${r.chunk_id ?? r.chunk_text.slice(0, 50)}`;
+}
+
+/**
+ * Canonical query-cache scope key.
+ *
+ * The semantic cache stores results keyed by `(scope, query, knobs_hash)`.
+ * A federated search (`sourceIds`) reads a different graph than a
+ * single-source one, so the two must never share a cache row. Pre-fix the
+ * cache only saw scalar `sourceId`; a federated query fell through to
+ * `'default'` and could cross-serve an unrelated scope.
+ *
+ *   - federated (sourceIds set) → `__set__:` + sorted, comma-joined ids
+ *     (order-independent; two different source-sets get distinct keys)
+ *   - scalar sourceId           → the id itself (single-source unchanged)
+ *   - unscoped                  → `'default'` (single-source brains unchanged)
+ */
+export function cacheScopeKey(opts?: { sourceId?: string; sourceIds?: string[] }): string {
+  if (opts?.sourceIds && opts.sourceIds.length > 0) {
+    return '__set__:' + [...opts.sourceIds].sort().join(',');
+  }
+  return opts?.sourceId ?? 'default';
 }
 
 /**
@@ -1731,7 +1829,7 @@ export function rrfFusionWeighted(
   for (const { list, k } of lists) {
     for (let rank = 0; rank < list.length; rank++) {
       const r = list[rank];
-      const key = `${r.slug}:${r.chunk_id ?? r.chunk_text.slice(0, 50)}`;
+      const key = rrfKey(r);
       const existing = scores.get(key);
       const rrfScore = 1 / (k + rank);
 
@@ -1771,7 +1869,7 @@ export function rrfFusion(lists: SearchResult[][], k: number, applyBoost = true)
   for (const list of lists) {
     for (let rank = 0; rank < list.length; rank++) {
       const r = list[rank];
-      const key = `${r.slug}:${r.chunk_id ?? r.chunk_text.slice(0, 50)}`;
+      const key = rrfKey(r);
       const existing = scores.get(key);
       const rrfScore = 1 / (k + rank);
 

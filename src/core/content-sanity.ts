@@ -376,9 +376,9 @@ export function assessContentSanity(opts: {
   // doesn't repeat the lowercase per literal.
   const bodyHead = body.slice(0, SCAN_HEAD_BYTES);
   const bodyHeadLower = bodyHead.toLowerCase();
-  // Defensive coercion (issue #1939): this is a pure exported fn; lint.ts and
-  // import-file both pass `parsed.title`, which a malformed YAML date/number
-  // title could make non-string. Never throw on a bad title.
+  // Defensive coercion (issue #1939 / #1883 / #1658): this is a pure exported fn;
+  // lint.ts and import-file both pass `parsed.title`, which a malformed YAML
+  // date/number title could make non-string. Never throw on a bad title.
   const title = String(opts.title ?? '');
   const titleLower = title.toLowerCase();
 

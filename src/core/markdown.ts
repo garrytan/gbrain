@@ -10,6 +10,7 @@ export type ParseValidationCode =
   | 'SLUG_MISMATCH'
   | 'NULL_BYTES'
   | 'NESTED_QUOTES'
+  | 'NON_STRING_FIELD'
   | 'EMPTY_FRONTMATTER';
 
 export interface ParseValidationError {
@@ -124,6 +125,13 @@ export function parseMarkdown(
 
   const { compiled_truth, timeline } = splitBody(body);
 
+  // #1948/#1939: frontmatter values can be non-strings (YAML coerces `title: 123`
+  // → number, a bare date → Date). The `as string` cast used to lie: a truthy
+  // non-string flowed downstream typed as string and crashed the first
+  // `.toLowerCase()` (content-sanity), aborting the whole lint/sync run.
+  // coerceFrontmatterString turns a scalar/date into a usable string (a date slug
+  // `2024-06-01` is legitimate); the NON_STRING_FIELD lint finding below still
+  // surfaces the un-quoted field so it can be cleaned up.
   const type = coerceFrontmatterString(frontmatter.type) || (
     opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath)
   );
@@ -305,6 +313,21 @@ function collectValidationErrors(
       errors.push({
         code: 'SLUG_MISMATCH',
         message: `Frontmatter slug "${declared}" does not match path-derived slug "${ctx.expectedSlug}"`,
+      });
+    }
+  }
+
+  // 8. NON_STRING_FIELD (#1948) — title/type/slug declared as a non-string YAML
+  //    scalar (e.g. `title: 123`, `slug: 2024`). The parser coerces title to a
+  //    string and falls back to inference for type/slug, but lint surfaces the
+  //    malformed frontmatter so it gets fixed rather than silently rewritten.
+  //    Pre-fix the slug validator above `typeof`-skipped these, hiding them.
+  for (const field of ['title', 'type', 'slug'] as const) {
+    const v = ctx.parsedFrontmatter[field];
+    if (v != null && typeof v !== 'string') {
+      errors.push({
+        code: 'NON_STRING_FIELD',
+        message: `Frontmatter "${field}" should be a string but is ${typeof v} (${JSON.stringify(v)}); quote the value (e.g. ${field}: "${String(v)}").`,
       });
     }
   }
