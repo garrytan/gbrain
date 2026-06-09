@@ -178,6 +178,30 @@ describe('gbrain extract --stale', () => {
     expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
   });
 
+  test('CRITICAL: page whose content predates versionTs clears (no perpetual lag)', async () => {
+    // Regression: the sweep used to stamp links_extracted_at = updated_at. A
+    // page whose CONTENT predates LINK_EXTRACTOR_VERSION_TS has updated_at <
+    // versionTs, so the stamp landed below versionTs and the `links_extracted_at
+    // < versionTs` arm kept re-flagging it FOREVER — extract --stale re-swept the
+    // same pages every run and the lag metric pinned near 100% on any older
+    // corpus. The fix floors the stamp at versionTs.
+    await engine.putPage('people/old', personPage('Old', 'No links.'));
+    // Backdate the content to well before versionTs, watermark still NULL.
+    await engine.executeRaw(
+      `UPDATE pages SET updated_at = '2020-01-01T00:00:00Z', links_extracted_at = NULL WHERE slug = 'people/old'`,
+    );
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(1); // NULL arm
+
+    await runExtract(engine, ['--stale']);
+
+    // Must clear: the stamp is floored at versionTs (not the 2020 updated_at), so
+    // neither the version arm nor the edited-since arm re-flags it.
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
+    const stamp = await stampOf('people/old');
+    expect(stamp).not.toBeNull();
+    expect(Date.parse(stamp as string)).toBeGreaterThanOrEqual(Date.parse(LINK_EXTRACTOR_VERSION_TS));
+  });
+
   test('CRITICAL (#1768): microsecond updated_at clears after --stale (no permanent lag)', async () => {
     // Repro of #1768: extractStaleFromDB used to stamp page.updated_at.toISOString()
     // (a JS Date, millisecond-truncated). The DB updated_at keeps microseconds, so

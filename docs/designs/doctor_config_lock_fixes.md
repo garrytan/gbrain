@@ -46,22 +46,28 @@ once-per-run stderr warn and miscategorization to 'meta'. Fix: add them
 scan `onboard/checks.ts`, not just `doctor.ts` — otherwise the categorized names
 read as "stale". Both directions of the guard now pass.
 
-## NOT fixed here — need retrieval/eval validation before landing
+### 3. `links_extraction_lag` pinned near 100% on any pre-versionTs corpus
+`countStalePagesForExtraction` marks a page stale when `links_extracted_at IS
+NULL OR links_extracted_at < versionTs OR updated_at > links_extracted_at`
+(versionTs = `LINK_EXTRACTOR_VERSION_TS`, currently 2026-05-31). The
+`extract --stale` sweep stamps `links_extracted_at = page.updated_at` (the read
+value, a deliberate D4 race fix). For any page whose CONTENT predates versionTs,
+`updated_at < versionTs`, so the stamp lands below versionTs and condition 2
+(`links_extracted_at < versionTs`) stays true FOREVER — the sweep re-processes
+the same pages every run and the lag metric never drops. Verified on a live
+brain: 956/991 pages had `updated_at < 2026-05-31`; repeated `extract --stale
+--catch-up` left all 956 "stale" via condition 2 while conditions 1 and 3 were
+clean (0 NULL, 0 `updated_at > links_extracted_at`). My earlier guess (cycle
+phase ordering bumping `updated_at`) was WRONG — the live breakdown disproved it.
 
-### 3. `links_extraction_lag` is a structural false positive under autopilot
-`countStalePagesForExtraction` (postgres-engine.ts) marks a page stale when
-`links_extracted_at IS NULL OR links_extracted_at < versionTs OR updated_at >
-links_extracted_at`. Within one cycle, `extract` runs BEFORE the page-mutating
-phases (`recompute_emotional_weight`, `consolidate`) which bump `updated_at`, so
-by end of cycle every touched page satisfies `updated_at > links_extracted_at`
-again. Under continuous autopilot the lag pins near 100% even when no edges are
-missing (verified: a full `extract --stale --catch-up` left 0 truly-stale rows
-by the NULL/updated_at breakdown, yet the doctor still reported 96%).
-Proposed approaches (pick one, needs a cycle-semantics decision):
-- Re-stamp `links_extracted_at` at end of cycle after the mutating phases, or
-- Compare staleness against a content-changed watermark (content_hash) rather
-  than `updated_at`, which bumps on extraction-irrelevant column writes, or
-- Order `extract` last among page-touching phases.
+Fix (extract.ts `extractStaleFromDB`): stamp `max(updated_at, versionTs)` instead
+of `updated_at`. Clears condition 2 (the page WAS just processed by the current
+extractor version — that's what the stamp should record) AND keeps the D4
+race-safety (a concurrent edit advances `updated_at` to now() > versionTs, still
+> the floored stamp, so it re-extracts). Validated on the live brain: stale count
+956 → 0, `links_extraction_lag` flips to OK (0/991). Done in this branch.
+
+## NOT fixed here — need retrieval/eval validation before landing
 
 ### 4. No HNSW index possible on `content_chunks.embedding` for >2000-dim models
 Column is `vector(2048)`; pgvector caps `vector` HNSW at 2000 dims, so the
