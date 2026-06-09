@@ -53,6 +53,11 @@ Original error: Aborted(). Build with -sASSERTIONS for more info.`;
     expect(classifyPgliteInitError(msg, 'win32')).toBe('windows-pglite-unknown');
   });
 
+  test('windows abort/runtime wording never falls through to the macOS verdict', () => {
+    const msg = 'PGLite failed: abort while starting runtime';
+    expect(classifyPgliteInitError(msg, 'win32')).toBe('windows-pglite-unknown');
+  });
+
   test('unknown verdict for generic / unrecognized errors', () => {
     const msg = 'TypeError: cannot read property of undefined at PGlite.create';
     expect(classifyPgliteInitError(msg)).toBe('unknown');

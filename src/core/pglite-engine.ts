@@ -173,7 +173,7 @@ export function classifyPgliteInitError(
     const hasShellEvidence = /NativeCommandError|FullyQualifiedErrorId\s*:\s*NativeCommandError|At line:\d+ char:\d+|CategoryInfo\s*:|PowerShell/i.test(message);
     const hasWindowsApostrophePath = /[A-Z]:\\[^\n\r]*'[^\n\r]*/i.test(message);
     if (hasShellEvidence || hasWindowsApostrophePath) return 'windows-path-shell';
-    if (/wasm.*runtime|Aborted\(\)|Cannot find module ['"]?@electric-sql\/pglite/i.test(message)) {
+    if (/abort.*runtime|wasm.*runtime|Aborted\(\)|Cannot find module ['"]?@electric-sql\/pglite/i.test(message)) {
       return 'windows-pglite-unknown';
     }
   }
