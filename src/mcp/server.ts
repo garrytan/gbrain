@@ -8,6 +8,31 @@ import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, validateParams, buildOperationContext } from './dispatch.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 
+/**
+ * v0.36.0.1: Parse `GBRAIN_SOURCES` (plural, comma-separated) into a normalized
+ * array of source ids for stdio MCP federated reads. Returns `undefined` when
+ * the env var is unset OR resolves to an empty list (so callers fall back to
+ * the scalar `GBRAIN_SOURCE` path).
+ *
+ * Exported for unit testing — the parsing rules (trim, drop empties, drop
+ * dupes) are the same regression-class as the federated_read array
+ * normalization. Drift here would silently re-introduce the docc-source-id
+ * bug class on stdio MCP.
+ */
+export function parseStdioAllowedSources(raw: string | undefined): string[] | undefined {
+  if (!raw) return undefined;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of raw.split(',')) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    if (seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 export async function startMcpServer(engine: BrainEngine) {
   const server = new Server(
     { name: 'gbrain', version: VERSION },
@@ -33,13 +58,35 @@ export async function startMcpServer(engine: BrainEngine) {
     // see private hunches via takes_list / takes_search / query. Operators
     // who want stdio to see everything should call ops directly via
     // `gbrain call <op>` (sets remote=false in src/cli.ts).
+    // v0.36.0.1: federated reads for stdio MCP. HTTP MCP sources allowedSources
+    // from oauth_clients.federated_read at token-verification time; stdio MCP
+    // has no per-token auth and pre-fix could only scope to one source via
+    // GBRAIN_SOURCE. Now GBRAIN_SOURCES (plural, comma-separated) populates
+    // a synthetic AuthInfo.allowedSources so the same federated-read pattern
+    // works on stdio. Example: `env GBRAIN_SOURCES=default,docc,popify`.
+    // GBRAIN_SOURCE (singular) remains the scalar write-scope fallback for
+    // single-source setups. Parsing rules pinned in parseStdioAllowedSources().
+    const allowedSources = parseStdioAllowedSources(process.env.GBRAIN_SOURCES);
+    const stdioAuth = allowedSources && allowedSources.length > 0
+      ? {
+          token: 'stdio',
+          clientId: 'stdio',
+          scopes: ['read', 'write'],
+          sourceId: process.env.GBRAIN_SOURCE || allowedSources[0],
+          allowedSources,
+        }
+      : undefined;
+
     return dispatchToolCall(engine, name, params, {
       remote: true,
       takesHoldersAllowList: ['world'],
       // v0.31: source defaults to 'default' for stdio (no per-token scope).
       // Operators who want a different source on stdio MCP should set
       // GBRAIN_SOURCE in the env or use --source via `gbrain call`.
-      sourceId: process.env.GBRAIN_SOURCE || 'default',
+      // v0.36.0.1: GBRAIN_SOURCES (plural) wins for federated reads via
+      // synthetic AuthInfo above; GBRAIN_SOURCE is the scalar fallback.
+      sourceId: process.env.GBRAIN_SOURCE || allowedSources?.[0] || 'default',
+      auth: stdioAuth,
       // v0.31 (eD3): _meta.brain_hot_memory injection so Claude Desktop /
       // Code see the brain's relevant hot memory automatically alongside
       // every tool-call response. Best-effort; absorbs errors.
