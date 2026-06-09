@@ -1,5 +1,29 @@
-# kos-jarvis — Outstanding Work (post v0.42.1.0 sync, 2026-06-01)
+# kos-jarvis — Outstanding Work (post v0.42.37.0 sync, 2026-06-09)
 
+> **Updated 2026-06-09**: v0.42.37.0 upstream sync landed (35 commits,
+> v0.42.1.0 → v0.42.37.0, 374 files / +41864 / −2635 LoC). Story in
+> `docs/JARVIS-ARCHITECTURE.md` §6.34. **4 merge conflicts** (CLAUDE.md /
+> llms-full.txt / skills/RESOLVER.md / src/core/ai/gateway.ts — the last
+> because the fork now carries its first src/ runtime patch:
+> `fork(ai-gateway) e7b6a554` embed transport retry for the avman relay
+> TLS flake, committed FIRST on the sync branch per §6.33 R1–R7 precedent;
+> merged with upstream's v0.42.20.0 per-call embed timeout, applied
+> per-attempt). Schema **v111 → v115** (4 migrations). check:all green
+> after `fix(sync) 352e6a82` withEnv-converted two test-isolation R1
+> violations (one ours, one upstream's own v0.42.36.0 test — candidate to
+> upstream). test/ai/ **320 pass / 0 fail / 1008 expect()** (+20 vs
+> §6.33). Production kos.chenge.ink on 0.42.37.0, **15,206 pages** (±0;
+> baseline grew vs §6.33's 13,613 from omada corpus + dailies). Smoke: ZH
+> compound-CJK 0.876 / EN semantic 0.889; EN high-frequency single-term
+> 'Lucien' now hits the pre-existing 8s ts_rank cliff (25,450 matches,
+> email corpus +22% w/w — NOT a sync regression; P2 below). Post-deploy:
+> drained 8,625 NULL-vector chunks via `gbrain embed --stale` (the TLS-
+> flake fallout the retry patch addresses; final state 48,535 chunks /
+> 0 NULL / single-model after normalizing 8,664 zembed-1 cosmetic
+> mislabels per the §6.32 rule), cleared 2 expired cycle locks.
+>
+> ---
+>
 > **Updated 2026-06-01**: v0.42.1.0 upstream sync landed (27 commits,
 > v0.41.14.0 → v0.42.1.0, 605 files / +66781 / −37154 LoC). Story in
 > `docs/JARVIS-ARCHITECTURE.md` §6.33. **4 merge conflicts** (CLAUDE.md /
@@ -163,6 +187,31 @@ pending), brain_score 80/100。doctor status: warnings (resolver_health 51 issue
 全是 ~/.openclaw/workspace AGENTS.md 跨 boundary 引用,不是 fork 责任)。生产
 Postgres 17 + pgvector 0.8.2 已升到 schema v45 (35 tables 全 RLS,新增 facts +
 oauth_*),WAL fork patch retained for brain-db.ts。
+
+---
+
+## P2 — Post-v0.42.37.0 sync follow-ups (added 2026-06-09)
+
+- (P2) **Keyword-arm ts_rank cliff on high-frequency terms**. `gbrain search
+  "Lucien"` hits the 8s `statement_timeout`: 25,450 matching chunks (the
+  mailbox owner's name appears in nearly every email), and the keyword arm
+  ranks ALL matches before LIMIT — ts_rank detoasts ~280k buffer pages, CPU-
+  bound (cache-hot), inner CTE alone 5.3s. Pre-existing (timeout ×3 predates
+  the merge; §6.33's same probe still scored 0.81 on 06-01 — the email corpus
+  grew 31k → 37.8k chunks (+22%) in the week since and crossed the cliff).
+  `--source` scoping does NOT help (filter applies after the GIN scan +
+  detoast). Real fix is upstream query shape (cheap-proxy prefilter before
+  ts_rank) — file an issue on garrytan/gbrain. Vector path unaffected (ZH
+  0.876 / EN semantic 0.889).
+- (P2) **Daily omada-sentiment ingest embeds must stay watched**. 98% of
+  omada chunks (2,482/2,521) had NULL vectors before the 06-09 drain — the
+  avman TLS flake silently failed corpus-ingest's embed stage AND the daily
+  writes. The `fork(ai-gateway)` transport retry now covers the synchronous
+  put_page path; kos-patrol should alert if `content_chunks.embedding IS
+  NULL` count grows again (add check if recurrence observed).
+- (P3) Upstream `db-lock-heartbeat-takeover.test.ts` withEnv conversion
+  (352e6a82) is a candidate to PR upstream — their master fails its own
+  check-test-isolation gate.
 
 ---
 
