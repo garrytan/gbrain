@@ -24,21 +24,33 @@ import {
   _resetUnknownCheckWarningsForTest,
 } from '../src/core/doctor-categories.ts';
 
-const DOCTOR_TS_PATH = join(import.meta.dir, '..', 'src', 'commands', 'doctor.ts');
+// Every file that EMITS a Check whose name flows through `categorizeCheck`
+// must be scanned here, or a categorized name from it reads as "stale" and a
+// non-categorized name from it reads as uncategorized at runtime (the
+// stderr warn). doctor.ts is the main surface; onboard/checks.ts emits the
+// remediation checks (embed_staleness, entity_link_coverage, timeline_coverage,
+// takes_count, type_proliferation, pack_upgrade_available, dangling_aliases)
+// that the doctor surfaces and categorizes too.
+const CHECK_SOURCE_PATHS = [
+  join(import.meta.dir, '..', 'src', 'commands', 'doctor.ts'),
+  join(import.meta.dir, '..', 'src', 'core', 'onboard', 'checks.ts'),
+];
 
 function enumerateCheckNames(): Set<string> {
-  const source = readFileSync(DOCTOR_TS_PATH, 'utf-8');
   const names = new Set<string>();
-  // 1) Inline object-literal form: `{ name: 'foo', ... }`.
-  for (const m of source.matchAll(/name:\s*['"]([a-z][a-z0-9_]+)['"]/g)) {
-    names.add(m[1]);
-  }
-  // 2) Helper-function form: `const name = 'foo';` inside a check helper.
-  //    Catches checks like `nightly_quality_probe_health` and
-  //    `conversation_facts_backlog` that build the Check from a captured
-  //    name constant.
-  for (const m of source.matchAll(/const\s+name\s*=\s*['"]([a-z][a-z0-9_]+)['"]/g)) {
-    names.add(m[1]);
+  for (const path of CHECK_SOURCE_PATHS) {
+    const source = readFileSync(path, 'utf-8');
+    // 1) Inline object-literal form: `{ name: 'foo', ... }`.
+    for (const m of source.matchAll(/name:\s*['"]([a-z][a-z0-9_]+)['"]/g)) {
+      names.add(m[1]);
+    }
+    // 2) Helper-function form: `const name = 'foo';` inside a check helper.
+    //    Catches checks like `nightly_quality_probe_health` and
+    //    `conversation_facts_backlog` that build the Check from a captured
+    //    name constant.
+    for (const m of source.matchAll(/const\s+name\s*=\s*['"]([a-z][a-z0-9_]+)['"]/g)) {
+      names.add(m[1]);
+    }
   }
   return names;
 }

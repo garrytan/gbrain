@@ -353,11 +353,36 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     if (existsSync(lockPath)) {
       const stat = require('fs').statSync(lockPath);
       const ageMinutes = (Date.now() - stat.mtimeMs) / 60000;
-      if (ageMinutes < 10) {
-        console.error('Another autopilot instance is running (lock file is fresh). Exiting.');
+      // A fresh mtime alone is NOT proof of life. A SIGTERM'd autopilot
+      // (e.g. `systemctl restart gbrain-autopilot`) leaves the lock with a
+      // recent mtime but a DEAD pid; a pure mtime check then makes every
+      // relaunch exit(0) and the systemd unit flaps in "activating
+      // (auto-restart)" forever. The lock stores the holder pid, so verify
+      // it is actually alive before yielding.
+      let holderAlive = false;
+      try {
+        const holderPid = parseInt(readFileSync(lockPath, 'utf8').trim(), 10);
+        if (Number.isInteger(holderPid) && holderPid > 0 && holderPid !== process.pid) {
+          try {
+            process.kill(holderPid, 0); // signal 0 = liveness probe, no signal sent
+            holderAlive = true;
+          } catch (e) {
+            // ESRCH = no such process (dead). EPERM = alive but owned by
+            // another user — still a live holder, so yield.
+            holderAlive = (e as NodeJS.ErrnoException)?.code === 'EPERM';
+          }
+        }
+      } catch { /* unreadable/empty lock → treat holder as dead, take over */ }
+
+      if (holderAlive && ageMinutes < 10) {
+        console.error('Another autopilot instance is running (pid alive, lock fresh). Exiting.');
         process.exit(0);
       }
-      console.log('Stale lock file found (>10 min). Taking over.');
+      console.log(
+        holderAlive
+          ? 'Stale lock file found (>10 min). Taking over.'
+          : 'Lock holder pid is dead. Taking over.',
+      );
     }
     writeFileSync(lockPath, String(process.pid));
   } catch { /* best-effort */ }

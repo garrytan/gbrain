@@ -52,6 +52,7 @@ import {
 import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
+import { executeRawJsonb } from './sql-query.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -406,10 +407,19 @@ export async function addSource(
     const displayName = opts.name ?? opts.id;
 
     try {
-      await engine.executeRaw(
+      // jsonb param goes through executeRawJsonb (NOT JSON.stringify + $4::jsonb):
+      // postgres-js double-encodes a stringified jsonb param into a JSONB STRING
+      // scalar, so `config->>'key'` reads null forever and any later
+      // `config || patch` merge yields a JSONB array. executeRawJsonb binds the
+      // raw object so both postgres-js and PGLite store a real jsonb OBJECT
+      // (gbrain#1861 contract). This is what kept federated sources' configs
+      // (e.g. {"federated":true}) corrupt and broke cycle_freshness.
+      await executeRawJsonb(
+        engine,
         `INSERT INTO sources (id, name, local_path, config)
              VALUES ($1, $2, $3, $4::jsonb)`,
-        [opts.id, displayName, finalPath, JSON.stringify(config)],
+        [opts.id, displayName, finalPath],
+        [config],
       );
     } catch (e) {
       rmSync(tempDir, { recursive: true, force: true });
@@ -452,10 +462,13 @@ export async function addSource(
       config.federated = opts.federated;
     }
     const displayName = opts.name ?? opts.id;
-    await engine.executeRaw(
+    // jsonb via executeRawJsonb, not JSON.stringify + $4::jsonb — see Path A.
+    await executeRawJsonb(
+      engine,
       `INSERT INTO sources (id, name, local_path, config)
            VALUES ($1, $2, $3, $4::jsonb)`,
-      [opts.id, displayName, finalPath, JSON.stringify(config)],
+      [opts.id, displayName, finalPath],
+      [config],
     );
   }
 
