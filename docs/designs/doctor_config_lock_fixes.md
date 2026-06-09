@@ -67,18 +67,25 @@ race-safety (a concurrent edit advances `updated_at` to now() > versionTs, still
 > the floored stamp, so it re-extracts). Validated on the live brain: stale count
 956 → 0, `links_extraction_lag` flips to OK (0/991). Done in this branch.
 
-## NOT fixed here — need retrieval/eval validation before landing
+## Partially addressed — doctor message fixed, index feature deferred
 
-### 4. No HNSW index possible on `content_chunks.embedding` for >2000-dim models
-Column is `vector(2048)`; pgvector caps `vector` HNSW at 2000 dims, so the
-canonical `CREATE INDEX ... hnsw(embedding vector_cosine_ops)` (schema.sql,
-vector-index.ts, retrieval-upgrade-planner.ts) fails silently and search falls
-back to seq scan. `facts`/`query_cache` already switch to
-`halfvec_cosine_ops` above 2000 dims (migrate.ts), but `content_chunks` does
-not, and the runtime query (postgres-engine.ts `embedding <=> '...'::vector`)
-casts to `::vector`, so even a halfvec expression index wouldn't be used.
-Proposed fix (gated on embedding_dimensions > 2000): build the index as
-`hnsw((embedding::halfvec(N)) halfvec_cosine_ops)` AND cast the query to
-`embedding::halfvec(N) <=> $1::halfvec(N)`, mirroring the facts/query_cache
-path. Needs the retrieval eval suite to confirm no recall regression. Benign at
-small scale (seq scan is sub-second at ~1k pages).
+### 4. `embedding_column_registry` recommended an impossible index DDL (message fixed; index work deferred)
+Column is `vector(2048)`. pgvector caps `vector` HNSW at 2000 dims, so
+`chunkEmbeddingIndexSql` already SKIPS the index above 2000 dims by design and
+search uses exact seq scan — this is intentional, not a silent failure. The
+actual defect was the doctor's `embedding_column_registry` check, which still
+told the operator to run `CREATE INDEX ... USING hnsw (embedding
+vector_cosine_ops)` — a statement that ALWAYS errors above 2000 dims. Fixed in
+this branch: for a `vector` column wider than the cap the check now explains
+seq scan is expected and points to the halfvec migration path instead of
+emitting the failing DDL.
+
+ENABLING an index for >2000-dim columns (the real feature) is deliberately NOT
+done here. It requires migrating the column to `halfvec` (storage + the
+`embedding_columns` registry so `buildVectorCastFragment` casts the column to
+`halfvec_cosine_ops`, matching the index) — `facts`/`query_cache` already do
+this (migrate.ts), `content_chunks` does not — plus a retrieval-recall eval
+(halfvec is float16; HNSW is approximate). This overlaps the in-flight
+`origin/garrytan/vector-search-max-pool` branch, so it should be coordinated
+there rather than landed as a competing change. Benign to defer: seq scan is
+sub-second at ~1k pages.

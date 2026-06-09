@@ -5314,6 +5314,7 @@ export async function buildChecks(
     const { getEmbeddingColumnRegistry, resolveEmbeddingColumn, quoteIdentifier } =
       await import('../core/search/embedding-column.ts');
     const { loadConfig: _loadConfig } = await import('../core/config.ts');
+    const { PGVECTOR_HNSW_VECTOR_MAX_DIMS } = await import('../core/vector-index.ts');
     const fileCfg = _loadConfig();
     const mergedCfg = fileCfg ? await (await import('../core/config.ts')).loadConfigWithEngine(engine, fileCfg).catch(() => fileCfg) : null;
     if (!mergedCfg) {
@@ -5392,6 +5393,26 @@ export async function buildChecks(
           continue;
         }
         if (engine.kind === 'postgres' && haveIndex.get(colName) === false) {
+          // pgvector caps `vector` HNSW at PGVECTOR_HNSW_VECTOR_MAX_DIMS dims.
+          // A wider `vector` column CANNOT take the canonical vector_cosine_ops
+          // index — gbrain skips it by policy (chunkEmbeddingIndexSql) and search
+          // uses exact sequential scan. Emitting the generic CREATE INDEX here
+          // would hand the operator a statement that always errors. Give the
+          // real options instead: accept seq scan (fine at small scale), or
+          // migrate the column to halfvec (supports up to 4000 dims) AND declare
+          // it halfvec so the query path casts to match the index.
+          if (actualType === 'vector' && actualDims !== null && actualDims > PGVECTOR_HNSW_VECTOR_MAX_DIMS) {
+            issues.push(
+              `${colName}: no HNSW index — a ${actualDims}-dim 'vector' column exceeds ` +
+                `pgvector's ${PGVECTOR_HNSW_VECTOR_MAX_DIMS}-dim HNSW cap, so search uses exact ` +
+                `sequential scan (acceptable at small scale). To enable an index, migrate to ` +
+                `halfvec: ALTER TABLE content_chunks ALTER COLUMN ${colName} TYPE halfvec(${actualDims}); ` +
+                `gbrain config set embedding_columns '<...type:halfvec...>' (so the query casts to ` +
+                `halfvec_cosine_ops and uses the index); then rebuild the index. Do NOT run a plain ` +
+                `vector_cosine_ops CREATE INDEX — it errors above ${PGVECTOR_HNSW_VECTOR_MAX_DIMS} dims.`,
+            );
+            continue;
+          }
           issues.push(
             `${colName}: no HNSW index. Search works but uses sequential scan. ` +
               `Fix: CREATE INDEX IF NOT EXISTS idx_chunks_${colName} ON content_chunks USING hnsw (${quoteIdentifier(colName)} ${entry.type}_cosine_ops);`,
