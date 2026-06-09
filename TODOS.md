@@ -1,5 +1,21 @@
 # TODOS
 
+## gbrain#1981 Retrieval Reflex follow-ups (v0.43+)
+
+Filed from the #1981 ship (v0.42.38.0). Deliberately scoped OUT — the v1 extractor
+is deterministic + precision-biased. See plan + GSTACK REVIEW REPORT at
+`~/.claude/plans/system-instruction-you-are-working-wild-yeti.md`.
+
+- [ ] **P3 — broaden entity detection beyond proper-case ASCII.** The v1 extractor
+  (`src/core/context/entity-salience.ts`) misses lowercase names, many non-Latin
+  scripts, pronoun follow-ups ("what about her?"), and assistant-introduced entities.
+  These need conversation state or an LLM pass. **Why:** higher recall on the read
+  side. **Where:** `entity-salience.ts` + the orchestrator's `priorContextText`.
+- [ ] **P3 — recall knob: optional fuzzy/prefix-expansion resolution.** The resolver
+  (`src/core/context/retrieval-reflex.ts`) is exact-only (alias + title + slug-suffix)
+  for precision. Revisit adding `resolveEntitySlug`'s trgm-fuzzy / prefix-expansion
+  arm, gated on an unambiguous single hit, if recall telemetry comes back weak.
+
 ## gbrain#1881 sync reclone ownership follow-ups (v0.43+)
 
 Filed from the #1881 fix (`gbrain sync --strategy code` deleted a user's working
