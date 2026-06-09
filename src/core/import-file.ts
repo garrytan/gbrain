@@ -286,8 +286,6 @@ async function replacePageDerivedStorage(
     page.frontmatter,
     await resolvePageChunkOptions(engine),
   );
-  await engine.deleteChunks(page.slug);
-  assertDerivedRefreshNotAborted(signal);
   await engine.upsertChunks(page.slug, resolvedChunks);
   assertDerivedRefreshNotAborted(signal);
   const manifest = await engine.upsertNoteManifestEntry(buildNoteManifestEntry({

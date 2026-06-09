@@ -193,6 +193,44 @@ Body`;
     }
   });
 
+  test('unchanged derived refresh preserves existing chunk embeddings', async () => {
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: ':memory:' });
+    try {
+      await engine.initSchema();
+
+      const content = `---
+type: concept
+title: Preserve Embeddings
+---
+Stable compiled truth.`;
+      const slug = 'concepts/preserve-embeddings';
+
+      expect((await importFromContent(engine, slug, content)).status).toBe('imported');
+      await engine.upsertChunks(slug, [{
+        chunk_index: 0,
+        chunk_text: 'Stable compiled truth.',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array(1024).fill(0.25),
+        model: 'qwen3-embedding:0.6b',
+        token_count: 3,
+      }]);
+      const before = (await engine.getChunksWithEmbeddings(slug))[0]!;
+      expect(before.embedding).not.toBeNull();
+      expect(before.embedded_at).toBeInstanceOf(Date);
+
+      await engine.deleteNoteManifestEntry('workspace:default', slug);
+
+      expect((await importFromContent(engine, slug, content)).status).toBe('skipped');
+      const after = (await engine.getChunksWithEmbeddings(slug))[0]!;
+      expect(after.chunk_text).toBe('Stable compiled truth.');
+      expect(after.embedding).not.toBeNull();
+      expect(after.embedded_at).toBeInstanceOf(Date);
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
   test('imports corpus lane provenance into manifest and section source refs', async () => {
     const engine = new SQLiteEngine();
     await engine.connect({ engine: 'sqlite', database_path: ':memory:' });
