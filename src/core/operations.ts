@@ -1021,6 +1021,8 @@ export function formatResult(
         ] : []),
         'Required reads:',
         ...formatSelectorLines(resultValue.required_reads),
+        `Read plan: mode=${resultValue.read_plan?.mode ?? 'none'} max_depth=${resultValue.read_plan?.max_depth ?? 'none'} selected=${resultValue.read_plan?.selected_selectors?.length ?? 0} deferred=${resultValue.read_plan?.deferred_candidate_ids?.length ?? 0} gaps=${formatCsv(resultValue.read_plan?.gap_reasons)}`,
+        ...formatReadPlanActions(resultValue.read_plan),
         'Candidates:',
         ...formatCandidateLines(resultValue.candidates),
         `Candidate signal policy: mode=${resultValue.candidate_signal_policy?.mode ?? 'none'} included=${resultValue.candidate_signal_policy?.included_count ?? 0} suppressed=${resultValue.candidate_signal_policy?.suppressed_count ?? 0} reasons=${formatCsv(resultValue.candidate_signal_policy?.reason_codes)}`,
@@ -1322,6 +1324,16 @@ function formatSelectorLines(selectors: unknown): string[] {
     const value = selector as Record<string, unknown>;
     return `- ${formatSelectorId(value)} [${String(value.kind ?? 'unknown')}]`;
   });
+}
+
+function formatReadPlanActions(readPlan: unknown): string[] {
+  const value = readPlan as Record<string, unknown> | undefined;
+  const actions = value?.next_actions;
+  if (!Array.isArray(actions) || actions.length === 0) return [];
+  return [
+    'Read plan next actions:',
+    ...actions.map((action) => `- ${String(action)}`),
+  ];
 }
 
 function formatSelectorId(selector: Record<string, unknown>): string {
@@ -5316,7 +5328,7 @@ const plan_retrieval_request: Operation = {
 
 const retrieve_context: Operation = {
   name: 'retrieve_context',
-  description: 'Agentic MBrain retrieval probe. Returns required canonical reads plus non-canonical candidate_signals from Memory Inbox; chunks and candidate signals are not answer evidence. Call read_context on required_reads before answering factual questions.',
+  description: 'Agentic MBrain retrieval probe. Returns a bounded read_plan, required canonical reads, and non-canonical candidate_signals from Memory Inbox; chunks and candidate signals are not answer evidence. Call read_context on read_plan.selected_selectors before answering factual questions.',
   params: {
     query: { type: 'string', description: 'Raw user request or memory query' },
     selectors: {

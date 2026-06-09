@@ -14,6 +14,7 @@ import type {
   RetrieveContextGraphFrontierOptions,
   RetrieveContextInput,
   RetrieveContextOrientation,
+  RetrieveContextReadPlan,
   RetrieveContextResult,
   RetrievalMatchedChunk,
   RetrievalRouteIntent,
@@ -87,8 +88,9 @@ export interface RetrieveContextDependencies {
 
 const DEFAULT_CANDIDATE_LIMIT = 5;
 const DEFAULT_READ_CONTEXT_MAX_SELECTORS = 3;
+const READ_PLAN_MAX_DEPTH = 1;
 const CANDIDATE_SELECTOR_BATCH_SIZE = 10;
-const MAX_CANDIDATE_QUERY_VARIANTS = 5;
+const MAX_CANDIDATE_QUERY_VARIANTS = 8;
 const CANDIDATE_RRF_K = 60;
 const LINKED_CANDIDATE_SEED_LIMIT = 5;
 const LINKED_CANDIDATE_PER_SEED_LIMIT = 4;
@@ -152,6 +154,7 @@ export async function retrieveContext(
   if (normalizedSelectors.length > 0) {
     const candidates = normalizedSelectors.map((selector, index) => candidateFromSelector(selector, index + 1));
     const requiredReads = normalizedSelectors;
+    const orientation = emptyOrientation();
     const candidateSignals = await buildRetrieveContextCandidateSignals(
       candidateSignalBuilder,
       engine,
@@ -175,7 +178,14 @@ export async function retrieveContext(
       },
       candidates,
       required_reads: requiredReads,
-      orientation: emptyOrientation(),
+      read_plan: buildReadPlan({
+        candidates,
+        required_reads: requiredReads,
+        orientation,
+        candidate_signals: candidateSignals,
+        required_read_limit: requiredReadLimit,
+      }),
+      orientation,
       ...candidateSignals,
       warnings: ['Exact selector supplied; call read_context for canonical evidence.'],
     }, input);
@@ -190,6 +200,7 @@ export async function retrieveContext(
     });
     const candidates = [candidateFromSelector(selector, 1)];
     const requiredReads = [selector];
+    const orientation = emptyOrientation();
     const candidateSignals = await buildRetrieveContextCandidateSignals(
       candidateSignalBuilder,
       engine,
@@ -213,7 +224,14 @@ export async function retrieveContext(
       },
       candidates,
       required_reads: requiredReads,
-      orientation: emptyOrientation(),
+      read_plan: buildReadPlan({
+        candidates,
+        required_reads: requiredReads,
+        orientation,
+        candidate_signals: candidateSignals,
+        required_read_limit: requiredReadLimit,
+      }),
+      orientation,
       ...candidateSignals,
       warnings: ['Task continuation must read task state before raw files or graph orientation.'],
     }, input);
@@ -267,6 +285,13 @@ export async function retrieveContext(
     },
     candidates,
     required_reads: requiredReads,
+    read_plan: buildReadPlan({
+      candidates,
+      required_reads: requiredReads,
+      orientation: graphAugmentation.orientation,
+      candidate_signals: candidateSignals,
+      required_read_limit: requiredReadLimit,
+    }),
     orientation: graphAugmentation.orientation,
     ...candidateSignals,
     warnings: [
@@ -468,6 +493,7 @@ function blockedByScopeGate(
     },
     candidates: [],
     required_reads: [],
+    read_plan: emptyReadPlan(['Resolve the scope gate before planning canonical reads.']),
     orientation: emptyOrientation(),
     ...emptyCandidateSignalResult('strict', ['scope_gate_blocked']),
     warnings: scopeGate.summary_lines,
@@ -538,8 +564,13 @@ function candidateSearchQueries(query: string): string[] {
   };
 
   addVariant(query);
-  for (const token of tokenizeForSectionRank(query)) {
+  const tokens = tokenizeForSectionRank(query);
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
     addVariant(token);
+    if (index + 1 < tokens.length) {
+      addVariant(`${token} ${tokens[index + 1]!}`);
+    }
     if (variants.length >= MAX_CANDIDATE_QUERY_VARIANTS) break;
   }
 
@@ -1196,6 +1227,82 @@ function emptyOrientation(): RetrieveContextOrientation {
   };
 }
 
+function emptyReadPlan(nextActions: string[] = []): RetrieveContextReadPlan {
+  return {
+    mode: 'bounded_evidence',
+    max_depth: READ_PLAN_MAX_DEPTH,
+    max_selectors: 0,
+    selected_selectors: [],
+    deferred_candidate_ids: [],
+    gap_reasons: [],
+    next_actions: nextActions,
+  };
+}
+
+function buildReadPlan(input: {
+  candidates: RetrieveContextCandidate[];
+  required_reads: RetrievalSelector[];
+  orientation: RetrieveContextOrientation;
+  candidate_signals: CandidateSignalResult;
+  required_read_limit: number;
+}): RetrieveContextReadPlan {
+  const selectedSelectors = input.required_reads.map(retrievalSelectorId);
+  const selectedEvidence = new Set(input.required_reads.map(selectorEvidencePlanKey));
+  const deferredCandidateIds = input.candidates
+    .filter((candidate) => !selectedEvidence.has(selectorEvidencePlanKey(candidate.read_selector)))
+    .map((candidate) => candidate.candidate_id);
+  const deferredOrientationReads = input.orientation.recommended_reads
+    .filter((selector) => !selectedEvidence.has(selectorEvidencePlanKey(selector)));
+  const gapReasons: RetrieveContextReadPlan['gap_reasons'] = [];
+
+  if (input.required_reads.length === 0) {
+    gapReasons.push('no_canonical_read_candidates');
+  }
+  if (deferredCandidateIds.length > 0 || input.candidates.length > input.required_reads.length) {
+    gapReasons.push('candidate_pool_exceeds_read_budget');
+  }
+  if (deferredOrientationReads.length > 0) {
+    gapReasons.push('orientation_reads_deferred');
+  }
+  if (input.candidate_signals.candidate_signals.length > 0) {
+    gapReasons.push('candidate_signals_are_non_canonical');
+  }
+
+  return {
+    mode: 'bounded_evidence',
+    max_depth: READ_PLAN_MAX_DEPTH,
+    max_selectors: input.required_read_limit,
+    selected_selectors: selectedSelectors,
+    deferred_candidate_ids: deferredCandidateIds,
+    gap_reasons: [...new Set(gapReasons)],
+    next_actions: readPlanNextActions(selectedSelectors, deferredCandidateIds, input.candidate_signals),
+  };
+}
+
+function selectorEvidencePlanKey(selector: RetrievalSelector): string {
+  return canonicalEvidenceKey(normalizeRetrievalSelector(selector)) ?? retrievalSelectorId(selector);
+}
+
+function readPlanNextActions(
+  selectedSelectors: string[],
+  deferredCandidateIds: string[],
+  candidateSignals: CandidateSignalResult,
+): string[] {
+  const actions: string[] = [];
+  if (selectedSelectors.length > 0) {
+    actions.push('Call read_context with read_plan.selected_selectors before making factual claims.');
+  } else {
+    actions.push('Do not answer factual claims until retrieve_context finds canonical read selectors.');
+  }
+  if (deferredCandidateIds.length > 0) {
+    actions.push('If read_context reports gaps, rerun retrieve_context with a narrower query or higher limit.');
+  }
+  if (candidateSignals.candidate_signals.length > 0) {
+    actions.push('Inspect candidate_signals separately; they are non-canonical and not answer evidence.');
+  }
+  return actions;
+}
+
 function toMatchedChunk(result: SearchResult, corpusLane?: RetrievalMatchedChunk['corpus_lane']): RetrievalMatchedChunk {
   return {
     slug: result.slug,
@@ -1322,6 +1429,7 @@ async function persistRetrieveTrace(
       ...buildScopeGateVerification(result.scope_gate),
       ...corpusLaneVerification(result.required_reads),
       ...buildGraphFrontierVerification(result),
+      ...buildReadPlanVerification(result),
       ...buildCandidateSignalVerification(result),
     ],
     write_outcome: 'no_durable_write',
@@ -1355,6 +1463,15 @@ function buildGraphFrontierVerification(result: RetrieveContextResult): string[]
   return [
     `graph_frontier_paths_considered:${paths.length}`,
     'graph_frontier_authority:selector_planning_only',
+  ];
+}
+
+function buildReadPlanVerification(result: RetrieveContextResult): string[] {
+  return [
+    `read_plan:${result.read_plan.mode}`,
+    `read_plan_max_depth:${result.read_plan.max_depth}`,
+    `read_plan_selected:${result.read_plan.selected_selectors.length}`,
+    ...result.read_plan.gap_reasons.map((reason) => `read_plan_gap:${reason}`),
   ];
 }
 

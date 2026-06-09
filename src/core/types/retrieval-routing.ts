@@ -512,6 +512,24 @@ export interface RetrieveContextOrientation {
   graph_paths_considered?: string[];
 }
 
+export type RetrieveContextReadPlanMode = 'bounded_evidence';
+
+export type RetrieveContextReadPlanGapReason =
+  | 'no_canonical_read_candidates'
+  | 'candidate_pool_exceeds_read_budget'
+  | 'orientation_reads_deferred'
+  | 'candidate_signals_are_non_canonical';
+
+export interface RetrieveContextReadPlan {
+  mode: RetrieveContextReadPlanMode;
+  max_depth: number;
+  max_selectors: number;
+  selected_selectors: string[];
+  deferred_candidate_ids: string[];
+  gap_reasons: RetrieveContextReadPlanGapReason[];
+  next_actions: string[];
+}
+
 export interface RetrieveContextGraphFrontierOptions {
   enabled: boolean;
   max_depth?: number;
@@ -535,6 +553,7 @@ export interface RetrieveContextResult {
   answerability: RetrieveContextAnswerability;
   candidates: RetrieveContextCandidate[];
   required_reads: RetrievalSelector[];
+  read_plan: RetrieveContextReadPlan;
   orientation: RetrieveContextOrientation;
   candidate_signal_policy: CandidateSignalPolicy;
   candidate_signals: CandidateSignal[];

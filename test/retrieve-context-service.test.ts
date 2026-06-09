@@ -591,6 +591,123 @@ describe('retrieve context service', () => {
     });
   });
 
+  test('recalls multi-token phrase candidates before falling back to noisy token-only reads', async () => {
+    await withEngine('query-phrase-recall', async (engine) => {
+      await importFromContent(engine, 'concepts/queue-routing', [
+        '---',
+        'type: concept',
+        'title: Queue Routing',
+        '---',
+        '# Queue Routing',
+        'Queue routing coordinates worker lanes.',
+      ].join('\n'), { path: 'concepts/queue-routing.md' });
+      await importFromContent(engine, 'concepts/queue-glossary', [
+        '---',
+        'type: concept',
+        'title: Queue Glossary',
+        '---',
+        '# Queue Glossary',
+        'Queue glossary content is a broad token-only match.',
+      ].join('\n'), { path: 'concepts/queue-glossary.md' });
+
+      const seenQueries: string[] = [];
+      const result = await retrieveContext(engine, {
+        query: 'queue routing coordination',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async (query) => {
+          seenQueries.push(query);
+          if (query === 'queue routing') {
+            return [{
+              slug: 'concepts/queue-routing',
+              page_id: 1,
+              title: 'Queue Routing',
+              type: 'concept',
+              chunk_text: 'Queue routing coordinates worker lanes.',
+              chunk_source: 'compiled_truth',
+              score: 0.5,
+              stale: false,
+            }];
+          }
+          if (query === 'queue' || query === 'routing') {
+            return [{
+              slug: 'concepts/queue-glossary',
+              page_id: 2,
+              title: 'Queue Glossary',
+              type: 'concept',
+              chunk_text: 'Queue glossary content is a broad token-only match.',
+              chunk_source: 'compiled_truth',
+              score: 10,
+              stale: false,
+            }];
+          }
+          return [];
+        },
+      });
+
+      expect(seenQueries).toContain('queue routing');
+      expect(result.required_reads[0]!.slug).toBe('concepts/queue-routing');
+    });
+  });
+
+  test('returns a bounded evidence read plan with deferred candidates when selector budget is full', async () => {
+    await withEngine('bounded-read-plan', async (engine) => {
+      for (const slug of [
+        'concepts/queue-routing',
+        'systems/runtime-platform',
+        'systems/worker-lanes',
+        'concepts/backpressure',
+      ]) {
+        await importFromContent(engine, slug, [
+          '---',
+          'type: concept',
+          `title: ${slug.split('/')[1]}`,
+          '---',
+          `# ${slug}`,
+          `Canonical evidence for ${slug} and queue routing.`,
+        ].join('\n'), { path: `${slug}.md` });
+      }
+
+      const result = await retrieveContext(engine, {
+        query: 'queue routing runtime worker backpressure',
+        include_orientation: false,
+        limit: 4,
+      }, {
+        candidateSearch: async () => [
+          'concepts/queue-routing',
+          'systems/runtime-platform',
+          'systems/worker-lanes',
+          'concepts/backpressure',
+        ].map((slug, index) => ({
+          slug,
+          page_id: index + 1,
+          title: slug,
+          type: 'concept' as const,
+          chunk_text: `Canonical evidence for ${slug} and queue routing.`,
+          chunk_source: 'compiled_truth' as const,
+          score: 10 - index,
+          stale: false,
+        })),
+      });
+
+      expect(result.required_reads).toHaveLength(3);
+      expect(result.read_plan).toMatchObject({
+        mode: 'bounded_evidence',
+        max_depth: 1,
+        max_selectors: 3,
+      });
+      expect(result.read_plan.selected_selectors).toEqual(
+        result.required_reads.map((selector) => retrievalSelectorId(selector)),
+      );
+      expect(result.read_plan.deferred_candidate_ids).toHaveLength(1);
+      expect(result.read_plan.gap_reasons).toContain('candidate_pool_exceeds_read_budget');
+      expect(result.read_plan.next_actions).toContain(
+        'Call read_context with read_plan.selected_selectors before making factual claims.',
+      );
+    });
+  });
+
   test('does not let duplicate canonical pages consume multiple required-read slots', async () => {
     await withEngine('duplicate-page-family', async (engine) => {
       const duplicateContent = [

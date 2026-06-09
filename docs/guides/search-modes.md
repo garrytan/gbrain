@@ -30,8 +30,10 @@ on user_asks_about(topic):
     else:
         # MODE 2: Normal agent Q&A
         probe = mbrain retrieve-context "{question}"
-        read = mbrain read-context --selectors '<probe.required_reads json>'
+        read = mbrain read-context --selectors '<probe.read_plan.selected_selectors json>'
         # Answer only from read.canonical_reads when answer_ready is true.
+        # If probe.read_plan.gap_reasons is non-empty, disclose gaps or narrow
+        # the probe before making broad factual claims.
 ```
 
 ## Lower-Level Tools
@@ -54,22 +56,25 @@ factual answers.
 2. **Exact selectors skip fuzzy discovery.** If you already know the slug,
    section id, source ref, task id, profile-memory id, or personal-episode id,
    go straight to `read_context`.
-3. **Context maps and backlinks orient.** They can explain relationships,
+3. **Read plans are bounded.** Use `read_plan.selected_selectors` as the
+   planned evidence set. If `gap_reasons` or `next_actions` report deferred
+   candidates, rerun a narrower probe or state the evidence gap.
+4. **Context maps and backlinks orient.** They can explain relationships,
    recommend reads, or help rank candidates, but they are not canonical truth.
-4. **Mention/existence questions are narrower.** For "did anyone mention Y?",
+5. **Mention/existence questions are narrower.** For "did anyone mention Y?",
    probe/search metadata can answer existence if you disclose that it is
    candidate metadata and do not infer meaning without a canonical read.
-5. **Keyword search works without embeddings.** If hybrid search misses results
+6. **Keyword search works without embeddings.** If hybrid search misses results
    but keyword search finds them, embedding coverage may be incomplete.
-6. **Full pages are an escape hatch.** Use `mbrain get <slug>` when the user
+7. **Full pages are an escape hatch.** Use `mbrain get <slug>` when the user
    asks for the complete page or when a bounded selector read is insufficient.
 
 ## How to Verify
 
 1. Run `mbrain retrieve-context "Pedro"` and confirm it returns candidates plus
-   `required_reads`.
-2. Run `mbrain read-context --selectors '<required_reads json>'` and confirm it
-   returns `canonical_reads` and `answer_ready`.
+   `required_reads` and `read_plan`.
+2. Run `mbrain read-context --selectors '<read_plan.selected_selectors json>'`
+   and confirm it returns `canonical_reads` and `answer_ready`.
 3. Run `mbrain search "Pedro"` and confirm it returns candidate chunks with slug
    references, not answer-ready evidence.
 4. Run `mbrain query "who works at fintech companies"` and confirm it returns

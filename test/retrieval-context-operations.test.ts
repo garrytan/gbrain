@@ -115,6 +115,8 @@ describe('agentic retrieval context operations', () => {
     expect(output).toContain('Chunks are candidate pointers; call read_context before answering.');
     expect(output).toContain('Required reads:');
     expect(output).toContain('section:workspace:default:concepts/retrieval#compiled-truth');
+    expect(output).toContain('Read plan: mode=bounded_evidence max_depth=1 selected=1');
+    expect(output).toContain('Call read_context with read_plan.selected_selectors before making factual claims.');
     expect(output).toContain('Candidate signal policy:');
     expect(output).toContain('candidate:operation-output');
     expect(output).toContain('promotion=advance_to_review');

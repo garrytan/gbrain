@@ -52,9 +52,11 @@ describe('core tool descriptions include trigger context', () => {
   test('retrieve_context description makes it the preferred agent probe', () => {
     const retrieveContext = operations.find(op => op.name === 'retrieve_context');
     expect(retrieveContext).toBeDefined();
+    expect(retrieveContext!.description).toContain('bounded read_plan');
     expect(retrieveContext!.description).toContain('required canonical reads');
     expect(retrieveContext!.description).toContain('candidate_signals');
     expect(retrieveContext!.description).toContain('non-canonical');
+    expect(retrieveContext!.description).toContain('read_plan.selected_selectors');
     expect(retrieveContext!.description).toContain('read_context');
   });
 
