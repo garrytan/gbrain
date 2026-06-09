@@ -1,0 +1,201 @@
+{
+  "source_vault": "/absolute/path/to/reviewed/vault",
+  "output_root": "/tmp/gbrain-readonly-pilot",
+  "port": 31339,
+  "blocked_terms": [
+    "ceo-only",
+    "borrower-package-ocr",
+    "email-intelligence",
+    "dropbox-intelligence",
+    "document-control",
+    "source-extracts",
+    "granola",
+    "cap table",
+    "wire instructions",
+    "social security",
+    "ssn"
+  ],
+  "sources": [
+    {
+      "id": "public",
+      "name": "Readonly pilot public canary",
+      "federated": true
+    },
+    {
+      "id": "team",
+      "name": "Readonly pilot reviewed team corpus",
+      "federated": true
+    },
+    {
+      "id": "restricted",
+      "name": "Readonly pilot restricted canary",
+      "federated": false
+    }
+  ],
+  "synthetic_docs": [
+    {
+      "source": "public",
+      "path": "adapter/public-canary.md",
+      "content": "---\ntitle: Public Canary\ntype: note\nsensitivity: synthetic-public\n---\n# Public Canary\nMarker: PUBLIC_CANARY_MARKER.\n"
+    },
+    {
+      "source": "restricted",
+      "path": "adapter/restricted-canary.md",
+      "content": "---\ntitle: Restricted Canary\ntype: note\nsensitivity: synthetic-restricted\n---\n# Restricted Canary\nMarker: RESTRICTED_CANARY_MARKER.\n"
+    }
+  ],
+  "allowlist": [
+    {
+      "source": "team",
+      "path": "relative/path/to/reviewed-real-note.md",
+      "append_marker": "TEAM_REAL_MARKER",
+      "forbid_sensitive_frontmatter": true,
+      "forbid_terms": [
+        "ceo-only",
+        "cap table"
+      ]
+    }
+  ],
+  "topology_hubs": [
+    {
+      "source": "team",
+      "path": "adapter/topology-hub.md",
+      "link_count": 6,
+      "content_template": "---\ntitle: Team Topology Hub\ntype: note\nsensitivity: internal\n---\n# Team Topology Hub\nMarker: TEAM_REAL_MARKER.\nLinks: {{links}}.\n"
+    }
+  ],
+  "clients": [
+    {
+      "id": "team_reader",
+      "name": "readonly-team-reader",
+      "source": "team",
+      "federated_read": [
+        "public",
+        "team"
+      ],
+      "scopes": "read"
+    },
+    {
+      "id": "restricted_reader",
+      "name": "readonly-restricted-reader",
+      "source": "restricted",
+      "federated_read": [
+        "restricted"
+      ],
+      "scopes": "read"
+    }
+  ],
+  "mcp_tool_calls": [
+    {
+      "id": "search_public",
+      "name": "search",
+      "arguments": {
+        "query": "PUBLIC_CANARY_MARKER",
+        "limit": 5
+      }
+    },
+    {
+      "id": "search_team",
+      "name": "search",
+      "arguments": {
+        "query": "TEAM_REAL_MARKER",
+        "limit": 5
+      }
+    },
+    {
+      "id": "search_restricted",
+      "name": "search",
+      "arguments": {
+        "query": "RESTRICTED_CANARY_MARKER",
+        "limit": 5
+      }
+    },
+    {
+      "id": "graph_topology_hub",
+      "name": "traverse_graph",
+      "arguments": {
+        "slug": "adapter/topology-hub",
+        "max_depth": 1
+      }
+    },
+    {
+      "id": "put_denied_probe",
+      "name": "put_page",
+      "arguments": {
+        "slug": "adapter/should-not-write",
+        "content": "---\ntitle: Should Not Write\ntype: note\n---\n\nWRITE_PROBE",
+        "dry_run": false
+      }
+    }
+  ],
+  "expectations": [
+    {
+      "client": "team_reader",
+      "call": "search_public",
+      "contains": [
+        "PUBLIC_CANARY_MARKER"
+      ],
+      "not_contains": [
+        "RESTRICTED_CANARY_MARKER"
+      ],
+      "empty": false
+    },
+    {
+      "client": "team_reader",
+      "call": "search_team",
+      "contains": [
+        "TEAM_REAL_MARKER"
+      ],
+      "not_contains": [
+        "RESTRICTED_CANARY_MARKER"
+      ],
+      "empty": false
+    },
+    {
+      "client": "team_reader",
+      "call": "search_restricted",
+      "empty": true,
+      "not_contains": [
+        "RESTRICTED_CANARY_MARKER"
+      ]
+    },
+    {
+      "client": "team_reader",
+      "call": "put_denied_probe",
+      "contains": [
+        "insufficient_scope"
+      ]
+    },
+    {
+      "client": "restricted_reader",
+      "call": "search_public",
+      "empty": true,
+      "not_contains": [
+        "PUBLIC_CANARY_MARKER"
+      ]
+    },
+    {
+      "client": "restricted_reader",
+      "call": "search_team",
+      "empty": true,
+      "not_contains": [
+        "TEAM_REAL_MARKER"
+      ]
+    },
+    {
+      "client": "restricted_reader",
+      "call": "search_restricted",
+      "contains": [
+        "RESTRICTED_CANARY_MARKER"
+      ],
+      "empty": false
+    },
+    {
+      "client": "restricted_reader",
+      "call": "put_denied_probe",
+      "contains": [
+        "insufficient_scope"
+      ]
+    }
+  ]
+}

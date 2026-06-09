@@ -42,6 +42,8 @@ async function truncateAll() {
   for (const t of ['content_chunks', 'links', 'tags', 'raw_data', 'timeline_entries', 'page_versions', 'ingest_log', 'pages']) {
     await (engine as any).db.exec(`DELETE FROM ${t}`);
   }
+  await (engine as any).db.exec(`DELETE FROM sources WHERE id <> 'default'`);
+  await (engine as any).db.exec(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
 }
 
 const personPage = (title: string, body = ''): PageInput => ({
@@ -96,6 +98,72 @@ describe('gbrain extract links --source fs', () => {
     // listPages + per-page getLinks. ~10 files should complete in well under
     // 2s even on a slow CI box.
     expect(elapsedMs).toBeLessThan(2000);
+  });
+
+  test('--source-id non-default source writes same-source FS links; dry-run and apply agree', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ('team', 'team', $1)
+       ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+      [brainDir],
+    );
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES
+         ('people/alice', 'team', 'person', 'Alice', 'Met [[people/bob]].', ''),
+         ('people/bob', 'team', 'person', 'Bob', 'Friend of Alice.', '')`,
+    );
+
+    writeFile('people/alice.md', '---\ntitle: Alice\n---\n\nMet [[people/bob]].\n');
+    writeFile('people/bob.md', '---\ntitle: Bob\n---\n');
+
+    const lines: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => { lines.push(args.join(' ')); };
+    try {
+      await runExtract(engine, ['links', '--source', 'fs', '--source-id', 'team', '--dir', brainDir, '--dry-run', '--json']);
+    } finally {
+      console.log = origLog;
+    }
+    const dryRun = JSON.parse(lines.at(-1) ?? '{}');
+    expect(dryRun.links_created).toBe(1);
+
+    await runExtract(engine, ['links', '--source', 'fs', '--source-id', 'team', '--dir', brainDir]);
+    const links = await engine.getLinks('people/alice', { sourceId: 'team' });
+    expect(links.length).toBe(1);
+    expect(links[0]).toMatchObject({ to_slug: 'people/bob' });
+  });
+
+  test('--source-id with explicit --dir outside that source local_path fails loud', async () => {
+    const teamDir = mkdtempSync(join(tmpdir(), 'gbrain-extract-team-'));
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ('team', 'team', $1)
+       ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+      [teamDir],
+    );
+
+    let exitCode: number | null = null;
+    const errBuf: string[] = [];
+    const savedExit = process.exit;
+    const savedConsoleError = console.error;
+    try {
+      (process as any).exit = (code: number) => { exitCode = code; throw new Error('__test_exit__'); };
+      console.error = (...parts: unknown[]) => { errBuf.push(parts.join(' ')); };
+      try {
+        await runExtract(engine, ['links', '--source', 'fs', '--source-id', 'team', '--dir', brainDir]);
+      } catch (e) {
+        if (!(e instanceof Error && e.message === '__test_exit__')) throw e;
+      }
+    } finally {
+      (process as any).exit = savedExit;
+      console.error = savedConsoleError;
+      try { rmSync(teamDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+
+    expect(exitCode as unknown).toBe(1);
+    const all = errBuf.join('\n');
+    expect(all).toContain('--source-id team');
+    expect(all).toContain('--dir');
+    expect(all).toContain('does not match registered local_path');
   });
 
   test('--dry-run dedups duplicate candidates across files (printed once, not N times)', async () => {
