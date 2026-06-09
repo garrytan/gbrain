@@ -145,14 +145,15 @@ GBrain uses Supabase for vector embeddings and full-text search at scale. There 
 
 Skip this and every embed write fails with "type vector does not exist" the moment GBrain tries to create its schema. pgvector is what stores the embeddings; the schema migrations refuse to run without it. Five seconds in the UI; an hour of debugging if you forget.
 
-### 7b. Get the CONNECTION POOLER connection string, not the direct one
+### 7b. Get the TRANSACTION POOLER connection string, not the direct one
 
-In **Project Settings → Database → Connection string**, Supabase shows you two options. They look almost identical. Use the right one.
+In the Supabase dashboard, click **Connect** in the top navigation bar, then **Connection String**. Supabase shows three options. They look almost identical. Use the right one.
 
-- **Direct connection** (port 5432). Talks straight to the Postgres instance. IPv6-only. Will fail if your Render host doesn't have IPv6 outbound (most don't by default).
-- **Connection pooler** (port 6543, hostname starts with `aws-0-...pooler.supabase.com`). Talks through Supabase's pgbouncer. Works over IPv4. Survives connection storms from parallel workers.
+- **Direct connection** (port 5432, host `db.YOUR-PROJECT.supabase.co`). Talks straight to the Postgres instance. IPv6-only. Will fail if your Render host doesn't have IPv6 outbound (most don't by default).
+- **Transaction pooler** (port 6543, host `aws-0-...pooler.supabase.com`). Talks through Supabase's pooler (Supavisor) in transaction mode. Works over IPv4. Survives connection storms from parallel workers. GBrain is tuned for this one: it auto-disables prepared statements on port 6543 and routes migrations, DDL, and worker locks to a separate direct connection (see 7c).
+- **Session pooler** (port 5432, host `aws-0-...pooler.supabase.com`). Also works over IPv4, with full session features. You don't need it as your main URL, but it's the free way to fix the IPv4 gotcha in 7c.
 
-You want the **connection pooler** string. Format looks like:
+You want the **Transaction pooler** string. Format looks like:
 
 ```
 postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-us-west-1.pooler.supabase.com:6543/postgres
@@ -164,11 +165,23 @@ Configure it via:
 gbrain config set database_url "postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-us-west-1.pooler.supabase.com:6543/postgres"
 ```
 
-### 7c. Buy the IPv4 add-on if your host is IPv4-only
+### 7c. Fix the IPv4 gotcha for migrations, DDL, and worker locks
 
-Even with the pooler, some Supabase regions and some Render plans hit IPv6 resolution snags. If your `gbrain doctor` shows connection failures and the error mentions "network unreachable" or hangs forever on connect, you need Supabase's **IPv4 add-on**.
+The transaction pooler (7b) carries your normal reads and writes over IPv4. But GBrain runs schema migrations, DDL, and background-worker locks on a *direct* connection, which it derives from your pooler URL by swapping the host to `db.YOUR-PROJECT.supabase.co:5432`. That direct host is **IPv6-only**. On an IPv4-only host (most Render plans), reads work but migrations hang and worker locks orphan, often silently.
 
-In the Supabase dashboard, **Project Settings → Add-ons → IPv4 address**. About $4 a month. Toggle on, wait a minute, retry the connection. This bit me on multiple installs before I learned to just buy it up front.
+Two ways to fix it. The free one first:
+
+**Free: point GBrain's direct connection at the Session pooler.** The session pooler is the same Supavisor host on port 5432, and it's IPv4. Copy the **Session pooler** string from the same **Connect → Connection String** panel and set it as the direct-connection override:
+
+```bash
+export GBRAIN_DIRECT_DATABASE_URL="postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-us-west-1.pooler.supabase.com:5432/postgres"
+```
+
+Now both pools — reads on the transaction pooler (6543), DDL and locks on the session pooler (5432) — run over IPv4 at zero extra cost.
+
+**Paid: buy Supabase's IPv4 add-on.** About $4 a month, Pro tier or higher. It makes the direct `db.*.supabase.co` host reachable over IPv4, so the derived direct connection just works with no extra config. In the Supabase dashboard, **Project Settings → Add-ons → IPv4 address**. Toggle on, wait a minute, retry.
+
+Either fixes it. If `gbrain doctor` still shows connection failures that mention "network unreachable" or hangs forever on connect, you haven't done one of these yet.
 
 ### 7d. Verify the connection
 

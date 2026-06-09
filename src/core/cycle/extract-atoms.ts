@@ -220,6 +220,71 @@ export async function discoverExtractablePages(
 }
 
 /**
+ * issue #1678 (C4) — count DB pages eligible for atom extraction that have NO
+ * atom row yet. Single source of truth for the backlog number: the doctor
+ * `extract_atoms_backlog` check calls this so its definition can't drift from
+ * what the phase actually processes. Uses the SAME eligibility predicate as
+ * `discoverExtractablePages` (minus the LIMIT and affectedSlugs filter) so it
+ * rides migration v104's `pages_atom_source_hash_idx` partial index and stays
+ * O(log n) on 100K+ brains.
+ *
+ * PAGE-BACKLOG-ONLY (Codex #11): extract_atoms also discovers transcript files
+ * at runtime; this count covers DB pages only. Callers label that caveat.
+ *
+ * Fail-soft: returns null on error so the doctor check can report a warn
+ * (query failed) rather than a misleading 0.
+ */
+export async function countExtractAtomsBacklog(
+  engine: BrainEngine,
+  sourceId?: string,
+): Promise<number | null> {
+  try {
+    // Two modes: scoped (the phase's per-source `remaining`) vs brain-wide
+    // (doctor — matches the conversation-facts check's cross-source posture).
+    // The atom must live in the SAME source as the page either way, so the
+    // brain-wide form keys the NOT EXISTS on `atom.source_id = p.source_id`.
+    const scoped = sourceId !== undefined;
+    const sql = scoped
+      ? `SELECT COUNT(*) AS cnt FROM pages p
+         WHERE p.source_id = $1
+           AND p.type = ANY($2::text[])
+           AND p.deleted_at IS NULL
+           AND p.content_hash IS NOT NULL
+           AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
+           AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+           AND length(COALESCE(p.compiled_truth, '')) >= $3
+           AND NOT EXISTS (
+             SELECT 1 FROM pages atom
+             WHERE atom.type = 'atom' AND atom.source_id = $1
+               AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
+               AND atom.deleted_at IS NULL
+           )`
+      : `SELECT COUNT(*) AS cnt FROM pages p
+         WHERE p.type = ANY($1::text[])
+           AND p.deleted_at IS NULL
+           AND p.content_hash IS NOT NULL
+           AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
+           AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+           AND length(COALESCE(p.compiled_truth, '')) >= $2
+           AND NOT EXISTS (
+             SELECT 1 FROM pages atom
+             WHERE atom.type = 'atom' AND atom.source_id = p.source_id
+               AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
+               AND atom.deleted_at IS NULL
+           )`;
+    const params = scoped
+      ? [sourceId, EXTRACTABLE_PAGE_TYPES as unknown as string[], MIN_PAGE_CHARS_FOR_EXTRACTION]
+      : [EXTRACTABLE_PAGE_TYPES as unknown as string[], MIN_PAGE_CHARS_FOR_EXTRACTION];
+    const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params);
+    return Number(rows[0]?.cnt ?? 0);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[extract_atoms] backlog count failed: ${msg}`);
+    return null;
+  }
+}
+
+/**
  * Batch source-hash idempotency check. Returns the set of contentHash16
  * values that already have an atom row for this source. One SQL
  * roundtrip; migration v104 adds the partial expression index that

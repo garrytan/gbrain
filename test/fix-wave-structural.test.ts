@@ -20,19 +20,19 @@
 import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 
-describe('v0.36.1.x #1125 — query drain cache writes before CLI exit', () => {
-  test("cli.ts awaits awaitPendingSearchCacheWrites for the 'query' op", () => {
-    const src = readFileSync('src/cli.ts', 'utf8');
-    // Sequence: 'query' op match → import the drain → await
-    expect(src).toMatch(/op\.name\s*===\s*'query'[\s\S]{0,200}awaitPendingSearchCacheWrites/);
-    expect(src).toMatch(/await\s+awaitPendingSearchCacheWrites\(\)/);
-  });
-
-  test('hybrid.ts exports the drain helper + trackCacheWrite', () => {
+describe('v0.42.20.0 — search-cache drained via the background-work registry', () => {
+  // Supersedes the v0.36.1.x #1125 query-only drain: search-cache now registers
+  // a registry drainer (drained for BOTH search and query, bounded), and cli.ts
+  // drains the whole registry rather than calling awaitPendingSearchCacheWrites
+  // directly for the 'query' op only.
+  test('hybrid.ts registers a bounded search-cache drainer', () => {
     const src = readFileSync('src/core/search/hybrid.ts', 'utf8');
     expect(src).toMatch(/export async function awaitPendingSearchCacheWrites/);
     expect(src).toMatch(/pendingCacheWrites\.add\(promise\)/);
     expect(src).toMatch(/trackCacheWrite\(/);
+    // Now bounded (was an unbounded Promise.allSettled) + registered.
+    expect(src).toMatch(/registerBackgroundWorkDrainer\(\{[\s\S]*?name:\s*'search-cache'/);
+    expect(src).toMatch(/Promise\.race/);
   });
 });
 
@@ -123,51 +123,58 @@ describe('v0.36.1.x #1124 — query --no-expand actually negates expand', () => 
   });
 });
 
-describe('v0.41.8.0 #1247/#1269/#1290 — drain last-retrieved before CLI disconnect', () => {
-  test('cli.ts imports awaitPendingLastRetrievedWrites', () => {
+describe('v0.42.20.0 — background-work registry drains every sink before disconnect', () => {
+  // Supersedes the v0.41.8.0 #1247/#1269/#1290 per-call last-retrieved drain:
+  // last-retrieved is now one of four registry sinks; cli.ts drains the whole
+  // registry (drainAllBackgroundWorkForCliExit) before disconnect on BOTH the
+  // op-dispatch path AND the CLI_ONLY path (the latter closes #1762 for capture).
+  test('cli.ts imports + uses drainAllBackgroundWorkForCliExit', () => {
     const src = readFileSync('src/cli.ts', 'utf8');
-    // Allow additional type-imports from the same module (e.g. `type DrainOutcome`)
-    expect(src).toMatch(/import\s+\{[^}]*\bawaitPendingLastRetrievedWrites\b[^}]*\}\s*from\s+['"]\.\/core\/last-retrieved\.ts['"]/);
+    expect(src).toMatch(/import\s+\{\s*drainAllBackgroundWorkForCliExit\s*\}\s*from\s+['"]\.\/core\/background-work\.ts['"]/);
+    // Two call sites: op-dispatch finally + handleCliOnly finally.
+    const calls = src.match(/await\s+drainAllBackgroundWorkForCliExit\s*\(/g) ?? [];
+    expect(calls.length).toBeGreaterThanOrEqual(2);
   });
 
-  test('last-retrieved.ts exports the drain + tracks promises in a module-scoped Set', () => {
+  test('last-retrieved.ts still exports the bounded drain + registers a drainer', () => {
     const src = readFileSync('src/core/last-retrieved.ts', 'utf8');
     expect(src).toMatch(/export async function awaitPendingLastRetrievedWrites/);
     expect(src).toMatch(/pendingLastRetrievedWrites\s*=\s*new\s+Set/);
-    expect(src).toMatch(/pendingLastRetrievedWrites\.add\(promise\)/);
-    // Per D5+D8: snapshot pattern (Codex finding #3) + bounded timeout
     expect(src).toMatch(/Promise\.race/);
-    expect(src).toMatch(/drain timed out/);
+    expect(src).toMatch(/registerBackgroundWorkDrainer\(\{[\s\S]*?name:\s*'last-retrieved'/);
   });
 
-  test('cli.ts behavioral positioning: drain appears BEFORE engine.disconnect in op-dispatch', () => {
+  test('all four sinks register a drainer', () => {
+    expect(readFileSync('src/core/facts/queue.ts', 'utf8'))
+      .toMatch(/registerBackgroundWorkDrainer\(\{[\s\S]*?name:\s*'facts'[\s\S]*?abort:/);
+    expect(readFileSync('src/core/search/hybrid.ts', 'utf8'))
+      .toMatch(/name:\s*'search-cache'/);
+    expect(readFileSync('src/core/last-retrieved.ts', 'utf8'))
+      .toMatch(/name:\s*'last-retrieved'/);
+    expect(readFileSync('src/core/eval-capture.ts', 'utf8'))
+      .toMatch(/name:\s*'eval-capture'/);
+  });
+
+  test('cli.ts behavioral positioning: registry drain appears BEFORE engine.disconnect (op-dispatch)', () => {
     const src = readFileSync('src/cli.ts', 'utf8');
-    // Per D5+D8: replaces the brittle literal-output regex from PR #1259
-    // with a behavioral-positioning assertion. The drain CALL must appear
-    // textually before the disconnect CALL in the local-engine path.
-    // Match `await fn(` not bare names — bare names also appear in
-    // comments and would false-match the comment ordering.
     const localPath = src.match(/\/\/ Local engine path \(unchanged behavior[\s\S]+?^\}/m);
     expect(localPath).not.toBeNull();
     const block = localPath![0];
-    const drainCallRe = /await\s+awaitPendingLastRetrievedWrites\s*\(/;
+    const drainCallRe = /await\s+drainAllBackgroundWorkForCliExit\s*\(/;
     const disconnectCallRe = /await\s+engine\.disconnect\s*\(/;
     expect(block).toMatch(drainCallRe);
     expect(block).toMatch(disconnectCallRe);
-    const drainMatch = block.match(drainCallRe);
-    const disconnectMatch = block.match(disconnectCallRe);
-    const drainIdx = block.indexOf(drainMatch![0]);
-    const disconnectIdx = block.indexOf(disconnectMatch![0]);
-    expect(drainIdx).toBeGreaterThan(-1);
-    expect(disconnectIdx).toBeGreaterThan(-1);
+    const drainIdx = block.indexOf(block.match(drainCallRe)![0]);
+    const disconnectIdx = block.indexOf(block.match(disconnectCallRe)![0]);
     expect(drainIdx).toBeLessThan(disconnectIdx);
   });
 
-  test('cli.ts uses shouldForceExitAfterMain only on the timeout path', () => {
-    const src = readFileSync('src/cli.ts', 'utf8');
-    expect(src).toMatch(/import\s+\{\s*shouldForceExitAfterMain\s*\}\s*from\s+['"]\.\/core\/cli-force-exit\.ts['"]/);
-    // The force-exit gate MUST be conditioned on drainResult.outcome ==='timeout'
-    expect(src).toMatch(/drainResult\.outcome\s*===\s*['"]timeout['"]/);
+  test('background-work.ts: Map registry, ordered drain, awaited abort, test seam', () => {
+    const src = readFileSync('src/core/background-work.ts', 'utf8');
+    expect(src).toMatch(/new\s+Map<string,\s*BackgroundWorkDrainer>/);
+    expect(src).toMatch(/sort\(\s*\(a,\s*b\)\s*=>\s*a\.order\s*-\s*b\.order/);
+    expect(src).toMatch(/if\s*\(unfinished\s*>\s*0\s*&&\s*d\.abort\)\s*\{[\s\S]*?await\s+d\.abort\(\)/);
+    expect(src).toMatch(/export function __registerDrainerForTest/);
   });
 
   test('cli-force-exit.ts daemon guard excludes "serve"', () => {

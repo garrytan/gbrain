@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'crypto';
-import type { Page, PageInput, PageType, Chunk, SearchResult } from './types.ts';
+import type { Page, PageInput, PageType, Chunk, SearchResult, StalePageRow } from './types.ts';
 import type { Take, TakeKind } from './engine.ts';
 
 /**
@@ -118,6 +118,34 @@ export function rowToPage(row: Record<string, unknown>): Page {
     // an upstream caller bypassed the projection check; better to surface than
     // silently mis-attribute).
     source_id: (row.source_id as string | undefined) ?? 'default',
+  };
+}
+
+/**
+ * v0.42.7 (#1696) — map a DB row to a StalePageRow for the extraction
+ * freshness sweep. Shared by both engines so frontmatter JSONB parsing can't
+ * drift. Mirrors rowToPage's `typeof === 'string' ? JSON.parse` idiom; tolerates
+ * NULL compiled_truth/timeline/frontmatter (empty-string / {} fallback).
+ */
+export function rowToStalePage(row: Record<string, unknown>): StalePageRow {
+  const fm = row.frontmatter;
+  return {
+    id: row.id as number,
+    slug: row.slug as string,
+    source_id: (row.source_id as string | undefined) ?? 'default',
+    type: row.type as string,
+    title: (row.title as string | null) ?? '',
+    compiled_truth: (row.compiled_truth as string | null) ?? '',
+    timeline: (row.timeline as string | null) ?? '',
+    frontmatter: (fm == null ? {} : (typeof fm === 'string' ? JSON.parse(fm) : fm)) as Record<string, unknown>,
+    updated_at: new Date(row.updated_at as string),
+    // #1768: full-µs UTC string projected by the SELECT (`updated_at_iso`).
+    // Fallback derives an ISO string from the Date — NEVER String(Date), which
+    // yields "Mon Jun 02 2026 …" that `::timestamptz` misparses. Pre-#1768
+    // callers that don't project the column still get a valid (ms) ISO value.
+    updated_at_iso: row.updated_at_iso != null
+      ? String(row.updated_at_iso)
+      : new Date(row.updated_at as string).toISOString(),
   };
 }
 

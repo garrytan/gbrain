@@ -20,7 +20,7 @@
  * which is cached (D11), so the effective cost ~1.3x not 3x.
  */
 
-import { runWithLimit } from '../worker-pool.ts';
+import { runWithLimit, isMustAbortError } from '../worker-pool.ts';
 import { runRollout, type RolloutOpts } from './rollout.ts';
 import { scoreTrajectory } from './score.ts';
 import type { BenchmarkTask, GateInput, GateResult, ScoredRollout } from './types.ts';
@@ -94,8 +94,16 @@ export async function runValidationGate(opts: ValidateGateOpts): Promise<GateRes
     signal: opts.abortSignal,
   });
 
-  // SettledItem<TOut>[] — extract successful results; treat errors as score=0
-  // (pessimistic fallback consistent with the judge fail-open posture).
+  // MUST-ABORT errors (budget exhaustion / no-pricing) are NOT scoring noise —
+  // swallowing them as score=0 turns a pricing/cap crash into a fake "0/N" run
+  // (the bug the SkillOpt eval surfaced: a Haiku run with --max-cost hit
+  // no_pricing on every rollout and the whole gate reported a vacuous 0). Surface
+  // them loudly so the caller aborts instead of recording a hollow measurement.
+  const aborter = settled.find((s) => s && !s.ok && isMustAbortError(s.error));
+  if (aborter && !aborter.ok) throw aborter.error;
+
+  // SettledItem<TOut>[] — extract successful results; treat (non-abort) errors as
+  // score=0 (pessimistic fallback consistent with the judge fail-open posture).
   // Errored tasks contribute no scoredRollouts (caller's reflect sees fewer
   // trajectories rather than fabricated zero-score entries).
   const perTaskMedians = settled.map((s, idx) => {
@@ -118,6 +126,43 @@ export async function runValidationGate(opts: ValidateGateOpts): Promise<GateRes
     else reason = 'no_margin';
   }
   return { accepted, perTaskMedians, selScore, scoredRollouts, ...(reason ? { reason } : {}) };
+}
+
+export interface ScoreOnTasksOpts {
+  engine: BrainEngine;
+  skillText: string;
+  tasks: BenchmarkTask[];
+  targetModel: string;
+  judgeModel?: string;
+  /** Median-of-N runs per task. Defaults to `VALIDATION_RUNS_PER_TASK` (3). */
+  runsPerTask?: number;
+  abortSignal?: AbortSignal;
+  rolloutFn?: typeof runRollout;
+  scoreFn?: typeof scoreTrajectory;
+}
+
+/**
+ * Score a skill on an arbitrary task set and return the mean-of-per-task-medians
+ * (`selScore`). The single primitive for "how good is this skill on these tasks?"
+ * — used by the orchestrator's baseline + final-test eval, the held-out gate, and
+ * the Track B eval harnesses, so they can't drift on scoring semantics. Thin
+ * wrapper over `runValidationGate({ bestScore: -1 })` (any score "accepts"; we
+ * only read `.selScore`).
+ */
+export async function scoreSkillOnTasks(opts: ScoreOnTasksOpts): Promise<number> {
+  const gate = await runValidationGate({
+    engine: opts.engine,
+    candidateSkillText: opts.skillText,
+    selSet: opts.tasks,
+    bestScore: -1,
+    targetModel: opts.targetModel,
+    ...(opts.judgeModel !== undefined ? { judgeModel: opts.judgeModel } : {}),
+    ...(opts.runsPerTask !== undefined ? { runsPerTask: opts.runsPerTask } : {}),
+    ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
+    ...(opts.rolloutFn ? { rolloutFn: opts.rolloutFn } : {}),
+    ...(opts.scoreFn ? { scoreFn: opts.scoreFn } : {}),
+  });
+  return gate.selScore;
 }
 
 /** Pure median for an array of numbers. Returns 0 for empty array. */

@@ -99,6 +99,10 @@ CREATE TABLE IF NOT EXISTS pages (
   -- v0.37.0 (migration v79): real stale-page signal for gbrain lsd
   -- (mirrors src/schema.sql). NULL = never retrieved.
   last_retrieved_at     TIMESTAMPTZ,
+  -- v0.42.7 (migration v112): link-extraction freshness watermark
+  -- (mirrors src/schema.sql). NULL = never extracted. Powers
+  -- gbrain extract --stale + the links_extraction_lag doctor check.
+  links_extracted_at    TIMESTAMPTZ,
   -- v0.40.3.0 contextual retrieval (renumbered from v81 to v90 on master
   -- merge; mirrors src/schema.sql).
   -- contextual_retrieval_mode is the tier the page was last embedded under;
@@ -187,6 +191,12 @@ CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx
 -- query (mirrors src/schema.sql). Postgres handles NULL in B-tree indexes.
 CREATE INDEX IF NOT EXISTS pages_last_retrieved_at_idx
   ON pages (last_retrieved_at);
+-- v0.42.7 (migration v112): composite B-tree backing extract --stale and the
+-- links_extraction_lag doctor check (mirrors src/schema.sql). source_id leads so
+-- source-scoped staleness scans are indexed; NOT partial-NULL (predicate has a
+-- NULL arm AND a version-timestamp arm).
+CREATE INDEX IF NOT EXISTS pages_links_extracted_at_idx
+  ON pages (source_id, links_extracted_at);
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
@@ -245,10 +255,11 @@ CREATE TABLE IF NOT EXISTS links (
   to_page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   link_type      TEXT    NOT NULL DEFAULT '',
   context        TEXT    NOT NULL DEFAULT '',
-  -- v0.41.18.0: 'mentions' added for auto-linked body-text mentions
-  -- (gbrain extract links --by-mention). Filtered OUT of backlink-count
-  -- for search ranking; only counts toward orphan-ratio + graph traversal.
-  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions')),
+  -- v114 (#1941): open kebab-case provenance (not a closed allowlist) so
+  -- external derivers stamp their own tag. Format gate only: lowercase kebab,
+  -- <=64 chars. Managed built-ins still satisfy this; see src/schema.sql for
+  -- full rationale + the add_link op-layer guard against forging them.
+  link_source    TEXT    CHECK (link_source IS NULL OR (link_source ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$' AND char_length(link_source) <= 64)),
   -- v0.41.18.0 (codex finding #12): nullable link_kind distinguishes
   -- "plain body mention" from "verb-pattern-derived typed link" within
   -- link_source='mentions'. See src/schema.sql for full rationale.
@@ -919,6 +930,20 @@ CREATE TABLE IF NOT EXISTS op_checkpoints (
 );
 CREATE INDEX IF NOT EXISTS op_checkpoints_updated_at_idx
   ON op_checkpoints (updated_at);
+
+-- #1794: append-only delta storage (one row per completed path). FK cascade
+-- drops children with the parent. PK prefix (op,fingerprint) serves all reads.
+-- Mirrors migration v115 + src/schema.sql. Placed after op_checkpoints so the
+-- FK target exists in the top-to-bottom replay.
+CREATE TABLE IF NOT EXISTS op_checkpoint_paths (
+  op          TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  path        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (op, fingerprint, path),
+  CONSTRAINT op_checkpoint_paths_parent_fk
+    FOREIGN KEY (op, fingerprint) REFERENCES op_checkpoints (op, fingerprint) ON DELETE CASCADE
+);
 
 -- ============================================================
 -- migration_impact_log (v0.41.18.0 — gbrain onboard wave)

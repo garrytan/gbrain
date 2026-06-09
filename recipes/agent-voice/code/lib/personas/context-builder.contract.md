@@ -50,6 +50,32 @@ export async function buildMarsContext(opts);
  * @returns {Promise<string>}
  */
 export async function buildVenusContext(opts);
+
+/**
+ * #1851 — Build TOPIC context: the recent conversation in the topic the agent
+ * was summoned into (persona-agnostic; the same block is used for Mars or
+ * Venus). Lets a caller drop a persona into whatever thread they were already
+ * discussing without re-explaining.
+ *
+ * The server resolves this from `topicId` at connect time. `topicId` is the
+ * ONLY topic field accepted over the wire (a call link carries it). NEVER
+ * accept topic CONTENT as a parameter — that's prompt injection + a leak into
+ * URLs, browser history, referrers, and access logs.
+ *
+ * `topicId` MUST be a strict slug (^[a-z0-9][a-z0-9-]*$, ≤128 chars); the
+ * shipped example reads `$BRAIN_ROOT/topics/<topicId>.md` and confines the
+ * resolved path under `topics/` (defense-in-depth against traversal).
+ *
+ * Required: PII scrubbed. Required: ≤ 2500 chars. Returns '' when there is no
+ * topic, the id is unsafe, or the file is missing → the persona falls back to
+ * its generic live context (current behavior).
+ *
+ * @param {object} opts
+ * @param {string} opts.brainRoot
+ * @param {string} opts.topicId — strict slug; indexes topics/<topicId>.md
+ * @returns {Promise<string>}
+ */
+export async function buildTopicContext(opts);
 ```
 
 ## Brain layout expected by the shipped example

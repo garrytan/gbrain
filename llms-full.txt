@@ -45,8 +45,12 @@ start here.
 ## Read this order
 
 1. `./AGENTS.md` (this file) — install + operating protocol.
-2. [`./CLAUDE.md`](./CLAUDE.md) — architecture reference, key files, trust boundaries,
-   test layout.
+2. [`./CLAUDE.md`](./CLAUDE.md) — orientation + resolver: architecture, cross-cutting
+   invariants, the reference map, inline ship rules. It routes to on-demand detail docs:
+   [`./docs/architecture/KEY_FILES.md`](./docs/architecture/KEY_FILES.md) (per-file index —
+   read a file's entry before editing it), [`./docs/TESTING.md`](./docs/TESTING.md) (test
+   tiers + isolation lint + E2E lifecycle), and
+   [`./docs/architecture/thin-client.md`](./docs/architecture/thin-client.md) (remote-MCP seam).
 3. [`./docs/architecture/brains-and-sources.md`](./docs/architecture/brains-and-sources.md)
    — the two-axis mental model (brain = which DB, source = which repo in the DB). Every
    query routes on both axes. Read before writing anything that touches brain ops.
@@ -121,7 +125,9 @@ diff-aware subset during fast iteration on a focused branch. Requires Docker
 Manual path: `bun test` plus the E2E lifecycle described in `./CLAUDE.md` (spin
 up the test Postgres container, run `bun run test:e2e`, tear it down).
 
-Ship via the `/ship` skill, not by hand.
+Ship via the `/ship` skill, not by hand. The full release + contributor process
+(CHANGELOG voice, version-locations sync, PR conventions, community-PR-wave) lives in
+[`./docs/RELEASING.md`](./docs/RELEASING.md); read it before shipping.
 
 ## Privacy
 
@@ -158,10 +164,12 @@ working on this codebase, before touching anything else:
    full migration story (v1 Python/shell → v2 GBrain TS + Gemini shim),
    current deployment (launchd / kos.chenge.ink / Notion Knowledge Agent
    / OpenClaw feishu), and the Jarvis triangle (KOS compiles ↔ Notion
-   operates ↔ OpenClaw executes). Latest sync story: **§6.31 v0.41.14.0
-   upstream sync (2026-05-26, 20 versions / 34 commits / 818 files;
-   schema v85 → v97)**. Previous: §6.30 v0.38.2.0 sync (2026-05-22,
-   schema v78 → v85); §6.29 v0.37.0.0 sync (2026-05-19, schema v66 → v78).
+   operates ↔ OpenClaw executes). Latest sync story: **§6.33 v0.42.1.0
+   upstream sync (2026-06-01, 27 commits / v0.41.14.0 → v0.42.1.0 / 605
+   files; schema v97 → v111)**. Previous: §6.31 v0.41.14.0 sync
+   (2026-05-26, schema v85 → v97); §6.30 v0.38.2.0 sync (2026-05-22,
+   schema v78 → v85). Note §6.32 (2026-05-31) was the embedding
+   convergence, not a sync.
 3. Read [`skills/kos-jarvis/TODO.md`](skills/kos-jarvis/TODO.md) — current
    outstanding work (P0/P1/P2). Check here before suggesting "what should
    we do next?"
@@ -227,13 +235,33 @@ working on this codebase, before touching anything else:
   [`docs/EXTERNAL-CLIENTS-MCP-WIRE-HANDOFF.md`](docs/EXTERNAL-CLIENTS-MCP-WIRE-HANDOFF.md)
   is self-contained for any caller. If you change MCP op signatures or
   OAuth client scopes, notify Lucien.
-- **OAuth client identities** live at `~/.gbrain/oauth-clients/<name>.json`
-  (gitignored, mode 600 — contains plaintext `client_secret`). Never
-  commit. If lost: `bin/gbrain auth revoke-client <client_id>` then
-  re-register via `bin/gbrain auth register-client`. 4 clients reserved
-  2026-05-17: `kos-worker` (Notion Knowledge Agent), `lucien-cli` (Lucien
-  ad-hoc CLI), `mailagent` (future, when 方案 B ships), `feishu`
-  (future, dormant since 2026-05-05).
+- **OAuth client identities**: legacy clients live at
+  `~/.gbrain/oauth-clients/<name>.json` (gitignored, mode 600, plaintext
+  `client_secret`); newer ones (post-v0.42) live in the **`oauth_clients` DB
+  table** with a *hashed* secret (shown ONCE at registration — capture it then,
+  it's unrecoverable). Never commit secrets. If lost:
+  `bin/gbrain auth revoke-client <client_id>` then re-register via
+  `bin/gbrain auth register-client`. There is **no update command** — to change
+  an existing client's `federated_read` (cross-source read), `UPDATE
+  oauth_clients SET federated_read = ARRAY[...]` directly (daemon reads it live;
+  keeps the creds). Active clients:
+  - `kos-worker` — Notion Knowledge Agent (default).
+  - `lucien-cli` — Lucien ad-hoc CLI.
+  - `mailagent` — chat-save (write `default`); **`federated_read = {default,
+    mailagent-emails, omada}`** so its LLM can query across all three (2026-06-02).
+  - `mailagent-bulk` — bulk email ingest (write/read `mailagent-emails`).
+  - `omada-sentiment` — the Omada 舆情/竞品 sentiment system's daily writer
+    (write+read `omada`, `client_credentials`; created 2026-06-02; secret in
+    `~/.gbrain/oauth-clients/omada-sentiment.secret.txt`, mode 600).
+  - `feishu` — dormant since 2026-05-05.
+- **MCP skill publishing is ENABLED** (`mcp.publish_skills = true`,
+  `mcp.skills_dir = <repo>/skills`, both in the DB config plane; 2026-06-02). The
+  MCP server publishes all 56 skills (upstream + fork, fork under `kos-jarvis/…`
+  names) via `list_skills` / `get_skill` so a thin client (mailagent's LLM, etc.)
+  can discover + follow them, then call the CRUD MCP tools. Publishing is GLOBAL
+  (one catalog for all OAuth clients — no per-client skill allowlist); curate on
+  the *client/prompt* side (e.g. mailagent should use `query`/`idea-ingest`/
+  `brain-ops`, not the `kos-jarvis/*` batch/operator skills).
 - **Retired (2026-05-17, §6.28)**: `server/kos-compat-api.ts` (661 LoC,
   KOS-v1 Bearer wire that bound `:7225`) → `server/_archived/`, executed
   same-session via atomic port re-use (not 1-week deferred). Mbp-office
@@ -287,7 +315,12 @@ Both axes follow the same 6-tier resolution pattern. See
 `docs/architecture/brains-and-sources.md` for diagrams and
 `skills/conventions/brain-routing.md` for the agent decision table.
 
-For our fork: brain = `host`, sources = `default` (the only one).
+For our fork: brain = `host`. Sources (2026-06-02): `default` (personal
+brain), `mailagent-emails` (email corpus), `gbrain-docs` (upstream gbrain docs,
+145 pages), `omada` (Omada product KB: 114 user-guide sections + 572 FAQs + 24
+corpus-synth viewpoint pages + 720 entities; built via `corpus-ingest`; the
+`omada-sentiment` client appends daily 舆情/竞品 data). All on one coherent
+embedding space (openai:text-embedding-3-large@1536 via avman, §6.32).
 
 ## Skills + routing
 
@@ -508,6 +541,29 @@ After this step:
 
 If a user has a very large brain (>10K pages), `extract --source db` is idempotent
 and supports `--since YYYY-MM-DD` for incremental runs.
+
+### Obsidian-style bare wikilinks (opt-in)
+
+If the user imported an Obsidian or Notion vault that uses **bare** `[[note-name]]`
+wikilinks — where `[[struktura]]` written in one folder means the page that lives
+at `projects/struktura.md` in another — GBrain does NOT connect those by default.
+Out of the box it only resolves path-qualified refs like `[[projects/struktura]]`,
+so a vault full of bare links shows up as a thin, broken graph. Turn on basename
+resolution so the cross-folder links connect:
+
+```bash
+gbrain config set link_resolution.global_basename true
+gbrain extract links --source db          # re-run so the new edges land
+```
+
+`gbrain doctor` surfaces a `link_resolution_opportunity` hint with the exact count
+("47 of 60 bare wikilinks would resolve") so you know whether it's worth enabling
+before you flip it. When a bare name matches more than one page (`[[struktura]]` →
+both `projects/struktura` and `archive/struktura`), GBrain emits one edge to each
+rather than guessing a winner — review and prune the duplicates with
+`gbrain graph-query <slug>`. The mode is also honored on the filesystem-walk path
+(`gbrain extract links` with no `--source db`) and by auto-link on every future
+`put_page`.
 
 ## Step 5: Load Skills
 
@@ -768,6 +824,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run" | `skills/maintain/SKILL.md` (dream cycle section) |
 | "Brain health", "what features am I missing", "brain score" | Run `gbrain features --json` |
 | "Set up autopilot", "run brain maintenance", "keep brain updated" | Run `gbrain autopilot --install --repo ~/brain` |
+| "Upgrade gbrain", "update gbrain", "gbrain update available", `UPGRADE_AVAILABLE`, "is gbrain up to date" | `skills/gbrain-upgrade/SKILL.md` |
 | Agent identity, "who am I", customize agent | `skills/soul-audit/SKILL.md` |
 | "Populate links", "extract links", "backfill graph" | `skills/maintain/SKILL.md` (graph population phase) |
 | "Populate timeline", "extract timeline entries" | `skills/maintain/SKILL.md` (graph population phase) |
@@ -810,6 +867,7 @@ These apply to ALL brain-writing skills:
 | "enrich this article", "enrich brain pages", "batch enrich", "make brain pages useful" | `skills/article-enrichment/SKILL.md` |
 | "strategic reading", "read this through the lens of", "apply this to my problem", "what can I learn from this about", "extract a playbook from" | `skills/strategic-reading/SKILL.md` |
 | "concept synthesis", "synthesize my concepts", "find patterns across my notes", "build my intellectual map", "trace idea evolution" | `skills/concept-synthesis/SKILL.md` |
+| "idea lineage", "trace the lineage of this idea", "how my thinking about", "how has my thinking about", "what is my current version of", "show reversals in my thinking about", "where did this idea come from" | `skills/idea-lineage/SKILL.md` |
 | "perplexity research", "what's new about", "current state of", "web research", "what changed about" | `skills/perplexity-research/SKILL.md` |
 | "crawl my archive", "find gold in my archive", "archive crawler", "scan my dropbox for", "mine my old files for" | `skills/archive-crawler/SKILL.md` |
 | "verify this academic claim", "check this study", "academic verify", "validate citation", "is this study real" | `skills/academic-verify/SKILL.md` |
@@ -829,10 +887,20 @@ upstream sections above; KOS extensions are append-only by policy.
 | Daily patrol + staleness + gap detection + MEMORY digest | `skills/kos-jarvis/kos-patrol/SKILL.md` |
 | Weekly push KOS digest → OpenClaw MEMORY.md 近期层 | `skills/kos-jarvis/digest-to-memory/SKILL.md` |
 | Batch scan brain, extract entities, create people/company stubs (G1 payoff) | `skills/kos-jarvis/enrich-sweep/SKILL.md` |
+| "high-level abstraction", "entity dossier", "synthesis sweep" — Opus per-entity dossier synthesis (Wisdom layer): cluster an entity's mentioning sources via the link graph → deep evidence-cited high-level page | `skills/kos-jarvis/synthesis-sweep/SKILL.md` |
+| "corpus synthesis", "语料级综合", "corpus-level wisdom" — Opus corpus-level viewpoint synthesis: map a whole source → propose themes/tensions → deep per-theme 观点与洞察 page (top of DIKW) | `skills/kos-jarvis/corpus-synth/SKILL.md` |
+| "corpus ingest", "bulk ingest pipeline", "一键入脑", "ingest a knowledge base" — one-command D→I→K→W pipeline for one isolated source (register→ingest→embed→enrich→graph→[entity-synth]→corpus-synth), idempotent/incremental, --from/--to-stage | `skills/kos-jarvis/corpus-ingest/SKILL.md` |
 | Ingest images from IMAGE_SOURCE_DIR via Voyage multimodal-3 (cross-modal v0.36.6.0); scaffolded — awaits VOYAGE_API_KEY + IMAGE_SOURCE_DIR | `skills/kos-jarvis/image-ingest/SKILL.md` |
 
 These chain into upstream skills: digest-to-memory reads patrol output;
-enrich-sweep wraps upstream `skills/enrich/` in bulk mode.
+enrich-sweep wraps upstream `skills/enrich/` in bulk mode; synthesis-sweep is
+the entity-level Wisdom layer on top of enrich-sweep's entities + the
+extract-links graph; corpus-synth is the corpus-level Wisdom layer (whole-source
+themes/tensions). Both replace gbrain's pack-gated dream synthesis for the fork's
+corpus (gbrain's K→W phases require an atom layer / personal-reflections slugs /
+a VC-forecast prompt the fork's corpus structurally doesn't fit). corpus-ingest
+chains the whole D→I→K→W pipeline (ingest → embed → enrich-sweep → extract-links →
+synthesis-sweep/corpus-synth) into one idempotent command per source.
 
 > **Archived (2026-05-05)**: `feishu-bridge` + `pending-enrich` skills
 > moved to `skills/kos-jarvis/_archived/`. Phase 2 Feishu signal-fork
@@ -909,7 +977,7 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/README.md
 
 ## Upstream GBrain (below)
 
-**Search gives you raw pages. GBrain gives you the answer.** It's the brain layer your AI agent has been missing — the only one that does synthesis, graph traversal, and gap analysis in one box.
+**Search gives you raw pages. GBrain gives you the answer.** It's the brain layer your AI agent has been missing — the only one that does synthesis, graph traversal, and gap analysis in one box. Run a full autonomous agent on top of it, or just wire it into Claude Code or Codex as a supercharged retrieval layer in one command; either way your coding agent stops being amnesiac about everything that isn't code.
 
 I'm Garry Tan, President and CEO of Y Combinator. I built GBrain to run my own AI agents. It's the production brain behind my OpenClaw and Hermes deployments: **146,646 pages, 24,585 people, 5,339 companies**, 66 cron jobs running autonomously. My agent ingests meetings, emails, tweets, voice calls, and original ideas while I sleep. It enriches every person and company it encounters. It fixes its own citations and consolidates memory overnight. I wake up smarter than when I went to bed — and so will you.
 
@@ -994,9 +1062,29 @@ The agent installs GBrain, creates the brain, asks for your API keys, loads 43 s
 
 > **Never set up an AI agent platform before?** The [personal-brain tutorial](docs/tutorials/personal-brain.md) walks the whole path end-to-end — picking OpenClaw vs Hermes, deploying it, pointing it at INSTALL_FOR_AGENTS.md, getting the API keys, and verifying the first query. Start there if any of the above is new.
 
-### Install it into your existing agent
+### Quick start: Claude Code or Codex
 
-Already running Codex, Claude Code, Cursor, or another coding agent? Paste the same instruction in:
+Already running Claude Code or Codex? There are two ways to wire GBrain in, depending on what you want.
+
+**Just want a memory for your coding agent (recommended starting point).** Spin up a local brain and connect it in two commands — zero server, zero token, zero tunnel:
+
+```bash
+gbrain init --pglite                     # 2-second local brain (no Docker)
+claude mcp add gbrain -- gbrain serve    # or: codex mcp add gbrain -- gbrain serve
+```
+
+**Already have a brain on a remote host** (OpenClaw, Hermes, or any `gbrain serve --http`)? Point your laptop agents at it with one command each — `--install` wires it up and smoke-tests the token before handoff:
+
+```bash
+gbrain connect https://your-host/mcp --token gbrain_xxx --install               # Claude Code
+gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex --install # Codex
+```
+
+**[→ Full walkthrough: give your coding agent a memory](docs/tutorials/connect-coding-agent.md)** — both paths end to end, plus the brain-first protocol you paste into `CLAUDE.md` / `AGENTS.md` and the four habits that make it actually change how you work.
+
+### Install the full autonomous setup into your existing agent
+
+Want the whole thing — local brain, 43 skills, the overnight dream cycle that enriches while you sleep? Paste this into Codex, Claude Code, Cursor, or another coding agent:
 
 ```
 Retrieve and follow the instructions at:
@@ -1021,11 +1109,12 @@ Postgres-at-scale, Supabase, and thin-client setup paths live in [`docs/INSTALL.
 
 GBrain exposes 30+ tools over MCP (stdio and HTTP). The specific snippet depends on which client you use:
 
-- **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — one command: `claude mcp add gbrain -- gbrain serve`. Zero server, zero tunnel.
+- **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — local: one command, `claude mcp add gbrain -- gbrain serve` (zero server, zero tunnel). Remote with just a bearer token: `gbrain connect https://your-host/mcp --token gbrain_xxx` prints a paste-ready block (or `--install` wires it up and smoke-tests the token).
+- **[Codex](docs/mcp/CODEX.md)** — `gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex` (or `--install`). Codex reads the bearer from `$GBRAIN_REMOTE_TOKEN` at runtime, so the token never lands in Codex config.
 - **[Cursor / Windsurf / any stdio MCP client](docs/mcp/CLAUDE_CODE.md)** — same shape, add `{"command": "gbrain", "args": ["serve"]}` to your MCP config.
 - **[Claude Desktop (Cowork)](docs/mcp/CLAUDE_DESKTOP.md)** — Settings → Integrations → add the URL of your HTTP server. Remote only; the local `claude_desktop_config.json` does not work for remote servers.
 - **[Claude Cowork (team plan)](docs/mcp/CLAUDE_COWORK.md)** — org Owner adds the connector under Organization Settings → Connectors.
-- **[Perplexity Computer](docs/mcp/PERPLEXITY.md)** — Settings → Connectors → add the URL + bearer token. Pro subscription required.
+- **[Perplexity Computer](docs/mcp/PERPLEXITY.md)** — `gbrain connect https://your-host/mcp --agent perplexity --oauth --register` mints a least-privilege OAuth client and prints the Issuer/Client ID/Secret to paste into Settings → Connectors (OAuth is the right path for a cloud connector; a bearer token also works for local use). Pro subscription required.
 - **[ChatGPT](docs/mcp/CHATGPT.md)** — uses OAuth 2.1 with PKCE (the hard requirement). Register a `chatgpt` client from the admin dashboard with grant type `authorization_code`.
 
 For the HTTP server itself:
@@ -1142,7 +1231,7 @@ The whole loop is described in [`docs/architecture/topologies.md`](docs/architec
 
 **Hybrid search.** Vector (HNSW on pgvector) + BM25 keyword + reciprocal-rank fusion + source-tier boost + intent-aware query rewriting. Three named search modes (`conservative`, `balanced`, `tokenmax`) bundle the cost/quality knobs into a single config key. Live cost/recall comparisons in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md). Default: `balanced` with ZeroEntropy reranker on. Per-query graph signals notice when a top result is a hub for THAT query (adjacency boost), is corroborated across team brains (cross-source boost), or is being crowded out by weak chunks from a chatty session (session demote). Run `gbrain search "<query>" --explain` to see per-stage attribution: base score, every boost that fired, what it multiplied. `gbrain doctor` ships a `graph_signals_coverage` check; `gbrain search stats` shows fire counts and failure breakdowns. Vector retrieval pools the best chunk per page, so a page surfaces on its strongest evidence instead of losing to a neighbor on one weak chunk. Queries that match a page's title phrase or a declared free-text alias (`gbrain reindex --aliases` backfills existing pages) get boosted to the page they name. Every result carries an `evidence` tag (why it matched) and a `create_safety` hint (`exists` / `probable` / `unknown`) so an agent decides whether a page already exists instead of guessing from a raw score. `gbrain search diagnose "<query>" --target <slug>` traces which retrieval layer surfaces (or misses) a page.
 
-**Self-wiring knowledge graph.** Every `put_page` extracts entity refs from markdown/wikilinks/typed-link syntax and writes edges with zero LLM calls. Typed edges (`attended`, `works_at`, `invested_in`, `founded`, `advises`, `mentions`, …). Multi-hop traversal via `gbrain graph-query`. The graph is what produces the +31.4 P@5 lift over vector-only RAG.
+**Self-wiring knowledge graph.** Every `put_page` extracts entity refs from markdown/wikilinks/typed-link syntax and writes edges with zero LLM calls. Typed edges (`attended`, `works_at`, `invested_in`, `founded`, `advises`, `mentions`, …). Multi-hop traversal via `gbrain graph-query`. The graph is what produces the +31.4 P@5 lift over vector-only RAG. **Obsidian-style vaults:** bare `[[note-name]]` wikilinks that point across folders — you wrote `[[struktura]]` but the page lives at `projects/struktura.md` — resolve by basename once you opt in with `gbrain config set link_resolution.global_basename true`. Off by default; `gbrain doctor` tells you how many edges you'd gain before you flip it. See [migrating an Obsidian vault](INSTALL_FOR_AGENTS.md#step-45-wire-the-knowledge-graph).
 
 **Job queue (Minions).** BullMQ-shaped, Postgres-native job queue. Durable subagents (LLM tool loops that survive crashes via two-phase pending→done persistence), shell jobs with audit, child jobs with cascading timeouts, rate leases for outbound providers, attachments via S3/Supabase storage. Replaces "spawn subagent as fire-and-forget Promise" with something that recovers from anything.
 
@@ -2010,17 +2099,20 @@ with the brain repo automatically. You never have to remember to run sync.
 
 ## Implementation
 
-### Prerequisite: Session Mode Pooler
+### Prerequisite: a reachable direct connection
 
-Sync uses `engine.transaction()` on every import. If `DATABASE_URL` points to
-Supabase's **Transaction mode** pooler, sync will throw `.begin() is not a
-function` and **silently skip most pages**. This is the number one cause of
-"sync ran but nothing happened."
+GBrain is tuned for the Supabase **Transaction pooler** (port 6543): it
+auto-disables prepared statements there and routes `engine.transaction()`
+(migrations, DDL, sync imports) to a derived **direct** connection
+(`db.<ref>.supabase.co:5432`). That direct host is IPv6-only, so on an
+IPv4-only host, reads work but sync **silently skips most pages**. This is the
+number one cause of "sync ran but nothing happened."
 
-Fix: use the **Session mode** pooler string (port 6543, Session mode) or the
-direct connection (port 5432, IPv6-only). Verify by running `gbrain sync` and
-checking that the page count in `gbrain stats` matches the syncable file count
-in the repo.
+Fix: make the direct connection reachable over IPv4. Either set
+`GBRAIN_DIRECT_DATABASE_URL` to the **Session pooler** string (port 5432 on the
+`pooler.supabase.com` host, IPv4), or enable Supabase's IPv4 add-on. Verify by
+running `gbrain sync` and checking that the page count in `gbrain stats` matches
+the syncable file count in the repo.
 
 ### The Primitives
 
@@ -2053,8 +2145,9 @@ gbrain sync --repo /data/brain && gbrain embed --stale
 Name: gbrain-auto-sync
 Schedule: */15 * * * *
 Prompt: "Run: gbrain sync --repo /data/brain && gbrain embed --stale
-  Log the result. If sync fails with .begin() is not a function,
-  the DATABASE_URL is using Transaction mode pooler."
+  Log the result. If sync errors mention an unreachable host or timeout,
+  the direct connection isn't reachable over IPv4 (set
+  GBRAIN_DIRECT_DATABASE_URL to the Session pooler, or enable the IPv4 add-on)."
 ```
 
 **Hermes:**
@@ -2111,6 +2204,17 @@ hashes match. If both a cron and `--watch` fire simultaneously, no conflict.
    server is down when a push happens, that sync is missed. Pair webhooks
    with a cron fallback that catches anything the webhook missed.
 
+4. **A single un-parseable file can't wedge all indexing.** When a file fails
+   to import (malformed YAML frontmatter, an unquoted colon, etc.), sync holds
+   the bookmark and tells you exactly which file broke — a *fresh* failure
+   fails closed so nothing is silently dropped. But a file that fails the same
+   way `GBRAIN_SYNC_AUTOSKIP_AFTER` consecutive syncs (default 3, set `0` to
+   disable) is auto-skipped so the rest of the brain keeps indexing past it.
+   Skipped files don't disappear: `gbrain doctor` keeps warning until you fix
+   or delete them, and fixing the file clears it on the next sync. A repository
+   history rewrite still hard-blocks even with `--skip-failed`. Run
+   `gbrain sync --skip-failed` to acknowledge a known-bad set yourself.
+
 ## How to Verify
 
 1. **Edit a file and search for the change.** Edit a brain markdown file,
@@ -2120,8 +2224,8 @@ hashes match. If both a cron and `--watch` fire simultaneously, no conflict.
 
 2. **Compare page count to file count.** Run `gbrain stats` and count the
    syncable markdown files in the brain repo. The page count in the database
-   should match. If they diverge, files are being silently skipped (likely
-   a Transaction mode pooler issue).
+   should match. If they diverge, files are being silently skipped (likely an
+   unreachable direct connection on IPv4 — see the prerequisite above).
 
 3. **Check embedded chunk count.** In `gbrain stats`, the embedded chunk
    count should be close to the total chunk count. A large gap means
@@ -3212,14 +3316,15 @@ find /data/brain -name '*.md' \
 Some difference is normal (files added since last sync), but if page count is
 less than half the file count, sync is silently skipping pages.
 
-**If page count is way too low:** The #1 cause is the connection pooler bug.
-Check your `DATABASE_URL`:
-- If it contains `pooler.supabase.com:6543`, verify it's using **Session mode**,
-  not Transaction mode.
-- Transaction mode breaks `engine.transaction()` and causes `.begin() is not a
-  function` errors.
-- Fix: switch to Session mode pooler string, then run `gbrain sync --full`
-  to reimport everything.
+**If page count is way too low:** The #1 cause is an unreachable direct
+connection on an IPv4-only host. GBrain uses the Transaction pooler (port 6543)
+for reads, but routes migrations, DDL, and sync transactions to a derived direct
+connection (`db.<ref>.supabase.co:5432`), which is IPv6-only.
+- On an IPv4-only host, reads work but sync transactions fail and silently skip
+  pages.
+- Fix: set `GBRAIN_DIRECT_DATABASE_URL` to the **Session pooler** string (port
+  5432 on the `pooler.supabase.com` host, IPv4), or enable Supabase's IPv4
+  add-on. Then run `gbrain sync --full` to reimport everything.
 
 ### 4b. Embed Check
 
@@ -3266,7 +3371,8 @@ gbrain search "<text from the correction>"
 - Is `gbrain sync --watch` still alive (if using watch mode)?
 - Run `gbrain config get sync.last_run` to see when sync last ran.
 - Run `gbrain sync --repo /data/brain` manually and check for errors.
-- If you see `.begin() is not a function`, fix the pooler (see 4a above).
+- If sync errors mention an unreachable host or connection timeout, the direct
+  connection isn't reachable on IPv4 (see 4a above).
 
 ---
 

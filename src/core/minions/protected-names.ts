@@ -56,6 +56,13 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   // handler must reject MCP submission). Costs user money (optimizer +
   // judge + rollouts) so PROTECTED is the right posture.
   'skillopt',
+  // v0.42.x (#1685 GAP D, CODEX #1) — extract_atoms backlog drain. Each run
+  // calls Haiku to extract atoms (~$0.30/source/run), so it MUST NOT be
+  // submittable by an MCP/OAuth-scoped caller — same posture as the protected
+  // `extract-takes-from-pages`. Only trusted local callers (the autopilot
+  // auto-drain branch, an explicit `gbrain jobs submit extract-atoms-drain
+  // --allow-protected`) can insert it.
+  'extract-atoms-drain',
 ]);
 
 /** Check a job name against the protected set. Normalizes whitespace first. */

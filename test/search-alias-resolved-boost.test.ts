@@ -89,7 +89,7 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('bumped to 6 to invalidate caches across v0.42 boost stage addition', () => {
-    expect(KNOBS_HASH_VERSION).toBe(7);
+  it('is 10 (9→10 relational recall arm invalidates rel-off cache rows, v0.43)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(10);
   });
 });

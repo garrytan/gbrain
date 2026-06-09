@@ -15,7 +15,9 @@ import {
   capturesDir,
   loadHeldOut,
   runHeldOutGate,
+  MIN_HELD_OUT_SIZE,
 } from '../../src/core/skillopt/held-out.ts';
+import { assertBundledMutationHeldOut } from '../../src/core/skillopt/bundled-skill-gate.ts';
 
 let tmp: string;
 
@@ -107,5 +109,37 @@ describe('F11 runHeldOutGate vacuous case', () => {
     expect(result.passed).toBe(true);
     expect(result.baselineScore).toBe(0);
     expect(result.candidateScore).toBe(0);
+  });
+});
+
+describe('D16 assertBundledMutationHeldOut (core ENFORCE)', () => {
+  test('bundled + mutate + too-small held-out → throws (hard refuse)', () => {
+    expect(() => assertBundledMutationHeldOut({
+      isBundled: true, willMutate: true, heldOutCount: MIN_HELD_OUT_SIZE - 1, skillName: 'brain-ops',
+    })).toThrow(/held-out/i);
+  });
+
+  test('bundled + mutate + empty held-out → throws (vacuous-pass hole closed)', () => {
+    expect(() => assertBundledMutationHeldOut({
+      isBundled: true, willMutate: true, heldOutCount: 0, skillName: 'brain-ops',
+    })).toThrow(/non-empty held-out/i);
+  });
+
+  test('bundled + mutate + sufficient held-out → no throw', () => {
+    expect(() => assertBundledMutationHeldOut({
+      isBundled: true, willMutate: true, heldOutCount: MIN_HELD_OUT_SIZE, skillName: 'brain-ops',
+    })).not.toThrow();
+  });
+
+  test('not bundled → no throw even with zero held-out (user skills are free)', () => {
+    expect(() => assertBundledMutationHeldOut({
+      isBundled: false, willMutate: true, heldOutCount: 0, skillName: 'my-skill',
+    })).not.toThrow();
+  });
+
+  test('bundled but NOT mutating (no-mutate / proposed.md path) → no throw', () => {
+    expect(() => assertBundledMutationHeldOut({
+      isBundled: true, willMutate: false, heldOutCount: 0, skillName: 'brain-ops',
+    })).not.toThrow();
   });
 });

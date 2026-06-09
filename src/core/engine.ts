@@ -1,8 +1,8 @@
 import type {
   Page, PageInput, PageFilters, GetPageOpts,
-  Chunk, ChunkInput, StaleChunkRow,
+  Chunk, ChunkInput, StaleChunkRow, StalePageRow,
   SearchResult, SearchOpts,
-  Link, GraphNode, GraphPath,
+  Link, GraphNode, GraphPath, RelationalFanoutRow, RelationalFanoutOpts,
   TimelineEntry, TimelineInput, TimelineOpts,
   RawData,
   PageVersion,
@@ -16,6 +16,7 @@ import type {
   EmotionalWeightInputRow, EmotionalWeightWriteRow,
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
   AdjacencyRow,
+  EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
 
 /**
@@ -97,7 +98,7 @@ export interface FileSpec {
 /**
  * v0.41.18.0 — shared opts for engine batch primitives that self-retry on
  * transient connection errors. Threaded through addLinksBatch /
- * addTimelineEntriesBatch / upsertChunks.
+ * addTimelineEntriesBatch / addTakesBatch / upsertChunks.
  *
  * Retry semantics: each batch primitive wraps its internal SQL in
  * `withRetry(BULK_RETRY_OPTS)` (default `{maxRetries:3, delayMs:1000,
@@ -126,10 +127,16 @@ export interface LinkBatchInput {
   link_type?: string;
   context?: string;
   /**
-   * Provenance (v0.13+). Pass 'frontmatter' for edges derived from YAML
-   * frontmatter, 'markdown' for [Name](path) refs, 'manual' for user-created.
-   * NULL means "legacy / unknown" and is only used by pre-v0.13 rows; new
-   * writes should always set this. Missing on input defaults to 'markdown'.
+   * Provenance (v0.13+; opened to kebab tags in v114 / #1941). Any lowercase
+   * kebab-case value <=64 chars is DB-valid (CHECK `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`),
+   * so external derivers stamp their own tag (e.g. 'citation-graph'). The
+   * reconciliation-managed built-ins are 'markdown' ([Name](path) refs),
+   * 'frontmatter' (YAML-derived, see origin_*), 'mentions', 'wikilink-resolved';
+   * 'manual' is for user/tool-created edges. NULL = legacy/unknown (pre-v0.13).
+   * Missing on this batch input defaults to 'markdown'. NOTE: the add_link OP
+   * (not this engine method) forbids callers from passing the four managed
+   * built-ins and defaults omitted to 'manual' — internal callers use the
+   * engine directly and keep writing the managed values.
    */
   link_source?: string;
   /** For link_source='frontmatter': slug of the page whose frontmatter created this edge. */
@@ -1027,6 +1034,49 @@ export interface BrainEngine {
    */
   deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void>;
 
+  // ============================================================
+  // v0.42.7 (#1696): link/timeline extraction freshness watermark.
+  // A page is stale for extraction when its links_extracted_at is NULL,
+  // older than the extractor version stamp, or older than its updated_at
+  // (edited-since-extract — the MCP put_page / sync --no-extract path).
+  // Powers `gbrain extract --stale` + the `links_extraction_lag` doctor check.
+  // ============================================================
+  /**
+   * Count pages needing (re)extraction. `versionTs` is the ISO-8601
+   * `LINK_EXTRACTOR_VERSION_TS` string (bound `::timestamptz`); when omitted,
+   * only the NULL + edited-since arms apply. Soft-deleted pages excluded.
+   */
+  countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string }): Promise<number>;
+  /**
+   * List a keyset page (ordered by `id`, `id > afterPageId`) of stale pages
+   * WITH their content so the caller extracts without an N+1 `getPage`. Same
+   * stale predicate as countStalePagesForExtraction. Caller passes a SMALL
+   * batchSize (page bodies are unbounded — 25MB transcript pages exist) and
+   * applies its own per-batch byte budget.
+   */
+  listStalePagesForExtraction(opts: {
+    batchSize: number;
+    afterPageId?: number;
+    sourceId?: string;
+    versionTs?: string;
+  }): Promise<StalePageRow[]>;
+  /**
+   * Stamp `links_extracted_at` for a batch of pages keyed on the unique
+   * `(slug, source_id)` pair (3-array `unnest` idiom; slugs/ids/timestamps only,
+   * so unlike the free-text batch inserts it never needed the #1861 jsonb migration).
+   * Short-circuits on empty input. Called AFTER the link/timeline flush so a
+   * crash mid-batch leaves pages unstamped and they re-extract next run.
+   *
+   * Each ref may carry its own `extractedAt`; refs that omit it use the
+   * `defaultExtractedAt` arg. `gbrain extract --stale` passes the row's READ
+   * `updated_at` per ref (v0.42.7 D4 race fix) so a concurrent edit landing
+   * between the SELECT and this stamp advances `updated_at` past the stamped
+   * value → the page stays stale → re-extracted next run, never marked
+   * fresh-with-the-old-content. Sync / DB-extract sites omit per-ref values and
+   * pass `now()` (the page was just imported, so `now() >= updated_at`).
+   */
+  markPagesExtractedBatch(refs: Array<{ slug: string; source_id: string; extractedAt?: string }>, defaultExtractedAt: string): Promise<void>;
+
   // Links
   /**
    * Single-row link insert. linkSource defaults to 'markdown' for back-compat
@@ -1094,6 +1144,16 @@ export interface BrainEngine {
    */
   getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]>;
   /**
+   * v114 (#1941): distinct link_source provenances with edge counts, for
+   * `gbrain link-sources`. Source-scoped via `{sourceId?, sourceIds?}` (both
+   * forms, so federated `allowedSources` reads don't leak cross-source counts).
+   * Deterministic order `count DESC, link_source ASC NULLS LAST` for PG/PGLite
+   * parity. `link_source` may be NULL (legacy/unknown rows).
+   */
+  listLinkSources(
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<{ link_source: string | null; count: number }[]>;
+  /**
    * Fuzzy-match a display name to a page slug using pg_trgm similarity.
    * Zero embedding cost, zero LLM cost — designed for the v0.13 resolver used
    * during migration/batch backfill where 5K+ lookups must stay sub-second.
@@ -1138,6 +1198,30 @@ export interface BrainEngine {
     opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[] },
   ): Promise<GraphPath[]>;
   /**
+   * Typed-edge relational fan-out for the relational recall arm (v0.43).
+   *
+   * Generalizes traversePaths to a SEED ARRAY and aggregates to ranked NODES
+   * (not edges): for each reached page, the shortest hop from any seed, a
+   * connection-richness count, the edge types it was reached by, the shortest
+   * connecting slug path, and the page's canonical (lowest-ordinal) chunk id.
+   *
+   * Invariants:
+   * - WITHIN-SOURCE: a walk never crosses a source boundary (each branch
+   *   stays in its seed's own source), even when multiple sources are in
+   *   scope. Cross-source edge traversal is a separate, security-reviewed
+   *   feature.
+   * - `link_source='mentions'` edges are EXCLUDED by default (noisy + the
+   *   densest fan-out source); opt in via `includeMentions`.
+   * - `deleted_at IS NULL` at seed, every neighbor, and every returned node.
+   * - Deterministic ordering: hop ASC, edge_count DESC, source_id, slug.
+   * Must move in lockstep with the PGLite implementation
+   * (test/e2e/engine-parity.test.ts).
+   */
+  relationalFanout(
+    seeds: string[],
+    opts?: RelationalFanoutOpts,
+  ): Promise<RelationalFanoutRow[]>;
+  /**
    * For a list of slugs, return how many inbound links each has.
    * Used by hybrid search backlink boost. Single SQL query, not N+1.
    * Slugs with zero inbound links are present in the map with value 0.
@@ -1169,6 +1253,17 @@ export interface BrainEngine {
    * sync-topology-aware refinement.
    */
   getAdjacencyBoosts(pageIds: number[]): Promise<Map<number, AdjacencyRow>>;
+  /**
+   * v0.42 (issue #1699): for a list of page_ids, return their
+   * `frontmatter.content_flag` markers (reason + detail). Used by hybrid
+   * search to stamp `SearchResult.content_flag` post-fusion — the
+   * agent-warning channel for fuzzy markup-heavy / oversize pages that
+   * stay searchable. Single SQL query, not N+1. Pages without the marker
+   * get no entry in the map. Empty input → empty map (no query).
+   */
+  getContentFlagsByPageIds(
+    pageIds: number[],
+  ): Promise<Map<number, { reason: string; detail: string }>>;
   /**
    * v0.27.0: for a list of slugs, return their updated_at timestamps (or created_at fallback).
    * Used by hybrid search recency boost. Single SQL query, not N+1.
@@ -1288,17 +1383,23 @@ export interface BrainEngine {
   // v0.28: Takes (typed/weighted/attributed claims) + synthesis evidence
   // ============================================================
   /**
-   * Bulk insert/upsert takes. Uses `unnest()` (Postgres) or manual `$N`
-   * placeholders (PGLite). Idempotency: ON CONFLICT (page_id, row_num) DO UPDATE
-   * — re-extract on a changed claim/weight updates the row in place.
-   * Returns the number of rows inserted OR updated.
+   * Bulk insert/upsert takes. Binds the whole batch as one JSONB document via
+   * `jsonb_to_recordset(($1::jsonb)->'rows')` through `executeRawJsonb` (#1861;
+   * free-text-safe, replaced the prior `unnest(::text[])` path). Idempotency:
+   * ON CONFLICT (page_id, row_num) DO UPDATE — re-extract on a changed
+   * claim/weight updates the row in place. Returns the number of rows inserted
+   * OR updated. Row construction + weight clamp/round + NUL-strip live in
+   * `src/core/batch-rows.ts:buildTakeRows` (shared across both engines).
+   *
+   * Wrapped in `batchRetry` like the other batch primitives, so `opts` (auditSite,
+   * AbortSignal) is honored; same no-double-wrap contract as `BatchOpts`.
    *
    * Weight outside [0, 1] is clamped server-side and surfaces a stderr
    * warning per call (`TAKES_WEIGHT_CLAMPED`). Invalid `kind` values
    * fail the whole batch via the CHECK constraint — caller is responsible
    * for parser validation upstream.
    */
-  addTakesBatch(rows: TakeBatchInput[]): Promise<number>;
+  addTakesBatch(rows: TakeBatchInput[], opts?: BatchOpts): Promise<number>;
 
   /** List takes filtered by holder/kind/active/etc. Resolves page_slug via JOIN. */
   listTakes(opts?: TakesListOpts): Promise<Take[]>;
@@ -1858,6 +1959,24 @@ export interface BrainEngine {
     opts?: { signal?: AbortSignal },
   ): Promise<T[]>;
 
+  /**
+   * Like `executeRaw`, but routes through the DIRECT (session-mode) pool when
+   * dual-pool is active (Supabase: port 5432), falling back to the read pool
+   * otherwise. Use this for the Minion lock hot-path (`claim`/`renewLock`):
+   * those statements heartbeat a lock over many seconds, and the
+   * transaction-mode pooler (port 6543) recycles connections per-transaction,
+   * which surfaces as `CONNECTION_ENDED` mid-heartbeat → orphaned locks →
+   * silent worker wedge. The direct session pool holds the connection open for
+   * the life of the worker, so heartbeats survive. Single-statement UPDATEs
+   * only — same idempotency contract as `executeRaw`. On PGLite (no pooler)
+   * this is identical to `executeRaw`.
+   */
+  executeRawDirect<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+    opts?: { signal?: AbortSignal },
+  ): Promise<T[]>;
+
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)
   // ============================================================
@@ -1975,6 +2094,20 @@ export interface BrainEngine {
    * Postgres (eng review D5 — avoids dialect drift on `interval` binding).
    */
   getRecentSalience(opts: SalienceOpts): Promise<SalienceResult[]>;
+
+  /**
+   * v0.41.39 (issue #1700) — enrich candidate selection for
+   * `gbrain enrich --thin`. ONE source-aware SQL query: thin-filter +
+   * per-page inbound-link count (source-correct via `to_page_id = p.id`,
+   * `link_source='mentions'` excluded) + optional `enriched_at` recency
+   * guard + whitelisted ORDER BY (ENRICH_ORDER_SQL) + LIMIT. Returns a
+   * lightweight projection (NO page bodies) so ranking 100K stubs doesn't
+   * pull every body into memory.
+   *
+   * Empty `opts.types` → empty result, no SQL. Source scope follows the
+   * canonical scalar/array precedence (sourceIds wins over sourceId).
+   */
+  listEnrichCandidates(opts: EnrichCandidatesOpts): Promise<EnrichCandidate[]>;
 
   /**
    * Anomaly detection: cohorts (tag, type) with unusually-high page activity

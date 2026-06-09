@@ -15,6 +15,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { autoDetectSkillsDirReadOnly } from '../repo-root.ts';
+import { errorFor } from '../errors.ts';
+import { MIN_HELD_OUT_SIZE } from './held-out.ts';
 import type { BundledSkillContext } from './types.ts';
 
 /**
@@ -68,4 +70,31 @@ export function shouldMutateSkillFile(
     return { mutate: false, reason: 'bundled_skill_requires_allow_flag' };
   }
   return { mutate: true };
+}
+
+/**
+ * D16 ENFORCE (core mutation policy). Mutating a BUNDLED skill in place
+ * requires a NON-EMPTY held-out set (>= MIN_HELD_OUT_SIZE) — an empty/missing
+ * one passes the held-out gate vacuously and re-opens the benchmark-gaming
+ * hole. Throws (hard-refuse) when the requirement is unmet; no-op otherwise.
+ *
+ * Pure + side-effect-free (no fs, no engine) so every entry point that funnels
+ * through runSkillOpt — CLI, batch, fleet, cycle, background job, run_skillopt
+ * MCP op — inherits the check, and it's unit-testable without install-path
+ * detection (which is always false in a tempdir).
+ */
+export function assertBundledMutationHeldOut(input: {
+  isBundled: boolean;
+  willMutate: boolean;
+  heldOutCount: number;
+  skillName: string;
+}): void {
+  if (input.willMutate && input.isBundled && input.heldOutCount < MIN_HELD_OUT_SIZE) {
+    throw errorFor({
+      class: 'HeldOutRequired',
+      code: 'held_out_required_for_bundled',
+      message: `Mutating bundled skill '${input.skillName}' in place requires a non-empty held-out set (>= ${MIN_HELD_OUT_SIZE} rows); got ${input.heldOutCount}.`,
+      hint: `add --held-out <path> (>= ${MIN_HELD_OUT_SIZE} rows), or drop --allow-mutate-bundled to get proposed.md for review.`,
+    });
+  }
 }

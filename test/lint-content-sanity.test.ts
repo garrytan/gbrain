@@ -129,6 +129,31 @@ body`;
   });
 });
 
+describe('lint — markup-heavy rule (v0.42 #1699)', () => {
+  test('fires on markup-heavy body in the warn window', () => {
+    const navRow = '| [a](http://a) | [b](http://b) | [c](http://c) | [d](http://d) |\n';
+    const content = MINIMAL_FRONTMATTER + navRow.repeat(1200); // ~60K, > 50K warn
+    const issues = lintContent(content, 'test.md');
+    const mk = issues.find((i) => i.rule === 'markup-heavy');
+    expect(mk).toBeDefined();
+    expect(mk!.message).toContain('boilerplate');
+    expect(mk!.fixable).toBe(false);
+  });
+
+  test('does NOT fire on prose-heavy body of the same size', () => {
+    const content = MINIMAL_FRONTMATTER + 'real sentences with actual words. '.repeat(2000); // ~68K prose
+    const issues = lintContent(content, 'test.md');
+    expect(issues.find((i) => i.rule === 'markup-heavy')).toBeUndefined();
+  });
+
+  test('does NOT fire when prose_check_enabled is false', () => {
+    const navRow = '| [a](http://a) | [b](http://b) | [c](http://c) | [d](http://d) |\n';
+    const content = MINIMAL_FRONTMATTER + navRow.repeat(1200);
+    const issues = lintContent(content, 'test.md', { contentSanity: { prose_check_enabled: false } });
+    expect(issues.find((i) => i.rule === 'markup-heavy')).toBeUndefined();
+  });
+});
+
 describe('lint — bytes parity with doctor (D2)', () => {
   test('lint measures body-only bytes (not file bytes)', () => {
     // A page with large frontmatter but small body should NOT trip

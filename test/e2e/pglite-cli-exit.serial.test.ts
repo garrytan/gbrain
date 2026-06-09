@@ -227,6 +227,46 @@ describe('v0.41.8.0 — PGLite CLI read commands exit cleanly (#1247/#1269/#1290
   }, 30_000);
 });
 
+describe('v0.42.20.0 — gbrain capture (CLI_ONLY) exits cleanly + frees the lock (#1762)', () => {
+  test('multi-chunk capture exits 0 within 25s AND a later command runs lock-free', async () => {
+    // The #1762 repro: capture on a multi-chunk page enqueues a fire-and-forget
+    // facts:absorb job, then handleCliOnly's finally disconnects mid-job →
+    // PGLite db.close() busy-loop pins the single-writer lock. The registry
+    // drain-before-disconnect (Fix 0.A + Fix 1) closes it. Without an API key
+    // the facts job is a fast no-op, so this is a wiring regression guard: the
+    // drain+disconnect path runs and capture exits cleanly + the lock is free.
+    const body = Array.from({ length: 12 }, (_, i) =>
+      `## Section ${i}\n\nThis is paragraph ${i} of a deliberately long meeting note ` +
+      `with enough prose to split into multiple chunks. Foxtrot tango whiskey ${i}. ` +
+      `The recursive chunker targets a few hundred tokens per chunk, so a dozen of ` +
+      `these sections guarantees a multi-chunk page for the capture path.\n`,
+    ).join('\n');
+    const capFile = join(tmpHome, 'capture-input.md');
+    writeFileSync(capFile, `---\ntitle: Capture Meeting\n---\n${body}\n`, 'utf-8');
+
+    const cap = await runWithTimeout(
+      ['capture', '--file', capFile, '--slug', 'meetings/capture-test', '--type', 'meeting', '--quiet'],
+      25_000,
+    );
+    if (cap.code !== 0) {
+      // The IRON RULE is "does not hang." A non-zero exit that still returned
+      // within the window is tolerable in keyless CI; a hang (kill at 25s) is not.
+      expect(cap.durationMs).toBeLessThan(25_000);
+    } else {
+      expect(cap.code).toBe(0);
+    }
+
+    // The real lock-pin symptom: the NEXT command times out waiting for the
+    // PGLite lock. Assert a subsequent read runs cleanly and quickly.
+    const next = await runWithTimeout(['get', 'meetings/capture-test'], 15_000);
+    expect(next.durationMs).toBeLessThan(15_000);
+    expect(next.stderr).not.toContain('Timed out waiting for PGLite lock');
+    if (next.code === 0) {
+      expect(next.stdout.toLowerCase()).toContain('foxtrot');
+    }
+  }, 60_000);
+});
+
 describe('v0.41.8.0 — daemon survival (regression guard for narrow force-exit)', () => {
   test('gbrain serve --http stays alive past the timeout window', async () => {
     // Pick a likely-free ephemeral port. We're testing "still alive

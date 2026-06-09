@@ -17,6 +17,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { __thinkAdapter } from '../src/core/think/index.ts';
+import { resetGateway } from '../src/core/ai/gateway.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 describe('think gateway adapter — response shape conversion', () => {
@@ -88,6 +89,100 @@ describe('think gateway adapter — model-id normalization', () => {
     await withEnv({ ANTHROPIC_API_KEY: undefined }, async () => {
       expect(__thinkAdapter.hasAnthropicKey()).toBe(false);
     });
+  });
+});
+
+describe('think gateway adapter — #1698 slash form + explicit-model fork', () => {
+  test('tryBuildGatewayClient accepts SLASH form (anthropic/claude-...) — the reported bug', async () => {
+    // Pre-fix the colon-only inline produced `anthropic:anthropic/claude-sonnet-4-6`
+    // and the client silently degraded. normalizeModelId fixes it → builds cleanly.
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-test-fake' }, async () => {
+      const client = await __thinkAdapter.tryBuildGatewayClient('anthropic/claude-sonnet-4-6');
+      expect(client).not.toBeNull();
+    });
+  });
+
+  test('explicit unresolvable model THROWS (does not degrade to null)', async () => {
+    await expect(
+      __thinkAdapter.tryBuildGatewayClient('bogusprovider:foo-1', { explicitModel: true }),
+    ).rejects.toThrow(/not usable.*unknown_provider/);
+  });
+
+  test('explicit typo native model THROWS (unknown_model)', async () => {
+    await expect(
+      __thinkAdapter.tryBuildGatewayClient('anthropic:claude-bogus-9', { explicitModel: true }),
+    ).rejects.toThrow(/not usable.*unknown_model/);
+  });
+
+  test('explicit anthropic model with no key THROWS (unavailable)', async () => {
+    await withEnv({ ANTHROPIC_API_KEY: undefined }, async () => {
+      await expect(
+        __thinkAdapter.tryBuildGatewayClient('anthropic:claude-sonnet-4-6', { explicitModel: true }),
+      ).rejects.toThrow(/not usable.*unavailable/);
+    });
+  });
+
+  test('NON-explicit unresolvable model returns null (graceful, unchanged)', async () => {
+    const client = await __thinkAdapter.tryBuildGatewayClient('bogusprovider:foo-1', { explicitModel: false });
+    expect(client).toBeNull();
+  });
+
+  test('create-callback fork: explicit rethrows AIConfigError; non-explicit returns the sentinel', async () => {
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-test-fake' }, async () => {
+      // Build valid clients (key present → probe ok) but leave the gateway UNCONFIGURED
+      // so gateway.chat() throws AIConfigError (requireConfig) at create() time.
+      resetGateway();
+      const params: any = {
+        model: 'anthropic:claude-sonnet-4-6',
+        max_tokens: 16,
+        system: 'sys',
+        messages: [{ role: 'user', content: 'hi' }],
+      };
+
+      const explicitClient = await __thinkAdapter.tryBuildGatewayClient(
+        'anthropic:claude-sonnet-4-6', { explicitModel: true },
+      );
+      expect(explicitClient).not.toBeNull();
+      await expect(explicitClient!.create(params)).rejects.toThrow();
+
+      const gracefulClient = await __thinkAdapter.tryBuildGatewayClient(
+        'anthropic:claude-sonnet-4-6', { explicitModel: false },
+      );
+      expect(gracefulClient).not.toBeNull();
+      const msg = await gracefulClient!.create(params);
+      const text = msg.content.find((b: any) => b.type === 'text');
+      expect(text && 'text' in text ? text.text : '').toContain('no LLM available');
+    });
+  });
+
+  // D1 BACKSTOP (codex #1, accepted-as-is): probeChatModel only PRE-checks the Anthropic
+  // key, so an explicit NON-anthropic model (deepseek/openai/...) passes the early gate and
+  // BUILDS a client even with no provider key — its key is checked lazily at chat time. The
+  // create-callback rethrow is then the ONLY thing standing between "explicit unusable model"
+  // and a silent degrade. This test locks that backstop into a contract: the client builds
+  // (proving the deviation), and create() HARD-ERRORS (proving it never degrades to the
+  // 'no LLM available' stub). A future refactor that turns this into a graceful path fails here.
+  test('D1 backstop: explicit non-anthropic model, no key → BUILDS then create() THROWS (never a stub)', async () => {
+    await withEnv(
+      { ANTHROPIC_API_KEY: undefined, DEEPSEEK_API_KEY: undefined, OPENAI_API_KEY: undefined },
+      async () => {
+        resetGateway();  // unconfigured → gateway.chat() throws AIConfigError at create()
+        // deepseek:deepseek-chat passes validateModelId (real recipe + chat touchpoint) — the
+        // A9 non-anthropic model. probeChatModel returns ok (no anthropic key check) → builds.
+        const client = await __thinkAdapter.tryBuildGatewayClient(
+          'deepseek:deepseek-chat', { explicitModel: true },
+        );
+        expect(client).not.toBeNull();  // proves the early gate did NOT pre-reject non-anthropic
+        const params: any = {
+          model: 'deepseek:deepseek-chat',
+          max_tokens: 16,
+          system: 'sys',
+          messages: [{ role: 'user', content: 'hi' }],
+        };
+        // The backstop fires: explicit → AIConfigError rethrown, NOT the graceful sentinel.
+        await expect(client!.create(params)).rejects.toThrow();
+      },
+    );
   });
 });
 

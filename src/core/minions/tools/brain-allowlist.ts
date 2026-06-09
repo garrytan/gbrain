@@ -54,6 +54,10 @@ export const BRAIN_TOOL_ALLOWLIST: ReadonlySet<string> = new Set([
   'file_url',
   'get_backlinks',
   'traverse_graph',
+  // v114 (#1941): read-only provenance discovery. Edge-WRITE ops (add_link /
+  // remove_link) are deliberately NOT allowlisted — exposing graph writes to
+  // subagents is a separate trust decision.
+  'list_link_sources',
   'resolve_slugs',
   'get_ingest_log',
   'put_page',
@@ -89,6 +93,7 @@ export const BRAIN_TOOL_USAGE_HINTS: Readonly<Record<string, string>> = {
   file_url: 'Get a presigned URL for a brain-stored file. Read-only; expires.',
   get_backlinks: 'List every page that links TO the given slug. Use for "what references this".',
   traverse_graph: 'Walk the typed-edge graph starting from a slug (e.g. `works_at`, `founded`, `invested_in`). Use for relationship queries.',
+  list_link_sources: 'List the distinct link provenances in the brain with edge counts (e.g. `citation-graph`, `manual`). Use to discover which edge-writers have populated the graph.',
   resolve_slugs: 'Resolve free-form entity names to canonical slugs (e.g. "Alice" → `people/alice-example`). Use before any tool that takes a slug if the user gave a name not a slug.',
   get_ingest_log: 'Read the brain ingestion log for diagnostic / verification queries.',
   put_page: 'Write a markdown page to the gbrain DATABASE (NOT the local filesystem). Page becomes searchable + linkable. Slug must match the agent\'s allowed namespace.',

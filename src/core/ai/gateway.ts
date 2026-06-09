@@ -21,7 +21,7 @@
  *     rotation (via configureGateway()) invalidates stale entries.
  */
 
-import { embed as aiEmbed, embedMany, generateObject, generateText } from 'ai';
+import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -41,6 +41,7 @@ import type {
   EmbedMultimodalOpts,
   MultimodalBatchResult,
   MultimodalInput,
+  ParsedModelId,
   Recipe,
   TouchpointKind,
 } from './types.ts';
@@ -48,8 +49,46 @@ import { resolveRecipe, assertTouchpoint, parseModelId } from './model-resolver.
 import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
+import { hasAnthropicKey } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
+import { abortableSleep, computeNextDelay } from '../retry.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
+
+// ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
+//
+// Plain `fetch` (Bun/Node) has NO default request timeout, so a stalled provider
+// socket makes an `await` never settle — which hangs `gbrain capture`/`search`
+// and, on PGLite, pins the single-writer lock. The AI SDK's `maxRetries` only
+// fires on a SETTLED error; a half-open socket never settles. So we bound at the
+// SDK CALL layer: default an `abortSignal` into every generateText / generateObject
+// / embed call. This (1) covers EVERY provider — including `native-anthropic`
+// (the default chat model + the facts:absorb Haiku), which the AI SDK forwards
+// the signal to as `fetch(url, {signal})`; and (2) bounds the WHOLE call incl.
+// internal retries, not one attempt. Direct-`fetch` paths (multimodal) get the
+// signal explicitly. Rerank is already bounded by its recipe `default_timeout_ms`.
+function resolveAiTimeoutMs(envVar: string, fallback: number): number {
+  const raw = process.env[envVar];
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+/** chat / expansion / OCR — generous; only catches true hangs (non-streaming generateText). */
+const AI_CHAT_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_CHAT_TIMEOUT_MS', 300_000);
+/** embed sub-batch (per SDK call, NOT per whole import). */
+const AI_EMBED_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_EMBED_TIMEOUT_MS', 60_000);
+/** multimodal per request. */
+const AI_MULTIMODAL_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_MULTIMODAL_TIMEOUT_MS', 60_000);
+
+/**
+ * Compose a caller signal with a default wall-clock timeout. When the caller
+ * supplies its own (Fix 3's 6s query deadline, the facts queue's shutdown abort,
+ * a budget signal), `AbortSignal.any` makes whichever fires FIRST win — so a
+ * shorter caller deadline always takes precedence over the default backstop.
+ */
+function withDefaultTimeout(caller: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return caller ? AbortSignal.any([caller, timeout]) : timeout;
+}
 
 const MAX_CHARS = 8000;
 // v0.36.0.0 (D3 + D4): ZeroEntropy zembed-1 at 1280d via Matryoshka is the
@@ -1420,6 +1459,135 @@ export function __getShrinkStateForTests(recipeId: string): ShrinkEntry | undefi
   return entry ? { ...entry } : undefined;
 }
 
+const EMBED_RETRY_MAX_MS = 8_000;
+
+/**
+ * Node/undici transport error codes that are transient and worth retrying.
+ * These bypass the AI SDK's APICallError-based retry because they surface as
+ * a raw `TypeError: fetch failed` (no HTTP status), so the SDK never retries
+ * them. The standout is UNABLE_TO_VERIFY_LEAF_SIGNATURE: a flaky embedding
+ * relay intermittently serves an incomplete cert chain (leaf without the
+ * intermediate), which Node cannot complete (it does not AIA-fetch the
+ * missing intermediate). The rest are ordinary dropped-socket / timeout codes.
+ */
+const EMBED_TRANSPORT_RETRY_CODES = new Set([
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'CERT_HAS_EXPIRED',
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EPIPE',
+  'EAI_AGAIN',
+  'ENETUNREACH',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_SOCKET',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+]);
+
+/** Walk the error's `.cause` chain to find the first Node error `code`. */
+function transportErrorCode(err: unknown, depth = 0): string | undefined {
+  if (!err || typeof err !== 'object' || depth > 5) return undefined;
+  const code = (err as { code?: unknown }).code;
+  if (typeof code === 'string' && code.length > 0) return code;
+  return transportErrorCode((err as { cause?: unknown }).cause, depth + 1);
+}
+
+/** Short, log-safe label for an embed transport error (code, else name:msg). */
+function transportErrorLabel(err: unknown): string {
+  const code = transportErrorCode(err);
+  if (code) return code;
+  if (err instanceof Error) return `${err.name}: ${err.message.slice(0, 80)}`;
+  return String(err ?? 'unknown').slice(0, 80);
+}
+
+/**
+ * Is this a transport-level transient error worth an inline retry? TLS /
+ * connection / socket-timeout failures from undici fetch qualify. Errors that
+ * carry an HTTP status (4xx/5xx) are excluded: those ride the SDK retry +
+ * normalizeAIError classification, so retrying them here would double up.
+ */
+export function isRetryableEmbedTransportError(err: unknown): boolean {
+  const status =
+    (err as { status?: number })?.status ??
+    (err as { statusCode?: number })?.statusCode;
+  if (typeof status === 'number') return false;
+  const code = transportErrorCode(err);
+  if (code && EMBED_TRANSPORT_RETRY_CODES.has(code)) return true;
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return /unable to verify the first certificate|socket hang up|ECONNRESET|ETIMEDOUT|EAI_AGAIN|network socket/i.test(msg);
+}
+
+/** Retries (not counting the first attempt). Tunable; 0 disables. */
+function embedTransportMaxRetries(): number {
+  const raw = process.env.GBRAIN_EMBED_TRANSPORT_RETRIES;
+  if (raw === undefined || raw === '') return 2;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : 2;
+}
+
+/** Base backoff delay in ms (decorrelated jitter floor). Tunable for tests. */
+function embedRetryBaseMs(): number {
+  const raw = process.env.GBRAIN_EMBED_RETRY_BASE_MS;
+  if (raw === undefined || raw === '') return 500;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : 500;
+}
+
+/**
+ * Wrap the embed transport call with a bounded retry on transport-level
+ * transient errors (see isRetryableEmbedTransportError). Reuses the
+ * decorrelated backoff from ../retry.ts. Token-limit errors are NOT retried
+ * here (embedSubBatch halves the batch instead) and HTTP-status errors are
+ * left to the SDK + normalizeAIError. Observability: warns per retry and on
+ * give-up so a persistent upstream outage is visible, not silently swallowed.
+ *
+ * Why this exists: a flaky embedding relay intermittently served an incomplete
+ * TLS chain, failing the *synchronous* MCP put_page embed (no job queue behind
+ * it to retry later) with `unable to verify the first certificate`.
+ * Tunable via GBRAIN_EMBED_TRANSPORT_RETRIES (default 2 = 3 attempts).
+ */
+async function embedTransportWithRetry(
+  callArgs: Omit<Parameters<EmbedManyFn>[0], 'abortSignal'>,
+  ctx: { recipeId: string; modelId: string; signal?: AbortSignal },
+): Promise<Awaited<ReturnType<EmbedManyFn>>> {
+  const maxRetries = embedTransportMaxRetries();
+  const baseMs = embedRetryBaseMs();
+  let prevDelay = 0;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      // v0.42.20.0 — per-SUB-BATCH embed timeout (codex #3: bounding once at
+      // embed() top would cap a whole multi-batch import; this is the
+      // per-SDK-call scope), applied per ATTEMPT so each retry gets a fresh
+      // AI_EMBED_TIMEOUT_MS budget. Composes with the caller signal (Fix 3's
+      // 6s query deadline) — shorter wins. A fired timeout is NOT a retryable
+      // transport error, so a hung relay aborts the loop instead of re-arming it.
+      return await _embedTransport({
+        ...callArgs,
+        abortSignal: withDefaultTimeout(ctx.signal, AI_EMBED_TIMEOUT_MS),
+      });
+    } catch (err) {
+      if (!isRetryableEmbedTransportError(err) || ctx.signal?.aborted) throw err;
+      if (attempt >= maxRetries) {
+        console.warn(
+          `[ai.gateway] embed transport gave up after ${attempt + 1} attempt(s) ` +
+          `for ${ctx.recipeId}:${ctx.modelId}: ${transportErrorLabel(err)}`,
+        );
+        throw err;
+      }
+      const delay = computeNextDelay(attempt, prevDelay, baseMs, EMBED_RETRY_MAX_MS, 'decorrelated');
+      prevDelay = delay;
+      console.warn(
+        `[ai.gateway] embed transport retry ${attempt + 1}/${maxRetries} ` +
+        `for ${ctx.recipeId}:${ctx.modelId} after ${transportErrorLabel(err)}; waiting ${delay}ms`,
+      );
+      await abortableSleep(delay, ctx.signal);
+    }
+  }
+}
+
 /**
  * Embed a single sub-batch with automatic halving on token-limit errors.
  * If the batch is already at MIN_SUB_BATCH and still fails, throws.
@@ -1434,16 +1602,20 @@ async function embedSubBatch(
   opts?: EmbedOpts,
 ): Promise<Float32Array[]> {
   try {
-    const result = await _embedTransport({
-      model,
-      values: texts,
-      providerOptions: providerOpts,
-      // v0.33.4: caller-supplied abortSignal + maxRetries passthrough.
-      // Undefined fields are ignored by the AI SDK so the call shape stays
-      // identical for production callers that don't opt in.
-      ...(opts?.abortSignal !== undefined && { abortSignal: opts.abortSignal }),
-      ...(opts?.maxRetries !== undefined && { maxRetries: opts.maxRetries }),
-    });
+    const result = await embedTransportWithRetry(
+      {
+        model,
+        values: texts,
+        providerOptions: providerOpts,
+        // v0.33.4: caller-supplied maxRetries passthrough. Undefined fields
+        // are ignored by the AI SDK so the call shape stays identical for
+        // production callers that don't opt in. The caller abortSignal is
+        // threaded via ctx.signal — the retry wrapper composes it with the
+        // v0.42.20.0 per-attempt default timeout.
+        ...(opts?.maxRetries !== undefined && { maxRetries: opts.maxRetries }),
+      },
+      { recipeId: recipe.id, modelId, signal: opts?.abortSignal },
+    );
 
     if (!Array.isArray(result.embeddings) || result.embeddings.length !== texts.length) {
       throw new AIConfigError(
@@ -1501,12 +1673,16 @@ export async function embedOne(text: string): Promise<Float32Array> {
  */
 export async function embedQuery(
   text: string,
-  opts?: { embeddingModel?: string; dimensions?: number },
+  opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal },
 ): Promise<Float32Array> {
   const [v] = await embed([text], {
     inputType: 'query',
     embeddingModel: opts?.embeddingModel,
     dimensions: opts?.dimensions,
+    // v0.42.20.0 (Fix 3) — forward a caller deadline so the query-time embed
+    // can be bounded BELOW the CLI force-exit; composes with the gateway embed
+    // default via withDefaultTimeout (shorter wins).
+    abortSignal: opts?.abortSignal,
   });
   return v;
 }
@@ -1640,6 +1816,9 @@ export async function embedMultimodal(
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
+        // v0.42.20.0 (codex #4) — per-request multimodal timeout (direct fetch
+        // bypasses the SDK abortSignal).
+        signal: AbortSignal.timeout(AI_MULTIMODAL_TIMEOUT_MS),
       });
     } catch (err) {
       throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${parsed.modelId})`);
@@ -1782,6 +1961,8 @@ async function embedMultimodalOpenAICompat(
           [authResult.headerName]: authResult.token,
         },
         body: JSON.stringify(body),
+        // v0.42.20.0 (codex #4) — per-request multimodal timeout (direct fetch).
+        signal: AbortSignal.timeout(AI_MULTIMODAL_TIMEOUT_MS),
       });
     } catch (err) {
       throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${modelId})`);
@@ -2032,6 +2213,9 @@ export async function expand(query: string): Promise<string[]> {
     const result = await generateObject({
       model,
       schema: ExpansionSchema,
+      // v0.42.20.0 (codex P0) — expansion had NO abortSignal; same stalled-socket
+      // class as chat. Default the chat timeout.
+      abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
       prompt: [
         'Rewrite the search query below into 3-4 different, related queries that would help find relevant documents.',
         'Return ONLY the JSON object. Do NOT include the original query in the result.',
@@ -2082,6 +2266,8 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
   const base64 = imageBytes.toString('base64');
   const result = await generateText({
     model,
+    // v0.42.20.0 (codex) — OCR is a 5th unbounded generateText entry point.
+    abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
     messages: [
       {
         role: 'system',
@@ -2175,6 +2361,52 @@ export interface ChatToolDef {
   inputSchema: Record<string, unknown>;
 }
 
+/**
+ * Convert gbrain's provider-neutral ChatMessage[] into AI SDK v6 ModelMessage[].
+ *
+ * The original code passed `opts.messages as any` straight to generateText,
+ * which worked on AI SDK v4/v5 but v6 tightened ModelMessage validation:
+ *   - tool results must be a `role: 'tool'` message (gbrain pushes them as
+ *     `role: 'user'` with tool-result blocks), and
+ *   - each tool-result `output` must be a structured `{ type, value }` part,
+ *     not a bare value.
+ * Without this conversion every multi-turn tool loop (skillopt rollouts AND
+ * production subagent jobs) throws "messages do not match the ModelMessage[]
+ * schema" the moment the model calls a tool. Surfaced by the SkillOpt eval.
+ */
+export function toModelMessages(messages: ChatMessage[]): unknown[] {
+  return messages.map((m) => {
+    if (typeof m.content === 'string') return { role: m.role, content: m.content };
+    const blocks = m.content;
+    if (blocks.some((b) => b.type === 'tool-result')) {
+      // v6: tool results ride on a dedicated `tool` role with structured output.
+      return {
+        role: 'tool' as const,
+        content: blocks
+          .filter((b): b is Extract<ChatBlock, { type: 'tool-result' }> => b.type === 'tool-result')
+          .map((b) => ({
+            type: 'tool-result' as const,
+            toolCallId: b.toolCallId,
+            toolName: b.toolName,
+            output: b.isError
+              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(b.output) }
+              : (typeof b.output === 'string'
+                ? { type: 'text' as const, value: b.output }
+                : { type: 'json' as const, value: (b.output ?? null) as never }),
+          })),
+      };
+    }
+    return {
+      role: m.role,
+      content: blocks.map((b) => {
+        if (b.type === 'text') return { type: 'text' as const, text: b.text };
+        if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, input: b.input };
+        return b;
+      }),
+    };
+  });
+}
+
 export interface ChatResult {
   /** Final text content concatenated from text blocks. */
   text: string;
@@ -2211,6 +2443,75 @@ export interface ChatOpts {
    * ignored on providers without `supports_prompt_cache`.
    */
   cacheSystem?: boolean;
+}
+
+/**
+ * v0.41.x (#1698) — id-validity core. Shared by `runThink`'s explicit-model gate
+ * (via `probeChatModel`) AND `makeJudgeClient` in `cycle/synthesize.ts`.
+ *
+ * Validates that a `provider:model` string resolves to a real recipe AND that the
+ * recipe supports the chat touchpoint (catches typo'd native models like
+ * `anthropic:claude-bogus-9`). Both checks read the recipe REGISTRY, not gateway
+ * `_config`, so this works before `configureGateway()` has run — which is why
+ * `makeJudgeClient` reuses this layer instead of the full `probeChatModel` (whose
+ * `isAvailable` layer would reject non-Anthropic-no-key + unconfigured-gateway).
+ *
+ * Order matters: `resolveRecipe` first (unknown_provider), then `assertTouchpoint`
+ * (unknown_model). `isAvailable` alone collapses both into a bare `false`.
+ */
+export type ModelIdValidity =
+  | { ok: true; parsed: ParsedModelId; recipe: Recipe }
+  | { ok: false; reason: 'unknown_provider' | 'unknown_model'; detail: string; fix?: string };
+
+export function validateModelId(modelStr: string): ModelIdValidity {
+  let parsed: ParsedModelId;
+  let recipe: Recipe;
+  try {
+    ({ parsed, recipe } = resolveRecipe(modelStr));
+  } catch (e) {
+    if (e instanceof AIConfigError) return { ok: false, reason: 'unknown_provider', detail: e.message, fix: e.fix };
+    throw e;
+  }
+  try {
+    assertTouchpoint(recipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
+  } catch (e) {
+    if (e instanceof AIConfigError) return { ok: false, reason: 'unknown_model', detail: e.message, fix: e.fix };
+    throw e;
+  }
+  return { ok: true, parsed, recipe };
+}
+
+/**
+ * v0.41.x (#1698) — full chat-model probe = id-validity + key availability.
+ * Used by `runThink`'s explicit-`--model` gate (where a model the user typed but
+ * can't run SHOULD hard-error, not silently degrade), AND by `tryBuildGatewayClient`
+ * + `makeJudgeClient`. One shared predicate, no drift.
+ *
+ * The key layer uses `hasAnthropicKey` (env OR gbrain config file), which is
+ * gateway-config-INDEPENDENT — it works before `configureGateway()` and in unit
+ * tests, and preserves the historical key-detection source (codex #6; the prior
+ * draft used `isAvailable`, which reads gateway `_config.env` and would have
+ * regressed the builder + broken every test that skips `configureGateway`).
+ * Non-Anthropic providers are checked LAZILY at `gateway.chat()` time (build the
+ * client, let the call surface AIConfigError) — matches the deliberate
+ * per-transcript-degrade contract (test A9: a deepseek judge with no key returns
+ * a client, not null).
+ */
+export type ChatModelProbe =
+  | { ok: true }
+  | { ok: false; reason: 'unknown_provider' | 'unknown_model' | 'unavailable'; detail: string; fix?: string };
+
+export function probeChatModel(modelStr: string): ChatModelProbe {
+  const v = validateModelId(modelStr);
+  if (!v.ok) return { ok: false, reason: v.reason, detail: v.detail, fix: v.fix };
+  if (v.parsed.providerId === 'anthropic' && !hasAnthropicKey()) {
+    return {
+      ok: false,
+      reason: 'unavailable',
+      detail: 'no Anthropic API key configured (set ANTHROPIC_API_KEY or run: gbrain config set anthropic_api_key ...)',
+    };
+  }
+  return { ok: true };
 }
 
 async function resolveChatProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
@@ -2457,7 +2758,12 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const tools = (opts.tools ?? []).reduce((acc, t) => {
     acc[t.name] = {
       description: t.description,
-      inputSchema: { jsonSchema: t.inputSchema } as any,
+      // AI SDK v6 requires a Schema (carrying the schema symbol), not a plain
+      // `{jsonSchema}` object — the bare object makes asSchema() treat it as a
+      // thunk and call schema(), throwing "schema is not a function". Wrap the
+      // raw JSON Schema with the SDK's jsonSchema() helper so tool calls work
+      // through the real toolLoop (skillopt rollouts + subagent jobs).
+      inputSchema: jsonSchema(t.inputSchema as any),
     };
     return acc;
   }, {} as Record<string, any>);
@@ -2487,10 +2793,12 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     const result = await generateText({
       model,
       system: opts.system,
-      messages: opts.messages as any,
+      messages: toModelMessages(opts.messages) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
       maxOutputTokens: opts.maxTokens ?? 4096,
-      abortSignal: opts.abortSignal,
+      // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
+      // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
+      abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
       providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
     });
 

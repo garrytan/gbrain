@@ -151,6 +151,8 @@ export interface FleetOpts {
   noMutate: boolean;
   allowMutateBundled: boolean;
   bootstrapReviewed: boolean;
+  /** F11: optional held-out test set (one skill, so a single path is valid here). */
+  heldOutPath?: string;
   maxCostUsd: number;
   maxRuntimeMin: number;
   force: boolean;
@@ -225,6 +227,7 @@ export async function runFleet(opts: FleetOpts): Promise<FleetResult> {
       noMutate,
       allowMutateBundled: opts.allowMutateBundled,
       bootstrapReviewed: opts.bootstrapReviewed,
+      ...(opts.heldOutPath ? { heldOutPath: opts.heldOutPath } : {}),
       json: true,
       maxCostUsd: opts.maxCostUsd,
       maxRuntimeMin: opts.maxRuntimeMin,

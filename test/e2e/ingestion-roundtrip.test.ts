@@ -27,6 +27,15 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { IngestionDaemon } from '../../src/core/ingestion/daemon.ts';
 import { createInboxFolderSource } from '../../src/core/ingestion/sources/inbox-folder.ts';
+import { watch, type ChokidarOptions, type FSWatcher } from 'chokidar';
+
+// E2E determinism: force chokidar into polling mode via the source's
+// `_watchFactory` seam so file-drop detection never depends on macOS fsevents
+// timing. The native-events path occasionally missed the first add under load,
+// timing out the 15s waitFor (the documented first-drop flake). Polling at a
+// 20ms interval is deterministic and still fast. Production keeps native events.
+const pollingWatchFactory = (paths: string, opts: ChokidarOptions): FSWatcher =>
+  watch(paths, { ...opts, usePolling: true, interval: 20, binaryInterval: 20 });
 import { makeIngestCaptureHandler } from '../../src/core/minions/handlers/ingest-capture.ts';
 import type { IngestionEvent } from '../../src/core/ingestion/types.ts';
 import type { MinionJobContext } from '../../src/core/minions/types.ts';
@@ -133,14 +142,19 @@ describe('ingestion roundtrip — inbox-folder → daemon → ingest_capture →
       inboxDir,
       debounceMs: 50,
       awaitStabilityMs: 100,
+      _watchFactory: pollingWatchFactory,
     });
     daemon.register({ source });
-    await daemon.start();
 
-    // Drop a file into the inbox.
+    // Drop the file BEFORE start so the initial scan (ignoreInitial:false)
+    // emits it deterministically. The full emit → dispatch → handler → DB →
+    // archive pipeline still runs end to end; only the inherently timing-
+    // dependent post-start watcher detection is removed (covered robustly by
+    // the dedup test's polled second drop below).
     const captured = path.join(inboxDir, 'roundtrip.md');
     fs.writeFileSync(captured, '---\ntitle: Roundtrip\n---\n\nfull e2e flow');
 
+    await daemon.start();
     // Wait for the daemon to pick it up + dispatch + handler to write.
     await waitFor(() => dispatchedEvents.length === 1, 15000);
 
@@ -186,28 +200,36 @@ describe('ingestion roundtrip — inbox-folder → daemon → ingest_capture →
       inboxDir,
       debounceMs: 50,
       awaitStabilityMs: 100,
+      _watchFactory: pollingWatchFactory,
     });
     daemon.register({ source });
-    await daemon.start();
 
-    // Drop file 1
+    // Drop file 1 BEFORE start so the initial scan (ignoreInitial:false) emits
+    // it deterministically — removes the post-start watcher race that flaked.
     const drop1 = path.join(inboxDir, 'dup-1.md');
     fs.writeFileSync(drop1, '# duplicate content\n\nidentical body');
+
+    await daemon.start();
     await waitFor(() => dispatchedEvents.length === 1, 15000);
 
-    // Drop file 2 with byte-identical content (different filename).
+    // Drop file 2 with byte-identical content (different filename) AFTER start;
+    // the watcher catches it and dedup intercepts before dispatch.
     const drop2 = path.join(inboxDir, 'dup-2.md');
     fs.writeFileSync(drop2, '# duplicate content\n\nidentical body');
-    // chokidar.archive moves drop2, but the dedup should catch the event
-    // BEFORE the handler runs. Let chokidar process a bit then check.
-    await new Promise((r) => setTimeout(r, 600));
+
+    // Poll for the dedup hit instead of a fixed sleep so a slow watcher tick
+    // can't make the assertion flake.
+    let dedupHits = 0;
+    for (let i = 0; i < 240; i++) {
+      dedupHits = (await daemon.healthCheck()).dedup.hits;
+      if (dedupHits >= 1) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
 
     // Only ONE event made it through dispatch (dedup intercepted the second).
     expect(dispatchedEvents).toHaveLength(1);
-
     // The daemon's dedup stats reflect a hit.
-    const health = await daemon.healthCheck();
-    expect(health.dedup.hits).toBeGreaterThanOrEqual(1);
+    expect(dedupHits).toBeGreaterThanOrEqual(1);
 
     await daemon.stop();
   }, 15_000);
@@ -241,19 +263,26 @@ describe('ingestion roundtrip — multi-source coordination', () => {
       inboxDir: inboxA,
       debounceMs: 50,
       awaitStabilityMs: 100,
+      _watchFactory: pollingWatchFactory,
     });
     const sourceB = createInboxFolderSource({
       id: 'inbox-b',
       inboxDir: inboxB,
       debounceMs: 50,
       awaitStabilityMs: 100,
+      _watchFactory: pollingWatchFactory,
     });
     daemon.register({ source: sourceA });
     daemon.register({ source: sourceB });
-    await daemon.start();
 
+    // Drop both files BEFORE start. With ignoreInitial:false the initial scan
+    // emits an `add` for each on chokidar `ready`, so both sources ingest
+    // deterministically — no dependency on the post-start watcher catching a
+    // freshly written file (the source of the residual flake).
     fs.writeFileSync(path.join(inboxA, 'from-a.md'), 'content from A');
     fs.writeFileSync(path.join(inboxB, 'from-b.md'), 'content from B');
+
+    await daemon.start();
 
     await waitFor(() => dispatchedEvents.length === 2, 15000);
 

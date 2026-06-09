@@ -468,279 +468,42 @@ export function resolveSlugForPath(filePath: string, repoPrefix?: string): strin
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Sync failure tracking — Bug 9
+// Sync failure ledger — moved to ./sync-failure-ledger.ts (issue #1939)
 // ─────────────────────────────────────────────────────────────────
 //
-// When a sync run catches a per-file parse error (YAML with unquoted
-// colons, malformed frontmatter, etc.), we record it here instead of just
-// logging and moving on. Three goals:
-//   1. Gate the sync.last_commit bookmark advance in all three sync paths
-//      (incremental, full/runImport, `gbrain import` git continuity).
-//   2. Give users a visible record of what failed, with the commit hash
-//      they can use to re-attempt after fixing the source file.
-//   3. Let `gbrain sync --skip-failed` acknowledge a known-bad set so
-//      repos with many broken files aren't permanently stuck.
-
-import { existsSync as _existsSync, readFileSync as _readFileSync, appendFileSync as _appendFileSync, mkdirSync as _mkdirSync } from 'fs';
-import { join as _joinPath } from 'path';
-import { gbrainPath as _gbrainPath } from './config.ts';
-import { createHash as _createHash } from 'crypto';
-
-export interface SyncFailure {
-  path: string;
-  error: string;
-  /** Structured error code extracted from the error message. */
-  code?: string;
-  commit: string;
-  line?: number;
-  ts: string;
-  acknowledged?: boolean;
-  acknowledged_at?: string;
-}
-
-/**
- * Best-effort extraction of a structured error code from a sync failure
- * message. Matches known ParseValidationCode patterns (SLUG_MISMATCH,
- * YAML_PARSE, etc.) and common DB / timeout errors. Returns 'UNKNOWN'
- * when no pattern matches.
- *
- * Order matters: DB-layer errors are checked BEFORE YAML-layer ones so
- * Postgres `duplicate key value violates unique constraint` doesn't get
- * mislabeled as a YAML duplicate-key. Frontmatter patterns key off the
- * canonical messages emitted by `collectValidationErrors()` in markdown.ts.
- */
-export function classifyErrorCode(errorMsg: string): string {
-  // SLUG_MISMATCH: thrown by importFromFile() at src/core/import-file.ts:374.
-  if (/slug.*does not match|SLUG_MISMATCH/i.test(errorMsg)) return 'SLUG_MISMATCH';
-
-  // DB-layer errors come BEFORE the YAML duplicate-key check. Postgres unique-
-  // constraint violations contain "duplicate key" but are not a YAML problem.
-  if (/duplicate key value violates unique constraint|DB_DUPLICATE_KEY/i.test(errorMsg)) {
-    return 'DB_DUPLICATE_KEY';
-  }
-  if (/canceling statement due to statement timeout|STATEMENT_TIMEOUT/i.test(errorMsg)) {
-    return 'STATEMENT_TIMEOUT';
-  }
-
-  // YAML / frontmatter patterns. These match either the canonical message
-  // strings in src/core/markdown.ts (collectValidationErrors) or the literal
-  // ParseValidationCode token, so they fire whether the caller stores the
-  // message or just the code.
-  if (/YAML parse failed|YAML_PARSE/i.test(errorMsg)) return 'YAML_PARSE';
-  if (/YAMLException|duplicated mapping key|YAML_DUPLICATE_KEY/i.test(errorMsg)) {
-    return 'YAML_DUPLICATE_KEY';
-  }
-  if (/File is empty or whitespace-only|Frontmatter must start with ---|MISSING_OPEN/i.test(errorMsg)) {
-    return 'MISSING_OPEN';
-  }
-  if (/No closing --- delimiter|Heading at line .* found inside frontmatter|MISSING_CLOSE/i.test(errorMsg)) {
-    return 'MISSING_CLOSE';
-  }
-  if (/Frontmatter block is empty|EMPTY_FRONTMATTER/i.test(errorMsg)) return 'EMPTY_FRONTMATTER';
-  if (/Content contains null bytes|NULL_BYTES|null byte/i.test(errorMsg)) return 'NULL_BYTES';
-  if (/Nested double quotes|NESTED_QUOTES/i.test(errorMsg)) return 'NESTED_QUOTES';
-
-  // Generic fallbacks.
-  if (/invalid UTF-?8|INVALID_UTF8/i.test(errorMsg)) return 'INVALID_UTF8';
-
-  // v0.22.12 additions: covers the four real production sites in src/core/import-file.ts
-  // (lines 199, 347, 352, 401) that previously bucketed to UNKNOWN.
-  if (/file too large|content too large|FILE_TOO_LARGE/i.test(errorMsg)) return 'FILE_TOO_LARGE';
-  if (/skipping symlink|symlink|SYMLINK_NOT_ALLOWED/i.test(errorMsg)) return 'SYMLINK_NOT_ALLOWED';
-
-  // v0.32 takes-v2 additions: malformed fence rows + holder-grammar failures.
-  // TAKES_TABLE_MALFORMED and TAKES_ROW_NUM_COLLISION are produced by
-  // parseTakesFence (src/core/takes-fence.ts); TAKES_HOLDER_INVALID lands
-  // in v0.32 (EXP-4) when a holder doesn't match the world|brain|people/...|
-  // companies/... grammar. Wired into sync-failures.jsonl by the v0_28_0
-  // migration's phaseBBackfill (one-time backfill emission).
-  if (/TAKES_TABLE_MALFORMED|TAKES_ROW_NUM_COLLISION|TAKES_FENCE_UNBALANCED/i.test(errorMsg)) {
-    return 'TAKES_TABLE_MALFORMED';
-  }
-  if (/TAKES_HOLDER_INVALID/i.test(errorMsg)) return 'TAKES_HOLDER_INVALID';
-
-  // v0.41.6.0 D2: embedding error classification. Per-recipe verbatim shapes:
-  //   native-openai  → "OpenAI embedding requires OPENAI_API_KEY."
-  //   native-google  → "Google embedding requires GOOGLE_GENERATIVE_AI_API_KEY."
-  //   openai-compat  → "${recipe.name} embedding requires ${REQUIRED_ENV}."
-  //                    (Voyage AI / ZeroEntropy / DeepSeek / Together AI /
-  //                    DashScope / MiniMax / Zhipu AI all use this shape via
-  //                    defaultResolveAuth at src/core/ai/gateway.ts:250)
-  // EMBEDDING_NO_CREDS catches the missing-env case for every provider. The
-  // anthropic-no-touchpoint case ("Anthropic has no embedding model") is a
-  // misconfig, not a creds issue — bucketed separately so users don't get
-  // pointed at setting a key for a provider that doesn't offer embeddings.
-  if (/embedding requires [A-Z][A-Z0-9_]+_API_KEY|EMBEDDING_NO_CREDS/i.test(errorMsg)) {
-    return 'EMBEDDING_NO_CREDS';
-  }
-  if (/Anthropic has no embedding model|EMBEDDING_NO_TOUCHPOINT/i.test(errorMsg)) {
-    return 'EMBEDDING_NO_TOUCHPOINT';
-  }
-  // 429 status + textual rate-limit signals. AI SDK normalizes provider 429s
-  // into messages containing "rate limit" / "rate_limited" / "429".
-  if (/\brate.?limit|\b429\b|too many requests|rate_limited|RateLimit/i.test(errorMsg)) {
-    return 'EMBEDDING_RATE_LIMIT';
-  }
-  // OpenAI: insufficient_quota / "exceeded your current quota". Anthropic:
-  // "credit balance is too low". Catch-all token: EMBEDDING_QUOTA.
-  if (/insufficient_quota|quota exceeded|exceeded.*quota|credit balance is too low|billing|EMBEDDING_QUOTA/i.test(errorMsg)) {
-    return 'EMBEDDING_QUOTA';
-  }
-  // OpenAI: "maximum context length" / "too many tokens in request". Voyage:
-  // "input length exceeds". General: "max_tokens" / "context length".
-  if (/maximum context length|max_tokens|context length|input too long|input length exceeds|tokens? exceed|too many tokens|EMBEDDING_OVERSIZE/i.test(errorMsg)) {
-    return 'EMBEDDING_OVERSIZE';
-  }
-
-  // v0.41 content-sanity gate. Hard-blocks at importFromContent throw
-  // ContentSanityBlockError whose toString() embeds `PAGE_JUNK_PATTERN:`
-  // (see src/core/content-sanity.ts PAGE_JUNK_PATTERN_CODE). Soft-blocks
-  // (oversize alone) don't fail — the page lands with frontmatter.embed_skip
-  // set and never enters this classifier.
-  if (/PAGE_JUNK_PATTERN/i.test(errorMsg)) return 'PAGE_JUNK_PATTERN';
-
-  return 'UNKNOWN';
-}
-
-/** Group failures by error code and return a sorted summary. */
-export function summarizeFailuresByCode(
-  failures: Array<{ error: string; code?: string }>,
-): Array<{ code: string; count: number }> {
-  const counts: Record<string, number> = {};
-  for (const f of failures) {
-    const code = f.code ?? classifyErrorCode(f.error);
-    counts[code] = (counts[code] ?? 0) + 1;
-  }
-  return Object.entries(counts)
-    .sort(([, a], [, b]) => b - a)
-    .map(([code, count]) => ({ code, count }));
-}
-
-/**
- * Format a code-grouped summary as a human-readable multi-line string for
- * stderr / doctor output. Accepts either raw failures (which are summarized
- * internally) or an already-summarized `{code, count}[]` shape (the return
- * value of `summarizeFailuresByCode` or `AcknowledgeResult.summary`).
- * Returns an empty string when the input is empty.
- */
-export function formatCodeBreakdown(
-  input: Array<{ error: string; code?: string }> | Array<{ code: string; count: number }>,
-): string {
-  // Distinguish by shape: summary entries have a numeric `count`. Empty array
-  // returns '' from either branch — both paths produce a 0-length join.
-  const summary =
-    input.length > 0 && typeof (input[0] as { count?: unknown }).count === 'number'
-      ? (input as Array<{ code: string; count: number }>)
-      : summarizeFailuresByCode(input as Array<{ error: string; code?: string }>);
-  return summary.map(s => `  ${s.code}: ${s.count}`).join('\n');
-}
-
-function _failuresDir(): string {
-  return _gbrainPath();
-}
-
-export function syncFailuresPath(): string {
-  return _joinPath(_failuresDir(), 'sync-failures.jsonl');
-}
-
-function _hashError(msg: string): string {
-  return _createHash('sha256').update(msg).digest('hex').slice(0, 12);
-}
-
-function _dedupKey(f: { path: string; commit: string; error: string }): string {
-  return `${f.path}|${f.commit}|${_hashError(f.error)}`;
-}
-
-/**
- * Read the failures JSONL, skipping malformed lines with a warning to stderr.
- * Returns empty array if the file doesn't exist.
- */
-export function loadSyncFailures(): SyncFailure[] {
-  const path = syncFailuresPath();
-  if (!_existsSync(path)) return [];
-  const raw = _readFileSync(path, 'utf-8');
-  const out: SyncFailure[] = [];
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      out.push(JSON.parse(trimmed) as SyncFailure);
-    } catch {
-      console.warn(`[sync-failures] skipping malformed line: ${trimmed.slice(0, 120)}`);
-    }
-  }
-  return out;
-}
-
-/**
- * Append failure entries to the JSONL. Dedups by (path, commit, error-hash) —
- * the same file failing with the same error on the same commit writes ONCE
- * to the log, not once per sync run.
- */
-export function recordSyncFailures(
-  failures: Array<{ path: string; error: string; line?: number }>,
-  commit: string,
-): void {
-  if (failures.length === 0) return;
-  const existing = loadSyncFailures();
-  const seen = new Set(existing.map(f => _dedupKey(f)));
-
-  _mkdirSync(_failuresDir(), { recursive: true });
-  const now = new Date().toISOString();
-  for (const f of failures) {
-    const entry: SyncFailure = {
-      path: f.path,
-      error: f.error,
-      code: classifyErrorCode(f.error),
-      commit,
-      line: f.line,
-      ts: now,
-    };
-    if (seen.has(_dedupKey(entry))) continue;
-    _appendFileSync(syncFailuresPath(), JSON.stringify(entry) + '\n');
-    seen.add(_dedupKey(entry));
-  }
-}
-
-export interface AcknowledgeResult {
-  count: number;
-  summary: Array<{ code: string; count: number }>;
-}
-
-/**
- * Mark all unacknowledged failures as acknowledged. Used by
- * `gbrain sync --skip-failed`. Returns count and a structured summary
- * grouped by error code so the operator can see *why* files were skipped.
- *
- * We do not delete — acknowledged entries stay as historical record so
- * doctor can still show them under a "previously skipped" bucket.
- */
-export function acknowledgeSyncFailures(): AcknowledgeResult {
-  const entries = loadSyncFailures();
-  if (entries.length === 0) return { count: 0, summary: [] };
-  const now = new Date().toISOString();
-  let changed = 0;
-  const newlyAcked: SyncFailure[] = [];
-  const updated = entries.map(e => {
-    if (e.acknowledged) return e;
-    changed++;
-    // Backfill code for entries that predate the code field.
-    const code = e.code ?? classifyErrorCode(e.error);
-    const acked = { ...e, code, acknowledged: true, acknowledged_at: now };
-    newlyAcked.push(acked);
-    return acked;
-  });
-  if (changed === 0) return { count: 0, summary: [] };
-  _mkdirSync(_failuresDir(), { recursive: true });
-  const fd = require('fs').writeFileSync;
-  fd(syncFailuresPath(), updated.map(e => JSON.stringify(e)).join('\n') + '\n');
-  return {
-    count: changed,
-    summary: summarizeFailuresByCode(newlyAcked),
-  };
-}
-
-/** Return only unacknowledged failures. */
-export function unacknowledgedSyncFailures(): SyncFailure[] {
-  return loadSyncFailures().filter(f => !f.acknowledged);
-}
+// The failure store + bounded auto-skip valve now live in a leaf module so
+// they can be unit-tested in isolation and shared by both sync gates without
+// a circular import. Re-exported here so existing callers that
+// `await import('../core/sync.ts')` for these symbols keep working.
+export {
+  classifyErrorCode,
+  summarizeFailuresByCode,
+  formatCodeBreakdown,
+  syncFailuresPath,
+  loadSyncFailures,
+  unacknowledgedSyncFailures,
+  recordSyncFailures,
+  acknowledgeSyncFailures,
+  recordFailures,
+  clearFailures,
+  acknowledgeFailures,
+  autoSkipFailures,
+  withLedgerLock,
+  resolveAutoSkipThreshold,
+  isSkippablePath,
+  decideGateAction,
+  decideSyncFailureSeverity,
+  applySyncFailureGate,
+  DEFAULT_SOURCE_ID,
+  SENTINEL_PREFIX,
+  DEFAULT_AUTOSKIP_AFTER,
+} from './sync-failure-ledger.ts';
+export type {
+  SyncFailure,
+  SyncFailureState,
+  AcknowledgeResult,
+  GateDecision,
+  SeverityResult,
+  SyncGateInput,
+  SyncGateOutcome,
+} from './sync-failure-ledger.ts';

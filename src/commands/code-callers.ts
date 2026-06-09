@@ -30,6 +30,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
 import { resolveScopedSourceOrThrow, SourceResolutionError } from '../core/sources-ops.ts';
 import { formatSoleNonDefaultNudge } from '../core/source-resolver.ts';
+import { resolveCodeReadiness, readinessHint } from '../core/code-graph-readiness.ts';
 
 /** A bad/invalid `.gbrain-source` pin or GBRAIN_SOURCE value surfaces from
  * `resolveSourceWithTier`'s `assertSourceExists` as a plain Error with one of
@@ -134,9 +135,16 @@ export async function runCodeCallers(engine: BrainEngine, args: string[]): Promi
     const scope = allSources ? 'all' : 'single';
     const envelopeSourceId = allSources ? null : (sourceId ?? null);
 
+    // Call-graph readiness ('edge' grain): distinguishes "graph not built / still
+    // indexing" from "genuinely no callers" when count === 0.
+    const readiness = await resolveCodeReadiness(engine, {
+      kind: 'edge', count: edges.length, sourceId: sourceId ?? undefined, allSources,
+    });
+
     if (shouldEmitJson(args)) {
       const out: Record<string, unknown> = {
-        symbol: sym, source_id: envelopeSourceId, scope, count: edges.length, callers: edges,
+        symbol: sym, source_id: envelopeSourceId, scope, count: edges.length,
+        status: readiness.status, ready: readiness.ready, callers: edges,
       };
       if (edges.length === 0 && !allSources && sourceId) {
         out.hint = `No callers in source '${sourceId}'. Try --all-sources to search every source.`;
@@ -148,6 +156,8 @@ export async function runCodeCallers(engine: BrainEngine, args: string[]): Promi
       } else {
         console.log(`No callers found for "${sym}".`);
       }
+      const hint = readinessHint(readiness);
+      if (hint) console.log(hint);
     } else {
       console.log(`${edges.length} caller(s) for "${sym}":`);
       for (const e of edges) {
