@@ -289,7 +289,10 @@ CREATE INDEX IF NOT EXISTS idx_links_origin ON links(origin_page_id);
 -- Including link_source / origin_page_id / etc. in the view would couple
 -- the alias to columns that didn't exist in pre-v0.13 brains AND would
 -- block ALTER TABLE DROP COLUMN on those columns during upgrades.
-CREATE OR REPLACE VIEW page_links AS
+-- security_invoker=true: the view enforces the querying role RLS on the links
+-- table instead of the owner, so it is not a "Security Definer View" (Supabase
+-- lint). Migration v116 applies the same option to existing brains.
+CREATE OR REPLACE VIEW page_links WITH (security_invoker = true) AS
   SELECT id, from_page_id, to_page_id FROM links;
 
 -- ============================================================

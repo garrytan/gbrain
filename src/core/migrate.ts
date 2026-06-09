@@ -5186,6 +5186,25 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 116,
+    name: 'page_links_view_security_invoker',
+    // Harden the v86 `page_links` alias view. v86 created it without
+    // `security_invoker`, so on Postgres the view runs with its OWNER's
+    // privileges (postgres) and bypasses the querying role's RLS on `links` —
+    // Supabase's linter flags this "Security Definer View" as Critical. Recreate
+    // it WITH (security_invoker = true) so it enforces the caller's RLS instead.
+    // CREATE OR REPLACE is idempotent and the projection is unchanged, so this
+    // is a no-op for the engine's own service-role JOINs. Supersedes the v86
+    // definition for both fresh and existing brains. PGLite (PG15+) accepts the
+    // option too (verified), so this runs unguarded on both engines. Keep in
+    // sync with src/core/pglite-schema.ts.
+    idempotent: true,
+    sql: `
+      CREATE OR REPLACE VIEW page_links WITH (security_invoker = true) AS
+        SELECT id, from_page_id, to_page_id FROM links;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

@@ -67,6 +67,23 @@ race-safety (a concurrent edit advances `updated_at` to now() > versionTs, still
 > the floored stamp, so it re-extracts). Validated on the live brain: stale count
 956 → 0, `links_extraction_lag` flips to OK (0/991). Done in this branch.
 
+### 6. `page_links` view is SECURITY DEFINER (Supabase Critical lint)
+Migration v86 (`page_links_view_alias`) creates `CREATE OR REPLACE VIEW
+page_links AS SELECT id, from_page_id, to_page_id FROM links` with NO
+`security_invoker` option, and gbrain sets `security_invoker` on zero views
+anywhere in src. On Postgres the view then runs with its OWNER's privileges and
+bypasses the querying role's RLS on `links` — Supabase's linter flags it
+"Security Definer View / Critical". Not drift and not un-applied DDL: the live
+view matches the source byte-for-byte; the source itself is missing the option,
+so every gbrain-on-Postgres brain hits it. gbrain's own engine queries run as
+the service role (RLS-exempt) so functionality is unaffected, but a restricted
+role could read link edges past RLS. Fix: recreate the view `WITH
+(security_invoker = true)` (PG15+; verified PGLite accepts it too). Added
+migration v116 (`page_links_view_security_invoker`, idempotent CREATE OR REPLACE,
+runs on both engines — fixes existing brains and supersedes v86) and the same
+option in `pglite-schema.ts` for fresh PGLite bootstrap. Live brain patched
+out-of-band (`reloptions = {security_invoker=true}`).
+
 ## Partially addressed — doctor message fixed, index feature deferred
 
 ### 4. `embedding_column_registry` recommended an impossible index DDL (message fixed; index work deferred)
