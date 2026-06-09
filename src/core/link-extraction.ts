@@ -13,6 +13,7 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { PageType } from './types.ts';
+import { slugifyPath } from './sync.ts';
 
 /**
  * v0.42.7 — link-extraction version stamp. Bump this ISO timestamp whenever the
@@ -79,12 +80,15 @@ const ENTITY_REF_RE = new RegExp(
  * Match Obsidian-style `[[path]]` or `[[path|Display Text]]` wikilinks.
  * Captures: slug (dir/...), displayName (optional).
  *
- * Same dir whitelist as ENTITY_REF_RE. Strips trailing `.md`, strips section
- * anchors (`#heading`), skips external URLs. Wiki KBs use this format almost
- * exclusively so missing it leaves the graph empty.
+ * Generalized (v0.42+): supports arbitrary/custom wiki directory structures
+ * (e.g. llm-wiki/entities/, _meta/, daily/...) in addition to canonical entity
+ * dirs. Requires at least one '/' so bare [[Page]] (same-dir) can be handled
+ * by context-aware callers if needed. Strips trailing `.md`, anchors, skips URLs.
+ * Then slugifyPath() is applied so "AI 3.0" or "Some Page Name" become canonical
+ * slugs matching FS-imported page slugs. Fixes #1964 cross-dir wikilink resolution.
  */
 const WIKILINK_RE = new RegExp(
-  `\\[\\[(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+  `\\[\\[([^|\\]#]+?/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
 
@@ -101,7 +105,7 @@ const WIKILINK_RE = new RegExp(
  * anyway, but the two-pass approach keeps intent crystal-clear).
  */
 const QUALIFIED_WIKILINK_RE = new RegExp(
-  `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+  `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):([^|\\]#]+?/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
 
@@ -270,6 +274,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
     if (!slug) continue;
     if (slug.includes('://')) continue;
     if (slug.endsWith('.md')) slug = slug.slice(0, -3);
+    slug = slugifyPath(slug);
     const displayName = (match[3] || slug).trim();
     const dir = slug.split('/')[0];
     refs.push({ name: displayName, slug, dir, sourceId });
@@ -285,6 +290,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
     if (!slug) continue;
     if (slug.includes('://')) continue;
     if (slug.endsWith('.md')) slug = slug.slice(0, -3);
+    slug = slugifyPath(slug);
     const displayName = (match[2] || slug).trim();
     const dir = slug.split('/')[0];
     refs.push({ name: displayName, slug, dir });

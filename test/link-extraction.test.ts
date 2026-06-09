@@ -109,6 +109,23 @@ describe('extractEntityRefs', () => {
     expect(refs.length).toBe(1);
     expect(refs[0].dir).toBe('meetings');
   });
+
+  // Regression for #1964: Obsidian wikilinks use original filename (spaces, MixedCase)
+  // and custom directory structures (e.g. llm-wiki/...) while pages are stored under
+  // slugified paths from slugifyPath. extractEntityRefs must capture them and
+  // return canonical slug so extract links / backlinks / graph / orphans work.
+  test('slugifies wikilink targets with spaces/MixedCase and supports cross-dir custom prefixes (#1964)', () => {
+    const refs = extractEntityRefs('See [[llm-wiki/entities/AI 3.0]] and [[llm-wiki/_meta/Books By Domain]] for context.');
+    expect(refs.length).toBeGreaterThanOrEqual(2);
+    expect(refs.some(r => r.slug === 'llm-wiki/entities/ai-3.0' && r.dir === 'llm-wiki')).toBe(true);
+    expect(refs.some(r => r.slug === 'llm-wiki/_meta/books-by-domain' && r.dir === 'llm-wiki')).toBe(true);
+  });
+
+  test('slugifies wikilink with |display and .md suffix', () => {
+    const refs = extractEntityRefs('[[entities/Some Page Name.md|Display Text]]');
+    expect(refs.length).toBe(1);
+    expect(refs[0]).toEqual({ name: 'Display Text', slug: 'entities/some-page-name', dir: 'entities' });
+  });
 });
 
 // ─── extractPageLinks ──────────────────────────────────────────
