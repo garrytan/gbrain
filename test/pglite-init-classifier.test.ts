@@ -35,6 +35,24 @@ describe('classifyPgliteInitError', () => {
     expect(classifyPgliteInitError(msg)).toBe('macos-26-3');
   });
 
+  test('windows path/shell verdict for #2008 NativeCommandError + WASM red herring', () => {
+    const msg = `bun :
+At line:1 char:31
++ ... C:\\Users\\quote-test'\\.gbrain"; bun run src/cli.ts apply-migrations --yes
++                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+Phase A (schema) failed: PGLite failed to initialize its WASM runtime.
+Original error: Aborted(). Build with -sASSERTIONS for more info.`;
+    expect(classifyPgliteInitError(msg, 'win32')).toBe('windows-path-shell');
+  });
+
+  test('windows generic WASM failure does not get the apostrophe/path verdict', () => {
+    const msg = 'PGLite failed to initialize its WASM runtime. Original error: Aborted().';
+    expect(classifyPgliteInitError(msg, 'win32')).toBe('windows-pglite-unknown');
+  });
+
   test('unknown verdict for generic / unrecognized errors', () => {
     const msg = 'TypeError: cannot read property of undefined at PGlite.create';
     expect(classifyPgliteInitError(msg)).toBe('unknown');
@@ -80,8 +98,33 @@ describe('buildPgliteInitErrorMessage — hint routing', () => {
     expect(msg).toContain(original);
   });
 
+  test('windows path/shell verdict names #2008 and does not blame macOS', () => {
+    const msg = buildPgliteInitErrorMessage(
+      'windows-path-shell',
+      'NativeCommandError followed by Aborted() from PGLite',
+    );
+    expect(msg).toContain('Windows');
+    expect(msg).toContain('apostrophe');
+    expect(msg).toContain('issues/2008');
+    expect(msg).not.toContain('macOS 26.3');
+    expect(msg).not.toContain('issues/223');
+  });
+
+  test('windows generic verdict avoids macOS and avoids apostrophe-specific advice', () => {
+    const msg = buildPgliteInitErrorMessage(
+      'windows-pglite-unknown',
+      'PGLite failed to initialize its WASM runtime. Original error: Aborted().',
+    );
+    expect(msg).toContain('Windows');
+    expect(msg).toContain('gbrain doctor');
+    expect(msg).not.toContain('macOS 26.3');
+    expect(msg).not.toContain('issues/223');
+    expect(msg).not.toContain('apostrophe');
+    expect(msg).not.toContain('C:\\gbrain');
+  });
+
   test('all verdicts produce the canonical header line', () => {
-    for (const v of ['bunfs', 'macos-26-3', 'unknown'] as const) {
+    for (const v of ['bunfs', 'macos-26-3', 'windows-path-shell', 'windows-pglite-unknown', 'unknown'] as const) {
       const msg = buildPgliteInitErrorMessage(v, original);
       expect(msg.startsWith('PGLite failed to initialize its WASM runtime.')).toBe(true);
     }
