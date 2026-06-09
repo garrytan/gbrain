@@ -52,3 +52,43 @@ export function assertValidSourceId(s: unknown): asserts s is string {
     );
   }
 }
+
+/**
+ * Normalize the optional `source` field of an `/admin/api/register-client`
+ * request body into a write source_id.
+ *
+ * Mirrors the CLI's `--source` flag. Returns the literal `'default'` when the
+ * field is omitted (`undefined`/`null`) so every caller that doesn't send
+ * `source` keeps landing on source_id='default' (the pre-source HTTP
+ * register-client behavior). A present-but-invalid value throws (via
+ * `assertValidSourceId`) so the route can surface a structured 400 instead of
+ * failing at INSERT time.
+ */
+export function normalizeSourceInput(raw: unknown): string {
+  if (raw === undefined || raw === null) return 'default';
+  assertValidSourceId(raw);
+  return raw;
+}
+
+/**
+ * Normalize the optional `federatedRead` field of an
+ * `/admin/api/register-client` request body into a source_id array, or
+ * `undefined` when omitted.
+ *
+ * Mirrors the CLI's `--federated-read` flag. `undefined`/`null` → `undefined`
+ * so `registerClientManual` applies its own default (`[sourceId]`, a
+ * non-federated client whose read scope equals its write scope). A present
+ * value must be a non-empty array whose every element is a valid source_id;
+ * anything else throws for a structured 400.
+ */
+export function normalizeFederatedReadInput(raw: unknown): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new Error(
+      `Invalid federatedRead: ${JSON.stringify(raw)}. ` +
+      `Must be a non-empty array of source_ids.`,
+    );
+  }
+  for (const s of raw) assertValidSourceId(s);
+  return raw as string[];
+}
