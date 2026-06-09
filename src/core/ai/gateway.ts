@@ -49,6 +49,7 @@ import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
+import { abortableSleep, computeNextDelay } from '../retry.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 
 const MAX_CHARS = 8000;
@@ -1420,6 +1421,126 @@ export function __getShrinkStateForTests(recipeId: string): ShrinkEntry | undefi
   return entry ? { ...entry } : undefined;
 }
 
+const EMBED_RETRY_MAX_MS = 8_000;
+
+/**
+ * Node/undici transport error codes that are transient and worth retrying.
+ * These bypass the AI SDK's APICallError-based retry because they surface as
+ * a raw `TypeError: fetch failed` (no HTTP status), so the SDK never retries
+ * them. The standout is UNABLE_TO_VERIFY_LEAF_SIGNATURE: a flaky embedding
+ * relay intermittently serves an incomplete cert chain (leaf without the
+ * intermediate), which Node cannot complete (it does not AIA-fetch the
+ * missing intermediate). The rest are ordinary dropped-socket / timeout codes.
+ */
+const EMBED_TRANSPORT_RETRY_CODES = new Set([
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'CERT_HAS_EXPIRED',
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EPIPE',
+  'EAI_AGAIN',
+  'ENETUNREACH',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_SOCKET',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+]);
+
+/** Walk the error's `.cause` chain to find the first Node error `code`. */
+function transportErrorCode(err: unknown, depth = 0): string | undefined {
+  if (!err || typeof err !== 'object' || depth > 5) return undefined;
+  const code = (err as { code?: unknown }).code;
+  if (typeof code === 'string' && code.length > 0) return code;
+  return transportErrorCode((err as { cause?: unknown }).cause, depth + 1);
+}
+
+/** Short, log-safe label for an embed transport error (code, else name:msg). */
+function transportErrorLabel(err: unknown): string {
+  const code = transportErrorCode(err);
+  if (code) return code;
+  if (err instanceof Error) return `${err.name}: ${err.message.slice(0, 80)}`;
+  return String(err ?? 'unknown').slice(0, 80);
+}
+
+/**
+ * Is this a transport-level transient error worth an inline retry? TLS /
+ * connection / socket-timeout failures from undici fetch qualify. Errors that
+ * carry an HTTP status (4xx/5xx) are excluded: those ride the SDK retry +
+ * normalizeAIError classification, so retrying them here would double up.
+ */
+export function isRetryableEmbedTransportError(err: unknown): boolean {
+  const status =
+    (err as { status?: number })?.status ??
+    (err as { statusCode?: number })?.statusCode;
+  if (typeof status === 'number') return false;
+  const code = transportErrorCode(err);
+  if (code && EMBED_TRANSPORT_RETRY_CODES.has(code)) return true;
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return /unable to verify the first certificate|socket hang up|ECONNRESET|ETIMEDOUT|EAI_AGAIN|network socket/i.test(msg);
+}
+
+/** Retries (not counting the first attempt). Tunable; 0 disables. */
+function embedTransportMaxRetries(): number {
+  const raw = process.env.GBRAIN_EMBED_TRANSPORT_RETRIES;
+  if (raw === undefined || raw === '') return 2;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : 2;
+}
+
+/** Base backoff delay in ms (decorrelated jitter floor). Tunable for tests. */
+function embedRetryBaseMs(): number {
+  const raw = process.env.GBRAIN_EMBED_RETRY_BASE_MS;
+  if (raw === undefined || raw === '') return 500;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : 500;
+}
+
+/**
+ * Wrap the embed transport call with a bounded retry on transport-level
+ * transient errors (see isRetryableEmbedTransportError). Reuses the
+ * decorrelated backoff from ../retry.ts. Token-limit errors are NOT retried
+ * here (embedSubBatch halves the batch instead) and HTTP-status errors are
+ * left to the SDK + normalizeAIError. Observability: warns per retry and on
+ * give-up so a persistent upstream outage is visible, not silently swallowed.
+ *
+ * Why this exists: a flaky embedding relay intermittently served an incomplete
+ * TLS chain, failing the *synchronous* MCP put_page embed (no job queue behind
+ * it to retry later) with `unable to verify the first certificate`.
+ * Tunable via GBRAIN_EMBED_TRANSPORT_RETRIES (default 2 = 3 attempts).
+ */
+async function embedTransportWithRetry(
+  callArgs: Parameters<EmbedManyFn>[0],
+  ctx: { recipeId: string; modelId: string; signal?: AbortSignal },
+): Promise<Awaited<ReturnType<EmbedManyFn>>> {
+  const maxRetries = embedTransportMaxRetries();
+  const baseMs = embedRetryBaseMs();
+  let prevDelay = 0;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await _embedTransport(callArgs);
+    } catch (err) {
+      if (!isRetryableEmbedTransportError(err) || ctx.signal?.aborted) throw err;
+      if (attempt >= maxRetries) {
+        console.warn(
+          `[ai.gateway] embed transport gave up after ${attempt + 1} attempt(s) ` +
+          `for ${ctx.recipeId}:${ctx.modelId}: ${transportErrorLabel(err)}`,
+        );
+        throw err;
+      }
+      const delay = computeNextDelay(attempt, prevDelay, baseMs, EMBED_RETRY_MAX_MS, 'decorrelated');
+      prevDelay = delay;
+      console.warn(
+        `[ai.gateway] embed transport retry ${attempt + 1}/${maxRetries} ` +
+        `for ${ctx.recipeId}:${ctx.modelId} after ${transportErrorLabel(err)}; waiting ${delay}ms`,
+      );
+      await abortableSleep(delay, ctx.signal);
+    }
+  }
+}
+
 /**
  * Embed a single sub-batch with automatic halving on token-limit errors.
  * If the batch is already at MIN_SUB_BATCH and still fails, throws.
@@ -1434,16 +1555,19 @@ async function embedSubBatch(
   opts?: EmbedOpts,
 ): Promise<Float32Array[]> {
   try {
-    const result = await _embedTransport({
-      model,
-      values: texts,
-      providerOptions: providerOpts,
-      // v0.33.4: caller-supplied abortSignal + maxRetries passthrough.
-      // Undefined fields are ignored by the AI SDK so the call shape stays
-      // identical for production callers that don't opt in.
-      ...(opts?.abortSignal !== undefined && { abortSignal: opts.abortSignal }),
-      ...(opts?.maxRetries !== undefined && { maxRetries: opts.maxRetries }),
-    });
+    const result = await embedTransportWithRetry(
+      {
+        model,
+        values: texts,
+        providerOptions: providerOpts,
+        // v0.33.4: caller-supplied abortSignal + maxRetries passthrough.
+        // Undefined fields are ignored by the AI SDK so the call shape stays
+        // identical for production callers that don't opt in.
+        ...(opts?.abortSignal !== undefined && { abortSignal: opts.abortSignal }),
+        ...(opts?.maxRetries !== undefined && { maxRetries: opts.maxRetries }),
+      },
+      { recipeId: recipe.id, modelId, signal: opts?.abortSignal },
+    );
 
     if (!Array.isArray(result.embeddings) || result.embeddings.length !== texts.length) {
       throw new AIConfigError(
