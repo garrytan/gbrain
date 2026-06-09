@@ -1,6 +1,6 @@
-import { readdirSync, lstatSync, existsSync } from 'fs';
+import { readdirSync, lstatSync, existsSync, appendFileSync, mkdirSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { join, relative } from 'path';
+import { join, relative, dirname } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
@@ -39,6 +39,22 @@ export interface RunImportResult {
   errors: number;
   chunksCreated: number;
   failures: Array<{ path: string; error: string }>;
+}
+
+export interface ImportManifestRecord {
+  path: string;
+  source_id: string;
+  status: 'imported' | 'skipped' | 'error';
+  slug?: string;
+  chunks?: number;
+  error?: string;
+  duration_ms: number;
+}
+
+export function appendImportManifestRecord(path: string, record: ImportManifestRecord): void {
+  const dir = dirname(path);
+  if (dir && dir !== '.') mkdirSync(dir, { recursive: true });
+  appendFileSync(path, JSON.stringify(record) + '\n', 'utf-8');
 }
 
 export async function runImport(
@@ -145,6 +161,8 @@ export async function runImport(
   }
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
+  const manifestIdx = args.indexOf('--manifest');
+  const manifestPath = manifestIdx !== -1 ? args[manifestIdx + 1] : null;
   // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
   // (--workers 0, -3, "foo") with a loud error instead of silently falling
   // through to 1. Mirrors sync.ts's flag handling.
@@ -160,13 +178,18 @@ export async function runImport(
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
   if (sourceIdIdx !== -1) flagValues.add(sourceIdIdx + 1);
+  if (manifestIdx !== -1) flagValues.add(manifestIdx + 1);
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--json]');
+    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--manifest path.jsonl] [--json]');
     process.exit(1);
   }
   const dir: string = dirArg;  // narrowed; survives closure capture
+  if (manifestIdx !== -1 && !manifestPath) {
+    console.error('--manifest requires a path');
+    process.exit(1);
+  }
 
   // v0.31.2: collect under the right strategy. Pre-fix this called
   // collectMarkdownFiles unconditionally — code-strategy first sync
@@ -247,10 +270,31 @@ export async function runImport(
         imported++;
         chunksCreated += result.chunks;
         importedSlugs.push(result.slug);
+        if (manifestPath) {
+          appendImportManifestRecord(manifestPath, {
+            path: relativePath,
+            source_id: sourceId ?? 'default',
+            status: 'imported',
+            slug: result.slug,
+            chunks: result.chunks,
+            duration_ms: _fileMs,
+          });
+        }
         // v0.33.2: path-based checkpoint — record only on success.
         completed.add(relativePath);
       } else {
         skipped++;
+        if (manifestPath) {
+          appendImportManifestRecord(manifestPath, {
+            path: relativePath,
+            source_id: sourceId ?? 'default',
+            status: 'skipped',
+            slug: result.slug,
+            chunks: result.chunks,
+            error: result.error,
+            duration_ms: _fileMs,
+          });
+        }
         if (result.error && result.error !== 'unchanged') {
           console.error(`  Skipped ${relativePath}: ${result.error}`);
           // Bug 9 — non-"unchanged" skips carry a real error reason.
@@ -273,6 +317,15 @@ export async function runImport(
       errors++;
       skipped++;
       failures.push({ path: relativePath, error: msg });
+      if (manifestPath) {
+        appendImportManifestRecord(manifestPath, {
+          path: relativePath,
+          source_id: sourceId ?? 'default',
+          status: 'error',
+          error: msg,
+          duration_ms: Date.now() - _fileT0,
+        });
+      }
     }
     processed++;
     tickProgress();
