@@ -618,3 +618,27 @@ describe('audit-skill-brain-first (snapshot+diff)', () => {
     expect(name).toMatch(/^skill-brain-first-2026-W\d{2}\.jsonl$/);
   });
 });
+
+describe('parseSkillFrontmatter — CRLF tolerance', () => {
+  test('CRLF line endings (Windows checkouts) parse identically to LF', () => {
+    const content = [
+      '---',
+      'name: thing',
+      'mutating: true',
+      'writes_to:',
+      '  - people/',
+      '  - companies/',
+      'triggers:',
+      '  - do the thing',
+      '---',
+      '',
+      '# thing',
+    ].join('\r\n');
+    const fm = parseSkillFrontmatter(content);
+    expect(fm).not.toBeNull();
+    expect(fm!.name).toBe('thing');
+    expect(fm!.mutating).toBe(true);
+    expect(fm!.writes_to).toEqual(['people/', 'companies/']);
+    expect(fm!.triggers).toEqual(['do the thing']);
+  });
+});

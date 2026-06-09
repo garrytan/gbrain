@@ -417,3 +417,40 @@ function afterEachCleanup(fn: () => void) {
   afterEach(fn);
 }
 
+
+// ---------------------------------------------------------------------------
+// CRLF tolerance — Windows checkouts (core.autocrlf=true) produce CRLF
+// SKILL.md files; frontmatter + trigger extraction must parse them.
+// ---------------------------------------------------------------------------
+
+describe("CRLF tolerance — checkResolvable", () => {
+  test("CRLF SKILL.md frontmatter still yields reachable skill with triggers", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gbrain-crlf-"));
+    writeFileSync(
+      join(dir, "RESOLVER.md"),
+      `## Test\n| Trigger | Skill |\n|-----|-----|\n| "crlf-skill" | \`skills/crlf-skill/SKILL.md\` |\n`
+    );
+    writeFileSync(
+      join(dir, "manifest.json"),
+      JSON.stringify({ skills: [{ name: "crlf-skill", path: "crlf-skill/SKILL.md" }] }, null, 2)
+    );
+    mkdirSync(join(dir, "crlf-skill"), { recursive: true });
+    const skillMd = [
+      "---",
+      "name: crlf-skill",
+      "description: test",
+      "triggers:",
+      '  - "crlf-skill"',
+      "---",
+      "",
+      "# crlf-skill",
+      "",
+    ].join("\r\n");
+    writeFileSync(join(dir, "crlf-skill", "SKILL.md"), skillMd);
+    const report = checkResolvable(dir);
+    const skillIssues = report.issues.filter(i => i.skill === "crlf-skill");
+    expect(report.summary.unreachable).toBe(0);
+    expect(skillIssues.filter(i => i.type === "mece_gap")).toHaveLength(0);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
