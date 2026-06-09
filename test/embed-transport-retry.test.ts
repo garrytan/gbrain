@@ -21,6 +21,14 @@ import {
   resetGateway,
   __setEmbedTransportForTests,
 } from '../src/core/ai/gateway.ts';
+import { withEnv } from './helpers/with-env.ts';
+
+// Keep inter-attempt sleeps sub-millisecond so the retry tests stay fast;
+// pin the retry budget to the default by clearing any ambient override.
+const FAST_RETRY_ENV = {
+  GBRAIN_EMBED_RETRY_BASE_MS: '1',
+  GBRAIN_EMBED_TRANSPORT_RETRIES: undefined,
+} as const;
 
 /** The shape undici produces: TypeError('fetch failed') wrapping the OpenSSL cause. */
 function certChainError(): Error {
@@ -48,16 +56,11 @@ function configure() {
 
 beforeEach(() => {
   resetGateway();
-  // Keep inter-attempt sleeps sub-millisecond so the retry tests stay fast.
-  process.env.GBRAIN_EMBED_RETRY_BASE_MS = '1';
-  delete process.env.GBRAIN_EMBED_TRANSPORT_RETRIES;
 });
 
 afterEach(() => {
   __setEmbedTransportForTests(null);
   resetGateway();
-  delete process.env.GBRAIN_EMBED_RETRY_BASE_MS;
-  delete process.env.GBRAIN_EMBED_TRANSPORT_RETRIES;
 });
 
 describe('embed transport retry', () => {
@@ -70,7 +73,7 @@ describe('embed transport retry', () => {
       return okResult(values);
     });
 
-    const out = await embed(['hello']);
+    const out = await withEnv(FAST_RETRY_ENV, () => embed(['hello']));
     expect(out.length).toBe(1);
     expect(out[0].length).toBe(1536);
     expect(calls).toBe(3); // 2 failures + 1 success
@@ -84,12 +87,11 @@ describe('embed transport retry', () => {
       throw certChainError();
     });
 
-    await expect(embed(['hello'])).rejects.toThrow();
+    await expect(withEnv(FAST_RETRY_ENV, () => embed(['hello']))).rejects.toThrow();
     expect(calls).toBe(3); // default 2 retries = 3 attempts
   });
 
   test('honors GBRAIN_EMBED_TRANSPORT_RETRIES=0 (no retry)', async () => {
-    process.env.GBRAIN_EMBED_TRANSPORT_RETRIES = '0';
     configure();
     let calls = 0;
     __setEmbedTransportForTests(async () => {
@@ -97,7 +99,9 @@ describe('embed transport retry', () => {
       throw certChainError();
     });
 
-    await expect(embed(['hello'])).rejects.toThrow();
+    await expect(
+      withEnv({ ...FAST_RETRY_ENV, GBRAIN_EMBED_TRANSPORT_RETRIES: '0' }, () => embed(['hello'])),
+    ).rejects.toThrow();
     expect(calls).toBe(1);
   });
 

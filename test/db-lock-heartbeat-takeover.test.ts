@@ -15,6 +15,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { hostname } from 'os';
+import { withEnv } from './helpers/with-env.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   tryAcquireDbLock,
@@ -81,22 +82,16 @@ describe('resolveStealGraceSeconds', () => {
     expect(resolveStealGraceSeconds(1)).toBe(60);
   });
 
-  test('env override wins', () => {
-    process.env.GBRAIN_LOCK_STEAL_GRACE_SECONDS = '123';
-    try {
+  test('env override wins', async () => {
+    await withEnv({ GBRAIN_LOCK_STEAL_GRACE_SECONDS: '123' }, () => {
       expect(resolveStealGraceSeconds(30)).toBe(123);
-    } finally {
-      delete process.env.GBRAIN_LOCK_STEAL_GRACE_SECONDS;
-    }
+    });
   });
 
-  test('bad env override falls back to derived', () => {
-    process.env.GBRAIN_LOCK_STEAL_GRACE_SECONDS = 'nope';
-    try {
+  test('bad env override falls back to derived', async () => {
+    await withEnv({ GBRAIN_LOCK_STEAL_GRACE_SECONDS: 'nope' }, () => {
       expect(resolveStealGraceSeconds(30)).toBe(600);
-    } finally {
-      delete process.env.GBRAIN_LOCK_STEAL_GRACE_SECONDS;
-    }
+    });
   });
 });
 
