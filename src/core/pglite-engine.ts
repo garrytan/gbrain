@@ -170,9 +170,8 @@ export function classifyPgliteInitError(
 ): PgliteInitFailure {
   if (/\$\$bunfs|ENOENT[\s\S]*pglite\.data/i.test(message)) return 'bunfs';
   if (platform === 'win32') {
-    const hasShellEvidence = /NativeCommandError|FullyQualifiedErrorId\s*:\s*NativeCommandError|At line:\d+ char:\d+|CategoryInfo\s*:|PowerShell/i.test(message);
     const hasWindowsApostrophePath = /[A-Z]:\\[^\n\r]*'[^\n\r]*/i.test(message);
-    if (hasShellEvidence || hasWindowsApostrophePath) return 'windows-path-shell';
+    if (hasWindowsApostrophePath) return 'windows-path-shell';
     if (/abort.*runtime|wasm.*runtime|Aborted\(\)|Cannot find module ['"]?@electric-sql\/pglite/i.test(message)) {
       return 'windows-pglite-unknown';
     }
