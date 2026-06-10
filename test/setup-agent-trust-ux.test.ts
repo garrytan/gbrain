@@ -70,6 +70,7 @@ function expectNoSetupSideEffects() {
   expect(existsSync(join(tempHome, '.codex', 'AGENTS.md'))).toBe(false);
   expect(existsSync(join(tempHome, '.claude', 'settings.json'))).toBe(false);
   expect(existsSync(join(tempHome, '.claude', 'scripts', 'hooks', 'stop-mbrain-check.sh'))).toBe(false);
+  expect(existsSync(join(tempHome, '.claude', 'scripts', 'hooks', 'prompt-mbrain-context.sh'))).toBe(false);
   expect(existsSync(join(tempHome, '.claude', 'CLAUDE.md.mbrain.tmp'))).toBe(false);
   expect(existsSync(join(tempHome, '.codex', 'AGENTS.md.mbrain.tmp'))).toBe(false);
   expect(existsSync(join(tempHome, 'claude-mcp-add.log'))).toBe(false);
@@ -126,6 +127,11 @@ describe('setup-agent trust UX preview and diff', () => {
       }),
       expect.objectContaining({
         target_kind: 'claude_stop_hook',
+        status: 'create',
+        effects: expect.arrayContaining(['filesystem_write', 'chmod']),
+      }),
+      expect.objectContaining({
+        target_kind: 'claude_prompt_hook',
         status: 'create',
         effects: expect.arrayContaining(['filesystem_write', 'chmod']),
       }),
@@ -301,6 +307,7 @@ describe('setup-agent trust UX preview and diff', () => {
     expect(agentsMd).not.toContain('MBRAIN:RULES:START');
 
     expect(existsSync(join(tempHome, '.claude', 'scripts', 'hooks', 'stop-mbrain-check.sh'))).toBe(false);
+    expect(existsSync(join(tempHome, '.claude', 'scripts', 'hooks', 'prompt-mbrain-context.sh'))).toBe(false);
     expect(existsSync(join(tempHome, '.claude', 'scripts', 'hooks', 'lib', 'mbrain-relevance.sh'))).toBe(false);
     expect(readFileSync(skipDirsPath, 'utf-8')).toContain('/keep-this-user-path');
 
@@ -308,6 +315,7 @@ describe('setup-agent trust UX preview and diff', () => {
     expect(settings.permissions.defaultMode).toBe('default');
     expect(settings.hooks.Stop.find((entry: any) => entry.id === 'stop:mbrain-check')).toBeUndefined();
     expect(settings.hooks.Stop.find((entry: any) => entry.id === 'stop:other')).toBeDefined();
+    expect((settings.hooks.UserPromptSubmit ?? []).find((entry: any) => entry.id === 'prompt:mbrain-context')).toBeUndefined();
     expect(settings.hooks.PreToolUse[0].id).toBe('pre:keep');
 
     const second = await runSetupAgent(['--skip-mcp', '--uninstall', '--json']);
@@ -344,6 +352,7 @@ describe('setup-agent trust UX preview and diff', () => {
 
     const after = JSON.parse(readFileSync(settingsPath, 'utf-8'));
     expect(after.hooks.Stop[0].hooks[0].command).toBe('echo user-modified');
+    expect((after.hooks.UserPromptSubmit ?? []).find((entry: any) => entry.id === 'prompt:mbrain-context')).toBeUndefined();
   });
 
   test('setup-agent --uninstall preserves malformed managed prompt markers', async () => {

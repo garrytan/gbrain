@@ -3,6 +3,7 @@ import { dirname, join } from 'path';
 import { execSync } from 'child_process';
 import { VERSION } from '../version.ts';
 import {
+  CLAUDE_MBRAIN_PROMPT_HOOK,
   CLAUDE_MBRAIN_RELEVANCE_LIB,
   CLAUDE_MBRAIN_SKIP_DIRS,
   CLAUDE_MBRAIN_STOP_HOOK,
@@ -32,6 +33,7 @@ type SetupAgentUninstallResult = {
   rules: string;
   mcp_scope?: ClaudeMcpScope;
   claude_stop_hook?: string;
+  claude_prompt_hook?: string;
   claude_relevance_lib?: string;
   claude_skip_dirs?: string;
   claude_settings_hook?: string;
@@ -117,6 +119,7 @@ export async function runSetupAgent(args: string[]) {
           ? {
               mcp_scope: claudeMcpScope,
               claude_stop_hook_content: readOptionalFile(join(client.configDir, 'scripts', 'hooks', 'stop-mbrain-check.sh')),
+              claude_prompt_hook_content: readOptionalFile(join(client.configDir, 'scripts', 'hooks', 'prompt-mbrain-context.sh')),
               claude_relevance_lib_content: readOptionalFile(join(client.configDir, 'scripts', 'hooks', 'lib', 'mbrain-relevance.sh')),
               claude_skip_dirs_content: readOptionalFile(join(client.configDir, 'mbrain-skip-dirs')),
               claude_settings_content: readOptionalFile(join(client.configDir, 'settings.json')),
@@ -125,6 +128,7 @@ export async function runSetupAgent(args: string[]) {
           : {}),
       })),
       expected_claude_stop_hook: CLAUDE_MBRAIN_STOP_HOOK,
+      expected_claude_prompt_hook: CLAUDE_MBRAIN_PROMPT_HOOK,
       expected_claude_relevance_lib: CLAUDE_MBRAIN_RELEVANCE_LIB,
       expected_claude_skip_dirs: CLAUDE_MBRAIN_SKIP_DIRS,
     });
@@ -146,7 +150,7 @@ export async function runSetupAgent(args: string[]) {
           : 'not_registered';
       const rulesStatus = removeRules(client);
       const claudeStatus = client.name === 'claude'
-        ? uninstallClaudeStopHook(client.configDir)
+        ? uninstallClaudeHooks(client.configDir)
         : {};
 
       return {
@@ -185,6 +189,7 @@ export async function runSetupAgent(args: string[]) {
         console.log(`    Rules: ${r.rules}`);
         if (r.client === 'claude') {
           console.log(`    Claude stop hook: ${r.claude_stop_hook}`);
+          console.log(`    Claude prompt hook: ${r.claude_prompt_hook}`);
           console.log(`    Claude relevance lib: ${r.claude_relevance_lib}`);
           console.log(`    Claude skip dirs: ${r.claude_skip_dirs}`);
           console.log(`    Claude settings hook: ${r.claude_settings_hook}`);
@@ -215,7 +220,7 @@ export async function runSetupAgent(args: string[]) {
     const rulesStatus = injectRules(client, rulesContent);
 
     if (client.name === 'claude') {
-      installClaudeStopHook(client.configDir);
+      installClaudeHooks(client.configDir);
     }
 
     results.push({
@@ -258,10 +263,10 @@ export async function runSetupAgent(args: string[]) {
     }
     const configuredClaude = results.some(r => r.client === 'claude');
     if (configuredClaude) {
-      console.log('\nClaude Code MBrain memory check:');
-      console.log('  This installs a Stop hook that may appear under Claude Code as "Stop hook error".');
-      console.log('  That label is Claude Code UI wording; the MBrain hook is a memory reminder, not a crash.');
-      console.log('  Disable for a session: MBRAIN_STOP_HOOK=0 claude');
+      console.log('\nClaude Code MBrain hooks:');
+      console.log('  UserPromptSubmit injects a short MBrain retrieval/writeback note as silent context on each prompt.');
+      console.log('  The Stop hook is non-blocking by default; restore the blocking memory gate with MBRAIN_STOP_HOOK_MODE=block.');
+      console.log('  Disable for a session: MBRAIN_PROMPT_HOOK=0 (prompt note) or MBRAIN_STOP_HOOK=0 (stop check)');
       console.log('  Skip directories: add absolute paths to ~/.claude/mbrain-skip-dirs');
     }
     console.log('\nDone. Start a new session in your AI client to activate the rules.');
@@ -471,36 +476,46 @@ function normalizeRemovedRulesContent(before: string, after: string): string {
   return joined.replace(/\n{3,}/g, '\n\n');
 }
 
-function installClaudeStopHook(claudeDir: string): void {
-  const hookPath = join(claudeDir, 'scripts', 'hooks', 'stop-mbrain-check.sh');
+function installClaudeHooks(claudeDir: string): void {
+  const stopHookPath = join(claudeDir, 'scripts', 'hooks', 'stop-mbrain-check.sh');
+  const promptHookPath = join(claudeDir, 'scripts', 'hooks', 'prompt-mbrain-context.sh');
   const libPath = join(claudeDir, 'scripts', 'hooks', 'lib', 'mbrain-relevance.sh');
   const skipDirsPath = join(claudeDir, 'mbrain-skip-dirs');
   const settingsPath = join(claudeDir, 'settings.json');
   const legacyHooksJsonPath = join(claudeDir, 'hooks', 'hooks.json');
 
-  atomicWrite(hookPath, CLAUDE_MBRAIN_STOP_HOOK);
-  chmodSync(hookPath, 0o755);
+  atomicWrite(stopHookPath, CLAUDE_MBRAIN_STOP_HOOK);
+  chmodSync(stopHookPath, 0o755);
+
+  atomicWrite(promptHookPath, CLAUDE_MBRAIN_PROMPT_HOOK);
+  chmodSync(promptHookPath, 0o755);
 
   atomicWrite(libPath, CLAUDE_MBRAIN_RELEVANCE_LIB);
-  atomicWrite(skipDirsPath, CLAUDE_MBRAIN_SKIP_DIRS);
 
-  upsertClaudeStopHook(settingsPath);
+  // The skip-dirs file is user-editable; never clobber entries on re-run.
+  if (!existsSync(skipDirsPath)) {
+    atomicWrite(skipDirsPath, CLAUDE_MBRAIN_SKIP_DIRS);
+  }
+
+  upsertClaudeHookSettings(settingsPath);
   cleanupLegacyHooksJson(legacyHooksJsonPath);
 }
 
-function uninstallClaudeStopHook(claudeDir: string): Omit<SetupAgentUninstallResult, 'client' | 'mcp' | 'rules' | 'mcp_scope'> {
-  const hookPath = join(claudeDir, 'scripts', 'hooks', 'stop-mbrain-check.sh');
+function uninstallClaudeHooks(claudeDir: string): Omit<SetupAgentUninstallResult, 'client' | 'mcp' | 'rules' | 'mcp_scope'> {
+  const stopHookPath = join(claudeDir, 'scripts', 'hooks', 'stop-mbrain-check.sh');
+  const promptHookPath = join(claudeDir, 'scripts', 'hooks', 'prompt-mbrain-context.sh');
   const libPath = join(claudeDir, 'scripts', 'hooks', 'lib', 'mbrain-relevance.sh');
   const skipDirsPath = join(claudeDir, 'mbrain-skip-dirs');
   const settingsPath = join(claudeDir, 'settings.json');
   const legacyHooksJsonPath = join(claudeDir, 'hooks', 'hooks.json');
 
   return {
-    claude_stop_hook: removeManagedFile(hookPath, CLAUDE_MBRAIN_STOP_HOOK),
+    claude_stop_hook: removeManagedFile(stopHookPath, CLAUDE_MBRAIN_STOP_HOOK),
+    claude_prompt_hook: removeManagedFile(promptHookPath, CLAUDE_MBRAIN_PROMPT_HOOK),
     claude_relevance_lib: removeManagedFile(libPath, CLAUDE_MBRAIN_RELEVANCE_LIB),
     claude_skip_dirs: removeManagedFile(skipDirsPath, CLAUDE_MBRAIN_SKIP_DIRS),
-    claude_settings_hook: removeClaudeStopHookFromSettings(settingsPath),
-    claude_legacy_hook: removeClaudeStopHookFromSettings(legacyHooksJsonPath),
+    claude_settings_hook: removeClaudeHooksFromSettings(settingsPath),
+    claude_legacy_hook: removeClaudeHooksFromSettings(legacyHooksJsonPath),
   };
 }
 
@@ -512,27 +527,70 @@ function removeManagedFile(path: string, expectedContent: string): string {
   return 'removed';
 }
 
-function upsertClaudeStopHook(settingsPath: string): void {
-  const stopHookEntry = {
-    matcher: '*',
-    hooks: [{
-      type: 'command',
-      command: 'bash "$HOME/.claude/scripts/hooks/stop-mbrain-check.sh"',
-      timeout: 5,
-    }],
-    description: 'Ask agent to write session knowledge back to mbrain.',
-    id: 'stop:mbrain-check',
-  };
+const CLAUDE_MANAGED_HOOK_ENTRIES = [
+  {
+    event: 'Stop',
+    entry: {
+      matcher: '*',
+      hooks: [{
+        type: 'command',
+        command: 'bash "$HOME/.claude/scripts/hooks/stop-mbrain-check.sh"',
+        timeout: 5,
+      }],
+      description: 'MBrain session memory check (non-blocking by default).',
+      id: 'stop:mbrain-check',
+    },
+  },
+  {
+    event: 'UserPromptSubmit',
+    entry: {
+      matcher: '*',
+      hooks: [{
+        type: 'command',
+        command: 'bash "$HOME/.claude/scripts/hooks/prompt-mbrain-context.sh"',
+        timeout: 5,
+      }],
+      description: 'Inject MBrain retrieval/writeback guidance as silent context.',
+      id: 'prompt:mbrain-context',
+    },
+  },
+] as const;
 
-  const base: Record<string, unknown> = existsSync(settingsPath)
-    ? parseJsonOrEmpty(settingsPath)
-    : {};
+function upsertClaudeHookSettings(settingsPath: string): void {
+  // Never overwrite a settings.json we cannot faithfully round-trip: a parse
+  // failure here used to silently replace the whole file with just our hooks.
+  let base: Record<string, unknown> = {};
+  if (existsSync(settingsPath)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    } catch {
+      console.error(`Warning: ${settingsPath} is not valid JSON; left untouched. Fix it and rerun mbrain setup-agent --apply to register the MBrain hooks.`);
+      return;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      console.error(`Warning: ${settingsPath} is not a JSON object; left untouched. Fix it and rerun mbrain setup-agent --apply to register the MBrain hooks.`);
+      return;
+    }
+    base = parsed as Record<string, unknown>;
+  }
 
-  const hooks = typeof base.hooks === 'object' && base.hooks ? base.hooks as Record<string, unknown> : {};
-  const stop = Array.isArray(hooks.Stop) ? hooks.Stop as any[] : [];
-  const withoutExisting = stop.filter(entry => entry?.id !== 'stop:mbrain-check');
+  let hooks: Record<string, unknown>;
+  if (base.hooks === undefined) {
+    hooks = {};
+  } else if (typeof base.hooks === 'object' && base.hooks && !Array.isArray(base.hooks)) {
+    hooks = base.hooks as Record<string, unknown>;
+  } else {
+    console.error(`Warning: "hooks" in ${settingsPath} is not an object; left untouched. Fix it and rerun mbrain setup-agent --apply to register the MBrain hooks.`);
+    return;
+  }
 
-  hooks.Stop = [...withoutExisting, stopHookEntry];
+  for (const { event, entry } of CLAUDE_MANAGED_HOOK_ENTRIES) {
+    const existing = Array.isArray(hooks[event]) ? hooks[event] as any[] : [];
+    const withoutExisting = existing.filter(e => e?.id !== entry.id);
+    hooks[event] = [...withoutExisting, entry];
+  }
+
   base.hooks = hooks;
 
   atomicWrite(settingsPath, JSON.stringify(base, null, 2) + '\n');
@@ -558,36 +616,45 @@ function cleanupLegacyHooksJson(legacyPath: string): void {
   atomicWrite(legacyPath, JSON.stringify(parsed, null, 2) + '\n');
 }
 
-function removeClaudeStopHookFromSettings(settingsPath: string): string {
+function removeClaudeHooksFromSettings(settingsPath: string): string {
   if (!existsSync(settingsPath)) return 'absent';
 
   const parsed = parseJsonOrEmpty(settingsPath) as { hooks?: Record<string, unknown> };
   const hooks = parsed.hooks;
   if (!hooks || typeof hooks !== 'object') return 'absent';
 
-  const stop = Array.isArray(hooks.Stop) ? hooks.Stop as any[] : null;
-  if (!stop) return 'absent';
+  let removed = false;
+  let preservedModified = false;
 
-  const managedEntries = stop.filter(isManagedClaudeStopHookEntry);
-  const modifiedMbrainEntries = stop.filter(entry => entry?.id === 'stop:mbrain-check' && !isManagedClaudeStopHookEntry(entry));
-  if (managedEntries.length === 0) {
-    return modifiedMbrainEntries.length > 0 ? 'preserved_modified' : 'absent';
+  for (const { event, entry } of CLAUDE_MANAGED_HOOK_ENTRIES) {
+    const existing = Array.isArray(hooks[event]) ? hooks[event] as any[] : null;
+    if (!existing) continue;
+
+    const managedEntries = existing.filter(e => isManagedClaudeHookEntry(e, entry));
+    const modifiedMbrainEntries = existing.filter(e => e?.id === entry.id && !isManagedClaudeHookEntry(e, entry));
+    if (modifiedMbrainEntries.length > 0) preservedModified = true;
+    if (managedEntries.length === 0) continue;
+
+    hooks[event] = existing.filter(e => !isManagedClaudeHookEntry(e, entry));
+    removed = true;
   }
 
-  const filtered = stop.filter(entry => !isManagedClaudeStopHookEntry(entry));
-  hooks.Stop = filtered;
-  atomicWrite(settingsPath, JSON.stringify(parsed, null, 2) + '\n');
-  return 'removed';
+  if (removed) {
+    atomicWrite(settingsPath, JSON.stringify(parsed, null, 2) + '\n');
+  }
+  if (preservedModified) return 'preserved_modified';
+  return removed ? 'removed' : 'absent';
 }
 
-function isManagedClaudeStopHookEntry(entry: any): boolean {
-  return entry?.id === 'stop:mbrain-check'
-    && entry?.matcher === '*'
-    && entry?.description === 'Ask agent to write session knowledge back to mbrain.'
-    && Array.isArray(entry?.hooks)
-    && entry.hooks.length === 1
-    && entry.hooks[0]?.type === 'command'
-    && entry.hooks[0]?.command === 'bash "$HOME/.claude/scripts/hooks/stop-mbrain-check.sh"';
+function isManagedClaudeHookEntry(candidate: any, managed: { id: string; hooks: readonly { command: string }[] }): boolean {
+  // Match on identity and command only: description copy may differ across
+  // mbrain versions, and uninstall should still remove our own entry.
+  return candidate?.id === managed.id
+    && candidate?.matcher === '*'
+    && Array.isArray(candidate?.hooks)
+    && candidate.hooks.length === 1
+    && candidate.hooks[0]?.type === 'command'
+    && candidate.hooks[0]?.command === managed.hooks[0].command;
 }
 
 function uninstallResultChanged(result: SetupAgentUninstallResult): boolean {

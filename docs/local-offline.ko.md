@@ -440,7 +440,7 @@ apply 명령은:
 1. 설치된 AI 클라이언트를 **자동 감지**합니다 (`~/.claude/` 및/또는 `~/.codex/`)
 2. 감지된 클라이언트에 MCP 서버를 **등록**합니다 (이미 등록된 경우 건너뜀)
 3. 각 클라이언트의 글로벌 설정에 MBrain 에이전트 규칙을 **주입**합니다
-4. Claude Code의 세션 종료 시 durable signal을 assertion pipeline으로 라우팅하라고 상기시키는 Stop hook을 **설치**합니다
+4. Claude Code hook을 **설치**합니다: 매 프롬프트마다 MBrain 검색/writeback 안내를 조용히 컨텍스트로 주입하는 UserPromptSubmit hook과, 세션 종료 memory gate용 Stop hook(기본 non-blocking)
 
 에이전트 규칙은 brain-agent loop을 가르칩니다: MBrain이 관련 있을 때 먼저 읽고, durable signal은 `route_memory_writeback`과 assertion pipeline을 통해 라우팅하며, eligible write는 governed canonical memory가 되고 모호한 것은 review candidate로 남깁니다. 순수 코드 편집, git 작업, 파일 관리, 공개 라이브러리 문서 확인, 일반 프로그래밍처럼 저장할 지식이 없는 작업은 MBrain 쓰기를 건너뛰도록 안내합니다.
 
@@ -481,19 +481,27 @@ Claude Code 등록은 기본적으로 user scope를 사용합니다. 현재 Clau
 
 Claude Code의 경우 `setup-agent`는 추가로 아래 항목도 설치합니다:
 
+- `~/.claude/scripts/hooks/prompt-mbrain-context.sh`
 - `~/.claude/scripts/hooks/stop-mbrain-check.sh`
 - `~/.claude/scripts/hooks/lib/mbrain-relevance.sh`
-- `~/.claude/mbrain-skip-dirs`
-- `~/.claude/settings.json`의 Stop hook 엔트리 `stop:mbrain-check`
+- `~/.claude/mbrain-skip-dirs` (없을 때만 생성; 사용자가 추가한 항목은 보존)
+- `~/.claude/settings.json`의 hook 엔트리 `prompt:mbrain-context`(UserPromptSubmit)와 `stop:mbrain-check`(Stop)
 
-이 Stop hook은 세션 종료 시 한 번 실행되어, eligible session이면 Claude Code가 durable signal을 governed assertion/canonical policy pipeline으로 라우팅하거나 `MBRAIN-PASS: <reason>`로 명시적으로 건너뛰도록 요구합니다.
+UserPromptSubmit hook은 매 프롬프트마다 짧은 MBrain 노트를 `additionalContext`로 주입합니다: 사람·회사·프로젝트·미팅·개념·내부 시스템·과거 결정에 대한 요청은 MBrain을 먼저 확인하고(`retrieve_context` 후 `read_context`), 턴이 끝나기 전에 durable한 새 지식을 `route_memory_writeback`으로 라우팅하라는 내용입니다. 이는 조용한 컨텍스트 주입이라 UI에 아무것도 추가로 표시되지 않고 강제 응답도 없습니다.
 
-Stop hook이 응답을 막을 때 Claude Code는 이 메시지를 `Stop hook error` 접두어 아래에 표시할 수 있습니다. 이 경우 MBrain hook이 크래시 난 것이 아니라, 한 줄 reason으로 설치된 MBrain agent rules를 적용하라고 상기시키는 것입니다. 에이전트는 저장할 만한 durable signal이 있을 때만 라우팅하고, 모호한 것은 daily memory report에서 검토할 candidate로 남기며, 저장할 내용이 없으면 정확히 `MBRAIN-PASS: <short reason>`라고 응답하면 됩니다.
-
-Claude 세션 하나에서만 이 알림을 끄려면:
+Stop hook은 기본적으로 non-blocking이며 로그만 남깁니다. memory를 라우팅하거나 에이전트가 `MBRAIN-PASS: <reason>`로 응답할 때까지 세션 종료를 막는 기존의 하드 게이트를 원하면 세션 단위로 opt-in 하세요:
 
 ```bash
-MBRAIN_STOP_HOOK=0 claude
+MBRAIN_STOP_HOOK_MODE=block claude
+```
+
+block 모드에서는 Claude Code가 이 리마인더를 `Stop hook error` 접두어 아래에 표시하는데, 이는 UI 문구일 뿐 크래시가 아닙니다.
+
+Claude 세션 하나에서만 hook을 끄려면:
+
+```bash
+MBRAIN_PROMPT_HOOK=0 claude   # 프롬프트별 컨텍스트 노트 끄기
+MBRAIN_STOP_HOOK=0 claude     # stop hook memory check 끄기
 ```
 
 특정 작업 디렉터리에서 끄려면 절대 경로를 `~/.claude/mbrain-skip-dirs`에 추가하세요.

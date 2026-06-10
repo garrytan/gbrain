@@ -458,7 +458,7 @@ The apply command:
 1. **Detects** which AI clients are installed (`~/.claude/` and/or `~/.codex/`)
 2. **Registers** the MCP server with each detected client (if not already registered)
 3. **Injects** the MBrain agent rules into each client's global config
-4. **Installs** the Claude Code Stop hook that reminds agents to route durable signals through the assertion pipeline
+4. **Installs** the Claude Code hooks: a UserPromptSubmit hook that silently injects MBrain retrieval/writeback guidance as context on each prompt, and a Stop hook (non-blocking by default) for the optional end-of-session memory gate
 
 The agent rules teach your AI client the brain-agent loop: read brain when MBrain is relevant, route durable signals through `route_memory_writeback` and the assertion pipeline, let eligible writes become governed canonical memory, and leave ambiguous cases as review candidates. They also tell the agent to skip MBrain for purely code editing, git operations, file management, public library docs, or general programming when no durable knowledge was learned.
 
@@ -499,22 +499,30 @@ markers so user content outside the managed MBrain block is preserved. Running
 
 For Claude Code, `setup-agent` also installs:
 
+- `~/.claude/scripts/hooks/prompt-mbrain-context.sh`
 - `~/.claude/scripts/hooks/stop-mbrain-check.sh`
 - `~/.claude/scripts/hooks/lib/mbrain-relevance.sh`
-- `~/.claude/mbrain-skip-dirs`
-- `~/.claude/settings.json` Stop hook entry `stop:mbrain-check`
+- `~/.claude/mbrain-skip-dirs` (created only if missing; user entries are preserved)
+- `~/.claude/settings.json` hook entries `prompt:mbrain-context` (UserPromptSubmit) and `stop:mbrain-check` (Stop)
 
-The Stop hook runs once at session end, blocks once for eligible sessions, and asks Claude Code to either route durable signals through the governed assertion/canonical policy pipeline or respond with `MBRAIN-PASS: <reason>`.
+The UserPromptSubmit hook injects a short MBrain note as `additionalContext` on each prompt: consult MBrain first for requests about named people, companies, projects, meetings, concepts, internal systems, or prior decisions (`retrieve_context` then `read_context`), and route durable new knowledge through `route_memory_writeback` before the turn ends. This is silent context injection — nothing extra is rendered in the UI and no reply is forced.
 
-When the Stop hook blocks a response, Claude Code may display the message under a `Stop hook error` prefix. In this case, the MBrain hook is not crashing; its one-line reason is a reminder to apply the installed MBrain agent rules, route only durable signals when appropriate, review ambiguous candidates later through the daily memory report, or respond exactly `MBRAIN-PASS: <short reason>`.
-
-To disable the reminder for one Claude session:
+The Stop hook is non-blocking by default and only logs. If you want the legacy hard gate that blocks session end until memory is routed (or the agent replies `MBRAIN-PASS: <reason>`), opt in per session:
 
 ```bash
-MBRAIN_STOP_HOOK=0 claude
+MBRAIN_STOP_HOOK_MODE=block claude
 ```
 
-To disable it for specific working directories, add absolute paths to `~/.claude/mbrain-skip-dirs`.
+In block mode Claude Code displays the reminder under a `Stop hook error` prefix; that is UI wording, not a crash.
+
+To disable the hooks for one Claude session:
+
+```bash
+MBRAIN_PROMPT_HOOK=0 claude   # disable the per-prompt context note
+MBRAIN_STOP_HOOK=0 claude     # disable the stop-hook memory check
+```
+
+To disable them for specific working directories, add absolute paths to `~/.claude/mbrain-skip-dirs`.
 
 ### After setup
 

@@ -31,6 +31,7 @@ export interface InstalledAgentReadinessInput {
   codexPrompt: string | null;
   claudePrompt: string | null;
   claudeStopHook: string | null;
+  claudePromptHook?: string | null;
   codexMcpRegistration?: InstalledAgentMcpRegistration | null;
   claudeMcpRegistration?: InstalledAgentMcpRegistration | null;
   expectedRulesVersion: string;
@@ -127,6 +128,9 @@ export function buildInstalledAgentReadinessReport(
     claudePromptCheck,
     buildPromptCoverageCheck([codexPromptCheck, claudePromptCheck]),
     buildClaudeStopHookCheck(input.claudeStopHook),
+    ...(input.claudePromptHook === undefined
+      ? []
+      : [buildClaudePromptHookCheck(input.claudePromptHook)]),
   ];
 
   return {
@@ -164,6 +168,7 @@ export async function collectInstalledAgentReadiness({
     codexPrompt: readOptionalFile(join(home, '.codex', 'AGENTS.md')),
     claudePrompt: readOptionalFile(join(home, '.claude', 'CLAUDE.md')),
     claudeStopHook: readOptionalFile(join(home, '.claude', 'scripts', 'hooks', 'stop-mbrain-check.sh')),
+    claudePromptHook: readOptionalFile(join(home, '.claude', 'scripts', 'hooks', 'prompt-mbrain-context.sh')),
     codexMcpRegistration,
     claudeMcpRegistration,
     expectedRulesVersion,
@@ -442,6 +447,32 @@ function buildClaudeStopHookCheck(content: string | null): InstalledAgentCheck {
     name: 'claude_stop_hook',
     status: 'ok',
     message: 'Claude stop hook calls route_memory_writeback',
+  };
+}
+
+function buildClaudePromptHookCheck(content: string | null): InstalledAgentCheck {
+  // The stop hook is non-blocking by default, so per-prompt context injection
+  // is what carries MBrain retrieval/writeback guidance during sessions.
+  if (content === null) {
+    return {
+      name: 'claude_prompt_hook',
+      status: 'warn',
+      message: 'Claude prompt hook is absent; rerun mbrain setup-agent --apply to install per-prompt MBrain guidance',
+    };
+  }
+
+  if (!content.includes('retrieve_context') || !content.includes('route_memory_writeback')) {
+    return {
+      name: 'claude_prompt_hook',
+      status: 'fail',
+      message: 'Claude prompt hook does not inject MBrain retrieval/writeback guidance',
+    };
+  }
+
+  return {
+    name: 'claude_prompt_hook',
+    status: 'ok',
+    message: 'Claude prompt hook injects MBrain retrieval/writeback guidance',
   };
 }
 

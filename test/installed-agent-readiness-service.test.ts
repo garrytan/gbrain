@@ -73,6 +73,58 @@ describe('installed-agent readiness service', () => {
       .toContain('route_memory_writeback');
   });
 
+  test('warns when the Claude prompt hook is absent', () => {
+    const report = buildInstalledAgentReadinessReport({
+      command: 'mbrain',
+      commandPath: '/opt/homebrew/bin/mbrain',
+      commandVersion: 'mbrain 0.10.3',
+      tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
+      codexPrompt: rulesBlock,
+      claudePrompt: rulesBlock,
+      claudeStopHook: 'route_memory_writeback with sources',
+      claudePromptHook: null,
+      expectedRulesVersion: '0.5.7',
+    });
+
+    const check = report.checks.find((c) => c.name === 'claude_prompt_hook');
+    expect(check?.status).toBe('warn');
+    expect(check?.message).toContain('setup-agent');
+  });
+
+  test('reports the Claude prompt hook ok when it injects retrieval and writeback guidance', () => {
+    const report = buildInstalledAgentReadinessReport({
+      command: 'mbrain',
+      commandPath: '/opt/homebrew/bin/mbrain',
+      commandVersion: 'mbrain 0.10.3',
+      tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
+      codexPrompt: rulesBlock,
+      claudePrompt: rulesBlock,
+      claudeStopHook: 'route_memory_writeback with sources',
+      claudePromptHook: 'additionalContext retrieve_context read_context route_memory_writeback',
+      expectedRulesVersion: '0.5.7',
+    });
+
+    const check = report.checks.find((c) => c.name === 'claude_prompt_hook');
+    expect(check?.status).toBe('ok');
+  });
+
+  test('fails when the Claude prompt hook lacks retrieval guidance', () => {
+    const report = buildInstalledAgentReadinessReport({
+      command: 'mbrain',
+      commandPath: '/opt/homebrew/bin/mbrain',
+      commandVersion: 'mbrain 0.10.3',
+      tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
+      codexPrompt: rulesBlock,
+      claudePrompt: rulesBlock,
+      claudeStopHook: 'route_memory_writeback with sources',
+      claudePromptHook: '#!/bin/bash\nexit 0\n',
+      expectedRulesVersion: '0.5.7',
+    });
+
+    const check = report.checks.find((c) => c.name === 'claude_prompt_hook');
+    expect(check?.status).toBe('fail');
+  });
+
   test('fails when a detected agent has no MCP registration', () => {
     const report = buildInstalledAgentReadinessReport({
       command: 'mbrain',

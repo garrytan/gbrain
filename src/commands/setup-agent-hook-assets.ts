@@ -45,11 +45,7 @@ _mbrain_skip_dir_match() {
   return 1
 }
 
-mbrain_is_relevant() {
-  if [ "\${MBRAIN_STOP_HOOK:-1}" = "0" ]; then
-    return 1
-  fi
-
+_mbrain_gate_common() {
   local cwd="$(pwd)"
   local skipfile="\${MBRAIN_SKIP_DIRS_FILE:-$HOME/.claude/mbrain-skip-dirs}"
   if _mbrain_skip_dir_match "$cwd" "$skipfile"; then
@@ -61,6 +57,22 @@ mbrain_is_relevant() {
   fi
 
   return 0
+}
+
+mbrain_is_relevant() {
+  if [ "\${MBRAIN_STOP_HOOK:-1}" = "0" ]; then
+    return 1
+  fi
+
+  _mbrain_gate_common
+}
+
+mbrain_prompt_is_relevant() {
+  if [ "\${MBRAIN_PROMPT_HOOK:-1}" = "0" ]; then
+    return 1
+  fi
+
+  _mbrain_gate_common
 }
 `;
 
@@ -101,23 +113,75 @@ extract_stop_active() {
 
 RAW_INPUT="$(cat)"
 SESSION_ID="$(extract_session_id "$RAW_INPUT")"
+SESSION_ID="\${SESSION_ID%%$'\\n'*}"
 STOP_ACTIVE="$(extract_stop_active "$RAW_INPUT")"
 
 if [ "$STOP_ACTIVE" = "true" ]; then
   log_line "reentry" "$SESSION_ID" "stop_hook_active=true"
-  printf '%s' "$RAW_INPUT"
   exit 0
 fi
 
 if ! mbrain_is_relevant; then
   log_line "skip" "$SESSION_ID" "relevance-gate"
-  printf '%s' "$RAW_INPUT"
   exit 0
 fi
 
-REASON='MBrain memory check (not a crash): route durable signals through route_memory_writeback and the assertion pipeline; eligible writes become governed canonical memory, ambiguous ones become candidates. Otherwise reply exactly MBRAIN-PASS: <short reason>.'
+MODE="\${MBRAIN_STOP_HOOK_MODE:-silent}"
 
-log_line "block" "$SESSION_ID" "gate-passed"
+if [ "$MODE" = "block" ]; then
+  log_line "block" "$SESSION_ID" "gate-passed"
+  printf '%s\n' '{"decision":"block","reason":"MBrain memory check (not a crash): route durable signals through route_memory_writeback and the assertion pipeline; eligible writes become governed canonical memory, ambiguous ones become candidates. Otherwise reply exactly MBRAIN-PASS: <short reason>."}'
+  exit 0
+fi
 
-printf '%s\n' '{"decision":"block","reason":"MBrain memory check (not a crash): route durable signals through route_memory_writeback and the assertion pipeline; eligible writes become governed canonical memory, ambiguous ones become candidates. Otherwise reply exactly MBRAIN-PASS: <short reason>."}'
+if [ "$MODE" != "silent" ]; then
+  log_line "unknown-mode" "$SESSION_ID" "MBRAIN_STOP_HOOK_MODE=$MODE treated-as-silent"
+  exit 0
+fi
+
+# Default silent mode emits nothing: Claude Code renders blocking Stop reasons
+# as "Stop hook error" and forces an extra reply turn, so the routine memory
+# duty is injected per prompt by prompt-mbrain-context.sh instead.
+log_line "silent" "$SESSION_ID" "non-blocking-default"
+exit 0
+`;
+
+export const CLAUDE_MBRAIN_PROMPT_HOOK = `#!/bin/bash
+set -u
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOG_FILE="\${MBRAIN_PROMPT_HOOK_LOG:-$HOME/.claude/logs/mbrain-prompt-hook.log}"
+# shellcheck source=lib/mbrain-relevance.sh
+source "$HOOK_DIR/lib/mbrain-relevance.sh"
+
+log_line() {
+  local decision="$1"
+  local session_id="$2"
+  local reason="\${3:-}"
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+  printf '%s %s %s %s\n' "$ts" "$session_id" "$decision" "$reason" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+extract_session_id() {
+  local raw="$1"
+  printf '%s' "$raw" | jq -r 'try .session_id // "unknown"' 2>/dev/null || printf 'unknown'
+}
+
+# UserPromptSubmit treats plain stdout as model context, so this hook prints
+# either the structured JSON below or nothing at all. Never echo RAW_INPUT.
+RAW_INPUT="$(cat)"
+SESSION_ID="$(extract_session_id "$RAW_INPUT")"
+SESSION_ID="\${SESSION_ID%%$'\\n'*}"
+
+if ! mbrain_prompt_is_relevant; then
+  log_line "skip" "$SESSION_ID" "relevance-gate"
+  exit 0
+fi
+
+log_line "inject" "$SESSION_ID" "context-injected"
+
+printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"MBrain is connected. If the request involves a named person, company, project, meeting, technical concept, internal system, or a prior decision, check MBrain before answering from general knowledge: call retrieve_context first, then read_context for the returned required_reads. If MBrain has nothing relevant, say so rather than guessing. Route durable new knowledge surfaced this turn through route_memory_writeback before finishing; ambiguous signals become Memory Inbox candidates."}}'
+exit 0
 `;

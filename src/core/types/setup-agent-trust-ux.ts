@@ -14,6 +14,7 @@ export type SetupAgentTargetKind =
   | 'mcp_registration'
   | 'prompt_rules'
   | 'claude_stop_hook'
+  | 'claude_prompt_hook'
   | 'skip_dirs'
   | 'legacy_hook_cleanup';
 

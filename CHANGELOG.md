@@ -4,6 +4,19 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Claude Code sessions stop nagging and start retrieving.** The MBrain Stop
+  hook no longer blocks every session end with a `Stop hook error` and a forced
+  `MBRAIN-PASS` reply — it is silent by default, and the legacy blocking gate is
+  one env var away (`MBRAIN_STOP_HOOK_MODE=block`). Instead, a new
+  UserPromptSubmit hook silently injects MBrain retrieval/writeback guidance on
+  every prompt, so the agent checks your brain exactly when a person, company,
+  project, or past decision comes up. `mbrain doctor --agent` now verifies the
+  new prompt hook, re-running `setup-agent` no longer clobbers your
+  `~/.claude/mbrain-skip-dirs` entries, and a malformed `settings.json` is left
+  untouched with a warning instead of being overwritten.
+
 ## [0.12.0] - 2026-06-07
 
 ### Added
