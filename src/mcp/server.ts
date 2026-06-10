@@ -664,8 +664,18 @@ export function createMcpServer(
     },
   );
   const operations = options.operations ?? defaultOperations;
+  const operationsByName = new Map(operations.map(o => [o.name, o]));
   const toolCatalog = createMcpToolCatalogProvider(operations);
   const toolExecutionLimiter = options.toolExecutionLimiter ?? createMcpToolExecutionLimiter();
+  // Config, logger, and result budget are immutable for the lifetime of the
+  // server process; resolve them once instead of per tool call.
+  const resolvedConfig = options.config ?? loadConfig() ?? DEFAULT_RUNTIME_CONFIG;
+  const resolvedLogger = options.logger ?? {
+    info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
+    warn: (msg: string) => process.stderr.write(`[warn] ${msg}\n`),
+    error: (msg: string) => process.stderr.write(`[error] ${msg}\n`),
+  };
+  const resolvedMaxResultTextBytes = options.maxResultTextBytes ?? mcpResultTextBudgetForFinalFrame();
 
   // Generate tool definitions from operations
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -681,7 +691,7 @@ export function createMcpServer(
   // Dispatch tool calls to operation handlers
   server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     const { name, arguments: params } = request.params;
-    const op = operations.find(o => o.name === name);
+    const op = operationsByName.get(name);
     if (!op) {
       return { content: [{ type: 'text', text: `Error: Unknown tool: ${name}` }], isError: true };
     }
@@ -691,12 +701,8 @@ export function createMcpServer(
         const resolvedEngine = await enginePromise;
         const ctx: OperationContext = {
           engine: resolvedEngine,
-          config: options.config ?? loadConfig() ?? DEFAULT_RUNTIME_CONFIG,
-          logger: options.logger ?? {
-            info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
-            warn: (msg: string) => process.stderr.write(`[warn] ${msg}\n`),
-            error: (msg: string) => process.stderr.write(`[error] ${msg}\n`),
-          },
+          config: resolvedConfig,
+          logger: resolvedLogger,
           dryRun: !!(params?.dry_run),
         };
         return op.handler(ctx, prepareMcpToolParams(name, params));
@@ -705,7 +711,7 @@ export function createMcpServer(
         content: [{
           type: 'text',
           text: formatMcpToolResult(name, result, {
-            maxResultTextBytes: options.maxResultTextBytes ?? mcpResultTextBudgetForFinalFrame(),
+            maxResultTextBytes: resolvedMaxResultTextBytes,
           }),
         }],
       };
@@ -715,7 +721,7 @@ export function createMcpServer(
           content: [{
             type: 'text',
             text: formatMcpToolResult(name, e.toJSON(), {
-              maxResultTextBytes: options.maxResultTextBytes ?? mcpResultTextBudgetForFinalFrame(),
+              maxResultTextBytes: resolvedMaxResultTextBytes,
             }),
           }],
           isError: true,

@@ -28,40 +28,45 @@ export async function hybridSearch(
   const candidateLimit = sourceRankCandidateLimit(limit);
   const keywordPromise = engine.searchKeyword(query, { ...opts, limit: candidateLimit });
 
-  // Determine query variants (optionally with expansion)
-  let queries = [query];
-  if (opts?.expansion && opts?.expandFn) {
-    try {
-      const expanded = await opts.expandFn(query);
-      queries = dedupeQueryVariants([query, ...expanded]).slice(0, 3);
-    } catch {
-      // Expansion failure is non-fatal
+  // The vector leg (expansion -> embedding -> vector search) only depends on
+  // the query string, so it runs concurrently with the keyword search.
+  const vectorListsPromise = (async (): Promise<SearchResult[][]> => {
+    // Determine query variants (optionally with expansion)
+    let queries = [query];
+    if (opts?.expansion && opts?.expandFn) {
+      try {
+        const expanded = await opts.expandFn(query);
+        queries = dedupeQueryVariants([query, ...expanded]).slice(0, 3);
+      } catch {
+        // Expansion failure is non-fatal
+      }
     }
-  }
 
-  const keywordResults = await keywordPromise;
-  const provider = getEmbeddingProvider();
-  if (!provider.capability.available) {
-    return dedupAndRankSearchResults(keywordResults, limit);
-  }
+    const provider = getEmbeddingProvider();
+    if (!provider.capability.available) {
+      return [];
+    }
 
-  const embeddingSettled = await Promise.allSettled(
-    queries.map(q => embedQuery(q, { provider })),
-  );
-  const embeddings = embeddingSettled.flatMap((result) => (
-    result.status === 'fulfilled' ? [result.value] : []
-  ));
+    const embeddingSettled = await Promise.allSettled(
+      queries.map(q => embedQuery(q, { provider })),
+    );
+    const embeddings = embeddingSettled.flatMap((result) => (
+      result.status === 'fulfilled' ? [result.value] : []
+    ));
 
-  if (embeddings.length === 0) {
-    return dedupAndRankSearchResults(keywordResults, limit);
-  }
+    if (embeddings.length === 0) {
+      return [];
+    }
 
-  const vectorSettled = await Promise.allSettled(
-    embeddings.map(emb => engine.searchVector(emb, { ...opts, limit: candidateLimit })),
-  );
-  const vectorLists = vectorSettled.flatMap((result) => (
-    result.status === 'fulfilled' ? [result.value] : []
-  ));
+    const vectorSettled = await Promise.allSettled(
+      embeddings.map(emb => engine.searchVector(emb, { ...opts, limit: candidateLimit })),
+    );
+    return vectorSettled.flatMap((result) => (
+      result.status === 'fulfilled' ? [result.value] : []
+    ));
+  })();
+
+  const [keywordResults, vectorLists] = await Promise.all([keywordPromise, vectorListsPromise]);
 
   if (vectorLists.length === 0 || vectorLists.every(list => list.length === 0)) {
     return dedupAndRankSearchResults(keywordResults, limit);

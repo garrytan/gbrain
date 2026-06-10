@@ -241,13 +241,17 @@ export async function retrieveContext(
   const searchLimit = query.length > 0 ? sourceRankCandidateLimit(limit) : 0;
   const candidateSearch = dependencies.candidateSearch ?? ((candidateQuery, options) =>
     engine.searchKeyword(candidateQuery, { limit: options.limit }));
-  const searchResults = query.length > 0
-    ? rankSearchResults(await searchCandidatePool(candidateSearch, query, searchLimit))
-    : [];
+  // Orientation only depends on the query, not on the candidate search
+  // results, so both run concurrently.
+  const [searchResults, orientation] = await Promise.all([
+    query.length > 0
+      ? searchCandidatePool(candidateSearch, query, searchLimit).then((pool) => rankSearchResults(pool))
+      : Promise.resolve([]),
+    input.include_orientation === false || query.length === 0
+      ? Promise.resolve(emptyOrientation())
+      : buildOrientation(engine, query, limit),
+  ]);
   const candidates = await groupCandidatesByCanonicalPage(engine, searchResults, limit, query, scopeGate);
-  const orientation = input.include_orientation === false || query.length === 0
-    ? emptyOrientation()
-    : await buildOrientation(engine, query, limit);
   const baseRequiredReads = dedupeSelectorsByEvidence([
     ...candidates.map((candidate) => candidate.read_selector),
     ...orientation.recommended_reads,

@@ -174,7 +174,7 @@ describe('PostgresEngine search wiring', () => {
       'AND p.slug != ALL($3::text[])',
     );
     expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
-      'LEFT JOIN content_chunks cc ON cc.page_id = p.id',
+      'LEFT JOIN content_chunks cc ON cc.page_id = pm.page_id',
     );
     expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
       'LEFT JOIN derived_index_state dis',

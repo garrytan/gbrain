@@ -563,17 +563,20 @@ describe('SQLiteEngine', () => {
       && sql.includes('p.page_embedding')
       && sql.includes('cc.embedding IS NOT NULL')
     ))).toBe(true);
+    // Single lightweight scan over chunk embeddings (no chunk_text); the
+    // shortlist/omitted split happens in JS against the prefiltered page set.
     expect(seenSql.some((sql) => (
       sql.includes('FROM content_chunks cc')
-      && sql.includes('cc.chunk_text')
-      && sql.includes('cc.page_id IN')
-    ))).toBe(true);
-    expect(seenSql.some((sql) => (
-      sql.includes('SELECT')
       && sql.includes('cc.id AS chunk_id')
       && sql.includes('cc.embedding')
       && !sql.includes('cc.chunk_text')
-      && sql.includes('cc.page_id NOT IN')
+    ))).toBe(true);
+    // Full rows (chunk_text, stale flag) are fetched only for the final
+    // candidate chunk ids.
+    expect(seenSql.some((sql) => (
+      sql.includes('FROM content_chunks cc')
+      && sql.includes('cc.chunk_text')
+      && sql.includes('cc.id IN')
     ))).toBe(true);
   });
 

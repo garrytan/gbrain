@@ -156,6 +156,7 @@ import {
   rowToCanonicalHandoffEntry,
   rowToDerivedIndexState,
   rowToDerivedJob,
+  compareNoteSectionEntries,
   rowToNoteManifestEntry,
   rowToNoteSectionEntry,
   rowToProfileMemoryEntry,
@@ -611,7 +612,38 @@ export class PostgresEngine implements BrainEngine {
 
     return this.withSearchTimeout(async (sql) => {
       const rows = await sql.unsafe(
-        `SELECT DISTINCT ON (ranked.slug)
+        `WITH pm AS MATERIALIZED (
+          -- Page-level ranks, the stale flag, and derived state are computed
+          -- once per matched page here. MATERIALIZED stops the planner from
+          -- flattening the CTE and re-inlining the ts_rank/to_tsvector
+          -- expressions per (page x chunk) joined row.
+          SELECT
+            p.slug,
+            p.id AS page_id,
+            p.title,
+            p.type,
+            p.compiled_truth,
+            p.timeline,
+            p.search_text,
+            ts_rank(to_tsvector('english', coalesce(p.search_text, '')), websearch_to_tsquery('english', $1)) AS frontmatter_score,
+            ts_rank(to_tsvector('english', coalesce(p.compiled_truth, '')), websearch_to_tsquery('english', $1)) AS compiled_score,
+            ts_rank(to_tsvector('english', coalesce(p.timeline, '')), websearch_to_tsquery('english', $1)) AS timeline_score,
+            ts_rank(p.search_vector, websearch_to_tsquery('english', $1)) AS page_score,
+            CASE WHEN p.updated_at < (
+              SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
+            ) THEN true ELSE false END AS stale,
+            dis.artifact_kind AS derived_artifact_kind,
+            dis.status AS derived_status,
+            dis.target_content_hash AS derived_target_content_hash,
+            dis.indexed_content_hash AS derived_indexed_content_hash
+          FROM pages p
+          LEFT JOIN derived_index_state dis
+            ON dis.scope_id = 'workspace:default'
+           AND dis.slug = p.slug
+           AND dis.artifact_kind = 'page_chunks'
+          WHERE p.search_vector @@ websearch_to_tsquery('english', $1)${filterSql}
+        )
+        SELECT DISTINCT ON (ranked.slug)
           ranked.slug, ranked.page_id, ranked.title, ranked.type,
           CASE
             WHEN ranked.frontmatter_score >= ranked.compiled_score
@@ -639,35 +671,13 @@ export class PostgresEngine implements BrainEngine {
           ranked.derived_indexed_content_hash
         FROM (
           SELECT
-            p.slug,
-            p.id AS page_id,
-            p.title,
-            p.type,
-            p.compiled_truth,
-            p.timeline,
-            p.search_text,
+            pm.*,
             cc.chunk_text,
             cc.chunk_source,
             cc.chunk_index,
-            ts_rank(to_tsvector('english', coalesce(p.search_text, '')), websearch_to_tsquery('english', $1)) AS frontmatter_score,
-            ts_rank(to_tsvector('english', coalesce(p.compiled_truth, '')), websearch_to_tsquery('english', $1)) AS compiled_score,
-            ts_rank(to_tsvector('english', coalesce(p.timeline, '')), websearch_to_tsquery('english', $1)) AS timeline_score,
-            coalesce(ts_rank(to_tsvector('english', coalesce(cc.chunk_text, '')), websearch_to_tsquery('english', $1)), 0) AS chunk_score,
-            ts_rank(p.search_vector, websearch_to_tsquery('english', $1)) AS page_score,
-            CASE WHEN p.updated_at < (
-              SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-            ) THEN true ELSE false END AS stale,
-            dis.artifact_kind AS derived_artifact_kind,
-            dis.status AS derived_status,
-            dis.target_content_hash AS derived_target_content_hash,
-            dis.indexed_content_hash AS derived_indexed_content_hash
-          FROM pages p
-          LEFT JOIN content_chunks cc ON cc.page_id = p.id
-          LEFT JOIN derived_index_state dis
-            ON dis.scope_id = 'workspace:default'
-           AND dis.slug = p.slug
-           AND dis.artifact_kind = 'page_chunks'
-          WHERE p.search_vector @@ websearch_to_tsquery('english', $1)${filterSql}
+            coalesce(ts_rank(to_tsvector('english', coalesce(cc.chunk_text, '')), websearch_to_tsquery('english', $1)), 0) AS chunk_score
+          FROM pm
+          LEFT JOIN content_chunks cc ON cc.page_id = pm.page_id
         ) ranked
         ORDER BY ranked.slug, GREATEST(ranked.frontmatter_score, ranked.compiled_score, ranked.timeline_score, ranked.chunk_score) DESC, ranked.page_score DESC, ranked.chunk_index ASC`,
         params,
@@ -3129,50 +3139,81 @@ export class PostgresEngine implements BrainEngine {
     pageSlug: string,
     entries: NoteSectionEntryInput[],
   ): Promise<NoteSectionEntry[]> {
-    const sql = this.sql;
     const normalizedSlug = validateSlug(pageSlug);
-
-    await sql`
-      DELETE FROM note_section_entries
-      WHERE scope_id = ${scopeId} AND page_slug = ${normalizedSlug}
-    `;
-
     const timestamp = new Date().toISOString();
-    for (const entry of entries) {
-      await sql`
-        INSERT INTO note_section_entries (
-          scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
-          heading_path, heading_text, depth, line_start, line_end, section_text,
-          outgoing_wikilinks, outgoing_urls, source_refs, content_hash, extractor_version, last_indexed_at
-        ) VALUES (
-          ${scopeId},
-          ${entry.page_id},
-          ${validateSlug(entry.page_slug)},
-          ${entry.page_path},
-          ${entry.section_id},
-          ${entry.parent_section_id ?? null},
-          ${entry.heading_slug},
-          ${sql.json(jsonParam(entry.heading_path ?? []))},
-          ${entry.heading_text},
-          ${entry.depth},
-          ${entry.line_start},
-          ${entry.line_end},
-          ${entry.section_text},
-          ${sql.json(jsonParam(entry.outgoing_wikilinks ?? []))},
-          ${sql.json(jsonParam(entry.outgoing_urls ?? []))},
-          ${sql.json(jsonParam(entry.source_refs ?? []))},
-          ${entry.content_hash},
-          ${entry.extractor_version},
-          ${timestamp}
-        )
-      `;
-    }
-
-    return this.listNoteSectionEntries({
+    const inserted: NoteSectionEntry[] = entries.map((entry) => ({
       scope_id: scopeId,
-      page_slug: normalizedSlug,
-      limit: Math.max(entries.length, 1),
+      page_id: entry.page_id,
+      page_slug: validateSlug(entry.page_slug),
+      page_path: entry.page_path,
+      section_id: entry.section_id,
+      parent_section_id: entry.parent_section_id ?? null,
+      heading_slug: entry.heading_slug,
+      heading_path: entry.heading_path ?? [],
+      heading_text: entry.heading_text,
+      depth: entry.depth,
+      line_start: entry.line_start,
+      line_end: entry.line_end,
+      section_text: entry.section_text,
+      outgoing_wikilinks: entry.outgoing_wikilinks ?? [],
+      outgoing_urls: entry.outgoing_urls ?? [],
+      source_refs: entry.source_refs ?? [],
+      content_hash: entry.content_hash,
+      extractor_version: entry.extractor_version,
+      last_indexed_at: new Date(timestamp),
+    }));
+
+    // One transaction so the delete + batched inserts replace atomically.
+    await this.transaction(async (txEngine) => {
+      const sql = (txEngine as PostgresEngine).sql;
+
+      await sql`
+        DELETE FROM note_section_entries
+        WHERE scope_id = ${scopeId} AND page_slug = ${normalizedSlug}
+      `;
+
+      // Single multi-row INSERT per batch instead of one round-trip per section.
+      // Batched to stay well under the Postgres bind-parameter limit.
+      const cols = `(scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
+                     heading_path, heading_text, depth, line_start, line_end, section_text,
+                     outgoing_wikilinks, outgoing_urls, source_refs, content_hash, extractor_version, last_indexed_at)`;
+      const NOTE_SECTION_INSERT_BATCH = 500;
+      for (let start = 0; start < inserted.length; start += NOTE_SECTION_INSERT_BATCH) {
+        const batch = inserted.slice(start, start + NOTE_SECTION_INSERT_BATCH);
+        const rows: string[] = [];
+        const params: PostgresParam[] = [];
+        let paramIdx = 1;
+        for (const entry of batch) {
+          rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::jsonb, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::jsonb, $${paramIdx++}::jsonb, $${paramIdx++}::jsonb, $${paramIdx++}, $${paramIdx++}, $${paramIdx++})`);
+          params.push(
+            entry.scope_id,
+            entry.page_id,
+            entry.page_slug,
+            entry.page_path,
+            entry.section_id,
+            entry.parent_section_id,
+            entry.heading_slug,
+            JSON.stringify(entry.heading_path),
+            entry.heading_text,
+            entry.depth,
+            entry.line_start,
+            entry.line_end,
+            entry.section_text,
+            JSON.stringify(entry.outgoing_wikilinks),
+            JSON.stringify(entry.outgoing_urls),
+            JSON.stringify(entry.source_refs),
+            entry.content_hash,
+            entry.extractor_version,
+            timestamp,
+          );
+        }
+        await sql.unsafe(`INSERT INTO note_section_entries ${cols} VALUES ${rows.join(', ')}`, params);
+      }
     });
+
+    // Return value is assembled in memory (same ordering as
+    // listNoteSectionEntries) instead of reading back what was just written.
+    return inserted.sort(compareNoteSectionEntries);
   }
 
   async getNoteSectionEntry(scopeId: string, sectionId: string): Promise<NoteSectionEntry | null> {

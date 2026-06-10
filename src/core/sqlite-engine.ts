@@ -34,6 +34,7 @@ import { appendPendingDerivedSearchResults } from './search/derived-freshness.ts
 import { selectLocalVectorChunkIds, selectLocalVectorPageIds } from './search/vector-prefilter.ts';
 import { searchLocalVectors } from './search/vector-local.ts';
 import { slugifyPath } from './sync.ts';
+import { compareNoteSectionEntries } from './utils/row-mappers.ts';
 import type {
   AutoPromoteVerdictKey,
   AutoPromoteVerdictRow,
@@ -1165,13 +1166,12 @@ export class SQLiteEngine implements BrainEngine {
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
     const limit = opts?.limit ?? 20;
     const candidatePageIds = this.getLocalVectorPrefilterPageIds(embedding, limit, opts);
-    const shortlistedRows = this.queryLocalVectorChunkRows(opts, candidatePageIds);
-    const omittedChunkIds = this.getOmittedLocalVectorChunkIds(embedding, limit, opts, candidatePageIds);
-    const omittedRows = this.queryLocalVectorChunkRowsByIds(omittedChunkIds);
+    const finalChunkIds = this.selectLocalVectorCandidateChunkIds(embedding, limit, opts, candidatePageIds);
+    const rows = this.queryLocalVectorChunkRowsByIds(finalChunkIds);
 
     const results = searchLocalVectors(
       embedding,
-      [...shortlistedRows, ...omittedRows].map(rowToLocalVectorCandidate),
+      rows.map(rowToLocalVectorCandidate),
       limit,
     );
     return appendPendingDerivedSearchResults(this, results, opts);
@@ -1182,31 +1182,34 @@ export class SQLiteEngine implements BrainEngine {
     const db = this.database;
 
     if (chunks.length === 0) {
-      db.run(`DELETE FROM content_chunks WHERE page_id = ?`, [pageId]);
-      this.refreshPageEmbeddingFromChunks(pageId);
+      await this.transaction(async () => {
+        db.run(`DELETE FROM content_chunks WHERE page_id = ?`, [pageId]);
+        this.refreshPageEmbeddingFromChunks(pageId);
+      });
       return;
     }
 
     const indices = chunks.map(chunk => chunk.chunk_index);
-    db.run(
-      `DELETE FROM content_chunks WHERE page_id = ? AND chunk_index NOT IN (${indices.map(() => '?').join(', ')})`,
-      [pageId, ...indices],
-    );
 
-    const clearEmbeddingIndices = chunks
-      .filter(chunk => chunk.clear_embedding === true)
-      .map(chunk => chunk.chunk_index);
-    if (clearEmbeddingIndices.length > 0) {
+    // One transaction (single commit) instead of one autocommit per
+    // statement; this sits on the hot putPage -> ensurePageChunks path.
+    await this.transaction(async () => {
       db.run(
-        `DELETE FROM content_chunks WHERE page_id = ? AND chunk_index IN (${clearEmbeddingIndices.map(() => '?').join(', ')})`,
-        [pageId, ...clearEmbeddingIndices],
+        `DELETE FROM content_chunks WHERE page_id = ? AND chunk_index NOT IN (${indices.map(() => '?').join(', ')})`,
+        [pageId, ...indices],
       );
-    }
 
-    for (const chunk of chunks) {
-      const embedding = chunk.embedding ? float32ToBlob(chunk.embedding) : null;
-      const chunkHash = chunkContentHash(chunk.chunk_text, chunk.chunk_source);
-      db.run(`
+      const clearEmbeddingIndices = chunks
+        .filter(chunk => chunk.clear_embedding === true)
+        .map(chunk => chunk.chunk_index);
+      if (clearEmbeddingIndices.length > 0) {
+        db.run(
+          `DELETE FROM content_chunks WHERE page_id = ? AND chunk_index IN (${clearEmbeddingIndices.map(() => '?').join(', ')})`,
+          [pageId, ...clearEmbeddingIndices],
+        );
+      }
+
+      const insert = db.query(`
         INSERT INTO content_chunks (
           page_id, chunk_index, chunk_text, chunk_source, chunk_content_hash, embedding, model, token_count, embedded_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1228,20 +1231,26 @@ export class SQLiteEngine implements BrainEngine {
               AND excluded.model = content_chunks.model THEN content_chunks.embedded_at
             ELSE NULL
           END
-      `, [
-        pageId,
-        chunk.chunk_index,
-        chunk.chunk_text,
-        chunk.chunk_source,
-        chunkHash,
-        embedding,
-        chunk.model || DEFAULT_EMBEDDING_MODEL,
-        chunk.token_count ?? null,
-        embedding ? nowIso() : null,
-      ]);
-    }
+      `);
 
-    this.refreshPageEmbeddingFromChunks(pageId);
+      for (const chunk of chunks) {
+        const embedding = chunk.embedding ? float32ToBlob(chunk.embedding) : null;
+        const chunkHash = chunkContentHash(chunk.chunk_text, chunk.chunk_source);
+        insert.run(...sqliteBindings([
+          pageId,
+          chunk.chunk_index,
+          chunk.chunk_text,
+          chunk.chunk_source,
+          chunkHash,
+          embedding,
+          chunk.model || DEFAULT_EMBEDDING_MODEL,
+          chunk.token_count ?? null,
+          embedding ? nowIso() : null,
+        ]));
+      }
+
+      this.refreshPageEmbeddingFromChunks(pageId);
+    });
   }
 
   async getChunks(slug: string): Promise<Chunk[]> {
@@ -3663,49 +3672,72 @@ export class SQLiteEngine implements BrainEngine {
     entries: NoteSectionEntryInput[],
   ): Promise<NoteSectionEntry[]> {
     const normalizedSlug = validateSlug(pageSlug);
-    this.database.run(
-      `DELETE FROM note_section_entries WHERE scope_id = ? AND page_slug = ?`,
-      [scopeId, normalizedSlug],
-    );
-
-    const insert = this.database.query(`
-      INSERT INTO note_section_entries (
-        scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
-        heading_path, heading_text, depth, line_start, line_end, section_text,
-        outgoing_wikilinks, outgoing_urls, source_refs, content_hash, extractor_version, last_indexed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
     const timestamp = nowIso();
-
-    for (const entry of entries) {
-      insert.run(...sqliteBindings([
-        scopeId,
-        entry.page_id,
-        validateSlug(entry.page_slug),
-        entry.page_path,
-        entry.section_id,
-        entry.parent_section_id,
-        entry.heading_slug,
-        JSON.stringify(entry.heading_path ?? []),
-        entry.heading_text,
-        entry.depth,
-        entry.line_start,
-        entry.line_end,
-        entry.section_text,
-        JSON.stringify(entry.outgoing_wikilinks ?? []),
-        JSON.stringify(entry.outgoing_urls ?? []),
-        JSON.stringify(entry.source_refs ?? []),
-        entry.content_hash,
-        entry.extractor_version,
-        timestamp,
-      ]));
-    }
-
-    return this.listNoteSectionEntries({
+    const inserted: NoteSectionEntry[] = entries.map((entry) => ({
       scope_id: scopeId,
-      page_slug: normalizedSlug,
-      limit: Math.max(entries.length, 1),
+      page_id: entry.page_id,
+      page_slug: validateSlug(entry.page_slug),
+      page_path: entry.page_path,
+      section_id: entry.section_id,
+      parent_section_id: entry.parent_section_id ?? null,
+      heading_slug: entry.heading_slug,
+      heading_path: entry.heading_path ?? [],
+      heading_text: entry.heading_text,
+      depth: entry.depth,
+      line_start: entry.line_start,
+      line_end: entry.line_end,
+      section_text: entry.section_text,
+      outgoing_wikilinks: entry.outgoing_wikilinks ?? [],
+      outgoing_urls: entry.outgoing_urls ?? [],
+      source_refs: entry.source_refs ?? [],
+      content_hash: entry.content_hash,
+      extractor_version: entry.extractor_version,
+      last_indexed_at: new Date(timestamp),
+    }));
+
+    // One transaction for the whole replace instead of one autocommit per row.
+    await this.transaction(async () => {
+      this.database.run(
+        `DELETE FROM note_section_entries WHERE scope_id = ? AND page_slug = ?`,
+        [scopeId, normalizedSlug],
+      );
+
+      const insert = this.database.query(`
+        INSERT INTO note_section_entries (
+          scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
+          heading_path, heading_text, depth, line_start, line_end, section_text,
+          outgoing_wikilinks, outgoing_urls, source_refs, content_hash, extractor_version, last_indexed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (const entry of inserted) {
+        insert.run(...sqliteBindings([
+          entry.scope_id,
+          entry.page_id,
+          entry.page_slug,
+          entry.page_path,
+          entry.section_id,
+          entry.parent_section_id,
+          entry.heading_slug,
+          JSON.stringify(entry.heading_path),
+          entry.heading_text,
+          entry.depth,
+          entry.line_start,
+          entry.line_end,
+          entry.section_text,
+          JSON.stringify(entry.outgoing_wikilinks),
+          JSON.stringify(entry.outgoing_urls),
+          JSON.stringify(entry.source_refs),
+          entry.content_hash,
+          entry.extractor_version,
+          timestamp,
+        ]));
+      }
     });
+
+    // Return value is assembled in memory (same ordering as
+    // listNoteSectionEntries) instead of reading back what was just written.
+    return inserted.sort(compareNoteSectionEntries);
   }
 
   async getNoteSectionEntry(scopeId: string, sectionId: string): Promise<NoteSectionEntry | null> {
@@ -7601,60 +7633,22 @@ export class SQLiteEngine implements BrainEngine {
     return selectLocalVectorPageIds(embedding, candidates, limit);
   }
 
-  private queryLocalVectorChunkRows(
-    opts?: SearchOpts,
-    pageIds?: number[],
-  ): Record<string, unknown>[] {
-    if (pageIds && pageIds.length === 0) return [];
-
-    const params: unknown[] = [];
-    let sql = `
-      SELECT
-        cc.id AS chunk_id,
-        p.id AS page_id,
-        p.slug,
-        p.title,
-        p.type,
-        cc.chunk_text,
-        cc.chunk_source,
-        cc.embedding,
-        CASE WHEN EXISTS (
-          SELECT 1 FROM timeline_entries te
-          WHERE te.page_id = p.id AND p.updated_at < te.created_at
-        ) THEN 1 ELSE 0 END AS stale
-      FROM content_chunks cc
-      JOIN pages p ON p.id = cc.page_id
-      WHERE cc.embedding IS NOT NULL
-    `;
-
-    if (opts?.type) {
-      sql += ` AND p.type = ?`;
-      params.push(opts.type);
-    }
-
-    if (opts?.exclude_slugs?.length) {
-      sql += ` AND p.slug NOT IN (${opts.exclude_slugs.map(() => '?').join(', ')})`;
-      params.push(...opts.exclude_slugs.map(slug => validateSlug(slug)));
-    }
-
-    if (pageIds && pageIds.length > 0) {
-      sql += ` AND cc.page_id IN (${pageIds.map(() => '?').join(', ')})`;
-      params.push(...pageIds);
-    }
-
-    return this.database.query(sql).all(...sqliteBindings(params)) as Record<string, unknown>[];
-  }
-
-  private getOmittedLocalVectorChunkIds(
+  // Single pass over all chunk embeddings (id + page_id + embedding only).
+  // Chunks on shortlisted pages are always candidates; the best `limit`
+  // chunks from non-shortlisted pages are added so strong chunks on weak
+  // pages still surface. Full rows (chunk_text, stale flag) are fetched
+  // afterwards for the final candidates only.
+  private selectLocalVectorCandidateChunkIds(
     embedding: Float32Array,
     limit: number,
     opts?: SearchOpts,
-    pageIds?: number[],
+    shortlistedPageIds?: number[],
   ): number[] {
     const params: unknown[] = [];
     let sql = `
       SELECT
         cc.id AS chunk_id,
+        cc.page_id,
         cc.embedding
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
@@ -7671,20 +7665,28 @@ export class SQLiteEngine implements BrainEngine {
       params.push(...opts.exclude_slugs.map(slug => validateSlug(slug)));
     }
 
-    if (pageIds && pageIds.length > 0) {
-      sql += ` AND cc.page_id NOT IN (${pageIds.map(() => '?').join(', ')})`;
-      params.push(...pageIds);
-    }
-
     const rows = this.database.query(sql).all(...sqliteBindings(params)) as Record<string, unknown>[];
-    return selectLocalVectorChunkIds(
-      embedding,
-      rows.map((row) => ({
+    const shortlist = new Set(shortlistedPageIds ?? []);
+    const shortlisted: { chunk_id: number; embedding: Float32Array | null }[] = [];
+    const omitted: { chunk_id: number; embedding: Float32Array | null }[] = [];
+    for (const row of rows) {
+      const candidate = {
         chunk_id: Number(row.chunk_id),
         embedding: blobToFloat32(row.embedding),
-      })),
-      limit,
-    );
+      };
+      if (shortlist.has(Number(row.page_id))) {
+        shortlisted.push(candidate);
+      } else {
+        omitted.push(candidate);
+      }
+    }
+
+    const omittedTopIds = new Set(selectLocalVectorChunkIds(embedding, omitted, limit));
+    const finalCandidates = [
+      ...shortlisted,
+      ...omitted.filter((candidate) => omittedTopIds.has(candidate.chunk_id)),
+    ];
+    return selectLocalVectorChunkIds(embedding, finalCandidates, limit);
   }
 
   private queryLocalVectorChunkRowsByIds(chunkIds: number[]): Record<string, unknown>[] {

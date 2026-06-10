@@ -178,6 +178,15 @@ export function rowToNoteSectionEntry(row: Record<string, unknown>): NoteSection
   };
 }
 
+// Mirrors the listNoteSectionEntries SQL ordering:
+// ORDER BY page_slug ASC, line_start ASC, section_id ASC
+export function compareNoteSectionEntries(a: NoteSectionEntry, b: NoteSectionEntry): number {
+  if (a.page_slug !== b.page_slug) return a.page_slug < b.page_slug ? -1 : 1;
+  if (a.line_start !== b.line_start) return a.line_start - b.line_start;
+  if (a.section_id !== b.section_id) return a.section_id < b.section_id ? -1 : 1;
+  return 0;
+}
+
 export function rowToDerivedJob(row: Record<string, unknown>): DerivedJob {
   return {
     id: row.id as string,
