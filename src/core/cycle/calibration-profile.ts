@@ -223,9 +223,10 @@ class CalibrationProfilePhase extends BaseCyclePhase {
   protected async process(
     engine: BrainEngine,
     scope: ScopedReadOpts,
-    _ctx: OperationContext,
+    ctx: OperationContext,
     opts: CalibrationProfileOpts,
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
+    const dryRun = opts.dryRun === true || ctx.dryRun === true;
     const holder = opts.holder ?? 'garry';
     const promptVersion = opts.promptVersion ?? CALIBRATION_PROFILE_PROMPT_VERSION;
     const modelId = opts.model ?? 'claude-sonnet-4-6';
@@ -347,45 +348,48 @@ class CalibrationProfilePhase extends BaseCyclePhase {
       );
     }
 
-    await engine.executeRaw(
-      `INSERT INTO calibration_profiles (
-         source_id, holder, generated_at, published,
-         total_resolved, brier, accuracy, partial_rate, grade_completion,
-         domain_scorecards, pattern_statements,
-         voice_gate_passed, voice_gate_attempts,
-         active_bias_tags, model_id, cost_usd, judge_model_agreement
-       ) VALUES ($1, $2, now(), false,
-                 $3, $4, $5, $6, $7,
-                 $8::jsonb, $9::text[],
-                 $10, $11,
-                 $12::text[], $13, NULL, NULL)`,
-      [
-        sourceId,
-        holder,
-        scorecard.resolved,
-        scorecard.brier,
-        scorecard.accuracy,
-        scorecard.partial_rate,
-        gradeCompletion,
-        // v0.41 T10 — domain_scorecards JSONB populated by the
-        // domain-aggregators pass above. Empty {} when no active pack
-        // declares calibration_domains (R1 byte-identical regression).
-        JSON.stringify(domainScorecards),
-        result.pattern_statements,
-        result.voice_gate_passed,
-        result.voice_gate_attempts,
-        result.active_bias_tags,
-        modelId,
-      ],
-    );
-    result.profile_written = true;
+    if (!dryRun) {
+      await engine.executeRaw(
+        `INSERT INTO calibration_profiles (
+           source_id, holder, generated_at, published,
+           total_resolved, brier, accuracy, partial_rate, grade_completion,
+           domain_scorecards, pattern_statements,
+           voice_gate_passed, voice_gate_attempts,
+           active_bias_tags, model_id, cost_usd, judge_model_agreement
+         ) VALUES ($1, $2, now(), false,
+                   $3, $4, $5, $6, $7,
+                   $8::jsonb, $9::text[],
+                   $10, $11,
+                   $12::text[], $13, NULL, NULL)`,
+        [
+          sourceId,
+          holder,
+          scorecard.resolved,
+          scorecard.brier,
+          scorecard.accuracy,
+          scorecard.partial_rate,
+          gradeCompletion,
+          // v0.41 T10 — domain_scorecards JSONB populated by the
+          // domain-aggregators pass above. Empty {} when no active pack
+          // declares calibration_domains (R1 byte-identical regression).
+          JSON.stringify(domainScorecards),
+          result.pattern_statements,
+          result.voice_gate_passed,
+          result.voice_gate_attempts,
+          result.active_bias_tags,
+          modelId,
+        ],
+      );
+      result.profile_written = true;
+    }
 
     return {
       summary:
-        `calibration_profile: holder=${holder} brier=${(scorecard.brier ?? 0).toFixed(2)} ` +
+        `calibration_profile: holder=${holder}${dryRun ? ' would write profile (dry-run)' : ''} ` +
+        `brier=${(scorecard.brier ?? 0).toFixed(2)} ` +
         `(${scorecard.resolved} resolved, ${result.pattern_statements.length} patterns, ` +
         `${result.active_bias_tags.length} bias tags, gate ${gated.passed ? 'passed' : 'fell back to template'})`,
-      details: { ...result },
+      details: { ...result, dryRun, profile_would_write: dryRun },
       status: 'ok',
     };
   }

@@ -61,6 +61,7 @@ function buildCtx(engine: BrainEngine): OperationContext {
 
 const passJudge: VoiceGateJudge = async () => ({ verdict: 'conversational', reason: 'fine' });
 const rejectJudge: VoiceGateJudge = async () => ({ verdict: 'academic', reason: 'clinical' });
+const noBiasTags: BiasTagsGenerator = async () => [];
 
 // ─── Parsers ────────────────────────────────────────────────────────
 
@@ -239,6 +240,26 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     expect(insert!.params[11]).toEqual(['over-confident-geography']); // active_bias_tags
   });
 
+  test('dry-run previews profile without writing calibration_profiles row', async () => {
+    const { engine, captured } = buildMockEngine({ scorecard: ENOUGH_RESOLVED_SCORECARD });
+    const patternsGenerator: PatternStatementsGenerator = async () => [
+      'You called early-stage tactics well — 8 of 10 held up.',
+    ];
+    const result = await runPhaseCalibrationProfile({ ...buildCtx(engine), dryRun: true }, {
+      patternsGenerator,
+      biasTagsGenerator: noBiasTags,
+      voiceGateJudge: passJudge,
+    });
+
+    expect(result.status).toBe('ok');
+    const details = result.details as Record<string, unknown>;
+    expect(details.dryRun).toBe(true);
+    expect(details.profile_written).toBe(false);
+    expect(details.profile_would_write).toBe(true);
+    expect(result.summary).toContain('would write profile');
+    expect(captured.filter(c => c.sql.includes('INSERT INTO calibration_profiles'))).toHaveLength(0);
+  });
+
   test('voice gate rejects both attempts → template fallback written, voice_gate_passed=false', async () => {
     const { engine, captured } = buildMockEngine({ scorecard: ENOUGH_RESOLVED_SCORECARD });
     const patternsGenerator: PatternStatementsGenerator = async () => [
@@ -246,6 +267,7 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     ];
     const result = await runPhaseCalibrationProfile(buildCtx(engine), {
       patternsGenerator,
+      biasTagsGenerator: noBiasTags,
       voiceGateJudge: rejectJudge,
     });
     const details = result.details as Record<string, unknown>;
@@ -266,6 +288,7 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     const patternsGenerator: PatternStatementsGenerator = async () => ['fine pattern'];
     await runPhaseCalibrationProfile(buildCtx(engine), {
       patternsGenerator,
+      biasTagsGenerator: noBiasTags,
       voiceGateJudge: passJudge,
       gradeCompletion: 0.6,
     });
@@ -296,6 +319,7 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     const ctx = { ...buildCtx(engine), sourceId: 'tenant-b' };
     await runPhaseCalibrationProfile(ctx, {
       patternsGenerator,
+      biasTagsGenerator: noBiasTags,
       voiceGateJudge: passJudge,
     });
     const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
