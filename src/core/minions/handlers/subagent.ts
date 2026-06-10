@@ -83,6 +83,12 @@ export function resolveLeaseCap(raw: string | undefined): number {
     `Use a positive integer, "unlimited" (or "none"), or omit for default 32.`,
   );
 }
+
+export function resolveSubagentAnthropicApiKey(config: Pick<GBrainConfig, 'anthropic_api_key'>): string {
+  const key = process.env.ANTHROPIC_API_KEY || config.anthropic_api_key;
+  if (key) return key;
+  throw new Error('no Anthropic API key configured (set ANTHROPIC_API_KEY or run: gbrain config set anthropic_api_key ...)');
+}
 const DEFAULT_MAX_CONCURRENT = resolveLeaseCap(process.env.GBRAIN_ANTHROPIC_MAX_INFLIGHT);
 const DEFAULT_LEASE_TTL_MS = 120_000;
 // v0.41 Approach C: DEFAULT_SUBAGENT_SYSTEM lives in ./system-prompt.ts
@@ -106,12 +112,12 @@ export interface SubagentDeps {
   /** Anthropic client. Defaults to the SDK-constructed client. */
   client?: MessagesClient;
   /**
-   * Anthropic SDK constructor. Defaults to `() => new Anthropic()`.
+   * Anthropic SDK constructor. Defaults to config-aware `new Anthropic({ apiKey })`.
    * Overridable in tests so the factory default-client branch is
-   * exercisable without an ANTHROPIC_API_KEY or a real API call.
-   * When `deps.client` is provided, this is unused.
+   * exercisable without a real API call. When `deps.client` is provided,
+   * this is unused.
    */
-  makeAnthropic?: () => Anthropic;
+  makeAnthropic?: (apiKey?: string) => Anthropic;
   /** Config (MCP, brain, etc.). Defaults to loadConfig(). */
   config?: GBrainConfig;
   /** Rate-lease key. Defaults to `anthropic:messages`. */
@@ -160,14 +166,19 @@ interface PersistedToolExec {
  */
 export function makeSubagentHandler(deps: SubagentDeps) {
   const engine = deps.engine;
+  const config = deps.config ?? loadConfig() ?? ({ engine: 'postgres' } as GBrainConfig);
   // sdk.messages IS the MessagesClient-shaped object. The v0.16.0 bug was
   // casting new Anthropic() (top level) to MessagesClient, but .create()
   // lives at sdk.messages.create. Assigning sdk.messages directly gets the
   // right object; JS method-call semantics preserve `this` at the call
   // site (subagent.ts invokes client.create(...) with client === sdk.messages).
-  const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic());
-  const client: MessagesClient = deps.client ?? makeAnthropic().messages;
-  const config = deps.config ?? loadConfig() ?? ({ engine: 'postgres' } as GBrainConfig);
+  //
+  // Direct subagent auth mirrors the gateway key resolution: shell env wins,
+  // then `gbrain config set anthropic_api_key ...`. MCP/launchd children often
+  // lack ANTHROPIC_API_KEY, so constructing an env-only SDK client here makes
+  // synthesize children fail even though gbrain config is valid.
+  const makeAnthropic = deps.makeAnthropic ?? ((apiKey?: string) => new Anthropic(apiKey ? { apiKey } : undefined));
+  const client: MessagesClient = deps.client ?? makeAnthropic(resolveSubagentAnthropicApiKey(config)).messages;
   const rateLeaseKey = deps.rateLeaseKey ?? DEFAULT_RATE_KEY;
   const maxConcurrent = deps.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
   const leaseTtlMs = deps.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
