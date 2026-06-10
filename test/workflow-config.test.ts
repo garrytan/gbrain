@@ -63,12 +63,27 @@ test('release workflow smoke-tests compiled binaries before upload', () => {
 
 test('workflows avoid GitHub actions pinned to deprecated Node 20 majors', () => {
   const checkoutUses = getWorkflowUseLines('actions/checkout');
+  const downloadArtifactUses = getWorkflowUseLines('actions/download-artifact');
   const gitleaksUses = getWorkflowUseLines('gitleaks/gitleaks-action');
+  const releaseUses = getWorkflowUseLines('softprops/action-gh-release');
+  const uploadArtifactUses = getWorkflowUseLines('actions/upload-artifact');
 
   expect(checkoutUses.length).toBeGreaterThan(0);
+  expect(downloadArtifactUses.length).toBeGreaterThan(0);
   expect(gitleaksUses.length).toBeGreaterThan(0);
+  expect(releaseUses.length).toBeGreaterThan(0);
+  expect(uploadArtifactUses.length).toBeGreaterThan(0);
   expect(checkoutUses.filter((line) => !/actions\/checkout@[0-9a-f]{40}\s+#\s+v5\b/.test(line))).toEqual([]);
+  expect(
+    downloadArtifactUses.filter((line) => !/actions\/download-artifact@[0-9a-f]{40}\s+#\s+v8\b/.test(line)),
+  ).toEqual([]);
   expect(gitleaksUses.filter((line) => !/gitleaks\/gitleaks-action@[0-9a-f]{40}\s+#\s+v3\b/.test(line))).toEqual([]);
+  expect(releaseUses.filter((line) => !/softprops\/action-gh-release@[0-9a-f]{40}\s+#\s+v3\b/.test(line))).toEqual(
+    [],
+  );
+  expect(uploadArtifactUses.filter((line) => !/actions\/upload-artifact@[0-9a-f]{40}\s+#\s+v7\b/.test(line))).toEqual(
+    [],
+  );
 });
 
 test('test workflow keeps full git history for history-backed scenario guards', () => {
