@@ -140,6 +140,17 @@ describe('extractEntityRefs', () => {
     expect(wikiRefs[0].needsResolution).toBe(true);
   });
 
+  test('recognizes reference-page wikilinks as concrete targets', () => {
+    const refs = extractEntityRefs('See [[reference/mcminnville-market-data]] for source context.');
+    expect(refs.length).toBe(1);
+    expect(refs[0]).toMatchObject({
+      name: 'reference/mcminnville-market-data',
+      slug: 'reference/mcminnville-market-data',
+      dir: 'reference',
+    });
+    expect(refs[0].needsResolution).toBeUndefined();
+  });
+
   test('skips qualified-syntax tokens (those belong to 2a)', () => {
     // [[wiki:topics/ai]] looks like 2a's qualified shape — even though
     // it wouldn't satisfy DIR_PATTERN, 2c must not claim it either
