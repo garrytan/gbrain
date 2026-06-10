@@ -71,7 +71,7 @@ GBrain is designed to be installed and operated by an AI agent. The fastest path
 
 If you don't already have an AI agent platform running, start with one of these. Both are designed to read GBrain's install protocol and execute it:
 
-- **[OpenClaw](https://github.com/openclawagents/openclaw)** — deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/alphaclaw) (one click, 8GB+ RAM)
+- **[OpenClaw](https://github.com/openclawagents/openclaw)** — deploy [AlphaClaw on Render](https://dashboard.render.com/blueprint/new?repo=https%3A%2F%2Fgithub.com%2Fchrysb%2Fopenclaw-render-template) (one click, 8GB+ RAM)
 - **[Hermes](https://github.com/openclawagents/hermes)** — deploy on [Railway](https://github.com/praveen-ks-2001/hermes-agent-template) (one click)
 
 Then paste this into your agent:
