@@ -251,6 +251,26 @@ describe('runPhaseGradeTakes — phase integration', () => {
     expect(resolves[0]!.resolution.resolvedBy).toBe('gbrain:grade_takes');
   });
 
+  test('dry-run previews cache write and auto-apply without mutating either surface', async () => {
+    const takes = [buildTake({ id: 1, sinceDate: '2023-01-01' })];
+    const { engine, captured, resolves } = buildMockEngine({ takes });
+    const judge: JudgeFn = async () => ({ verdict: 'incorrect', confidence: 0.96, reasoning: 'contradicted' });
+    const result = await runPhaseGradeTakes({ ...buildCtx(engine), dryRun: true }, {
+      judge,
+      autoResolve: true,
+      autoResolveThreshold: 0.95,
+    });
+
+    expect(result.status).toBe('ok');
+    const details = result.details as Record<string, unknown>;
+    expect(details.dryRun).toBe(true);
+    expect(details.verdicts_written).toBe(1);
+    expect(details.auto_applied).toBe(1);
+    expect(result.summary).toContain('would be written');
+    expect(captured.filter(c => c.sql.includes('INSERT INTO take_grade_cache'))).toHaveLength(0);
+    expect(resolves).toHaveLength(0);
+  });
+
   test('auto-resolve ON but confidence below threshold → cached only, NOT applied', async () => {
     const takes = [buildTake({ id: 1, sinceDate: '2023-01-01' })];
     const { engine, captured, resolves } = buildMockEngine({ takes });

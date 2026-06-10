@@ -384,9 +384,10 @@ class GradeTakesPhase extends BaseCyclePhase {
   protected async process(
     engine: BrainEngine,
     scope: ScopedReadOpts,
-    _ctx: OperationContext,
+    ctx: OperationContext,
     opts: GradeTakesOpts,
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
+    const dryRun = opts.dryRun === true || ctx.dryRun === true;
     const judge = opts.judge ?? defaultJudge;
     const evidenceRetriever = opts.evidenceRetriever ?? defaultEvidenceRetriever;
     const promptVersion = opts.promptVersion ?? GRADE_TAKES_PROMPT_VERSION;
@@ -541,17 +542,21 @@ class GradeTakesPhase extends BaseCyclePhase {
 
       // Write the verdict to the cache. Idempotency conflict means another
       // run beat us to it; either way the row exists with consistent state.
-      await engine.executeRaw(
-        `INSERT INTO take_grade_cache
-           (take_id, prompt_version, judge_model_id, evidence_signature, verdict, confidence, applied)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (take_id, prompt_version, judge_model_id, evidence_signature) DO NOTHING`,
-        [take.id, promptVersion, recordedJudgeModelId, recordedSig, recordedVerdict.verdict, recordedVerdict.confidence, shouldApply],
-      );
+      if (!dryRun) {
+        await engine.executeRaw(
+          `INSERT INTO take_grade_cache
+             (take_id, prompt_version, judge_model_id, evidence_signature, verdict, confidence, applied)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (take_id, prompt_version, judge_model_id, evidence_signature) DO NOTHING`,
+          [take.id, promptVersion, recordedJudgeModelId, recordedSig, recordedVerdict.verdict, recordedVerdict.confidence, shouldApply],
+        );
+      }
       result.verdicts_written += 1;
 
       // Apply to canonical takes if eligible.
-      if (shouldApply && resolution) {
+      if (dryRun && shouldApply && resolution) {
+        result.auto_applied += 1;
+      } else if (shouldApply && resolution) {
         try {
           await engine.resolveTake(take.page_id, take.row_num, resolution);
           result.auto_applied += 1;
@@ -598,11 +603,14 @@ class GradeTakesPhase extends BaseCyclePhase {
     const summary =
       `grade_takes: scanned ${result.takes_scanned} takes ` +
       `(${result.too_recent} too recent, ${result.cache_hits} cached, ` +
-      `${result.verdicts_written} new verdicts, ${result.auto_applied} auto-applied)`;
+      (dryRun
+        ? `${result.verdicts_written} verdicts would be written, ${result.auto_applied} would auto-apply; dry-run)`
+        : `${result.verdicts_written} new verdicts, ${result.auto_applied} auto-applied)`);
     return {
       summary,
       details: {
         ...result,
+        dryRun,
         prompt_version: promptVersion,
         auto_resolve: autoResolve,
         auto_resolve_threshold: autoResolveThreshold,
