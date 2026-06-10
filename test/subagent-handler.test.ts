@@ -131,7 +131,7 @@ describe('subagent handler auth resolution', () => {
       const seen: string[] = [];
       const handler = makeSubagentHandler({
         engine,
-        config: { engine: 'postgres', anthropic_api_key: 'sk-ant-from-config' } as any,
+        config: { engine: 'postgres', anthropic_api_key: 'sk-ant...nfig' } as any,
         toolRegistry: [],
         makeAnthropic: (apiKey?: string) => {
           seen.push(apiKey ?? '');
@@ -142,7 +142,30 @@ describe('subagent handler auth resolution', () => {
       const result = await handler(await makeCtx({ prompt: 'hi' }));
 
       expect(result.result).toBe('ok');
-      expect(seen).toEqual(['sk-ant-from-config']);
+      expect(seen).toEqual(['sk-ant...nfig']);
+    });
+  });
+
+  test('model-specified jobs still construct the default Anthropic client with the config key when env is absent', async () => {
+    await withEnv({ ANTHROPIC_API_KEY: undefined }, async () => {
+      const seen: string[] = [];
+      const handler = makeSubagentHandler({
+        engine,
+        config: { engine: 'postgres', anthropic_api_key: 'sk-ant...model' } as any,
+        toolRegistry: [],
+        makeAnthropic: (apiKey?: string) => {
+          seen.push(apiKey ?? '');
+          return { messages: new FakeMessagesClient([{ content: [{ type: 'text', text: 'model ok' }] as any }]) } as any;
+        },
+      });
+
+      const result = await handler(await makeCtx({
+        prompt: 'hi',
+        model: 'anthropic:claude-sonnet-4-6',
+      }));
+
+      expect(result.result).toBe('model ok');
+      expect(seen).toEqual(['sk-ant...model']);
     });
   });
 
