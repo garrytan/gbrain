@@ -13,6 +13,8 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { PageType } from './types.ts';
+import type { SchemaPackManifest } from './schema-pack/manifest-v1.ts';
+import { frontmatterLinkTypeFromPack } from './schema-pack/link-inference.ts';
 
 /**
  * v0.42.7 — link-extraction version stamp. Bump this ISO timestamp whenever the
@@ -27,7 +29,7 @@ import type { PageType } from './types.ts';
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
-export const LINK_EXTRACTOR_VERSION_TS = '2026-05-31T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-06-10T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -467,7 +469,7 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
-  opts: { globalBasename?: boolean; skipFrontmatter?: boolean } = {},
+  opts: { globalBasename?: boolean; skipFrontmatter?: boolean; schemaPack?: Pick<SchemaPackManifest, 'frontmatter_links'> } = {},
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
@@ -551,7 +553,7 @@ export async function extractPageLinks(
   // path needed `resolveBasenameMatches` on the real resolver.
   let fmUnresolved: UnresolvedFrontmatterRef[] = [];
   if (!opts.skipFrontmatter) {
-    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver);
+    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver, { schemaPack: opts.schemaPack });
     candidates.push(...fm.candidates);
     fmUnresolved = fm.unresolved;
   }
@@ -1004,6 +1006,50 @@ export interface FrontmatterExtractResult {
   unresolved: UnresolvedFrontmatterRef[];
 }
 
+export interface FrontmatterExtractOptions {
+  /**
+   * Optional active schema pack. When supplied, frontmatter_links rules
+   * override the legacy hardcoded verb for matching fields. Legacy direction
+   * and dirHint are preserved where a legacy mapping exists; pack-only fields
+   * default to outgoing slug-shaped links.
+   */
+  schemaPack?: Pick<SchemaPackManifest, 'frontmatter_links'>;
+}
+
+function frontmatterMappingsForPage(
+  pageType: string,
+  schemaPack?: Pick<SchemaPackManifest, 'frontmatter_links'>,
+): FrontmatterFieldMapping[] {
+  if (!schemaPack || schemaPack.frontmatter_links.length === 0) return FRONTMATTER_LINK_MAP;
+
+  const mappings: FrontmatterFieldMapping[] = [];
+  const seen = new Set<string>();
+
+  for (const mapping of FRONTMATTER_LINK_MAP) {
+    if (mapping.pageType && mapping.pageType !== pageType) continue;
+    for (const field of mapping.fields) {
+      const packType = frontmatterLinkTypeFromPack(schemaPack, pageType, field);
+      mappings.push({ ...mapping, fields: [field], type: packType ?? mapping.type });
+      seen.add(field);
+    }
+  }
+
+  for (const rule of schemaPack.frontmatter_links) {
+    if (rule.page_type !== pageType) continue;
+    const fields = rule.fields.filter(field => !seen.has(field));
+    if (fields.length === 0) continue;
+    mappings.push({
+      fields,
+      pageType,
+      type: rule.link_type,
+      direction: 'outgoing',
+      dirHint: '',
+    });
+  }
+
+  return mappings;
+}
+
 /**
  * Extract typed graph edges from YAML frontmatter. Async because the
  * resolver may need to query the DB for fuzzy matches.
@@ -1017,11 +1063,12 @@ export async function extractFrontmatterLinks(
   pageType: PageType,
   frontmatter: Record<string, unknown>,
   resolver: SlugResolver,
+  opts: FrontmatterExtractOptions = {},
 ): Promise<FrontmatterExtractResult> {
   const candidates: LinkCandidate[] = [];
   const unresolved: UnresolvedFrontmatterRef[] = [];
 
-  for (const mapping of FRONTMATTER_LINK_MAP) {
+  for (const mapping of frontmatterMappingsForPage(pageType, opts.schemaPack)) {
     if (mapping.pageType && mapping.pageType !== pageType) continue;
     for (const field of mapping.fields) {
       const value = frontmatter[field];

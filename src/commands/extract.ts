@@ -61,6 +61,9 @@ import { createHash } from 'crypto';
 // shared sliding-pool helper + PGLite-clamp wrapper.
 import { runSlidingPool } from '../core/worker-pool.ts';
 import { parseWorkers, resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
+import { loadActivePackBestEffortWithResolution } from '../core/schema-pack/best-effort.ts';
+import type { OperationContext } from '../core/operations.ts';
+import type { SchemaPackManifest } from '../core/schema-pack/manifest-v1.ts';
 
 // Batch size for addLinksBatch / addTimelineEntriesBatch.
 // Postgres bind-parameter limit is 65535. Links use 4 cols/row → 16K hard ceiling;
@@ -77,6 +80,37 @@ const BATCH_SIZE = 100;
 // 25 caps the worst case at ~625MB even if every page is a 25MB transcript.
 // Normal pages are KBs; raise via GBRAIN_EXTRACT_STALE_BATCH for throughput.
 const STALE_BATCH_SIZE = Math.max(1, Number(process.env.GBRAIN_EXTRACT_STALE_BATCH) || 25);
+
+interface ExtractionSchemaPackState {
+  schemaPack?: Pick<SchemaPackManifest, 'frontmatter_links'>;
+  skipFrontmatter: boolean;
+}
+
+async function loadExtractionSchemaPack(sourceId?: string): Promise<ExtractionSchemaPackState> {
+  const ctx = {
+    engine: undefined as never,
+    config: {} as never,
+    logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
+    dryRun: false,
+    remote: false,
+    ...(sourceId ? { sourceId } : {}),
+  } as OperationContext;
+  const result = await loadActivePackBestEffortWithResolution(ctx);
+  if (!result.pack) {
+    if (result.configured) {
+      console.error(
+        `[schema] active schema_pack \`${result.resolution.pack_name}\` (${result.resolution.source}) failed to load; ` +
+        'skipping frontmatter link extraction for this run to avoid legacy-verb edges.',
+      );
+      return { skipFrontmatter: true };
+    }
+    return { skipFrontmatter: false };
+  }
+  if (!result.configured || result.pack.manifest.frontmatter_links.length === 0) {
+    return { skipFrontmatter: false };
+  }
+  return { schemaPack: result.pack.manifest, skipFrontmatter: false };
+}
 // v0.42.7: wall-clock budget for one `extract --stale` invocation (default
 // 30 min). `--catch-up` removes the cap (loops until 0 stale). Mirrors
 // embedAllStale's time-budget shape.
@@ -376,7 +410,7 @@ function parseFrontmatterFromContent(content: string, relPath: string): Record<s
  */
 export async function extractLinksFromFile(
   content: string, relPath: string, allSlugs: Set<string>,
-  opts?: { includeFrontmatter?: boolean; globalBasename?: boolean },
+  opts?: { includeFrontmatter?: boolean; globalBasename?: boolean; schemaPack?: Pick<SchemaPackManifest, 'frontmatter_links'> },
 ): Promise<ExtractedLink[]> {
   const links: ExtractedLink[] = [];
   const slug = pathToSlug(relPath);
@@ -451,7 +485,7 @@ export async function extractLinksFromFile(
       : topDir === 'meetings' ? 'meeting'
       : 'concept';
     const fm = parseFrontmatterFromContent(content, relPath);
-    const fmLinks = await extractFrontmatterLinks(slug, pageType as never, fm, fsResolver);
+    const fmLinks = await extractFrontmatterLinks(slug, pageType as never, fm, fsResolver, { schemaPack: opts?.schemaPack });
     for (const c of fmLinks.candidates) {
       links.push({
         from_slug: c.fromSlug ?? slug,
@@ -948,6 +982,7 @@ async function extractForSlugs(
 
   // Issue #972: read the basename flag once per extract run.
   const globalBasename = await isGlobalBasenameEnabled(engine);
+  const schemaPackState = doLinks ? await loadExtractionSchemaPack() : undefined;
 
   const linkBatch: LinkBatchInput[] = [];
   const timelineBatch: TimelineBatchInput[] = [];
@@ -1001,7 +1036,7 @@ async function extractForSlugs(
         const content = readFileSync(fullPath, 'utf-8');
 
         if (doLinks) {
-          const links = await extractLinksFromFile(content, relPath, allSlugs, { globalBasename });
+          const links = await extractLinksFromFile(content, relPath, allSlugs, { globalBasename, schemaPack: schemaPackState?.schemaPack });
           for (const link of links) {
             if (dryRun) {
               if (!jsonMode) console.log(`  ${link.from_slug} → ${link.to_slug} (${link.link_type})`);
@@ -1056,6 +1091,7 @@ async function extractLinksFromDir(
   // re-query the DB. globalBasename = true emits one edge per basename
   // match for bare wikilinks like `[[struktura]]`.
   const globalBasename = await isGlobalBasenameEnabled(engine);
+  const schemaPackState = await loadExtractionSchemaPack();
 
   // Progress stream on stderr (separate from the action-events --json writes
   // to stdout, which tests grep for). Rate-gated; respects global --quiet /
@@ -1092,7 +1128,7 @@ async function extractLinksFromDir(
     onItem: async (file) => {
       try {
         const content = readFileSync(file.path, 'utf-8');
-        const links = await extractLinksFromFile(content, file.relPath, allSlugs, { globalBasename });
+        const links = await extractLinksFromFile(content, file.relPath, allSlugs, { globalBasename, schemaPack: schemaPackState.schemaPack });
         for (const link of links) {
           if (dryRunSeen) {
             const key = `${link.from_slug}::${link.to_slug}::${link.link_type}`;
@@ -1203,13 +1239,14 @@ export async function extractLinksForSlugs(
     : undefined;
   // Issue #972: same flag as the standalone extract path.
   const globalBasename = await isGlobalBasenameEnabled(engine);
+  const schemaPackState = await loadExtractionSchemaPack(opts?.sourceId);
   let created = 0;
   for (const slug of slugs) {
     const filePath = join(repoPath, slug + '.md');
     if (!existsSync(filePath)) continue;
     try {
       const content = readFileSync(filePath, 'utf-8');
-      for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs, { globalBasename })) {
+      for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs, { globalBasename, schemaPack: schemaPackState.schemaPack })) {
         try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type, link.link_source, undefined, undefined, linkOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback when batch path declines a row
       }
     } catch { /* skip */ }
@@ -1279,6 +1316,7 @@ async function extractLinksFromDB(
   // Issue #972: opt-in global-basename wikilink resolution. Read once
   // per extract run; threaded into each extractPageLinks call.
   const globalBasename = await isGlobalBasenameEnabled(engine);
+  const schemaPackState = await loadExtractionSchemaPack(sourceIdFilter);
   // v0.32.8: listAllPageRefs enumerates (slug, source_id) so we can thread
   // sourceId to getPage AND build a cross-source resolution map for link
   // disambiguation. Pre-fix used getAllSlugs() which collapsed
@@ -1359,7 +1397,7 @@ async function extractLinksFromDB(
     // basename lookup; off by default for back-compat.
     const extracted = await extractPageLinks(
       slug, fullContent, page.frontmatter, page.type, resolver,
-      { skipFrontmatter: !includeFrontmatter, globalBasename },
+      { skipFrontmatter: !includeFrontmatter || schemaPackState.skipFrontmatter, globalBasename, schemaPack: schemaPackState.schemaPack },
     );
     unresolved.push(...extracted.unresolved);
 
@@ -1585,6 +1623,7 @@ async function extractStaleFromDB(
   const resolver = makeResolver(engine, { mode: 'batch' });
   const nullResolver = { resolve: async () => null as string | null };
   const activeResolver = includeFrontmatter ? resolver : nullResolver;
+  const schemaPackState = includeFrontmatter ? await loadExtractionSchemaPack(sourceIdFilter) : undefined;
   const allRefs = await engine.listAllPageRefs();
   const allSlugs = new Set<string>();
   const slugToSources = new Map<string, string[]>();
@@ -1617,6 +1656,7 @@ async function extractStaleFromDB(
       const fullContent = page.compiled_truth + '\n' + page.timeline;
       const extracted = await extractPageLinks(
         page.slug, fullContent, page.frontmatter, page.type, activeResolver,
+        { skipFrontmatter: !includeFrontmatter || schemaPackState?.skipFrontmatter, schemaPack: schemaPackState?.schemaPack },
       );
       for (const c of extracted.candidates) {
         const r = resolveCandidateSources(c, page.slug, page.source_id, allSlugs, slugToSources);

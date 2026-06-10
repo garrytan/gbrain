@@ -12,6 +12,7 @@ import {
   type SlugResolver,
 } from '../src/core/link-extraction.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { parseSchemaPackManifest } from '../src/core/schema-pack/index.ts';
 
 // v0.27.1 cherry-3: image-to-page path-proximity heuristic.
 describe('imageOfCandidates', () => {
@@ -242,6 +243,58 @@ describe('extractPageLinks', () => {
     const sourceLink = candidates.find(c => c.linkType === 'source');
     expect(sourceLink).toBeDefined();
     expect(sourceLink!.targetSlug).toBe('meetings/2026-01-15');
+  });
+
+  test('pack frontmatter_links can override a legacy field verb while preserving resolution', async () => {
+    const pack = parseSchemaPackManifest({
+      api_version: 'gbrain-schema-pack-v1',
+      name: 'jarvis-test',
+      version: '0.1.0',
+      extends: null,
+      page_types: [],
+      link_types: [{ name: 'sourced_from' }],
+      frontmatter_links: [
+        { page_type: 'person', fields: ['source'], link_type: 'sourced_from' },
+      ],
+    });
+    const { candidates } = await extractPageLinks(
+      'people/alice', 'Some content.', { source: 'meetings/2026-01-15' }, 'person', allowAllResolver,
+      { schemaPack: pack },
+    );
+    const sourceLink = candidates.find(c => c.targetSlug === 'meetings/2026-01-15');
+    expect(sourceLink).toBeDefined();
+    expect(sourceLink!.linkType).toBe('sourced_from');
+    expect(sourceLink!.fromSlug).toBe('people/alice');
+  });
+
+  test('pack-only frontmatter_links emit outgoing edges for custom fields', async () => {
+    const pack = parseSchemaPackManifest({
+      api_version: 'gbrain-schema-pack-v1',
+      name: 'jarvis-test',
+      version: '0.1.0',
+      extends: null,
+      page_types: [],
+      link_types: [{ name: 'about' }],
+      frontmatter_links: [
+        { page_type: 'note', fields: ['primary_entity'], link_type: 'about' },
+      ],
+    });
+    const { candidates } = await extractFrontmatterLinks(
+      'notes/alice-brief',
+      'note' as never,
+      { primary_entity: 'people/alice' },
+      allowAllResolver,
+      { schemaPack: pack },
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      fromSlug: 'notes/alice-brief',
+      targetSlug: 'people/alice',
+      linkType: 'about',
+      linkSource: 'frontmatter',
+      originSlug: 'notes/alice-brief',
+      originField: 'primary_entity',
+    });
   });
 
   test('extracts bare slug references in text', async () => {

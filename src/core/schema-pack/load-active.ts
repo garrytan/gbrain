@@ -37,6 +37,7 @@ import {
   type ResolutionInput,
   type ResolutionResult,
 } from './registry.ts';
+import { BUNDLED_PACK_NAMES } from './bundled.ts';
 
 /**
  * Inputs the caller (operations.ts handler / engine query path) provides.
@@ -92,28 +93,7 @@ export function _resetPackLocatorForTests(): void {
  * throwing UnknownPackError with a paste-ready install hint.
  */
 function defaultPackLocator(name: string): string | null {
-  // v0.39 T8 — bundled packs registry. gbrain-base + gbrain-recommended
-  // ship in src/core/schema-pack/base/. Add a new entry here to bundle
-  // additional canonical packs.
-  //
-  // v0.41 T4 — lens packs join the bundle: creator (atoms + concepts +
-  // extract_atoms/synthesize_concepts phases), investor (theses + bet
-  // resolution + 3 calibration domains), engineer (gstack-learnings bridge
-  // + 3 calibration domains), everything (meta-pack stacking all three
-  // via extends + borrow_from). Each ships as a real YAML at base/<name>.yaml.
-  const BUNDLED: ReadonlyArray<string> = [
-    'gbrain-base',
-    'gbrain-recommended',
-    'gbrain-creator',
-    'gbrain-investor',
-    'gbrain-engineer',
-    'gbrain-everything',
-    // v0.42 type-unification: 15-type canonical successor to gbrain-base.
-    // Ships as install default (Lane E T17) + via gbrain onboard pack
-    // upgrade flow (the unify-types Minion handler).
-    'gbrain-base-v2',
-  ];
-  if (BUNDLED.includes(name)) {
+  if ((BUNDLED_PACK_NAMES as readonly string[]).includes(name)) {
     // Resolve bundled YAML relative to this source file. Works in both
     // direct-bun execution and bun --compile binaries.
     const here = dirname(fileURLToPath(import.meta.url));
