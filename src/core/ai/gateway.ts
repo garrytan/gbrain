@@ -3169,7 +3169,15 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   // whose request/response shape differs from ZE/llama.cpp (e.g. Voyage with
   // `top_k` / `data[]`) needs separate adapter hooks in a follow-up plan.
   const url = `${compat.baseURL.replace(/\/$/, '')}${tp.path ?? '/models/rerank'}`;
-  const auth = applyResolveAuth(recipe, cfg, 'reranker');
+  let auth: { apiKey?: string; headers?: Record<string, string> };
+  try {
+    auth = applyResolveAuth(recipe, cfg, 'reranker');
+  } catch (err) {
+    if (err instanceof AIConfigError) {
+      throw new RerankError(err.message, 'auth');
+    }
+    throw err;
+  }
   // applyResolveAuth returns { apiKey } for Bearer-style auth (SDK's native
   // path) or { headers } for custom-header providers (Azure). v0.37.6.0:
   // recipes can ALSO declare default_headers (attribution etc.) which flow
