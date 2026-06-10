@@ -231,6 +231,10 @@ export async function extractLinksFromFile(
         }
         return null;
       },
+      async exists(slug: string): Promise<boolean> {
+        if (!slug) return false;
+        return allSlugs.has(slug.trim());
+      },
     };
     // Guess the page type from its directory for field-map filtering.
     const topDir = slug.split('/')[0];
@@ -590,6 +594,7 @@ async function extractLinksFromDB(
   const unresolved: UnresolvedFrontmatterRef[] = [];
   const nullResolver = {
     resolve: async () => null as string | null,
+    exists: async () => false,
   };
   const allSlugs = await engine.getAllSlugs();
   const slugList = Array.from(allSlugs);
@@ -633,7 +638,16 @@ async function extractLinksFromDB(
     // --include-frontmatter default OFF in v0.13 (codex tension 5, back-compat).
     // Migration orchestrator explicitly enables it for the one-time backfill;
     // user-invoked `gbrain extract links` stays outgoing-only.
-    const activeResolver = includeFrontmatter ? resolver : nullResolver;
+    //
+    // Hybrid resolver when the flag is off: frontmatter resolve() is a no-op
+    // (matches the historical short-circuit), but exists() still hits the
+    // real engine so extractPageLinks' bare-wikilink pass can validate
+    // candidates against the page table. Without this, the pass would
+    // silently emit nothing on every flag-off run.
+    const activeResolver = includeFrontmatter ? resolver : {
+      resolve: nullResolver.resolve,
+      exists: resolver.exists.bind(resolver),
+    };
     const extracted = await extractPageLinks(
       slug, fullContent, page.frontmatter, page.type, activeResolver,
     );

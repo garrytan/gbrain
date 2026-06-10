@@ -47,6 +47,33 @@ export type LinkResolutionType = 'qualified' | 'unqualified';
 const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
 
 /**
+ * Set form of DIR_PATTERN. Used by extractPageLinks' bare-wikilink pass
+ * to skip candidates whose first segment is already covered by the strict
+ * regexes (extractEntityRefs handles those).
+ */
+const DIR_PATTERN_SET = new Set([
+  'people', 'companies', 'meetings', 'concepts', 'deal', 'civic',
+  'project', 'projects', 'source', 'media', 'yc', 'tech', 'finance',
+  'personal', 'openclaw', 'entities',
+]);
+
+/**
+ * Bare-wikilink capture: any `[[X]]` or `[[X|Display]]`, no dir-prefix
+ * requirement. Used by extractPageLinks for slugs that don't fit the
+ * DIR_PATTERN whitelist (flat slugs like `[[my-runbook]]`, domain dirs
+ * like `[[tools/X]]`). Validated against the page table via
+ * SlugResolver.exists() before emission, so random `[[foo]]` text in
+ * prose doesn't generate dead links.
+ *
+ * Excludes `:` so qualified wikilinks (`[[src:slug]]`) stay handled by
+ * QUALIFIED_WIKILINK_RE above and don't double-emit.
+ */
+const BARE_WIKILINK_RE = new RegExp(
+  `\\[\\[([^\\]\\|#:]+?)(?:#[^|\\]]*?)?(?:\\|[^\\]]+?)?\\]\\]`,
+  'g',
+);
+
+/**
  * Match `[Name](path)` markdown links pointing to entity directories.
  * Accepts both filesystem-relative format (`[Name](../people/slug.md)`)
  * AND engine-slug format (`[Name](people/slug)`).
@@ -310,6 +337,39 @@ export async function extractPageLinks(
     });
   }
 
+  // 2b. Bare/unwhitelisted wikilinks: `[[X]]` whose first segment isn't
+  // in DIR_PATTERN. Catches brains that use flat slugs (`[[my-runbook]]`)
+  // or domain-specific dir prefixes outside the canonical taxonomy
+  // (`[[tools/X]]`, `[[reference/X]]`). Validated via resolver.exists()
+  // so random `[[foo]]` text in prose doesn't generate dead edges.
+  //
+  // Order: after the strict regexes in passes 1 + 2a so the cheap matches
+  // run first and the per-candidate DB hit only fires for the leftovers.
+  const seenBareTargets = new Set<string>();
+  let wm: RegExpExecArray | null;
+  const wikiPass = new RegExp(BARE_WIKILINK_RE.source, BARE_WIKILINK_RE.flags);
+  while ((wm = wikiPass.exec(strippedContent)) !== null) {
+    let candidate = wm[1].trim();
+    if (!candidate || candidate.includes('://')) continue;
+    if (candidate.endsWith('.md')) candidate = candidate.slice(0, -3);
+    if (!candidate) continue;
+    const firstSeg = candidate.split('/')[0];
+    // Skip ones extractEntityRefs already produced — both DIR_PATTERN-prefixed
+    // (matched by WIKILINK_RE) and our own within-pass dups.
+    if (DIR_PATTERN_SET.has(firstSeg)) continue;
+    if (seenBareTargets.has(candidate)) continue;
+    seenBareTargets.add(candidate);
+    if (!(await resolver.exists(candidate))) continue;
+    const idx = strippedContent.indexOf(`[[${wm[1]}`, Math.max(0, wm.index - 2));
+    const ctx = excerpt(strippedContent, idx >= 0 ? idx : wm.index, 240);
+    candidates.push({
+      targetSlug: candidate,
+      linkType: inferLinkType(pageType, ctx, content, candidate),
+      context: ctx,
+      linkSource: 'markdown',
+    });
+  }
+
   // 3. Frontmatter-derived edges (v0.13). Includes the legacy `source:`
   // field along with the full field map.
   const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver);
@@ -498,6 +558,14 @@ export interface SlugResolver {
    * extract/put_page summary so the user can see the gap.
    */
   resolve(name: string, dirHint?: string | string[]): Promise<string | null>;
+  /**
+   * Exact-slug existence check (no fuzzy, no display-name normalization).
+   * Used by extractPageLinks' bare-wikilink pass to validate `[[slug]]`
+   * candidates whose first segment isn't in the DIR_PATTERN whitelist —
+   * avoids emitting dead links from random `[[foo]]` text that happens
+   * to look slug-shaped.
+   */
+  exists(slug: string): Promise<boolean>;
 }
 
 /**
@@ -520,10 +588,22 @@ export function makeResolver(
   opts: { mode: 'batch' | 'live' } = { mode: 'live' },
 ): SlugResolver {
   const cache = new Map<string, string | null>();
+  // Separate cache so resolve()/exists() with the same string don't collide.
+  const existsCache = new Map<string, boolean>();
 
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
 
   return {
+    async exists(slug: string): Promise<boolean> {
+      if (!slug || typeof slug !== 'string') return false;
+      const trimmed = slug.trim();
+      if (!trimmed) return false;
+      if (existsCache.has(trimmed)) return existsCache.get(trimmed)!;
+      const page = await engine.getPage(trimmed);
+      const result = page !== null;
+      existsCache.set(trimmed, result);
+      return result;
+    },
     async resolve(name: string, dirHint?: string | string[]): Promise<string | null> {
       if (!name || typeof name !== 'string') return null;
       const trimmed = name.trim();

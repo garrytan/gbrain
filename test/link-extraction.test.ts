@@ -83,11 +83,12 @@ const allowAllResolver = {
     if (/^[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/.test(name)) return name;
     return null;
   },
+  exists: async () => true,
 };
 
 // Resolver that never resolves. Used to test that the non-frontmatter
 // paths still produce candidates even when no fuzzy matching is possible.
-const nullResolver = { resolve: async () => null };
+const nullResolver = { resolve: async () => null, exists: async () => false };
 
 describe('extractPageLinks', () => {
   test('returns LinkCandidate[] with inferred types', async () => {
@@ -142,6 +143,125 @@ describe('extractPageLinks', () => {
     );
     const aliceLink = candidates.find(c => c.targetSlug === 'people/alice');
     expect(aliceLink!.linkType).toBe('attended');
+  });
+});
+
+// ─── extractPageLinks — bare-wikilink pass ─────────────────────
+
+describe('extractPageLinks bare-wikilink pass', () => {
+  // Resolver that knows about a fixed set of flat + non-canonical slugs.
+  // Brains with DIR_PATTERN-outside taxonomies (tools/, reference/, flat
+  // slugs like fortscott-pipeline-current-state) are the target use case.
+  const knownSlugs = new Set([
+    'my-runbook',
+    'fortscott-pipeline-current-state',
+    'tools/yt-dlp/crawl',
+    'reference/gpu-box',
+    'people/alice',
+  ]);
+  const brainResolver: SlugResolver = {
+    async resolve(name: string) {
+      return knownSlugs.has(name) ? name : null;
+    },
+    async exists(slug: string) {
+      return knownSlugs.has(slug);
+    },
+  };
+
+  test('flat slug to existing page emits a candidate', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/x', 'See [[my-runbook]] for the procedure.',
+      {}, 'concept', brainResolver,
+    );
+    expect(candidates.find(c => c.targetSlug === 'my-runbook')).toBeDefined();
+  });
+
+  test('flat slug to missing page is silently dropped', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/x', 'See [[some-missing-page]] for context.',
+      {}, 'concept', brainResolver,
+    );
+    expect(candidates.find(c => c.targetSlug === 'some-missing-page')).toBeUndefined();
+  });
+
+  test('non-canonical dir prefix to existing page emits a candidate', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/x', 'Audio pulled via [[tools/yt-dlp/crawl]].',
+      {}, 'concept', brainResolver,
+    );
+    expect(candidates.find(c => c.targetSlug === 'tools/yt-dlp/crawl')).toBeDefined();
+  });
+
+  test('mixed whitelisted + bare wikilinks both emit', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/x', 'Met [[people/alice]] about [[fortscott-pipeline-current-state]].',
+      {}, 'concept', brainResolver,
+    );
+    expect(candidates.find(c => c.targetSlug === 'people/alice')).toBeDefined();
+    expect(candidates.find(c => c.targetSlug === 'fortscott-pipeline-current-state')).toBeDefined();
+  });
+
+  test('whitelisted slug is not double-emitted by both passes', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/x', 'See [[people/alice]] for details.',
+      {}, 'concept', brainResolver,
+    );
+    const aliceMatches = candidates.filter(c => c.targetSlug === 'people/alice');
+    expect(aliceMatches.length).toBe(1);
+  });
+
+  test('bare wikilink inside a code fence is ignored', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/x',
+      'Real ref: [[my-runbook]]\n\n```\nIn code: [[fortscott-pipeline-current-state]]\n```',
+      {}, 'concept', brainResolver,
+    );
+    expect(candidates.find(c => c.targetSlug === 'my-runbook')).toBeDefined();
+    expect(candidates.find(c => c.targetSlug === 'fortscott-pipeline-current-state')).toBeUndefined();
+  });
+
+  test('display-text syntax [[slug|Display]] still resolves the slug', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/x', 'See [[my-runbook|the runbook]] for the procedure.',
+      {}, 'concept', brainResolver,
+    );
+    expect(candidates.find(c => c.targetSlug === 'my-runbook')).toBeDefined();
+  });
+
+  test('qualified wikilink [[src:slug]] is not picked up by bare pass', async () => {
+    // The qualified syntax is handled (or not handled) by QUALIFIED_WIKILINK_RE
+    // in extractEntityRefs; the bare pass must not generate a phantom edge
+    // for `newsroom:people/alice` as a "slug".
+    const { candidates } = await extractPageLinks(
+      'docs/x', 'Cross-brain: [[newsroom:people/alice]].',
+      {}, 'concept', brainResolver,
+    );
+    expect(candidates.find(c => c.targetSlug === 'newsroom:people/alice')).toBeUndefined();
+  });
+
+  test('duplicate bare wikilinks dedup within the page', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/x', 'First mention [[my-runbook]]. Later [[my-runbook]] again.',
+      {}, 'concept', brainResolver,
+    );
+    const matches = candidates.filter(c => c.targetSlug === 'my-runbook');
+    expect(matches.length).toBe(1);
+  });
+
+  test('bare wikilink with trailing .md is normalized', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/x', 'See [[my-runbook.md]] for details.',
+      {}, 'concept', brainResolver,
+    );
+    expect(candidates.find(c => c.targetSlug === 'my-runbook')).toBeDefined();
+  });
+
+  test('section anchor stripped from bare wikilink slug', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/x', 'See [[my-runbook#step-3]] for details.',
+      {}, 'concept', brainResolver,
+    );
+    expect(candidates.find(c => c.targetSlug === 'my-runbook')).toBeDefined();
   });
 });
 
@@ -357,6 +477,9 @@ function makeFixtureResolver(pages: Record<string, string>): SlugResolver {
         if (pages[candidate]) return candidate;
       }
       return null;
+    },
+    async exists(slug: string) {
+      return slug in pages;
     },
   };
 }
