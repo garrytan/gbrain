@@ -18,9 +18,11 @@ import { MinionQueue } from '../src/core/minions/queue.ts';
 import {
   makeSubagentHandler,
   RateLeaseUnavailableError,
+  resolveSubagentAnthropicApiKey,
   stripProviderPrefix,
   type MessagesClient,
 } from '../src/core/minions/handlers/subagent.ts';
+import { withEnv } from './helpers/with-env.ts';
 import type { ToolDef, MinionJobContext } from '../src/core/minions/types.ts';
 import type Anthropic from '@anthropic-ai/sdk';
 
@@ -120,6 +122,62 @@ function makeThrowingTool(name = 'broken'): ToolDef {
     async execute() { throw new Error('tool broken'); },
   };
 }
+
+// ── Tests ───────────────────────────────────────────────────
+
+describe('subagent handler auth resolution', () => {
+  test('default Anthropic factory uses config anthropic_api_key when env is absent', async () => {
+    await withEnv({ ANTHROPIC_API_KEY: undefined }, async () => {
+      const seen: string[] = [];
+      const handler = makeSubagentHandler({
+        engine,
+        config: { engine: 'postgres', anthropic_api_key: 'sk-ant...nfig' } as any,
+        toolRegistry: [],
+        makeAnthropic: (apiKey?: string) => {
+          seen.push(apiKey ?? '');
+          return { messages: new FakeMessagesClient([{ content: [{ type: 'text', text: 'ok' }] as any }]) } as any;
+        },
+      });
+
+      const result = await handler(await makeCtx({ prompt: 'hi' }));
+
+      expect(result.result).toBe('ok');
+      expect(seen).toEqual(['sk-ant...nfig']);
+    });
+  });
+
+  test('model-specified jobs still construct the default Anthropic client with the config key when env is absent', async () => {
+    await withEnv({ ANTHROPIC_API_KEY: undefined }, async () => {
+      const seen: string[] = [];
+      const handler = makeSubagentHandler({
+        engine,
+        config: { engine: 'postgres', anthropic_api_key: 'sk-ant...model' } as any,
+        toolRegistry: [],
+        makeAnthropic: (apiKey?: string) => {
+          seen.push(apiKey ?? '');
+          return { messages: new FakeMessagesClient([{ content: [{ type: 'text', text: 'model ok' }] as any }]) } as any;
+        },
+      });
+
+      const result = await handler(await makeCtx({
+        prompt: 'hi',
+        model: 'anthropic:claude-sonnet-4-6',
+      }));
+
+      expect(result.result).toBe('model ok');
+      expect(seen).toEqual(['sk-ant...model']);
+    });
+  });
+
+  test('subagent auth fails clearly only when env and config keys are both absent', async () => {
+    await withEnv({ ANTHROPIC_API_KEY: undefined }, async () => {
+      expect(() => resolveSubagentAnthropicApiKey({})).toThrow(/set ANTHROPIC_API_KEY.*anthropic_api_key/);
+    });
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-ant-env' }, async () => {
+      expect(resolveSubagentAnthropicApiKey({})).toBe('sk-ant-env');
+    });
+  });
+});
 
 // ── Tests ───────────────────────────────────────────────────
 
@@ -585,6 +643,7 @@ describe('makeSubagentHandler default client construction', () => {
     // factory to hit the default-client branch (`deps.client ?? makeAnthropic().messages`).
     const handler = makeSubagentHandler({
       engine,
+      config: { engine: 'postgres', anthropic_api_key: 'sk-ant-test' } as any,
       makeAnthropic: () => fakeSdk,
       toolRegistry: [],
     });

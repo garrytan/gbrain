@@ -73,6 +73,10 @@ const HEADROOM_RATIO = 0.9;
 const MIN_PROMPT_TOKENS = 100_000;
 /** Default chunk-count cap; operator-configurable via dream.synthesize.max_chunks_per_transcript. */
 const DEFAULT_MAX_CHUNKS = 24;
+/** Default per-child synthesis wall clock: 30 minutes (stock behavior). */
+const DEFAULT_CHILD_TIMEOUT_MS = 30 * 60 * 1000;
+/** Orchestrator waits five minutes longer than the child job timeout. */
+const ORCHESTRATOR_WAIT_GRACE_MS = 5 * 60 * 1000;
 /** Conservative default budget when model is unknown (200K × HEADROOM_RATIO). */
 const UNKNOWN_MODEL_BUDGET_TOKENS = 180_000;
 
@@ -460,7 +464,7 @@ export async function runPhaseSynthesize(
           : config.model;
       for (let i = 0; i < chunks.length; i++) {
         const childData: SubagentHandlerData = {
-          prompt: buildSynthesisPrompt(t, chunks[i], i, chunks.length, priorContradictionsBlock),
+          prompt: buildSynthesisPrompt(t, chunks[i], i, chunks.length, priorContradictionsBlock, allowedSlugPrefixes),
           model: subagentModel,
           max_turns: 30,
           allowed_slug_prefixes: allowedSlugPrefixes,
@@ -478,7 +482,7 @@ export async function runPhaseSynthesize(
           max_stalled: 3,
           on_child_fail: 'continue',
           idempotency_key,
-          timeout_ms: 30 * 60 * 1000, // 30 min per chunk
+          timeout_ms: config.childTimeoutMs,
         };
         const child = await queue.add(
           'subagent',
@@ -499,7 +503,7 @@ export async function runPhaseSynthesize(
     for (const jobId of childIds) {
       try {
         const job = await waitForCompletion(queue, jobId, {
-          timeoutMs: 35 * 60 * 1000,
+          timeoutMs: synthesizeOrchestratorWaitMs(config.childTimeoutMs),
           pollMs: 5 * 1000,
         });
         childOutcomes.push({ jobId, status: job.status });
@@ -531,7 +535,8 @@ export async function runPhaseSynthesize(
     // Summary index page (deterministic; orchestrator-written via direct
     // engine.putPage so no allow-list path needed).
     const summaryDate = opts.date ?? today();
-    const summarySlug = `dream-cycle-summaries/${summaryDate}`;
+    const summaryPrefixConfig = await engine.getConfig('dream.synthesize.summary_slug_prefix');
+    const summarySlug = `${deriveSummarySlugPrefix(allowedSlugPrefixes, summaryPrefixConfig)}/${summaryDate}`;
     // Back-compat: writeSummaryPage takes string[] for display; map refs back to slugs.
     const writtenSlugs = writtenRefs.map(r => r.slug);
     if (SUMMARY_SLUG_RE.test(summarySlug)) {
@@ -593,6 +598,18 @@ interface SynthConfig {
    * `dream.synthesize.max_chunks_per_transcript`.
    */
   maxChunksPerTranscript: number;
+  /** Per-child subagent timeout. Operator override: `dream.synthesize.child_timeout_ms`. */
+  childTimeoutMs: number;
+}
+
+export function parseSynthesizeChildTimeoutMs(raw: string | null | undefined): number {
+  if (!raw) return DEFAULT_CHILD_TIMEOUT_MS;
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CHILD_TIMEOUT_MS;
+}
+
+export function synthesizeOrchestratorWaitMs(childTimeoutMs: number): number {
+  return childTimeoutMs + ORCHESTRATOR_WAIT_GRACE_MS;
 }
 
 async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
@@ -621,6 +638,7 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
   const cooldownHoursStr = await engine.getConfig('dream.synthesize.cooldown_hours');
   const maxPromptTokensStr = await engine.getConfig('dream.synthesize.max_prompt_tokens');
   const maxChunksStr = await engine.getConfig('dream.synthesize.max_chunks_per_transcript');
+  const childTimeoutStr = await engine.getConfig('dream.synthesize.child_timeout_ms');
 
   let excludePatterns: string[] = ['medical', 'therapy'];
   if (excludeStr) {
@@ -658,6 +676,7 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     cooldownHours: cooldownHoursStr ? Math.max(0, parseInt(cooldownHoursStr, 10) || 12) : 12,
     maxPromptTokens,
     maxChunksPerTranscript,
+    childTimeoutMs: parseSynthesizeChildTimeoutMs(childTimeoutStr),
   };
 }
 
@@ -939,6 +958,7 @@ function buildSynthesisPrompt(
   chunkIdx: number,
   chunkTotal: number,
   priorContradictionsBlock = '',
+  allowedSlugPrefixes: string[] = [],
 ): string {
   const dateHint = t.inferredDate ?? today();
   const baseSlugSegment = sanitizeForSlug(t.basename) || `session-${dateHint}`;
@@ -952,6 +972,7 @@ function buildSynthesisPrompt(
   const transcriptHeader = isChunked
     ? `${t.filePath} (chunk ${chunkIdx + 1}/${chunkTotal})`
     : t.filePath;
+  const examplePrefixes = deriveSynthesisExamplePrefixes(allowedSlugPrefixes);
   return `You are synthesizing a conversation transcript into the user's personal knowledge brain.
 
 CONTEXT
@@ -967,10 +988,10 @@ OUTPUT POLICY (ALL of these are required)
 
 TASKS
 A. Reflections (self-knowledge, pattern recognition, emotional processing):
-   slug: \`wiki/personal/reflections/${dateHint}-<topic-slug>-${hashSuffix}\`
+   slug: \`${examplePrefixes.reflections}/${dateHint}-<topic-slug>-${hashSuffix}\`
 
 B. Originals (new ideas, frames, theses, mental models):
-   slug: \`wiki/originals/ideas/${dateHint}-<idea-slug>-${hashSuffix}\`
+   slug: \`${examplePrefixes.originals}/${dateHint}-<idea-slug>-${hashSuffix}\`
 
 C. People mentions: search first; if a page exists, do not put_page over it (the orchestrator handles people enrichment via timeline entries — your job is the reflection/original synthesis, NOT modifying existing person pages).
 
@@ -982,6 +1003,42 @@ ${chunkText}
 ---
 
 When done, briefly list the slugs you wrote in your final message so the orchestrator can audit.`;
+}
+
+export function normalizeAllowedSlugPrefix(glob: string): string {
+  return glob
+    .trim()
+    .replace(/\*+$/g, '')
+    .replace(/\/+$/g, '');
+}
+
+export function deriveSynthesisExamplePrefixes(allowedSlugPrefixes: string[]): { reflections: string; originals: string } {
+  const fallback = {
+    reflections: 'wiki/personal/reflections',
+    originals: 'wiki/originals/ideas',
+  };
+  const normalized = allowedSlugPrefixes
+    .map(normalizeAllowedSlugPrefix)
+    .filter(Boolean);
+  if (normalized.length === 0) return fallback;
+
+  const first = normalized[0]!;
+  const reflections = normalized.find(p => /(^|\/)(reflections?|self|personal)(\/|$)/i.test(p)) ?? first;
+  const originals = normalized.find(p => /(^|\/)(originals?|ideas?|frames?|theses)(\/|$)/i.test(p)) ?? first;
+  return { reflections, originals };
+}
+
+export function deriveSummarySlugPrefix(allowedSlugPrefixes: string[], configuredPrefix?: string | null): string {
+  const normalized = allowedSlugPrefixes
+    .map(normalizeAllowedSlugPrefix)
+    .filter(Boolean);
+  const fromAllowList = normalized.find(p => /(^|\/)dream-cycle/i.test(p));
+  if (fromAllowList) return fromAllowList;
+  if (configuredPrefix) {
+    const normalizedConfig = normalizeAllowedSlugPrefix(configuredPrefix);
+    if (normalizedConfig) return normalizedConfig;
+  }
+  return 'dream-cycle-summaries';
 }
 
 function sanitizeForSlug(s: string): string {
@@ -1231,6 +1288,13 @@ function failed(error: PhaseError): PhaseResult {
     error,
   };
 }
+
+export const __synthesizeInternals = {
+  buildSynthesisPrompt,
+  deriveSummarySlugPrefix,
+  deriveSynthesisExamplePrefixes,
+  normalizeAllowedSlugPrefix,
+};
 
 function makeError(cls: string, code: string, message: string, hint?: string): PhaseError {
   return hint ? { class: cls, code, message, hint } : { class: cls, code, message };

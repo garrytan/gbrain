@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadActivePackBestEffort } from '../src/core/schema-pack/best-effort.ts';
+import { loadActivePackBestEffort, loadActivePackBestEffortWithResolution } from '../src/core/schema-pack/best-effort.ts';
 import {
   __setPackLocatorForTests,
   _resetPackLocatorForTests,
@@ -78,6 +78,25 @@ describe('loadActivePackBestEffort', () => {
     await withEnv({ GBRAIN_HOME: tmpDir }, async () => {
       // resolves, doesn't throw.
       await expect(loadActivePackBestEffort(fakeCtx())).resolves.toBeNull();
+    });
+  });
+
+  it('reports unconfigured default separately from configured pack load failure', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      const result = await loadActivePackBestEffortWithResolution(fakeCtx());
+      expect(result.configured).toBe(false);
+      expect(result.resolution.source).toBe('default');
+      expect(result.pack?.manifest.name).toBe('gbrain-base');
+    });
+  });
+
+  it('reports configured=true when a configured pack fails to load', async () => {
+    __setPackLocatorForTests(() => null);
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: 'never-installed' }, async () => {
+      const result = await loadActivePackBestEffortWithResolution(fakeCtx());
+      expect(result.configured).toBe(true);
+      expect(result.resolution).toMatchObject({ pack_name: 'never-installed', source: 'env' });
+      expect(result.pack).toBeNull();
     });
   });
 });

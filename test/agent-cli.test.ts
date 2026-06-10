@@ -43,13 +43,28 @@ describe('parseRunFlags', () => {
     expect(rest).toEqual(['hello', 'world']);
   });
 
-  test('flags before prompt are parsed, unknown token ends flag parsing', () => {
+  test('flags before prompt are parsed', () => {
     const { flags, rest } = agentTesting.parseRunFlags([
       '--model', 'claude-opus-4-7', '--max-turns', '30', 'summarize', 'everything',
     ]);
     expect(flags.model).toBe('claude-opus-4-7');
     expect(flags.maxTurns).toBe(30);
     expect(rest).toEqual(['summarize', 'everything']);
+  });
+
+  test('known flags after the prompt are parsed instead of being submitted as prompt text', () => {
+    const { flags, rest } = agentTesting.parseRunFlags([
+      'Reply with exactly: AUTH-OK', '--model', 'anthropic:claude-sonnet-4-6', '--detach',
+    ]);
+    expect(flags.model).toBe('anthropic:claude-sonnet-4-6');
+    expect(flags.detach).toBe(true);
+    expect(rest).toEqual(['Reply with exactly: AUTH-OK']);
+  });
+
+  test('unknown prompt-looking flags after prompt stay in the prompt', () => {
+    const { flags, rest } = agentTesting.parseRunFlags(['Reply exactly:', 'AUTH-OK', '--json']);
+    expect(flags.model).toBeUndefined();
+    expect(rest).toEqual(['Reply exactly:', 'AUTH-OK', '--json']);
   });
 
   test('--tools comma-split', () => {

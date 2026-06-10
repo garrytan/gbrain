@@ -17,7 +17,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { runPhaseSynthesize, renderPageToMarkdown } from '../../src/core/cycle/synthesize.ts';
+import {
+  parseSynthesizeChildTimeoutMs,
+  renderPageToMarkdown,
+  runPhaseSynthesize,
+  synthesizeOrchestratorWaitMs,
+} from '../../src/core/cycle/synthesize.ts';
 
 interface TestRig {
   engine: PGLiteEngine;
@@ -118,6 +123,20 @@ describe('E2E synthesize — empty corpus', () => {
       await rig.cleanup();
     }
   }, 30_000);
+});
+
+describe('synthesize timeout config', () => {
+  test('child timeout override drives child and derived orchestrator waits', () => {
+    const childTimeoutMs = parseSynthesizeChildTimeoutMs('4500000');
+    expect(childTimeoutMs).toBe(75 * 60 * 1000);
+    expect(synthesizeOrchestratorWaitMs(childTimeoutMs)).toBe(80 * 60 * 1000);
+  });
+
+  test('invalid child timeout preserves stock 30min child / 35min orchestrator defaults', () => {
+    const childTimeoutMs = parseSynthesizeChildTimeoutMs('0');
+    expect(childTimeoutMs).toBe(30 * 60 * 1000);
+    expect(synthesizeOrchestratorWaitMs(childTimeoutMs)).toBe(35 * 60 * 1000);
+  });
 });
 
 describe('E2E synthesize — gateway-adapter mid-run AIConfigError catch (v0.41 T5 rework)', () => {

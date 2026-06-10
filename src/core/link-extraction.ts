@@ -13,6 +13,8 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { PageType } from './types.ts';
+import type { SchemaPackManifest } from './schema-pack/manifest-v1.ts';
+import { frontmatterLinkTypeFromPack } from './schema-pack/link-inference.ts';
 
 /**
  * v0.42.7 — link-extraction version stamp. Bump this ISO timestamp whenever the
@@ -27,7 +29,7 @@ import type { PageType } from './types.ts';
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
-export const LINK_EXTRACTOR_VERSION_TS = '2026-05-31T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-06-10T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -467,78 +469,82 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
-  opts: { globalBasename?: boolean; skipFrontmatter?: boolean } = {},
+  opts: { globalBasename?: boolean; skipFrontmatter?: boolean; frontmatterOnly?: boolean; schemaPack?: Pick<SchemaPackManifest, 'frontmatter_links'> } = {},
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
   // 1. Markdown entity refs.
-  for (const ref of extractEntityRefs(content)) {
-    // Issue #972: refs from the generic `[[bare-name]]` pass carry the
-    // literal wikilink text, not a real page slug. When global_basename
-    // mode is on AND the resolver implements basename lookup, resolve
-    // to every matching page and emit one candidate per match. When the
-    // flag is off (default), drop silently — back-compat with the
-    // pre-v0.40.8.2 behavior of dropping bare wikilinks outside
-    // DIR_PATTERN.
-    if (ref.needsResolution) {
-      if (!opts.globalBasename || typeof resolver.resolveBasenameMatches !== 'function') {
+  if (!opts.frontmatterOnly) {
+    for (const ref of extractEntityRefs(content)) {
+      // Issue #972: refs from the generic `[[bare-name]]` pass carry the
+      // literal wikilink text, not a real page slug. When global_basename
+      // mode is on AND the resolver implements basename lookup, resolve
+      // to every matching page and emit one candidate per match. When the
+      // flag is off (default), drop silently — back-compat with the
+      // pre-v0.40.8.2 behavior of dropping bare wikilinks outside
+      // DIR_PATTERN.
+      if (ref.needsResolution) {
+        if (!opts.globalBasename || typeof resolver.resolveBasenameMatches !== 'function') {
+          continue;
+        }
+        // Issue #972 (codex): resolve by the wikilink TARGET (ref.slug — the
+        // text inside `[[...]]` before any `|`), NOT the display alias
+        // (ref.name = match[2]). `[[struktura|the project]]` must resolve
+        // `struktura`, not "the project". The display text is for context only.
+        const matches = await resolver.resolveBasenameMatches(ref.slug);
+        if (matches.length === 0) continue;
+        const idx = content.indexOf(ref.slug);
+        const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
+        for (const matched of matches) {
+          // Issue #972 (codex [P2]): a basename `[[own-tail]]` on its own page
+          // resolves back to itself — drop the self-loop.
+          if (matched === slug) continue;
+          candidates.push({
+            targetSlug: matched,
+            linkType: WIKILINK_BASENAME_LINK_TYPE,
+            context,
+            linkSource: 'wikilink-resolved',
+          });
+        }
         continue;
       }
-      // Issue #972 (codex): resolve by the wikilink TARGET (ref.slug — the
-      // text inside `[[...]]` before any `|`), NOT the display alias
-      // (ref.name = match[2]). `[[struktura|the project]]` must resolve
-      // `struktura`, not "the project". The display text is for context only.
-      const matches = await resolver.resolveBasenameMatches(ref.slug);
-      if (matches.length === 0) continue;
-      const idx = content.indexOf(ref.slug);
+      const idx = content.indexOf(ref.name);
+      // Wider context window (240 chars vs original 80) catches verbs that
+      // appear at sentence-or-paragraph distance from the slug — common in
+      // narrative prose where a partner's investment verbs appear once and
+      // then portfolio companies are listed in subsequent sentences.
       const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
-      for (const matched of matches) {
-        // Issue #972 (codex [P2]): a basename `[[own-tail]]` on its own page
-        // resolves back to itself — drop the self-loop.
-        if (matched === slug) continue;
-        candidates.push({
-          targetSlug: matched,
-          linkType: WIKILINK_BASENAME_LINK_TYPE,
-          context,
-          linkSource: 'wikilink-resolved',
-        });
-      }
-      continue;
+      candidates.push({
+        targetSlug: ref.slug,
+        linkType: inferLinkType(pageType, context, content, ref.slug),
+        context,
+        linkSource: 'markdown',
+      });
     }
-    const idx = content.indexOf(ref.name);
-    // Wider context window (240 chars vs original 80) catches verbs that
-    // appear at sentence-or-paragraph distance from the slug — common in
-    // narrative prose where a partner's investment verbs appear once and
-    // then portfolio companies are listed in subsequent sentences.
-    const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
-    candidates.push({
-      targetSlug: ref.slug,
-      linkType: inferLinkType(pageType, context, content, ref.slug),
-      context,
-      linkSource: 'markdown',
-    });
   }
 
   // 2. Bare slug references (e.g. "see people/alice-chen for context").
   // Limited to the same entity directories ENTITY_REF_RE covers.
   // Code blocks are stripped first — slugs in code samples are not real refs.
-  const strippedContent = stripCodeBlocks(content);
-  const bareRe = new RegExp(
-    `\\b(${DIR_PATTERN}\\/[a-z0-9][a-z0-9/-]*[a-z0-9])\\b`,
-    'g',
-  );
-  let m: RegExpExecArray | null;
-  while ((m = bareRe.exec(strippedContent)) !== null) {
-    // Skip matches that are part of a markdown link (already handled above).
-    const charBefore = m.index > 0 ? strippedContent[m.index - 1] : '';
-    if (charBefore === '/' || charBefore === '(') continue;
-    const context = excerpt(strippedContent, m.index, 240);
-    candidates.push({
-      targetSlug: m[1],
-      linkType: inferLinkType(pageType, context, content, m[1]),
-      context,
-      linkSource: 'markdown',
-    });
+  if (!opts.frontmatterOnly) {
+    const strippedContent = stripCodeBlocks(content);
+    const bareRe = new RegExp(
+      `\\b(${DIR_PATTERN}\\/[a-z0-9][a-z0-9/-]*[a-z0-9])\\b`,
+      'g',
+    );
+    let m: RegExpExecArray | null;
+    while ((m = bareRe.exec(strippedContent)) !== null) {
+      // Skip matches that are part of a markdown link (already handled above).
+      const charBefore = m.index > 0 ? strippedContent[m.index - 1] : '';
+      if (charBefore === '/' || charBefore === '(') continue;
+      const context = excerpt(strippedContent, m.index, 240);
+      candidates.push({
+        targetSlug: m[1],
+        linkType: inferLinkType(pageType, context, content, m[1]),
+        context,
+        linkSource: 'markdown',
+      });
+    }
   }
 
   // 3. Frontmatter-derived edges (v0.13). Includes the legacy `source:`
@@ -551,7 +557,7 @@ export async function extractPageLinks(
   // path needed `resolveBasenameMatches` on the real resolver.
   let fmUnresolved: UnresolvedFrontmatterRef[] = [];
   if (!opts.skipFrontmatter) {
-    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver);
+    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver, { schemaPack: opts.schemaPack });
     candidates.push(...fm.candidates);
     fmUnresolved = fm.unresolved;
   }
@@ -1004,6 +1010,50 @@ export interface FrontmatterExtractResult {
   unresolved: UnresolvedFrontmatterRef[];
 }
 
+export interface FrontmatterExtractOptions {
+  /**
+   * Optional active schema pack. When supplied, frontmatter_links rules
+   * override the legacy hardcoded verb for matching fields. Legacy direction
+   * and dirHint are preserved where a legacy mapping exists; pack-only fields
+   * default to outgoing slug-shaped links.
+   */
+  schemaPack?: Pick<SchemaPackManifest, 'frontmatter_links'>;
+}
+
+function frontmatterMappingsForPage(
+  pageType: string,
+  schemaPack?: Pick<SchemaPackManifest, 'frontmatter_links'>,
+): FrontmatterFieldMapping[] {
+  if (!schemaPack || schemaPack.frontmatter_links.length === 0) return FRONTMATTER_LINK_MAP;
+
+  const mappings: FrontmatterFieldMapping[] = [];
+  const seen = new Set<string>();
+
+  for (const mapping of FRONTMATTER_LINK_MAP) {
+    if (mapping.pageType && mapping.pageType !== pageType) continue;
+    for (const field of mapping.fields) {
+      const packType = frontmatterLinkTypeFromPack(schemaPack, pageType, field);
+      mappings.push({ ...mapping, fields: [field], type: packType ?? mapping.type });
+      seen.add(field);
+    }
+  }
+
+  for (const rule of schemaPack.frontmatter_links) {
+    if (rule.page_type !== pageType) continue;
+    const fields = rule.fields.filter(field => !seen.has(field));
+    if (fields.length === 0) continue;
+    mappings.push({
+      fields,
+      pageType,
+      type: rule.link_type,
+      direction: 'outgoing',
+      dirHint: '',
+    });
+  }
+
+  return mappings;
+}
+
 /**
  * Extract typed graph edges from YAML frontmatter. Async because the
  * resolver may need to query the DB for fuzzy matches.
@@ -1017,11 +1067,12 @@ export async function extractFrontmatterLinks(
   pageType: PageType,
   frontmatter: Record<string, unknown>,
   resolver: SlugResolver,
+  opts: FrontmatterExtractOptions = {},
 ): Promise<FrontmatterExtractResult> {
   const candidates: LinkCandidate[] = [];
   const unresolved: UnresolvedFrontmatterRef[] = [];
 
-  for (const mapping of FRONTMATTER_LINK_MAP) {
+  for (const mapping of frontmatterMappingsForPage(pageType, opts.schemaPack)) {
     if (mapping.pageType && mapping.pageType !== pageType) continue;
     for (const field of mapping.fields) {
       const value = frontmatter[field];

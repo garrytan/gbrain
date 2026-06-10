@@ -178,7 +178,7 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
   // dream.* — adding env shadows is a separate PR (out of scope for the
   // fix wave). These tests pin that contract.
   describe('dream.* DB-plane merge (v0.41.2.1)', () => {
-    test('DB value fills in for all 5 dream.synthesize.* keys when base unset', async () => {
+    test('DB value fills in for all 6 dream.synthesize.* keys when base unset', async () => {
       const base: GBrainConfig = { engine: 'pglite' };
       const engine = makeEngine({
         'dream.synthesize.session_corpus_dir': '/tmp/sessions',
@@ -186,6 +186,7 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
         'dream.synthesize.verdict_model': 'anthropic:claude-haiku-4-5',
         'dream.synthesize.max_prompt_tokens': '180000',
         'dream.synthesize.max_chunks_per_transcript': '32',
+        'dream.synthesize.child_timeout_ms': '4500000',
       });
       const merged = await loadConfigWithEngine(engine, base);
       expect(merged?.dream?.synthesize?.session_corpus_dir).toBe('/tmp/sessions');
@@ -193,6 +194,7 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
       expect(merged?.dream?.synthesize?.verdict_model).toBe('anthropic:claude-haiku-4-5');
       expect(merged?.dream?.synthesize?.max_prompt_tokens).toBe(180000);
       expect(merged?.dream?.synthesize?.max_chunks_per_transcript).toBe(32);
+      expect(merged?.dream?.synthesize?.child_timeout_ms).toBe(4500000);
     });
 
     test('DB value fills in for both dream.patterns.* keys when base unset', async () => {

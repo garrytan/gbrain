@@ -74,8 +74,9 @@ SUBMITTING
     --follow                     Tail status until terminal (default on TTY)
     --detach                     Submit + print job id, exit immediately
 
-  Flags after \`run\` up to the first unrecognized token are parsed; the
-  remainder is the prompt. Use \`--\` to explicitly terminate flag parsing.
+  Known flags may appear before or after the prompt. Unknown flag-looking tokens
+  after prompt text stay in the prompt (for example: "reply with --json"). Use
+  \`--\` to explicitly terminate flag parsing.
 
 VIEWING
   gbrain agent logs <job_id>
@@ -107,26 +108,35 @@ function parseRunFlags(args: string[]): { flags: RunFlags; rest: string[] } {
     follow: process.stdout.isTTY === true,
     detach: false,
   };
+  const rest: string[] = [];
+  let sawPromptToken = false;
   let i = 0;
   while (i < args.length) {
     const a = args[i];
-    if (a === '--') { i++; break; }
-    if (!isKnownFlag(a!)) break;
+    if (a === '--') {
+      rest.push(...args.slice(i + 1));
+      break;
+    }
     switch (a) {
-      case '--subagent-def': flags.subagentDef = args[++i]; i++; break;
-      case '--model':        flags.model = args[++i]; i++; break;
-      case '--max-turns':    flags.maxTurns = parseInt(args[++i] ?? '', 10); i++; break;
-      case '--tools':        flags.tools = (args[++i] ?? '').split(',').map(s => s.trim()).filter(Boolean); i++; break;
-      case '--timeout-ms':   flags.timeoutMs = parseInt(args[++i] ?? '', 10); i++; break;
-      case '--fanout-manifest': flags.fanoutManifest = args[++i]; i++; break;
-      case '--follow':       flags.follow = true; i++; break;
-      case '--no-follow':    flags.follow = false; i++; break;
-      case '--detach':       flags.detach = true; flags.follow = false; i++; break;
+      case '--subagent-def': flags.subagentDef = args[++i]; i++; continue;
+      case '--model':        flags.model = args[++i]; i++; continue;
+      case '--max-turns':    flags.maxTurns = parseInt(args[++i] ?? '', 10); i++; continue;
+      case '--tools':        flags.tools = (args[++i] ?? '').split(',').map(s => s.trim()).filter(Boolean); i++; continue;
+      case '--timeout-ms':   flags.timeoutMs = parseInt(args[++i] ?? '', 10); i++; continue;
+      case '--fanout-manifest': flags.fanoutManifest = args[++i]; i++; continue;
+      case '--follow':       flags.follow = true; i++; continue;
+      case '--no-follow':    flags.follow = false; i++; continue;
+      case '--detach':       flags.detach = true; flags.follow = false; i++; continue;
       default:
-        throw new Error(`unknown flag: ${a}. Run \`gbrain agent run --help\` for usage.`);
+        if (isKnownFlag(a!) && !sawPromptToken) {
+          throw new Error(`unknown flag: ${a}. Run \`gbrain agent run --help\` for usage.`);
+        }
+        rest.push(a!);
+        sawPromptToken = true;
+        i++;
     }
   }
-  return { flags, rest: args.slice(i) };
+  return { flags, rest };
 }
 
 export async function runAgentRun(engine: BrainEngine, args: string[]): Promise<void> {
