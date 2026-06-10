@@ -8,6 +8,9 @@ import {
   makeResolver,
   parseTimelineEntries,
   isAutoLinkEnabled,
+  normalizeBasename,
+  buildBasenameIndex,
+  queryBasenameIndex,
   FRONTMATTER_LINK_MAP,
   type SlugResolver,
 } from '../src/core/link-extraction.ts';
@@ -1236,6 +1239,53 @@ describe("v0.18.0 migration v22 — links_resolution_type", () => {
     expect(v22!.sql).toContain("links_resolution_type_check");
     expect(v22!.sql).toContain("qualified");
     expect(v22!.sql).toContain("unqualified");
+  });
+});
+
+describe("normalizeBasename — hyphen-run collapse", () => {
+  test('collapses " - " (space-hyphen-space) to a single hyphen', () => {
+    // Before: "Guide - Getting Started" normalized to "guide---getting-started"
+    // and missed the slug tail "guide-getting-started".
+    expect(normalizeBasename("Guide - Getting Started")).toBe(
+      "guide-getting-started",
+    );
+    expect(normalizeBasename("Project - API Gateway")).toBe(
+      "project-api-gateway",
+    );
+  });
+
+  test("leaves simple titles single-hyphenated (no regression)", () => {
+    expect(normalizeBasename("Release Notes")).toBe("release-notes");
+    expect(normalizeBasename("Roadmap")).toBe("roadmap");
+  });
+
+  test("trims stray leading/trailing hyphens", () => {
+    expect(normalizeBasename("- leading")).toBe("leading");
+    expect(normalizeBasename("trailing -")).toBe("trailing");
+  });
+});
+
+describe("queryBasenameIndex — resolves ' - ' titled wikilinks", () => {
+  const idx = buildBasenameIndex([
+    "guides/guide-getting-started",
+    "guides/project-api-gateway",
+    "guides/release-notes",
+  ]);
+
+  test("[[Type - Name]] resolves to its single-hyphen slug", () => {
+    expect(queryBasenameIndex(idx, "Guide - Getting Started")).toEqual([
+      "guides/guide-getting-started",
+    ]);
+    expect(queryBasenameIndex(idx, "Project - API Gateway")).toEqual([
+      "guides/project-api-gateway",
+    ]);
+  });
+
+  test("simple basenames still resolve, no spurious matches", () => {
+    expect(queryBasenameIndex(idx, "Release Notes")).toEqual([
+      "guides/release-notes",
+    ]);
+    expect(queryBasenameIndex(idx, "Nonexistent Page")).toEqual([]);
   });
 });
 
