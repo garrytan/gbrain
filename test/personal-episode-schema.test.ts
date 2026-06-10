@@ -7,6 +7,9 @@ import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 setDefaultTimeout(20_000);
 
+// PGLite schema initialization can exceed the default timeout on macOS release runners.
+const PGLITE_SCHEMA_TEST_TIMEOUT_MS = 60_000;
+
 describe('personal-episode schema', () => {
   const tempPaths: string[] = [];
 
@@ -60,5 +63,5 @@ describe('personal-episode schema', () => {
     ]);
 
     await engine.disconnect();
-  });
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 });

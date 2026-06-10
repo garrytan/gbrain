@@ -3,7 +3,8 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
-setDefaultTimeout(20_000);
+// PGLite schema initialization can exceed the default timeout on macOS release runners.
+setDefaultTimeout(60_000);
 
 let pglite: PGLiteEngine;
 let sqlite: SQLiteEngine;
@@ -19,8 +20,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await pglite.disconnect();
-  await sqlite.disconnect();
+  await pglite?.disconnect();
+  await sqlite?.disconnect();
 });
 
 async function clearEngine(engine: PGLiteEngine | SQLiteEngine): Promise<void> {
