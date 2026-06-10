@@ -92,6 +92,24 @@ describe('postgres-engine / search path timeout isolation', () => {
     expect(keyword).not.toMatch(/SET\s+statement_timeout\s*=\s*['"]?0/);
     expect(vector).not.toMatch(/SET\s+statement_timeout\s*=\s*['"]?0/);
   });
+
+  test('pgvector write/search paths do not name bare vector casts', () => {
+    const upsertChunks = stripComments(extractMethod(SRC, '_upsertChunksOnce'));
+    const insertFact = stripComments(extractMethod(SRC, 'insertFact'));
+    const insertFacts = stripComments(extractMethod(SRC, 'insertFacts'));
+    const findCandidateDuplicates = stripComments(extractMethod(SRC, 'findCandidateDuplicates'));
+    const searchTakesVector = stripComments(extractMethod(SRC, 'searchTakesVector'));
+
+    for (const fn of [
+      upsertChunks,
+      insertFact,
+      insertFacts,
+      findCandidateDuplicates,
+      searchTakesVector,
+    ]) {
+      expect(fn).not.toMatch(/::(?:halfvec|vector)\b/);
+    }
+  });
 });
 
 function stripComments(s: string): string {
@@ -105,7 +123,7 @@ function stripComments(s: string): string {
 // brace. Good enough for the small number of methods in this file.
 function extractMethod(source: string, name: string): string {
   // Find "async <name>(" at method-definition indentation (2 spaces).
-  const openRe = new RegExp(`^\\s+async\\s+${name}\\s*\\(`, 'm');
+  const openRe = new RegExp(`^\\s+(?:private\\s+)?async\\s+${name}\\s*\\(`, 'm');
   const match = openRe.exec(source);
   if (!match) {
     throw new Error(`method ${name} not found in postgres-engine.ts`);

@@ -142,4 +142,21 @@ describe('checkAutopilotLockScope (#1226)', () => {
     rmSync(home, { recursive: true, force: true });
     rmSync(gbrainHome, { recursive: true, force: true });
   });
+
+  test('running lock outside GBRAIN_HOME → ok with owner PID', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'doctor-lock-home-'));
+    const gbrainHome = mkdtempSync(join(tmpdir(), 'doctor-lock-gbrain-'));
+    mkdirSync(join(home, '.gbrain'), { recursive: true });
+    writeFileSync(join(home, '.gbrain', 'autopilot.lock'), String(process.pid));
+
+    await withEnv({ HOME: home, GBRAIN_HOME: gbrainHome }, async () => {
+      const r = checkAutopilotLockScope();
+      expect(r.status).toBe('ok');
+      expect(r.message).toMatch(/running process/);
+      expect(r.message).toContain(String(process.pid));
+    });
+
+    rmSync(home, { recursive: true, force: true });
+    rmSync(gbrainHome, { recursive: true, force: true });
+  });
 });

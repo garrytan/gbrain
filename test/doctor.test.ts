@@ -54,6 +54,24 @@ describe('doctor command', () => {
     expect(runDoctor.length).toBeLessThanOrEqual(3);
   });
 
+  test('parsePgVectorFormattedType accepts schema-qualified pgvector types', async () => {
+    const { parsePgVectorFormattedType } = await import('../src/commands/doctor.ts');
+
+    expect(parsePgVectorFormattedType('vector(1536)')).toEqual({
+      type: 'vector',
+      dimensions: 1536,
+    });
+    expect(parsePgVectorFormattedType('extensions.vector(1024)')).toEqual({
+      type: 'vector',
+      dimensions: 1024,
+    });
+    expect(parsePgVectorFormattedType('extensions.halfvec(2560)')).toEqual({
+      type: 'halfvec',
+      dimensions: 2560,
+    });
+    expect(parsePgVectorFormattedType('text')).toBeNull();
+  });
+
   // Bug 7 — --fast should differentiate "no config anywhere" from "user
   // chose --fast with GBRAIN_DATABASE_URL / config-file URL present".
   test('getDbUrlSource reflects GBRAIN_DATABASE_URL env var', async () => {

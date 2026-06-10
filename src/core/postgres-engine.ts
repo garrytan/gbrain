@@ -1875,7 +1875,8 @@ export class PostgresEngine implements BrainEngine {
     // in Voyage multimodal-3 space — no modality filter; the column itself
     // is the discriminator (rows without embedding_multimodal aren't searched).
     const resolvedCol = normalizeEngineColumn(opts?.embeddingColumn);
-    const { col, castSql } = buildVectorCastFragment(resolvedCol);
+    const { col, castSql: rawCastSql } = buildVectorCastFragment(resolvedCol);
+    const castSql = pgvectorCastSql(rawCastSql);
     let modalityFilter: string;
     if (resolvedCol.name === 'embedding_image') {
       modalityFilter = `AND cc.modality = 'image'`;
@@ -2100,9 +2101,9 @@ export class PostgresEngine implements BrainEngine {
         : null;
       const modality = chunk.modality ?? 'text';
 
-      const embeddingPh = embeddingStr ? `$${paramIdx++}::vector` : 'NULL';
+      const embeddingPh = embeddingStr ? `$${paramIdx++}${PG_VECTOR_CAST}` : 'NULL';
       const embeddedAtPh = embeddingStr ? 'now()' : 'NULL';
-      const embeddingImagePh = embeddingImageStr ? `$${paramIdx++}::vector` : 'NULL';
+      const embeddingImagePh = embeddingImageStr ? `$${paramIdx++}${PG_VECTOR_CAST}` : 'NULL';
 
       rows.push(
         `($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, ` +
@@ -3627,22 +3628,19 @@ export class PostgresEngine implements BrainEngine {
 
   /**
    * v0.41.15.0 (T6, codex #20): per-process cache for the
-   * `facts.embedding` cast suffix. Migration v40 creates the column as
-   * `halfvec(N)` on pgvector >= 0.7 but falls back to `vector(N)` on
-   * older. The pre-v0.41.15 insert path always cast embeddings as
-   * `::vector`, which works via implicit cast on pgvector >= 0.7 but
-   * is honest-only when the column actually IS vector. Probing once
-   * per process + caching the suffix lets the insert match the column
-   * type exactly. Initialized lazily in `insertFacts`.
+   * `facts.embedding` cast suffix. Supabase can install pgvector in the
+   * private `extensions` schema while restricted roles lack schema USAGE, so
+   * current Postgres writes avoid explicit vector type names and let the
+   * target column infer the input type. Initialized lazily in `insertFacts`.
    */
-  private _factsEmbeddingCastSuffix: '::vector' | '::halfvec' | null = null;
+  private _factsEmbeddingCastSuffix: typeof PG_VECTOR_CAST | typeof PG_HALFVEC_CAST | null = null;
 
   /** Test seam: clear the cached cast suffix so tests can re-probe. */
   __resetFactsEmbeddingCastCacheForTest(): void {
     this._factsEmbeddingCastSuffix = null;
   }
 
-  private async resolveFactsEmbeddingCast(): Promise<'::vector' | '::halfvec'> {
+  private async resolveFactsEmbeddingCast(): Promise<typeof PG_VECTOR_CAST | typeof PG_HALFVEC_CAST> {
     if (this._factsEmbeddingCastSuffix !== null) return this._factsEmbeddingCastSuffix;
     const sql = this.sql;
     try {
@@ -3661,19 +3659,17 @@ export class PostgresEngine implements BrainEngine {
       // regex would shadow it. See readFactsEmbeddingDim's identical
       // ordering note.
       if (formatted && /halfvec\(\d+\)/i.test(formatted)) {
-        this._factsEmbeddingCastSuffix = '::halfvec';
+        this._factsEmbeddingCastSuffix = PG_HALFVEC_CAST;
       } else {
-        // Default to '::vector' (the pre-v0.41.15 behavior). On a brain
-        // without the facts.embedding column yet (pre-v40), the cast
-        // suffix is irrelevant — the INSERT would fail elsewhere
-        // anyway. Caching the default still saves the SELECT on
-        // subsequent inserts.
-        this._factsEmbeddingCastSuffix = '::vector';
+        // On a brain without the facts.embedding column yet (pre-v40), the
+        // suffix is irrelevant because the INSERT fails elsewhere anyway.
+        // Caching the default still saves the SELECT on subsequent inserts.
+        this._factsEmbeddingCastSuffix = PG_VECTOR_CAST;
       }
     } catch {
-      // Probe failed — fall back to '::vector' default. Cache so we
-      // don't re-probe on every insert.
-      this._factsEmbeddingCastSuffix = '::vector';
+      // Probe failed. Cache the no-explicit-cast default so we don't re-probe
+      // on every insert.
+      this._factsEmbeddingCastSuffix = PG_VECTOR_CAST;
     }
     return this._factsEmbeddingCastSuffix;
   }
@@ -3685,9 +3681,9 @@ export class PostgresEngine implements BrainEngine {
     if (rows.length === 0) return { inserted: 0, ids: [] };
 
     const sql = this.sql;
-    // v0.41.15.0 (T6, codex #20): resolve the embedding-cast suffix
-    // ONCE per process so the cast matches the actual column type
-    // (halfvec vs vector). The probe is cached after first call.
+    // v0.41.15.0 (T6, codex #20): resolve the embedding-cast suffix ONCE per
+    // process. Current Supabase-safe behavior uses no explicit pgvector type
+    // name; the target column infers the vector input.
     const castSuffix = await this.resolveFactsEmbeddingCast();
     // Single transaction so the v51 partial UNIQUE index can roll back
     // the whole batch on constraint violation. Per-row INSERTs (not
@@ -3870,7 +3866,7 @@ export class PostgresEngine implements BrainEngine {
           AND entity_slug = ${entitySlug}
           AND expired_at IS NULL
           AND embedding IS NOT NULL
-        ORDER BY embedding <=> ${sql.unsafe(`'${lit}'::vector`)}
+        ORDER BY embedding <=> ${sql.unsafe(`'${lit}'${PG_VECTOR_CAST}`)}
         LIMIT ${k}
       `;
       return rows.map(rowToFactPg);
@@ -4296,7 +4292,7 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql`
       SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
              t.claim, t.kind, t.holder, t.weight,
-             (1 - (t.embedding <=> ${vec}::vector))::real AS score
+             (1 - (t.embedding <=> ${vec}))::real AS score
       FROM takes t
       JOIN pages p ON p.id = t.page_id
       WHERE t.active
@@ -4305,7 +4301,7 @@ export class PostgresEngine implements BrainEngine {
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
         )
-      ORDER BY t.embedding <=> ${vec}::vector
+      ORDER BY t.embedding <=> ${vec}
       LIMIT ${limit}
     `;
     return rows as unknown as TakeHit[];
@@ -5711,6 +5707,18 @@ function rowToFactPg(row: FactRowSqlShape): FactRow {
 function toPgVectorLiteral(v: Float32Array | number[]): string {
   if (v instanceof Float32Array) return '[' + Array.from(v).join(',') + ']';
   return '[' + v.join(',') + ']';
+}
+
+// Supabase often installs pgvector into the private `extensions` schema while
+// restricted app roles lack direct USAGE on that schema. Avoid naming the type
+// in Postgres SQL and let typed columns/operators infer the vector input cast.
+const PG_VECTOR_CAST = '' as const;
+const PG_HALFVEC_CAST = '' as const;
+
+function pgvectorCastSql(castSql: string): string {
+  return castSql
+    .replace(/::halfvec(?:\(\d+\))?/g, PG_HALFVEC_CAST)
+    .replace(/::vector(?:\(\d+\))?/g, PG_VECTOR_CAST);
 }
 
 function pgRowToCodeEdge(row: Record<string, unknown>): import('./types.ts').CodeEdgeResult {

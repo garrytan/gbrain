@@ -2313,6 +2313,16 @@ export function checkAutopilotLockScope(): Check {
       const raw = readFileSync(legacy, 'utf8').trim();
       if (/^\d+$/.test(raw)) owningPid = raw;
     } catch { /* unreadable → leave 'unknown' */ }
+    if (/^\d+$/.test(owningPid)) {
+      try {
+        process.kill(Number(owningPid), 0);
+        return {
+          name: 'autopilot_lock_scope',
+          status: 'ok',
+          message: `External lock belongs to a running process: ${legacy} (PID ${owningPid})`,
+        };
+      } catch { /* dead or inaccessible → warn below */ }
+    }
     return {
       name: 'autopilot_lock_scope',
       status: 'warn',
@@ -2611,7 +2621,7 @@ async function checkEmbeddingEnvOverride(engine: BrainEngine): Promise<Check> {
   };
 }
 
-async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
+export async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
   try {
     const { classifyCapabilities } = await import('../core/ai/capabilities.ts');
     const tierSubagent = await engine.getConfig('models.tier.subagent');
@@ -2661,6 +2671,9 @@ async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
       const issue = explain(modelsDefault, 'models.default');
       if (issue) return issue;
     }
+    const useGatewayLoopRaw = await engine.getConfig('agent.use_gateway_loop').catch(() => null);
+    const useGatewayLoop =
+      useGatewayLoopRaw === 'true' || useGatewayLoopRaw === '1';
     // v0.37 (T10 / D7) + v0.38 (D7 capability rename): warn when the configured
     // chat_model is non-Anthropic AND ANTHROPIC_API_KEY isn't set. With
     // agent.use_gateway_loop=false (the v0.38 default), subagent jobs still
@@ -2673,7 +2686,7 @@ async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
       const cfg = loadConfig();
       const chatModel = cfg?.chat_model;
       const { isAnthropicProvider } = await import('../core/model-config.ts');
-      if (chatModel && !isAnthropicProvider(chatModel) && !process.env.ANTHROPIC_API_KEY) {
+      if (chatModel && !isAnthropicProvider(chatModel) && !process.env.ANTHROPIC_API_KEY && !useGatewayLoop) {
         return {
           name: 'subagent_capability',
           status: 'warn',
@@ -2689,7 +2702,9 @@ async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
     return {
       name: 'subagent_capability',
       status: 'ok',
-      message: tierSubagent
+      message: useGatewayLoop
+        ? `agent.use_gateway_loop=true; subagent jobs route through the configured gateway loop`
+        : tierSubagent
         ? `Subagent tier resolves to "${tierSubagent}" with full tool-loop capability`
         : `Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability`,
     };
@@ -3910,6 +3925,20 @@ export async function computePoolReapHealthCheck(
     };
   }
   return null;
+}
+
+export function parsePgVectorFormattedType(
+  actual: string,
+): { type: 'vector' | 'halfvec'; dimensions: number } | null {
+  // format_type() usually returns `vector(N)` / `halfvec(N)`, but Supabase
+  // installations can expose schema-qualified names such as
+  // `extensions.vector(N)` to restricted app roles.
+  const m = actual.match(/^(?:(?:\w+)\.)?(vector|halfvec)\((\d+)\)$/i);
+  if (!m) return null;
+  return {
+    type: m[1].toLowerCase() as 'vector' | 'halfvec',
+    dimensions: parseInt(m[2], 10),
+  };
 }
 
 export async function buildChecks(
@@ -5402,10 +5431,9 @@ export async function buildChecks(
           issues.push(`${colName}: declared but column does NOT exist in content_chunks`);
           continue;
         }
-        // Expected format: `vector(N)` or `halfvec(N)`.
-        const m = actual.match(/^(vector|halfvec)\((\d+)\)/i);
-        const actualType = m ? m[1].toLowerCase() : actual;
-        const actualDims = m ? parseInt(m[2], 10) : null;
+        const parsed = parsePgVectorFormattedType(actual);
+        const actualType = parsed?.type ?? actual;
+        const actualDims = parsed?.dimensions ?? null;
         if (actualType !== entry.type) {
           issues.push(
             `${colName}: declared type=${entry.type} but actual is ${actual}. ` +
