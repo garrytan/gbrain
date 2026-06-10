@@ -18,7 +18,7 @@ import {
   isDreamOutput,
   DREAM_OUTPUT_MARKER_RE,
 } from '../src/core/cycle/transcript-discovery.ts';
-import { judgeSignificance, renderPageToMarkdown, type JudgeClient } from '../src/core/cycle/synthesize.ts';
+import { judgeSignificance, renderPageToMarkdown, __synthesizeInternals, type JudgeClient } from '../src/core/cycle/synthesize.ts';
 
 let tmpDir: string;
 
@@ -162,6 +162,47 @@ describe('discoverTranscripts', () => {
     makeTranscript('2026-04-25-a.txt', 'edited content ' + 'x'.repeat(3000));
     const out2 = discoverTranscripts({ corpusDir: tmpDir, minChars: 1000 });
     expect(out2[0].contentHash).not.toBe(out2[1].contentHash);
+  });
+});
+
+describe('synthesize prompt slug examples', () => {
+  test('derives reflection and original examples from threaded allowed_slug_prefixes', () => {
+    const prefixes = __synthesizeInternals.deriveSynthesisExamplePrefixes([
+      'brain/reflections/*',
+      'brain/originals/ideas/*',
+      'dream-cycle-summaries/*',
+    ]);
+    expect(prefixes).toEqual({
+      reflections: 'brain/reflections',
+      originals: 'brain/originals/ideas',
+    });
+
+    const prompt = __synthesizeInternals.buildSynthesisPrompt(
+      {
+        filePath: '/tmp/2026-06-10-session.txt',
+        basename: '2026-06-10-session',
+        content: 'hello',
+        contentHash: 'abcdef1234567890',
+        inferredDate: '2026-06-10',
+      } as any,
+      'transcript body',
+      0,
+      1,
+      '',
+      ['brain/reflections/*', 'brain/originals/ideas/*'],
+    );
+
+    expect(prompt).toContain('`brain/reflections/2026-06-10-<topic-slug>-abcdef`');
+    expect(prompt).toContain('`brain/originals/ideas/2026-06-10-<idea-slug>-abcdef`');
+    expect(prompt).not.toContain('wiki/personal/reflections/2026-06-10');
+    expect(prompt).not.toContain('wiki/originals/ideas/2026-06-10');
+  });
+
+  test('keeps stock examples when allow-list is empty', () => {
+    expect(__synthesizeInternals.deriveSynthesisExamplePrefixes([])).toEqual({
+      reflections: 'wiki/personal/reflections',
+      originals: 'wiki/originals/ideas',
+    });
   });
 });
 

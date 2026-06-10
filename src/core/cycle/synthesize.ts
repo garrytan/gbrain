@@ -460,7 +460,7 @@ export async function runPhaseSynthesize(
           : config.model;
       for (let i = 0; i < chunks.length; i++) {
         const childData: SubagentHandlerData = {
-          prompt: buildSynthesisPrompt(t, chunks[i], i, chunks.length, priorContradictionsBlock),
+          prompt: buildSynthesisPrompt(t, chunks[i], i, chunks.length, priorContradictionsBlock, allowedSlugPrefixes),
           model: subagentModel,
           max_turns: 30,
           allowed_slug_prefixes: allowedSlugPrefixes,
@@ -939,6 +939,7 @@ function buildSynthesisPrompt(
   chunkIdx: number,
   chunkTotal: number,
   priorContradictionsBlock = '',
+  allowedSlugPrefixes: string[] = [],
 ): string {
   const dateHint = t.inferredDate ?? today();
   const baseSlugSegment = sanitizeForSlug(t.basename) || `session-${dateHint}`;
@@ -952,6 +953,7 @@ function buildSynthesisPrompt(
   const transcriptHeader = isChunked
     ? `${t.filePath} (chunk ${chunkIdx + 1}/${chunkTotal})`
     : t.filePath;
+  const examplePrefixes = deriveSynthesisExamplePrefixes(allowedSlugPrefixes);
   return `You are synthesizing a conversation transcript into the user's personal knowledge brain.
 
 CONTEXT
@@ -967,10 +969,10 @@ OUTPUT POLICY (ALL of these are required)
 
 TASKS
 A. Reflections (self-knowledge, pattern recognition, emotional processing):
-   slug: \`wiki/personal/reflections/${dateHint}-<topic-slug>-${hashSuffix}\`
+   slug: \`${examplePrefixes.reflections}/${dateHint}-<topic-slug>-${hashSuffix}\`
 
 B. Originals (new ideas, frames, theses, mental models):
-   slug: \`wiki/originals/ideas/${dateHint}-<idea-slug>-${hashSuffix}\`
+   slug: \`${examplePrefixes.originals}/${dateHint}-<idea-slug>-${hashSuffix}\`
 
 C. People mentions: search first; if a page exists, do not put_page over it (the orchestrator handles people enrichment via timeline entries — your job is the reflection/original synthesis, NOT modifying existing person pages).
 
@@ -982,6 +984,29 @@ ${chunkText}
 ---
 
 When done, briefly list the slugs you wrote in your final message so the orchestrator can audit.`;
+}
+
+export function normalizeAllowedSlugPrefix(glob: string): string {
+  return glob
+    .trim()
+    .replace(/\*+$/g, '')
+    .replace(/\/+$/g, '');
+}
+
+export function deriveSynthesisExamplePrefixes(allowedSlugPrefixes: string[]): { reflections: string; originals: string } {
+  const fallback = {
+    reflections: 'wiki/personal/reflections',
+    originals: 'wiki/originals/ideas',
+  };
+  const normalized = allowedSlugPrefixes
+    .map(normalizeAllowedSlugPrefix)
+    .filter(Boolean);
+  if (normalized.length === 0) return fallback;
+
+  const first = normalized[0]!;
+  const reflections = normalized.find(p => /(^|\/)(reflections?|self|personal)(\/|$)/i.test(p)) ?? first;
+  const originals = normalized.find(p => /(^|\/)(originals?|ideas?|frames?|theses)(\/|$)/i.test(p)) ?? first;
+  return { reflections, originals };
 }
 
 function sanitizeForSlug(s: string): string {
@@ -1231,6 +1256,12 @@ function failed(error: PhaseError): PhaseResult {
     error,
   };
 }
+
+export const __synthesizeInternals = {
+  buildSynthesisPrompt,
+  deriveSynthesisExamplePrefixes,
+  normalizeAllowedSlugPrefix,
+};
 
 function makeError(cls: string, code: string, message: string, hint?: string): PhaseError {
   return hint ? { class: cls, code, message, hint } : { class: cls, code, message };
