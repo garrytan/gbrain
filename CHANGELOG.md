@@ -2,6 +2,68 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.18.3] - 2026-06-10
+
+## **Extract finds the wikilinks you actually wrote.**
+## **No more brain that reports zero edges while sitting on hundreds of `[[refs]]`.**
+
+If you've ever written `[[my-runbook]]` or `[[tools/yt-dlp/crawl]]` in a gbrain page and watched `gbrain orphans` claim every page is orphaned, this release is why. The extract regex required a fixed dir-prefix whitelist (`people|companies|concepts|...`) and silently dropped everything else. Bare slugs were invisible. Domain-specific dirs like `tools/`, `reference/`, `design-docs/` were invisible. Your graph showed empty while your content was packed with cross-references.
+
+v0.18.3 adds a second extract pass that takes any `[[X]]` and validates X against the actual page table. If a page with that slug exists, it becomes an edge. If not, it's silently dropped (no dead links). The DIR_PATTERN whitelist still handles its happy path; the new pass picks up everything else.
+
+### The numbers that matter
+
+Verified on a real personal knowledge brain (118 pages, mixed `tools/*`, `reference/*`, and flat-slug naming):
+
+| Metric | Before v0.18.3 | After v0.18.3 | Δ |
+|---|---|---|---|
+| Edges discovered by `gbrain extract` | 0 | 117 | +117 |
+| Orphan pages (zero inbound refs) | 118 / 118 (100%) | 82 / 118 (69%) | -36 pages |
+| Wikilinks the regex could even see | ~10 / 173 (6%) | 151 / 173 (87%) | +141 |
+| Idempotent re-run (extract twice in a row) | n/a | 0 new edges | clean |
+
+The 22 unresolvable refs that remain are real content gaps (typos, cross-brain references to other gbrain instances, never-created entity pages) ... exactly the surface `gbrain orphans` is supposed to expose. The brain now shows you what's actually there.
+
+### What this means for knowledge-brain users
+
+If your brain uses any wikilink style outside the canonical `people|companies|...` taxonomy ... flat slugs, domain dirs, mixed conventions ... your graph layer has been silently broken since v0.12.0. Run `gbrain dream --phase extract` after upgrading; edges materialize on first run. Subsequent runs are idempotent.
+
+## To take advantage of v0.18.3
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about anything:
+
+1. **Re-run extract to materialize the now-visible wikilinks:**
+   ```bash
+   gbrain extract links --source db
+   ```
+2. **Verify orphan count dropped:**
+   ```bash
+   gbrain orphans --count
+   ```
+   If the count is the same as before upgrade, your content genuinely has no internal cross-references (which is fine for project-doc brains).
+3. **If you have placeholder edges from a prior manual backfill** (e.g., you ran `gbrain link` for each pair when extract couldn't find them), you may have duplicate edges with both `'mentions'` and inferred-type rows. Compare `link_type` counts:
+   ```bash
+   psql "$DATABASE_URL" -c "SELECT link_type, count(*) FROM links GROUP BY link_type;"
+   ```
+   If you see both empty-string and `'mentions'` rows for the same (from, to) pairs, the empty-string ones are the manual backfills. Delete them and re-run extract.
+4. **If any step fails,** please file an issue at https://github.com/garrytan/gbrain/issues with output of `gbrain doctor` and the unexpected behavior.
+
+### Itemized changes
+
+#### Link extraction (the headline)
+
+- `src/core/link-extraction.ts` ... added `DIR_PATTERN_SET`, `BARE_WIKILINK_RE`, and a new pass in `extractPageLinks` that captures any `[[X]]` not matched by the strict regexes, then validates against the page table via the new `SlugResolver.exists()` method before emitting a `LinkCandidate`. Skips qualified `[[src:slug]]` (handled by `QUALIFIED_WIKILINK_RE` upstream) and code-block contents.
+- `src/commands/extract.ts` ... when `--include-frontmatter` is off (the default), use a hybrid resolver: null `resolve()` for frontmatter (preserves the v0.13 cost-avoidance behavior) but real `exists()` for the bare-wikilink validator. Without this, the new pass would silently emit nothing on every flag-off run ... the failure mode that prompted this release in the first place.
+
+#### SlugResolver interface
+
+- Added `exists(slug: string): Promise<boolean>` ... exact-slug existence check with no fuzzy matching, no display-name normalization. Cached separately from `resolve()`. Implemented in `makeResolver` via direct `engine.getPage()` lookup.
+- Updated all three test fixture resolvers (`allowAllResolver`, `nullResolver`, `makeFixtureResolver`) to implement `exists`.
+
+#### Tests
+
+- `test/link-extraction.test.ts` ... added 11 new test cases under `extractPageLinks bare-wikilink pass`: flat slug to existing page, flat slug to missing page (dropped), non-canonical dir to existing page, mixed whitelisted + bare wikilinks, no-double-emit dedup, code-block exclusion, display-text syntax, qualified `[[src:slug]]` not picked up, within-page dedup, trailing `.md` normalization, section-anchor stripping. Full suite: 2175 pass, 0 fail. E2E suite: 186 pass, 0 fail.
+
 ## [0.18.2] - 2026-04-23
 
 ## **Migrations survive a crash and Supabase's 2-min ceiling.**
