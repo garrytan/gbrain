@@ -8,6 +8,8 @@ import { PostgresEngine } from '../src/core/postgres-engine.ts';
 
 setDefaultTimeout(20_000);
 
+// PGLite schema initialization can exceed the default timeout on macOS release runners.
+const PGLITE_SCHEMA_TEST_TIMEOUT_MS = 60_000;
 const PGLITE_TRACE_MIGRATION_TEST_TIMEOUT_MS = 45_000;
 
 const RETRIEVAL_TRACE_FIDELITY_COLUMNS = [
@@ -98,7 +100,7 @@ describe('task-memory schema', () => {
     );
 
     await engine.disconnect();
-  });
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 
   test('sqlite upgrades pre-trace-fidelity traces and backfills structured gate fields', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-task-memory-sqlite-legacy-trace-'));
