@@ -1783,11 +1783,6 @@ Three items deferred:
   self-heals via stale-reclaim). The common sync SUCCESS path already drains via
   handleCliOnly's finally. Convert for graceful drain on sync error exits.
 
-- [ ] **(v0.42.20.0 follow-up) Decouple the op-dispatch force-exit timer** so it
-  wraps `engine.disconnect()` only (it's armed before the handler today, doubling
-  as a blanket handler watchdog) and fix its misleading "engine.disconnect() did
-  not return…" message that fires even when the handler (not disconnect) was slow.
-
 - [ ] **(v0.42.20.0 follow-up) Gateway idle-timeout (vs absolute) for streaming
   chat.** `withDefaultTimeout` uses an absolute `AbortSignal.timeout`; a streaming
   generation actively producing tokens past the chat default (300s) would abort.
@@ -3556,6 +3551,18 @@ keeping both skills' triggers intact for chaining.
 **Found:** 2026-04-24 during v0.19.0 production-readiness review.
 
 ## Completed
+
+### ~~(v0.42.20.0 follow-up) Decouple the op-dispatch force-exit timer~~
+**Completed:** v0.42.39.0 (2026-06-10)
+
+The timer now arms at teardown entry (inside the op-dispatch finally, before
+drain + disconnect) so it bounds ONLY disconnect — no longer doubling as a
+blanket handler watchdog that killed slow-but-healthy ops at 10s with exit 0
+and empty stdout. Its "engine.disconnect() did not return…" message is now
+accurate by construction (it can only fire during teardown). Read-scope
+handlers + context build got their own explicit wallclock bound (180s default,
+`--timeout=Ns`, exit 124, hard-exit after teardown) in the same wave. Pinned by
+`test/cli-force-exit-teardown-arming.test.ts`.
 
 ### ~~Checks 5 + 6 for check-resolvable~~
 **Completed:** v0.19.0 (2026-04-22)

@@ -360,30 +360,83 @@ async function main() {
   //
   // Defense-in-depth (adversarial-review C13): `engine.disconnect()` itself
   // can hang on PGLite (db.close() or releaseLock racing OS-level FS state).
-  // Install an unref'd setTimeout hard-exit fallback BEFORE entering the
-  // try/catch/finally so a hung disconnect cannot defeat the force-exit
-  // contract. Daemons (`serve`) are excluded so they stay alive.
+  // The unref'd hard-exit fallback is armed inside the `finally` below, so it
+  // bounds ONLY the teardown phase (drain + disconnect) — the same placement
+  // as the fall-through owner-disconnect site later in this file. It used to
+  // be armed HERE, before the try, which silently killed any op whose BODY ran
+  // past the deadline: on a slow Postgres pooler (6-10s per fresh connection)
+  // a healthy `gbrain search` was force-exited mid-handler with code 0 and
+  // ZERO stdout — an empty "success" indistinguishable from no results. The
+  // exitCode honor (v0.42.20.0) can't help there: a mid-op kill fires before
+  // any error path sets exitCode. Op-body wallclock bounds are the read-scope
+  // withTimeout wrap inside the try below, not this teardown backstop.
+  // Daemons (`serve`) are excluded so they stay alive.
   const DISCONNECT_HARD_DEADLINE_MS = 10_000;
+  // Wallclock bound for READ-scope op handlers. With the hard-deadline timer
+  // correctly scoped to teardown, a genuinely WEDGED read handler (hung pooler
+  // connection mid-query) would otherwise hang the CLI forever — the #1633
+  // zombie class the old (buggy) pre-try timer accidentally bounded at 10s.
+  // 180s sits far above any healthy slow-pooler run (6-10s/connection);
+  // --timeout=Ns overrides. Writes/admin stay unbounded: a long import/embed
+  // must never be killed by a default deadline.
+  const READ_OP_TIMEOUT_MS = 180_000;
   let forceExitTimer: ReturnType<typeof setTimeout> | undefined;
-  if (shouldForceExitAfterMain()) {
-    forceExitTimer = setTimeout(() => {
-      console.warn(
-        `[cli] engine.disconnect() did not return within ${DISCONNECT_HARD_DEADLINE_MS}ms — force-exiting`,
-      );
-      // v0.42.20.0 (codex): honor an exit code an errored op already set —
-      // a bare process.exit(0) here would mask a failed op as success if the
-      // drain/disconnect then hangs.
-      process.exit(process.exitCode ?? 0);
-    }, DISCONNECT_HARD_DEADLINE_MS);
-    // unref so the timer itself doesn't keep the event loop alive — only
-    // the actual pending work (PGLite WASM handle) does. Without unref,
-    // we'd block a clean exit by 10s on every successful CLI run.
-    forceExitTimer.unref?.();
-  }
+  // Set when a wallclock bound fired. The abandoned (timed-out but still
+  // running) handler can hold ref'd sockets/timers that keep Bun's event loop
+  // alive after main() returns — so the finally must hard-exit after teardown
+  // on this path, or the timeout print is followed by an immortal process:
+  // the same zombie class, resurrected through the timeout door (adversarial
+  // review finding).
+  let wallclockTimedOut = false;
 
   try {
-    const ctx = await makeContext(engine, params);
-    const rawResult = await op.handler(ctx, params);
+    const { withTimeout, OperationTimeoutError } = await import('./core/timeout.ts');
+    const wallclockMs = getCliOptions().timeoutMs ?? READ_OP_TIMEOUT_MS;
+    const onWallclockTimeout = (e: InstanceType<typeof OperationTimeoutError>) => {
+      const hint = getCliOptions().timeoutMs
+        ? ''
+        : ` (default ${e.ms}ms; pass --timeout=Ns to override)`;
+      console.error(`${e.label} timed out${hint}.`);
+      process.exitCode = 124;
+      wallclockTimedOut = true;
+    };
+
+    // Context build does DB I/O (resolveSourceId) and runs for EVERY op —
+    // a wedged pooler connection here would otherwise hang reads, writes,
+    // and admin alike with no bound at all (adversarial review finding).
+    let ctx: Awaited<ReturnType<typeof makeContext>>;
+    try {
+      ctx = await withTimeout(
+        makeContext(engine, params),
+        wallclockMs,
+        `gbrain ${command}: context`,
+      );
+    } catch (e: unknown) {
+      if (e instanceof OperationTimeoutError) {
+        onWallclockTimeout(e);
+        return; // the finally below still drains + disconnects, then exits
+      }
+      throw e;
+    }
+
+    let rawResult: unknown;
+    if (op.scope === 'read') {
+      try {
+        rawResult = await withTimeout(
+          op.handler(ctx, params),
+          wallclockMs,
+          `gbrain ${command}`,
+        );
+      } catch (e: unknown) {
+        if (e instanceof OperationTimeoutError) {
+          onWallclockTimeout(e);
+          return; // the finally below still drains + disconnects, then exits
+        }
+        throw e;
+      }
+    } else {
+      rawResult = await op.handler(ctx, params);
+    }
     // ENG-2 (renderer parity by data shape): JSON-round-trip the local-engine
     // path's return value so renderers see the same shape they'd see on the
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
@@ -396,7 +449,8 @@ async function main() {
     // STILL runs (drains every background-work sink + disconnects). A bare
     // process.exit(1) here would skip the finally → skip the drain + disconnect
     // (leaves facts/cache/eval-capture writes racing teardown). The finally's
-    // drain bounds teardown; the outer hard-deadline timer bounds a hung one.
+    // drain bounds teardown; the hard-deadline timer armed at teardown entry
+    // bounds a hung one.
     if (e instanceof OperationError) {
       console.error(`Error [${e.code}]: ${e.message}`);
       if (e.suggestion) console.error(`  Fix: ${e.suggestion}`);
@@ -412,11 +466,36 @@ async function main() {
     // DB logIngest gets the freshest live-engine window. 1s per-sink timeout:
     // read paths with no pending work pay the ~0ms fast path; capture/import
     // that DO enqueue pay up to 1s (+ facts shutdown grace) while in-flight
-    // Haiku finishes. The unref'd hard-deadline timer above is the backstop if
-    // disconnect or a lingering socket keeps Bun's loop alive.
+    // Haiku finishes. The unref'd hard-deadline timer armed here is the
+    // backstop if disconnect or a lingering socket keeps Bun's loop alive —
+    // armed at teardown entry (NOT before the op body; see the C13 comment
+    // above) so a slow-but-progressing op handler is never killed mid-flight.
+    if (shouldForceExitAfterMain()) {
+      forceExitTimer = setTimeout(() => {
+        console.warn(
+          `[cli] engine.disconnect() did not return within ${DISCONNECT_HARD_DEADLINE_MS}ms — force-exiting`,
+        );
+        // v0.42.20.0 (codex): honor an exit code an errored op already set —
+        // a bare process.exit(0) here would mask a failed op as success if the
+        // drain/disconnect then hangs.
+        process.exit(process.exitCode ?? 0);
+      }, DISCONNECT_HARD_DEADLINE_MS);
+      // unref so the timer itself doesn't keep the event loop alive — only
+      // the actual pending work (PGLite WASM handle) does. Without unref,
+      // we'd block a clean exit by 10s on every successful CLI run.
+      forceExitTimer.unref?.();
+    }
     await drainAllBackgroundWorkForCliExit({ timeoutMs: 1000 });
     await engine.disconnect();
     if (forceExitTimer) clearTimeout(forceExitTimer);
+    // Wallclock-timeout path: teardown is done, but the ABANDONED handler
+    // (withTimeout races, it does not cancel) can still hold ref'd sockets /
+    // SDK retry timers that keep Bun's event loop alive indefinitely. With
+    // the hard-deadline timer just cleared, nothing else bounds that — exit
+    // explicitly. Safe: drain + disconnect completed on the lines above.
+    if (wallclockTimedOut) {
+      process.exit(process.exitCode ?? 124);
+    }
   }
 }
 

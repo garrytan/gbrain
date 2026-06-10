@@ -2,6 +2,27 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.39.0] - 2026-06-10
+
+**`gbrain search` no longer dies silently at 10 seconds, and "who calls this" actually answers on source-scoped brains.** Both were silent failures — exit 0, empty output, nothing to debug — found and traced live on a production brain behind a Supabase transaction pooler.
+
+The search one: the op dispatcher armed its 10-second disconnect hard-deadline BEFORE the operation body ran, so on a connection that takes 6-10s to establish, every search was force-exited mid-handler with code 0 and zero stdout — an empty "success" indistinguishable from no results. The timer now bounds only teardown, where it belongs. In its place, reads (and context build, which does DB I/O for every op) get a real wallclock bound — 180s default, `--timeout=Ns` override, exit 124 — and the timeout path hard-exits after teardown so an abandoned handler's sockets can't keep the process alive as a zombie. Writes stay unbounded: a long import must never be killed by a default.
+
+The call-graph one: `importCodeFile` never stamped `source_id` on extracted edges, so every edge landed NULL — and a scoped query (`--source`, a worktree pin, `GBRAIN_SOURCE`) filters `AND source_id = ...`, which NULL never matches. `code-callers`/`code-callees` returned 0 on multi-source brains even though the edges existed; existing tests only ever queried `--all-sources`, which bypasses the filter, so it never surfaced. Edges are now stamped at import (falling back to the schema-default source, same as pages), the engines default the column on insert as a last line of defense, and migration v116 backfills every pre-existing NULL edge from its own chunk's page — plus indexes `from_symbol_qualified` on both edge tables, so callee lookups stop sequential-scanning now that scoped walks actually expand.
+
+Also: the embedding dimension-migration recipe — in the doc, in the runtime message that prints it, and in the facts-table variant — ordered the column ALTER before wiping old embeddings. pgvector refuses to cast existing vectors across dimensions, so the recipe as written aborted on any brain that has embeddings. All three now wipe first; same-dimension type swaps (halfvec ↔ vector) keep the lossless cast and preserve data.
+
+### Fixed
+- **`gbrain search` returns results instead of exiting 0 with empty output on slow connections.** The disconnect hard-deadline timer is armed at teardown entry (matching the fall-through owner-disconnect site), never before the op body. Verified: a search that was killed at 10s now completes at ~21s with correct results.
+- **Read-scope operations and context build are wallclock-bounded (180s default, `--timeout=Ns`, exit 124)** — a genuinely wedged connection no longer hangs the CLI forever, and the timeout path force-exits after a clean teardown so the abandoned handler can't zombify the process.
+- **Scoped `code-callers`/`code-callees` find their edges.** Edge rows carry `source_id` at import (normalized once — an empty-string source can no longer FK-violate and silently drop a file's whole call graph), the engines default it on insert, and migration v116 repairs all pre-existing NULL rows.
+- **Callee lookups use an index.** `from_symbol_qualified` is indexed on both edge tables (v116, mirrored in the bootstrap schema) — previously every `code-callees`/`code-flow`/`code-blast` BFS node paid a sequential scan of both tables.
+- **The dimension-migration recipe works on brains that have embeddings.** `docs/embedding-migrations.md`, the runtime mismatch message, and `buildFactsAlterRecipe` all NULL embeddings before the cross-dimension ALTER; same-dim type swaps still preserve data. Recipe order is pinned by tests so the three can't drift apart again.
+
+### To take advantage of v0.42.39.0
+
+`gbrain upgrade`. Migration v116 backfills the NULL edges and adds the indexes automatically. If `gbrain code-callers <symbol>` returned `count: 0` on a pinned worktree before, re-run it — the existing edges become visible without re-importing. On a slow pooler, `gbrain search` simply works now; pass `--timeout=Ns` if your reads legitimately need more than 180s.
+
 ## [0.42.38.0] - 2026-06-09
 
 **Three independent job-layer bugs that left autopilot wedged or swallowed a command's output are fixed, each traced to source.** A triage of the job/lock/teardown layer (gbrain#1972) pulled them into one wave.
