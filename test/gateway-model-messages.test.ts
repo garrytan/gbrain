@@ -120,4 +120,31 @@ describe('toModelMessages — v6 ModelMessage shape', () => {
     expect((out[2] as any).role).toBe('tool');
     expect((out[2] as any).content[0].output).toEqual({ type: 'json', value: { hits: 0 } });
   });
+
+  test('tool-call with missing input is coerced to an empty object', () => {
+    const msgs = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'noop' }],
+      },
+    ] as unknown as ChatMessage[];
+
+    expect(toModelMessages(msgs)).toEqual([
+      {
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'noop', input: {} }],
+      },
+    ]);
+  });
+
+  test('unknown blocks are dropped and empty messages are removed', () => {
+    const msgs = [
+      { role: 'assistant', content: [{ type: 'reasoning', text: 'thinking' }, { type: 'weird', value: 1 }] },
+      { role: 'assistant', content: [{ type: 'unknown', value: 2 }] },
+    ] as unknown as ChatMessage[];
+
+    expect(toModelMessages(msgs)).toEqual([
+      { role: 'assistant', content: [{ type: 'text', text: 'thinking' }] },
+    ]);
+  });
 });

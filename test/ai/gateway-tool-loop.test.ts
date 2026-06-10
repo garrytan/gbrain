@@ -202,6 +202,76 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     expect(result.finalText).toBe('fin');
   });
 
+  it('reconciles a dangling assistant tool-call tail before the first replay chat', async () => {
+    let chatCalls = 0;
+    __setChatTransportForTests(async (opts) => {
+      chatCalls++;
+      expect(opts.messages).toEqual([
+        { role: 'user', content: 'go' },
+        { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'provider-call-1', toolName: 'work', input: { x: 1 } }] },
+        { role: 'user', content: [{ type: 'tool-result', toolCallId: 'provider-call-1', toolName: 'work', output: { ok: true } }] },
+      ]);
+      return {
+        text: 'fin',
+        blocks: [{ type: 'text', text: 'fin' }] as ChatBlock[],
+        stopReason: 'end',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-sonnet-4-6',
+        providerId: 'anthropic',
+      };
+    });
+
+    const persistedToolResultTurns: Array<{ messageIdx: number; blocks: ChatBlock[] }> = [];
+    const result = await toolLoop({
+      initialMessages: [{ role: 'user', content: 'unused on replay' }],
+      tools: [{ name: 'work', description: 'w', inputSchema: { type: 'object' } }],
+      toolHandlers: new Map([['work', { idempotent: false, async execute() { throw new Error('must not re-execute'); } }]]),
+      replayState: {
+        priorMessages: [
+          { role: 'user', content: 'go' },
+          { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'provider-call-1', toolName: 'work', input: { x: 1 } }] },
+        ],
+        priorTools: new Map([['provider-call-1', { status: 'complete' as const, output: { ok: true } }]]),
+        nextTurnIdx: 1,
+        nextMessageIdx: 2,
+      },
+      onToolResultsTurn: async (_turnIdx, messageIdx, blocks) => {
+        persistedToolResultTurns.push({ messageIdx, blocks });
+      },
+    });
+
+    expect(chatCalls).toBe(1);
+    expect(persistedToolResultTurns).toEqual([
+      { messageIdx: 2, blocks: [{ type: 'tool-result', toolCallId: 'provider-call-1', toolName: 'work', output: { ok: true } }] },
+    ]);
+    expect(result.finalText).toBe('fin');
+  });
+
+  it('returns a terminal assistant replay tail without assistant-prefilling the next chat', async () => {
+    __setChatTransportForTests(async () => {
+      throw new Error('chat must not be called when replay already has a terminal assistant answer');
+    });
+
+    const result = await toolLoop({
+      initialMessages: [{ role: 'user', content: 'unused on replay' }],
+      tools: [],
+      toolHandlers: new Map(),
+      replayState: {
+        priorMessages: [
+          { role: 'user', content: 'answer me' },
+          { role: 'assistant', content: [{ type: 'text', text: 'already done' }] },
+        ],
+        priorTools: new Map(),
+        nextTurnIdx: 1,
+        nextMessageIdx: 2,
+      },
+    });
+
+    expect(result.stopReason).toBe('end');
+    expect(result.finalText).toBe('already done');
+    expect(result.messages).toHaveLength(2);
+  });
+
   it('refuses replay of non-idempotent pending tool with unrecoverable error', async () => {
     __setChatTransportForTests(async () => ({
       text: '',

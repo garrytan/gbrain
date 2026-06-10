@@ -2242,36 +2242,50 @@ export interface ChatToolDef {
  * schema" the moment the model calls a tool. Surfaced by the SkillOpt eval.
  */
 export function toModelMessages(messages: ChatMessage[]): unknown[] {
-  return messages.map((m) => {
-    if (typeof m.content === 'string') return { role: m.role, content: m.content };
+  const out: unknown[] = [];
+  for (const m of messages) {
+    if (typeof m.content === 'string') {
+      if (m.content.length > 0) out.push({ role: m.role, content: m.content });
+      continue;
+    }
     const blocks = m.content;
     if (blocks.some((b) => b.type === 'tool-result')) {
-      // v6: tool results ride on a dedicated `tool` role with structured output.
-      return {
-        role: 'tool' as const,
-        content: blocks
-          .filter((b): b is Extract<ChatBlock, { type: 'tool-result' }> => b.type === 'tool-result')
-          .map((b) => ({
-            type: 'tool-result' as const,
-            toolCallId: b.toolCallId,
-            toolName: b.toolName,
-            output: b.isError
-              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(b.output) }
-              : (typeof b.output === 'string'
-                ? { type: 'text' as const, value: b.output }
-                : { type: 'json' as const, value: (b.output ?? null) as never }),
-          })),
-      };
+      const content = blocks
+        .filter((b): b is Extract<ChatBlock, { type: 'tool-result' }> => b.type === 'tool-result')
+        .map((b) => ({
+          type: 'tool-result' as const,
+          toolCallId: b.toolCallId,
+          toolName: b.toolName,
+          output: b.isError
+            ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(b.output) }
+            : (typeof b.output === 'string'
+              ? { type: 'text' as const, value: b.output }
+              : { type: 'json' as const, value: (b.output ?? null) as never }),
+        }));
+      if (content.length > 0) {
+        // v6: tool results ride on a dedicated `tool` role with structured output.
+        out.push({ role: 'tool' as const, content });
+      }
+      continue;
     }
-    return {
-      role: m.role,
-      content: blocks.map((b) => {
-        if (b.type === 'text') return { type: 'text' as const, text: b.text };
-        if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, input: b.input };
-        return b;
-      }),
-    };
-  });
+    const content = blocks.flatMap((b: any): Array<Record<string, unknown>> => {
+      if (b.type === 'text') return [{ type: 'text' as const, text: b.text }];
+      // Some providers emit reasoning parts. Replay them as text so a persisted
+      // chain-of-thought-shaped block cannot poison the ModelMessage[] schema.
+      if (b.type === 'reasoning' && typeof b.text === 'string') return [{ type: 'text' as const, text: b.text }];
+      if (b.type === 'tool-call') {
+        return [{
+          type: 'tool-call' as const,
+          toolCallId: b.toolCallId,
+          toolName: b.toolName,
+          input: b.input ?? {},
+        }];
+      }
+      return [];
+    });
+    if (content.length > 0) out.push({ role: m.role, content });
+  }
+  return out;
 }
 
 export interface ChatResult {
@@ -2681,7 +2695,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
             type: 'tool-call',
             toolCallId: part.toolCallId,
             toolName: part.toolName,
-            input: part.input ?? part.args,
+            input: part.input ?? part.args ?? {},
           });
         }
       }
@@ -2695,7 +2709,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
           type: 'tool-call',
           toolCallId: tc.toolCallId,
           toolName: tc.toolName,
-          input: tc.input ?? tc.args,
+          input: tc.input ?? tc.args ?? {},
         });
       }
     }
@@ -2813,6 +2827,8 @@ export interface ToolLoopOpts {
   ) => Promise<{ gbrainToolUseId: string }>;
   onToolCallComplete?: (gbrainToolUseId: string, output: unknown) => Promise<void>;
   onToolCallFailed?: (gbrainToolUseId: string, error: string) => Promise<void>;
+  /** Persist a synthesized tool-result user turn created during resume reconciliation. */
+  onToolResultsTurn?: (turnIdx: number, messageIdx: number, blocks: ChatBlock[]) => Promise<void>;
 
   /** Optional per-call heartbeat for observability. */
   onHeartbeat?: (event: string, data: Record<string, unknown>) => void;
@@ -2867,6 +2883,75 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
   let messageIdx = opts.replayState?.nextMessageIdx ?? 0;
   let finalText = '';
   let stopReason: ToolLoopStopReason = 'end';
+
+  if (opts.replayState && messages.length > 0) {
+    const tail = messages[messages.length - 1];
+    if (tail?.role === 'assistant' && Array.isArray(tail.content)) {
+      const danglingCalls = tail.content.filter(
+        (b): b is Extract<ChatBlock, { type: 'tool-call' }> => b.type === 'tool-call',
+      );
+      if (danglingCalls.length > 0) {
+        const toolResultBlocks: ChatBlock[] = [];
+        const assistantMessageIdx = Math.max(0, messageIdx - 1);
+        const assistantTurnIdx = Math.max(0, turnIdx - 1);
+        for (let callIdx = 0; callIdx < danglingCalls.length; callIdx++) {
+          const call = danglingCalls[callIdx];
+          const { gbrainToolUseId } = (await opts.onToolCallStart?.(
+            assistantTurnIdx,
+            assistantMessageIdx,
+            callIdx,
+            call.toolName,
+            call.input,
+            call.toolCallId,
+          )) ?? { gbrainToolUseId: call.toolCallId };
+          const prior = opts.replayState.priorTools.get(gbrainToolUseId) ?? opts.replayState.priorTools.get(call.toolCallId);
+          if (prior?.status === 'complete') {
+            toolResultBlocks.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: prior.output });
+            opts.onHeartbeat?.('tool_replay_complete', { turn_idx: assistantTurnIdx, tool_name: call.toolName });
+            continue;
+          }
+          if (prior?.status === 'failed') {
+            toolResultBlocks.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: prior.error ?? 'tool failed', isError: true });
+            opts.onHeartbeat?.('tool_replay_failed', { turn_idx: assistantTurnIdx, tool_name: call.toolName });
+            continue;
+          }
+          const handler = handlers.get(call.toolName);
+          if (prior?.status === 'pending' && handler?.idempotent) {
+            opts.onHeartbeat?.('tool_called', { turn_idx: assistantTurnIdx, tool_name: call.toolName, replay_reexecute: true });
+            try {
+              const output = await handler.execute(call.input, opts.abortSignal ?? new AbortController().signal);
+              await opts.onToolCallComplete?.(gbrainToolUseId, output);
+              toolResultBlocks.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output });
+              continue;
+            } catch (err) {
+              const errMsg = err instanceof Error ? err.message : String(err);
+              await opts.onToolCallFailed?.(gbrainToolUseId, errMsg);
+              toolResultBlocks.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: errMsg, isError: true });
+              continue;
+            }
+          }
+          if (prior?.status === 'pending' && handler && !handler.idempotent) {
+            throw new Error(`non-idempotent tool "${call.toolName}" pending on resume; gbrainToolUseId=${gbrainToolUseId} — cannot safely re-run`);
+          }
+          toolResultBlocks.push({
+            type: 'tool-result',
+            toolCallId: call.toolCallId,
+            toolName: call.toolName,
+            output: handler ? 'tool result unavailable on replay' : `tool "${call.toolName}" is not in the registry for this subagent`,
+            isError: true,
+          });
+        }
+        messages.push({ role: 'user', content: toolResultBlocks });
+        await opts.onToolResultsTurn?.(turnIdx, messageIdx++, toolResultBlocks);
+      } else {
+        finalText = tail.content
+          .filter((b): b is Extract<ChatBlock, { type: 'text' }> => b.type === 'text')
+          .map((b) => b.text)
+          .join('');
+        return { finalText, totalTurns: turnIdx, totalUsage, stopReason: 'end', messages };
+      }
+    }
+  }
 
   while (turnIdx < maxTurns) {
     if (opts.abortSignal?.aborted) {
