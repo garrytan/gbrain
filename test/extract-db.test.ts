@@ -11,6 +11,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExtract } from '../src/commands/extract.ts';
+import { withEnv } from './helpers/with-env.ts';
 import type { PageInput } from '../src/core/types.ts';
 
 let engine: PGLiteEngine;
@@ -141,6 +142,47 @@ describe('gbrain extract links --source db', () => {
     expect(bobLinks.length).toBe(1);
     const acmeLinks = await engine.getLinks('companies/acme');
     expect(acmeLinks.length).toBe(0);
+  });
+
+  test('--frontmatter-only skips legacy markdown inference but keeps pack frontmatter links', async () => {
+    await engine.putPage('companies/acme', companyPage('Acme'));
+    await engine.putPage('companies/bodycorp', companyPage('Bodycorp'));
+    await engine.putPage('people/alice', {
+      type: 'person',
+      title: 'Alice',
+      compiled_truth: '[Alice](people/alice) is CEO of [Bodycorp](companies/bodycorp).',
+      timeline: '',
+      frontmatter: { company: 'Acme' },
+    });
+
+    await withEnv({ GBRAIN_SCHEMA_PACK: 'gbrain-base' }, async () => {
+      await runExtract(engine, ['links', '--source', 'db', '--include-frontmatter', '--frontmatter-only']);
+    });
+
+    const links = await engine.getLinks('people/alice');
+    expect(links.map(l => l.to_slug)).toEqual(['companies/acme']);
+    expect(links[0]?.link_type).toBe('works_at');
+    expect(links[0]?.link_source).toBe('frontmatter');
+  });
+
+  test('--frontmatter-only requires --include-frontmatter', async () => {
+    const stderr: string[] = [];
+    const origError = console.error;
+    const origExit = process.exit;
+    console.error = (msg?: unknown) => { stderr.push(typeof msg === 'string' ? msg : String(msg)); };
+    (process as { exit: unknown }).exit = ((code?: number) => {
+      throw new Error(`__test_exit:${code ?? 0}`);
+    }) as unknown as typeof process.exit;
+
+    try {
+      await expect(runExtract(engine, ['links', '--source', 'db', '--frontmatter-only']))
+        .rejects.toThrow('__test_exit:2');
+    } finally {
+      console.error = origError;
+      (process as { exit: unknown }).exit = origExit;
+    }
+
+    expect(stderr.join('\n')).toContain('--frontmatter-only requires --include-frontmatter');
   });
 });
 

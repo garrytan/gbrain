@@ -24,8 +24,8 @@
 
 import { loadConfig } from '../config.ts';
 import type { OperationContext } from '../operations.ts';
-import { loadActivePack } from './load-active.ts';
-import type { ResolvedPack } from './registry.ts';
+import { loadActivePack, resolveActivePackNameOnly } from './load-active.ts';
+import type { ResolvedPack, ResolutionResult } from './registry.ts';
 
 /**
  * Best-effort loader for the active schema pack. Returns null on any
@@ -44,16 +44,43 @@ import type { ResolvedPack } from './registry.ts';
  *     : [];  // EMPTY filter, NOT hardcoded defaults
  *   const results = await search(query, { types });
  */
+function activePackInput(ctx: OperationContext) {
+  return {
+    cfg: loadConfig(),
+    remote: ctx.remote ?? true,
+    sourceId: ctx.sourceId,
+  };
+}
+
 export async function loadActivePackBestEffort(
   ctx: OperationContext,
 ): Promise<ResolvedPack | null> {
   try {
-    return await loadActivePack({
-      cfg: loadConfig(),
-      remote: ctx.remote ?? true,
-      sourceId: ctx.sourceId,
-    });
+    return await loadActivePack(activePackInput(ctx));
   } catch {
     return null;
   }
+}
+
+export interface ActivePackBestEffortResult {
+  pack: ResolvedPack | null;
+  resolution: ResolutionResult;
+  configured: boolean;
+}
+
+/**
+ * Best-effort active pack load plus resolution provenance. Consumers that
+ * need to preserve legacy fallback only for an unconfigured default pack can
+ * distinguish `configured=false` from a configured pack that failed to load.
+ *
+ * Still NEVER throws and NEVER logs; call sites choose how loud their
+ * fail-empty surface should be.
+ */
+export async function loadActivePackBestEffortWithResolution(
+  ctx: OperationContext,
+): Promise<ActivePackBestEffortResult> {
+  const input = activePackInput(ctx);
+  const resolution = resolveActivePackNameOnly(input);
+  const pack = await loadActivePackBestEffort(ctx);
+  return { pack, resolution, configured: resolution.source !== 'default' };
 }
