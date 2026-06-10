@@ -1400,6 +1400,21 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       detachedWorkingTreeManifest.renamed.length > 0);
 
   if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
+    // issue: sync_freshness false-stale on no-op syncs. A successful sync that
+    // finds git HEAD unchanged is PROOF the source is fresh as of now(), but the
+    // historical short-circuit returned here WITHOUT stamping last_sync_at — so
+    // doctor's sync_freshness check (which reads sources.last_sync_at) stayed
+    // stale forever on a quiet, caught-up source. Stamp the freshness anchor on
+    // the way out. Re-writing the same last_commit value is value-neutral; the
+    // point is the now() timestamp + newest_content_at refresh in the same
+    // atomic UPDATE writeSyncAnchor already performs for the last_commit branch.
+    await writeSyncAnchor(
+      engine,
+      opts.sourceId,
+      'last_commit',
+      headCommit,
+      commitTimeMs(repoPath, headCommit),
+    );
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,

@@ -910,4 +910,36 @@ describe('#1970: unreachable last_commit bookmark recovery', () => {
     const settled = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
     expect(settled.status).toBe('up_to_date');
   });
+
+  test('no-op up_to_date sync stamps last_sync_at (sync_freshness regression)', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/alice.md': personMd('Alice', 'Alice is a person.') });
+
+    // First sync establishes the bookmark + an initial last_sync_at.
+    const first = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(['first_sync', 'synced']).toContain(first.status);
+
+    async function lastSyncAt(): Promise<number | null> {
+      const rows = await engine.executeRaw<{ last_sync_at: string | null }>(
+        `SELECT last_sync_at FROM sources WHERE id = 'default'`,
+      );
+      const v = rows[0]?.last_sync_at ?? null;
+      return v ? new Date(v).getTime() : null;
+    }
+
+    const before = await lastSyncAt();
+    expect(before).not.toBeNull();
+
+    // A no-op sync (git HEAD unchanged) returns up_to_date. Historically this
+    // short-circuited WITHOUT stamping last_sync_at, leaving sync_freshness
+    // false-stale forever on a quiet, caught-up source. Assert the timestamp
+    // advances: a successful no-op sync IS proof of freshness.
+    await new Promise((r) => setTimeout(r, 25)); // ensure now() is strictly later
+    const noop = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(noop.status).toBe('up_to_date');
+
+    const after = await lastSyncAt();
+    expect(after).not.toBeNull();
+    expect(after!).toBeGreaterThan(before!);
+  });
 });
