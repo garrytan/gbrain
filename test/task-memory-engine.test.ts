@@ -9,6 +9,8 @@ import { PostgresEngine } from '../src/core/postgres-engine.ts';
 
 setDefaultTimeout(20_000);
 
+// PGLite task-memory initialization can exceed the default timeout on macOS release runners.
+const PGLITE_LIST_TEST_TIMEOUT_MS = 60_000;
 const PGLITE_REOPEN_TEST_TIMEOUT_MS = 45_000;
 
 interface EngineHarness {
@@ -173,7 +175,7 @@ for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
     } finally {
       await harness.cleanup();
     }
-  });
+  }, createHarness === createPgliteHarness ? PGLITE_LIST_TEST_TIMEOUT_MS : undefined);
 }
 
 const databaseUrl = process.env.DATABASE_URL;
