@@ -2813,6 +2813,8 @@ export interface ToolLoopOpts {
   ) => Promise<{ gbrainToolUseId: string }>;
   onToolCallComplete?: (gbrainToolUseId: string, output: unknown) => Promise<void>;
   onToolCallFailed?: (gbrainToolUseId: string, error: string) => Promise<void>;
+  /** Persist the synthesized user turn containing tool-result blocks before the next chat turn. */
+  onToolResults?: (messageIdx: number, blocks: ChatBlock[]) => Promise<void>;
 
   /** Optional per-call heartbeat for observability. */
   onHeartbeat?: (event: string, data: Record<string, unknown>) => void;
@@ -3036,9 +3038,11 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
 
     if (stopReason === 'aborted') break;
 
-    // Feed all tool results back as a single user message.
+    // Feed all tool results back as a single user message. Persist it before the
+    // next chat turn so crash/retry reconstruction preserves the required
+    // assistant tool-call → user tool-result pairing.
     const userMessageIdx = messageIdx++;
-    void userMessageIdx;
+    await opts.onToolResults?.(userMessageIdx, toolResultBlocks);
     messages.push({ role: 'user', content: toolResultBlocks });
 
     turnIdx++;
