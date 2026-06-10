@@ -4,6 +4,8 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-06-11
+
 ### Changed
 
 - **Claude Code sessions stop nagging and start retrieving.** The MBrain Stop
@@ -16,6 +18,9 @@ All notable changes to MBrain will be documented in this file.
   new prompt hook, re-running `setup-agent` no longer clobbers your
   `~/.claude/mbrain-skip-dirs` entries, and a malformed `settings.json` is left
   untouched with a warning instead of being overwritten.
+- **Version metadata now reports `0.13.0`.** `VERSION`, `package.json`,
+  `skills/manifest.json`, and `openclaw.plugin.json` are aligned so the CLI,
+  skills manifest, and plugin bundle describe the same release.
 
 ## [0.12.0] - 2026-06-07
 
