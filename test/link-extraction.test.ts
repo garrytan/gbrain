@@ -8,6 +8,9 @@ import {
   makeResolver,
   parseTimelineEntries,
   isAutoLinkEnabled,
+  normalizeBasename,
+  buildBasenameIndex,
+  queryBasenameIndex,
   FRONTMATTER_LINK_MAP,
   type SlugResolver,
 } from '../src/core/link-extraction.ts';
@@ -1236,6 +1239,51 @@ describe("v0.18.0 migration v22 — links_resolution_type", () => {
     expect(v22!.sql).toContain("links_resolution_type_check");
     expect(v22!.sql).toContain("qualified");
     expect(v22!.sql).toContain("unqualified");
+  });
+});
+
+describe("normalizeBasename — hyphen-run collapse", () => {
+  test('collapses " - " (space-hyphen-space) to a single hyphen', () => {
+    // Before: "Idea - X" normalized to "idea---x" and missed the slug tail
+    // "idea-x" that buildBasenameIndex keys on.
+    expect(normalizeBasename("Idea - CEO Frustration Intercept")).toBe(
+      "idea-ceo-frustration-intercept",
+    );
+    expect(normalizeBasename("Project - API Marketplace")).toBe(
+      "project-api-marketplace",
+    );
+  });
+
+  test("leaves simple titles single-hyphenated (no regression)", () => {
+    expect(normalizeBasename("Seren Porter")).toBe("seren-porter");
+    expect(normalizeBasename("SourcingGPT")).toBe("sourcinggpt");
+  });
+
+  test("trims stray leading/trailing hyphens", () => {
+    expect(normalizeBasename("- leading")).toBe("leading");
+    expect(normalizeBasename("trailing -")).toBe("trailing");
+  });
+});
+
+describe("queryBasenameIndex — resolves ' - ' titled wikilinks", () => {
+  const idx = buildBasenameIndex([
+    "ideas/idea-ceo-frustration-intercept",
+    "ideas/idea-agentic-communications-fabric",
+    "people/seren-porter",
+  ]);
+
+  test("[[Idea - X]] resolves to its single-hyphen slug", () => {
+    expect(queryBasenameIndex(idx, "Idea - CEO Frustration Intercept")).toEqual([
+      "ideas/idea-ceo-frustration-intercept",
+    ]);
+    expect(queryBasenameIndex(idx, "Idea - Agentic Communications Fabric")).toEqual([
+      "ideas/idea-agentic-communications-fabric",
+    ]);
+  });
+
+  test("simple basenames still resolve, no spurious matches", () => {
+    expect(queryBasenameIndex(idx, "Seren Porter")).toEqual(["people/seren-porter"]);
+    expect(queryBasenameIndex(idx, "Nonexistent Page")).toEqual([]);
   });
 });
 

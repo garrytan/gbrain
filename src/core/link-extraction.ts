@@ -27,7 +27,7 @@ import type { PageType } from './types.ts';
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
-export const LINK_EXTRACTOR_VERSION_TS = '2026-05-31T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-06-10T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -822,7 +822,17 @@ export interface SlugResolver {
  * final `/`-segment (or the whole slug when it has no `/`).
  */
 export function normalizeBasename(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    // Collapse runs of whitespace AND hyphens to a single hyphen. Titles that
+    // contain " - " (space-hyphen-space) — e.g. "Idea - X", "Project - Y" —
+    // otherwise produce "idea---x" and fail to match the single-hyphen slug
+    // tail "idea-x" that buildBasenameIndex keys on. The slug generator already
+    // collapses separators; this keeps the lookup side symmetric.
+    .replace(/[\s-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 /** Stable order: shorter slug first (likely closer to brain root), then lexical. */
