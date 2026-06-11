@@ -730,3 +730,100 @@ describe('doctor command', () => {
     expect(stdout).toContain('--agent-command');
   });
 });
+
+describe('doctor sync and inbox surfacing', () => {
+  const minimalInput = {
+    connectionOk: true,
+    config: null,
+    profile: null,
+    rawPostgresChecksSupported: false,
+    latestVersion: 4,
+    schemaVersion: '4',
+  };
+
+  test('reports ok when the last successful sync is recent', () => {
+    const report = buildDoctorReport({
+      ...minimalInput,
+      syncRecency: { configured: true, last_run: new Date().toISOString(), days_since: 0 },
+    });
+    const check = report.checks.find((entry) => entry.name === 'sync_recency');
+    expect(check?.status).toBe('ok');
+    expect(check?.message).toContain('today');
+  });
+
+  test('warns when the last successful sync is older than the recency window', () => {
+    const report = buildDoctorReport({
+      ...minimalInput,
+      syncRecency: { configured: true, last_run: '2026-05-01T00:00:00.000Z', days_since: 41 },
+    });
+    const check = report.checks.find((entry) => entry.name === 'sync_recency');
+    expect(check?.status).toBe('warn');
+    expect(check?.message).toContain('41 days ago');
+    expect(check?.message).toContain('mbrain sync');
+  });
+
+  test('warns when sync is configured but never succeeded', () => {
+    const report = buildDoctorReport({
+      ...minimalInput,
+      syncRecency: { configured: true, last_run: null, days_since: null },
+    });
+    const check = report.checks.find((entry) => entry.name === 'sync_recency');
+    expect(check?.status).toBe('warn');
+    expect(check?.message).toContain('no successful run');
+  });
+
+  test('emits no sync_recency check when sync is not configured', () => {
+    const report = buildDoctorReport({
+      ...minimalInput,
+      syncRecency: { configured: false, last_run: null, days_since: null },
+    });
+    expect(report.checks.find((entry) => entry.name === 'sync_recency')).toBeUndefined();
+  });
+
+  test('surfaces a dead live-sync watcher', () => {
+    const report = buildDoctorReport({
+      ...minimalInput,
+      syncWatchFailure: {
+        stopped_at: '2026-06-11T01:00:00.000Z',
+        reason: 'connection refused',
+        consecutive_failures: 5,
+      },
+    });
+    const check = report.checks.find((entry) => entry.name === 'sync_watch');
+    expect(check?.status).toBe('warn');
+    expect(check?.message).toContain('connection refused');
+    expect(check?.message).toContain('mbrain sync --watch');
+  });
+
+  test('keeps the inbox backlog check ok below the threshold', () => {
+    const report = buildDoctorReport({
+      ...minimalInput,
+      memoryInboxBacklog: { staged_for_review: 3, capped: false, threshold: 50 },
+    });
+    const check = report.checks.find((entry) => entry.name === 'memory_inbox_backlog');
+    expect(check?.status).toBe('ok');
+    expect(check?.message).toContain('3 candidates staged');
+  });
+
+  test('warns when the staged-for-review backlog exceeds the threshold', () => {
+    const report = buildDoctorReport({
+      ...minimalInput,
+      memoryInboxBacklog: { staged_for_review: 65, capped: false, threshold: 50 },
+    });
+    const check = report.checks.find((entry) => entry.name === 'memory_inbox_backlog');
+    expect(check?.status).toBe('warn');
+    expect(check?.message).toContain('65 candidates staged for review');
+    expect(check?.message).toContain('mbrain memory-report');
+    expect(report.status).toBe('healthy');
+  });
+
+  test('labels a capped backlog count as a lower bound', () => {
+    const report = buildDoctorReport({
+      ...minimalInput,
+      memoryInboxBacklog: { staged_for_review: 200, capped: true, threshold: 50 },
+    });
+    const check = report.checks.find((entry) => entry.name === 'memory_inbox_backlog');
+    expect(check?.status).toBe('warn');
+    expect(check?.message).toContain('200+');
+  });
+});

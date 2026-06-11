@@ -14,6 +14,7 @@ import type { MemoryCandidateEntry } from '../src/core/types.ts';
 import {
   buildMemoryReviewReport,
   formatMemoryReviewReport,
+  MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD,
 } from '../src/core/services/memory-review-report-service.ts';
 
 const now = '2026-05-22T12:00:00.000Z';
@@ -1340,5 +1341,41 @@ describe('memory review report service', () => {
     } finally {
       await engine.disconnect();
     }
+  });
+
+  test('warns at the top of the report when the review backlog exceeds the pressure threshold', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+      review_items: Array.from({ length: MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD }, (_, index) => ({
+        id: `candidate:${index}`,
+        review_type: 'candidate',
+        summary: `Staged candidate ${index}`,
+        severity: 'medium' as const,
+      })),
+    });
+
+    const formatted = formatMemoryReviewReport(report);
+    const warningIndex = formatted.indexOf('WARNING: review backlog pressure');
+    expect(warningIndex).toBeGreaterThan(-1);
+    expect(formatted.slice(0, warningIndex)).not.toContain('Summary');
+    expect(formatted).toContain(`${MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD} candidates are staged for review`);
+  });
+
+  test('emits no backlog warning below the pressure threshold', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+      review_items: [
+        {
+          id: 'candidate:solo',
+          review_type: 'candidate',
+          summary: 'Single staged candidate',
+          severity: 'low',
+        },
+      ],
+    });
+
+    expect(formatMemoryReviewReport(report)).not.toContain('WARNING: review backlog pressure');
   });
 });

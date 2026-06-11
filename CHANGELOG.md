@@ -4,6 +4,15 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Your brain now tells you when it's going stale.** `mbrain doctor` reports
+  how long ago the last successful sync ran (and warns past a week), warns
+  when the live sync watcher has died instead of failing silently, and flags
+  Memory Inbox pressure once 50+ candidates sit waiting for review. The same
+  backlog warning now leads the memory review report, so a drifting inbox is
+  impossible to miss.
+
 ### Changed
 
 - **macOS breakage now gets caught before it ever reaches a release.** Pull

@@ -11,7 +11,16 @@ import {
 import type { BrainHealth, BrainStats } from '../types.ts';
 import type { AgentTrustExplainReport } from '../types/agent-trust-explain.ts';
 import type { InstalledAgentReadinessReport } from './installed-agent-readiness-service.ts';
+import { readSyncWatchFailure, type SyncWatchFailure } from '../health-beacon.ts';
+import { loadSubbrainRegistry } from '../subbrains.ts';
+import { MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD } from './memory-review-report-service.ts';
 import * as db from '../db.ts';
+
+// Stop counting staged candidates past this point; doctor only needs to know
+// the backlog is large, not its exact size.
+const INBOX_BACKLOG_SCAN_LIMIT = 200;
+// A configured sync that has not succeeded in this many days is stale.
+const SYNC_RECENCY_WARN_DAYS = 7;
 
 export interface DoctorCheck {
   name: string;
@@ -54,6 +63,17 @@ export interface DoctorInputs {
     credential_warnings: number;
     quarantine_count: number;
     purge_candidates: number;
+  };
+  syncRecency?: {
+    configured: boolean;
+    last_run: string | null;
+    days_since: number | null;
+  };
+  syncWatchFailure?: SyncWatchFailure | null;
+  memoryInboxBacklog?: {
+    staged_for_review: number;
+    capped: boolean;
+    threshold: number;
   };
 }
 
@@ -108,6 +128,29 @@ export async function collectDoctorInputs(
       inputs.health = undefined;
     }
 
+    try {
+      inputs.syncRecency = await collectSyncRecency(engine);
+    } catch {
+      inputs.syncRecency = undefined;
+    }
+
+    inputs.syncWatchFailure = readSyncWatchFailure();
+
+    try {
+      const staged = await engine.listMemoryCandidateEntries({
+        status: 'staged_for_review',
+        limit: INBOX_BACKLOG_SCAN_LIMIT,
+        offset: 0,
+      });
+      inputs.memoryInboxBacklog = {
+        staged_for_review: staged.length,
+        capped: staged.length >= INBOX_BACKLOG_SCAN_LIMIT,
+        threshold: MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD,
+      };
+    } catch {
+      inputs.memoryInboxBacklog = undefined;
+    }
+
     return inputs;
   } catch (error: unknown) {
     return {
@@ -119,6 +162,32 @@ export async function collectDoctorInputs(
       latestVersion: LATEST_VERSION,
     };
   }
+}
+
+async function collectSyncRecency(engine: BrainEngine): Promise<DoctorInputs['syncRecency']> {
+  const legacyRepoPath = await engine.getConfig('sync.repo_path');
+  const registry = await loadSubbrainRegistry(engine);
+  const subbrainIds = Object.keys(registry.subbrains);
+  const configured = !!legacyRepoPath || subbrainIds.length > 0;
+  if (!configured) {
+    return { configured: false, last_run: null, days_since: null };
+  }
+
+  const lastRuns = (await Promise.all([
+    engine.getConfig('sync.last_run'),
+    ...subbrainIds.map((id) => engine.getConfig(`sync.subbrains.${id}.last_run`)),
+  ])).filter((value): value is string => !!value);
+
+  const latest = lastRuns
+    .map((value) => ({ value, time: Date.parse(value) }))
+    .filter((entry) => Number.isFinite(entry.time))
+    .sort((a, b) => b.time - a.time)[0] ?? null;
+
+  return {
+    configured: true,
+    last_run: latest?.value ?? null,
+    days_since: latest ? Math.max(0, Math.floor((Date.now() - latest.time) / 86_400_000)) : null,
+  };
 }
 
 async function checkPgVector(deps: DoctorServiceDeps): Promise<{ status: 'ok' | 'warn' | 'fail'; message: string }> {
@@ -441,6 +510,49 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
         message: 'No embeddings yet. Run: mbrain embed --stale',
       });
     }
+  }
+
+  if (input.syncRecency?.configured) {
+    const { last_run, days_since } = input.syncRecency;
+    if (!last_run) {
+      checks.push({
+        name: 'sync_recency',
+        status: 'warn',
+        message: "Sync is configured but no successful run is recorded. Run: mbrain sync",
+      });
+    } else if (days_since !== null && days_since > SYNC_RECENCY_WARN_DAYS) {
+      checks.push({
+        name: 'sync_recency',
+        status: 'warn',
+        message: `Last successful sync was ${days_since} days ago (${last_run}). Run: mbrain sync`,
+      });
+    } else {
+      checks.push({
+        name: 'sync_recency',
+        status: 'ok',
+        message: days_since === 0 ? 'Last successful sync: today' : `Last successful sync: ${days_since} day(s) ago`,
+      });
+    }
+  }
+
+  if (input.syncWatchFailure) {
+    checks.push({
+      name: 'sync_watch',
+      status: 'warn',
+      message: `Live sync watcher stopped at ${input.syncWatchFailure.stopped_at} after ${input.syncWatchFailure.consecutive_failures} consecutive failures: ${input.syncWatchFailure.reason}. Restart with: mbrain sync --watch`,
+    });
+  }
+
+  if (input.memoryInboxBacklog) {
+    const backlog = input.memoryInboxBacklog;
+    const countLabel = backlog.capped ? `${backlog.staged_for_review}+` : `${backlog.staged_for_review}`;
+    checks.push({
+      name: 'memory_inbox_backlog',
+      status: backlog.staged_for_review >= backlog.threshold ? 'warn' : 'ok',
+      message: backlog.staged_for_review >= backlog.threshold
+        ? `${countLabel} candidates staged for review (threshold ${backlog.threshold}). Review them via 'mbrain memory-report' before the backlog drifts.`
+        : `${countLabel} candidates staged for review (threshold ${backlog.threshold})`,
+    });
   }
 
   if (input.systemOfRecord) {

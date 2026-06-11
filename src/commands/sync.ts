@@ -2,6 +2,7 @@ import { existsSync, realpathSync, statSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join, relative, resolve } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
+import { clearSyncWatchFailure, recordSyncWatchFailure } from '../core/health-beacon.ts';
 import { importFile } from '../core/import-file.ts';
 import { formatResult as formatOperationResult } from '../core/operations.ts';
 import {
@@ -659,6 +660,7 @@ export async function runSync(engine: BrainEngine, args: string[]) {
     try {
       const result = await performSync(engine, { ...opts, full: false });
       consecutiveErrors = 0;
+      clearSyncWatchFailure();
       if (result.status === 'synced') {
         const ts = new Date().toISOString().slice(11, 19);
         console.log(`[${ts}] Synced: +${result.added} ~${result.modified} -${result.deleted} R${result.renamed}`);
@@ -669,6 +671,11 @@ export async function runSync(engine: BrainEngine, args: string[]) {
       console.error(`[${new Date().toISOString().slice(11, 19)}] Sync error (${consecutiveErrors}/5): ${msg}`);
       if (consecutiveErrors >= 5) {
         console.error(`5 consecutive sync failures. Stopping watch.`);
+        recordSyncWatchFailure({
+          stopped_at: new Date().toISOString(),
+          reason: msg,
+          consecutive_failures: consecutiveErrors,
+        });
         process.exit(1);
       }
     }

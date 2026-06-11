@@ -1,5 +1,9 @@
 import type { CandidateDebtMetrics, NegativeMemoryProjection } from '../types.ts';
 
+// Above this many staged-for-review candidates, the backlog gets a prominent
+// warning in both the memory report and `mbrain doctor`.
+export const MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD = 50;
+
 export type ReportHealthStatus = 'ok' | 'warn' | 'fail';
 export type ReportActionKind =
   | 'undo'
@@ -402,6 +406,14 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
     `Generated: ${report.generated_at}`,
     `Health: ${report.health.status}`,
   ];
+
+  if (report.summary.review_items >= MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD) {
+    lines.push(
+      '',
+      `WARNING: review backlog pressure — ${report.summary.review_items} candidates are staged for review (threshold ${MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD}).`,
+      'Promote, reject, or supersede staged candidates before the backlog drifts further.',
+    );
+  }
 
   if (isEmptyReport(report)) {
     lines.push('', 'No reportable memory exceptions.');
