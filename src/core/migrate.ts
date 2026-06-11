@@ -5186,6 +5186,18 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 116,
+    name: 'take_proposals_idempotency_idx_non_unique',
+    // Make the propose_takes idempotency index non-unique. This allows multiple
+    // proposals for the same index key.
+    idempotent: true,
+    sql: `
+      DROP INDEX IF EXISTS take_proposals_idempotency_idx;
+      CREATE INDEX IF NOT EXISTS take_proposals_idempotency_idx
+        ON take_proposals (source_id, page_slug, content_hash, prompt_version);
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
