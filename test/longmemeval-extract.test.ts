@@ -265,7 +265,7 @@ describe('extractAndInsertClaims — content-hash cache', () => {
 });
 
 describe('extractAndInsertClaims — fail-open paths', () => {
-  test('malformed JSON output → 0 inserted, no throw', async () => {
+  test('malformed JSON output → 0 inserted, no throw, reports extractor error', async () => {
     const aliasMap = makeAliasMap();
     const client: ThinkLLMClient = {
       create: async () => ({
@@ -280,9 +280,10 @@ describe('extractAndInsertClaims — fail-open paths', () => {
       sessionBody: 'body', sourceId: 'default', aliasMap,
     });
     expect(result.inserted).toBe(0);
+    expect(result.error).toBe('extractor_failed');
   });
 
-  test('Haiku call throws → 0 inserted, no throw', async () => {
+  test('Haiku call throws → 0 inserted, no throw, reports extractor error', async () => {
     const aliasMap = makeAliasMap();
     const client: ThinkLLMClient = {
       create: async () => { throw new Error('synthetic API failure'); },
@@ -292,6 +293,7 @@ describe('extractAndInsertClaims — fail-open paths', () => {
       sessionBody: 'body', sourceId: 'default', aliasMap,
     });
     expect(result.inserted).toBe(0);
+    expect(result.error).toBe('extractor_failed');
   });
 
   test('empty array output → 0 inserted, no throw', async () => {

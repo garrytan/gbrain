@@ -10,7 +10,7 @@
  */
 
 import { readFileSync, existsSync, openSync, writeSync, closeSync, writeFileSync } from 'fs';
-import Anthropic from '@anthropic-ai/sdk';
+import type Anthropic from '@anthropic-ai/sdk';
 import { withBenchmarkBrain, resetTables } from '../eval/longmemeval/harness.ts';
 import { haystackToPages, type LongMemEvalQuestion } from '../eval/longmemeval/adapter.ts';
 import { renderChatBlock, type ChatSessionForPrompt } from '../eval/longmemeval/sanitize.ts';
@@ -19,6 +19,8 @@ import { hybridSearch } from '../core/search/hybrid.ts';
 import { expandQuery } from '../core/search/expansion.ts';
 import { resolveModel } from '../core/model-config.ts';
 import type { ThinkLLMClient } from '../core/think/index.ts';
+import { chat as gatewayChat, type ChatResult } from '../core/ai/gateway.ts';
+import { normalizeModelId } from '../core/model-id.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { PGLiteEngine } from '../core/pglite-engine.ts';
@@ -307,6 +309,52 @@ function uniqSessionIds(results: SearchResult[]): string[] {
   return out;
 }
 
+function textFromContent(content: Anthropic.MessageParam['content']): string {
+  if (typeof content === 'string') return content;
+  return content.map(block => ('text' in block ? block.text : '')).join('');
+}
+
+function systemToText(system: Anthropic.MessageCreateParamsNonStreaming['system']): string | undefined {
+  if (typeof system === 'string') return system;
+  if (Array.isArray(system)) return system.map(block => ('text' in block ? block.text : '')).join('');
+  return undefined;
+}
+
+function chatResultToAnthropicMessage(result: ChatResult, model: string): Anthropic.Message {
+  return {
+    id: 'gbrain-gateway-longmemeval',
+    type: 'message',
+    role: 'assistant',
+    model,
+    content: [{ type: 'text', text: result.text }],
+    stop_reason: result.stopReason === 'length' ? 'max_tokens' : result.stopReason === 'tool_calls' ? 'tool_use' : 'end_turn',
+    usage: {
+      input_tokens: result.usage.input_tokens,
+      output_tokens: result.usage.output_tokens,
+    },
+  } as unknown as Anthropic.Message;
+}
+
+function makeGatewayClient(resolvedModel: string): ThinkLLMClient {
+  const model = normalizeModelId(resolvedModel);
+  return {
+    create: async (params, callOpts): Promise<Anthropic.Message> => {
+      const messages = params.messages.map(m => ({
+        role: m.role,
+        content: textFromContent(m.content),
+      }));
+      const result = await gatewayChat({
+        model,
+        system: systemToText(params.system),
+        messages,
+        maxTokens: params.max_tokens,
+        abortSignal: callOpts?.signal,
+      });
+      return chatResultToAnthropicMessage(result, model);
+    },
+  };
+}
+
 async function generateAnswer(
   client: ThinkLLMClient,
   question: string,
@@ -364,12 +412,13 @@ async function generateAnswer(
 }
 
 export interface RunOpts {
-  /** Inject an Anthropic client for tests; defaults to a fresh SDK client. */
+  /** Inject an LLM client for tests; defaults to the provider-neutral AI gateway. */
   client?: ThinkLLMClient;
   /**
-   * v0.40.2.0 — separate stub for the Haiku claim extractor. Tests can
+   * v0.40.2.0 — separate stub for the claim extractor. Tests can
    * isolate "extractor stubbed, answer-gen real" from "extractor real,
-   * answer-gen stubbed". Defaults to the same SDK client when omitted.
+   * answer-gen stubbed". Defaults to the gateway-routed extractor model
+   * when trajectory extraction is enabled.
    */
   extractorClient?: ThinkLLMClient;
   /**
@@ -468,16 +517,6 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     fallback: 'sonnet',
   });
 
-  // Wrap Anthropic SDK so its `.messages.create` shape matches ThinkLLMClient.
-  // Same pattern as src/core/think/index.ts:247-249.
-  const realClient = new Anthropic();
-  const client: ThinkLLMClient = runOpts.client ?? {
-    create: (params, callOpts) => realClient.messages.create(params, callOpts),
-  };
-  // v0.40.2.0 — separate extractor client (defaults to same SDK).
-  const extractorClient: ThinkLLMClient = runOpts.extractorClient ?? {
-    create: (params, callOpts) => realClient.messages.create(params, callOpts),
-  };
   const trajectoryEnabled = !opts.noTrajectory;
   const extractorModel = trajectoryEnabled
     ? await resolveModel(null, {
@@ -486,6 +525,15 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
         fallback: 'haiku',
       })
     : '';
+
+  // Default answer generation and extractor calls must route through the
+  // provider-neutral gateway. resolveModel() returns provider-prefixed ids like
+  // `anthropic:claude-sonnet-4-6`; handing those directly to Anthropic's raw SDK
+  // 404s out of the box. The gateway normalizes before native SDK dispatch.
+  const client: ThinkLLMClient = runOpts.client ?? makeGatewayClient(model);
+  const extractorClient: ThinkLLMClient = runOpts.extractorClient ?? (
+    trajectoryEnabled ? makeGatewayClient(extractorModel) : client
+  );
 
   process.stderr.write(`[longmemeval] estimated 20-60 minutes for ${questions.length} questions; use --limit N for shorter runs\n`);
   process.stderr.write(`[longmemeval] connecting in-memory brain...\n`);
@@ -508,6 +556,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   }
   let runStart = Date.now();
   let errorCount = 0;
+  let extractorErrorCount = 0;
 
   // v0.41.10 engine-sharing seam: when a caller-owned engine is provided
   // (tests using beforeAll/afterAll to amortize PGLite cold-create across
@@ -526,11 +575,12 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     for (const q of questions) {
       const qStart = Date.now();
       try {
-        await runOneQuestion(engine, q, opts, model, client, emitter, recallByType, {
+        const questionStats = await runOneQuestion(engine, q, opts, model, client, emitter, recallByType, {
           trajectoryEnabled,
           extractorClient,
           extractorModel,
         });
+        extractorErrorCount += questionStats.extractorErrors;
         progress.tick(1, q.question_id);
       } catch (err: any) {
         errorCount++;
@@ -585,6 +635,9 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     const total = cache.hits + cache.misses;
     const pct = total === 0 ? 0 : (cache.hits / total) * 100;
     process.stderr.write(`[longmemeval] extractor.cache_hits: ${cache.hits} / ${total} sessions (${pct.toFixed(1)}%, cached_bodies=${cache.size})\n`);
+    if (extractorErrorCount > 0) {
+      process.stderr.write(`[longmemeval] extractor.errors: ${extractorErrorCount} session(s) failed; trajectory recall may degrade\n`);
+    }
     process.stderr.write(`[longmemeval] methodology_note: ${TRAJECTORY_METHODOLOGY_NOTE}\n`);
   }
 
@@ -625,8 +678,9 @@ async function runOneQuestion(
   emitter: JsonlEmitter,
   recallByType: Record<string, { hit: number; total: number }>,
   traj: TrajectoryRunOpts,
-): Promise<void> {
+): Promise<{ extractorErrors: number }> {
   await resetTables(engine);
+  let extractorErrors = 0;
   const adapterPages = haystackToPages(q);
   // Track date per slug so generateAnswer can pass it through structural framing.
   const dates = q.haystack_dates ?? [];
@@ -645,7 +699,7 @@ async function runOneQuestion(
     // summary level. Each call is fail-open; one bad session never
     // kills the per-question loop.
     if (traj.trajectoryEnabled) {
-      await extractAndInsertClaims({
+      const extractResult = await extractAndInsertClaims({
         engine,
         client: traj.extractorClient,
         model: traj.extractorModel,
@@ -655,6 +709,7 @@ async function runOneQuestion(
         sourceId: 'default',
         aliasMap,
       });
+      if (extractResult.error) extractorErrors++;
     }
   }
 
@@ -767,6 +822,7 @@ async function runOneQuestion(
       methodology_note: TRAJECTORY_METHODOLOGY_NOTE,
     } : {}),
   });
+  return { extractorErrors };
 }
 
 /**
