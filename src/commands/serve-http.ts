@@ -27,6 +27,29 @@ import { operations, OperationError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { GBrainOAuthProvider, validateTokenEndpointAuthMethod } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
+import {
+  resolveGoogleLoginConfig,
+  buildGoogleAuthUrl,
+  signState,
+  verifyState,
+  signSession,
+  verifySession,
+  signPkce,
+  verifyPkce,
+  generateCodeVerifier,
+  codeChallengeS256,
+  generateNonce,
+  safeReturnUrl,
+  exchangeGoogleCode,
+  verifyGoogleIdToken,
+  GoogleJwksCache,
+  LOGIN_SESSION_COOKIE,
+  LOGIN_PKCE_COOKIE,
+  SESSION_TTL_SECONDS,
+  STATE_TTL_SECONDS,
+} from '../core/oauth-google-login.ts';
+import type { GoogleLoginConfig } from '../core/oauth-google-login.ts';
+import { randomUUID } from 'crypto';
 import { hasScope, ALLOWED_SCOPES_LIST, normalizeScopesInput } from '../core/scope.ts';
 import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
 import { paramDefToSchema } from '../mcp/tool-defs.ts';
@@ -299,6 +322,18 @@ interface ServeHttpOptions {
    * tracking the regenerated value through other means.
    */
   suppressBootstrapToken?: boolean;
+  /**
+   * OPT-IN Google-Workspace login gate. The gate is OFF unless
+   * `oauthLoginHd` is set. When set, the browser `authorization_code` flow at
+   * /authorize requires a Google sign-in on the allowed hosted domain before a
+   * code is issued; the remaining three options are then REQUIRED (startup
+   * fails fast otherwise). All four undefined → behavior is byte-for-byte
+   * unchanged. See src/core/oauth-google-login.ts.
+   */
+  oauthLoginHd?: string;
+  oauthGoogleClientId?: string;
+  oauthGoogleClientSecret?: string;
+  oauthSessionSecret?: string;
 }
 
 /**
@@ -407,6 +442,27 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   const bind = options.bind ?? '127.0.0.1';
   const config = loadConfig() || { engine: 'pglite' as const };
 
+  // OPT-IN Google login gate. resolveGoogleLoginConfig returns undefined when
+  // --oauth-login-hd is unset (gate OFF → unchanged behavior); it THROWS when
+  // --oauth-login-hd is set but a required google credential / session secret
+  // is missing, so we surface that as a fail-fast startup error rather than
+  // half-enabling the gate. The throw propagates to the CLI's serve handler.
+  let googleLogin: GoogleLoginConfig | undefined;
+  try {
+    googleLogin = resolveGoogleLoginConfig({
+      oauthLoginHd: options.oauthLoginHd,
+      oauthGoogleClientId: options.oauthGoogleClientId,
+      oauthGoogleClientSecret: options.oauthGoogleClientSecret,
+      oauthSessionSecret: options.oauthSessionSecret,
+    });
+  } catch (e) {
+    console.error(`[serve-http] ${e instanceof Error ? e.message : e}`);
+    process.exit(1);
+  }
+  // Lazy JWKS cache for id_token verification — only instantiated when the
+  // gate is on, so the default path adds zero objects.
+  const jwksCache = googleLogin ? new GoogleJwksCache() : undefined;
+
   if (logFullParams) {
     console.error(
       '[serve-http] WARNING: --log-full-params writes raw request payloads to mcp_request_log + SSE feed. Disable for shared dashboards or production.',
@@ -449,6 +505,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     sql,
     tokenTtl,
     dcrDisabled: !enableDcr,
+    // CRITICAL-1: when the Google login gate is on, harden EVERY DCR
+    // `/register` to public + authorization_code/refresh_token + `read` so a
+    // self-registered client cannot mint a confidential `client_credentials`
+    // admin token that skips `/authorize` (→ the gate). See
+    // GBrainClientsStore.registerClient. Machine clients minted by the operator
+    // via `registerClientManual` are unaffected.
+    loginGateEnabled: googleLogin !== undefined,
   });
 
   // Sweep expired tokens on startup (non-blocking)
@@ -695,6 +758,201 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // SDK's mcpAuthRouter reads provider.clientsStore once and only wires up
   // /register when the store exposes registerClient — so passing dcrDisabled
   // to the constructor is sufficient. No monkey-patching here.
+
+  // ---------------------------------------------------------------------------
+  // OPT-IN Google-Workspace login gate (src/core/oauth-google-login.ts)
+  // ---------------------------------------------------------------------------
+  // When `googleLogin` is set, the browser `authorization_code` flow at
+  // /authorize must carry a valid login-session cookie. If it doesn't, the gate
+  // captures the original /authorize URL in a signed, expiring state value and
+  // 302-redirects to /login/google. Google signs the user in (constrained to
+  // the allowed hosted domain), redirects back to /login/google/callback, which
+  // verifies the id_token, sets the login-session cookie, and bounces back to
+  // the original /authorize URL — which now passes the gate.
+  //
+  // ALL of this is inert when the gate is off: the middleware below short-
+  // circuits to next() and the two /login/google routes are never reached
+  // (they 404 unless the gate is on). client_credentials never hits /authorize,
+  // so machine-to-machine tokens are entirely unaffected. The public base URL
+  // is derived from issuerUrl (the same source the server uses for the OAuth
+  // issuer / --public-url) — not hardcoded.
+  if (googleLogin) {
+    const cfg = googleLogin;
+    const publicBaseUrl = issuerUrl.origin;
+    const googleRedirectUri = `${publicBaseUrl}/login/google/callback`;
+
+    // Session cookie shares the secure/SameSite posture of the admin cookie,
+    // EXCEPT SameSite=Lax is REQUIRED (not Strict): the cookie must be sent on
+    // the top-level redirect back to /authorize from /login/google/callback. A
+    // Strict cookie would be withheld on that cross-site navigation and the
+    // gate would loop. Path=/ so it's sent to /authorize and the callback.
+    const loginCookieOpts = (req: Request) => ({
+      httpOnly: true as const,
+      sameSite: 'lax' as const,
+      secure: req.secure || issuerUrl.protocol === 'https:',
+      maxAge: SESSION_TTL_SECONDS * 1000,
+      path: '/',
+    });
+
+    // PKCE/nonce cookie posture (MEDIUM-1 + MEDIUM-2): HttpOnly + Secure +
+    // SameSite=Lax (must survive the top-level redirect from Google back to the
+    // callback) + Path scoped to the callback so it's only sent where it's read.
+    // Short maxAge = STATE_TTL_SECONDS — the login round-trip is interactive.
+    const pkceCookieOpts = (req: Request) => ({
+      httpOnly: true as const,
+      sameSite: 'lax' as const,
+      secure: req.secure || issuerUrl.protocol === 'https:',
+      maxAge: STATE_TTL_SECONDS * 1000,
+      path: '/login/google/callback',
+    });
+
+    // Start a Google login: mint a fresh PKCE verifier + nonce, set the signed,
+    // browser-bound PKCE cookie, and redirect to Google's auth endpoint with the
+    // signed state (return_url carrier), the S256 code_challenge, and the nonce.
+    // Binding the verifier+nonce to this browser closes the replayable-state /
+    // session-fixation gap and adds PKCE + OIDC nonce to the gbrain↔Google leg.
+    function startGoogleLogin(req: Request, res: Response, returnUrl: string) {
+      const now = Math.floor(Date.now() / 1000);
+      const verifier = generateCodeVerifier();
+      const nonce = generateNonce();
+      const state = signState(
+        { return_url: returnUrl, nonce: randomUUID(), exp: now + STATE_TTL_SECONDS },
+        cfg.sessionSecret,
+      );
+      const pkce = signPkce({ verifier, nonce, exp: now + STATE_TTL_SECONDS }, cfg.sessionSecret);
+      res.cookie(LOGIN_PKCE_COOKIE, pkce, pkceCookieOpts(req));
+      res.redirect(buildGoogleAuthUrl({
+        clientId: cfg.clientId,
+        redirectUri: googleRedirectUri,
+        hd: cfg.hd,
+        state,
+        codeChallenge: codeChallengeS256(verifier),
+        nonce,
+      }));
+    }
+
+    // Gate middleware — register BEFORE mcpAuthRouter so it runs ahead of the
+    // SDK's /authorize handler. Only gates /authorize; every other route
+    // (including /token, /register, /mcp) is untouched.
+    app.use('/authorize', (req: Request, res: Response, next: NextFunction) => {
+      const cookie = (req.cookies as Record<string, string> | undefined)?.[LOGIN_SESSION_COOKIE];
+      const session = verifySession(cookie, cfg.sessionSecret);
+      if (session) return next();
+
+      // No valid session — start the Google login. Capture the full original
+      // /authorize URL (path + query) so we can return to it afterward.
+      startGoogleLogin(req, res, req.originalUrl);
+    });
+
+    // GET /login/google — explicit entry point (also reachable directly). Mints
+    // a fresh state with no return_url constraint beyond /authorize and
+    // redirects to Google. Used when an operator hits the login URL directly;
+    // the gate path above normally redirects straight to Google itself.
+    app.get('/login/google', (req: Request, res: Response) => {
+      const rawReturn = typeof req.query.return_url === 'string' ? req.query.return_url : '/authorize';
+      const returnUrl = safeReturnUrl(rawReturn, publicBaseUrl) ? rawReturn : '/authorize';
+      startGoogleLogin(req, res, returnUrl);
+    });
+
+    // GET /login/google/callback — Google redirects here with code + state.
+    app.get('/login/google/callback', async (req: Request, res: Response) => {
+      // Clear the browser-bound PKCE cookie regardless of outcome — it is
+      // single-use. Same path/flags as when it was set so the clear actually
+      // matches the cookie.
+      const clearPkceCookie = () =>
+        res.clearCookie(LOGIN_PKCE_COOKIE, {
+          httpOnly: true,
+          sameSite: 'lax',
+          secure: req.secure || issuerUrl.protocol === 'https:',
+          path: '/login/google/callback',
+        });
+      try {
+        const state = verifyState(
+          typeof req.query.state === 'string' ? req.query.state : undefined,
+          cfg.sessionSecret,
+        );
+        if (!state) {
+          clearPkceCookie();
+          res.status(400).json({ error: 'invalid_state', error_description: 'state missing, tampered, or expired' });
+          return;
+        }
+        // Browser binding (MEDIUM-1): the PKCE/nonce cookie must be present and
+        // valid. Its absence means this callback was not initiated by this
+        // browser's /authorize redirect (replay / session-fixation attempt) —
+        // reject cleanly.
+        const pkceCookie = (req.cookies as Record<string, string> | undefined)?.[LOGIN_PKCE_COOKIE];
+        const pkce = verifyPkce(pkceCookie, cfg.sessionSecret);
+        if (!pkce) {
+          clearPkceCookie();
+          res.status(400).json({ error: 'invalid_request', error_description: 'login session cookie missing or invalid' });
+          return;
+        }
+        const code = typeof req.query.code === 'string' ? req.query.code : undefined;
+        if (!code) {
+          clearPkceCookie();
+          res.status(400).json({ error: 'invalid_request', error_description: 'code required' });
+          return;
+        }
+
+        // Exchange the code for tokens at Google (passing the PKCE verifier),
+        // then verify the id_token against Google's JWKS (RS256) and assert
+        // iss/aud/exp/hd/email_verified AND that its nonce matches the cookie.
+        const tokenRes = await exchangeGoogleCode({
+          code,
+          clientId: cfg.clientId,
+          clientSecret: cfg.clientSecret,
+          redirectUri: googleRedirectUri,
+          codeVerifier: pkce.verifier,
+        });
+        if (!tokenRes.id_token) {
+          clearPkceCookie();
+          res.status(400).json({ error: 'invalid_grant', error_description: 'Google returned no id_token' });
+          return;
+        }
+        // Pull the JWKS (cached by kid) for the token's signing key.
+        const kid = (() => {
+          try {
+            const h = JSON.parse(Buffer.from(tokenRes.id_token!.split('.')[0].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+            return typeof h.kid === 'string' ? h.kid : undefined;
+          } catch { return undefined; }
+        })();
+        const jwks = await jwksCache!.getForKid(kid);
+        const claims = verifyGoogleIdToken(tokenRes.id_token, jwks, {
+          clientId: cfg.clientId,
+          hd: cfg.hd,
+          nonce: pkce.nonce,
+        });
+
+        // Success — clear the single-use PKCE cookie, set the signed login-
+        // session cookie, and bounce back to the validated /authorize URL. The
+        // open-redirect guard rejects anything not same-origin + /authorize.
+        const dest = safeReturnUrl(state.return_url, publicBaseUrl);
+        if (!dest) {
+          clearPkceCookie();
+          res.status(400).json({ error: 'invalid_return_url', error_description: 'return_url failed the same-origin /authorize guard' });
+          return;
+        }
+        clearPkceCookie();
+        const session = signSession(
+          { email: claims.email, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS },
+          cfg.sessionSecret,
+        );
+        res.cookie(LOGIN_SESSION_COOKIE, session, loginCookieOpts(req));
+        res.redirect(dest);
+      } catch (e) {
+        // LOW-1: log the detailed error server-side (exchangeGoogleCode's
+        // IdTokenError embeds Google's response body) but return a generic
+        // description to the anonymous caller — don't echo Google's body.
+        clearPkceCookie();
+        console.error(`[serve-http] Google login callback failed: ${e instanceof Error ? e.message : e}`);
+        res.status(401).json({ error: 'login_denied', error_description: 'Google sign-in failed' });
+      }
+    });
+
+    console.error(
+      `[serve-http] Google login gate ENABLED — /authorize requires sign-in on hosted domain "${cfg.hd}".`,
+    );
+  }
 
   const authRouter = mcpAuthRouter(authRouterOptions);
 
@@ -1404,7 +1662,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null });
   });
 
-  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider }), async (req: Request, res: Response) => {
+  // resourceMetadataUrl adds `resource_metadata="..."` to the 401
+  // WWW-Authenticate: Bearer header (RFC 9728 / MCP protected-resource spec)
+  // without disturbing the existing `error="invalid_token"` content. The SDK's
+  // mcpAuthRouter already serves the document at this path (resourceServerUrl
+  // defaults to the issuer). Derived from issuerUrl, not hardcoded.
+  const resourceMetadataUrl = `${issuerUrl.origin}/.well-known/oauth-protected-resource`;
+
+  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider, resourceMetadataUrl }), async (req: Request, res: Response) => {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
 
@@ -1747,7 +2012,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.post(
     '/ingest',
     ingestRateLimiter,
-    requireBearerAuth({ verifier: oauthProvider, requiredScopes: ['write'] }),
+    requireBearerAuth({ verifier: oauthProvider, requiredScopes: ['write'], resourceMetadataUrl }),
     express.raw({ type: '*/*', limit: ingestMaxBytes }),
     async (req: Request, res: Response) => {
       const startTime = Date.now();
@@ -2104,6 +2369,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 ║  Issuer:    ${issuerUrl.origin.padEnd(40)}║
 ║  Clients:   ${String((clientCount[0] as any).count).padEnd(40)}║
 ║  DCR:       ${(enableDcr ? 'enabled' : 'disabled').padEnd(40)}║
+║  LoginGate: ${(googleLogin ? `google:${googleLogin.hd}` : 'off').padEnd(40)}║
 ║  Skills:    ${skillStatus.bannerValue.padEnd(40)}║
 ║  Token TTL: ${(tokenTtl + 's').padEnd(40)}║
 ╠══════════════════════════════════════════════════════╣

@@ -2236,6 +2236,11 @@ ADMIN
     --token-ttl N                    Access token TTL in seconds (default: 3600)
     --enable-dcr                     Enable Dynamic Client Registration
     --public-url URL                 Public issuer URL (required behind proxy/tunnel)
+    --oauth-login-hd DOMAIN          Require Google sign-in on this hosted domain
+                                     before /authorize issues a code (opt-in gate)
+    --oauth-google-client-id ID      Google OAuth client id   (required with --oauth-login-hd)
+    --oauth-google-client-secret S   Google OAuth client secret (required with --oauth-login-hd)
+    --oauth-session-secret SECRET    HMAC key for login session+state cookies (required with --oauth-login-hd)
   connect <mcp-url> --token <t>      Wire Claude Code to a remote gbrain (bearer token)
         [--install] [--json]         Print the paste-ready command, or --install to run it
   call <tool> '<json>'               Raw tool invocation

@@ -181,14 +181,41 @@ interface GBrainOAuthProviderOptions {
    * before mcpAuthRouter ran).
    */
   dcrDisabled?: boolean;
+  /**
+   * True when the resolved Google login gate config exists (serve-http resolves
+   * it from `--oauth-login-hd`). When set, `GBrainClientsStore.registerClient`
+   * (the DCR `/register` path) hardens EVERY self-registration to public
+   * (`token_endpoint_auth_method='none'`), strips `client_credentials` from
+   * `grant_types`, and clamps scope to `read` — forcing every self-registered
+   * client through `/authorize` (→ the Google gate) and capping it at read.
+   * Without this an anonymous caller could `POST /register` a confidential
+   * `client_credentials` client and mint an admin token via `POST /token`,
+   * never hitting `/authorize` and bypassing the gate. The operator path
+   * (`registerClientManual`) is NEVER affected. When the gate is OFF, DCR
+   * behavior is unchanged (backward compatible).
+   */
+  loginGateEnabled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // Clients Store
 // ---------------------------------------------------------------------------
 
+/**
+ * Grants a self-registered (DCR) client may hold when the Google login gate is
+ * on. `client_credentials` is deliberately excluded — it is the grant that
+ * skips `/authorize` (and therefore the gate). A self-registered client may
+ * only obtain tokens through the browser `authorization_code` flow (+ refresh).
+ */
+const GATE_HARDENED_GRANT_TYPES = ['authorization_code', 'refresh_token'] as const;
+
 class GBrainClientsStore implements OAuthRegisteredClientsStore {
-  constructor(private sql: SqlQuery) {}
+  /**
+   * @param loginGateEnabled when true, harden every DCR `/register` (this
+   *   class's `registerClient`) to public + authorization_code/refresh_token +
+   *   `read`. See `GBrainOAuthProviderOptions.loginGateEnabled`.
+   */
+  constructor(private sql: SqlQuery, private loginGateEnabled = false) {}
 
   async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
     const rows = await this.sql`
@@ -239,7 +266,43 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     // `--enable-dcr` is not the looser entry point. CLI and admin paths gate
     // through the same `validateTokenEndpointAuthMethod` helper — all three
     // registration entry points share one allow-list.
-    const authMethod = validateTokenEndpointAuthMethod(client.token_endpoint_auth_method);
+    const requestedAuthMethod = validateTokenEndpointAuthMethod(client.token_endpoint_auth_method);
+
+    // Login-gate hardening (CRITICAL-1): when the Google login gate is on, EVERY
+    // self-registered client MUST be forced through `/authorize` (→ the gate)
+    // and capped at `read`. Without this, an anonymous caller could
+    // `POST /register` a CONFIDENTIAL `client_credentials` client and mint an
+    // admin token via `POST /token` — never hitting `/authorize`, bypassing the
+    // gate entirely. So we:
+    //   - force token_endpoint_auth_method='none' (public, PKCE-only) — do NOT
+    //     honor a requested confidential method;
+    //   - strip `client_credentials` from grant_types so the only grants are
+    //     authorization_code + refresh_token (the browser flow);
+    //   - clamp scope to `read`.
+    // The operator path (registerClientManual) is a SEPARATE method and is
+    // never affected. When the gate is OFF, behavior is unchanged.
+    const authMethod = this.loginGateEnabled ? 'none' : requestedAuthMethod;
+
+    const requestedGrants = client.grant_types || ['client_credentials'];
+    const grantTypes = this.loginGateEnabled
+      ? (() => {
+          const filtered = requestedGrants.filter(g => g !== 'client_credentials');
+          return filtered.length > 0 ? filtered : [...GATE_HARDENED_GRANT_TYPES];
+        })()
+      : requestedGrants;
+
+    // DCR scope clamp: a self-registered PUBLIC client (PKCE-only,
+    // token_endpoint_auth_method='none') is the surface a browser/agent
+    // registers without operator review — it must NEVER be able to grant
+    // itself `write` or `admin`. Clamp its registered scope to `read` only.
+    // Confidential DCR clients (those that present a secret) are unaffected
+    // *when the gate is OFF*; with the gate ON every registration is forced
+    // public above, so this clamp fires for all of them. Admin-minted clients
+    // go through registerClientManual, not this path, so they keep their full
+    // requested scope. The clamp happens before the INSERT and the response
+    // below echoes the clamped value, so the stored row and the DCR reply agree.
+    const requestedScope = client.scope;
+    const effectiveScope = authMethod === 'none' ? 'read' : requestedScope;
 
     const clientId = generateToken('gbrain_cl_');
     // v0.34.1 (#909): RFC 7591 §2 — clients that authenticate at the token
@@ -271,8 +334,8 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                     client_id_issued_at, source_id, federated_read)
         VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                 ${pgArray((client.redirect_uris || []).map(String))},
-                ${pgArray(client.grant_types || ['client_credentials'])},
-                ${client.scope || ''}, ${authMethod},
+                ${pgArray(grantTypes)},
+                ${effectiveScope || ''}, ${authMethod},
                 ${now}, ${'default'}, ${pgArray(['default'])})
       `;
     } catch (err) {
@@ -284,8 +347,8 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                         client_id_issued_at, source_id)
             VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                     ${pgArray((client.redirect_uris || []).map(String))},
-                    ${pgArray(client.grant_types || ['client_credentials'])},
-                    ${client.scope || ''}, ${authMethod},
+                    ${pgArray(grantTypes)},
+                    ${effectiveScope || ''}, ${authMethod},
                     ${now}, ${'default'})
           `;
         } catch (err2) {
@@ -296,8 +359,8 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                           client_id_issued_at)
               VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                       ${pgArray((client.redirect_uris || []).map(String))},
-                      ${pgArray(client.grant_types || ['client_credentials'])},
-                      ${client.scope || ''}, ${authMethod},
+                      ${pgArray(grantTypes)},
+                      ${effectiveScope || ''}, ${authMethod},
                       ${now})
             `;
           } else {
@@ -311,8 +374,8 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                       client_id_issued_at)
           VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                   ${pgArray((client.redirect_uris || []).map(String))},
-                  ${pgArray(client.grant_types || ['client_credentials'])},
-                  ${client.scope || ''}, ${authMethod},
+                  ${pgArray(grantTypes)},
+                  ${effectiveScope || ''}, ${authMethod},
                   ${now})
         `;
       } else {
@@ -327,6 +390,15 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     // exactly once — same shape as before.
     const response: OAuthClientInformationFull = {
       ...client,
+      // Echo the clamped scope so the DCR reply matches the stored row. A
+      // public client that requested `read write` is told it has `read`.
+      scope: effectiveScope,
+      // Echo the hardened grant_types + auth method so the DCR reply matches
+      // the stored row. With the login gate on, a client that requested
+      // `client_secret_post` + `client_credentials` is told it is public
+      // (`none`) with `['authorization_code','refresh_token']`.
+      grant_types: grantTypes,
+      token_endpoint_auth_method: authMethod,
       client_id: clientId,
       client_id_issued_at: now,
     };
@@ -348,7 +420,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
   constructor(options: GBrainOAuthProviderOptions) {
     this.sql = options.sql;
-    this._clientsStore = new GBrainClientsStore(this.sql);
+    this._clientsStore = new GBrainClientsStore(this.sql, options.loginGateEnabled === true);
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
