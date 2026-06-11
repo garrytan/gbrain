@@ -95,6 +95,10 @@ const CANDIDATE_RRF_K = 60;
 const LINKED_CANDIDATE_SEED_LIMIT = 5;
 const LINKED_CANDIDATE_PER_SEED_LIMIT = 4;
 const MANIFEST_LINK_SCAN_BATCH_SIZE = 500;
+// Backlink discovery is a fallback for seeds with no recorded links; cap the
+// manifest scan so a large brain cannot turn one retrieval into a full-table
+// sweep. Targets with fewer backlinks inside the cap simply get fewer.
+const MANIFEST_LINK_SCAN_MAX_ROWS = 5_000;
 const SEARCH_HIT_CONTEXT_CHARS = 40;
 const SEARCH_CHUNK_WARNING = 'Search/query chunks are candidate pointers; call read_context before answering factual questions.';
 const DEFAULT_GRAPH_FRONTIER_POLICY_VERSION = 'policy:v1';
@@ -811,7 +815,10 @@ async function linkedCandidatesForResolvedCandidates(
     engine,
     uniqueSlugs([...linkedSlugsBySeed.values()].flat()),
   );
-  const output: RetrieveContextCandidate[] = [];
+  // Selection is synchronous (limits + scope gating depend only on loaded
+  // manifests), so pick the winners first and build their candidates
+  // concurrently instead of one engine round-trip pair at a time.
+  const selected: { seedSlug: string; manifest: NoteManifestEntry }[] = [];
   const seenSlugs = new Set(seedSlugs);
   for (const seedSlug of seedSlugs) {
     const linkedSlugs = linkedSlugsBySeed.get(seedSlug) ?? [];
@@ -824,14 +831,14 @@ async function linkedCandidatesForResolvedCandidates(
       if (!linkedManifest) continue;
       if (!manifestAllowedByRetrieveScope(linkedManifest, scopeGate)) continue;
 
-      const candidate = await candidateFromLinkedManifest(engine, linkedManifest, seedSlug, query);
-      output.push(candidate);
+      selected.push({ seedSlug, manifest: linkedManifest });
       seenSlugs.add(linkedSlug);
       addedForSeed += 1;
     }
   }
 
-  return output;
+  return Promise.all(selected.map(({ seedSlug, manifest }) =>
+    candidateFromLinkedManifest(engine, manifest, seedSlug, query)));
 }
 
 async function loadManifestEntriesBySlug(
@@ -856,7 +863,7 @@ async function manifestBacklinkSlugs(
   if (targetSlugs.size === 0) return incomingByTarget;
   if (typeof engine.listNoteManifestEntries !== 'function') return incomingByTarget;
 
-  for (let offset = 0; ; offset += MANIFEST_LINK_SCAN_BATCH_SIZE) {
+  for (let offset = 0; offset < MANIFEST_LINK_SCAN_MAX_ROWS; offset += MANIFEST_LINK_SCAN_BATCH_SIZE) {
     const batch = await engine.listNoteManifestEntries({
       scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
       limit: MANIFEST_LINK_SCAN_BATCH_SIZE,
@@ -965,12 +972,14 @@ async function bestReadSelectorForLinkedManifest(
   manifest: NoteManifestEntry,
   query: string,
 ): Promise<RetrievalSelector> {
-  const projection = await engine.getPageProjection(manifest.slug);
-  const sections = await engine.listNoteSectionEntries({
-    scope_id: manifest.scope_id,
-    page_slug: manifest.slug,
-    limit: 50,
-  });
+  const [projection, sections] = await Promise.all([
+    engine.getPageProjection(manifest.slug),
+    engine.listNoteSectionEntries({
+      scope_id: manifest.scope_id,
+      page_slug: manifest.slug,
+      limit: 50,
+    }),
+  ]);
   const queryTokens = tokenizeForSectionRank(query);
   const rankedSection = sections
     .map((section, index) => ({

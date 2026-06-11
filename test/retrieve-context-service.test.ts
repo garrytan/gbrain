@@ -1505,3 +1505,73 @@ function graphFrontierFixtureEdges(): GraphFrontierEdge[] {
     policy_version: 'policy:v1',
   }];
 }
+
+describe('manifest backlink scan bounding', () => {
+  test('caps the manifest scan for seeds with no recorded links instead of sweeping the whole brain', async () => {
+    await withEngine('backlink-scan-cap', async (engine) => {
+      await importFromContent(engine, 'systems/orphan-platform', [
+        '---',
+        'type: system',
+        'title: Orphan Platform',
+        '---',
+        '# Orphan Platform',
+        'A page with no outgoing links and no recorded backlinks.',
+      ].join('\n'), { path: 'systems/orphan-platform.md' });
+
+      let scanCalls = 0;
+      const proxied = new Proxy(engine, {
+        get(target, prop, receiver) {
+          if (prop === 'listNoteManifestEntries') {
+            // Simulate an arbitrarily large brain where no manifest links back
+            // to the seed: every batch is full and irrelevant.
+            return async (filters: { limit: number; offset: number }) => {
+              scanCalls += 1;
+              return Array.from({ length: filters.limit }, (_, index) => ({
+                scope_id: 'workspace:default',
+                page_id: 100_000 + filters.offset + index,
+                slug: `noise/page-${filters.offset + index}`,
+                path: `noise/page-${filters.offset + index}.md`,
+                page_type: 'concept',
+                title: `Noise ${filters.offset + index}`,
+                frontmatter: {},
+                aliases: [],
+                tags: [],
+                outgoing_wikilinks: ['concepts/unrelated'],
+                outgoing_urls: [],
+                source_refs: [],
+                heading_index: [],
+                content_hash: `hash-${filters.offset + index}`,
+                extractor_version: 'test',
+                last_indexed_at: '2026-06-12T00:00:00.000Z',
+              }));
+            };
+          }
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      }) as typeof engine;
+
+      const result = await retrieveContext(proxied, {
+        query: 'orphan platform',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async () => [{
+          slug: 'systems/orphan-platform',
+          page_id: 1,
+          title: 'Orphan Platform',
+          type: 'system',
+          chunk_text: 'A page with no outgoing links and no recorded backlinks.',
+          chunk_source: 'compiled_truth',
+          score: 1,
+          stale: false,
+        }],
+      });
+
+      expect(result.required_reads.length).toBeGreaterThan(0);
+      // 5,000-row cap at 500 rows per batch.
+      expect(scanCalls).toBeLessThanOrEqual(10);
+      expect(scanCalls).toBeGreaterThan(0);
+    });
+  });
+});

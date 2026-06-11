@@ -56,6 +56,12 @@ All notable changes to MBrain will be documented in this file.
 
 ### Changed
 
+- **Context retrieval got mechanically faster on link-rich pages.** Linked-page
+  read candidates are now built concurrently instead of one engine round-trip
+  at a time (up to 20 sequential queries before), and the backlink fallback for
+  pages with no recorded links is capped at a 5,000-row manifest scan instead
+  of sweeping the entire brain.
+
 - **macOS breakage now gets caught before it ever reaches a release.** Pull
   request CI now runs the full unit suite on macOS — the exact step that used
   to fail only during release builds (three separate "stabilize macOS PGLite"
