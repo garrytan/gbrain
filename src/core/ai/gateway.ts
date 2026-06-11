@@ -943,9 +943,11 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
  *  - Path: AI SDK adapter calls `${base_url}/embeddings`; ZE wants
  *    `${base_url}/models/embed`. Rewrite the URL path.
  *  - Body: inject `input_type: 'document'` (or `'query'` when threaded via
- *    providerOptions.openaiCompatible.input_type) and `encoding_format:
- *    'float'` (don't trust SDK default; strip any base64 caller injected
- *    to keep the response rewriter simple).
+ *    the `x-gbrain-input-type` request header — NOT providerOptions:
+ *    `openaiCompatible.input_type` is silently dropped by the AI-SDK
+ *    adapter) and `encoding_format: 'float'` (don't trust SDK default;
+ *    strip any base64 caller injected to keep the response rewriter
+ *    simple).
  *  - Response: ZE returns `{results: [{embedding: float[]}], usage:
  *    {total_bytes, total_tokens}}`. AI SDK's openai-compatible Zod schema
  *    expects `{data: [{embedding, index}], usage: {prompt_tokens, ...}}`.
@@ -955,6 +957,17 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
  * float[] (not base64), so the Layer 2 cap compares against the JSON
  * payload size of each embedding rather than a base64 string length.
  */
+// Test-only seam for the ZE compat shim's terminal fetch — lets a unit test
+// drive embed()/embedQuery() through the REAL AI-SDK adapter and assert the
+// final wire body (test/ze-input-type-wire.test.ts), which the
+// __setEmbedTransportForTests seam cannot see (it replaces the transport
+// UPSTREAM of the adapter that drops providerOptions). Mirrors the
+// __setChatTransportForTests pattern. Production paths see _zeFetch === null.
+let _zeFetch: typeof fetch | null = null;
+export function __setZeFetchForTests(fn: typeof fetch | null): void {
+  _zeFetch = fn;
+}
+
 const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   // OUTBOUND: normalize URL, rewrite path /embeddings → /models/embed, then
   // rewrite body. fetch accepts RequestInfo (string | Request) | URL; we
@@ -1005,6 +1018,27 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
           parsed.encoding_format = 'float';
           mutated = true;
         }
+        // Asymmetric input_type threading (header → body).
+        // providerOptions.openaiCompatible.input_type never survives the
+        // AI-SDK adapter (unrecognized field; `dimensions` survives because
+        // it's a known param), so EVERY embed — including query-side
+        // embedQuery() — arrived here without input_type and got the
+        // 'document' default below. That silently broke asymmetric
+        // retrieval: the whole vector arm searched with document-typed
+        // query vectors. Fix: embedSubBatch() threads the input type via
+        // the 'x-gbrain-input-type' request header (race-free — travels
+        // with the request); the shim consumes it here and strips it
+        // before sending.
+        const hdrs = new Headers(baseInit.headers ?? {});
+        const threadedInputType = hdrs.get('x-gbrain-input-type');
+        if (threadedInputType === 'query' || threadedInputType === 'document') {
+          if (parsed.input_type !== threadedInputType) {
+            parsed.input_type = threadedInputType;
+            mutated = true;
+          }
+          hdrs.delete('x-gbrain-input-type');
+          baseInit = { ...baseInit, headers: hdrs };
+        }
         // Default input_type when caller didn't thread one (document-side
         // embedding is the correct default for ingest paths).
         if (parsed.input_type === undefined) {
@@ -1022,7 +1056,7 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
     }
   }
 
-  const resp = await fetch(urlString, baseInit);
+  const resp = await (_zeFetch ?? fetch)(urlString, baseInit);
   if (!resp.ok) return resp;
   const ct = resp.headers.get('content-type') ?? '';
   if (!ct.toLowerCase().includes('application/json')) return resp;
@@ -1476,6 +1510,13 @@ async function embedSubBatch(
       model,
       values: texts,
       providerOptions: providerOpts,
+      // Thread the asymmetric input type as a request header —
+      // providerOptions.openaiCompatible.input_type is dropped by the
+      // AI-SDK adapter, which silently made every embed (incl. embedQuery)
+      // document-typed. The ZE compat shim reads + strips this header and
+      // writes input_type into the request body. Wire-level contract:
+      // test/ze-input-type-wire.test.ts.
+      ...(opts?.inputType && { headers: { 'x-gbrain-input-type': opts.inputType } }),
       // v0.42.20.0 — default a per-SUB-BATCH embed timeout (codex #3: bounding
       // once at embed() top would cap a whole multi-batch import; this is the
       // per-SDK-call scope). Composes with a caller signal (Fix 3's 6s query
