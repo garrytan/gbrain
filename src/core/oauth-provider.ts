@@ -268,12 +268,15 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     // registration entry points share one allow-list.
     const requestedAuthMethod = validateTokenEndpointAuthMethod(client.token_endpoint_auth_method);
 
-    // Login-gate hardening (CRITICAL-1): when the Google login gate is on, EVERY
-    // self-registered client MUST be forced through `/authorize` (→ the gate)
-    // and capped at `read`. Without this, an anonymous caller could
+    // Login-gate hardening (CRITICAL-1): when the Google login gate is on, every
+    // client self-registered FROM NOW ON is forced through `/authorize` (→ the
+    // gate) and capped at `read`. Without this, an anonymous caller could
     // `POST /register` a CONFIDENTIAL `client_credentials` client and mint an
     // admin token via `POST /token` — never hitting `/authorize`, bypassing the
-    // gate entirely. So we:
+    // gate entirely. (Note: this is registration-time hardening, not retroactive —
+    // any confidential client_credentials client registered while the gate was
+    // OFF keeps working at /token. Enable the gate from the start, or revoke
+    // pre-existing DCR clients when turning it on.) So we:
     //   - force token_endpoint_auth_method='none' (public, PKCE-only) — do NOT
     //     honor a requested confidential method;
     //   - strip `client_credentials` from grant_types so the only grants are
@@ -291,18 +294,16 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
         })()
       : requestedGrants;
 
-    // DCR scope clamp: a self-registered PUBLIC client (PKCE-only,
-    // token_endpoint_auth_method='none') is the surface a browser/agent
-    // registers without operator review — it must NEVER be able to grant
-    // itself `write` or `admin`. Clamp its registered scope to `read` only.
-    // Confidential DCR clients (those that present a secret) are unaffected
-    // *when the gate is OFF*; with the gate ON every registration is forced
-    // public above, so this clamp fires for all of them. Admin-minted clients
-    // go through registerClientManual, not this path, so they keep their full
-    // requested scope. The clamp happens before the INSERT and the response
-    // below echoes the clamped value, so the stored row and the DCR reply agree.
-    const requestedScope = client.scope;
-    const effectiveScope = authMethod === 'none' ? 'read' : requestedScope;
+    // DCR scope clamp: when the gate is ON, every registration is forced public
+    // above and must be capped at `read` — a self-registered browser/agent client
+    // must NEVER grant itself `write`/`admin`. When the gate is OFF we leave the
+    // requested scope untouched so behavior is byte-for-byte unchanged from
+    // upstream (the gate-OFF DCR path is not ours to alter in this feature).
+    // Admin-minted clients go through registerClientManual, not this path, so
+    // they keep their full requested scope. The clamp happens before the INSERT
+    // and the response below echoes the clamped value, so the stored row and the
+    // DCR reply agree.
+    const effectiveScope = this.loginGateEnabled ? 'read' : client.scope;
 
     const clientId = generateToken('gbrain_cl_');
     // v0.34.1 (#909): RFC 7591 §2 — clients that authenticate at the token

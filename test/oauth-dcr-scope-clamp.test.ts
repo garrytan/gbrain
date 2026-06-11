@@ -1,11 +1,11 @@
 /**
  * DCR scope-clamp security test (src/core/oauth-provider.ts registerClient).
  *
- * A self-registered PUBLIC client (token_endpoint_auth_method='none', PKCE-only
- * — the surface a browser/agent registers without operator review) must NEVER
- * be able to grant itself `write` or `admin`. registerClient clamps its scope
- * to `read`. Confidential DCR clients keep their requested scope, and admin-
- * minted clients (registerClientManual) are unaffected.
+ * With the login gate ON, registerClient hardens EVERY self-registration to
+ * public (none) + authorization_code/refresh_token + `read`, forcing it through
+ * /authorize (→ the gate) and capping it at read. With the gate OFF, behavior is
+ * byte-for-byte unchanged from upstream (no clamp). Admin-minted clients
+ * (registerClientManual) are never affected, gate on or off.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
@@ -54,7 +54,10 @@ async function storedRow(
 }
 
 describe('DCR scope clamp (registerClient)', () => {
-  test('public client (none) requesting "read write admin" is clamped to "read"', async () => {
+  // Backward-compat invariant: with the login gate OFF, registerClient must
+  // behave byte-for-byte like upstream — no scope clamp. The read clamp is a
+  // gate-ON hardening only (see the gate-ENABLED block below).
+  test('gate OFF: public client (none) requesting "read write admin" keeps its scope (unchanged upstream behavior)', async () => {
     const reg = await provider.clientsStore.registerClient!({
       client_name: 'browser-dcr',
       redirect_uris: ['https://app.example.com/callback'],
@@ -62,13 +65,13 @@ describe('DCR scope clamp (registerClient)', () => {
       scope: 'read write admin',
       token_endpoint_auth_method: 'none',
     } as any);
-    expect(reg.scope).toBe('read');
-    expect(await storedScope(reg.client_id)).toBe('read');
+    expect(reg.scope).toBe('read write admin');
+    expect(await storedScope(reg.client_id)).toBe('read write admin');
     // Public client: no secret issued.
     expect(reg.client_secret).toBeUndefined();
   });
 
-  test('public client (none) requesting "write" is clamped to "read"', async () => {
+  test('gate OFF: public client (none) requesting "write" keeps "write"', async () => {
     const reg = await provider.clientsStore.registerClient!({
       client_name: 'browser-dcr-2',
       redirect_uris: ['https://app.example.com/cb'],
@@ -76,8 +79,8 @@ describe('DCR scope clamp (registerClient)', () => {
       scope: 'write',
       token_endpoint_auth_method: 'none',
     } as any);
-    expect(reg.scope).toBe('read');
-    expect(await storedScope(reg.client_id)).toBe('read');
+    expect(reg.scope).toBe('write');
+    expect(await storedScope(reg.client_id)).toBe('write');
   });
 
   test('confidential DCR client keeps its requested scope (not clamped)', async () => {

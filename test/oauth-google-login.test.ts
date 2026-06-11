@@ -353,9 +353,19 @@ describe('verifyGoogleIdToken', () => {
     expect(() => verifyGoogleIdToken(token, stubJwks(), VERIFY_OPTS)).toThrow(/not verified/);
   });
 
-  test('rejects an unexpected alg (none / HS256)', () => {
+  test('rejects alg=none', () => {
     const token = mintIdToken({}, { alg: 'none' });
     expect(() => verifyGoogleIdToken(token, stubJwks(), VERIFY_OPTS)).toThrow(/alg/);
+  });
+
+  test('rejects alg=HS256 (RS/HS confusion) before any signature work', () => {
+    const token = mintIdToken({}, { alg: 'HS256' });
+    expect(() => verifyGoogleIdToken(token, stubJwks(), VERIFY_OPTS)).toThrow(/alg/);
+  });
+
+  test('rejects email_verified absent (undefined), not only false', () => {
+    const token = mintIdToken({ email_verified: undefined });
+    expect(() => verifyGoogleIdToken(token, stubJwks(), VERIFY_OPTS)).toThrow(/not verified/);
   });
 
   test('rejects when no JWKS key matches the kid', () => {
