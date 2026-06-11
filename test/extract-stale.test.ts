@@ -135,6 +135,19 @@ describe('gbrain extract --stale', () => {
     expect(stamp1).not.toBeNull();
   });
 
+  test('historical pages older than extractor version clear after --stale', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.executeRaw(`UPDATE pages SET updated_at = '2026-01-01T00:00:00Z' WHERE slug = 'people/alice'`);
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(1);
+
+    await runExtract(engine, ['--stale']);
+
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
+    const stamp = await stampOf('people/alice');
+    expect(stamp).not.toBeNull();
+    expect(Date.parse(stamp!)).toBeGreaterThanOrEqual(Date.parse(LINK_EXTRACTOR_VERSION_TS));
+  });
+
   test('--dry-run reports count and writes nothing', async () => {
     await engine.putPage('people/alice', personPage('Alice'));
     await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) joined [Acme](companies/acme).'));

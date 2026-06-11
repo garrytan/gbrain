@@ -685,14 +685,21 @@ describe('parseTimelineEntries', () => {
     expect(entries.length).toBe(1);
   });
 
+  test('parses repo-template legacy format: - YYYY-MM-DD: summary', () => {
+    const entries = parseTimelineEntries('- 2026-05-31: Event. [Source: Discord]');
+    expect(entries.length).toBe(1);
+    expect(entries[0]).toEqual({ date: '2026-05-31', summary: 'Event. [Source: Discord]', detail: '' });
+  });
+
   test('parses multiple entries', () => {
     const content = `## Timeline
 - **2026-01-15** | First event
+- 2026-02-20: Second event
 - **2026-02-20** | Second event
 - **2026-03-10** | Third event`;
     const entries = parseTimelineEntries(content);
-    expect(entries.length).toBe(3);
-    expect(entries.map(e => e.date)).toEqual(['2026-01-15', '2026-02-20', '2026-03-10']);
+    expect(entries.length).toBe(4);
+    expect(entries.map(e => e.date)).toEqual(['2026-01-15', '2026-02-20', '2026-02-20', '2026-03-10']);
   });
 
   test('skips invalid dates (2026-13-45)', () => {
@@ -1264,4 +1271,3 @@ describe("v0.18.0 migration v22 — links_resolution_type", () => {
     expect(v22!.sql).toContain("unqualified");
   });
 });
-

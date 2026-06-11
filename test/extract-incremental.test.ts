@@ -120,6 +120,21 @@ describe('runExtractCore — incremental cycle path (#417)', () => {
     expect(result.timeline_entries_created).toBe(0);
   });
 
+  test('5b. mode: timeline extracts repo-template date-colon bullets', async () => {
+    const body = '# alice\n\n## Timeline\n- 2026-01-01: started [Source: test]';
+    await seedPage('people/alice-example', body);
+    const result = await runExtractCore(engine as unknown as BrainEngine, {
+      mode: 'timeline',
+      dir: tempDir,
+      slugs: ['people/alice-example'],
+    });
+
+    expect(result.timeline_entries_created).toBe(1);
+    const timeline = await engine.getTimeline('people/alice-example');
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0].summary).toBe('started [Source: test]');
+  });
+
   test('6. dryRun: true does not invoke addLinksBatch / addTimelineEntriesBatch', async () => {
     await seedPage('people/alice-example', '# alice\n\n[bob](people/bob-example)');
     await seedPage('people/bob-example', '# bob');

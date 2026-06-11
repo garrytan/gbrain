@@ -475,11 +475,20 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
   // Format 1: Bullet — - **YYYY-MM-DD** | Source — Summary
   const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+?)\s*[—–-]\s*(.+)$/gm;
   let match;
+  const sourceStyleLines = new Set<string>();
   while ((match = bulletPattern.exec(content)) !== null) {
+    sourceStyleLines.add(match[0]);
     entries.push({ slug, date: match[1], source: match[2].trim(), summary: match[3].trim() });
   }
 
-  // Format 2: Header — ### YYYY-MM-DD — Title
+  // Format 2: Simple bullet — - **YYYY-MM-DD** | Summary or - YYYY-MM-DD: Summary
+  const simpleBulletPattern = /^-\s+(?:\*\*)?(\d{4}-\d{2}-\d{2})(?:\*\*)?\s*(?:\||:|--|---|[—–-])\s*(.+)$/gm;
+  while ((match = simpleBulletPattern.exec(content)) !== null) {
+    if (sourceStyleLines.has(match[0])) continue;
+    entries.push({ slug, date: match[1], source: 'markdown', summary: match[2].trim() });
+  }
+
+  // Format 3: Header — ### YYYY-MM-DD — Title
   const headerPattern = /^###\s+(\d{4}-\d{2}-\d{2})\s*[—–-]\s*(.+)$/gm;
   while ((match = headerPattern.exec(content)) !== null) {
     const afterIdx = match.index + match[0].length;
@@ -1654,16 +1663,21 @@ async function extractStaleFromDB(
         timelineRows.push({ slug: page.slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
       }
       // EVERY processed page is stamped (incl. zero-link pages). D4 race fix:
-      // stamp with the row's READ updated_at, NOT now() — a concurrent edit
-      // landing between this SELECT and the stamp advances updated_at past the
-      // stamped value, so the page stays stale and re-extracts next run instead
-      // of being marked fresh-with-stale-content.
+      // stamp with the row's READ updated_at, not now(); if the row predates
+      // the extractor-version watermark, stamp at versionTs so the version arm
+      // clears. A concurrent edit landing after our SELECT still advances
+      // updated_at past this stamp, so the page stays stale instead of being
+      // marked fresh-with-old-content.
       //
       // #1768: stamp the FULL-µs `updated_at_iso` (projected via to_char), NOT
       // `page.updated_at.toISOString()` — the JS Date is ms-truncated, so the
       // µs-precision DB updated_at stayed strictly greater and the page never
       // cleared on Postgres. Stamping the exact value makes them equal.
-      processedRefs.push({ slug: page.slug, source_id: page.source_id, extractedAt: page.updated_at_iso });
+      processedRefs.push({
+        slug: page.slug,
+        source_id: page.source_id,
+        extractedAt: extractionStampForStalePage(page.updated_at_iso, versionTs),
+      });
     }
 
     // Flush NON-swallowing (CDX-4): a throw here propagates out of the sweep so
@@ -1702,6 +1716,15 @@ async function extractStaleFromDB(
     }) + '\n');
   }
   return { linksCreated, timelineCreated, pagesProcessed, staleRemaining };
+}
+
+export function extractionStampForStalePage(readUpdatedAtIso: string, versionTs: string): string {
+  const readMs = Date.parse(readUpdatedAtIso);
+  const versionMs = Date.parse(versionTs);
+  if (Number.isFinite(readMs) && Number.isFinite(versionMs) && versionMs > readMs) {
+    return versionTs;
+  }
+  return readUpdatedAtIso;
 }
 
 /**

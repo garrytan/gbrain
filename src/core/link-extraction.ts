@@ -28,7 +28,7 @@ import { ensureWellFormed } from './text-safe.ts';
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
-export const LINK_EXTRACTOR_VERSION_TS = '2026-05-31T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-06-11T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -1100,9 +1100,9 @@ export interface TimelineCandidate {
   detail: string;
 }
 
-// Match: `- **YYYY-MM-DD** | summary` or `- **YYYY-MM-DD** -- summary`
-// or `- **YYYY-MM-DD** - summary` or just `**YYYY-MM-DD** | summary`.
-const TIMELINE_LINE_RE = /^\s*-?\s*\*\*(\d{4}-\d{2}-\d{2})\*\*\s*[|\-–—]+\s*(.+?)\s*$/;
+// Match canonical `- **YYYY-MM-DD** | summary` and the repo-template legacy
+// form `- YYYY-MM-DD: summary`.
+const TIMELINE_LINE_RE = /^\s*-?\s*(?:\*\*)?(\d{4}-\d{2}-\d{2})(?:\*\*)?\s*(?:\||:|--|---|[–—-])\s*(.+?)\s*$/;
 
 /**
  * Parse timeline entries from content. Looks at:
