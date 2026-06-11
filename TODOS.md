@@ -74,7 +74,7 @@ deliberately scoped OUT of the tool-schema fix (it's pre-existing + a separate
 structural change). Plan + GSTACK REVIEW REPORT at
 `~/.claude/plans/system-instruction-you-are-working-abstract-willow.md`.
 
-- [ ] **P1 — Gateway toolLoop crash-replay sends a malformed ModelMessage
+- [x] **P1 — Gateway toolLoop crash-replay sends a malformed ModelMessage
   history.** The gateway path never persists the tool-result feedback message:
   `toolLoop` pushes `{role:'user', content: toolResultBlocks}` with `void
   messageIdx` and NO persistence callback, so only assistant turns reach

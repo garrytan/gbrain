@@ -34,6 +34,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
+import { generateText, jsonSchema } from 'ai';
+import { MockLanguageModelV3 } from 'ai/test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { makeSubagentHandler } from '../../src/core/minions/handlers/subagent.ts';
@@ -42,7 +44,9 @@ import {
   __setChatTransportForTests,
   configureGateway,
   resetGateway,
+  toModelMessages,
   type ChatBlock,
+  type ChatOpts,
   type ChatResult,
 } from '../../src/core/ai/gateway.ts';
 
@@ -189,6 +193,35 @@ function buildHandler(toolRegistry: ToolDef[]) {
   });
 }
 
+function mockReplayModel(): MockLanguageModelV3 {
+  return new MockLanguageModelV3({
+    doGenerate: async () => ({
+      content: [{ type: 'text', text: 'sdk accepted replay history' }],
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      warnings: [],
+    }),
+  } as any);
+}
+
+async function assertAiSdkV6AcceptsReplayMessages(opts: ChatOpts): Promise<void> {
+  const model = mockReplayModel();
+  const result = await generateText({
+    model: model as any,
+    tools: {
+      search: {
+        description: 'stub search',
+        inputSchema: jsonSchema({ type: 'object' } as any),
+      },
+    } as any,
+    messages: toModelMessages(opts.messages) as any,
+  });
+
+  expect(result.text).toBe('sdk accepted replay history');
+  const prompt = model.doGenerateCalls[0]!.prompt as any[];
+  expect(prompt.some((m) => m.role === 'tool')).toBe(true);
+}
+
 /**
  * Seed a "crashed-mid-loop" state for jobId:
  *   - 1 user message at idx 0 (the seed prompt)
@@ -291,6 +324,55 @@ async function makeCrashedCtx(jobId: number, prompt: string, modelId: string): P
 // ── Tests ───────────────────────────────────────────────────
 
 describe('SIGKILL crash-replay reconciliation across provider matrix (v0.38 LOAD-BEARING)', () => {
+  it('reconstructs the missing tool-result turn before the first resumed gateway chat', async () => {
+    let observedMessages: ChatOpts['messages'] = [];
+    __setChatTransportForTests(async (opts) => {
+      observedMessages = opts.messages.map((m) => ({
+        role: m.role,
+        content: Array.isArray(m.content) ? [...m.content] : m.content,
+      }));
+      await assertAiSdkV6AcceptsReplayMessages(opts);
+      return PROVIDER_MATRIX[0].finalResponse;
+    });
+
+    const executions: Array<{ name: string; input: unknown }> = [];
+    const tools = makeStubTools(executions);
+    const handler = buildHandler(tools);
+
+    const { jobId } = await seedCrashedState('find foo', 'v2');
+    const ctx = await makeCrashedCtx(jobId, 'find foo', 'anthropic:claude-sonnet-4-6');
+
+    const result = await handler(ctx);
+
+    expect(result.stop_reason).toBe('end_turn');
+    expect(executions.length).toBe(0);
+    expect(observedMessages.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+    expect(Array.isArray(observedMessages[2]?.content)).toBe(true);
+    expect((observedMessages![2]!.content as ChatBlock[])[0]).toMatchObject({
+      type: 'tool-result',
+      toolCallId: 'provider-tc-v2-crashed',
+      toolName: 'search',
+    });
+
+    const persisted = await engine.executeRaw<Record<string, unknown>>(
+      `SELECT message_idx, role, content_blocks
+         FROM subagent_messages
+        WHERE job_id = $1
+        ORDER BY message_idx`,
+      [jobId],
+    );
+    expect(persisted.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
+    expect(persisted[2].message_idx).toBe(2);
+    const blocks = typeof persisted[2].content_blocks === 'string'
+      ? JSON.parse(persisted[2].content_blocks as string)
+      : persisted[2].content_blocks;
+    expect(blocks[0]).toMatchObject({
+      type: 'tool-result',
+      toolCallId: 'provider-tc-v2-crashed',
+      toolName: 'search',
+    });
+  });
+
   describe.each(PROVIDER_MATRIX)('provider $providerId', (provider) => {
     it('replay short-circuits the prior complete tool (v2 shape, gbrain_tool_use_id key)', async () => {
       // Stub the SECOND turn — replay should NOT call gateway.chat() for

@@ -780,10 +780,49 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
   // Convert prior Anthropic-shape messages → ChatMessage with ChatBlock content.
   // v1 rows store Anthropic content blocks ({type:'tool_use'|'tool_result'|...});
   // we adapt them to ChatBlock shape (type: 'tool-call' | 'tool-result' | 'text').
-  const priorChatMessages: ChatMessage[] = priorMessages.map(m => ({
+  let priorChatMessages: ChatMessage[] = priorMessages.map(m => ({
     role: m.role as 'user' | 'assistant',
     content: adaptContentBlocksToChatBlocks(m.content_blocks),
   }));
+
+  let nextMessageIdx = priorMessages.length === 0
+    ? 0
+    : Math.max(...priorMessages.map(m => m.message_idx)) + 1;
+
+  const lastPriorMessage = priorMessages[priorMessages.length - 1];
+  const lastPriorChatMessage = priorChatMessages[priorChatMessages.length - 1];
+  if (lastPriorMessage && lastPriorChatMessage?.role === 'assistant' && Array.isArray(lastPriorChatMessage.content)) {
+    const toolCalls = lastPriorChatMessage.content.filter(
+      (b): b is { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown } =>
+        b.type === 'tool-call',
+    );
+    if (toolCalls.length > 0) {
+      const toolResultBlocks = await reconcileGatewayToolResultTurn({
+        engine,
+        ctx,
+        model,
+        assistantMessageIdx: lastPriorMessage.message_idx,
+        toolCalls,
+        priorTools,
+        toolHandlers,
+        heartbeat: (event, payload) => {
+          logSubagentHeartbeat({ job_id: ctx.id, event: event as any, ...payload } as any);
+        },
+      });
+      const userIdx = nextMessageIdx++;
+      await persistMessage(engine, ctx.id, {
+        message_idx: userIdx,
+        role: 'user',
+        content_blocks: toolResultBlocks as unknown as ContentBlock[],
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cache_read: null,
+        tokens_cache_create: null,
+        model: null,
+      });
+      priorChatMessages = [...priorChatMessages, { role: 'user', content: toolResultBlocks }];
+    }
+  }
 
   // Initial seed message if no prior state.
   const initialMessages: ChatMessage[] = priorChatMessages.length === 0
@@ -791,7 +830,6 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     : [];
 
   // Persist seed user message at idx 0 if fresh start.
-  let nextMessageIdx = priorChatMessages.length;
   if (nextMessageIdx === 0) {
     await persistMessage(engine, ctx.id, {
       message_idx: 0,
@@ -874,35 +912,36 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       // because priorTools is keyed by the original UUID — the short-
       // circuit silently breaks and the tool re-executes. Pinned by
       // test/e2e/subagent-crash-replay-multi-provider.test.ts.
-      const candidateId = randomUUIDv7();
-      const rows = await engine.executeRaw<{ gbrain_tool_use_id: string }>(
-        `INSERT INTO subagent_tool_executions
-           (job_id, message_idx, tool_use_id, tool_name, input, status, schema_version, ordinal, gbrain_tool_use_id, provider_id)
-         VALUES ($1, $2, $3, $4, $5::jsonb, 'pending', 2, $6, $7, $8)
-         ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
-           SET status = subagent_tool_executions.status
-         RETURNING gbrain_tool_use_id::text AS gbrain_tool_use_id`,
-        [ctx.id, messageIdx, providerToolCallId, toolName, JSON.stringify(input ?? null), ordinal, candidateId, recipeIdFromModel(model)],
-      );
-      const gbrainToolUseId = rows[0]?.gbrain_tool_use_id ?? candidateId;
+      const gbrainToolUseId = await persistGatewayToolExecPending({
+        engine,
+        jobId: ctx.id,
+        messageIdx,
+        ordinal,
+        toolName,
+        input,
+        providerToolCallId,
+        providerId: recipeIdFromModel(model),
+      });
       heartbeat('tool_called', { turn_idx: turnIdx, tool_name: toolName });
       return { gbrainToolUseId };
     },
     onToolCallComplete: async (gbrainToolUseId, output) => {
-      await engine.executeRaw(
-        `UPDATE subagent_tool_executions
-           SET status = 'complete', output = $1::jsonb, ended_at = now()
-         WHERE gbrain_tool_use_id::text = $2`,
-        [JSON.stringify(output ?? null), gbrainToolUseId],
-      );
+      await persistGatewayToolExecComplete(engine, gbrainToolUseId, output);
     },
     onToolCallFailed: async (gbrainToolUseId, errorMsg) => {
-      await engine.executeRaw(
-        `UPDATE subagent_tool_executions
-           SET status = 'failed', error = $1, ended_at = now()
-         WHERE gbrain_tool_use_id::text = $2`,
-        [errorMsg, gbrainToolUseId],
-      );
+      await persistGatewayToolExecFailedByStableId(engine, gbrainToolUseId, errorMsg);
+    },
+    onToolResults: async (_turnIdx, messageIdx, blocks) => {
+      await persistMessage(engine, ctx.id, {
+        message_idx: messageIdx,
+        role: 'user',
+        content_blocks: blocks as unknown as ContentBlock[],
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cache_read: null,
+        tokens_cache_create: null,
+        model: null,
+      });
     },
     onHeartbeat: heartbeat,
   });
@@ -937,6 +976,217 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
 function recipeIdFromModel(modelString: string): string {
   const idx = modelString.indexOf(':');
   return idx > 0 ? modelString.slice(0, idx) : 'anthropic';
+}
+
+async function persistGatewayToolExecPending(input: {
+  engine: BrainEngine;
+  jobId: number;
+  messageIdx: number;
+  ordinal: number;
+  toolName: string;
+  input: unknown;
+  providerToolCallId: string;
+  providerId: string;
+}): Promise<string> {
+  const candidateId = randomUUIDv7();
+  const rows = await input.engine.executeRaw<{ gbrain_tool_use_id: string }>(
+    `INSERT INTO subagent_tool_executions
+       (job_id, message_idx, tool_use_id, tool_name, input, status, schema_version, ordinal, gbrain_tool_use_id, provider_id)
+     VALUES ($1, $2, $3, $4, $5::jsonb, 'pending', 2, $6, $7, $8)
+     ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
+       SET status = subagent_tool_executions.status
+     RETURNING gbrain_tool_use_id::text AS gbrain_tool_use_id`,
+    [
+      input.jobId,
+      input.messageIdx,
+      input.providerToolCallId,
+      input.toolName,
+      JSON.stringify(input.input ?? null),
+      input.ordinal,
+      candidateId,
+      input.providerId,
+    ],
+  );
+  return rows[0]?.gbrain_tool_use_id ?? candidateId;
+}
+
+async function persistGatewayToolExecComplete(
+  engine: BrainEngine,
+  gbrainToolUseId: string,
+  output: unknown,
+): Promise<void> {
+  await engine.executeRaw(
+    `UPDATE subagent_tool_executions
+       SET status = 'complete', output = $1::jsonb, ended_at = now()
+     WHERE gbrain_tool_use_id::text = $2`,
+    [JSON.stringify(output ?? null), gbrainToolUseId],
+  );
+}
+
+async function persistGatewayToolExecFailedByStableId(
+  engine: BrainEngine,
+  gbrainToolUseId: string,
+  errorMsg: string,
+): Promise<void> {
+  await engine.executeRaw(
+    `UPDATE subagent_tool_executions
+       SET status = 'failed', error = $1, ended_at = now()
+     WHERE gbrain_tool_use_id::text = $2`,
+    [errorMsg, gbrainToolUseId],
+  );
+}
+
+function findPriorGatewayTool(
+  priorTools: PriorToolV2Row[],
+  messageIdx: number,
+  ordinal: number,
+  call: { toolCallId: string; toolName: string },
+): PriorToolV2Row | undefined {
+  return priorTools.find(t =>
+    t.message_idx === messageIdx &&
+    t.ordinal === ordinal &&
+    t.tool_name === call.toolName,
+  ) ?? priorTools.find(t =>
+    t.message_idx === messageIdx &&
+    t.tool_use_id === call.toolCallId &&
+    t.tool_name === call.toolName,
+  );
+}
+
+async function reconcileGatewayToolResultTurn(input: {
+  engine: BrainEngine;
+  ctx: MinionJobContext;
+  model: string;
+  assistantMessageIdx: number;
+  toolCalls: Array<{ type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }>;
+  priorTools: PriorToolV2Row[];
+  toolHandlers: Map<string, ToolHandler>;
+  heartbeat: (event: string, payload: Record<string, unknown>) => void;
+}): Promise<ChatBlock[]> {
+  const toolResultBlocks: ChatBlock[] = [];
+  for (let ordinal = 0; ordinal < input.toolCalls.length; ordinal++) {
+    const call = input.toolCalls[ordinal]!;
+    const prior = findPriorGatewayTool(input.priorTools, input.assistantMessageIdx, ordinal, call);
+
+    if (prior?.status === 'complete') {
+      toolResultBlocks.push({
+        type: 'tool-result',
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        output: prior.output,
+      });
+      input.heartbeat('tool_replay_complete', { turn_idx: null, tool_name: call.toolName });
+      continue;
+    }
+
+    if (prior?.status === 'failed') {
+      toolResultBlocks.push({
+        type: 'tool-result',
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        output: prior.error ?? 'tool failed',
+        isError: true,
+      });
+      input.heartbeat('tool_replay_failed', { turn_idx: null, tool_name: call.toolName });
+      continue;
+    }
+
+    const handler = input.toolHandlers.get(call.toolName);
+    if (!handler) {
+      const errorMsg = `tool "${call.toolName}" is not in the registry for this subagent`;
+      if (prior?.gbrain_tool_use_id) {
+        await persistGatewayToolExecFailedByStableId(input.engine, prior.gbrain_tool_use_id, errorMsg);
+      } else if (prior) {
+        await persistToolExecFailed(
+          input.engine,
+          input.ctx.id,
+          input.assistantMessageIdx,
+          prior.tool_use_id,
+          call.toolName,
+          call.input,
+          errorMsg,
+        );
+      } else {
+        const gbrainToolUseId = await persistGatewayToolExecPending({
+          engine: input.engine,
+          jobId: input.ctx.id,
+          messageIdx: input.assistantMessageIdx,
+          ordinal,
+          toolName: call.toolName,
+          input: call.input,
+          providerToolCallId: call.toolCallId,
+          providerId: recipeIdFromModel(input.model),
+        });
+        await persistGatewayToolExecFailedByStableId(input.engine, gbrainToolUseId, errorMsg);
+      }
+      toolResultBlocks.push({
+        type: 'tool-result',
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        output: errorMsg,
+        isError: true,
+      });
+      continue;
+    }
+
+    if (prior?.status === 'pending' && !handler.idempotent) {
+      throw new Error(
+        `non-idempotent tool "${call.toolName}" pending on resume; gbrainToolUseId=${prior.stableKey} — cannot safely re-run`,
+      );
+    }
+
+    const gbrainToolUseId = prior
+      ? prior.gbrain_tool_use_id
+      : await persistGatewayToolExecPending({
+        engine: input.engine,
+        jobId: input.ctx.id,
+        messageIdx: input.assistantMessageIdx,
+        ordinal,
+        toolName: call.toolName,
+        input: call.input,
+        providerToolCallId: call.toolCallId,
+        providerId: recipeIdFromModel(input.model),
+      });
+
+    try {
+      input.heartbeat('tool_called', { turn_idx: null, tool_name: call.toolName });
+      const output = await handler.execute(call.input, input.ctx.signal);
+      if (gbrainToolUseId) {
+        await persistGatewayToolExecComplete(input.engine, gbrainToolUseId, output);
+      } else {
+        await persistToolExecComplete(input.engine, input.ctx.id, prior!.tool_use_id, output);
+      }
+      toolResultBlocks.push({
+        type: 'tool-result',
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        output,
+      });
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (gbrainToolUseId) {
+        await persistGatewayToolExecFailedByStableId(input.engine, gbrainToolUseId, errMsg);
+      } else {
+        await persistToolExecFailed(
+          input.engine,
+          input.ctx.id,
+          input.assistantMessageIdx,
+          prior!.tool_use_id,
+          call.toolName,
+          call.input,
+          errMsg,
+        );
+      }
+      toolResultBlocks.push({
+        type: 'tool-result',
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        output: errMsg,
+        isError: true,
+      });
+    }
+  }
+  return toolResultBlocks;
 }
 
 /**
@@ -1016,6 +1266,11 @@ function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
 
 interface PriorToolV2Row {
   stableKey: string;
+  message_idx: number;
+  tool_use_id: string;
+  tool_name: string;
+  ordinal: number | null;
+  gbrain_tool_use_id: string | null;
   status: 'pending' | 'complete' | 'failed';
   output: unknown;
   error: string | null;
@@ -1051,6 +1306,11 @@ async function loadPriorToolsV2(engine: BrainEngine, jobId: number): Promise<Pri
       : `legacy:${jobId}:${r.message_idx}:${r.tool_use_id}:${r.tool_name}`;
     return {
       stableKey,
+      message_idx: r.message_idx as number,
+      tool_use_id: r.tool_use_id as string,
+      tool_name: r.tool_name as string,
+      ordinal: (r.ordinal as number | null) ?? null,
+      gbrain_tool_use_id: gbrainId,
       status: r.status as 'pending' | 'complete' | 'failed',
       output: r.output,
       error: (r.error as string | null) ?? null,
