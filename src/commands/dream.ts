@@ -57,6 +57,12 @@ interface DreamArgs {
    */
   bypassDreamGuard: boolean;
   /**
+   * Per-run trusted-workspace output allow-list for synthesize subagents.
+   * When set, replaces the broad `skills/_brain-filing-rules.json`
+   * dream_synthesize_paths list for this invocation only.
+   */
+  allowedSlugPrefixes: string[] | null;
+  /**
    * v0.41.13: per-source cycle scoping. Threaded into runCycle as
    * `sourceId` so `cycle.ts:1947-1967` writes `last_full_cycle_at`
    * to `sources.config` on success — without it, `gbrain doctor`'s
@@ -155,6 +161,19 @@ function parseArgs(args: string[]): DreamArgs {
   // --input implies --phase synthesize.
   if (inputFile && !phase) phase = 'synthesize';
 
+  const allowedSlugPrefixes = collectFlagValues(args, '--allowed-slug-prefix');
+  if (allowedSlugPrefixes === null) {
+    console.error('--allowed-slug-prefix <glob>: missing value. Example: --allowed-slug-prefix dream-cycle-summaries/*');
+    process.exit(2);
+  }
+  const uniqueAllowedSlugPrefixes = Array.from(new Set(
+    allowedSlugPrefixes.map(v => v.trim()).filter(Boolean),
+  ));
+  if (uniqueAllowedSlugPrefixes.some(v => v.startsWith('--'))) {
+    console.error('--allowed-slug-prefix <glob>: missing value before next flag');
+    process.exit(2);
+  }
+
   // v0.41.13: --source <id> (and the --source-id alias) drives per-source
   // cycle scoping. Resolution rules:
   //   - missing value (flag at end of argv) → exit 2 with usage
@@ -226,6 +245,7 @@ function parseArgs(args: string[]): DreamArgs {
     from,
     to,
     bypassDreamGuard: args.includes('--unsafe-bypass-dream-guard'),
+    allowedSlugPrefixes: uniqueAllowedSlugPrefixes.length > 0 ? uniqueAllowedSlugPrefixes : null,
     source,
     drain,
     windowSeconds,
@@ -327,6 +347,10 @@ Options:
 
   --input <file>      Synthesize a specific transcript file (implies
                       --phase synthesize). Bypasses corpus-dir scan.
+  --allowed-slug-prefix <glob>
+                      Restrict synthesize subagent writes for this run only.
+                      Repeatable. Example:
+                      --allowed-slug-prefix dream-cycle-summaries/*
   --date YYYY-MM-DD   Synthesize transcripts dated for one specific day.
   --from YYYY-MM-DD   Backfill range start (use with --to).
   --to   YYYY-MM-DD   Backfill range end.
@@ -594,6 +618,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     synthFrom: opts.from ?? undefined,
     synthTo: opts.to ?? undefined,
     synthBypassDreamGuard: opts.bypassDreamGuard,
+    synthAllowedSlugPrefixes: opts.allowedSlugPrefixes ?? undefined,
   });
 
   if (opts.json) {

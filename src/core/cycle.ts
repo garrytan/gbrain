@@ -415,6 +415,7 @@ export interface CycleOpts {
    * Synthesize phase scope overrides (v0.23). Forwarded to runPhaseSynthesize.
    * - `synthInputFile`: ad-hoc transcript path (`gbrain dream --input <file>`).
    * - `synthDate` / `synthFrom` / `synthTo`: date filters for corpus scan.
+   * - `synthAllowedSlugPrefixes`: per-run trusted-workspace output allow-list.
    * Mutually exclusive with each other in CLI parsing; runner trusts the
    * caller (CLI wrapper validates).
    */
@@ -422,6 +423,7 @@ export interface CycleOpts {
   synthDate?: string;
   synthFrom?: string;
   synthTo?: string;
+  synthAllowedSlugPrefixes?: string[];
   /**
    * v0.23.2: explicit opt-in to disable the synthesize self-consumption guard.
    * Wired from `gbrain dream --unsafe-bypass-dream-guard`. Never auto-applied
@@ -1577,6 +1579,7 @@ export async function runCycle(
           from: opts.synthFrom,
           to: opts.synthTo,
           bypassDreamGuard: opts.synthBypassDreamGuard,
+          allowedSlugPrefixes: opts.synthAllowedSlugPrefixes,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);

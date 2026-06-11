@@ -18,7 +18,7 @@ import {
   isDreamOutput,
   DREAM_OUTPUT_MARKER_RE,
 } from '../src/core/cycle/transcript-discovery.ts';
-import { judgeSignificance, renderPageToMarkdown, type JudgeClient } from '../src/core/cycle/synthesize.ts';
+import { judgeSignificance, renderPageToMarkdown, __testing as synthTesting, type JudgeClient } from '../src/core/cycle/synthesize.ts';
 
 let tmpDir: string;
 
@@ -333,6 +333,97 @@ describe('judgeSignificance', () => {
     const r = await judgeSignificance(client, makeTranscript());
     expect(r.worth_processing).toBe(false);
     expect(r.reasons[0]).toContain('unparseable');
+  });
+});
+
+describe('synthesize allowed slug prefix override', () => {
+  test('per-run override replaces broad dream filing rule allow-list', () => {
+    expect(
+      synthTesting.resolveAllowedSlugPrefixesForRun(
+        ['dream-cycle-summaries/*'],
+        [
+          'wiki/personal/reflections/*',
+          'wiki/originals/*',
+          'wiki/personal/patterns/*',
+          'wiki/people/*',
+          'dream-cycle-summaries/*',
+        ],
+      ),
+    ).toEqual(['dream-cycle-summaries/*']);
+  });
+
+  test('empty per-run override falls back to repo filing rules', () => {
+    expect(
+      synthTesting.resolveAllowedSlugPrefixesForRun(undefined, ['wiki/originals/*']),
+    ).toEqual(['wiki/originals/*']);
+  });
+
+  test('dry-run planner exposes one-child narrow allow-list and cost projection', () => {
+    const plan = synthTesting.planSynthesizeRun(
+      [{
+        filePath: '/tmp/one.txt',
+        contentHash: 'abcdef0123456789',
+        content: 'single candidate transcript '.repeat(200),
+        basename: 'one',
+        inferredDate: null,
+      }],
+      {
+        model: 'deepseek:deepseek-chat',
+        maxPromptTokens: 100_000,
+        maxChunksPerTranscript: 24,
+      },
+      ['dream-cycle-summaries/*'],
+    );
+
+    expect(plan.allowed_slug_prefixes).toEqual(['dream-cycle-summaries/*']);
+    expect(plan.planned_transcripts).toBe(1);
+    expect(plan.planned_child_jobs).toBe(1);
+    expect(plan.pricing_known).toBe(true);
+    expect(plan.projected_cost_usd).toBeGreaterThan(0);
+    expect(plan.skips).toEqual([]);
+  });
+
+  test('narrow allow-list rewrites synthesis prompt away from wiki destinations', () => {
+    const prompt = synthTesting.buildSynthesisPrompt(
+      {
+        filePath: '/tmp/one.txt',
+        contentHash: 'abcdef0123456789',
+        content: 'candidate',
+        basename: '2026-06-02-candidate',
+        inferredDate: '2026-06-02',
+      },
+      'candidate transcript',
+      0,
+      1,
+      '',
+      ['dream-cycle-summaries/*'],
+    );
+
+    expect(prompt).toContain('dream-cycle-summaries/2026-06-02-2026-06-02-candidate-abcdef');
+    expect(prompt).toContain('Do not create or update wiki');
+    expect(prompt).not.toContain('wiki/personal/reflections/');
+    expect(prompt).not.toContain('wiki/originals/ideas/');
+  });
+
+  test('per-run allow-list policy hash is stable and order-sensitive', () => {
+    const one = synthTesting.hashAllowedSlugPrefixes(['dream-cycle-summaries/*']);
+    expect(one).toMatch(/^[0-9a-f]{8}$/);
+    expect(synthTesting.hashAllowedSlugPrefixes(['dream-cycle-summaries/*'])).toBe(one);
+    expect(synthTesting.hashAllowedSlugPrefixes(['wiki/originals/*', 'dream-cycle-summaries/*'])).not.toBe(one);
+  });
+
+  test('per-run execution policy hash changes when synthesize model changes', () => {
+    const prefixes = ['dream-cycle-summaries/*'];
+    const deepseek = synthTesting.hashSynthesizeExecutionPolicy(prefixes, 'deepseek:deepseek-chat');
+    const openai = synthTesting.hashSynthesizeExecutionPolicy(prefixes, 'openai:gpt-4o-mini');
+    const openaiGatewayLoop = synthTesting.hashSynthesizeExecutionPolicy(prefixes, 'openai:gpt-4o-mini', true);
+    expect(deepseek).toMatch(/^[0-9a-f]{8}$/);
+    expect(openai).toMatch(/^[0-9a-f]{8}$/);
+    expect(openaiGatewayLoop).toMatch(/^[0-9a-f]{8}$/);
+    expect(openai).not.toBe(deepseek);
+    expect(openaiGatewayLoop).not.toBe(openai);
+    expect(synthTesting.hashSynthesizeExecutionPolicy(prefixes, 'openai:gpt-4o-mini')).toBe(openai);
+    expect(synthTesting.hashSynthesizeExecutionPolicy(prefixes, 'openai:gpt-4o-mini', true)).toBe(openaiGatewayLoop);
   });
 });
 

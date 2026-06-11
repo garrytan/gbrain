@@ -46,6 +46,13 @@ describe('dream CLI flag wiring', () => {
     expect(dreamSrc).toContain('synthDate');
     expect(dreamSrc).toContain('synthFrom');
     expect(dreamSrc).toContain('synthTo');
+    expect(dreamSrc).toContain('synthAllowedSlugPrefixes');
+  });
+
+  test('declares per-run synthesize output allow-list flag', () => {
+    expect(dreamSrc).toContain("'--allowed-slug-prefix'");
+    expect(dreamSrc).toContain('allowedSlugPrefixes');
+    expect(dreamSrc).toContain('dream-cycle-summaries/*');
   });
 
   test('totals line includes synth + patterns counters', () => {

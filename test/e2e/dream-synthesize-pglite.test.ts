@@ -13,7 +13,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
@@ -68,6 +68,21 @@ async function withoutAnthropicKey<T>(body: () => Promise<T>): Promise<T> {
     else process.env.GBRAIN_HOME = savedHome;
     try { rmSync(tmpHome, { recursive: true, force: true }); } catch { /* */ }
   }
+}
+
+async function seedWorthProcessingVerdict(engine: PGLiteEngine, filePath: string, content: string): Promise<string> {
+  const { createHash } = await import('node:crypto');
+  const contentHash = createHash('sha256').update(content, 'utf8').digest('hex');
+  await engine.putDreamVerdict(filePath, contentHash, {
+    worth_processing: true,
+    reasons: ['seeded dry-run no-write proof'],
+  });
+  return contentHash;
+}
+
+async function tableCount(engine: PGLiteEngine, table: string): Promise<number> {
+  const rows = await engine.executeRaw<{ cnt: string | number }>(`SELECT count(*) AS cnt FROM ${table}`);
+  return Number(rows[0]?.cnt ?? 0);
 }
 
 describe('E2E synthesize — disabled / not_configured', () => {
@@ -227,6 +242,43 @@ describe('E2E synthesize — dry-run skips Sonnet (Codex finding #8)', () => {
         expect((result.details as { pages_written: number }).pages_written).toBe(0);
         expect(result.summary).toMatch(/dry-run/);
       });
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('gbrain dream --phase synthesize --dry-run does not write pages, jobs, files, or completion timestamp', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+
+      const filePath = join(rig.corpusDir, '2026-06-11-worth-processing.txt');
+      const content = 'a meaningful conversation about strategy and memory\n'.repeat(200);
+      writeFileSync(filePath, content);
+      await seedWorthProcessingVerdict(rig.engine, filePath, content);
+
+      const pagesBefore = await tableCount(rig.engine, 'pages');
+      const jobsBefore = await tableCount(rig.engine, 'minion_jobs');
+      const completionBefore = await rig.engine.getConfig('dream.synthesize.last_completion_ts');
+      const filesBefore = readdirSync(rig.brainDir, { recursive: true }).map(String).sort();
+
+      const result = await runPhaseSynthesize(rig.engine, {
+        brainDir: rig.brainDir,
+        dryRun: true,
+      });
+
+      expect(result.status).toBe('ok');
+      expect(result.summary).toMatch(/dry-run/);
+      expect((result.details as { dryRun: boolean }).dryRun).toBe(true);
+      expect((result.details as { transcripts_processed: number }).transcripts_processed).toBe(0);
+      expect((result.details as { pages_written: number }).pages_written).toBe(0);
+      expect((result.details as { planned_child_jobs: number }).planned_child_jobs).toBe(1);
+
+      expect(await tableCount(rig.engine, 'pages')).toBe(pagesBefore);
+      expect(await tableCount(rig.engine, 'minion_jobs')).toBe(jobsBefore);
+      expect(await rig.engine.getConfig('dream.synthesize.last_completion_ts')).toBe(completionBefore);
+      expect(readdirSync(rig.brainDir, { recursive: true }).map(String).sort()).toEqual(filesBefore);
     } finally {
       await rig.cleanup();
     }

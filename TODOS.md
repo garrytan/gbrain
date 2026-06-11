@@ -1,5 +1,12 @@
 # TODOS
 
+## Dream synthesize clean-replay residue (2026-06-11)
+
+Replay scope was intentionally narrow: only the Dream synthesize safety commits
+from `codex/gbrain-hub-freshness-steward-and-dream-feature-gate` were carried
+onto the clean branch. Broader hub/freshness-steward cleanup and all-phase
+`gbrain dream --dry-run` side-effect audits remain separate work.
+
 ## v0.42.21.0 module-singleton ownership follow-ups (v0.42+)
 
 Filed from the v0.42.21.0 wave (#1404/#1471/#1619 — the dream-cycle
