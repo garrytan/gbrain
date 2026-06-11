@@ -1677,8 +1677,18 @@ export interface BrainEngine {
    * structural guarantee that legacy rows live in a different keyspace
    * until the v0_32_2 migration backfills them. Cycle-phase callers in
    * commit 7 add the empty-fence-guard as a belt-and-suspenders check.
+   *
+   * #1928 — `opts.excludeSourcePrefixes` skips rows whose `source` matches
+   * any of the given LIKE prefixes (each prefix is matched as `prefix%`).
+   * The cycle's `extract_facts` phase passes `['cli:']` so CLI-deposited
+   * rows (e.g. `cli:extract-conversation-facts`, which write to pages
+   * that have no `## Facts` fence by design) survive the fence reconcile.
    */
-  deleteFactsForPage(slug: string, source_id: string): Promise<{ deleted: number }>;
+  deleteFactsForPage(
+    slug: string,
+    source_id: string,
+    opts?: { excludeSourcePrefixes?: string[] },
+  ): Promise<{ deleted: number }>;
 
   /**
    * Mark a fact expired. Never DELETE. Returns true iff a row was updated.

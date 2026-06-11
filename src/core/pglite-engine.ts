@@ -3598,10 +3598,26 @@ export class PGLiteEngine implements BrainEngine {
     return { inserted: ids.length, ids };
   }
 
-  async deleteFactsForPage(slug: string, source_id: string): Promise<{ deleted: number }> {
+  async deleteFactsForPage(
+    slug: string,
+    source_id: string,
+    opts?: { excludeSourcePrefixes?: string[] },
+  ): Promise<{ deleted: number }> {
+    const prefixes = opts?.excludeSourcePrefixes ?? [];
+    if (prefixes.length === 0) {
+      const result = await this.db.query(
+        `DELETE FROM facts WHERE source_id = $1 AND source_markdown_slug = $2`,
+        [source_id, slug],
+      );
+      return { deleted: result.affectedRows ?? 0 };
+    }
+    // #1928: each prefix becomes 'prefix%' for LIKE.
+    const patterns = prefixes.map(p => p + '%');
     const result = await this.db.query(
-      `DELETE FROM facts WHERE source_id = $1 AND source_markdown_slug = $2`,
-      [source_id, slug],
+      `DELETE FROM facts
+         WHERE source_id = $1 AND source_markdown_slug = $2
+           AND NOT (source LIKE ANY($3::text[]))`,
+      [source_id, slug, patterns],
     );
     return { deleted: result.affectedRows ?? 0 };
   }
