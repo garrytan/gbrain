@@ -717,6 +717,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'eval',
   'eval.capture',
   'eval.scrub_pii',
+  'agent.use_gateway_loop',
   'embedding_multimodal',
   'embedding_multimodal_model',
   'embedding_image_ocr',

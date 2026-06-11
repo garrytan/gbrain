@@ -2675,8 +2675,10 @@ async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
       const { loadConfig } = await import('../core/config.ts');
       const cfg = loadConfig();
       const chatModel = cfg?.chat_model;
+      const gatewayLoopRaw = await engine.getConfig('agent.use_gateway_loop').catch(() => null);
+      const gatewayLoopEnabled = gatewayLoopRaw === 'true' || gatewayLoopRaw === '1';
       const { isAnthropicProvider } = await import('../core/model-config.ts');
-      if (chatModel && !isAnthropicProvider(chatModel) && !process.env.ANTHROPIC_API_KEY) {
+      if (chatModel && !gatewayLoopEnabled && !isAnthropicProvider(chatModel) && !process.env.ANTHROPIC_API_KEY) {
         return {
           name: 'subagent_capability',
           status: 'warn',
