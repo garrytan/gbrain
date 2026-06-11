@@ -735,6 +735,34 @@ describe('MinionQueue: Cancel & Retry', () => {
     expect(retried!.status).toBe('waiting');
     expect(retried!.error_text).toBeNull();
   });
+
+  test('retry resets stale runtime timestamps so wall-clock timeout casualties get a fresh claim window', async () => {
+    const job = await queue.add('sync', { prompt: 'x' }, { timeout_ms: 1000 });
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      `UPDATE minion_jobs
+       SET started_at = now() - interval '10 minutes',
+           timeout_at = now() - interval '9 minutes',
+           status = 'dead',
+           error_text = 'wall-clock timeout exceeded',
+           finished_at = now()
+       WHERE id = $1`,
+      [job.id],
+    );
+
+    const retried = await queue.retryJob(job.id);
+    expect(retried!.status).toBe('waiting');
+    expect(retried!.started_at).toBeNull();
+    expect(retried!.timeout_at).toBeNull();
+
+    const claimed = await queue.claim('tok2', 30000, 'default', ['sync']);
+    expect(claimed!.id).toBe(job.id);
+    expect(claimed!.started_at).not.toBeNull();
+    expect(claimed!.timeout_at).not.toBeNull();
+
+    const dead = await queue.handleWallClockTimeouts(30000);
+    expect(dead.map(j => j.id)).not.toContain(job.id);
+  });
 });
 
 // --- Pause / Resume (5 tests) ---

@@ -471,11 +471,19 @@ export class MinionQueue {
     });
   }
 
-  /** Re-queue a failed or dead job for retry. */
+  /**
+   * Re-queue a failed or dead job for retry.
+   *
+   * Reset started_at/timeout_at as well as terminal/lock fields. Wall-clock
+   * timeout recovery keys off started_at (not attempts), so leaving the old
+   * value in place makes manually retried timeout casualties insta-die on the
+   * next claim before the handler gets a real fresh run.
+   */
   async retryJob(id: number): Promise<MinionJob | null> {
     const rows = await this.engine.executeRaw<Record<string, unknown>>(
       `UPDATE minion_jobs SET status = 'waiting', error_text = NULL,
         lock_token = NULL, lock_until = NULL, delay_until = NULL,
+        started_at = NULL, timeout_at = NULL,
         finished_at = NULL, updated_at = now()
        WHERE id = $1 AND status IN ('failed', 'dead')
        RETURNING *`,
