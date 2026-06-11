@@ -2675,8 +2675,18 @@ async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
       const { loadConfig } = await import('../core/config.ts');
       const cfg = loadConfig();
       const chatModel = cfg?.chat_model;
+      const useGatewayLoopRaw = await engine.getConfig('agent.use_gateway_loop').catch(() => null);
+      const useGatewayLoop = useGatewayLoopRaw === 'true' || useGatewayLoopRaw === '1';
       const { isAnthropicProvider } = await import('../core/model-config.ts');
       if (chatModel && !isAnthropicProvider(chatModel) && !process.env.ANTHROPIC_API_KEY) {
+        if (useGatewayLoop) {
+          return {
+            name: 'subagent_capability',
+            status: 'ok',
+            message:
+              `chat_model is "${chatModel}" (non-Anthropic), but agent.use_gateway_loop=true routes subagent loops through the configured gateway path.`,
+          };
+        }
         return {
           name: 'subagent_capability',
           status: 'warn',
@@ -2687,7 +2697,7 @@ async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
             `Either set ANTHROPIC_API_KEY or enable: \`gbrain config set agent.use_gateway_loop true\`.`,
         };
       }
-    } catch { /* loadConfig may throw; fall through */ }
+    } catch { /* loadConfig / config-table reads may throw; fall through */ }
 
     return {
       name: 'subagent_capability',
@@ -5017,16 +5027,24 @@ export async function buildChecks(
 
   // 4. pgvector extension
   progress.heartbeat('pgvector');
-  try {
-    const sql = db.getConnection();
-    const ext = await sql`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
-    if (ext.length > 0) {
-      checks.push({ name: 'pgvector', status: 'ok', message: 'Extension installed' });
-    } else {
-      checks.push({ name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' });
+  if (engine.kind === 'pglite') {
+    checks.push({
+      name: 'pgvector',
+      status: 'ok',
+      message: 'Skipped (PGLite — pgvector is bundled in the WASM engine)',
+    });
+  } else {
+    try {
+      const sql = db.getConnection();
+      const ext = await sql`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
+      if (ext.length > 0) {
+        checks.push({ name: 'pgvector', status: 'ok', message: 'Extension installed' });
+      } else {
+        checks.push({ name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' });
+      }
+    } catch {
+      checks.push({ name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' });
     }
-  } catch {
-    checks.push({ name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' });
   }
 
   // 4b. PgBouncer / prepared-statement compatibility.
@@ -5786,36 +5804,44 @@ export async function buildChecks(
   // surface matches `repair-jsonb` (the previous 4-target scan missed a
   // repair target, per #254/Codex review).
   progress.heartbeat('jsonb_integrity');
-  try {
-    const sql = db.getConnection();
-    const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
-      { table: 'pages',         col: 'frontmatter',    expected: 'object' },
-      { table: 'raw_data',      col: 'data',           expected: 'object' },
-      { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
-      { table: 'files',         col: 'metadata',       expected: 'object' },
-      { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
-    ];
-    let totalBad = 0;
-    const breakdown: string[] = [];
-    for (const { table, col } of targets) {
-      progress.heartbeat(`jsonb_integrity.${table}.${col}`);
-      const rows = await sql.unsafe(
-        `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
-      );
-      const n = Number((rows as any)[0]?.n ?? 0);
-      if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
+  if (engine.kind === 'pglite') {
+    checks.push({
+      name: 'jsonb_integrity',
+      status: 'ok',
+      message: 'Skipped (PGLite — JSONB double-encode bug is Postgres-only; repair-jsonb is a no-op)',
+    });
+  } else {
+    try {
+      const sql = db.getConnection();
+      const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
+        { table: 'pages',         col: 'frontmatter',    expected: 'object' },
+        { table: 'raw_data',      col: 'data',           expected: 'object' },
+        { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
+        { table: 'files',         col: 'metadata',       expected: 'object' },
+        { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
+      ];
+      let totalBad = 0;
+      const breakdown: string[] = [];
+      for (const { table, col } of targets) {
+        progress.heartbeat(`jsonb_integrity.${table}.${col}`);
+        const rows = await sql.unsafe(
+          `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
+        );
+        const n = Number((rows as any)[0]?.n ?? 0);
+        if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
+      }
+      if (totalBad === 0) {
+        checks.push({ name: 'jsonb_integrity', status: 'ok', message: 'All JSONB columns store objects/arrays' });
+      } else {
+        checks.push({
+          name: 'jsonb_integrity',
+          status: 'warn',
+          message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
+        });
+      }
+    } catch {
+      checks.push({ name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' });
     }
-    if (totalBad === 0) {
-      checks.push({ name: 'jsonb_integrity', status: 'ok', message: 'All JSONB columns store objects/arrays' });
-    } else {
-      checks.push({
-        name: 'jsonb_integrity',
-        status: 'warn',
-        message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
-      });
-    }
-  } catch {
-    checks.push({ name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' });
   }
 
   // 10b. Takes weight grid integrity (v0.32 — EXP-2).

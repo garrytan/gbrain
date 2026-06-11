@@ -75,6 +75,14 @@ export interface GBrainConfig {
    */
   storage?: unknown;
   /**
+   * v0.38+ subagent execution knobs. `agent.use_gateway_loop` lets non-Anthropic
+   * chat models drive protected subagent jobs through the configured gateway
+   * path instead of requiring ANTHROPIC_API_KEY.
+   */
+  agent?: {
+    use_gateway_loop?: boolean;
+  };
+  /**
    * v0.25.0 — session capture settings. Read via file-plane `loadConfig()`
    * at process boot (NOT `gbrain config set` which writes the DB plane —
    * those are different stores). Edit `~/.gbrain/config.json` directly.
@@ -714,6 +722,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'chat_fallback_chain',
   'provider_base_urls',
   'storage',
+  'agent',
+  'agent.use_gateway_loop',
   'eval',
   'eval.capture',
   'eval.scrub_pii',
