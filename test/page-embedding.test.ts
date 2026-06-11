@@ -255,6 +255,24 @@ describe('PostgresEngine page embeddings', () => {
 
       return [];
     };
+    // PgEngineBase routes engine SQL through the sql.unsafe(text, params) seam.
+    sql.unsafe = async (text: string, params: unknown[] = []) => {
+      calls.push({ text, values: params });
+
+      if (text.includes('UPDATE pages')) {
+        return [{ id: 7 }];
+      }
+
+      if (text.includes('SELECT p.id AS page_id')) {
+        return [{
+          page_id: 7,
+          slug: 'systems/compiler.md',
+          embedding: expectedLiteral,
+        }];
+      }
+
+      return [];
+    };
 
     const engine = new PostgresEngine() as any;
     engine._sql = sql;

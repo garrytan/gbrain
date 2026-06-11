@@ -623,10 +623,10 @@ describe('derived job engine APIs', () => {
   });
 
   test('postgres and pglite page slug mutations lock page rows before derived job tables', () => {
-    const postgresSource = readFileSync(join(import.meta.dir, '../src/core/postgres-engine.ts'), 'utf-8');
-    const pgliteSource = readFileSync(join(import.meta.dir, '../src/core/pglite-engine.ts'), 'utf-8');
+    // Both engines share these mutations via PgEngineBase (F7).
+    const sharedBaseSource = readFileSync(join(import.meta.dir, '../src/core/pg-engine-base.ts'), 'utf-8');
 
-    for (const source of [postgresSource, pgliteSource]) {
+    for (const source of [sharedBaseSource]) {
       for (const method of ['deletePage', 'updateSlug']) {
         const body = methodBody(source, method);
         const pageLockIndex = body.indexOf('FOR UPDATE');

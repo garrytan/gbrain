@@ -16,7 +16,8 @@ available in local mode versus what must fail with honest guidance.
 - `src/core/operations-agent-session-memory.ts` — Agent/session memory preview and capture operations
 - `src/core/operations-agent-session-activation.ts` — Agent-session activation planning operation
 - `src/core/engine.ts` — Pluggable engine interface (BrainEngine)
-- `src/core/postgres-engine.ts` — Postgres + pgvector implementation
+- `src/core/pg-engine-base.ts` — Shared SQL logic for both Postgres-dialect engines (PgEngineBase + PgQueryable transport seam)
+- `src/core/postgres-engine.ts` — Postgres + pgvector transport (postgres.js) over PgEngineBase
 - `src/core/sqlite-engine.ts` — SQLite engine for local/offline mode
 - `src/core/engine-factory.ts` — Config resolution + engine selection (`postgres` vs `sqlite`)
 - `src/core/offline-profile.ts` — Honest capability gating for local/offline mode
