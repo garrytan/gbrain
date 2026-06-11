@@ -12,6 +12,18 @@ All notable changes to MBrain will be documented in this file.
   Memory Inbox pressure once 50+ candidates sit waiting for review. The same
   backlog warning now leads the memory review report, so a drifting inbox is
   impossible to miss.
+- **Your brain now maintains itself by default.** `mbrain setup-agent --apply`
+  registers a daily 03:00 candidate-only dream cycle with your OS scheduler
+  (launchd on macOS, a managed crontab block elsewhere) — it captures and
+  refreshes Memory Inbox candidates overnight without ever touching canonical
+  pages, running auto-promote, or calling an LLM. Opt out with
+  `--no-autopilot`; `setup-agent --uninstall` removes it cleanly, and
+  `--preview` shows exactly what would be installed.
+- **Auto-promote now writes you a morning digest.** `mbrain auto-promote
+  --digest` saves a timestamped report (promotable count, escalations,
+  exclusions grouped by reason — contradictions included) into
+  `brain/reports/auto-promote-digest/`, so deciding `--apply` takes one glance
+  instead of a JSON dive.
 
 ### Changed
 

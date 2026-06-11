@@ -83,6 +83,7 @@ const SETUP_AGENT_CLI_SPEC: Operation = {
     apply: { type: 'boolean', description: 'Explicitly apply managed setup actions' },
     uninstall: { type: 'boolean', description: 'Remove managed setup actions without touching user content' },
     skip_mcp: { type: 'boolean', description: 'Inject rules without registering MCP' },
+    no_autopilot: { type: 'boolean', description: 'Skip registering the daily candidate-only dream cycle schedule' },
     print: { type: 'boolean', description: 'Print the agent rules instead of writing files' },
     json: { type: 'boolean', description: 'Emit machine-readable setup results' },
   },

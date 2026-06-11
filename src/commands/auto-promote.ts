@@ -4,13 +4,16 @@ import { normalizeAutoPromoteConfig, type AutoPromoteConfig } from '../core/auto
 import { detectRestrictedRunners } from '../core/runners/runner-registry.ts';
 import type { RestrictedRunnerCandidate } from '../core/runners/runner-registry.ts';
 import { createCliRunnerExecutor } from '../core/auto-promote/cli-executor.ts';
-import { runAutoPromote } from '../core/auto-promote/service.ts';
+import { runAutoPromote, type RunAutoPromoteResult } from '../core/auto-promote/service.ts';
+import { saveBrainReport } from './report.ts';
 
 export interface AutoPromoteArgs {
   dry_run: boolean;
   scope_id: string;
   limit?: number;
   json: boolean;
+  digest: boolean;
+  report_dir: string;
 }
 
 export function parseAutoPromoteArgs(args: string[]): AutoPromoteArgs {
@@ -21,13 +24,58 @@ export function parseAutoPromoteArgs(args: string[]): AutoPromoteArgs {
     dry_run,
     scope_id: readFlag(args, '--scope-id') ?? readFlag(args, '--scope') ?? 'workspace:default',
     json: hasFlag(args, '--json'),
+    digest: hasFlag(args, '--digest'),
+    report_dir: readFlag(args, '--report-dir') ?? '.',
     ...(readNumberFlag(args, '--limit') !== undefined ? { limit: readNumberFlag(args, '--limit') } : {}),
   };
 }
 
+export function buildAutoPromoteDigest(input: {
+  result: RunAutoPromoteResult;
+  dry_run: boolean;
+  scope_id: string;
+  now: string;
+}): string {
+  const c = input.result.counts;
+  const exclusionsByReason = new Map<string, number>();
+  for (const entry of input.result.excluded) {
+    exclusionsByReason.set(entry.reason, (exclusionsByReason.get(entry.reason) ?? 0) + 1);
+  }
+  const lines = [
+    `Mode: ${input.dry_run ? 'dry-run (no mutations applied)' : 'apply'}`,
+    `Scope: ${input.scope_id}`,
+    `Generated: ${input.now}`,
+    '',
+    '## Summary',
+    `- Promotable (auto-promoted): ${c.auto_promoted}`,
+    `- Canonical handoffs: ${c.canonical_handoffs}`,
+    `- Canonical writes: ${c.canonical_writes}`,
+    `- Escalated for review: ${c.escalated}`,
+    `- Deferred: ${c.deferred}`,
+    `- Excluded: ${c.excluded}`,
+  ];
+  if (exclusionsByReason.size > 0) {
+    lines.push('', '## Exclusions by reason');
+    for (const [reason, count] of [...exclusionsByReason.entries()].sort((a, b) => b[1] - a[1])) {
+      lines.push(`- ${reason}: ${count}`);
+    }
+  }
+  if (input.dry_run) {
+    lines.push(
+      '',
+      '## Next step',
+      c.auto_promoted > 0
+        ? `Run \`mbrain auto-promote --apply\` to promote the ${c.auto_promoted} confident candidate(s).`
+        : 'No candidates met the confidence bar; review staged candidates via `mbrain memory-report`.',
+    );
+  }
+  return lines.join('\n');
+}
+
 export async function runAutoPromoteCommand(engine: BrainEngine, args: string[]): Promise<void> {
   if (hasFlag(args, '--help') || hasFlag(args, '-h')) {
-    console.log('Usage: mbrain auto-promote [--apply] [--dry-run] [--scope-id <id>] [--limit <n>] [--json]');
+    console.log('Usage: mbrain auto-promote [--apply] [--dry-run] [--scope-id <id>] [--limit <n>] [--json] [--digest] [--report-dir <brain-dir>]');
+    console.log('  --digest saves a summary report under <brain-dir>/reports/auto-promote-digest/ (default: current directory).');
     return;
   }
   const parsed = parseAutoPromoteArgs(args);
@@ -61,9 +109,28 @@ export async function runAutoPromoteCommand(engine: BrainEngine, args: string[])
     ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
   });
 
+  let digestPath: string | null = null;
+  if (parsed.digest) {
+    const now = new Date();
+    const digest = buildAutoPromoteDigest({
+      result,
+      dry_run: parsed.dry_run,
+      scope_id: parsed.scope_id,
+      now: now.toISOString(),
+    });
+    digestPath = saveBrainReport({
+      brainDir: parsed.report_dir,
+      type: 'auto-promote-digest',
+      title: 'Auto-Promote Digest',
+      content: digest,
+      now,
+    });
+  }
+
   if (parsed.json) {
-    console.log(JSON.stringify(result, null, 2));
+    console.log(JSON.stringify(digestPath ? { ...result, digest_path: digestPath } : result, null, 2));
   } else {
+    if (digestPath) console.log(`digest saved: ${digestPath}`);
     const c = result.counts;
     console.log(
       `auto-promote (${config.dry_run ? 'dry-run' : 'apply'}, runners=${runners.map((runner) => runner.kind).join(',')}): promoted ${c.auto_promoted}, handoffs ${c.canonical_handoffs}, canonical_writes ${c.canonical_writes}, escalated ${c.escalated}, deferred ${c.deferred}, excluded ${c.excluded} (low_risk=${c.selected_low_risk}, risky=${c.selected_risky})`,

@@ -3,6 +3,11 @@ import { dirname, join } from 'path';
 import { execSync } from 'child_process';
 import { VERSION } from '../version.ts';
 import {
+  applyAutopilotSchedule,
+  planAutopilotSchedule,
+  removeAutopilotSchedule,
+} from './setup-agent-autopilot.ts';
+import {
   CLAUDE_MBRAIN_PROMPT_HOOK,
   CLAUDE_MBRAIN_RELEVANCE_LIB,
   CLAUDE_MBRAIN_SKIP_DIRS,
@@ -47,6 +52,7 @@ export async function runSetupAgent(args: string[]) {
   const printOnly = args.includes('--print');
   const jsonOutput = args.includes('--json');
   const skipMcp = args.includes('--skip-mcp');
+  const skipAutopilot = args.includes('--no-autopilot');
   const modeParse = parseSetupAgentRunMode(args);
   if ('error' in modeParse) {
     console.error(modeParse.error);
@@ -96,7 +102,9 @@ export async function runSetupAgent(args: string[]) {
     });
   }
 
-  if (clients.length === 0) {
+  // Uninstall must still be able to clean up the autopilot schedule after the
+  // AI clients themselves were removed.
+  if (clients.length === 0 && runMode !== 'uninstall') {
     console.error('No AI clients detected. Expected ~/.claude/ or ~/.codex/ to exist.');
     console.error('Install Claude Code or Codex first, then rerun: mbrain setup-agent');
     process.exit(1);
@@ -133,10 +141,23 @@ export async function runSetupAgent(args: string[]) {
       expected_claude_skip_dirs: CLAUDE_MBRAIN_SKIP_DIRS,
     });
 
+    const autopilotPlan = skipAutopilot ? null : planAutopilotSchedule();
     if (jsonOutput) {
-      console.log(JSON.stringify(report));
+      console.log(JSON.stringify({
+        ...report,
+        autopilot: skipAutopilot
+          ? { planned: false, reason: 'skipped (--no-autopilot)' }
+          : { planned: autopilotPlan?.supported ?? false, ...autopilotPlan },
+      }));
     } else {
       console.log(formatSetupAgentTrustUxReport(report));
+      if (skipAutopilot) {
+        console.log('\nAutopilot schedule: skipped (--no-autopilot)');
+      } else if (autopilotPlan?.supported) {
+        console.log(`\nAutopilot schedule: --apply would register ${autopilotPlan.mode} (${autopilotPlan.target}) running ${autopilotPlan.schedule_description}. Skip with --no-autopilot.`);
+      } else {
+        console.log(`\nAutopilot schedule: not available — ${autopilotPlan?.reason ?? 'unsupported platform'}`);
+      }
     }
     return;
   }
@@ -161,7 +182,10 @@ export async function runSetupAgent(args: string[]) {
       };
     });
 
-    const changed = results.some(uninstallResultChanged);
+    const autopilotRemoval = skipAutopilot
+      ? { status: 'skipped' as const, mode: null, reason: 'skipped (--no-autopilot)' }
+      : removeAutopilotSchedule();
+    const changed = results.some(uninstallResultChanged) || autopilotRemoval.status === 'removed';
     const status = results.some(uninstallResultWarn) ? 'warn' : 'ok';
     const warnings = buildUninstallWarnings(results);
 
@@ -175,6 +199,7 @@ export async function runSetupAgent(args: string[]) {
         changed,
         managed_only: true,
         warnings,
+        autopilot: autopilotRemoval,
         ...(hasClaude ? { claudeScope: claudeMcpScope } : {}),
         clients: results,
       }));
@@ -182,6 +207,7 @@ export async function runSetupAgent(args: string[]) {
       console.log(status === 'ok'
         ? '\nmbrain setup-agent uninstall complete:\n'
         : '\nmbrain setup-agent partial uninstall:\n');
+      console.log(`  Autopilot schedule: ${autopilotRemoval.status}${autopilotRemoval.reason ? ` (${autopilotRemoval.reason})` : ''}`);
       for (const r of results) {
         const clientLabel = r.client === 'claude' ? 'Claude Code' : 'Codex';
         console.log(`  ${clientLabel}:`);
@@ -231,6 +257,16 @@ export async function runSetupAgent(args: string[]) {
     });
   }
 
+  // Autopilot schedule: register a daily candidate-only dream cycle unless
+  // the user opted out. The scheduled run creates Memory Inbox candidates only
+  // (no canonical writes, no auto-promote, no LLM).
+  if (modeParse.compatibilityAlias && !skipAutopilot && !jsonOutput) {
+    console.log('Note: this also registers the daily autopilot schedule. Skip with --no-autopilot; inspect first with --preview.');
+  }
+  const autopilotResult = skipAutopilot
+    ? { status: 'skipped' as const, mode: null, reason: 'skipped (--no-autopilot)' }
+    : applyAutopilotSchedule(planAutopilotSchedule());
+
   // Report
   if (jsonOutput) {
     const hasClaude = results.some(r => r.client === 'claude');
@@ -240,8 +276,10 @@ export async function runSetupAgent(args: string[]) {
       mode: 'apply',
       mutating: true,
       compatibility_alias: modeParse.compatibilityAlias,
-      changed: results.some((r) => r.mcp === 'registered' || r.rules === 'injected' || r.rules === 'updated'),
+      changed: results.some((r) => r.mcp === 'registered' || r.rules === 'injected' || r.rules === 'updated')
+        || autopilotResult.status === 'installed',
       managed_only: true,
+      autopilot: autopilotResult,
       ...(hasClaude ? { claudeScope: claudeMcpScope } : {}),
       clients: results,
     }));
@@ -260,6 +298,15 @@ export async function runSetupAgent(args: string[]) {
         console.log(`    [=] Claude MCP scope: ${r.mcp_scope}`);
       }
       console.log(`    [${rulesIcon}] Rules: ${r.rules}`);
+    }
+    if (autopilotResult.status === 'installed') {
+      console.log(`\n  [+] Autopilot schedule: ${autopilotResult.mode} installed (${autopilotResult.target}) — daily candidate-only dream cycle at 03:00.`);
+      console.log('      Run logs append to ~/.mbrain/logs/autopilot.*.log (rotate or clear periodically).');
+      for (const warning of autopilotResult.warnings ?? []) {
+        console.log(`      warning: ${warning}`);
+      }
+    } else {
+      console.log(`\n  [-] Autopilot schedule: ${autopilotResult.status}${autopilotResult.reason ? ` (${autopilotResult.reason})` : ''}`);
     }
     const configuredClaude = results.some(r => r.client === 'claude');
     if (configuredClaude) {

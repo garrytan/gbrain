@@ -49,34 +49,45 @@ export async function runReport(args: string[]) {
     process.exit(1);
   }
 
-  const now = new Date();
+  const title = titleIdx >= 0
+    ? args[titleIdx + 1]
+    : reportType.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+  const filepath = saveBrainReport({ brainDir, type: reportType, title, content });
+  console.log(filepath);
+}
+
+export function saveBrainReport(input: {
+  brainDir: string;
+  type: string;
+  title: string;
+  content: string;
+  now?: Date;
+}): string {
+  const now = input.now ?? new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
   const timeStr = `${pad(now.getHours())}${pad(now.getMinutes())}`;
   const timePretty = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
 
-  const title = titleIdx >= 0
-    ? args[titleIdx + 1]
-    : reportType.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-
   const filename = `${dateStr}-${timeStr}.md`;
-  const reportDir = join(brainDir, 'reports', reportType);
+  const reportDir = join(input.brainDir, 'reports', input.type);
   mkdirSync(reportDir, { recursive: true });
 
   const page = `---
-title: "${title} -- ${dateStr}"
+title: "${input.title} -- ${dateStr}"
 type: report
-report_type: ${reportType}
+report_type: ${input.type}
 date: ${dateStr}
 time: "${timePretty}"
 ---
 
-# ${title} -- ${dateStr} ${timePretty}
+# ${input.title} -- ${dateStr} ${timePretty}
 
-${content.trim()}
+${input.content.trim()}
 `;
 
   const filepath = join(reportDir, filename);
   writeFileSync(filepath, page);
-  console.log(filepath);
+  return filepath;
 }
