@@ -552,7 +552,10 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
       // Same set the legacy walkers honored, surfaced once at the top of
       // every iteration.
       if (entry.startsWith('.')) continue;
-      if (entry === 'node_modules' || entry === 'ops') continue;
+      // `venv` is the Python equivalent of `node_modules`: a vendored
+      // dependency tree (often thousands of files) that floods the slug
+      // namespace and triggers ON CONFLICT collisions on first full sync.
+      if (entry === 'node_modules' || entry === 'ops' || entry === 'venv') continue;
 
       const full = join(d, entry);
       let stat;
