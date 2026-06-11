@@ -30,6 +30,32 @@ export async function routeAgentSessionMemorySignals(
   for (const signal of input.signals) {
     const routeInput = routeInputForSignal(signal);
     let route = routeMemoryWriteback(routeInput);
+
+    // Prompt-injection-flagged signals never become candidates or writes:
+    // content that tried to steer the agent must not steer durable memory.
+    // Keep the normalized signal for auditability, but force no_write.
+    if (signal.prompt_injection_flagged === true) {
+      const {
+        candidate_input: _candidateInput,
+        created_candidate: _createdCandidate,
+        canonical_write_requirements: _canonicalWriteRequirements,
+        ...rest
+      } = route;
+      results.push({
+        signal,
+        route: {
+          ...rest,
+          decision: 'no_write',
+          intended_operation: 'none',
+          applied: false,
+          reasons: ['prompt_injection_suppressed', ...route.reasons],
+        },
+        direct_write: null,
+        blocked_reason: 'prompt_injection_suppressed',
+      });
+      continue;
+    }
+
     let directResult: DirectWriteResult = {
       direct_write: null,
       blocked_reason: null,

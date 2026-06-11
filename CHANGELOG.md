@@ -6,6 +6,18 @@ All notable changes to MBrain will be documented in this file.
 
 ### Added
 
+- **Sessions can now remember themselves.** Set `MBRAIN_STOP_HOOK_MODE=capture`
+  and the Claude Code Stop hook automatically captures each session transcript
+  into Memory Inbox candidates in the background — no manual export, no
+  blocking of session exit, hard size caps, and `candidate_only` writes so
+  nothing touches canonical memory without review. The same adapter powers
+  `mbrain agent-session capture --transcript-path <jsonl> --session-id <id>`
+  for manual runs.
+- **Prompt-injection content can no longer write itself into memory.** Session
+  signals flagged by the injection scanner are now fully suppressed before
+  routing — they never become Memory Inbox candidates or personal writes,
+  closing the loop-hole where flagged content was only blocked from direct
+  writes.
 - **Your brain now tells you when it's going stale.** `mbrain doctor` reports
   how long ago the last successful sync ran (and warns past a week), warns
   when the live sync watcher has died instead of failing silently, and flags

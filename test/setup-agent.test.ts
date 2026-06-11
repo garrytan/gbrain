@@ -423,6 +423,89 @@ describe('setup-agent', () => {
     expect(legacy.hooks.PreToolUse[0].id).toBe('pre:keep');
   });
 
+  test('installed Claude stop hook capture mode backgrounds an mbrain agent-session capture', async () => {
+    const result = await runSetupAgent(['--claude', '--skip-mcp']);
+    expect(result.exitCode).toBe(0);
+
+    const transcriptPath = join(tempHome, 'transcript.jsonl');
+    writeFileSync(
+      transcriptPath,
+      [
+        '{"message":{"role":"user","content":"remember: I prefer concise replies"}}',
+        '{"message":{"role":"assistant","content":"Noted."}}',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const invocationLog = join(tempHome, 'mbrain-capture-invocations.log');
+    writeFileSync(
+      join(tempBin, 'mbrain'),
+      `#!/bin/sh\necho "$@" >> "${invocationLog}"\nexit 0\n`,
+      'utf-8',
+    );
+    Bun.spawnSync(['chmod', '+x', join(tempBin, 'mbrain')]);
+
+    const payload = JSON.stringify({
+      session_id: 's-capture',
+      transcript_path: transcriptPath,
+      stop_hook_active: false,
+    });
+    const hook = await runInstalledHook(payload, { env: { MBRAIN_STOP_HOOK_MODE: 'capture' } });
+
+    expect(hook.exitCode).toBe(0);
+    expect(hook.stdout).toBe('');
+
+    // The capture is backgrounded; give it a moment to land.
+    let invocations = '';
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (existsSync(invocationLog)) {
+        invocations = readFileSync(invocationLog, 'utf-8');
+        if (invocations.includes('agent-session')) break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(invocations).toContain('agent-session capture');
+    expect(invocations).toContain(`--transcript-path ${transcriptPath}`);
+    expect(invocations).toContain('--session-id s-capture');
+    expect(invocations).toContain('--apply --write-mode candidate_only');
+
+    const log = readFileSync(join(tempHome, '.claude', 'logs', 'mbrain-stop-hook.log'), 'utf-8');
+    expect(log).toContain('capture');
+    expect(log).toContain('backgrounded');
+  });
+
+  test('installed Claude stop hook capture mode skips when the transcript is missing', async () => {
+    const result = await runSetupAgent(['--claude', '--skip-mcp']);
+    expect(result.exitCode).toBe(0);
+
+    const payload = JSON.stringify({
+      session_id: 's-missing',
+      transcript_path: join(tempHome, 'does-not-exist.jsonl'),
+      stop_hook_active: false,
+    });
+    const hook = await runInstalledHook(payload, { env: { MBRAIN_STOP_HOOK_MODE: 'capture' } });
+
+    expect(hook.exitCode).toBe(0);
+    expect(hook.stdout).toBe('');
+    const log = readFileSync(join(tempHome, '.claude', 'logs', 'mbrain-stop-hook.log'), 'utf-8');
+    expect(log).toContain('capture-skip');
+    expect(log).toContain('transcript-missing');
+  });
+
+  test('installed Claude stop hook capture mode respects the kill switch', async () => {
+    const result = await runSetupAgent(['--claude', '--skip-mcp']);
+    expect(result.exitCode).toBe(0);
+
+    const payload = '{"session_id":"s-kill","transcript_path":"/tmp/x.jsonl","stop_hook_active":false}';
+    const hook = await runInstalledHook(payload, {
+      env: { MBRAIN_STOP_HOOK: '0', MBRAIN_STOP_HOOK_MODE: 'capture' },
+    });
+
+    expect(hook.exitCode).toBe(0);
+    const log = readFileSync(join(tempHome, '.claude', 'logs', 'mbrain-stop-hook.log'), 'utf-8');
+    expect(log).toContain('skip');
+  });
+
   test('installed Claude stop hook stays silent by default for a relevant session', async () => {
     const result = await runSetupAgent(['--claude', '--skip-mcp']);
     expect(result.exitCode).toBe(0);

@@ -49,7 +49,7 @@ describe('installed-agent readiness service', () => {
       tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
       codexPrompt: rulesBlock,
       claudePrompt: rulesBlock,
-      claudeStopHook: 'route_memory_writeback with sources',
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
       codexMcpRegistration: {
         client: 'codex',
         detected: true,
@@ -81,7 +81,7 @@ describe('installed-agent readiness service', () => {
       tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
       codexPrompt: rulesBlock,
       claudePrompt: rulesBlock,
-      claudeStopHook: 'route_memory_writeback with sources',
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
       claudePromptHook: null,
       expectedRulesVersion: '0.5.7',
     });
@@ -99,7 +99,7 @@ describe('installed-agent readiness service', () => {
       tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
       codexPrompt: rulesBlock,
       claudePrompt: rulesBlock,
-      claudeStopHook: 'route_memory_writeback with sources',
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
       claudePromptHook: 'additionalContext retrieve_context read_context route_memory_writeback',
       expectedRulesVersion: '0.5.7',
     });
@@ -116,7 +116,7 @@ describe('installed-agent readiness service', () => {
       tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
       codexPrompt: rulesBlock,
       claudePrompt: rulesBlock,
-      claudeStopHook: 'route_memory_writeback with sources',
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
       claudePromptHook: '#!/bin/bash\nexit 0\n',
       expectedRulesVersion: '0.5.7',
     });
@@ -133,7 +133,7 @@ describe('installed-agent readiness service', () => {
       tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
       codexPrompt: rulesBlock,
       claudePrompt: rulesBlock,
-      claudeStopHook: 'route_memory_writeback with sources',
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
       codexMcpRegistration: {
         client: 'codex',
         detected: true,
@@ -158,7 +158,7 @@ describe('installed-agent readiness service', () => {
       tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
       codexPrompt: rulesBlock,
       claudePrompt: rulesBlock,
-      claudeStopHook: 'route_memory_writeback with sources',
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
       codexMcpRegistration: {
         client: 'codex',
         detected: true,
@@ -183,7 +183,7 @@ describe('installed-agent readiness service', () => {
       tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
       codexPrompt: rulesBlock,
       claudePrompt: rulesBlock,
-      claudeStopHook: 'route_memory_writeback with sources',
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
       codexMcpRegistration: {
         client: 'codex',
         detected: true,
@@ -208,7 +208,7 @@ describe('installed-agent readiness service', () => {
       tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
       codexPrompt: rulesBlock,
       claudePrompt: rulesBlock,
-      claudeStopHook: 'route_memory_writeback with sources',
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
       codexMcpRegistration: {
         client: 'codex',
         detected: true,
@@ -233,7 +233,7 @@ describe('installed-agent readiness service', () => {
       tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
       codexPrompt: rulesBlock,
       claudePrompt: rulesBlock,
-      claudeStopHook: 'route_memory_writeback with sources',
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
       codexMcpRegistration: {
         client: 'codex',
         detected: true,
@@ -259,7 +259,7 @@ describe('installed-agent readiness service', () => {
       tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
       codexPrompt: rulesBlock,
       claudePrompt: rulesBlock,
-      claudeStopHook: 'route_memory_writeback with sources',
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
       claudeMcpRegistration: {
         client: 'claude',
         detected: true,
@@ -285,7 +285,7 @@ describe('installed-agent readiness service', () => {
       tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
       codexPrompt: rulesBlock,
       claudePrompt: rulesBlock,
-      claudeStopHook: 'route_memory_writeback with sources',
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
       claudeMcpRegistration: {
         client: 'claude',
         detected: true,
@@ -401,7 +401,7 @@ describe('installed-agent readiness service', () => {
         .map((name) => ({ name })),
       codexPrompt: rulesBlock,
       claudePrompt: rulesBlock,
-      claudeStopHook: 'route_memory_writeback with sources',
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
       expectedRulesVersion: '0.5.7',
     });
 
@@ -418,7 +418,7 @@ describe('installed-agent readiness service', () => {
       tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
       codexPrompt: null,
       claudePrompt: rulesBlock,
-      claudeStopHook: 'route_memory_writeback with sources',
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
       expectedRulesVersion: '0.5.7',
     });
 
@@ -460,7 +460,7 @@ describe('installed-agent readiness service', () => {
       tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
       codexPrompt: staleRulesBlock,
       claudePrompt: rulesBlock,
-      claudeStopHook: 'route_memory_writeback with sources',
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
       expectedRulesVersion: '0.5.7',
     });
 
@@ -484,7 +484,7 @@ describe('installed-agent readiness service', () => {
       tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
       codexPrompt: tokenOnlyRulesBlock,
       claudePrompt: rulesBlock,
-      claudeStopHook: 'route_memory_writeback with sources',
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
       expectedRulesVersion: '0.5.7',
       expectedRulesContent: rulesContent,
     });

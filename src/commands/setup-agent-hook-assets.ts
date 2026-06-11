@@ -134,6 +134,35 @@ if [ "$MODE" = "block" ]; then
   exit 0
 fi
 
+if [ "$MODE" = "capture" ]; then
+  if ! command -v jq >/dev/null 2>&1; then
+    log_line "capture-skip" "$SESSION_ID" "jq-missing"
+    exit 0
+  fi
+  TRANSCRIPT_PATH="$(printf '%s' "$RAW_INPUT" | jq -r 'try .transcript_path // empty' 2>/dev/null)"
+  if [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; then
+    log_line "capture-skip" "$SESSION_ID" "transcript-missing"
+    exit 0
+  fi
+  FILE_SIZE="$(stat -f%z "$TRANSCRIPT_PATH" 2>/dev/null || stat -c%s "$TRANSCRIPT_PATH" 2>/dev/null || echo 0)"
+  if [ "$FILE_SIZE" -gt 52428800 ]; then
+    log_line "capture-skip" "$SESSION_ID" "transcript-too-large size=$FILE_SIZE"
+    exit 0
+  fi
+  CAPTURE_LOG="\${MBRAIN_CAPTURE_LOG:-$HOME/.claude/logs/mbrain-session-capture.log}"
+  mkdir -p "$(dirname "$CAPTURE_LOG")" 2>/dev/null || true
+  # Background the capture so session exit never blocks on the database.
+  # write_mode candidate_only: captured signals only ever become Memory Inbox
+  # candidates; injection-flagged signals are suppressed inside the pipeline.
+  nohup mbrain agent-session capture \\
+    --transcript-path "$TRANSCRIPT_PATH" \\
+    --session-id "$SESSION_ID" \\
+    --apply --write-mode candidate_only \\
+    >> "$CAPTURE_LOG" 2>&1 &
+  log_line "capture" "$SESSION_ID" "backgrounded pid=$!"
+  exit 0
+fi
+
 if [ "$MODE" != "silent" ]; then
   log_line "unknown-mode" "$SESSION_ID" "MBRAIN_STOP_HOOK_MODE=$MODE treated-as-silent"
   exit 0

@@ -443,10 +443,18 @@ function buildClaudeStopHookCheck(content: string | null): InstalledAgentCheck {
     };
   }
 
+  if (!content.includes('agent-session capture')) {
+    return {
+      name: 'claude_stop_hook',
+      status: 'warn',
+      message: 'Claude stop hook predates capture mode (MBRAIN_STOP_HOOK_MODE=capture). Re-run: mbrain setup-agent --apply',
+    };
+  }
+
   return {
     name: 'claude_stop_hook',
     status: 'ok',
-    message: 'Claude stop hook calls route_memory_writeback',
+    message: 'Claude stop hook calls route_memory_writeback and supports capture mode',
   };
 }
 

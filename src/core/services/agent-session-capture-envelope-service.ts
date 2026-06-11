@@ -188,3 +188,129 @@ function optionalRecord(value: unknown, label: string): Record<string, unknown> 
   }
   return value as Record<string, unknown>;
 }
+
+// --- Claude Code stop-hook transcript adapter -------------------------------
+
+// Bounds for hook-driven automatic capture: a runaway transcript must not be
+// able to flood the capture pipeline. Truncation happens before the injection
+// scanner runs, so a payload past the cut is never scanned — but it is never
+// stored either; only the truncated text continues through the pipeline.
+const TRANSCRIPT_EVENT_TEXT_LIMIT = 16_000;
+const TRANSCRIPT_MAX_EVENTS = 2_000;
+
+export interface ClaudeCodeTranscriptParseResult {
+  input: AgentSessionCaptureOperationInput;
+  parsed_events: number;
+  skipped_lines: number;
+}
+
+/**
+ * Converts a Claude Code session transcript (the JSONL file the Stop hook
+ * receives as `transcript_path`) into a capture envelope. Transcript lines are
+ * heterogeneous; only user/assistant messages with extractable text become
+ * events — everything else (tool results, meta records, malformed lines) is
+ * counted as skipped instead of failing the whole capture.
+ */
+export function parseClaudeCodeTranscript(
+  text: string,
+  options: { session_id: string; repo_path?: string | null },
+): ClaudeCodeTranscriptParseResult {
+  const inherited: AgentSessionInheritedEnvelopeMetadata = {
+    source_kind: 'claude_session',
+    session_id: options.session_id,
+    client_name: 'claude',
+    repo_path: options.repo_path ?? null,
+    workspace_id: null,
+  };
+
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  let skipped = 0;
+  const rawEvents: Record<string, unknown>[] = [];
+
+  for (const [index, line] of lines.entries()) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      skipped += 1;
+      continue;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      skipped += 1;
+      continue;
+    }
+
+    const record = parsed as Record<string, unknown>;
+    // Sidechain (subagent) turns can contain tool-fetched external content;
+    // capturing them as main-thread user/assistant text would launder that
+    // content into higher evidence authority. Skip them.
+    if (record.isSidechain === true) {
+      skipped += 1;
+      continue;
+    }
+    const message = (record.message && typeof record.message === 'object' && !Array.isArray(record.message))
+      ? record.message as Record<string, unknown>
+      : record;
+    const role = typeof message.role === 'string' ? message.role : null;
+    if (role !== 'user' && role !== 'assistant') {
+      skipped += 1;
+      continue;
+    }
+
+    const flattened = flattenTranscriptContent(message.content);
+    if (!flattened) {
+      skipped += 1;
+      continue;
+    }
+
+    rawEvents.push({
+      event_kind: role === 'user' ? 'user_prompt' : 'assistant_response',
+      text: flattened.length > TRANSCRIPT_EVENT_TEXT_LIMIT
+        ? `${flattened.slice(0, TRANSCRIPT_EVENT_TEXT_LIMIT)}\n…[truncated]`
+        : flattened,
+      ...(typeof record.uuid === 'string' && record.uuid.trim().length > 0
+        ? { event_id: record.uuid }
+        : { event_id: `claude-transcript:${options.session_id}:${index}` }),
+      ...(typeof record.timestamp === 'string' && Number.isFinite(Date.parse(record.timestamp))
+        ? { occurred_at: record.timestamp }
+        : {}),
+    });
+  }
+
+  // Keep the most recent events when a transcript exceeds the cap: the end of
+  // a session carries the durable outcome.
+  const bounded = rawEvents.length > TRANSCRIPT_MAX_EVENTS
+    ? rawEvents.slice(rawEvents.length - TRANSCRIPT_MAX_EVENTS)
+    : rawEvents;
+  skipped += rawEvents.length - bounded.length;
+
+  const events = bounded.map((event) => normalizeEvent(event, inherited));
+
+  return {
+    input: { ...inherited, events },
+    parsed_events: events.length,
+    skipped_lines: skipped,
+  };
+}
+
+function flattenTranscriptContent(content: unknown): string | null {
+  if (typeof content === 'string') {
+    const trimmed = content.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (!Array.isArray(content)) return null;
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
+    const item = block as Record<string, unknown>;
+    if (item.type === 'text' && typeof item.text === 'string' && item.text.trim().length > 0) {
+      parts.push(item.text.trim());
+    }
+  }
+  const joined = parts.join('\n').trim();
+  return joined.length > 0 ? joined : null;
+}

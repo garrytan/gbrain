@@ -313,6 +313,7 @@ export async function runSetupAgent(args: string[]) {
       console.log('\nClaude Code MBrain hooks:');
       console.log('  UserPromptSubmit injects a short MBrain retrieval/writeback note as silent context on each prompt.');
       console.log('  The Stop hook is non-blocking by default; restore the blocking memory gate with MBRAIN_STOP_HOOK_MODE=block.');
+      console.log('  Automatic session capture: MBRAIN_STOP_HOOK_MODE=capture saves session transcripts as Memory Inbox candidates at session end.');
       console.log('  Disable for a session: MBRAIN_PROMPT_HOOK=0 (prompt note) or MBRAIN_STOP_HOOK=0 (stop check)');
       console.log('  Skip directories: add absolute paths to ~/.claude/mbrain-skip-dirs');
     }
