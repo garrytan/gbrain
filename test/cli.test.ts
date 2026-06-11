@@ -144,10 +144,10 @@ describe('CLI source shape', () => {
     expect(cliSource).toContain('await runServe(enginePromise, normalizeCliOnlyArgs(command, args));');
   });
 
-  test('serve warns when OAuth refresh signing falls back to the approval token', () => {
-    expect(serveSource).toContain('MBRAIN_OAUTH_SIGNING_SECRET is not set');
-    expect(serveSource).toContain('refresh-token signing will fall back to the approval token');
-    expect(serveSource).toContain('Set a separate 32+ byte random secret for production');
+  test('serve refuses OAuth startup without both dedicated secrets', () => {
+    expect(serveSource).toContain('OAuth requires both MBRAIN_OAUTH_APPROVAL_TOKEN and MBRAIN_OAUTH_SIGNING_SECRET');
+    expect(serveSource).toContain('The previous fallback (signing refresh tokens with the approval token) was removed');
+    expect(serveSource).toContain('process.exit(1)');
   });
 
   test('init guidance keeps pgvector troubleshooting backend-neutral', () => {

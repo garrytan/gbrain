@@ -4,6 +4,23 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **The HTTP MCP server no longer answers browsers with `*`.** CORS now uses an
+  explicit allowlist (derived from `--public-url` plus
+  `MBRAIN_HTTP_ALLOWED_ORIGINS`); with nothing configured, no CORS headers are
+  emitted at all. Non-browser MCP clients are unaffected.
+- **OAuth brute force is now throttled.** `/oauth/token`, `/oauth/authorize`,
+  and `/oauth/register` are rate limited per client address (10 requests per
+  minute); discovery metadata stays unthrottled.
+- **Refresh tokens can no longer be signed with the approval token.**
+  `mbrain serve --http --oauth` now requires both
+  `MBRAIN_OAUTH_APPROVAL_TOKEN` and a dedicated
+  `MBRAIN_OAUTH_SIGNING_SECRET` (`openssl rand -hex 32`) and refuses to start
+  otherwise. If you relied on the old fallback, set the new secret —
+  existing refresh tokens signed under the fallback stop validating, so
+  clients will re-authorize once.
+
 ### Added
 
 - **Sessions can now remember themselves.** Set `MBRAIN_STOP_HOOK_MODE=capture`

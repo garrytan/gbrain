@@ -5,7 +5,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { Database } from 'bun:sqlite';
 import { resolveConfig } from '../src/core/config.ts';
-import { createMcpHttpHandler } from '../src/mcp/http-server.ts';
+import { createFixedWindowRateLimiter, createMcpHttpHandler } from '../src/mcp/http-server.ts';
+import { resolveAllowedOrigins } from '../src/commands/serve.ts';
 import { createInMemoryMcpOAuthStore } from '../src/mcp/oauth.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { DEFAULT_RUNTIME_CONFIG } from '../src/core/engine-factory.ts';
@@ -932,3 +933,171 @@ function createSqliteTokenDb(): { db: Database; dbPath: string } {
 async function sleep(ms: number): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
+
+describe('MCP HTTP security hardening', () => {
+  test('emits no CORS headers when no allowed origins are configured', async () => {
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      authenticate: async () => ({ ok: false, status: 401, body: { error: 'missing_auth' } }),
+      logRequest: async () => {},
+    });
+
+    const response = await handler(new Request('http://localhost/health', {
+      headers: { Origin: 'https://evil.example.com' },
+    }));
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
+
+    const preflight = await handler(new Request('http://localhost/mcp', {
+      method: 'OPTIONS',
+      headers: { Origin: 'https://evil.example.com' },
+    }));
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+
+  test('echoes only allowlisted origins, never a wildcard', async () => {
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      authenticate: async () => ({ ok: false, status: 401, body: { error: 'missing_auth' } }),
+      logRequest: async () => {},
+      allowedOrigins: ['https://app.example.com'],
+    });
+
+    const allowed = await handler(new Request('http://localhost/health', {
+      headers: { Origin: 'https://app.example.com' },
+    }));
+    expect(allowed.headers.get('Access-Control-Allow-Origin')).toBe('https://app.example.com');
+    expect(allowed.headers.get('Vary')).toBe('Origin');
+
+    const denied = await handler(new Request('http://localhost/health', {
+      headers: { Origin: 'https://evil.example.com' },
+    }));
+    expect(denied.headers.get('Access-Control-Allow-Origin')).toBeNull();
+
+    const preflight = await handler(new Request('http://localhost/mcp', {
+      method: 'OPTIONS',
+      headers: { Origin: 'https://app.example.com' },
+    }));
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('Access-Control-Allow-Origin')).toBe('https://app.example.com');
+  });
+
+  test('rate limits OAuth credential endpoints per client address', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+      },
+    });
+
+    const fire = (ip: string) => handler(new Request('http://localhost/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'grant_type=authorization_code&code=bogus',
+    }), ip);
+
+    let limited = 0;
+    for (let i = 0; i < 12; i += 1) {
+      const response = await fire('203.0.113.7');
+      if (response.status === 429) limited += 1;
+    }
+    expect(limited).toBe(2);
+
+    // A different client address has its own budget.
+    const other = await fire('203.0.113.8');
+    expect(other.status).not.toBe(429);
+
+    // Discovery metadata stays unthrottled.
+    for (let i = 0; i < 15; i += 1) {
+      const metadata = await handler(
+        new Request('http://localhost/.well-known/oauth-authorization-server'),
+        '203.0.113.7',
+      );
+      expect(metadata.status).toBe(200);
+    }
+  });
+
+  test('fixed-window rate limiter refills after the window elapses', () => {
+    const limiter = createFixedWindowRateLimiter({ capacity: 2, windowMs: 1_000, maxKeys: 4 });
+    expect(limiter.allow('k', 0)).toBe(true);
+    expect(limiter.allow('k', 10)).toBe(true);
+    expect(limiter.allow('k', 20)).toBe(false);
+    expect(limiter.allow('k', 1_001)).toBe(true);
+  });
+});
+
+describe('serve allowed-origin resolution', () => {
+  test('derives origins from env CSV and the public URL', () => {
+    const origins = resolveAllowedOrigins('https://brain.example.com/mcp', {
+      MBRAIN_HTTP_ALLOWED_ORIGINS: 'https://chat.openai.com, https://claude.ai/',
+    } as NodeJS.ProcessEnv);
+    expect(origins).toEqual(['https://chat.openai.com', 'https://claude.ai', 'https://brain.example.com']);
+  });
+
+  test('normalizes path-bearing entries and rejects null or malformed origins', () => {
+    const origins = resolveAllowedOrigins(undefined, {
+      MBRAIN_HTTP_ALLOWED_ORIGINS: 'HTTPS://App.Example.com/some/path, null, not a url',
+    } as NodeJS.ProcessEnv);
+    expect(origins).toEqual(['https://app.example.com']);
+  });
+
+  test('returns empty when nothing is configured', () => {
+    expect(resolveAllowedOrigins(undefined, {} as NodeJS.ProcessEnv)).toEqual([]);
+  });
+});
+
+describe('OAuth responses honor the CORS allowlist', () => {
+  function oauthHandler(allowedOrigins?: string[]) {
+    const { dbPath } = createSqliteTokenDb();
+    return createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
+      ...(allowedOrigins ? { allowedOrigins } : {}),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+      },
+    });
+  }
+
+  test('never emits a wildcard for non-allowlisted origins on OAuth endpoints', async () => {
+    const handler = oauthHandler(['https://app.example.com']);
+    const response = await handler(new Request('http://localhost/.well-known/oauth-authorization-server', {
+      headers: { Origin: 'https://evil.example.com' },
+    }));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+
+  test('echoes the allowlisted origin on OAuth endpoints', async () => {
+    const handler = oauthHandler(['https://app.example.com']);
+    const response = await handler(new Request('http://localhost/.well-known/oauth-authorization-server', {
+      headers: { Origin: 'https://app.example.com' },
+    }));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://app.example.com');
+  });
+
+  test('emits no CORS headers at all on OAuth endpoints when unconfigured', async () => {
+    const handler = oauthHandler();
+    const response = await handler(new Request('http://localhost/.well-known/oauth-authorization-server', {
+      headers: { Origin: 'https://app.example.com' },
+    }));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+});

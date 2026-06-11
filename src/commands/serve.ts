@@ -14,13 +14,21 @@ export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args:
   const oauthSigningSecret = process.env.MBRAIN_OAUTH_SIGNING_SECRET;
 
   if (http) {
+    if (oauth && (!oauthApprovalToken || !oauthSigningSecret)) {
+      console.error('OAuth requires both MBRAIN_OAUTH_APPROVAL_TOKEN and MBRAIN_OAUTH_SIGNING_SECRET to be set.');
+      console.error('The previous fallback (signing refresh tokens with the approval token) was removed for security.');
+      console.error('Generate a dedicated secret, e.g.: openssl rand -hex 32');
+      process.exit(1);
+    }
     const config = loadConfig() ?? DEFAULT_RUNTIME_CONFIG;
     const httpEngine = await prepareHttpServeEngine(engine, oauth);
+    const allowedOrigins = resolveAllowedOrigins(publicBaseUrl);
     const server = startMcpHttpServer({
       engine: httpEngine,
       config,
       host,
       port,
+      allowedOrigins,
       oauth: oauth ? {
         enabled: true,
         publicBaseUrl,
@@ -29,11 +37,11 @@ export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args:
       } : undefined,
     });
     console.error(`Starting MBrain MCP server (HTTP) on http://${server.hostname}:${server.port}`);
+    console.error(allowedOrigins.length > 0
+      ? `Browser CORS allowed origins: ${allowedOrigins.join(', ')}`
+      : 'Browser CORS disabled (no allowed origins). Set MBRAIN_HTTP_ALLOWED_ORIGINS or --public-url if a browser client needs access.');
     if (oauth) {
-      console.error('OAuth routes enabled. Set MBRAIN_OAUTH_APPROVAL_TOKEN before connecting a ChatGPT-style client.');
-      if (oauthApprovalToken && !oauthSigningSecret) {
-        console.error('Warning: MBRAIN_OAUTH_SIGNING_SECRET is not set; refresh-token signing will fall back to the approval token. Set a separate 32+ byte random secret for production.');
-      }
+      console.error('OAuth routes enabled. Token/authorize/register endpoints are rate limited per client address.');
     }
     await new Promise(() => undefined);
     return;
@@ -52,6 +60,35 @@ export async function prepareHttpServeEngine(
     await resolved.initSchema();
   }
   return resolved;
+}
+
+export function resolveAllowedOrigins(publicBaseUrl: string | undefined, env: NodeJS.ProcessEnv = process.env): string[] {
+  const origins = new Set<string>();
+  for (const entry of (env.MBRAIN_HTTP_ALLOWED_ORIGINS ?? '').split(',')) {
+    const trimmed = entry.trim().replace(/\/+$/, '');
+    if (trimmed.length === 0) continue;
+    // Browsers send `Origin: null` from sandboxed contexts; never allow the
+    // literal string to be allowlisted by accident.
+    if (trimmed.toLowerCase() === 'null') {
+      console.error(`Ignoring MBRAIN_HTTP_ALLOWED_ORIGINS entry "${entry.trim()}": the null origin cannot be allowlisted.`);
+      continue;
+    }
+    try {
+      // Normalize to a real origin so entries with paths or uppercase schemes
+      // still match the browser's Origin header.
+      origins.add(new URL(trimmed).origin);
+    } catch {
+      console.error(`Ignoring MBRAIN_HTTP_ALLOWED_ORIGINS entry "${entry.trim()}": not a valid origin URL.`);
+    }
+  }
+  if (publicBaseUrl) {
+    try {
+      origins.add(new URL(publicBaseUrl).origin);
+    } catch {
+      // Ignore malformed public URLs; the server reports CORS state at startup.
+    }
+  }
+  return [...origins];
 }
 
 function parseStringFlag(args: string[], flag: string): string | undefined {

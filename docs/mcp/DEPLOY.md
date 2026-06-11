@@ -62,8 +62,17 @@ OAuth setup state requires the Postgres engine; use bearer-token HTTP MCP for
 SQLite/PGLite local profiles. Postgres-backed setup state survives server
 restarts, prunes unapproved DCR registrations after one hour, and caps pending
 registrations at 128.
-Use a separate `MBRAIN_OAUTH_SIGNING_SECRET` for refresh-token signing; if it is
-unset, MBrain warns and falls back to the approval token for local testing only.
+Use a separate `MBRAIN_OAUTH_SIGNING_SECRET` for refresh-token signing; it is
+required, and `mbrain serve --http --oauth` exits at startup if either secret
+is missing (the old approval-token fallback was removed).
+
+OAuth credential endpoints (`/oauth/token`, `/oauth/authorize`,
+`/oauth/register`) are rate limited per client TCP address (10 requests per
+minute). Behind a reverse proxy (ngrok, nginx, Cloudflare) every client shares
+the proxy's address and therefore one bucket; `X-Forwarded-For` is deliberately
+not trusted. Browser CORS is allowlist-only: set `MBRAIN_HTTP_ALLOWED_ORIGINS`
+(comma-separated origins) or rely on the `--public-url` origin; with neither,
+no CORS headers are emitted.
 
 For HTTP MCP clients such as ChatGPT Developer Mode, `tools/list` returns full
 tool descriptors with titles, descriptions, and MCP read/write/destructive

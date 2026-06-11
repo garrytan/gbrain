@@ -45,6 +45,12 @@ export interface McpHttpHandlerOptions {
   oauthStore?: McpOAuthStore;
   authenticate?: (request: Request) => Promise<McpHttpAuthResult>;
   logRequest?: (entry: McpHttpRequestLogEntry) => Promise<void>;
+  /**
+   * Exact origins allowed for browser CORS. When unset or empty, no CORS
+   * headers are emitted at all: non-browser MCP clients are unaffected and
+   * browsers are denied by default instead of the previous wildcard.
+   */
+  allowedOrigins?: string[];
 }
 
 export interface McpHttpRequestLogEntry {
@@ -59,21 +65,37 @@ export interface StartMcpHttpServerOptions extends McpHttpHandlerOptions {
   port: number;
 }
 
-export function createMcpHttpHandler(options: McpHttpHandlerOptions): (request: Request) => Promise<Response> {
+export function createMcpHttpHandler(
+  options: McpHttpHandlerOptions,
+): (request: Request, clientIp?: string | null) => Promise<Response> {
   const enginePromise = Promise.resolve(options.engine);
   const authenticate = options.authenticate ?? ((request: Request) => authenticateMcpHttpRequest(options.config, request));
   const toolExecutionLimiter = createMcpToolExecutionLimiter();
   const oauthState = options.oauth?.enabled
     ? createMcpOAuthState(options.oauth, options.oauthStore ?? createMcpOAuthStore(options.config))
     : null;
+  const oauthRateLimiter = createFixedWindowRateLimiter(OAUTH_ENDPOINT_RATE_LIMIT);
 
-  return async function handleMcpHttpRequest(request: Request): Promise<Response> {
-    const url = new URL(request.url);
+  return async function handleMcpHttpRequest(request: Request, clientIp?: string | null): Promise<Response> {
+    const cors = corsHeadersFor(request, options.allowedOrigins);
     if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: corsHeaders() });
+      return new Response(null, { status: 204, headers: cors });
     }
+    const response = await dispatch(request, clientIp ?? null);
+    return applyExtraHeaders(response, cors);
+  };
+
+  async function dispatch(request: Request, clientIp: string | null): Promise<Response> {
+    const url = new URL(request.url);
 
     if (oauthState && isMcpOAuthPath(url.pathname)) {
+      if (isRateLimitedOAuthPath(url.pathname) && !oauthRateLimiter.allow(clientIp ?? 'global')) {
+        return jsonResponse(
+          { error: 'rate_limited', error_description: 'too many OAuth requests; retry later' },
+          429,
+          { 'Retry-After': '60' },
+        );
+      }
       return handleMcpOAuthRequest({
         request,
         state: oauthState,
@@ -128,7 +150,7 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): (request: 
         latencyMs: Date.now() - startTime,
         status,
       });
-      return withCors(response);
+      return response;
     } catch (error) {
       await logRequest(options, {
         tokenName: auth.tokenName,
@@ -138,7 +160,7 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): (request: 
       });
       throw error;
     }
-  };
+  }
 }
 
 async function inferMcpHttpOperation(request: Request): Promise<string> {
@@ -172,11 +194,15 @@ async function classifyMcpHttpResponseStatus(request: Request, response: Respons
 
 export function startMcpHttpServer(options: StartMcpHttpServerOptions): ReturnType<typeof Bun.serve> {
   const handler = createMcpHttpHandler(options);
-  return Bun.serve({
+  const server: ReturnType<typeof Bun.serve> = Bun.serve({
     hostname: options.host,
     port: options.port,
-    fetch: handler,
+    // NOTE: this is the direct TCP peer address. Behind a reverse proxy every
+    // request shares the proxy's address (one OAuth rate-limit bucket for all
+    // clients); X-Forwarded-For is deliberately not trusted here.
+    fetch: (request): Promise<Response> => handler(request, server.requestIP(request)?.address ?? null),
   });
+  return server;
 }
 
 async function authenticateMcpHttpRequest(
@@ -537,7 +563,6 @@ async function logMcpHttpRequest(config: MBrainConfig, entry: McpHttpRequestLogE
 function jsonResponse(body: Record<string, unknown>, status: number, extraHeaders: Record<string, string | undefined> = {}): Response {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...corsHeaders(),
   };
   for (const [key, value] of Object.entries(extraHeaders)) {
     if (value) headers[key] = value;
@@ -548,9 +573,16 @@ function jsonResponse(body: Record<string, unknown>, status: number, extraHeader
   });
 }
 
-function withCors(response: Response): Response {
+function applyExtraHeaders(response: Response, extra: Record<string, string>): Response {
+  const entries = Object.entries(extra);
+  if (entries.length === 0) return response;
   const headers = new Headers(response.headers);
-  for (const [key, value] of Object.entries(corsHeaders())) {
+  for (const [key, value] of entries) {
+    if (key === 'Vary') {
+      const existing = headers.get('Vary');
+      headers.set('Vary', existing && !existing.split(',').map((v) => v.trim()).includes(value) ? `${existing}, ${value}` : existing ?? value);
+      continue;
+    }
     headers.set(key, value);
   }
   return new Response(response.body, {
@@ -564,12 +596,48 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function corsHeaders(): Record<string, string> {
+function corsHeadersFor(request: Request, allowedOrigins: string[] | undefined): Record<string, string> {
+  const origin = request.headers.get('Origin');
+  if (!origin || !allowedOrigins || allowedOrigins.length === 0) return {};
+  if (!allowedOrigins.includes(origin)) return {};
   return {
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': origin,
+    'Vary': 'Origin',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID',
     'Access-Control-Expose-Headers': 'Mcp-Session-Id',
+  };
+}
+
+// OAuth credential endpoints are the brute-force surface; the metadata
+// discovery documents stay unthrottled.
+const OAUTH_ENDPOINT_RATE_LIMIT = { capacity: 10, windowMs: 60_000, maxKeys: 1_024 };
+
+function isRateLimitedOAuthPath(pathname: string): boolean {
+  return pathname === '/oauth/register'
+    || pathname === '/oauth/authorize'
+    || pathname === '/oauth/token';
+}
+
+export function createFixedWindowRateLimiter(limit: { capacity: number; windowMs: number; maxKeys: number }) {
+  const windows = new Map<string, { windowStart: number; count: number }>();
+  return {
+    allow(key: string, now = Date.now()): boolean {
+      const existing = windows.get(key);
+      if (!existing || now - existing.windowStart >= limit.windowMs) {
+        if (!existing && windows.size >= limit.maxKeys) {
+          // Bound memory under address churn by evicting the oldest entry.
+          // (A full clear() would let an attacker with maxKeys addresses
+          // reset everyone's counters at will.)
+          const oldest = windows.keys().next().value;
+          if (oldest !== undefined) windows.delete(oldest);
+        }
+        windows.set(key, { windowStart: now, count: 1 });
+        return true;
+      }
+      existing.count += 1;
+      return existing.count <= limit.capacity;
+    },
   };
 }
 

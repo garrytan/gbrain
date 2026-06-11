@@ -233,7 +233,6 @@ async function handleAuthorize(request: Request, state: McpOAuthState): Promise<
     status: 302,
     headers: {
       Location: redirect.toString(),
-      ...oauthCorsHeaders(),
     },
   });
 }
@@ -407,7 +406,6 @@ function renderApprovalForm(params: Record<string, unknown>): Response {
     status: 200,
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
-      ...oauthCorsHeaders(),
     },
   });
 }
@@ -503,7 +501,9 @@ function oauthConfigured(options: McpOAuthOptions): boolean {
 }
 
 function signingSecret(options: McpOAuthOptions): string {
-  return options.signingSecret || options.approvalToken || '';
+  // No approval-token fallback: the approval token is user-visible and short;
+  // refresh-token integrity needs its own dedicated secret.
+  return options.signingSecret || '';
 }
 
 function resolvePublicBaseUrl(request: Request, options: McpOAuthOptions): string {
@@ -529,21 +529,14 @@ function isAllowedRedirectUri(uri: string): boolean {
 function oauthJson(body: Record<string, unknown>, status: number): Response {
   return new Response(JSON.stringify(body), {
     status,
+    // CORS is applied centrally by the http-server choke point; emitting a
+    // wildcard here would bypass the allowlist.
     headers: {
       'Content-Type': 'application/json',
       'Cache-Control': 'no-store',
       Pragma: 'no-cache',
-      ...oauthCorsHeaders(),
     },
   });
-}
-
-function oauthCorsHeaders(): Record<string, string> {
-  return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
 }
 
 export function createInMemoryMcpOAuthStore(): McpOAuthStore {

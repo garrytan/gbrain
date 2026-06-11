@@ -50,8 +50,9 @@ mbrain serve --http \
 ```
 
 Set `MBRAIN_OAUTH_SIGNING_SECRET` to a separate 32+ byte random value for
-refresh-token signing. If it is unset, MBrain warns and falls back to the
-approval token for local testing only.
+refresh-token signing (`openssl rand -hex 32`). It is required: `mbrain serve
+--http --oauth` refuses to start unless both `MBRAIN_OAUTH_APPROVAL_TOKEN` and
+`MBRAIN_OAUTH_SIGNING_SECRET` are set.
 
 Then expose the local server with ngrok, Tailscale Funnel, Fly.io, Railway, or
 another HTTPS host.
