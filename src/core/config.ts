@@ -397,8 +397,13 @@ export function loadConfig(): GBrainConfig | null {
     fileConfig = migrateLegacyEmbeddingConfig(parsed) as unknown as GBrainConfig;
   } catch { /* no config file */ }
 
-  // Try env vars
-  const dbUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+  // Try env vars. GBRAIN_DATABASE_URL is the intentional gbrain-specific operator
+  // override and always wins. The generic DATABASE_URL is only a LAST-RESORT
+  // fallback — it must not override a brain already configured in config.json, or
+  // a co-located app's DATABASE_URL in the same environment silently repoints
+  // gbrain at the wrong database. (PGLite brains have no config database_url, so a
+  // bare DATABASE_URL still upgrades them to Postgres — the operator escape hatch.)
+  const dbUrl = process.env.GBRAIN_DATABASE_URL || fileConfig?.database_url || process.env.DATABASE_URL;
 
   if (!fileConfig && !dbUrl) return null;
 
