@@ -360,26 +360,22 @@ async function main() {
   //
   // Defense-in-depth (adversarial-review C13): `engine.disconnect()` itself
   // can hang on PGLite (db.close() or releaseLock racing OS-level FS state).
-  // Install an unref'd setTimeout hard-exit fallback BEFORE entering the
-  // try/catch/finally so a hung disconnect cannot defeat the force-exit
-  // contract. Daemons (`serve`) are excluded so they stay alive.
+  // An unref'd setTimeout hard-exit fallback bounds the teardown so a hung
+  // disconnect cannot defeat the force-exit contract. Daemons (`serve`) are
+  // excluded so they stay alive.
+  //
+  // #1775: the timer is armed in the `finally` below — at teardown start,
+  // never before the op handler. Armed up here it was a whole-run deadline:
+  // any op slower than 10s total (search/query against a remote Postgres, a
+  // reranker pass, a query with LLM expansion) got process.exit()
+  // MID-HANDLER — empty stdout, exit 0, and a misleading "disconnect did
+  // not return" warning for a disconnect that never ran. Slow HANDLERS are
+  // bounded piecemeal by the layers underneath — 6s query-embed deadline
+  // (hybrid.ts), 60s/300s AI gateway deadlines (withDefaultTimeout),
+  // Postgres statement_timeout (default 5min) — not by a uniform per-op
+  // wallclock; this timer's only contract is bounding drain + disconnect.
   const DISCONNECT_HARD_DEADLINE_MS = 10_000;
   let forceExitTimer: ReturnType<typeof setTimeout> | undefined;
-  if (shouldForceExitAfterMain()) {
-    forceExitTimer = setTimeout(() => {
-      console.warn(
-        `[cli] engine.disconnect() did not return within ${DISCONNECT_HARD_DEADLINE_MS}ms — force-exiting`,
-      );
-      // v0.42.20.0 (codex): honor an exit code an errored op already set —
-      // a bare process.exit(0) here would mask a failed op as success if the
-      // drain/disconnect then hangs.
-      process.exit(process.exitCode ?? 0);
-    }, DISCONNECT_HARD_DEADLINE_MS);
-    // unref so the timer itself doesn't keep the event loop alive — only
-    // the actual pending work (PGLite WASM handle) does. Without unref,
-    // we'd block a clean exit by 10s on every successful CLI run.
-    forceExitTimer.unref?.();
-  }
 
   try {
     const ctx = await makeContext(engine, params);
@@ -412,8 +408,23 @@ async function main() {
     // DB logIngest gets the freshest live-engine window. 1s per-sink timeout:
     // read paths with no pending work pay the ~0ms fast path; capture/import
     // that DO enqueue pay up to 1s (+ facts shutdown grace) while in-flight
-    // Haiku finishes. The unref'd hard-deadline timer above is the backstop if
+    // Haiku finishes. The unref'd hard-deadline timer below is the backstop if
     // disconnect or a lingering socket keeps Bun's loop alive.
+    if (shouldForceExitAfterMain()) {
+      forceExitTimer = setTimeout(() => {
+        console.warn(
+          `[cli] engine.disconnect() did not return within ${DISCONNECT_HARD_DEADLINE_MS}ms — force-exiting`,
+        );
+        // v0.42.20.0 (codex): honor an exit code an errored op already set —
+        // a bare process.exit(0) here would mask a failed op as success if the
+        // drain/disconnect then hangs.
+        process.exit(process.exitCode ?? 0);
+      }, DISCONNECT_HARD_DEADLINE_MS);
+      // unref so the timer itself doesn't keep the event loop alive — only
+      // the actual pending work (PGLite WASM handle) does. Without unref,
+      // we'd block a clean exit by 10s on every successful CLI run.
+      forceExitTimer.unref?.();
+    }
     await drainAllBackgroundWorkForCliExit({ timeoutMs: 1000 });
     await engine.disconnect();
     if (forceExitTimer) clearTimeout(forceExitTimer);
