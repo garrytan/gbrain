@@ -1,5 +1,6 @@
 import type { BrainEngine } from './engine.ts';
 import { buildFrontmatterSearchText } from './markdown.ts';
+import { resolvePageChunkOptions } from './page-chunk-options.ts';
 import { ensurePageChunks } from './page-chunks.ts';
 import { buildPageCentroid } from './services/page-embedding.ts';
 import { slugifyPath } from './sync.ts';
@@ -135,10 +136,11 @@ const MIGRATIONS: Migration[] = [
     `,
     handler: async (engine) => {
       const pages = await listAllPages(engine);
+      const chunkOptions = await resolvePageChunkOptions(engine);
       for (const page of pages) {
         const searchText = buildFrontmatterSearchText(page.frontmatter);
         await backfillSearchText(engine, page.id, searchText);
-        await ensurePageChunks(engine, page);
+        await ensurePageChunks(engine, page, chunkOptions);
       }
     },
   },
@@ -3019,6 +3021,22 @@ const MIGRATIONS: Migration[] = [
         ON assertion_links(scope_id, from_assertion_id, link_type);
     `,
   },
+  {
+    version: 52,
+    name: 'embedding_coverage_indexes',
+    sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('content_chunks') IS NOT NULL THEN
+          CREATE INDEX IF NOT EXISTS idx_chunks_embedded
+            ON content_chunks(page_id) WHERE embedded_at IS NOT NULL;
+          CREATE INDEX IF NOT EXISTS idx_chunks_missing_embedding
+            ON content_chunks(page_id) WHERE embedded_at IS NULL;
+        END IF;
+      END
+      $$;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -3041,8 +3059,15 @@ export async function runMigrations(
   const currentStr = await engine.getConfig('version');
   const current = parseInt(currentStr || '1', 10);
 
+  // Common startup case: schema already current — return without scanning
+  // the migration list.
+  const firstPendingIndex = MIGRATIONS.findIndex((m) => m.version > current);
+  if (firstPendingIndex === -1) {
+    return { applied: 0, current };
+  }
+
   let applied = 0;
-  for (let index = 0; index < MIGRATIONS.length;) {
+  for (let index = firstPendingIndex; index < MIGRATIONS.length;) {
     const m = MIGRATIONS[index]!;
     if (m.version <= current) {
       index++;

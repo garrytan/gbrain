@@ -4,6 +4,7 @@ import {
   canonicalDerivedParameters,
   derivedJobMatchesTarget,
   derivedExtractorVersion,
+  DERIVED_JOB_TERMINAL_HISTORY_RETAINED,
   derivedSchemaVersion,
   normalizeDerivedJobLeaseDurationMs,
   normalizeDerivedJobMaxAttempts,
@@ -1982,10 +1983,11 @@ export class PostgresEngine implements BrainEngine {
     const uniqueInteractionIds = [...new Set(interactionIds)];
     if (uniqueInteractionIds.length === 0) return [];
     const sql = this.sql;
-    const entries: MemoryCandidateStatusEvent[] = [];
-    for (const chunk of chunkInteractionIds(uniqueInteractionIds)) {
+    // Batches are independent read-only queries and the result is re-sorted
+    // below, so they can run concurrently on the connection pool.
+    const batches = await Promise.all(chunkInteractionIds(uniqueInteractionIds).map((chunk) => {
       const placeholders = chunk.map((_, index) => `$${index + 1}`).join(', ');
-      const rows = await sql.unsafe(
+      return sql.unsafe(
         `SELECT id, candidate_id, scope_id, from_status, to_status, event_kind,
                 interaction_id, reviewed_at, review_reason, created_at
          FROM memory_candidate_status_events
@@ -1993,8 +1995,10 @@ export class PostgresEngine implements BrainEngine {
          ORDER BY created_at DESC, id DESC`,
         chunk,
       );
-      entries.push(...(rows as Record<string, unknown>[]).map(rowToMemoryCandidateStatusEvent));
-    }
+    }));
+    const entries = batches.flatMap((rows) => (
+      (rows as Record<string, unknown>[]).map(rowToMemoryCandidateStatusEvent)
+    ));
     return sortByCreatedAtDescIdDesc(entries);
   }
 
@@ -2798,10 +2802,9 @@ export class PostgresEngine implements BrainEngine {
   ): Promise<MemoryCandidateSupersessionEntry[]> {
     if (interactionIds.length === 0) return [];
     const sql = this.sql;
-    const entries: MemoryCandidateSupersessionEntry[] = [];
-    for (const chunk of chunkInteractionIds(interactionIds)) {
+    const batches = await Promise.all(chunkInteractionIds(interactionIds).map((chunk) => {
       const placeholders = chunk.map((_, index) => `$${index + 1}`).join(', ');
-      const rows = await sql.unsafe(
+      return sql.unsafe(
         `SELECT id, scope_id, superseded_candidate_id, replacement_candidate_id,
                 reviewed_at, review_reason, interaction_id, created_at, updated_at
          FROM memory_candidate_supersession_entries
@@ -2809,8 +2812,10 @@ export class PostgresEngine implements BrainEngine {
          ORDER BY created_at DESC, id ASC`,
         chunk,
       );
-      entries.push(...(rows as Record<string, unknown>[]).map(rowToMemoryCandidateSupersessionEntry));
-    }
+    }));
+    const entries = batches.flatMap((rows) => (
+      (rows as Record<string, unknown>[]).map(rowToMemoryCandidateSupersessionEntry)
+    ));
     return sortByCreatedAtDescIdAsc(entries);
   }
 
@@ -2881,10 +2886,9 @@ export class PostgresEngine implements BrainEngine {
   ): Promise<MemoryCandidateContradictionEntry[]> {
     if (candidateIds.length === 0) return [];
     const sql = this.sql;
-    const entries: MemoryCandidateContradictionEntry[] = [];
-    for (const chunk of chunkInteractionIds(candidateIds)) {
+    const batches = await Promise.all(chunkInteractionIds(candidateIds).map((chunk) => {
       const placeholders = chunk.map((_, index) => `$${index + 1}`).join(', ');
-      const rows = await sql.unsafe(
+      return sql.unsafe(
         `SELECT id, scope_id, candidate_id, challenged_candidate_id, outcome, supersession_entry_id,
                 reviewed_at, review_reason, interaction_id, created_at, updated_at
          FROM memory_candidate_contradiction_entries
@@ -2893,8 +2897,10 @@ export class PostgresEngine implements BrainEngine {
          ORDER BY created_at DESC, id ASC`,
         chunk,
       );
-      entries.push(...(rows as Record<string, unknown>[]).map(rowToMemoryCandidateContradictionEntry));
-    }
+    }));
+    const entries = batches.flatMap((rows) => (
+      (rows as Record<string, unknown>[]).map(rowToMemoryCandidateContradictionEntry)
+    ));
     return sortByCreatedAtDescIdAsc(entries);
   }
 
@@ -2903,10 +2909,9 @@ export class PostgresEngine implements BrainEngine {
   ): Promise<MemoryCandidateContradictionEntry[]> {
     if (interactionIds.length === 0) return [];
     const sql = this.sql;
-    const entries: MemoryCandidateContradictionEntry[] = [];
-    for (const chunk of chunkInteractionIds(interactionIds)) {
+    const batches = await Promise.all(chunkInteractionIds(interactionIds).map((chunk) => {
       const placeholders = chunk.map((_, index) => `$${index + 1}`).join(', ');
-      const rows = await sql.unsafe(
+      return sql.unsafe(
         `SELECT id, scope_id, candidate_id, challenged_candidate_id, outcome, supersession_entry_id,
                 reviewed_at, review_reason, interaction_id, created_at, updated_at
          FROM memory_candidate_contradiction_entries
@@ -2914,8 +2919,10 @@ export class PostgresEngine implements BrainEngine {
          ORDER BY created_at DESC, id ASC`,
         chunk,
       );
-      entries.push(...(rows as Record<string, unknown>[]).map(rowToMemoryCandidateContradictionEntry));
-    }
+    }));
+    const entries = batches.flatMap((rows) => (
+      (rows as Record<string, unknown>[]).map(rowToMemoryCandidateContradictionEntry)
+    ));
     return sortByCreatedAtDescIdAsc(entries);
   }
 
@@ -3009,10 +3016,9 @@ export class PostgresEngine implements BrainEngine {
   ): Promise<CanonicalHandoffEntry[]> {
     if (interactionIds.length === 0) return [];
     const sql = this.sql;
-    const entries: CanonicalHandoffEntry[] = [];
-    for (const chunk of chunkInteractionIds(interactionIds)) {
+    const batches = await Promise.all(chunkInteractionIds(interactionIds).map((chunk) => {
       const placeholders = chunk.map((_, index) => `$${index + 1}`).join(', ');
-      const rows = await sql.unsafe(
+      return sql.unsafe(
         `SELECT id, scope_id, candidate_id, target_object_type, target_object_id, source_refs,
                 reviewed_at, review_reason, interaction_id, created_at, updated_at
          FROM canonical_handoff_entries
@@ -3020,8 +3026,10 @@ export class PostgresEngine implements BrainEngine {
          ORDER BY created_at DESC, id ASC`,
         chunk,
       );
-      entries.push(...(rows as Record<string, unknown>[]).map(rowToCanonicalHandoffEntry));
-    }
+    }));
+    const entries = batches.flatMap((rows) => (
+      (rows as Record<string, unknown>[]).map(rowToCanonicalHandoffEntry)
+    ));
     return sortByCreatedAtDescIdAsc(entries);
   }
 
@@ -3455,6 +3463,24 @@ export class PostgresEngine implements BrainEngine {
       RETURNING id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
                 derived_parameters, status, attempts, last_error, lease_owner,
                 lease_expires_at, created_at, updated_at
+    `;
+    // Superseded/failed rows accumulate one per re-enqueue and are otherwise
+    // only deleted with the page; keep the most recent ones and prune the rest.
+    await sql`
+      DELETE FROM derived_jobs
+      WHERE scope_id = ${input.scope_id}
+        AND slug = ${normalizedSlug}
+        AND artifact_kind = ${input.artifact_kind}
+        AND status IN ('superseded', 'failed')
+        AND id NOT IN (
+          SELECT id FROM derived_jobs
+          WHERE scope_id = ${input.scope_id}
+            AND slug = ${normalizedSlug}
+            AND artifact_kind = ${input.artifact_kind}
+            AND status IN ('superseded', 'failed')
+          ORDER BY updated_at DESC, created_at DESC, id ASC
+          LIMIT ${DERIVED_JOB_TERMINAL_HISTORY_RETAINED}
+        )
     `;
     await this.upsertPendingDerivedIndexState(input, normalizedSlug, parameters);
     return rowToDerivedJob(rows[0] as Record<string, unknown>);

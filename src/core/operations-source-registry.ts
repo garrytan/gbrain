@@ -52,13 +52,13 @@ import {
   type SourcePolicyOverride,
 } from './source-registry/source-policy.ts';
 import type { MemoryMutationOperationName } from './types.ts';
-
-type OperationErrorCtor = new (
-  code: 'invalid_params',
-  message: string,
-  suggestion?: string,
-  docs?: string,
-) => Error;
+import {
+  invalidParams,
+  optionalBoolean,
+  optionalString,
+  requiredString,
+  type OperationErrorCtor,
+} from './operations-param-utils.ts';
 
 const SOURCE_ORIGIN_EVENTS = [
   'initial_import',
@@ -2445,33 +2445,6 @@ async function insertSourceStatusEvent(
   throw new Error('source control operations require a SQL-backed engine');
 }
 
-function invalidParams(
-  deps: { OperationError: OperationErrorCtor },
-  message: string,
-): Error {
-  return new deps.OperationError('invalid_params', message);
-}
-
-function requiredString(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw invalidParams(deps, `${field} must be a non-empty string`);
-  }
-  return value.trim();
-}
-
-function optionalString(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): string | undefined {
-  if (value == null) return undefined;
-  return requiredString(deps, field, value);
-}
-
 function optionalNullableString(
   deps: { OperationError: OperationErrorCtor },
   field: string,
@@ -2479,18 +2452,6 @@ function optionalNullableString(
 ): string | null | undefined {
   if (value === null) return null;
   return optionalString(deps, field, value);
-}
-
-function optionalBoolean(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): boolean | undefined {
-  if (value == null) return undefined;
-  if (typeof value !== 'boolean') {
-    throw invalidParams(deps, `${field} must be a boolean`);
-  }
-  return value;
 }
 
 function optionalNumber(

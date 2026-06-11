@@ -6021,7 +6021,7 @@ const get_skillpack: Operation = {
       if (!rulesPath) {
         return { error: 'not_found', message: 'MBRAIN_AGENT_RULES.md not found in the mbrain package.' };
       }
-      return { document: 'MBRAIN_AGENT_RULES.md', content: readFileSync(rulesPath, 'utf-8') };
+      return { document: 'MBRAIN_AGENT_RULES.md', content: readDocCached(rulesPath) };
     }
 
     // Load full SKILLPACK and extract section
@@ -6030,7 +6030,7 @@ const get_skillpack: Operation = {
       return { error: 'not_found', message: 'MBRAIN_SKILLPACK.md not found in the mbrain package.' };
     }
 
-    const fullContent = readFileSync(skillpackPath, 'utf-8');
+    const fullContent = readDocCached(skillpackPath);
 
     // Try to find section by number (e.g. "## 5." or "## 5 ")
     const sectionNum = parseInt(section, 10);
@@ -6066,6 +6066,19 @@ const get_skillpack: Operation = {
   },
   cliHints: { hidden: true },
 };
+
+// Skillpack/agent-rules docs are static for the lifetime of an installed
+// binary; cache file contents so repeated get_skillpack calls skip the disk.
+const docContentCache = new Map<string, string>();
+
+function readDocCached(path: string): string {
+  let content = docContentCache.get(path);
+  if (content === undefined) {
+    content = readFileSync(path, 'utf-8');
+    docContentCache.set(path, content);
+  }
+  return content;
+}
 
 function resolveDocPath(filename: string): string | null {
   const candidates = [

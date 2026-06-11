@@ -4,6 +4,7 @@ import type { EmbeddedChunkBatch } from '../core/embedding.ts';
 import { createEmbeddingQueue } from '../core/embedding-queue.ts';
 import { formatOpHelp, parseOpArgs } from '../core/operations.ts';
 import type { Operation } from '../core/operations.ts';
+import { resolvePageChunkOptions } from '../core/page-chunk-options.ts';
 import { ensurePageChunks } from '../core/page-chunks.ts';
 import type { Chunk, ChunkInput } from '../core/types.ts';
 
@@ -84,6 +85,9 @@ async function embedAll(
   staleOnly: boolean,
 ) {
   const pages = await engine.listPages({ limit: 100000 });
+  // Chunk options are static for the lifetime of the command; resolving them
+  // per page costs two config queries each.
+  const chunkOptions = await resolvePageChunkOptions(engine);
   let embedded = 0;
   let touchedPages = 0;
   let wroteBatchProgress = false;
@@ -113,7 +117,7 @@ async function embedAll(
 
   for (let index = 0; index < pages.length; index++) {
     const page = pages[index];
-    const chunks = await ensurePageChunks(engine, page);
+    const chunks = await ensurePageChunks(engine, page, chunkOptions);
     const targetChunks = selectChunksToEmbed(chunks, staleOnly, provider.capability.model);
     if (targetChunks.length === 0) {
       continue;

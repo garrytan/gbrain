@@ -37,13 +37,13 @@ import type {
   MemoryRedactionPlanStatus,
 } from './types.ts';
 import { applyMemoryRealmUpsertDefaults, applyMemorySessionCreateDefaults, parseValidIsoTimestamp } from './utils.ts';
-
-type OperationErrorCtor = new (
-  code: 'invalid_params',
-  message: string,
-  suggestion?: string,
-  docs?: string,
-) => Error;
+import {
+  invalidParams,
+  optionalBoolean,
+  optionalString,
+  requiredString,
+  type OperationErrorCtor,
+} from './operations-param-utils.ts';
 
 const MEMORY_REALM_SCOPES = ['work', 'personal', 'mixed'] as const satisfies readonly MemoryRealmScope[];
 const MEMORY_ACCESS_MODES = ['read_only', 'read_write'] as const satisfies readonly MemoryAccessMode[];
@@ -55,33 +55,6 @@ const DEFAULT_SESSION_CLOSE_SOURCE_REFS = ['Source: mbrain close_memory_session 
 const DEFAULT_SESSION_ATTACH_SOURCE_REFS = ['Source: mbrain attach_memory_realm_to_session operation'];
 const DEFAULT_REALM_UPSERT_ACTOR = 'mbrain:memory_control_plane';
 const REDACTION_PLAN_PREVIEW_ITEM_PAGE_SIZE = 500;
-
-function invalidParams(
-  deps: { OperationError: OperationErrorCtor },
-  message: string,
-): Error {
-  return new deps.OperationError('invalid_params', message);
-}
-
-function requiredString(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw invalidParams(deps, `${field} must be a non-empty string`);
-  }
-  return value.trim();
-}
-
-function optionalString(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): string | undefined {
-  if (value == null) return undefined;
-  return requiredString(deps, field, value);
-}
 
 function optionalNullableString(
   deps: { OperationError: OperationErrorCtor },
@@ -121,18 +94,6 @@ function enumValue<T extends string>(
     throw invalidParams(deps, `${field} must be one of: ${allowed.join(', ')}`);
   }
   return value as T;
-}
-
-function optionalBoolean(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): boolean | undefined {
-  if (value == null) return undefined;
-  if (typeof value !== 'boolean') {
-    throw invalidParams(deps, `${field} must be a boolean`);
-  }
-  return value;
 }
 
 function integerParam(

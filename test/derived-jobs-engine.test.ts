@@ -2,6 +2,7 @@ import { setDefaultTimeout, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { DERIVED_JOB_TERMINAL_HISTORY_RETAINED } from '../src/core/derived-jobs.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
@@ -79,6 +80,42 @@ describe('derived job engine APIs', () => {
       });
 
       expect(transactionCalls).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  test('enqueue prunes terminal job history beyond the retention cap', async () => {
+    await withEngines(async (engine, label) => {
+      const api = engine as any;
+      const slug = `concepts/${label}-terminal-history`;
+      const totalEnqueues = DERIVED_JOB_TERMINAL_HISTORY_RETAINED + 10;
+
+      for (let revision = 1; revision <= totalEnqueues; revision += 1) {
+        await api.enqueueDerivedJob({
+          scope_id: 'workspace:default',
+          slug,
+          artifact_kind: 'page_chunks',
+          target_content_hash: `hash-${revision}`,
+          manifest_path: `${slug}.md`,
+          derived_parameters: {
+            extractor_version: 'recursive-chunks-v1',
+            derived_schema_version: 'page-derived-v1',
+          },
+        });
+      }
+
+      const jobs = await api.listDerivedJobs({
+        scope_id: 'workspace:default',
+        slug,
+        artifact_kind: 'page_chunks',
+        limit: 1000,
+      });
+      const pending = jobs.filter((job: any) => job.status === 'pending');
+      const superseded = jobs.filter((job: any) => job.status === 'superseded');
+
+      expect(pending).toHaveLength(1);
+      expect(pending[0].target_content_hash).toBe(`hash-${totalEnqueues}`);
+      expect(superseded).toHaveLength(DERIVED_JOB_TERMINAL_HISTORY_RETAINED);
+      expect(jobs).toHaveLength(DERIVED_JOB_TERMINAL_HISTORY_RETAINED + 1);
     });
   });
 
@@ -963,6 +1000,49 @@ describe('derived job engine APIs', () => {
           indexed_content_hash: null,
           last_error: 'permanent failure',
         });
+      } finally {
+        if ((engine as any)._sql) {
+          await engine.sql`DELETE FROM derived_jobs WHERE slug = ${slug}`;
+          await engine.sql`DELETE FROM derived_index_state WHERE slug = ${slug}`;
+        }
+        await engine.disconnect().catch(() => undefined);
+      }
+    });
+    test('postgres enqueue prunes terminal job history beyond the retention cap', async () => {
+      const engine = new PostgresEngine();
+      const slug = `concepts/postgres-terminal-history-${Date.now()}`;
+      const totalEnqueues = DERIVED_JOB_TERMINAL_HISTORY_RETAINED + 10;
+      try {
+        await engine.connect({ engine: 'postgres', database_url: postgresDatabaseUrl });
+        await engine.initSchema();
+
+        for (let revision = 1; revision <= totalEnqueues; revision += 1) {
+          await engine.enqueueDerivedJob({
+            scope_id: 'workspace:default',
+            slug,
+            artifact_kind: 'page_chunks',
+            target_content_hash: `hash-${revision}`,
+            manifest_path: `${slug}.md`,
+            derived_parameters: {
+              extractor_version: 'recursive-chunks-v1',
+              derived_schema_version: 'page-derived-v1',
+            },
+          });
+        }
+
+        const jobs = await engine.listDerivedJobs({
+          scope_id: 'workspace:default',
+          slug,
+          artifact_kind: 'page_chunks',
+          limit: 1000,
+        });
+        const pending = jobs.filter((job) => job.status === 'pending');
+        const superseded = jobs.filter((job) => job.status === 'superseded');
+
+        expect(pending).toHaveLength(1);
+        expect(pending[0]?.target_content_hash).toBe(`hash-${totalEnqueues}`);
+        expect(superseded).toHaveLength(DERIVED_JOB_TERMINAL_HISTORY_RETAINED);
+        expect(jobs).toHaveLength(DERIVED_JOB_TERMINAL_HISTORY_RETAINED + 1);
       } finally {
         if ((engine as any)._sql) {
           await engine.sql`DELETE FROM derived_jobs WHERE slug = ${slug}`;

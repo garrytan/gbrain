@@ -17,7 +17,7 @@ import {
 } from './services/note-manifest-service.ts';
 import { buildNoteSectionEntries, NOTE_SECTION_EXTRACTOR_VERSION } from './services/note-section-service.ts';
 import { pathToSlug, slugifyPath } from './sync.ts';
-import type { ChunkInput, DerivedArtifactKind, DerivedIndexState, Page } from './types.ts';
+import type { ChunkInput, DerivedArtifactKind, DerivedIndexState, DerivedJob, Page } from './types.ts';
 import { importContentHash, validateSlug } from './utils.ts';
 
 export interface ImportResult {
@@ -155,15 +155,15 @@ export async function importFromContent(
       content_hash: hash,
     });
 
-    // Tag reconciliation: remove stale, add current
+    // Tag reconciliation: remove stale, add current. Removes and adds target
+    // disjoint tags and are single statements (no nested transactions), so
+    // they can be issued concurrently.
     const existingTags = await tx.getTags(slug);
     const newTags = new Set(parsed.tags);
-    for (const old of existingTags) {
-      if (!newTags.has(old)) await tx.removeTag(slug, old);
-    }
-    for (const tag of parsed.tags) {
-      await tx.addTag(slug, tag);
-    }
+    await Promise.all([
+      ...existingTags.filter((old) => !newTags.has(old)).map((old) => tx.removeTag(slug, old)),
+      ...parsed.tags.map((tag) => tx.addTag(slug, tag)),
+    ]);
 
     if (deferDerived) {
       await invalidatePageDerivedStorage(tx, storedPage, manifestPath);
@@ -399,12 +399,29 @@ async function getPageDerivedRefreshTargetState(
 ): Promise<{ current: boolean; activeArtifactKinds: ReadonlySet<DerivedArtifactKind> }> {
   const activeArtifactKinds = new Set<DerivedArtifactKind>();
   if (!page.content_hash) return { current: true, activeArtifactKinds };
+  // Two status-filtered round trips covering every artifact kind instead of
+  // one unfiltered query per kind. Filtering by status server-side matters:
+  // superseded/failed job rows accumulate per slug and are only deleted with
+  // the page, so an unfiltered slug query could push active jobs past the
+  // default row limit on heavily re-imported pages.
+  const pendingJobs = await engine.listDerivedJobs({
+    scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+    slug: page.slug,
+    status: 'pending',
+  });
+  const runningJobs = await engine.listDerivedJobs({
+    scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+    slug: page.slug,
+    status: 'running',
+  });
+  const activeJobsByKind = new Map<DerivedArtifactKind, DerivedJob[]>();
+  for (const job of [...pendingJobs, ...runningJobs]) {
+    const bucket = activeJobsByKind.get(job.artifact_kind) ?? [];
+    bucket.push(job);
+    activeJobsByKind.set(job.artifact_kind, bucket);
+  }
   for (const artifactKind of PAGE_DERIVED_ARTIFACTS) {
-    const activeJobs = (await engine.listDerivedJobs({
-      scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
-      slug: page.slug,
-      artifact_kind: artifactKind,
-    })).filter((job) => job.status === 'pending' || job.status === 'running');
+    const activeJobs = activeJobsByKind.get(artifactKind) ?? [];
     if (activeJobs.length === 0) continue;
     activeArtifactKinds.add(artifactKind);
 
@@ -429,13 +446,15 @@ async function isPageDerivedStorageCurrent(
   const existingManifest = await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, page.slug);
   if (existingManifest?.path !== manifestPath) return false;
 
+  // One round trip covering every artifact kind instead of one query per kind.
+  const states = await engine.listDerivedIndexStates({
+    scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+    slug: page.slug,
+  });
+  const statesByKind = new Map(states.map((state) => [state.artifact_kind, state]));
   for (const artifactKind of PAGE_DERIVED_ARTIFACTS) {
     const targetParameters = pageDerivedParameters(artifactKind, manifestPath);
-    const state = await engine.getDerivedIndexState(
-      DEFAULT_NOTE_MANIFEST_SCOPE_ID,
-      page.slug,
-      artifactKind,
-    );
+    const state = statesByKind.get(artifactKind);
     if (
       state?.status !== 'ready'
       || state.target_content_hash !== page.content_hash

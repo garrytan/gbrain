@@ -17,13 +17,13 @@ import type {
   MemoryRealm,
   MemorySession,
 } from './types.ts';
-
-type OperationErrorCtor = new (
-  code: 'invalid_params',
-  message: string,
-  suggestion?: string,
-  docs?: string,
-) => Error;
+import {
+  invalidParams,
+  optionalBoolean,
+  optionalString,
+  requiredString,
+  type OperationErrorCtor,
+} from './operations-param-utils.ts';
 
 const MEMORY_MUTATION_RESULTS = [
   'dry_run',
@@ -156,33 +156,6 @@ const DRY_RUN_MEMORY_MUTATION_ALLOWED_OPERATIONS = Object.keys(
 const ISO_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(?:Z|([+-])(\d{2}):(\d{2}))$/;
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 
-function invalidParams(
-  deps: { OperationError: OperationErrorCtor },
-  message: string,
-): Error {
-  return new deps.OperationError('invalid_params', message);
-}
-
-function requiredString(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw invalidParams(deps, `${field} must be a non-empty string`);
-  }
-  return value.trim();
-}
-
-function optionalString(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): string | undefined {
-  if (value == null) return undefined;
-  return requiredString(deps, field, value);
-}
-
 function optionalNullableString(
   deps: { OperationError: OperationErrorCtor },
   field: string,
@@ -288,18 +261,6 @@ function integerParam(
   }
   if (options.max !== undefined && value > options.max) {
     throw invalidParams(deps, `${field} must be less than or equal to ${options.max}`);
-  }
-  return value;
-}
-
-function optionalBoolean(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): boolean | undefined {
-  if (value == null) return undefined;
-  if (typeof value !== 'boolean') {
-    throw invalidParams(deps, `${field} must be a boolean`);
   }
   return value;
 }

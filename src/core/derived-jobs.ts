@@ -12,6 +12,11 @@ export const PAGE_DERIVED_ARTIFACTS: DerivedArtifactKind[] = [
 ];
 export const DEFAULT_DERIVED_JOB_LEASE_DURATION_MS = 30_000;
 export const DEFAULT_DERIVED_JOB_MAX_ATTEMPTS = 3;
+// Terminal (superseded/failed) job rows are kept for diagnostics but pruned
+// at enqueue time so per-(scope, slug, artifact_kind) history stays bounded.
+// Failure details are also copied into derived_index_state, so pruning loses
+// nothing load-bearing.
+export const DERIVED_JOB_TERMINAL_HISTORY_RETAINED = 20;
 
 export function normalizeDerivedParameters(input: DerivedJobInput): Record<string, unknown> {
   const parameters = canonicalizeJsonObject(input.derived_parameters ?? {});

@@ -1,15 +1,19 @@
 import type { BrainEngine } from './engine.ts';
 import { defaultEmbeddingDimensionsForModel } from './embedding/provider.ts';
 import { buildPageChunks } from './import-file.ts';
-import { resolvePageChunkOptions } from './page-chunk-options.ts';
+import { resolvePageChunkOptions, type PageChunkOptions } from './page-chunk-options.ts';
 import type { Chunk, ChunkInput, Page } from './types.ts';
 
-export async function ensurePageChunks(engine: BrainEngine, page: Page): Promise<Chunk[]> {
+export async function ensurePageChunks(
+  engine: BrainEngine,
+  page: Page,
+  chunkOptions?: PageChunkOptions,
+): Promise<Chunk[]> {
   const desired = buildPageChunks(
     page.compiled_truth,
     page.timeline,
     page.frontmatter,
-    await resolvePageChunkOptions(engine),
+    chunkOptions ?? await resolvePageChunkOptions(engine),
   );
   let chunks = await engine.getChunks(page.slug);
 

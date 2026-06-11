@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS content_chunks (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_chunks_page ON content_chunks(page_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
+-- Partial indexes so health/stats embedding-coverage counts avoid full scans
+CREATE INDEX IF NOT EXISTS idx_chunks_embedded ON content_chunks(page_id) WHERE embedded_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_chunks_missing_embedding ON content_chunks(page_id) WHERE embedded_at IS NULL;
 
 -- ============================================================
 -- links: cross-references between pages

@@ -6,6 +6,7 @@ import {
   canonicalDerivedParameters,
   derivedJobMatchesTarget,
   derivedExtractorVersion,
+  DERIVED_JOB_TERMINAL_HISTORY_RETAINED,
   derivedSchemaVersion,
   normalizeDerivedJobLeaseDurationMs,
   normalizeDerivedJobMaxAttempts,
@@ -3359,6 +3360,25 @@ export class PGLiteEngine implements BrainEngine {
         manifestPath,
         parametersJson,
       ],
+    );
+    // Superseded/failed rows accumulate one per re-enqueue and are otherwise
+    // only deleted with the page; keep the most recent ones and prune the rest.
+    await this.db.query(
+      `DELETE FROM derived_jobs
+       WHERE scope_id = $1
+         AND slug = $2
+         AND artifact_kind = $3
+         AND status IN ('superseded', 'failed')
+         AND id NOT IN (
+           SELECT id FROM derived_jobs
+           WHERE scope_id = $1
+             AND slug = $2
+             AND artifact_kind = $3
+             AND status IN ('superseded', 'failed')
+           ORDER BY updated_at DESC, created_at DESC, id ASC
+           LIMIT $4
+         )`,
+      [input.scope_id, normalizedSlug, input.artifact_kind, DERIVED_JOB_TERMINAL_HISTORY_RETAINED],
     );
     await this.upsertPendingDerivedIndexState(input, normalizedSlug, parameters);
     return rowToDerivedJob(rows[0] as Record<string, unknown>);

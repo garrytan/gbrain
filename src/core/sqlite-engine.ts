@@ -8,6 +8,7 @@ import {
   canonicalDerivedParameters,
   derivedJobMatchesTarget,
   derivedExtractorVersion,
+  DERIVED_JOB_TERMINAL_HISTORY_RETAINED,
   derivedSchemaVersion,
   normalizeDerivedJobLeaseDurationMs,
   normalizeDerivedJobMaxAttempts,
@@ -21,6 +22,7 @@ import {
   isAllowedMemoryCandidateStatusUpdate,
 } from './memory-inbox-status.ts';
 import { LATEST_VERSION } from './migrate.ts';
+import { resolvePageChunkOptions } from './page-chunk-options.ts';
 import { ensurePageChunks } from './page-chunks.ts';
 import {
   normalizePageLineSpanProjectionOptions,
@@ -227,6 +229,8 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   UNIQUE(page_id, chunk_index)
 );
 CREATE INDEX IF NOT EXISTS idx_chunks_page ON content_chunks(page_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_embedded ON content_chunks(page_id) WHERE embedded_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_chunks_missing_embedding ON content_chunks(page_id) WHERE embedded_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS links (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1579,30 +1583,37 @@ export class SQLiteEngine implements BrainEngine {
   }
 
   async getHealth(): Promise<BrainHealth> {
-    const pageCount = Number((this.database.query(`SELECT count(*) AS count FROM pages`).get() as { count: number }).count);
-    const chunkCount = Number((this.database.query(`SELECT count(*) AS count FROM content_chunks`).get() as { count: number }).count);
-    const embeddedCount = Number((this.database.query(`SELECT count(*) AS count FROM content_chunks WHERE embedded_at IS NOT NULL`).get() as { count: number }).count);
-    const stalePages = Number((this.database.query(`
-      SELECT count(*) AS count
-      FROM pages p
-      WHERE EXISTS (
-        SELECT 1 FROM timeline_entries te
-        WHERE te.page_id = p.id AND p.updated_at < te.created_at
-      )
-    `).get() as { count: number }).count);
-    const orphanPages = Number((this.database.query(`
-      SELECT count(*) AS count
-      FROM pages p
-      WHERE NOT EXISTS (
-        SELECT 1 FROM links l WHERE l.to_page_id = p.id
-      )
-    `).get() as { count: number }).count);
-    const deadLinks = Number((this.database.query(`
-      SELECT count(*) AS count
-      FROM links l
-      LEFT JOIN pages p ON p.id = l.to_page_id
-      WHERE p.id IS NULL
-    `).get() as { count: number }).count);
+    // One statement with scalar subqueries, mirroring the Postgres engine,
+    // instead of six separately parsed queries.
+    const row = this.database.query(`
+      SELECT
+        (SELECT count(*) FROM pages) AS page_count,
+        (SELECT count(*) FROM content_chunks) AS chunk_count,
+        (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL) AS embedded_count,
+        (SELECT count(*) FROM pages p WHERE EXISTS (
+          SELECT 1 FROM timeline_entries te
+          WHERE te.page_id = p.id AND p.updated_at < te.created_at
+        )) AS stale_pages,
+        (SELECT count(*) FROM pages p WHERE NOT EXISTS (
+          SELECT 1 FROM links l WHERE l.to_page_id = p.id
+        )) AS orphan_pages,
+        (SELECT count(*) FROM links l
+          LEFT JOIN pages p ON p.id = l.to_page_id
+          WHERE p.id IS NULL) AS dead_links
+    `).get() as {
+      page_count: number;
+      chunk_count: number;
+      embedded_count: number;
+      stale_pages: number;
+      orphan_pages: number;
+      dead_links: number;
+    };
+    const pageCount = Number(row.page_count);
+    const chunkCount = Number(row.chunk_count);
+    const embeddedCount = Number(row.embedded_count);
+    const stalePages = Number(row.stale_pages);
+    const orphanPages = Number(row.orphan_pages);
+    const deadLinks = Number(row.dead_links);
 
     return {
       page_count: pageCount,
@@ -3954,6 +3965,32 @@ export class SQLiteEngine implements BrainEngine {
       timestamp,
       timestamp,
     ]);
+    // Superseded/failed rows accumulate one per re-enqueue and are otherwise
+    // only deleted with the page; keep the most recent ones and prune the rest.
+    this.database.run(`
+      DELETE FROM derived_jobs
+      WHERE scope_id = ?
+        AND slug = ?
+        AND artifact_kind = ?
+        AND status IN ('superseded', 'failed')
+        AND id NOT IN (
+          SELECT id FROM derived_jobs
+          WHERE scope_id = ?
+            AND slug = ?
+            AND artifact_kind = ?
+            AND status IN ('superseded', 'failed')
+          ORDER BY updated_at DESC, created_at DESC, id ASC
+          LIMIT ?
+        )
+    `, [
+      input.scope_id,
+      normalizedSlug,
+      input.artifact_kind,
+      input.scope_id,
+      normalizedSlug,
+      input.artifact_kind,
+      DERIVED_JOB_TERMINAL_HISTORY_RETAINED,
+    ]);
     await this.upsertPendingDerivedIndexState(input, normalizedSlug, parameters, timestamp);
     return (await this.getDerivedJobById(id))!;
   }
@@ -4602,10 +4639,11 @@ export class SQLiteEngine implements BrainEngine {
               this.database.exec(`ALTER TABLE pages ADD COLUMN search_text TEXT NOT NULL DEFAULT '';`);
             }
 
+            const chunkOptions = await resolvePageChunkOptions(this);
             for (const page of await this.listAllPages()) {
               const searchText = buildFrontmatterSearchText(page.frontmatter);
               this.database.run(`UPDATE pages SET search_text = ? WHERE id = ?`, [searchText, page.id]);
-              await ensurePageChunks(this, page);
+              await ensurePageChunks(this, page, chunkOptions);
             }
 
             this.database.exec(`
@@ -5147,6 +5185,16 @@ export class SQLiteEngine implements BrainEngine {
           break;
         case 51:
           this.ensureAssertionScopePolicyColumns();
+          break;
+        case 52:
+          if (this.sqliteTableExists('content_chunks')) {
+            this.database.exec(`
+              CREATE INDEX IF NOT EXISTS idx_chunks_embedded
+                ON content_chunks(page_id) WHERE embedded_at IS NOT NULL;
+              CREATE INDEX IF NOT EXISTS idx_chunks_missing_embedding
+                ON content_chunks(page_id) WHERE embedded_at IS NULL;
+            `);
+          }
           break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);

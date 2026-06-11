@@ -193,25 +193,52 @@ re-declared identically in at least:
 400+ lines of pure duplication; any validation change must be applied N
 times. **Suggested fix:** shared `operations-param-utils.ts` module.
 
-### F9 (MEDIUM) — repeated config queries in bulk loops
+### F9 (MEDIUM, FIXED in wave 2) — repeated config queries in bulk loops
 
 - `src/commands/embed.ts:116` + `src/core/page-chunk-options.ts:20–22`:
   `embedAll` calls `ensurePageChunks` per page, which calls
   `resolvePageChunkOptions` → two `getConfig` DB queries per page. 1,000
   pages = 2,000 wasted round-trips for values static within a command.
-  Resolve once before the loop and pass through. Same issue in
-  `replacePageDerivedStorage` (`src/core/import-file.ts:287`) inside the
-  derived worker.
 
-### F10 (MEDIUM) — derived artifact state machinery: 13 sequential round-trips per import
+**Fixed:** `ensurePageChunks` accepts optional pre-resolved chunk options;
+`embedAll` and the two search_text backfill migrations resolve once per
+loop. `replacePageDerivedStorage` deliberately keeps per-job resolution so
+config edits take effect while a long-running derived worker is up (and its
+`chunks ?? ...` short-circuit already skips the lookup when chunks are
+passed in).
 
-`src/core/import-file.ts:346–450`: `enqueuePageDerivedRefresh`,
-`markPageDerivedStorageReady`, `getPageDerivedRefreshTargetState`, and
-`isPageDerivedStorageCurrent` each iterate the 3-element
-`PAGE_DERIVED_ARTIFACTS` array with `await` inside the loop — up to 13
-sequential queries per content-changed `put_page`. Use `Promise.all` per
-loop; `isPageDerivedStorageCurrent` can use the already-existing plural
-`listDerivedIndexStates` engine method.
+### F10 (MEDIUM, FIXED in wave 2 — read side) — derived artifact state machinery round-trips
+
+`src/core/import-file.ts:346–450`: the four helpers each iterated the
+3-element `PAGE_DERIVED_ARTIFACTS` array with `await` inside the loop.
+
+**Fixed (reads):** `getPageDerivedRefreshTargetState` now issues two
+status-filtered slug-scoped `listDerivedJobs` queries (pending, running)
+instead of one unfiltered query per kind — status filtering matters because
+superseded/failed rows accumulate per slug and could push active jobs past
+the row limit. `isPageDerivedStorageCurrent` issues one
+`listDerivedIndexStates` query (bounded at one row per kind). Net: 6
+round-trips → 3 per content-changed `put_page`.
+
+**Deliberately not parallelized (writes):** `enqueuePageDerivedRefresh` and
+`markPageDerivedStorageReady` are called with transaction-scoped engines and
+each call opens its own nested savepoint; concurrent savepoints interleave
+unsafely on a single connection, so they stay sequential.
+
+**Root cause also fixed (wave 3):** the superseded/failed row buildup that
+made status filtering necessary is now bounded at the source — every enqueue
+prunes terminal rows for its (scope, slug, artifact_kind) beyond the most
+recent `DERIVED_JOB_TERMINAL_HISTORY_RETAINED` (20), in all three engines.
+Failure details survive in `derived_index_state`.
+
+Accepted degradation: `derivedJobSlugForManifestPath` (read-context-service)
+probes `failed` note_sections jobs as a third fallback for
+manifest_path→slug resolution; a slug whose failed row is followed by 20+
+newer terminal rows of the same kind loses that one fallback hop (the
+sections-table and selectorPageSlug fallbacks still apply). A durable
+manifest_path→slug record would require adding manifest_path to
+`derived_index_state` — noted as future work, not worth a schema change
+now.
 
 ### F11 (MEDIUM) — tag reconciliation is serial inside the import transaction
 
@@ -224,11 +251,14 @@ individually. Independent; can be issued concurrently.
 candidate. Independent per candidate; bounded parallelism (respecting
 `max_runner_calls`) would cut wall-clock roughly by the concurrency factor.
 
-### F13 (MEDIUM) — migrate loop touches all versions on up-to-date schema
+### F13 (MEDIUM, FIXED in wave 2) — migrate loop touches all versions on up-to-date schema
 
 `src/core/migrate.ts:3044–3102`: `runMigrations` runs on every serve startup
-and iterates all 51 migrations even when none are pending. Use `findIndex`
-for the first pending migration and early-return.
+and iterates all migrations even when none are pending.
+
+**Fixed:** `findIndex` for the first pending migration with an early return
+on the up-to-date path. (Honest sizing: the absolute cost was ~50 integer
+comparisons — this is a clarity/tidiness win more than a measurable one.)
 
 ### F14 (MEDIUM) — `get_skillpack` re-reads file from disk per call
 
@@ -243,12 +273,16 @@ limit — 4 KB per page; 5,000 pages ≈ 20 MB materialized at once. Callers are
 migration paths (`migrate.ts:3145`, `migrate-engine.ts:213`); add cursor or
 batch parameter and stream in batches of ~500.
 
-### F16 (MEDIUM) — missing index for embedding-coverage counts
+### F16 (MEDIUM, FIXED in wave 2) — missing index for embedding-coverage counts
 
 `src/schema.sql`: health/stats queries count
 `content_chunks WHERE embedded_at IS [NOT] NULL` with no supporting index —
-full scans on every `mbrain health` / `mbrain report`. Add a partial index
-on `content_chunks(page_id) WHERE embedded_at IS NOT NULL`.
+full scans on every `mbrain health` / `mbrain report`.
+
+**Fixed:** `idx_chunks_embedded` / `idx_chunks_missing_embedding` partial
+indexes added to the Postgres, PGLite, and SQLite schemas plus migration v52
+for existing installs (guarded for minimal catalogs without
+`content_chunks`).
 
 ### F17 (MEDIUM) — SQLite `getHealth` issues 5 queries where Postgres uses 1
 
@@ -262,11 +296,20 @@ row to extract a snippet client-side. Postgres can use `ts_headline`
 server-side; SQLite can use `substr`/`snippet()`. Changes snippet rendering,
 so needs its own test pass (deliberately excluded from F6).
 
-### F19 (MEDIUM) — `read_context` reads selectors sequentially
+### F19 (MEDIUM, DEFERRED — needs design) — `read_context` reads selectors sequentially
 
 `src/core/services/read-context-service.ts:89–127`: the token-budget guard
-serializes selector reads. For the common small-N, ample-budget case, fetch
-in parallel and apply the budget post-hoc.
+serializes selector reads.
+
+**Why "parallel + post-hoc budget" is not behavior-preserving:** the
+remaining budget is an *input* to each read, not bookkeeping — it sets
+per-read char limits (`projectionCharLimit`, `charBudget`) and drives
+truncation and `continuation_selector` generation. Reading every selector
+with the full budget and discounting afterwards returns different content
+whenever an earlier read consumed budget. A correct speculative design
+(parallel full-budget reads, sequential re-read of any result whose
+`token_estimate` exceeds its positional remaining budget) requires proving
+budget-purity for all six reader kinds first; deferred to its own change.
 
 ### F20 (LOW) — chunker micro-inefficiencies
 
@@ -284,11 +327,18 @@ in parallel and apply the budget post-hoc.
 postgres-engine.ts:1976, 2792, 2875, 2897, 3003 (and SQLite equivalents):
 500-ID batches issued with `for...await`; `Promise.all` over batches.
 
-### F22 (LOW) — MCP result truncation double-serializes
+### F22 (LOW, WON'T FIX — misdiagnosis) — MCP result truncation double-serializes
 
 `src/mcp/server.ts:306–361`: result is `JSON.stringify`ed, immediately
 `JSON.parse`d back, then re-stringified up to 8 times in the bisection loop.
-Pass the object through and serialize once per attempt.
+
+**Won't fix:** the stringify→parse round-trip is load-bearing JSON
+normalization, not waste. `truncateJsonStrings` treats any non-null object
+as a record; passing the raw result through would turn `Date` fields
+(common in engine rows, e.g. `last_indexed_at`) into `{}` via
+`Object.entries(date)`, and would skip `toJSON`/`undefined` normalization.
+The parse only runs on the rare oversized-result path, so the cost is
+bounded and the current code is correct as written.
 
 ---
 
@@ -296,8 +346,9 @@ Pass the object through and serialize once per attempt.
 
 | Priority | Items | Rationale |
 |----------|-------|-----------|
-| Done (this branch) | F1–F6 | Hot-path wins, no contract changes |
-| Next | F9, F10, F13, F16 | Cheap, measurable import/startup wins |
-| Then | F8, F14, F17, F19, F21, F22 | Small cleanups |
+| Done (wave 1) | F1–F6 | Hot-path wins, no contract changes |
+| Done (wave 2) | F9, F10 (reads), F13, F16 | Import/startup wins; F10 writes stay sequential (savepoint safety) |
+| Done (wave 3) | F8, F11, F14, F17, F21 | Small cleanups |
+| Closed without change | F22 (won't fix — parse-back is load-bearing), F19 (deferred — needs budget-purity design) | See sections above |
 | Structural (own PR) | F7 engine unification | Halves all future engine maintenance |
 | Needs design | F5 follow-up (ANN index), F18 (server-side snippets), F12, F15, F20 | Behavior-visible or dependency decisions |
