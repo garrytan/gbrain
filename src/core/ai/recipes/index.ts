@@ -12,6 +12,7 @@ import { anthropic } from './anthropic.ts';
 import { ollama } from './ollama.ts';
 import { openrouter } from './openrouter.ts';
 import { voyage } from './voyage.ts';
+import { jina } from './jina.ts';
 import { litellmProxy } from './litellm-proxy.ts';
 import { deepseek } from './deepseek.ts';
 import { groq } from './groq.ts';
@@ -31,6 +32,7 @@ const ALL: Recipe[] = [
   ollama,
   openrouter,
   voyage,
+  jina,
   litellmProxy,
   deepseek,
   groq,
