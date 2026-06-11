@@ -15,7 +15,7 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { TakeBatchInput, TakeKind } from './engine.ts';
-import { chat, isAvailable } from './ai/gateway.ts';
+import { chat, getChatModel, isAvailable } from './ai/gateway.ts';
 
 export const ALLOWED_PAGE_TYPES = [
   'concept', 'atom', 'lore', 'briefing', 'writing', 'originals',
@@ -114,7 +114,8 @@ export async function extractTakesFromPages(
     };
   }
 
-  if (!isAvailable('chat')) {
+  const classifierModel = opts.model ?? getChatModel();
+  if (!isAvailable('chat', classifierModel)) {
     return {
       pages_scanned: 0,
       claims_extracted: 0,
@@ -174,7 +175,7 @@ export async function extractTakesFromPages(
     let response: { text: string };
     try {
       response = await chat({
-        model: opts.model ?? 'anthropic:claude-haiku-4-5',
+        model: classifierModel,
         system: CLASSIFIER_SYSTEM,
         messages: [
           {
