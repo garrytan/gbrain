@@ -1,5 +1,35 @@
 # Search Mode Evaluation Methodology
 
+## 2026-06-10 LongMemEval-V2 status
+
+Blunt answer for operators: the published search-mode evidence below is not
+current LongMemEval-V2 evidence. It is older LongMemEval / replay methodology.
+Use it as historical context, not as a reason for Sawyer to spend more usage on
+`tokenmax`.
+
+Current LongMemEval-V2 (`xiaowu0162/longmemeval-v2`) is a different benchmark
+shape: `questions.jsonl`, `trajectories.jsonl`, and haystack maps such as
+`haystacks/lme_v2_small.json`. The existing `gbrain eval longmemeval
+<dataset.jsonl>` command expects the older v1 per-question `haystack_sessions`
+shape. A direct V2 probe currently writes an error row with an empty
+`hypothesis`, so a three-mode V2 sweep would be fake until a V2 adapter lands.
+
+Current bounded receipt:
+
+```bash
+scripts/eval-longmemeval-v2-receipt.sh
+```
+
+Receipt artifact:
+[`docs/eval/results/longmemeval-v2-2026-06-10/README.md`](./results/longmemeval-v2-2026-06-10/README.md)
+
+Acceptance threshold before changing Sawyer's search-mode default: a bounded
+V2 retrieval-only sweep across `conservative`, `balanced`, and `tokenmax` using
+the V2 small haystack, followed by a full answer-scored sweep only if the
+bounded run shows a real quality delta. Until then, `balanced` remains the
+right default for a Sonnet-class agent loop: good enough retrieval depth without
+spending on unproven extra context.
+
 _How v0.32.3 measures the difference between `conservative`, `balanced`, and `tokenmax`. Written haters-immune: every claim is reproducible from the committed dataset + raw outputs._
 
 ## 1. What this measures and what it doesn't

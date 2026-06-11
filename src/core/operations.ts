@@ -4528,7 +4528,7 @@ const run_onboard: Operation = {
     // typo, the underlying queue.add would reject. Defense-in-depth.
     const result = await runRemediation(
       ctx.engine,
-      { targetScore, maxUsd },
+      { targetScore, maxUsd, extraRemediations: allowedExtras },
       {},
     );
 

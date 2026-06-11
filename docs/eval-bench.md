@@ -344,6 +344,30 @@ benchmark directly against gbrain's hybrid retrieval. Different evaluation
 axis from `eval replay`: public dataset with ground-truth labels, end-to-end
 question-answer pipeline, hermetic per-question brains.
 
+### LongMemEval-V2 compatibility note (2026-06-10)
+
+LongMemEval-V2 is not the same input shape as the older LongMemEval splits this
+command consumes. V2 separates `questions.jsonl`, `trajectories.jsonl`, and
+haystack maps (`haystacks/lme_v2_small.json`, `haystacks/lme_v2_medium.json`).
+The current `gbrain eval longmemeval <dataset.jsonl>` path expects each question
+row to carry `haystack_sessions`, so it cannot produce real V2 evidence yet.
+
+To reproduce the current compatibility receipt without spending on a fake
+benchmark sweep:
+
+```bash
+scripts/eval-longmemeval-v2-receipt.sh
+```
+
+The generated receipt records the current Hugging Face dataset SHA, question
+counts, haystack coverage, and the one-question probe showing the current
+harness emits an error row for V2. The checked-in receipt lives at
+[`docs/eval/results/longmemeval-v2-2026-06-10/README.md`](./eval/results/longmemeval-v2-2026-06-10/README.md).
+
+Do not use `gbrain eval run-all --suites longmemeval` as proof of a V2 sweep.
+That command currently writes audit-trail stub records; after a V2 adapter
+exists, run direct per-mode benchmark commands first.
+
 ```bash
 # Download the dataset (visit the HF page in a browser; gated/manual download).
 # Place longmemeval_oracle.json (or _s.json) somewhere local.

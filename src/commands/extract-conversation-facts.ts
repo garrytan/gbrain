@@ -849,6 +849,27 @@ async function writeTerminalAuditRow(
   await engine.insertFacts([fact], { source_id: sourceId }); // gbrain-allow-direct-insert: page-level TERMINAL audit row (Codex C7 / E16) marks extraction completion in the durable facts table — there's no fence equivalent because this is internal audit state, not user-facing knowledge
 }
 
+async function hasTerminalAuditRow(
+  engine: BrainEngine,
+  sourceId: string,
+  slug: string,
+): Promise<boolean> {
+  try {
+    const rows = await engine.executeRaw<{ found: string | number | boolean }>(
+      `SELECT 1 AS found
+         FROM facts
+        WHERE source_id = $1
+          AND source = $2
+          AND source_session = $3
+        LIMIT 1`,
+      [sourceId, TERMINAL_AUDIT_SOURCE, `${TERMINAL_AUDIT_SOURCE}:${slug}`],
+    );
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Core entry point — one source per call. Caller (CLI / Minion / cycle
  * phase) handles multi-source iteration externally.
@@ -960,7 +981,15 @@ export async function runExtractConversationFactsCore(
       if (opts.force) {
         state.cpMap.delete(cpMapKey(sourceId, page.slug));
       }
-      const checkpointed = state.cpMap.get(cpMapKey(sourceId, page.slug)) ?? null;
+      const checkpointMapKey = cpMapKey(sourceId, page.slug);
+      let checkpointed = state.cpMap.get(checkpointMapKey) ?? null;
+      if (checkpointed && !(await hasTerminalAuditRow(engine, sourceId, page.slug))) {
+        state.cpMap.delete(checkpointMapKey);
+        checkpointed = null;
+        process.stderr.write(
+          `[extract-conversation-facts] ${page.slug}: checkpoint exists but terminal audit row is missing; reprocessing page\n`,
+        );
+      }
       sinceIso = pickLaterIso(checkpointed, opts.sinceIso);
 
       try {

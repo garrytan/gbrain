@@ -27,6 +27,7 @@ import {
   extractConversationFactsFingerprint,
   encodeCheckpointEntry,
   decodeCheckpointEntry,
+  CHECKPOINT_OP,
   DEFAULT_SEGMENT_GAP_MINUTES,
   DEFAULT_SEGMENT_MAX_MESSAGES,
   SEGMENT_TEXT_CHAR_LIMIT,
@@ -424,6 +425,36 @@ describe('runExtractConversationFactsCore', () => {
     });
     expect(third.pages_processed).toBe(1);
     expect(third.segments_processed).toBeGreaterThanOrEqual(1);
+  });
+
+  test('ignores stale checkpoint when terminal audit row is missing', async () => {
+    const fingerprint = extractConversationFactsFingerprint({ sourceId: 'default' });
+    const entry = encodeCheckpointEntry(
+      'default',
+      'conversations/imessage/alice-example',
+      '2024-03-16T08:05:00Z',
+    );
+    await engine.executeRaw(
+      `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+       VALUES ($1, $2, $3::jsonb, now())`,
+      [CHECKPOINT_OP, fingerprint, JSON.stringify([entry])],
+    );
+
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/alice-example',
+      sleepMs: 0,
+    });
+
+    expect(result.pages_processed).toBe(1);
+    expect(result.pages_skipped).toBe(0);
+    expect(result.segments_processed).toBeGreaterThanOrEqual(1);
+
+    const terminalRows = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM facts WHERE source = $1 AND source_session = $2`,
+      [TERMINAL_AUDIT_SOURCE, `${TERMINAL_AUDIT_SOURCE}:conversations/imessage/alice-example`],
+    );
+    expect(Number(terminalRows[0]?.count ?? 0)).toBe(1);
   });
 
   test('honors facts.extraction_enabled kill-switch (F2)', async () => {

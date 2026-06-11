@@ -25,7 +25,7 @@ import {
   resetTables,
 } from '../src/eval/longmemeval/harness.ts';
 import { haystackToPages, type LongMemEvalQuestion } from '../src/eval/longmemeval/adapter.ts';
-import { loadResumeSet } from '../src/commands/eval-longmemeval.ts';
+import { loadDataset, loadResumeSet } from '../src/commands/eval-longmemeval.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { DEFAULT_SOURCE_BOOSTS } from '../src/core/search/source-boost.ts';
 import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -255,6 +255,32 @@ describe('adapter haystackToPages', () => {
     const pages = haystackToPages(q);
     expect(pages.length).toBe(1);
     expect(pages[0].slug).toBe('chat/lme-q-s-2-0');
+  });
+
+  test('LongMemEval-V2 dataset root keeps private labels and expands trajectories into pages', () => {
+    const root = join(import.meta.dir, 'fixtures', 'longmemeval-v2-mini');
+    const questions = loadDataset(root);
+    expect(questions.length).toBe(1);
+    expect(questions[0].dataset_schema).toBe('longmemeval-v2');
+    expect(questions[0].question_id).toBe('v2-q-1');
+    expect(questions[0].question_type).toBe('procedure');
+    expect(questions[0].answer_session_ids).toEqual(['traj_report']);
+
+    const pages = haystackToPages(questions[0]);
+    expect(pages.length).toBe(2);
+    expect(pages[0].slug).toBe('chat/traj-report');
+    expect(pages[0].content).toContain('session_id: traj_report');
+    expect(pages[0].content).toContain('Goal: Rebalance tagged problem workload between agents.');
+    expect(pages[0].content).toContain("Action: click('Reports')");
+    expect(pages[0].content).toContain('Accessibility tree:');
+    expect(pages[0].content).toContain('link Problem workload by tag');
+  });
+
+  test('LongMemEval-V2 questions.jsonl path honors --v2-tier haystack ordering', () => {
+    const questionsPath = join(import.meta.dir, 'fixtures', 'longmemeval-v2-mini', 'questions.jsonl');
+    const questions = loadDataset(questionsPath, 'medium');
+    const pages = haystackToPages(questions[0]);
+    expect(pages.map(p => p.slug)).toEqual(['chat/traj-distractor', 'chat/traj-report']);
   });
 });
 

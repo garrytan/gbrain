@@ -28,6 +28,7 @@ import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { makeStubClient } from './helpers/longmemeval-stub.ts';
 
 const FIXTURE_PATH = join(import.meta.dir, 'fixtures', 'longmemeval-mini.jsonl');
+const V2_FIXTURE_ROOT = join(import.meta.dir, 'fixtures', 'longmemeval-v2-mini');
 
 // One shared brain across the whole file, threaded into every
 // runEvalLongMemEval call via runOpts.engine. resetTables is called
@@ -423,6 +424,35 @@ describe('runEvalLongMemEval --by-type (v0.40.1.0 Track D / T1+T2)', () => {
       // Summary aggregates across ALL 5 rows (not just the 2 newly processed).
       // The fixture has ground truth on every row, so total == 5.
       expect(last.aggregate.total).toBe(5);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('LongMemEval-V2 labeled fixture drives retrieval recall and --by-type floor', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'lme-v2-test-'));
+    const outPath = join(tmp, 'v2-hypothesis.jsonl');
+    try {
+      await runEvalLongMemEval(
+        [V2_FIXTURE_ROOT, '--keyword-only', '--retrieval-only', '--top-k', '2',
+         '--output', outPath, '--by-type', '--by-type-floor', '1', '--no-trajectory'],
+        { engine: sharedEngine },
+      );
+
+      const lines = readFileSync(outPath, 'utf8').split('\n').filter(l => l.length > 0).map(l => JSON.parse(l));
+      expect(lines.length).toBe(2);
+
+      const row = lines[0];
+      expect(row.question_id).toBe('v2-q-1');
+      expect(row.dataset_schema).toBe('longmemeval-v2');
+      expect(row.question_type).toBe('procedure');
+      expect(row.retrieved_session_ids).toContain('traj-report');
+      expect(row.recall_hit).toBe(true);
+
+      const summary = lines[1];
+      expect(summary.kind).toBe('by_type_summary');
+      expect(summary.recall_by_type.procedure).toEqual({ hit: 1, total: 1, rate: 1 });
+      expect(summary.aggregate).toEqual({ hit: 1, total: 1, rate: 1 });
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

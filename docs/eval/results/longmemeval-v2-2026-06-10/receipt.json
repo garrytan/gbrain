@@ -1,0 +1,48 @@
+{
+  "dataset": {
+    "domains": {
+      "enterprise": 211,
+      "web": 240
+    },
+    "image_question_count": 29,
+    "lastModified": "2026-05-17T02:59:48.000Z",
+    "name": "xiaowu0162/longmemeval-v2",
+    "question_count": 451,
+    "question_types": {
+      "dynamic-environment": 86,
+      "dynamic-environment-abs": 41,
+      "errors-gotchas": 29,
+      "procedure": 74,
+      "procedure-abs": 32,
+      "static-environment": 134,
+      "static-environment-abs": 55
+    },
+    "questions_sha256": "0a3ae5ebea938c24d7800e1e0b0828e08ae1646f939a53853b2b8cdc08e292b7",
+    "sha": "f152293e235517d504809563c833d7190b8c713b",
+    "small_haystack_max": 100,
+    "small_haystack_min": 100,
+    "small_haystack_question_count": 451,
+    "small_haystack_sha256": "9b5301defb23a088a5f06e45ff8d5f35e569d78305a66d492046a9fff9b46593"
+  },
+  "generated_at": "2026-06-10T12:59:31Z",
+  "probe": {
+    "command": "bun src/cli.ts eval longmemeval /tmp/gbrain-lme-v2-receipt/questions.jsonl --limit 1 --retrieval-only --mode conservative --output docs/eval/results/longmemeval-v2-2026-06-10/probe-current-harness.jsonl",
+    "exit_code": 0,
+    "first_row": {
+      "domain": "enterprise",
+      "environment": "workarena",
+      "error": "undefined is not an object (evaluating 'raw.length')",
+      "eval_function": "norm_phrase_set_match|lower=true|normalize_hyphen=true|strip_punct=true|separators=,;|require_non_empty=true",
+      "hypothesis": "",
+      "question": "I am working with our ServiceNow portal. On the Incidents list page, when I open the \"Filters\" dropdown, excluding \"Edit personal filters\" and \"-- None --\", which filter option labels contain the substring \"Incident\"?\n\nMark your final answer (should be one or more short phrases) in \\boxed{}.",
+      "question_type": "dynamic-environment"
+    },
+    "log_path": "docs/eval/results/longmemeval-v2-2026-06-10/probe-current-harness.log",
+    "output_path": "docs/eval/results/longmemeval-v2-2026-06-10/probe-current-harness.jsonl",
+    "purpose": "prove whether the current v1-shaped LongMemEval harness can consume V2 questions directly",
+    "reproduce_command": "scripts/eval-longmemeval-v2-receipt.sh",
+    "row_count": 1
+  },
+  "repo_commit": "220fc72f",
+  "schema_version": 1
+}

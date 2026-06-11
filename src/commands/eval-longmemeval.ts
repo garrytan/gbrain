@@ -9,10 +9,18 @@
  * ThinkLLMClient so the full pipeline runs without any API key.
  */
 
-import { readFileSync, existsSync, openSync, writeSync, closeSync, writeFileSync } from 'fs';
+import { readFileSync, existsSync, openSync, writeSync, closeSync, writeFileSync, statSync } from 'fs';
+import { basename, dirname, join } from 'path';
 import Anthropic from '@anthropic-ai/sdk';
 import { withBenchmarkBrain, resetTables } from '../eval/longmemeval/harness.ts';
-import { haystackToPages, type LongMemEvalQuestion } from '../eval/longmemeval/adapter.ts';
+import {
+  haystackToPages,
+  longMemEvalV2ToQuestion,
+  sanitizeSessionIdForSlug,
+  type LongMemEvalQuestion,
+  type LongMemEvalV2Question,
+  type LongMemEvalV2Trajectory,
+} from '../eval/longmemeval/adapter.ts';
 import { renderChatBlock, type ChatSessionForPrompt } from '../eval/longmemeval/sanitize.ts';
 import { importFromContent } from '../core/import-file.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
@@ -47,7 +55,10 @@ import { formatTrajectoryBlock } from '../core/trajectory-format.ts';
  */
 const TRAJECTORY_METHODOLOGY_NOTE = 'extractor=haiku-preprocess-full-haystack-v1';
 
-const HUGGINGFACE_URL = 'https://huggingface.co/datasets/xiaowu0162/longmemeval';
+const HUGGINGFACE_URL = 'https://huggingface.co/datasets/xiaowu0162/longmemeval-v2';
+const LEGACY_HUGGINGFACE_URL = 'https://huggingface.co/datasets/xiaowu0162/longmemeval';
+
+type LongMemEvalV2Tier = 'small' | 'medium';
 
 interface ParsedArgs {
   help: boolean;
@@ -88,6 +99,8 @@ interface ParsedArgs {
    * rate falls below this floor. Default unset = informational only.
    */
   byTypeFloor?: number;
+  /** LongMemEval-V2 haystack tier for dataset roots / questions.jsonl paths. */
+  v2Tier: LongMemEvalV2Tier;
 }
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -99,6 +112,7 @@ function parseArgs(args: string[]): ParsedArgs {
     topK: 8,
     noTrajectory: false,
     byType: false,
+    v2Tier: 'small',
   };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -113,6 +127,15 @@ function parseArgs(args: string[]): ParsedArgs {
     if (a === '--output') { out.outputPath = args[++i]; continue; }
     if (a === '--resume-from') { out.resumeFromPath = args[++i]; continue; }
     if (a === '--by-type') { out.byType = true; continue; }
+    if (a === '--v2-tier') {
+      const v = args[++i];
+      if (v === 'small' || v === 'medium') {
+        out.v2Tier = v;
+      } else {
+        throw new Error(`--v2-tier must be one of small|medium (got: ${v})`);
+      }
+      continue;
+    }
     if (a === '--by-type-floor') {
       const v = Number(args[++i]);
       if (!Number.isFinite(v) || v < 0 || v > 1) {
@@ -138,12 +161,15 @@ function parseArgs(args: string[]): ParsedArgs {
 
 function printHelp(): void {
   process.stderr.write(
-    `gbrain eval longmemeval <dataset.jsonl> [options]\n\n` +
+    `gbrain eval longmemeval <dataset> [options]\n\n` +
     `Run the LongMemEval benchmark against gbrain's hybrid retrieval. Spins up an\n` +
     `in-memory PGLite per benchmark run; the user's brain is never opened.\n\n` +
     `Arguments:\n` +
-    `  <dataset.jsonl>           LongMemEval dataset file (one question per line).\n` +
-    `                            Download from ${HUGGINGFACE_URL}\n\n` +
+    `  <dataset>                 Legacy LongMemEval JSON/JSONL, OR a LongMemEval-V2\n` +
+    `                            dataset root / questions.jsonl with sibling\n` +
+    `                            trajectories.jsonl + haystacks/lme_v2_*.json.\n` +
+    `                            V2: ${HUGGINGFACE_URL}\n` +
+    `                            Legacy: ${LEGACY_HUGGINGFACE_URL}\n\n` +
     `Options:\n` +
     `  --limit N                 Run only the first N questions.\n` +
     `  --model M                 Override answer-generation model (default: resolveModel).\n` +
@@ -171,6 +197,8 @@ function printHelp(): void {
     `                            summary at the tail is REPLACED, not appended.\n` +
     `  --by-type-floor F         v0.40.1.0 — exit non-zero if any question_type rate < F\n` +
     `                            (range [0, 1]). Implies --by-type. Default: no gate.\n` +
+    `  --v2-tier small|medium    LongMemEval-V2 haystack tier when <dataset> is a V2\n` +
+    `                            root or questions.jsonl (default: small).\n` +
     `  -h, --help                Show this help.\n\n` +
     `Note: a full 500-question run takes ~20-60 minutes depending on flags. Use\n` +
     `--limit during development.\n`,
@@ -243,12 +271,90 @@ export function loadResumeSet(resumePath: string): Set<string> {
   return done;
 }
 
-function loadDataset(datasetPath: string): LongMemEvalQuestion[] {
+function readJsonlObjects<T extends object>(path: string): T[] {
+  const raw = readFileSync(path, 'utf8');
+  const out: T[] = [];
+  let lineNo = 0;
+  for (const line of raw.split('\n')) {
+    lineNo++;
+    if (!line.trim()) continue;
+    try {
+      const row = JSON.parse(line);
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        throw new Error('line is not a JSON object');
+      }
+      out.push(row as T);
+    } catch (err: any) {
+      throw new Error(`dataset ${path}:${lineNo}: ${err.message ?? err}`);
+    }
+  }
+  return out;
+}
+
+function resolveV2Root(datasetPath: string): string | null {
+  if (!existsSync(datasetPath)) return null;
+  const st = statSync(datasetPath);
+  if (st.isDirectory()) {
+    const questionsPath = join(datasetPath, 'questions.jsonl');
+    const trajectoriesPath = join(datasetPath, 'trajectories.jsonl');
+    const haystacksPath = join(datasetPath, 'haystacks');
+    if (existsSync(questionsPath) && existsSync(trajectoriesPath) && existsSync(haystacksPath)) {
+      return datasetPath;
+    }
+    return null;
+  }
+  if (basename(datasetPath) === 'questions.jsonl') {
+    const root = dirname(datasetPath);
+    const trajectoriesPath = join(root, 'trajectories.jsonl');
+    const haystacksPath = join(root, 'haystacks');
+    if (existsSync(trajectoriesPath) && existsSync(haystacksPath)) {
+      return root;
+    }
+  }
+  return null;
+}
+
+function loadLongMemEvalV2Dataset(datasetRoot: string, tier: LongMemEvalV2Tier): LongMemEvalQuestion[] {
+  const questionsPath = join(datasetRoot, 'questions.jsonl');
+  const trajectoriesPath = join(datasetRoot, 'trajectories.jsonl');
+  const haystackPath = join(datasetRoot, 'haystacks', `lme_v2_${tier}.json`);
+  if (!existsSync(haystackPath)) {
+    throw new Error(`LongMemEval-V2 haystack not found: ${haystackPath}`);
+  }
+
+  const questions = readJsonlObjects<LongMemEvalV2Question>(questionsPath);
+  const trajectories = readJsonlObjects<LongMemEvalV2Trajectory>(trajectoriesPath);
+  const trajectoriesById = new Map<string, LongMemEvalV2Trajectory>();
+  for (const trajectory of trajectories) {
+    if (!trajectory.id) throw new Error(`LongMemEval-V2 trajectory missing id in ${trajectoriesPath}`);
+    trajectoriesById.set(trajectory.id, trajectory);
+  }
+
+  const haystackRaw = JSON.parse(readFileSync(haystackPath, 'utf8'));
+  if (!haystackRaw || typeof haystackRaw !== 'object' || Array.isArray(haystackRaw)) {
+    throw new Error(`LongMemEval-V2 haystack must be an object: ${haystackPath}`);
+  }
+  const haystack = haystackRaw as Record<string, unknown>;
+
+  return questions.map((question) => {
+    const ids = haystack[question.id];
+    if (!Array.isArray(ids) || !ids.every((id): id is string => typeof id === 'string' && id.length > 0)) {
+      throw new Error(`LongMemEval-V2 haystack entry for ${question.id} must be a string array`);
+    }
+    return longMemEvalV2ToQuestion(question, trajectoriesById, ids);
+  });
+}
+
+export function loadDataset(datasetPath: string, v2Tier: LongMemEvalV2Tier = 'small'): LongMemEvalQuestion[] {
   if (!existsSync(datasetPath)) {
     throw new Error(
       `dataset not found: ${datasetPath}\n` +
       `Download from ${HUGGINGFACE_URL}`,
     );
+  }
+  const v2Root = resolveV2Root(datasetPath);
+  if (v2Root) {
+    return loadLongMemEvalV2Dataset(v2Root, v2Tier);
   }
   const raw = readFileSync(datasetPath, 'utf8');
   const out: LongMemEvalQuestion[] = [];
@@ -272,6 +378,15 @@ function loadDataset(datasetPath: string): LongMemEvalQuestion[] {
     }
   }
   return out;
+}
+
+function recallLabelSet(q: LongMemEvalQuestion): Set<string> {
+  const gt = new Set<string>();
+  for (const id of q.answer_session_ids ?? []) {
+    gt.add(id);
+    gt.add(sanitizeSessionIdForSlug(id));
+  }
+  return gt;
 }
 
 function renderRetrievedAsHypothesis(results: SearchResult[]): string {
@@ -405,7 +520,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
 
   let questions: LongMemEvalQuestion[];
   try {
-    questions = loadDataset(opts.datasetPath);
+    questions = loadDataset(opts.datasetPath, opts.v2Tier);
   } catch (err: any) {
     process.stderr.write(`Error: ${err.message ?? err}\n`);
     process.exit(1);
@@ -543,6 +658,11 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
           question_id: q.question_id,
           question: q.question,
           question_type: q.question_type,
+          ...(q.dataset_schema ? { dataset_schema: q.dataset_schema } : {}),
+          ...(q.domain ? { domain: q.domain } : {}),
+          ...(q.environment ? { environment: q.environment } : {}),
+          ...(q.eval_function ? { eval_function: q.eval_function } : {}),
+          ...(q.question_image ? { question_image: q.question_image } : {}),
           hypothesis: '',
           error: String(err?.message ?? err),
         });
@@ -671,7 +791,7 @@ async function runOneQuestion(
   const retrievedSessionIds = uniqSessionIds(results);
   // Recall: did any retrieved session match ground-truth answer_session_ids?
   if (q.answer_session_ids && q.answer_session_ids.length > 0) {
-    const gt = new Set(q.answer_session_ids);
+    const gt = recallLabelSet(q);
     const hit = retrievedSessionIds.some(s => gt.has(s));
     const bucket = recallByType[q.question_type] ?? (recallByType[q.question_type] = { hit: 0, total: 0 });
     bucket.total++;
@@ -738,7 +858,7 @@ async function runOneQuestion(
   // the dataset has no ground-truth answer_session_ids for this question.
   let recallHit: boolean | undefined;
   if (q.answer_session_ids && q.answer_session_ids.length > 0) {
-    const gt = new Set(q.answer_session_ids);
+    const gt = recallLabelSet(q);
     recallHit = retrievedSessionIds.some(s => gt.has(s));
   }
 
@@ -751,6 +871,11 @@ async function runOneQuestion(
     // v0.40.1.0 (Track D / T2) — copy question_type into the row so the
     // by_type_summary can be rebuilt from the file on resume runs.
     question_type: q.question_type,
+    ...(q.dataset_schema ? { dataset_schema: q.dataset_schema } : {}),
+    ...(q.domain ? { domain: q.domain } : {}),
+    ...(q.environment ? { environment: q.environment } : {}),
+    ...(q.eval_function ? { eval_function: q.eval_function } : {}),
+    ...(q.question_image ? { question_image: q.question_image } : {}),
     hypothesis,
     retrieved_session_ids: retrievedSessionIds,
     ...(recallHit !== undefined ? { recall_hit: recallHit } : {}),

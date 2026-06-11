@@ -48,6 +48,7 @@ export async function runRemediation(
   const dryRun = opts.dryRun ?? false;
   const resumeMode = opts.resume ?? false;
   const resumePlanHash = opts.resumePlanHash;
+  const extraRemediations = opts.extraRemediations ?? [];
 
   // Lazy-load orchestration deps so the library entry-point doesn't pay
   // their cost on a --dry-run shortcut path (or when callers only need
@@ -68,7 +69,7 @@ export async function runRemediation(
   const ctx = await loadRecommendationContext(engine);
 
   // Pre-flight ceiling check via the shared plan computation.
-  const initialPlan = await computeRemediationPlan(engine, { targetScore });
+  const initialPlan = await computeRemediationPlan(engine, { targetScore, extraRemediations });
   if (initialPlan.target_unreachable) {
     hooks.onTargetUnreachable?.(targetScore, initialPlan.max_reachable_score);
     return {
@@ -87,7 +88,7 @@ export async function runRemediation(
   }
 
   const initialHealth = await engine.getHealth();
-  let recs: RemediationStep[] = computeRecommendations(initialHealth, ctx)
+  let recs: RemediationStep[] = computeRecommendations(initialHealth, ctx, extraRemediations)
     .filter((r) => r.status === 'remediable');
   if (recs.length === 0) {
     hooks.onNothingToDo?.(initialHealth.brain_score, targetScore);
@@ -182,6 +183,8 @@ export async function runRemediation(
   // Real submission path
   const submitted: StepResult[] = [];
   const abortedIds = new Set<string>();
+  const attemptedIds = new Set<string>();
+  const attemptedIdempotencyKeys = new Set<string>();
   const doctorRunId = crypto.randomUUID();
 
   const { MinionQueue } = await import('../minions/queue.ts');
@@ -229,6 +232,8 @@ export async function runRemediation(
 
       // Resume: skip steps that the checkpoint already marked completed.
       if (completedFromCheckpoint.has(step.id)) {
+        attemptedIds.add(step.id);
+        attemptedIdempotencyKeys.add(step.idempotency_key);
         const result: StepResult = { step: stepCount, id: step.id, job_id: null, status: 'completed' };
         submitted.push(result);
         hooks.onStepEnd?.(result);
@@ -247,6 +252,8 @@ export async function runRemediation(
       }
 
       hooks.onStepStart?.(stepCount, totalSteps, step);
+      attemptedIds.add(step.id);
+      attemptedIdempotencyKeys.add(step.idempotency_key);
       try {
         const isProtected = !!step.protected;
         const job = await queue.add(
@@ -305,7 +312,10 @@ export async function runRemediation(
       // steps with bumped retry suffix (D1).
       if (recs.length === 0 || stepCount >= maxJobs) break;
       const freshHealth = await engine.getHealth();
-      recs = computeRecommendations(freshHealth, ctx).filter((r) => r.status === 'remediable');
+      recs = computeRecommendations(freshHealth, ctx, extraRemediations)
+        .filter((r) => r.status === 'remediable')
+        .filter((r) => !attemptedIds.has(r.id))
+        .filter((r) => !attemptedIdempotencyKeys.has(r.idempotency_key));
     }
   };
 

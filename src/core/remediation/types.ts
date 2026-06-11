@@ -53,6 +53,12 @@ export interface RemediationPlan {
 export interface RemediationOpts {
   /** Target brain_score (default: 90). */
   targetScore?: number;
+  /**
+   * Caller-supplied RemediationStep entries threaded into the active run.
+   * Mirrors RemediationPlanOpts.extraRemediations so `onboard --check` and
+   * `onboard --auto` can execute the same recommendation set.
+   */
+  extraRemediations?: RemediationStep[];
   /** Cap inner loop iterations (default: Infinity). */
   maxJobs?: number;
   /** USD cap for total plan cost. Pre-flight refuse + mid-run BudgetExhausted gate. */

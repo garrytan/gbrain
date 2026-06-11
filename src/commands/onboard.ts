@@ -131,6 +131,7 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
     {
       targetScore,
       maxUsd,
+      extraRemediations,
       // --auto --yes opts into the prompt_required tier too; library
       // doesn't distinguish auto_apply vs prompt_required, it just runs
       // every remediation in the plan. The plan-building side (T12 render)

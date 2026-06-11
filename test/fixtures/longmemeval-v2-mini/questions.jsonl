@@ -1,0 +1,1 @@
+{"id":"v2-q-1","domain":"enterprise","environment":"workarena","question_type":"procedure","question":"problem workload by tag report","image":null,"answer":"Reports","eval_function":"norm_phrase_set_match|lower=true","answer_session_ids":["traj_report"]}

@@ -13,11 +13,12 @@
 
 import { describe, expect, test, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { computeRemediationPlan } from '../../src/core/remediation/index.ts';
+import { computeRemediationPlan, runRemediation } from '../../src/core/remediation/index.ts';
 import { captureMetric } from '../../src/core/onboard/impact-capture.ts';
 import { buildOnboardReport, toOnboardRecommendation } from '../../src/core/onboard/render.ts';
 import { runAllOnboardChecks } from '../../src/core/onboard/checks.ts';
 import { makeRemediationStep } from '../../src/core/remediation-step.ts';
+import { MinionWorker } from '../../src/core/minions/worker.ts';
 
 let engine: PGLiteEngine;
 
@@ -143,6 +144,88 @@ describe('onboard E2E — buildOnboardReport', () => {
     expect(typeof report.summary.prompt_required).toBe('number');
     expect(typeof report.summary.manual_only).toBe('number');
     expect(typeof report.summary.est_total_usd).toBe('number');
+  });
+});
+
+describe('onboard E2E — runRemediation recheck loop guard', () => {
+  test('does not rerun the same persistent recommendation after a fresh health recheck', async () => {
+    let calls = 0;
+    const worker = new MinionWorker(engine, { pollInterval: 20 });
+    worker.register('test-stable-onboard-step', async () => {
+      calls++;
+      return { ok: true };
+    });
+
+    const workerPromise = worker.start();
+    try {
+      const step = makeRemediationStep({
+        id: 'test.stable_onboard_step',
+        job: 'test-stable-onboard-step',
+        params: {},
+        severity: 'medium',
+        est_seconds: 1,
+        est_usd_cost: 0,
+        rationale: 'synthetic persistent recommendation',
+        status: 'remediable',
+      });
+      const result = await runRemediation(engine, {
+        targetScore: 0,
+        maxUsd: 0,
+        maxJobs: 3,
+        extraRemediations: [step],
+      });
+
+      expect(calls).toBe(1);
+      expect(result.submitted.map((s) => s.id)).toEqual(['test.stable_onboard_step']);
+    } finally {
+      worker.stop();
+      await workerPromise;
+    }
+  });
+
+  test('does not rerun a retried recommendation with the same idempotency key', async () => {
+    let calls = 0;
+    const worker = new MinionWorker(engine, { pollInterval: 20 });
+    worker.register('test-stable-onboard-idempotency-step', async () => {
+      calls++;
+      return { ok: true };
+    });
+
+    const workerPromise = worker.start();
+    try {
+      const base = {
+        job: 'test-stable-onboard-idempotency-step',
+        params: { sourceId: 'default' },
+        severity: 'medium' as const,
+        est_seconds: 1,
+        est_usd_cost: 0,
+        rationale: 'synthetic persistent recommendation',
+        status: 'remediable' as const,
+      };
+      const first = makeRemediationStep({
+        ...base,
+        id: 'test.stable_onboard_step',
+      });
+      const retrySameWork = makeRemediationStep({
+        ...base,
+        id: 'test.stable_onboard_step:r1',
+      });
+
+      expect(retrySameWork.idempotency_key).toBe(first.idempotency_key);
+
+      const result = await runRemediation(engine, {
+        targetScore: 0,
+        maxUsd: 0,
+        maxJobs: 3,
+        extraRemediations: [first, retrySameWork],
+      });
+
+      expect(calls).toBe(1);
+      expect(result.submitted.map((s) => s.id)).toEqual(['test.stable_onboard_step']);
+    } finally {
+      worker.stop();
+      await workerPromise;
+    }
   });
 });
 
