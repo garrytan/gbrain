@@ -12,7 +12,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { PageInput, ChunkInput } from '../src/core/types.ts';
 import { importContentHash } from '../src/core/utils.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 let engine: PGLiteEngine;
 

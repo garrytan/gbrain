@@ -1,4 +1,4 @@
-import { setDefaultTimeout, afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -8,7 +8,10 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
+
+// PGLite schema/migration replay can exceed the default timeout on macOS CI runners.
+const PGLITE_SCHEMA_TEST_TIMEOUT_MS = 60_000;
 
 describe('memory-inbox schema', () => {
   const tempPaths: string[] = [];
@@ -861,7 +864,7 @@ describe('memory-inbox schema', () => {
     ]);
 
     await engine.disconnect();
-  });
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 
   const databaseUrl = process.env.DATABASE_URL;
   if (databaseUrl) {
@@ -962,7 +965,7 @@ describe('memory-inbox schema', () => {
     } finally {
       await engine.disconnect();
     }
-  });
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 
   test('pglite rerun from v15 preserves candidates and keeps final status contract', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-inbox-pglite-rerun-'));
@@ -1017,5 +1020,5 @@ describe('memory-inbox schema', () => {
     } finally {
       await engine.disconnect();
     }
-  });
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 });

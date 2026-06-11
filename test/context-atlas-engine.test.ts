@@ -7,7 +7,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 interface EngineHarness {
   label: string;

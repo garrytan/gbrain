@@ -11,7 +11,7 @@ import { SQLiteEngine } from '../../src/core/sqlite-engine.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { LATEST_VERSION } from '../../src/core/migrate.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 const ENGINE_COLD_START_BUDGET_MS = 30_000;
 

@@ -5,7 +5,7 @@ import { tmpdir } from 'os';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { SQLiteEngine } from '../../src/core/sqlite-engine.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 describe('auto_promote_verdicts cache', () => {
   const key = { candidate_id: 'c1', content_hash: 'h1', runner_kind: 'claude_code', prompt_version: 'auto-promote-v1' };

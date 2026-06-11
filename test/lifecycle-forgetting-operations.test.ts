@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { MBrainConfig } from '../src/core/config.ts';
-import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { createLifecycleForgettingStoreForEngine } from '../src/core/maintenance/lifecycle-forgetting.ts';
-import { createLifecycleForgettingService } from '../src/core/services/lifecycle-forgetting-service.ts';
+import { type OperationContext, operationsByName } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { createLifecycleForgettingService } from '../src/core/services/lifecycle-forgetting-service.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 const tempPaths: string[] = [];
@@ -217,7 +217,8 @@ describe('lifecycle forgetting operations', () => {
     })).resolves.toMatchObject({ state: { lifecycle_state: 'purged' } });
 
     await engine.disconnect();
-  }, 20_000);
+    // PGLite schema/migration replay can exceed 20s on macOS CI runners.
+  }, 60_000);
 });
 
 async function createApprovedPurgePlan(

@@ -7,7 +7,7 @@ import { parsePromotionVerdict } from '../../src/core/auto-promote/verdict.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 
 const NOW = '2026-06-01T00:00:00Z';
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 async function withEngine(fn: (engine: PGLiteEngine) => Promise<void>) {
   const engine = new PGLiteEngine();

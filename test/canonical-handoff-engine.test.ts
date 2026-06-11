@@ -9,7 +9,7 @@ import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { advanceMemoryCandidateStatus } from '../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../src/core/services/memory-inbox-promotion-service.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 interface EngineHarness {
   label: string;

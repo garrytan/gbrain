@@ -6,7 +6,7 @@ import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import * as db from '../src/core/db.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 const originalEnv = { ...process.env };
 let tempHome: string;

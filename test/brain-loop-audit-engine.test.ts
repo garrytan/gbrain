@@ -8,7 +8,7 @@ import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { auditBrainLoop } from '../src/core/services/brain-loop-audit-service.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 interface Harness {
   label: string;

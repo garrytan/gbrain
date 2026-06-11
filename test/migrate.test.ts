@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 const originalEnv = { ...process.env };
 const PGLITE_MIGRATION_TEST_TIMEOUT_MS = 45_000;

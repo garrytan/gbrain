@@ -17,7 +17,7 @@ import {
 } from '../src/core/services/memory-review-report-service.ts';
 
 const now = '2026-05-22T12:00:00.000Z';
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 describe('memory review report service', () => {
   const tempPaths: string[] = [];

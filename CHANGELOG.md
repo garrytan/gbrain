@@ -4,6 +4,24 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **macOS breakage now gets caught before it ever reaches a release.** Pull
+  request CI now runs the full unit suite on macOS — the exact step that used
+  to fail only during release builds (three separate "stabilize macOS PGLite"
+  hotfixes were needed in v0.13) — so platform-specific PGLite/WASM timing
+  regressions block the PR instead of breaking your release.
+- **Releases are now smoke-gated end to end.** Publishing a release binary now
+  requires the Postgres runtime smoke (init → import → projection lineage →
+  replay gate → doctor) and the HTTP OAuth smoke (DCR → PKCE → token refresh →
+  request logging) to pass against a real pgvector database first. A release
+  can no longer ship with a broken runtime path that unit tests don't cover.
+- **The JSONB double-encoding trap is now fenced on every engine.** The
+  regression class that PR #176 hit (structured JSON silently stored as a
+  string scalar) is now covered by dedicated tests on PGlite and SQLite too,
+  not just Postgres — and the PGlite/SQLite variants run in every unit-test
+  environment with no database setup at all.
+
 ## [0.13.0] - 2026-06-11
 
 ### Changed

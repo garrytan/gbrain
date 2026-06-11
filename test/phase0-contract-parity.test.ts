@@ -12,7 +12,7 @@ import { buildTaskResumeCard } from '../src/core/services/task-memory-service.ts
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import type { PageType } from '../src/core/types.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 type SharedWorkflowEngine = Pick<
   BrainEngine,

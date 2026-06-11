@@ -109,10 +109,34 @@ test('test workflow keeps the legacy test check as a shard aggregator', () => {
   const source = readFileSync(join(workflowsDir, 'test.yml'), 'utf-8');
   const testJob = getWorkflowJob(source, 'test');
 
-  expect(testJob).toContain('needs: [typecheck, test-shard]');
+  expect(testJob).toContain('needs: [typecheck, test-shard, test-macos]');
   expect(testJob).toContain('if: ${{ always() }}');
   expect(testJob).toContain('needs.typecheck.result');
   expect(testJob).toContain('needs.test-shard.result');
+  expect(testJob).toContain('needs.test-macos.result');
   expect(testJob).toContain('exit 1');
   expect(testJob).toContain('Typecheck and all unit test shards passed');
+});
+
+test('test workflow runs the unit suite on macOS at PR time', () => {
+  const source = readFileSync(join(workflowsDir, 'test.yml'), 'utf-8');
+  const macosJob = getWorkflowJob(source, 'test-macos');
+
+  expect(macosJob).toContain('runs-on: macos-latest');
+  expect(macosJob).toContain('timeout-minutes:');
+  expect(macosJob).toContain('fetch-depth: 0');
+  // Pin the exact command: the macOS job must run the full unsharded suite,
+  // not a ci-shard subset.
+  expect(macosJob).toContain('- run: bun run test\n');
+});
+
+test('release workflow gates publishing on runtime and OAuth smokes', () => {
+  const source = readFileSync(join(workflowsDir, 'release.yml'), 'utf-8');
+  const smokeJob = getWorkflowJob(source, 'smoke');
+  const releaseJob = getWorkflowJob(source, 'release');
+
+  expect(smokeJob).toContain('image: pgvector/pgvector:pg16');
+  expect(smokeJob).toContain('bun run smoke:postgres-runtime');
+  expect(smokeJob).toContain('bun run smoke:http-oauth');
+  expect(releaseJob).toContain('needs: [build, smoke]');
 });

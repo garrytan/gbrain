@@ -51,9 +51,35 @@ jobs:
           TEST_SHARD_INDEX: ${{ matrix.shard }}
           TEST_SHARD_TOTAL: 4
 
+  test-macos:
+    name: Unit Tests (macOS)
+    runs-on: macos-latest
+    # Bound the PR queue: a hung PGLite/WASM test on macOS must fail fast,
+    # not hold the required aggregator for the 6h GitHub default. The full
+    # suite takes ~25 minutes on macOS runners with TEST_WORKERS=2.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.12
+      - run: bun install
+      # Mirrors the release.yml macOS test step so PGLite/WASM timing
+      # regressions surface at PR time instead of at release time.
+      # TEST_WORKERS=2: macOS runners have 3-4 cores and PGLite WASM init is
+      # CPU-bound; full parallelism starves migration-replay tests past their
+      # timeouts.
+      - run: bun run test
+        env:
+          TEST_WORKERS: 2
+          # PGLite WASM schema init regularly needs >20s on macOS runners.
+          TEST_TIMEOUT_MS: 60000
+
   test:
     runs-on: ubuntu-latest
-    needs: [typecheck, test-shard]
+    needs: [typecheck, test-shard, test-macos]
     if: ${{ always() }}
     steps:
       - name: Verify typecheck and all unit test shards passed
@@ -64,6 +90,10 @@ jobs:
           fi
           if [ "${{ needs.test-shard.result }}" != "success" ]; then
             echo "Unit test shards did not all pass: ${{ needs.test-shard.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.test-macos.result }}" != "success" ]; then
+            echo "macOS unit tests did not pass: ${{ needs.test-macos.result }}"
             exit 1
           fi
           echo "Typecheck and all unit test shards passed"

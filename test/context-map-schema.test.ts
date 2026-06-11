@@ -5,7 +5,7 @@ import { tmpdir } from 'os';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 describe('context-map schema', () => {
   const tempDirs: string[] = [];

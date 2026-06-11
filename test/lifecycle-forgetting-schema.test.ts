@@ -1,4 +1,4 @@
-import { setDefaultTimeout, afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -6,9 +6,10 @@ import { LATEST_VERSION } from '../src/core/migrate.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
-const PGLITE_SCHEMA_TEST_TIMEOUT_MS = 20_000;
+// PGLite schema/migration replay can exceed the default timeout on macOS CI runners.
+const PGLITE_SCHEMA_TEST_TIMEOUT_MS = 60_000;
 
 const tempPaths: string[] = [];
 

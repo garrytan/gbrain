@@ -7,7 +7,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { buildPageCentroid } from '../src/core/services/page-embedding.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 function makeVector(...values: number[]): Float32Array {
   const vector = new Float32Array(1024);

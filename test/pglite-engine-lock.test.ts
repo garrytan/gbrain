@@ -5,7 +5,7 @@ import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { acquireLock } from '../src/core/pglite-lock.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 const TEST_DIR = join(tmpdir(), `mbrain-pglite-engine-lock-${process.pid}`);
 

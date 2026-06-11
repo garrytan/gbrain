@@ -9,7 +9,7 @@ import { type Operation, type OperationContext, operations } from '../src/core/o
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 const PGLITE_SOURCE_REGISTRY_TEST_TIMEOUT_MS = 60_000;
 

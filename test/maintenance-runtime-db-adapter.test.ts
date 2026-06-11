@@ -7,7 +7,7 @@ import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { createSqlMaintenanceRuntimeAdapter } from '../src/core/services/maintenance-runtime-db-adapter.ts';
 import { createAutopilotService } from '../src/core/services/autopilot-service.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 describe('SQL maintenance runtime adapter', () => {
   const tempPaths: string[] = [];

@@ -13,7 +13,7 @@ import { seedMemoryCandidate } from './helpers.ts';
 import { promoteMemoryCandidateEntry } from '../../src/core/services/memory-inbox-promotion-service.ts';
 import { supersedeMemoryCandidateEntry } from '../../src/core/services/memory-inbox-supersession-service.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 const ENGINE_COLD_START_BUDGET_MS = 30_000;
 

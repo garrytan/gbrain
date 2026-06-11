@@ -5,7 +5,7 @@ import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 // PGLite schema initialization can exceed the default timeout on macOS release runners.
 const PGLITE_SCHEMA_TEST_TIMEOUT_MS = 60_000;

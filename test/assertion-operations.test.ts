@@ -271,7 +271,8 @@ describe('assertion retrieval operations', () => {
     } finally {
       await engine.disconnect();
     }
-  }, 20_000);
+  // PGLite schema/migration replay can exceed 20s on macOS CI runners.
+  }, 60_000);
 });
 
 function operationContext(engine: OperationContext['engine'], config: MBrainConfig): OperationContext {

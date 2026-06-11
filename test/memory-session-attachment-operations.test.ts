@@ -8,7 +8,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { hashCanonicalJson } from '../src/core/services/target-snapshot-hash-service.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 const PGLITE_SESSION_OPERATION_TIMEOUT_MS = 180_000;
 
