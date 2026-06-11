@@ -38,6 +38,28 @@ export const minimax: Recipe = {
       // halving in the gateway catches token-limit errors at runtime.
       max_batch_tokens: 4096,
     },
+    chat: {
+      // MiniMax text models via the OpenAI-compatible /chat/completions
+      // endpoint (same base_url). Function calling is supported, which is
+      // what the gateway tool loop needs. The capabilities hint in
+      // src/core/ai/capabilities.ts already lists minimax among chat
+      // providers — this touchpoint makes the recipe match it.
+      // openai-compat tier: the models list is informational, arbitrary
+      // ids are accepted at runtime (same contract as openrouter).
+      models: ['MiniMax-M3', 'MiniMax-M2.5'],
+      supports_tools: true,
+      supports_subagent_loop: true,
+      // Anthropic-style cache_control is only honored on MiniMax's
+      // anthropic-compatible endpoint, not the OpenAI-compatible one.
+      supports_prompt_cache: false,
+      // MiniMax-M3 advertises 1M; M2.5 is 200K. Declare the conservative
+      // floor — per-model context is handled by callers (e.g. dream's
+      // MODEL_CONTEXT_TOKENS map).
+      max_context_tokens: 200_000,
+      cost_per_1m_input_usd: 0.6, // M3 list price 2026-06
+      cost_per_1m_output_usd: 2.4,
+      price_last_verified: '2026-06-11',
+    },
   },
   setup_hint:
     'Get an API key at https://www.minimaxi.com, then `export MINIMAX_API_KEY=...`',
