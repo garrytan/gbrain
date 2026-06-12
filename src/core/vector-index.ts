@@ -17,6 +17,7 @@
 import type { BrainEngine } from './engine.ts';
 
 export const PGVECTOR_HNSW_VECTOR_MAX_DIMS = 2000;
+export const PGVECTOR_HNSW_SUBVECTOR_DIMS = PGVECTOR_HNSW_VECTOR_MAX_DIMS;
 
 const CHUNK_EMBEDDING_HNSW_INDEX =
   'CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);';
@@ -24,8 +25,10 @@ const CHUNK_EMBEDDING_HNSW_INDEX =
 export function chunkEmbeddingIndexSql(dims: number): string {
   if (dims <= PGVECTOR_HNSW_VECTOR_MAX_DIMS) return CHUNK_EMBEDDING_HNSW_INDEX;
   return [
-    '-- idx_chunks_embedding skipped: pgvector HNSW vector indexes support',
-    `-- at most ${PGVECTOR_HNSW_VECTOR_MAX_DIMS} dimensions; exact vector scans remain available.`,
+    '-- idx_chunks_embedding uses pgvector subvector HNSW for high-dimensional embeddings.',
+    `-- pgvector HNSW vector indexes support at most ${PGVECTOR_HNSW_VECTOR_MAX_DIMS} dimensions;`,
+    '-- searchVector uses this expression index for candidate retrieval, then re-ranks by the full vector.',
+    `CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw ((subvector(embedding, 1, ${PGVECTOR_HNSW_SUBVECTOR_DIMS})::vector(${PGVECTOR_HNSW_SUBVECTOR_DIMS})) vector_cosine_ops) WHERE embedding IS NOT NULL;`,
   ].join('\n');
 }
 

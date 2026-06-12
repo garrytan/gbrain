@@ -18,17 +18,19 @@ describe('chunkEmbeddingIndexSql — pre-v0.30.1 contract', () => {
     expect(sql).toContain('hnsw');
   });
 
-  test('emits skip-comment for dims > 2000 (Voyage 3072)', () => {
+  test('emits subvector HNSW expression index for dims > 2000 (Voyage 3072 / Solar 4096)', () => {
     const sql = chunkEmbeddingIndexSql(3072);
-    expect(sql).toContain('skipped');
-    expect(sql).not.toContain('CREATE INDEX');
+    expect(sql).toContain('CREATE INDEX IF NOT EXISTS idx_chunks_embedding');
+    expect(sql).toContain('subvector(embedding, 1, 2000)::vector(2000)');
+    expect(sql).toContain('vector_cosine_ops');
+    expect(sql).toContain('WHERE embedding IS NOT NULL');
   });
 
   test('boundary at exactly PGVECTOR_HNSW_VECTOR_MAX_DIMS (2000)', () => {
     const at = chunkEmbeddingIndexSql(PGVECTOR_HNSW_VECTOR_MAX_DIMS);
     expect(at).toContain('CREATE INDEX');
     const above = chunkEmbeddingIndexSql(PGVECTOR_HNSW_VECTOR_MAX_DIMS + 1);
-    expect(above).toContain('skipped');
+    expect(above).toContain('subvector');
   });
 });
 
@@ -38,7 +40,7 @@ describe('applyChunkEmbeddingIndexPolicy', () => {
     const out = applyChunkEmbeddingIndexPolicy(input, 1536);
     expect(out).toContain('idx_chunks_embedding');
     const out2 = applyChunkEmbeddingIndexPolicy(input, 3072);
-    expect(out2).toContain('skipped');
+    expect(out2).toContain('subvector(embedding, 1, 2000)::vector(2000)');
   });
 });
 

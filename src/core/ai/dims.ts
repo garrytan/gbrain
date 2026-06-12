@@ -65,6 +65,22 @@ export function isValidZeroEntropyDim(dims: number): boolean {
   return (ZEROENTROPY_VALID_DIMS as readonly number[]).includes(dims);
 }
 
+// Upstage Solar Embeddings are a fixed 4096-dim asymmetric pair in one space:
+// passage for document/indexing and query for search/query encoding.
+const UPSTAGE_SOLAR_EMBEDDING_MODELS = new Set([
+  'solar-embedding-1-large-passage',
+  'solar-embedding-1-large-query',
+]);
+export const UPSTAGE_SOLAR_VALID_DIMS = [4096] as const;
+
+export function supportsUpstageSolarEmbedding(modelId: string): boolean {
+  return UPSTAGE_SOLAR_EMBEDDING_MODELS.has(modelId);
+}
+
+export function isValidUpstageSolarDim(dims: number): boolean {
+  return (UPSTAGE_SOLAR_VALID_DIMS as readonly number[]).includes(dims);
+}
+
 // v0.36.0.0 (D13): OpenAI text-embedding-3-* accepts arbitrary truncation via
 // Matryoshka — any positive integer up to the model's native size. When a
 // brain is configured with `embedding_dimensions` OUTSIDE that range, OpenAI
@@ -164,6 +180,21 @@ export function dimsProviderOptions(
             input_type: inputType ?? 'document',
           },
         };
+      }
+      // Upstage Solar Embeddings — fixed 4096 dims + asymmetric query/passage
+      // model pair. The OpenAI-compatible providerOptions seam gives the
+      // gateway an `input_type` side-channel; upstageCompatFetch rewrites that
+      // into the actual model ID (`...-query` vs `...-passage`) and strips the
+      // non-Upstage field before the request leaves the process.
+      if (supportsUpstageSolarEmbedding(modelId)) {
+        if (!isValidUpstageSolarDim(dims)) {
+          throw new AIConfigError(
+            `Upstage Solar embedding models support dimensions only in ` +
+            `{${UPSTAGE_SOLAR_VALID_DIMS.join(', ')}}, got ${dims}.`,
+            `Set \`embedding_dimensions\` to 4096 in your gbrain config.`,
+          );
+        }
+        return { openaiCompatible: { input_type: inputType ?? 'document' } };
       }
       // Voyage hosted flexible-dim models — accept `output_dimension`
       // (translated by voyageCompatFetch) AND `input_type: query|document`
