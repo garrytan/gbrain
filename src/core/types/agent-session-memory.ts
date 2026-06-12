@@ -127,6 +127,8 @@ export interface AgentSessionCompressedObservation {
   title: string;
   narrative: string;
   facts: string[];
+  /** Number of fact lines dropped by the per-observation cap; absent when nothing was dropped. */
+  truncated_fact_count?: number;
   concepts: string[];
   files: string[];
   importance_score: number;

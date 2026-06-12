@@ -7,14 +7,23 @@ import type {
 } from '../types.ts';
 import type { AgentSessionCapturePlan } from './agent-session-memory-service.ts';
 
-export function compressAgentSessionCapturePlan(plan: AgentSessionCapturePlan): AgentSessionCompressedObservation[] {
+// Default cap on fact lines per observation; overflow is counted in
+// truncated_fact_count instead of being dropped silently.
+export const MAX_OBSERVATION_FACTS = 5;
+
+export function compressAgentSessionCapturePlan(
+  plan: AgentSessionCapturePlan,
+  opts?: { max_facts?: number },
+): AgentSessionCompressedObservation[] {
   validateEventChunkAlignment(plan);
+  const maxFacts = opts?.max_facts ?? MAX_OBSERVATION_FACTS;
 
   return plan.events.map((event, index) => {
     const chunk = plan.ingest_plan.chunks[index];
     const text = chunk.redacted_text;
     const files = extractFilePaths(text);
     const concepts = extractConcepts(text);
+    const { facts, truncatedCount } = factLinesFor(text, maxFacts);
 
     return {
       id: stableId('agent-session-observation', plan.ingest_plan.item.id, event.event_id),
@@ -28,7 +37,8 @@ export function compressAgentSessionCapturePlan(plan: AgentSessionCapturePlan): 
       observation_type: observationTypeFor(event),
       title: titleFor(event, text),
       narrative: firstSentence(text, 240),
-      facts: factLinesFor(text),
+      facts,
+      ...(truncatedCount > 0 ? { truncated_fact_count: truncatedCount } : {}),
       concepts,
       files,
       importance_score: importanceFor(event, text),
@@ -130,13 +140,16 @@ function titleFor(event: AgentSessionNormalizedEvent, text: string): string {
   return firstSentence(text, 80);
 }
 
-function factLinesFor(text: string): string[] {
+function factLinesFor(text: string, maxFacts: number): { facts: string[]; truncatedCount: number } {
   const lines = text
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   const withoutHeader = lines[0] !== undefined && isFormattedEventHeader(lines[0]) ? lines.slice(1) : lines;
-  return withoutHeader.slice(0, 5);
+  return {
+    facts: withoutHeader.slice(0, maxFacts),
+    truncatedCount: Math.max(0, withoutHeader.length - maxFacts),
+  };
 }
 
 function importanceFor(event: AgentSessionNormalizedEvent, text: string): number {

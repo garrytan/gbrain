@@ -219,3 +219,85 @@ describe('agent session zero-LLM compression', () => {
     expect(summary.follow_ups[0]).toContain('후속');
   });
 });
+
+describe('fact truncation observability (B-8)', () => {
+  function planWithFactLines(count: number) {
+    const text = Array.from({ length: count }, (_, i) => `fact line number ${i + 1}`).join('\n');
+    return buildAgentSessionCapturePlan({
+      source_kind: 'codex_session',
+      session_id: 'session-trunc',
+      events: [{
+        source_kind: 'codex_session',
+        session_id: 'session-trunc',
+        event_kind: 'user_prompt',
+        actor: 'user',
+        text,
+        occurred_at: '2026-06-03T01:00:00.000Z',
+      }],
+      now: '2026-06-03T01:01:00.000Z',
+    });
+  }
+
+  test('records truncated_fact_count when an event has more facts than the limit', () => {
+    const observations = compressAgentSessionCapturePlan(planWithFactLines(9));
+    expect(observations[0].facts).toHaveLength(5);
+    expect(observations[0].truncated_fact_count).toBe(4);
+  });
+
+  test('omits truncated_fact_count when nothing is dropped', () => {
+    const observations = compressAgentSessionCapturePlan(planWithFactLines(3));
+    expect(observations[0].facts.length).toBeGreaterThan(0);
+    expect(observations[0].truncated_fact_count).toBeUndefined();
+  });
+
+  test('honors a configurable max_facts limit', () => {
+    const observations = compressAgentSessionCapturePlan(planWithFactLines(9), { max_facts: 8 });
+    expect(observations[0].facts).toHaveLength(8);
+    expect(observations[0].truncated_fact_count).toBe(1);
+  });
+});
+
+describe('header stripping accuracy (B-8 review)', () => {
+  test('strips the real event header and counts truncation over body lines only', () => {
+    const body = Array.from({ length: 9 }, (_, i) => `fact line number ${i + 1}`).join('\n');
+    const plan = buildAgentSessionCapturePlan({
+      source_kind: 'codex_session',
+      session_id: 'session-header',
+      events: [{
+        source_kind: 'codex_session',
+        session_id: 'session-header',
+        event_kind: 'user_prompt',
+        actor: 'user',
+        text: body,
+        occurred_at: '2026-06-03T01:00:00.000Z',
+      }],
+      now: '2026-06-03T01:01:00.000Z',
+    });
+    // The capture plan formats each chunk as "[<ISO>] <actor> <kind>\n<text>".
+    expect(plan.ingest_plan.chunks[0].redacted_text.startsWith('[2026-06-03T01:00:00.000Z] user user_prompt')).toBe(true);
+
+    const observations = compressAgentSessionCapturePlan(plan);
+    expect(observations[0].facts).toHaveLength(5);
+    expect(observations[0].facts[0]).toBe('fact line number 1');
+    expect(observations[0].truncated_fact_count).toBe(4);
+  });
+
+  test('keeps bracket-prefixed user lines that merely look header-ish', () => {
+    const plan = buildAgentSessionCapturePlan({
+      source_kind: 'codex_session',
+      session_id: 'session-bracket',
+      events: [{
+        source_kind: 'codex_session',
+        session_id: 'session-bracket',
+        event_kind: 'user_prompt',
+        actor: 'user',
+        text: '[important] review this\nsecond fact line',
+        occurred_at: '2026-06-03T01:00:00.000Z',
+      }],
+      now: '2026-06-03T01:01:00.000Z',
+    });
+    const observations = compressAgentSessionCapturePlan(plan);
+    expect(observations[0].facts).toContain('[important] review this');
+    expect(observations[0].facts).toContain('second fact line');
+  });
+});
