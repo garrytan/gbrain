@@ -76,4 +76,47 @@ describe('selectAutoPromoteCandidates', () => {
     expect(r.risky).toHaveLength(0);
     expect(r.excluded).toHaveLength(0);
   });
+  it('excludes refuted candidates regardless of evidence kind', () => {
+    const r = selectAutoPromoteCandidates([{ ...base, verification_status: 'refuted' }], policy);
+    expect(r.excluded).toHaveLength(1);
+    expect(r.excluded[0].reason).toBe('verification_refuted');
+  });
+  it('upgrades verified inferred candidates from risky handoff to low_risk', () => {
+    const unverified = selectAutoPromoteCandidates([{ ...base, extraction_kind: 'inferred' }], policy);
+    const verified = selectAutoPromoteCandidates([{
+      ...base,
+      extraction_kind: 'inferred',
+      verification_status: 'verified',
+    }], policy);
+
+    expect(unverified.risky).toHaveLength(1);
+    expect(verified.low_risk).toHaveLength(1);
+    expect(verified.risky).toHaveLength(0);
+  });
+  it('keeps verified risky candidates in handoff when the upgrade is disabled by policy', () => {
+    const restricted = {
+      ...policy,
+      eligibility: { ...policy.eligibility, allow_verified_risky_upgrade: false },
+    };
+    const r = selectAutoPromoteCandidates([{
+      ...base,
+      extraction_kind: 'inferred',
+      verification_status: 'verified',
+    }], restricted);
+
+    expect(r.low_risk).toHaveLength(0);
+    expect(r.risky).toHaveLength(1);
+  });
+  it('routes unverified candidates to risky handoff when require_verification is on', () => {
+    const strict = {
+      ...policy,
+      eligibility: { ...policy.eligibility, require_verification: true },
+    };
+    const unverified = selectAutoPromoteCandidates([{ ...base }], strict);
+    const verified = selectAutoPromoteCandidates([{ ...base, verification_status: 'verified' }], strict);
+
+    expect(unverified.low_risk).toHaveLength(0);
+    expect(unverified.risky).toHaveLength(1);
+    expect(verified.low_risk).toHaveLength(1);
+  });
 });

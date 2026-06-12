@@ -92,6 +92,7 @@ const MEMORY_MUTATION_OPERATION_NAMES = [
   'attach_memory_realm_to_session',
   'create_memory_candidate_entry',
   'advance_memory_candidate_status',
+  'verify_memory_candidate_entry',
   'reject_memory_candidate_entry',
   'delete_memory_candidate_entry',
   'promote_memory_candidate_entry',

@@ -62,6 +62,7 @@ export type MemoryMutationOperationName =
   | 'attach_memory_realm_to_session'
   | 'create_memory_candidate_entry'
   | 'advance_memory_candidate_status'
+  | 'verify_memory_candidate_entry'
   | 'reject_memory_candidate_entry'
   | 'delete_memory_candidate_entry'
   | 'promote_memory_candidate_entry'
@@ -405,6 +406,16 @@ export type MemoryCandidateTargetObjectType =
   | 'personal_episode'
   | 'other';
 
+export type MemoryCandidateVerificationStatus = 'unverified' | 'verified' | 'refuted';
+
+export type MemoryCandidateVerificationMethod =
+  | 'command_execution'
+  | 'db_query'
+  | 'file_inspection'
+  | 'source_recheck'
+  | 'user_confirmation'
+  | 'external_lookup';
+
 export type MemoryCandidatePromotionPreflightDecision = 'allow' | 'deny' | 'defer';
 
 export type MemoryCandidatePromotionPreflightReason =
@@ -414,6 +425,7 @@ export type MemoryCandidatePromotionPreflightReason =
   | 'candidate_scope_conflict'
   | 'candidate_unknown_sensitivity'
   | 'candidate_requires_revalidation'
+  | 'candidate_refuted'
   | 'candidate_possible_duplicate'
   | 'candidate_ready_for_promotion';
 
@@ -434,6 +446,11 @@ export interface MemoryCandidateEntry {
   target_object_id: string | null;
   reviewed_at: Date | null;
   review_reason: string | null;
+  verification_status: MemoryCandidateVerificationStatus;
+  verification_method: MemoryCandidateVerificationMethod | null;
+  verification_evidence: string | null;
+  verification_source_refs: string[];
+  verified_at: Date | null;
   patch_target_kind?: MemoryMutationTargetKind | null;
   patch_target_id?: string | null;
   patch_base_target_snapshot_hash?: string | null;
@@ -547,6 +564,14 @@ export interface MemoryCandidateStatusPatch {
   status: Exclude<MemoryCandidateStatus, 'promoted' | 'superseded'>;
   reviewed_at?: Date | string | null;
   review_reason?: string | null;
+}
+
+export interface MemoryCandidateVerificationPatch {
+  verification_status: Exclude<MemoryCandidateVerificationStatus, 'unverified'>;
+  verification_method: MemoryCandidateVerificationMethod;
+  verification_evidence: string;
+  verification_source_refs?: string[];
+  verified_at?: Date | string | null;
 }
 
 export interface MemoryCandidatePromotionPatch {

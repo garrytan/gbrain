@@ -21,6 +21,11 @@ function candidate(input: Partial<MemoryCandidateEntry> & { id: string; proposed
     status: input.status ?? 'candidate',
     reviewed_at: input.reviewed_at ?? null,
     review_reason: input.review_reason ?? null,
+    verification_status: 'unverified',
+    verification_method: null,
+    verification_evidence: null,
+    verification_source_refs: [],
+    verified_at: null,
     created_at: input.created_at ?? now,
     updated_at: input.updated_at ?? now,
   };

@@ -8,6 +8,8 @@ import type {
   MemoryCandidateStatus,
   MemoryCandidateStatusEventKind,
   MemoryCandidateTargetObjectType,
+  MemoryCandidateVerificationMethod,
+  MemoryCandidateVerificationStatus,
 } from '../types.ts';
 import {
   reviewDuplicateMemory,
@@ -29,12 +31,30 @@ const ISO_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?
 
 export class MemoryInboxServiceError extends Error {
   constructor(
-    public code: 'memory_candidate_not_found' | 'invalid_status_transition' | 'promotion_preflight_failed',
+    public code: 'memory_candidate_not_found' | 'invalid_status_transition' | 'promotion_preflight_failed' | 'invalid_verification',
     message: string,
   ) {
     super(message);
     this.name = 'MemoryInboxServiceError';
   }
+}
+
+export const MEMORY_CANDIDATE_VERIFICATION_METHODS = [
+  'command_execution',
+  'db_query',
+  'file_inspection',
+  'source_recheck',
+  'user_confirmation',
+  'external_lookup',
+] as const satisfies readonly MemoryCandidateVerificationMethod[];
+
+export interface VerifyMemoryCandidateEntryInput {
+  id: string;
+  verification_status: Exclude<MemoryCandidateVerificationStatus, 'unverified'>;
+  verification_method: MemoryCandidateVerificationMethod;
+  verification_evidence: string;
+  verification_source_refs?: string[];
+  verified_at?: Date | string | null;
 }
 
 export interface AdvanceMemoryCandidateStatusInput {
@@ -101,6 +121,9 @@ export async function preflightPromoteMemoryCandidate(
   }
   if (hasScopeConflict(entry)) {
     denyReasons.push('candidate_scope_conflict');
+  }
+  if (entry.verification_status === 'refuted') {
+    denyReasons.push('candidate_refuted');
   }
   if (entry.sensitivity === 'unknown') {
     deferReasons.push('candidate_unknown_sensitivity');
@@ -196,6 +219,63 @@ export async function advanceMemoryCandidateStatus(
       interaction_id: input.interaction_id ?? null,
     });
     return advanced;
+  });
+}
+
+export async function verifyMemoryCandidateEntry(
+  engine: BrainEngine,
+  input: VerifyMemoryCandidateEntryInput,
+): Promise<MemoryCandidateEntry> {
+  if (input.verification_status !== 'verified' && input.verification_status !== 'refuted') {
+    throw new MemoryInboxServiceError(
+      'invalid_verification',
+      'verification_status must be verified or refuted.',
+    );
+  }
+  if (!MEMORY_CANDIDATE_VERIFICATION_METHODS.includes(input.verification_method)) {
+    throw new MemoryInboxServiceError(
+      'invalid_verification',
+      `verification_method must be one of: ${MEMORY_CANDIDATE_VERIFICATION_METHODS.join(', ')}.`,
+    );
+  }
+  if (typeof input.verification_evidence !== 'string' || input.verification_evidence.trim().length === 0) {
+    throw new MemoryInboxServiceError(
+      'invalid_verification',
+      'verification_evidence must be a non-empty string describing how the claim was checked.',
+    );
+  }
+
+  return engine.transaction(async (txBase) => {
+    const tx = txBase as BrainEngine;
+    const entry = await tx.getMemoryCandidateEntry(input.id);
+    if (!entry) {
+      throw new MemoryInboxServiceError(
+        'memory_candidate_not_found',
+        `Memory candidate not found: ${input.id}`,
+      );
+    }
+
+    if (entry.status !== 'captured' && entry.status !== 'candidate' && entry.status !== 'staged_for_review') {
+      throw new MemoryInboxServiceError(
+        'invalid_status_transition',
+        `Cannot verify memory candidate in terminal status ${entry.status}; only active candidates may be verified.`,
+      );
+    }
+
+    const updated = await tx.updateMemoryCandidateEntryVerification(entry.id, {
+      verification_status: input.verification_status,
+      verification_method: input.verification_method,
+      verification_evidence: input.verification_evidence,
+      verification_source_refs: input.verification_source_refs ?? [],
+      verified_at: normalizeMemoryInboxReviewedAt(input.verified_at, new Date()),
+    });
+    if (!updated) {
+      throw new MemoryInboxServiceError(
+        'invalid_status_transition',
+        `Cannot verify memory candidate ${entry.id}; current state changed before verification completed.`,
+      );
+    }
+    return updated;
   });
 }
 
@@ -353,6 +433,11 @@ function hasUsableTargetBinding(entry: MemoryCandidateEntry): boolean {
 }
 
 function requiresRevalidation(entry: MemoryCandidateEntry): boolean {
+  // An explicit verification record (a checked fact with evidence) clears the
+  // revalidation requirement; see verifyMemoryCandidateEntry.
+  if (entry.verification_status === 'verified') {
+    return false;
+  }
   return entry.candidate_type === 'procedure'
     || entry.target_object_type === 'other';
 }
@@ -404,6 +489,8 @@ function formatReasonLabel(reason: MemoryCandidatePromotionPreflightReason): str
       return 'candidate sensitivity is unknown';
     case 'candidate_requires_revalidation':
       return 'candidate requires revalidation';
+    case 'candidate_refuted':
+      return 'candidate verification refuted the claim';
     case 'candidate_possible_duplicate':
       return 'possible duplicate';
     case 'candidate_ready_for_promotion':
