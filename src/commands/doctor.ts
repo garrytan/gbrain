@@ -5666,11 +5666,23 @@ export async function buildChecks(
           continue;
         }
         if (engine.kind === 'postgres' && haveIndex.get(colName) === false) {
-          issues.push(
-            `${colName}: no HNSW index. Search works but uses sequential scan. ` +
-              `Fix: CREATE INDEX IF NOT EXISTS idx_chunks_${colName} ON content_chunks USING hnsw (${quoteIdentifier(colName)} ${entry.type}_cosine_ops);`,
-          );
-          continue;
+          // pgvector HNSW supports vector columns only up to 2,000 dimensions.
+          // Brains migrated to zeroentropy/zembed keep the legacy full-precision
+          // `embedding vector(2560)` column for compatibility, but search runs
+          // through the configured active `embedding_half halfvec(2560)` column
+          // which *is* indexable and indexed. Do not warn operators to run an
+          // impossible CREATE INDEX for an inactive legacy column when the active
+          // column already has HNSW coverage.
+          const activeIndexed = activeCol && haveIndex.get(activeCol) === true;
+          const impossibleInactiveVectorIndex =
+            colName !== activeCol && activeIndexed && entry.type === 'vector' && entry.dimensions > 2000;
+          if (!impossibleInactiveVectorIndex) {
+            issues.push(
+              `${colName}: no HNSW index. Search works but uses sequential scan. ` +
+                `Fix: CREATE INDEX IF NOT EXISTS idx_chunks_${colName} ON content_chunks USING hnsw (${quoteIdentifier(colName)} ${entry.type}_cosine_ops);`,
+            );
+            continue;
+          }
         }
         okColumns.push(colName);
       }
