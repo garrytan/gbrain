@@ -1,7 +1,8 @@
 /**
- * v0.29 — Recompute emotional weight phase. Runs AFTER extract + synthesize so
- * it sees the union of (sync-touched, synthesize-written) pages with fresh
- * tag + take state. Pure deterministic computation; no LLM calls.
+ * v0.29 — Recompute emotional weight phase. Runs AFTER extract + synthesize +
+ * consolidate so it sees the union of (sync-touched, synthesize-written,
+ * consolidate-take-affected) pages with fresh tag + take state. Pure
+ * deterministic computation; no LLM calls.
  *
  * Two SQL round-trips total regardless of brain size (codex C4#3, C4#4):
  *   1. batchLoadEmotionalInputs — single CTE-shaped read with per-table
@@ -28,9 +29,10 @@ export interface RecomputeEmotionalWeightOpts {
   /** When false, the phase reads + computes but skips the UPDATE. */
   dryRun?: boolean;
   /**
-   * Slugs to recompute. Undefined / empty array = full brain recompute.
-   * Caller passes `union(syncPagesAffected, synthesizeWrittenSlugs)` for
-   * the incremental path.
+   * Slugs to recompute. Undefined = full brain recompute; empty array =
+   * zero-work success. Caller passes
+   * `union(syncPagesAffected, synthesizeWrittenSlugs, consolidateTakeSlugs)`
+   * for the incremental path.
    */
   affectedSlugs?: string[];
   /** GBrain config for high_emotion_tags + user_holder overrides. */

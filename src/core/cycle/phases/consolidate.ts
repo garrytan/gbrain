@@ -58,6 +58,12 @@ export async function runPhaseConsolidate(
   let takesWritten = 0;
   let bucketsProcessed = 0;
   let bucketsSkipped = 0;
+  // Slugs of pages whose takes were created/refreshed this run. Reported in
+  // details.pages_affected so runCycle can feed the incremental
+  // recompute_emotional_weight union — a page that gains an active take here
+  // changes its emotional-weight inputs even when sync/synthesize never
+  // touched it.
+  const pagesAffected = new Set<string>();
 
   // Pull every (source_id, entity_slug) bucket of unconsolidated facts.
   // Uses the partial idx_facts_unconsolidated index.
@@ -155,6 +161,7 @@ export async function runPhaseConsolidate(
         // Pretend we did it.
         takesWritten += 1;
         factsConsolidated += cluster.length;
+        pagesAffected.add(b.entity_slug);
         nextRowNum += 1;
         continue;
       }
@@ -211,6 +218,10 @@ export async function runPhaseConsolidate(
         nextRowNum += 1;
         takesWritten += 1;
       }
+      // Both branches (fresh INSERT + re-promotion refresh) count: the page's
+      // take set is current as of this run, and including re-promotions lets
+      // the recompute pass self-heal pages whose weight a pre-fix cycle missed.
+      pagesAffected.add(b.entity_slug);
 
       // Mark all contributing facts consolidated.
       for (const f of cluster) {
@@ -264,6 +275,7 @@ export async function runPhaseConsolidate(
       takes_written: takesWritten,
       buckets_processed: bucketsProcessed,
       buckets_skipped: bucketsSkipped,
+      pages_affected: Array.from(pagesAffected).sort(),
     },
   };
 }

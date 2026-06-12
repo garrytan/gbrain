@@ -128,15 +128,20 @@ export const ALL_PHASES: CyclePhase[] = [
   // so the cluster pass sees fresh cross-session themes. Same pack-gate
   // model as extract_atoms.
   'synthesize_concepts',
-  // v0.29 — runs AFTER extract + synthesize so it sees the union of
-  // sync-touched + synthesize-written pages with fresh tag + take state.
-  'recompute_emotional_weight',
   // v0.31: cluster unconsolidated facts per (source_id, entity_slug);
   // Sonnet-synthesize one take per cluster; INSERT into takes(kind='fact');
   // mark facts consolidated_at + consolidated_into. Never DELETE — facts
   // stay as audit trail. Placed AFTER patterns (graph-fresh) and BEFORE
   // embed (so the new takes get embedded same-cycle).
   'consolidate',
+  // v0.29 — runs AFTER extract + synthesize + consolidate so it sees fresh
+  // tag + take state for every page touched this cycle. Moved below
+  // consolidate (originally sat above it) because consolidate INSERTs active
+  // takes — an emotional-weight input — onto pages that sync/synthesize may
+  // never touch; running first meant those pages kept emotional_weight=0
+  // until a manual full walk. Incremental mode unions
+  // (sync ∪ synthesize ∪ consolidate) slugs.
+  'recompute_emotional_weight',
   // v0.36.1.0 Hindsight calibration wave. Ordering rationale:
   //   - propose_takes AFTER consolidate so the proposal LLM sees the
   //     freshly-consolidated takes when deciding what's NOT yet captured
@@ -1571,10 +1576,12 @@ export async function runCycle(
 
     // ── Phase 3: sync ───────────────────────────────────────────
     // Track which slugs sync touched so extract can run incrementally,
-    // and which slugs synthesize wrote so recompute_emotional_weight can
-    // pick up the union of (sync ∪ synthesize) for v0.29 incremental mode.
+    // which slugs synthesize wrote, and which pages consolidate gave new
+    // takes, so recompute_emotional_weight can pick up the union of
+    // (sync ∪ synthesize ∪ consolidate) for v0.29 incremental mode.
     let syncPagesAffected: string[] | undefined;
     let synthesizeWrittenSlugs: string[] | undefined;
+    let consolidateTakeSlugs: string[] | undefined;
     if (phases.includes('sync')) {
       checkAborted(opts.signal);
       if (!engine) {
@@ -1864,47 +1871,7 @@ export async function runCycle(
       await safeYield(opts.yieldBetweenPhases);
     }
 
-    // ── Phase 7: recompute_emotional_weight (v0.29) ─────────────
-    // Runs AFTER extract + synthesize so it sees fresh tags + takes for
-    // every page touched in this cycle. Incremental mode uses union(sync,
-    // synthesize); full mode walks every page in the brain.
-    if (phases.includes('recompute_emotional_weight')) {
-      checkAborted(opts.signal);
-      if (!engine) {
-        phaseResults.push({
-          phase: 'recompute_emotional_weight',
-          status: 'skipped',
-          duration_ms: 0,
-          summary: 'no database connected',
-          details: { reason: 'no_database' },
-        });
-      } else {
-        progress.start('cycle.recompute_emotional_weight');
-        const { runPhaseRecomputeEmotionalWeight } = await import('./cycle/recompute-emotional-weight.ts');
-        // Determine incremental vs full mode. If sync OR synthesize ran in this
-        // cycle, do incremental over their union. If neither phase ran (e.g.,
-        // user passed `--phase recompute_emotional_weight`), do full walk.
-        const incremental: string[] | undefined =
-          (syncPagesAffected || synthesizeWrittenSlugs)
-            ? Array.from(new Set([
-                ...(syncPagesAffected ?? []),
-                ...(synthesizeWrittenSlugs ?? []),
-              ]))
-            : undefined;
-        const { result, duration_ms } = await timePhase(() =>
-          runPhaseRecomputeEmotionalWeight(engine, {
-            dryRun,
-            affectedSlugs: incremental,
-          }),
-        );
-        result.duration_ms = duration_ms;
-        phaseResults.push(result);
-        progress.finish();
-      }
-      await safeYield(opts.yieldBetweenPhases);
-    }
-
-    // ── Phase 8 (v0.31): consolidate facts → takes ──────────────
+    // ── Phase 7 (v0.31): consolidate facts → takes ──────────────
     // Cluster unconsolidated facts per entity, Sonnet-synthesize one take
     // per cluster, INSERT into takes(kind='fact'), mark facts as
     // consolidated_into. Never DELETE — facts are the audit trail.
@@ -1926,6 +1893,56 @@ export async function runCycle(
           yieldDuringPhase: opts.yieldDuringPhase,
           signal: opts.signal,
         }));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        // Capture pages that gained takes so recompute_emotional_weight can
+        // union them with sync's pagesAffected + synthesize's written_slugs
+        // for incremental mode (mirrors the synthesize capture above).
+        if (result.details && Array.isArray(result.details.pages_affected)) {
+          consolidateTakeSlugs = result.details.pages_affected as string[];
+        }
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // ── Phase 8: recompute_emotional_weight (v0.29) ─────────────
+    // Runs AFTER extract + synthesize + consolidate so it sees fresh tags +
+    // takes for every page touched in this cycle — consolidate INSERTs
+    // active takes (a weight input) onto pages sync/synthesize may never
+    // touch, so it must run first. Incremental mode uses union(sync,
+    // synthesize, consolidate); full mode walks every page in the brain.
+    if (phases.includes('recompute_emotional_weight')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'recompute_emotional_weight',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.recompute_emotional_weight');
+        const { runPhaseRecomputeEmotionalWeight } = await import('./cycle/recompute-emotional-weight.ts');
+        // Determine incremental vs full mode. If sync, synthesize, OR
+        // consolidate ran in this cycle, do incremental over their union. If
+        // none of them ran (e.g., user passed
+        // `--phase recompute_emotional_weight`), do full walk.
+        const incremental: string[] | undefined =
+          (syncPagesAffected || synthesizeWrittenSlugs || consolidateTakeSlugs)
+            ? Array.from(new Set([
+                ...(syncPagesAffected ?? []),
+                ...(synthesizeWrittenSlugs ?? []),
+                ...(consolidateTakeSlugs ?? []),
+              ]))
+            : undefined;
+        const { result, duration_ms } = await timePhase(() =>
+          runPhaseRecomputeEmotionalWeight(engine, {
+            dryRun,
+            affectedSlugs: incremental,
+          }),
+        );
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();

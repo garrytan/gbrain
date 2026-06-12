@@ -32,19 +32,21 @@ import { tmpdir } from 'os';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 
 // Mock must declare EVERY symbol src/core/embedding.ts exports — Bun's module
-// linker fails-fast if any consumer downstream imports a missing one. v0.36.1.0
-// added `embedMultimodal` and `embedQuery` to the module; the propose_takes
-// phase + other v0.36 phases pull both, so the mock has to keep parity.
+// linker fails-fast if any consumer downstream imports a missing one (this
+// bit when v0.41.31 added willEmbedSynchronously and src/commands/sync.ts in
+// the import graph pulled it). Spreading the real module forwards every
+// pure/passive export automatically; only the network-touching embed surface
+// stays stubbed.
+import * as realEmbedding from '../../src/core/embedding.ts';
 mock.module('../../src/core/embedding.ts', () => ({
+  ...realEmbedding,
   embed: async () => new Float32Array(1536),
   embedQuery: async () => new Float32Array(1536),
   embedBatch: async (texts: string[]) => texts.map(() => new Float32Array(1536)),
   embedMultimodal: async () => [],
+  embedMultimodalSafe: async () => [],
   getEmbeddingModelName: () => 'text-embedding-3-large',
   getEmbeddingDimensions: () => 1536,
-  EMBEDDING_MODEL: 'text-embedding-3-large',
-  EMBEDDING_DIMENSIONS: 1536,
-  EMBEDDING_COST_PER_1K_TOKENS: 0.00013,
   estimateEmbeddingCostUsd: (tokens: number) => (tokens / 1000) * 0.00013,
   // v0.41.31: embed phase reads the current signature to stamp provenance.
   currentEmbeddingSignature: () => 'text-embedding-3-large:1536',
@@ -122,8 +124,10 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'resolve_symbol_edges',       // v0.33.3 — within-file symbol resolution
   'patterns',
   'synthesize_concepts',         // v0.41 T9 — concept synthesis (pack-gated)
-  'recompute_emotional_weight', // v0.29
   'consolidate',                // v0.31
+  'recompute_emotional_weight', // v0.29 — moved after consolidate so pages
+                                // whose takes were created by consolidate get
+                                // their weight recomputed in the same cycle
   'propose_takes',              // v0.36.1.0 — hindsight calibration wave
   'grade_takes',                // v0.36.1.0
   'calibration_profile',        // v0.36.1.0
