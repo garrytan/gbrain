@@ -743,6 +743,21 @@ export interface SyncOpts {
   /** Multi-repo: sync strategy override (markdown, code, auto). */
   strategy?: 'markdown' | 'code' | 'auto';
   /**
+   * Glob filters threaded into `isSyncable` / `unsyncableReason`. Populated
+   * by `syncOneSource` from the source's `config.include_globs` /
+   * `config.exclude_globs` arrays (set via `gbrain sources add --include
+   * <glob>` / `--exclude <glob>`). The internal classifier in
+   * `src/core/sync.ts` already understood these via its `SyncableOptions`
+   * shape; this opt threads them from persisted source config into the
+   * filter callsites at performSync line ~1454.
+   *
+   * Empty arrays are the same as undefined (no filtering). `exclude` is
+   * applied after `include`; a path that matches a `include_globs` entry
+   * is then rejected by `exclude_globs` if it also matches one.
+   */
+  include?: string[];
+  exclude?: string[];
+  /**
    * Number of parallel workers for the import phase. When > 1, each worker
    * gets its own small Postgres connection pool and files are dispatched via
    * an atomic queue index (same pattern as `import --workers N`).
@@ -934,6 +949,19 @@ function unique<T>(items: T[]): T[] {
 // v0.42.42.0 (#2139): `buildDetachedWorkingTreeManifest` relocated to
 // `src/core/sync-delta.ts` (re-imported below) so the inline cost estimator
 // prices detached sources through the same code the executor imports them with.
+
+/**
+ * Defensive parse for the JSONB-loaded `config.include_globs` / `config.exclude_globs`
+ * arrays read off the sources row. The column is a free-form JSONB and could
+ * contain anything — coerce to a string-only array, drop empties, and return
+ * undefined when the result has no useful entries so the caller can decide
+ * not to engage glob-filtering at all.
+ */
+export function parseGlobList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const globs = value.filter((v): v is string => typeof v === 'string' && v.length > 0);
+  return globs.length > 0 ? globs : undefined;
+}
 
 // v0.18.0 Step 5: source-scoped sync state helpers. When opts.sourceId
 // is set, read/write the per-source row instead of the global config
@@ -1835,8 +1863,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   }
   const manifest = delta.manifest;
 
-  // Filter to syncable files (strategy-aware)
-  const syncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
+  // Filter to syncable files (strategy + glob-aware). `include` / `exclude`
+  // arrive from the source row's `config.include_globs` / `config.exclude_globs`
+  // via syncOneSource, so a `gbrain sources add --exclude 'Templates/**'` is
+  // honored on every subsequent sync without further wiring.
+  const include = opts.include && opts.include.length > 0 ? opts.include : undefined;
+  const exclude = opts.exclude && opts.exclude.length > 0 ? opts.exclude : undefined;
+  const syncOpts = (opts.strategy || include || exclude)
+    ? { strategy: opts.strategy, include, exclude }
+    : undefined;
   // #1970 (F-C): a rename whose DESTINATION is unsyncable drops out of BOTH
   // `renamed` (only `r.to` is kept below) AND `deleted` (git emits it as `R`,
   // not `D`), leaving the OLD page stale. Fold the source side into the delete
@@ -3596,7 +3631,11 @@ See also:
     const onAllSigint = () => { try { allInterrupt.abort(new Error('SIGINT')); } catch { /* */ } };
 
     const runOne = async (src: typeof sources[number]): Promise<SyncResult> => {
-      const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
+      const cfg = (src.config || {}) as {
+        strategy?: 'markdown' | 'code' | 'auto';
+        include_globs?: unknown;
+        exclude_globs?: unknown;
+      };
       // D18: parallel path defers embed; auto-enqueue embed-backfill after.
       // v0.42.42.0 (#2139): `autoDeferEmbeds` (the inline gate tripped in a
       // non-TTY session) ALSO forces deferral — global by design (the gate's
@@ -3634,6 +3673,8 @@ See also:
         skipFailed, retryFailed, noSchemaPack,
         sourceId: src.id,
         strategy: cfg.strategy,
+        include: parseGlobList(cfg.include_globs),
+        exclude: parseGlobList(cfg.exclude_globs),
         concurrency,
         signal: composeAbortSignals(allInterrupt.signal, controller?.signal),
       };
@@ -3845,9 +3886,24 @@ See also:
   // lock released by its own finally) instead of a hard cut.
   const singleSourceInterrupt = new AbortController();
   const onSingleSourceSigint = () => { try { singleSourceInterrupt.abort(new Error('SIGINT')); } catch { /* */ } };
+  // Read persisted include/exclude globs from the source row, mirroring the
+  // --all fan-out's `runOne` closure above. Best-effort: a fetch failure
+  // falls through to "no glob filters", preserving pre-existing behavior.
+  // sourceId is always set here (resolveSourceWithTier ran above), so this
+  // path never silently runs without source-config awareness.
+  let sourceCfg: { include_globs?: unknown; exclude_globs?: unknown } = {};
+  try {
+    const { fetchSource } = await import('../core/sources-load.ts');
+    const src = await fetchSource(engine, sourceId);
+    if (src?.config && typeof src.config === 'object') {
+      sourceCfg = src.config as { include_globs?: unknown; exclude_globs?: unknown };
+    }
+  } catch { /* fall through to no filters */ }
   const opts: SyncOpts = {
     repoPath, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, noSchemaPack, sourceId,
     strategy: strategyArg, concurrency,
+    include: parseGlobList(sourceCfg.include_globs),
+    exclude: parseGlobList(sourceCfg.exclude_globs),
     signal: composeAbortSignals(singleSourceInterrupt.signal, singleSourceController?.signal),
   };
 
@@ -4075,7 +4131,11 @@ export async function syncOneSource(
     noExtract?: boolean;
   },
 ): Promise<{ result: SyncResult; log: string }> {
-  const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
+  const cfg = (src.config || {}) as {
+    strategy?: 'markdown' | 'code' | 'auto';
+    include_globs?: unknown;
+    exclude_globs?: unknown;
+  };
   const log = `\n--- Syncing source: ${src.name} ---\n`;
   const repoOpts: SyncOpts = {
     repoPath: src.local_path!,
@@ -4089,6 +4149,8 @@ export async function syncOneSource(
     noSchemaPack: shared.noSchemaPack,
     sourceId: src.id,
     strategy: cfg.strategy,
+    include: parseGlobList(cfg.include_globs),
+    exclude: parseGlobList(cfg.exclude_globs),
     concurrency: shared.concurrency,
     // lockId defaults to `gbrain-sync:${src.id}` via the invariant in
     // performSync (no explicit override needed — sourceId triggers it).

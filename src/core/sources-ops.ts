@@ -145,6 +145,19 @@ export interface AddSourceOpts {
    * Only honored when remoteUrl is set.
    */
   cloneDir?: string;
+  /**
+   * Glob filters persisted into `sources.config.include_globs` /
+   * `sources.config.exclude_globs`. Read at sync time by
+   * `commands/sync.ts:syncOneSource` and the single-source path, threaded
+   * into `isSyncable` / `unsyncableReason` (their `SyncableOptions` shape
+   * has carried this contract since v0.41.13).
+   *
+   * Empty / unspecified arrays are not persisted at all (no `[]` written
+   * to the JSONB), which keeps the row identical to today for sources
+   * that don't use filtering.
+   */
+  includeGlobs?: string[];
+  excludeGlobs?: string[];
 }
 
 export interface RemoveSourceOpts {
@@ -403,6 +416,12 @@ export async function addSource(
     if (opts.federated !== null && opts.federated !== undefined) {
       config.federated = opts.federated;
     }
+    if (opts.includeGlobs && opts.includeGlobs.length > 0) {
+      config.include_globs = opts.includeGlobs;
+    }
+    if (opts.excludeGlobs && opts.excludeGlobs.length > 0) {
+      config.exclude_globs = opts.excludeGlobs;
+    }
     const displayName = opts.name ?? opts.id;
 
     try {
@@ -450,6 +469,12 @@ export async function addSource(
     const config: Record<string, unknown> = {};
     if (opts.federated !== null && opts.federated !== undefined) {
       config.federated = opts.federated;
+    }
+    if (opts.includeGlobs && opts.includeGlobs.length > 0) {
+      config.include_globs = opts.includeGlobs;
+    }
+    if (opts.excludeGlobs && opts.excludeGlobs.length > 0) {
+      config.exclude_globs = opts.excludeGlobs;
     }
     const displayName = opts.name ?? opts.id;
     await engine.executeRaw(
