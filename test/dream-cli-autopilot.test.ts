@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
@@ -28,33 +28,34 @@ describe('dream CLI and autopilot integration', () => {
   });
 
   test('dream CLI and autopilot dream command call the same phase runner input contract', async () => {
-    const calls: Array<Record<string, unknown>> = [];
-    const runner = async (input: Record<string, unknown>) => {
-      calls.push(input);
-      return {
-        status: 'ok',
-        mode: input.dry_run === false ? 'apply' : 'dry_run',
-        scope_id: input.scope_id,
-        phases: [],
+    await withTempConfigDir({ autopilot: { allow_llm: false, allow_local_runner: false } }, async () => {
+      const calls: Array<Record<string, unknown>> = [];
+      const runner = async (input: Record<string, unknown>) => {
+        calls.push(input);
+        return {
+          status: 'ok',
+          mode: input.dry_run === false ? 'apply' : 'dry_run',
+          scope_id: input.scope_id,
+          phases: [],
+        };
       };
-    };
-    const { runDream } = await importFreshDreamCommand();
-    const { runAutopilot } = await importFreshAutopilotCommand();
+      const { runDream } = await importFreshDreamCommand();
+      const { runAutopilot } = await importFreshAutopilotCommand();
 
-    await captureConsole(() => runDream(stubEngine(), [
-      '--scope-id', 'workspace:default',
-      '--now', '2026-05-21T10:00:00.000Z',
-      '--dry-run',
-    ], { runner }));
-    await captureConsole(() => runAutopilot([
-      'dream',
-      '--scope-id', 'workspace:default',
-      '--now', '2026-05-21T10:00:00.000Z',
-      '--dry-run',
-    ], { engine: stubEngine(), dreamRunner: runner }));
+      await captureConsole(() => runDream(stubEngine(), [
+        '--scope-id', 'workspace:default',
+        '--now', '2026-05-21T10:00:00.000Z',
+        '--dry-run',
+      ], { runner }));
+      await captureConsole(() => runAutopilot([
+        'dream',
+        '--scope-id', 'workspace:default',
+        '--now', '2026-05-21T10:00:00.000Z',
+        '--dry-run',
+      ], { engine: stubEngine(), dreamRunner: runner }));
 
-    expect(calls).toHaveLength(2);
-    expect(calls[0]).toEqual({
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toEqual({
         scope_id: 'workspace:default',
         now: '2026-05-21T10:00:00.000Z',
         dry_run: true,
@@ -62,8 +63,8 @@ describe('dream CLI and autopilot integration', () => {
         apply_auto_promote: false,
         allow_canonical_page_writes: false,
         trigger: 'cli',
-    });
-    expect(calls[1]).toMatchObject({
+      });
+      expect(calls[1]).toMatchObject({
         scope_id: 'workspace:default',
         now: '2026-05-21T10:00:00.000Z',
         dry_run: true,
@@ -71,9 +72,10 @@ describe('dream CLI and autopilot integration', () => {
         apply_auto_promote: false,
         allow_canonical_page_writes: false,
         trigger: 'autopilot',
+      });
+      expect(calls[1]).toHaveProperty('allow_local_runner', false);
+      expect(calls[1]).toHaveProperty('allow_llm', false);
     });
-    expect(calls[1]).toHaveProperty('allow_local_runner', false);
-    expect(calls[1]).toHaveProperty('allow_llm', false);
   });
 
   test('dry-run flag wins if apply and dry-run are both provided', async () => {
@@ -161,6 +163,88 @@ describe('dream CLI and autopilot integration', () => {
       });
     });
   });
+
+  test('dream CLI apply mode uses the built-in replay canary before phase work', async () => {
+    await withSQLiteEngine(async (engine) => {
+      const { runDream } = await importFreshDreamCommand();
+      const { stdout } = await captureConsole(() => runDream(engine, [
+        '--scope-id', 'workspace:default',
+        '--now', '2026-06-06T00:00:00.000Z',
+        '--apply',
+      ]));
+      const result = JSON.parse(stdout);
+
+      expect(result.status).not.toBe('failed');
+      expect(result.guardrails.replay_canary).toMatchObject({
+        status: 'passed',
+        required: true,
+      });
+      expect(result.guardrails.replay_canary.reason_codes).toContain('proof_agent_memory_passed');
+      expect(result.phases.length).toBeGreaterThan(0);
+    });
+  });
+
+  test('autopilot dream apply mode uses the built-in replay canary before phase work', async () => {
+    await withSQLiteEngine(async (engine) => {
+      const { runAutopilot } = await importFreshAutopilotCommand();
+      const { stdout } = await captureConsole(() => runAutopilot([
+        'dream',
+        '--scope-id', 'workspace:default',
+        '--now', '2026-06-06T00:00:00.000Z',
+        '--apply',
+      ], { engine }));
+      const result = JSON.parse(stdout);
+
+      expect(result.status).not.toBe('failed');
+      expect(result.guardrails.replay_canary).toMatchObject({
+        status: 'passed',
+        required: true,
+      });
+      expect(result.guardrails.replay_canary.reason_codes).toContain('proof_agent_memory_passed');
+      expect(result.phases.length).toBeGreaterThan(0);
+    });
+  });
+
+  test('autopilot run-once apply cycle uses the built-in replay canary before phase work', async () => {
+    await withSQLiteEngine(async (engine, paths) => {
+      const originalConfigDir = process.env.MBRAIN_CONFIG_DIR;
+      const originalConfigPath = process.env.MBRAIN_CONFIG_PATH;
+      process.env.MBRAIN_CONFIG_DIR = paths.configDir;
+      delete process.env.MBRAIN_CONFIG_PATH;
+      try {
+        mkdirSync(paths.configDir, { recursive: true });
+        writeFileSync(join(paths.configDir, 'config.json'), JSON.stringify({
+          engine: 'sqlite',
+          database_path: paths.databasePath,
+          autopilot: {
+            enabled: true,
+            mode: 'manual',
+            allow_llm: false,
+            allow_local_runner: false,
+          },
+        }, null, 2));
+
+        const { runAutopilot } = await importFreshAutopilotCommand();
+        const { stdout } = await captureConsole(() => runAutopilot([
+          'run-once',
+        ], { engine }));
+        const result = JSON.parse(stdout);
+
+        expect(result.status).not.toBe('failed');
+        expect(result.dream_result.guardrails.replay_canary).toMatchObject({
+          status: 'passed',
+          required: true,
+        });
+        expect(result.dream_result.guardrails.replay_canary.reason_codes).toContain('proof_agent_memory_passed');
+        expect(result.dream_result.phases.length).toBeGreaterThan(0);
+      } finally {
+        if (originalConfigDir === undefined) delete process.env.MBRAIN_CONFIG_DIR;
+        else process.env.MBRAIN_CONFIG_DIR = originalConfigDir;
+        if (originalConfigPath === undefined) delete process.env.MBRAIN_CONFIG_PATH;
+        else process.env.MBRAIN_CONFIG_PATH = originalConfigPath;
+      }
+    });
+  });
 });
 
 async function importFreshDreamCommand() {
@@ -178,15 +262,42 @@ function stubEngine() {
   } as any;
 }
 
-async function withSQLiteEngine(run: (engine: SQLiteEngine) => Promise<void>) {
+async function withSQLiteEngine(
+  run: (engine: SQLiteEngine, paths: { rootDir: string; configDir: string; databasePath: string }) => Promise<void>,
+) {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-dream-lifecycle-'));
+  const databasePath = join(dir, 'brain.db');
   const engine = new SQLiteEngine();
   try {
-    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
     await engine.initSchema();
-    await run(engine);
+    await run(engine, {
+      rootDir: dir,
+      configDir: join(dir, '.mbrain'),
+      databasePath,
+    });
   } finally {
     await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function withTempConfigDir(config: Record<string, unknown>, run: () => Promise<void>): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-dream-config-'));
+  const configDir = join(dir, '.mbrain');
+  const originalConfigDir = process.env.MBRAIN_CONFIG_DIR;
+  const originalConfigPath = process.env.MBRAIN_CONFIG_PATH;
+  try {
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify(config, null, 2));
+    process.env.MBRAIN_CONFIG_DIR = configDir;
+    delete process.env.MBRAIN_CONFIG_PATH;
+    await run();
+  } finally {
+    if (originalConfigDir === undefined) delete process.env.MBRAIN_CONFIG_DIR;
+    else process.env.MBRAIN_CONFIG_DIR = originalConfigDir;
+    if (originalConfigPath === undefined) delete process.env.MBRAIN_CONFIG_PATH;
+    else process.env.MBRAIN_CONFIG_PATH = originalConfigPath;
     rmSync(dir, { recursive: true, force: true });
   }
 }

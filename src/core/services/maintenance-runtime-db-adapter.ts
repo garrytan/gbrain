@@ -922,11 +922,11 @@ function shouldRetryFailure(
 }
 
 function placeholder(executor: SqlExecutor, index: number): string {
-  return executor.kind === 'sqlite' ? '?' : `$${index}`;
+  return executor.kind === 'sqlite' ? `?${index}` : `$${index}`;
 }
 
 function jsonExpr(executor: SqlExecutor, index: number): string {
-  return executor.kind === 'sqlite' ? '?' : `$${index}::jsonb`;
+  return executor.kind === 'sqlite' ? `?${index}` : `$${index}::jsonb`;
 }
 
 function normalizePgParams(params: unknown[]): unknown[] {

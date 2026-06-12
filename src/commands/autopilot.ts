@@ -6,6 +6,7 @@ import { createConnectedEngine } from '../core/engine-factory.ts';
 import { createSqlMaintenanceRuntimeAdapter } from '../core/services/maintenance-runtime-db-adapter.ts';
 import { maybeCreateLifecycleForgettingServiceForEngine } from '../core/services/lifecycle-forgetting-engine-service.ts';
 import { createAutopilotService, type AutopilotService } from '../core/services/autopilot-service.ts';
+import { createProofAgentDreamReplayCanary } from '../core/services/dream-replay-canary-service.ts';
 import { runDreamCycle, type DreamCycleRunInput, type DreamCycleRunResult } from '../core/services/dream-cycle-runner-service.ts';
 import { parseDreamArgs } from './dream.ts';
 import type { AutopilotMode } from '../core/maintenance/autopilot.ts';
@@ -111,6 +112,7 @@ export async function runAutopilot(args: string[], deps: RunAutopilotDeps = {}):
             ...(runtime ? { runtime } : {}),
             lifecycleForgetting: maybeCreateLifecycleForgettingServiceForEngine(engine, () => input.now ?? new Date().toISOString()),
             autoPromote: createAutoPromoteDreamDependency(engine),
+            replayCanary: createProofAgentDreamReplayCanary(),
           }),
       } : {}),
     });

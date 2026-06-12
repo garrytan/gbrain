@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { createSqlMaintenanceRuntimeAdapter } from '../core/services/maintenance-runtime-db-adapter.ts';
 import { maybeCreateLifecycleForgettingServiceForEngine } from '../core/services/lifecycle-forgetting-engine-service.ts';
+import { createProofAgentDreamReplayCanary } from '../core/services/dream-replay-canary-service.ts';
 import {
   runDreamCycle,
   type DreamCycleRunInput,
@@ -28,6 +29,7 @@ export async function runDream(
         runtime: createSqlMaintenanceRuntimeAdapter(engine),
         lifecycleForgetting: maybeCreateLifecycleForgettingServiceForEngine(engine, () => input.now ?? new Date().toISOString()),
         autoPromote: createAutoPromoteDreamDependency(engine),
+        replayCanary: createProofAgentDreamReplayCanary(),
       });
   console.log(JSON.stringify(result, null, 2));
 }
