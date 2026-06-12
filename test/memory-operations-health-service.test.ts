@@ -16,6 +16,11 @@ describe('memory operations health service', () => {
       },
       listMemoryCandidateEntries: async (filters: Record<string, unknown>) => {
         calls.push({ method: 'listMemoryCandidateEntries', filters });
+        if (filters.status === 'promoted') return [
+          { id: 'promoted-verified-a', verification_status: 'verified' },
+          { id: 'promoted-verified-b', verification_status: 'verified' },
+          { id: 'promoted-unverified', verification_status: 'unverified' },
+        ];
         if (filters.patch_operation_state === 'proposed') return [{ id: 'candidate-proposed' }];
         if (filters.patch_operation_state === 'dry_run_validated') return [
           { id: 'candidate-dry-run-a' },
@@ -37,11 +42,15 @@ describe('memory operations health service', () => {
       mutation_event_count: 2,
       open_redaction_plan_count: 1,
       pending_candidate_patch_count: 4,
+      promoted_candidate_count: 3,
+      verified_promoted_candidate_count: 2,
+      promotion_verification_coverage: 2 / 3,
     });
     expect(report.summary_lines).toEqual([
       'workspace:ops sampled up to 25 rows and found 2 memory mutation events.',
       'workspace:ops sampled up to 25 draft redaction plans and found 1 draft redaction plan.',
       'workspace:ops sampled up to 25 rows per pending patch state and found 4 pending memory patch candidates.',
+      'workspace:ops sampled up to 25 promoted candidates: 2 of 3 carry verification evidence (coverage 67%).',
     ]);
     expect(calls).toEqual([
       { method: 'listMemoryMutationEvents', filters: { scope_id: 'workspace:ops', limit: 25, offset: 0 } },
@@ -49,6 +58,7 @@ describe('memory operations health service', () => {
       { method: 'listMemoryCandidateEntries', filters: { scope_id: 'workspace:ops', patch_operation_state: 'proposed', limit: 25, offset: 0 } },
       { method: 'listMemoryCandidateEntries', filters: { scope_id: 'workspace:ops', patch_operation_state: 'dry_run_validated', limit: 25, offset: 0 } },
       { method: 'listMemoryCandidateEntries', filters: { scope_id: 'workspace:ops', patch_operation_state: 'approved_for_apply', limit: 25, offset: 0 } },
+      { method: 'listMemoryCandidateEntries', filters: { scope_id: 'workspace:ops', status: 'promoted', limit: 25, offset: 0 } },
     ]);
   });
 
@@ -56,7 +66,10 @@ describe('memory operations health service', () => {
     const engine = {
       listMemoryMutationEvents: async () => [],
       listMemoryRedactionPlans: async () => [],
-      listMemoryCandidateEntries: async () => [{ id: 'pending' }],
+      listMemoryCandidateEntries: async (filters: Record<string, unknown>) => {
+        if (filters.status === 'promoted') return [];
+        return [{ id: 'pending' }];
+      },
     } as unknown as BrainEngine;
 
     const report = await getMemoryOperationsHealth(engine);
@@ -64,6 +77,12 @@ describe('memory operations health service', () => {
     expect(report.scope_id).toBe('workspace:default');
     expect(report.sampled_row_limit).toBe(100);
     expect(report.pending_candidate_patch_count).toBe(3);
+    expect(report.promoted_candidate_count).toBe(0);
+    expect(report.verified_promoted_candidate_count).toBe(0);
+    expect(report.promotion_verification_coverage).toBeNull();
+    expect(report.summary_lines).toContain(
+      'workspace:default sampled up to 100 promoted candidates: none found (verification coverage n/a).',
+    );
     expect((engine as any).listMemoryCandidatePatches).toBeUndefined();
   });
 });
