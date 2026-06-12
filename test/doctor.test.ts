@@ -798,6 +798,7 @@ describe('doctor sync and inbox surfacing', () => {
     expect(check?.status).toBe('warn');
     expect(check?.message).toContain('connection refused');
     expect(check?.message).toContain('mbrain sync --watch');
+    expect(check?.message).toContain('mbrain sync --clear-failure');
   });
 
   test('keeps the inbox backlog check ok below the threshold', () => {

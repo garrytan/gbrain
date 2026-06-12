@@ -643,7 +643,7 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
     checks.push({
       name: 'sync_watch',
       status: 'warn',
-      message: `Live sync watcher stopped at ${input.syncWatchFailure.stopped_at} after ${input.syncWatchFailure.consecutive_failures} consecutive failures: ${input.syncWatchFailure.reason}. Restart with: mbrain sync --watch`,
+      message: `Live sync watcher stopped at ${input.syncWatchFailure.stopped_at} after ${input.syncWatchFailure.consecutive_failures} consecutive failures: ${input.syncWatchFailure.reason}. Restart with: mbrain sync --watch (or dismiss with: mbrain sync --clear-failure)`,
     });
   }
 

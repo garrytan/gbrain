@@ -633,6 +633,12 @@ function aggregateSyncResults(results: Array<{ id: string; result: SyncResult }>
 }
 
 export async function runSync(engine: BrainEngine, args: string[]) {
+  if (args.includes('--clear-failure')) {
+    clearSyncWatchFailure();
+    console.log('Sync watch failure marker cleared. Restart live sync with: mbrain sync --watch');
+    return;
+  }
+
   const repoPath = args.find((a, i) => args[i - 1] === '--repo') || undefined;
   const subbrain = args.find((a, i) => args[i - 1] === '--subbrain') || undefined;
   const allSubbrains = args.includes('--all-subbrains');

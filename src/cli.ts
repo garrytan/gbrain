@@ -181,6 +181,7 @@ const SYNC_CLI_SPEC: Operation = {
     no_embed: { type: 'boolean', description: 'Compatibility no-op: sync already defers embeddings' },
     watch: { type: 'boolean', description: 'Poll for changes continuously until interrupted' },
     interval: { type: 'number', description: 'Seconds between watch polls (default 60)' },
+    clear_failure: { type: 'boolean', description: 'Dismiss the recorded sync watch failure marker and exit' },
   },
   handler: noopHandler,
   cliHints: { name: 'sync' },
@@ -286,6 +287,18 @@ async function main() {
   }
 
   if (command === 'sync') {
+    // --clear-failure must run before any engine connection: the marker
+    // typically exists because the database is unreachable.
+    if (subArgs.includes('--clear-failure')) {
+      if (subArgs.includes('--watch')) {
+        console.error('--clear-failure cannot be combined with --watch; clear first, then restart with: mbrain sync --watch');
+        process.exit(1);
+      }
+      const { clearSyncWatchFailure } = await import('./core/health-beacon.ts');
+      clearSyncWatchFailure();
+      console.log('Sync watch failure marker cleared. Restart live sync with: mbrain sync --watch');
+      return;
+    }
     const syncCliRouting = resolveSyncCliRouting(subArgs);
     for (const warning of syncCliRouting.warnings) {
       console.error(warning);
