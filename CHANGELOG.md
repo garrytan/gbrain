@@ -23,6 +23,41 @@ All notable changes to MBrain will be documented in this file.
 
 ### Added
 
+- **A stray script can no longer hijack your brain config.** `mbrain init` now
+  refuses to repoint `~/.mbrain/config.json` at a different database unless you
+  pass `--force`, and every overwrite first drops a timestamped backup next to
+  the config (newest five kept, passwords never echoed in the refusal message).
+  This codifies the real incident where a test run silently rewired the config
+  to a throwaway test database — the E2E suites now run fully isolated from
+  your real config too.
+- **`mbrain doctor` now spots zombie MCP servers.** A new `serve_processes`
+  check lists running `mbrain serve` processes and warns when one has been
+  alive longer than 48 hours (it is still serving the code and config it
+  started with — restart your agent clients) or when more than four have piled
+  up. The check runs even when the database connection fails, which is exactly
+  when you need it.
+- **Database connection failures finally say why.** Errors like
+  `Cannot connect to database: .` (an empty driver message) now fall back to
+  the error code, errno, or name, so a dead port and a bad password no longer
+  look identical.
+- **The dead-watcher warning is now dismissible.** `mbrain sync
+  --clear-failure` removes the live-sync failure marker without connecting to
+  the database (it works precisely when the DB is down), and the doctor hint
+  shows both recovery paths: restart the watcher or dismiss the marker.
+- **Session compression no longer hides what it dropped.** Observations that
+  carried more than five fact lines now report `truncated_fact_count`, and the
+  cap is configurable per call — so a dense session can't silently lose its
+  tail.
+- **Memory writes tell you the real reason they were blocked.** Direct personal
+  write preflight failures carry the underlying scope-gate decision
+  (`direct_personal_preflight_failed:work_signal`, `…:insufficient_signal`)
+  instead of one opaque code, and preflight system errors are reported
+  separately while the signal still falls back to the governed candidate
+  route.
+- **Search tells you when query expansion failed.** Hybrid search reports
+  `expansion_failed` and the `query` operation logs a warning instead of
+  silently degrading to the original query, so reduced recall is visible the
+  moment it happens.
 - **Your memory now knows the difference between a checked fact and a plausible
   guess.** The new `verify_memory_candidate_entry` operation (CLI:
   `mbrain verify-memory-candidate`) records how a Memory Inbox claim was

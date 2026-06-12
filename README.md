@@ -470,6 +470,7 @@ Sync and embeddings:
 mbrain import ~/git/brain
 mbrain sync --repo ~/git/brain
 mbrain sync --repo ~/git/brain --watch --interval 60
+mbrain sync --clear-failure   # dismiss a dead-watcher warning without a DB connection
 mbrain embed --stale
 ```
 
