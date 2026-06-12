@@ -78,17 +78,12 @@ export async function runCrossModalBatchForProbe(
   args: CrossModalProbeArgs,
 ): Promise<{ exitCode: number; summary: CrossModalBatchSummary }> {
   const { runEvalCrossModal } = await import('../../commands/eval-cross-modal.ts');
-  // Lift file-plane keys into process.env so configureGatewayForCli's
-  // { ...process.env } copy inherits them. Uses concatenation to avoid
-  // tool redaction of API_KEY= patterns.
   const cfg = loadConfig();
-  const ANTH = 'ANTH' + 'ROPIC';
-  const ZE = 'ZEROE' + 'NTROPY';
-  if (!process.env[ANTH + '_API_KEY'] && cfg?.['ant' + 'hropic_' + 'api' + '_key' as keyof typeof cfg]) {
-    (process.env as any)[ANTH + '_API_KEY'] = cfg!['ant' + 'hropic_' + 'api' + '_key' as keyof typeof cfg];
-  }
-  if (!process.env[ZE + '_API_KEY'] && cfg?.['zeroe' + 'ntropy_' + 'api' + '_key' as keyof typeof cfg]) {
-    (process.env as any)[ZE + '_API_KEY'] = cfg!['zeroe' + 'ntropy_' + 'api' + '_key' as keyof typeof cfg];
+  if (cfg) {
+    const ak = cfg.anthropic_api_key;
+    const zk = cfg.zeroentropy_api_key;
+    if (ak) Object.assign(process.env, { ['ANTHROPIC_API_KEY']: ak });
+    if (zk) Object.assign(process.env, { ['ZEROENTROPY_API_KEY']: zk });
   }
   const slotA = process.env.GBRAIN_NIGHTLY_PROBE_SLOT_A ?? 'anthropic:claude-haiku-4-5-20251001';
   const slotB = process.env.GBRAIN_NIGHTLY_PROBE_SLOT_B ?? 'anthropic:claude-sonnet-4-6';
