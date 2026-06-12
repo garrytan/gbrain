@@ -84,7 +84,7 @@ default. Stop and ask the operator.
 ```
 Per-query cost @ 10K queries/mo (typical single-user volume):
 
-                  Haiku 4.5     Sonnet 4.6    Opus 4.7
+                  Haiku 4.5     Sonnet 4.6    Opus 4.8
                   ($1/M)        ($3/M)        ($5/M)
   conservative    $40/mo        $120/mo       $200/mo
   balanced        $100/mo       $300/mo       $500/mo

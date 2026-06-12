@@ -21,7 +21,7 @@
  * regression trip-wire if anyone later re-hardcodes a view back into a duplicate)
  * and that the cross-modal panel models are all present in canonical.
  *
- * Prices verified 2026-06-03 against published provider pricing:
+ * Prices verified 2026-06-12 against published provider pricing:
  *   - Anthropic: https://platform.claude.com/docs/en/about-claude/models/overview
  *   - OpenAI:    https://openai.com/api/pricing
  *   - Google:    https://ai.google.dev/gemini-api/docs/pricing
@@ -68,7 +68,10 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'openai:gpt-4o':                        { input:  2.50, output: 10.00 },
   'openai:gpt-4o-mini':                   { input:  0.15, output:  0.60 },
   'openai:gpt-5':                         { input:  5.00, output: 20.00 },
-  'openai:gpt-5.5':                       { input:  4.00, output: 16.00 },
+  'openai:gpt-5.5':                       { input:  5.00, output: 30.00 },
+  'openai:gpt-5.4':                       { input:  2.50, output: 15.00 },
+  'openai:gpt-5.4-mini':                  { input:  0.75, output:  4.50 },
+  'openai:gpt-5.4-nano':                  { input:  0.20, output:  1.25 },
 
   // ── Google ─────────────────────────────────────────────────────────────
   'google:gemini-1.5-pro':                { input:  1.25, output:  5.00 },

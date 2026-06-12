@@ -437,7 +437,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
             console.log('');
             console.log('Per-query cost @ 10K queries/mo (typical single-user volume):');
             console.log('');
-            console.log('                  Haiku 4.5    Sonnet 4.6   Opus 4.7');
+            console.log('                  Haiku 4.5    Sonnet 4.6   Opus 4.8');
             console.log('                  ($1/M)       ($3/M)       ($5/M)');
             console.log('  conservative    $40/mo       $120/mo      $200/mo');
             console.log('  balanced        $100/mo      $300/mo      $500/mo');

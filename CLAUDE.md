@@ -156,7 +156,7 @@ The corner-to-corner spread is 25x once you pair mode with downstream model.
 Chunks ~400 tokens avg. Per-query cost @ 10K queries/month (typical
 single-user volume), full search payload, no cache savings:
 
-| Mode \ Downstream | Haiku 4.5 (\$1/M) | Sonnet 4.6 (\$3/M) | Opus 4.7 (\$5/M) |
+| Mode \ Downstream | Haiku 4.5 (\$1/M) | Sonnet 4.6 (\$3/M) | Opus 4.8 (\$5/M) |
 |---|---|---|---|
 | conservative (~4K) | **\$40/mo** | \$120/mo | \$200/mo |
 | balanced (~10K) | \$100/mo | \$300/mo | \$500/mo |

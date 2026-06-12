@@ -127,7 +127,7 @@ per 1K queries for the Haiku expansion call).
 
 Per-query cost @ 10K queries/mo (full search payload, no cache savings):
 
-                  Haiku 4.5     Sonnet 4.6    Opus 4.7
+                  Haiku 4.5     Sonnet 4.6    Opus 4.8
                   ($1/M input)  ($3/M input)  ($5/M input)
   conservative    $40/mo        $120/mo       $200/mo
   balanced        $100/mo       $300/mo       $500/mo
@@ -232,7 +232,7 @@ export async function runModePicker(
     console.log('');
     console.log('Per-query cost @ 10K queries/mo (search payload only, no cache savings):');
     console.log('');
-    console.log('                    Haiku 4.5     Sonnet 4.6    Opus 4.7');
+    console.log('                    Haiku 4.5     Sonnet 4.6    Opus 4.8');
     console.log('                    ($1/M input)  ($3/M input)  ($5/M input)');
     console.log('   conservative     $40/mo        $120/mo       $200/mo');
     console.log('   balanced         $100/mo       $300/mo       $500/mo');
