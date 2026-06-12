@@ -131,6 +131,24 @@ function formatJobDetail(job: MinionJob): string {
   return lines.join('\n');
 }
 
+function coerceRemoteJobDates(job: MinionJob): MinionJob {
+  const dateKeys = [
+    'lock_until', 'delay_until', 'timeout_at',
+    'created_at', 'started_at', 'finished_at', 'updated_at',
+  ] as const;
+  const out = { ...(job as unknown as Record<string, unknown>) };
+  for (const key of dateKeys) {
+    const value = out[key];
+    if (typeof value === 'string' && value.length > 0) out[key] = new Date(value);
+    else if (value == null) out[key] = null;
+  }
+  return out as unknown as MinionJob;
+}
+
+function coerceRemoteJobsDates(jobs: MinionJob[]): MinionJob[] {
+  return jobs.map(coerceRemoteJobDates);
+}
+
 export async function runJobs(engine: BrainEngine, args: string[]): Promise<void> {
   const sub = args[0];
 
@@ -436,7 +454,7 @@ HANDLER TYPES (built in)
         const raw = await callRemoteTool(cfg!, 'list_jobs', {
           status, queue: queueName, limit,
         }, { timeoutMs: 30_000 });
-        jobs = unpackToolResult<MinionJob[]>(raw);
+        jobs = coerceRemoteJobsDates(unpackToolResult<MinionJob[]>(raw));
       } else {
         try { await queue.ensureSchema(); }
         catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
@@ -465,7 +483,8 @@ HANDLER TYPES (built in)
       if (isThinClient(cfg)) {
         try {
           const raw = await callRemoteTool(cfg!, 'get_job', { id }, { timeoutMs: 30_000 });
-          job = unpackToolResult<MinionJob | null>(raw);
+          const unpacked = unpackToolResult<MinionJob | null>(raw);
+          job = unpacked ? coerceRemoteJobDates(unpacked) : null;
         } catch (e) {
           // The remote op throws `invalid_params` on not-found; surface as
           // the same "Job not found" exit-1 the local path produces.

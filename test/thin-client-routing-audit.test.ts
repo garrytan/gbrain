@@ -38,6 +38,14 @@ const V032_REFUSE_ADDITIONS = [
   'code-def', 'code-refs', 'code-callers', 'code-callees',
 ];
 
+// 2026-06-09 follow-up audit: these CLI-only commands previously fell past
+// the thin-client guard and tried to open the absent local DB.
+const DB_BOUND_CLI_ONLY_REFUSALS = [
+  'import', 'export', 'call', 'features', 'autopilot', 'graph-query', 'agent',
+  'book-mirror', 'reindex', 'reindex-code', 'reindex-frontmatter', 'salience',
+  'anomalies', 'edges-backfill', 'quarantine', 'repos',
+];
+
 describe('thin-client routing audit — v0.32 REFUSE additions stay in the table', () => {
   test('THIN_CLIENT_REFUSED_COMMANDS set declaration is intact', () => {
     expect(CLI_SOURCE).toContain('const THIN_CLIENT_REFUSED_COMMANDS = new Set([');
@@ -62,6 +70,24 @@ describe('thin-client routing audit — v0.32 REFUSE additions stay in the table
       const hintsBlock = CLI_SOURCE.slice(hintsStart, hintsEnd);
       // Hint keys with embedded dashes are quoted (`'code-def':`); others
       // can be bare (`pages:`). Accept either shape.
+      const bareKey = new RegExp(`\\b${command.replace(/-/g, '\\-')}\\s*:`);
+      const quotedKey = new RegExp(`['"]${command.replace(/-/g, '\\-')}['"]\\s*:`);
+      expect(bareKey.test(hintsBlock) || quotedKey.test(hintsBlock)).toBe(true);
+    });
+  }
+
+  for (const command of DB_BOUND_CLI_ONLY_REFUSALS) {
+    test(`'${command}' is refused instead of opening a thin-client local DB`, () => {
+      const setStart = CLI_SOURCE.indexOf('const THIN_CLIENT_REFUSED_COMMANDS = new Set([');
+      const setEnd = CLI_SOURCE.indexOf(']);', setStart);
+      const setBlock = CLI_SOURCE.slice(setStart, setEnd);
+      expect(setBlock).toContain(`'${command}'`);
+
+      const hintsStart = CLI_SOURCE.indexOf(
+        'const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {',
+      );
+      const hintsEnd = CLI_SOURCE.indexOf('};', hintsStart);
+      const hintsBlock = CLI_SOURCE.slice(hintsStart, hintsEnd);
       const bareKey = new RegExp(`\\b${command.replace(/-/g, '\\-')}\\s*:`);
       const quotedKey = new RegExp(`['"]${command.replace(/-/g, '\\-')}['"]\\s*:`);
       expect(bareKey.test(hintsBlock) || quotedKey.test(hintsBlock)).toBe(true);
@@ -125,5 +151,15 @@ describe('thin-client routing audit — v0.32 ROUTE additions wire callRemoteToo
     expect(src).toContain(`from '../core/mcp-client.ts'`);
     expect(src).toContain(`callRemoteTool(cfg!, 'list_jobs'`);
     expect(src).toContain(`callRemoteTool(cfg!, 'get_job'`);
+  });
+
+  test('src/commands/jobs.ts: remote jobs are date-coerced before rendering', () => {
+    const src = readFileSync(
+      join(import.meta.dir, '..', 'src', 'commands', 'jobs.ts'),
+      'utf8',
+    );
+    expect(src).toContain('coerceRemoteJobDates');
+    expect(src).toContain('created_at');
+    expect(src).toContain('new Date(value)');
   });
 });

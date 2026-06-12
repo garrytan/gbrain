@@ -971,6 +971,11 @@ function formatResult(opName: string, result: unknown): string {
 const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   'sync', 'embed', 'extract', 'extract-conversation-facts', 'enrich', 'migrate', 'apply-migrations',
   'repair-jsonb', 'orphans', 'integrity', 'serve',
+  // Thin clients have no local engine. Refuse DB-bound CLI-only commands
+  // here unless they have an explicit pre-engine remote branch below.
+  'import', 'export', 'call', 'features', 'autopilot', 'graph-query', 'agent',
+  'book-mirror', 'reindex', 'reindex-code', 'reindex-frontmatter', 'salience',
+  'anomalies', 'edges-backfill', 'quarantine', 'repos',
   // v0.31.1 (CDX-2 op coverage matrix): more local-only commands
   'dream', 'transcripts', 'storage',
   // v0.31.1 CDX-2 audit: takes/sources have multiple subcommands; some
@@ -1014,6 +1019,22 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   orphans: "orphans needs the host's brain. Run on the host or use the `find_orphans` MCP tool from your agent.",
   transcripts: 'transcripts is server-private (raw chat exports stay on the host). Read transcripts on the host machine.',
   storage: 'storage operates on the local repo on disk. Run on the host.',
+  import: 'import reads local files and writes the host brain. Run on the host, or use `gbrain capture` for a single note.',
+  export: 'export reads the host brain and writes local files. Run on the host.',
+  call: '`call` is a trusted local operation escape hatch. Use the corresponding MCP tool from your agent instead.',
+  features: 'features scans the host brain and proposes host-side fixes. Use `gbrain remote doctor` for thin-client health, or run `gbrain features` on the host.',
+  autopilot: 'autopilot runs host maintenance. Use `gbrain remote ping` to queue a host cycle.',
+  'graph-query': 'graph-query requires direct local DB access. Run on the host, or use `search` / `query` through the thin client.',
+  agent: 'agent commands run host-side agent/minion workflows. Run on the host.',
+  'book-mirror': 'book-mirror reads and writes host-side storage. Run on the host.',
+  reindex: 'reindex mutates host indexes. Run on the host.',
+  'reindex-code': 'reindex-code mutates host code indexes. Run on the host.',
+  'reindex-frontmatter': 'reindex-frontmatter mutates host indexes. Run on the host.',
+  salience: 'salience computes host-side scores. Run on the host.',
+  anomalies: 'anomalies scans host-side state. Run on the host.',
+  'edges-backfill': 'edges-backfill mutates host graph edges. Run on the host.',
+  quarantine: 'quarantine mutates page flags in the host brain. Run on the host or use an admin MCP tool if one exists.',
+  repos: 'repos inspects host-side repository metadata. Run on the host.',
   takes: 'takes mutate subcommands edit local .md files; routing the read subcommands lands in v0.31.x. For now: use `takes_list` and `takes_search` MCP tools from your agent, or run on the host.',
   sources: 'sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.',
   // v0.32 audit additions
@@ -1463,6 +1484,53 @@ async function handleCliOnly(command: string, args: string[]) {
     const { runCapture } = await import('./commands/capture.ts');
     await runCapture(null, args);
     return;
+  }
+  if (command === 'capture') {
+    const cfgPre = loadConfig();
+    if (cfgPre && isThinClient(cfgPre)) {
+      const { runCapture } = await import('./commands/capture.ts');
+      await runCapture(null, args);
+      return;
+    }
+  }
+
+  // Thin-client route/refusal branches for CLI-only commands with handlers
+  // that already know how to call the remote MCP. Keep them before the
+  // generic connectEngine() path so they don't fall into the "No database URL"
+  // trap on installs that intentionally have no local DB.
+  if (command === 'jobs') {
+    const cfgPre = loadConfig();
+    if (cfgPre && isThinClient(cfgPre)) {
+      const sub = args[0];
+      if (!sub || sub === '--help' || sub === '-h' || sub === 'list' || sub === 'get') {
+        const { runJobs } = await import('./commands/jobs.ts');
+        await runJobs(null as never, args);
+        return;
+      }
+      refuseThinClient('jobs', cfgPre.remote_mcp!.mcp_url);
+    }
+  }
+  if (command === 'recall' || command === 'forget') {
+    const cfgPre = loadConfig();
+    if (cfgPre && isThinClient(cfgPre)) {
+      const { runRecall, runForget } = await import('./commands/recall.ts');
+      if (command === 'recall') await runRecall(null as never, args);
+      else await runForget(null as never, args);
+      return;
+    }
+  }
+  if (command === 'config') {
+    const cfgPre = loadConfig();
+    if (cfgPre && isThinClient(cfgPre)) {
+      if (args[0] === 'show') {
+        const { runConfig } = await import('./commands/config.ts');
+        await runConfig(null as never, args);
+        return;
+      }
+      console.error(`\`gbrain config ${args[0] ?? ''}\` requires the host DB/config plane.`);
+      console.error(`(thin-client of ${cfgPre.remote_mcp!.mcp_url})`);
+      process.exit(1);
+    }
   }
 
   // v0.41.39 (#1700): same pattern for `enrich --help`. enrich is in
