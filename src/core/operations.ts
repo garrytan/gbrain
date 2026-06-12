@@ -2444,6 +2444,40 @@ const get_raw_data: Operation = {
 
 // --- Resolution & Chunks ---
 
+const reflex_pointers: Operation = {
+  name: 'reflex_pointers',
+  description:
+    'Retrieval Reflex (#1981) over an op transport: extract salient entities from a turn of ' +
+    'user text and resolve them to compact page pointers. Same pipeline, gate, timeout and ' +
+    'heartbeat as the context-engine layer — for hosts (per-prompt hooks, non-context-engine ' +
+    'agents) that consume the brain over MCP instead of assemble().',
+  params: {
+    text: { type: 'string', required: true },
+    prior_context: { type: 'string', required: false },
+    max_pointers: { type: 'number', required: false },
+  },
+  handler: async (ctx, p) => {
+    const { buildReflexAddition } = await import('./context/reflex.ts');
+    const { resolveEntitiesToPointers } = await import('./context/retrieval-reflex.ts');
+    const maxPointers =
+      typeof p.max_pointers === 'number' && p.max_pointers > 0 ? p.max_pointers : undefined;
+    const text = await buildReflexAddition({
+      workspaceDir: process.cwd(),
+      currentUserText: p.text as string,
+      priorContextText: (p.prior_context as string) ?? '',
+      // Host-resolver arm of the ladder: reuse THIS op's already-open engine +
+      // source scope instead of letting the ladder open a second connection.
+      resolveEntities: (candidates, opts) =>
+        resolveEntitiesToPointers(ctx.engine, ctx.sourceId || 'default', candidates, {
+          ...opts,
+          maxPointers: maxPointers ?? opts.maxPointers,
+        }),
+    });
+    return { text };
+  },
+  scope: 'read',
+};
+
 const resolve_slugs: Operation = {
   name: 'resolve_slugs',
   description: 'Fuzzy-resolve a partial slug to matching page slugs',
@@ -4834,7 +4868,7 @@ export const operations: Operation[] = [
   // Raw data
   put_raw_data, get_raw_data,
   // Resolution & chunks
-  resolve_slugs, get_chunks,
+  reflex_pointers, resolve_slugs, get_chunks,
   // Ingest log
   log_ingest, get_ingest_log,
   // Files
