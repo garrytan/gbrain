@@ -47,7 +47,7 @@ If you want to know how a mode behaves on YOUR brain, run `gbrain search stats -
 
 ## 2. Datasets and sizes
 
-- **LongMemEval** — public split, `n=500` questions. Downloaded from [Hugging Face](https://huggingface.co/datasets/xiaowu0162/longmemeval). The corpus + answer keys are pinned to a specific commit; recorded in every per-run record.
+- **LongMemEval** — public split, `n=500` questions. Downloaded from [Hugging Face](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned). The corpus + answer keys are pinned to a specific commit; recorded in every per-run record.
 - **Replay captures** — NDJSON from the sibling `gbrain-evals` repo, `n=200` queries. Each query carries a `retrieved_slugs` baseline + a `latency_ms` measurement from the original production run.
 - **BrainBench v1** — `n=1240` documents / `n=350` qrels (binary relevance judgments). Lives in the sibling [`gbrain-evals`](https://github.com/garrytan/gbrain-evals) repo, SHA-pinned at every run.
 
