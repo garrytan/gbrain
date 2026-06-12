@@ -155,6 +155,20 @@ export interface GBrainConfig {
   embedding_multimodal?: boolean;
   /** Model override for multimodal embeddings (e.g. "voyage:voyage-multimodal-3"). */
   embedding_multimodal_model?: string;
+
+  /**
+   * v0.42 (#1981) — Retrieval Reflex. The context engine's deterministic
+   * per-turn entity-pointer injection. Default ON (absent key = enabled).
+   *
+   * IMPORTANT: this is a FILE-PLANE / env gate only. The context engine reads
+   * it via the synchronous `loadConfig()` during `assemble()`, which never
+   * touches the DB. So `gbrain config set retrieval_reflex false` (DB plane)
+   * does NOT disable the reflex — set it in `~/.gbrain/config.json` or via
+   * `GBRAIN_RETRIEVAL_REFLEX=false`.
+   */
+  retrieval_reflex?: boolean;
+  /** Max pointers injected per turn (default 3). File-plane only. */
+  retrieval_reflex_max_pointers?: number;
   embedding_image_ocr?: boolean;
   embedding_image_ocr_model?: string;
 
@@ -425,6 +439,9 @@ export function loadConfig(): GBrainConfig | null {
       : {}),
     ...(process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL
       ? { embedding_image_ocr_model: process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL }
+      : {}),
+    ...(process.env.GBRAIN_RETRIEVAL_REFLEX
+      ? { retrieval_reflex: !(process.env.GBRAIN_RETRIEVAL_REFLEX === 'false' || process.env.GBRAIN_RETRIEVAL_REFLEX === '0') }
       : {}),
     ...(process.env.GBRAIN_REMOTE_CLIENT_SECRET && fileConfig?.remote_mcp
       ? { remote_mcp: { ...fileConfig.remote_mcp, oauth_client_secret: process.env.GBRAIN_REMOTE_CLIENT_SECRET } }

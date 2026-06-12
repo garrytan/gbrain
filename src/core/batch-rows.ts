@@ -18,26 +18,34 @@
  *   LinkBatchInput[] ---+
  *   TimelineInput[] ----+--> build*Rows() --> [{...}, ...] --> { rows } wrapper
  *   TakeBatchInput[] ---+         |                              |
- *                          stripNul free-text             executeRawJsonb
- *                          fields only                    $1::jsonb -> 'rows'
+ *                          sanitizeForJsonb              executeRawJsonb
+ *                          free-text fields only         $1::jsonb -> 'rows'
  *                                                         jsonb_to_recordset(...)
  *
- * NUL POLICY (codex P0 hardening): Postgres `jsonb` rejects the Unicode NUL
- * escape, and Postgres `text` cannot store a NUL either, so the OLD
- * `unnest(::text[])` path rejected (errored) any row carrying an embedded NUL.
- * We deliberately PRESERVE that reject semantics for IDENTITY and
- * security-relevant fields: slugs, source_ids, `holder`, `kind`, dates, and the
- * enum-ish `link_type` / `link_source` / `origin_slug` / `origin_field`. Those
- * are left UN-stripped, so a NUL in them still errors the batch and can never
- * silently retarget a row to a different page/source or normalize a `holder`
- * past the read-side `holder = ANY(allowlist)` privacy filter.
+ * NUL + SURROGATE POLICY (codex P0 hardening; #2011): Postgres `jsonb` rejects
+ * both the Unicode NUL escape AND an unpaired UTF-16 surrogate half, and Postgres
+ * `text` cannot store a NUL either, so the OLD `unnest(::text[])` path rejected
+ * (errored) any row carrying either. We deliberately PRESERVE that reject
+ * semantics for IDENTITY and security-relevant fields: slugs, source_ids,
+ * `holder`, `kind`, dates, and the enum-ish `link_type` / `link_source` /
+ * `origin_slug` / `origin_field`. Those are left UN-sanitized, so junk in them
+ * still errors the batch and can never silently retarget a row to a different
+ * page/source or normalize a `holder` past the read-side `holder = ANY(allowlist)`
+ * privacy filter.
  *
- * `stripNul` is applied ONLY to genuinely free-prose body fields where a junk
- * NUL plausibly arrives from calendar/meeting/LLM content and where dropping the
- * whole batch would be the worse outcome: `context` (links), `summary` + `detail`
- * (timeline), `claim` (takes). NUL is the ONLY character ever stripped; commas,
- * quotes, braces, and em-dashes are exactly what JSONB encodes correctly, and
- * stripping them would corrupt user data.
+ * `sanitizeForJsonb` (strip NUL + well-form lone surrogates) is applied ONLY to
+ * genuinely free-prose body fields where junk plausibly arrives from
+ * calendar/meeting/LLM/OCR content and where dropping the whole batch would be
+ * the worse outcome: `context` (links), `summary` + `detail` + `source`
+ * (timeline), `claim` + `source` (takes). A lone surrogate is normalized to
+ * U+FFFD; NUL is removed. Timeline `source` is free-text here (it round-trips
+ * arbitrary provenance labels and is treated as free text by both engines), so it
+ * is sanitized too even though it participates in `idx_timeline_dedup` — replacing
+ * a malformed half-char before dedup is correct, not lossy (#2011). Takes `source`
+ * is likewise free-text LLM-extracted provenance (not an identity/dedup field —
+ * the takes key is `(page_id, row_num)`), so it is sanitized as well. Commas, quotes,
+ * braces, and em-dashes are exactly what JSONB encodes correctly and are never
+ * touched; stripping them would corrupt user data.
  *
  * DEFAULTING NOTE: the builders reproduce each method's exact pre-#1861
  * defaulting. `|| ''` / `|| 'markdown'` / `|| 'default'` collapse empty strings;
@@ -54,14 +62,30 @@
 
 import type { LinkBatchInput, TimelineBatchInput, TakeBatchInput } from './engine.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
+import { ensureWellFormed } from './text-safe.ts';
 
 /**
  * Strip Unicode NUL (U+0000) from a free-text body field. Fast-path the common
  * case (no NUL) so the regex replace only runs when a NUL is actually present.
  * Only call this on free-prose columns, never on identity/security fields (see
  * the NUL POLICY note above).
+ *
+ * This is the NUL-only primitive. For anything serialized into a `::jsonb` cast,
+ * prefer `sanitizeForJsonb` below — NUL alone does not protect against the lone
+ * surrogate that aborts a jsonb batch (#2011). Exported only as the building
+ * block for `sanitizeForJsonb`; don't reach for it directly on a jsonb path.
  */
 export const stripNul = (s: string): string => (s.includes('\0') ? s.replace(/\0/g, '') : s);
+
+/**
+ * Sanitize a free-text body field for JSONB serialization: strip NUL (#1861)
+ * AND well-form unpaired UTF-16 surrogates (#2011). A lone surrogate half (left
+ * behind when a slicer like `excerpt()` cuts a window boundary through an emoji)
+ * is rejected by Postgres inside a `::jsonb` cast and aborts the whole batch;
+ * `ensureWellFormed` replaces it with U+FFFD. Like `stripNul`, call this ONLY on
+ * free-prose body columns, NEVER on identity/security fields (see NUL POLICY).
+ */
+export const sanitizeForJsonb = (s: string): string => ensureWellFormed(stripNul(s));
 
 /** One links row, keys === the jsonb_to_recordset column list. */
 export interface LinkRow {
@@ -109,7 +133,7 @@ export function buildLinkRows(links: LinkBatchInput[]): LinkRow[] {
     from_slug: l.from_slug,
     to_slug: l.to_slug,
     link_type: l.link_type || '',
-    context: stripNul(l.context || ''), // free-text body: NUL-stripped
+    context: sanitizeForJsonb(l.context || ''), // free-text body: NUL + lone-surrogate sanitized
     link_source: l.link_source || 'markdown',
     origin_slug: l.origin_slug || null,
     origin_field: l.origin_field || null,
@@ -124,9 +148,9 @@ export function buildTimelineRows(entries: TimelineBatchInput[]): TimelineRow[] 
   return entries.map(e => ({
     slug: e.slug,
     date: e.date,
-    source: e.source || '',
-    summary: stripNul(e.summary), // free-text body: NUL-stripped
-    detail: stripNul(e.detail || ''), // free-text body: NUL-stripped
+    source: sanitizeForJsonb(e.source || ''), // free-text body: NUL + lone-surrogate sanitized (#2011)
+    summary: sanitizeForJsonb(e.summary), // free-text body: NUL + lone-surrogate sanitized
+    detail: sanitizeForJsonb(e.detail || ''), // free-text body: NUL + lone-surrogate sanitized
     source_id: e.source_id || 'default',
   }));
 }
@@ -144,13 +168,15 @@ export function buildTakeRows(rowsIn: TakeBatchInput[]): { rows: TakeRow[]; weig
     return {
       page_id: r.page_id,
       row_num: r.row_num,
-      claim: stripNul(r.claim), // free-text body: NUL-stripped
+      claim: sanitizeForJsonb(r.claim), // free-text body: NUL + lone-surrogate sanitized
       kind: r.kind,
       holder: r.holder,
       weight,
       since_date: r.since_date ?? null,
       until_date: r.until_date ?? null,
-      source: r.source ?? null,
+      // free-text provenance → NUL + lone-surrogate sanitized (#2011); same
+      // jsonb crash class as claim. null/undefined stay null; '' stays ''.
+      source: r.source == null ? null : sanitizeForJsonb(r.source),
       superseded_by: r.superseded_by ?? null,
       active: r.active ?? true,
     };

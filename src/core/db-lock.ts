@@ -340,58 +340,37 @@ export interface LockSnapshot {
   ms_since_last_refresh: number | null;
 }
 
-export async function inspectLock(engine: BrainEngine, lockId: string): Promise<LockSnapshot | null> {
-  const maybePG = engine as unknown as { sql?: (...args: unknown[]) => Promise<unknown> };
-  const maybePGLite = engine as unknown as {
-    db?: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
-  };
+/**
+ * Raw row shape returned by every `gbrain_cycle_locks` SELECT. Lives here so
+ * `selectLockRows` (the single canonical reader) and its mapper share one type.
+ */
+interface RawLockRow {
+  id?: string;
+  holder_pid?: number;
+  holder_host?: string;
+  acquired_at?: Date | string;
+  ttl_expires_at?: Date | string;
+  last_refreshed_at?: Date | string | null;
+}
 
-  let row: {
-    id?: string;
-    holder_pid?: number;
-    holder_host?: string;
-    acquired_at?: Date | string;
-    ttl_expires_at?: Date | string;
-    last_refreshed_at?: Date | string | null;
-  } | undefined;
+/** Canonical column list for every lock SELECT — keep in lockstep with `RawLockRow`. */
+const LOCK_SELECT_COLS = 'id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at';
 
-  if (engine.kind === 'postgres' && maybePG.sql) {
-    const sql = maybePG.sql as any;
-    const rows = await sql`
-      SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at
-        FROM gbrain_cycle_locks
-       WHERE id = ${lockId}
-    `;
-    row = rows[0];
-  } else if (engine.kind === 'pglite' && maybePGLite.db) {
-    const { rows } = await maybePGLite.db.query(
-      `SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at
-         FROM gbrain_cycle_locks
-        WHERE id = $1`,
-      [lockId],
-    );
-    row = rows[0] as typeof row;
-  } else {
-    throw new Error(`Unknown engine kind for inspectLock: ${engine.kind}`);
-  }
-
-  if (!row || row.holder_pid === undefined || !row.acquired_at || !row.ttl_expires_at) return null;
-
+/**
+ * Row → `LockSnapshot` mapper. Coerces postgres.js Date|string columns to Date
+ * and computes the derived fields (age_ms, ttl_expired, ms_since_last_refresh).
+ * Returns null for a structurally-incomplete row (missing pid / acquired_at /
+ * ttl). v0.41.13.0: last_refreshed_at may be NULL on pre-v98 brains.
+ */
+function rowToLockSnapshot(row: RawLockRow, now: number): LockSnapshot | null {
+  if (row.holder_pid === undefined || !row.acquired_at || !row.ttl_expires_at) return null;
   const acquired = row.acquired_at instanceof Date ? row.acquired_at : new Date(row.acquired_at);
   const ttlExpires = row.ttl_expires_at instanceof Date ? row.ttl_expires_at : new Date(row.ttl_expires_at);
-  const now = Date.now();
-  // v0.41.13.0: last_refreshed_at may be NULL on pre-v98 brains that have
-  // the column but no acquire has happened since the migration ran. Render
-  // both `last_refreshed_at` and the computed delta as null so callers can
-  // distinguish "never observed a refresh" from "refresh fired N ms ago".
   const lastRefreshed = row.last_refreshed_at == null
     ? null
-    : (row.last_refreshed_at instanceof Date
-        ? row.last_refreshed_at
-        : new Date(row.last_refreshed_at));
-
+    : (row.last_refreshed_at instanceof Date ? row.last_refreshed_at : new Date(row.last_refreshed_at));
   return {
-    id: lockId,
+    id: String(row.id ?? ''),
     holder_pid: Number(row.holder_pid),
     holder_host: String(row.holder_host ?? ''),
     acquired_at: acquired,
@@ -403,6 +382,59 @@ export async function inspectLock(engine: BrainEngine, lockId: string): Promise<
   };
 }
 
+interface SelectLockRowsOpts {
+  /** Return only the row for this exact lock id (the `inspectLock` case). */
+  lockId?: string;
+  /** Return only rows whose ttl_expires_at < NOW() (the `listStaleLocks` case). */
+  staleOnly?: boolean;
+}
+
+/**
+ * The single canonical reader for `gbrain_cycle_locks`. Engine-branches once
+ * (postgres / pglite) so `inspectLock`, `listStaleLocks`, and the reaper don't
+ * each re-roll the SELECT + Date-coercion (previously triplicated). Returns
+ * fully-mapped `LockSnapshot[]`; callers filter in JS (the table holds 0-2 rows
+ * in practice, so a no-WHERE full read is cheap and keeps the SQL trivial).
+ */
+async function selectLockRows(engine: BrainEngine, opts: SelectLockRowsOpts = {}): Promise<LockSnapshot[]> {
+  const maybePG = engine as unknown as { sql?: (...args: unknown[]) => Promise<unknown> };
+  const maybePGLite = engine as unknown as {
+    db?: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
+  };
+
+  let rows: RawLockRow[];
+  if (engine.kind === 'postgres' && maybePG.sql) {
+    const sql = maybePG.sql as any;
+    if (opts.lockId !== undefined) {
+      rows = await sql`SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at FROM gbrain_cycle_locks WHERE id = ${opts.lockId}`;
+    } else if (opts.staleOnly) {
+      rows = await sql`SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at FROM gbrain_cycle_locks WHERE ttl_expires_at < NOW() ORDER BY acquired_at`;
+    } else {
+      rows = await sql`SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at FROM gbrain_cycle_locks ORDER BY acquired_at`;
+    }
+  } else if (engine.kind === 'pglite' && maybePGLite.db) {
+    if (opts.lockId !== undefined) {
+      rows = (await maybePGLite.db.query(`SELECT ${LOCK_SELECT_COLS} FROM gbrain_cycle_locks WHERE id = $1`, [opts.lockId])).rows as RawLockRow[];
+    } else if (opts.staleOnly) {
+      rows = (await maybePGLite.db.query(`SELECT ${LOCK_SELECT_COLS} FROM gbrain_cycle_locks WHERE ttl_expires_at < NOW() ORDER BY acquired_at`)).rows as RawLockRow[];
+    } else {
+      rows = (await maybePGLite.db.query(`SELECT ${LOCK_SELECT_COLS} FROM gbrain_cycle_locks ORDER BY acquired_at`)).rows as RawLockRow[];
+    }
+  } else {
+    throw new Error(`Unknown engine kind for selectLockRows: ${engine.kind}`);
+  }
+
+  const now = Date.now();
+  return rows
+    .map((r) => rowToLockSnapshot(r, now))
+    .filter((s): s is LockSnapshot => s !== null);
+}
+
+export async function inspectLock(engine: BrainEngine, lockId: string): Promise<LockSnapshot | null> {
+  const rows = await selectLockRows(engine, { lockId });
+  return rows[0] ?? null;
+}
+
 /**
  * v0.41.6.0 D3: list every lock whose TTL has expired. Used by gbrain
  * doctor's `stale_locks` check. The query reuses the same canonical
@@ -410,55 +442,7 @@ export async function inspectLock(engine: BrainEngine, lockId: string): Promise<
  * UPDATE-on-conflict already trusts — no parallel heuristic.
  */
 export async function listStaleLocks(engine: BrainEngine): Promise<LockSnapshot[]> {
-  const maybePG = engine as unknown as { sql?: (...args: unknown[]) => Promise<unknown> };
-  const maybePGLite = engine as unknown as {
-    db?: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
-  };
-
-  let rows: Array<{ id?: string; holder_pid?: number; holder_host?: string; acquired_at?: Date | string; ttl_expires_at?: Date | string; last_refreshed_at?: Date | string | null }>;
-
-  if (engine.kind === 'postgres' && maybePG.sql) {
-    const sql = maybePG.sql as any;
-    rows = await sql`
-      SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at
-        FROM gbrain_cycle_locks
-       WHERE ttl_expires_at < NOW()
-       ORDER BY acquired_at
-    `;
-  } else if (engine.kind === 'pglite' && maybePGLite.db) {
-    const result = await maybePGLite.db.query(
-      `SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at
-         FROM gbrain_cycle_locks
-        WHERE ttl_expires_at < NOW()
-        ORDER BY acquired_at`,
-    );
-    rows = result.rows as typeof rows;
-  } else {
-    throw new Error(`Unknown engine kind for listStaleLocks: ${engine.kind}`);
-  }
-
-  const now = Date.now();
-  return rows
-    .filter(r => r.holder_pid !== undefined && r.acquired_at && r.ttl_expires_at)
-    .map(r => {
-      const acquired = r.acquired_at instanceof Date ? r.acquired_at : new Date(r.acquired_at!);
-      const ttl = r.ttl_expires_at instanceof Date ? r.ttl_expires_at : new Date(r.ttl_expires_at!);
-      // v0.41.13.0: last_refreshed_at may be NULL on pre-v98 brains.
-      const lastRefreshed = r.last_refreshed_at == null
-        ? null
-        : (r.last_refreshed_at instanceof Date ? r.last_refreshed_at : new Date(r.last_refreshed_at));
-      return {
-        id: String(r.id ?? ''),
-        holder_pid: Number(r.holder_pid),
-        holder_host: String(r.holder_host ?? ''),
-        acquired_at: acquired,
-        ttl_expires_at: ttl,
-        age_ms: now - acquired.getTime(),
-        ttl_expired: true,
-        last_refreshed_at: lastRefreshed,
-        ms_since_last_refresh: lastRefreshed ? now - lastRefreshed.getTime() : null,
-      };
-    });
+  return selectLockRows(engine, { staleOnly: true });
 }
 
 /**
@@ -586,6 +570,110 @@ export async function deleteLockRowIfStale(
     return { deleted: true, lastRefreshedAt: lastRefreshed };
   }
   throw new Error(`Unknown engine kind for deleteLockRowIfStale: ${engine.kind}`);
+}
+
+/**
+ * #1972 — snapshot-matched verify-and-delete for the background reaper.
+ *
+ * Unlike `deleteLockRow` (id + holder_pid only), this ALSO pins the observed
+ * `acquired_at`, closing the TOCTOU window the reaper opens by reading rows
+ * before deleting them: between the SELECT and the DELETE, the dead holder's
+ * row could be replaced by a NEW holder that reused the same numeric PID
+ * (PID-space wraps). That new row carries a newer `acquired_at`, so the match
+ * fails and the DELETE is a safe no-op.
+ *
+ * Why `date_trunc('milliseconds', acquired_at) = $3` and not bare equality:
+ * postgres.js parses timestamptz into a JS Date (millisecond precision), so the
+ * snapshot we hold has already lost the microseconds that `acquired_at DEFAULT
+ * NOW()` writes. A bare `acquired_at = $3` would therefore NEVER match in
+ * production (microsecond stored value ≠ ms-truncated param) — the reaper would
+ * silently delete nothing. Truncating both sides to ms makes the comparison
+ * round-trip-safe on Postgres + PGLite, while a real takeover (seconds later)
+ * still differs by far more than a millisecond.
+ */
+export async function deleteLockRowExact(
+  engine: BrainEngine,
+  lockId: string,
+  holderPid: number,
+  acquiredAt: Date,
+): Promise<{ deleted: boolean }> {
+  const maybePG = engine as unknown as { sql?: (...args: unknown[]) => Promise<unknown> };
+  const maybePGLite = engine as unknown as {
+    db?: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
+  };
+
+  if (engine.kind === 'postgres' && maybePG.sql) {
+    const sql = maybePG.sql as any;
+    const rows: Array<{ id: string }> = await sql`
+      DELETE FROM gbrain_cycle_locks
+       WHERE id = ${lockId}
+         AND holder_pid = ${holderPid}
+         AND date_trunc('milliseconds', acquired_at) = ${acquiredAt}
+      RETURNING id
+    `;
+    return { deleted: rows.length > 0 };
+  }
+  if (engine.kind === 'pglite' && maybePGLite.db) {
+    const { rows } = await maybePGLite.db.query(
+      `DELETE FROM gbrain_cycle_locks
+        WHERE id = $1
+          AND holder_pid = $2
+          AND date_trunc('milliseconds', acquired_at) = $3
+       RETURNING id`,
+      [lockId, holderPid, acquiredAt],
+    );
+    return { deleted: rows.length > 0 };
+  }
+  throw new Error(`Unknown engine kind for deleteLockRowExact: ${engine.kind}`);
+}
+
+/**
+ * #1972 — host-scoped reaper for dead-holder locks. Closes the gap where a sync
+ * (or cycle) that crashed (OOM, recycle, SIGKILL) strands its lock row until
+ * something contends for it — a low-traffic source could look "syncing" for
+ * hours. `tryAcquireDbLock` only reclaims on contention; this is the background
+ * sweep. Intended to run at cycle start (and under `gbrain doctor --fix` for
+ * no-autopilot brains).
+ *
+ * Scoped to the `gbrain-sync:*` and `gbrain-cycle`/`gbrain-cycle:*` namespaces
+ * ONLY. `gbrain_cycle_locks` is shared by enrich, the minion supervisor,
+ * reindex, schema-pack, and elections (`tryWithDbElection`) — a blanket sweep
+ * would change their TTL-failover timing. Those keep their existing
+ * on-contention + TTL behavior.
+ *
+ *   reapDeadHolderLocks (host-scoped, sync/cycle namespaces only)
+ *     selectLockRows → for each row:
+ *     ├─ id not in sync/cycle namespace ───────→ KEEP (blast-radius scope)
+ *     ├─ holder_host != thisHost ──────────────→ KEEP (cross_host; can't probe)
+ *     ├─ kill(pid,0) == alive / EPERM ─────────→ KEEP (live or not-ours)
+ *     ├─ ESRCH && age < 60s grace ─────────────→ KEEP (PID-reuse defense)
+ *     └─ ESRCH && age ≥ 60s grace ─────────────→ deleteLockRowExact(id, pid, acquired_at)
+ *                                                  (snapshot-matched: reused-PID
+ *                                                   fresh row has newer acquired_at → no-op)
+ */
+function isReapableNamespace(lockId: string): boolean {
+  return (
+    lockId === 'gbrain-cycle' ||
+    lockId.startsWith('gbrain-cycle:') ||
+    lockId.startsWith('gbrain-sync:')
+  );
+}
+
+export async function reapDeadHolderLocks(
+  engine: BrainEngine,
+  opts: HolderLivenessOpts = {},
+): Promise<{ reaped: number; reapedIds: string[] }> {
+  const rows = await selectLockRows(engine);
+  const reapedIds: string[] = [];
+  for (const s of rows) {
+    if (!isReapableNamespace(s.id)) continue;
+    // isHolderDeadLocally combines same-host + ESRCH + the 60s reuse grace,
+    // so pure-PID-liveness (which PID-space wrap defeats) is never used alone.
+    if (!isHolderDeadLocally(s.holder_pid, s.holder_host, s.age_ms, opts)) continue;
+    const { deleted } = await deleteLockRowExact(engine, s.id, s.holder_pid, s.acquired_at);
+    if (deleted) reapedIds.push(s.id);
+  }
+  return { reaped: reapedIds.length, reapedIds };
 }
 
 /**

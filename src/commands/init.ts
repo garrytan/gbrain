@@ -1452,6 +1452,12 @@ export function reportModStatus(): void {
   }
   console.log('Resolver: skills/RESOLVER.md');
   console.log('Soul audit: run `gbrain soul-audit` to customize agent identity');
+  // Retrieval Reflex (#1981): the deterministic pointer layer is ON by default
+  // (no action needed). The policy skill is installed into the HOST repo on
+  // request — we PRINT the command rather than silently mutating the host repo.
+  console.log('Retrieval reflex: on by default (entity pointers injected per turn)');
+  console.log('  Install the policy skill into your agent repo:');
+  console.log('  gbrain integrations install retrieval-reflex --target <host-repo>');
   console.log('');
 }
 

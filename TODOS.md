@@ -1,5 +1,40 @@
 # TODOS
 
+## gbrain#1981 Retrieval Reflex follow-ups (v0.43+)
+
+Filed from the #1981 ship (v0.42.39.0). Deliberately scoped OUT — the v1 extractor
+is deterministic + precision-biased. See plan + GSTACK REVIEW REPORT at
+`~/.claude/plans/system-instruction-you-are-working-wild-yeti.md`.
+
+- [ ] **P3 — broaden entity detection beyond proper-case ASCII.** The v1 extractor
+  (`src/core/context/entity-salience.ts`) misses lowercase names, many non-Latin
+  scripts, pronoun follow-ups ("what about her?"), and assistant-introduced entities.
+  These need conversation state or an LLM pass. **Why:** higher recall on the read
+  side. **Where:** `entity-salience.ts` + the orchestrator's `priorContextText`.
+- [ ] **P3 — recall knob: optional fuzzy/prefix-expansion resolution.** The resolver
+  (`src/core/context/retrieval-reflex.ts`) is exact-only (alias + title + slug-suffix)
+  for precision. Revisit adding `resolveEntitySlug`'s trgm-fuzzy / prefix-expansion
+  arm, gated on an unambiguous single hit, if recall telemetry comes back weak.
+
+## gbrain#1972 job-layer follow-up (v0.43+)
+
+Filed from the #1972 fix (stale-lock reaper + bounded disconnect + complete
+cooperative-abort). One item was deliberately gated, not deferred blindly. See plan +
+GSTACK REVIEW REPORT at `~/.claude/plans/system-instruction-you-are-working-curious-pike.md`.
+
+- [ ] **P2 — `findBacklinkGaps` sync→async refactor (gated on telemetry).** The backlinks
+  phase does its heavy work in a single synchronous call (`findBacklinkGaps`,
+  `src/commands/backlinks.ts:71` — nested `readdirSync` double-walk, no `await` seam), so it
+  cannot be cooperatively aborted: a >30s run on a huge brain blocks the event loop and gets
+  force-evicted. lint was made yield-able this wave (it was already async); backlinks needs
+  `findBacklinkGaps` converted to async-with-periodic-yields, threaded through
+  `runBacklinksCore` + `runPhaseBacklinks`. **Why gated:** the trigger is UNCONFIRMED — we
+  don't know backlinks ever exceeds 30s. This wave added the phase-duration force-evict
+  attribution log (`FORCE_EVICT_DEADLINE_MS` in `src/core/cycle.ts`), which names any phase
+  that crosses the deadline. Do this refactor only if a production 24h pull shows backlinks
+  crossing it; otherwise it's a hot-loop rewrite for a non-occurring case. **Where:**
+  `src/commands/backlinks.ts`, `src/core/cycle.ts` (runPhaseBacklinks signal threading).
+
 ## gbrain#1881 sync reclone ownership follow-ups (v0.43+)
 
 Filed from the #1881 fix (`gbrain sync --strategy code` deleted a user's working
@@ -89,8 +124,9 @@ context). Deliberately scoped OUT of that PR. See plan + GSTACK REVIEW REPORT at
   batch error, retry the batch element-by-element so one bad row can't abort a
   353K-page `extract --stale` sweep, logging the offending `(from_slug, context)`
   instead of dying. The durable JSONB fix removed the known crash class (malformed
-  array literal) and NUL-stripping removed the other known jsonb-parse failure, so
-  there is no remaining data-dependent crash for this to catch *today* — it's
+  array literal), NUL-stripping removed a second jsonb-parse failure, and
+  v0.42.40.0 lone-surrogate well-forming (#2011) removed a third, so there is no
+  remaining *known* data-dependent crash for this to catch *today* — it's
   belt-and-suspenders against unknown future per-row failures. Wire it in
   `addLinksBatch`/`addTimelineEntriesBatch`/`addTakesBatch` (or in `batchRetry` as
   a post-classification fallback). Issue #1861 option 2.

@@ -7,6 +7,13 @@ import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, validateParams, buildOperationContext } from './dispatch.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
+import { loadConfig } from '../core/config.ts';
+import {
+  resolveSocketPath,
+  startResolveIpcServer,
+  cleanupStaleSocket,
+} from '../core/context/resolve-ipc.ts';
+import { resolveEntitiesToPointers } from '../core/context/retrieval-reflex.ts';
 
 export async function startMcpServer(engine: BrainEngine) {
   const server = new Server(
@@ -50,6 +57,30 @@ export async function startMcpServer(engine: BrainEngine) {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
+  // Retrieval Reflex (#1981, D9=C): on a PGLite brain, serve owns the single
+  // connection, so the context engine resolves salient entities THROUGH us over
+  // a local unix socket rather than opening a second (impossible) connection.
+  // Best-effort; failure to bind never blocks the MCP server.
+  let resolveServer: import('node:net').Server | null = null;
+  let resolveSocket: string | null = null;
+  try {
+    const cfg = loadConfig();
+    if (cfg?.engine === 'pglite' && cfg.database_path) {
+      resolveSocket = resolveSocketPath(cfg.database_path);
+      const defaultSource = process.env.GBRAIN_SOURCE || 'default';
+      resolveServer = await startResolveIpcServer(resolveSocket, (req) =>
+        resolveEntitiesToPointers(
+          engine,
+          req.sourceId || defaultSource,
+          req.candidates ?? [],
+          { priorContextText: req.priorContextText, maxPointers: req.maxPointers },
+        ),
+      );
+    }
+  } catch {
+    /* resolve IPC is best-effort; never block serve */
+  }
+
   // Exit cleanly when MCP client disconnects (stdin EOF) or on signals.
   // Without this, orphaned serve processes accumulate and contend for the
   // PGLite write lock, causing ingest jobs (email-sync) to time out.
@@ -58,6 +89,8 @@ export async function startMcpServer(engine: BrainEngine) {
     if (shuttingDown) return;
     shuttingDown = true;
     process.stderr.write(`[gbrain-serve] shutdown: ${reason}\n`);
+    try { resolveServer?.close(); } catch { /* noop */ }
+    if (resolveSocket) cleanupStaleSocket(resolveSocket);
     Promise.resolve(engine.disconnect?.())
       .catch(() => {})
       .finally(() => process.exit(code));

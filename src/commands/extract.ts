@@ -60,6 +60,7 @@ import { createHash } from 'crypto';
 // v0.41.15.0 (T7, D9): --workers N for the fs-walk inner loops via the
 // shared sliding-pool helper + PGLite-clamp wrapper.
 import { runSlidingPool } from '../core/worker-pool.ts';
+import { isAborted } from '../core/abort-check.ts';
 import { parseWorkers, resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
 
 // Batch size for addLinksBatch / addTimelineEntriesBatch.
@@ -526,6 +527,14 @@ export interface ExtractOpts {
    * own pagination and stay serial in v0.41.15.0.
    */
   workers?: number;
+  /**
+   * #1972: cooperative-abort signal. Forwarded into the sliding pool (which
+   * propagates it to every worker) and checked at the top of each onItem, so a
+   * cancelled cycle's extract (incremental OR full-walk) relinquishes its
+   * worker slot well under the 30s force-evict. Honored by the cycle-reachable
+   * paths: extractForSlugs, extractLinksFromDir, extractTimelineFromDir.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -564,7 +573,7 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
       // Nothing changed — skip entirely.
       return result;
     }
-    const r = await extractForSlugs(engine, opts.dir, opts.slugs, opts.mode, dryRun, jsonMode, workers);
+    const r = await extractForSlugs(engine, opts.dir, opts.slugs, opts.mode, dryRun, jsonMode, workers, opts.signal);
     result.links_created = r.links_created;
     result.timeline_entries_created = r.timeline_created;
     result.pages_processed = r.pages;
@@ -573,12 +582,12 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
 
   // Full walk path: CLI `gbrain extract` or first-run.
   if (opts.mode === 'links' || opts.mode === 'all') {
-    const r = await extractLinksFromDir(engine, opts.dir, dryRun, jsonMode, workers);
+    const r = await extractLinksFromDir(engine, opts.dir, dryRun, jsonMode, workers, opts.signal);
     result.links_created = r.created;
     result.pages_processed = r.pages;
   }
   if (opts.mode === 'timeline' || opts.mode === 'all') {
-    const r = await extractTimelineFromDir(engine, opts.dir, dryRun, jsonMode, workers);
+    const r = await extractTimelineFromDir(engine, opts.dir, dryRun, jsonMode, workers, opts.signal);
     result.timeline_entries_created = r.created;
     result.pages_processed = Math.max(result.pages_processed, r.pages);
   }
@@ -931,6 +940,7 @@ async function extractForSlugs(
   // shared flush primitive; JS single-threaded event loop makes the
   // shared counter increments atomic.
   workers: number = 1,
+  signal?: AbortSignal,
 ): Promise<{ links_created: number; timeline_created: number; pages: number }> {
   // Build the full slug set for link resolution (fast: just readdir, no file reads)
   const allFiles = walkMarkdownFiles(brainDir);
@@ -992,8 +1002,12 @@ async function extractForSlugs(
   await runSlidingPool({
     items: slugs,
     workers,
+    signal,
     failureLabel: (slug) => slug,
     onItem: async (slug) => {
+      // #1972: bail before doing any work for this slug on abort. Trailing
+      // flushLinks/flushTimeline still commit accumulated rows — no torn write.
+      if (isAborted(signal)) return;
       const relPath = slug + '.md';
       const fullPath = join(brainDir, relPath);
       try {
@@ -1048,6 +1062,7 @@ async function extractLinksFromDir(
   engine: BrainEngine, brainDir: string, dryRun: boolean, jsonMode: boolean,
   // v0.41.15.0 (T7): in-process worker count. Default 1.
   workers: number = 1,
+  signal?: AbortSignal,
 ): Promise<{ created: number; pages: number }> {
   const files = walkMarkdownFiles(brainDir);
   const allSlugs = new Set(files.map(f => pathToSlug(f.relPath)));
@@ -1088,8 +1103,11 @@ async function extractLinksFromDir(
   await runSlidingPool({
     items: files,
     workers,
+    signal,
     failureLabel: (f) => f.relPath,
     onItem: async (file) => {
+      // #1972: bail before this file on abort; trailing flush() commits the batch.
+      if (isAborted(signal)) return;
       try {
         const content = readFileSync(file.path, 'utf-8');
         const links = await extractLinksFromFile(content, file.relPath, allSlugs, { globalBasename });
@@ -1123,6 +1141,7 @@ async function extractTimelineFromDir(
   engine: BrainEngine, brainDir: string, dryRun: boolean, jsonMode: boolean,
   // v0.41.15.0 (T7): in-process worker count. Default 1.
   workers: number = 1,
+  signal?: AbortSignal,
 ): Promise<{ created: number; pages: number }> {
   const files = walkMarkdownFiles(brainDir);
 
@@ -1153,8 +1172,11 @@ async function extractTimelineFromDir(
   await runSlidingPool({
     items: files,
     workers,
+    signal,
     failureLabel: (f) => f.relPath,
     onItem: async (file) => {
+      // #1972: bail before this file on abort; trailing flush() commits the batch.
+      if (isAborted(signal)) return;
       try {
         const content = readFileSync(file.path, 'utf-8');
         const slug = pathToSlug(file.relPath);
