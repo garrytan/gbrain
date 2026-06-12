@@ -49,6 +49,8 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // on different ports.
   if (process.env.LLAMA_SERVER_RERANKER_BASE_URL) envBaseUrls['llama-server-reranker'] = process.env.LLAMA_SERVER_RERANKER_BASE_URL;
   if (process.env.OLLAMA_BASE_URL) envBaseUrls['ollama'] = process.env.OLLAMA_BASE_URL;
+  if (process.env.MLX_EMBEDDING_BASE_URL) envBaseUrls['mlx-embedding'] = process.env.MLX_EMBEDDING_BASE_URL;
+  if (process.env.MLX_GEMMA4_BASE_URL) envBaseUrls['mlx-gemma4'] = process.env.MLX_GEMMA4_BASE_URL;
   if (process.env.LMSTUDIO_BASE_URL) envBaseUrls['lmstudio'] = process.env.LMSTUDIO_BASE_URL;
   if (process.env.LITELLM_BASE_URL) envBaseUrls['litellm'] = process.env.LITELLM_BASE_URL;
   if (process.env.OPENROUTER_BASE_URL) envBaseUrls['openrouter'] = process.env.OPENROUTER_BASE_URL;
