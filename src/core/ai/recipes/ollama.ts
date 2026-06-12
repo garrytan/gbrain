@@ -13,8 +13,9 @@ export const ollama: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm'],
+      models: ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm', 'qwen3-embed-8b', 'snowflake-arctic-embed'],
       default_dims: 768, // nomic-embed-text native dim
+      dims_options: [384, 768, 1024, 4096], // all-minilm 384 | nomic 768 | mxbai/arctic 1024 | qwen3-8b 4096
       cost_per_1m_tokens_usd: 0,
       price_last_verified: '2026-04-20',
       // Ollama's batch capacity depends on the locally loaded model + the
