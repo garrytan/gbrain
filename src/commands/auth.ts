@@ -405,7 +405,7 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
 
 async function registerClient(name: string, args: string[]) {
   if (!name) {
-    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...|"*"] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
     process.exit(1);
   }
   let parsed: RegisterClientArgs;
@@ -413,7 +413,7 @@ async function registerClient(name: string, args: string[]) {
     parsed = parseRegisterClientArgs(args);
   } catch (e: any) {
     console.error(`Error: ${e.message}`);
-    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...|"*"] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
     process.exit(1);
   }
   const { grantTypes, scopes, sourceId, federatedRead, redirectUris, tokenEndpointAuthMethod } = parsed;
@@ -441,7 +441,10 @@ async function registerClient(name: string, args: string[]) {
         console.log(`  Redirect URIs:       ${redirectUris.join(', ')}`);
       }
       console.log(`  Write source:        ${sourceId}`);
-      console.log(`  Federated reads:     ${effectiveFederated.join(', ')}\n`);
+      const readsLabel = effectiveFederated.includes('*')
+        ? `* (ALL sources, read scope — current and future)`
+        : effectiveFederated.join(', ');
+      console.log(`  Federated reads:     ${readsLabel}\n`);
       if (clientSecret) {
         console.log('Save the client secret — it will not be shown again.');
       } else {

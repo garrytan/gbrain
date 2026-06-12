@@ -12,6 +12,7 @@ import { describe, test, expect } from 'bun:test';
 import {
   resolveRequestedScope,
   resolveCodeIntelScope,
+  sourceScopeOpts,
   OperationError,
   type OperationContext,
 } from '../src/core/operations.ts';
@@ -96,6 +97,45 @@ describe('resolveRequestedScope — default (no param)', () => {
   });
 });
 
+describe("sourceScopeOpts — '*' wildcard grant", () => {
+  test("a '*' grant spans every source (no filter)", () => {
+    const ctx = ctxOf({ remote: true, sourceId: 'a', auth: { token: 't', clientId: 'c', scopes: [], allowedSources: ['*'] } as any });
+    expect(sourceScopeOpts(ctx)).toEqual({});
+  });
+
+  test("'*' mixed with explicit sources still spans every source", () => {
+    const ctx = ctxOf({ remote: true, auth: { token: 't', clientId: 'c', scopes: [], allowedSources: ['a', '*', 'b'] } as any });
+    expect(sourceScopeOpts(ctx)).toEqual({});
+  });
+
+  test('a non-wildcard array is unchanged (exact federated list)', () => {
+    const ctx = ctxOf({ remote: true, auth: { token: 't', clientId: 'c', scopes: [], allowedSources: ['a', 'b'] } as any });
+    expect(sourceScopeOpts(ctx)).toEqual({ sourceIds: ['a', 'b'] });
+  });
+
+  test('empty grant still fail-closed to the scalar floor (NOT wildcard)', () => {
+    const ctx = ctxOf({ remote: true, sourceId: 'a', auth: { token: 't', clientId: 'c', scopes: [], allowedSources: [] } as any });
+    expect(sourceScopeOpts(ctx)).toEqual({ sourceId: 'a' });
+  });
+});
+
+describe("resolveRequestedScope — '*' wildcard grant", () => {
+  test("remote + '*' grant + __all__ spans the whole brain", () => {
+    const ctx = ctxOf({ remote: true, sourceId: 'a', auth: { token: 't', clientId: 'c', scopes: [], allowedSources: ['*'] } as any });
+    expect(resolveRequestedScope(ctx, '__all__')).toEqual({});
+  });
+
+  test("remote + '*' grant + no param spans the whole brain", () => {
+    const ctx = ctxOf({ remote: true, sourceId: 'a', auth: { token: 't', clientId: 'c', scopes: [], allowedSources: ['*'] } as any });
+    expect(resolveRequestedScope(ctx, undefined)).toEqual({});
+  });
+
+  test("remote + '*' grant can narrow to ANY explicit source (no rejection)", () => {
+    const ctx = ctxOf({ remote: true, auth: { token: 't', clientId: 'c', scopes: [], allowedSources: ['*'] } as any });
+    expect(resolveRequestedScope(ctx, 'anything')).toEqual({ sourceId: 'anything' });
+  });
+});
+
 describe('resolveCodeIntelScope — single-source code traversal', () => {
   test('scalar sourceId → that source, allSources false', () => {
     expect(resolveCodeIntelScope(ctxOf({ remote: true, sourceId: 'a' }), undefined)).toEqual({ allSources: false, sourceId: 'a' });
@@ -118,6 +158,18 @@ describe('resolveCodeIntelScope — single-source code traversal', () => {
 
   test('remote with no source in scope is denied, never widened to all', () => {
     const ctx = ctxOf({ remote: true, sourceId: '' });
+    expect(() => resolveCodeIntelScope(ctx, '__all__')).toThrow(OperationError);
+  });
+
+  test("remote + '*' grant can traverse an explicitly-named source", () => {
+    const ctx = ctxOf({ remote: true, sourceId: '', auth: { token: 't', clientId: 'c', scopes: [], allowedSources: ['*'] } as any });
+    expect(resolveCodeIntelScope(ctx, 'pick-one')).toEqual({ allSources: false, sourceId: 'pick-one' });
+  });
+
+  test("remote + '*' grant WITHOUT an explicit source is denied (traversal is single-source)", () => {
+    // '*' spans reads, but graph traversal needs ONE source — the resolver
+    // yields {} and code-intel must not silently span all for a remote caller.
+    const ctx = ctxOf({ remote: true, sourceId: '', auth: { token: 't', clientId: 'c', scopes: [], allowedSources: ['*'] } as any });
     expect(() => resolveCodeIntelScope(ctx, '__all__')).toThrow(OperationError);
   });
 });

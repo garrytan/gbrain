@@ -152,6 +152,14 @@ describe('get_page handler closes the cross-source exact-read leak', () => {
     const page: any = await get_page.handler(ctx, { slug: 'shared/alpha-doc' });
     expect(page.title).toBe('Alpha doc');
   });
+
+  test("remote client with a '*' wildcard grant CAN read any source's slug", async () => {
+    const ctx = ctxOf({ remote: true, auth: { token: 't', clientId: 'c', scopes: [], allowedSources: ['*'] } as any });
+    const beta: any = await get_page.handler(ctx, { slug: 'secret/beta-doc' });
+    expect(beta.title).toBe('Beta secret');
+    const alpha: any = await get_page.handler(ctx, { slug: 'shared/alpha-doc' });
+    expect(alpha.title).toBe('Alpha doc');
+  });
 });
 
 // ---------------------------------------------------------------------------
