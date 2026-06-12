@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Non-project correspondence
+    url: https://github.com/garrytan/gbrain/blob/master/SUPPORT.md
+    about: Legal, IP, attribution, partnership, and other non-project correspondence does not belong in public issues.
+  - name: Security vulnerability
+    url: https://github.com/garrytan/gbrain/security/advisories/new
+    about: Report vulnerabilities privately through GitHub Security Advisories.
