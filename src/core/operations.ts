@@ -28,7 +28,7 @@ import { createMemoryMutationLedgerOperations } from './operations-memory-mutati
 import { createMemoryWritebackRouterOperations } from './operations-memory-writeback-router.ts';
 import { createSourceRegistryOperations } from './operations-source-registry.ts';
 import { expandQuery } from './search/expansion.ts';
-import { hybridSearch } from './search/hybrid.ts';
+import { hybridSearchWithMeta } from './search/hybrid.ts';
 import { rankSearchResults, sourceRankCandidateLimit } from './search/source-ranking.ts';
 import { getAtlasOrientationBundle } from './services/atlas-orientation-bundle-service.ts';
 import { getAtlasOrientationCard } from './services/atlas-orientation-card-service.ts';
@@ -3153,11 +3153,15 @@ const query: Operation = {
   },
   handler: async (ctx, p) => {
     const expand = p.expand !== false;
-    return hybridSearch(ctx.engine, p.query as string, {
+    const { results, expansion_failed } = await hybridSearchWithMeta(ctx.engine, p.query as string, {
       limit: (p.limit as number) ?? 20,
       expansion: expand,
       expandFn: expand ? (query) => expandQuery(query, { config: ctx.config }) : undefined,
     });
+    if (expansion_failed) {
+      ctx.logger.warn('query expansion failed; results reflect the original query only');
+    }
+    return results;
   },
   cliHints: { name: 'query', positional: ['query'] },
 };

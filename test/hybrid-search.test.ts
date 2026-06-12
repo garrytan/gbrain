@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { hybridSearch } from '../src/core/search/hybrid.ts';
+import { hybridSearch, hybridSearchWithMeta } from '../src/core/search/hybrid.ts';
 import { resetEmbeddingProviderForTests, setEmbeddingProviderForTests } from '../src/core/embedding.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { SearchResult } from '../src/core/types.ts';
@@ -122,5 +122,55 @@ describe('hybridSearch', () => {
     expect(embeddedQueries).toEqual(['hybrid search', 'hybrid search alternatives']);
     expect(vectorCalls).toHaveLength(2);
     expect(results.map((entry) => entry.slug)).toEqual(['concepts/hybrid']);
+  });
+});
+
+describe('hybridSearchWithMeta expansion failure flag (C-20)', () => {
+  const disabledProvider = {
+    capability: {
+      available: false,
+      mode: 'none',
+      implementation: 'none',
+      model: null,
+      dimensions: null,
+      reason: 'test provider disabled',
+    },
+    embedBatch: async () => {
+      throw new Error('test provider disabled');
+    },
+  } as const;
+
+  function keywordOnlyEngine(): BrainEngine {
+    return {
+      searchKeyword: async () => [makeResult()],
+      searchVector: async () => [],
+    } as Pick<BrainEngine, 'searchKeyword' | 'searchVector'> as BrainEngine;
+  }
+
+  test('flags expansion_failed when the expansion function throws', async () => {
+    setEmbeddingProviderForTests(disabledProvider as any);
+    const { results, expansion_failed } = await hybridSearchWithMeta(keywordOnlyEngine(), 'context', {
+      expansion: true,
+      expandFn: async () => {
+        throw new Error('rewrite runner unavailable');
+      },
+    });
+    expect(expansion_failed).toBe(true);
+    expect(results.length).toBeGreaterThan(0);
+  });
+
+  test('does not flag expansion_failed when expansion succeeds', async () => {
+    setEmbeddingProviderForTests(disabledProvider as any);
+    const { expansion_failed } = await hybridSearchWithMeta(keywordOnlyEngine(), 'context', {
+      expansion: true,
+      expandFn: async () => ['context compounding'],
+    });
+    expect(expansion_failed).toBe(false);
+  });
+
+  test('does not flag expansion_failed when expansion is disabled', async () => {
+    setEmbeddingProviderForTests(disabledProvider as any);
+    const { expansion_failed } = await hybridSearchWithMeta(keywordOnlyEngine(), 'context', {});
+    expect(expansion_failed).toBe(false);
   });
 });

@@ -19,14 +19,30 @@ export interface HybridSearchOpts extends SearchOpts {
   expandFn?: (query: string) => Promise<string[]>;
 }
 
+export interface HybridSearchMetaResult {
+  results: SearchResult[];
+  /** True when query expansion was requested but failed and the original query was used alone. */
+  expansion_failed: boolean;
+}
+
 export async function hybridSearch(
   engine: BrainEngine,
   query: string,
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
+  const { results } = await hybridSearchWithMeta(engine, query, opts);
+  return results;
+}
+
+export async function hybridSearchWithMeta(
+  engine: BrainEngine,
+  query: string,
+  opts?: HybridSearchOpts,
+): Promise<HybridSearchMetaResult> {
   const limit = opts?.limit || 20;
   const candidateLimit = sourceRankCandidateLimit(limit);
   const keywordPromise = engine.searchKeyword(query, { ...opts, limit: candidateLimit });
+  let expansionFailed = false;
 
   // The vector leg (expansion -> embedding -> vector search) only depends on
   // the query string, so it runs concurrently with the keyword search.
@@ -38,7 +54,8 @@ export async function hybridSearch(
         const expanded = await opts.expandFn(query);
         queries = dedupeQueryVariants([query, ...expanded]).slice(0, 3);
       } catch {
-        // Expansion failure is non-fatal
+        // Expansion failure is non-fatal, but no longer silent.
+        expansionFailed = true;
       }
     }
 
@@ -69,7 +86,10 @@ export async function hybridSearch(
   const [keywordResults, vectorLists] = await Promise.all([keywordPromise, vectorListsPromise]);
 
   if (vectorLists.length === 0 || vectorLists.every(list => list.length === 0)) {
-    return dedupAndRankSearchResults(keywordResults, limit);
+    return {
+      results: dedupAndRankSearchResults(keywordResults, limit),
+      expansion_failed: expansionFailed,
+    };
   }
 
   // Merge all result lists via RRF
@@ -77,7 +97,10 @@ export async function hybridSearch(
   const fused = rrfFusion(allLists);
 
   // Dedup
-  return dedupAndRankSearchResults(fused, limit);
+  return {
+    results: dedupAndRankSearchResults(fused, limit),
+    expansion_failed: expansionFailed,
+  };
 }
 
 function dedupAndRankSearchResults(results: SearchResult[], limit: number): SearchResult[] {
