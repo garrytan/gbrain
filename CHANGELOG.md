@@ -23,6 +23,26 @@ All notable changes to MBrain will be documented in this file.
 
 ### Added
 
+- **Your memory now knows the difference between a checked fact and a plausible
+  guess.** The new `verify_memory_candidate_entry` operation (CLI:
+  `mbrain verify-memory-candidate`) records how a Memory Inbox claim was
+  actually checked — command run, DB query, file inspection, source recheck,
+  user confirmation — with the evidence attached. Refuted claims are blocked
+  from promotion outright, so a disproven guess can never become compiled
+  truth. This encodes the fail → investigate → verify → distill → consult
+  memory loop directly into the candidate pipeline.
+- **Verified knowledge gets a faster path to compiled truth.** Promotion
+  preflight treats a verification record as clearing the standing
+  revalidation defer — verified procedure candidates become promotable for
+  the first time — and auto-promote upgrades verified inferred/ambiguous
+  candidates from the handoff-only lane to canonical-eligible. Want a
+  stricter brain? Set `auto_promote.eligibility.require_verification: true`
+  and only checked facts reach the canonical lane. The promotion judge now
+  sees the verification evidence too.
+- **You can finally measure how trustworthy your promoted memory is.**
+  `get_memory_operations_health` reports promotion verification coverage —
+  what share of promoted candidates carry verification evidence — so you can
+  watch the quality of your compiled truth instead of guessing at it.
 - **Sessions can now remember themselves.** Set `MBRAIN_STOP_HOOK_MODE=capture`
   and the Claude Code Stop hook automatically captures each session transcript
   into Memory Inbox candidates in the background — no manual export, no

@@ -45,7 +45,10 @@ Use the lightest lookup:
 not answer evidence; `read_context` is the canonical evidence boundary before
 factual claims. If required reads miss but `candidate_signals` exist, say
 canonical evidence is absent/different and Memory Inbox has non-canonical signals.
-Use candidate/review ops to inspect, promote, reject, or supersede them.
+Use candidate/review ops to inspect, verify, promote, reject, or supersede them.
+When you check a candidate's claim against ground truth (run a command, query
+the DB, read the file), record it with `verify_memory_candidate_entry` before
+promoting; refuted candidates are blocked from promotion.
 For known selectors or slugs, go directly to `read_context` or `get_page`.
 Stop once you have enough context.
 
