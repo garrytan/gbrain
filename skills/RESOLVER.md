@@ -149,6 +149,7 @@ upstream sections above; KOS extensions are append-only by policy.
 | "corpus synthesis", "语料级综合", "corpus-level wisdom" — Opus corpus-level viewpoint synthesis: map a whole source → propose themes/tensions → deep per-theme 观点与洞察 page (top of DIKW) | `skills/kos-jarvis/corpus-synth/SKILL.md` |
 | "corpus ingest", "bulk ingest pipeline", "一键入脑", "ingest a knowledge base" — one-command D→I→K→W pipeline for one isolated source (register→ingest→embed→enrich→graph→[entity-synth]→corpus-synth), idempotent/incremental, --from/--to-stage | `skills/kos-jarvis/corpus-ingest/SKILL.md` |
 | Ingest images from IMAGE_SOURCE_DIR via Voyage multimodal-3 (cross-modal v0.36.6.0); scaffolded — awaits VOYAGE_API_KEY + IMAGE_SOURCE_DIR | `skills/kos-jarvis/image-ingest/SKILL.md` |
+| "atom concepts backfill", "concepts backfill" — stamp `frontmatter.concepts` onto page-derived atoms (bridges the upstream extract_atoms → synthesize_concepts gap; idempotent, retires when the upstream fix lands) | `skills/kos-jarvis/atom-concepts-backfill/SKILL.md` |
 
 These chain into upstream skills: digest-to-memory reads patrol output;
 enrich-sweep wraps upstream `skills/enrich/` in bulk mode; synthesis-sweep is
