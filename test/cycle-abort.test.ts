@@ -113,7 +113,7 @@ describe('autopilot-cycle handler contract (v0.20.5)', () => {
     // the original 2000-char ceiling. The intent of the guard is unchanged:
     // "the autopilot-cycle handler passes job.signal to runCycle." The
     // window just needs to be wide enough to span any reasonable handler.
-    const handlerStart = jobsSource.indexOf("worker.register('autopilot-cycle'");
+    const handlerStart = jobsSource.indexOf("registerBuiltinJob(worker, engine, 'autopilot-cycle'");
     expect(handlerStart).toBeGreaterThan(-1);
     const handlerBlock = jobsSource.slice(handlerStart, handlerStart + 6000);
 
