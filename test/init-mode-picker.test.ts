@@ -110,7 +110,7 @@ describe('MENU_TEXT cost-matrix anchors (must match CLAUDE.md + methodology doc)
     const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
     expect(MODE_PICKER_MENU).toContain('Haiku 4.5');
     expect(MODE_PICKER_MENU).toContain('Sonnet 4.6');
-    expect(MODE_PICKER_MENU).toContain('Opus 4.7');
+    expect(MODE_PICKER_MENU).toContain('Opus 4.8');
     expect(MODE_PICKER_MENU).toContain('$1/M');
     expect(MODE_PICKER_MENU).toContain('$3/M');
     expect(MODE_PICKER_MENU).toContain('$5/M');

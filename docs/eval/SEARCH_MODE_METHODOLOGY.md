@@ -152,7 +152,7 @@ The mode-picker prompt at `gbrain init` and the CLAUDE.md `## Search Mode` table
 **Variables:**
 - `T` = avg tokens per search-result chunk. The recursive chunker targets 300 words / chunk → ~400 tokens (English, OpenAI tiktoken approx).
 - `N` = chunks delivered per query (capped by the mode's `searchLimit`).
-- `R` = downstream model input rate. Sonnet 4.6 = \$3/M. Opus 4.7 = \$5/M. Haiku 4.5 = \$1/M.
+- `R` = downstream model input rate. Sonnet 4.6 = \$3/M. Opus 4.8 = \$5/M. Haiku 4.5 = \$1/M.
 - `Q` = queries per month.
 
 **Per-query input cost** (downstream agent reads the chunks):
@@ -201,7 +201,7 @@ downstream model tier is the BIGGER cost lever. Per-query cost at 10K
 queries/month (typical single-user volume), search payload only (no cache
 savings):
 
-| Mode (search tokens) | Haiku 4.5 (\$1/M) | Sonnet 4.6 (\$3/M) | Opus 4.7 (\$5/M) |
+| Mode (search tokens) | Haiku 4.5 (\$1/M) | Sonnet 4.6 (\$3/M) | Opus 4.8 (\$5/M) |
 |---|---|---|---|
 | conservative (~4K) | **\$40/mo** | \$120/mo | \$200/mo |
 | balanced (~10K) | \$100/mo | \$300/mo | \$500/mo |
@@ -217,7 +217,7 @@ mode). **Mismatches waste capacity:**
   context per query. Haiku's reasoning is weaker; more chunks = more noise,
   not more signal. You pay Haiku rates but get sub-Haiku quality. Wrong
   direction.
-- `conservative + Opus`: Opus has 200K context window and can synthesize
+- `conservative + Opus`: Opus has a large context window and can synthesize
   across many chunks. Capping at 10 chunks / 4K tokens leaves Opus
   reasoning underfed. You pay Opus rates but get conservative-shape
   retrieval. Wasted spend.

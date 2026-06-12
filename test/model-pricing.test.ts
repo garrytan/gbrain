@@ -49,6 +49,13 @@ describe('CANONICAL_PRICING — table integrity', () => {
       CANONICAL_PRICING['google:gemini-2.0-flash'],
     );
   });
+
+  test('current OpenAI GPT-5.5 / 5.4 prices are pinned from official pricing', () => {
+    expect(CANONICAL_PRICING['openai:gpt-5.5']).toEqual({ input: 5.0, output: 30.0 });
+    expect(CANONICAL_PRICING['openai:gpt-5.4']).toEqual({ input: 2.5, output: 15.0 });
+    expect(CANONICAL_PRICING['openai:gpt-5.4-mini']).toEqual({ input: 0.75, output: 4.5 });
+    expect(CANONICAL_PRICING['openai:gpt-5.4-nano']).toEqual({ input: 0.2, output: 1.25 });
+  });
 });
 
 describe('canonicalLookup — id normalization', () => {
