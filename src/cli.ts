@@ -1926,6 +1926,12 @@ async function handleCliOnly(command: string, args: string[]) {
     // #1471: this is also the fall-through OWNER-disconnect — the owner is torn
     // down LAST (after the drain), so module-singleton borrowers never outlive it.
     if (command !== 'serve') {
+      // Drain FIRST, then arm the disconnect watchdog: the timer's contract is
+      // bounding engine.disconnect() (see its message), but armed before the
+      // drain it also killed any drain longer than 10s — which defeats a
+      // GBRAIN_EXIT_DRAIN_MS-extended drain waiting on in-flight facts:absorb
+      // (#2108) and force-exited mid-settle with a misleading warning.
+      await drainAllBackgroundWorkForCliExit();
       const forceExit = shouldForceExitAfterMain();
       let hardExitTimer: ReturnType<typeof setTimeout> | undefined;
       if (forceExit) {
@@ -1935,7 +1941,6 @@ async function handleCliOnly(command: string, args: string[]) {
         }, 10_000);
         hardExitTimer.unref?.();
       }
-      await drainAllBackgroundWorkForCliExit();
       await engine.disconnect();
       if (hardExitTimer) clearTimeout(hardExitTimer);
     }
