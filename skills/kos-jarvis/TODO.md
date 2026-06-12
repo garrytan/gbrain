@@ -190,6 +190,151 @@ oauth_*),WAL fork patch retained for brain-db.ts。
 
 ---
 
+## P1 — dream-cycle 夜间回归 RESOLVED + KB 编译 enablement (added 2026-06-09)
+
+### [x] (P1) dream sync/synthesize 自 06-02 起每晚 fail — RESOLVED 2026-06-09 (双根因)
+
+- **RC1 — upstream #1678 (cycle lint DB-disconnect)**: lint phase 创建竞争
+  module-style engine 后 disconnect,把共享 db singleton 置空,后续 DB phase
+  报 "connect() has not been called"。v0.42.1.0 (06-01 部署) 带 bug;上游
+  v0.42.5.0 `766604de` 修复;§6.34 部署 0.42.37.0 已含 → sync 恢复 ok。
+- **RC2 — launchd 旧 env 缓存**: `com.jarvis.dream-cycle` + `com.jarvis.kos-patrol`
+  plist **文件** 5/31 17:48 (§6.32) 已改 openai@avman,但 job 从未
+  bootout/bootstrap → 内存 job 定义仍是 `GBRAIN_EMBEDDING_MODEL=
+  google:gemini-embedding-001` + 已过期 Google key,且无 OPENAI_*。每晚
+  embed 全败 (stderr 累计 24,236 条 "API key expired"),还把 te3 签名
+  chunk 当 prior-signature **invalidate** (06-09 晚 7 个) → NULL 向量持续
+  累积 (§6.34 排干的 8,625 NULL 的 dream 侧来源;ingest 侧才是 avman TLS
+  flake)。**Fix 2026-06-09**: 两个 job bootout+bootstrap 重载 (serve-http
+  本来就对,不动)。
+- **验证 (kickstart 22:25 run)**: sync ok / synthesize 回到良性
+  skipped(not_configured) / embed 0 gemini 报错 / consolidate 提升 8
+  facts → 4 takes。
+- **Lesson**: 改 plist EnvironmentVariables 必须随手 bootout+bootstrap,
+  否则 launchd 永远用旧 env。§6.32 收敛漏了这两个 job 的重载。
+
+### [~] (P1) Knowledge/wisdom 层编译 enablement — 执行 2026-06-09 晚 (Lucien D2 决定: 先启用,模型升级暂缓)
+
+背景: M2-A 退役 dikw-compile 后,上游现行的 knowledge 编译机制是
+**atoms→concepts** (`extract_atoms` per-source 提取 +
+`synthesize_concepts` 全局聚合出 tier-promoted concept 页),被
+schema pack 门控 — 原 active pack `gbrain-base` 不声明这两个 phase。
+
+1. [x] **Pack 切换 → `gbrain-everything`** (DONE 2026-06-09)。via
+   `~/.gbrain/config.json` `schema_pack` 字段 (tier-6 home-config;
+   备份 `config.json.before-pack-switch-20260609`)。**上游 papercut**:
+   `gbrain schema use` 的校验列表只认 base/recommended/base-v2,而
+   loader 实际 bundle 7 个 (含 creator/investor/engineer/everything)
+   → `use` 报 "Unknown pack",只能直写 config。另: `schema active/
+   explain/graph` 等 inspection 命令不走 extends 链 (everything 显示
+   Page types: 0),display-only — merge 机制本身经
+   `test/lens-pack-manifests.test.ts` + `test/cycle-pack-gating.test.ts`
+   50/50 验证 OK。注意 bundled yaml 在 `bin/gbrain` 编译版二进制里
+   resolve 不到 (连 gbrain-base 都 unknown);生产走 `~/.bun/bin/gbrain
+   → src/cli.ts` 源码直跑,不受影响。
+2. [x] **`cycle.enrich_thin.enabled=true`** (DONE 2026-06-09, DB config
+   plane)。对 thin/stub 页做 brain-internal grounded synthesis —
+   对口 3,417 email stubs + 13,054 orphans。
+3. [x→改判] **extract_facts 卡死根因改判**: `apply-migrations --yes` 报
+   "All migrations up to date" — 79 行根本不是 v0.31 legacy,**全部是
+   06-02 起 omada-sentiment 日更经 `mcp:put_page` 提取的新 facts**
+   (source='mcp:put_page', source_id='omada'),上游 put_page facts
+   路径不打 `row_num`,而 cycle guard 把 `row_num IS NULL AND
+   entity_slug IS NOT NULL` 一律当 legacy → phase 永久 skip 且逐日
+   加重 (70→79)。**候选上游 issue**(guard 应排除 source='mcp:put_page'
+   或 put_page 路径应补 row_num)。不动 DB,等上游表态。
+4. [DEFERRED] **模型路由落 gbrain config** — Lucien 2026-06-09 D2 决定
+   暂缓 (成本考虑)。dream LLM phase 维持上游默认 (chat 默认
+   anthropic:claude-sonnet-4-6;extract_atoms Haiku tier)。路由规则
+   本身仍有效 (haiku→sonnet, sonnet/opus→fable-5),用于 ad-hoc 编译
+   任务;何时落 config 由 Lucien 另行决定。
+
+历史全量 sweep (9.7k source 页) 仍按 pilot-first: 先 100 页试点看质量
++ 单页成本再放量。`dream.synthesize.session_corpus_dir` (conversation
+transcript 综合) 与 KB 编译无关,保持 unset。
+
+**验证 run (2026-06-10T02-55-55Z, kickstart)**:
+- `extract_atoms: ok` — **首跑产出 28 atoms** (25/50 pages 处理,25
+  budget-skipped — per-tick 预算会逐晚消化)。落库 `atoms/2026-06-10/*`,
+  内容质量好 (邮件/omada 语料的具体洞察)。注意 atom 页无 `kind`
+  frontmatter (上游用 slug 前缀 + pack type 体系) — 与 KOS 9-kind 的
+  映射待定,候补 `type-mapping.md` 一行。
+- `synthesize_concepts: skipped — no atoms with concept refs` — ~~良性~~
+  **改判 2026-06-11: 上游端到端断点 → 当晚三件套全部落地**:
+  1. **桥接 skill 落地并验证**: `skills/kos-jarvis/atom-concepts-backfill/`
+     (sonnet 批量标注 1-3 个 kebab 共享词表 topic 标签 + jsonb stamp;
+     幂等,只碰缺字段的 atom;manifest 59 entries + RESOLVER row +
+     check:resolver OK)。试点 60 atoms → `gbrain dream --phase
+     synthesize_concepts` **写出 33 个 concept 页 (T2=7/T3=26),
+     $0.044/0 失败** — wisdom 层 concepts 首批产出。全量回填跑通
+     (~$1,跟着 drain 进度补增量)。坑×2 已修: postgres.js 预序列化参数
+     会双重编码成 jsonb string (要用 `sql.json()`);crs 代理 base 自带
+     /v1 而官方 SDK 自己追加 → 构造 client 时剥尾部 /v1。
+  2. **上游 issue 已提**: [garrytan/gbrain#2123](https://github.com/garrytan/gbrain/issues/2123)
+     (证据: synthesize-concepts.ts 头注释设计意图 vs extract-atoms.ts
+     无写入 + 生产 696/0 复现 + 外部 stamp 后消费侧立即工作)。
+  3. **上游 PR 已提**: [garrytan/gbrain#2124](https://github.com/garrytan/gbrain/pull/2124)
+     (branch `upstream-fix/extract-atoms-concept-refs` @ upstream/master
+     v0.42.40.0,2 files/+92−3: prompt 加 concepts 字段 + parse kebab
+     校验 + frontmatter stamp;测试 20→25 pass,含一条走真 DB 路径的
+     端到端回归 — 上游原测试用 `_atoms` seam 喂数据所以漏掉了断点;
+     tsc 干净)。**Merge 后**: 桥接 skill 自动退场 (新 atoms 自带
+     concepts,backfill 查询空集),归档至 `_archived/`。
+  - (P3) fork-boundary guard hook 会拦 /tmp 下 upstream PR worktree 的
+    src/ 编辑 — 建议 `guard-fork-boundary.sh` 加判断: 文件不在
+    `$CLAUDE_PROJECT_DIR` 下时放行 (本次用 python 替换绕行,记录在案)。
+  - (P2) **第二个上游缺陷 (2026-06-12 定位): 0-yield 页永远重新被发现**。
+    extract_atoms 的幂等靠 atom row 的 source_hash 排除已处理页 — LLM
+    判定提不出 atom 的页没有 atom row → 无 tombstone → 每次 discovery
+    都重新入选。后果: ① `--drain` 在 backlog 头部聚集 0-yield 页时
+    误判 no_progress 停机 (6/12 01:24 default 卡死在 2,013,log 可见
+    remaining 冻结) ② nightly 每晚重复花钱处理同一批 0-yield 页
+    (6/12 晚 41 页只产 2 atoms)。**候选第二个上游 issue**(0-yield
+    tombstone / no_progress 按 pages-processed 判定)。缓解性事实:
+    default 剩余 backlog 头部抽样全是低价值邮件线程页 (Turkeycontroller
+    ×3 / Re-cancel-subscription...) — 可提取的精华基本已提完,
+    剩余 2,183 页的"排干"边际价值低,不值得硬泵。
+- `enrich_thin: ok` — 4/4 源,候选 5 页全部 `insufficient` (brain 内
+  证据不足,质量门拦下,宁缺毋滥),$0.07 评估成本。每 tick 上限 3 页 /
+  $1,types=[person,company] — 正对 email entity stubs,逐晚啃。
+- cycle duration 72s → **563s** (extract_atoms LLM 提取所致)。
+- **观察项 (2-3 晚)**: atoms 积累速率 + synthesize_concepts 首跑 +
+  dream 时长/成本走势 (绑定既有 v0.36.1.0 dream spend 观察项)。
+
+### [~] (P1) KB 缺口盘点 + 一次性 backfill 启动 (2026-06-09 晚, Lucien D3 全选授权)
+
+盘点 (doctor health_score 15): atoms backlog **2,886 页** (default 2,191 +
+omada 695; **mailagent-emails 0 页 eligible** — 邮件 type 不在 pack 的
+atom 提取类型里,要进管道需 type 映射决策,候补)。orphan_ratio **FAIL
+86%** (13,084/15,231)。calibration holder 错配 (takes 数据 holder=`self`,
+查询默认 `garry` → 永远 0 条)。
+
+已启动 (全部满足「幂等、不返工」标准):
+1. [x] `emotional_weight.user_holder=self` config 对齐 (DONE 2026-06-09 晚)。
+   注意: 未来若想改 holder=lucien 需同步 `UPDATE takes SET holder`。
+2. [x] `gbrain extract links --by-mention --source db` — **DONE 2026-06-09
+   晚: 92,102 条 mentions 连边落库** (page_links 14k → 106,337),零 LLM
+   token。log `/tmp/kb-backfill-20260609.log`。
+3. [~] `gbrain dream --phase extract_atoms --drain` 循环 (default → omada,
+   30min 窗口,**02:50 deadline 自动停避让 03:11 nightly**,exit 3 = 续跑)。
+   成本基线 $0.0125/页 × 2,886 ≈ **$36**,~16h — 今晚跑不完,明天接力:
+   重跑同命令即可 (content-hash 幂等)。
+   **坑 (已修,记 memory)**: Claude Code shell 注入的
+   `ANTHROPIC_BASE_URL=https://api.anthropic.com` (不带 /v1) 会让所有
+   anthropic chat 404 "Not Found" → 首轮 drain +0 死循环;`unset
+   ANTHROPIC_BASE_URL` 后单批 +22 atoms 恢复。launchd 夜间任务无此 env
+   不受影响。手动跑 gbrain LLM 命令前一律 unset。外层循环已加
+   no_progress / remaining-stuck 保护。
+4. [ ] drain 排干后手动 `gbrain dream --phase synthesize_concepts` 收割
+   第一批 tier-promoted concepts。
+
+明确**不跑**的: enrich_thin 批量 (证据不足 stub 日后要重评 = 返工,夜间
+质量门慢啃)、backlinks fix (§6.28 audit-only by design)、conversation
+LLM fallback (低优)。takes 池 20 条 (理想 >100) 缺的是 Lucien 人工
+accept/reject,不是 token。
+
+---
+
 ## P2 — Post-v0.42.37.0 sync follow-ups (added 2026-06-09)
 
 - (P2) **Keyword-arm ts_rank cliff on high-frequency terms**. `gbrain search
