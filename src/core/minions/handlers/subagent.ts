@@ -874,17 +874,30 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       // because priorTools is keyed by the original UUID — the short-
       // circuit silently breaks and the tool re-executes. Pinned by
       // test/e2e/subagent-crash-replay-multi-provider.test.ts.
-      const candidateId = randomUUIDv7();
-      const rows = await engine.executeRaw<{ gbrain_tool_use_id: string }>(
-        `INSERT INTO subagent_tool_executions
-           (job_id, message_idx, tool_use_id, tool_name, input, status, schema_version, ordinal, gbrain_tool_use_id, provider_id)
-         VALUES ($1, $2, $3, $4, $5::jsonb, 'pending', 2, $6, $7, $8)
-         ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
-           SET status = subagent_tool_executions.status
-         RETURNING gbrain_tool_use_id::text AS gbrain_tool_use_id`,
-        [ctx.id, messageIdx, providerToolCallId, toolName, JSON.stringify(input ?? null), ordinal, candidateId, recipeIdFromModel(model)],
+      const legacyStableKey = `legacy:${ctx.id}:${messageIdx}:${providerToolCallId}:${toolName}`;
+      const existingRows = await engine.executeRaw<{ gbrain_tool_use_id: string | null }>(
+        `SELECT gbrain_tool_use_id::text AS gbrain_tool_use_id
+           FROM subagent_tool_executions
+          WHERE job_id = $1
+            AND ((message_idx = $2 AND ordinal = $3) OR tool_use_id = $4)
+          ORDER BY CASE WHEN message_idx = $2 AND ordinal = $3 THEN 0 ELSE 1 END, id
+          LIMIT 1`,
+        [ctx.id, messageIdx, ordinal, providerToolCallId],
       );
-      const gbrainToolUseId = rows[0]?.gbrain_tool_use_id ?? candidateId;
+      let gbrainToolUseId = existingRows[0]?.gbrain_tool_use_id ?? legacyStableKey;
+      if (existingRows.length === 0) {
+        const candidateId = randomUUIDv7();
+        const rows = await engine.executeRaw<{ gbrain_tool_use_id: string }>(
+          `INSERT INTO subagent_tool_executions
+             (job_id, message_idx, tool_use_id, tool_name, input, status, schema_version, ordinal, gbrain_tool_use_id, provider_id)
+           VALUES ($1, $2, $3, $4, $5::jsonb, 'pending', 2, $6, $7, $8)
+           ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
+             SET status = subagent_tool_executions.status
+           RETURNING gbrain_tool_use_id::text AS gbrain_tool_use_id`,
+          [ctx.id, messageIdx, providerToolCallId, toolName, JSON.stringify(input ?? null), ordinal, candidateId, recipeIdFromModel(model)],
+        );
+        gbrainToolUseId = rows[0]?.gbrain_tool_use_id ?? candidateId;
+      }
       heartbeat('tool_called', { turn_idx: turnIdx, tool_name: toolName });
       return { gbrainToolUseId };
     },

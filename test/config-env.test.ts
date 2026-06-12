@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, test } from 'bun:test';
-import { loadConfig, saveConfig } from '../src/core/config.ts';
+import { KNOWN_CONFIG_KEYS, loadConfig, saveConfig } from '../src/core/config.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 // PR #681 originally shipped a manual `restoreEnv()` in afterEach for these
@@ -127,5 +127,11 @@ describe('loadConfig env database URL precedence', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe('known config keys', () => {
+  test('accepts the gateway-native subagent switch without --force', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('agent.use_gateway_loop');
   });
 });

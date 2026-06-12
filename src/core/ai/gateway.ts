@@ -2868,6 +2868,140 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
   let finalText = '';
   let stopReason: ToolLoopStopReason = 'end';
 
+  const dispatchToolCalls = async (
+    toolCalls: Array<Extract<ChatBlock, { type: 'tool-call' }>>,
+    toolTurnIdx: number,
+    assistantMessageIdx: number,
+  ): Promise<{ blocks: ChatBlock[]; aborted: boolean }> => {
+    const toolResultBlocks: ChatBlock[] = [];
+    for (let callIdx = 0; callIdx < toolCalls.length; callIdx++) {
+      const call = toolCalls[callIdx];
+      if (opts.abortSignal?.aborted) {
+        stopReason = 'aborted';
+        return { blocks: toolResultBlocks, aborted: true };
+      }
+
+      const handler = handlers.get(call.toolName);
+      if (!handler) {
+        // Tool not registered. Synthesize an error result; don't persist.
+        toolResultBlocks.push({
+          type: 'tool-result',
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          output: `tool "${call.toolName}" is not in the registry for this subagent`,
+          isError: true,
+        });
+        opts.onHeartbeat?.('tool_failed', { turn_idx: toolTurnIdx, tool_name: call.toolName, error: 'not_registered' });
+        continue;
+      }
+
+      // Guardrail seam: classify tool input BEFORE pending-persist and BEFORE
+      // tool execution. Observe-only / fail-open. Sends only the tool name +
+      // input — never tool output, LLM output, or full conversation state.
+      await classifyGatewayGuardrail({
+        hook: 'ai_gateway.tool_input',
+        content: stringifyGuardrailValue({ toolName: call.toolName, input: call.input }),
+        metadata: {
+          turn_idx: toolTurnIdx,
+          call_idx: callIdx,
+          tool_name: call.toolName,
+        },
+      });
+
+      // Step 2: persist pending row + claim gbrainToolUseId. The caller's
+      // callback handles uniqueness contention via ON CONFLICT DO NOTHING +
+      // re-read pattern (see persistToolExecPending in subagent.ts).
+      const { gbrainToolUseId } = (await opts.onToolCallStart?.(
+        toolTurnIdx,
+        assistantMessageIdx,
+        callIdx,
+        call.toolName,
+        call.input,
+        call.toolCallId,
+      )) ?? { gbrainToolUseId: `inline-${toolTurnIdx}-${callIdx}` };
+
+      // Replay short-circuit: prior outcome wins, idempotent re-execute allowed.
+      const prior = opts.replayState?.priorTools.get(gbrainToolUseId);
+      if (prior?.status === 'complete') {
+        toolResultBlocks.push({
+          type: 'tool-result',
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          output: prior.output,
+        });
+        opts.onHeartbeat?.('tool_replay_complete', { turn_idx: toolTurnIdx, tool_name: call.toolName });
+        continue;
+      }
+      if (prior?.status === 'failed') {
+        toolResultBlocks.push({
+          type: 'tool-result',
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          output: prior.error ?? 'tool failed',
+          isError: true,
+        });
+        opts.onHeartbeat?.('tool_replay_failed', { turn_idx: toolTurnIdx, tool_name: call.toolName });
+        continue;
+      }
+      if (prior?.status === 'pending' && !handler.idempotent) {
+        // Non-idempotent crash-mid-execute. Surface as unrecoverable.
+        stopReason = 'unrecoverable';
+        throw new Error(
+          `non-idempotent tool "${call.toolName}" pending on resume; gbrainToolUseId=${gbrainToolUseId} — cannot safely re-run`,
+        );
+      }
+
+      // Step 3: execute (side effect).
+      opts.onHeartbeat?.('tool_called', { turn_idx: toolTurnIdx, tool_name: call.toolName });
+      try {
+        const output = await handler.execute(call.input, opts.abortSignal ?? new AbortController().signal);
+        // Step 4: settle complete.
+        await opts.onToolCallComplete?.(gbrainToolUseId, output);
+        toolResultBlocks.push({
+          type: 'tool-result',
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          output,
+        });
+        opts.onHeartbeat?.('tool_result', { turn_idx: toolTurnIdx, tool_name: call.toolName });
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        await opts.onToolCallFailed?.(gbrainToolUseId, errMsg);
+        toolResultBlocks.push({
+          type: 'tool-result',
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          output: errMsg,
+          isError: true,
+        });
+        opts.onHeartbeat?.('tool_failed', { turn_idx: toolTurnIdx, tool_name: call.toolName, error: errMsg });
+      }
+    }
+
+    return { blocks: toolResultBlocks, aborted: false };
+  };
+
+  // Replay reconciliation: if a crash/retry resumes after persisting an
+  // assistant turn with tool calls but before appending the corresponding tool
+  // result message, satisfy every pending provider tool_call id before the next
+  // model call. AI SDK v6 validates that invariant before it calls the provider;
+  // sending the trailing assistant turn alone raises MissingToolResultsError,
+  // especially visible on providers that emit parallel tool calls (DeepSeek).
+  const trailingMessage = messages[messages.length - 1];
+  if (opts.replayState && trailingMessage?.role === 'assistant' && Array.isArray(trailingMessage.content)) {
+    const trailingToolCalls = trailingMessage.content.filter(
+      (b): b is Extract<ChatBlock, { type: 'tool-call' }> => b.type === 'tool-call',
+    );
+    if (trailingToolCalls.length > 0) {
+      const reconciled = await dispatchToolCalls(trailingToolCalls, Math.max(0, turnIdx - 1), Math.max(0, messageIdx - 1));
+      if (reconciled.aborted) {
+        return { finalText, totalTurns: turnIdx, totalUsage, stopReason, messages };
+      }
+      messages.push({ role: 'user', content: reconciled.blocks });
+      messageIdx++;
+    }
+  }
+
   while (turnIdx < maxTurns) {
     if (opts.abortSignal?.aborted) {
       stopReason = 'aborted';
@@ -2929,117 +3063,14 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
     }
 
     // D11 + write-ordering invariant: persist pending → execute → settle.
-    const toolResultBlocks: ChatBlock[] = [];
-    for (let callIdx = 0; callIdx < toolCalls.length; callIdx++) {
-      const call = toolCalls[callIdx];
-      if (opts.abortSignal?.aborted) {
-        stopReason = 'aborted';
-        break;
-      }
+    const dispatched = await dispatchToolCalls(toolCalls, turnIdx, assistantMessageIdx);
 
-      const handler = handlers.get(call.toolName);
-      if (!handler) {
-        // Tool not registered. Synthesize an error result; don't persist.
-        toolResultBlocks.push({
-          type: 'tool-result',
-          toolCallId: call.toolCallId,
-          toolName: call.toolName,
-          output: `tool "${call.toolName}" is not in the registry for this subagent`,
-          isError: true,
-        });
-        opts.onHeartbeat?.('tool_failed', { turn_idx: turnIdx, tool_name: call.toolName, error: 'not_registered' });
-        continue;
-      }
-
-      // Guardrail seam: classify tool input BEFORE pending-persist and BEFORE
-      // tool execution. Observe-only / fail-open. Sends only the tool name +
-      // input — never tool output, LLM output, or full conversation state.
-      await classifyGatewayGuardrail({
-        hook: 'ai_gateway.tool_input',
-        content: stringifyGuardrailValue({ toolName: call.toolName, input: call.input }),
-        metadata: {
-          turn_idx: turnIdx,
-          call_idx: callIdx,
-          tool_name: call.toolName,
-        },
-      });
-
-      // Step 2: persist pending row + claim gbrainToolUseId. The caller's
-      // callback handles uniqueness contention via ON CONFLICT DO NOTHING +
-      // re-read pattern (see persistToolExecPending in subagent.ts).
-      const { gbrainToolUseId } = (await opts.onToolCallStart?.(
-        turnIdx,
-        assistantMessageIdx,
-        callIdx,
-        call.toolName,
-        call.input,
-        call.toolCallId,
-      )) ?? { gbrainToolUseId: `inline-${turnIdx}-${callIdx}` };
-
-      // Replay short-circuit: prior outcome wins, idempotent re-execute allowed.
-      const prior = opts.replayState?.priorTools.get(gbrainToolUseId);
-      if (prior?.status === 'complete') {
-        toolResultBlocks.push({
-          type: 'tool-result',
-          toolCallId: call.toolCallId,
-          toolName: call.toolName,
-          output: prior.output,
-        });
-        opts.onHeartbeat?.('tool_replay_complete', { turn_idx: turnIdx, tool_name: call.toolName });
-        continue;
-      }
-      if (prior?.status === 'failed') {
-        toolResultBlocks.push({
-          type: 'tool-result',
-          toolCallId: call.toolCallId,
-          toolName: call.toolName,
-          output: prior.error ?? 'tool failed',
-          isError: true,
-        });
-        opts.onHeartbeat?.('tool_replay_failed', { turn_idx: turnIdx, tool_name: call.toolName });
-        continue;
-      }
-      if (prior?.status === 'pending' && !handler.idempotent) {
-        // Non-idempotent crash-mid-execute. Surface as unrecoverable.
-        stopReason = 'unrecoverable';
-        throw new Error(
-          `non-idempotent tool "${call.toolName}" pending on resume; gbrainToolUseId=${gbrainToolUseId} — cannot safely re-run`,
-        );
-      }
-
-      // Step 3: execute (side effect).
-      opts.onHeartbeat?.('tool_called', { turn_idx: turnIdx, tool_name: call.toolName });
-      try {
-        const output = await handler.execute(call.input, opts.abortSignal ?? new AbortController().signal);
-        // Step 4: settle complete.
-        await opts.onToolCallComplete?.(gbrainToolUseId, output);
-        toolResultBlocks.push({
-          type: 'tool-result',
-          toolCallId: call.toolCallId,
-          toolName: call.toolName,
-          output,
-        });
-        opts.onHeartbeat?.('tool_result', { turn_idx: turnIdx, tool_name: call.toolName });
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        await opts.onToolCallFailed?.(gbrainToolUseId, errMsg);
-        toolResultBlocks.push({
-          type: 'tool-result',
-          toolCallId: call.toolCallId,
-          toolName: call.toolName,
-          output: errMsg,
-          isError: true,
-        });
-        opts.onHeartbeat?.('tool_failed', { turn_idx: turnIdx, tool_name: call.toolName, error: errMsg });
-      }
-    }
-
-    if (stopReason === 'aborted') break;
+    if (dispatched.aborted) break;
 
     // Feed all tool results back as a single user message.
     const userMessageIdx = messageIdx++;
     void userMessageIdx;
-    messages.push({ role: 'user', content: toolResultBlocks });
+    messages.push({ role: 'user', content: dispatched.blocks });
 
     turnIdx++;
   }

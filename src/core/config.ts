@@ -743,6 +743,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.image_query.max_bytes',
   'search.reranker.enabled',
   'search.track_retrieval',
+  'agent.use_gateway_loop',
   // Models tier system (v0.31.12)
   'models.default',
   'models.tier.utility',
