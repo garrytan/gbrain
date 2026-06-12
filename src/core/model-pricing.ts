@@ -70,6 +70,12 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'openai:gpt-5':                         { input:  5.00, output: 20.00 },
   'openai:gpt-5.5':                       { input:  4.00, output: 16.00 },
 
+  // -- OpenRouter (subscription/proxy endpoints -- $0 per-token; without an
+  //    entry the budget gate hard-fails on missing pricing under the default
+  //    cap) ----------------------------------------------------------------
+  'openrouter:gpt-5.5':                   { input:  0.00, output:  0.00 },
+  'openrouter:gpt-5.4-mini':              { input:  0.00, output:  0.00 },
+
   // ── Google ─────────────────────────────────────────────────────────────
   'google:gemini-1.5-pro':                { input:  1.25, output:  5.00 },
   // Gemini 2.0 Flash: $0.10 in / $0.40 out (verified 2026-06-03). Reconciled
