@@ -43,6 +43,7 @@ test('memory inbox operations can be built from a dedicated domain module', () =
     'list_canonical_handoff_entries',
     'assess_historical_validity',
     'advance_memory_candidate_status',
+    'verify_memory_candidate_entry',
     'reject_memory_candidate_entry',
     'preflight_promote_memory_candidate',
     'promote_memory_candidate_entry',
@@ -69,6 +70,7 @@ test('memory inbox operations are registered with CLI hints', () => {
   const listCanonicalHandoffs = operations.find((operation) => operation.name === 'list_canonical_handoff_entries');
   const assessHistoricalValidity = operations.find((operation) => operation.name === 'assess_historical_validity');
   const advance = operations.find((operation) => operation.name === 'advance_memory_candidate_status');
+  const verify = operations.find((operation) => operation.name === 'verify_memory_candidate_entry');
   const reject = operations.find((operation) => operation.name === 'reject_memory_candidate_entry');
   const preflight = operations.find((operation) => operation.name === 'preflight_promote_memory_candidate');
   const promote = operations.find((operation) => operation.name === 'promote_memory_candidate_entry');
@@ -93,6 +95,7 @@ test('memory inbox operations are registered with CLI hints', () => {
   expect(listCanonicalHandoffs?.cliHints?.name).toBe('list-canonical-handoffs');
   expect(assessHistoricalValidity?.cliHints?.name).toBe('assess-historical-validity');
   expect(advance?.cliHints?.name).toBe('advance-memory-candidate-status');
+  expect(verify?.cliHints?.name).toBe('verify-memory-candidate');
   expect(reject?.cliHints?.name).toBe('reject-memory-candidate');
   expect(preflight?.cliHints?.name).toBe('preflight-promote-memory-candidate');
   expect(promote?.cliHints?.name).toBe('promote-memory-candidate');
@@ -140,6 +143,8 @@ test('memory inbox operations are registered with CLI hints', () => {
   expect(readCandidateContext?.params.purpose?.enum).toEqual(['review', 'promotion', 'audit', 'debug']);
   expect(readCandidateContext?.params.requested_scope?.enum).toEqual(['work', 'personal', 'mixed']);
   expect(advance?.params.next_status?.description).toContain('depends on the current stored status');
+  expect(verify?.params.verification_status?.enum).toEqual(['verified', 'refuted']);
+  expect(verify?.params.verification_method?.enum).toContain('command_execution');
 });
 
 test('create_memory_patch_candidate stages a normal inbox candidate and records a mutation ledger event', async () => {
