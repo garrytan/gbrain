@@ -95,6 +95,7 @@ import type {
   MemoryCandidateStatusEventInput,
   MemoryCandidateSupersessionEntry,
   MemoryCandidateSupersessionInput,
+  MemoryCandidateVerificationPatch,
   MemoryCandidateStatusPatch,
   CanonicalHandoffEntry,
   CanonicalHandoffEntryInput,
@@ -2198,6 +2199,7 @@ export class SQLiteEngine implements BrainEngine {
              patch_body, patch_format, patch_operation_state, patch_risk_class,
              patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
              patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
              created_at, updated_at
       FROM memory_candidate_entries
       WHERE id = ?
@@ -2215,6 +2217,7 @@ export class SQLiteEngine implements BrainEngine {
              patch_body, patch_format, patch_operation_state, patch_risk_class,
              patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
              patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
              created_at, updated_at
       FROM memory_candidate_entries
       WHERE id = ?
@@ -2321,6 +2324,7 @@ export class SQLiteEngine implements BrainEngine {
              patch_body, patch_format, patch_operation_state, patch_risk_class,
              patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
              patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
              created_at, updated_at
       FROM memory_candidate_entries
       ${whereClause}
@@ -3082,12 +3086,50 @@ export class SQLiteEngine implements BrainEngine {
              patch_body, patch_format, patch_operation_state, patch_risk_class,
              patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
              patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
              created_at, updated_at
       FROM memory_candidate_entries
       WHERE id = ?
     `).get(id) as Record<string, unknown> | null;
     if (!row) throw new Error(`Memory candidate entry not found after status update: ${id}`);
     return rowToMemoryCandidateEntry(row);
+  }
+
+  async updateMemoryCandidateEntryVerification(id: string, patch: MemoryCandidateVerificationPatch): Promise<MemoryCandidateEntry | null> {
+    const current = await this.getMemoryCandidateEntry(id);
+    if (!current) {
+      throw new Error(`Memory candidate entry not found before verification update: ${id}`);
+    }
+
+    const timestamp = nowIso();
+    const verifiedAt = patch.verified_at === undefined || patch.verified_at === null
+      ? timestamp
+      : toNullableIso(patch.verified_at);
+    const result = this.database.run(`
+      UPDATE memory_candidate_entries
+      SET verification_status = ?,
+          verification_method = ?,
+          verification_evidence = ?,
+          verification_source_refs = ?,
+          verified_at = ?,
+          updated_at = ?
+      WHERE id = ?
+        AND status = ?
+    `, [
+      patch.verification_status,
+      patch.verification_method,
+      patch.verification_evidence,
+      JSON.stringify(patch.verification_source_refs ?? []),
+      verifiedAt,
+      timestamp,
+      id,
+      current.status,
+    ]);
+    if (result.changes === 0) {
+      return null;
+    }
+
+    return this.getMemoryCandidateEntry(id);
   }
 
   async updateMemoryCandidatePatchOperationState(
@@ -3153,6 +3195,7 @@ export class SQLiteEngine implements BrainEngine {
              patch_body, patch_format, patch_operation_state, patch_risk_class,
              patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
              patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
              created_at, updated_at
       FROM memory_candidate_entries
       WHERE id = ?
@@ -3198,6 +3241,7 @@ export class SQLiteEngine implements BrainEngine {
              patch_body, patch_format, patch_operation_state, patch_risk_class,
              patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
              patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
              created_at, updated_at
       FROM memory_candidate_entries
       WHERE id = ?
@@ -5195,6 +5239,9 @@ export class SQLiteEngine implements BrainEngine {
                 ON content_chunks(page_id) WHERE embedded_at IS NULL;
             `);
           }
+          break;
+        case 53:
+          this.ensureMemoryCandidateVerificationColumns();
           break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
@@ -7568,6 +7615,32 @@ export class SQLiteEngine implements BrainEngine {
     this.ensureMemoryCandidateIndexes();
   }
 
+  private ensureMemoryCandidateVerificationColumns(): void {
+    if (!this.sqliteTableExists('memory_candidate_entries')) {
+      return;
+    }
+
+    const columns = this.database.query(`PRAGMA table_info(memory_candidate_entries)`).all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    const additions = [
+      ['verification_status', `ALTER TABLE memory_candidate_entries ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'unverified' CHECK (verification_status IN ('unverified', 'verified', 'refuted'))`],
+      ['verification_method', `ALTER TABLE memory_candidate_entries ADD COLUMN verification_method TEXT CHECK (verification_method IS NULL OR verification_method IN ('command_execution', 'db_query', 'file_inspection', 'source_recheck', 'user_confirmation', 'external_lookup'))`],
+      ['verification_evidence', `ALTER TABLE memory_candidate_entries ADD COLUMN verification_evidence TEXT`],
+      ['verification_source_refs', `ALTER TABLE memory_candidate_entries ADD COLUMN verification_source_refs TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(verification_source_refs) AND json_type(verification_source_refs) = 'array')`],
+      ['verified_at', `ALTER TABLE memory_candidate_entries ADD COLUMN verified_at TEXT`],
+    ] as const;
+
+    for (const [column, sql] of additions) {
+      if (!names.has(column)) {
+        this.database.exec(`${sql};`);
+      }
+    }
+    this.database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_memory_candidates_scope_verification
+        ON memory_candidate_entries(scope_id, verification_status, updated_at DESC);
+    `);
+  }
+
   private ensureMemoryCandidateSupersessionSchema(): void {
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS memory_candidate_supersession_entries (
@@ -8289,6 +8362,11 @@ function rowToMemoryCandidateEntry(row: Record<string, unknown>): MemoryCandidat
     target_object_id: row.target_object_id == null ? null : String(row.target_object_id),
     reviewed_at: row.reviewed_at == null ? null : new Date(String(row.reviewed_at)),
     review_reason: row.review_reason == null ? null : String(row.review_reason),
+    verification_status: row.verification_status == null ? 'unverified' : row.verification_status as MemoryCandidateEntry['verification_status'],
+    verification_method: row.verification_method == null ? null : row.verification_method as MemoryCandidateEntry['verification_method'],
+    verification_evidence: row.verification_evidence == null ? null : String(row.verification_evidence),
+    verification_source_refs: parseJsonArray(row.verification_source_refs),
+    verified_at: row.verified_at == null ? null : new Date(String(row.verified_at)),
     patch_target_kind: row.patch_target_kind == null ? null : row.patch_target_kind as MemoryCandidateEntry['patch_target_kind'],
     patch_target_id: row.patch_target_id == null ? null : String(row.patch_target_id),
     patch_base_target_snapshot_hash: row.patch_base_target_snapshot_hash == null ? null : String(row.patch_base_target_snapshot_hash),

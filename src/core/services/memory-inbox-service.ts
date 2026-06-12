@@ -404,6 +404,8 @@ function formatReasonLabel(reason: MemoryCandidatePromotionPreflightReason): str
       return 'candidate sensitivity is unknown';
     case 'candidate_requires_revalidation':
       return 'candidate requires revalidation';
+    case 'candidate_refuted':
+      return 'candidate verification refuted the claim';
     case 'candidate_possible_duplicate':
       return 'possible duplicate';
     case 'candidate_ready_for_promotion':

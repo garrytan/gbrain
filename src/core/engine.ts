@@ -37,6 +37,7 @@ import type {AutoPromoteVerdictKey,
   MemoryCandidateStatusPatch,
   MemoryCandidateSupersessionEntry,
   MemoryCandidateSupersessionInput,
+  MemoryCandidateVerificationPatch,
   MemoryMutationEvent,
   MemoryMutationEventFilters,
   MemoryMutationEventInput,
@@ -208,6 +209,7 @@ export interface MemoryGovernanceStore {
   listMemoryCandidateStatusEvents(filters?: MemoryCandidateStatusEventFilters): Promise<MemoryCandidateStatusEvent[]>;
   listMemoryCandidateStatusEventsByInteractionIds(interactionIds: string[]): Promise<MemoryCandidateStatusEvent[]>;
   updateMemoryCandidateEntryStatus(id: string, patch: MemoryCandidateStatusPatch): Promise<MemoryCandidateEntry | null>;
+  updateMemoryCandidateEntryVerification(id: string, patch: MemoryCandidateVerificationPatch): Promise<MemoryCandidateEntry | null>;
   updateMemoryCandidatePatchOperationState(id: string, patch: MemoryCandidatePatchOperationStatePatch): Promise<MemoryCandidateEntry | null>;
   promoteMemoryCandidateEntry(id: string, patch?: MemoryCandidatePromotionPatch): Promise<MemoryCandidateEntry | null>;
   supersedeMemoryCandidateEntry(input: MemoryCandidateSupersessionInput): Promise<MemoryCandidateSupersessionEntry | null>;

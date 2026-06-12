@@ -51,6 +51,11 @@ function makeStoredCandidate(
     target_object_id: overrides.target_object_id ?? 'projects/acme-migration',
     reviewed_at: overrides.reviewed_at instanceof Date ? overrides.reviewed_at : null,
     review_reason: overrides.review_reason ?? null,
+    verification_status: 'unverified',
+    verification_method: null,
+    verification_evidence: null,
+    verification_source_refs: [],
+    verified_at: null,
     created_at: new Date('2026-05-09T00:00:00.000Z'),
     updated_at: new Date('2026-05-09T00:00:00.000Z'),
   };

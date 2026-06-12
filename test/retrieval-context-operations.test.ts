@@ -83,6 +83,11 @@ describe('agentic retrieval context operations', () => {
           target_object_id: 'concepts/retrieval',
           reviewed_at: null,
           review_reason: null,
+          verification_status: 'unverified',
+          verification_method: null,
+          verification_evidence: null,
+          verification_source_refs: [],
+          verified_at: null,
           created_at: new Date('2026-05-16T03:00:00.000Z'),
           updated_at: new Date('2026-05-16T03:00:00.000Z'),
         }];

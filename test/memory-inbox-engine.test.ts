@@ -739,6 +739,54 @@ for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
       await harness.cleanup();
     }
   }, timeoutMs);
+
+  test(`${createHarness.name} persists memory candidate verification fields across reopen`, async () => {
+    const harness = await createHarness();
+    const scopeId = 'workspace:default';
+    const id = `memory-candidate:verification:${harness.label}`;
+    let reopened: BrainEngine | null = null;
+
+    try {
+      const created = await seedMemoryCandidate(harness.engine, id, scopeId);
+      expect(created.verification_status).toBe('unverified');
+      expect(created.verification_method).toBeNull();
+      expect(created.verification_evidence).toBeNull();
+      expect(created.verification_source_refs).toEqual([]);
+      expect(created.verified_at).toBeNull();
+
+      const verified = await harness.engine.updateMemoryCandidateEntryVerification(id, {
+        verification_status: 'verified',
+        verification_method: 'command_execution',
+        verification_evidence: 'Ran `bun test test/sync.test.ts`; output confirms the claimed behavior.',
+        verification_source_refs: ['Command output, 2026-06-12 11:00 AM KST'],
+        verified_at: new Date('2026-06-12T02:00:00.000Z'),
+      });
+      expect(verified?.verification_status).toBe('verified');
+      expect(verified?.verification_method).toBe('command_execution');
+      expect(verified?.verification_evidence).toContain('bun test');
+      expect(verified?.verification_source_refs).toEqual(['Command output, 2026-06-12 11:00 AM KST']);
+      expect(verified?.verified_at?.toISOString()).toBe('2026-06-12T02:00:00.000Z');
+      expect(verified?.status).toBe('captured');
+
+      await harness.engine.disconnect();
+      reopened = await harness.reopen();
+      const persisted = await reopened.getMemoryCandidateEntry(id);
+      expect(persisted?.verification_status).toBe('verified');
+      expect(persisted?.verification_method).toBe('command_execution');
+      expect(persisted?.verification_source_refs).toEqual(['Command output, 2026-06-12 11:00 AM KST']);
+
+      const refuted = await reopened.updateMemoryCandidateEntryVerification(id, {
+        verification_status: 'refuted',
+        verification_method: 'db_query',
+        verification_evidence: 'Queried the canonical table; the claimed column does not exist.',
+      });
+      expect(refuted?.verification_status).toBe('refuted');
+      expect(refuted?.verified_at).not.toBeNull();
+    } finally {
+      if (reopened) await reopened.disconnect().catch(() => undefined);
+      await harness.cleanup();
+    }
+  }, timeoutMs);
 }
 
 const databaseUrl = process.env.DATABASE_URL;

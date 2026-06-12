@@ -3037,6 +3037,36 @@ const MIGRATIONS: Migration[] = [
       $$;
     `,
   },
+  {
+    version: 53,
+    name: 'memory_candidate_verification_fields',
+    sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('memory_candidate_entries') IS NOT NULL THEN
+          ALTER TABLE memory_candidate_entries
+            ADD COLUMN IF NOT EXISTS verification_status TEXT NOT NULL DEFAULT 'unverified',
+            ADD COLUMN IF NOT EXISTS verification_method TEXT,
+            ADD COLUMN IF NOT EXISTS verification_evidence TEXT,
+            ADD COLUMN IF NOT EXISTS verification_source_refs JSONB NOT NULL DEFAULT '[]',
+            ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
+          ALTER TABLE memory_candidate_entries
+            DROP CONSTRAINT IF EXISTS memory_candidate_entries_verification_status_check;
+          ALTER TABLE memory_candidate_entries
+            ADD CONSTRAINT memory_candidate_entries_verification_status_check
+            CHECK (verification_status IN ('unverified', 'verified', 'refuted'));
+          ALTER TABLE memory_candidate_entries
+            DROP CONSTRAINT IF EXISTS memory_candidate_entries_verification_method_check;
+          ALTER TABLE memory_candidate_entries
+            ADD CONSTRAINT memory_candidate_entries_verification_method_check
+            CHECK (verification_method IS NULL OR verification_method IN ('command_execution', 'db_query', 'file_inspection', 'source_recheck', 'user_confirmation', 'external_lookup'));
+          CREATE INDEX IF NOT EXISTS idx_memory_candidates_scope_verification
+            ON memory_candidate_entries(scope_id, verification_status, updated_at DESC);
+        END IF;
+      END
+      $$;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

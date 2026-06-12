@@ -43,6 +43,7 @@ import type {
   MemoryCandidateEntry, MemoryCandidateEntryInput, MemoryCandidateFilters,
   MemoryCandidatePatchOperationStatePatch, MemoryCandidatePromotionPatch,
   MemoryCandidateStatusEvent, MemoryCandidateStatusEventFilters, MemoryCandidateStatusEventInput, MemoryCandidateStatusPatch,
+  MemoryCandidateVerificationPatch,
   MemoryCandidateSupersessionEntry, MemoryCandidateSupersessionInput,
   MemoryMutationEvent, MemoryMutationEventFilters, MemoryMutationEventInput,
   MemoryRealm, MemoryRealmFilters, MemoryRealmInput,
@@ -1347,6 +1348,7 @@ export abstract class PgEngineBase {
                 patch_body, patch_format, patch_operation_state, patch_risk_class,
                 patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
                 patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+                verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
                 created_at, updated_at`,
       [
         input.id,
@@ -1402,6 +1404,7 @@ export abstract class PgEngineBase {
               patch_body, patch_format, patch_operation_state, patch_risk_class,
               patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
               patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+              verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
               created_at, updated_at
        FROM memory_candidate_entries
        WHERE id = $1`,
@@ -1513,6 +1516,7 @@ export abstract class PgEngineBase {
               patch_body, patch_format, patch_operation_state, patch_risk_class,
               patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
               patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+              verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
               created_at, updated_at
        FROM memory_candidate_entries
        ${whereClause}
@@ -2252,12 +2256,55 @@ export abstract class PgEngineBase {
                 patch_body, patch_format, patch_operation_state, patch_risk_class,
                 patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
                 patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+                verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
                 created_at, updated_at`,
       [
         id,
         patch.status,
         patch.reviewed_at instanceof Date ? patch.reviewed_at.toISOString() : patch.reviewed_at ?? null,
         patch.review_reason ?? null,
+        current.status,
+      ],
+    );
+    if (rows.length === 0) return null;
+    return rowToMemoryCandidateEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async updateMemoryCandidateEntryVerification(id: string, patch: MemoryCandidateVerificationPatch): Promise<MemoryCandidateEntry | null> {
+    const current = await this.getMemoryCandidateEntry(id);
+    if (!current) {
+      throw new Error(`Memory candidate entry not found before verification update: ${id}`);
+    }
+
+    const verifiedAt = patch.verified_at instanceof Date
+      ? patch.verified_at.toISOString()
+      : patch.verified_at ?? new Date().toISOString();
+    const { rows } = await this.queryable.query(
+      `UPDATE memory_candidate_entries
+      SET verification_status = $2,
+          verification_method = $3,
+          verification_evidence = $4,
+          verification_source_refs = $5::jsonb,
+          verified_at = $6,
+          updated_at = now()
+      WHERE id = $1
+        AND status = $7
+      RETURNING id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+                extraction_kind, confidence_score, importance_score, recurrence_score,
+                sensitivity, status, target_object_type, target_object_id, reviewed_at,
+                review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+                patch_body, patch_format, patch_operation_state, patch_risk_class,
+                patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+                patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+                verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
+                created_at, updated_at`,
+      [
+        id,
+        patch.verification_status,
+        patch.verification_method,
+        patch.verification_evidence,
+        JSON.stringify(patch.verification_source_refs ?? []),
+        verifiedAt,
         current.status,
       ],
     );
@@ -2310,6 +2357,7 @@ export abstract class PgEngineBase {
                  patch_body, patch_format, patch_operation_state, patch_risk_class,
                  patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
                  patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+                 verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
                  created_at, updated_at`,
       [
         id,
@@ -2349,6 +2397,7 @@ export abstract class PgEngineBase {
                  patch_body, patch_format, patch_operation_state, patch_risk_class,
                  patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
                  patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+                 verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
                  created_at, updated_at`,
       [
         id,
