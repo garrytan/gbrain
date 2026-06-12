@@ -357,7 +357,12 @@ export function resolveSchemaMultimodalDim(opts: ResolveSchemaMultimodalDimOpts)
  *   1. recipe-declared `dims_options` (highest precedence — recipe author
  *      knows their backend)
  *   2. provider-specific dim.ts allow-lists (for known Matryoshka providers)
- *   3. fall through to "this model only emits default_dims" rejection
+ *   3. passthrough recipes (Ollama plus any recipe with
+ *      `touchpoints.embedding.user_provided_models === true`): the backend
+ *      decides the dim, not the recipe author. Accept any positive integer
+ *      up to PGVECTOR_COLUMN_MAX_DIMS (the upper bound is enforced in
+ *      `validateDimAgainstTouchpoint` before this function runs).
+ *   4. fall through to "this model only emits default_dims" rejection
  */
 function validateDimAgainstTouchpoint(
   modelId: string,
@@ -451,7 +456,18 @@ function isCustomDimValidForProvider(
     };
   }
 
-  // Tier 3: provider not known to support custom dims at all.
+  // Tier 3: passthrough recipes — local backends where the user's model
+  // decides the dim. Ollama's recipe ships an illustrative `models` list
+  // (nomic 768, mxbai-embed-large 1024, etc.) under a single `default_dims`,
+  // so any non-default Ollama model fails Tier 1/2. `user_provided_models`
+  // recipes (llama-server, litellm-proxy) ship an empty models list and
+  // already require explicit dims; trust the user there too. The upper
+  // bound (PGVECTOR_COLUMN_MAX_DIMS) was checked in the caller.
+  if (recipe.id === 'ollama' || recipe.touchpoints.embedding?.user_provided_models === true) {
+    return { valid: true, error: '' };
+  }
+
+  // Tier 4: provider not known to support custom dims at all.
   return {
     valid: false,
     error:

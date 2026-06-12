@@ -310,6 +310,112 @@ describe('resolveSchemaEmbeddingDim', () => {
       expect(got.model).toBe('openai:text-embedding-3-large');
     }
   });
+
+  // Passthrough recipes (Ollama + `user_provided_models` flag).
+  //
+  // The ollama recipe ships an illustrative `models` list with a single
+  // `default_dims: 768` (nomic-embed-text). Other listed models — and the
+  // myriad of `ollama pull`-able models like Qwen3-Embedding or
+  // snowflake/arctic-embed — emit their own native dims (1024, 4096, …).
+  // Before the passthrough tier, any non-768 Ollama dim was hard-rejected
+  // even though the user's local backend was happy to produce it.
+  // `user_provided_models: true` recipes (llama-server, litellm-proxy)
+  // were in the same hole.
+  describe('passthrough recipes accept arbitrary positive dims (up to pgvector cap)', () => {
+    test('ollama:mxbai-embed-large @ 1024 accepted (recipe default is 768)', () => {
+      const got = resolveSchemaEmbeddingDim({
+        embedding_model: 'ollama:mxbai-embed-large',
+        embedding_dimensions: 1024,
+      });
+      expect(got.ok).toBe(true);
+      if (got.ok) {
+        expect(got.dim).toBe(1024);
+        expect(got.provider).toBe('ollama');
+      }
+    });
+
+    test('ollama:qwen3-embedding:4b @ 1536 accepted (Matryoshka truncation, native 2560)', () => {
+      // Companion to upstream PR #1072 which threads `dimensions: N` in the
+      // request body; the validation gate has to allow it first.
+      const got = resolveSchemaEmbeddingDim({
+        embedding_model: 'ollama:qwen3-embedding:4b',
+        embedding_dimensions: 1536,
+      });
+      expect(got.ok).toBe(true);
+      if (got.ok) expect(got.dim).toBe(1536);
+    });
+
+    test('ollama:qwen3-embedding:8b @ 4096 accepted (native 8B dim)', () => {
+      const got = resolveSchemaEmbeddingDim({
+        embedding_model: 'ollama:qwen3-embedding:8b',
+        embedding_dimensions: 4096,
+      });
+      expect(got.ok).toBe(true);
+      if (got.ok) expect(got.dim).toBe(4096);
+    });
+
+    test('ollama:snowflake-arctic-embed-l-v2 @ 1024 accepted', () => {
+      const got = resolveSchemaEmbeddingDim({
+        embedding_model: 'ollama:snowflake-arctic-embed-l-v2',
+        embedding_dimensions: 1024,
+      });
+      expect(got.ok).toBe(true);
+      if (got.ok) expect(got.dim).toBe(1024);
+    });
+
+    test('ollama still rejects dims above pgvector column cap', () => {
+      // Passthrough does NOT bypass the upper bound.
+      const got = resolveSchemaEmbeddingDim({
+        embedding_model: 'ollama:mxbai-embed-large',
+        embedding_dimensions: PGVECTOR_COLUMN_MAX_DIMS + 1,
+      });
+      expect(got.ok).toBe(false);
+      if (!got.ok) expect(got.error).toMatch(/exceed pgvector's column cap/);
+    });
+
+    test('ollama still rejects negative dims', () => {
+      const got = resolveSchemaEmbeddingDim({
+        embedding_model: 'ollama:mxbai-embed-large',
+        embedding_dimensions: -100,
+      });
+      expect(got.ok).toBe(false);
+      if (!got.ok) expect(got.error).toMatch(/positive integer/);
+    });
+
+    test('llama-server @ explicit dim accepted (user_provided_models)', () => {
+      const got = resolveSchemaEmbeddingDim({
+        embedding_model: 'llama-server:custom-gguf',
+        embedding_dimensions: 1024,
+      });
+      expect(got.ok).toBe(true);
+      if (got.ok) {
+        expect(got.dim).toBe(1024);
+        expect(got.provider).toBe('llama-server');
+      }
+    });
+
+    test('litellm @ explicit dim accepted (user_provided_models)', () => {
+      const got = resolveSchemaEmbeddingDim({
+        embedding_model: 'litellm:bedrock-titan-embed-text-v2',
+        embedding_dimensions: 1024,
+      });
+      expect(got.ok).toBe(true);
+      if (got.ok) {
+        expect(got.dim).toBe(1024);
+        expect(got.provider).toBe('litellm');
+      }
+    });
+
+    test('llama-server without --embedding-dimensions rejected (default_dims: 0 forces explicit choice)', () => {
+      // Pre-passthrough behavior preserved: empty-list recipes still demand
+      // an explicit dim. Only the "is this dim allowed" gate changed.
+      const got = resolveSchemaEmbeddingDim({
+        embedding_model: 'llama-server:custom-gguf',
+      });
+      expect(got.ok).toBe(false);
+      if (!got.ok) expect(got.error).toMatch(/positive integer/);
+    });
+  });
 });
 
 describe('resolveSchemaMultimodalDim', () => {
