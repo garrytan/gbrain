@@ -5,9 +5,11 @@ import { parseMarkdown, serializeMarkdown } from './markdown.ts';
 import {
   advanceMemoryCandidateStatus,
   createMemoryCandidateEntryWithStatusEvent,
+  MEMORY_CANDIDATE_VERIFICATION_METHODS,
   MemoryInboxServiceError,
   preflightPromoteMemoryCandidate,
   rejectMemoryCandidateEntry,
+  verifyMemoryCandidateEntry,
 } from './services/memory-inbox-service.ts';
 import { rankMemoryCandidateEntries } from './services/memory-candidate-scoring-service.ts';
 import { readCandidateContext } from './services/inbox-lead-service.ts';
@@ -50,6 +52,7 @@ const MEMORY_CANDIDATE_EARLY_STATUS_VALUES = ['captured', 'candidate', 'staged_f
 const MEMORY_CANDIDATE_STATUS_VALUES = ['captured', 'candidate', 'staged_for_review', 'rejected', 'promoted', 'superseded'] as const;
 const MEMORY_CANDIDATE_STATUS_EVENT_KIND_VALUES = ['created', 'advanced', 'promoted', 'rejected', 'superseded'] as const;
 const MEMORY_CANDIDATE_ADVANCE_STATUS_VALUES = ['candidate', 'staged_for_review'] as const;
+const MEMORY_CANDIDATE_VERIFICATION_STATUS_VALUES = ['verified', 'refuted'] as const;
 const MEMORY_CANDIDATE_TYPE_VALUES = ['fact', 'relationship', 'note_update', 'procedure', 'profile_update', 'open_question', 'rationale'] as const;
 const MEMORY_CANDIDATE_GENERATED_BY_VALUES = ['agent', 'map_analysis', 'dream_cycle', 'manual', 'import'] as const;
 const MEMORY_CANDIDATE_EXTRACTION_KIND_VALUES = ['extracted', 'inferred', 'ambiguous', 'manual'] as const;
@@ -2217,6 +2220,76 @@ export function createMemoryInboxOperations(
     cliHints: { name: 'advance-memory-candidate-status' },
   };
 
+  const verify_memory_candidate_entry: Operation = {
+    name: 'verify_memory_candidate_entry',
+    description: 'Record a verification outcome (checked fact or refuted claim) with evidence on one active memory-inbox candidate.',
+    params: {
+      id: { type: 'string', required: true, description: 'Memory candidate id' },
+      verification_status: {
+        type: 'string',
+        required: true,
+        description: 'Verification outcome: verified turns the candidate into a checked fact; refuted blocks promotion.',
+        enum: [...MEMORY_CANDIDATE_VERIFICATION_STATUS_VALUES],
+      },
+      verification_method: {
+        type: 'string',
+        required: true,
+        description: 'How the claim was checked against ground truth.',
+        enum: [...MEMORY_CANDIDATE_VERIFICATION_METHODS],
+      },
+      verification_evidence: {
+        type: 'string',
+        required: true,
+        description: 'What was checked and what the check showed; required for auditability.',
+      },
+      verification_source_refs: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Optional provenance strings for the verification itself (command output, file span, query).',
+      },
+      verified_at: { type: 'string', description: 'Optional ISO timestamp for when the verification happened; defaults to now.' },
+    },
+    mutating: true,
+    handler: async (ctx, p) => {
+      const verificationEvidence = typeof p.verification_evidence === 'string'
+        ? p.verification_evidence
+        : (() => { throw invalidParams(deps, 'verification_evidence must be a string'); })();
+      if (p.verification_source_refs != null && (!Array.isArray(p.verification_source_refs)
+        || p.verification_source_refs.some((ref: unknown) => typeof ref !== 'string'))) {
+        throw invalidParams(deps, 'verification_source_refs must be an array of strings');
+      }
+
+      if (ctx.dryRun) {
+        return {
+          dry_run: true,
+          action: 'verify_memory_candidate_entry',
+          id: p.id,
+          verification_status: p.verification_status,
+        };
+      }
+
+      try {
+        return await verifyMemoryCandidateEntry(ctx.engine, {
+          id: String(p.id),
+          verification_status: requireEnumValue(deps, 'verification_status', p.verification_status, MEMORY_CANDIDATE_VERIFICATION_STATUS_VALUES),
+          verification_method: requireEnumValue(deps, 'verification_method', p.verification_method, MEMORY_CANDIDATE_VERIFICATION_METHODS),
+          verification_evidence: verificationEvidence,
+          verification_source_refs: (p.verification_source_refs as string[] | undefined) ?? [],
+          verified_at: p.verified_at === null ? null : (typeof p.verified_at === 'string' ? p.verified_at : undefined),
+        });
+      } catch (error) {
+        if (error instanceof MemoryInboxServiceError) {
+          if (error.code === 'memory_candidate_not_found') {
+            throw new deps.OperationError('memory_candidate_not_found', error.message);
+          }
+          throw new deps.OperationError('invalid_params', error.message);
+        }
+        throw error;
+      }
+    },
+    cliHints: { name: 'verify-memory-candidate' },
+  };
+
   const reject_memory_candidate_entry: Operation = {
     name: 'reject_memory_candidate_entry',
     description: 'Reject one staged memory-inbox candidate as an explicit governance outcome.',
@@ -2515,6 +2588,7 @@ export function createMemoryInboxOperations(
     list_canonical_handoff_entries,
     assess_historical_validity,
     advance_memory_candidate_status,
+    verify_memory_candidate_entry,
     reject_memory_candidate_entry,
     preflight_promote_memory_candidate,
     promote_memory_candidate_entry,
