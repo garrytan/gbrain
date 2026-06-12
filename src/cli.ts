@@ -1555,6 +1555,23 @@ async function handleCliOnly(command: string, args: string[]) {
     }
   }
 
+  // #2091: serve dispatches BEFORE the eager connectEngine(). MCP hosts
+  // enforce a connect timeout on the initialize handshake (Claude Code:
+  // 30s); the PGLite boot + advisory write-lock acquire can exceed that
+  // (cold cache, large brain, or the lock held by another process — the
+  // lock wait alone is up to 30s). Handing runServe a lazy connector lets
+  // the stdio path answer initialize immediately and connect the engine in
+  // the background; the first tools/call awaits readiness and a connect
+  // failure surfaces as a structured per-call error instead of an opaque
+  // host-side timeout. The --http path resolves the connector eagerly
+  // inside runServe (no handshake deadline there). serve owns the engine
+  // lifecycle end-to-end, so it skips the finally-disconnect below.
+  if (command === 'serve') {
+    const { runServe } = await import('./commands/serve.ts');
+    await runServe(() => connectEngine(), args);
+    return;
+  }
+
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
   try {
@@ -1588,11 +1605,7 @@ async function handleCliOnly(command: string, args: string[]) {
         await runEmbed(engine, args);
         break;
       }
-      case 'serve': {
-        const { runServe } = await import('./commands/serve.ts');
-        await runServe(engine, args);
-        return; // serve doesn't disconnect
-      }
+      // 'serve' is dispatched before connectEngine() above (#2091).
       case 'call': {
         const { runCall } = await import('./commands/call.ts');
         await runCall(engine, args);
