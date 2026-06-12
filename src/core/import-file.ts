@@ -1231,6 +1231,7 @@ export async function importCodeFile(
           from_symbol_qualified: from.symbol_name_qualified,
           to_symbol_qualified: e.toSymbol,
           edge_type: e.edgeType,
+          source_id: sourceId ?? 'default',
         });
       }
 
