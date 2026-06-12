@@ -26,7 +26,7 @@ import { sanitizeForJsonb, buildLinkRows, buildTimelineRows, buildTakeRows } fro
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import { verifySchema } from './schema-verify.ts';
-import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes } from './vector-index.ts';
+import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes, PGVECTOR_HNSW_SUBVECTOR_DIMS } from './vector-index.ts';
 import {
   normalizeEngineColumn,
   buildVectorCastFragment,
@@ -1876,6 +1876,10 @@ export class PostgresEngine implements BrainEngine {
     // is the discriminator (rows without embedding_multimodal aren't searched).
     const resolvedCol = normalizeEngineColumn(opts?.embeddingColumn);
     const { col, castSql } = buildVectorCastFragment(resolvedCol);
+    const useSubvectorHnsw = resolvedCol.type === 'vector' && embedding.length > PGVECTOR_HNSW_SUBVECTOR_DIMS;
+    const orderDistanceSql = useSubvectorHnsw
+      ? `subvector(cc.${col}, 1, ${PGVECTOR_HNSW_SUBVECTOR_DIMS})::vector(${PGVECTOR_HNSW_SUBVECTOR_DIMS}) <=> subvector(${castSql}, 1, ${PGVECTOR_HNSW_SUBVECTOR_DIMS})::vector(${PGVECTOR_HNSW_SUBVECTOR_DIMS})`
+      : `cc.${col} <=> ${castSql}`;
     let modalityFilter: string;
     if (resolvedCol.name === 'embedding_image') {
       modalityFilter = `AND cc.modality = 'image'`;
@@ -1907,7 +1911,7 @@ export class PostgresEngine implements BrainEngine {
           ${sourceClause}
           ${hardExcludeClause}
           ${visibilityClause}
-        ORDER BY cc.${col} <=> ${castSql}
+        ORDER BY ${orderDistanceSql}
         LIMIT ${innerLimitParam}
       ),
       -- score computed as a select-list expr (NOT in the inner ORDER BY, which

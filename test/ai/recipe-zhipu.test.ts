@@ -5,7 +5,7 @@
  *  - Recipe registered with expected shape
  *  - default auth: ZHIPUAI_API_KEY → "Bearer <key>"; missing → AIConfigError
  *  - dims_options exposes [256, 512, 1024, 2048]; default 1024 (HNSW-compatible)
- *  - 2048-dim path falls into exact-scan branch via chunkEmbeddingIndexSql
+ *  - 2048-dim path falls into subvector-HNSW branch via chunkEmbeddingIndexSql
  *    from src/core/vector-index.ts
  */
 
@@ -54,12 +54,13 @@ describe('recipe: zhipu', () => {
     expect(() => defaultResolveAuth(r, {}, 'embedding')).toThrow(AIConfigError);
   });
 
-  test('2048-dim option from dims_options falls into exact-scan branch', () => {
-    // 2048d exceeds the HNSW cap, so chunkEmbeddingIndexSql returns the
-    // exact-scan-skip-index path. Users picking 2048 trade ANN speed for
-    // full embedding fidelity.
+  test('2048-dim option from dims_options falls into subvector-HNSW branch', () => {
+    // 2048d exceeds pgvector's direct vector-HNSW cap, so
+    // chunkEmbeddingIndexSql emits a 2000d subvector expression index.
+    // searchVector uses it for candidate retrieval, then reranks by the
+    // full vector score.
     const sql = chunkEmbeddingIndexSql(2048);
-    expect(sql.toLowerCase()).toContain('skipped');
+    expect(sql.toLowerCase()).toContain('subvector');
     expect(sql.toLowerCase()).toContain('hnsw');
   });
 

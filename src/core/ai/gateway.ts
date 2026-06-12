@@ -1096,6 +1096,51 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
   }
 }) as unknown as typeof fetch;
 
+/**
+ * Upstage compatibility shim.
+ *
+ * Upstage Solar embeddings expose an OpenAI-compatible endpoint at
+ * `${baseURL}/embeddings`, but asymmetric retrieval is represented as two
+ * model IDs rather than a provider-native `input_type` parameter:
+ *   - document/indexing: solar-embedding-1-large-passage
+ *   - query/search:      solar-embedding-1-large-query
+ *
+ * dimsProviderOptions() emits `input_type` for the Solar pair. Translate that
+ * side-channel into the request's `model`, then strip `input_type` so Upstage
+ * receives its documented body shape.
+ */
+const upstageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  if (init?.body && typeof init.body === 'string') {
+    try {
+      const parsed = JSON.parse(init.body);
+      if (parsed && typeof parsed === 'object') {
+        let mutated = false;
+        if (
+          parsed.model === 'solar-embedding-1-large-passage' ||
+          parsed.model === 'solar-embedding-1-large-query'
+        ) {
+          parsed.model = parsed.input_type === 'query'
+            ? 'solar-embedding-1-large-query'
+            : 'solar-embedding-1-large-passage';
+          mutated = true;
+        }
+        if ('input_type' in parsed) {
+          delete parsed.input_type;
+          mutated = true;
+        }
+        if (mutated) {
+          const headers = new Headers(init.headers ?? {});
+          headers.delete('content-length');
+          init = { ...init, body: JSON.stringify(parsed), headers };
+        }
+      }
+    } catch {
+      // Body wasn't JSON — pass through untouched.
+    }
+  }
+  return fetch(input, init);
+}) as unknown as typeof fetch;
+
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'embedding', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
@@ -1149,14 +1194,16 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       // wrapper via resolveOpenAICompatConfig. Azure recipes ship their own
       // fetch (api-version splice); voyage doesn't — use voyageCompatFetch.
       // ZeroEntropy needs zeroEntropyCompatFetch (URL path + body input_type
-      // + response shape rewrite + OOM caps). Same per-recipe-id branch
-      // pattern as voyage so adding a third compat shim is one more case.
+      // + response shape rewrite + OOM caps). Upstage uses the same side-channel
+      // idea but rewrites input_type into its query/passage model pair.
       const fetchWrapper =
         compat.fetch ??
         (recipe.id === 'voyage'
           ? voyageCompatFetch
           : recipe.id === 'zeroentropyai'
           ? zeroEntropyCompatFetch
+          : recipe.id === 'upstage'
+          ? upstageCompatFetch
           : undefined);
       const client = createOpenAICompatible({
         name: recipe.id,
