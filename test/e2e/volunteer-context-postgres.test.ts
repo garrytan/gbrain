@@ -1,11 +1,11 @@
 /**
  * v0.43 (#2095) — volunteer_context on REAL Postgres (engine parity beyond
- * PGLite) + the RLS pin for the v116 table.
+ * PGLite) + the RLS pin for the v117 table.
  *
  * The unit suite covers the volunteer core hermetically on PGLite; this file
  * proves the same op handler against pgvector Postgres: resolution arms,
  * the fire-and-forget event sink landing rows, the stats join, and that
- * context_volunteer_events has ROW LEVEL SECURITY enabled (the v35
+ * context_volunteer_events (migration v117) has ROW LEVEL SECURITY enabled (the v35
  * auto_rls_on_create_table event trigger covers migration-created tables —
  * this is the assertion that keeps that mechanism honest for new tables).
  *
@@ -84,7 +84,7 @@ describePg('volunteer_context on real Postgres (#2095)', () => {
     expect(stats.total_used).toBeGreaterThanOrEqual(1);
   }, 120_000);
 
-  test('RLS is enabled on context_volunteer_events (auto-RLS covers v116)', async () => {
+  test('RLS is enabled on context_volunteer_events (auto-RLS covers v117)', async () => {
     const engine = getEngine();
     const rows = await engine.executeRaw<{ relrowsecurity: boolean }>(
       `SELECT relrowsecurity FROM pg_class
