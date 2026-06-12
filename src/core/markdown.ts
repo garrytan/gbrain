@@ -213,39 +213,39 @@ function collectValidationErrors(
     return;
   }
 
-  // 3. MISSING_CLOSE — find the next `---` after the opener. If a markdown
-  //    heading appears before it, that's a strong signal the closing
-  //    delimiter is missing (the heading was meant to be in the body).
+  // 3. MISSING_CLOSE — find the next `---` after the opener.
   let closeLine = -1;
-  let headingBeforeClose = -1;
   for (let i = firstNonEmpty + 1; i < lines.length; i++) {
-    const t = lines[i].trim();
-    if (t === '---') {
+    if (lines[i].trim() === '---') {
       closeLine = i;
       break;
     }
-    if (/^#{1,6}\s/.test(t) && headingBeforeClose === -1) {
-      headingBeforeClose = i;
-    }
   }
   if (closeLine === -1) {
+    // No closing fence found. Surface the first heading-shaped line as a
+    // hint for where the parser thinks the frontmatter went off the rails —
+    // only useful when the close is genuinely missing, since YAML allows
+    // `#` comment lines inside a closed fence (see comment below).
+    let headingHint = -1;
+    for (let i = firstNonEmpty + 1; i < lines.length; i++) {
+      if (/^#{1,6}\s/.test(lines[i].trim())) {
+        headingHint = i;
+        break;
+      }
+    }
     errors.push({
       code: 'MISSING_CLOSE',
       message:
-        headingBeforeClose >= 0
-          ? `No closing --- before heading at line ${headingBeforeClose + 1}`
+        headingHint >= 0
+          ? `No closing --- before heading at line ${headingHint + 1}`
           : 'No closing --- delimiter found',
-      line: headingBeforeClose >= 0 ? headingBeforeClose + 1 : firstNonEmpty + 1,
+      line: headingHint >= 0 ? headingHint + 1 : firstNonEmpty + 1,
     });
     return;
   }
-  if (headingBeforeClose >= 0 && headingBeforeClose < closeLine) {
-    errors.push({
-      code: 'MISSING_CLOSE',
-      message: `Heading at line ${headingBeforeClose + 1} found inside frontmatter zone (closing --- comes after)`,
-      line: headingBeforeClose + 1,
-    });
-  }
+  // Closing fence found. Content between opening and closing is YAML, which
+  // permits `#` comment lines anywhere — those are not markdown headings
+  // and must not raise MISSING_CLOSE.
 
   // 4. EMPTY_FRONTMATTER — open and close present but nothing meaningful between.
   const fmBody = lines.slice(firstNonEmpty + 1, closeLine).join('\n').trim();
