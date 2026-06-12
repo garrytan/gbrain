@@ -91,7 +91,15 @@ export function __listDrainerNamesForTest(): string[] {
  * the subsequent disconnect.
  */
 export async function drainAllBackgroundWorkForCliExit(opts?: { timeoutMs?: number }): Promise<void> {
-  const timeoutMs = opts?.timeoutMs ?? 2000;
+  // GBRAIN_EXIT_DRAIN_MS — operator escape hatch (#2108): in-flight facts:absorb
+  // LLM round-trips need far more than the 1-2s default to settle on batch
+  // ingest (sync/capture), and the registry's abort() turns "slow" into
+  // "silently lost". drain() returns as soon as work settles, so a large value
+  // costs ~0ms on idle runs. The env wins over call-site values so ONE knob
+  // covers every exit path (op-dispatch passes 1000 explicitly; CLI_ONLY
+  // passes nothing).
+  const envMs = Number(process.env.GBRAIN_EXIT_DRAIN_MS);
+  const timeoutMs = Number.isFinite(envMs) && envMs > 0 ? envMs : (opts?.timeoutMs ?? 2000);
   const ordered = [...drainers.values()].sort(
     (a, b) => a.order - b.order || a.name.localeCompare(b.name),
   );

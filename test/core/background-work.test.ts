@@ -133,4 +133,51 @@ describe('background-work registry', () => {
     await drainAllBackgroundWorkForCliExit({ timeoutMs: 10 });
     expect(true).toBe(true);
   });
+
+  test('GBRAIN_EXIT_DRAIN_MS env overrides the call-site timeout (#2108)', async () => {
+    const received: number[] = [];
+    const probe: BackgroundWorkDrainer = {
+      name: 'test-env-knob',
+      order: 0,
+      drain: async (timeoutMs) => { received.push(timeoutMs); return { unfinished: 0 }; },
+    };
+    const unreg = __registerDrainerForTest(probe);
+    const prev = process.env.GBRAIN_EXIT_DRAIN_MS;
+    try {
+      process.env.GBRAIN_EXIT_DRAIN_MS = '123456';
+      await drainAllBackgroundWorkForCliExit({ timeoutMs: 50 });
+      expect(received).toContain(123456); // env wins over the explicit call-site value
+    } finally {
+      if (prev === undefined) delete process.env.GBRAIN_EXIT_DRAIN_MS;
+      else process.env.GBRAIN_EXIT_DRAIN_MS = prev;
+      unreg();
+    }
+  });
+
+  test('invalid GBRAIN_EXIT_DRAIN_MS falls back to call-site / default (#2108)', async () => {
+    const received: number[] = [];
+    const probe: BackgroundWorkDrainer = {
+      name: 'test-env-knob-invalid',
+      order: 0,
+      drain: async (timeoutMs) => { received.push(timeoutMs); return { unfinished: 0 }; },
+    };
+    const unreg = __registerDrainerForTest(probe);
+    const prev = process.env.GBRAIN_EXIT_DRAIN_MS;
+    try {
+      for (const bad of ['abc', '0', '-5', '']) {
+        received.length = 0;
+        process.env.GBRAIN_EXIT_DRAIN_MS = bad;
+        await drainAllBackgroundWorkForCliExit({ timeoutMs: 50 });
+        expect(received).toContain(50); // call-site value preserved
+      }
+      received.length = 0;
+      delete process.env.GBRAIN_EXIT_DRAIN_MS;
+      await drainAllBackgroundWorkForCliExit();
+      expect(received).toContain(2000); // documented default when nothing is set
+    } finally {
+      if (prev === undefined) delete process.env.GBRAIN_EXIT_DRAIN_MS;
+      else process.env.GBRAIN_EXIT_DRAIN_MS = prev;
+      unreg();
+    }
+  });
 });
