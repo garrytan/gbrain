@@ -58,7 +58,7 @@ Per-call knobs on the op/watch: `max_pages`, `min_confidence`, `session_id`,
 
 ## Storage + privacy
 
-Volunteered pages log to `context_volunteer_events` (migration v116): slug,
+Volunteered pages log to `context_volunteer_events` (migration v117): slug,
 arm, confidence, channel, optional session/turn — the rationale is a
 deterministic template string, never raw conversation text. Rows are pruned
 after 90 days by the dream cycle's purge phase. Synopses pass through the same

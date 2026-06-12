@@ -946,7 +946,7 @@ CREATE TABLE IF NOT EXISTS op_checkpoint_paths (
 );
 
 -- #2095 push-based context: feedback-loop log of volunteered pages.
--- Mirrors migration v116 + src/schema.sql. "Used" derives from
+-- Mirrors migration v117 + src/schema.sql. "Used" derives from
 -- pages.last_retrieved_at > volunteered_at; 90-day prune in the dream
 -- cycle's purge phase.
 CREATE TABLE IF NOT EXISTS context_volunteer_events (

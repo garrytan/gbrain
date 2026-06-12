@@ -199,6 +199,9 @@ export class PGLiteEngine implements BrainEngine {
   readonly kind = 'pglite' as const;
   private _db: PGLiteDB | null = null;
   private _lock: LockHandle | null = null;
+  // #2034: captured at connect() so reconnect() can restore the same data dir
+  // after a drop, matching PostgresEngine's _savedConfig contract.
+  private _savedConfig: EngineConfig | null = null;
   // Tier 3: when GBRAIN_PGLITE_SNAPSHOT loaded a post-initSchema state into
   // PGlite.create(loadDataDir), initSchema is a no-op (schema is already
   // present + migrations already applied). Saves ~1-3s per fresh test PGLite.
@@ -211,6 +214,7 @@ export class PGLiteEngine implements BrainEngine {
 
   // Lifecycle
   async connect(config: EngineConfig): Promise<void> {
+    this._savedConfig = config; // #2034: remember for reconnect()
     const dataDir = config.database_path || undefined; // undefined = in-memory
 
     // Acquire file lock to prevent concurrent PGLite access (crashes with Aborted())
@@ -292,6 +296,27 @@ export class PGLiteEngine implements BrainEngine {
         await releaseLock(lock);
       }
     }
+  }
+
+  /**
+   * #2034: engine-parity reconnect. PGLite is single-writer in-process so it
+   * doesn't suffer the pool-drop class PostgresEngine.reconnect() handles, but
+   * the method MUST exist so callers (autopilot health probe, worker/queue
+   * claim-error recovery) can call `engine.reconnect()` uniformly.
+   *
+   * IN-MEMORY (no `database_path`) is a NO-OP: there is no persistent backing,
+   * the connection can't recoverably "drop" in-process, and a disconnect+reopen
+   * would DISCARD all state. This matches the long-standing assumption the
+   * worker/queue recovery paths are written against ("PGLite has no pooler
+   * reaping so reconnect is absent" — src/core/minions/queue.ts). A FILE-backed
+   * engine genuinely re-opens the same data dir (state persists on disk).
+   */
+  async reconnect(_ctx?: { error?: unknown }): Promise<void> {
+    if (!this._savedConfig) return; // never connected — nothing to restore
+    if (!this._savedConfig.database_path) return; // in-memory — no-op, preserve state
+    const config = this._savedConfig;
+    await this.disconnect();
+    await this.connect(config);
   }
 
   async initSchema(): Promise<void> {
@@ -3604,7 +3629,25 @@ export class PGLiteEngine implements BrainEngine {
     return { inserted: ids.length, ids };
   }
 
-  async deleteFactsForPage(slug: string, source_id: string): Promise<{ deleted: number }> {
+  async deleteFactsForPage(
+    slug: string,
+    source_id: string,
+    opts?: { excludeSourcePrefixes?: string[] },
+  ): Promise<{ deleted: number }> {
+    const prefixes = opts?.excludeSourcePrefixes;
+    if (prefixes && prefixes.length > 0) {
+      // #1928: keep rows whose `source` matches an excluded prefix (e.g.
+      // `cli:` conversation facts). COALESCE so NULL/empty-source fence rows
+      // stay deletable — only the explicitly-protected prefixes survive.
+      const patterns = prefixes.map(p => `${p}%`);
+      const result = await this.db.query(
+        `DELETE FROM facts
+           WHERE source_id = $1 AND source_markdown_slug = $2
+             AND NOT (COALESCE(source, '') LIKE ANY($3::text[]))`,
+        [source_id, slug, patterns],
+      );
+      return { deleted: result.affectedRows ?? 0 };
+    }
     const result = await this.db.query(
       `DELETE FROM facts WHERE source_id = $1 AND source_markdown_slug = $2`,
       [source_id, slug],
@@ -4914,7 +4957,7 @@ export class PGLiteEngine implements BrainEngine {
           e.from_chunk_id, e.to_chunk_id, e.from_symbol_qualified,
           e.to_symbol_qualified, e.edge_type,
           JSON.stringify(e.edge_metadata ?? {}),
-          e.source_id ?? null,
+          e.source_id ?? 'default',
         );
       }
       const res = await this.db.query(
@@ -4935,7 +4978,7 @@ export class PGLiteEngine implements BrainEngine {
         params.push(
           e.from_chunk_id, e.from_symbol_qualified, e.to_symbol_qualified, e.edge_type,
           JSON.stringify(e.edge_metadata ?? {}),
-          e.source_id ?? null,
+          e.source_id ?? 'default',
         );
       }
       const res = await this.db.query(

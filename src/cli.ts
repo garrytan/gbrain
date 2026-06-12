@@ -354,9 +354,91 @@ async function main() {
 
   // Local engine path (unchanged behavior for local installs).
   const engine = await connectEngine();
+  // v0.41.8.0 (#1247, #1269, #1290): the search / query / get_page
+  // op handlers fire-and-forget `bumpLastRetrievedAt` after returning
+  // results. On PGLite that IIFE keeps Bun's event loop alive past
+  // engine.disconnect(), hanging the CLI at ~95-98% CPU until SIGKILL.
+  // Drain the fire-and-forget set BEFORE disconnect; force-exit only
+  // if the drain itself times out (preserves stderr diagnostic signal
+  // AND guarantees the CLI doesn't re-hang at the disconnect layer).
+  //
+  // Defense-in-depth (adversarial-review C13): `engine.disconnect()` itself
+  // can hang on PGLite (db.close() or releaseLock racing OS-level FS state).
+  // The unref'd hard-exit fallback is armed inside drainThenDisconnect (called
+  // from the `finally` below), so it bounds ONLY the teardown phase (drain +
+  // disconnect) — the same helper every owner-disconnect site uses. It used to
+  // be armed HERE, before the try, which silently killed any op whose BODY ran
+  // past the deadline: on a slow Postgres pooler (6-10s per fresh connection)
+  // a healthy `gbrain search` was force-exited mid-handler with code 0 and
+  // ZERO stdout — an empty "success" indistinguishable from no results. The
+  // exitCode honor (v0.42.20.0) can't help there: a mid-op kill fires before
+  // any error path sets exitCode. Op-body wallclock bounds are the read-scope
+  // withTimeout wrap inside the try below, not this teardown backstop.
+  // Daemons (`serve`) are excluded so they stay alive.
+  // Wallclock bound for READ-scope op handlers. With the hard-deadline timer
+  // correctly scoped to teardown, a genuinely WEDGED read handler (hung pooler
+  // connection mid-query) would otherwise hang the CLI forever — the #1633
+  // zombie class the old (buggy) pre-try timer accidentally bounded at 10s.
+  // 180s sits far above any healthy slow-pooler run (6-10s/connection);
+  // --timeout=Ns overrides. Writes/admin stay unbounded: a long import/embed
+  // must never be killed by a default deadline.
+  const READ_OP_TIMEOUT_MS = 180_000;
+  // Set when a wallclock bound fired. The abandoned (timed-out but still
+  // running) handler can hold ref'd sockets/timers that keep Bun's event loop
+  // alive after main() returns — so the finally must hard-exit after teardown
+  // on this path, or the timeout print is followed by an immortal process:
+  // the same zombie class, resurrected through the timeout door (adversarial
+  // review finding).
+  let wallclockTimedOut = false;
+
   try {
-    const ctx = await makeContext(engine, params);
-    const rawResult = await op.handler(ctx, params);
+    const { withTimeout, OperationTimeoutError } = await import('./core/timeout.ts');
+    const wallclockMs = getCliOptions().timeoutMs ?? READ_OP_TIMEOUT_MS;
+    const onWallclockTimeout = (e: InstanceType<typeof OperationTimeoutError>) => {
+      const hint = getCliOptions().timeoutMs
+        ? ''
+        : ` (default ${e.ms}ms; pass --timeout=Ns to override)`;
+      console.error(`${e.label} timed out${hint}.`);
+      setCliExitCode(124);
+      wallclockTimedOut = true;
+    };
+
+    // Context build does DB I/O (resolveSourceId) and runs for EVERY op —
+    // a wedged pooler connection here would otherwise hang reads, writes,
+    // and admin alike with no bound at all (adversarial review finding).
+    let ctx: Awaited<ReturnType<typeof makeContext>>;
+    try {
+      ctx = await withTimeout(
+        makeContext(engine, params),
+        wallclockMs,
+        `gbrain ${command}: context`,
+      );
+    } catch (e: unknown) {
+      if (e instanceof OperationTimeoutError) {
+        onWallclockTimeout(e);
+        return; // the finally below still drains + disconnects, then exits
+      }
+      throw e;
+    }
+
+    let rawResult: unknown;
+    if (op.scope === 'read') {
+      try {
+        rawResult = await withTimeout(
+          op.handler(ctx, params),
+          wallclockMs,
+          `gbrain ${command}`,
+        );
+      } catch (e: unknown) {
+        if (e instanceof OperationTimeoutError) {
+          onWallclockTimeout(e);
+          return; // the finally below still drains + disconnects, then exits
+        }
+        throw e;
+      }
+    } else {
+      rawResult = await op.handler(ctx, params);
+    }
     // ENG-2 (renderer parity by data shape): JSON-round-trip the local-engine
     // path's return value so renderers see the same shape they'd see on the
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
@@ -369,7 +451,8 @@ async function main() {
     // STILL runs (drains every background-work sink + disconnects). A bare
     // process.exit(1) here would skip the finally → skip the drain + disconnect
     // (leaves facts/cache/eval-capture writes racing teardown). The finally's
-    // drain bounds teardown; the outer hard-deadline timer bounds a hung one.
+    // drain bounds teardown; the hard-deadline timer armed at teardown entry
+    // bounds a hung one.
     if (e instanceof OperationError) {
       console.error(`Error [${e.code}]: ${e.message}`);
       if (e.suggestion) console.error(`  Fix: ${e.suggestion}`);
@@ -382,6 +465,15 @@ async function main() {
     // ~0ms fast path; capture/import that DO enqueue pay up to 1s (+ facts
     // shutdown grace) while in-flight Haiku finishes.
     await drainThenDisconnect(engine, { drainTimeoutMs: 1000 });
+    // Wallclock-timeout path (master v0.42.41.0): the ABANDONED handler
+    // (withTimeout races, it does not cancel) can hold ref'd sockets / SDK
+    // retry timers that keep Bun's event loop alive. The entrypoint
+    // flush-exit fires when main() resolves and covers this; the explicit
+    // call here is belt-and-braces in case a future caller invokes this op
+    // path outside the guarded entrypoint.
+    if (wallclockTimedOut) {
+      void flushStdoutThenExit(getCliExitCode());
+    }
   }
 }
 
@@ -400,11 +492,12 @@ async function main() {
  *     │     busy-loop (#1762)
  *     └── engine.disconnect() (best-effort), then clear the deadline
  *
- * The 10s timer is armed HERE — around the teardown window only — not before
- * the op handler (the pre-v0.43 placement would have force-killed any op
- * slower than 10s). On the happy path the timer never fires: main() resolves
- * and the entrypoint's flushStdoutThenExit ends the process deliberately
- * (#2084's fix for lingering embedding/PgBouncer sockets riding the backstop).
+ * The 10s timer is armed HERE — around the teardown window only — never
+ * before the op handler (master's v0.42.41.0 triage wave fixed the same
+ * pre-armed-timer bug independently: it force-killed any op slower than
+ * 10s). On the happy path the timer never fires: main() resolves and the
+ * entrypoint's flushStdoutThenExit ends the process deliberately (#2084's
+ * fix for lingering embedding/PgBouncer sockets riding the backstop).
  */
 const DISCONNECT_HARD_DEADLINE_MS = 10_000;
 export async function drainThenDisconnect(

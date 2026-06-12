@@ -390,6 +390,11 @@ CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_to
   ON code_edges_chunk(to_chunk_id, edge_type);
 CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_to_symbol
   ON code_edges_chunk(to_symbol_qualified, edge_type);
+-- getCalleesOf filters on from_symbol_qualified; without this index every
+-- callee lookup is a sequential scan, amplified per-BFS-node by the
+-- recursive code walk. Mirrors migration v116.
+CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_from_symbol
+  ON code_edges_chunk(from_symbol_qualified);
 
 CREATE TABLE IF NOT EXISTS code_edges_symbol (
   id                    SERIAL PRIMARY KEY,
@@ -407,6 +412,10 @@ CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_from
   ON code_edges_symbol(from_chunk_id, edge_type);
 CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_to
   ON code_edges_symbol(to_symbol_qualified, edge_type);
+-- getCalleesOf companion to idx_code_edges_chunk_from_symbol above.
+-- Mirrors migration v116.
+CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_from_symbol
+  ON code_edges_symbol(from_symbol_qualified);
 
 -- ============================================================
 -- links: cross-references between pages
@@ -706,7 +715,7 @@ CREATE TABLE IF NOT EXISTS op_checkpoint_paths (
 -- (volunteer_context op / retrieval-reflex pointers / gbrain watch).
 -- "Used" derives from pages.last_retrieved_at > volunteered_at; rationale is
 -- a deterministic template string, never raw conversation text. 90-day prune
--- in the dream cycle's purge phase. Mirrors migration v116.
+-- in the dream cycle's purge phase. Mirrors migration v117.
 CREATE TABLE IF NOT EXISTS context_volunteer_events (
   id             BIGSERIAL PRIMARY KEY,
   source_id      TEXT NOT NULL,

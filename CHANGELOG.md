@@ -2,6 +2,39 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.41.0] - 2026-06-11
+
+**A correctness-and-reliability wave: your conversation facts survive a cycle, write-through stops polluting other repos, autopilot rides out a DB blip instead of crash-looping, and concurrent PGLite processes stop corrupting each other.** A triage of open reports surfaced six bugs with no fix yet plus a batch of community PRs; this ships them together, each with a regression test.
+
+The headline is data durability. The `extract_facts` cycle phase reconciles a page's facts from its `## Facts` fence by deleting then reinserting — but conversation facts (written by `extract-conversation-facts`) live on pages that have no fence, so a cycle could delete them and reinsert nothing. A failed sync made it worse by escalating the phase to a full-brain walk. Both are fixed: the reconcile now protects non-fence (`cli:`-origin) facts, the destructive phase no longer inherits the failed-sync full-walk, and a reconcile that removes far more than it adds now reports `warn` instead of a silent `ok`.
+
+Three more silent failures, each found in production and now self-healing or loud:
+- **Timeline writes that silently stopped.** A migration renumbered during a merge could be recorded as applied without its index change ever running, so every timeline insert failed its `ON CONFLICT`. `gbrain` now repairs the index shape on every migrate pass (dedupe-then-rebuild, even when nothing is pending), `gbrain doctor` reports the drift, and the meetings extractor no longer swallows batch errors.
+- **Autopilot crash-loop on transient DB errors.** The health-probe recovery called `connect()` without its config, so every reconnect threw and the process exited on any blip. It now uses `reconnect()`, which restores the captured config; `reconnect()` is a first-class method on both engines.
+- **WAL corruption from concurrent PGLite processes.** A live, working process holding the data-dir lock could have it stolen after five minutes. The lock now heartbeats while held and is only reclaimed from a dead or genuinely stalled holder.
+
+### Added
+- **`timeline_dedup_index` doctor check + always-run repair (#2038).** Detects and heals a stale `idx_timeline_dedup` shape; `gbrain apply-migrations --force-schema` triggers the repair on demand. Reported by @jbarol.
+- **`BrainEngine.reconnect()` on both engines (#2034).** Config-restoring reconnect, replacing the `disconnect()`+bare-`connect()` pattern.
+
+### Fixed
+- **Conversation facts survive a fence reconcile (#1928).** The cycle's per-page wipe now excludes non-fence (`cli:`) facts, the destructive phase no longer full-walks on a failed sync, and net-negative reconciles surface as `warn`.
+- **`put_page` write-through no longer leaks into an unrelated source's repo (#2018).** It mirrors to the assigned source's own `local_path`; a source without one is skipped rather than written into the global repo path.
+- **Autopilot survives transient DB errors instead of crash-looping (#2034).**
+- **Concurrent PGLite processes no longer corrupt the WAL (#2058).** Heartbeat + steal-grace replaces the age-only stale-lock check.
+- **Timeline migration drift self-heals; the extractor stops swallowing errors (#2038, #2057).** A Date-typed batch date round-trips correctly (verified by test).
+- **A cwd `.env` `DATABASE_URL` no longer silently retargets the brain (#2064, closes #427).** Reported by @bomliu.
+- **`gbrain sync --strategy code` honors `.gitignore` and skips `vendor`/`dist`/`build`/`venv` (#2052, #2020).** Reported by @aphaiboon and @dMac716.
+- **Asymmetric embedding `input_type` reaches the wire across every openai-compatible recipe (#2033, supersedes #1400).** Query vectors are no longer document-typed. By @pabloglzg; original diagnosis by @billy-armstrong.
+- **`updateSourceConfig` JSONB merge is atomic (#2074).** Eliminates a concurrent-writer lost-update race. Reported by @pai-scaffolde.
+- **`gbrain doctor` correctness pass (#2075):** stale-lock hints, content sanity, graph coverage, exit code, gateway guard. Reported by @pai-scaffolde.
+- **`gbrain search` returns results instead of exiting 0 empty on slow poolers; scoped `code-callers`/`code-callees` find their edges (#2073).** Migration v116 backfills NULL edge `source_id` and indexes `from_symbol_qualified`. Reported by @jbarol.
+- **OAuth scope handling (#2009, #2072):** an omitted authorize scope now defaults to the client's registered grant (clamped to it, so no widening) instead of an empty grant that never self-heals; legacy token source grants are honored through a single shared scope parser. By @austinrarnett and @maxpetrusenkoagent.
+
+### To take advantage of v0.42.41.0
+
+`gbrain upgrade`. The timeline-index repair and migration v116 run automatically on the next migrate pass — if `gbrain doctor` flagged a timeline or call-graph problem before, re-run it after upgrade. No config changes required; the facts, write-through, autopilot, and lock fixes apply on restart.
+
 ## [0.42.40.0] - 2026-06-09
 
 **`gbrain extract --stale` no longer aborts partway through a brain that contains emoji or other non-BMP characters.** On a large brain, link/timeline extraction could die with `invalid input syntax for type json` and commit nothing — and because the staleness bookmark only advances on a clean finish, every retry re-hit the same point and extraction stayed wedged. The cause: the link-context excerpt was sliced by raw UTF-16 index, so a window boundary landing inside an emoji's surrogate pair left an unpaired surrogate half in the text, which Postgres rejects when the batch is serialized to JSONB — taking down the whole batch, not just the one row. (PGLite is more permissive here, so this primarily bit the managed-Postgres engine.)

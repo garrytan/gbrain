@@ -2181,7 +2181,7 @@ describe('v112 — pages_links_extracted_at', () => {
 
 
 // v0.43 (#2095): context_volunteer_events — push-based-context feedback log.
-describe('v116 — context_volunteer_events_table', () => {
+describe('v117 — context_volunteer_events_table', () => {
   let engine: PGLiteEngine;
   beforeAll(async () => {
     engine = new PGLiteEngine();
@@ -2190,15 +2190,15 @@ describe('v116 — context_volunteer_events_table', () => {
   }, 60_000);
   afterAll(async () => { if (engine) await engine.disconnect(); }, 60_000);
 
-  test('v116 entry exists, named + idempotent', () => {
-    const m = MIGRATIONS.find(x => x.version === 116);
+  test('v117 entry exists, named + idempotent', () => {
+    const m = MIGRATIONS.find(x => x.version === 117);
     expect(m).toBeDefined();
     expect(m!.name).toBe('context_volunteer_events_table');
     expect(m!.idempotent).toBe(true);
   });
 
-  test('LATEST_VERSION is at or above 116', () => {
-    expect(LATEST_VERSION).toBeGreaterThanOrEqual(116);
+  test('LATEST_VERSION is at or above 117', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(117);
   });
 
   test('table exists after initSchema with the documented columns', async () => {

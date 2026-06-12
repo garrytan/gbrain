@@ -1276,11 +1276,28 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean> {
-    // v0.38: atomic JSONB merge. `||` is the Postgres concat operator —
-    // for jsonb, right-side keys overwrite left-side; nested object keys
-    // are NOT deep-merged (use jsonb_set for nested paths). The patch
-    // shape this autopilot wave uses is flat (`last_full_cycle_at`,
-    // `archive_*`, etc.) so concat is sufficient. Idempotent on re-run.
+    // Atomic single-statement merge. The previous read-then-write form dropped
+    // concurrent updates: two callers patching different keys could both read
+    // the same old config and the later `SET config = ...` clobbered the
+    // earlier patch. These keys are written by background cycle/autopilot
+    // paths, so the merge must happen inside the UPDATE (parity with
+    // pglite-engine.updateSourceConfig, which already uses JSONB `||`).
+    //
+    // The CASE normalizes historical bad shapes inline (so `config` is re-read
+    // against the row-locked latest version — a CTE/subquery snapshot would
+    // reintroduce the lost-update race under READ COMMITTED): older code paths
+    // could store config as a JSONB string (double-encoded) or as a JSONB array
+    // of patch objects. We coerce those to a flat object before the `||` merge
+    // so doctor and source routing keep getting flat keys.
+    //
+    // String branch guard: a JSONB string whose inner text is NOT itself valid
+    // JSON (one of the historical bad shapes this path repairs) would make the
+    // bare `::jsonb` cast raise `invalid input syntax for type json`, failing
+    // the whole UPDATE. Postgres has no `try_cast`, so we gate the cast with
+    // the SQL `IS JSON` predicate (Postgres 16+): parseable inner text is
+    // double-encoded config and gets parsed; unparseable text falls back to `{}`.
+    // The guard keeps the merge a single atomic statement (no extra round-trip,
+    // no lost-update race).
     //
     // MUST use sql.json(patch) inside the template tag — postgres-js's
     // positional executeRaw + `$1::jsonb` cast DOUBLE-ENCODES the
@@ -1294,7 +1311,25 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const result = await sql`
       UPDATE sources
-         SET config = COALESCE(config, '{}'::jsonb) || ${sql.json(patch as Parameters<typeof sql.json>[0])}
+         SET config =
+           CASE
+             WHEN jsonb_typeof(config) = 'object' THEN config
+             WHEN jsonb_typeof(config) = 'string'
+               THEN CASE
+                 WHEN (config #>> '{}') IS JSON
+                   THEN COALESCE(NULLIF((config #>> '{}'), '')::jsonb, '{}'::jsonb)
+                 ELSE '{}'::jsonb
+               END
+             WHEN jsonb_typeof(config) = 'array'
+               THEN COALESCE(
+                 (SELECT jsonb_object_agg(kv.key, kv.value)
+                    FROM jsonb_array_elements(config) elem,
+                         jsonb_each(elem) kv),
+                 '{}'::jsonb
+               )
+             ELSE '{}'::jsonb
+           END
+           || ${sql.json(patch as Parameters<typeof sql.json>[0])}
        WHERE id = ${sourceId}
     `;
     return (result.count ?? 0) > 0;
@@ -3745,8 +3780,26 @@ export class PostgresEngine implements BrainEngine {
     return { inserted: ids.length, ids };
   }
 
-  async deleteFactsForPage(slug: string, source_id: string): Promise<{ deleted: number }> {
+  async deleteFactsForPage(
+    slug: string,
+    source_id: string,
+    opts?: { excludeSourcePrefixes?: string[] },
+  ): Promise<{ deleted: number }> {
     const sql = this.sql;
+    const prefixes = opts?.excludeSourcePrefixes;
+    if (prefixes && prefixes.length > 0) {
+      // #1928: keep rows whose `source` matches an excluded prefix (e.g.
+      // `cli:` conversation facts). COALESCE so NULL/empty-source fence rows
+      // stay deletable — only the explicitly-protected prefixes survive.
+      const patterns = prefixes.map(p => `${p}%`);
+      const result = await sql`
+        DELETE FROM facts
+        WHERE source_id = ${source_id}
+          AND source_markdown_slug = ${slug}
+          AND NOT (COALESCE(source, '') LIKE ANY(${patterns}))
+      `;
+      return { deleted: result.count ?? 0 };
+    }
     const result = await sql`
       DELETE FROM facts WHERE source_id = ${source_id} AND source_markdown_slug = ${slug}
     `;
@@ -5119,7 +5172,7 @@ export class PostgresEngine implements BrainEngine {
       const toQual = resolved.map(e => e.to_symbol_qualified);
       const edgeTypes = resolved.map(e => e.edge_type);
       const metas = resolved.map(e => JSON.stringify(e.edge_metadata ?? {}));
-      const sources = resolved.map(e => e.source_id ?? null);
+      const sources = resolved.map(e => e.source_id ?? 'default');
       const res = await sql`
         INSERT INTO code_edges_chunk (from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id)
         SELECT * FROM unnest(
@@ -5139,7 +5192,7 @@ export class PostgresEngine implements BrainEngine {
       const toQual = unresolved.map(e => e.to_symbol_qualified);
       const edgeTypes = unresolved.map(e => e.edge_type);
       const metas = unresolved.map(e => JSON.stringify(e.edge_metadata ?? {}));
-      const sources = unresolved.map(e => e.source_id ?? null);
+      const sources = unresolved.map(e => e.source_id ?? 'default');
       const res = await sql`
         INSERT INTO code_edges_symbol (from_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id)
         SELECT * FROM unnest(

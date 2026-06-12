@@ -530,8 +530,13 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       autopilotReconnectFails = 0; // reset on success
     } catch (probeErr) {
       try {
-        await engine.disconnect();
-        await (engine as any).connect?.();
+        // #2034: use reconnect() — it restores the config captured at connect()
+        // and avoids the null-connection window. The previous
+        // `disconnect()` + bare `connect()` lost the config (throwing
+        // `database_url undefined` on every retry → FATAL restart-loop on any
+        // transient DB blip) AND tore down the pool postgres.js can otherwise
+        // self-heal.
+        await engine.reconnect({ error: probeErr });
         autopilotReconnectFails = 0;
       } catch (e) {
         logError('reconnect', e);

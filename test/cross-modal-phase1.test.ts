@@ -136,15 +136,17 @@ describe('D2 — knobsHash differs across cross-modal knob values', () => {
     return resolveSearchMode({ mode: 'balanced' });
   }
 
-  test('KNOBS_HASH_VERSION is 10 (cross-modal still appended; 9→10 relational recall)', () => {
+  test('KNOBS_HASH_VERSION is 11 (cross-modal still appended; 10→11 asymmetric input_type fix)', () => {
     // v0.35 ladder: 1→2 reranker, 2→3 floor_ratio. v0.36 piggybacks on v=3
     // with 7 cross-modal knobs + column/provider context. v0.40.4 (salem) +
     // v0.39 T21 (master) bump to v=4 for graph_signals + schema-pack fields.
     // v0.40.3.0 D8 bumps to v=5 (sequenced behind salem's v=4 graph-signals).
     // v0.41.22.0 (type-unification): 5→6 for alias_resolved post-fusion boost.
     // T2: 6→7 title_boost. v0.42.3.0: 7→8 autocut. issue #1777: 8→9 archive/ demote.
-    // v0.43: 9→10 relational recall arm.
-    expect(KNOBS_HASH_VERSION).toBe(10);
+    // v0.43: 9→10 relational recall arm. #1400: 10→11 query-side input_type
+    // finally reaches asymmetric providers — pre-fix rows were keyed on
+    // document-side query vectors.
+    expect(KNOBS_HASH_VERSION).toBe(11);
   });
 
   test('flipping unified_multimodal changes the hash', () => {
