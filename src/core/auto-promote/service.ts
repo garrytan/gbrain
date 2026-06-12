@@ -139,7 +139,15 @@ async function excludedByOpenContradiction(
 
 async function judge(
   input: RunAutoPromoteInput,
-  c: { id: string; proposed_content: string; target_object_id: string | null; source_refs: string[] },
+  c: {
+    id: string;
+    proposed_content: string;
+    target_object_id: string | null;
+    source_refs: string[];
+    verification_status?: string;
+    verification_method?: string | null;
+    verification_evidence?: string | null;
+  },
   _model: string | null,
   targetSnapshotHashes: Map<string, string | null>,
   runnerBudget: { calls: number; max: number },
@@ -147,11 +155,13 @@ async function judge(
   const targetContext = normalizeTargetContext(await input.contextLoader(c.target_object_id ?? ''));
   targetSnapshotHashes.set(c.id, targetContext.content_hash);
   const runners = input.runners?.length ? input.runners : [input.runner];
+  const verification = promptVerificationFor(c);
   const prompt = buildPromotionReviewPrompt({
     candidate_content: c.proposed_content,
     target_ref: c.target_object_id ?? '(unknown)',
     target_context: targetContext.text,
     source_refs: c.source_refs,
+    verification,
   });
   const toolPolicy = evaluateRunnerToolCall({ task_type: 'candidate_promotion_review', tool_name: 'emit_promotion_verdict' });
 
@@ -161,6 +171,7 @@ async function judge(
       source_refs: c.source_refs,
       target_ref: c.target_object_id ?? '(unknown)',
       target_context: targetContext.text,
+      verification,
       runner_kind: runner.kind,
       model: _model,
       prompt_version: PROMPT_VERSION,
@@ -215,6 +226,19 @@ function promptInputHash(input: Record<string, unknown>): string {
     ...input,
     source_refs: sourceRefs,
   }));
+}
+
+function promptVerificationFor(c: {
+  verification_status?: string;
+  verification_method?: string | null;
+  verification_evidence?: string | null;
+}): { status: 'verified' | 'refuted'; method: string; evidence: string } | null {
+  if (c.verification_status !== 'verified' && c.verification_status !== 'refuted') return null;
+  return {
+    status: c.verification_status,
+    method: c.verification_method ?? 'unknown',
+    evidence: c.verification_evidence ?? '',
+  };
 }
 
 function normalizeTargetContext(value: string | TargetContextSnapshot): TargetContextSnapshot {

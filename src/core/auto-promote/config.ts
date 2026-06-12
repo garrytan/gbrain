@@ -13,6 +13,7 @@ export interface AutoPromoteConfig {
     evidence_kinds: AutoPromoteEvidenceKind[];
     sensitivities: AutoPromoteSensitivity[];
     allow_contradictions: boolean;
+    require_verification: boolean;
   };
   escalation: { enabled: boolean; max_per_cycle: number };
   dry_run: boolean;
@@ -33,6 +34,7 @@ export function defaultAutoPromoteConfig(): AutoPromoteConfig {
       evidence_kinds: ['direct_user_statement', 'source_extracted'],
       sensitivities: ['public', 'work'],
       allow_contradictions: false,
+      require_verification: false,
     },
     escalation: { enabled: true, max_per_cycle: 20 },
     dry_run: false,
@@ -55,6 +57,7 @@ export function normalizeAutoPromoteConfig(input: Partial<AutoPromoteConfig> | n
       evidence_kinds: filterEnum((elig as AutoPromoteConfig['eligibility']).evidence_kinds, ALLOWED_EVIDENCE, d.eligibility.evidence_kinds) as AutoPromoteEvidenceKind[],
       sensitivities: filterEnum((elig as AutoPromoteConfig['eligibility']).sensitivities, ALLOWED_SENSITIVITIES, d.eligibility.sensitivities) as AutoPromoteSensitivity[],
       allow_contradictions: (elig as AutoPromoteConfig['eligibility']).allow_contradictions ?? d.eligibility.allow_contradictions,
+      require_verification: (elig as AutoPromoteConfig['eligibility']).require_verification ?? d.eligibility.require_verification,
     },
     escalation: {
       enabled: i.escalation?.enabled ?? d.escalation.enabled,

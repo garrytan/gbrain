@@ -43,6 +43,10 @@ export function classifyAutoPromoteLane(
     return { lane: 'excluded', reason: 'scope_not_clear' };
   }
 
+  if (c.verification_status === 'refuted') {
+    return { lane: 'excluded', reason: 'verification_refuted' };
+  }
+
   if (!hasSourceRefs(c)) {
     return { lane: 'excluded', reason: 'source_refs_missing' };
   }
@@ -64,12 +68,20 @@ export function classifyAutoPromoteLane(
   if (c.generated_by === 'dream_cycle') {
     return { lane: 'handoff_only', reason: 'generated_by_handoff_only:dream_cycle' };
   }
+  const isVerified = c.verification_status === 'verified';
   const evidence = evidenceKindFor(c.extraction_kind);
   if (evidence === 'risky') {
-    return { lane: 'handoff_only', reason: `evidence_handoff_only:risky_${c.extraction_kind}` };
-  }
-  if (!policy.eligibility.evidence_kinds.includes(evidence)) {
+    // A verified candidate carries a checked fact with evidence, which
+    // upgrades risky (inferred/ambiguous) extraction to canonical-eligible.
+    if (!isVerified) {
+      return { lane: 'handoff_only', reason: `evidence_handoff_only:risky_${c.extraction_kind}` };
+    }
+  } else if (!policy.eligibility.evidence_kinds.includes(evidence)) {
     return { lane: 'excluded', reason: `evidence_excluded:${evidence}` };
+  }
+
+  if (policy.eligibility.require_verification && !isVerified) {
+    return { lane: 'handoff_only', reason: 'verification_required' };
   }
 
   return { lane: 'canonical_eligible' };
