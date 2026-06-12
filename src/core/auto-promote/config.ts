@@ -14,6 +14,10 @@ export interface AutoPromoteConfig {
     sensitivities: AutoPromoteSensitivity[];
     allow_contradictions: boolean;
     require_verification: boolean;
+    // Verification is agent-attested; operators who restrict evidence_kinds
+    // can also disable this upgrade so verified inferred/ambiguous candidates
+    // stay in the handoff lane.
+    allow_verified_risky_upgrade: boolean;
   };
   escalation: { enabled: boolean; max_per_cycle: number };
   dry_run: boolean;
@@ -35,6 +39,7 @@ export function defaultAutoPromoteConfig(): AutoPromoteConfig {
       sensitivities: ['public', 'work'],
       allow_contradictions: false,
       require_verification: false,
+      allow_verified_risky_upgrade: true,
     },
     escalation: { enabled: true, max_per_cycle: 20 },
     dry_run: false,
@@ -58,6 +63,7 @@ export function normalizeAutoPromoteConfig(input: Partial<AutoPromoteConfig> | n
       sensitivities: filterEnum((elig as AutoPromoteConfig['eligibility']).sensitivities, ALLOWED_SENSITIVITIES, d.eligibility.sensitivities) as AutoPromoteSensitivity[],
       allow_contradictions: (elig as AutoPromoteConfig['eligibility']).allow_contradictions ?? d.eligibility.allow_contradictions,
       require_verification: (elig as AutoPromoteConfig['eligibility']).require_verification ?? d.eligibility.require_verification,
+      allow_verified_risky_upgrade: (elig as AutoPromoteConfig['eligibility']).allow_verified_risky_upgrade ?? d.eligibility.allow_verified_risky_upgrade,
     },
     escalation: {
       enabled: i.escalation?.enabled ?? d.escalation.enabled,

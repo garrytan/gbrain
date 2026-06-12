@@ -2289,6 +2289,7 @@ export abstract class PgEngineBase {
           updated_at = now()
       WHERE id = $1
         AND status = $7
+        AND verification_status = $8
       RETURNING id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
                 extraction_kind, confidence_score, importance_score, recurrence_score,
                 sensitivity, status, target_object_type, target_object_id, reviewed_at,
@@ -2306,6 +2307,7 @@ export abstract class PgEngineBase {
         JSON.stringify(patch.verification_source_refs ?? []),
         verifiedAt,
         current.status,
+        current.verification_status,
       ],
     );
     if (rows.length === 0) return null;

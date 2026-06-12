@@ -73,7 +73,8 @@ export function classifyAutoPromoteLane(
   if (evidence === 'risky') {
     // A verified candidate carries a checked fact with evidence, which
     // upgrades risky (inferred/ambiguous) extraction to canonical-eligible.
-    if (!isVerified) {
+    // Verification is agent-attested, so the upgrade is policy-gated.
+    if (!isVerified || !policy.eligibility.allow_verified_risky_upgrade) {
       return { lane: 'handoff_only', reason: `evidence_handoff_only:risky_${c.extraction_kind}` };
     }
   } else if (!policy.eligibility.evidence_kinds.includes(evidence)) {

@@ -2251,6 +2251,8 @@ export function createMemoryInboxOperations(
     },
     mutating: true,
     handler: async (ctx, p) => {
+      const verificationStatus = requireEnumValue(deps, 'verification_status', p.verification_status, MEMORY_CANDIDATE_VERIFICATION_STATUS_VALUES);
+      const verificationMethod = requireEnumValue(deps, 'verification_method', p.verification_method, MEMORY_CANDIDATE_VERIFICATION_METHODS);
       const verificationEvidence = typeof p.verification_evidence === 'string'
         ? p.verification_evidence
         : (() => { throw invalidParams(deps, 'verification_evidence must be a string'); })();
@@ -2264,15 +2266,15 @@ export function createMemoryInboxOperations(
           dry_run: true,
           action: 'verify_memory_candidate_entry',
           id: p.id,
-          verification_status: p.verification_status,
+          verification_status: verificationStatus,
         };
       }
 
       try {
         return await verifyMemoryCandidateEntry(ctx.engine, {
           id: String(p.id),
-          verification_status: requireEnumValue(deps, 'verification_status', p.verification_status, MEMORY_CANDIDATE_VERIFICATION_STATUS_VALUES),
-          verification_method: requireEnumValue(deps, 'verification_method', p.verification_method, MEMORY_CANDIDATE_VERIFICATION_METHODS),
+          verification_status: verificationStatus,
+          verification_method: verificationMethod,
           verification_evidence: verificationEvidence,
           verification_source_refs: (p.verification_source_refs as string[] | undefined) ?? [],
           verified_at: p.verified_at === null ? null : (typeof p.verified_at === 'string' ? p.verified_at : undefined),

@@ -35,7 +35,9 @@ All notable changes to MBrain will be documented in this file.
   preflight treats a verification record as clearing the standing
   revalidation defer — verified procedure candidates become promotable for
   the first time — and auto-promote upgrades verified inferred/ambiguous
-  candidates from the handoff-only lane to canonical-eligible. Want a
+  candidates from the handoff-only lane to canonical-eligible (verification
+  is agent-attested, so the upgrade is policy-gated: turn it off with
+  `auto_promote.eligibility.allow_verified_risky_upgrade: false`). Want a
   stricter brain? Set `auto_promote.eligibility.require_verification: true`
   and only checked facts reach the canonical lane. The promotion judge now
   sees the verification evidence too.

@@ -93,6 +93,20 @@ describe('selectAutoPromoteCandidates', () => {
     expect(verified.low_risk).toHaveLength(1);
     expect(verified.risky).toHaveLength(0);
   });
+  it('keeps verified risky candidates in handoff when the upgrade is disabled by policy', () => {
+    const restricted = {
+      ...policy,
+      eligibility: { ...policy.eligibility, allow_verified_risky_upgrade: false },
+    };
+    const r = selectAutoPromoteCandidates([{
+      ...base,
+      extraction_kind: 'inferred',
+      verification_status: 'verified',
+    }], restricted);
+
+    expect(r.low_risk).toHaveLength(0);
+    expect(r.risky).toHaveLength(1);
+  });
   it('routes unverified candidates to risky handoff when require_verification is on', () => {
     const strict = {
       ...policy,

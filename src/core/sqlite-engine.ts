@@ -3115,6 +3115,7 @@ export class SQLiteEngine implements BrainEngine {
           updated_at = ?
       WHERE id = ?
         AND status = ?
+        AND verification_status = ?
     `, [
       patch.verification_status,
       patch.verification_method,
@@ -3124,6 +3125,7 @@ export class SQLiteEngine implements BrainEngine {
       timestamp,
       id,
       current.status,
+      current.verification_status,
     ]);
     if (result.changes === 0) {
       return null;

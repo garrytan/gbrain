@@ -23,4 +23,9 @@ describe('auto_promote config', () => {
     const c = normalizeAutoPromoteConfig({ eligibility: { require_verification: true } as any });
     expect(c.eligibility.require_verification).toBe(true);
   });
+  it('defaults allow_verified_risky_upgrade to true and accepts an explicit opt-out', () => {
+    expect(defaultAutoPromoteConfig().eligibility.allow_verified_risky_upgrade).toBe(true);
+    const c = normalizeAutoPromoteConfig({ eligibility: { allow_verified_risky_upgrade: false } as any });
+    expect(c.eligibility.allow_verified_risky_upgrade).toBe(false);
+  });
 });

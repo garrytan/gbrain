@@ -939,6 +939,39 @@ if (databaseUrl) {
       await engine.disconnect().catch(() => undefined);
     }
   });
+
+  test('postgres persists memory candidate verification fields', async () => {
+    const scopeId = 'workspace:default';
+    const id = `memory-candidate:verification:postgres:${Date.now()}`;
+    const engine = new PostgresEngine();
+
+    try {
+      await engine.connect({ engine: 'postgres', database_url: databaseUrl });
+      await engine.initSchema();
+
+      const created = await seedMemoryCandidate(engine, id, scopeId);
+      expect(created.verification_status).toBe('unverified');
+      expect(created.verification_source_refs).toEqual([]);
+
+      const verified = await engine.updateMemoryCandidateEntryVerification(id, {
+        verification_status: 'verified',
+        verification_method: 'db_query',
+        verification_evidence: 'Checked the canonical table; the claimed row exists with the stated value.',
+        verification_source_refs: ['Query output, 2026-06-12 11:30 AM KST'],
+      });
+      expect(verified?.verification_status).toBe('verified');
+      expect(verified?.verification_method).toBe('db_query');
+      expect(verified?.verification_source_refs).toEqual(['Query output, 2026-06-12 11:30 AM KST']);
+      expect(verified?.verified_at).not.toBeNull();
+
+      const fetched = await engine.getMemoryCandidateEntry(id);
+      expect(fetched?.verification_status).toBe('verified');
+      expect(fetched?.verification_evidence).toContain('canonical table');
+    } finally {
+      await engine.deleteMemoryCandidateEntry(id).catch(() => undefined);
+      await engine.disconnect().catch(() => undefined);
+    }
+  });
 } else {
   test.skip('postgres memory inbox persistence skipped: DATABASE_URL is not configured', () => {});
 }
