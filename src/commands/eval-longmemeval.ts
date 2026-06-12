@@ -56,7 +56,7 @@ import { formatTrajectoryBlock } from '../core/trajectory-format.ts';
 const TRAJECTORY_METHODOLOGY_NOTE = 'extractor=haiku-preprocess-full-haystack-v1';
 
 const HUGGINGFACE_URL = 'https://huggingface.co/datasets/xiaowu0162/longmemeval-v2';
-const LEGACY_HUGGINGFACE_URL = 'https://huggingface.co/datasets/xiaowu0162/longmemeval';
+const CLEANED_V1_HUGGINGFACE_URL = 'https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned';
 
 type LongMemEvalV2Tier = 'small' | 'medium';
 
@@ -169,7 +169,7 @@ function printHelp(): void {
     `                            dataset root / questions.jsonl with sibling\n` +
     `                            trajectories.jsonl + haystacks/lme_v2_*.json.\n` +
     `                            V2: ${HUGGINGFACE_URL}\n` +
-    `                            Legacy: ${LEGACY_HUGGINGFACE_URL}\n\n` +
+    `                            Cleaned V1: ${CLEANED_V1_HUGGINGFACE_URL}\n\n` +
     `Options:\n` +
     `  --limit N                 Run only the first N questions.\n` +
     `  --model M                 Override answer-generation model (default: resolveModel).\n` +

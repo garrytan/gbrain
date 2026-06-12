@@ -339,7 +339,7 @@ Existing `eval_candidates` rows stay until you `gbrain eval prune
 
 ## Public benchmarks: LongMemEval (v0.28.8)
 
-`gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval)
+`gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned)
 benchmark directly against gbrain's hybrid retrieval. Different evaluation
 axis from `eval replay`: public dataset with ground-truth labels, end-to-end
 question-answer pipeline, hermetic per-question brains.
