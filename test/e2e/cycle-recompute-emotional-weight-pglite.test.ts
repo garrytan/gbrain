@@ -50,12 +50,16 @@ afterAll(async () => {
 });
 
 describe('v0.29 — recompute_emotional_weight phase is registered', () => {
-  test('appears in ALL_PHASES between patterns and embed', () => {
+  test('appears in ALL_PHASES between consolidate and embed', () => {
     const idx = ALL_PHASES.indexOf('recompute_emotional_weight');
     const patternsIdx = ALL_PHASES.indexOf('patterns');
+    // Must run AFTER consolidate: consolidate INSERTs active takes (an
+    // emotional-weight input) onto pages sync/synthesize may never touch.
+    const consolidateIdx = ALL_PHASES.indexOf('consolidate');
     const embedIdx = ALL_PHASES.indexOf('embed');
     expect(idx).toBeGreaterThan(-1);
     expect(idx).toBeGreaterThan(patternsIdx);
+    expect(idx).toBeGreaterThan(consolidateIdx);
     expect(idx).toBeLessThan(embedIdx);
   });
 });
