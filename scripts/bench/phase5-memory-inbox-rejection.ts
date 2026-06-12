@@ -90,8 +90,6 @@ async function runLatencyWorkload(
 
   for (let sample = 0; sample < SAMPLE_COUNT; sample += 1) {
     const id = `phase5-rejection-latency-${sample}`;
-    const start = performance.now();
-
     await engine.createMemoryCandidateEntry(buildCandidateInput(id));
     await advanceMemoryCandidateStatus(engine, { id, next_status: 'candidate' });
     await advanceMemoryCandidateStatus(engine, {
@@ -99,6 +97,8 @@ async function runLatencyWorkload(
       next_status: 'staged_for_review',
       review_reason: 'Prepared for explicit decision.',
     });
+
+    const start = performance.now();
     await rejectMemoryCandidateEntry(engine, {
       id,
       review_reason: 'Insufficient provenance for durable memory.',
