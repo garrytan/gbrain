@@ -5,6 +5,8 @@ import { join } from 'path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { buildAgentSessionActivationArtifacts } from '../src/core/services/agent-session-activation-service.ts';
 import {
+  preflightBlockedReason,
+  preflightErrorReason,
   routeAgentSessionMemorySignals,
   routeInputForSignal,
 } from '../src/core/services/agent-session-writeback-service.ts';
@@ -649,4 +651,33 @@ test('unflagged signals still route normally', async () => {
 
   expect(result.route?.decision).not.toBe('no_write');
   expect(result.blocked_reason).toBeNull();
+});
+
+test('preflightBlockedReason carries the underlying scope-gate decision reason (B-12)', () => {
+  expect(preflightBlockedReason({ selection_reason: 'cross_scope_signal_without_explicit_scope' }))
+    .toBe('direct_personal_preflight_failed:cross_scope_signal_without_explicit_scope');
+  expect(preflightBlockedReason({ selection_reason: 'unsupported_scope_intent' }))
+    .toBe('direct_personal_preflight_failed:unsupported_scope_intent');
+});
+
+test('preflightBlockedReason covers defer-path scope-gate reasons (B-12 review)', () => {
+  // Defer-path values: scope unresolved, recoverable with more context.
+  expect(preflightBlockedReason({ selection_reason: 'insufficient_signal' }))
+    .toBe('direct_personal_preflight_failed:insufficient_signal');
+  // Deny-path value produced when the resolved scope is work for a personal intent.
+  expect(preflightBlockedReason({ selection_reason: 'work_signal' }))
+    .toBe('direct_personal_preflight_failed:work_signal');
+});
+
+test('preflightBlockedReason falls back to the bare reason when no detail exists (B-12)', () => {
+  expect(preflightBlockedReason({ selection_reason: '' })).toBe('direct_personal_preflight_failed');
+  expect(preflightBlockedReason({ selection_reason: '   ' })).toBe('direct_personal_preflight_failed');
+});
+
+test('preflightErrorReason distinguishes system errors with their cause (B-12)', () => {
+  expect(preflightErrorReason(new Error('connection reset')))
+    .toBe('direct_personal_preflight_error:connection reset');
+  expect(preflightErrorReason(new Error(''))).toBe('direct_personal_preflight_error:unknown');
+  expect(preflightErrorReason('boom')).toBe('direct_personal_preflight_error:boom');
+  expect(preflightErrorReason(null)).toBe('direct_personal_preflight_error:unknown');
 });

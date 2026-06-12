@@ -21,6 +21,37 @@ export interface AgentSessionWritebackInput {
 
 type DirectWriteResult = Pick<AgentSessionMemoryRouteResult, 'direct_write' | 'blocked_reason'>;
 
+/**
+ * Preflight (personal write target selection) failures used to surface as a
+ * bare 'direct_personal_preflight_failed' with the actual scope-gate decision
+ * discarded. Carry the underlying reason so review surfaces can tell scope
+ * mismatches from target-selection gaps.
+ *
+ * `selection_reason` always comes from the `policy !== 'allow'` branch of
+ * selectPersonalWriteTarget (deny or defer): values like
+ * 'unsupported_scope_intent' are hard gates, while
+ * 'insufficient_signal' / 'cross_scope_signal_without_explicit_scope' mean
+ * the scope could not be resolved and more context could unblock the write.
+ */
+export function preflightBlockedReason(target: { selection_reason: string }): string {
+  const detail = target.selection_reason.trim();
+  return detail ? `direct_personal_preflight_failed:${detail}` : 'direct_personal_preflight_failed';
+}
+
+/**
+ * System errors during preflight are distinguished from policy denials.
+ *
+ * Catching here only changes the outcome when the failure is confined to
+ * preflight: the signal then degrades to the governed candidate route. If the
+ * database itself is down, the subsequent candidate write throws inside the
+ * same transaction exactly as it did before this catch existed, so transport
+ * failures are not silenced.
+ */
+export function preflightErrorReason(error: unknown): string {
+  const detail = error instanceof Error ? error.message.trim() : String(error ?? '').trim();
+  return `direct_personal_preflight_error:${detail && detail !== 'null' && detail !== 'undefined' ? detail : 'unknown'}`;
+}
+
 export async function routeAgentSessionMemorySignals(
   engine: BrainEngine,
   input: AgentSessionWritebackInput,
@@ -216,16 +247,24 @@ async function applyDirectProfileWrite(
     };
   }
 
-  const target = await selectPersonalWriteTarget(engine, {
-    target_kind: 'profile_memory',
-    requested_scope: requestedScopeForSignal(signal),
-    query: content,
-    subject: profileSubject,
-  });
+  let target: Awaited<ReturnType<typeof selectPersonalWriteTarget>>;
+  try {
+    target = await selectPersonalWriteTarget(engine, {
+      target_kind: 'profile_memory',
+      requested_scope: requestedScopeForSignal(signal),
+      query: content,
+      subject: profileSubject,
+    });
+  } catch (error: unknown) {
+    return {
+      direct_write: null,
+      blocked_reason: preflightErrorReason(error),
+    };
+  }
   if (!target.route) {
     return {
       direct_write: null,
-      blocked_reason: 'direct_personal_preflight_failed',
+      blocked_reason: preflightBlockedReason(target),
     };
   }
 
@@ -265,16 +304,24 @@ async function applyDirectPersonalEpisodeWrite(
     };
   }
 
-  const target = await selectPersonalWriteTarget(engine, {
-    target_kind: 'personal_episode',
-    requested_scope: requestedScopeForSignal(signal),
-    query: summary,
-    title,
-  });
+  let target: Awaited<ReturnType<typeof selectPersonalWriteTarget>>;
+  try {
+    target = await selectPersonalWriteTarget(engine, {
+      target_kind: 'personal_episode',
+      requested_scope: requestedScopeForSignal(signal),
+      query: summary,
+      title,
+    });
+  } catch (error: unknown) {
+    return {
+      direct_write: null,
+      blocked_reason: preflightErrorReason(error),
+    };
+  }
   if (!target.route) {
     return {
       direct_write: null,
-      blocked_reason: 'direct_personal_preflight_failed',
+      blocked_reason: preflightBlockedReason(target),
     };
   }
 
