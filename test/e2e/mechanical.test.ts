@@ -24,6 +24,14 @@ import { importFromContent } from '../../src/core/import-file.ts';
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
 
+// Every spawned CLI must use an isolated MBrain config dir. Spawning `init`
+// with the inherited environment rewrites the user's real ~/.mbrain/config.json
+// to point at the throwaway test database (2026-06-12 incident).
+const E2E_CONFIG_DIR = skip ? '' : mkdtempSync(join(tmpdir(), 'mbrain-e2e-config-'));
+afterAll(() => {
+  if (E2E_CONFIG_DIR) rmSync(E2E_CONFIG_DIR, { recursive: true, force: true });
+});
+
 function makeCtx(): OperationContext {
   return {
     engine: getEngine(),
@@ -571,7 +579,7 @@ describeE2E('E2E: Setup Journey', () => {
   afterAll(teardownDB);
 
   const cliCwd = join(import.meta.dir, '../..');
-  const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL! });
+  const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL!, MBRAIN_CONFIG_DIR: E2E_CONFIG_DIR, MBRAIN_CONFIG_PATH: '' });
 
   test('mbrain init --non-interactive connects and initializes', () => {
     const result = Bun.spawnSync({
@@ -638,7 +646,7 @@ describeE2E('E2E: Init Edge Cases', () => {
   afterAll(teardownDB);
 
   test('init --non-interactive without URL fails gracefully', () => {
-    const env = { ...process.env };
+    const env: Record<string, string | undefined> = { ...process.env, MBRAIN_CONFIG_DIR: E2E_CONFIG_DIR, MBRAIN_CONFIG_PATH: '' };
     delete env.DATABASE_URL;
     delete env.MBRAIN_DATABASE_URL;
     const result = Bun.spawnSync({
@@ -831,7 +839,7 @@ describeE2E('E2E: Doctor Command', () => {
   afterAll(teardownDB);
 
   const cliCwd = join(import.meta.dir, '../..');
-  const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL!, MBRAIN_DATABASE_URL: process.env.DATABASE_URL! });
+  const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL!, MBRAIN_DATABASE_URL: process.env.DATABASE_URL!, MBRAIN_CONFIG_DIR: E2E_CONFIG_DIR, MBRAIN_CONFIG_PATH: '' });
 
   test('mbrain doctor exits 0 on healthy DB', () => {
     // Init first so config exists for CLI
@@ -876,7 +884,7 @@ describeE2E('E2E: Parallel Import', () => {
   afterAll(teardownDB);
 
   const cliCwd = join(import.meta.dir, '../..');
-  const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL!, MBRAIN_DATABASE_URL: process.env.DATABASE_URL! });
+  const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL!, MBRAIN_DATABASE_URL: process.env.DATABASE_URL!, MBRAIN_CONFIG_DIR: E2E_CONFIG_DIR, MBRAIN_CONFIG_PATH: '' });
 
   function initCli() {
     Bun.spawnSync({

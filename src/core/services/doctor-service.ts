@@ -15,12 +15,19 @@ import { readSyncWatchFailure, type SyncWatchFailure } from '../health-beacon.ts
 import { loadSubbrainRegistry } from '../subbrains.ts';
 import { MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD } from './memory-review-report-service.ts';
 import * as db from '../db.ts';
+import { spawnSync } from 'child_process';
 
 // Stop counting staged candidates past this point; doctor only needs to know
 // the backlog is large, not its exact size.
 const INBOX_BACKLOG_SCAN_LIMIT = 200;
 // A configured sync that has not succeeded in this many days is stale.
 const SYNC_RECENCY_WARN_DAYS = 7;
+// A serve process older than this likely predates the current code/config:
+// MCP servers hold both in memory from the moment they start (2026-06-12
+// incident: week-old serve processes replayed an already-fixed regression).
+const STALE_SERVE_PROCESS_AGE_SECONDS = 48 * 60 * 60;
+// More simultaneous serve processes than this suggests leaked MCP servers.
+const SERVE_PROCESS_COUNT_WARN_THRESHOLD = 4;
 
 export interface DoctorCheck {
   name: string;
@@ -75,6 +82,13 @@ export interface DoctorInputs {
     capped: boolean;
     threshold: number;
   };
+  serveProcesses?: ServeProcessInfo[];
+}
+
+export interface ServeProcessInfo {
+  pid: number;
+  elapsed_seconds: number | null;
+  command: string;
 }
 
 interface DoctorServiceDeps {
@@ -135,6 +149,7 @@ export async function collectDoctorInputs(
     }
 
     inputs.syncWatchFailure = readSyncWatchFailure();
+    inputs.serveProcesses = collectServeProcesses();
 
     try {
       const staged = await engine.listMemoryCandidateEntries({
@@ -160,8 +175,94 @@ export async function collectDoctorInputs(
       profile,
       rawPostgresChecksSupported: false,
       latestVersion: LATEST_VERSION,
+      serveProcesses: collectServeProcesses(),
     };
   }
+}
+
+/** Parse `ps` etime ([[dd-]hh:]mm:ss) into seconds; null when unparseable. */
+export function parseEtimeSeconds(etime: string): number | null {
+  const match = etime.trim().match(/^(?:(\d+)-)?(?:(\d{1,2}):)?(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const [, days, hours, minutes, seconds] = match;
+  return (days ? parseInt(days, 10) * 86400 : 0)
+    + (hours ? parseInt(hours, 10) * 3600 : 0)
+    + parseInt(minutes!, 10) * 60
+    + parseInt(seconds!, 10);
+}
+
+/** Extract mbrain serve rows from `ps -axo pid=,etime=,args=` output. */
+export function parseServeProcessTable(psOutput: string, selfPid?: number): ServeProcessInfo[] {
+  const rows: ServeProcessInfo[] = [];
+  for (const line of psOutput.split('\n')) {
+    const match = line.trim().match(/^(\d+)\s+(\S+)\s+(.*)$/);
+    if (!match) continue;
+    const pid = parseInt(match[1]!, 10);
+    const command = match[3]!;
+    if (selfPid !== undefined && pid === selfPid) continue;
+    // Match only real mbrain MCP servers: the mbrain binary or its cli.ts
+    // entrypoint immediately followed by the `serve` subcommand. A looser
+    // "mbrain anywhere + serve anywhere" check false-positives on dev servers
+    // (e.g. `webpack serve`) launched from a directory named mbrain.
+    if (!/(?:^|[\s/])mbrain\s+serve\b/.test(command) && !/cli\.ts\s+serve\b/.test(command)) continue;
+    if (/\bgrep\b/.test(command)) continue;
+    rows.push({ pid, elapsed_seconds: parseEtimeSeconds(match[2]!), command });
+  }
+  return rows;
+}
+
+function collectServeProcesses(): ServeProcessInfo[] | undefined {
+  try {
+    const result = spawnSync('ps', ['-axo', 'pid=,etime=,args='], { encoding: 'utf-8' });
+    if (result.status !== 0 || typeof result.stdout !== 'string') return undefined;
+    return parseServeProcessTable(result.stdout, process.pid);
+  } catch {
+    return undefined;
+  }
+}
+
+function formatProcessAge(seconds: number | null): string {
+  if (seconds === null) return 'unknown age';
+  if (seconds >= 86400) return `${Math.floor(seconds / 86400)}d`;
+  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.max(1, Math.floor(seconds / 60))}m`;
+}
+
+function buildServeProcessCheck(processes: ServeProcessInfo[]): DoctorCheck {
+  if (processes.length === 0) {
+    return { name: 'serve_processes', status: 'ok', message: 'No mbrain serve processes running' };
+  }
+  const stale = processes.filter(
+    (proc) => (proc.elapsed_seconds ?? 0) >= STALE_SERVE_PROCESS_AGE_SECONDS,
+  );
+  if (stale.length > 0) {
+    const listed = stale
+      .map((proc) => `pid ${proc.pid} (${formatProcessAge(proc.elapsed_seconds)})`)
+      .join(', ');
+    return {
+      name: 'serve_processes',
+      status: 'warn',
+      message: `${processes.length} serve process(es) running; ${stale.length} stale (>48h): ${listed}. Stale servers hold the code and config they started with — restart your agent clients (Claude Code/Codex) to relaunch them.`,
+    };
+  }
+  if (processes.length > SERVE_PROCESS_COUNT_WARN_THRESHOLD) {
+    return {
+      name: 'serve_processes',
+      status: 'warn',
+      message: `${processes.length} mbrain serve processes running (expected at most ${SERVE_PROCESS_COUNT_WARN_THRESHOLD}) — likely leaked MCP servers; restart your agent clients (Claude Code/Codex).`,
+    };
+  }
+  const oldest = processes.reduce<number | null>(
+    (max, proc) => (proc.elapsed_seconds !== null && (max === null || proc.elapsed_seconds > max)
+      ? proc.elapsed_seconds
+      : max),
+    null,
+  );
+  return {
+    name: 'serve_processes',
+    status: 'ok',
+    message: `${processes.length} mbrain serve process(es) running (oldest ${formatProcessAge(oldest)})`,
+  };
 }
 
 async function collectSyncRecency(engine: BrainEngine): Promise<DoctorInputs['syncRecency']> {
@@ -355,6 +456,9 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
       status: 'fail',
       message: input.connectionError || 'Unknown connection error',
     });
+    if (input.serveProcesses !== undefined) {
+      checks.push(buildServeProcessCheck(input.serveProcesses));
+    }
     appendInstalledAgentChecks(checks, input.installedAgent);
     return {
       status: 'unhealthy',
@@ -595,6 +699,10 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
           : 'ok',
       message: parts.join(', '),
     });
+  }
+
+  if (input.serveProcesses !== undefined) {
+    checks.push(buildServeProcessCheck(input.serveProcesses));
   }
 
   appendInstalledAgentChecks(checks, input.installedAgent);

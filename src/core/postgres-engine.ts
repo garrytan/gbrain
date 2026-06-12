@@ -7,6 +7,7 @@ import type {
   EngineConfig,
 } from './types.ts';
 import { MBrainError } from './types.ts';
+import { connectionFailureDetail } from './connection-failure.ts';
 import { clearConnectionOwner } from './db.ts';
 
 type PostgresConnectConfig = EngineConfig & {
@@ -100,10 +101,9 @@ export class PostgresEngine extends PgEngineBase implements BrainEngine {
       if (sql) {
         await sql.end({ timeout: 0 }).catch(() => undefined);
       }
-      const msg = e instanceof Error ? e.message : String(e);
       throw new MBrainError(
         'Cannot connect to database',
-        msg,
+        connectionFailureDetail(e),
         'Check your connection URL in ~/.mbrain/config.json',
       );
     }

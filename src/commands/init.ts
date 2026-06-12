@@ -1,16 +1,117 @@
 import { execSync } from 'child_process';
-import { readdirSync, lstatSync } from 'fs';
-import { join } from 'path';
+import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync, lstatSync } from 'fs';
+import { basename, dirname, join } from 'path';
 import {
+  configPath,
   createLocalConfigDefaults,
   defaultPGLiteDatabasePath,
   saveConfig,
   type MBrainConfig,
+  type MBrainConfigInput,
 } from '../core/config.ts';
 import { createConnectedEngine, createEngine, createEngineFromConfig, toEngineConfig } from '../core/engine-factory.ts';
 import { assertExplicitRemoteDsn } from '../core/postgres-runtime/connection-profile.ts';
 import { MBrainError } from '../core/types.ts';
 import * as db from '../core/db.ts';
+
+export interface ConfigOverwriteGuardResult {
+  backedUpTo: string | null;
+}
+
+interface ConfigTarget {
+  engine: 'postgres' | 'sqlite' | 'pglite';
+  database_url?: string;
+  database_path?: string;
+}
+
+// Keep a small window of credential-bearing config backups instead of
+// accumulating them forever.
+const MAX_CONFIG_BACKUPS = 5;
+
+/** Mask the password portion of a DSN for user-facing messages. */
+function sanitizeDsnForDisplay(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.password) parsed.password = '***';
+    return parsed.toString();
+  } catch {
+    return url.replace(/:\/\/([^:@/]+):[^@/]+@/, '://$1:***@');
+  }
+}
+
+function describeConfigTarget(target: ConfigTarget): string {
+  const location = target.database_url !== undefined
+    ? sanitizeDsnForDisplay(target.database_url)
+    : target.database_path ?? '(no target)';
+  return `${target.engine} ${location}`;
+}
+
+/**
+ * Guard against `mbrain init` silently clobbering an existing user config
+ * (the 2026-06-12 incident: an E2E run repointed ~/.mbrain/config.json at a
+ * throwaway test database). Re-initializing the same target is allowed;
+ * switching targets requires --force. Any overwrite first copies the current
+ * config to a timestamped .bak file.
+ */
+export function ensureConfigOverwriteAllowed(
+  next: ConfigTarget,
+  opts: { force: boolean },
+): ConfigOverwriteGuardResult {
+  const path = configPath();
+  if (!existsSync(path)) return { backedUpTo: null };
+
+  let existing: MBrainConfigInput | null = null;
+  try {
+    existing = JSON.parse(readFileSync(path, 'utf-8')) as MBrainConfigInput;
+  } catch {
+    existing = null;
+  }
+
+  const existingEngine = existing
+    ? (existing.engine ?? (existing.database_path ? 'pglite' : 'postgres'))
+    : null;
+  const sameTarget = existing !== null
+    && existingEngine === next.engine
+    && (existing.database_url ?? null) === (next.database_url ?? null)
+    && (existing.database_path ?? null) === (next.database_path ?? null);
+
+  if (!sameTarget && !opts.force) {
+    const existingDescription = existing
+      ? describeConfigTarget({
+        engine: existingEngine as ConfigTarget['engine'],
+        database_url: existing.database_url,
+        database_path: existing.database_path,
+      })
+      : 'an unparseable config';
+    throw new MBrainError(
+      'Refusing to overwrite existing config',
+      `${path} already points to ${existingDescription}, but init was asked to write ${describeConfigTarget(next)}`,
+      'Re-run with --force to overwrite (a timestamped backup of the current config is created first)',
+    );
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupPath = `${path}.bak-${timestamp}`;
+  copyFileSync(path, backupPath);
+  pruneConfigBackups(path);
+  return { backedUpTo: backupPath };
+}
+
+function pruneConfigBackups(configFilePath: string): void {
+  try {
+    const dir = dirname(configFilePath);
+    const prefix = `${basename(configFilePath)}.bak-`;
+    const stale = readdirSync(dir)
+      .filter((name) => name.startsWith(prefix))
+      .sort() // ISO timestamps sort lexicographically, oldest first
+      .slice(0, -MAX_CONFIG_BACKUPS);
+    for (const name of stale) {
+      rmSync(join(dir, name), { force: true });
+    }
+  } catch {
+    // Pruning is best-effort; never block init on cleanup.
+  }
+}
 
 export async function runInit(args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
@@ -23,6 +124,7 @@ export async function runInit(args: string[]) {
   const isPGLite = args.includes('--pglite');
   const isNonInteractive = args.includes('--non-interactive');
   const jsonOutput = args.includes('--json');
+  const force = args.includes('--force');
   const urlIndex = args.indexOf('--url');
   const dsnIndex = args.indexOf('--dsn');
   const manualUrl = urlIndex !== -1 ? args[urlIndex + 1] : dsnIndex !== -1 ? args[dsnIndex + 1] : null;
@@ -34,11 +136,11 @@ export async function runInit(args: string[]) {
   const customPath = pathIndex !== -1 ? args[pathIndex + 1] : null;
 
   if (isLocal) {
-    return initSQLite({ jsonOutput, apiKey, customPath });
+    return initSQLite({ jsonOutput, apiKey, customPath, force });
   }
 
   if (isPGLite) {
-    return initPGLite({ jsonOutput, apiKey, customPath });
+    return initPGLite({ jsonOutput, apiKey, customPath, force });
   }
 
   let databaseUrl: string;
@@ -58,7 +160,7 @@ export async function runInit(args: string[]) {
     databaseUrl = await postgresWizard();
   }
 
-  return initPostgres({ databaseUrl, jsonOutput, apiKey });
+  return initPostgres({ databaseUrl, jsonOutput, apiKey, force });
 }
 
 function printInitHelp() {
@@ -75,6 +177,7 @@ OPTIONS
   --dsn <conn>              Alias for --url
   --profile <name>          Local Postgres profile: homebrew-postgres, linux-system-postgres, container-postgres
   --non-interactive         Fail instead of prompting; use with --url or MBRAIN_DATABASE_URL
+  --force                   Overwrite a config that points to a different brain (backup created)
   --path <path>             Override the SQLite/PGLite database path
   --key <openai_api_key>    Save an OpenAI API key in the config
   --json                    Emit machine-readable status output
@@ -87,11 +190,16 @@ Examples
 `);
 }
 
-async function initSQLite(opts: { jsonOutput: boolean; apiKey: string | null; customPath: string | null }) {
+async function initSQLite(opts: { jsonOutput: boolean; apiKey: string | null; customPath: string | null; force: boolean }) {
   const engineConfig = createLocalConfigDefaults({
     ...(opts.customPath ? { database_path: opts.customPath } : {}),
     ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
   });
+  const guard = ensureConfigOverwriteAllowed(
+    { engine: 'sqlite', database_path: engineConfig.database_path },
+    { force: opts.force },
+  );
+  reportConfigBackup(guard);
   const engine = createEngineFromConfig(engineConfig);
 
   console.log('Bootstrapping local SQLite brain...');
@@ -121,8 +229,13 @@ async function initSQLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
   }
 }
 
-async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; customPath: string | null }) {
+async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; customPath: string | null; force: boolean }) {
   const dbPath = opts.customPath || defaultPGLiteDatabasePath();
+  const guard = ensureConfigOverwriteAllowed(
+    { engine: 'pglite', database_path: dbPath },
+    { force: opts.force },
+  );
+  reportConfigBackup(guard);
   console.log('Setting up local brain with PGLite (no server needed)...');
 
   const engine = await createEngine({ engine: 'pglite' });
@@ -153,8 +266,13 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
   }
 }
 
-async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; apiKey: string | null }) {
+async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; apiKey: string | null; force: boolean }) {
   const { databaseUrl } = opts;
+  const guard = ensureConfigOverwriteAllowed(
+    { engine: 'postgres', database_url: databaseUrl },
+    { force: opts.force },
+  );
+  reportConfigBackup(guard);
 
   if (databaseUrl.match(/db\.[a-z]+\.supabase\.co/) || databaseUrl.includes('.supabase.co:5432')) {
     console.warn('');
@@ -223,6 +341,12 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
       console.error('Use the Session pooler connection string instead (port 6543).');
     }
     throw e;
+  }
+}
+
+function reportConfigBackup(guard: ConfigOverwriteGuardResult): void {
+  if (guard.backedUpTo) {
+    console.log(`Existing config backed up to ${guard.backedUpTo}`);
   }
 }
 

@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, test, expect, mock } from 'bun:test';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { buildDoctorReport, collectDoctorInputs } from '../src/core/services/doctor-service.ts';
+import {
+  buildDoctorReport,
+  collectDoctorInputs,
+  parseEtimeSeconds,
+  parseServeProcessTable,
+} from '../src/core/services/doctor-service.ts';
 import { resolveOfflineProfile } from '../src/core/offline-profile.ts';
 import {
   EMBEDDED_AGENT_RULES_VERSION,
@@ -825,5 +830,91 @@ describe('doctor sync and inbox surfacing', () => {
     const check = report.checks.find((entry) => entry.name === 'memory_inbox_backlog');
     expect(check?.status).toBe('warn');
     expect(check?.message).toContain('200+');
+  });
+});
+
+describe('doctor stale serve process surfacing', () => {
+  const minimalInput = {
+    connectionOk: true,
+    config: null,
+    profile: null,
+    rawPostgresChecksSupported: false,
+    latestVersion: 4,
+    schemaVersion: '4',
+  };
+
+  test('parseEtimeSeconds handles mm:ss, hh:mm:ss, and dd-hh:mm:ss', () => {
+    expect(parseEtimeSeconds('05:33')).toBe(333);
+    expect(parseEtimeSeconds('1:02:03')).toBe(3723);
+    expect(parseEtimeSeconds('6-01:00:00')).toBe(6 * 86400 + 3600);
+    expect(parseEtimeSeconds('garbage')).toBeNull();
+  });
+
+  test('parseServeProcessTable extracts mbrain serve rows and skips unrelated commands', () => {
+    const psOutput = [
+      '  123 05:33 /Users/x/.bun/bin/bun /Users/x/Work/mbrain/src/cli.ts serve',
+      '  456 6-01:00:00 /usr/local/bin/mbrain serve',
+      '  789 00:10 vim notes.md',
+      '  321 00:05 grep cli.ts serve',
+    ].join('\n');
+    const rows = parseServeProcessTable(psOutput);
+    expect(rows.map((r) => r.pid)).toEqual([123, 456]);
+    expect(rows[0]!.elapsed_seconds).toBe(333);
+    expect(rows[1]!.elapsed_seconds).toBe(6 * 86400 + 3600);
+  });
+
+  test('parseServeProcessTable ignores unrelated dev servers launched from a directory named mbrain', () => {
+    const psOutput = [
+      // "serve" + the word mbrain in a path component must not count as an MCP server.
+      '  111 10:00 node /Users/x/Work/mbrain/node_modules/.bin/webpack serve',
+      '  222 10:00 node /Users/x/Work/mbrain/node_modules/.bin/vite serve --port 3000',
+      '  333 10:00 /usr/local/bin/mbrain serve --http',
+      '  444 10:00 bun /Users/x/Work/mbrain/src/cli.ts serve',
+    ].join('\n');
+    const rows = parseServeProcessTable(psOutput);
+    expect(rows.map((r) => r.pid)).toEqual([333, 444]);
+  });
+
+  test('emits no serve_processes check when process inspection is unavailable', () => {
+    const report = buildDoctorReport({ ...minimalInput });
+    expect(report.checks.find((entry) => entry.name === 'serve_processes')).toBeUndefined();
+  });
+
+  test('reports ok for a small set of young serve processes', () => {
+    const report = buildDoctorReport({
+      ...minimalInput,
+      serveProcesses: [
+        { pid: 123, elapsed_seconds: 3600, command: 'bun src/cli.ts serve' },
+      ],
+    });
+    const check = report.checks.find((entry) => entry.name === 'serve_processes');
+    expect(check?.status).toBe('ok');
+    expect(check?.message).toContain('1');
+  });
+
+  test('warns when a serve process has outlived the stale threshold', () => {
+    const report = buildDoctorReport({
+      ...minimalInput,
+      serveProcesses: [
+        { pid: 99690, elapsed_seconds: 7 * 86400, command: 'bun src/cli.ts serve' },
+      ],
+    });
+    const check = report.checks.find((entry) => entry.name === 'serve_processes');
+    expect(check?.status).toBe('warn');
+    expect(check?.message).toContain('99690');
+    expect(check?.message).toContain('stale');
+    expect(check?.message.toLowerCase()).toContain('restart');
+  });
+
+  test('warns when too many serve processes are running', () => {
+    const procs = [11, 12, 13, 14, 15].map((pid) => ({
+      pid,
+      elapsed_seconds: 60,
+      command: 'bun src/cli.ts serve',
+    }));
+    const report = buildDoctorReport({ ...minimalInput, serveProcesses: procs });
+    const check = report.checks.find((entry) => entry.name === 'serve_processes');
+    expect(check?.status).toBe('warn');
+    expect(check?.message).toContain('5');
   });
 });
