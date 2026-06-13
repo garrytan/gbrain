@@ -231,3 +231,17 @@ Required evaluation questions:
 - Are export and sync paths preserving the user's privacy expectations?
 
 The subsystem is successful only if it achieves both goals at the same time: durable personal memory and reliable work-personal isolation.
+
+## Phase 11 Personal Data Connector Scope Notes
+
+Phase 11 personal data connectors must respect this workstream before any
+source-derived signal becomes retrievable personal memory. Connector registry,
+credential references, source sync protocol, and minimal-consent source selection
+are source and provenance controls; they do not grant authority to cross scopes
+by themselves.
+
+Connector raw ingest cannot create Profile Memory, Personal Episodes, or other
+personal answer-ground records without Scope Gate and writeback routing. A
+connector may persist source records and raw ingest evidence, but promotion into
+personal memory remains governed by the same scope, sensitivity, and target
+identity checks as any other writeback path.

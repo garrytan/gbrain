@@ -350,3 +350,17 @@ Required evaluation questions:
 - Is stale-map detection preventing false confidence in changed code or changed note structure?
 
 The subsystem is successful only if it improves orientation and navigation while preserving the hard rule that canonical Markdown and other canonical sources remain the authority.
+
+## Phase 10 Projection Reconciliation Owner Notes
+
+Phase 10 projection reconciliation belongs at the boundary between canonical
+Markdown and derived orientation state. This workstream owns the derived side of
+that boundary: projection targets, page-projection outputs, context maps, and
+other rebuildable artifacts must remain explainable and discardable.
+
+Current implementation evidence includes the system-of-record reconciler and
+projection contracts in `test/system-of-record-reconciler-service.test.ts`,
+`test/markdown-projection-contracts.test.ts`, and
+`test/page-projection-engine.test.ts`. That is targeted evidence only: there is
+no `test:phase10` acceptance alias, so this document should not imply full
+Phase 10 acceptance from those tests alone.

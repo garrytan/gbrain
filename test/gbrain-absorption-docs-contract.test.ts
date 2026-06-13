@@ -298,4 +298,33 @@ describe('personal gbrain absorption docs contracts', () => {
     expect(verify).not.toMatch(/[0-9a-f]{40}\.\.[0-9a-f]{40}/);
     expect(scenarios).toContain('| S32 | `s32-gbrain-upstream-discipline.test.ts` | GA-P7, E1, L4, L6, G1 | ✅ green |');
   });
+
+  test('anchors Phase 10 through 12 and Unreleased evidence in workstream owners', () => {
+    const operational = readRepoFile('docs/architecture/redesign/04-workstream-operational-memory.md');
+    const contextMap = readRepoFile('docs/architecture/redesign/05-workstream-context-map.md');
+    const governance = readRepoFile('docs/architecture/redesign/06-workstream-governance-and-inbox.md');
+    const scope = readRepoFile('docs/architecture/redesign/07-workstream-profile-memory-and-scope.md');
+
+    expect(operational).toContain('## Unreleased Operational Memory Scenario Evidence');
+    expect(operational).toContain('S33 agent-session memory loop');
+    expect(operational).toContain('S34 agent-session auto-capture');
+    expect(operational).toContain('raw-ingest evidence, not connector acceptance');
+
+    expect(contextMap).toContain('## Phase 10 Projection Reconciliation Owner Notes');
+    expect(contextMap).toContain('Phase 10 projection reconciliation');
+    expect(contextMap).toContain('system-of-record reconciler');
+    expect(contextMap).toContain('test/system-of-record-reconciler-service.test.ts');
+    expect(contextMap).toContain('no `test:phase10` acceptance alias');
+
+    expect(governance).toContain('## Phase 12 Review, Audit, and Health Owner Notes');
+    expect(governance).toContain('memory review report');
+    expect(governance).toContain('test/memory-review-report-service.test.ts');
+    expect(governance).toContain('S35 prompt-injection suppression health');
+    expect(governance).toContain('no `test:phase12` acceptance alias');
+
+    expect(scope).toContain('## Phase 11 Personal Data Connector Scope Notes');
+    expect(scope).toContain('Phase 11 personal data connectors');
+    expect(scope).toContain('minimal-consent source selection');
+    expect(scope).toContain('Scope Gate and writeback routing');
+  });
 });

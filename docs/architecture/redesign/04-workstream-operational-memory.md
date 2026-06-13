@@ -186,6 +186,20 @@ verify_code_reference
 
 The exact command and tool names can evolve, but the public contract should preserve the same semantics across CLI and MCP surfaces.
 
+## Unreleased Operational Memory Scenario Evidence
+
+The Unreleased scenario suite adds operational-memory evidence that is newer
+than the GA-P0 through GA-P7 roadmap checkpoints.
+
+- S33 agent-session memory loop is operational-memory evidence: session-derived
+  signals still need the task, scope, and continuation boundaries defined here.
+- S34 agent-session auto-capture proves agent-session raw-ingest and capture
+  behavior. It is raw-ingest evidence, not connector acceptance, and it does not
+  move source-choice ownership out of Phase 11.
+- These scenarios support the operational-memory contract, but they do not
+  replace the Phase 10 projection, Phase 11 connector, or Phase 12 report
+  acceptance boundaries owned by their respective workstreams.
+
 ## Tests and Evaluation
 
 This subsystem succeeds only if it measurably reduces repeated work.
