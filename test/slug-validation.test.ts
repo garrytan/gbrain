@@ -24,6 +24,14 @@ describe('slugifySegment', () => {
     expect(slugifySegment('caf\u00e9')).toBe('cafe');
   });
 
+  test('normalizes compatibility-width latin and digits before filtering', () => {
+    expect(slugifySegment('ＡＢＣ 한글 １２３')).toBe('abc-한글-123');
+  });
+
+  test('recomposes decomposed Hangul syllables', () => {
+    expect(slugifySegment('한글')).toBe('한글');
+  });
+
   test('collapses multiple hyphens', () => {
     expect(slugifySegment('a - b')).toBe('a-b');
   });

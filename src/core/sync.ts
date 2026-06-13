@@ -106,7 +106,7 @@ export function isSyncable(path: string): boolean {
  * Slugify a single path segment: lowercase, strip special chars, spaces → hyphens.
  */
 export function slugifySegment(segment: string): string {
-  return segment
+  return normalizeCompatibilityWidthChars(segment)
     .normalize('NFD')                     // Decompose accented chars
     .replace(/[\u0300-\u036f]/g, '')      // Strip accent marks
     .normalize('NFC')                     // Recompose Hangul syllables after NFD
@@ -115,6 +115,12 @@ export function slugifySegment(segment: string): string {
     .replace(/[\s]+/g, '-')              // Spaces → hyphens
     .replace(/-+/g, '-')                 // Collapse multiple hyphens
     .replace(/^-|-$/g, '');              // Strip leading/trailing hyphens
+}
+
+function normalizeCompatibilityWidthChars(value: string): string {
+  return value
+    .replace(/\u3000/g, ' ')
+    .replace(/[\uFF00-\uFFEF]/g, char => char.normalize('NFKC'));
 }
 
 /**
