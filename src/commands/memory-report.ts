@@ -180,8 +180,19 @@ function memoryMutationToCanonicalMemory(event: MemoryMutationEvent): ReportCano
 }
 
 function memoryCandidateToReviewItem(candidate: MemoryCandidateEntry): ReportReviewItem[] {
-  if (!needsReview(candidate.status)) return [];
+  if (!isReportableCandidateStatus(candidate.status)) return [];
   const sourceRefsCount = candidate.source_refs.filter((sourceRef) => sourceRef.trim().length > 0).length;
+  if (candidate.status === 'candidate') {
+    return [
+      {
+        id: candidate.id,
+        review_type: 'candidate_staging',
+        target_ref: candidate.target_object_id ?? candidate.target_object_type ?? undefined,
+        summary: `Memory candidate is ready to stage for review (${candidate.candidate_type}; source_refs ${sourceRefsCount}; content gated; use read_candidate_context for explicit audited access).`,
+        severity: candidate.sensitivity === 'secret' ? 'high' : 'medium',
+      },
+    ];
+  }
   return [
     {
       id: candidate.id,
@@ -244,8 +255,8 @@ function isCreateOperation(operation: MemoryMutationEvent['operation']): boolean
     || operation === 'write_personal_episode_entry';
 }
 
-function needsReview(status: MemoryCandidateEntry['status']): boolean {
-  return status === 'staged_for_review';
+function isReportableCandidateStatus(status: MemoryCandidateEntry['status']): boolean {
+  return status === 'candidate' || status === 'staged_for_review';
 }
 
 function parsePositiveInt(value: string | undefined): number | undefined {
