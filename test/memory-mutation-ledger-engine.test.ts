@@ -350,7 +350,7 @@ test('sqlite surfaces memory mutation ledger operation and result constraint err
       target_kind: 'page',
       target_id: 'constraint-target',
       source_refs: ['Source: sqlite constraint invalid result'],
-      result: 'approved' as any,
+      result: 'invented_result' as any,
     })).rejects.toThrow();
   } finally {
     await harness.cleanup();

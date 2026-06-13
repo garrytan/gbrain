@@ -114,6 +114,10 @@ function validInsertSql(id: string): string {
   `;
 }
 
+function approvedInsertSql(id: string): string {
+  return validInsertSql(id).replace("'applied'", "'approved'");
+}
+
 function realmUpsertInsertSql(id: string): string {
   return validInsertSql(id)
     .replace("'put_page'", "'upsert_memory_realm'")
@@ -272,6 +276,7 @@ const OLD_V26_POSTGRES_MUTATION_EVENT_SQL = `
       result IN (
         'dry_run',
         'staged_for_review',
+        'approved',
         'applied',
         'conflict',
         'denied',
@@ -650,10 +655,10 @@ describe('memory operations control-plane schema', () => {
     expect(scopeIndex?.sql).toContain('WHERE scope_id IS NOT NULL');
 
     expect(() => db.query(sqliteSql(validInsertSql('sqlite-valid'))).run()).not.toThrow();
+    expect(() => db.query(sqliteSql(approvedInsertSql('sqlite-approved-valid'))).run()).not.toThrow();
     expect(() => db.query(sqliteSql(realmUpsertInsertSql('sqlite-realm-upsert-valid'))).run()).not.toThrow();
     expect(() => db.query(sqliteSql(governedCanonicalWriteInsertSql('sqlite-governed-write-valid'))).run()).not.toThrow();
     expect(() => db.query(sqliteSql(invalidInsertSql('operation', 'invented_operation'))).run()).toThrow();
-    expect(() => db.query(sqliteSql(invalidInsertSql('result', 'approved'))).run()).toThrow();
     expect(() => db.query(sqliteSql(invalidInsertSql('target_kind', 'note'))).run()).toThrow();
     expect(() => db.query(sqliteSql(invalidInsertSql('redaction_visibility', 'hidden'))).run()).toThrow();
     expect(() => db.query(sqliteSql(invalidInsertSql('dry_run', '2'))).run()).toThrow();
@@ -714,10 +719,10 @@ describe('memory operations control-plane schema', () => {
     ]);
 
     await expect(db.query(validInsertSql('pglite-valid'))).resolves.toBeDefined();
+    await expect(db.query(approvedInsertSql('pglite-approved-valid'))).resolves.toBeDefined();
     await expect(db.query(realmUpsertInsertSql('pglite-realm-upsert-valid'))).resolves.toBeDefined();
     await expect(db.query(governedCanonicalWriteInsertSql('pglite-governed-write-valid'))).resolves.toBeDefined();
     await expect(db.query(invalidInsertSql('operation', 'invented_operation'))).rejects.toThrow();
-    await expect(db.query(invalidInsertSql('result', 'approved'))).rejects.toThrow();
     await expect(db.query(invalidInsertSql('target_kind', 'note'))).rejects.toThrow();
     await expect(db.query(invalidInsertSql('redaction_visibility', 'hidden'))).rejects.toThrow();
     await expect(db.query(invalidInsertSql('dry_run', '2'))).rejects.toThrow();
@@ -1037,6 +1042,7 @@ describe('memory operations control-plane schema', () => {
     const version = db.query(`SELECT value FROM config WHERE key = 'version'`).get() as { value: string };
     expect(version.value).toBe(String(LATEST_VERSION));
     expect(() => db.query(sqliteSql(governedCanonicalWriteInsertSql('sqlite-v36-governed-after'))).run()).not.toThrow();
+    expect(() => db.query(sqliteSql(approvedInsertSql('sqlite-v36-approved-after'))).run()).not.toThrow();
     expectSqliteMutationEventRequiredContract(db);
 
     await engine.disconnect();
@@ -1065,6 +1071,7 @@ describe('memory operations control-plane schema', () => {
     const version = await db.query(`SELECT value FROM config WHERE key = 'version'`);
     expect(version.rows).toEqual([{ value: String(LATEST_VERSION) }]);
     await expect(db.query(governedCanonicalWriteInsertSql('pglite-v36-governed-after'))).resolves.toBeDefined();
+    await expect(db.query(approvedInsertSql('pglite-v36-approved-after'))).resolves.toBeDefined();
 
     await engine.disconnect();
   }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
@@ -1152,9 +1159,9 @@ describe('memory operations control-plane schema', () => {
         }
 
         await expect(engine.sql.unsafe(validInsertSql('postgres-valid'))).resolves.toBeDefined();
+        await expect(engine.sql.unsafe(approvedInsertSql('postgres-approved-valid'))).resolves.toBeDefined();
         await expect(engine.sql.unsafe(realmUpsertInsertSql('postgres-realm-upsert-valid'))).resolves.toBeDefined();
         await expect(engine.sql.unsafe(invalidInsertSql('operation', 'invented_operation'))).rejects.toThrow();
-        await expect(engine.sql.unsafe(invalidInsertSql('result', 'approved'))).rejects.toThrow();
         await expect(engine.sql.unsafe(invalidInsertSql('target_kind', 'note'))).rejects.toThrow();
         await expect(engine.sql.unsafe(invalidInsertSql('redaction_visibility', 'hidden'))).rejects.toThrow();
         await expect(engine.sql.unsafe(invalidInsertSql('dry_run', '2'))).rejects.toThrow();

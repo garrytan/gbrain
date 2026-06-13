@@ -95,7 +95,7 @@ describe('runAutoPromote', () => {
       expect(res.counts.auto_promoted).toBe(1);
       expect(res.counts.canonical_handoffs).toBe(1);
       expect(res.counts.canonical_writes).toBe(0);
-      expect(res.excluded.find((entry) => entry.id === candidate.id)?.reason).toContain('content hash mismatch');
+      expect(res.excluded.find((entry) => entry.id === candidate.id)?.reason).toContain('base_target_snapshot_hash does not match the current target snapshot hash');
       expect((await engine.getPage('concepts/acme'))?.compiled_truth).not.toContain('Acme raised a seed round.');
     });
   });

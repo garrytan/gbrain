@@ -58,6 +58,7 @@ test('memory mutation ledger operations are registered with privileged boundary 
   expect(list.params.operation.enum).toContain('put_page');
   expect(list.params.target_kind.enum).toContain('ledger_event');
   expect(list.params.result.enum).toContain('applied');
+  expect(list.params.result.enum).toContain('approved');
 
   expect(record.mutating).toBe(true);
   expect(record.description).toContain('privileged');

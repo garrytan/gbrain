@@ -28,6 +28,7 @@ import {
 const MEMORY_MUTATION_RESULTS = [
   'dry_run',
   'staged_for_review',
+  'approved',
   'applied',
   'conflict',
   'denied',

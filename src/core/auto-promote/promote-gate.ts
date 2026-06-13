@@ -5,7 +5,6 @@ import type { AutoPromoteConfig } from './config.ts';
 import { advanceMemoryCandidateStatus } from '../services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../services/memory-inbox-promotion-service.ts';
 import { recordCanonicalHandoff } from '../services/canonical-handoff-service.ts';
-import { serializeMarkdown } from '../markdown.ts';
 import { operationsByName, type OperationContext } from '../operations.ts';
 import type { MBrainConfig } from '../config.ts';
 
@@ -115,25 +114,58 @@ async function canonicalizePromotedCandidate(
   const expectedContentHash = input.target_snapshot_hashes?.get(candidate.id);
   try {
     const currentPage = await input.engine.getPage(targetSlug);
-    const content = serializeCanonicalCandidatePage(currentPage, targetSlug, candidate, handoff.handoff.id, input.now);
-    await operationsByName.put_page.handler(operationContext(input), {
-      slug: targetSlug,
-      content,
-      expected_content_hash: expectedContentHash === undefined ? currentPage?.content_hash ?? null : expectedContentHash,
+    const baseTargetSnapshotHash = expectedContentHash === undefined ? currentPage?.content_hash ?? null : expectedContentHash;
+    if (baseTargetSnapshotHash !== (currentPage?.content_hash ?? null)) {
+      throw new Error('base_target_snapshot_hash does not match the current target snapshot hash');
+    }
+    const sourceRefs = [
+      `canonical_handoff:${handoff.handoff.id}`,
+      `memory_candidate:${candidate.id}`,
+      ...candidate.source_refs,
+    ];
+    const patchCandidateId = `auto-promote-patch:${candidate.id}`;
+    const patchContext = await ensureAutoPromotePatchContext(input, candidate, handoff.handoff.id);
+    const ctx = operationContext(input);
+    const createPatchResult = await operationsByName.create_memory_patch_candidate.handler(ctx, {
+      id: patchCandidateId,
+      session_id: patchContext.sessionId,
+      realm_id: patchContext.realmId,
       actor: input.actor,
-      session_id: `auto_promote:${candidate.id}`,
-      realm_id: candidate.sensitivity === 'personal' ? 'personal' : 'work',
       scope_id: candidate.scope_id,
-      source_refs: [
-        `canonical_handoff:${handoff.handoff.id}`,
-        `memory_candidate:${candidate.id}`,
-        ...candidate.source_refs,
-      ],
-      metadata: {
-        candidate_id: candidate.id,
-        canonical_handoff_id: handoff.handoff.id,
-        auto_promote: true,
-      },
+      target_kind: 'page',
+      target_id: targetSlug,
+      base_target_snapshot_hash: baseTargetSnapshotHash,
+      patch_body: buildCanonicalCandidatePagePatch(currentPage, targetSlug, candidate, handoff.handoff.id, input.now),
+      patch_format: 'merge_patch',
+      risk_class: 'low',
+      proposed_content: `Auto-promote canonical patch for ${targetSlug} from Memory Inbox candidate ${candidate.id}.`,
+      source_refs: sourceRefs,
+      generated_by: 'agent',
+      extraction_kind: candidate.extraction_kind,
+      confidence_score: candidate.confidence_score,
+      importance_score: candidate.importance_score,
+      recurrence_score: candidate.recurrence_score,
+      sensitivity: candidate.sensitivity,
+      provenance_summary: `Auto-promote canonical handoff ${handoff.handoff.id} for Memory Inbox candidate ${candidate.id}.`,
+    }) as { id: string };
+    await operationsByName.review_memory_patch_candidate.handler(ctx, {
+      candidate_id: createPatchResult.id,
+      session_id: patchContext.sessionId,
+      realm_id: patchContext.realmId,
+      actor: input.actor,
+      decision: 'approve',
+      reviewed_at: input.now,
+      review_reason: `auto_promote approved canonical patch (${input.actor})`,
+      source_refs: sourceRefs,
+    });
+    await operationsByName.apply_memory_patch_candidate.handler(ctx, {
+      candidate_id: createPatchResult.id,
+      session_id: patchContext.sessionId,
+      realm_id: patchContext.realmId,
+      actor: input.actor,
+      reviewed_at: input.now,
+      review_reason: `auto_promote applied approved canonical patch (${input.actor})`,
+      source_refs: sourceRefs,
     });
     return { handoff: true, write_slug: targetSlug };
   } catch (error) {
@@ -154,28 +186,26 @@ function isCanonicalWriteEligible(input: PromoteGateInput, candidate: MemoryCand
     && candidate.source_refs.some((ref) => ref.trim().length > 0);
 }
 
-function serializeCanonicalCandidatePage(
+function buildCanonicalCandidatePagePatch(
   page: Page | null,
   slug: string,
   candidate: MemoryCandidateEntry,
   handoffId: string,
   now: string,
-): string {
+): Record<string, unknown> {
   const citation = sourceCitation(candidate.source_refs);
   const compiledLine = `${candidate.proposed_content.trim()} ${citation}`.trim();
   const compiledTruth = appendUniqueLine(page?.compiled_truth ?? '', compiledLine);
   const timelineLine = `- **${now.slice(0, 10)}** | Auto-promoted Memory Inbox candidate ${candidate.id} via canonical handoff ${handoffId}. ${citation}`;
   const timeline = appendUniqueLine(page?.timeline ?? '', timelineLine);
-  return serializeMarkdown(
-    page?.frontmatter ?? {},
-    compiledTruth,
+  return {
+    type: page?.type ?? inferPageType(slug),
+    title: page?.title ?? inferTitle(slug),
+    frontmatter: page?.frontmatter ?? {},
+    tags: [],
+    compiled_truth: compiledTruth,
     timeline,
-    {
-      type: page?.type ?? inferPageType(slug),
-      title: page?.title ?? inferTitle(slug),
-      tags: [],
-    },
-  );
+  };
 }
 
 function appendUniqueLine(existing: string, line: string): string {
@@ -233,3 +263,37 @@ const MINIMAL_OPERATION_CONFIG: MBrainConfig = {
   embedding_provider: 'none',
   query_rewrite_provider: 'none',
 };
+
+async function ensureAutoPromotePatchContext(
+  input: PromoteGateInput,
+  candidate: MemoryCandidateEntry,
+  handoffId: string,
+): Promise<{ sessionId: string; realmId: string }> {
+  const realmId = candidate.sensitivity === 'personal' ? 'personal' : 'work';
+  const scope = candidate.sensitivity === 'personal' ? 'personal' : 'work';
+  const sessionId = `auto_promote:${candidate.id}:${handoffId}`;
+  if (!await input.engine.getMemoryRealm(realmId)) {
+    await input.engine.upsertMemoryRealm({
+      id: realmId,
+      name: realmId === 'personal' ? 'Personal auto-promote' : 'Work auto-promote',
+      scope,
+      default_access: 'read_write',
+    });
+  }
+  const existingSession = await input.engine.getMemorySession(sessionId);
+  if (!existingSession) {
+    await input.engine.createMemorySession({
+      id: sessionId,
+      actor_ref: input.actor,
+    });
+  } else if (existingSession.status !== 'active') {
+    throw new Error(`auto-promote memory session is not active: ${sessionId}`);
+  }
+  await input.engine.attachMemoryRealmToSession({
+    session_id: sessionId,
+    realm_id: realmId,
+    access: 'read_write',
+    instructions: `Auto-promote canonical patch for Memory Inbox candidate ${candidate.id}.`,
+  });
+  return { sessionId, realmId };
+}

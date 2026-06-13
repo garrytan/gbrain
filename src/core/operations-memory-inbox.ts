@@ -702,6 +702,51 @@ function materializePageMergePatch(
   };
 }
 
+function materializeMissingPageMergePatch(
+  deps: { OperationError: OperationErrorCtor },
+  slug: string,
+  patchBody: unknown,
+): { content: string; target_snapshot_hash: string } {
+  const now = new Date(0);
+  return materializePageMergePatch(
+    deps,
+    {
+      id: 0,
+      slug,
+      type: inferPageTypeFromSlug(slug),
+      title: inferTitleFromSlug(slug),
+      compiled_truth: '',
+      timeline: '',
+      frontmatter: {},
+      created_at: now,
+      updated_at: now,
+    },
+    [],
+    patchBody,
+  );
+}
+
+function inferPageTypeFromSlug(slug: string): PageType {
+  const normalized = `/${slug.toLowerCase()}/`;
+  if (normalized.includes('/people/')) return 'person';
+  if (normalized.includes('/companies/')) return 'company';
+  if (normalized.includes('/deals/')) return 'deal';
+  if (normalized.includes('/yc/')) return 'yc';
+  if (normalized.includes('/civic/')) return 'civic';
+  if (normalized.includes('/projects/')) return 'project';
+  if (normalized.includes('/systems/')) return 'system';
+  if (normalized.includes('/sources/')) return 'source';
+  if (normalized.includes('/media/')) return 'media';
+  return 'concept';
+}
+
+function inferTitleFromSlug(slug: string): string {
+  const last = slug.split('/').filter(Boolean).at(-1) ?? slug;
+  return last
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function normalizeRequiredPatchString(
   deps: { OperationError: OperationErrorCtor },
   field: string,
@@ -1487,7 +1532,7 @@ export function createMemoryInboxOperations(
           target_id: candidate.id,
           scope_id: candidate.scope_id,
           source_refs: sourceRefs,
-          result: decision === 'approve' ? 'applied' : 'denied',
+          result: decision === 'approve' ? 'approved' : 'denied',
           metadata: {
             decision,
             patch_target_kind: candidate.patch_target_kind,
@@ -1704,54 +1749,16 @@ export function createMemoryInboxOperations(
           };
         }
 
-        if (!page) {
-          const event = await recordMemoryMutationEvent(tx, {
-            session_id: sessionId,
-            realm_id: realmId,
-            actor,
-            operation: 'apply_memory_patch_candidate',
-            target_kind: 'page',
-            target_id: targetId,
-            scope_id: candidate.scope_id,
-            source_refs: sourceRefs,
-            expected_target_snapshot_hash: expectedTargetSnapshotHash,
-            current_target_snapshot_hash: null,
-            result: 'failed',
-            conflict_info: {
-              reason: 'missing_page_apply_not_supported',
-              candidate_id: candidate.id,
-            },
-            metadata: {
-              candidate_id: candidate.id,
-              patch_format: candidate.patch_format,
-              previous_patch_operation_state: candidate.patch_operation_state,
-            },
-          });
-          const updated = await tx.updateMemoryCandidatePatchOperationState(candidate.id, {
-            patch_operation_state: 'failed',
-            expected_current_status: 'staged_for_review',
-            expected_current_patch_operation_state: 'approved_for_apply',
-            patch_ledger_event_ids: appendPatchLedgerEventId(candidate, event.id),
-            reviewed_at: reviewedAt,
-            review_reason: reviewReason ?? 'Applying patches to missing page targets is not supported yet.',
-          });
-          if (!updated) {
-            throw invalidParams(deps, `memory patch candidate changed before missing-target apply recording completed: ${candidateId}`);
-          }
-          return {
-            kind: 'failed' as const,
-            message: 'applying patches to missing page targets is not supported yet',
-          };
-        }
-
         let materialized: { content: string; target_snapshot_hash: string };
         try {
-          materialized = materializePageMergePatch(
-            deps,
-            page,
-            await tx.getTags(targetId),
-            candidate.patch_body,
-          );
+          materialized = page
+            ? materializePageMergePatch(
+                deps,
+                page,
+                await tx.getTags(targetId),
+                candidate.patch_body,
+              )
+            : materializeMissingPageMergePatch(deps, targetId, candidate.patch_body);
         } catch (error) {
           const message = error instanceof Error ? error.message : 'patch materialization failed';
           const event = await recordMemoryMutationEvent(tx, {

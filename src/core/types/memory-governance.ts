@@ -1,6 +1,7 @@
 export type MemoryMutationResult =
   | 'dry_run'
   | 'staged_for_review'
+  | 'approved'
   | 'applied'
   | 'conflict'
   | 'denied'

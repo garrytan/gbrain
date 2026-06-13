@@ -5245,6 +5245,9 @@ export class SQLiteEngine implements BrainEngine {
         case 53:
           this.ensureMemoryCandidateVerificationColumns();
           break;
+        case 54:
+          this.repairMemoryMutationEventSessionAttachmentContract();
+          break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
       }
@@ -5361,6 +5364,7 @@ export class SQLiteEngine implements BrainEngine {
           result IN (
             'dry_run',
             'staged_for_review',
+            'approved',
             'applied',
             'conflict',
             'denied',
@@ -5533,6 +5537,7 @@ export class SQLiteEngine implements BrainEngine {
           result IN (
             'dry_run',
             'staged_for_review',
+            'approved',
             'applied',
             'conflict',
             'denied',
@@ -5726,6 +5731,7 @@ export class SQLiteEngine implements BrainEngine {
           result IN (
             'dry_run',
             'staged_for_review',
+            'approved',
             'applied',
             'conflict',
             'denied',
@@ -5922,6 +5928,7 @@ export class SQLiteEngine implements BrainEngine {
           result IN (
             'dry_run',
             'staged_for_review',
+            'approved',
             'applied',
             'conflict',
             'denied',
@@ -6126,6 +6133,7 @@ export class SQLiteEngine implements BrainEngine {
           result IN (
             'dry_run',
             'staged_for_review',
+            'approved',
             'applied',
             'conflict',
             'denied',

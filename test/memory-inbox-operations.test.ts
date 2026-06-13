@@ -370,6 +370,13 @@ test('review and apply memory patch candidate update a page only after approval 
     expect(approved.status).toBe('staged_for_review');
     expect(approved.patch_operation_state).toBe('approved_for_apply');
     expect(approved.patch_ledger_event_ids).toHaveLength(created.patch_ledger_event_ids.length + 1);
+    const reviewEvents = await engine.listMemoryMutationEvents({
+      operation: 'review_memory_patch_candidate',
+      target_kind: 'memory_candidate',
+      target_id: 'patch-candidate-apply',
+      result: 'approved',
+    });
+    expect(reviewEvents).toHaveLength(1);
 
     const applied = await applyPatch.handler(ctx, {
       candidate_id: 'patch-candidate-apply',
@@ -409,6 +416,190 @@ test('review and apply memory patch candidate update a page only after approval 
       candidate_id: 'patch-candidate-apply',
     });
     expect(statusEvents.map((event) => event.event_kind).sort()).toEqual(['created', 'promoted']);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('apply_memory_patch_candidate creates a missing page when the base snapshot is null', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-patch-apply-missing-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+  const createPatch = operations.find((operation) => operation.name === 'create_memory_patch_candidate');
+  const reviewPatch = operations.find((operation) => operation.name === 'review_memory_patch_candidate');
+  const applyPatch = operations.find((operation) => operation.name === 'apply_memory_patch_candidate');
+
+  if (!createPatch || !reviewPatch || !applyPatch) {
+    throw new Error('memory patch review/apply operations are missing');
+  }
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+    await engine.upsertMemoryRealm({
+      id: 'realm:patch-missing',
+      name: 'Patch missing realm',
+      scope: 'work',
+      default_access: 'read_write',
+    });
+    await engine.createMemorySession({
+      id: 'session:patch-missing',
+      actor_ref: 'agent:patch-applier',
+    });
+    await engine.attachMemoryRealmToSession({
+      session_id: 'session:patch-missing',
+      realm_id: 'realm:patch-missing',
+      access: 'read_write',
+    });
+    const ctx = {
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    };
+
+    await createPatch.handler(ctx, {
+      id: 'patch-candidate-missing',
+      session_id: 'session:patch-missing',
+      realm_id: 'realm:patch-missing',
+      actor: 'agent:patch-applier',
+      target_kind: 'page',
+      target_id: 'concepts/patch-missing-target',
+      base_target_snapshot_hash: null,
+      patch_body: {
+        type: 'concept',
+        title: 'Patch Missing Target',
+        compiled_truth: 'Created page body. [Source: User, direct message, 2026-04-26 12:20 PM KST]',
+        timeline: '- **2026-04-26** | Patch created the page. [Source: User, direct message, 2026-04-26 12:20 PM KST]',
+      },
+      patch_format: 'merge_patch',
+      source_refs: ['User, direct message, 2026-04-26 12:20 PM KST'],
+    });
+    await reviewPatch.handler(ctx, {
+      candidate_id: 'patch-candidate-missing',
+      session_id: 'session:patch-missing',
+      realm_id: 'realm:patch-missing',
+      actor: 'agent:patch-applier',
+      decision: 'approve',
+      source_refs: ['User, direct message, 2026-04-26 12:20 PM KST'],
+    });
+
+    const applied = await applyPatch.handler(ctx, {
+      candidate_id: 'patch-candidate-missing',
+      session_id: 'session:patch-missing',
+      realm_id: 'realm:patch-missing',
+      actor: 'agent:patch-applier',
+      source_refs: ['User, direct message, 2026-04-26 12:20 PM KST'],
+    }) as any;
+
+    expect(applied.status).toBe('applied');
+    expect(applied.previous_target_snapshot_hash).toBeNull();
+    const page = await engine.getPage('concepts/patch-missing-target');
+    expect(page?.compiled_truth).toBe('Created page body. [Source: User, direct message, 2026-04-26 12:20 PM KST]');
+    const applyEvents = await engine.listMemoryMutationEvents({
+      operation: 'apply_memory_patch_candidate',
+      target_kind: 'page',
+      target_id: 'concepts/patch-missing-target',
+      result: 'applied',
+    });
+    expect(applyEvents).toHaveLength(1);
+    expect(applyEvents[0]?.expected_target_snapshot_hash).toBeNull();
+    expect(applyEvents[0]?.current_target_snapshot_hash).toBe(page?.content_hash ?? null);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('apply_memory_patch_candidate conflicts when a missing page target appears before apply', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-patch-apply-missing-conflict-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+  const createPatch = operations.find((operation) => operation.name === 'create_memory_patch_candidate');
+  const reviewPatch = operations.find((operation) => operation.name === 'review_memory_patch_candidate');
+  const applyPatch = operations.find((operation) => operation.name === 'apply_memory_patch_candidate');
+
+  if (!createPatch || !reviewPatch || !applyPatch) {
+    throw new Error('memory patch review/apply operations are missing');
+  }
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+    await engine.upsertMemoryRealm({
+      id: 'realm:patch-missing-conflict',
+      name: 'Patch missing conflict realm',
+      scope: 'work',
+      default_access: 'read_write',
+    });
+    await engine.createMemorySession({
+      id: 'session:patch-missing-conflict',
+      actor_ref: 'agent:patch-applier',
+    });
+    await engine.attachMemoryRealmToSession({
+      session_id: 'session:patch-missing-conflict',
+      realm_id: 'realm:patch-missing-conflict',
+      access: 'read_write',
+    });
+    const ctx = {
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    };
+
+    await createPatch.handler(ctx, {
+      id: 'patch-candidate-missing-conflict',
+      session_id: 'session:patch-missing-conflict',
+      realm_id: 'realm:patch-missing-conflict',
+      actor: 'agent:patch-applier',
+      target_kind: 'page',
+      target_id: 'concepts/patch-missing-conflict-target',
+      base_target_snapshot_hash: null,
+      patch_body: {
+        compiled_truth: 'Patch body. [Source: User, direct message, 2026-04-26 12:30 PM KST]',
+      },
+      patch_format: 'merge_patch',
+      source_refs: ['User, direct message, 2026-04-26 12:30 PM KST'],
+    });
+    await reviewPatch.handler(ctx, {
+      candidate_id: 'patch-candidate-missing-conflict',
+      session_id: 'session:patch-missing-conflict',
+      realm_id: 'realm:patch-missing-conflict',
+      actor: 'agent:patch-applier',
+      decision: 'approve',
+      source_refs: ['User, direct message, 2026-04-26 12:30 PM KST'],
+    });
+    const concurrentPage = await engine.putPage('concepts/patch-missing-conflict-target', {
+      type: 'concept',
+      title: 'Patch Missing Conflict Target',
+      compiled_truth: 'Concurrent page body. [Source: User, direct message, 2026-04-26 12:31 PM KST]',
+      timeline: '',
+    });
+
+    await expect(applyPatch.handler(ctx, {
+      candidate_id: 'patch-candidate-missing-conflict',
+      session_id: 'session:patch-missing-conflict',
+      realm_id: 'realm:patch-missing-conflict',
+      actor: 'agent:patch-applier',
+      source_refs: ['User, direct message, 2026-04-26 12:30 PM KST'],
+    })).rejects.toMatchObject({
+      code: 'write_conflict',
+    });
+
+    expect((await engine.getPage('concepts/patch-missing-conflict-target'))?.content_hash).toBe(concurrentPage.content_hash);
+    const candidate = await engine.getMemoryCandidateEntry('patch-candidate-missing-conflict');
+    expect(candidate?.patch_operation_state).toBe('conflicted');
+    const conflictEvents = await engine.listMemoryMutationEvents({
+      operation: 'apply_memory_patch_candidate',
+      target_kind: 'page',
+      target_id: 'concepts/patch-missing-conflict-target',
+      result: 'conflict',
+    });
+    expect(conflictEvents).toHaveLength(1);
+    expect(conflictEvents[0]?.expected_target_snapshot_hash).toBeNull();
+    expect(conflictEvents[0]?.current_target_snapshot_hash).toBe(concurrentPage.content_hash ?? null);
   } finally {
     await engine.disconnect();
     rmSync(dir, { recursive: true, force: true });

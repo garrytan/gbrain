@@ -83,11 +83,73 @@ describe('runPromoteGate', () => {
       expect(page?.compiled_truth).toContain('[Source: User, direct message, 2026-04-22 3:01 PM KST]');
       const handoffs = await engine.listCanonicalHandoffEntries({ candidate_id: candidate.id });
       expect(handoffs).toHaveLength(1);
-      const events = await engine.listMemoryMutationEvents({ operation: 'put_page', target_id: 'concepts/acme' });
+      const events = await engine.listMemoryMutationEvents({ operation: 'apply_memory_patch_candidate', target_id: 'concepts/acme' });
       expect(events.some((event) => event.source_refs.includes(`canonical_handoff:${handoffs[0]!.id}`))).toBe(true);
     });
   });
-  it('creates a new canonical page only for canonical-eligible candidates', async () => {
+  it('writes canonical page changes through the reviewable patch candidate lifecycle', async () => {
+    await withEngine(async (engine) => {
+      const target = await seedTargetPage(engine);
+      const cfg = { ...defaultAutoPromoteConfig(), dry_run: false };
+      const candidate = await seedEligibleCandidate(engine);
+
+      const res = await runPromoteGate({
+        engine,
+        verdicts: [{ candidate_id: candidate.id, decision: 'promote' as const, confidence: 0.95, reasoning: 'ok', source_refs: [] }],
+        candidates: [candidate],
+        config: cfg,
+        now: '2026-06-01T00:00:00Z',
+        actor: 'mbrain:auto_promote',
+        target_snapshot_hashes: new Map([[candidate.id, target.content_hash ?? null]]),
+        allow_canonical_page_writes: true,
+        canonical_write_candidate_ids: new Set([candidate.id]),
+      });
+
+      expect(res.promoted).toContain(candidate.id);
+      expect(res.canonical_writes).toContain('concepts/acme');
+
+      const directPageWrites = await engine.listMemoryMutationEvents({
+        operation: 'put_page',
+        target_kind: 'page',
+        target_id: 'concepts/acme',
+      });
+      expect(directPageWrites).toHaveLength(0);
+
+      const createEvents = await engine.listMemoryMutationEvents({
+        operation: 'create_memory_patch_candidate',
+        target_kind: 'memory_candidate',
+        result: 'staged_for_review',
+      });
+      expect(createEvents).toHaveLength(1);
+      const patchCandidateId = createEvents[0]!.target_id;
+      expect(createEvents[0]!.source_refs).toContain(`memory_candidate:${candidate.id}`);
+
+      const reviewEvents = await engine.listMemoryMutationEvents({
+        operation: 'review_memory_patch_candidate',
+        target_kind: 'memory_candidate',
+        target_id: patchCandidateId,
+        result: 'approved',
+      });
+      expect(reviewEvents).toHaveLength(1);
+
+      const applyEvents = await engine.listMemoryMutationEvents({
+        operation: 'apply_memory_patch_candidate',
+        target_kind: 'page',
+        target_id: 'concepts/acme',
+        result: 'applied',
+      });
+      expect(applyEvents).toHaveLength(1);
+      expect(applyEvents[0]!.metadata.candidate_id).toBe(patchCandidateId);
+
+      const patchCandidate = await engine.getMemoryCandidateEntry(patchCandidateId);
+      expect(patchCandidate?.status).toBe('promoted');
+      expect(patchCandidate?.patch_operation_state).toBe('applied');
+      expect(patchCandidate?.patch_target_kind).toBe('page');
+      expect(patchCandidate?.patch_target_id).toBe('concepts/acme');
+      expect(patchCandidate?.patch_ledger_event_ids).toHaveLength(3);
+    });
+  });
+  it('creates a missing canonical page through the reviewable patch candidate lifecycle', async () => {
     await withEngine(async (engine) => {
       const cfg = { ...defaultAutoPromoteConfig(), dry_run: false };
       const candidate = await seedEligibleCandidate(engine);
@@ -104,6 +166,22 @@ describe('runPromoteGate', () => {
       });
       expect(res.canonical_writes).toContain('concepts/acme');
       expect((await engine.getPage('concepts/acme'))?.compiled_truth).toContain('Acme raised a seed round.');
+
+      const directPageWrites = await engine.listMemoryMutationEvents({
+        operation: 'put_page',
+        target_kind: 'page',
+        target_id: 'concepts/acme',
+      });
+      expect(directPageWrites).toHaveLength(0);
+
+      const appliedPatchEvents = await engine.listMemoryMutationEvents({
+        operation: 'apply_memory_patch_candidate',
+        target_kind: 'page',
+        target_id: 'concepts/acme',
+        result: 'applied',
+      });
+      expect(appliedPatchEvents).toHaveLength(1);
+      expect(appliedPatchEvents[0]!.expected_target_snapshot_hash).toBeNull();
     });
   });
   it('requires explicit permission before writing canonical pages', async () => {
@@ -178,8 +256,10 @@ describe('runPromoteGate', () => {
       expect(res.promoted).toContain(candidate.id);
       expect(res.canonical_handoffs).toContain(candidate.id);
       expect(res.canonical_writes).toEqual([]);
-      expect(res.skipped.find((s) => s.id === candidate.id)?.reason).toContain('content hash mismatch');
+      expect(res.skipped.find((s) => s.id === candidate.id)?.reason).toContain('base_target_snapshot_hash does not match the current target snapshot hash');
       expect((await engine.getPage('concepts/acme'))?.compiled_truth).not.toContain('Acme raised a seed round.');
+      expect(await engine.listMemorySessions({ actor_ref: 'mbrain:auto_promote' })).toHaveLength(0);
+      expect(await engine.listMemoryMutationEvents({ operation: 'create_memory_patch_candidate' })).toHaveLength(0);
     });
   });
   it('skips verdicts below the confidence threshold', async () => {

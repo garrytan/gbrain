@@ -999,6 +999,7 @@ const MIGRATIONS: Migration[] = [
           result IN (
             'dry_run',
             'staged_for_review',
+            'approved',
             'applied',
             'conflict',
             'denied',
@@ -3062,6 +3063,36 @@ const MIGRATIONS: Migration[] = [
             CHECK (verification_method IS NULL OR verification_method IN ('command_execution', 'db_query', 'file_inspection', 'source_recheck', 'user_confirmation', 'external_lookup'));
           CREATE INDEX IF NOT EXISTS idx_memory_candidates_scope_verification
             ON memory_candidate_entries(scope_id, verification_status, updated_at DESC);
+        END IF;
+      END
+      $$;
+    `,
+  },
+  {
+    version: 54,
+    name: 'memory_mutation_events_approved_result',
+    sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('memory_mutation_events') IS NOT NULL THEN
+          ALTER TABLE memory_mutation_events
+            DROP CONSTRAINT IF EXISTS memory_mutation_events_result_check;
+          ALTER TABLE memory_mutation_events
+            DROP CONSTRAINT IF EXISTS chk_memory_mutation_events_result;
+          ALTER TABLE memory_mutation_events
+            ADD CONSTRAINT chk_memory_mutation_events_result
+            CHECK (
+              result IN (
+                'dry_run',
+                'staged_for_review',
+                'approved',
+                'applied',
+                'conflict',
+                'denied',
+                'failed',
+                'redacted'
+              )
+            );
         END IF;
       END
       $$;
