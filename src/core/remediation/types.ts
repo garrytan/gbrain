@@ -63,6 +63,16 @@ export interface RemediationOpts {
   resumePlanHash?: string;
   /** Whether to attempt resume at all (default false). */
   resume?: boolean;
+  /**
+   * Caller-supplied RemediationStep entries threaded into the planner.
+   * Mirrors RemediationPlanOptions.extraRemediations so onboard's --apply
+   * --auto path can forward the same onboard-check remediations its --check
+   * path already passes through computeRemediationPlan. Without this field
+   * the runner saw only generic brain_score remediations (sync, embed,
+   * etc.) and reported "Nothing to do" whenever the only applicable work
+   * was an extra (e.g. extract-ner, extract-timeline-from-meetings).
+   */
+  extraRemediations?: RemediationStep[];
 }
 
 /**

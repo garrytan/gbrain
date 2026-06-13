@@ -125,12 +125,16 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
 
   // --auto path: runs through the T2 library orchestrator. Hooks emit CLI
   // progress to stderr; the final result lands as JSON on stdout (or human
-  // summary).
+  // summary). extraRemediations (gathered above from runAllOnboardChecks)
+  // gets threaded into the runner so the auto-eligible onboard-check
+  // remediations (extract-ner, extract-timeline-from-meetings, etc.) reach
+  // the planner — the same wiring the --check path uses on line ~109.
   const result = await runRemediation(
     engine,
     {
       targetScore,
       maxUsd,
+      extraRemediations,
       // --auto --yes opts into the prompt_required tier too; library
       // doesn't distinguish auto_apply vs prompt_required, it just runs
       // every remediation in the plan. The plan-building side (T12 render)
