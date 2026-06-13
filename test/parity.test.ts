@@ -132,8 +132,8 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
       const pgliteSnapshot = await collectListAndLinkSnapshot(pglite);
 
       expect(sqliteSnapshot).toEqual({
-        conceptPages: ['concepts/parity-alpha', 'concepts/parity-gamma'],
-        parityTaggedPages: ['concepts/parity-alpha', 'concepts/parity-gamma'],
+        conceptPages: ['concepts/control-delta', 'concepts/parity-alpha', 'concepts/parity-gamma'],
+        parityTaggedPages: ['concepts/parity-alpha', 'concepts/parity-gamma', 'people/parity-beta'],
         parityTaggedConcepts: ['concepts/parity-alpha', 'concepts/parity-gamma'],
         linksBySlug: {
           'concepts/parity-alpha': ['concepts/parity-alpha->people/parity-beta:mentions:alpha to beta'],
@@ -151,9 +151,22 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
       });
       expect(pgliteSnapshot).toEqual(sqliteSnapshot);
     } finally {
-      await sqlite.disconnect().catch(() => undefined);
-      await pglite.disconnect().catch(() => undefined);
-      rmSync(root, { recursive: true, force: true });
+      const cleanupErrors: unknown[] = [];
+      for (const engine of [sqlite, pglite]) {
+        try {
+          await engine.disconnect();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      try {
+        rmSync(root, { recursive: true, force: true });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, 'Failed to clean up SQLite/PGLite parity fixtures');
+      }
     }
   });
 });
@@ -179,9 +192,15 @@ async function seedListAndLinkFixture(engine: ListAndLinkEngine): Promise<void> 
     title: 'Parity Gamma',
     compiled_truth: 'Gamma parity concept.',
   });
+  await engine.putPage('concepts/control-delta', {
+    type: 'concept',
+    title: 'Control Delta',
+    compiled_truth: 'Delta concept without the parity tag.',
+  });
 
   await engine.addTag('concepts/parity-alpha', 'parity');
   await engine.addTag('concepts/parity-gamma', 'parity');
+  await engine.addTag('people/parity-beta', 'parity');
   await engine.addTag('people/parity-beta', 'people');
 
   await engine.addLink('concepts/parity-alpha', 'people/parity-beta', 'alpha to beta', 'mentions');
