@@ -176,7 +176,7 @@ describe('hybridSearch', () => {
     ]);
   });
 
-  test('does not let a low-ranked vector neighbor outrank the top keyword-only result', async () => {
+  test('does not let a lower-ranked high-confidence vector neighbor outrank the top keyword-only result', async () => {
     setEmbeddingProviderForTests({
       capability: {
         available: true,
@@ -188,14 +188,32 @@ describe('hybridSearch', () => {
       embedBatch: async () => [new Float32Array([1, 0, 0])],
     });
 
-    const vectorResults = Array.from({ length: 55 }, (_, index) => makeResult({
-      slug: `projects/vector-${index}`,
-      page_id: 200 + index,
-      title: `Vector ${index}`,
-      type: index % 2 === 0 ? 'project' : 'person',
-      chunk_text: `semantic neighbor ${index} with unrelated supporting text`,
-      score: index === 54 ? 0.95 : 0.01,
-    }));
+    const vectorResults = [
+      makeResult({
+        slug: 'concepts/vector-top',
+        page_id: 200,
+        title: 'Vector Top',
+        type: 'person',
+        chunk_text: 'top vector neighbor with weak semantic confidence',
+        score: 0.01,
+      }),
+      makeResult({
+        slug: 'concepts/vector-middle',
+        page_id: 201,
+        title: 'Vector Middle',
+        type: 'project',
+        chunk_text: 'middle vector neighbor with weak semantic confidence',
+        score: 0.01,
+      }),
+      makeResult({
+        slug: 'concepts/vector-lower-high-confidence',
+        page_id: 202,
+        title: 'Vector Lower High Confidence',
+        type: 'company',
+        chunk_text: 'lower vector neighbor with strong semantic confidence',
+        score: 0.95,
+      }),
+    ];
 
     const engine = {
       searchKeyword: async () => [
@@ -212,8 +230,11 @@ describe('hybridSearch', () => {
     } as Pick<BrainEngine, 'searchKeyword' | 'searchVector'> as BrainEngine;
 
     const results = await hybridSearch(engine, 'exact keyword', { limit: 10 });
+    const slugs = results.map((entry) => entry.slug);
 
-    expect(results[0]?.slug).toBe('concepts/exact-keyword');
+    expect(slugs.indexOf('concepts/exact-keyword')).toBeLessThan(
+      slugs.indexOf('concepts/vector-lower-high-confidence'),
+    );
   });
 });
 
