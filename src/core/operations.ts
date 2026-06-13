@@ -16,7 +16,7 @@ import {
   MAX_MARKDOWN_IMPORT_BYTES,
 } from './import-file.ts';
 import { parseMarkdown, serializeMarkdown } from './markdown.ts';
-import { getUnsupportedCapabilityReason } from './offline-profile.ts';
+import { getUnsupportedCapabilityReason, type OfflineProfile } from './offline-profile.ts';
 import { createAgentSessionActivationOperations } from './operations-agent-session-activation.ts';
 import { createAgentSessionMemoryOperations } from './operations-agent-session-memory.ts';
 import { createAssertionOperations } from './operations-assertions.ts';
@@ -172,12 +172,14 @@ export class OperationError extends Error {
 }
 
 export type ParamType = 'string' | 'number' | 'boolean' | 'object' | 'array';
+export type OperationCapability = keyof OfflineProfile['capabilities'];
 
 export interface ParamDef {
   type: ParamType | ParamType[];
   required?: boolean;
   nullable?: boolean;
   description?: string;
+  capabilityRequired?: OperationCapability;
   default?: unknown;
   enum?: string[];
   compactEnum?: boolean;
@@ -277,6 +279,7 @@ export interface Operation {
   params: Record<string, ParamDef>;
   handler: (ctx: OperationContext, params: Record<string, unknown>) => Promise<unknown>;
   mutating?: boolean;
+  capabilityRequired?: OperationCapability;
   cliHints?: {
     name?: string;
     positional?: string[];
@@ -284,6 +287,37 @@ export interface Operation {
     hidden?: boolean;
     aliases?: Record<string, string>;
   };
+}
+
+export function getOperationCapabilityRequirements(operation: Operation): OperationCapability[] {
+  const requirements = new Set<OperationCapability>();
+  if (operation.capabilityRequired) {
+    requirements.add(operation.capabilityRequired);
+  }
+  for (const param of Object.values(operation.params)) {
+    collectParamCapabilityRequirements(param, requirements);
+  }
+  return [...requirements];
+}
+
+export function isOperationSupportedByConfig(
+  operation: Operation,
+  config: MBrainConfig,
+): boolean {
+  return getOperationCapabilityRequirements(operation)
+    .every(capability => getUnsupportedCapabilityReason(config, capability) === null);
+}
+
+function collectParamCapabilityRequirements(
+  param: ParamDef,
+  requirements: Set<OperationCapability>,
+): void {
+  if (param.capabilityRequired) {
+    requirements.add(param.capabilityRequired);
+  }
+  if (param.items) {
+    collectParamCapabilityRequirements(param.items, requirements);
+  }
 }
 
 const RETRIEVAL_TRACE_WRITE_OUTCOMES = [
@@ -5972,6 +6006,7 @@ const FILE_LIST_LIMIT = 100;
 const file_list: Operation = {
   name: 'file_list',
   description: 'List stored files',
+  capabilityRequired: 'files',
   params: {
     slug: { type: 'string', description: 'Filter by page slug' },
   },
@@ -5989,6 +6024,7 @@ const file_list: Operation = {
 const file_upload: Operation = {
   name: 'file_upload',
   description: 'Upload a file to storage',
+  capabilityRequired: 'files',
   params: {
     path: { type: 'string', required: true, description: 'Local file path' },
     page_slug: { type: 'string', description: 'Associate with page' },
@@ -6062,6 +6098,7 @@ const file_upload: Operation = {
 const file_url: Operation = {
   name: 'file_url',
   description: 'Get a URL for a stored file',
+  capabilityRequired: 'files',
   params: {
     storage_path: { type: 'string', required: true },
   },
@@ -6260,7 +6297,7 @@ export const operations: Operation[] = [
 
 function assertCapabilitySupported(
   config: MBrainConfig,
-  capability: 'files',
+  capability: OperationCapability,
 ) {
   const reason = getUnsupportedCapabilityReason(config, capability);
   if (reason) {

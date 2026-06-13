@@ -2,7 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { ListResourcesRequestSchema, ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
 import { startDerivedWorker, type DerivedWorkerController } from '../core/derived-worker.ts';
-import { operations as defaultOperations, OperationError, MCP_INSTRUCTIONS, validateOperationParams } from '../core/operations.ts';
+import { operations as defaultOperations, OperationError, MCP_INSTRUCTIONS, isOperationSupportedByConfig, validateOperationParams } from '../core/operations.ts';
 import type { Operation, OperationContext } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
@@ -31,6 +31,10 @@ export type FormatMcpToolResultOptions = {
 
 export type McpToolCatalogOptions = {
   compact?: boolean;
+};
+
+export type McpToolCatalogProviderOptions = {
+  config?: OperationContext['config'] | null;
 };
 
 export type McpToolCatalogProvider = {
@@ -112,18 +116,22 @@ const HEAVY_READ_TOOL_NAMES = new Set([
 
 export function createMcpToolCatalogProvider(
   operations: Operation[] = defaultOperations,
+  options: McpToolCatalogProviderOptions = {},
 ): McpToolCatalogProvider {
+  const catalogOperations = options.config
+    ? operations.filter(operation => isOperationSupportedByConfig(operation, options.config!))
+    : operations;
   let compactTools: ReturnType<typeof operationToMcpTool>[] | undefined;
   let fullTools: ReturnType<typeof operationToMcpTool>[] | undefined;
 
   return {
     getTools({ compact = false }: McpToolCatalogOptions = {}) {
       if (compact) {
-        compactTools ??= operations.map(operation => operationToMcpTool(operation, { compact: true }));
+        compactTools ??= catalogOperations.map(operation => operationToMcpTool(operation, { compact: true }));
         return compactTools;
       }
 
-      fullTools ??= operations.map(operation => operationToMcpTool(operation, { compact: false }));
+      fullTools ??= catalogOperations.map(operation => operationToMcpTool(operation, { compact: false }));
       return fullTools;
     },
   };
@@ -665,11 +673,11 @@ export function createMcpServer(
   );
   const operations = options.operations ?? defaultOperations;
   const operationsByName = new Map(operations.map(o => [o.name, o]));
-  const toolCatalog = createMcpToolCatalogProvider(operations);
-  const toolExecutionLimiter = options.toolExecutionLimiter ?? createMcpToolExecutionLimiter();
   // Config, logger, and result budget are immutable for the lifetime of the
   // server process; resolve them once instead of per tool call.
   const resolvedConfig = options.config ?? loadConfig() ?? DEFAULT_RUNTIME_CONFIG;
+  const toolCatalog = createMcpToolCatalogProvider(operations, { config: resolvedConfig });
+  const toolExecutionLimiter = options.toolExecutionLimiter ?? createMcpToolExecutionLimiter();
   const resolvedLogger = options.logger ?? {
     info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
     warn: (msg: string) => process.stderr.write(`[warn] ${msg}\n`),

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { operations } from '../src/core/operations.ts';
+import { resolveConfig } from '../src/core/config.ts';
+import { operations, operationsByName } from '../src/core/operations.ts';
 import type { Operation } from '../src/core/operations.ts';
 import {
   createMcpToolCatalogProvider,
@@ -13,6 +14,11 @@ function byteLength(text: string): number {
 }
 
 const originalDeferPutPageDerived = process.env.MBRAIN_MCP_DEFER_PUT_PAGE_DERIVED;
+const noopLogger = {
+  info: () => undefined,
+  warn: () => undefined,
+  error: () => undefined,
+};
 
 afterEach(() => {
   if (originalDeferPutPageDerived === undefined) {
@@ -33,6 +39,75 @@ describe('MCP response guard', () => {
 
     const dryRunMutation = tools.find(tool => tool.name === 'dry_run_memory_mutation');
     expect((dryRunMutation?.inputSchema.properties as any).operation.enum).toContain('put_page');
+  });
+
+  test('offline MCP tool catalog hides unsupported capability-gated operations', () => {
+    const catalog = createMcpToolCatalogProvider(operations, {
+      config: resolveConfig({
+        engine: 'sqlite',
+        database_path: '/tmp/mbrain-offline-test.db',
+        offline: true,
+      }),
+    });
+    const compactTools = catalog.getTools({ compact: true });
+    const fullTools = catalog.getTools({ compact: false });
+    const compactNames = compactTools.map(tool => tool.name);
+    const fullNames = fullTools.map(tool => tool.name);
+
+    expect(compactNames).not.toContain('file_list');
+    expect(compactNames).not.toContain('file_upload');
+    expect(compactNames).not.toContain('file_url');
+    expect(fullNames).toEqual(compactNames);
+    expect(compactNames).toContain('get_page');
+    expect(compactTools.length).toBeLessThan(operations.length);
+  });
+
+  test('offline file operations remain guarded when called directly', async () => {
+    await expect(operationsByName.file_list.handler({
+      config: resolveConfig({
+        engine: 'sqlite',
+        database_path: '/tmp/mbrain-offline-test.db',
+        offline: true,
+      }),
+      dryRun: false,
+      engine: {} as any,
+      logger: noopLogger,
+    }, {})).rejects.toMatchObject({
+      code: 'unsupported_capability',
+      message: expect.stringMatching(/sqlite\/local mode/i),
+    });
+  });
+
+  test('MCP tool catalog honors parameter-level capability requirements', () => {
+    const sampleOperations: Operation[] = [
+      {
+        name: 'sample_public',
+        description: 'Visible operation',
+        params: {},
+        handler: async () => ({ ok: true }),
+      },
+      {
+        name: 'sample_file',
+        description: 'File-backed operation',
+        params: {
+          storage_path: {
+            type: 'string',
+            required: true,
+            capabilityRequired: 'files',
+          },
+        },
+        handler: async () => ({ ok: true }),
+      },
+    ];
+    const catalog = createMcpToolCatalogProvider(sampleOperations, {
+      config: resolveConfig({
+        engine: 'sqlite',
+        database_path: '/tmp/mbrain-offline-test.db',
+        offline: true,
+      }),
+    });
+
+    expect(catalog.getTools({ compact: true }).map(tool => tool.name)).toEqual(['sample_public']);
   });
 
   test('cached MCP tool catalog returns stable compact and full arrays', () => {
