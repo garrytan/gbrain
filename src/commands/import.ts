@@ -11,6 +11,7 @@ import {
   isCodeFilePath,
   isMarkdownFilePath,
   isImageFilePath as isImageFilePathFromSync,
+  pruneDir,
   type SyncStrategy,
 } from '../core/sync.ts';
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
@@ -526,51 +527,74 @@ function isCollectibleForWalker(
  *    files on resume.
  */
 /**
- * v0.42.x (bug 1 fix): the first-sync walker honored only a hardcoded prune
- * set (`node_modules`, `ops`, dot-dirs), so it indexed gitignored build output
- * — iOS `build/`, `DerivedData/`, `Pods/`, Rust `target/`, web `dist/` — that
- * the incremental git-diff path (sync.ts uses `git ls-files --exclude-standard`)
- * correctly skips. That left first-sync and incremental-sync disagreeing about
- * what's in scope, polluting the brain with generated files.
+ * v0.42.x (bug 1 fix): the first-sync filesystem walker honored only a hardcoded
+ * prune set (`node_modules`, `ops`, dot-dirs), so it pulled in everything else on
+ * disk — gitignored build output (iOS `build/`, `DerivedData/`, `Pods/`, Rust
+ * `target/`, web `dist/`), untracked temp files, AND nested linked worktrees (a
+ * second full checkout under `worktrees/`). None of that is the user's authored
+ * work, and it polluted the brain (one repo went from 4.5k source files to 8.6k
+ * indexed pages via a duplicate worktree).
  *
- * Compute the repo's ignored top-level entries once via git and skip them in
- * the walk so first-sync matches incremental-sync. `--directory` collapses a
- * fully-ignored dir to a single `build/` entry; we strip the trailing slash and
- * match the absolute path lexically against walk entries. Best-effort: a non-git
- * dir or any git failure yields an empty set, so the walk behaves exactly as
- * before (no regression for non-git imports).
+ * For a git repo, the authoritative "the user's own files" set is the tracked
+ * index. Enumerate via `git ls-files` so first-sync indexes only committed work,
+ * automatically excluding vendored deps, build output, temp files, submodules
+ * (separate repos — not in this index), and nested worktrees. Returns null for a
+ * non-git directory or any git failure, so the caller falls back to the legacy
+ * filesystem walk and non-git imports are unaffected.
  */
-function collectGitIgnoredPaths(dir: string): Set<string> {
+function listTrackedFiles(dir: string): string[] | null {
   try {
     const out = execFileSync(
       'git',
-      ['-c', 'core.quotePath=false', '-C', dir,
-        'ls-files', '--others', '--ignored', '--exclude-standard', '--directory'],
-      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 256 * 1024 * 1024 },
+      ['-c', 'core.quotePath=false', '-C', dir, 'ls-files', '-z'],
+      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 512 * 1024 * 1024 },
     );
-    const set = new Set<string>();
-    for (const line of out.split('\n')) {
-      const rel = line.trim().replace(/\/+$/, '');
+    const files: string[] = [];
+    for (const rel of out.split('\0')) {
       if (!rel) continue;
-      set.add(join(dir, rel));
+      const full = join(dir, rel);
+      // ls-files lists index entries that can be staged-deleted from the working
+      // tree or owned by another worktree; only keep regular files present here.
+      try {
+        if (!lstatSync(full).isFile()) continue;
+      } catch {
+        continue;
+      }
+      files.push(full);
     }
-    return set;
+    return files;
   } catch {
-    // Not a git repo, git not installed, or the command failed — fall back to
-    // the legacy prune-only behavior. Never block the import.
-    return new Set();
+    // Not a git repo, git missing, or the command failed — signal fallback.
+    return null;
   }
 }
 
 export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): string[] {
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
   const multimodalOn = process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
+
+  // Git repo: index only tracked files (the user's committed work). This skips
+  // vendored deps, build output, temp files, submodules, and nested worktrees
+  // that the legacy filesystem walk pulled in. Apply the same name-based prune
+  // set (dot-dirs, node_modules, ops, .raw) the walk and incremental classifier
+  // honor, in case any such path is tracked.
+  const tracked = listTrackedFiles(dir);
+  if (tracked) {
+    const out: string[] = [];
+    for (const full of tracked) {
+      const segs = relative(dir, full).split('/');
+      if (segs.slice(0, -1).some(s => !pruneDir(s))) continue;
+      const entry = segs[segs.length - 1] || '';
+      if (!isCollectibleForWalker(entry, strategy, multimodalOn)) continue;
+      out.push(full);
+    }
+    return out.sort();
+  }
+
+  // Non-git directory: fall back to the legacy filesystem walk.
   const maxDepth = resolveMaxWalkDepth();
   const visitedInodes = new Map<string, true>();
   const files: string[] = [];
-  // Skip paths the repo's own .gitignore excludes (build output, vendored deps)
-  // so first-sync matches incremental-sync. Empty for non-git dirs.
-  const gitIgnored = collectGitIgnoredPaths(dir);
 
   function walk(d: string, depth: number): void {
     if (depth >= maxDepth) {
@@ -603,10 +627,6 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
         console.warn(`[gbrain import] Skipping symlink: ${full}`);
         continue;
       }
-
-      // Honor the repo's .gitignore: skip ignored dirs (don't descend) and
-      // ignored files, matching the incremental git-diff sync path.
-      if (gitIgnored.has(full)) continue;
 
       if (stat.isDirectory()) {
         const inodeKey = `${stat.dev}:${stat.ino}`;
