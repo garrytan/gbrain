@@ -290,15 +290,21 @@ export function createSourceRegistryOperations(
     params: {
       source_kind: { type: 'string', enum: [...SOURCE_KINDS], description: 'Optional source kind filter.' },
       connector_id: { type: 'string', description: 'Optional connector id filter.' },
+      locator: { type: 'string', description: 'Optional exact source locator filter.' },
+      locator_overlap: { type: 'string', description: 'Optional file URL locator overlap filter.' },
       consent_state: { type: 'string', enum: [...CONSENT_STATES], description: 'Optional minimal consent filter.' },
       enabled: { type: 'boolean', description: 'Optional enabled filter.' },
+      blocked_for_ingest: { type: 'boolean', description: 'Optional filter for sources currently blocked from ingest.' },
       limit: { type: 'number', description: 'Maximum rows to return.' },
     },
     handler: async (ctx, p) => listSourceInspectionRows(ctx.engine, {
       source_kind: optionalSourceKind(deps, p.source_kind),
       connector_id: optionalString(deps, 'connector_id', p.connector_id),
+      locator: optionalString(deps, 'locator', p.locator),
+      locator_overlap: optionalString(deps, 'locator_overlap', p.locator_overlap),
       consent_state: optionalConsentState(deps, p.consent_state),
       enabled: optionalBoolean(deps, 'enabled', p.enabled),
+      blocked_for_ingest: optionalBoolean(deps, 'blocked_for_ingest', p.blocked_for_ingest),
       limit: optionalNumber(deps, 'limit', p.limit) ?? 100,
     }),
     mutating: false,
@@ -612,8 +618,11 @@ type QueryableEngine = BrainEngine & {
 interface SourceInspectionFilters {
   source_kind?: SourceKind;
   connector_id?: string;
+  locator?: string;
+  locator_overlap?: string;
   consent_state?: SourceConsentState;
   enabled?: boolean;
+  blocked_for_ingest?: boolean;
   limit: number;
 }
 
@@ -1658,8 +1667,12 @@ async function listSourceInspectionRows(
   const sources = (await readAllSourceRecords(engine))
     .filter((source) => !filters.source_kind || source.kind === filters.source_kind)
     .filter((source) => !filters.connector_id || source.connector_id === filters.connector_id)
+    .filter((source) => !filters.locator || source.locator === filters.locator)
+    .filter((source) => !filters.locator_overlap || sourceLocatorOverlaps(source.locator, filters.locator_overlap))
     .filter((source) => !filters.consent_state || source.consent_state === filters.consent_state)
     .filter((source) => filters.enabled === undefined || source.enabled === filters.enabled)
+    .filter((source) => filters.blocked_for_ingest === undefined
+      || sourceBlockedForIngest(source) === filters.blocked_for_ingest)
     .slice(0, filters.limit);
 
   const inspected = [];
@@ -1667,6 +1680,25 @@ async function listSourceInspectionRows(
     inspected.push(await buildSourceInspection(engine, source, false));
   }
   return { sources: inspected };
+}
+
+function sourceBlockedForIngest(source: SourceRecord): boolean {
+  return source.consent_state !== 'granted' || source.enabled !== true || Boolean(source.paused_at);
+}
+
+function sourceLocatorOverlaps(sourceLocator: string | null | undefined, targetLocator: string): boolean {
+  if (!sourceLocator) return false;
+  if (sourceLocator === targetLocator) return true;
+  if (!sourceLocator.startsWith('file://') || !targetLocator.startsWith('file://')) {
+    return false;
+  }
+  return fileUrlContains(sourceLocator, targetLocator) || fileUrlContains(targetLocator, sourceLocator);
+}
+
+function fileUrlContains(container: string, candidate: string): boolean {
+  if (container === candidate) return true;
+  const prefix = container.endsWith('/') ? container : `${container}/`;
+  return candidate.startsWith(prefix);
 }
 
 async function getSourceInspectionRow(

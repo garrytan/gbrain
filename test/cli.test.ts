@@ -85,9 +85,15 @@ describe('CLI source shape', () => {
     expect(cliSource).not.toContain('planned, not yet implemented');
   });
 
-  test('connectors command is exposed as a registry inspection command', () => {
+  test('connectors command is exposed as an engine-backed registry sync command', () => {
     expect(cliSource).toContain("connectors: async () => (await import('./commands/connectors.ts')).runConnectors");
-    expect(cliSource).toContain('connectors [list|show]');
+    expect(cliSource).toContain('connectors [list|show|sync]');
+
+    const noEngineBlock = cliSource.match(/const DIRECT_NO_ENGINE_COMMANDS:.*?= \{(.*?)\};/s)?.[1] ?? '';
+    const engineBlock = cliSource.match(/const DIRECT_ENGINE_COMMANDS:.*?= \{(.*?)\};/s)?.[1] ?? '';
+    expect(noEngineBlock).not.toContain('connectors');
+    expect(engineBlock).toContain('connectors');
+    expect(cliSource).toContain("command === 'connectors' && args[0] !== 'sync'");
   });
 
   test('memory-report command is exposed as the review report surface', () => {
@@ -396,6 +402,70 @@ describe('CLI dispatch integration', () => {
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
     expect(stdout).toContain('Usage: mbrain get');
+    expect(exitCode).toBe(0);
+  });
+
+  test('connectors --help prints usage without DB connection', async () => {
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'connectors', '--help'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+    expect(stdout).toContain('Usage: mbrain connectors');
+    expect(stdout).toContain('--path');
+    expect(stderr).toBe('');
+    expect(exitCode).toBe(0);
+  });
+
+  test('connectors list prints registry definitions without DB connection', async () => {
+    writeUserConfig({
+      engine: 'postgres',
+      database_url: 'postgresql://user:pass@127.0.0.1:1/mbrain',
+      offline: false,
+      embedding_provider: 'none',
+      query_rewrite_provider: 'none',
+    });
+
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'connectors', 'list'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    expect(stdout).toContain('"id": "meeting_transcripts"');
+    expect(stderr).toBe('');
+    expect(exitCode).toBe(0);
+  });
+
+  test('connectors show prints one connector definition without DB connection', async () => {
+    writeUserConfig({
+      engine: 'postgres',
+      database_url: 'postgresql://user:pass@127.0.0.1:1/mbrain',
+      offline: false,
+      embedding_provider: 'none',
+      query_rewrite_provider: 'none',
+    });
+
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'connectors', 'show', 'meeting_transcripts'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    expect(stdout).toContain('"id": "meeting_transcripts"');
+    expect(stderr).toBe('');
     expect(exitCode).toBe(0);
   });
 
