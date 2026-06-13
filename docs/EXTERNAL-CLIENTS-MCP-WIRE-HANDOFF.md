@@ -8,6 +8,11 @@
 > **Status**: this doc replaces the old KOS-v1 contract (Bearer
 > `KOS_API_TOKEN` against `kos.chenge.ink/{query,ingest,digest,status}`).
 > Retire date: 2026-05-17 (`docs/JARVIS-ARCHITECTURE.md` §6.28).
+>
+> **Usage layer**: for the *how-to-use* guide (which client for what,
+> source-scope model, which tools/skills to expose to a chat LLM, common
+> pitfalls) see [`MAILAGENT-KOS-INTEGRATION-GUIDE.md`](./MAILAGENT-KOS-INTEGRATION-GUIDE.md).
+> This doc is the low-level wire spec underneath it.
 
 ---
 
