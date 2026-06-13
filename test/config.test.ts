@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'fs';
-import { isSensitiveConfigKey, redactConfigValue } from '../src/commands/config.ts';
+import { isSensitiveConfigKey, redactConfigValue, formatConfigValue } from '../src/commands/config.ts';
 
 // redactUrl is not exported, so we test it by reading the source and
 // reimplementing the regex to verify the pattern, then test via CLI
@@ -251,5 +251,33 @@ describe('loadConfig — GBRAIN_MAX_MARKUP_RATIO env (v0.42 #1699)', () => {
     await withHomeAndEnv({ GBRAIN_MAX_MARKUP_RATIO: '1.5' }, (cfg) => {
       expect((cfg as { content_sanity?: { max_markup_ratio?: number } }).content_sanity?.max_markup_ratio).toBeUndefined();
     });
+  });
+});
+
+describe('formatConfigValue', () => {
+  test('JSON-stringifies nested objects instead of rendering [object Object]', () => {
+    expect(formatConfigValue('mcp', { publish_skills: true })).toBe('{"publish_skills":true}');
+    expect(formatConfigValue('search', { mode: 'balanced' })).toBe('{"mode":"balanced"}');
+  });
+
+  test('JSON-stringifies arrays', () => {
+    expect(formatConfigValue('sources', ['a', 'b'])).toBe('["a","b"]');
+  });
+
+  test('no config value renders as "[object Object]"', () => {
+    for (const v of [{ mode: 'notify', mode_prompted: true }, { publish_skills: true }, ['x']]) {
+      expect(formatConfigValue('k', v)).not.toContain('[object Object]');
+    }
+  });
+
+  test('redacts sensitive string values', () => {
+    expect(formatConfigValue('zeroentropy_api_key', 'ze_secret123')).toBe('***');
+    expect(formatConfigValue('database_url', 'postgresql://user:pw@host:5432/db'))
+      .toBe('postgresql://user:***@host:5432/db');
+  });
+
+  test('passes through plain string + primitive values', () => {
+    expect(formatConfigValue('engine', 'postgres')).toBe('postgres');
+    expect(formatConfigValue('embedding_disabled', false)).toBe('false');
   });
 });
