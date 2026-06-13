@@ -525,12 +525,52 @@ function isCollectibleForWalker(
  *    index-based against a sorted list. Unstable order skips the wrong
  *    files on resume.
  */
+/**
+ * v0.42.x (bug 1 fix): the first-sync walker honored only a hardcoded prune
+ * set (`node_modules`, `ops`, dot-dirs), so it indexed gitignored build output
+ * — iOS `build/`, `DerivedData/`, `Pods/`, Rust `target/`, web `dist/` — that
+ * the incremental git-diff path (sync.ts uses `git ls-files --exclude-standard`)
+ * correctly skips. That left first-sync and incremental-sync disagreeing about
+ * what's in scope, polluting the brain with generated files.
+ *
+ * Compute the repo's ignored top-level entries once via git and skip them in
+ * the walk so first-sync matches incremental-sync. `--directory` collapses a
+ * fully-ignored dir to a single `build/` entry; we strip the trailing slash and
+ * match the absolute path lexically against walk entries. Best-effort: a non-git
+ * dir or any git failure yields an empty set, so the walk behaves exactly as
+ * before (no regression for non-git imports).
+ */
+function collectGitIgnoredPaths(dir: string): Set<string> {
+  try {
+    const out = execFileSync(
+      'git',
+      ['-c', 'core.quotePath=false', '-C', dir,
+        'ls-files', '--others', '--ignored', '--exclude-standard', '--directory'],
+      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 256 * 1024 * 1024 },
+    );
+    const set = new Set<string>();
+    for (const line of out.split('\n')) {
+      const rel = line.trim().replace(/\/+$/, '');
+      if (!rel) continue;
+      set.add(join(dir, rel));
+    }
+    return set;
+  } catch {
+    // Not a git repo, git not installed, or the command failed — fall back to
+    // the legacy prune-only behavior. Never block the import.
+    return new Set();
+  }
+}
+
 export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): string[] {
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
   const multimodalOn = process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
   const maxDepth = resolveMaxWalkDepth();
   const visitedInodes = new Map<string, true>();
   const files: string[] = [];
+  // Skip paths the repo's own .gitignore excludes (build output, vendored deps)
+  // so first-sync matches incremental-sync. Empty for non-git dirs.
+  const gitIgnored = collectGitIgnoredPaths(dir);
 
   function walk(d: string, depth: number): void {
     if (depth >= maxDepth) {
@@ -563,6 +603,10 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
         console.warn(`[gbrain import] Skipping symlink: ${full}`);
         continue;
       }
+
+      // Honor the repo's .gitignore: skip ignored dirs (don't descend) and
+      // ignored files, matching the incremental git-diff sync path.
+      if (gitIgnored.has(full)) continue;
 
       if (stat.isDirectory()) {
         const inodeKey = `${stat.dev}:${stat.ino}`;
