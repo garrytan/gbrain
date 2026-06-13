@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { operations, operationsByName } from '../src/core/operations.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import type { Operation } from '../src/core/operations.ts';
 import type { PageType, SearchResult, Page, Link } from '../src/core/types.ts';
@@ -107,6 +108,113 @@ describe('operations contract parity', () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────
+// Cross-engine parity seeds — SQLite and PGLite
+// ─────────────────────────────────────────────────────────────────
+
+describe('SQLite/PGLite behavioral parity seeds', () => {
+  test('agree on filtered page lists and batch link maps', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-pglite-parity-'));
+    const sqlite = new SQLiteEngine();
+    const pglite = new PGLiteEngine();
+
+    try {
+      await sqlite.connect({ engine: 'sqlite', database_path: join(root, 'brain.db') });
+      await sqlite.initSchema();
+      await pglite.connect({ engine: 'pglite', database_path: join(root, 'brain.pglite') });
+      await pglite.initSchema();
+
+      await seedListAndLinkFixture(sqlite);
+      await seedListAndLinkFixture(pglite);
+
+      const sqliteSnapshot = await collectListAndLinkSnapshot(sqlite);
+      const pgliteSnapshot = await collectListAndLinkSnapshot(pglite);
+
+      expect(sqliteSnapshot).toEqual({
+        conceptPages: ['concepts/parity-alpha', 'concepts/parity-gamma'],
+        parityTaggedPages: ['concepts/parity-alpha', 'concepts/parity-gamma'],
+        parityTaggedConcepts: ['concepts/parity-alpha', 'concepts/parity-gamma'],
+        linksBySlug: {
+          'concepts/parity-alpha': ['concepts/parity-alpha->people/parity-beta:mentions:alpha to beta'],
+          'concepts/parity-gamma': ['concepts/parity-gamma->people/parity-beta:mentions:gamma to beta'],
+          'people/parity-beta': ['people/parity-beta->concepts/parity-alpha:supports:beta to alpha'],
+        },
+        backlinksBySlug: {
+          'concepts/parity-alpha': ['people/parity-beta->concepts/parity-alpha:supports:beta to alpha'],
+          'concepts/parity-gamma': [],
+          'people/parity-beta': [
+            'concepts/parity-alpha->people/parity-beta:mentions:alpha to beta',
+            'concepts/parity-gamma->people/parity-beta:mentions:gamma to beta',
+          ],
+        },
+      });
+      expect(pgliteSnapshot).toEqual(sqliteSnapshot);
+    } finally {
+      await sqlite.disconnect().catch(() => undefined);
+      await pglite.disconnect().catch(() => undefined);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+type ListAndLinkEngine = Pick<
+  SQLiteEngine,
+  'putPage' | 'addTag' | 'addLink' | 'listPages' | 'getLinksForSlugs' | 'getBacklinksForSlugs'
+>;
+
+async function seedListAndLinkFixture(engine: ListAndLinkEngine): Promise<void> {
+  await engine.putPage('concepts/parity-alpha', {
+    type: 'concept',
+    title: 'Parity Alpha',
+    compiled_truth: 'Alpha parity concept.',
+  });
+  await engine.putPage('people/parity-beta', {
+    type: 'person',
+    title: 'Parity Beta',
+    compiled_truth: 'Beta parity person.',
+  });
+  await engine.putPage('concepts/parity-gamma', {
+    type: 'concept',
+    title: 'Parity Gamma',
+    compiled_truth: 'Gamma parity concept.',
+  });
+
+  await engine.addTag('concepts/parity-alpha', 'parity');
+  await engine.addTag('concepts/parity-gamma', 'parity');
+  await engine.addTag('people/parity-beta', 'people');
+
+  await engine.addLink('concepts/parity-alpha', 'people/parity-beta', 'alpha to beta', 'mentions');
+  await engine.addLink('concepts/parity-gamma', 'people/parity-beta', 'gamma to beta', 'mentions');
+  await engine.addLink('people/parity-beta', 'concepts/parity-alpha', 'beta to alpha', 'supports');
+}
+
+async function collectListAndLinkSnapshot(engine: ListAndLinkEngine) {
+  const slugs = ['concepts/parity-alpha', 'concepts/parity-gamma', 'people/parity-beta'];
+
+  return {
+    conceptPages: (await engine.listPages({ type: 'concept' })).map((page) => page.slug).sort(),
+    parityTaggedPages: (await engine.listPages({ tag: 'parity' })).map((page) => page.slug).sort(),
+    parityTaggedConcepts: (await engine.listPages({ type: 'concept', tag: 'parity' }))
+      .map((page) => page.slug)
+      .sort(),
+    linksBySlug: normalizeLinkMap(await engine.getLinksForSlugs(slugs)),
+    backlinksBySlug: normalizeLinkMap(await engine.getBacklinksForSlugs(slugs)),
+  };
+}
+
+function normalizeLinkMap(map: Map<string, Link[]>): Record<string, string[]> {
+  return Object.fromEntries(
+    [...map.entries()]
+      .map(([slug, links]) => [
+        slug,
+        links
+          .map((link) => `${link.from_slug}->${link.to_slug}:${link.link_type}:${link.context}`)
+          .sort(),
+      ] as const)
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────
 // Behavioral correctness tests — real SQLiteEngine operations
