@@ -123,6 +123,58 @@ describe('hybridSearch', () => {
     expect(vectorCalls).toHaveLength(2);
     expect(results.map((entry) => entry.slug)).toEqual(['concepts/hybrid']);
   });
+
+  test('applies bounded semantic boost after RRF fusion when vector scores are available', async () => {
+    setEmbeddingProviderForTests({
+      capability: {
+        available: true,
+        mode: 'local',
+        implementation: 'test-local',
+        model: 'test-local-v1',
+        dimensions: 3,
+      },
+      embedBatch: async () => [new Float32Array([1, 0, 0])],
+    });
+
+    const engine = {
+      searchKeyword: async () => [
+        makeResult({
+          slug: 'concepts/keyword-only',
+          page_id: 101,
+          title: 'Keyword Only',
+          type: 'concept',
+          chunk_text: 'keyword match without semantic confidence',
+          score: 1,
+        }),
+      ],
+      searchVector: async () => [
+        makeResult({
+          slug: 'concepts/vector-low',
+          page_id: 102,
+          title: 'Vector Low',
+          type: 'person',
+          chunk_text: 'semantic neighbor with weak vector score',
+          score: 0.1,
+        }),
+        makeResult({
+          slug: 'concepts/semantic-best',
+          page_id: 103,
+          title: 'Semantic Best',
+          type: 'project',
+          chunk_text: 'semantic neighbor with strong vector score',
+          score: 0.95,
+        }),
+      ],
+    } as Pick<BrainEngine, 'searchKeyword' | 'searchVector'> as BrainEngine;
+
+    const results = await hybridSearch(engine, 'semantic confidence', { limit: 3 });
+
+    expect(results.map((entry) => entry.slug)).toEqual([
+      'concepts/semantic-best',
+      'concepts/vector-low',
+      'concepts/keyword-only',
+    ]);
+  });
 });
 
 describe('hybridSearchWithMeta expansion failure flag (C-20)', () => {
