@@ -1763,8 +1763,8 @@ describe('retrieve context service', () => {
         .toContain('concepts/canonical-memory');
       expect(result.required_reads.map((selector) => selector.slug))
         .not.toContain('systems/derived-memory-map');
-      expect(result.read_plan.selected_selectors)
-        .not.toContain('compiled_truth:workspace:default:systems/derived-memory-map');
+      expect(result.read_plan.selected_selectors.some((selectorId) =>
+        selectorId.includes('systems/derived-memory-map'))).toBe(false);
       expect(result.read_plan.next_actions).toContain(
         'Broad-synthesis route contributes orientation reads only; read_plan.selected_selectors remains the evidence boundary.',
       );
