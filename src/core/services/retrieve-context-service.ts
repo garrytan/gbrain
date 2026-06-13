@@ -260,7 +260,6 @@ export async function retrieveContext(
   const candidates = await groupCandidatesByCanonicalPage(engine, searchResults, limit, query, scopeGate);
   const baseRequiredReads = dedupeSelectorsByEvidence([
     ...candidates.map((candidate) => candidate.read_selector),
-    ...orientation.recommended_reads,
   ].filter((selector) => selectorAllowedByRetrieveScope(selector, scopeGate))).slice(0, requiredReadLimit);
   const graphAugmentation = await maybeAugmentRequiredReadsWithGraphFrontier(engine, input, dependencies, {
     query,
@@ -1408,7 +1407,7 @@ function buildReadPlan(input: {
     next_actions: readPlanNextActions(
       selectedSelectors,
       deferredCandidateIds,
-      input.orientation.recommended_reads.length > 0,
+      deferredOrientationReads.length > 0,
       input.candidate_signals,
     ),
   };

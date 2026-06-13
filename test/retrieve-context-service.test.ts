@@ -1672,7 +1672,7 @@ describe('retrieve context service', () => {
     });
   });
 
-  test('uses context maps as orientation and keeps required reads canonical', async () => {
+  test('uses context maps as orientation without making route reads the evidence boundary', async () => {
     await withEngine('orientation', async (engine) => {
       await importFromContent(engine, 'systems/mbrain', [
         '---',
@@ -1703,10 +1703,12 @@ describe('retrieve context service', () => {
       expect(result.answerability.answerable_from_probe).toBe(false);
       expect(result.orientation.derived_consulted.some((ref) => ref.startsWith('context_map:'))).toBe(true);
       expect(result.orientation.recommended_reads.length).toBeGreaterThan(0);
-      expect(result.required_reads.map(retrievalSelectorId)).toEqual(
-        result.orientation.recommended_reads.map(retrievalSelectorId),
+      expect(result.required_reads).toEqual([]);
+      expect(result.read_plan.selected_selectors).toEqual([]);
+      expect(result.read_plan.gap_reasons).toContain('orientation_reads_deferred');
+      expect(result.read_plan.next_actions).toContain(
+        'Broad-synthesis route contributes orientation reads only; read_plan.selected_selectors remains the evidence boundary.',
       );
-      expect(result.required_reads.every((selector) => selector.kind !== 'source_ref')).toBe(true);
     });
   });
 
@@ -1724,10 +1726,10 @@ describe('retrieve context service', () => {
       await importFromContent(engine, 'systems/derived-memory-map', [
         '---',
         'type: system',
-        'title: Derived Memory Map',
+        'title: Canonical Memory System',
         '---',
         '# Overview',
-        'The derived map links to [[concepts/canonical-memory]] for broad orientation.',
+        'The derived map discusses Canonical Memory for broad orientation, without being linked evidence.',
         '[Source: User, direct message, 2026-05-07 09:21 KST]',
       ].join('\n'), { path: 'systems/derived-memory-map.md' });
       await buildStructuralContextMapEntry(engine);
@@ -1754,10 +1756,15 @@ describe('retrieve context service', () => {
       });
 
       const broadReadSlugs = broadRoute.route!.recommended_reads.map((read) => read.page_slug);
+      expect(broadReadSlugs).toContain('systems/derived-memory-map');
       expect(result.orientation.recommended_reads.map((selector) => selector.slug))
         .toEqual(expect.arrayContaining(broadReadSlugs));
       expect(result.required_reads.map((selector) => selector.slug))
         .toContain('concepts/canonical-memory');
+      expect(result.required_reads.map((selector) => selector.slug))
+        .not.toContain('systems/derived-memory-map');
+      expect(result.read_plan.selected_selectors)
+        .not.toContain('compiled_truth:workspace:default:systems/derived-memory-map');
       expect(result.read_plan.next_actions).toContain(
         'Broad-synthesis route contributes orientation reads only; read_plan.selected_selectors remains the evidence boundary.',
       );
