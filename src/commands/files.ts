@@ -73,6 +73,9 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
     case 'clean':
       await cleanFiles(args.slice(1));
       break;
+    case 'delete':
+      await deleteFile(engine, args.slice(1));
+      break;
     case 'upload-raw':
       await uploadRaw(engine, args.slice(1));
       break;
@@ -95,6 +98,7 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
       console.error(`  redirect <dir> [--dry-run]  Replace files with .redirect.yaml pointers`);
       console.error(`  restore <dir>             Download from storage, recreate local files`);
       console.error(`  clean <dir> [--yes]       Delete redirect pointers (irreversible)`);
+      console.error(`  delete --id <id>|--path <path> [--yes] [--json]  Delete file row from DB (orphan/missing cleanup)`);
       console.error(`  status                    Show migration status of directories`);
       process.exit(1);
   }
@@ -602,6 +606,75 @@ async function cleanFiles(args: string[]) {
 
   console.log(`Cleaned ${cleaned} redirect breadcrumbs. Cloud storage is now the only source.`);
 }
+/**
+ * v0.42.43.0 (PR #2xxx): delete a file row from the `files` table.
+ * Use case: doctor `image_assets` WARN surfaces vanished images whose
+ * files rows still exist; this verb lets operators clean those up
+ * without going to SQL. The pre-#2xxx fix path (`gbrain sync --skip-failed`)
+ * only acknowledges sync-level failures, not per-file rows.
+ *
+ * Required: --id <id> OR --path <path>
+ * Confirm:  --yes (interactive: prints rows + asks for re-run)
+ * Format:   --json
+ */
+async function deleteFile(engine: BrainEngine, args: string[]) {
+  const confirmed = args.includes('--yes');
+  const json = args.includes('--json');
+  const idIdx = args.indexOf('--id');
+  const pathIdx = args.indexOf('--path');
+  const id = idIdx !== -1 ? Number(args[idIdx + 1]) : null;
+  const storagePath = pathIdx !== -1 ? args[pathIdx + 1] : null;
+
+  if ((id === null || !Number.isFinite(id)) && !storagePath) {
+    console.error('Usage: gbrain files delete --id <id> | --path <path> [--yes] [--json]');
+    console.error('At least one of --id or --path is required.');
+    process.exit(1);
+  }
+
+  type RowShape = { id: number; storage_path: string; original_name: string; page_slug: string | null };
+  let rows: RowShape[];
+  if (id !== null) {
+    rows = await engine.executeRaw<RowShape>(
+      `SELECT id, storage_path, original_name, page_slug FROM files WHERE id = $1`,
+      [id],
+    );
+  } else {
+    rows = await engine.executeRaw<RowShape>(
+      `SELECT id, storage_path, original_name, page_slug FROM files WHERE storage_path = $1 OR original_name = $1`,
+      [storagePath!],
+    );
+  }
+
+  if (rows.length === 0) {
+    if (json) console.log(JSON.stringify({ status: 'not_found', id, storage_path: storagePath }));
+    else console.error(`No file row matches ${id !== null ? `id=${id}` : `path=${storagePath}`}.`);
+    process.exit(1);
+  }
+
+  if (!confirmed) {
+    if (json) {
+      console.log(JSON.stringify({ status: 'confirm_required', rows }));
+    } else {
+      console.error(`About to permanently delete ${rows.length} file row(s):`);
+      for (const r of rows) console.error(`  id=${r.id}  path=${r.storage_path}  page=${r.page_slug ?? '(none)'}`);
+      console.error('Re-run with --yes to confirm.');
+    }
+    process.exit(1);
+  }
+
+  const ids = rows.map(r => r.id);
+  const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
+  const result = await engine.executeRaw<{ id: number }>(
+    `DELETE FROM files WHERE id IN (${placeholders}) RETURNING id`,
+    ids,
+  );
+  if (json) {
+    console.log(JSON.stringify({ status: 'deleted', count: result.length, ids: result.map(r => r.id) }));
+  } else {
+    console.log(`Deleted ${result.length} file row(s): ${result.map(r => r.id).join(', ')}`);
+  }
+}
+
 
 async function filesStatus(args: string[]) {
   const dir = args[0] || '.';
