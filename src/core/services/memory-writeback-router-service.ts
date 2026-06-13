@@ -407,7 +407,7 @@ function personalTargetMissingRequirements(
   sensitivity: MemoryCandidateSensitivity,
   targetObjectType: MemoryCandidateTargetObjectType | null,
 ): string[] {
-  if (!targetObjectType || !PERSONAL_ONLY_TARGET_TYPES.has(targetObjectType)) return [];
+  if (!requiresPersonalTargetValidation(scopeId, sensitivity, targetObjectType)) return [];
   const missing: string[] = [];
   if (!normalizeOptionalString(input.scope_id) || !scopeId.startsWith('personal:')) {
     missing.push('scope_id');
@@ -416,6 +416,16 @@ function personalTargetMissingRequirements(
     missing.push('sensitivity');
   }
   return missing;
+}
+
+function requiresPersonalTargetValidation(
+  scopeId: string,
+  sensitivity: MemoryCandidateSensitivity,
+  targetObjectType: MemoryCandidateTargetObjectType | null,
+): boolean {
+  if (targetObjectType && PERSONAL_ONLY_TARGET_TYPES.has(targetObjectType)) return true;
+  if (targetObjectType && targetObjectType !== 'other') return false;
+  return scopeId.startsWith('personal:') || sensitivity === 'personal';
 }
 
 function personalTargetMissingReasons(missing: string[]): string[] {

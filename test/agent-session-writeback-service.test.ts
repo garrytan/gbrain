@@ -370,9 +370,10 @@ test('work-scoped malformed profile signal without target type does not direct w
       write_mode: 'direct_personal_when_allowed',
     });
 
-    expect(result.route?.decision).toBe('create_candidate');
+    expect(result.route?.decision).toBe('defer');
+    expect(result.route?.missing_requirements).toContain('scope_id');
     expect(result.direct_write).toBeNull();
-    expect(result.blocked_reason).toBe('direct_personal_scope_blocked');
+    expect(result.blocked_reason).toBe('direct_personal_route_blocked');
     await expectNoProfileRows(engine);
   });
 });
@@ -392,9 +393,10 @@ test('work-sensitivity malformed profile signal without target type does not dir
       write_mode: 'direct_personal_when_allowed',
     });
 
-    expect(result.route?.decision).toBe('create_candidate');
+    expect(result.route?.decision).toBe('defer');
+    expect(result.route?.missing_requirements).toContain('sensitivity');
     expect(result.direct_write).toBeNull();
-    expect(result.blocked_reason).toBe('direct_personal_sensitivity_blocked');
+    expect(result.blocked_reason).toBe('direct_personal_route_blocked');
     await expectNoProfileRows(engine);
   });
 });

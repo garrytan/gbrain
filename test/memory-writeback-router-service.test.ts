@@ -348,6 +348,35 @@ describe('memory writeback router service', () => {
     expect(result.candidate_input).toBeUndefined();
   });
 
+  test('defers untyped personal candidates without explicit personal scope and sensitivity', () => {
+    const missingSensitivity = routeMemoryWriteback({
+      content: 'The user prefers private weekend planning notes.',
+      evidence_kind: 'direct_user_statement',
+      source_refs: sourceRefs,
+      target_object_id: 'profile:user-preferences',
+      scope_id: 'personal:default',
+    });
+
+    expect(missingSensitivity.decision).toBe('defer');
+    expect(missingSensitivity.reasons).toContain('personal_target_sensitivity_required');
+    expect(missingSensitivity.missing_requirements).toContain('sensitivity');
+    expect(missingSensitivity.candidate_input).toBeUndefined();
+
+    const missingScope = routeMemoryWriteback({
+      content: 'The user prefers private weekend planning notes.',
+      evidence_kind: 'direct_user_statement',
+      source_refs: sourceRefs,
+      target_object_type: 'other',
+      target_object_id: 'profile:user-preferences',
+      sensitivity: 'personal',
+    });
+
+    expect(missingScope.decision).toBe('defer');
+    expect(missingScope.reasons).toContain('personal_target_scope_required');
+    expect(missingScope.missing_requirements).toContain('scope_id');
+    expect(missingScope.candidate_input).toBeUndefined();
+  });
+
   test('creates personal target candidates when personal scope and sensitivity are explicit', () => {
     const result = routeMemoryWriteback({
       content: 'The user prefers private weekend planning notes.',
