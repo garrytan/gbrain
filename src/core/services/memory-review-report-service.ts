@@ -411,8 +411,8 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
   if (report.summary.review_items >= MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD) {
     lines.push(
       '',
-      `WARNING: review backlog pressure — ${report.summary.review_items} candidates are staged for review (threshold ${MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD}).`,
-      'Promote, reject, or supersede staged candidates before the backlog drifts further.',
+      `WARNING: review backlog pressure — ${report.summary.review_items} candidates need review or staging (threshold ${MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD}).`,
+      'Stage candidate items first, then promote, reject, or supersede staged candidates.',
     );
   }
 

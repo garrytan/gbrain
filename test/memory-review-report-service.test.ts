@@ -1439,14 +1439,14 @@ describe('memory review report service', () => {
     }
   });
 
-  test('warns at the top of the report when the review backlog exceeds the pressure threshold', () => {
+  test('warns at the top of the report when the review and staging backlog exceeds the pressure threshold', () => {
     const report = buildMemoryReviewReport({
       scope_id: 'workspace:default',
       generated_at: now,
       review_items: Array.from({ length: MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD }, (_, index) => ({
         id: `candidate:${index}`,
-        review_type: 'candidate',
-        summary: `Staged candidate ${index}`,
+        review_type: index === 0 ? 'candidate_staging' : 'candidate',
+        summary: index === 0 ? `Candidate ${index} needs staging` : `Staged candidate ${index}`,
         severity: 'medium' as const,
       })),
     });
@@ -1455,7 +1455,9 @@ describe('memory review report service', () => {
     const warningIndex = formatted.indexOf('WARNING: review backlog pressure');
     expect(warningIndex).toBeGreaterThan(-1);
     expect(formatted.slice(0, warningIndex)).not.toContain('Summary');
-    expect(formatted).toContain(`${MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD} candidates are staged for review`);
+    expect(formatted).toContain(`${MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD} candidates need review or staging`);
+    expect(formatted).toContain('Stage candidate items first, then promote, reject, or supersede staged candidates.');
+    expect(formatted).not.toContain('candidates are staged for review');
   });
 
   test('emits no backlog warning below the pressure threshold', () => {
