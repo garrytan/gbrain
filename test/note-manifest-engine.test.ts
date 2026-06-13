@@ -126,6 +126,31 @@ for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
       await harness.cleanup();
     }
   }, createHarness === createPgliteHarness ? PGLITE_REOPEN_TEST_TIMEOUT_MS : undefined);
+
+  test(`${createHarness.name} lists note manifest entries by slug batch`, async () => {
+    const harness = await createHarness();
+
+    try {
+      await seedManifest(harness.engine, `concepts/note-manifest-${harness.label}-a`, `concepts/note-manifest-${harness.label}-a.md`);
+      await seedManifest(harness.engine, `concepts/note-manifest-${harness.label}-b`, `concepts/note-manifest-${harness.label}-b.md`);
+      await seedManifest(harness.engine, `concepts/note-manifest-${harness.label}-other`, `concepts/note-manifest-${harness.label}-other.md`);
+
+      const entries = await harness.engine.listNoteManifestEntries({
+        scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+        slugs: [
+          `CONCEPTS/NOTE-MANIFEST-${harness.label.toUpperCase()}-A`,
+          `concepts/note-manifest-${harness.label}-b`,
+        ],
+      });
+
+      expect(entries.map((entry) => entry.slug).sort()).toEqual([
+        `concepts/note-manifest-${harness.label}-a`,
+        `concepts/note-manifest-${harness.label}-b`,
+      ]);
+    } finally {
+      await harness.cleanup();
+    }
+  }, createHarness === createPgliteHarness ? PGLITE_REOPEN_TEST_TIMEOUT_MS : undefined);
 }
 
 test('note manifest engines honor limit and offset filters', async () => {

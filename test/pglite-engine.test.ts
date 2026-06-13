@@ -584,6 +584,22 @@ describe('PGLiteEngine: Links', () => {
     expect(backlinks[0].from_slug).toBe('people/alice');
   });
 
+  test('getLinksForSlugs + getBacklinksForSlugs group links by slug', async () => {
+    await engine.addLink('people/alice', 'companies/acme', 'works at', 'employment');
+    await engine.addLink('people/alice', 'companies/beta', 'advises', 'advisor');
+    await engine.addLink('companies/beta', 'companies/acme', 'partners with', 'partner');
+
+    const linksBySlug = await engine.getLinksForSlugs(['people/alice', 'companies/beta', 'companies/missing']);
+    const backlinksBySlug = await engine.getBacklinksForSlugs(['companies/acme', 'companies/beta', 'companies/missing']);
+
+    expect(linksBySlug.get('people/alice')?.map((link) => link.to_slug)).toEqual(['companies/acme', 'companies/beta']);
+    expect(linksBySlug.get('companies/beta')?.map((link) => link.to_slug)).toEqual(['companies/acme']);
+    expect(linksBySlug.get('companies/missing')).toEqual([]);
+    expect(backlinksBySlug.get('companies/acme')?.map((link) => link.from_slug)).toEqual(['companies/beta', 'people/alice']);
+    expect(backlinksBySlug.get('companies/beta')?.map((link) => link.from_slug)).toEqual(['people/alice']);
+    expect(backlinksBySlug.get('companies/missing')).toEqual([]);
+  });
+
   test('removeLink', async () => {
     await engine.addLink('people/alice', 'companies/acme');
     await engine.removeLink('people/alice', 'companies/acme');

@@ -47,6 +47,7 @@ export interface NoteManifestEntryInput {
 export interface NoteManifestFilters {
   scope_id?: string;
   slug?: string;
+  slugs?: string[];
   limit?: number;
   offset?: number;
 }

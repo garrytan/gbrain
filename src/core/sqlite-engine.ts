@@ -1353,6 +1353,28 @@ export class SQLiteEngine implements BrainEngine {
     return rows.map(rowToLink);
   }
 
+  async getLinksForSlugs(slugs: string[]): Promise<Map<string, Link[]>> {
+    const normalizedSlugs = uniqueValidatedSlugs(slugs);
+    const linksBySlug = new Map(normalizedSlugs.map((slug) => [slug, [] as Link[]]));
+    if (normalizedSlugs.length === 0) return linksBySlug;
+
+    const placeholders = normalizedSlugs.map(() => '?').join(', ');
+    const rows = this.database.query(`
+      SELECT f.slug AS from_slug, t.slug AS to_slug, l.link_type, l.context
+      FROM links l
+      JOIN pages f ON f.id = l.from_page_id
+      JOIN pages t ON t.id = l.to_page_id
+      WHERE f.slug IN (${placeholders})
+      ORDER BY f.slug, t.slug
+    `).all(...sqliteBindings(normalizedSlugs)) as Record<string, unknown>[];
+
+    for (const row of rows) {
+      const link = rowToLink(row);
+      linksBySlug.get(link.from_slug)?.push(link);
+    }
+    return linksBySlug;
+  }
+
   async getBacklinks(slug: string): Promise<Link[]> {
     const rows = this.database.query(`
       SELECT f.slug AS from_slug, t.slug AS to_slug, l.link_type, l.context
@@ -1363,6 +1385,28 @@ export class SQLiteEngine implements BrainEngine {
       ORDER BY f.slug
     `).all(validateSlug(slug)) as Record<string, unknown>[];
     return rows.map(rowToLink);
+  }
+
+  async getBacklinksForSlugs(slugs: string[]): Promise<Map<string, Link[]>> {
+    const normalizedSlugs = uniqueValidatedSlugs(slugs);
+    const backlinksBySlug = new Map(normalizedSlugs.map((slug) => [slug, [] as Link[]]));
+    if (normalizedSlugs.length === 0) return backlinksBySlug;
+
+    const placeholders = normalizedSlugs.map(() => '?').join(', ');
+    const rows = this.database.query(`
+      SELECT f.slug AS from_slug, t.slug AS to_slug, l.link_type, l.context
+      FROM links l
+      JOIN pages f ON f.id = l.from_page_id
+      JOIN pages t ON t.id = l.to_page_id
+      WHERE t.slug IN (${placeholders})
+      ORDER BY t.slug, f.slug
+    `).all(...sqliteBindings(normalizedSlugs)) as Record<string, unknown>[];
+
+    for (const row of rows) {
+      const link = rowToLink(row);
+      backlinksBySlug.get(link.to_slug)?.push(link);
+    }
+    return backlinksBySlug;
   }
 
   async traverseGraph(slug: string, depth: number = 5): Promise<GraphNode[]> {
@@ -3686,7 +3730,8 @@ export class SQLiteEngine implements BrainEngine {
   }
 
   async listNoteManifestEntries(filters?: NoteManifestFilters): Promise<NoteManifestEntry[]> {
-    const limit = filters?.limit ?? 100;
+    const slugsFilter = filters?.slugs !== undefined ? uniqueValidatedSlugs(filters.slugs) : undefined;
+    const limit = filters?.limit ?? slugsFilter?.length ?? 100;
     const offset = filters?.offset ?? 0;
     const clauses: string[] = [];
     const params: unknown[] = [];
@@ -3698,6 +3743,11 @@ export class SQLiteEngine implements BrainEngine {
     if (filters?.slug) {
       clauses.push('slug = ?');
       params.push(validateSlug(filters.slug));
+    }
+    if (slugsFilter !== undefined) {
+      if (slugsFilter.length === 0) return [];
+      clauses.push(`slug IN (${slugsFilter.map(() => '?').join(', ')})`);
+      params.push(...slugsFilter);
     }
 
     params.push(limit);
@@ -7895,6 +7945,18 @@ function validateSlug(slug: string): string {
     throw new Error(`Invalid slug: "${slug}". Slugs cannot be empty, start with /, or contain path traversal.`);
   }
   return slug.toLowerCase();
+}
+
+function uniqueValidatedSlugs(slugs: string[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const slug of slugs) {
+    const normalized = validateSlug(slug);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    output.push(normalized);
+  }
+  return output;
 }
 
 function nowIso(): string {

@@ -10,7 +10,7 @@ import { retrieveContext } from '../src/core/services/retrieve-context-service.t
 import { retrievalSelectorId } from '../src/core/services/retrieval-selector-service.ts';
 import { sourceRankCandidateLimit } from '../src/core/search/source-ranking.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
-import type { GraphFrontierEdge, GraphFrontierInput, GraphFrontierNode, MemoryCandidateEntryInput, SearchResult } from '../src/core/types.ts';
+import type { GraphFrontierEdge, GraphFrontierInput, GraphFrontierNode, Link, MemoryCandidateEntryInput, SearchResult } from '../src/core/types.ts';
 
 async function withEngine<T>(label: string, fn: (engine: SQLiteEngine) => Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), `mbrain-retrieve-context-${label}-`));
@@ -878,7 +878,9 @@ describe('retrieve context service', () => {
         'Queue routing explains worker lane assignment.',
       ].join('\n'), { path: 'concepts/queue-routing.md' });
       await engine.addLink('systems/runtime-platform', 'concepts/queue-routing', 'related routing concept', 'related');
-      engine.listNoteManifestEntries = async () => {
+      const originalListManifest = engine.listNoteManifestEntries.bind(engine);
+      engine.listNoteManifestEntries = async (filters) => {
+        if (filters?.slug || filters?.slugs !== undefined) return originalListManifest(filters);
         throw new Error('explicit link expansion should not scan all manifests');
       };
 
@@ -941,6 +943,275 @@ describe('retrieve context service', () => {
       });
 
       expect(result.required_reads.map((selector) => selector.slug)).toContain('concepts/queue-routing');
+    });
+  });
+
+  test('batches manifest lookups for seed and linked candidate pages', async () => {
+    await withEngine('candidate-manifest-batching', async (engine) => {
+      await importFromContent(engine, 'systems/runtime-platform', [
+        '---',
+        'type: system',
+        'title: Runtime Platform',
+        '---',
+        '# Runtime Platform',
+        'Runtime platform overview links to [[concepts/queue-routing]].',
+      ].join('\n'), { path: 'systems/runtime-platform.md' });
+      await importFromContent(engine, 'systems/runtime-workers', [
+        '---',
+        'type: system',
+        'title: Runtime Workers',
+        '---',
+        '# Runtime Workers',
+        'Runtime workers link to [[concepts/worker-lanes]].',
+      ].join('\n'), { path: 'systems/runtime-workers.md' });
+      await importFromContent(engine, 'concepts/queue-routing', [
+        '---',
+        'type: concept',
+        'title: Queue Routing',
+        '---',
+        '# Queue Routing',
+        'Queue routing explains synthetic worker assignment.',
+      ].join('\n'), { path: 'concepts/queue-routing.md' });
+      await importFromContent(engine, 'concepts/worker-lanes', [
+        '---',
+        'type: concept',
+        'title: Worker Lanes',
+        '---',
+        '# Worker Lanes',
+        'Worker lanes describe runtime queue capacity.',
+      ].join('\n'), { path: 'concepts/worker-lanes.md' });
+
+      const originalListManifest = engine.listNoteManifestEntries.bind(engine);
+      const manifestFilters: Array<{ slug?: string; slugs?: string[] }> = [];
+      const batchedEngine = new Proxy(engine, {
+        get(target, prop, receiver) {
+          if (prop === 'getNoteManifestEntry') {
+            return async () => {
+              throw new Error('retrieve_context should batch manifest lookups');
+            };
+          }
+          if (prop === 'listNoteManifestEntries') {
+            return async (filters?: Parameters<SQLiteEngine['listNoteManifestEntries']>[0] & { slugs?: string[] }) => {
+              manifestFilters.push({ slug: filters?.slug, slugs: filters?.slugs });
+              return originalListManifest(filters);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as SQLiteEngine;
+
+      const result = await retrieveContext(batchedEngine, {
+        query: 'runtime queue worker lanes',
+        include_orientation: false,
+        limit: 4,
+      }, {
+        candidateSearch: async () => [
+          {
+            slug: 'systems/runtime-platform',
+            page_id: 1,
+            title: 'Runtime Platform',
+            type: 'system',
+            chunk_text: 'Runtime platform overview links to queue routing.',
+            chunk_source: 'compiled_truth',
+            score: 1,
+            stale: false,
+          },
+          {
+            slug: 'systems/runtime-workers',
+            page_id: 2,
+            title: 'Runtime Workers',
+            type: 'system',
+            chunk_text: 'Runtime workers link to worker lanes.',
+            chunk_source: 'compiled_truth',
+            score: 0.99,
+            stale: false,
+          },
+        ],
+      });
+
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('concepts/worker-lanes');
+      expect(manifestFilters.some((filter) =>
+        filter.slugs?.includes('systems/runtime-platform')
+        && filter.slugs?.includes('systems/runtime-workers'))).toBe(true);
+      expect(manifestFilters.some((filter) =>
+        filter.slugs?.includes('concepts/queue-routing')
+        && filter.slugs?.includes('concepts/worker-lanes'))).toBe(true);
+      expect(manifestFilters.some((filter) => filter.slug)).toBe(false);
+    });
+  });
+
+  test('uses batched explicit link lookups when the engine provides them', async () => {
+    await withEngine('candidate-explicit-link-batching', async (engine) => {
+      await importFromContent(engine, 'systems/runtime-platform', [
+        '---',
+        'type: system',
+        'title: Runtime Platform',
+        '---',
+        '# Runtime Platform',
+        'Runtime platform overview for synthetic services.',
+      ].join('\n'), { path: 'systems/runtime-platform.md' });
+      await importFromContent(engine, 'concepts/queue-routing', [
+        '---',
+        'type: concept',
+        'title: Queue Routing',
+        '---',
+        '# Queue Routing',
+        'Queue routing explains worker lane assignment.',
+      ].join('\n'), { path: 'concepts/queue-routing.md' });
+
+      const link: Link = {
+        from_slug: 'systems/runtime-platform',
+        to_slug: 'concepts/queue-routing',
+        link_type: 'related',
+        context: 'batched routing concept',
+      };
+      let batchedLinkCalls = 0;
+      const batchedEngine = new Proxy(engine, {
+        get(target, prop, receiver) {
+          if (prop === 'getLinks') return async () => [];
+          if (prop === 'getBacklinks') return async () => [];
+          if (prop === 'getLinksForSlugs') {
+            return async (slugs: string[]) => {
+              batchedLinkCalls += 1;
+              return new Map(slugs.map((slug) => [
+                slug,
+                slug === link.from_slug ? [link] : [],
+              ]));
+            };
+          }
+          if (prop === 'getBacklinksForSlugs') {
+            return async (slugs: string[]) => new Map(slugs.map((slug) => [slug, []]));
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as SQLiteEngine;
+
+      const result = await retrieveContext(batchedEngine, {
+        query: 'runtime platform queue routing',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async () => [{
+          slug: 'systems/runtime-platform',
+          page_id: 1,
+          title: 'Runtime Platform',
+          type: 'system',
+          chunk_text: 'Runtime platform overview for synthetic services.',
+          chunk_source: 'compiled_truth',
+          score: 1,
+          stale: false,
+        }],
+      });
+
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('concepts/queue-routing');
+      expect(batchedLinkCalls).toBe(1);
+    });
+  });
+
+  test('keeps linked candidates when manifest links use non-canonical slug casing', async () => {
+    await withEngine('candidate-manifest-link-casing', async (engine) => {
+      await importFromContent(engine, 'systems/runtime-platform', [
+        '---',
+        'type: system',
+        'title: Runtime Platform',
+        '---',
+        '# Runtime Platform',
+        'Runtime platform overview links to queue routing.',
+      ].join('\n'), { path: 'systems/runtime-platform.md' });
+      await importFromContent(engine, 'concepts/queue-routing', [
+        '---',
+        'type: concept',
+        'title: Queue Routing',
+        '---',
+        '# Queue Routing',
+        'Queue routing explains worker lane assignment.',
+      ].join('\n'), { path: 'concepts/queue-routing.md' });
+
+      const manifest = await engine.getNoteManifestEntry('workspace:default', 'systems/runtime-platform');
+      expect(manifest).not.toBeNull();
+      await engine.upsertNoteManifestEntry({
+        ...manifest!,
+        outgoing_wikilinks: ['Concepts/Queue-Routing'],
+      });
+
+      const result = await retrieveContext(engine, {
+        query: 'runtime platform queue routing',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async () => [{
+          slug: 'systems/runtime-platform',
+          page_id: 1,
+          title: 'Runtime Platform',
+          type: 'system',
+          chunk_text: 'Runtime platform overview links to queue routing.',
+          chunk_source: 'compiled_truth',
+          score: 1,
+          stale: false,
+        }],
+      });
+
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('concepts/queue-routing');
+    });
+  });
+
+  test('falls back to per-seed explicit links when batch link lookup fails', async () => {
+    await withEngine('candidate-explicit-link-batch-fallback', async (engine) => {
+      await importFromContent(engine, 'systems/runtime-platform', [
+        '---',
+        'type: system',
+        'title: Runtime Platform',
+        '---',
+        '# Runtime Platform',
+        'Runtime platform overview for synthetic services.',
+      ].join('\n'), { path: 'systems/runtime-platform.md' });
+      await importFromContent(engine, 'concepts/queue-routing', [
+        '---',
+        'type: concept',
+        'title: Queue Routing',
+        '---',
+        '# Queue Routing',
+        'Queue routing explains worker lane assignment.',
+      ].join('\n'), { path: 'concepts/queue-routing.md' });
+      await engine.addLink('systems/runtime-platform', 'concepts/queue-routing', 'related routing concept', 'related');
+
+      let perSeedLinkCalls = 0;
+      const fallbackEngine = new Proxy(engine, {
+        get(target, prop, receiver) {
+          if (prop === 'getLinksForSlugs') {
+            return async () => {
+              throw new Error('simulated batch link failure');
+            };
+          }
+          if (prop === 'getLinks') {
+            return async (slug: string) => {
+              perSeedLinkCalls += 1;
+              return engine.getLinks(slug);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as SQLiteEngine;
+
+      const result = await retrieveContext(fallbackEngine, {
+        query: 'runtime platform queue routing',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async () => [{
+          slug: 'systems/runtime-platform',
+          page_id: 1,
+          title: 'Runtime Platform',
+          type: 'system',
+          chunk_text: 'Runtime platform overview for synthetic services.',
+          chunk_source: 'compiled_truth',
+          score: 1,
+          stale: false,
+        }],
+      });
+
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('concepts/queue-routing');
+      expect(perSeedLinkCalls).toBe(1);
     });
   });
 
@@ -1518,13 +1789,15 @@ describe('manifest backlink scan bounding', () => {
         'A page with no outgoing links and no recorded backlinks.',
       ].join('\n'), { path: 'systems/orphan-platform.md' });
 
+      const originalListManifest = engine.listNoteManifestEntries.bind(engine);
       let scanCalls = 0;
       const proxied = new Proxy(engine, {
         get(target, prop, receiver) {
           if (prop === 'listNoteManifestEntries') {
             // Simulate an arbitrarily large brain where no manifest links back
             // to the seed: every batch is full and irrelevant.
-            return async (filters: { limit: number; offset: number }) => {
+            return async (filters: { slug?: string; slugs?: string[]; limit: number; offset: number }) => {
+              if (filters.slug || filters.slugs !== undefined) return originalListManifest(filters);
               scanCalls += 1;
               return Array.from({ length: filters.limit }, (_, index) => ({
                 scope_id: 'workspace:default',

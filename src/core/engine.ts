@@ -131,6 +131,8 @@ export interface PageStore {
   removeLink(from: string, to: string): Promise<void>;
   getLinks(slug: string): Promise<Link[]>;
   getBacklinks(slug: string): Promise<Link[]>;
+  getLinksForSlugs?(slugs: string[]): Promise<Map<string, Link[]>>;
+  getBacklinksForSlugs?(slugs: string[]): Promise<Map<string, Link[]>>;
   traverseGraph(slug: string, depth?: number): Promise<GraphNode[]>;
 
   // Tags

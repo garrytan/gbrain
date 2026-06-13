@@ -551,6 +551,27 @@ export abstract class PgEngineBase {
     return rows as unknown as Link[];
   }
 
+  async getLinksForSlugs(slugs: string[]): Promise<Map<string, Link[]>> {
+    const normalizedSlugs = uniqueValidatedSlugs(slugs);
+    const linksBySlug = new Map(normalizedSlugs.map((slug) => [slug, [] as Link[]]));
+    if (normalizedSlugs.length === 0) return linksBySlug;
+
+    const { rows } = await this.queryable.query(
+      `SELECT f.slug as from_slug, t.slug as to_slug, l.link_type, l.context
+       FROM links l
+       JOIN pages f ON f.id = l.from_page_id
+       JOIN pages t ON t.id = l.to_page_id
+       WHERE f.slug = ANY($1::text[])
+       ORDER BY f.slug, t.slug`,
+      [normalizedSlugs],
+    );
+
+    for (const link of rows as unknown as Link[]) {
+      linksBySlug.get(link.from_slug)?.push(link);
+    }
+    return linksBySlug;
+  }
+
   async getBacklinks(slug: string): Promise<Link[]> {
     const { rows } = await this.queryable.query(
       `SELECT f.slug as from_slug, t.slug as to_slug, l.link_type, l.context
@@ -561,6 +582,27 @@ export abstract class PgEngineBase {
       [slug]
     );
     return rows as unknown as Link[];
+  }
+
+  async getBacklinksForSlugs(slugs: string[]): Promise<Map<string, Link[]>> {
+    const normalizedSlugs = uniqueValidatedSlugs(slugs);
+    const backlinksBySlug = new Map(normalizedSlugs.map((slug) => [slug, [] as Link[]]));
+    if (normalizedSlugs.length === 0) return backlinksBySlug;
+
+    const { rows } = await this.queryable.query(
+      `SELECT f.slug as from_slug, t.slug as to_slug, l.link_type, l.context
+       FROM links l
+       JOIN pages f ON f.id = l.from_page_id
+       JOIN pages t ON t.id = l.to_page_id
+       WHERE t.slug = ANY($1::text[])
+       ORDER BY t.slug, f.slug`,
+      [normalizedSlugs],
+    );
+
+    for (const link of rows as unknown as Link[]) {
+      backlinksBySlug.get(link.to_slug)?.push(link);
+    }
+    return backlinksBySlug;
   }
 
   async traverseGraph(slug: string, depth: number = 5): Promise<GraphNode[]> {
@@ -2833,7 +2875,8 @@ export abstract class PgEngineBase {
   }
 
   async listNoteManifestEntries(filters?: NoteManifestFilters): Promise<NoteManifestEntry[]> {
-    const limit = filters?.limit ?? 100;
+    const slugsFilter = filters?.slugs !== undefined ? uniqueValidatedSlugs(filters.slugs) : undefined;
+    const limit = filters?.limit ?? slugsFilter?.length ?? 100;
     const offset = filters?.offset ?? 0;
     const params: unknown[] = [];
     const clauses: string[] = [];
@@ -2845,6 +2888,11 @@ export abstract class PgEngineBase {
     if (filters?.slug) {
       params.push(validateSlug(filters.slug));
       clauses.push(`slug = $${params.length}`);
+    }
+    if (slugsFilter !== undefined) {
+      if (slugsFilter.length === 0) return [];
+      params.push(slugsFilter);
+      clauses.push(`slug = ANY($${params.length}::text[])`);
     }
 
     params.push(limit);
@@ -4041,6 +4089,18 @@ function sortByCreatedAtDescIdAsc<T extends { created_at: Date; id: string }>(en
     const createdDelta = b.created_at.getTime() - a.created_at.getTime();
     return createdDelta !== 0 ? createdDelta : a.id.localeCompare(b.id);
   });
+}
+
+function uniqueValidatedSlugs(slugs: string[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const slug of slugs) {
+    const normalized = validateSlug(slug);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    output.push(normalized);
+  }
+  return output;
 }
 
 function sortByCreatedAtDescIdDesc<T extends { created_at: Date; id: string }>(entries: T[]): T[] {

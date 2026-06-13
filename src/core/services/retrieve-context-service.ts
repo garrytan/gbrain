@@ -7,6 +7,7 @@ import type {
   GraphFrontierNode,
   GraphFrontierPathTrace,
   GraphFrontierResult,
+  Link,
   MemoryScenario,
   NoteManifestEntry,
   NoteSectionEntry,
@@ -94,6 +95,7 @@ const MAX_CANDIDATE_QUERY_VARIANTS = 8;
 const CANDIDATE_RRF_K = 60;
 const LINKED_CANDIDATE_SEED_LIMIT = 5;
 const LINKED_CANDIDATE_PER_SEED_LIMIT = 4;
+const MANIFEST_LOOKUP_BATCH_SIZE = 100;
 const MANIFEST_LINK_SCAN_BATCH_SIZE = 500;
 // Backlink discovery is a fallback for seeds with no recorded links; cap the
 // manifest scan so a large brain cannot turn one retrieval into a full-table
@@ -661,15 +663,27 @@ async function groupCandidatesByCanonicalPage(
     }))
     .sort((a, b) => a.rank - b.rank);
 
+  const manifestBySlug = await loadManifestEntriesBySlug(
+    engine,
+    groupedResults.map((group) => group.slug),
+  );
   const resolvedCandidates: RetrieveContextCandidate[] = [];
   for (let index = 0; index < groupedResults.length; index += CANDIDATE_SELECTOR_BATCH_SIZE) {
     const batch = groupedResults.slice(index, index + CANDIDATE_SELECTOR_BATCH_SIZE);
-    const resolved = await Promise.all(batch.map((group) => resolveCandidateGroup(engine, group, query)));
+    const resolved = await Promise.all(batch.map((group) =>
+      resolveCandidateGroup(engine, group, query, manifestBySlug.get(slugLookupKey(group.slug)))));
     resolvedCandidates.push(...resolved);
   }
 
   const rankedBaseCandidates = rankResolvedCandidates(resolvedCandidates, query);
-  const linkedCandidates = await linkedCandidatesForResolvedCandidates(engine, rankedBaseCandidates, query, limit, scopeGate);
+  const linkedCandidates = await linkedCandidatesForResolvedCandidates(
+    engine,
+    rankedBaseCandidates,
+    query,
+    limit,
+    scopeGate,
+    manifestBySlug,
+  );
   const rankedCandidates = rankResolvedCandidates([...rankedBaseCandidates, ...linkedCandidates], query);
   const candidates: RetrieveContextCandidate[] = [];
   const seenCanonicalEvidence = new Set<string>();
@@ -739,12 +753,16 @@ async function resolveCandidateGroup(
   engine: BrainEngine,
   group: { slug: string; results: SearchResult[]; top: SearchResult },
   query: string,
+  manifest?: NoteManifestEntry,
 ): Promise<RetrieveContextCandidate> {
   const readResult = bestTimelineSearchResult(group.results) ?? group.top;
   const selector = await bestReadSelectorForSearchResult(engine, readResult, query);
+  const manifestCorpusLane = manifest
+    ? corpusLaneForManifest(manifest)
+    : await corpusLaneForPage(engine, group.slug);
   const corpusLane = selector.corpus_lane
     ?? corpusLaneFromSourceRefs(selector.source_refs ?? [])
-    ?? await corpusLaneForPage(engine, group.slug);
+    ?? manifestCorpusLane;
   const readSelector = corpusLane
     ? normalizeRetrievalSelector({ ...selector, corpus_lane: corpusLane })
     : selector;
@@ -775,6 +793,7 @@ async function linkedCandidatesForResolvedCandidates(
   query: string,
   limit: number,
   scopeGate: ScopeGateDecisionResult | undefined,
+  knownManifestBySlug?: Map<string, NoteManifestEntry>,
 ): Promise<RetrieveContextCandidate[]> {
   const seedSlugs = seedCandidates
     .map((candidate) => candidate.read_selector.slug)
@@ -782,14 +801,17 @@ async function linkedCandidatesForResolvedCandidates(
     .slice(0, LINKED_CANDIDATE_SEED_LIMIT);
   if (seedSlugs.length === 0) return [];
 
-  const seedManifestBySlug = await loadManifestEntriesBySlug(engine, seedSlugs);
-  const explicitLinksBySeed = new Map(
-    await Promise.all(seedSlugs.map(async (seedSlug) => [seedSlug, await explicitLinkedSlugs(engine, seedSlug)] as const)),
-  );
+  const seedManifestBySlug = new Map(knownManifestBySlug ?? []);
+  const missingSeedSlugs = seedSlugs.filter((seedSlug) => !seedManifestBySlug.has(slugLookupKey(seedSlug)));
+  const loadedSeedManifestBySlug = await loadManifestEntriesBySlug(engine, missingSeedSlugs);
+  for (const [slug, manifest] of loadedSeedManifestBySlug) {
+    seedManifestBySlug.set(slug, manifest);
+  }
+  const explicitLinksBySeed = await explicitLinkedSlugsBySeed(engine, seedSlugs);
 
   const linkedSlugsBySeed = new Map<string, string[]>();
   for (const seedSlug of seedSlugs) {
-    const seedManifest = seedManifestBySlug.get(seedSlug);
+    const seedManifest = seedManifestBySlug.get(slugLookupKey(seedSlug));
     const explicit = explicitLinksBySeed.get(seedSlug);
     linkedSlugsBySeed.set(seedSlug, uniqueSlugs([
       ...(seedManifest?.outgoing_wikilinks ?? []),
@@ -819,20 +841,21 @@ async function linkedCandidatesForResolvedCandidates(
   // manifests), so pick the winners first and build their candidates
   // concurrently instead of one engine round-trip pair at a time.
   const selected: { seedSlug: string; manifest: NoteManifestEntry }[] = [];
-  const seenSlugs = new Set(seedSlugs);
+  const seenSlugKeys = new Set(seedSlugs.map(slugLookupKey));
   for (const seedSlug of seedSlugs) {
     const linkedSlugs = linkedSlugsBySeed.get(seedSlug) ?? [];
     let addedForSeed = 0;
 
     for (const linkedSlug of linkedSlugs) {
       if (addedForSeed >= LINKED_CANDIDATE_PER_SEED_LIMIT) break;
-      if (seenSlugs.has(linkedSlug)) continue;
-      const linkedManifest = linkedManifestBySlug.get(linkedSlug);
+      const linkedSlugKey = slugLookupKey(linkedSlug);
+      if (seenSlugKeys.has(linkedSlugKey)) continue;
+      const linkedManifest = linkedManifestBySlug.get(linkedSlugKey);
       if (!linkedManifest) continue;
       if (!manifestAllowedByRetrieveScope(linkedManifest, scopeGate)) continue;
 
       selected.push({ seedSlug, manifest: linkedManifest });
-      seenSlugs.add(linkedSlug);
+      seenSlugKeys.add(linkedSlugKey);
       addedForSeed += 1;
     }
   }
@@ -845,14 +868,33 @@ async function loadManifestEntriesBySlug(
   engine: BrainEngine,
   slugs: string[],
 ): Promise<Map<string, NoteManifestEntry>> {
+  const unique = uniqueSlugs(slugs);
+  if (unique.length === 0) return new Map();
+
+  if (typeof engine.listNoteManifestEntries === 'function') {
+    const manifestBySlug = new Map<string, NoteManifestEntry>();
+    for (let index = 0; index < unique.length; index += MANIFEST_LOOKUP_BATCH_SIZE) {
+      const batchSlugs = unique.slice(index, index + MANIFEST_LOOKUP_BATCH_SIZE);
+      const manifests = await engine.listNoteManifestEntries({
+        scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+        slugs: batchSlugs,
+        limit: batchSlugs.length,
+      });
+      for (const manifest of manifests) {
+        manifestBySlug.set(slugLookupKey(manifest.slug), manifest);
+      }
+    }
+    return manifestBySlug;
+  }
+
   if (typeof engine.getNoteManifestEntry !== 'function') return new Map();
-  const entries = await Promise.all(uniqueSlugs(slugs).map(async (slug) => [
+  const entries = await Promise.all(unique.map(async (slug) => [
     slug,
     await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, slug),
   ] as const));
   return new Map(entries
     .filter((entry): entry is readonly [string, NoteManifestEntry] => entry[1] !== null)
-    .map(([slug, manifest]) => [slug, manifest]));
+    .map(([slug, manifest]) => [slugLookupKey(slug), manifest]));
 }
 
 async function manifestBacklinkSlugs(
@@ -900,34 +942,109 @@ function manifestBacklinksSatisfied(
   return true;
 }
 
-async function explicitLinkedSlugs(
+async function explicitLinkedSlugsBySeed(
   engine: BrainEngine,
-  seedSlug: string,
-): Promise<{ outgoing: string[]; incoming: string[] }> {
-  if (typeof engine.getLinks !== 'function' && typeof engine.getBacklinks !== 'function') {
-    return { outgoing: [], incoming: [] };
-  }
-  const [linksResult, backlinksResult] = await Promise.allSettled([
-    typeof engine.getLinks === 'function' ? engine.getLinks(seedSlug) : Promise.resolve([]),
-    typeof engine.getBacklinks === 'function' ? engine.getBacklinks(seedSlug) : Promise.resolve([]),
+  seedSlugs: string[],
+): Promise<Map<string, { outgoing: string[]; incoming: string[] }>> {
+  const explicitBySeed = new Map<string, { outgoing: string[]; incoming: string[] }>(seedSlugs.map((seedSlug) => [
+    seedSlug,
+    { outgoing: [], incoming: [] },
+  ]));
+  if (seedSlugs.length === 0) return explicitBySeed;
+
+  const [outgoingResult, incomingResult] = await Promise.allSettled([
+    explicitOutgoingSlugsBySeed(engine, seedSlugs),
+    explicitIncomingSlugsBySeed(engine, seedSlugs),
   ]);
 
-  return {
-    outgoing: linksResult.status === 'fulfilled'
-      ? linksResult.value.map((link) => link.to_slug)
-      : [],
-    incoming: backlinksResult.status === 'fulfilled'
-      ? backlinksResult.value.map((link) => link.from_slug)
-      : [],
-  };
+  if (outgoingResult.status === 'fulfilled') {
+    for (const [seedSlug, outgoing] of outgoingResult.value) {
+      const explicit = explicitBySeed.get(seedSlug);
+      if (explicit) explicit.outgoing = outgoing;
+    }
+  }
+  if (incomingResult.status === 'fulfilled') {
+    for (const [seedSlug, incoming] of incomingResult.value) {
+      const explicit = explicitBySeed.get(seedSlug);
+      if (explicit) explicit.incoming = incoming;
+    }
+  }
+
+  return explicitBySeed;
+}
+
+async function explicitOutgoingSlugsBySeed(
+  engine: BrainEngine,
+  seedSlugs: string[],
+): Promise<Map<string, string[]>> {
+  if (typeof engine.getLinksForSlugs === 'function') {
+    try {
+      const linksBySeed = await engine.getLinksForSlugs(seedSlugs);
+      return mapLinksBySeed(seedSlugs, linksBySeed, (link) => link.to_slug);
+    } catch {
+      // Optional batch APIs are an optimization; degrade to the existing
+      // per-seed path if the batch query is unavailable or transiently fails.
+    }
+  }
+  if (typeof engine.getLinks !== 'function') return new Map();
+
+  return new Map(await Promise.all(seedSlugs.map(async (seedSlug): Promise<[string, string[]]> => {
+    try {
+      const links = await engine.getLinks(seedSlug);
+      return [seedSlug, links.map((link) => link.to_slug)];
+    } catch {
+      return [seedSlug, []];
+    }
+  })));
+}
+
+async function explicitIncomingSlugsBySeed(
+  engine: BrainEngine,
+  seedSlugs: string[],
+): Promise<Map<string, string[]>> {
+  if (typeof engine.getBacklinksForSlugs === 'function') {
+    try {
+      const backlinksBySeed = await engine.getBacklinksForSlugs(seedSlugs);
+      return mapLinksBySeed(seedSlugs, backlinksBySeed, (link) => link.from_slug);
+    } catch {
+      // Optional batch APIs are an optimization; degrade to the existing
+      // per-seed path if the batch query is unavailable or transiently fails.
+    }
+  }
+  if (typeof engine.getBacklinks !== 'function') return new Map();
+
+  return new Map(await Promise.all(seedSlugs.map(async (seedSlug): Promise<[string, string[]]> => {
+    try {
+      const links = await engine.getBacklinks(seedSlug);
+      return [seedSlug, links.map((link) => link.from_slug)];
+    } catch {
+      return [seedSlug, []];
+    }
+  })));
+}
+
+function mapLinksBySeed(
+  seedSlugs: string[],
+  linksBySeed: Map<string, Link[]>,
+  linkedSlug: (link: Link) => string,
+): Map<string, string[]> {
+  return new Map(seedSlugs.map((seedSlug) => [
+    seedSlug,
+    (linksBySeed.get(seedSlug) ?? linksBySeed.get(slugLookupKey(seedSlug)) ?? []).map(linkedSlug),
+  ]));
+}
+
+function slugLookupKey(slug: string): string {
+  return slug.toLowerCase();
 }
 
 function uniqueSlugs(slugs: string[]): string[] {
   const seen = new Set<string>();
   const output: string[] = [];
   for (const slug of slugs) {
-    if (seen.has(slug)) continue;
-    seen.add(slug);
+    const key = slugLookupKey(slug);
+    if (seen.has(key)) continue;
+    seen.add(key);
     output.push(slug);
   }
   return output;
