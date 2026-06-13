@@ -16,6 +16,7 @@ jobs:
   tier1:
     name: Tier 1 (Mechanical)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: pgvector/pgvector:pg16

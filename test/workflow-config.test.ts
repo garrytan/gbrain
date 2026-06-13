@@ -143,10 +143,16 @@ test('test workflow runs the unit suite on macOS at PR time', () => {
 test('e2e workflow runs HTTP OAuth smoke in default Tier 1 CI', () => {
   const source = readFileSync(join(workflowsDir, 'e2e.yml'), 'utf-8');
   const tier1Job = getWorkflowJob(source, 'tier1');
+  const httpOAuthSmokeStart = tier1Job.indexOf('HTTP OAuth smoke');
+  const httpOAuthSmokeBlock = httpOAuthSmokeStart === -1 ? '' : tier1Job.slice(httpOAuthSmokeStart);
 
+  expect(source).toContain('pull_request:');
+  expect(tier1Job).toContain('timeout-minutes:');
+  expect(tier1Job).not.toContain('github.event_name ==');
   expect(tier1Job).toContain('Run Tier 1 E2E tests');
   expect(tier1Job).toContain('HTTP OAuth smoke');
   expect(tier1Job).toContain('bun run smoke:http-oauth');
+  expect(httpOAuthSmokeBlock).toContain('DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mbrain_test');
   expect(tier1Job.indexOf('Run Tier 1 E2E tests')).toBeLessThan(
     tier1Job.indexOf('HTTP OAuth smoke'),
   );
