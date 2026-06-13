@@ -21,7 +21,7 @@ import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runSources } from '../src/commands/sources.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
-import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { CHUNKER_VERSION } from '../src/core/chunkers/code.ts';
 import type { ChunkInput } from '../src/core/types.ts';
 
@@ -48,8 +48,12 @@ beforeEach(async () => {
   configureGateway({
     embedding_model: 'openai:text-embedding-3-large',
     embedding_dimensions: 1536,
-    env: { OPENAI_API_KEY: 'sk-test-costgate' },
+    env: { OPENAI_API_KEY: '***' },
   });
+  __setEmbedTransportForTests(async ({ values }: any) => ({
+    embeddings: values.map(() => Array.from({ length: 1536 }, () => 0.01)),
+    usage: { tokens: 0 },
+  }) as any);
   repoPath = mkdtempSync(join(tmpdir(), 'gbrain-costgate-'));
   execSync('git init', { cwd: repoPath, stdio: 'pipe' });
   execSync('git config user.email "t@t.com"', { cwd: repoPath, stdio: 'pipe' });
@@ -127,6 +131,23 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
 
     expect(exitCode).toBe(2);
     expect(stdout).toContain('"gate":"confirmation_required"');
+  }, 60_000);
+
+  test('tokenmax search mode makes inline serial cost gate informational for non-TTY syncs', async () => {
+    await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
+    // Tokenmax is the operator posture that says quality/completeness wins over
+    // spend. Even when --serial forces inline embedding, unattended callers
+    // must not wedge on a ConfirmationRequired envelope.
+    await engine.setConfig('search.mode', 'tokenmax');
+    await engine.setConfig('sync.cost_gate_min_usd', '0');
+
+    const { exitCode, stdout } = await runSyncCaptured(['--all', '--serial', '--json', '--no-pull']);
+    const notice = JSON.parse(stdout.split('\n').find((line) => line.includes('"gate":"tokenmax_notice"'))!);
+
+    expect(exitCode).toBeUndefined();
+    expect(notice.costUsd).toBeGreaterThan(notice.floorUsd);
+    expect(stdout).toContain('"gate":"tokenmax_notice"');
+    expect(stdout).not.toContain('"gate":"confirmation_required"');
   }, 60_000);
 
   test('R-3: inline, git-unchanged source but STALE chunker_version still estimates (not $0)', async () => {

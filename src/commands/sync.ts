@@ -323,6 +323,19 @@ async function resolveBackfillCapUsd(engine: BrainEngine): Promise<number> {
   }
 }
 
+/**
+ * Tokenmax is the explicit max-quality posture. In that mode the sync cost
+ * preview is still useful telemetry, but it must not become a blocking
+ * ConfirmationRequired wedge for unattended serial recovery syncs.
+ */
+async function isTokenmaxSearchMode(engine: BrainEngine): Promise<boolean> {
+  try {
+    return String(await engine.getConfig('search.mode') ?? '').trim().toLowerCase() === 'tokenmax';
+  } catch {
+    return false;
+  }
+}
+
 /** Interactive [y/N] prompt. Resolves false on non-y answers or EOF. */
 async function promptYesNo(question: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -3157,6 +3170,8 @@ See also:
         const inline = estimateInlineNewTokens(sources, currentChunkerVersion);
         const newCostUsd = estimateEmbeddingCostUsd(inline.tokens);
         const costUsd = newCostUsd;
+        const tokenmaxMode = await isTokenmaxSearchMode(engine);
+        const costWouldBlock = shouldBlockSync(costUsd, floorUsd, mode);
         const staleNote = staleChars > 0
           ? ` (plus ~${staleChars.toLocaleString()} stale-backlog chars pending \`gbrain embed --stale\`)`
           : '';
@@ -3176,7 +3191,13 @@ See also:
         }
 
         if (!yesFlag) {
-          if (shouldBlockSync(costUsd, floorUsd, mode)) {
+          if (tokenmaxMode && costWouldBlock) {
+            if (jsonOut) {
+              console.log(JSON.stringify({ status: 'tokenmax_notice', mode, gate: 'tokenmax_notice', newTokens: inline.tokens, staleChars, costUsd, floorUsd, model: embeddingModelName }));
+            } else {
+              console.log(`${previewMsg} tokenmax mode: cost gate is informational, proceeding.`);
+            }
+          } else if (costWouldBlock) {
             const isTTY = Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY);
             if (!isTTY || jsonOut) {
               // Agent-facing path: emit structured envelope, exit 2.
