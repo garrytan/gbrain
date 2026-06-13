@@ -86,6 +86,30 @@ Within this envelope, Postgres is the target runtime for new personal memory fea
 
 Deliverables should remain scoped to what the current repository can absorb phase by phase. If a deliverable requires a deeper subsystem contract, that contract belongs in the later workstream document for that subsystem rather than here.
 
+## Phase Implementation Status
+
+This table is the status crosswalk between the Phase 0-14 roadmap and the
+current package scripts. A script can provide useful evidence without declaring
+the corresponding roadmap phase fully accepted.
+
+| Phase | Roadmap meaning | Current status | Evidence surface | Notes |
+|---|---|---|---|---|
+| Phase 0 | Policy, compatibility, parity, and baseline measurement | Evidence surface present | `bench:phase0`; parity coverage included in `test:phase1` | Baseline evidence exists, but later phases still need their own follow-up measurements. |
+| Phase 1 | Operational memory and repeated-work prevention | Evidence surface present | `bench:phase1`; `test:phase1` | Acceptance still depends on comparable baseline output, not only a passing test command. |
+| Phase 2 | Structural extraction and derived orientation foundations | Evidence surface present | `bench:phase2-*`; `test:phase2` | Derived artifacts remain rebuildable and may not replace canonical truth. |
+| Phase 3 | Orientation and navigation expansion | Evidence surface present | `bench:phase3-*`; `test:phase3` | Route and trace evidence should remain tied to bounded-output and freshness checks. |
+| Phase 4 | Reusable operating knowledge and personal scope boundaries | Evidence surface present | `bench:phase4-*`; `test:phase4` | Personal/profile acceptance requires explicit scope and visibility checks. |
+| Phase 5 | Governance and review boundaries | Evidence surface present | `bench:phase5-*`; `test:phase5` | Passing evidence does not authorize bypassing provenance, scope, or contradiction gates. |
+| Phase 6 | Higher-noise derived analysis under governance | Evidence surface present | `bench:phase6-*`; `test:phase6` | Candidate scoring and derived candidates remain reviewable, not direct canonical truth. |
+| Phase 7 | Later canonical knowledge consolidation | Evidence surface present | `bench:phase7-*`; `test:phase7` | Historical-validity and canonical handoff evidence must preserve current-evidence discipline. |
+| Phase 8 | Evaluation harness and dream cycle | Evidence surface present | `bench:phase8-*`; `test:phase8` | Dream-cycle evidence is maintenance/evaluation coverage, not a blanket acceptance of later phases. |
+| Phase 9 | Memory operations control plane | Evidence surface present | `bench:phase9-acceptance`; `test:phase9` | Control-plane acceptance is scoped to governed write, mutation, redaction, and health contracts. |
+| Phase 10 | System-of-record reconciler | Partial / no acceptance declared | No `bench:phase10` or `test:phase10` script | Projection and reconciliation behavior should not be marked accepted until a phase-specific gate exists. |
+| Phase 11 | Personal data connectors | Partial / no acceptance declared | Connector framework tests and source-registry tests | Framework and raw-ingest foundations exist, but connector acceptance should remain per-connector and inspectable. |
+| Phase 12 | Review, audit, and health | Partial / no acceptance declared | Memory report and doctor tests | Report surfaces exist, but Phase 12 acceptance needs executable report-action and health-summary coverage. |
+| Phase 13 | Evaluation and replay | Deterministic replay evidence | `bench:phase13-replay`; `test:phase13` | This is deterministic replay plus live-eval budget gating; it is not proof that production live evals ran. |
+| Phase 14 | Migration and cleanup | Runtime confidence gate present | `smoke:postgres-runtime` | This smoke is a Postgres target confidence gate; it does not accept skipped or partial Phase 10-12 work. |
+
 ## Mapping to Existing Inefficiency Workstreams
 
 The roadmap is justified by the inefficiency analysis only if each phase reduces a real current cost.
