@@ -1,5 +1,10 @@
 import { expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { importFromContent } from '../src/core/import-file.ts';
 import { formatResult, operations } from '../src/core/operations.ts';
+import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID, NOTE_MANIFEST_EXTRACTOR_VERSION } from '../src/core/services/note-manifest-service.ts';
 
 test('note manifest operations are registered with CLI hints', () => {
@@ -135,6 +140,10 @@ test('rebuild_note_manifest rebuilds a single page from canonical page state', a
           last_indexed_at: new Date('2026-04-20T10:00:00.000Z'),
         };
       },
+      markDerivedIndexReady: async () => ({
+        status: 'ready',
+      }),
+      listDerivedJobs: async () => [],
       listPages: async () => [],
     } as any,
     config: {} as any,
@@ -154,4 +163,74 @@ test('rebuild_note_manifest rebuilds a single page from canonical page state', a
   });
   expect((result as any).rebuilt).toBe(1);
   expect((result as any).slugs).toEqual(['concepts/rebuild-target']);
+});
+
+test('rebuild_note_manifest marks the derived manifest state ready for deferred pages', async () => {
+  const rebuild = operations.find((operation) => operation.name === 'rebuild_note_manifest');
+  if (!rebuild) throw new Error('rebuild_note_manifest operation is missing');
+
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-manifest-rebuild-state-'));
+  const engine = new SQLiteEngine();
+  const slug = 'concepts/deferred-manifest-rebuild';
+  const manifestPath = 'imports/raw/deferred-manifest-rebuild.md';
+  const content = [
+    '---',
+    'type: concept',
+    'title: Deferred Manifest Rebuild',
+    'tags: [phase2, derived]',
+    '---',
+    '# Overview',
+    'Manual rebuild should reconcile freshness state.',
+  ].join('\n');
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+    await engine.initSchema();
+
+    const imported = await importFromContent(engine, slug, content, {
+      path: manifestPath,
+      deferDerived: true,
+    });
+    expect(await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, slug)).toBeNull();
+    expect(await (engine as any).getDerivedIndexState(
+      DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+      slug,
+      'note_manifest',
+    )).toMatchObject({
+      status: 'pending',
+      target_content_hash: imported.content_hash,
+      indexed_content_hash: null,
+    });
+
+    await rebuild.handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, { slug });
+
+    expect(await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, slug)).toMatchObject({
+      title: 'Deferred Manifest Rebuild',
+      path: manifestPath,
+      content_hash: imported.content_hash,
+    });
+    expect(await (engine as any).getDerivedIndexState(
+      DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+      slug,
+      'note_manifest',
+    )).toMatchObject({
+      status: 'ready',
+      target_content_hash: imported.content_hash,
+      indexed_content_hash: imported.content_hash,
+    });
+    expect(await (engine as any).listDerivedJobs({
+      scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+      slug,
+      artifact_kind: 'note_manifest',
+      status: 'pending',
+    })).toHaveLength(0);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

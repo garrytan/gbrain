@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
+import { DERIVED_SCHEMA_VERSION } from '../derived-jobs.ts';
 import type { NoteManifestEntry, NoteSectionEntry, NoteSectionEntryInput, Page, PageInput } from '../types.ts';
 import { slugifyPath } from '../sync.ts';
 import { importContentHash } from '../utils.ts';
@@ -96,6 +97,24 @@ export async function rebuildNoteSectionEntries(
       }),
     );
     rebuilt.push(...entries);
+
+    if (page.content_hash) {
+      await engine.markDerivedIndexReady({
+        scope_id: scopeId,
+        slug: page.slug,
+        artifact_kind: 'note_sections',
+        target_content_hash: page.content_hash,
+        indexed_content_hash: page.content_hash,
+        manifest_path: manifest.path,
+        derived_parameters: {
+          manifest_path: manifest.path,
+          extractor_version: NOTE_SECTION_EXTRACTOR_VERSION,
+          derived_schema_version: DERIVED_SCHEMA_VERSION,
+        },
+        extractor_version: NOTE_SECTION_EXTRACTOR_VERSION,
+        derived_schema_version: DERIVED_SCHEMA_VERSION,
+      });
+    }
   }
 
   return rebuilt;

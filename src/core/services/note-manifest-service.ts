@@ -1,5 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
-import type { NoteManifestEntry, NoteManifestEntryInput, NoteManifestHeading, Page, PageInput } from '../types.ts';
+import { canonicalDerivedTags, DERIVED_SCHEMA_VERSION } from '../derived-jobs.ts';
+import type { DerivedJob, NoteManifestEntry, NoteManifestEntryInput, NoteManifestHeading, Page, PageInput } from '../types.ts';
 import { slugifyPath } from '../sync.ts';
 import { importContentHash, validateSlug } from '../utils.ts';
 import { extractFrontmatterSourceRefs, mergeSourceRefs } from './corpus-lane-service.ts';
@@ -74,18 +75,80 @@ export async function rebuildNoteManifestEntries(
   for (const page of pages) {
     const tags = await engine.getTags(page.slug);
     const existing = await engine.getNoteManifestEntry(scopeId, page.slug);
-    rebuilt.push(await engine.upsertNoteManifestEntry(buildNoteManifestEntry({
+    const manifestPath = await resolveManualRebuildManifestPath(engine, scopeId, page, existing?.path);
+    const manifest = await engine.upsertNoteManifestEntry(buildNoteManifestEntry({
       scope_id: scopeId,
       page_id: page.id,
       slug: page.slug,
-      path: existing?.path ?? `${page.slug}.md`,
+      path: manifestPath,
       tags,
       content_hash: page.content_hash,
       page,
-    })));
+    }));
+    rebuilt.push(manifest);
+
+    if (page.content_hash) {
+      await engine.markDerivedIndexReady({
+        scope_id: scopeId,
+        slug: page.slug,
+        artifact_kind: 'note_manifest',
+        target_content_hash: page.content_hash,
+        indexed_content_hash: page.content_hash,
+        manifest_path: manifest.path,
+        derived_parameters: {
+          manifest_path: manifest.path,
+          tags: canonicalDerivedTags(tags),
+          extractor_version: NOTE_MANIFEST_EXTRACTOR_VERSION,
+          derived_schema_version: DERIVED_SCHEMA_VERSION,
+        },
+        extractor_version: NOTE_MANIFEST_EXTRACTOR_VERSION,
+        derived_schema_version: DERIVED_SCHEMA_VERSION,
+      });
+    }
   }
 
   return rebuilt;
+}
+
+async function resolveManualRebuildManifestPath(
+  engine: BrainEngine,
+  scopeId: string,
+  page: Page,
+  existingPath: string | undefined,
+): Promise<string> {
+  if (existingPath) return existingPath;
+  return await findActiveManifestJobPath(engine, scopeId, page) ?? `${page.slug}.md`;
+}
+
+async function findActiveManifestJobPath(
+  engine: BrainEngine,
+  scopeId: string,
+  page: Page,
+): Promise<string | null> {
+  if (!page.content_hash) return null;
+
+  const [pendingJobs, runningJobs] = await Promise.all([
+    engine.listDerivedJobs({
+      scope_id: scopeId,
+      slug: page.slug,
+      artifact_kind: 'note_manifest',
+      status: 'pending',
+    }),
+    engine.listDerivedJobs({
+      scope_id: scopeId,
+      slug: page.slug,
+      artifact_kind: 'note_manifest',
+      status: 'running',
+    }),
+  ]);
+  const matchingJob = [...pendingJobs, ...runningJobs]
+    .find((job: DerivedJob) => (
+      job.target_content_hash === page.content_hash
+      && typeof job.manifest_path === 'string'
+      && job.manifest_path.length > 0
+    ));
+
+  return matchingJob?.manifest_path ?? null;
 }
 
 function normalizeManifestPath(path: string): string {
