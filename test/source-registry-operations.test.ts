@@ -922,4 +922,36 @@ describe('source registry operations', () => {
       await harness.cleanup();
     }
   });
+
+  test('list_sources can filter overlapping blocked connector sources before applying limit', async () => {
+    const harness = await createSqliteHarness('connector-locator-overlap-blocked-filter');
+    try {
+      const blocked = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'meeting_transcripts',
+        display_name: 'Meeting Transcripts: blocked child',
+        account_locator: 'file:///tmp/meetings/blocked/child.md',
+        consent_state: 'revoked',
+        now: '2026-06-14T00:00:00.000Z',
+      }) as any;
+      await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'meeting_transcripts',
+        display_name: 'Meeting Transcripts: unrelated granted',
+        account_locator: 'file:///tmp/meetings/unrelated.md',
+        consent_state: 'granted',
+        now: '2026-06-14T00:01:00.000Z',
+      });
+
+      const listed = await getOperation('list_sources').handler(harness.ctx(), {
+        connector_id: 'meeting_transcripts',
+        locator_overlap: 'file:///tmp/meetings/blocked',
+        blocked_for_ingest: true,
+        limit: 1,
+      }) as any;
+
+      expect(listed.sources).toHaveLength(1);
+      expect(listed.sources[0].source.id).toBe(blocked.source.id);
+    } finally {
+      await harness.cleanup();
+    }
+  });
 });

@@ -6,7 +6,6 @@ import {
   loadMeetingTranscriptFilesystemItems,
   resolveMeetingTranscriptFilesystemTarget,
   type MeetingTranscriptFilesystemLoad,
-  type MeetingTranscriptFilesystemTarget,
 } from '../core/connectors/meeting-transcripts-filesystem.ts';
 import { loadConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -102,12 +101,11 @@ async function syncMeetingTranscripts(
   }
   const dryRun = hasFlag(args, '--dry-run');
   const target = resolveMeetingTranscriptFilesystemTarget(path);
-  const sources = await listMeetingTranscriptSources(engine);
-  const blockingSource = findBlockingMeetingTranscriptSource(sources, target);
+  const blockingSource = await findBlockingMeetingTranscriptSource(engine, target.source_locator);
   if (blockingSource) {
     throw new Error(connectorSourceBlockReason(blockingSource.source) ?? 'source policy prevents connector sync');
   }
-  const existing = findExactMeetingTranscriptSource(sources, target.source_locator);
+  const existing = await findExactMeetingTranscriptSource(engine, target.source_locator);
   let sourceId: string | null = existing?.source.id ?? null;
 
   let loaded: MeetingTranscriptFilesystemLoad;
@@ -194,61 +192,29 @@ async function syncMeetingTranscripts(
   };
 }
 
-async function listMeetingTranscriptSources(
+async function findBlockingMeetingTranscriptSource(
   engine: BrainEngine,
-): Promise<any[]> {
+  locator: string,
+): Promise<any | null> {
   const listed = await operationsByName.list_sources.handler(ctx(engine), {
     connector_id: MEETING_TRANSCRIPTS_CONNECTOR_ID,
-    limit: 1000,
+    locator_overlap: locator,
+    blocked_for_ingest: true,
+    limit: 1,
   }) as any;
-  return listed.sources ?? [];
+  return listed.sources[0] ?? null;
 }
 
-function findExactMeetingTranscriptSource(
-  rows: any[],
+async function findExactMeetingTranscriptSource(
+  engine: BrainEngine,
   locator: string,
-): any | null {
-  return rows.find((row) => row.source?.locator === locator) ?? null;
-}
-
-function findBlockingMeetingTranscriptSource(
-  rows: any[],
-  target: MeetingTranscriptFilesystemTarget,
-): any | null {
-  return rows.find((row) => {
-    if (!row.source || !sourceOverlapsTarget(row, target)) return false;
-    return connectorSourceBlockReason(row.source) !== null;
-  }) ?? null;
-}
-
-function sourceOverlapsTarget(row: any, target: MeetingTranscriptFilesystemTarget): boolean {
-  const sourceLocator = row.source?.locator;
-  if (typeof sourceLocator !== 'string') return false;
-  if (sourceLocator === target.source_locator) return true;
-  if (!sourceLocator.startsWith('file://') || !target.source_locator.startsWith('file://')) {
-    return false;
-  }
-
-  const sourceScope = meetingTranscriptSourceScope(row);
-  if (target.source_scope === 'directory' && fileUrlContains(target.source_locator, sourceLocator)) {
-    return true;
-  }
-  if ((sourceScope === 'directory' || sourceScope === null)
-    && fileUrlContains(sourceLocator, target.source_locator)) {
-    return true;
-  }
-  return false;
-}
-
-function meetingTranscriptSourceScope(row: any): MeetingTranscriptFilesystemLoad['source_scope'] | null {
-  const scope = row.connector_account?.metadata_json?.source_scope;
-  return scope === 'file' || scope === 'directory' ? scope : null;
-}
-
-function fileUrlContains(container: string, candidate: string): boolean {
-  if (container === candidate) return true;
-  const prefix = container.endsWith('/') ? container : `${container}/`;
-  return candidate.startsWith(prefix);
+): Promise<any | null> {
+  const listed = await operationsByName.list_sources.handler(ctx(engine), {
+    connector_id: MEETING_TRANSCRIPTS_CONNECTOR_ID,
+    locator,
+    limit: 1,
+  }) as any;
+  return listed.sources[0] ?? null;
 }
 
 function connectorSourceBlockReason(source: any): string | null {

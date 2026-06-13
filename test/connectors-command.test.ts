@@ -338,6 +338,49 @@ describe('connectors sync command', () => {
     }
   });
 
+  test('revoked overlapping source beyond the first source page still blocks sync', async () => {
+    const harness = await createSqliteHarness('revoked-beyond-source-page');
+    const transcriptDir = makeTempDir('mbrain-meeting-transcripts-revoked-page-');
+    try {
+      const childPath = join(transcriptDir, 'child.md');
+      writeFileSync(childPath, 'Should not be ingested when any overlapping source is revoked');
+      await operationsByName.register_connector_source.handler(harness.ctx(), {
+        connector_id: 'meeting_transcripts',
+        display_name: 'Meeting Transcripts: revoked child',
+        account_locator: pathToFileURL(realpathSync(childPath)).href,
+        consent_state: 'revoked',
+        metadata_json: {
+          source_scope: 'file',
+        },
+        now: '2026-06-14T00:00:00.000Z',
+      });
+      for (let index = 0; index < 1000; index++) {
+        await operationsByName.register_connector_source.handler(harness.ctx(), {
+          connector_id: 'meeting_transcripts',
+          display_name: `Meeting Transcripts: filler ${index}`,
+          account_locator: `file:///tmp/mbrain-meeting-transcript-filler-${index}`,
+          consent_state: 'granted',
+          metadata_json: {
+            source_scope: 'file',
+          },
+          now: '2026-06-14T00:01:00.000Z',
+        });
+      }
+
+      await expect(runConnectors(harness.engine, [
+        'sync',
+        'meeting_transcripts',
+        '--path',
+        transcriptDir,
+      ])).rejects.toThrow('source consent revoked prevents connector sync');
+
+      const db = (harness.engine as any).database;
+      expect(db.query('SELECT COUNT(*) AS count FROM source_items').get().count).toBe(0);
+    } finally {
+      await harness.cleanup();
+    }
+  }, 15_000);
+
   test('filesystem read failure inside an existing source records connector failure health', async () => {
     const harness = await createSqliteHarness('existing-read-failure');
     const transcriptDir = makeTempDir('mbrain-meeting-transcripts-read-failure-');
