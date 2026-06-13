@@ -14,6 +14,7 @@ export type ReportActionKind =
   | 'revoke_source'
   | 'purge'
   | 'adjust_policy'
+  | 'stage_candidate'
   | 'approve_candidate'
   | 'resolve_conflict'
   | 'rerun_failed_job'
@@ -410,8 +411,8 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
   if (report.summary.review_items >= MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD) {
     lines.push(
       '',
-      `WARNING: review backlog pressure — ${report.summary.review_items} candidates are staged for review (threshold ${MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD}).`,
-      'Promote, reject, or supersede staged candidates before the backlog drifts further.',
+      `WARNING: review backlog pressure — ${report.summary.review_items} candidates need review or staging (threshold ${MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD}).`,
+      'Stage candidate items first, then promote, reject, or supersede staged candidates.',
     );
   }
 
@@ -678,16 +679,7 @@ function buildReportActions(input: {
         scope_id: input.scopeId,
         reason: 'memory review report restore action',
       })),
-    ...input.reviewItems.flatMap((item) => [
-      governedAction('reject', item.review_type, item.id, 'reject_memory_candidate_entry', {
-        id: item.id,
-        review_reason: 'memory review report reject action',
-      }),
-      governedAction('approve_candidate', item.review_type, item.id, 'promote_memory_candidate_entry', {
-        id: item.id,
-        review_reason: 'memory review report approve action',
-      }),
-    ]),
+    ...input.reviewItems.flatMap((item) => reviewItemActions(item)),
     ...input.conflicts.map((conflict) => governedWritebackAction({
       kind: 'resolve_conflict',
       targetKind: 'conflict',
@@ -772,6 +764,28 @@ function canonicalMemoryAuditTarget(memory: ReportCanonicalMemory): { targetKind
     targetKind: memory.target_kind ?? (memory.target_slug ? 'page' : 'ledger_event'),
     targetId: memory.target_id ?? memory.target_slug ?? memory.id,
   };
+}
+
+function reviewItemActions(item: ReportReviewItem): MemoryReportAction[] {
+  if (item.review_type === 'candidate_staging') {
+    return [
+      governedAction('stage_candidate', item.review_type, item.id, 'advance_memory_candidate_status', {
+        id: item.id,
+        next_status: 'staged_for_review',
+        review_reason: 'memory review report stage action',
+      }),
+    ];
+  }
+  return [
+    governedAction('reject', item.review_type, item.id, 'reject_memory_candidate_entry', {
+      id: item.id,
+      review_reason: 'memory review report reject action',
+    }),
+    governedAction('approve_candidate', item.review_type, item.id, 'promote_memory_candidate_entry', {
+      id: item.id,
+      review_reason: 'memory review report approve action',
+    }),
+  ];
 }
 
 function governedWritebackAction(input: {

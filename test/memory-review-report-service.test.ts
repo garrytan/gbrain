@@ -621,6 +621,78 @@ describe('memory review report service', () => {
       .not.toContain('target-secret-should-not-appear-in-summary');
   });
 
+  test('collects active candidate review items with staging actions only', async () => {
+    const timestamp = new Date(now);
+    const candidates: MemoryCandidateEntry[] = [
+      {
+        id: 'candidate:queued',
+        scope_id: 'workspace:default',
+        candidate_type: 'fact',
+        proposed_content: 'Queued candidate content must stay gated.',
+        source_refs: ['Source: queued candidate test'],
+        generated_by: 'agent',
+        extraction_kind: 'extracted',
+        confidence_score: 0.61,
+        importance_score: 0.4,
+        recurrence_score: 0.1,
+        sensitivity: 'work',
+        status: 'candidate',
+        target_object_type: 'curated_note',
+        target_object_id: 'people/ada',
+        reviewed_at: null,
+        review_reason: null,
+        verification_status: 'unverified',
+        verification_method: null,
+        verification_evidence: null,
+        verification_source_refs: [],
+        verified_at: null,
+        created_at: timestamp,
+        updated_at: timestamp,
+      },
+    ];
+    const engine = {
+      listMemoryMutationEvents: async () => [],
+      listMemoryCandidateEntries: async () => candidates,
+      listCanonicalHandoffEntries: async () => [],
+    } as unknown as BrainEngine;
+
+    const input = await collectMemoryReportInput(engine, 'workspace:default', 10, now);
+    const report = buildMemoryReviewReport(input);
+    const reportJson = JSON.stringify(report);
+
+    expect(input.review_items).toEqual([
+      expect.objectContaining({
+        id: 'candidate:queued',
+        review_type: 'candidate_staging',
+        summary: expect.stringContaining('stage for review'),
+        severity: 'medium',
+      }),
+    ]);
+    expect(reportJson).not.toContain('Queued candidate content');
+    expect(report.actions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'stage_candidate',
+        operation: 'advance_memory_candidate_status',
+        target_id: 'candidate:queued',
+        params: expect.objectContaining({
+          id: 'candidate:queued',
+          next_status: 'staged_for_review',
+        }),
+        requires_mutation_ledger: true,
+      }),
+    ]));
+    expect(report.actions).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        operation: 'promote_memory_candidate_entry',
+        params: expect.objectContaining({ id: 'candidate:queued' }),
+      }),
+      expect.objectContaining({
+        operation: 'reject_memory_candidate_entry',
+        params: expect.objectContaining({ id: 'candidate:queued' }),
+      }),
+    ]));
+  });
+
   test('collects Phase 12 report evidence from the configured runtime, not only synthetic input', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-report-'));
     tempPaths.push(dir);
@@ -941,7 +1013,7 @@ describe('memory review report service', () => {
         stale_memories: 1,
         archived_memories: 1,
         purge_candidates: 1,
-        review_items: 1,
+        review_items: 4,
         conflicts: 1,
         policy_denials: 1,
         quarantined_sources: 1,
@@ -1040,6 +1112,15 @@ describe('memory review report service', () => {
       expect(runtimeJson).not.toContain('Source: failed attempt fixture');
       expect(runtimeJson).not.toContain('Source: personal failed attempt fixture');
       expect(report.actions).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'stage_candidate',
+          operation: 'advance_memory_candidate_status',
+          params: expect.objectContaining({
+            id: 'candidate:queued',
+            next_status: 'staged_for_review',
+          }),
+          requires_mutation_ledger: true,
+        }),
         expect.objectContaining({
           kind: 'reject',
           operation: 'reject_memory_candidate_entry',
@@ -1358,14 +1439,14 @@ describe('memory review report service', () => {
     }
   });
 
-  test('warns at the top of the report when the review backlog exceeds the pressure threshold', () => {
+  test('warns at the top of the report when the review and staging backlog exceeds the pressure threshold', () => {
     const report = buildMemoryReviewReport({
       scope_id: 'workspace:default',
       generated_at: now,
       review_items: Array.from({ length: MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD }, (_, index) => ({
         id: `candidate:${index}`,
-        review_type: 'candidate',
-        summary: `Staged candidate ${index}`,
+        review_type: index === 0 ? 'candidate_staging' : 'candidate',
+        summary: index === 0 ? `Candidate ${index} needs staging` : `Staged candidate ${index}`,
         severity: 'medium' as const,
       })),
     });
@@ -1374,7 +1455,9 @@ describe('memory review report service', () => {
     const warningIndex = formatted.indexOf('WARNING: review backlog pressure');
     expect(warningIndex).toBeGreaterThan(-1);
     expect(formatted.slice(0, warningIndex)).not.toContain('Summary');
-    expect(formatted).toContain(`${MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD} candidates are staged for review`);
+    expect(formatted).toContain(`${MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD} candidates need review or staging`);
+    expect(formatted).toContain('Stage candidate items first, then promote, reject, or supersede staged candidates.');
+    expect(formatted).not.toContain('candidates are staged for review');
   });
 
   test('emits no backlog warning below the pressure threshold', () => {
