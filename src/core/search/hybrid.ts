@@ -13,7 +13,7 @@ import { dedupResults } from './dedup.ts';
 import { rankSearchResults, sourceRankCandidateLimit, sourceRankedScore } from './source-ranking.ts';
 
 const RRF_K = 60;
-const SEMANTIC_RERANK_WEIGHT = 0.5;
+const SEMANTIC_RERANK_WEIGHT = 0.01;
 
 interface RrfInputList {
   results: SearchResult[];

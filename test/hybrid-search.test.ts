@@ -124,7 +124,7 @@ describe('hybridSearch', () => {
     expect(results.map((entry) => entry.slug)).toEqual(['concepts/hybrid']);
   });
 
-  test('applies bounded semantic boost after RRF fusion when vector scores are available', async () => {
+  test('uses vector scores as a narrow tie-breaker after RRF fusion', async () => {
     setEmbeddingProviderForTests({
       capability: {
         available: true,
@@ -139,30 +139,30 @@ describe('hybridSearch', () => {
     const engine = {
       searchKeyword: async () => [
         makeResult({
-          slug: 'concepts/keyword-only',
+          slug: 'concepts/alpha-keyword',
           page_id: 101,
-          title: 'Keyword Only',
+          title: 'Alpha Keyword',
           type: 'concept',
-          chunk_text: 'keyword match without semantic confidence',
+          chunk_text: 'alpha keyword match without semantic confidence',
           score: 1,
         }),
       ],
       searchVector: async () => [
         makeResult({
-          slug: 'concepts/vector-low',
+          slug: 'concepts/vector-high',
           page_id: 102,
-          title: 'Vector Low',
+          title: 'Vector High',
           type: 'person',
-          chunk_text: 'semantic neighbor with weak vector score',
-          score: 0.1,
-        }),
-        makeResult({
-          slug: 'concepts/semantic-best',
-          page_id: 103,
-          title: 'Semantic Best',
-          type: 'project',
           chunk_text: 'semantic neighbor with strong vector score',
           score: 0.95,
+        }),
+        makeResult({
+          slug: 'concepts/vector-low',
+          page_id: 103,
+          title: 'Vector Low',
+          type: 'project',
+          chunk_text: 'semantic neighbor with weak vector score',
+          score: 0.1,
         }),
       ],
     } as Pick<BrainEngine, 'searchKeyword' | 'searchVector'> as BrainEngine;
@@ -170,10 +170,50 @@ describe('hybridSearch', () => {
     const results = await hybridSearch(engine, 'semantic confidence', { limit: 3 });
 
     expect(results.map((entry) => entry.slug)).toEqual([
-      'concepts/semantic-best',
+      'concepts/vector-high',
+      'concepts/alpha-keyword',
       'concepts/vector-low',
-      'concepts/keyword-only',
     ]);
+  });
+
+  test('does not let a low-ranked vector neighbor outrank the top keyword-only result', async () => {
+    setEmbeddingProviderForTests({
+      capability: {
+        available: true,
+        mode: 'local',
+        implementation: 'test-local',
+        model: 'test-local-v1',
+        dimensions: 3,
+      },
+      embedBatch: async () => [new Float32Array([1, 0, 0])],
+    });
+
+    const vectorResults = Array.from({ length: 55 }, (_, index) => makeResult({
+      slug: `projects/vector-${index}`,
+      page_id: 200 + index,
+      title: `Vector ${index}`,
+      type: index % 2 === 0 ? 'project' : 'person',
+      chunk_text: `semantic neighbor ${index} with unrelated supporting text`,
+      score: index === 54 ? 0.95 : 0.01,
+    }));
+
+    const engine = {
+      searchKeyword: async () => [
+        makeResult({
+          slug: 'concepts/exact-keyword',
+          page_id: 999,
+          title: 'Exact Keyword',
+          type: 'concept',
+          chunk_text: 'exact keyword result should stay ahead of deep vector neighbors',
+          score: 1,
+        }),
+      ],
+      searchVector: async () => vectorResults,
+    } as Pick<BrainEngine, 'searchKeyword' | 'searchVector'> as BrainEngine;
+
+    const results = await hybridSearch(engine, 'exact keyword', { limit: 10 });
+
+    expect(results[0]?.slug).toBe('concepts/exact-keyword');
   });
 });
 
