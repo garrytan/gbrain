@@ -693,6 +693,11 @@ The core references are:
 
 ## Verification
 
+For the current Phase 0-14 implementation status and how package scripts map to
+roadmap phases, see the
+[Phase Implementation Status](docs/architecture/redesign/03-migration-roadmap-and-execution-envelope.md#phase-implementation-status)
+crosswalk.
+
 For target Postgres runtime verification, run:
 
 ```bash
