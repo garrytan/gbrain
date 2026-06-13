@@ -94,6 +94,16 @@ test('test workflow keeps full git history for history-backed scenario guards', 
   expect(shardJob).toContain('bun run test:ci-shard');
 });
 
+test('test workflow checks generated schemas before typecheck', () => {
+  const source = readFileSync(join(workflowsDir, 'test.yml'), 'utf-8');
+  const typecheckJob = getWorkflowJob(source, 'typecheck');
+
+  expect(typecheckJob).toContain('bun run build:schema --check');
+  expect(typecheckJob.indexOf('bun run build:schema --check')).toBeLessThan(
+    typecheckJob.indexOf('bunx tsc --noEmit --pretty false'),
+  );
+});
+
 test('test workflow shards the unit suite to keep PR feedback fast', () => {
   const source = readFileSync(join(workflowsDir, 'test.yml'), 'utf-8');
   const shardJob = getWorkflowJob(source, 'test-shard');

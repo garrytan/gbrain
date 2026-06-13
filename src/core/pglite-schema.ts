@@ -1,17 +1,7 @@
-/**
- * PGLite schema — derived from schema-embedded.ts (Postgres schema).
- *
- * Differences from Postgres:
- * - No RLS block (no role system in embedded PGLite)
- * - No access_tokens / mcp_request_log (local-only, no remote auth)
- * - No files table (file attachments require Supabase Storage)
- * - No pg_advisory_lock (single connection)
- *
- * Everything else is identical: same tables, triggers, indexes, pgvector HNSW, tsvector GIN.
- *
- * DRIFT WARNING: When schema-embedded.ts changes, update this file to match.
- * test/edge-bundle.test.ts has a drift detection test.
- */
+// AUTO-GENERATED — do not edit. Run: bun run build:schema
+// Source: src/schema.sql (PGLite transform)
+// Excludes source registry, governed ledger, restricted runner, remote auth/OAuth/files, lifecycle forgetting, and RLS blocks from the Postgres schema.
+// PGLite starts from this local baseline and then applies src/core/migrate.ts migrations.
 
 export const PGLITE_SCHEMA_SQL = `
 -- MBrain PGLite schema (local embedded Postgres)
@@ -61,6 +51,7 @@ CREATE TABLE IF NOT EXISTS content_chunks (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_chunks_page ON content_chunks(page_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
+-- Partial indexes so health/stats embedding-coverage counts avoid full scans
 CREATE INDEX IF NOT EXISTS idx_chunks_embedded ON content_chunks(page_id) WHERE embedded_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_chunks_missing_embedding ON content_chunks(page_id) WHERE embedded_at IS NULL;
 
@@ -94,7 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
 CREATE INDEX IF NOT EXISTS idx_tags_page_id ON tags(page_id);
 
 -- ============================================================
--- raw_data: sidecar data
+-- raw_data: sidecar data (replaces .raw/ JSON files)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS raw_data (
   id         SERIAL PRIMARY KEY,
@@ -124,7 +115,7 @@ CREATE INDEX IF NOT EXISTS idx_timeline_page ON timeline_entries(page_id);
 CREATE INDEX IF NOT EXISTS idx_timeline_date ON timeline_entries(date);
 
 -- ============================================================
--- page_versions: snapshot history
+-- page_versions: snapshot history for compiled_truth
 -- ============================================================
 CREATE TABLE IF NOT EXISTS page_versions (
   id             SERIAL PRIMARY KEY,
@@ -475,11 +466,11 @@ CREATE INDEX IF NOT EXISTS idx_memory_job_artifacts_job_kind
   ON memory_job_artifacts(job_id, artifact_kind, created_at DESC);
 
 CREATE OR REPLACE FUNCTION prevent_maintenance_audit_mutation()
-RETURNS trigger AS $$
+RETURNS trigger AS \$\$
 BEGIN
   RAISE EXCEPTION 'maintenance audit tables are append-only';
 END;
-$$ LANGUAGE plpgsql;
+\$\$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS prevent_memory_job_events_update ON memory_job_events;
 CREATE TRIGGER prevent_memory_job_events_update
@@ -630,7 +621,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_redaction_items_target
   ON memory_redaction_plan_items(target_object_type, target_object_id);
 
 -- ============================================================
--- assertion pipeline
+-- assertion pipeline and session graph
 -- ============================================================
 CREATE TABLE IF NOT EXISTS extracted_claims (
   id                    TEXT PRIMARY KEY,
@@ -800,15 +791,18 @@ ALTER TABLE pages ADD COLUMN IF NOT EXISTS search_vector tsvector;
 
 CREATE INDEX IF NOT EXISTS idx_pages_search ON pages USING GIN(search_vector);
 
-CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger AS $$
+-- Function to rebuild search_vector for a page
+CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger AS \$\$
 DECLARE
   timeline_text TEXT;
 BEGIN
+  -- Gather timeline_entries text for this page
   SELECT coalesce(string_agg(summary || ' ' || detail, ' '), '')
   INTO timeline_text
   FROM timeline_entries
   WHERE page_id = NEW.id;
 
+  -- Build weighted tsvector
   NEW.search_vector :=
     setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
     setweight(to_tsvector('english', coalesce(NEW.compiled_truth, '')), 'B') ||
@@ -818,7 +812,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+\$\$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trg_pages_search_vector ON pages;
 CREATE TRIGGER trg_pages_search_vector
@@ -826,19 +820,23 @@ CREATE TRIGGER trg_pages_search_vector
   FOR EACH ROW
   EXECUTE FUNCTION update_page_search_vector();
 
-CREATE OR REPLACE FUNCTION update_page_search_vector_from_timeline() RETURNS trigger AS $$
+-- When timeline_entries change, update the parent page's search_vector
+CREATE OR REPLACE FUNCTION update_page_search_vector_from_timeline() RETURNS trigger AS \$\$
 DECLARE
   page_row pages%ROWTYPE;
 BEGIN
+  -- Touch the page to re-fire its trigger
   UPDATE pages SET updated_at = now()
   WHERE id = coalesce(NEW.page_id, OLD.page_id);
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+\$\$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trg_timeline_search_vector ON timeline_entries;
 CREATE TRIGGER trg_timeline_search_vector
   AFTER INSERT OR UPDATE OR DELETE ON timeline_entries
   FOR EACH ROW
   EXECUTE FUNCTION update_page_search_vector_from_timeline();
+
+-- ============================================================
 `;

@@ -28,6 +28,8 @@ jobs:
         with:
           bun-version: 1.3.12
       - run: bun install
+      - name: Check generated schemas
+        run: bun run build:schema --check
       - name: Typecheck
         run: bunx tsc --noEmit --pretty false
 
