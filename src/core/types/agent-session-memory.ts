@@ -179,6 +179,8 @@ export interface AgentSessionMemorySignal {
   recurrence_score: number;
   source_refs: string[];
   prompt_injection_flagged?: boolean;
+  dedupe_merged_signal_count?: number;
+  dedupe_merged_source_observation_ids?: string[];
   profile_type?: ProfileMemoryType;
   profile_subject?: string;
   personal_episode_title?: string;

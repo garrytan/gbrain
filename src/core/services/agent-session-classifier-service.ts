@@ -340,9 +340,17 @@ function dedupeSignals(signals: AgentSessionMemorySignal[]): AgentSessionMemoryS
     ].join('\0');
     const existing = deduped.get(key);
     if (existing === undefined) {
-      deduped.set(key, { ...signal, source_refs: dedupeValues(signal.source_refs) });
+      deduped.set(key, {
+        ...signal,
+        source_refs: dedupeValues(signal.source_refs),
+      });
       continue;
     }
+    const mergedSourceObservationIds = dedupeValues([
+      ...(existing.dedupe_merged_source_observation_ids ?? [existing.source_observation_id]),
+      signal.source_observation_id,
+    ]);
+    const mergedSignalCount = (existing.dedupe_merged_signal_count ?? 1) + 1;
     deduped.set(key, {
       ...existing,
       sensitivity: mostRestrictiveSensitivity(existing.sensitivity, signal.sensitivity),
@@ -350,6 +358,8 @@ function dedupeSignals(signals: AgentSessionMemorySignal[]): AgentSessionMemoryS
       importance_score: Math.max(existing.importance_score, signal.importance_score),
       source_refs: dedupeValues([...existing.source_refs, ...signal.source_refs]),
       prompt_injection_flagged: existing.prompt_injection_flagged === true || signal.prompt_injection_flagged === true,
+      dedupe_merged_signal_count: mergedSignalCount,
+      dedupe_merged_source_observation_ids: mergedSourceObservationIds,
     });
   }
   return [...deduped.values()];

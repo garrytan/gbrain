@@ -102,6 +102,36 @@ test('candidate-only preview routes inferred profile signals to Memory Inbox can
   expect(result.route?.created_candidate).toBeUndefined();
 });
 
+test('candidate writeback preserves agent-session dedupe audit refs', async () => {
+  await withSQLiteEngine(async (engine) => {
+    const signal = makeSignal({
+      id: 'agent-session-signal:deduped-profile',
+      evidence_kind: 'agent_inferred',
+      dedupe_merged_signal_count: 2,
+      dedupe_merged_source_observation_ids: [
+        'agent-session-observation:dedupe-a',
+        'agent-session-observation:dedupe-b',
+      ],
+    });
+
+    const [result] = await routeAgentSessionMemorySignals(engine, {
+      signals: [signal],
+      apply: true,
+      write_mode: 'candidate_only',
+    });
+
+    expect(result.route?.created_candidate?.source_refs).toEqual([
+      'source_item:agent-session-default',
+      'source_chunk:agent-session-default-1',
+      'agent_session_dedupe:merged_signal_count=2',
+      'agent_session_dedupe:source_observation_id=agent-session-observation:dedupe-a',
+      'agent_session_dedupe:source_observation_id=agent-session-observation:dedupe-b',
+    ]);
+    const stored = await engine.getMemoryCandidateEntry(result.route?.created_candidate?.id ?? '');
+    expect(stored?.source_refs).toEqual(result.route?.created_candidate?.source_refs);
+  });
+});
+
 test('task mechanics routes to no_write without a candidate', async () => {
   const { engine, touched } = throwingProxyEngine();
   const signal = makeSignal({

@@ -61,6 +61,7 @@ export async function routeAgentSessionMemorySignals(
   for (const signal of input.signals) {
     const routeInput = routeInputForSignal(signal);
     let route = routeMemoryWriteback(routeInput);
+    route = attachSignalDedupeAuditRefs(route, signal);
 
     // Prompt-injection-flagged signals never become candidates or writes:
     // content that tried to steer the agent must not steer durable memory.
@@ -136,6 +137,20 @@ export function routeInputForSignal(signal: AgentSessionMemorySignal): RouteMemo
     importance_score: signal.importance_score,
     recurrence_score: signal.recurrence_score,
     allow_canonical_write: false,
+  };
+}
+
+function attachSignalDedupeAuditRefs(
+  route: RouteMemoryWritebackResult,
+  signal: AgentSessionMemorySignal,
+): RouteMemoryWritebackResult {
+  if (!route.candidate_input) return route;
+  return {
+    ...route,
+    candidate_input: {
+      ...route.candidate_input,
+      source_refs: sourceRefsWithSignalDedupeAudit(route.candidate_input.source_refs, signal),
+    },
   };
 }
 
@@ -274,7 +289,7 @@ async function applyDirectProfileWrite(
     profile_type: profileType,
     subject: profileSubject,
     content,
-    source_refs: normalizeSourceRefs(signal.source_refs),
+    source_refs: sourceRefsWithSignalDedupeAudit(signal.source_refs, signal),
     sensitivity: 'personal',
     export_status: 'private_only',
     last_confirmed_at: new Date(),
@@ -346,7 +361,7 @@ async function applyDirectPersonalEpisodeWrite(
     end_time: null,
     source_kind: signal.personal_episode_source_kind ?? 'chat',
     summary,
-    source_refs: normalizeSourceRefs(signal.source_refs),
+    source_refs: sourceRefsWithSignalDedupeAudit(signal.source_refs, signal),
     candidate_ids: [],
   });
 
@@ -374,6 +389,23 @@ function requestedScopeForSignal(signal: AgentSessionMemorySignal): 'personal' |
 
 function normalizeSourceRefs(sourceRefs: string[]): string[] {
   return [...new Set(sourceRefs.map((sourceRef) => sourceRef.trim()).filter((sourceRef) => sourceRef.length > 0))];
+}
+
+function sourceRefsWithSignalDedupeAudit(
+  sourceRefs: string[],
+  signal: AgentSessionMemorySignal,
+): string[] {
+  const auditRefs = signalDedupeAuditRefs(signal);
+  return normalizeSourceRefs([...sourceRefs, ...auditRefs]);
+}
+
+function signalDedupeAuditRefs(signal: AgentSessionMemorySignal): string[] {
+  if (!signal.dedupe_merged_signal_count || signal.dedupe_merged_signal_count <= 1) return [];
+  const sourceObservationIds = signal.dedupe_merged_source_observation_ids ?? [signal.source_observation_id];
+  return [
+    `agent_session_dedupe:merged_signal_count=${signal.dedupe_merged_signal_count}`,
+    ...sourceObservationIds.map((id) => `agent_session_dedupe:source_observation_id=${id}`),
+  ];
 }
 
 function normalizeOptionalString(value: string | null | undefined): string | null {

@@ -482,6 +482,40 @@ describe('agent session signal classifier', () => {
       source_refs: ['source_chunk:personal', 'source_chunk:secret'],
       confidence_score: 0.9,
       importance_score: 0.85,
+      dedupe_merged_signal_count: 2,
+      dedupe_merged_source_observation_ids: [
+        'agent-session-observation:personal-duplicate',
+        'agent-session-observation:secret-duplicate',
+      ],
+    });
+  });
+
+  test('counts merged signals separately from unique source observations', () => {
+    const firstObservation = buildObservation({
+      id: 'agent-session-observation:shared-duplicate',
+      narrative: 'Remember that I prefer short implementation plans.',
+      facts: ['The user prefers short implementation plans.'],
+      source_refs: ['source_chunk:first'],
+    });
+    const secondObservation = buildObservation({
+      id: 'agent-session-observation:shared-duplicate',
+      narrative: 'Remember that I prefer short implementation plans.',
+      facts: ['The user prefers short implementation plans.'],
+      source_refs: ['source_chunk:second'],
+      confidence_score: 0.88,
+    });
+
+    const signals = classifyAgentSessionMemorySignals({
+      observations: [firstObservation, secondObservation],
+      summary: buildSummary({ outcome: '' }),
+    });
+
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({
+      dedupe_merged_signal_count: 2,
+      dedupe_merged_source_observation_ids: ['agent-session-observation:shared-duplicate'],
+      source_refs: ['source_chunk:first', 'source_chunk:second'],
+      confidence_score: 0.88,
     });
   });
 });
