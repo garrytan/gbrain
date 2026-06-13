@@ -54,6 +54,8 @@ agent planning/spec files are intentionally not tracked.
 | S31 | `s31-gbrain-personal-maintenance-cycle.test.ts` | GA-P6, G1, G2, L5, L6 | ✅ green |
 | S32 | `s32-gbrain-upstream-discipline.test.ts` | GA-P7, E1, L4, L6, G1 | ✅ green |
 | S33 | `s33-agent-session-memory-loop.test.ts` | G1, L6, L7 | ✅ green |
+| S34 | `s34-agent-session-auto-capture.test.ts` | G1, L6, L7 | ✅ green |
+| S35 | `s35-prompt-injection-suppression-health.test.ts` | G1, L6, G2 | ✅ green |
 
 Legend:
 - ✅ green = passes on current code
@@ -65,9 +67,11 @@ coverage, S23 duplicate review governance coverage, plus S24 duplicate review
 acceptance coverage, S25 memory consolidation retention coverage, S26
 GBrain absorption contract coverage, S27 GA-P2 evaluation foundation, and S28
 GA-P4 memory authority, S29 GA-P3 corpus lane provenance coverage, S30
-GA-P5 code lane derived-orientation coverage, and S31 GA-P6 personal
-maintenance cycle report/control-plane coverage, S32 GA-P7 consolidation
-and upstream-discipline coverage, and S33 agent-session memory loop coverage.
+GA-P5 code lane derived-orientation coverage, S31 GA-P6 personal maintenance
+cycle report/control-plane coverage, S32 GA-P7 consolidation and
+upstream-discipline coverage, S33 agent-session memory loop coverage, S34
+agent-session auto-capture raw-ingest coverage, and S35 prompt-injection
+suppression health coverage.
 Run this as
 part of final acceptance:
 
