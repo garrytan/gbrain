@@ -99,6 +99,7 @@ test('memory inbox operations are registered with CLI hints', () => {
   expect(reject?.cliHints?.name).toBe('reject-memory-candidate');
   expect(preflight?.cliHints?.name).toBe('preflight-promote-memory-candidate');
   expect(promote?.cliHints?.name).toBe('promote-memory-candidate');
+  expect(promote?.params.retry_on_stale).toMatchObject({ type: 'boolean' });
   expect(supersede?.cliHints?.name).toBe('supersede-memory-candidate');
   expect(contradiction?.cliHints?.name).toBe('resolve-memory-candidate-contradiction');
   expect(dreamCycle?.cliHints?.name).toBe('run-dream-cycle-maintenance');
@@ -2075,6 +2076,19 @@ test('memory inbox promotion operation promotes staged candidates and rejects bl
     });
 
     expect((promotedEvents as any[]).map((event) => event.to_status)).toEqual(['promoted']);
+
+    await expect(promote.handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, {
+      id: 'candidate-promote',
+      retry_on_stale: 'true',
+    })).rejects.toMatchObject({
+      code: 'invalid_params',
+      message: 'retry_on_stale must be a boolean',
+    });
 
     await create.handler({
       engine,

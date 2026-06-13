@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { spawnSync } from 'bun';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -200,7 +201,7 @@ test('promotion service fails closed for likely duplicate candidates', async () 
   });
 });
 
-test('promotion service fails closed when duplicate review inputs change during preflight', async () => {
+test('promotion service fails closed when duplicate review inputs change before promotion', async () => {
   await withEngine('mbrain-duplicate-preflight-stale-', async (engine) => {
     await seedCandidate(engine, 'incoming-stale-preflight', {
       proposed_content: 'Routing checks preserve stable review context.',
@@ -213,7 +214,7 @@ test('promotion service fails closed when duplicate review inputs change during 
     let listPagesCalls = 0;
     engine.listPages = async (filters) => {
       listPagesCalls += 1;
-      if (listPagesCalls === 2) {
+      if (listPagesCalls === 3) {
         await originalPutPage('concepts/unrelated-change', {
           type: 'concept',
           title: 'Unrelated Change',
@@ -228,11 +229,102 @@ test('promotion service fails closed when duplicate review inputs change during 
       review_reason: 'Attempt promotion with stale duplicate review inputs.',
     })).rejects.toMatchObject({
       code: 'promotion_preflight_failed',
+      message: expect.stringContaining('pages added: concepts/unrelated-change'),
     });
 
     const stored = await engine.getMemoryCandidateEntry('incoming-stale-preflight');
     expect(stored?.status).toBe('staged_for_review');
   });
+});
+
+test('promotion service retries once when duplicate review inputs change and retry_on_stale is enabled', async () => {
+  await withEngine('mbrain-duplicate-preflight-stale-retry-', async (engine) => {
+    await seedCandidate(engine, 'incoming-stale-preflight-retry', {
+      proposed_content: 'Routing checks preserve stable review context.',
+      source_refs: ['User, direct message, 2026-05-09 12:00 KST'],
+      target_object_id: 'concepts/stale-preflight-retry',
+    });
+
+    const originalListPages = engine.listPages.bind(engine);
+    const originalPutPage = engine.putPage.bind(engine);
+    let listPagesCalls = 0;
+    engine.listPages = async (filters) => {
+      listPagesCalls += 1;
+      if (listPagesCalls === 3) {
+        await originalPutPage('concepts/unrelated-change-retry', {
+          type: 'concept',
+          title: 'Unrelated Change Retry',
+          compiled_truth: 'An unrelated page changed between duplicate review and promotion.',
+        });
+      }
+      return originalListPages(filters);
+    };
+
+    const promoted = await promoteMemoryCandidateEntry(engine, {
+      id: 'incoming-stale-preflight-retry',
+      review_reason: 'Retry promotion after stale duplicate review inputs.',
+      retry_on_stale: true,
+    });
+
+    expect(promoted.status).toBe('promoted');
+    expect(promoted.review_reason).toBe('Retry promotion after stale duplicate review inputs.');
+    expect(await engine.listMemoryCandidateStatusEvents({
+      candidate_id: 'incoming-stale-preflight-retry',
+      event_kind: 'promoted',
+      limit: 10,
+    })).toHaveLength(1);
+    expect(listPagesCalls).toBeGreaterThan(3);
+  });
+});
+
+test('promotion service retries transaction-side duplicate review freshness changes', async () => {
+  await withEngine('mbrain-duplicate-preflight-write-stale-retry-', async (engine) => {
+    await seedCandidate(engine, 'incoming-write-stale-preflight-retry', {
+      proposed_content: 'Routing checks preserve stable review context inside the write transaction.',
+      source_refs: ['User, direct message, 2026-05-09 12:10 KST'],
+      target_object_id: 'concepts/write-stale-preflight-retry',
+    });
+
+    const originalPutPage = engine.putPage.bind(engine);
+    const originalTransaction = engine.transaction.bind(engine);
+    let transactionCalls = 0;
+    engine.transaction = async (fn) => {
+      transactionCalls += 1;
+      if (transactionCalls === 1) {
+        await originalPutPage('concepts/transaction-side-change-retry', {
+          type: 'concept',
+          title: 'Transaction Side Change Retry',
+          compiled_truth: 'A page changed after preflight and before the transactional promotion write.',
+        });
+      }
+      return originalTransaction(fn);
+    };
+
+    const promoted = await promoteMemoryCandidateEntry(engine, {
+      id: 'incoming-write-stale-preflight-retry',
+      review_reason: 'Retry promotion after transaction-side stale duplicate review inputs.',
+      retry_on_stale: true,
+    });
+
+    expect(promoted.status).toBe('promoted');
+    expect(promoted.review_reason).toBe('Retry promotion after transaction-side stale duplicate review inputs.');
+    expect(await engine.listMemoryCandidateStatusEvents({
+      candidate_id: 'incoming-write-stale-preflight-retry',
+      event_kind: 'promoted',
+      limit: 10,
+    })).toHaveLength(1);
+    expect(transactionCalls).toBe(2);
+  });
+});
+
+test('promote-memory-candidate CLI help exposes retry-on-stale', () => {
+  const proc = spawnSync(['bun', 'run', 'src/cli.ts', 'promote-memory-candidate', '--help'], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+
+  expect(proc.exitCode).toBe(0);
+  expect(new TextDecoder().decode(proc.stdout)).toContain('--retry-on-stale');
 });
 
 test('promotion preflight allow path includes no-match duplicate review', async () => {

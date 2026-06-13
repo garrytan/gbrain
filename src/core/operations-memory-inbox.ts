@@ -2379,6 +2379,7 @@ export function createMemoryInboxOperations(
       reviewed_at: { type: 'string', description: 'Optional ISO timestamp for promotion metadata' },
       review_reason: { type: 'string', description: 'Optional promotion reason for auditability' },
       interaction_id: { type: 'string', description: 'Optional retrieval trace id for lifecycle event attribution' },
+      retry_on_stale: { type: 'boolean', description: 'Retry once when duplicate review freshness changes before promotion' },
     },
     mutating: true,
     handler: async (ctx, p) => {
@@ -2392,6 +2393,7 @@ export function createMemoryInboxOperations(
         throw invalidParams(deps, 'review_reason must be a string or null');
       }
       const interactionId = normalizeOptionalNonEmptyString(deps, 'interaction_id', p.interaction_id);
+      const retryOnStale = normalizeOptionalBoolean(deps, 'retry_on_stale', p.retry_on_stale) === true;
       if (ctx.dryRun) {
         return {
           dry_run: true,
@@ -2407,6 +2409,7 @@ export function createMemoryInboxOperations(
           reviewed_at: p.reviewed_at === null ? null : (typeof p.reviewed_at === 'string' ? p.reviewed_at : undefined),
           review_reason: typeof p.review_reason === 'string' ? p.review_reason : undefined,
           interaction_id: interactionId,
+          retry_on_stale: retryOnStale,
         });
       } catch (error) {
         if (error instanceof MemoryInboxServiceError) {
