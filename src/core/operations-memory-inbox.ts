@@ -535,6 +535,19 @@ function unsupportedPatchApplySurfaceReason(
   return null;
 }
 
+function requiresPatchRiskAcknowledgement(
+  candidate: Pick<MemoryCandidateEntry, 'patch_risk_class'>,
+): boolean {
+  return candidate.patch_risk_class === 'high' || candidate.patch_risk_class === 'critical';
+}
+
+function patchRiskAcknowledgementRequiredMessage(
+  operation: 'review_memory_patch_candidate' | 'apply_memory_patch_candidate',
+  candidate: Pick<MemoryCandidateEntry, 'patch_risk_class'>,
+): string {
+  return `${operation} requires risk_acknowledged=true for ${candidate.patch_risk_class ?? 'unknown'} risk memory patch candidates`;
+}
+
 async function recordInvalidPatchLifecycleDenial(
   deps: { OperationError: OperationErrorCtor },
   tx: BrainEngine,
@@ -593,6 +606,70 @@ async function recordInvalidPatchLifecycleDenial(
   return {
     kind: 'denied',
     message: input.message,
+  };
+}
+
+async function recordPatchRiskAcknowledgementDenial(
+  deps: { OperationError: OperationErrorCtor },
+  tx: BrainEngine,
+  input: {
+    sessionId: string;
+    realmId: string;
+    actor: string;
+    operation: 'review_memory_patch_candidate' | 'apply_memory_patch_candidate';
+    targetKind: MemoryMutationTargetKind;
+    targetId: string;
+    candidate: MemoryCandidateEntry;
+    sourceRefs: string[];
+    reviewedAt?: string | null;
+    reviewReason?: string | null;
+  },
+): Promise<{ kind: 'denied'; message: string }> {
+  const patchOperationState = input.candidate.patch_operation_state;
+  if (!patchOperationState) {
+    throw invalidParams(deps, `memory patch candidate has no patch operation state: ${input.candidate.id}`);
+  }
+  const message = patchRiskAcknowledgementRequiredMessage(input.operation, input.candidate);
+  const event = await recordMemoryMutationEvent(tx, {
+    session_id: input.sessionId,
+    realm_id: input.realmId,
+    actor: input.actor,
+    operation: input.operation,
+    target_kind: input.targetKind,
+    target_id: input.targetId,
+    scope_id: input.candidate.scope_id,
+    source_refs: input.sourceRefs,
+    result: 'denied',
+    conflict_info: {
+      reason: 'patch_risk_acknowledgement_required',
+      candidate_id: input.candidate.id,
+      message,
+      patch_risk_class: input.candidate.patch_risk_class ?? 'unknown',
+    },
+    metadata: {
+      candidate_id: input.candidate.id,
+      patch_target_kind: input.candidate.patch_target_kind,
+      patch_target_id: input.candidate.patch_target_id,
+      patch_format: input.candidate.patch_format,
+      patch_risk_class: input.candidate.patch_risk_class ?? 'unknown',
+      previous_status: input.candidate.status,
+      previous_patch_operation_state: patchOperationState,
+    },
+  });
+  const updated = await tx.updateMemoryCandidatePatchOperationState(input.candidate.id, {
+    patch_operation_state: patchOperationState,
+    expected_current_status: input.candidate.status,
+    expected_current_patch_operation_state: patchOperationState,
+    patch_ledger_event_ids: appendPatchLedgerEventId(input.candidate, event.id),
+    reviewed_at: input.reviewedAt,
+    review_reason: input.reviewReason ?? message,
+  });
+  if (!updated) {
+    throw invalidParams(deps, `memory patch candidate changed before risk acknowledgement denial recording completed: ${input.candidate.id}`);
+  }
+  return {
+    kind: 'denied',
+    message,
   };
 }
 
@@ -1412,6 +1489,7 @@ export function createMemoryInboxOperations(
       },
       reviewed_at: { type: 'string', description: 'Optional ISO timestamp for review metadata' },
       review_reason: { type: 'string', description: 'Optional review reason for auditability' },
+      risk_acknowledged: { type: 'boolean', description: 'Required true when approving high or critical risk patch candidates' },
       source_refs: { type: 'array', required: true, items: { type: 'string' }, description: 'Required provenance strings for the review decision' },
     },
     mutating: true,
@@ -1522,6 +1600,20 @@ export function createMemoryInboxOperations(
             message: unsupportedApplySurfaceReason,
           };
         }
+        if (decision === 'approve' && requiresPatchRiskAcknowledgement(candidate) && p.risk_acknowledged !== true) {
+          return recordPatchRiskAcknowledgementDenial(deps, tx, {
+            sessionId,
+            realmId,
+            actor,
+            operation: 'review_memory_patch_candidate',
+            targetKind: 'memory_candidate',
+            targetId: candidate.id,
+            candidate,
+            sourceRefs,
+            reviewedAt,
+            reviewReason,
+          });
+        }
 
         const event = await recordMemoryMutationEvent(tx, {
           session_id: sessionId,
@@ -1594,6 +1686,7 @@ export function createMemoryInboxOperations(
       actor: { type: 'string', required: true, description: 'Actor applying the patch candidate' },
       reviewed_at: { type: 'string', description: 'Optional ISO timestamp for apply metadata' },
       review_reason: { type: 'string', description: 'Optional apply reason for auditability' },
+      risk_acknowledged: { type: 'boolean', description: 'Required true when applying high or critical risk patch candidates' },
       source_refs: { type: 'array', required: true, items: { type: 'string' }, description: 'Required provenance strings for the apply decision' },
     },
     mutating: true,
@@ -1658,6 +1751,20 @@ export function createMemoryInboxOperations(
             candidate,
             sourceRefs,
             message: `memory patch candidate must be approved_for_apply before apply: ${candidateId}`,
+          });
+        }
+        if (requiresPatchRiskAcknowledgement(candidate) && p.risk_acknowledged !== true) {
+          return recordPatchRiskAcknowledgementDenial(deps, tx, {
+            sessionId,
+            realmId,
+            actor,
+            operation: 'apply_memory_patch_candidate',
+            targetKind: candidateTargetKind,
+            targetId: candidateTargetId,
+            candidate,
+            sourceRefs,
+            reviewedAt,
+            reviewReason,
           });
         }
         const unsupportedApplySurfaceReason = unsupportedPatchApplySurfaceReason(candidate);

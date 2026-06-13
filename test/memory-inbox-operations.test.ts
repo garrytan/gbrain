@@ -124,7 +124,9 @@ test('memory inbox operations are registered with CLI hints', () => {
     'context_atlas',
   ]);
   expect(reviewPatch?.params.decision?.enum).toEqual(['approve', 'reject']);
+  expect(reviewPatch?.params.risk_acknowledged?.type).toBe('boolean');
   expect(applyPatch?.params.candidate_id?.type).toBe('string');
+  expect(applyPatch?.params.risk_acknowledged?.type).toBe('boolean');
   expect(list?.params.status?.enum).toEqual(['captured', 'candidate', 'staged_for_review', 'rejected', 'promoted', 'superseded']);
   expect(list?.params.patch_operation_state?.enum).toContain('approved_for_apply');
   expect(list?.params.patch_target_kind?.enum).toContain('page');
@@ -417,6 +419,197 @@ test('review and apply memory patch candidate update a page only after approval 
       candidate_id: 'patch-candidate-apply',
     });
     expect(statusEvents.map((event) => event.event_kind).sort()).toEqual(['created', 'promoted']);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('high and critical risk memory patch candidates require explicit acknowledgement before approval and apply', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-patch-risk-gate-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+  const createPatch = operations.find((operation) => operation.name === 'create_memory_patch_candidate');
+  const reviewPatch = operations.find((operation) => operation.name === 'review_memory_patch_candidate');
+  const applyPatch = operations.find((operation) => operation.name === 'apply_memory_patch_candidate');
+
+  if (!createPatch || !reviewPatch || !applyPatch) {
+    throw new Error('memory patch review/apply operations are missing');
+  }
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+    await engine.upsertMemoryRealm({
+      id: 'realm:patch-risk',
+      name: 'Patch risk realm',
+      scope: 'work',
+      default_access: 'read_write',
+    });
+    await engine.createMemorySession({
+      id: 'session:patch-risk',
+      actor_ref: 'agent:patch-risk',
+    });
+    await engine.attachMemoryRealmToSession({
+      session_id: 'session:patch-risk',
+      realm_id: 'realm:patch-risk',
+      access: 'read_write',
+    });
+    const page = await engine.putPage('concepts/patch-risk-target', {
+      type: 'concept',
+      title: 'Patch Risk Target',
+      compiled_truth: 'Original high risk target. [Source: User, direct message, 2026-04-26 01:00 PM KST]',
+      timeline: '',
+    });
+    const ctx = {
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    };
+
+    const created = await createPatch.handler(ctx, {
+      id: 'patch-candidate-high-risk',
+      session_id: 'session:patch-risk',
+      realm_id: 'realm:patch-risk',
+      actor: 'agent:patch-risk',
+      target_kind: 'page',
+      target_id: 'concepts/patch-risk-target',
+      base_target_snapshot_hash: page.content_hash,
+      patch_body: {
+        compiled_truth: 'Applied high risk target. [Source: User, direct message, 2026-04-26 01:01 PM KST]',
+      },
+      patch_format: 'merge_patch',
+      risk_class: 'high',
+      source_refs: ['User, direct message, 2026-04-26 01:01 PM KST'],
+    }) as any;
+
+    await expect(reviewPatch.handler(ctx, {
+      candidate_id: 'patch-candidate-high-risk',
+      session_id: 'session:patch-risk',
+      realm_id: 'realm:patch-risk',
+      actor: 'agent:patch-risk',
+      decision: 'approve',
+      review_reason: 'Approving without risk acknowledgement should be denied.',
+      source_refs: ['User, direct message, 2026-04-26 01:01 PM KST'],
+    })).rejects.toThrow(/risk_acknowledged=true/);
+
+    let candidate = await engine.getMemoryCandidateEntry('patch-candidate-high-risk');
+    expect(candidate?.status).toBe('staged_for_review');
+    expect(candidate?.patch_operation_state).toBe('proposed');
+    expect(candidate?.patch_ledger_event_ids).toHaveLength(created.patch_ledger_event_ids.length + 1);
+    let deniedEvents = await engine.listMemoryMutationEvents({
+      operation: 'review_memory_patch_candidate',
+      target_kind: 'memory_candidate',
+      target_id: 'patch-candidate-high-risk',
+      result: 'denied',
+    });
+    expect(deniedEvents).toHaveLength(1);
+    expect(deniedEvents[0]?.conflict_info?.reason).toBe('patch_risk_acknowledgement_required');
+    expect(deniedEvents[0]?.metadata.patch_risk_class).toBe('high');
+
+    const approved = await reviewPatch.handler(ctx, {
+      candidate_id: 'patch-candidate-high-risk',
+      session_id: 'session:patch-risk',
+      realm_id: 'realm:patch-risk',
+      actor: 'agent:patch-risk',
+      decision: 'approve',
+      risk_acknowledged: true,
+      review_reason: 'High risk patch was explicitly acknowledged.',
+      source_refs: ['User, direct message, 2026-04-26 01:01 PM KST'],
+    }) as any;
+    expect(approved.patch_operation_state).toBe('approved_for_apply');
+
+    await expect(applyPatch.handler(ctx, {
+      candidate_id: 'patch-candidate-high-risk',
+      session_id: 'session:patch-risk',
+      realm_id: 'realm:patch-risk',
+      actor: 'agent:patch-risk',
+      review_reason: 'Applying without risk acknowledgement should be denied.',
+      source_refs: ['User, direct message, 2026-04-26 01:01 PM KST'],
+    })).rejects.toThrow(/risk_acknowledged=true/);
+
+    candidate = await engine.getMemoryCandidateEntry('patch-candidate-high-risk');
+    expect(candidate?.status).toBe('staged_for_review');
+    expect(candidate?.patch_operation_state).toBe('approved_for_apply');
+    deniedEvents = await engine.listMemoryMutationEvents({
+      operation: 'apply_memory_patch_candidate',
+      target_kind: 'page',
+      target_id: 'concepts/patch-risk-target',
+      result: 'denied',
+    });
+    expect(deniedEvents).toHaveLength(1);
+    expect(deniedEvents[0]?.conflict_info?.reason).toBe('patch_risk_acknowledgement_required');
+    expect(deniedEvents[0]?.metadata.patch_risk_class).toBe('high');
+
+    const applied = await applyPatch.handler(ctx, {
+      candidate_id: 'patch-candidate-high-risk',
+      session_id: 'session:patch-risk',
+      realm_id: 'realm:patch-risk',
+      actor: 'agent:patch-risk',
+      risk_acknowledged: true,
+      review_reason: 'High risk apply was explicitly acknowledged.',
+      source_refs: ['User, direct message, 2026-04-26 01:01 PM KST'],
+    }) as any;
+
+    expect(applied.status).toBe('applied');
+    expect((await engine.getPage('concepts/patch-risk-target'))?.compiled_truth).toBe(
+      'Applied high risk target. [Source: User, direct message, 2026-04-26 01:01 PM KST]',
+    );
+
+    const criticalPage = await engine.putPage('concepts/patch-critical-risk-target', {
+      type: 'concept',
+      title: 'Patch Critical Risk Target',
+      compiled_truth: 'Original critical risk target. [Source: User, direct message, 2026-04-26 01:02 PM KST]',
+      timeline: '',
+    });
+    await createPatch.handler(ctx, {
+      id: 'patch-candidate-critical-risk',
+      session_id: 'session:patch-risk',
+      realm_id: 'realm:patch-risk',
+      actor: 'agent:patch-risk',
+      target_kind: 'page',
+      target_id: 'concepts/patch-critical-risk-target',
+      base_target_snapshot_hash: criticalPage.content_hash,
+      patch_body: {
+        compiled_truth: 'Applied critical risk target. [Source: User, direct message, 2026-04-26 01:03 PM KST]',
+      },
+      patch_format: 'merge_patch',
+      risk_class: 'critical',
+      source_refs: ['User, direct message, 2026-04-26 01:03 PM KST'],
+    });
+
+    await expect(reviewPatch.handler(ctx, {
+      candidate_id: 'patch-candidate-critical-risk',
+      session_id: 'session:patch-risk',
+      realm_id: 'realm:patch-risk',
+      actor: 'agent:patch-risk',
+      decision: 'approve',
+      review_reason: 'Critical risk approval without acknowledgement should be denied.',
+      source_refs: ['User, direct message, 2026-04-26 01:03 PM KST'],
+    })).rejects.toThrow(/critical risk memory patch candidates/);
+
+    candidate = await engine.getMemoryCandidateEntry('patch-candidate-critical-risk');
+    expect(candidate?.patch_operation_state).toBe('proposed');
+
+    await reviewPatch.handler(ctx, {
+      candidate_id: 'patch-candidate-critical-risk',
+      session_id: 'session:patch-risk',
+      realm_id: 'realm:patch-risk',
+      actor: 'agent:patch-risk',
+      decision: 'approve',
+      risk_acknowledged: true,
+      review_reason: 'Critical risk patch was explicitly acknowledged.',
+      source_refs: ['User, direct message, 2026-04-26 01:03 PM KST'],
+    });
+    await expect(applyPatch.handler(ctx, {
+      candidate_id: 'patch-candidate-critical-risk',
+      session_id: 'session:patch-risk',
+      realm_id: 'realm:patch-risk',
+      actor: 'agent:patch-risk',
+      review_reason: 'Critical risk apply without acknowledgement should be denied.',
+      source_refs: ['User, direct message, 2026-04-26 01:03 PM KST'],
+    })).rejects.toThrow(/critical risk memory patch candidates/);
   } finally {
     await engine.disconnect();
     rmSync(dir, { recursive: true, force: true });
