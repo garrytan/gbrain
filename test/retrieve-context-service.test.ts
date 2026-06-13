@@ -5,6 +5,7 @@ import { join } from 'path';
 import { importFromContent } from '../src/core/import-file.ts';
 import { readContext } from '../src/core/services/read-context-service.ts';
 import { buildStructuralContextMapEntry } from '../src/core/services/context-map-service.ts';
+import { getBroadSynthesisRoute } from '../src/core/services/broad-synthesis-route-service.ts';
 import { planAssertionGraphFrontier } from '../src/core/services/assertion-frontier-retrieval-service.ts';
 import { retrieveContext } from '../src/core/services/retrieve-context-service.ts';
 import { retrievalSelectorId } from '../src/core/services/retrieval-selector-service.ts';
@@ -1706,6 +1707,60 @@ describe('retrieve context service', () => {
         result.orientation.recommended_reads.map(retrievalSelectorId),
       );
       expect(result.required_reads.every((selector) => selector.kind !== 'source_ref')).toBe(true);
+    });
+  });
+
+  test('documents broad-synthesis orientation as separate from retrieve_context evidence ranking', async () => {
+    await withEngine('broad-synthesis-orientation-contract', async (engine) => {
+      await importFromContent(engine, 'concepts/canonical-memory', [
+        '---',
+        'type: concept',
+        'title: Canonical Memory',
+        '---',
+        '# Compiled Truth',
+        'Canonical Memory is the curated source of truth for broad synthesis.',
+        '[Source: User, direct message, 2026-05-07 09:20 KST]',
+      ].join('\n'), { path: 'concepts/canonical-memory.md' });
+      await importFromContent(engine, 'systems/derived-memory-map', [
+        '---',
+        'type: system',
+        'title: Derived Memory Map',
+        '---',
+        '# Overview',
+        'The derived map links to [[concepts/canonical-memory]] for broad orientation.',
+        '[Source: User, direct message, 2026-05-07 09:21 KST]',
+      ].join('\n'), { path: 'systems/derived-memory-map.md' });
+      await buildStructuralContextMapEntry(engine);
+
+      const broadRoute = await getBroadSynthesisRoute(engine, {
+        query: 'Canonical Memory',
+        limit: 5,
+      });
+      const result = await retrieveContext(engine, {
+        query: 'Canonical Memory',
+        include_orientation: true,
+        limit: 5,
+      }, {
+        candidateSearch: async () => [{
+          slug: 'concepts/canonical-memory',
+          page_id: 1,
+          title: 'Canonical Memory',
+          type: 'concept',
+          chunk_text: 'Canonical Memory is the curated source of truth for broad synthesis.',
+          chunk_source: 'compiled_truth',
+          score: 10,
+          stale: false,
+        }],
+      });
+
+      const broadReadSlugs = broadRoute.route!.recommended_reads.map((read) => read.page_slug);
+      expect(result.orientation.recommended_reads.map((selector) => selector.slug))
+        .toEqual(expect.arrayContaining(broadReadSlugs));
+      expect(result.required_reads.map((selector) => selector.slug))
+        .toContain('concepts/canonical-memory');
+      expect(result.read_plan.next_actions).toContain(
+        'Broad-synthesis route contributes orientation reads only; read_plan.selected_selectors remains the evidence boundary.',
+      );
     });
   });
 

@@ -1405,7 +1405,12 @@ function buildReadPlan(input: {
     selected_selectors: selectedSelectors,
     deferred_candidate_ids: deferredCandidateIds,
     gap_reasons: [...new Set(gapReasons)],
-    next_actions: readPlanNextActions(selectedSelectors, deferredCandidateIds, input.candidate_signals),
+    next_actions: readPlanNextActions(
+      selectedSelectors,
+      deferredCandidateIds,
+      input.orientation.recommended_reads.length > 0,
+      input.candidate_signals,
+    ),
   };
 }
 
@@ -1416,6 +1421,7 @@ function selectorEvidencePlanKey(selector: RetrievalSelector): string {
 function readPlanNextActions(
   selectedSelectors: string[],
   deferredCandidateIds: string[],
+  hasOrientationReads: boolean,
   candidateSignals: CandidateSignalResult,
 ): string[] {
   const actions: string[] = [];
@@ -1426,6 +1432,9 @@ function readPlanNextActions(
   }
   if (deferredCandidateIds.length > 0) {
     actions.push('If read_context reports gaps, rerun retrieve_context with a narrower query or higher limit.');
+  }
+  if (hasOrientationReads) {
+    actions.push('Broad-synthesis route contributes orientation reads only; read_plan.selected_selectors remains the evidence boundary.');
   }
   if (candidateSignals.candidate_signals.length > 0) {
     actions.push('Inspect candidate_signals separately; they are non-canonical and not answer evidence.');
