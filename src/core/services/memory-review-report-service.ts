@@ -430,6 +430,13 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
       }
     }
 
+    if (report.sections.policy_denials.length > 0) {
+      lines.push('', 'Policy Denials');
+      for (const denial of report.sections.policy_denials) {
+        lines.push(`- ${denial.id}: ${redactSecrets(denial.reason)}`);
+      }
+    }
+
     if (report.actions.length > 0) {
       lines.push('', 'Actions');
       for (const action of report.actions) {

@@ -1,4 +1,5 @@
 import type { Operation, OperationContext } from './operations.ts';
+import type { BrainEngine } from './engine.ts';
 import { buildAgentSessionActivationArtifacts } from './services/agent-session-activation-service.ts';
 import { classifyAgentSessionMemorySignals } from './services/agent-session-classifier-service.ts';
 import {
@@ -13,11 +14,14 @@ import { routeAgentSessionMemorySignals } from './services/agent-session-writeba
 import {
   AGENT_SESSION_EVENT_KINDS,
   AGENT_SESSION_SOURCE_KINDS,
+  type AgentSessionMemorySignal,
+  type AgentSessionMemoryRouteResult,
   type AgentSessionActor,
   type AgentSessionEventInput,
   type AgentSessionSourceKind,
   type AgentSessionWriteMode,
 } from './types.ts';
+import { recordMemoryMutationEvent } from './services/memory-mutation-ledger-service.ts';
 import { persistRawIngestPlan } from './source-registry/raw-ingest-store.ts';
 
 type OperationErrorCtor = new (
@@ -31,6 +35,8 @@ const AGENT_SESSION_WRITE_MODES = [
   'candidate_only',
   'direct_personal_when_allowed',
 ] as const satisfies readonly AgentSessionWriteMode[];
+
+const AGENT_SESSION_SUPPRESSION_REPORT_SCOPE_ID = 'workspace:default';
 
 const AGENT_SESSION_ACTORS = [
   'user',
@@ -172,11 +178,18 @@ async function runAgentSessionMemoryPipeline(
   const routes = apply
     ? await ctx.engine.transaction(async (tx) => {
         await persistRawIngestPlan(tx, capture.ingest_plan);
-        return routeAgentSessionMemorySignals(tx, {
+        const routed = await routeAgentSessionMemorySignals(tx, {
           signals,
           apply,
           write_mode: params.write_mode,
         });
+        await recordPromptInjectionSuppressionEvents(tx, {
+          routes: routed,
+          sessionId: params.session_id,
+          writeMode: params.write_mode,
+          now: params.now,
+        });
+        return routed;
       })
     : await routeAgentSessionMemorySignals(ctx.engine, {
         signals,
@@ -213,6 +226,62 @@ function redactCaptureForResponse(capture: AgentSessionCapturePlan): AgentSessio
       })),
     },
   };
+}
+
+async function recordPromptInjectionSuppressionEvents(
+  engine: BrainEngine,
+  input: {
+    routes: AgentSessionMemoryRouteResult[];
+    sessionId: string;
+    writeMode: AgentSessionWriteMode;
+    now?: string;
+  },
+): Promise<void> {
+  for (const route of input.routes) {
+    if (route.blocked_reason !== 'prompt_injection_suppressed') continue;
+    const signal = route.signal;
+    const target = promptInjectionSuppressionTarget(signal);
+    await recordMemoryMutationEvent(engine, {
+      session_id: input.sessionId,
+      realm_id: 'work',
+      actor: 'mbrain:agent_session_capture',
+      operation: 'record_memory_mutation_event',
+      target_kind: target.kind,
+      target_id: target.id,
+      scope_id: AGENT_SESSION_SUPPRESSION_REPORT_SCOPE_ID,
+      source_refs: signal.source_refs.length > 0 ? signal.source_refs : [`agent-session-signal:${signal.id}`],
+      result: 'denied',
+      metadata: {
+        reason: 'prompt_injection_suppressed',
+        signal_id: signal.id,
+        signal_scope_id: signal.scope_id,
+        source_observation_id: signal.source_observation_id,
+        signal_kind: signal.signal_kind,
+        candidate_type: signal.candidate_type,
+        target_object_type: signal.target_object_type,
+        sensitivity: signal.sensitivity,
+        write_mode: input.writeMode,
+      },
+      created_at: input.now,
+      decided_at: input.now,
+    });
+  }
+}
+
+function promptInjectionSuppressionTarget(
+  signal: AgentSessionMemorySignal,
+): { kind: 'source_record' | 'ledger_event'; id: string } {
+  const sourceRecord = sourceRecordIdFromRefs(signal.source_refs, 'source_chunk')
+    ?? sourceRecordIdFromRefs(signal.source_refs, 'source_item');
+  return sourceRecord
+    ? { kind: 'source_record', id: sourceRecord }
+    : { kind: 'ledger_event', id: signal.id };
+}
+
+function sourceRecordIdFromRefs(refs: string[], prefix: 'source_chunk' | 'source_item'): string | null {
+  const refPrefix = `${prefix}:`;
+  const ref = refs.find((entry) => entry.startsWith(refPrefix));
+  return ref?.slice(refPrefix.length).trim() || null;
 }
 
 function redactedEventText(redactedChunkText: string): string {
