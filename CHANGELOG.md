@@ -2,6 +2,10 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+- **`gbrain dream --break-lock`** (parity with `gbrain sync --break-lock`): safe path / `--max-age <seconds>` (atomic TOCTOU-safe) / `--force-break-lock`. Closes #1591; the cycle lock (held by `gbrain dream` / autopilot) had no CLI escape hatch, so a wedged cycle stranded it indefinitely and `gbrain doctor`'s hint routed operators to `gbrain sync --break-lock` which couldn't actually break it. Same safety semantics as sync: refuses if holder alive (60s liveness grace), refuses cross-host, atomic DELETE keyed on `(id, holder_pid)`.
+- **`gbrain files delete --id <id> | --path <path>`** (new subcommand): delete orphan/missing file rows from the `files` table. Requires `--yes` to confirm; supports `--json`. Pre-#2xxx the `image_assets` doctor hint pointed at `gbrain sync --skip-failed`, which only acknowledges sync-level failures, not per-file rows; this verb gives operators a per-file cleanup path. The doctor message now lists vanishing file ids and points at this command.
 ## [0.42.42.0] - 2026-06-12
 
 **`gbrain query` no longer pays a flat 10-second exit tax on managed Postgres behind a transaction-mode pooler — and CLI exit codes finally tell the truth on PGLite.** On deployments where the pooler holds sockets open past the bounded pool drain (gbrain#2084, a residual of gbrain#1972), every query printed its results and then sat for 10 seconds until the force-exit banner fired. The cause was two-layered: the hard-deadline timer was armed *before* the operation handler, so a multi-second search on a large brain burned the teardown budget (and any operation slower than 10 seconds was silently killed mid-run with exit 0 and truncated output); and the CLI never exited explicitly on success — it waited for Bun's event loop to drain, which a stuck pooler socket can hold open forever.

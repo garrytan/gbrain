@@ -7019,18 +7019,22 @@ export async function buildChecks(
   if (engine) {
     progress.heartbeat('image_assets');
     try {
-      const rows = await engine.executeRaw<{ storage_path: string }>(
-        `SELECT storage_path FROM files WHERE mime_type LIKE 'image/%' LIMIT 1000`
+      // v0.42.43.0 (PR #2xxx): also project id so the doctor hint can
+      // name a per-row id for `gbrain files delete --id`. Pre-#2xxx the
+      // hint routed operators to `gbrain sync --skip-failed`, which only
+      // acknowledges sync-level failures, not per-file rows.
+      const rows = await engine.executeRaw<{ id: number; storage_path: string }>(
+        `SELECT id, storage_path FROM files WHERE mime_type LIKE 'image/%' LIMIT 1000`
       );
       let vanished = 0;
-      const vanishedPaths: string[] = [];
+      const vanishedRows: Array<{ id: number; storage_path: string }> = [];
       const fs = await import('node:fs');
       for (const r of rows) {
         try {
           fs.statSync(r.storage_path);
         } catch {
           vanished++;
-          if (vanishedPaths.length < 5) vanishedPaths.push(r.storage_path);
+          if (vanishedRows.length < 5) vanishedRows.push({ id: r.id, storage_path: r.storage_path });
         }
       }
       if (rows.length === 0) {
@@ -7041,8 +7045,8 @@ export async function buildChecks(
         checks.push({
           name: 'image_assets',
           status: 'warn',
-          message: `${vanished} of ${rows.length} image(s) missing from disk (e.g. ${vanishedPaths.join(', ')}). ` +
-                   `Fix: restore from git, or \`gbrain sync --skip-failed\` to acknowledge.`,
+          message: `${vanished} of ${rows.length} image(s) missing from disk (e.g. ${vanishedRows.map(r => r.id + ':' + r.storage_path).join(', ')}). ` +
+                   `Fix: restore from git, or \`gbrain files delete --id <id>\` to acknowledge (run \`gbrain files list\` to find ids, or \`gbrain doctor --fix\` for a paste-ready list).`,
         });
       }
     } catch {
