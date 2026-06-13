@@ -346,3 +346,20 @@ The subsystem is successful only if it lets the system learn from derived signal
 while keeping durable memory cleaner, safer, and more explainable than a
 direct-write pipeline would. The Phase 9 control plane extends that success
 condition from candidate governance into governed mutation itself.
+
+## Phase 12 Review, Audit, and Health Owner Notes
+
+Phase 12 review, audit, and health is the report-first continuation of this
+workstream. The memory review report, audit query surfaces, doctor health
+expansion, failed-job/source/connector summaries, and report actions must stay
+governed operations rather than direct write shortcuts.
+
+Current implementation evidence includes `test/memory-review-report-service.test.ts`,
+`test/memory-operations-health-service.test.ts`, and
+`test/memory-operations-health-operations.test.ts`. The S35 prompt-injection suppression health
+scenario is also governance and health evidence because it proves that suppressed
+session signals are visible without becoming durable truth.
+
+This is targeted implementation evidence, not a full phase gate. There is no `test:phase12` acceptance alias,
+and `test:phase13` replay evidence should not be treated as proof that Phase 12
+report actions ran in production.
