@@ -6,6 +6,7 @@ import {
   loadMeetingTranscriptFilesystemItems,
   resolveMeetingTranscriptFilesystemTarget,
   type MeetingTranscriptFilesystemLoad,
+  type MeetingTranscriptFilesystemTarget,
 } from '../core/connectors/meeting-transcripts-filesystem.ts';
 import { loadConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -101,14 +102,24 @@ async function syncMeetingTranscripts(
   }
   const dryRun = hasFlag(args, '--dry-run');
   const target = resolveMeetingTranscriptFilesystemTarget(path);
-  const existing = await findMeetingTranscriptSource(engine, target.source_locator);
-  const blockReason = existing ? connectorSourceBlockReason(existing.source) : null;
-  if (blockReason) {
-    throw new Error(blockReason);
+  const sources = await listMeetingTranscriptSources(engine);
+  const blockingSource = findBlockingMeetingTranscriptSource(sources, target);
+  if (blockingSource) {
+    throw new Error(connectorSourceBlockReason(blockingSource.source) ?? 'source policy prevents connector sync');
+  }
+  const existing = findExactMeetingTranscriptSource(sources, target.source_locator);
+  let sourceId: string | null = existing?.source.id ?? null;
+
+  let loaded: MeetingTranscriptFilesystemLoad;
+  try {
+    loaded = loadMeetingTranscriptFilesystemItems({ path });
+  } catch (error) {
+    if (!dryRun && sourceId) {
+      await recordConnectorFailure(engine, sourceId, error);
+    }
+    throw error;
   }
 
-  const loaded = loadMeetingTranscriptFilesystemItems({ path });
-  let sourceId: string | null = existing?.source.id ?? null;
   let persisted = 0;
   let skippedUnchanged = 0;
 
@@ -165,11 +176,7 @@ async function syncMeetingTranscripts(
         },
       });
     } catch (error) {
-      await operationsByName.record_connector_failure.handler(ctx(engine), {
-        source_id: sourceId,
-        connector_id: MEETING_TRANSCRIPTS_CONNECTOR_ID,
-        error_message: error instanceof Error ? error.message : String(error),
-      }).catch(() => undefined);
+      await recordConnectorFailure(engine, sourceId, error);
       throw error;
     }
   }
@@ -187,16 +194,61 @@ async function syncMeetingTranscripts(
   };
 }
 
-async function findMeetingTranscriptSource(
+async function listMeetingTranscriptSources(
   engine: BrainEngine,
-  locator: string,
-): Promise<any | null> {
+): Promise<any[]> {
   const listed = await operationsByName.list_sources.handler(ctx(engine), {
     connector_id: MEETING_TRANSCRIPTS_CONNECTOR_ID,
-    locator,
-    limit: 1,
+    limit: 1000,
   }) as any;
-  return listed.sources[0] ?? null;
+  return listed.sources ?? [];
+}
+
+function findExactMeetingTranscriptSource(
+  rows: any[],
+  locator: string,
+): any | null {
+  return rows.find((row) => row.source?.locator === locator) ?? null;
+}
+
+function findBlockingMeetingTranscriptSource(
+  rows: any[],
+  target: MeetingTranscriptFilesystemTarget,
+): any | null {
+  return rows.find((row) => {
+    if (!row.source || !sourceOverlapsTarget(row, target)) return false;
+    return connectorSourceBlockReason(row.source) !== null;
+  }) ?? null;
+}
+
+function sourceOverlapsTarget(row: any, target: MeetingTranscriptFilesystemTarget): boolean {
+  const sourceLocator = row.source?.locator;
+  if (typeof sourceLocator !== 'string') return false;
+  if (sourceLocator === target.source_locator) return true;
+  if (!sourceLocator.startsWith('file://') || !target.source_locator.startsWith('file://')) {
+    return false;
+  }
+
+  const sourceScope = meetingTranscriptSourceScope(row);
+  if (target.source_scope === 'directory' && fileUrlContains(target.source_locator, sourceLocator)) {
+    return true;
+  }
+  if ((sourceScope === 'directory' || sourceScope === null)
+    && fileUrlContains(sourceLocator, target.source_locator)) {
+    return true;
+  }
+  return false;
+}
+
+function meetingTranscriptSourceScope(row: any): MeetingTranscriptFilesystemLoad['source_scope'] | null {
+  const scope = row.connector_account?.metadata_json?.source_scope;
+  return scope === 'file' || scope === 'directory' ? scope : null;
+}
+
+function fileUrlContains(container: string, candidate: string): boolean {
+  if (container === candidate) return true;
+  const prefix = container.endsWith('/') ? container : `${container}/`;
+  return candidate.startsWith(prefix);
 }
 
 function connectorSourceBlockReason(source: any): string | null {
@@ -207,6 +259,18 @@ function connectorSourceBlockReason(source: any): string | null {
     return 'source processing is paused for connector sync';
   }
   return null;
+}
+
+async function recordConnectorFailure(
+  engine: BrainEngine,
+  sourceId: string,
+  error: unknown,
+): Promise<void> {
+  await operationsByName.record_connector_failure.handler(ctx(engine), {
+    source_id: sourceId,
+    connector_id: MEETING_TRANSCRIPTS_CONNECTOR_ID,
+    error_message: error instanceof Error ? error.message : String(error),
+  });
 }
 
 function ctx(engine: BrainEngine, dryRun = false): OperationContext {

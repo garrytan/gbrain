@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
@@ -115,6 +116,26 @@ describe('connectors sync command', () => {
           source_scope: 'directory',
         },
       });
+      expect(listed.sources[0].connector_grants.map((grant: any) => [grant.scope, grant.grant_state])).toEqual([
+        ['meetings.read', 'granted'],
+      ]);
+      expect(listed.sources[0].connector_sync_state).toMatchObject({
+        health_status: 'healthy',
+        failure_count: 0,
+        metadata_json: {
+          planned_count: 1,
+          ingested_count: 1,
+          skipped_count: 0,
+        },
+      });
+
+      const inspected = await operationsByName.get_source.handler(harness.ctx(), {
+        source_id: listed.sources[0].source.id,
+      }) as any;
+      expect(inspected.status_events.map((event: any) => event.event_type)).toEqual([
+        'registered',
+        'connector_sync_succeeded',
+      ]);
 
       const items = await operationsByName.list_source_items.handler(harness.ctx(), {
         source_id: listed.sources[0].source.id,
@@ -249,6 +270,110 @@ describe('connectors sync command', () => {
       const db = (harness.engine as any).database;
       expect(db.query('SELECT COUNT(*) AS count FROM source_items').get().count).toBe(0);
     } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('revoked child file source blocks parent directory sync before reading overlapping content', async () => {
+    const harness = await createSqliteHarness('revoked-child-file');
+    const transcriptDir = makeTempDir('mbrain-meeting-transcripts-revoked-child-');
+    try {
+      const childPath = join(transcriptDir, 'child.md');
+      writeFileSync(childPath, 'Should not be ingested through parent directory');
+      await operationsByName.register_connector_source.handler(harness.ctx(), {
+        connector_id: 'meeting_transcripts',
+        display_name: 'Meeting Transcripts: child',
+        account_locator: pathToFileURL(realpathSync(childPath)).href,
+        consent_state: 'revoked',
+        metadata_json: {
+          source_scope: 'file',
+        },
+        now: '2026-06-14T00:00:00.000Z',
+      });
+
+      await expect(runConnectors(harness.engine, [
+        'sync',
+        'meeting_transcripts',
+        '--path',
+        transcriptDir,
+      ])).rejects.toThrow('source consent revoked prevents connector sync');
+
+      const db = (harness.engine as any).database;
+      expect(db.query('SELECT COUNT(*) AS count FROM sources').get().count).toBe(1);
+      expect(db.query('SELECT COUNT(*) AS count FROM source_items').get().count).toBe(0);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('revoked parent directory source blocks child file sync before reading overlapping content', async () => {
+    const harness = await createSqliteHarness('revoked-parent-directory');
+    const transcriptDir = makeTempDir('mbrain-meeting-transcripts-revoked-parent-');
+    try {
+      const childPath = join(transcriptDir, 'child.md');
+      writeFileSync(childPath, 'Should not be ingested through child file');
+      await operationsByName.register_connector_source.handler(harness.ctx(), {
+        connector_id: 'meeting_transcripts',
+        display_name: 'Meeting Transcripts: parent',
+        account_locator: pathToFileURL(realpathSync(transcriptDir)).href,
+        consent_state: 'revoked',
+        metadata_json: {
+          source_scope: 'directory',
+        },
+        now: '2026-06-14T00:00:00.000Z',
+      });
+
+      await expect(runConnectors(harness.engine, [
+        'sync',
+        'meeting_transcripts',
+        '--path',
+        childPath,
+      ])).rejects.toThrow('source consent revoked prevents connector sync');
+
+      const db = (harness.engine as any).database;
+      expect(db.query('SELECT COUNT(*) AS count FROM sources').get().count).toBe(1);
+      expect(db.query('SELECT COUNT(*) AS count FROM source_items').get().count).toBe(0);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('filesystem read failure inside an existing source records connector failure health', async () => {
+    const harness = await createSqliteHarness('existing-read-failure');
+    const transcriptDir = makeTempDir('mbrain-meeting-transcripts-read-failure-');
+    const transcriptPath = join(transcriptDir, 'locked.md');
+    try {
+      writeFileSync(transcriptPath, 'Unreadable transcript');
+      const registered = await operationsByName.register_connector_source.handler(harness.ctx(), {
+        connector_id: 'meeting_transcripts',
+        display_name: 'Meeting Transcripts: locked',
+        account_locator: pathToFileURL(realpathSync(transcriptDir)).href,
+        consent_state: 'granted',
+        metadata_json: {
+          source_scope: 'directory',
+        },
+        now: '2026-06-14T00:00:00.000Z',
+      }) as any;
+      chmodSync(transcriptPath, 0o000);
+
+      await expect(runConnectors(harness.engine, [
+        'sync',
+        'meeting_transcripts',
+        '--path',
+        transcriptDir,
+      ])).rejects.toThrow(/EACCES|permission/i);
+
+      const inspected = await operationsByName.get_source.handler(harness.ctx(), {
+        source_id: registered.source.id,
+      }) as any;
+      expect(inspected.connector_sync_state).toMatchObject({
+        health_status: 'unhealthy',
+        failure_count: 1,
+      });
+      expect(inspected.connector_sync_state.last_error).toMatch(/EACCES|permission/i);
+      expect(inspected.status_events.map((event: any) => event.event_type)).toContain('connector_sync_failed');
+    } finally {
+      chmodSync(transcriptPath, 0o600);
       await harness.cleanup();
     }
   });
