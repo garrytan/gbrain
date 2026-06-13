@@ -168,6 +168,19 @@ const AGENT_SESSION_CLI_SPEC: Operation = {
   cliHints: { name: 'agent-session', positional: ['action'] },
 };
 
+const CONNECTORS_CLI_SPEC: Operation = {
+  name: 'connectors',
+  description: 'Inspect connector definitions or sync supported personal connector sources.',
+  params: {
+    action: { type: 'string', description: 'Connector action: list, show, or sync' },
+    connector_id: { type: 'string', description: 'Connector id for show/sync' },
+    path: { type: 'string', description: 'Filesystem path for meeting transcript sync' },
+    dry_run: { type: 'boolean', description: 'Preview connector sync without writing source rows' },
+  },
+  handler: noopHandler,
+  cliHints: { name: 'connectors', positional: ['action', 'connector_id'] },
+};
+
 const SYNC_CLI_SPEC: Operation = {
   name: 'sync_brain',
   description: 'Sync git repo to brain (incremental). CLI also supports a watch-mode extension for repeated polling.',
@@ -201,7 +214,6 @@ const CLI_ONLY_SPECS: Partial<Record<string, Operation>> = {
 const DIRECT_NO_ENGINE_COMMANDS: Record<string, CliNoEngineLoader> = {
   init: async () => (await import('./commands/init.ts')).runInit,
   integrations: async () => (await import('./commands/integrations.ts')).runIntegrations,
-  connectors: async () => (await import('./commands/connectors.ts')).runConnectors,
   autopilot: async () => (await import('./commands/autopilot.ts')).runAutopilot,
   publish: async () => (await import('./commands/publish.ts')).runPublish,
   'check-backlinks': async () => (await import('./commands/backlinks.ts')).runBacklinks,
@@ -235,6 +247,7 @@ const DIRECT_ENGINE_COMMANDS: Record<string, CliEngineLoader> = {
   'memory-report': async () => (await import('./commands/memory-report.ts')).runMemoryReport,
   'auto-promote': async () => (await import('./commands/auto-promote.ts')).runAutoPromoteCommand,
   'agent-session': async () => (await import('./commands/agent-session.ts')).runAgentSession,
+  connectors: async () => (await import('./commands/connectors.ts')).runConnectors,
   migrate: async () => (await import('./commands/migrate-engine.ts')).runMigrateEngine,
   subbrain: async () => (await import('./commands/subbrain.ts')).runSubbrain,
 };
@@ -384,6 +397,7 @@ export function formatResult(opName: string, result: unknown, params: Record<str
 function getCliHelpSpec(command: string): Operation | undefined {
   if (command === 'sync') return SYNC_CLI_SPEC;
   if (command === 'dream') return DREAM_CLI_SPEC;
+  if (command === 'connectors') return CONNECTORS_CLI_SPEC;
   return cliOps.get(command) || CLI_ONLY_SPECS[command];
 }
 
@@ -478,6 +492,12 @@ async function handleDirectCommand(command: string, args: string[]): Promise<boo
     return true;
   }
 
+  if (command === 'connectors' && args[0] !== 'sync') {
+    const { runConnectors } = await import('./commands/connectors.ts');
+    await runConnectors(args);
+    return true;
+  }
+
   const noEngineLoader = DIRECT_NO_ENGINE_COMMANDS[command];
   if (noEngineLoader) {
     const runCommand = await noEngineLoader();
@@ -553,7 +573,7 @@ SETUP
   doctor [--json] [--agent] [--explain]
                                     Health check (engine, schema, embeddings, local/managed capabilities)
   integrations [subcommand]          Manage integration recipes
-  connectors [list|show]             Inspect personal data connector definitions
+  connectors [list|show|sync]        Inspect or sync personal data connector sources
   memory-report [--json]             Show the memory review report surface
   agent-session preview|capture      Preview or capture a JSON agent-session envelope file
 

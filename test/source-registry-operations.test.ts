@@ -892,4 +892,34 @@ describe('source registry operations', () => {
       await harness.cleanup();
     }
   });
+
+  test('list_sources can filter connector sources by exact locator', async () => {
+    const harness = await createSqliteHarness('connector-locator-filter');
+    try {
+      const first = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'meeting_transcripts',
+        display_name: 'Meeting Transcripts: one',
+        account_locator: 'file:///tmp/meetings/one',
+        consent_state: 'granted',
+        now: '2026-06-14T00:00:00.000Z',
+      }) as any;
+      await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'meeting_transcripts',
+        display_name: 'Meeting Transcripts: two',
+        account_locator: 'file:///tmp/meetings/two',
+        consent_state: 'revoked',
+        now: '2026-06-14T00:01:00.000Z',
+      });
+
+      const listed = await getOperation('list_sources').handler(harness.ctx(), {
+        connector_id: 'meeting_transcripts',
+        locator: 'file:///tmp/meetings/one',
+      }) as any;
+
+      expect(listed.sources).toHaveLength(1);
+      expect(listed.sources[0].source.id).toBe(first.source.id);
+    } finally {
+      await harness.cleanup();
+    }
+  });
 });

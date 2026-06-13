@@ -290,6 +290,7 @@ export function createSourceRegistryOperations(
     params: {
       source_kind: { type: 'string', enum: [...SOURCE_KINDS], description: 'Optional source kind filter.' },
       connector_id: { type: 'string', description: 'Optional connector id filter.' },
+      locator: { type: 'string', description: 'Optional exact source locator filter.' },
       consent_state: { type: 'string', enum: [...CONSENT_STATES], description: 'Optional minimal consent filter.' },
       enabled: { type: 'boolean', description: 'Optional enabled filter.' },
       limit: { type: 'number', description: 'Maximum rows to return.' },
@@ -297,6 +298,7 @@ export function createSourceRegistryOperations(
     handler: async (ctx, p) => listSourceInspectionRows(ctx.engine, {
       source_kind: optionalSourceKind(deps, p.source_kind),
       connector_id: optionalString(deps, 'connector_id', p.connector_id),
+      locator: optionalString(deps, 'locator', p.locator),
       consent_state: optionalConsentState(deps, p.consent_state),
       enabled: optionalBoolean(deps, 'enabled', p.enabled),
       limit: optionalNumber(deps, 'limit', p.limit) ?? 100,
@@ -612,6 +614,7 @@ type QueryableEngine = BrainEngine & {
 interface SourceInspectionFilters {
   source_kind?: SourceKind;
   connector_id?: string;
+  locator?: string;
   consent_state?: SourceConsentState;
   enabled?: boolean;
   limit: number;
@@ -1658,6 +1661,7 @@ async function listSourceInspectionRows(
   const sources = (await readAllSourceRecords(engine))
     .filter((source) => !filters.source_kind || source.kind === filters.source_kind)
     .filter((source) => !filters.connector_id || source.connector_id === filters.connector_id)
+    .filter((source) => !filters.locator || source.locator === filters.locator)
     .filter((source) => !filters.consent_state || source.consent_state === filters.consent_state)
     .filter((source) => filters.enabled === undefined || source.enabled === filters.enabled)
     .slice(0, filters.limit);
