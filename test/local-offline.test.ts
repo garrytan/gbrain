@@ -1476,6 +1476,41 @@ Updated chunk content for the same page.
     expect(after[0]?.model).toBe(model);
   });
 
+  test('stale-only embedding refreshes same-layout chunks from a previous embedding model', async () => {
+    const firstProvider = createFakeProvider();
+    setEmbeddingProviderForTests(firstProvider.provider);
+
+    await engine.putPage('concepts/model-drift', {
+      type: 'concept',
+      title: 'Model Drift',
+      compiled_truth: 'Same text should be stale after the embedding model changes.',
+      timeline: '',
+      frontmatter: {},
+    });
+    await runEmbed(engine, ['concepts/model-drift']);
+
+    const initialChunks = await engine.getChunks('concepts/model-drift');
+    expect(initialChunks).toHaveLength(1);
+    expect(initialChunks[0]?.model).toBe('test-local-v1');
+    expect(initialChunks[0]?.embedded_at).toBeInstanceOf(Date);
+
+    const secondProvider = createCapturingProvider('test-local-v2');
+    setEmbeddingProviderForTests(secondProvider.provider);
+
+    await runEmbed(engine, ['--stale']);
+
+    expect(secondProvider.batches).toEqual([
+      initialChunks.map(chunk => chunk.chunk_text),
+    ]);
+
+    const refreshedChunks = await engine.getChunks('concepts/model-drift');
+    expect(refreshedChunks).toHaveLength(1);
+    expect(refreshedChunks[0]?.model).toBe('test-local-v2');
+    expect(refreshedChunks[0]?.embedded_at).toBeInstanceOf(Date);
+    const refreshedWithEmbeddings = await engine.getChunksWithEmbeddings('concepts/model-drift');
+    expect(Array.from(refreshedWithEmbeddings[0]?.embedding ?? [])).toEqual([1, 1, 'test-local-v2'.length]);
+  });
+
   test('stale-only embedding removes obsolete frontmatter chunks after codemap deletion', async () => {
     const fake = createFakeProvider();
     setEmbeddingProviderForTests(fake.provider);
