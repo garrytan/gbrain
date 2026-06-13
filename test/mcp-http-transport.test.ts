@@ -340,6 +340,82 @@ describe('MCP HTTP transport', () => {
     expect(logs).toEqual([{ operation: 'failing_tool', status: 'error' }]);
   });
 
+  test('rejects invalid object params before dispatching MCP tools', async () => {
+    let handlerCalled = false;
+    const objectParamOp: Operation = {
+      name: 'object_param_tool',
+      description: 'Test-only operation with an object parameter.',
+      params: {
+        payload: { type: 'object', required: true },
+      },
+      handler: async () => {
+        handlerCalled = true;
+        return { ok: true };
+      },
+    };
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      operations: [objectParamOp],
+      authenticate: async () => ({ ok: true, tokenName: 'test-client' }),
+      logRequest: async () => {},
+    });
+
+    const response = await readJsonRpcResponse(await postMcp(handler, {
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: {
+        name: 'object_param_tool',
+        arguments: { payload: 'not an object' },
+      },
+      id: 1,
+    }));
+    const error = JSON.parse(response.result.content[0].text);
+
+    expect(response.result.isError).toBe(true);
+    expect(error).toMatchObject({ error: 'invalid_params' });
+    expect(error.message).toContain('payload must be an object');
+    expect(handlerCalled).toBe(false);
+  });
+
+  test('rejects invalid array item params before dispatching MCP tools', async () => {
+    let handlerCalled = false;
+    const arrayParamOp: Operation = {
+      name: 'array_param_tool',
+      description: 'Test-only operation with a string array parameter.',
+      params: {
+        source_refs: { type: 'array', required: true, items: { type: 'string' } },
+      },
+      handler: async () => {
+        handlerCalled = true;
+        return { ok: true };
+      },
+    };
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      operations: [arrayParamOp],
+      authenticate: async () => ({ ok: true, tokenName: 'test-client' }),
+      logRequest: async () => {},
+    });
+
+    const response = await readJsonRpcResponse(await postMcp(handler, {
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: {
+        name: 'array_param_tool',
+        arguments: { source_refs: ['valid-ref', 42] },
+      },
+      id: 1,
+    }));
+    const error = JSON.parse(response.result.content[0].text);
+
+    expect(response.result.isError).toBe(true);
+    expect(error).toMatchObject({ error: 'invalid_params' });
+    expect(error.message).toContain('source_refs[1] must be a string');
+    expect(handlerCalled).toBe(false);
+  });
+
   test('serves OAuth metadata and dynamic client registration when enabled', async () => {
     const { dbPath } = createSqliteTokenDb();
     const handler = createMcpHttpHandler({

@@ -518,7 +518,7 @@ export function createMemoryControlPlaneOperations(
       },
       session_id: { type: 'string', description: 'Optional mutation ledger session id. Generated when omitted.' },
       actor: { type: 'string', default: DEFAULT_REALM_UPSERT_ACTOR },
-      source_refs: { type: 'array', items: { type: 'string' }, description: 'Optional provenance reference string or string array for the ledger event.' },
+      source_refs: { type: ['array', 'string'], items: { type: 'string' }, description: 'Optional provenance reference string or string array for the ledger event.' },
     },
     mutating: true,
     handler: async (ctx, p) => {
@@ -599,7 +599,7 @@ export function createMemoryControlPlaneOperations(
         nullable: true,
         description: 'Optional ISO timestamp after which the session is effectively expired.',
       },
-      source_refs: { type: 'array', items: { type: 'string' }, description: 'Optional provenance reference string or string array for the ledger event.' },
+      source_refs: { type: ['array', 'string'], items: { type: 'string' }, description: 'Optional provenance reference string or string array for the ledger event.' },
     },
     mutating: true,
     handler: async (ctx, p) => {
@@ -673,7 +673,7 @@ export function createMemoryControlPlaneOperations(
     description: 'Close an active memory session if it exists.',
     params: {
       id: { type: 'string', required: true },
-      source_refs: { type: 'array', items: { type: 'string' }, description: 'Optional provenance reference string or string array for the ledger event.' },
+      source_refs: { type: ['array', 'string'], items: { type: 'string' }, description: 'Optional provenance reference string or string array for the ledger event.' },
     },
     mutating: true,
     handler: async (ctx, p) => {
@@ -729,7 +729,7 @@ export function createMemoryControlPlaneOperations(
       realm_id: { type: 'string', required: true },
       access: { type: 'string', required: true, enum: [...MEMORY_ACCESS_MODES] },
       instructions: { type: 'string', default: '' },
-      source_refs: { type: 'array', items: { type: 'string' }, description: 'Optional provenance reference string or string array for the ledger event.' },
+      source_refs: { type: ['array', 'string'], items: { type: 'string' }, description: 'Optional provenance reference string or string array for the ledger event.' },
     },
     mutating: true,
     handler: async (ctx, p) => {
@@ -798,7 +798,7 @@ export function createMemoryControlPlaneOperations(
       query: { type: 'string', required: true },
       replacement_text: { type: 'string', default: '[REDACTED]' },
       requested_by: { type: 'string', nullable: true },
-      source_refs: { type: 'array', items: { type: 'string' } },
+      source_refs: { type: ['array', 'string'], items: { type: 'string' } },
     },
     mutating: true,
     handler: async (ctx, p) => {
@@ -846,7 +846,7 @@ export function createMemoryControlPlaneOperations(
     params: {
       id: { type: 'string', required: true },
       review_reason: { type: 'string', nullable: true },
-      source_refs: { type: 'array', items: { type: 'string' } },
+      source_refs: { type: ['array', 'string'], items: { type: 'string' } },
     },
     mutating: true,
     handler: async (ctx, p) => {
@@ -880,7 +880,7 @@ export function createMemoryControlPlaneOperations(
     params: {
       id: { type: 'string', required: true },
       review_reason: { type: 'string', nullable: true },
-      source_refs: { type: 'array', items: { type: 'string' } },
+      source_refs: { type: ['array', 'string'], items: { type: 'string' } },
     },
     mutating: true,
     handler: async (ctx, p) => {
@@ -914,7 +914,7 @@ export function createMemoryControlPlaneOperations(
     params: {
       id: { type: 'string', required: true },
       actor: { type: 'string' },
-      source_refs: { type: 'array', items: { type: 'string' } },
+      source_refs: { type: ['array', 'string'], items: { type: 'string' } },
     },
     mutating: true,
     handler: async (ctx, p) => {

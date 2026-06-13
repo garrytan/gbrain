@@ -189,6 +189,75 @@ function paramHasType(paramDef: ParamDef | undefined, type: ParamType): boolean 
   return Array.isArray(paramDef.type) ? paramDef.type.includes(type) : paramDef.type === type;
 }
 
+export function validateOperationParams(
+  operation: { name: string; params: Record<string, ParamDef> },
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  for (const [name, value] of Object.entries(params)) {
+    const paramDef = operation.params[name];
+    if (!paramDef || value === undefined) continue;
+    validateOperationParamValue(name, value, paramDef);
+  }
+  return params;
+}
+
+function validateOperationParamValue(path: string, value: unknown, paramDef: ParamDef): void {
+  if (value === null) {
+    if (paramDef.nullable) return;
+    throw new OperationError('invalid_params', `${path} must be ${formatExpectedParamTypes(paramDef)}.`);
+  }
+
+  const types = Array.isArray(paramDef.type) ? paramDef.type : [paramDef.type];
+  const matched = types.some(type => valueMatchesParamType(value, type));
+  if (!matched) {
+    throw new OperationError('invalid_params', `${path} must be ${formatExpectedParamTypes(paramDef)}.`);
+  }
+
+  const itemDef = paramDef.items;
+  if (Array.isArray(value) && paramHasType(paramDef, 'array') && itemDef) {
+    value.forEach((item, index) => {
+      validateOperationParamValue(`${path}[${index}]`, item, itemDef);
+    });
+  }
+}
+
+function valueMatchesParamType(value: unknown, type: ParamType): boolean {
+  switch (type) {
+    case 'string':
+      return typeof value === 'string';
+    case 'number':
+      return typeof value === 'number' && Number.isFinite(value);
+    case 'boolean':
+      return typeof value === 'boolean';
+    case 'object':
+      return typeof value === 'object' && value !== null && !Array.isArray(value);
+    case 'array':
+      return Array.isArray(value);
+  }
+}
+
+function formatExpectedParamTypes(paramDef: ParamDef): string {
+  const types = Array.isArray(paramDef.type) ? paramDef.type : [paramDef.type];
+  const labels = types.map(formatExpectedParamType);
+  if (labels.length === 1) return labels[0];
+  return `${labels.slice(0, -1).join(', ')} or ${labels[labels.length - 1]}`;
+}
+
+function formatExpectedParamType(type: ParamType): string {
+  switch (type) {
+    case 'string':
+      return 'a string';
+    case 'number':
+      return 'a number';
+    case 'boolean':
+      return 'a boolean';
+    case 'object':
+      return 'an object';
+    case 'array':
+      return 'an array';
+  }
+}
+
 export interface Logger {
   info(msg: string): void;
   warn(msg: string): void;
@@ -2844,7 +2913,7 @@ const put_page: Operation = {
     realm_id: { type: 'string', description: 'Optional audit realm id. Defaults to work.' },
     actor: { type: 'string', description: 'Optional audit actor. Defaults to mbrain:put_page.' },
     scope_id: { type: 'string', description: 'Optional audit scope id. Defaults to workspace:default.' },
-    source_refs: { type: 'array', items: { type: 'string' }, description: 'Optional non-empty audit provenance references.' },
+    source_refs: { type: ['array', 'string'], items: { type: 'string' }, description: 'Optional non-empty audit provenance references.' },
     metadata: { type: 'object', description: 'Optional audit metadata object.' },
     defer_derived: { type: 'boolean', description: 'Commit the canonical page immediately and refresh chunks, manifest, and section indexes after the MCP response.' },
   },
@@ -5516,7 +5585,7 @@ const reverify_code_claims: Operation = {
   params: {
     repo_path: { type: 'string', required: true, description: 'Repository root used to verify file and symbol claims' },
     branch_name: { type: 'string', description: 'Current branch name for branch-sensitive claims' },
-    claims: { type: 'array', items: { type: 'object' }, description: 'Code claims to verify directly, optionally including expected_content_hash, verification_hint, verification_mode, source_ref, and symbol_id' },
+    claims: { type: ['array', 'string'], items: { type: ['object', 'string'] }, description: 'Code claims to verify directly, optionally including expected_content_hash, verification_hint, verification_mode, source_ref, and symbol_id' },
     trace_id: { type: 'string', description: 'Retrieval trace id containing code_claim verification entries' },
   },
   mutating: true,
@@ -5658,10 +5727,10 @@ const record_retrieval_trace: Operation = {
   params: {
     task_id: { type: 'string', required: true, description: 'Task thread id' },
     outcome: { type: 'string', required: true, description: 'Trace outcome summary' },
-    route: { type: 'array', items: { type: 'string' }, description: 'Ordered retrieval route' },
-    source_refs: { type: 'array', items: { type: 'string' }, description: 'Source references consulted' },
-    derived_consulted: { type: 'array', items: { type: 'string' }, description: 'Derived artifacts consulted separately from canonical source refs' },
-    verification: { type: 'array', items: { type: 'string' }, description: 'Verification steps performed' },
+    route: { type: ['array', 'string'], items: { type: 'string' }, description: 'Ordered retrieval route' },
+    source_refs: { type: ['array', 'string'], items: { type: 'string' }, description: 'Source references consulted' },
+    derived_consulted: { type: ['array', 'string'], items: { type: 'string' }, description: 'Derived artifacts consulted separately from canonical source refs' },
+    verification: { type: ['array', 'string'], items: { type: 'string' }, description: 'Verification steps performed' },
     write_outcome: { type: 'string', enum: [...RETRIEVAL_TRACE_WRITE_OUTCOMES], description: 'Structured write outcome for the trace' },
     selected_intent: { type: 'string', enum: [...RETRIEVAL_ROUTE_INTENTS], description: 'Structured retrieval intent selected for the trace' },
     scope_gate_policy: { type: 'string', enum: [...SCOPE_GATE_POLICIES], description: 'Structured scope gate policy, when evaluated' },
@@ -5771,12 +5840,12 @@ const refresh_task_working_set: Operation = {
   description: 'Refresh a task working set snapshot and advance its verification timestamp.',
   params: {
     task_id: { type: 'string', required: true, description: 'Task thread id' },
-    active_paths: { type: 'array', items: { type: 'string' }, description: 'Active file paths' },
-    active_symbols: { type: 'array', items: { type: 'string' }, description: 'Active symbols' },
-    blockers: { type: 'array', items: { type: 'string' }, description: 'Current blockers' },
-    open_questions: { type: 'array', items: { type: 'string' }, description: 'Open questions' },
-    next_steps: { type: 'array', items: { type: 'string' }, description: 'Next steps' },
-    verification_notes: { type: 'array', items: { type: 'string' }, description: 'Verification notes' },
+    active_paths: { type: ['array', 'string'], items: { type: 'string' }, description: 'Active file paths' },
+    active_symbols: { type: ['array', 'string'], items: { type: 'string' }, description: 'Active symbols' },
+    blockers: { type: ['array', 'string'], items: { type: 'string' }, description: 'Current blockers' },
+    open_questions: { type: ['array', 'string'], items: { type: 'string' }, description: 'Open questions' },
+    next_steps: { type: ['array', 'string'], items: { type: 'string' }, description: 'Next steps' },
+    verification_notes: { type: ['array', 'string'], items: { type: 'string' }, description: 'Verification notes' },
     last_verified_at: { type: 'string', description: 'Override verification timestamp (ISO datetime)' },
   },
   mutating: true,

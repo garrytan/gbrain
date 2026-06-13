@@ -266,7 +266,7 @@ export function createMemoryWritebackRouterOperations(
     description: 'Route a possible durable memory writeback to a reviewable candidate or deferred/no-write decision.',
     params: {
       content: { type: 'string', required: true, description: 'Claim, observation, or proposed memory content to route' },
-      source_refs: { type: 'array', items: { type: 'string' }, description: 'Provenance references for the writeback signal' },
+      source_refs: { type: ['array', 'string'], items: { type: 'string' }, description: 'Provenance references for the writeback signal' },
       corpus_lane: { type: ['object', 'string'], description: 'Optional post-scope corpus lane provenance metadata' },
       source_kind: { type: 'string', description: 'Source kind for the writeback signal', enum: [...MEMORY_SCENARIO_SOURCE_KIND_VALUES] },
       evidence_kind: {
