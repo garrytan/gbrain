@@ -34,6 +34,11 @@ import { resolveSourceId } from '../core/source-resolver.ts';
 import { fetchSource } from '../core/sources-load.ts';
 import { existsSync } from 'fs';
 import { resolve } from 'node:path';
+import {
+  inspectLock as drInspectLock,
+  deleteLockRow as drDeleteLockRow,
+  deleteLockRowIfStale as drDeleteLockRowIfStale,
+} from '../core/db-lock.ts';
 
 interface DreamArgs {
   json: boolean;
@@ -505,8 +510,132 @@ async function runDrain(
   if (result.remaining === null || result.remaining > 0) process.exit(EXIT_DRAIN_INCOMPLETE);
 }
 
+/**
+ * v0.42.43.0: `gbrain dream --break-lock` parity with sync (closes #1591).
+ * Closes #1591. Cycle lock (held by `gbrain dream`/autopilot) had no CLI
+ * escape hatch; doctor hint routed operators to `gbrain sync --break-lock`
+ * which couldn't actually break it. Same safety semantics as sync:
+ *   - --max-age N: atomic TOCTOU-safe age-gated delete
+ *   - --force-break-lock: skip guards, loud warning
+ *   - safe (no flag): refuse if holder alive on this host
+ *   - cross-host: always refuse (process.kill(pid, 0) invalid across hosts)
+ */
+async function runCycleLockBreak(
+  engine: BrainEngine,
+  lockKey: string,
+  sourceId: string,
+  opts: { force: boolean; json: boolean; maxAgeSeconds?: number },
+): Promise<number> {
+  let snap;
+  try { snap = await drInspectLock(engine, lockKey); }
+  catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (opts.json) console.log(JSON.stringify({ status: 'error', error: msg, lock: lockKey }));
+    else console.error(`Failed to inspect lock ${lockKey}: ${msg}`);
+    return 1;
+  }
+  if (!snap) {
+    if (opts.json) console.log(JSON.stringify({ status: 'absent', lock: lockKey, source_id: sourceId }));
+    else console.log(`Lock ${lockKey} is not held (nothing to break).`);
+    return 0;
+  }
+  const { hostname } = await import('os');
+  const localHost = hostname();
+
+  if (opts.maxAgeSeconds !== undefined && !opts.force) {
+    if (snap.holder_host !== localHost) {
+      if (opts.json) console.log(JSON.stringify({ status: 'refused', reason: 'cross_host', lock: lockKey, source_id: sourceId, snapshot: snap, local_host: localHost }));
+      else { console.error(`Lock ${lockKey} is held on a different host (${snap.holder_host}, this host is ${localHost}).`); console.error('Cross-host --max-age is unsupported. Use --force-break-lock when certain the remote holder is dead.'); }
+      return 1;
+    }
+    const { deleted, lastRefreshedAt } = await drDeleteLockRowIfStale(engine, lockKey, snap.holder_pid, opts.maxAgeSeconds);
+    if (opts.json) {
+      console.log(JSON.stringify({ status: deleted ? 'broken' : 'refused', reason: deleted ? 'max_age_breached' : 'within_max_age', lock: lockKey, source_id: sourceId, snapshot: snap, max_age_seconds: opts.maxAgeSeconds, last_refreshed_at: lastRefreshedAt ? lastRefreshedAt.toISOString() : null }));
+    } else if (deleted) {
+      const ageStr = lastRefreshedAt ? formatAgeHuman(Date.now() - lastRefreshedAt.getTime()) : 'unknown';
+      console.log(`Broke cycle lock ${lockKey} (pid ${snap.holder_pid} on ${snap.holder_host}; last refresh was ${ageStr} ago, > --max-age=${opts.maxAgeSeconds}s).`);
+    } else {
+      if (snap.last_refreshed_at === null) {
+        console.error(`Lock ${lockKey} has NULL last_refreshed_at (pre-v98 brain or migration window).`);
+        console.error('Run `gbrain apply-migrations --yes` to land v98, OR use --force-break-lock if you know the holder is dead.');
+      } else {
+        const ageStr = snap.ms_since_last_refresh != null ? formatAgeHuman(snap.ms_since_last_refresh) : 'unknown';
+        console.error(`Refusing to break lock ${lockKey}: last refresh was ${ageStr} ago, within --max-age=${opts.maxAgeSeconds}s window.`);
+        console.error('The holder is actively refreshing — likely a healthy long-running cycle.');
+      }
+      return 1;
+    }
+    return 0;
+  }
+
+  if (opts.force) {
+    const { deleted } = await drDeleteLockRow(engine, lockKey, snap.holder_pid);
+    if (opts.json) console.log(JSON.stringify({ status: deleted ? 'force_broken' : 'race_already_cleared', lock: lockKey, source_id: sourceId, snapshot: snap }));
+    else if (deleted) { console.log(`Force-broke cycle lock ${lockKey} (was held by pid ${snap.holder_pid} on ${snap.holder_host}, age ${formatAgeHuman(snap.age_ms)}).`); console.log('WARNING: the holder may still be writing. Verify with `gbrain doctor` before re-running.'); }
+    else console.log(`Lock ${lockKey} was already cleared by another process.`);
+    return 0;
+  }
+
+  // safe path: local host, no force, no max-age
+  if (snap.holder_host !== localHost) {
+    if (opts.json) console.log(JSON.stringify({ status: 'refused', reason: 'cross_host', lock: lockKey, source_id: sourceId, snapshot: snap, local_host: localHost }));
+    else { console.error(`Lock ${lockKey} is held on a different host (${snap.holder_host}, this host is ${localHost}).`); console.error('Use --force-break-lock when certain the remote holder is dead.'); }
+    return 1;
+  }
+  if (opts.json) {
+    console.log(JSON.stringify({ status: 'refused', reason: 'active_holder', lock: lockKey, source_id: sourceId, snapshot: snap, local_host: localHost }));
+  } else {
+    console.error(`Lock ${lockKey} is held by pid ${snap.holder_pid} on ${snap.holder_host} (${formatAgeHuman(snap.age_ms)} old, last refresh ${snap.ms_since_last_refresh != null ? formatAgeHuman(snap.ms_since_last_refresh) : 'unknown'} ago).`);
+    console.error('The holder is alive. Use --force-break-lock to clear anyway, or --max-age <seconds> to break only if stale.');
+  }
+  return 1;
+}
+
+function formatAgeHuman(ms: number): string {
+  if (ms < 0) return 'in-the-future';
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m${seconds % 60 ? ` ${seconds % 60}s` : ''}`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h${minutes % 60 ? ` ${minutes % 60}m` : ''}`;
+  const days = Math.floor(hours / 24);
+  return `${days}d${hours % 24 ? ` ${hours % 24}h` : ''}`;
+}
+
 export async function runDream(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {
   const opts = parseArgs(args);
+
+  // v0.42.43.0 (PR #2xxx): --break-lock short-circuits BEFORE any cycle work
+  // and BEFORE --help's short-circuit (the break-lock path needs a connected
+  // engine; --help doesn't). Mirrors `gbrain sync --break-lock` for the
+  // gbrain-cycle:* keyspace; Closes #1591.
+  if (
+    args.includes('--break-lock') ||
+    args.includes('--force-break-lock') ||
+    args.includes('--max-age')
+  ) {
+    if (engine === null) {
+      console.error('gbrain dream --break-lock requires a connected brain (no engine available); run `gbrain init` first.');
+      process.exit(1);
+    }
+    const force = args.includes('--force-break-lock');
+    const json = opts.json;
+    const maxAgeIdx = args.indexOf('--max-age');
+    let maxAgeSeconds: number | undefined;
+    if (maxAgeIdx !== -1) {
+      const n = Number(args[maxAgeIdx + 1]);
+      if (!Number.isFinite(n) || n < 0) {
+        console.error('--max-age must be a non-negative number of seconds');
+        process.exit(2);
+      }
+      maxAgeSeconds = n;
+    }
+    const sourceId = opts.source ?? 'default';
+    const lockKey = opts.source ? `gbrain-cycle:${opts.source}` : 'gbrain-cycle';
+    const exitCode = await runCycleLockBreak(engine, lockKey, sourceId, { force, json, maxAgeSeconds });
+    process.exit(exitCode);
+  }
 
   // ─── IRON RULE: --help short-circuits BEFORE any engine-bearing work ─
   // Tests pin this ordering so `gbrain dream --help --source whatever`
