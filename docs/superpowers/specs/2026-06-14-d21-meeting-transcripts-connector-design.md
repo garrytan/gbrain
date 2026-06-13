@@ -44,9 +44,11 @@ mbrain connectors sync meeting_transcripts --path ~/Meetings/transcripts --dry-r
 
 The explicit `--path` argument is the consent action for this local-only
 connector. The first successful non-dry run registers a connector source for the
-normalized path root with consent state `granted`. No credential secret is
-needed; the implementation uses a local credential reference with no secret
-payload so the existing connector authorization contract remains intact.
+exact normalized consent target with consent state `granted`. A single-file sync
+does not grant access to sibling files or its parent directory. No credential
+reference is persisted for this local filesystem connector; `credential_ref_id`
+stays `null`, and connector sync health remains `unknown` until sync success or
+failure events update it.
 
 ## Scope
 
@@ -58,6 +60,8 @@ In scope:
 - Directory traversal is recursive, deterministic, and sorted by normalized
   relative path.
 - Hidden files and hidden directories are skipped.
+- Symlinks are not followed in D-21. Symlinked files and directories are skipped
+  and counted before file content is read.
 - Unsupported extensions are skipped and counted.
 - Each file is read as UTF-8 text.
 - Each file has a maximum size of 5 MiB. Oversized files are skipped and counted
@@ -65,9 +69,9 @@ In scope:
 - Empty files are skipped and counted with reason `empty_file`.
 - A dry run reports counts and planned item metadata without mutating the
   database.
-- A non-dry run registers or reuses the matching connector source, plans raw
-  ingest, persists changed source items and chunks, records sync success, and
-  reports skipped unchanged items.
+- A non-dry run registers or reuses the matching connector source, persists
+  changed source items and chunks through raw ingest operations, records sync
+  success, and reports skipped unchanged items.
 - Existing source revocation, pause, and consent rules remain authoritative.
 
 Out of scope:
@@ -82,35 +86,45 @@ Out of scope:
 
 ## Source Identity
 
-The connector source is keyed by the normalized real path root:
+The connector source is keyed by the exact normalized consent target:
 
-- For a directory input, root is the directory real path.
-- For a single-file input, root is the parent directory real path.
-- The source account locator is `file://<root-realpath>`.
-- The display name is `Meeting Transcripts: <basename(root)>`.
+- For a directory input, `source_scope` is `directory` and the source locator is
+  `pathToFileURL(<directory-realpath>).href`.
+- For a single-file input, `source_scope` is `file` and the source locator is
+  `pathToFileURL(<file-realpath>).href`.
+- The connector account locator is the same encoded file URL as the source
+  locator.
+- The display name is `Meeting Transcripts: <basename(consent target)>`.
+- `source_scope` and a redacted display path are stored in source/account
+  metadata so inspection can distinguish a single file consent target from a
+  directory consent target.
 
-The source is reused when an existing enabled source has the same connector id
-and locator. If a matching source exists but is revoked or paused, sync stops
-before reading transcript files.
+The source lookup checks connector id and locator regardless of enabled,
+paused, or consent state. If a matching source exists but is revoked or paused,
+sync stops before reading transcript files. Regranting a revoked source requires
+an explicit source-control operation; rerunning `connectors sync --path` cannot
+silently create a new grant for the same target.
 
 ## Item Mapping
 
 Each accepted file maps to one connector source item:
 
-- `external_id`: normalized POSIX-style relative path from the source root.
-- `locator`: `file://<file-realpath>`.
-- `title`: frontmatter `title:` for Markdown files when present; otherwise the
-  filename without extension.
+- `external_id`: for a directory source, normalized POSIX-style relative path
+  from the source root; for a single-file source, the normalized basename.
+- `locator`: the relative path for directory sources, and `null` for
+  single-file sources. The absolute file URL is not repeated per item.
+- `title`: for Markdown files, a scalar `title` from the first YAML frontmatter
+  block only; otherwise the filename without extension.
 - `body`: full file text.
 - `created_at`: `null`.
 - `updated_at`: file modification time as an ISO timestamp.
 - `metadata_json`:
-  - `connector_id`: added by `planConnectorSync()`.
-  - `source_path`: absolute file real path.
+  - `connector_id`: added by the connector raw ingest path.
   - `relative_path`: normalized relative path.
   - `extension`: lowercase file extension.
   - `file_size_bytes`: file size in bytes.
   - `mtime_ms`: file modification time in milliseconds.
+  - `path_display`: redacted display path, never the full absolute path.
 
 `external_id` is path-stable across content edits. Content changes are detected
 by the raw ingest content hash. File renames produce a new `external_id`; missing
@@ -127,7 +141,8 @@ shape:
   "connector_id": "meeting_transcripts",
   "source_id": "src_example",
   "dry_run": false,
-  "path": "/Users/example/Meetings/transcripts",
+  "source_scope": "directory",
+  "path_display": ".../Meetings/transcripts",
   "planned": 2,
   "persisted": 2,
   "skipped_unchanged": 0,
@@ -143,6 +158,9 @@ shape:
 Dry runs set `source_id` to `null` when the source would be newly registered and
 set `persisted` to `0`.
 
+Command output never prints raw transcript text, full absolute transcript paths,
+or credential reference data.
+
 ## Error Handling
 
 - Missing `--path` exits with a usage error.
@@ -155,18 +173,43 @@ set `persisted` to `0`.
 - UTF-8 read failures or filesystem permission failures fail the sync and record
   a connector failure event when a source exists.
 - Revoked or paused source state stops before reading files.
+- Symlinked paths are skipped with reason `symlink_not_followed`.
 - Raw ingest secret scanning and prompt-injection scanning remain part of
   `buildRawIngestPlan()`; the connector does not bypass them.
+
+## Persistence Orchestration
+
+The CLI command coordinates existing operation-layer APIs rather than treating
+`createPersonalDataConnectorService()` as the persistence boundary:
+
+1. Normalize the consent target and compute the encoded file URL with
+   `pathToFileURL(realpath).href`.
+2. Look up any source for `connector_id=meeting_transcripts` and the same
+   locator without filtering out revoked or paused records.
+3. For a new non-dry-run source, call `register_connector_source` with
+   `credential_ref_id: null` and metadata containing `source_scope` and
+   `path_display`.
+4. For each planned file, call `ingest_connector_item` so raw ingest planning,
+   idempotency, redaction, prompt-injection flags, and chunk persistence remain
+   centralized.
+5. After a successful non-dry-run sync, call `record_connector_sync_success`
+   with ingested, updated, skipped, and file-skip counts in metadata.
+6. On a sync failure after a source is known, call `record_connector_failure`.
+
+Dry-run mode may call dry-run operation contexts, but it must not create rows in
+`sources`, `connector_accounts`, `connector_grants`, `source_items`,
+`source_chunks`, `source_status_events`, or `connector_sync_states`.
 
 ## Implementation Plan
 
 1. Add a small loader module for meeting transcript filesystem inputs.
 2. Add focused loader tests first for traversal, filtering, item identity, title
-   extraction, size limits, and stable ordering.
+   extraction, size limits, symlink skipping, and stable ordering.
 3. Extend `mbrain connectors` with `sync meeting_transcripts --path <path>
    [--dry-run]`.
-4. Add command/service tests proving dry-run no mutation, first sync persistence,
-   unchanged rerun skipping, and revoked source blocking.
+4. Add command/operation tests proving dry-run no mutation, first sync
+   persistence, unchanged rerun skipping, single-file consent isolation, revoked
+   source blocking, secret redaction, and prompt-injection flag preservation.
 5. Keep all persisted content in source registry raw ingest tables; do not touch
    canonical brain page write paths.
 
@@ -194,12 +237,22 @@ validation pass after the backlog PR sequence.
 
 - `mbrain connectors sync meeting_transcripts --path <dir>` ingests supported
   local transcript files into source registry source items and chunks.
+- `mbrain connectors sync meeting_transcripts --path <file>` registers consent
+  for that file only and does not authorize sibling files or its parent
+  directory.
 - Re-running the same command without file changes skips unchanged items by
   `external_id` and content hash.
 - `--dry-run` reports planned work without registering sources or persisting raw
   ingest records.
 - Revoked or paused matching sources block sync before transcript files are
   read.
-- Command output exposes counts and paths, not raw transcript text.
+- Symlinked files and directories are skipped before content is read.
+- Command output exposes counts and redacted display paths, not raw transcript
+  text or full absolute transcript paths.
+- Focused tests assert persisted rows in `sources`, `connector_accounts`,
+  `connector_grants`, `source_items`, `source_chunks`, source status events, and
+  connector sync state.
+- Focused tests assert transcript secret redaction and prompt-injection flags
+  are produced through raw ingest.
 - No canonical brain pages, assertions, candidates, summaries, or projections
   are created by this connector.
