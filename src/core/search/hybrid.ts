@@ -13,6 +13,12 @@ import { dedupResults } from './dedup.ts';
 import { rankSearchResults, sourceRankCandidateLimit, sourceRankedScore } from './source-ranking.ts';
 
 const RRF_K = 60;
+const SEMANTIC_RERANK_WEIGHT = 0.01;
+
+interface RrfInputList {
+  results: SearchResult[];
+  semantic: boolean;
+}
 
 export interface HybridSearchOpts extends SearchOpts {
   expansion?: boolean;
@@ -93,7 +99,10 @@ export async function hybridSearchWithMeta(
   }
 
   // Merge all result lists via RRF
-  const allLists = [...vectorLists, keywordResults];
+  const allLists: RrfInputList[] = [
+    ...vectorLists.map((results) => ({ results, semantic: true })),
+    { results: keywordResults, semantic: false },
+  ];
   const fused = rrfFusion(allLists);
 
   // Dedup
@@ -127,26 +136,39 @@ function dedupeQueryVariants(queries: string[]): string[] {
  * Reciprocal Rank Fusion: merge multiple ranked lists.
  * Each result gets score = sum(1 / (K + rank)) across all lists it appears in.
  */
-function rrfFusion(lists: SearchResult[][]): SearchResult[] {
-  const scores = new Map<string, { result: SearchResult; score: number }>();
+function rrfFusion(lists: RrfInputList[]): SearchResult[] {
+  const scores = new Map<string, { result: SearchResult; rrfScore: number; bestVectorScore: number | null }>();
 
   for (const list of lists) {
-    for (let rank = 0; rank < list.length; rank++) {
-      const r = list[rank];
+    for (let rank = 0; rank < list.results.length; rank++) {
+      const r = list.results[rank];
       const key = `${r.slug}:${r.chunk_text.slice(0, 50)}`;
       const existing = scores.get(key);
       const rrfScore = 1 / (RRF_K + rank);
+      const vectorScore = list.semantic ? boundedVectorScore(r.score) : null;
 
       if (existing) {
-        existing.score += rrfScore;
+        existing.rrfScore += rrfScore;
+        if (vectorScore !== null) {
+          existing.bestVectorScore = Math.max(existing.bestVectorScore ?? 0, vectorScore);
+        }
       } else {
-        scores.set(key, { result: r, score: rrfScore });
+        scores.set(key, { result: r, rrfScore, bestVectorScore: vectorScore });
       }
     }
   }
 
   // Sort by fused score descending
   return Array.from(scores.values())
+    .map(({ result, rrfScore, bestVectorScore }) => {
+      const semanticBoost = ((bestVectorScore ?? 0) * SEMANTIC_RERANK_WEIGHT) / RRF_K;
+      return { result, score: rrfScore + semanticBoost };
+    })
     .sort((a, b) => b.score - a.score)
     .map(({ result, score }) => ({ ...result, score }));
+}
+
+function boundedVectorScore(score: number): number | null {
+  if (!Number.isFinite(score)) return null;
+  return Math.max(0, Math.min(score, 1));
 }

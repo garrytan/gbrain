@@ -123,6 +123,119 @@ describe('hybridSearch', () => {
     expect(vectorCalls).toHaveLength(2);
     expect(results.map((entry) => entry.slug)).toEqual(['concepts/hybrid']);
   });
+
+  test('uses vector scores as a narrow tie-breaker after RRF fusion', async () => {
+    setEmbeddingProviderForTests({
+      capability: {
+        available: true,
+        mode: 'local',
+        implementation: 'test-local',
+        model: 'test-local-v1',
+        dimensions: 3,
+      },
+      embedBatch: async () => [new Float32Array([1, 0, 0])],
+    });
+
+    const engine = {
+      searchKeyword: async () => [
+        makeResult({
+          slug: 'concepts/alpha-keyword',
+          page_id: 101,
+          title: 'Alpha Keyword',
+          type: 'concept',
+          chunk_text: 'alpha keyword match without semantic confidence',
+          score: 1,
+        }),
+      ],
+      searchVector: async () => [
+        makeResult({
+          slug: 'concepts/vector-high',
+          page_id: 102,
+          title: 'Vector High',
+          type: 'person',
+          chunk_text: 'semantic neighbor with strong vector score',
+          score: 0.95,
+        }),
+        makeResult({
+          slug: 'concepts/vector-low',
+          page_id: 103,
+          title: 'Vector Low',
+          type: 'project',
+          chunk_text: 'semantic neighbor with weak vector score',
+          score: 0.1,
+        }),
+      ],
+    } as Pick<BrainEngine, 'searchKeyword' | 'searchVector'> as BrainEngine;
+
+    const results = await hybridSearch(engine, 'semantic confidence', { limit: 3 });
+
+    expect(results.map((entry) => entry.slug)).toEqual([
+      'concepts/vector-high',
+      'concepts/alpha-keyword',
+      'concepts/vector-low',
+    ]);
+  });
+
+  test('does not let a lower-ranked high-confidence vector neighbor outrank the top keyword-only result', async () => {
+    setEmbeddingProviderForTests({
+      capability: {
+        available: true,
+        mode: 'local',
+        implementation: 'test-local',
+        model: 'test-local-v1',
+        dimensions: 3,
+      },
+      embedBatch: async () => [new Float32Array([1, 0, 0])],
+    });
+
+    const vectorResults = [
+      makeResult({
+        slug: 'concepts/vector-top',
+        page_id: 200,
+        title: 'Vector Top',
+        type: 'person',
+        chunk_text: 'top vector neighbor with weak semantic confidence',
+        score: 0.01,
+      }),
+      makeResult({
+        slug: 'concepts/vector-middle',
+        page_id: 201,
+        title: 'Vector Middle',
+        type: 'project',
+        chunk_text: 'middle vector neighbor with weak semantic confidence',
+        score: 0.01,
+      }),
+      makeResult({
+        slug: 'concepts/vector-lower-high-confidence',
+        page_id: 202,
+        title: 'Vector Lower High Confidence',
+        type: 'company',
+        chunk_text: 'lower vector neighbor with strong semantic confidence',
+        score: 0.95,
+      }),
+    ];
+
+    const engine = {
+      searchKeyword: async () => [
+        makeResult({
+          slug: 'concepts/exact-keyword',
+          page_id: 999,
+          title: 'Exact Keyword',
+          type: 'concept',
+          chunk_text: 'exact keyword result should stay ahead of deep vector neighbors',
+          score: 1,
+        }),
+      ],
+      searchVector: async () => vectorResults,
+    } as Pick<BrainEngine, 'searchKeyword' | 'searchVector'> as BrainEngine;
+
+    const results = await hybridSearch(engine, 'exact keyword', { limit: 10 });
+    const slugs = results.map((entry) => entry.slug);
+
+    expect(slugs.indexOf('concepts/exact-keyword')).toBeLessThan(
+      slugs.indexOf('concepts/vector-lower-high-confidence'),
+    );
+  });
 });
 
 describe('hybridSearchWithMeta expansion failure flag (C-20)', () => {
