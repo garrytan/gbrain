@@ -140,6 +140,18 @@ test('test workflow runs the unit suite on macOS at PR time', () => {
   expect(macosJob).toContain('- run: bun run test\n');
 });
 
+test('e2e workflow runs HTTP OAuth smoke in default Tier 1 CI', () => {
+  const source = readFileSync(join(workflowsDir, 'e2e.yml'), 'utf-8');
+  const tier1Job = getWorkflowJob(source, 'tier1');
+
+  expect(tier1Job).toContain('Run Tier 1 E2E tests');
+  expect(tier1Job).toContain('HTTP OAuth smoke');
+  expect(tier1Job).toContain('bun run smoke:http-oauth');
+  expect(tier1Job.indexOf('Run Tier 1 E2E tests')).toBeLessThan(
+    tier1Job.indexOf('HTTP OAuth smoke'),
+  );
+});
+
 test('release workflow gates publishing on runtime and OAuth smokes', () => {
   const source = readFileSync(join(workflowsDir, 'release.yml'), 'utf-8');
   const smokeJob = getWorkflowJob(source, 'smoke');

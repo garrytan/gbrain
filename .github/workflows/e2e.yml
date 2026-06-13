@@ -40,6 +40,10 @@ jobs:
         run: bun test test/e2e/mechanical.test.ts test/e2e/mcp.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mbrain_test
+      - name: HTTP OAuth smoke
+        run: bun run smoke:http-oauth
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mbrain_test
 
   tier2:
     name: Tier 2 (LLM Skills)
