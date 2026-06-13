@@ -16,6 +16,7 @@ jobs:
   tier1:
     name: Tier 1 (Mechanical)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -38,6 +39,10 @@ jobs:
       - run: bun install
       - name: Run Tier 1 E2E tests
         run: bun test test/e2e/mechanical.test.ts test/e2e/mcp.test.ts
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mbrain_test
+      - name: HTTP OAuth smoke
+        run: bun run smoke:http-oauth
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mbrain_test
 
