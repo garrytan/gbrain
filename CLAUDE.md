@@ -172,10 +172,10 @@ Files that MUST be checked on every ship:
 - CHANGELOG.md — does it cover every commit?
 - TODOS.md — are completed items marked done?
 - docs/ — do any guides need updating?
-- MBrain self-brain pages (`personal/mbrain/*`) — if the ship changes
-  architecture, commands, setup, retrieval, governance, or agent workflows,
-  check whether those pages are stale; update them through the brain/codemap
-  workflow or record why no brain-page update is needed.
+- Durable memory note — if the ship changes architecture, commands, setup,
+  retrieval, governance, or agent workflows, check whether MBrain self-brain
+  pages (`personal/mbrain/*`) are stale; record the needed follow-up or why no
+  brain-page update is needed.
 
 A ship without updated docs is an incomplete ship. Period.
 
