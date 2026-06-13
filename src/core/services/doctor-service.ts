@@ -41,6 +41,15 @@ export interface DoctorReport {
   agent_explain?: AgentTrustExplainReport;
 }
 
+export interface DoctorAutopilotCycleSummary {
+  id: string;
+  status: string;
+  failure_class: string | null;
+  last_error: string | null;
+  updated_at: string | null;
+  finished_at: string | null;
+}
+
 export interface DoctorInputs {
   connectionOk: boolean;
   connectionError?: string;
@@ -70,6 +79,8 @@ export interface DoctorInputs {
     credential_warnings: number;
     quarantine_count: number;
     purge_candidates: number;
+    autopilot_stuck_jobs?: number;
+    autopilot_last_cycle?: DoctorAutopilotCycleSummary | null;
   };
   syncRecency?: {
     configured: boolean;
@@ -382,9 +393,45 @@ async function checkMemoryRuntimeHealth(
         'purge_plan_items',
         "status IN ('planned', 'approved')",
       ),
+      autopilot_stuck_jobs: await countTableRows(
+        deps,
+        'memory_jobs',
+        "name IN ('autopilot_cycle', 'autopilot-cycle') AND status = 'active' AND lock_expires_at <= now()",
+      ),
+      autopilot_last_cycle: await collectAutopilotLastCycle(deps),
     };
   } catch {
     return undefined;
+  }
+}
+
+async function collectAutopilotLastCycle(deps: DoctorServiceDeps): Promise<DoctorAutopilotCycleSummary | null> {
+  const sql = deps.getConnection();
+  try {
+    const tableRows = await sql`SELECT to_regclass('memory_jobs') AS table_name`;
+    if (!tableRows[0]?.table_name) return null;
+    const rows = await sql`
+      SELECT id, status, failure_class, last_error,
+             updated_at::text AS updated_at,
+             finished_at::text AS finished_at
+      FROM memory_jobs
+      WHERE name IN ('autopilot_cycle', 'autopilot-cycle')
+        AND status IN ('completed', 'failed', 'dead', 'cancelled')
+      ORDER BY COALESCE(finished_at, updated_at) DESC, id DESC
+      LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      id: stringOrEmpty(row.id),
+      status: stringOrEmpty(row.status),
+      failure_class: stringOrNull(row.failure_class),
+      last_error: stringOrNull(row.last_error),
+      updated_at: stringOrNull(row.updated_at),
+      finished_at: stringOrNull(row.finished_at),
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -417,6 +464,18 @@ function queryCount(
   }
   if (tableName === 'memory_jobs' && whereClause === "status = 'dead'") {
     return sql`SELECT count(*)::int AS count FROM memory_jobs WHERE status = 'dead'`;
+  }
+  if (
+    tableName === 'memory_jobs'
+    && whereClause === "name IN ('autopilot_cycle', 'autopilot-cycle') AND status = 'active' AND lock_expires_at <= now()"
+  ) {
+    return sql`
+      SELECT count(*)::int AS count
+      FROM memory_jobs
+      WHERE name IN ('autopilot_cycle', 'autopilot-cycle')
+        AND status = 'active'
+        AND lock_expires_at <= now()
+    `;
   }
   if (tableName === 'memory_jobs' && whereClause === "status = 'active' AND lock_expires_at <= now()") {
     return sql`SELECT count(*)::int AS count FROM memory_jobs WHERE status = 'active' AND lock_expires_at <= now()`;
@@ -701,6 +760,9 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
     });
   }
 
+  const autopilotCheck = buildAutopilotCheck(input);
+  if (autopilotCheck) checks.push(autopilotCheck);
+
   if (input.serveProcesses !== undefined) {
     checks.push(buildServeProcessCheck(input.serveProcesses));
   }
@@ -712,6 +774,57 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
     checks,
     ...doctorAgentExplainField(input.agentExplain),
   };
+}
+
+function buildAutopilotCheck(input: DoctorInputs): DoctorCheck | null {
+  const runtime = input.memoryRuntime;
+  if (!runtime) return null;
+  const enabled = isAutopilotEnabled(input.config);
+  const stuckJobs = runtime.autopilot_stuck_jobs ?? 0;
+  const lastCycle = runtime.autopilot_last_cycle ?? null;
+  if (!enabled && stuckJobs === 0 && !lastCycle) return null;
+
+  const parts = [enabled ? 'enabled' : 'not enabled'];
+  if (lastCycle) {
+    parts.push(`last cycle ${lastCycle.status || 'unknown'} (${lastCycle.id || 'unknown'})`);
+    if (lastCycle.failure_class) parts.push(`failure ${lastCycle.failure_class}`);
+    if (lastCycle.last_error) parts.push(lastCycle.last_error);
+  } else {
+    parts.push('last cycle not recorded');
+  }
+  if (stuckJobs > 0) {
+    parts.push(`${stuckJobs} stuck autopilot job${stuckJobs === 1 ? '' : 's'}`);
+  }
+
+  return {
+    name: 'autopilot',
+    status: autopilotStatus(enabled, stuckJobs, lastCycle),
+    message: parts.join(', '),
+  };
+}
+
+function autopilotStatus(
+  enabled: boolean,
+  stuckJobs: number,
+  lastCycle: DoctorAutopilotCycleSummary | null,
+): DoctorCheck['status'] {
+  if (stuckJobs > 0 || lastCycle?.status === 'dead') return 'fail';
+  if (lastCycle?.status === 'failed' || lastCycle?.status === 'cancelled') return 'warn';
+  if (enabled && !lastCycle) return 'warn';
+  return 'ok';
+}
+
+function isAutopilotEnabled(config: MBrainConfig | null): boolean {
+  const autopilot = (config as (MBrainConfig & { autopilot?: { enabled?: unknown } }) | null)?.autopilot;
+  return autopilot?.enabled === true;
+}
+
+function stringOrEmpty(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
 
 function appendInstalledAgentChecks(

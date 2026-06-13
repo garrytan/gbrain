@@ -145,6 +145,83 @@ describe('doctor command', () => {
     expect(observedQueries.some((query) => query.includes("status = 'active'") && query.includes('lock_expires_at <= now()'))).toBe(true);
   });
 
+  test('collectDoctorInputs includes autopilot last cycle and stuck job health', async () => {
+    const observedQueries: string[] = [];
+    const sql = async (strings: TemplateStringsArray) => {
+      const query = strings.join('');
+      observedQueries.push(query.replace(/\s+/g, ' ').trim());
+      if (query.includes('pg_extension')) return [{ extname: 'vector' }];
+      if (query.includes('pg_tables')) return [];
+      if (query.includes('to_regclass')) return [{ table_name: 'memory_jobs' }];
+      if (
+        query.includes("name IN ('autopilot_cycle', 'autopilot-cycle')")
+        && query.includes("status = 'active'")
+      ) {
+        return [{ count: 1 }];
+      }
+      if (
+        query.includes('FROM memory_jobs')
+        && query.includes("status IN ('completed', 'failed', 'dead', 'cancelled')")
+      ) {
+        return [{
+          id: 'job:autopilot-cycle',
+          status: 'failed',
+          failure_class: 'internal',
+          last_error: 'forgetting review failed',
+          updated_at: '2026-06-13T00:00:00.000Z',
+          finished_at: '2026-06-13T00:01:00.000Z',
+        }];
+      }
+      return [{ count: 0 }];
+    };
+    const engine = {
+      getStats: async () => ({
+        page_count: 0,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      }),
+      getConfig: async () => '44',
+      getHealth: async () => ({
+        page_count: 0,
+        embed_coverage: 1,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+      }),
+    };
+
+    const inputs = await collectDoctorInputs(engine as any, {
+      getConnection: () => sql as any,
+      loadConfig: () => ({
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+        autopilot: { enabled: true },
+      }) as any,
+      resolveOfflineProfile,
+      supportsRawPostgresAccess: () => true,
+    });
+
+    expect(inputs.memoryRuntime?.autopilot_stuck_jobs).toBe(1);
+    expect(inputs.memoryRuntime?.autopilot_last_cycle).toMatchObject({
+      id: 'job:autopilot-cycle',
+      status: 'failed',
+      failure_class: 'internal',
+      last_error: 'forgetting review failed',
+    });
+    expect(observedQueries.some((query) =>
+      query.includes("name IN ('autopilot_cycle', 'autopilot-cycle')")
+      && query.includes("status = 'active'")
+    )).toBe(true);
+  });
+
   test('buildDoctorReport detects stuck memory runtime locks and failed runtime work', () => {
     const report = buildDoctorReport({
       connectionOk: true,
@@ -205,6 +282,149 @@ describe('doctor command', () => {
     expect(check?.message).toContain('1 stuck lock');
     expect(check?.message).toContain('1 unhealthy connector');
     expect(check?.message).toContain('3 purge candidates');
+  });
+
+  test('buildDoctorReport surfaces autopilot cycle health separately from generic runtime counts', () => {
+    const report = buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 0,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: {
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+        autopilot: { enabled: true },
+      } as any,
+      profile: resolveOfflineProfile({
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      }),
+      rawPostgresChecksSupported: true,
+      latestVersion: 44,
+      schemaVersion: '44',
+      health: {
+        page_count: 0,
+        embed_coverage: 1,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+      },
+      memoryRuntime: {
+        queue_depth: 7,
+        failed_jobs: 2,
+        dead_jobs: 1,
+        stuck_locks: 1,
+        unavailable_runners: 1,
+        unhealthy_connectors: 1,
+        credential_warnings: 1,
+        quarantine_count: 2,
+        purge_candidates: 3,
+        autopilot_stuck_jobs: 1,
+        autopilot_last_cycle: {
+          id: 'job:autopilot-cycle',
+          status: 'failed',
+          failure_class: 'internal',
+          last_error: 'forgetting review failed',
+          updated_at: '2026-06-13T00:00:00.000Z',
+          finished_at: '2026-06-13T00:01:00.000Z',
+        },
+      },
+    });
+
+    const check = report.checks.find((candidate) => candidate.name === 'autopilot');
+    expect(check).toMatchObject({
+      status: 'fail',
+    });
+    expect(check?.message).toContain('enabled');
+    expect(check?.message).toContain('last cycle failed');
+    expect(check?.message).toContain('job:autopilot-cycle');
+    expect(check?.message).toContain('1 stuck autopilot job');
+    expect(check?.message).toContain('forgetting review failed');
+  });
+
+  test('buildDoctorReport classifies autopilot edge states without false positives', () => {
+    const memoryRuntime = (overrides: Record<string, unknown> = {}) => ({
+      queue_depth: 0,
+      failed_jobs: 0,
+      dead_jobs: 0,
+      stuck_locks: 0,
+      unavailable_runners: 0,
+      unhealthy_connectors: 0,
+      credential_warnings: 0,
+      quarantine_count: 0,
+      purge_candidates: 0,
+      ...overrides,
+    });
+    const reportFor = (input: { enabled: boolean; runtime: Record<string, unknown> }) => buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 0,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: {
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+        autopilot: { enabled: input.enabled },
+      } as any,
+      profile: resolveOfflineProfile({
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      }),
+      rawPostgresChecksSupported: true,
+      latestVersion: 44,
+      schemaVersion: '44',
+      memoryRuntime: input.runtime as any,
+    });
+    const checkFor = (input: { enabled: boolean; runtime: Record<string, unknown> }) =>
+      reportFor(input).checks.find((candidate) => candidate.name === 'autopilot');
+    const lastCycle = (status: string) => ({
+      id: `job:autopilot-${status}`,
+      status,
+      failure_class: status === 'completed' ? null : 'internal',
+      last_error: status === 'completed' ? null : `${status} cycle`,
+      updated_at: '2026-06-13T00:00:00.000Z',
+      finished_at: '2026-06-13T00:01:00.000Z',
+    });
+
+    expect(checkFor({ enabled: false, runtime: memoryRuntime() })).toBeUndefined();
+    expect(checkFor({ enabled: true, runtime: memoryRuntime() })).toMatchObject({
+      status: 'warn',
+      message: expect.stringContaining('last cycle not recorded'),
+    });
+    expect(checkFor({ enabled: true, runtime: memoryRuntime({ autopilot_last_cycle: lastCycle('completed') }) }))
+      .toMatchObject({ status: 'ok' });
+    expect(checkFor({ enabled: true, runtime: memoryRuntime({ autopilot_last_cycle: lastCycle('failed') }) }))
+      .toMatchObject({ status: 'warn' });
+    expect(checkFor({ enabled: true, runtime: memoryRuntime({ autopilot_last_cycle: lastCycle('cancelled') }) }))
+      .toMatchObject({ status: 'warn' });
+    expect(checkFor({ enabled: true, runtime: memoryRuntime({ autopilot_last_cycle: lastCycle('dead') }) }))
+      .toMatchObject({ status: 'fail' });
+    expect(checkFor({ enabled: false, runtime: memoryRuntime({ autopilot_stuck_jobs: 1 }) }))
+      .toMatchObject({ status: 'fail' });
   });
 
   test('buildDoctorReport marks sqlite local profile honestly', () => {
