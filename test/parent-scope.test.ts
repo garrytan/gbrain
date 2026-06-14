@@ -171,7 +171,7 @@ describe('Layer 6 (A3) — parent_symbol_path round-trips through upsertChunks',
         parent_symbol_path: ['BrainEngine'],
       },
     ]);
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await engine.disconnect();

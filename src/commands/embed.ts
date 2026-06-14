@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
-import { embedBatch } from '../core/embedding.ts';
+import { embedBatch, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS } from '../core/embedding.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
@@ -61,6 +61,10 @@ export interface EmbedResult {
  * auto-embed step) can report embeddings in their own structured output.
  */
 export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promise<EmbedResult> {
+  // Sync active model/dims to DB config so health/doctor reflect the real provider.
+  await engine.setConfig('embedding_model', EMBEDDING_MODEL);
+  await engine.setConfig('embedding_dimensions', String(EMBEDDING_DIMENSIONS));
+
   const result: EmbedResult = {
     embedded: 0,
     skipped: 0,

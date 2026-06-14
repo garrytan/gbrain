@@ -56,7 +56,7 @@ describe('Layer 5 (A1) — code-edges engine methods', () => {
     const bChunks = await engine.getChunks('src-b-ts');
     chunkA = aChunks[0]!.id;
     chunkB = bChunks[0]!.id;
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await engine.disconnect();

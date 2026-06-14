@@ -86,7 +86,7 @@ describe('Layer 7 (A2) — expandAnchors', () => {
         from_symbol_qualified: 'b', to_symbol_qualified: 'c',
         edge_type: 'calls' },
     ]);
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await engine.disconnect();

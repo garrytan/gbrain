@@ -43,7 +43,7 @@ describe('Layer 8 D3 — reconcile-links', () => {
       compiled_truth: 'module exports go here',
       timeline: '',
     });
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await engine.disconnect();

@@ -50,6 +50,8 @@ export class PGLiteEngine implements BrainEngine {
       this._db = await PGlite.create({
         dataDir,
         extensions: { vector, pg_trgm },
+        // Disable fsync to prevent WAL bloat on bulk ingest operations.
+        relaxedDurability: true,
       });
     } catch (err) {
       // v0.13.1: any PGLite.create() failure becomes actionable. Most commonly

@@ -10,6 +10,7 @@ import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
 import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
+import { hasEmbeddingCredentials } from './embedding.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
@@ -217,6 +218,19 @@ const get_page: Operation = {
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
 
+    const exactSourceCandidates = await ctx.engine.withReservedConnection(async (conn) => {
+      return conn.executeRaw<{ source_id: string }>(
+        'SELECT source_id FROM pages WHERE slug = $1 ORDER BY source_id LIMIT 2',
+        [slug],
+      );
+    });
+    if (exactSourceCandidates.length > 1) {
+      return {
+        error: 'ambiguous_slug',
+        candidates: exactSourceCandidates.map((row) => `${row.source_id}:${slug}`),
+      };
+    }
+
     let page = await ctx.engine.getPage(slug);
     let resolved_slug: string | undefined;
 
@@ -235,7 +249,7 @@ const get_page: Operation = {
     }
 
     const tags = await ctx.engine.getTags(page.slug);
-    return { ...page, tags, ...(resolved_slug ? { resolved_slug } : {}) };
+    return { ...page, tags, resolved_slug };
   },
   cliHints: { name: 'get', positional: ['slug'] },
 };
@@ -271,11 +285,11 @@ const put_page: Operation = {
     }
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
-    // Skip embedding when no OpenAI key is configured. importFromContent's existing
+    // Skip embedding when no embedding provider credentials are configured. importFromContent's existing
     // try/catch around embed only catches; without a key the OpenAI client would
     // attempt 5 retries with exponential backoff (up to ~2 minutes total) before
     // giving up. Detect early.
-    const noEmbed = !process.env.OPENAI_API_KEY;
+    const noEmbed = !hasEmbeddingCredentials();
     const result = await importFromContent(ctx.engine, slug, p.content as string, { noEmbed });
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own

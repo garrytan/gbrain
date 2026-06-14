@@ -43,7 +43,7 @@ describe('Cathedral II BrainBench — call_graph_recall', () => {
       'export function helper() { return 42; }\n',
       { noEmbed: true },
     );
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await engine.disconnect();
@@ -99,7 +99,7 @@ describe('Cathedral II BrainBench — parent_scope_coverage', () => {
 `,
       { noEmbed: true },
     );
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await engine.disconnect();

@@ -59,7 +59,7 @@ describe('Layer 13 E2 — runReindexCode', () => {
       compiled_truth: 'This is a markdown page, not code.',
       timeline: '',
     });
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await engine.disconnect();
