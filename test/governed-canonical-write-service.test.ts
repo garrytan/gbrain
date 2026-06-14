@@ -571,6 +571,46 @@ describe('governed canonical write service immediate projections', () => {
     }]);
   });
 
+  test('non-auto policy decisions are not applied and leave canonical state untouched', async () => {
+    const nonAutoDecisions = [
+      'candidate',
+      'verify_first',
+      'conflict',
+      'reject',
+      'quarantine',
+      'no_write',
+    ] as const;
+
+    for (const decision of nonAutoDecisions) {
+      const harness = createHarness({
+        decidePolicy: async () => ({
+          decision,
+          explanation: `${decision} decisions require review before canonical mutation`,
+        }),
+      });
+
+      const result = await harness.service.applyCanonicalWrite(policyInput({
+        session_write_grant: activeWriteGrant([...nonAutoDecisions]),
+      }));
+
+      expect(result).toMatchObject({
+        status: 'not_applied',
+        projection_status: 'not_attempted',
+        policy: {
+          decision,
+          explanation: `${decision} decisions require review before canonical mutation`,
+        },
+        assertion_ids: [],
+        assertion_evidence_ids: [],
+        extracted_claim_ids: ['extracted-claim:decision-policy'],
+      });
+      expect(harness.dbMutations).toHaveLength(0);
+      expect(harness.projectionMutations).toHaveLength(0);
+      expect(harness.reconcileMarks).toHaveLength(0);
+      expect(harness.ledgerEvents).toHaveLength(0);
+    }
+  });
+
   test('agent_session inferred_preference plans a candidate and does not mutate canonical state', async () => {
     const harness = createHarness({ decidePolicy: undefined });
 
