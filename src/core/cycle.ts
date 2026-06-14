@@ -49,7 +49,7 @@ import { gbrainPath } from './config.ts';
 import type { BrainEngine } from './engine.ts';
 import { createProgress, type ProgressReporter } from './progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
-import { tryAcquireDbLock, type DbLockHandle } from './db-lock.ts';
+import { tryAcquireDbLock, reapDeadHolderLocks, type DbLockHandle } from './db-lock.ts';
 import { assertValidSourceId } from './source-id.ts';
 
 // ─── Types ─────────────────────────────────────────────────────────
@@ -328,8 +328,13 @@ export interface CycleReport {
    *   - 'failed'  : lock acquired but all attempted phases failed
    */
   status: CycleStatus;
-  /** Present when status = 'skipped'. E.g., 'cycle_already_running' or 'no_database'. */
+  /** Present when status = 'skipped'. E.g., 'cycle_already_running' or 'no_database'. Also 'aborted' when the cycle was cancelled mid-flight (#1972). */
   reason?: string;
+  /**
+   * #1972: dead-holder sync/cycle locks the cycle-start reaper cleared this
+   * run (count + lock ids). Omitted when nothing was reaped or no engine.
+   */
+  reaped_dead_holder_locks?: { reaped: number; reapedIds: string[] };
   brain_dir: string | null;
   phases: PhaseResult[];
   totals: {
@@ -714,7 +719,7 @@ function checkAborted(signal?: AbortSignal): void {
 // keyword is the minimal seam that lets behavioral tests drive the
 // wrapper's result-mapping (counter → status enum + summary) without
 // going through runCycle's full setup cost.
-export async function runPhaseLint(brainDir: string, dryRun: boolean, engine?: BrainEngine | null): Promise<PhaseResult> {
+export async function runPhaseLint(brainDir: string, dryRun: boolean, engine?: BrainEngine | null, signal?: AbortSignal): Promise<PhaseResult> {
   try {
     const { runLintCore } = await import('../commands/lint.ts');
     // issue #1678: pass the cycle's live engine so lint's content-sanity
@@ -722,7 +727,7 @@ export async function runPhaseLint(brainDir: string, dryRun: boolean, engine?: B
     // competing module-style engine that nulls the shared db singleton
     // mid-cycle (which broke every phase after lint with a misleading
     // "connect() has not been called").
-    const result = await runLintCore({ target: brainDir, fix: true, dryRun, engine: engine ?? undefined });
+    const result = await runLintCore({ target: brainDir, fix: true, dryRun, engine: engine ?? undefined, signal });
     const issues = result.total_issues ?? 0;
     const fixed = result.total_fixed ?? 0;
     const remaining = Math.max(0, issues - fixed);
@@ -931,6 +936,7 @@ async function runPhaseExtract(
   brainDir: string,
   dryRun: boolean,
   changedSlugs?: string[],
+  signal?: AbortSignal,
 ): Promise<PhaseResult> {
   try {
     const { runExtractCore } = await import('../commands/extract.ts');
@@ -952,6 +958,7 @@ async function runPhaseExtract(
       mode: 'all',
       dir: brainDir,
       slugs: changedSlugs,  // undefined = full walk (first run / manual)
+      signal,
     });
     const linksCreated = result?.links_created ?? 0;
     const timelineCreated = result?.timeline_entries_created ?? 0;
@@ -988,6 +995,7 @@ async function runPhaseExtractFacts(
   sourceId: string,
   dryRun: boolean,
   changedSlugs?: string[],
+  signal?: AbortSignal,
 ): Promise<PhaseResult> {
   try {
     const { runExtractFacts } = await import('./cycle/extract-facts.ts');
@@ -996,6 +1004,7 @@ async function runPhaseExtractFacts(
       dryRun,
       sourceId,
       brainDir: brainDir ?? undefined,
+      signal,
     });
 
     // Empty-fence guard: pre-v51 legacy rows pending the v0_32_2 backfill.
@@ -1024,6 +1033,21 @@ async function runPhaseExtractFacts(
       || result.phantomsSkippedDrift)
       ? `, ${result.phantomsRedirected} phantom(s) redirected (${result.phantomsAmbiguous} ambiguous, ${result.phantomsSkippedDrift} drift-skipped)`
       : '';
+    // #1928: a reconcile that deletes far more facts than it reinserts is the
+    // signature of the conversation-facts wipe (factsDeleted 1829, inserted 0
+    // read as a no-op "ok" before this guard). Surface net deletion above a
+    // floor as `warn` so the daily report and doctor make it visible instead
+    // of it reading like a clean run.
+    const NET_DELETION_WARN_FLOOR = 50;
+    const netDeleted = result.factsDeleted - result.factsInserted;
+    const netDeletionWarn = netDeleted >= NET_DELETION_WARN_FLOOR;
+    if (netDeletionWarn) {
+      result.warnings.push(
+        `net_fact_deletion: reconcile removed ${result.factsDeleted} fact(s) and ` +
+        `reinserted ${result.factsInserted} (net -${netDeleted}). If unexpected, a ` +
+        `destructive full walk may have wiped non-fence facts (#1928).`,
+      );
+    }
     return {
       phase: 'extract_facts',
       status: result.warnings.length > 0 ? 'warn' : 'ok',
@@ -1511,6 +1535,24 @@ export async function runCycle(
     }
   }
 
+  // #1972: reap dead-holder sync/cycle locks at cycle start — before the sync
+  // phase needs them — so a crashed sync's stranded lock self-heals THIS tick
+  // instead of waiting out its TTL. Best-effort, namespace-scoped + host-scoped;
+  // never touches this cycle's own (live) lock. Skipped on dry-run (no writes).
+  let reapedLocks: { reaped: number; reapedIds: string[] } | undefined;
+  if (engine && !dryRun) {
+    try {
+      const r = await reapDeadHolderLocks(engine);
+      if (r.reaped > 0) {
+        reapedLocks = r;
+        console.warn(`[cycle] reaped ${r.reaped} dead-holder lock(s): ${r.reapedIds.join(', ')}`);
+      }
+    } catch (e) {
+      // Non-fatal: reaping is a backstop, never blocks the cycle.
+      console.warn(`[cycle] dead-holder lock reap failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   try {
     // ── Phase 1: lint ────────────────────────────────────────────
     if (phases.includes('lint')) {
@@ -1519,7 +1561,7 @@ export async function runCycle(
         phaseResults.push(skipNoBrainDir('lint'));
       } else {
         progress.start('cycle.lint');
-        const { result, duration_ms } = await timePhase(() => runPhaseLint(brainDir, dryRun, engine));
+        const { result, duration_ms } = await timePhase(() => runPhaseLint(brainDir, dryRun, engine, opts.signal));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -1547,6 +1589,11 @@ export async function runCycle(
     // and which slugs synthesize wrote so recompute_emotional_weight can
     // pick up the union of (sync ∪ synthesize) for v0.29 incremental mode.
     let syncPagesAffected: string[] | undefined;
+    // #1928 (codex): true ONLY when the sync phase actually RAN its work (not
+    // when it was skipped for no-engine / no-brainDir). The destructive
+    // extract_facts guard keys off this so a SKIPPED sync still allows a
+    // legitimate full reconcile — only a sync that ran and failed suppresses it.
+    let syncAttempted = false;
     let synthesizeWrittenSlugs: string[] | undefined;
     if (phases.includes('sync')) {
       checkAborted(opts.signal);
@@ -1562,6 +1609,7 @@ export async function runCycle(
         phaseResults.push(skipNoBrainDir('sync'));
       } else {
         progress.start('cycle.sync');
+        syncAttempted = true; // sync ran its work; undefined pagesAffected now means failure
         const { result, duration_ms } = await timePhase(() => runPhaseSync(engine, brainDir, dryRun, pull, phases.includes('extract')));
         result.duration_ms = duration_ms;
         // Capture changed slugs for incremental extract.
@@ -1627,7 +1675,7 @@ export async function runCycle(
         // If sync didn't run (phases exclude it) or failed, syncPagesAffected
         // is undefined → extract falls back to full walk (safe default).
         progress.start('cycle.extract');
-        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected));
+        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, opts.signal));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -1661,8 +1709,22 @@ export async function runCycle(
         // the sources table doesn't recognize this brainDir (pre-multi-
         // source installs).
         const xfSourceId = cycleSourceId ?? 'default';
+        // #1928: extract_facts is DESTRUCTIVE (wipe-and-reinsert per page). It
+        // must NOT inherit the "sync failed ⇒ undefined ⇒ full walk" fallback
+        // that's safe for link/timeline extract. When the sync phase RAN but
+        // failed, syncPagesAffected is undefined (a successful no-op sync
+        // returns []). In that case pass [] (no-op) so a lock-contention or
+        // transient sync failure can't escalate into a brain-wide fact wipe.
+        // undefined still reaches here (intended full reconcile) when the sync
+        // phase was absent OR skipped (no engine / no brainDir — extract_facts
+        // supports no-brainDir DB reconciliation). Only a sync that actually
+        // RAN and came back with undefined pagesAffected is a real failure
+        // (#1928, codex: keying off phases.includes('sync') wrongly suppressed
+        // the skipped-sync full reconcile).
+        const syncRanButFailed = syncAttempted && syncPagesAffected === undefined;
+        const xfSlugs = syncRanButFailed ? [] : syncPagesAffected;
         const { result, duration_ms } = await timePhase(() =>
-          runPhaseExtractFacts(engine, brainDir, xfSourceId, dryRun, syncPagesAffected));
+          runPhaseExtractFacts(engine, brainDir, xfSourceId, dryRun, xfSlugs, opts.signal));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -1897,6 +1959,7 @@ export async function runCycle(
         const { result, duration_ms } = await timePhase(() => runPhaseConsolidate(engine, {
           dryRun,
           yieldDuringPhase: opts.yieldDuringPhase,
+          signal: opts.signal,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -2189,6 +2252,34 @@ export async function runCycle(
   const totals = extractTotals(phaseResults);
   const status = deriveStatus(phaseResults, totals);
 
+  // #1972 (Codex #9): a phase that breaks on abort returns status 'ok' with
+  // partial counts. If the abort fired during the LAST selected phase, no
+  // between-phase checkAborted ran afterward, so without this guard runCycle
+  // would compute an ok/partial status AND stamp last_full_cycle_at — marking
+  // a cancelled run as a completed full cycle, which makes the next tick skip
+  // work it never actually did. Treat an aborted signal as a non-success run:
+  // skip the freshness stamp and report status 'partial' with reason 'aborted'.
+  const aborted = opts.signal?.aborted === true;
+
+  // #1972 (Decision 7A gating): attribute force-evicts. The minion worker
+  // force-evicts a job 30s after abort and logs "handler ignored abort signal";
+  // that log doesn't say WHICH phase blocked. Any phase whose wall-clock exceeds
+  // that deadline is a force-evict suspect (e.g. a synchronous lint/backlinks on
+  // a huge brain). Name it here so the next production pull tells us whether the
+  // remaining gap is backlinks (still uninstrumented per Decision 7A) or already
+  // covered. Mirrors the 30s grace timer in src/core/minions/worker.ts (the
+  // setTimeout that logs "handler ignored abort signal (force-evicted)").
+  const FORCE_EVICT_DEADLINE_MS = 30_000;
+  for (const pr of phaseResults) {
+    if (pr.duration_ms > FORCE_EVICT_DEADLINE_MS) {
+      console.warn(
+        `[cycle] phase '${pr.phase}' ran ${Math.round(pr.duration_ms / 1000)}s, exceeding the ` +
+        `${FORCE_EVICT_DEADLINE_MS / 1000}s worker force-evict deadline — if this cycle is ` +
+        `force-evicted on abort, '${pr.phase}' is the likely cause (#1972).`,
+      );
+    }
+  }
+
   // v0.38 (codex r1 P0-5): persist per-source cycle completion timestamp
   // when the cycle ran successfully against an explicit source. Read by
   // autopilot's per-source freshness gate next tick. Skipped when:
@@ -2200,7 +2291,7 @@ export async function runCycle(
   // Best-effort: a write failure does NOT change the CycleReport status.
   // The cost of writing the wrong timestamp post-failure is higher than
   // the cost of missing a successful write (next cycle will redo work).
-  if (opts.sourceId && engine && !dryRun && (status === 'ok' || status === 'clean' || status === 'partial')) {
+  if (opts.sourceId && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || status === 'partial')) {
     try {
       await engine.updateSourceConfig(opts.sourceId, {
         last_full_cycle_at: new Date().toISOString(),
@@ -2215,7 +2306,9 @@ export async function runCycle(
     schema_version: '1',
     timestamp,
     duration_ms,
-    status,
+    status: aborted ? 'partial' : status,
+    ...(aborted ? { reason: 'aborted' } : {}),
+    ...(reapedLocks ? { reaped_dead_holder_locks: reapedLocks } : {}),
     brain_dir: opts.brainDir,
     phases: phaseResults,
     totals,

@@ -22,7 +22,7 @@ import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
 import { executeRawJsonb } from './sql-query.ts';
-import { stripNul, buildLinkRows, buildTimelineRows, buildTakeRows } from './batch-rows.ts';
+import { sanitizeForJsonb, buildLinkRows, buildTimelineRows, buildTakeRows } from './batch-rows.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import { verifySchema } from './schema-verify.ts';
@@ -248,7 +248,9 @@ export class PostgresEngine implements BrainEngine {
       this.connectionManager = null;
     }
     if (this._sql) {
-      await this._sql.end();
+      // #1972: gbrain-owned hard bound so a PgBouncer drain that never settles
+      // can't block teardown until the CLI's 10s force-exit truncates stdout.
+      await db.endPoolBounded(this._sql);
       this._sql = null;
       // After this point, _connectionStyle stays 'instance' so a second
       // disconnect() is a no-op rather than falling through and clearing
@@ -1274,11 +1276,28 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean> {
-    // v0.38: atomic JSONB merge. `||` is the Postgres concat operator —
-    // for jsonb, right-side keys overwrite left-side; nested object keys
-    // are NOT deep-merged (use jsonb_set for nested paths). The patch
-    // shape this autopilot wave uses is flat (`last_full_cycle_at`,
-    // `archive_*`, etc.) so concat is sufficient. Idempotent on re-run.
+    // Atomic single-statement merge. The previous read-then-write form dropped
+    // concurrent updates: two callers patching different keys could both read
+    // the same old config and the later `SET config = ...` clobbered the
+    // earlier patch. These keys are written by background cycle/autopilot
+    // paths, so the merge must happen inside the UPDATE (parity with
+    // pglite-engine.updateSourceConfig, which already uses JSONB `||`).
+    //
+    // The CASE normalizes historical bad shapes inline (so `config` is re-read
+    // against the row-locked latest version — a CTE/subquery snapshot would
+    // reintroduce the lost-update race under READ COMMITTED): older code paths
+    // could store config as a JSONB string (double-encoded) or as a JSONB array
+    // of patch objects. We coerce those to a flat object before the `||` merge
+    // so doctor and source routing keep getting flat keys.
+    //
+    // String branch guard: a JSONB string whose inner text is NOT itself valid
+    // JSON (one of the historical bad shapes this path repairs) would make the
+    // bare `::jsonb` cast raise `invalid input syntax for type json`, failing
+    // the whole UPDATE. Postgres has no `try_cast`, so we gate the cast with
+    // the SQL `IS JSON` predicate (Postgres 16+): parseable inner text is
+    // double-encoded config and gets parsed; unparseable text falls back to `{}`.
+    // The guard keeps the merge a single atomic statement (no extra round-trip,
+    // no lost-update race).
     //
     // MUST use sql.json(patch) inside the template tag — postgres-js's
     // positional executeRaw + `$1::jsonb` cast DOUBLE-ENCODES the
@@ -1292,7 +1311,25 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const result = await sql`
       UPDATE sources
-         SET config = COALESCE(config, '{}'::jsonb) || ${sql.json(patch as Parameters<typeof sql.json>[0])}
+         SET config =
+           CASE
+             WHEN jsonb_typeof(config) = 'object' THEN config
+             WHEN jsonb_typeof(config) = 'string'
+               THEN CASE
+                 WHEN (config #>> '{}') IS JSON
+                   THEN COALESCE(NULLIF((config #>> '{}'), '')::jsonb, '{}'::jsonb)
+                 ELSE '{}'::jsonb
+               END
+             WHEN jsonb_typeof(config) = 'array'
+               THEN COALESCE(
+                 (SELECT jsonb_object_agg(kv.key, kv.value)
+                    FROM jsonb_array_elements(config) elem,
+                         jsonb_each(elem) kv),
+                 '{}'::jsonb
+               )
+             ELSE '{}'::jsonb
+           END
+           || ${sql.json(patch as Parameters<typeof sql.json>[0])}
        WHERE id = ${sourceId}
     `;
     return (result.count ?? 0) > 0;
@@ -2519,7 +2556,7 @@ export class PostgresEngine implements BrainEngine {
     await sql`
       INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, origin_page_id, origin_field)
       SELECT f.id, t.id, v.link_type, v.context, v.link_source, o.id, v.origin_field
-      FROM (VALUES (${from}, ${to}, ${linkType || ''}, ${stripNul(context || '')}, ${src}, ${originSlug ?? null}, ${originField ?? null}, ${fromSrc}, ${toSrc}, ${originSrc}))
+      FROM (VALUES (${from}, ${to}, ${linkType || ''}, ${sanitizeForJsonb(context || '')}, ${src}, ${originSlug ?? null}, ${originField ?? null}, ${fromSrc}, ${toSrc}, ${originSrc}))
         AS v(from_slug, to_slug, link_type, context, link_source, origin_slug, origin_field, from_source_id, to_source_id, origin_source_id)
       JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id
       JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id
@@ -3295,9 +3332,12 @@ export class PostgresEngine implements BrainEngine {
     // makes that ambiguity safe (caller asserts page exists). Source-qualify
     // the page-id lookup so multi-source brains don't fan timeline rows out
     // across every source containing the slug.
+    // Free-text body fields are NUL + lone-surrogate sanitized (#2011) so a
+    // surrogate from sliced/imported content can't reach the (later) ::jsonb
+    // batch path or corrupt the row; identity fields (slug, date) are left raw.
     await sql`
       INSERT INTO timeline_entries (page_id, date, source, summary, detail)
-      SELECT id, ${entry.date}::date, ${entry.source || ''}, ${entry.summary}, ${entry.detail || ''}
+      SELECT id, ${entry.date}::date, ${sanitizeForJsonb(entry.source || '')}, ${sanitizeForJsonb(entry.summary)}, ${sanitizeForJsonb(entry.detail || '')}
       FROM pages WHERE slug = ${slug} AND source_id = ${sourceId}
       ON CONFLICT (page_id, date, summary, source) DO NOTHING
     `;
@@ -3740,8 +3780,26 @@ export class PostgresEngine implements BrainEngine {
     return { inserted: ids.length, ids };
   }
 
-  async deleteFactsForPage(slug: string, source_id: string): Promise<{ deleted: number }> {
+  async deleteFactsForPage(
+    slug: string,
+    source_id: string,
+    opts?: { excludeSourcePrefixes?: string[] },
+  ): Promise<{ deleted: number }> {
     const sql = this.sql;
+    const prefixes = opts?.excludeSourcePrefixes;
+    if (prefixes && prefixes.length > 0) {
+      // #1928: keep rows whose `source` matches an excluded prefix (e.g.
+      // `cli:` conversation facts). COALESCE so NULL/empty-source fence rows
+      // stay deletable — only the explicitly-protected prefixes survive.
+      const patterns = prefixes.map(p => `${p}%`);
+      const result = await sql`
+        DELETE FROM facts
+        WHERE source_id = ${source_id}
+          AND source_markdown_slug = ${slug}
+          AND NOT (COALESCE(source, '') LIKE ANY(${patterns}))
+      `;
+      return { deleted: result.count ?? 0 };
+    }
     const result = await sql`
       DELETE FROM facts WHERE source_id = ${source_id} AND source_markdown_slug = ${slug}
     `;
@@ -5114,7 +5172,7 @@ export class PostgresEngine implements BrainEngine {
       const toQual = resolved.map(e => e.to_symbol_qualified);
       const edgeTypes = resolved.map(e => e.edge_type);
       const metas = resolved.map(e => JSON.stringify(e.edge_metadata ?? {}));
-      const sources = resolved.map(e => e.source_id ?? null);
+      const sources = resolved.map(e => e.source_id ?? 'default');
       const res = await sql`
         INSERT INTO code_edges_chunk (from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id)
         SELECT * FROM unnest(
@@ -5134,7 +5192,7 @@ export class PostgresEngine implements BrainEngine {
       const toQual = unresolved.map(e => e.to_symbol_qualified);
       const edgeTypes = unresolved.map(e => e.edge_type);
       const metas = unresolved.map(e => JSON.stringify(e.edge_metadata ?? {}));
-      const sources = unresolved.map(e => e.source_id ?? null);
+      const sources = unresolved.map(e => e.source_id ?? 'default');
       const res = await sql`
         INSERT INTO code_edges_symbol (from_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id)
         SELECT * FROM unnest(

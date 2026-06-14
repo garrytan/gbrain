@@ -8,6 +8,47 @@ let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
 
 /**
+ * #1972: hard upper bound (seconds) on a single pool `.end()` drain. postgres.js
+ * accepts `{ timeout }` but applies it internally — against PgBouncer
+ * transaction-mode the drain can still hang, and a stubbed `.end()` ignores it
+ * entirely. So `endPoolBounded` ALSO wraps each end in a gbrain-owned
+ * Promise.race and passes this value as the postgres.js hint so a healthy drain
+ * still finishes fast.
+ */
+export const POOL_END_TIMEOUT_SECONDS = 2;
+
+/**
+ * #1972: end a postgres.js pool with a gbrain-owned hard bound. Resolves as soon
+ * as `.end()` settles OR after POOL_END_TIMEOUT_SECONDS + a small slack — so
+ * teardown never hangs (the prior bare `.end()` blocked until the CLI's 10s
+ * force-exit fired, which `process.exit()`s and truncated pending stdout, e.g.
+ * #1959's relational query came back empty). Never throws: a teardown that
+ * rejects is worse than one that races past a stuck socket. The race timer is
+ * the real guarantee; `{ timeout }` just lets a healthy drain return in ms.
+ *
+ * Note callers that close MULTIPLE pools should `Promise.all` them rather than
+ * awaiting sequentially, so the per-pool bounds run concurrently instead of
+ * stacking.
+ */
+export async function endPoolBounded(
+  pool: { end: (opts?: { timeout?: number }) => Promise<void> },
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const guard = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, POOL_END_TIMEOUT_SECONDS * 1000 + 500);
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([
+      pool.end({ timeout: POOL_END_TIMEOUT_SECONDS }).catch(() => { /* idempotent / already-closed */ }),
+      guard,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
  * Default pool size for Postgres connections. Users on the Supabase transaction
  * pooler (port 6543) or any multi-tenant pooler can lower this to avoid
  * MaxClients errors when `gbrain upgrade` spawns subprocesses that each open
@@ -258,7 +299,7 @@ export async function disconnect(): Promise<void> {
   const s = sql;
   sql = null;
   connectedUrl = null;
-  if (s) await s.end();
+  if (s) await endPoolBounded(s);
 }
 
 export async function initSchema(): Promise<void> {

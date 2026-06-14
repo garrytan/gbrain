@@ -13,6 +13,7 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { PageType } from './types.ts';
+import { ensureWellFormed } from './text-safe.ts';
 
 /**
  * v0.42.7 — link-extraction version stamp. Bump this ISO timestamp whenever the
@@ -575,12 +576,22 @@ export async function extractPageLinks(
   return { candidates: result, unresolved: fmUnresolved };
 }
 
-/** Excerpt a window of `width` chars around `idx`, collapsed to one line. */
+/**
+ * Excerpt a window of `width` chars around `idx`, collapsed to one line.
+ *
+ * The window is sliced by raw UTF-16 index, so a boundary can land inside a
+ * surrogate pair (any non-BMP char — emoji, math alphanumerics, non-BMP CJK)
+ * and leave a lone surrogate half. That lone half flows into the link `context`
+ * field and, when the batch is serialized for the `jsonb_to_recordset` insert,
+ * makes Postgres reject the WHOLE batch on the `::jsonb` cast — aborting the
+ * entire `extract --stale` run (#2011). `ensureWellFormed` replaces any orphaned
+ * half with U+FFFD before the slice escapes this function.
+ */
 function excerpt(s: string, idx: number, width: number): string {
   const half = Math.floor(width / 2);
   const start = Math.max(0, idx - half);
   const end = Math.min(s.length, idx + half);
-  return s.slice(start, end).replace(/\s+/g, ' ').trim();
+  return ensureWellFormed(s.slice(start, end)).replace(/\s+/g, ' ').trim();
 }
 
 // ─── Relationship type inference (deterministic, zero LLM) ──────

@@ -8,7 +8,7 @@
  */
 
 import { createEngine } from '../core/engine-factory.ts';
-import { loadConfig, saveConfig, toEngineConfig, gbrainPath, type GBrainConfig } from '../core/config.ts';
+import { loadConfig, saveConfig, toEngineConfig, gbrainPath, effectiveEnvDatabaseUrl, type GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { EngineConfig } from '../core/types.ts';
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'fs';
@@ -91,7 +91,8 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   // Build target config
   const targetConfig: EngineConfig = { engine: opts.targetEngine };
   if (opts.targetEngine === 'postgres') {
-    targetConfig.database_url = opts.targetUrl || process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+    // #427 guard: don't let a cwd-.env DATABASE_URL become a migration target.
+    targetConfig.database_url = opts.targetUrl || effectiveEnvDatabaseUrl();
     if (!targetConfig.database_url) {
       console.error('Target is Supabase but no connection string provided. Use: --url <connection_string>');
       process.exit(1);

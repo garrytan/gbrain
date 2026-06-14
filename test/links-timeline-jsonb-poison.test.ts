@@ -23,6 +23,17 @@ const POISON =
 // fromCharCode so no literal NUL byte ever lands in this source file.
 const NUL = String.fromCharCode(0);
 
+// #2011 — a lone UTF-16 high surrogate (no low partner). This is what excerpt()
+// left behind when a context window boundary sliced an emoji; Postgres rejects
+// it inside the ::jsonb cast and aborts the whole batch. The row builders now
+// well-form it to U+FFFD. Built via fromCharCode so no lone surrogate is ever a
+// literal in this source file. PGLite serializes jsonb differently and may not
+// reproduce the original Postgres crash, but it still locks the JS-side
+// sanitization (buildLinkRows/...): the stored value must be well-formed.
+const LONE_HI = String.fromCharCode(0xd83c);
+const SURROGATE = `before${LONE_HI}after`;
+const SURROGATE_CLEAN = 'before�after';
+
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
@@ -242,5 +253,100 @@ describe('scalar addLink — NUL strip on free-text context (#1861 codex #3)', (
     await engine.addLink('a', 'b', `before${NUL}after`, 'mentions', 'manual');
     const links = await engine.getLinks('a', { sourceId: 'default' });
     expect(links[0].context).toBe('beforeafter');
+  });
+});
+
+describe('#2011 — lone-surrogate well-forming across all prose write paths', () => {
+  it('batch link context: lone surrogate well-formed, insert succeeds', async () => {
+    await seed('a'); await seed('b');
+    const n = await engine.addLinksBatch([
+      { from_slug: 'a', to_slug: 'b', link_type: 'mentions', context: SURROGATE, link_source: 'manual' },
+    ]);
+    expect(n).toBe(1);
+    const links = await engine.getLinks('a', { sourceId: 'default' });
+    expect(links[0].context).toBe(SURROGATE_CLEAN);
+    expect(links[0].context.isWellFormed()).toBe(true);
+  });
+
+  it('batch timeline summary/detail/source: all lone surrogates well-formed', async () => {
+    await seed('m');
+    const n = await engine.addTimelineEntriesBatch([
+      { slug: 'm', date: '2026-06-04', source: SURROGATE, summary: SURROGATE, detail: SURROGATE },
+    ]);
+    expect(n).toBe(1);
+    const rows = await engine.executeRaw<{ summary: string; detail: string; source: string }>(
+      `SELECT te.summary, te.detail, te.source FROM timeline_entries te
+       JOIN pages p ON p.id = te.page_id WHERE p.slug = 'm'`,
+    );
+    expect(rows[0].summary).toBe(SURROGATE_CLEAN);
+    expect(rows[0].detail).toBe(SURROGATE_CLEAN);
+    expect(rows[0].source).toBe(SURROGATE_CLEAN); // D2: timeline source now sanitized
+    expect(rows[0].source.isWellFormed()).toBe(true);
+  });
+
+  it('batch take claim: lone surrogate well-formed', async () => {
+    await seed('tk');
+    const pid = await pageId('tk');
+    await engine.addTakesBatch([
+      { page_id: pid, row_num: 1, claim: SURROGATE, kind: 'fact', holder: 'h' },
+    ]);
+    const rows = await engine.executeRaw<{ claim: string }>(
+      `SELECT claim FROM takes t JOIN pages p ON p.id = t.page_id
+       WHERE p.slug = 'tk' AND t.row_num = 1`,
+    );
+    expect(rows[0].claim).toBe(SURROGATE_CLEAN);
+    expect(rows[0].claim.isWellFormed()).toBe(true);
+  });
+
+  it('batch take source (free-text provenance): lone surrogate well-formed', async () => {
+    await seed('tks');
+    const pid = await pageId('tks');
+    await engine.addTakesBatch([
+      { page_id: pid, row_num: 1, claim: 'c', kind: 'fact', holder: 'h', source: SURROGATE },
+    ]);
+    const rows = await engine.executeRaw<{ source: string }>(
+      `SELECT source FROM takes t JOIN pages p ON p.id = t.page_id
+       WHERE p.slug = 'tks' AND t.row_num = 1`,
+    );
+    expect(rows[0].source).toBe(SURROGATE_CLEAN);
+    expect(rows[0].source.isWellFormed()).toBe(true);
+  });
+
+  it('scalar addLink: lone surrogate in context well-formed', async () => {
+    await seed('sa'); await seed('sb');
+    await engine.addLink('sa', 'sb', SURROGATE, 'mentions', 'manual');
+    const links = await engine.getLinks('sa', { sourceId: 'default' });
+    expect(links[0].context).toBe(SURROGATE_CLEAN);
+    expect(links[0].context.isWellFormed()).toBe(true);
+  });
+
+  it('scalar addTimelineEntry: lone surrogate in summary/detail/source well-formed', async () => {
+    await seed('sm');
+    await engine.addTimelineEntry('sm', {
+      date: '2026-06-05', source: SURROGATE, summary: SURROGATE, detail: SURROGATE,
+    });
+    const rows = await engine.executeRaw<{ summary: string; detail: string; source: string }>(
+      `SELECT te.summary, te.detail, te.source FROM timeline_entries te
+       JOIN pages p ON p.id = te.page_id WHERE p.slug = 'sm'`,
+    );
+    expect(rows[0].summary).toBe(SURROGATE_CLEAN);
+    expect(rows[0].detail).toBe(SURROGATE_CLEAN);
+    expect(rows[0].source).toBe(SURROGATE_CLEAN);
+  });
+
+  it('fail-closed: identity fields are NOT sanitized — a lone surrogate in to_slug rejects the batch', async () => {
+    // The NUL/surrogate policy deliberately leaves identity fields raw so a
+    // malformed slug can never be silently normalized into one that matches a
+    // different page. This PGLite build rejects the lone surrogate at the
+    // ::jsonb cast (22P02) — a loud failure, exactly the intended boundary
+    // (and proof we did NOT extend sanitizeForJsonb to identity columns).
+    await seed('idfrom'); await seed('idto');
+    await expect(
+      engine.addLinksBatch([
+        { from_slug: 'idfrom', to_slug: `idto${LONE_HI}`, link_type: 'mentions', link_source: 'manual' },
+      ]),
+    ).rejects.toThrow();
+    const links = await engine.getLinks('idfrom', { sourceId: 'default' });
+    expect(links).toHaveLength(0);
   });
 });

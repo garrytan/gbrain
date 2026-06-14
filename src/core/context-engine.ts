@@ -15,6 +15,7 @@
 
 import { readFileSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
+import { buildReflexAddition, warmReflex, type ResolveEntitiesFn as ReflexResolveEntitiesFn } from './context/reflex.ts';
 // Types inlined from openclaw/plugin-sdk to avoid hard dependency during development.
 // At runtime inside OpenClaw, the real SDK is available; these types ensure build compat.
 
@@ -111,7 +112,10 @@ export const ENGINE_NAME = 'GBrain Context Engine';
  * semantic: this is an interface-stability marker for OpenClaw's loader,
  * not a release tag.
  */
-export const ENGINE_API_VERSION = '0.1.0';
+// 0.2.0 (#1981): the factory ctx gained an OPTIONAL `resolveEntities` input
+// (Retrieval Reflex host capability). Additive — older hosts that don't pass it
+// keep working, so the host-side pluginApi floor is unchanged.
+export const ENGINE_API_VERSION = '0.2.0';
 /** @deprecated Use ENGINE_API_VERSION. Kept for back-compat with v0.32.5 callers. */
 export const ENGINE_VERSION = ENGINE_API_VERSION;
 
@@ -149,6 +153,50 @@ function loadJsonFile<T = unknown>(filePath: string): T | null {
  */
 function sanitizeForPrompt(s: string, maxLen: number = 100): string {
   return s.replace(/[\n\r\t\x00-\x1F\x7F]/g, ' ').slice(0, maxLen).trim();
+}
+
+/**
+ * Coerce a message's `content` (string or structured block array) to plain text
+ * for the Retrieval Reflex extractor / suppression scan. Best-effort: pulls
+ * `.text` out of content blocks, ignores non-text parts.
+ */
+function messageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((b) => (b && typeof b === 'object' && typeof (b as any).text === 'string' ? (b as any).text : ''))
+      .filter(Boolean)
+      .join(' ');
+  }
+  return '';
+}
+
+/** Text of the current turn = the LAST user-role message. '' if none. */
+function getLastUserText(messages: AgentMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === 'user') return messageText(messages[i].content);
+  }
+  return '';
+}
+
+/**
+ * Joined text of everything the agent has ALREADY seen — every message EXCEPT
+ * the current turn (the last user message). Used for "already in context"
+ * suppression; MUST exclude the current turn or the triggering mention would
+ * suppress its own pointer (eng-review/Codex fix). Capped for scan cost.
+ */
+function getPriorContextText(messages: AgentMessage[]): string {
+  let lastUserIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === 'user') { lastUserIdx = i; break; }
+  }
+  const parts: string[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    if (i === lastUserIdx) continue;
+    const t = messageText(messages[i]?.content);
+    if (t) parts.push(t);
+  }
+  return parts.join('\n').slice(-20_000);
 }
 
 /** Common airport → timezone mapping */
@@ -552,8 +600,19 @@ function formatContextBlock(ctx: LiveContext): string {
 
 export function createGBrainContextEngine(ctx: {
   workspaceDir?: string;
+  /**
+   * Retrieval Reflex (#1981, D1=A): optional host-provided resolver. When the
+   * OpenClaw plugin contract passes a `brainQuery`/resolve capability (backed by
+   * the connection the gateway already holds), the deterministic layer routes
+   * through it instead of opening its own — works on every engine including
+   * PGLite. Absent → the engine falls to the serve IPC / Postgres-direct ladder.
+   */
+  resolveEntities?: ReflexResolveEntitiesFn;
 }): ContextEngine {
   const workspaceDir = ctx.workspaceDir ?? process.cwd();
+  // Warm the Postgres connection ahead of the first salient turn (no-op for
+  // PGLite/host paths). Fire-and-forget; never blocks engine construction.
+  warmReflex();
 
   const engine: ContextEngine = {
     info: {
@@ -582,9 +641,21 @@ export function createGBrainContextEngine(ctx: {
         citationsMode,
       });
 
-      // 3. Combine: live context + memory prompt
+      // 2b. Retrieval Reflex (#1981): detect salient entities in THIS turn that
+      // resolve to existing brain pages and inject compact pointers. Zero-LLM,
+      // fail-open, time-bounded — returns null (no addition) on any error or when
+      // nothing salient resolves. Detect + point, never auto-dump bodies.
+      const reflexAddition = await buildReflexAddition({
+        workspaceDir,
+        currentUserText: getLastUserText(messages),
+        priorContextText: getPriorContextText(messages),
+        resolveEntities: ctx.resolveEntities,
+      });
+
+      // 3. Combine: live context + memory prompt + reflex pointers
       const parts = [contextBlock];
       if (memoryAddition) parts.push(memoryAddition);
+      if (reflexAddition) parts.push(reflexAddition);
 
       // 4. Pass through messages unchanged (legacy assembly)
       return {

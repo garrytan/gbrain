@@ -83,13 +83,13 @@ describe('resolveStealGraceSeconds', () => {
   });
 
   test('env override wins', async () => {
-    await withEnv({ GBRAIN_LOCK_STEAL_GRACE_SECONDS: '123' }, () => {
+    await withEnv({ GBRAIN_LOCK_STEAL_GRACE_SECONDS: '123' }, async () => {
       expect(resolveStealGraceSeconds(30)).toBe(123);
     });
   });
 
   test('bad env override falls back to derived', async () => {
-    await withEnv({ GBRAIN_LOCK_STEAL_GRACE_SECONDS: 'nope' }, () => {
+    await withEnv({ GBRAIN_LOCK_STEAL_GRACE_SECONDS: 'nope' }, async () => {
       expect(resolveStealGraceSeconds(30)).toBe(600);
     });
   });

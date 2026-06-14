@@ -5186,6 +5186,52 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 116,
+    name: 'code_edges_source_backfill_and_callee_index',
+    // Repair + index pass for the call graph:
+    //
+    // 1. BACKFILL: importCodeFile built CodeEdgeInput rows without source_id,
+    //    so every extracted edge landed NULL. getCallersOf/getCalleesOf add
+    //    `AND source_id = <scoped>` whenever a worktree pin / --source is in
+    //    play — NULL never matches, so scoped call-graph queries silently
+    //    returned 0 rows on multi-source brains even though the edges
+    //    existed. The write path now stamps `sourceId ?? 'default'`; this
+    //    backfill repairs rows written before the fix by deriving each
+    //    edge's source from its own from_chunk's page (pages.source_id is
+    //    NOT NULL DEFAULT 'default', so COALESCE is belt-and-braces only).
+    //
+    // 2. INDEXES: getCalleesOf filters BOTH edge tables on
+    //    from_symbol_qualified, which had no index anywhere — every callee
+    //    lookup was a sequential scan, amplified per-BFS-node by the
+    //    recursive code walk (one getCalleesOf per frontier node, up to
+    //    maxNodes). With NULL edges repaired, scoped walks actually expand,
+    //    so the latent seq-scan cost becomes real. Plain CREATE INDEX (not
+    //    CONCURRENTLY): edge tables are modest (mirrors the v58 resolver
+    //    index). Keep in sync with src/schema.sql.
+    idempotent: true,
+    sql: `
+      UPDATE code_edges_symbol e
+         SET source_id = COALESCE(p.source_id, 'default')
+        FROM content_chunks c
+        JOIN pages p ON p.id = c.page_id
+       WHERE c.id = e.from_chunk_id
+         AND e.source_id IS NULL;
+
+      UPDATE code_edges_chunk e
+         SET source_id = COALESCE(p.source_id, 'default')
+        FROM content_chunks c
+        JOIN pages p ON p.id = c.page_id
+       WHERE c.id = e.from_chunk_id
+         AND e.source_id IS NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_from_symbol
+        ON code_edges_symbol (from_symbol_qualified);
+
+      CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_from_symbol
+        ON code_edges_chunk (from_symbol_qualified);
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -5524,6 +5570,26 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   const sorted = [...MIGRATIONS].sort((a, b) => a.version - b.version);
 
   const pending = sorted.filter(m => m.version > current);
+
+  // #2038: schema-drift self-heal. A migration renumbered during a master
+  // merge (v102 timeline dedup, originally v99) can be recorded-as-applied
+  // without its DDL ever running — the version counter can't see it. Repair
+  // the known drift on EVERY pass, including when nothing is pending (the
+  // affected brains are stamped AHEAD of the missing migration, so they never
+  // reach the loop below). Best-effort + idempotent: a no-op on a healthy
+  // index; `doctor` surfaces it independently if this ever fails.
+  try {
+    const { repairTimelineDedupIndex } = await import('./timeline-dedup-repair.ts');
+    const r = await repairTimelineDedupIndex(engine);
+    if (r.repaired) {
+      console.error(
+        `[migrate] healed idx_timeline_dedup drift (#2038): ${r.before.join(',') || '(absent)'} ` +
+        `→ page_id,date,summary,source` +
+        (r.collapsedDuplicates > 0 ? ` (collapsed ${r.collapsedDuplicates} duplicate row(s))` : ''),
+      );
+    }
+  } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
+
   if (pending.length === 0) {
     return { applied: 0, current };
   }
