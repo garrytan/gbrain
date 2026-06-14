@@ -24,6 +24,7 @@ import type {
   NoteSectionEntry,
   Page,
   PageType,
+  PageVersion,
   PersonalEpisodeEntry,
   ProfileMemoryEntry,
   RetrievalTrace,
@@ -46,6 +47,16 @@ export function rowToPage(row: Record<string, unknown>): Page {
     content_hash: row.content_hash as string | undefined,
     created_at: new Date(row.created_at as string),
     updated_at: new Date(row.updated_at as string),
+  };
+}
+
+export function rowToPageVersion(row: Record<string, unknown>): PageVersion {
+  return {
+    id: Number(row.id),
+    page_id: Number(row.page_id),
+    compiled_truth: String(row.compiled_truth),
+    frontmatter: parseJsonObject(row.frontmatter),
+    snapshot_at: new Date(String(row.snapshot_at)),
   };
 }
 

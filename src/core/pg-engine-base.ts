@@ -100,6 +100,7 @@ import {
   rowToMemorySession,
   rowToMemorySessionAttachment,
   rowToPage,
+  rowToPageVersion,
   rowToPersonalEpisodeEntry,
   rowToSearchResult,
   rowToProfileMemoryEntry,
@@ -769,10 +770,10 @@ export abstract class PgEngineBase {
       `SELECT pv.* FROM page_versions pv
        JOIN pages p ON p.id = pv.page_id
        WHERE p.slug = $1
-       ORDER BY pv.snapshot_at DESC`,
+       ORDER BY pv.snapshot_at DESC, pv.id DESC`,
       [slug]
     );
-    return rows as unknown as PageVersion[];
+    return (rows as Record<string, unknown>[]).map(rowToPageVersion);
   }
 
   async revertToVersion(slug: string, versionId: number): Promise<void> {
