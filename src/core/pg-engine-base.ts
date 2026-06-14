@@ -306,8 +306,8 @@ export abstract class PgEngineBase {
   }
 
   async listPages(filters?: PageFilters): Promise<Page[]> {
-    const limit = filters?.limit || 100;
-    const offset = filters?.offset || 0;
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
 
     let result;
     if (filters?.type && filters?.tag) {

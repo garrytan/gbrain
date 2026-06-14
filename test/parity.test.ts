@@ -169,6 +169,45 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
       }
     }
   });
+
+  test('agree on explicit zero page-list limit', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-pglite-zero-limit-'));
+    const sqlite = new SQLiteEngine();
+    const pglite = new PGLiteEngine();
+
+    try {
+      await sqlite.connect({ engine: 'sqlite', database_path: join(root, 'brain.db') });
+      await sqlite.initSchema();
+      await pglite.connect({ engine: 'pglite', database_path: join(root, 'brain.pglite') });
+      await pglite.initSchema();
+
+      await seedListAndLinkFixture(sqlite);
+      await seedListAndLinkFixture(pglite);
+
+      const sqlitePages = await sqlite.listPages({ limit: 0 });
+      const pglitePages = await pglite.listPages({ limit: 0 });
+
+      expect(sqlitePages).toEqual([]);
+      expect(pglitePages).toEqual(sqlitePages);
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      for (const engine of [sqlite, pglite]) {
+        try {
+          await engine.disconnect();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      try {
+        rmSync(root, { recursive: true, force: true });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, 'Failed to clean up zero-limit parity fixtures');
+      }
+    }
+  });
 });
 
 type ListAndLinkEngine = Pick<
