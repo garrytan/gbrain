@@ -3978,16 +3978,17 @@ export class SQLiteEngine implements BrainEngine {
     if (!row) return null;
 
     const job = rowToDerivedJob(row);
+    const reclaimedExpiredLease = job.status === 'running';
     this.database.run(`
       UPDATE derived_jobs
       SET status = 'running',
-          attempts = attempts + 1,
+          attempts = attempts + ?,
           last_error = NULL,
           lease_owner = ?,
           lease_expires_at = ?,
           updated_at = ?
       WHERE id = ?
-    `, [input.lease_owner, leaseExpiresAt, timestamp, job.id]);
+    `, [reclaimedExpiredLease ? 1 : 0, input.lease_owner, leaseExpiresAt, timestamp, job.id]);
     return this.getDerivedJobById(job.id);
   }
 
@@ -4013,7 +4014,6 @@ export class SQLiteEngine implements BrainEngine {
     this.database.run(`
       UPDATE derived_jobs
       SET status = 'pending',
-          attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END,
           lease_owner = NULL,
           lease_expires_at = NULL,
           updated_at = ?
@@ -4030,10 +4030,12 @@ export class SQLiteEngine implements BrainEngine {
     if (input.lease_owner !== undefined && existing.lease_owner !== input.lease_owner) return existing;
 
     const maxAttempts = normalizeDerivedJobMaxAttempts(input.max_attempts);
-    const nextStatus = existing.attempts < maxAttempts ? 'pending' : 'failed';
+    const nextAttempts = existing.attempts + 1;
+    const nextStatus = nextAttempts < maxAttempts ? 'pending' : 'failed';
     this.database.run(`
       UPDATE derived_jobs
       SET status = ?,
+          attempts = attempts + 1,
           last_error = ?,
           lease_owner = NULL,
           lease_expires_at = NULL,

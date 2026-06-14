@@ -3137,34 +3137,33 @@ export abstract class PgEngineBase {
   }
 
   private async claimNextDerivedJobInTransaction(input: DerivedJobLeaseInput): Promise<DerivedJob | null> {
-    await this.queryable.query(`LOCK TABLE derived_jobs IN EXCLUSIVE MODE`);
     const leaseDurationMs = normalizeDerivedJobLeaseDurationMs(input.lease_duration_ms);
-    const { rows } = await this.queryable.query(
-      `SELECT id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
-              derived_parameters, status, attempts, last_error, lease_owner,
-              lease_expires_at, created_at, updated_at
-       FROM derived_jobs
-       WHERE status = 'pending'
-          OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= now()))
-       ORDER BY created_at ASC, updated_at ASC, id ASC
-       LIMIT 1`,
-    );
-    if (rows.length === 0) return null;
-    const job = rowToDerivedJob(rows[0] as Record<string, unknown>);
     const updated = await this.queryable.query(
-      `UPDATE derived_jobs
+      `WITH candidate AS (
+         SELECT id,
+                status = 'running' AS reclaim_expired
+         FROM derived_jobs
+         WHERE status = 'pending'
+            OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= now()))
+         ORDER BY created_at ASC, updated_at ASC, id ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT 1
+       )
+       UPDATE derived_jobs AS job
        SET status = 'running',
-           attempts = attempts + 1,
+           attempts = job.attempts + CASE WHEN candidate.reclaim_expired THEN 1 ELSE 0 END,
            last_error = NULL,
            lease_owner = $1,
            lease_expires_at = now() + ($2 * interval '1 millisecond'),
            updated_at = now()
-       WHERE id = $3
-       RETURNING id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
-                 derived_parameters, status, attempts, last_error, lease_owner,
-                 lease_expires_at, created_at, updated_at`,
-      [input.lease_owner, leaseDurationMs, job.id],
+       FROM candidate
+       WHERE job.id = candidate.id
+       RETURNING job.id, job.scope_id, job.slug, job.artifact_kind, job.target_content_hash,
+                 job.manifest_path, job.derived_parameters, job.status, job.attempts, job.last_error,
+                 job.lease_owner, job.lease_expires_at, job.created_at, job.updated_at`,
+      [input.lease_owner, leaseDurationMs],
     );
+    if (updated.rows.length === 0) return null;
     return rowToDerivedJob(updated.rows[0] as Record<string, unknown>);
   }
 
@@ -3190,7 +3189,6 @@ export abstract class PgEngineBase {
     const { rows } = await this.queryable.query(
       `UPDATE derived_jobs
        SET status = 'pending',
-           attempts = GREATEST(attempts - 1, 0),
            lease_owner = NULL,
            lease_expires_at = NULL,
            updated_at = now()
@@ -3212,10 +3210,12 @@ export abstract class PgEngineBase {
     if (input.lease_owner !== undefined && existing.lease_owner !== input.lease_owner) return existing;
 
     const maxAttempts = normalizeDerivedJobMaxAttempts(input.max_attempts);
-    const nextStatus = existing.attempts < maxAttempts ? 'pending' : 'failed';
+    const nextAttempts = existing.attempts + 1;
+    const nextStatus = nextAttempts < maxAttempts ? 'pending' : 'failed';
     const { rows } = await this.queryable.query(
       `UPDATE derived_jobs
        SET status = $1,
+           attempts = attempts + 1,
            last_error = $2,
            lease_owner = NULL,
            lease_expires_at = NULL,

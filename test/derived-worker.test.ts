@@ -159,7 +159,7 @@ test('stale refresh owner cannot complete or clear a reclaimed active job', asyn
     expect(secondClaim).toMatchObject({
       id: firstClaim.id,
       lease_owner: 'worker-b',
-      attempts: 2,
+      attempts: 1,
     });
 
     const staleRefresh = await refreshDerivedStorageForPage(engine, slug, {
@@ -316,7 +316,7 @@ test('refreshDerivedStorageForPage skips without completing a lease when aborted
     expect(await (engine as any).listDerivedJobs({ slug, status: 'running' })).toMatchObject([
       expect.objectContaining({
         id: claimed.id,
-        attempts: 1,
+        attempts: 0,
         lease_owner: 'abort-worker',
       }),
     ]);
