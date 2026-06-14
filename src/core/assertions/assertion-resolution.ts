@@ -79,7 +79,7 @@ export function resolveExtractedClaim(input: ResolveExtractedClaimInput): Assert
   const policyVersion = input.policy_version ?? 'policy:v1';
   const authorityScope = input.authority_scope ?? 'work';
   const claim = { ...input.claim, status: 'resolved' as const };
-  const targetType = input.target_type ?? inferTargetType(claim.target_hint);
+  const targetType = input.target_type ?? inferAssertionTargetType(claim.target_hint);
   const targetId = input.target_id ?? claim.target_hint;
   const targetSlug = input.target_slug ?? null;
   const matching = (input.existing_assertions ?? [])
@@ -541,7 +541,7 @@ function conflictSet(scopeId: string, targetType: string, targetId: string, prop
   };
 }
 
-function inferTargetType(targetHint: string): string {
+export function inferAssertionTargetType(targetHint: string): string {
   if (targetHint.startsWith('systems/')) return 'system';
   if (targetHint.startsWith('brain/')) return 'page';
   if (targetHint.startsWith('task:')) return 'task';
