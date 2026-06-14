@@ -202,7 +202,6 @@ function buildCanonicalCandidatePagePatch(
     type: page?.type ?? inferPageType(slug),
     title: page?.title ?? inferTitle(slug),
     frontmatter: page?.frontmatter ?? {},
-    tags: [],
     compiled_truth: compiledTruth,
     timeline,
   };

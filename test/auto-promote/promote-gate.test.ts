@@ -87,6 +87,29 @@ describe('runPromoteGate', () => {
       expect(events.some((event) => event.source_refs.includes(`canonical_handoff:${handoffs[0]!.id}`))).toBe(true);
     });
   });
+  it('preserves existing canonical page tags when applying an auto-promote patch', async () => {
+    await withEngine(async (engine) => {
+      const target = await seedTargetPage(engine);
+      await engine.addTag('concepts/acme', 'customer');
+      await engine.addTag('concepts/acme', 'priority');
+      const cfg = { ...defaultAutoPromoteConfig(), dry_run: false };
+      const candidate = await seedEligibleCandidate(engine);
+
+      await runPromoteGate({
+        engine,
+        verdicts: [{ candidate_id: candidate.id, decision: 'promote' as const, confidence: 0.95, reasoning: 'ok', source_refs: [] }],
+        candidates: [candidate],
+        config: cfg,
+        now: '2026-06-01T00:00:00Z',
+        actor: 'mbrain:auto_promote',
+        target_snapshot_hashes: new Map([[candidate.id, target.content_hash ?? null]]),
+        allow_canonical_page_writes: true,
+        canonical_write_candidate_ids: new Set([candidate.id]),
+      });
+
+      expect(await engine.getTags('concepts/acme')).toEqual(['customer', 'priority']);
+    });
+  });
   it('writes canonical page changes through the reviewable patch candidate lifecycle', async () => {
     await withEngine(async (engine) => {
       const target = await seedTargetPage(engine);
@@ -166,6 +189,7 @@ describe('runPromoteGate', () => {
       });
       expect(res.canonical_writes).toContain('concepts/acme');
       expect((await engine.getPage('concepts/acme'))?.compiled_truth).toContain('Acme raised a seed round.');
+      expect(await engine.getTags('concepts/acme')).toEqual([]);
 
       const directPageWrites = await engine.listMemoryMutationEvents({
         operation: 'put_page',
