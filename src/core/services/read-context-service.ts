@@ -15,6 +15,7 @@ import type {
   RetrievalTrace,
   ScopeGateDecisionResult,
   ScopeGateScope,
+  TimelineEntry,
 } from '../types.ts';
 import { scalarLength, sliceScalars } from '../text-offsets.ts';
 import {
@@ -33,6 +34,7 @@ import { pathToSlug } from '../sync.ts';
 const DEFAULT_TOKEN_BUDGET = 900;
 const DEFAULT_MAX_SELECTORS = 3;
 const CHARS_PER_TOKEN_ESTIMATE = 4;
+const TIMELINE_ENTRY_LOOKUP_PAGE_SIZE = 100;
 type ReadSelectorOptions = {
   token_budget: number;
   include_timeline: 'auto' | 'include' | 'exclude';
@@ -303,8 +305,7 @@ async function readTimelineEntry(
 ): Promise<CanonicalContextRead | null> {
   const target = timelineEntryTarget(selector);
   if (!target) return null;
-  const entries = await engine.getTimeline(target.slug);
-  const entry = entries.find((candidate) => String(candidate.id) === target.entry_id);
+  const entry = await findTimelineEntry(engine, target.slug, target.entry_id);
   if (!entry) return null;
 
   const text = [
@@ -324,6 +325,24 @@ async function readTimelineEntry(
     include_source_refs: options.include_source_refs,
     token_budget: options.token_budget,
   });
+}
+
+async function findTimelineEntry(
+  engine: BrainEngine,
+  slug: string,
+  entryId: string,
+): Promise<TimelineEntry | null> {
+  let offset = 0;
+  while (true) {
+    const entries = await engine.getTimeline(slug, {
+      limit: TIMELINE_ENTRY_LOOKUP_PAGE_SIZE,
+      offset,
+    });
+    const entry = entries.find((candidate) => String(candidate.id) === entryId);
+    if (entry) return entry;
+    if (entries.length < TIMELINE_ENTRY_LOOKUP_PAGE_SIZE) return null;
+    offset += entries.length;
+  }
 }
 
 function timelineEntryTarget(selector: RetrievalSelector): { slug: string; entry_id: string } | null {

@@ -1266,6 +1266,49 @@ describe('read context service', () => {
     });
   });
 
+  test('reads timeline_entry ids beyond the default timeline window', async () => {
+    await withEngine('timeline-entry-beyond-default-window', async (engine) => {
+      const slug = 'concepts/deep-timeline-entry';
+      await importFromContent(engine, slug, [
+        '---',
+        'type: concept',
+        'title: Deep Timeline Entry',
+        '---',
+        '# Compiled Truth',
+        'Timeline entry lookup should use the requested entry id.',
+      ].join('\n'), { path: `${slug}.md` });
+      await engine.addTimelineEntry(slug, {
+        date: '2025-01-01',
+        source: 'User, old timeline source, 2025-01-01 09:00 KST',
+        summary: 'Old target entry beyond the default window.',
+      });
+      for (let index = 0; index < 101; index += 1) {
+        const date = new Date(Date.UTC(2026, 0, index + 1)).toISOString().slice(0, 10);
+        await engine.addTimelineEntry(slug, {
+          date,
+          source: `User, newer timeline source ${index + 1}, ${date} 09:00 KST`,
+          summary: `Newer entry ${index + 1}`,
+        });
+      }
+      const target = (await engine.getTimeline(slug, { limit: 200 }))
+        .find((entry) => entry.summary === 'Old target entry beyond the default window.');
+      if (!target) throw new Error('target timeline entry fixture missing');
+
+      const result = await readContext(engine, {
+        selectors: [{
+          kind: 'timeline_entry',
+          slug,
+          object_id: String(target.id),
+        }],
+      });
+
+      expect(result.answer_ready.ready).toBe(true);
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(result.canonical_reads[0]!.text).toContain('Old target entry beyond the default window.');
+      expect(result.unread_required).toEqual([]);
+    });
+  });
+
   test('rejects invalid direct service numeric bounds', async () => {
     await withEngine('invalid-read-bounds', async (engine) => {
       await expect(readContext(engine, {
