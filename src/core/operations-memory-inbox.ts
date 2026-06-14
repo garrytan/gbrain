@@ -254,6 +254,13 @@ function normalizeOptionalNonNegativeInteger(
   return Math.floor(value);
 }
 
+function normalizeScore(value: unknown, defaultValue: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return defaultValue;
+  }
+  return Math.min(1, Math.max(0, value));
+}
+
 function normalizeOffset(
   deps: { OperationError: OperationErrorCtor },
   value: unknown,
@@ -1275,9 +1282,9 @@ export function createMemoryInboxOperations(
         source_refs: normalizeSourceRefs(deps, p),
         generated_by: optionalEnumValue(deps, 'generated_by', p.generated_by, MEMORY_CANDIDATE_GENERATED_BY_VALUES) ?? 'manual',
         extraction_kind: optionalEnumValue(deps, 'extraction_kind', p.extraction_kind, MEMORY_CANDIDATE_EXTRACTION_KIND_VALUES) ?? 'manual',
-        confidence_score: typeof p.confidence_score === 'number' ? p.confidence_score : 0.5,
-        importance_score: typeof p.importance_score === 'number' ? p.importance_score : 0.5,
-        recurrence_score: typeof p.recurrence_score === 'number' ? p.recurrence_score : 0,
+        confidence_score: normalizeScore(p.confidence_score, 0.5),
+        importance_score: normalizeScore(p.importance_score, 0.5),
+        recurrence_score: normalizeScore(p.recurrence_score, 0),
         sensitivity: optionalEnumValue(deps, 'sensitivity', p.sensitivity, MEMORY_CANDIDATE_SENSITIVITY_VALUES) ?? 'work',
         status,
         target_object_type: optionalEnumValue(deps, 'target_object_type', p.target_object_type, MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES) ?? null,
@@ -1418,9 +1425,9 @@ export function createMemoryInboxOperations(
         source_refs: sourceRefs,
         generated_by: optionalEnumValue(deps, 'generated_by', p.generated_by, MEMORY_CANDIDATE_GENERATED_BY_VALUES) ?? 'agent',
         extraction_kind: optionalEnumValue(deps, 'extraction_kind', p.extraction_kind, MEMORY_CANDIDATE_EXTRACTION_KIND_VALUES) ?? 'manual',
-        confidence_score: typeof p.confidence_score === 'number' ? p.confidence_score : 0.5,
-        importance_score: typeof p.importance_score === 'number' ? p.importance_score : 0.5,
-        recurrence_score: typeof p.recurrence_score === 'number' ? p.recurrence_score : 0,
+        confidence_score: normalizeScore(p.confidence_score, 0.5),
+        importance_score: normalizeScore(p.importance_score, 0.5),
+        recurrence_score: normalizeScore(p.recurrence_score, 0),
         sensitivity: optionalEnumValue(deps, 'sensitivity', p.sensitivity, MEMORY_CANDIDATE_SENSITIVITY_VALUES) ?? 'work',
         status: 'staged_for_review' as const,
         target_object_type: targetObjectTypeForPatchTarget(targetKind),

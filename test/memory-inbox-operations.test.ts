@@ -1799,6 +1799,92 @@ test('review and apply memory patch candidate work through the PGLite engine', a
   }
 });
 
+test('memory inbox candidate create operations normalize score fields', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-candidate-score-normalization-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+  const create = operations.find((operation) => operation.name === 'create_memory_candidate_entry');
+  const createPatch = operations.find((operation) => operation.name === 'create_memory_patch_candidate');
+
+  if (!create || !createPatch) {
+    throw new Error('memory inbox create operations are missing');
+  }
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+    await engine.upsertMemoryRealm({
+      id: 'realm:score-normalization',
+      name: 'Score normalization realm',
+      scope: 'work',
+      default_access: 'read_write',
+    });
+    await engine.createMemorySession({
+      id: 'session:score-normalization',
+      actor_ref: 'agent:score-normalization',
+    });
+    await engine.attachMemoryRealmToSession({
+      session_id: 'session:score-normalization',
+      realm_id: 'realm:score-normalization',
+      access: 'read_write',
+    });
+    const page = await engine.putPage('concepts/score-normalization-target', {
+      type: 'concept',
+      title: 'Score Normalization Target',
+      compiled_truth: 'Original compiled truth. [Source: User, direct message, 2026-04-26 11:00 AM KST]',
+      timeline: '',
+    });
+
+    const ctx = {
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    };
+
+    const created = await create.handler(ctx, {
+      id: 'candidate-score-normalized',
+      candidate_type: 'fact',
+      proposed_content: 'Candidate scores should be safe normalized numbers.',
+      source_ref: 'User, direct message, 2026-04-26 11:00 AM KST',
+      confidence_score: Number.NaN,
+      importance_score: Number.POSITIVE_INFINITY,
+      recurrence_score: -3,
+    }) as any;
+    expect(created.confidence_score).toBe(0.5);
+    expect(created.importance_score).toBe(0.5);
+    expect(created.recurrence_score).toBe(0);
+
+    const patchPreview = await createPatch.handler({
+      ...ctx,
+      dryRun: true,
+    }, {
+      id: 'patch-score-normalized',
+      session_id: 'session:score-normalization',
+      realm_id: 'realm:score-normalization',
+      actor: 'agent:score-normalization',
+      scope_id: 'workspace:default',
+      target_kind: 'page',
+      target_id: 'concepts/score-normalization-target',
+      base_target_snapshot_hash: page.content_hash,
+      patch_body: {
+        compiled_truth: 'Updated compiled truth. [Source: User, direct message, 2026-04-26 11:00 AM KST]',
+      },
+      patch_format: 'merge_patch',
+      source_refs: ['User, direct message, 2026-04-26 11:00 AM KST'],
+      confidence_score: 1.7,
+      importance_score: -2,
+      recurrence_score: Number.NEGATIVE_INFINITY,
+    }) as any;
+    expect(patchPreview.candidate.confidence_score).toBe(1);
+    expect(patchPreview.candidate.importance_score).toBe(0);
+    expect(patchPreview.candidate.recurrence_score).toBe(0);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('create_memory_candidate_entry rejects patch-only fields through the generic candidate path', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-candidate-patch-bypass-'));
   const databasePath = join(dir, 'brain.db');
