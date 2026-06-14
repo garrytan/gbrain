@@ -409,6 +409,80 @@ describe('agent session signal classifier', () => {
     });
   });
 
+  test('does not route preference self-corrections as contradictions', () => {
+    const observation = buildObservation({
+      id: 'agent-session-observation:actually-preference',
+      observation_type: 'conversation',
+      narrative: 'Actually, remember that I prefer short review plans.',
+      facts: ['The user prefers short review plans.'],
+      sensitivity: 'personal',
+      scope_id: 'personal:default',
+    });
+
+    const signals = classifyAgentSessionMemorySignals({
+      observations: [observation],
+      summary: buildSummary({ outcome: '' }),
+    });
+
+    expect(signals[0]).toMatchObject({
+      evidence_kind: 'direct_user_statement',
+      signal_kind: 'profile_memory',
+      candidate_type: 'profile_update',
+      target_object_type: 'profile_memory',
+      scope_id: 'personal:default',
+    });
+  });
+
+  test('does not route procedure self-corrections as contradictions', () => {
+    const observation = buildObservation({
+      id: 'agent-session-observation:actually-procedure',
+      observation_type: 'conversation',
+      narrative: 'Actually, always run focused tests before typecheck.',
+      facts: ['Always run focused tests before typecheck.'],
+      confidence_score: 0.85,
+      sensitivity: 'work',
+      scope_id: 'workspace:default',
+    });
+
+    const signals = classifyAgentSessionMemorySignals({
+      observations: [observation],
+      summary: buildSummary({ outcome: '' }),
+    });
+
+    expect(signals[0]).toMatchObject({
+      evidence_kind: 'source_extracted',
+      signal_kind: 'procedure',
+      candidate_type: 'procedure',
+      target_object_type: 'procedure',
+      scope_id: 'workspace:default',
+    });
+  });
+
+  test('keeps procedure self-corrections out of project-note routing', () => {
+    const observation = buildObservation({
+      id: 'agent-session-observation:actually-repo-procedure',
+      observation_type: 'conversation',
+      narrative: 'Actually, always follow this repo workflow before release step.',
+      facts: ['Always follow this repo workflow before release step.'],
+      confidence_score: 0.85,
+      sensitivity: 'work',
+      scope_id: 'workspace:default',
+    });
+
+    const signals = classifyAgentSessionMemorySignals({
+      observations: [observation],
+      summary: buildSummary({ outcome: '' }),
+    });
+
+    expect(signals[0]).toMatchObject({
+      evidence_kind: 'source_extracted',
+      signal_kind: 'procedure',
+      candidate_type: 'procedure',
+      target_object_type: 'procedure',
+      scope_id: 'workspace:default',
+    });
+  });
+
   test('keeps personal episode signals secret when the summary is secret', () => {
     const observation = buildObservation({
       observation_type: 'session_summary',
@@ -487,6 +561,64 @@ describe('agent session signal classifier', () => {
         'agent-session-observation:personal-duplicate',
         'agent-session-observation:secret-duplicate',
       ],
+    });
+  });
+
+  test('dedupes by preserving the most authoritative evidence kind', () => {
+    const inferredPreference = buildObservation({
+      id: 'agent-session-observation:inferred-preference',
+      actor: 'assistant',
+      event_kind: 'assistant_response',
+      narrative: 'Remember that I prefer short implementation plans.',
+      facts: ['The user prefers short implementation plans.'],
+      source_refs: ['source_chunk:inferred-preference'],
+    });
+    const directPreference = buildObservation({
+      id: 'agent-session-observation:direct-preference',
+      actor: 'user',
+      event_kind: 'user_prompt',
+      narrative: 'Remember that I prefer short implementation plans.',
+      facts: ['The user prefers short implementation plans.'],
+      source_refs: ['source_chunk:direct-preference'],
+    });
+    const inferredProcedure = buildObservation({
+      id: 'agent-session-observation:inferred-procedure',
+      actor: 'assistant',
+      event_kind: 'assistant_response',
+      narrative: 'Always run the focused test before typecheck.',
+      facts: ['Always run the focused test before typecheck.'],
+      confidence_score: 0.7,
+      sensitivity: 'work',
+      scope_id: 'workspace:default',
+      source_refs: ['source_chunk:inferred-procedure'],
+    });
+    const extractedProcedure = buildObservation({
+      id: 'agent-session-observation:extracted-procedure',
+      actor: 'user',
+      event_kind: 'user_prompt',
+      narrative: 'Always run the focused test before typecheck.',
+      facts: ['Always run the focused test before typecheck.'],
+      confidence_score: 0.9,
+      sensitivity: 'work',
+      scope_id: 'workspace:default',
+      source_refs: ['source_chunk:extracted-procedure'],
+    });
+
+    const signals = classifyAgentSessionMemorySignals({
+      observations: [inferredPreference, directPreference, inferredProcedure, extractedProcedure],
+      summary: buildSummary({ outcome: '' }),
+    });
+
+    expect(signals).toHaveLength(2);
+    expect(signals.find((signal) => signal.signal_kind === 'profile_memory')).toMatchObject({
+      evidence_kind: 'direct_user_statement',
+      dedupe_merged_signal_count: 2,
+      source_refs: ['source_chunk:inferred-preference', 'source_chunk:direct-preference'],
+    });
+    expect(signals.find((signal) => signal.signal_kind === 'procedure')).toMatchObject({
+      evidence_kind: 'source_extracted',
+      dedupe_merged_signal_count: 2,
+      source_refs: ['source_chunk:inferred-procedure', 'source_chunk:extracted-procedure'],
     });
   });
 

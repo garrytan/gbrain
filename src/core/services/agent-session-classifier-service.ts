@@ -17,12 +17,14 @@ export function classifyAgentSessionMemorySignals(
 
   for (const observation of input.observations) {
     const text = classifierTextFor(observation);
+    const explicitPreference = isExplicitPreference(text);
+    const procedure = isProcedureSignal(text);
 
     if (isPureTaskMechanics(observation, text)) {
       signals.push(noWriteSignal(observation));
       continue;
     }
-    if (isContradictionSignal(text)) {
+    if (isContradictionSignal(text) && !explicitPreference && !procedure) {
       signals.push(projectNoteSignal(observation, text, 'contradicts_existing'));
       continue;
     }
@@ -30,15 +32,15 @@ export function classifyAgentSessionMemorySignals(
       signals.push(taskMemorySignal(observation, text));
       continue;
     }
-    if (isProjectNoteSignal(text)) {
+    if (isProjectNoteSignal(text) && !procedure) {
       signals.push(projectNoteSignal(observation, text));
       continue;
     }
-    if (isExplicitPreference(text)) {
+    if (explicitPreference) {
       signals.push(profileSignal(observation, text));
       continue;
     }
-    if (isProcedureSignal(text)) {
+    if (procedure) {
       signals.push(procedureSignal(observation, text));
       continue;
     }
@@ -353,6 +355,7 @@ function dedupeSignals(signals: AgentSessionMemorySignal[]): AgentSessionMemoryS
     const mergedSignalCount = (existing.dedupe_merged_signal_count ?? 1) + 1;
     deduped.set(key, {
       ...existing,
+      evidence_kind: mostAuthoritativeEvidenceKind(existing.evidence_kind, signal.evidence_kind),
       sensitivity: mostRestrictiveSensitivity(existing.sensitivity, signal.sensitivity),
       confidence_score: Math.max(existing.confidence_score, signal.confidence_score),
       importance_score: Math.max(existing.importance_score, signal.importance_score),
@@ -363,6 +366,32 @@ function dedupeSignals(signals: AgentSessionMemorySignal[]): AgentSessionMemoryS
     });
   }
   return [...deduped.values()];
+}
+
+function mostAuthoritativeEvidenceKind(
+  left: AgentSessionMemorySignal['evidence_kind'],
+  right: AgentSessionMemorySignal['evidence_kind'],
+): AgentSessionMemorySignal['evidence_kind'] {
+  return evidenceKindRank(left) >= evidenceKindRank(right) ? left : right;
+}
+
+function evidenceKindRank(evidenceKind: AgentSessionMemorySignal['evidence_kind']): number {
+  switch (evidenceKind) {
+    case 'direct_user_statement':
+      return 6;
+    case 'source_extracted':
+      return 5;
+    case 'contradicts_existing':
+      return 4;
+    case 'code_sensitive':
+      return 3;
+    case 'agent_inferred':
+      return 2;
+    case 'ambiguous':
+      return 1;
+    case 'task_mechanics':
+      return 0;
+  }
 }
 
 function mostRestrictiveSensitivity(
