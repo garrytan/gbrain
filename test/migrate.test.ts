@@ -36,6 +36,71 @@ describe('migrate', () => {
     expect(LATEST_VERSION).toBeGreaterThan(6);
   });
 
+  test('SQLite migration switch covers every Postgres migration version', () => {
+    const migrateSource = readFileSync(
+      new URL('../src/core/migrate.ts', import.meta.url),
+      'utf-8',
+    );
+    const sqliteSource = readFileSync(
+      new URL('../src/core/sqlite-engine.ts', import.meta.url),
+      'utf-8',
+    );
+    const pgVersions = [...migrateSource.matchAll(/version:\s*(\d+)/g)]
+      .map(match => Number(match[1]));
+    const sqliteMigrationBody = sqliteSource.slice(sqliteSource.indexOf('private async runSqliteMigrations'));
+    const sqliteCases = new Set([...sqliteMigrationBody.matchAll(/case\s+(\d+)\s*:/g)]
+      .map(match => Number(match[1])));
+    const missing = pgVersions.filter(version => version > 1 && !sqliteCases.has(version));
+
+    expect(pgVersions.at(-1)).toBe(LATEST_VERSION);
+    expect(missing).toEqual([]);
+    expect(sqliteMigrationBody).toContain('SQLite migration ${version} is not implemented');
+  });
+
+  test('fresh SQLite and PGLite schemas expose matching shared table columns', async () => {
+    const { SQLiteEngine } = await import('../src/core/sqlite-engine.ts');
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const sqlite = new SQLiteEngine();
+    const pglite = new PGLiteEngine();
+    const sqlitePath = join(tempHome, 'schema-parity.sqlite');
+    const pglitePath = join(tempHome, 'schema-parity.pglite');
+    const sharedTables = [
+      'content_chunks',
+      'derived_index_state',
+      'derived_jobs',
+      'memory_candidate_entries',
+      'memory_mutation_events',
+      'note_manifest_entries',
+      'note_section_entries',
+      'source_chunks',
+      'source_items',
+    ];
+    try {
+      await sqlite.connect({ engine: 'sqlite', database_path: sqlitePath });
+      await sqlite.initSchema();
+      await pglite.connect({ engine: 'pglite', database_path: pglitePath });
+      await pglite.initSchema();
+      const db = (sqlite as any).database;
+
+      for (const table of sharedTables) {
+        const sqliteColumns = (db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
+          .map(column => column.name);
+        const pgColumns = (await (pglite as any).db.query(`
+          SELECT column_name
+          FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = $1
+          ORDER BY ordinal_position
+        `, [table])).rows.map((row: { column_name: string }) => row.column_name);
+
+        expect(pgColumns, `${table} should exist in PGLite`).not.toHaveLength(0);
+        expect(sqliteColumns, `${table} columns`).toEqual(pgColumns);
+      }
+    } finally {
+      await sqlite.disconnect().catch(() => undefined);
+      await pglite.disconnect().catch(() => undefined);
+    }
+  }, PGLITE_MIGRATION_TEST_TIMEOUT_MS);
+
   test('runMigrations is exported and callable', async () => {
     const { runMigrations } = await import('../src/core/migrate.ts');
     expect(typeof runMigrations).toBe('function');

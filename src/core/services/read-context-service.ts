@@ -15,6 +15,7 @@ import type {
   RetrievalTrace,
   ScopeGateDecisionResult,
   ScopeGateScope,
+  TimelineEntry,
 } from '../types.ts';
 import { scalarLength, sliceScalars } from '../text-offsets.ts';
 import {
@@ -27,12 +28,13 @@ import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
 import { normalizeRetrievalSelector, retrievalSelectorId } from './retrieval-selector-service.ts';
 import { retrieveContext } from './retrieve-context-service.ts';
 import { evaluateScopeGate } from './scope-gate-service.ts';
-import { listAllNoteSectionEntries } from './structural-entry-pagination.ts';
 import { pathToSlug } from '../sync.ts';
 
 const DEFAULT_TOKEN_BUDGET = 900;
 const DEFAULT_MAX_SELECTORS = 3;
 const CHARS_PER_TOKEN_ESTIMATE = 4;
+const TIMELINE_ENTRY_LOOKUP_PAGE_SIZE = 100;
+const SOURCE_REF_LOOKUP_BATCH_SIZE = 5000;
 type ReadSelectorOptions = {
   token_budget: number;
   include_timeline: 'auto' | 'include' | 'exclude';
@@ -104,7 +106,11 @@ export async function readContext(
       });
     } catch (error) {
       if (error instanceof ScopeBlockedReadError) {
-        return maybePersistReadTrace(engine, blockedByScopeGate(error.scopeGate, [selector]), input);
+        const warning = scopeBlockedSelectorWarning(selector, error.scopeGate);
+        selectorWarnings.push(warning);
+        unreadRequired.push(warning.selector);
+        warnings.push(`${warning.code}: ${warning.message}`);
+        continue;
       }
       if (error instanceof StaleSelectorReadError) {
         selectorWarnings.push(error.warning);
@@ -303,8 +309,7 @@ async function readTimelineEntry(
 ): Promise<CanonicalContextRead | null> {
   const target = timelineEntryTarget(selector);
   if (!target) return null;
-  const entries = await engine.getTimeline(target.slug);
-  const entry = entries.find((candidate) => String(candidate.id) === target.entry_id);
+  const entry = await findTimelineEntry(engine, target.slug, target.entry_id);
   if (!entry) return null;
 
   const text = [
@@ -326,6 +331,24 @@ async function readTimelineEntry(
   });
 }
 
+async function findTimelineEntry(
+  engine: BrainEngine,
+  slug: string,
+  entryId: string,
+): Promise<TimelineEntry | null> {
+  let offset = 0;
+  while (true) {
+    const entries = await engine.getTimeline(slug, {
+      limit: TIMELINE_ENTRY_LOOKUP_PAGE_SIZE,
+      offset,
+    });
+    const entry = entries.find((candidate) => String(candidate.id) === entryId);
+    if (entry) return entry;
+    if (entries.length < TIMELINE_ENTRY_LOOKUP_PAGE_SIZE) return null;
+    offset += entries.length;
+  }
+}
+
 function timelineEntryTarget(selector: RetrievalSelector): { slug: string; entry_id: string } | null {
   if (selector.slug && selector.object_id) {
     return { slug: selector.slug, entry_id: selector.object_id };
@@ -345,11 +368,14 @@ async function readSourceRef(
   options: Pick<ReadSelectorOptions, 'token_budget' | 'include_source_refs' | 'requested_scope' | 'query'>,
 ): Promise<CanonicalContextRead | null> {
   if (!selector.source_ref) return null;
-  const sections = await listAllNoteSectionEntries(
-    engine,
-    selector.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID,
-  );
   const targetPath = selector.path?.split('#')[0]?.trim();
+  const sections = await listSourceRefSections(engine, {
+    scope_id: selector.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+    source_ref: selector.source_ref,
+    page_slug: selector.slug,
+    page_path: targetPath,
+    section_id: selector.section_id,
+  });
   const matches = sections.filter((entry) => {
     if (!entry.source_refs.includes(selector.source_ref!)) return false;
     if (selector.slug && entry.page_slug !== selector.slug) return false;
@@ -396,6 +422,37 @@ async function readSourceRef(
     content_hash: selector.content_hash,
   }, options);
 }
+
+async function listSourceRefSections(
+  engine: BrainEngine,
+  filters: {
+    scope_id: string;
+    source_ref: string;
+    page_slug?: string;
+    page_path?: string;
+    section_id?: string;
+  },
+): Promise<RetrievalNoteSection[]> {
+  const sections: RetrievalNoteSection[] = [];
+  let offset = 0;
+  while (true) {
+    const batch = await engine.listNoteSectionEntries({
+      scope_id: filters.scope_id,
+      source_ref: filters.source_ref,
+      page_slug: filters.page_slug,
+      page_path: filters.page_path,
+      section_id: filters.section_id,
+      limit: SOURCE_REF_LOOKUP_BATCH_SIZE,
+      offset,
+    });
+    sections.push(...batch);
+    if (batch.length < SOURCE_REF_LOOKUP_BATCH_SIZE) break;
+    offset += batch.length;
+  }
+  return sections;
+}
+
+type RetrievalNoteSection = Awaited<ReturnType<BrainEngine['listNoteSectionEntries']>>[number];
 
 async function readProjectedPageField(
   engine: BrainEngine,
@@ -1156,6 +1213,7 @@ async function derivedJobSlugForManifestPath(
         scope_id: scopeId,
         artifact_kind: 'note_sections',
         status,
+        manifest_path: manifestPath,
         limit,
         offset,
       });
@@ -1180,6 +1238,22 @@ function extractSourceRefs(text: string): string[] {
 
 function textHasSourceMarkers(text: string): boolean {
   return /\[Source:\s*[^\]\n]+\]/.test(text);
+}
+
+function scopeBlockedSelectorWarning(
+  selector: RetrievalSelector,
+  scopeGate: ScopeGateDecisionResult,
+): RetrievalSelectorWarning {
+  const normalizedSelector = normalizeRetrievalSelector(selector);
+  return {
+    code: 'scope_blocked',
+    severity: 'warning',
+    selector_id: retrievalSelectorId(normalizedSelector),
+    selector: normalizedSelector,
+    slug: normalizedSelector.slug,
+    scope_gate: scopeGate,
+    message: `Selector blocked by scope gate: ${scopeGate.policy} (${scopeGate.decision_reason}).`,
+  };
 }
 
 async function resolveReadSelectors(

@@ -6,7 +6,10 @@ import {
   HeadObjectCommand,
   ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type { StorageBackend, StorageConfig } from '../storage.ts';
+
+const DEFAULT_SIGNED_URL_TTL_SECONDS = 300;
 
 /**
  * S3-compatible storage — works with AWS S3, Cloudflare R2, MinIO, etc.
@@ -83,15 +86,15 @@ export class S3Storage implements StorageBackend {
     return (res.Contents || []).map(obj => obj.Key!).filter(Boolean);
   }
 
-  async getUrl(path: string): Promise<string> {
-    // For custom endpoints (R2, MinIO), use the endpoint URL
-    const endpoint = (this.client.config as any).endpoint;
-    if (endpoint) {
-      const base = typeof endpoint === 'function' ? (await endpoint()).url.toString() : endpoint;
-      return `${base}/${this.bucket}/${path}`;
-    }
-    const region = await this.client.config.region();
-    return `https://${this.bucket}.s3.${region}.amazonaws.com/${path}`;
+  async getUrl(path: string, options?: { expiresInSeconds?: number }): Promise<string> {
+    return getSignedUrl(
+      this.client,
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: path,
+      }),
+      { expiresIn: options?.expiresInSeconds ?? DEFAULT_SIGNED_URL_TTL_SECONDS },
+    );
   }
 
   async getContentHash(path: string): Promise<string | null> {

@@ -52,6 +52,15 @@ export interface SyncOpts {
   noEmbed?: boolean;
 }
 
+export function formatWatchSyncSummary(result: SyncResult, now = new Date()): string | null {
+  if (result.status !== 'synced' && result.status !== 'first_sync') {
+    return null;
+  }
+  const ts = now.toISOString().slice(11, 19);
+  const label = result.status === 'first_sync' ? 'First sync' : 'Synced';
+  return `[${ts}] ${label}: +${result.added} ~${result.modified} -${result.deleted} R${result.renamed}`;
+}
+
 interface SyncFailure {
   path: string;
   message: string;
@@ -669,10 +678,8 @@ export async function runSync(engine: BrainEngine, args: string[]) {
       const result = await performSync(engine, { ...opts, full: false });
       consecutiveErrors = 0;
       clearSyncWatchFailure();
-      if (result.status === 'synced') {
-        const ts = new Date().toISOString().slice(11, 19);
-        console.log(`[${ts}] Synced: +${result.added} ~${result.modified} -${result.deleted} R${result.renamed}`);
-      }
+      const summary = formatWatchSyncSummary(result);
+      if (summary) console.log(summary);
     } catch (e: unknown) {
       consecutiveErrors++;
       const msg = e instanceof Error ? e.message : String(e);

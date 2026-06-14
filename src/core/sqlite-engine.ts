@@ -1120,6 +1120,7 @@ export class SQLiteEngine implements BrainEngine {
     const limit = opts?.limit ?? 20;
     const params: unknown[] = [prepared];
     let sql = `
+      WITH matched_pages AS (
       SELECT
         p.id AS page_id,
         p.slug,
@@ -1156,12 +1157,22 @@ export class SQLiteEngine implements BrainEngine {
       params.push(...opts.exclude_slugs.map(slug => validateSlug(slug)));
     }
 
-    sql += ` ORDER BY rank ASC LIMIT ?`;
+    sql += ` ORDER BY rank ASC LIMIT ?
+      )
+      SELECT
+        matched_pages.*,
+        cc.chunk_text AS stored_chunk_text,
+        cc.chunk_source AS stored_chunk_source,
+        cc.chunk_index AS stored_chunk_index,
+        cc.chunk_content_hash AS stored_chunk_content_hash
+      FROM matched_pages
+      LEFT JOIN content_chunks cc ON cc.page_id = matched_pages.page_id
+      ORDER BY matched_pages.rank ASC, cc.chunk_index ASC`;
     params.push(limit);
 
     try {
       const rows = this.database.query(sql).all(...sqliteBindings(params)) as Record<string, unknown>[];
-      return rows.map(row => rowToSearchResult(row, query));
+      return keywordRowsToSearchResults(rows, query);
     } catch (error) {
       if (isRecoverableFtsQueryError(error)) {
         // Malformed FTS5 queries degrade to empty results; operational failures must surface.
@@ -1497,7 +1508,7 @@ export class SQLiteEngine implements BrainEngine {
       params.push(opts.before);
     }
 
-    sql += ` ORDER BY te.date DESC LIMIT ? OFFSET ?`;
+    sql += ` ORDER BY te.date DESC, te.id DESC LIMIT ? OFFSET ?`;
     params.push(opts?.limit ?? 100, opts?.offset ?? 0);
 
     const rows = this.database.query(sql).all(...sqliteBindings(params)) as Record<string, unknown>[];
@@ -3876,6 +3887,10 @@ export class SQLiteEngine implements BrainEngine {
       clauses.push('page_slug = ?');
       params.push(validateSlug(filters.page_slug));
     }
+    if (filters?.page_path) {
+      clauses.push('page_path = ?');
+      params.push(filters.page_path);
+    }
     if (filters?.page_slugs && filters.page_slugs.length > 0) {
       clauses.push(`page_slug IN (${filters.page_slugs.map(() => '?').join(', ')})`);
       params.push(...filters.page_slugs.map((slug) => validateSlug(slug)));
@@ -3883,6 +3898,10 @@ export class SQLiteEngine implements BrainEngine {
     if (filters?.section_id) {
       clauses.push('section_id = ?');
       params.push(filters.section_id);
+    }
+    if (filters?.source_ref) {
+      clauses.push('EXISTS (SELECT 1 FROM json_each(source_refs) WHERE value = ?)');
+      params.push(filters.source_ref);
     }
 
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
@@ -3959,16 +3978,17 @@ export class SQLiteEngine implements BrainEngine {
     if (!row) return null;
 
     const job = rowToDerivedJob(row);
+    const reclaimedExpiredLease = job.status === 'running';
     this.database.run(`
       UPDATE derived_jobs
       SET status = 'running',
-          attempts = attempts + 1,
+          attempts = attempts + ?,
           last_error = NULL,
           lease_owner = ?,
           lease_expires_at = ?,
           updated_at = ?
       WHERE id = ?
-    `, [input.lease_owner, leaseExpiresAt, timestamp, job.id]);
+    `, [reclaimedExpiredLease ? 1 : 0, input.lease_owner, leaseExpiresAt, timestamp, job.id]);
     return this.getDerivedJobById(job.id);
   }
 
@@ -3994,7 +4014,6 @@ export class SQLiteEngine implements BrainEngine {
     this.database.run(`
       UPDATE derived_jobs
       SET status = 'pending',
-          attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END,
           lease_owner = NULL,
           lease_expires_at = NULL,
           updated_at = ?
@@ -4011,10 +4030,12 @@ export class SQLiteEngine implements BrainEngine {
     if (input.lease_owner !== undefined && existing.lease_owner !== input.lease_owner) return existing;
 
     const maxAttempts = normalizeDerivedJobMaxAttempts(input.max_attempts);
-    const nextStatus = existing.attempts < maxAttempts ? 'pending' : 'failed';
+    const nextAttempts = existing.attempts + 1;
+    const nextStatus = nextAttempts < maxAttempts ? 'pending' : 'failed';
     this.database.run(`
       UPDATE derived_jobs
       SET status = ?,
+          attempts = attempts + 1,
           last_error = ?,
           lease_owner = NULL,
           lease_expires_at = NULL,
@@ -4140,6 +4161,10 @@ export class SQLiteEngine implements BrainEngine {
     if (filters?.status) {
       clauses.push('status = ?');
       params.push(filters.status);
+    }
+    if (filters?.manifest_path) {
+      clauses.push('manifest_path = ?');
+      params.push(filters.manifest_path);
     }
     params.push(limit);
     params.push(offset);
@@ -7911,6 +7936,8 @@ export class SQLiteEngine implements BrainEngine {
         p.type,
         cc.chunk_text,
         cc.chunk_source,
+        cc.chunk_index,
+        cc.chunk_content_hash,
         cc.embedding,
         CASE WHEN EXISTS (
           SELECT 1 FROM timeline_entries te
@@ -8559,22 +8586,65 @@ function extractSnippet(text: string, queryTerms: string[], windowSize: number =
   return prefix + slice + suffix;
 }
 
+function keywordRowsToSearchResults(rows: Record<string, unknown>[], query: string): SearchResult[] {
+  const normalizedTerms = extractSearchTerms(query).map(term => term.toLowerCase());
+  const grouped = new Map<number, Record<string, unknown>[]>();
+  for (const row of rows) {
+    const pageId = Number(row.page_id);
+    const group = grouped.get(pageId);
+    if (group) {
+      group.push(row);
+    } else {
+      grouped.set(pageId, [row]);
+    }
+  }
+
+  return [...grouped.values()].map((group) => rowToSearchResult(bestKeywordRow(group, normalizedTerms), query));
+}
+
+function bestKeywordRow(
+  rows: Record<string, unknown>[],
+  normalizedTerms: string[],
+): Record<string, unknown> {
+  return [...rows].sort((a, b) => {
+    const scoreDelta = storedChunkMatchScore(b, normalizedTerms) - storedChunkMatchScore(a, normalizedTerms);
+    if (scoreDelta !== 0) return scoreDelta;
+    return (nullableNumber(a.stored_chunk_index) ?? Number.MAX_SAFE_INTEGER)
+      - (nullableNumber(b.stored_chunk_index) ?? Number.MAX_SAFE_INTEGER);
+  })[0]!;
+}
+
+function storedChunkMatches(row: Record<string, unknown>, normalizedTerms: string[]): boolean {
+  return storedChunkMatchScore(row, normalizedTerms) > 0;
+}
+
+function storedChunkMatchScore(row: Record<string, unknown>, normalizedTerms: string[]): number {
+  if (row.stored_chunk_text == null || row.stored_chunk_source == null) return 0;
+  const text = String(row.stored_chunk_text).toLowerCase();
+  return normalizedTerms.filter(term => text.includes(term)).length;
+}
+
 function rowToSearchResult(row: Record<string, unknown>, query: string): SearchResult {
   const compiled = String(row.compiled_truth || '');
   const timeline = String(row.timeline || '');
   const searchText = String(row.search_text || '');
   const normalizedTerms = extractSearchTerms(query).map(term => term.toLowerCase());
+  const hasStoredChunkMatch = storedChunkMatches(row, normalizedTerms);
   const compiledMatch = normalizedTerms.some(term => compiled.toLowerCase().includes(term));
   const timelineMatch = normalizedTerms.some(term => timeline.toLowerCase().includes(term));
   const frontmatterMatch = normalizedTerms.some(term => searchText.toLowerCase().includes(term));
-  const chunk_source = compiledMatch
+  const chunk_source = hasStoredChunkMatch
+    ? row.stored_chunk_source as SearchResult['chunk_source']
+    : compiledMatch
     ? 'compiled_truth'
     : timelineMatch
       ? 'timeline'
       : frontmatterMatch
         ? 'frontmatter'
         : 'compiled_truth';
-  const sourceText = chunk_source === 'compiled_truth'
+  const sourceText = hasStoredChunkMatch
+    ? String(row.stored_chunk_text)
+    : chunk_source === 'compiled_truth'
     ? compiled || timeline || searchText || String(row.title)
     : chunk_source === 'timeline'
       ? timeline || compiled || searchText || String(row.title)
@@ -8589,6 +8659,8 @@ function rowToSearchResult(row: Record<string, unknown>, query: string): SearchR
     type: row.type as PageType,
     chunk_text,
     chunk_source,
+    chunk_index: hasStoredChunkMatch ? nullableNumber(row.stored_chunk_index) : null,
+    chunk_content_hash: hasStoredChunkMatch ? nullableString(row.stored_chunk_content_hash) : null,
     score: Math.max(0, -rawRank),
     stale: Boolean(row.stale),
     ...searchResultDerivedFields(row),
@@ -8603,9 +8675,21 @@ function rowToLocalVectorCandidate(row: Record<string, unknown>) {
     type: row.type as PageType,
     chunk_text: String(row.chunk_text),
     chunk_source: row.chunk_source as Chunk['chunk_source'],
+    chunk_index: nullableNumber(row.chunk_index),
+    chunk_content_hash: nullableString(row.chunk_content_hash),
     stale: Boolean(row.stale),
     embedding: blobToFloat32(row.embedding),
   };
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function nullableString(value: unknown): string | null {
+  return value == null ? null : String(value);
 }
 
 function extractSearchTerms(query: string): string[] {

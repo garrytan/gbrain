@@ -69,13 +69,23 @@ export async function runAutoPromote(input: RunAutoPromoteInput): Promise<RunAut
     calls: 0,
     max: input.max_runner_calls ?? Number.POSITIVE_INFINITY,
   };
+  const timeBudget = createTimeBudget(input.time_budget_ms);
+  const timeBudgetExcluded: { id: string; reason: string }[] = [];
   for (const c of buckets.low_risk) {
+    if (timeBudget.exceeded()) {
+      timeBudgetExcluded.push({ id: c.id, reason: 'time_budget_exceeded' });
+      continue;
+    }
     const v = await judge(input, c, input.config.first_pass_model, targetSnapshotHashes, runnerBudget);
     if (v) verdicts.push(v);
   }
   let escalated = 0;
   if (input.config.escalation.enabled) {
     for (const c of buckets.risky.slice(0, input.config.escalation.max_per_cycle)) {
+      if (timeBudget.exceeded()) {
+        timeBudgetExcluded.push({ id: c.id, reason: 'time_budget_exceeded' });
+        continue;
+      }
       const v = await judge(input, c, input.config.escalation_model ?? input.config.first_pass_model, targetSnapshotHashes, runnerBudget);
       if (v) { verdicts.push(v); escalated++; }
     }
@@ -94,6 +104,7 @@ export async function runAutoPromote(input: RunAutoPromoteInput): Promise<RunAut
     ...selfConsumptionExcluded,
     ...contradictionExcluded.map((entry) => ({ id: entry.id, reason: 'open_contradiction' })),
     ...buckets.excluded.map((e) => ({ id: e.candidate.id, reason: e.reason })),
+    ...timeBudgetExcluded,
     ...reportableGateSkips,
   ];
 
@@ -115,6 +126,14 @@ export async function runAutoPromote(input: RunAutoPromoteInput): Promise<RunAut
 
 function isReportableGateSkip(reason: string): boolean {
   return reason !== 'decision_defer' && reason !== 'below_threshold';
+}
+
+function createTimeBudget(timeBudgetMs: number | undefined): { exceeded: () => boolean } {
+  if (timeBudgetMs === undefined) {
+    return { exceeded: () => false };
+  }
+  const deadline = Date.now() + Math.max(0, timeBudgetMs);
+  return { exceeded: () => Date.now() >= deadline };
 }
 
 function isAutoPromoteOpenStatus(candidate: { status: string }): boolean {

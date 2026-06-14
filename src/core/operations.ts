@@ -6039,6 +6039,7 @@ const get_ingest_log: Operation = {
 // --- File Operations ---
 
 const FILE_LIST_LIMIT = 100;
+const FILE_URL_TTL_SECONDS = 300;
 
 const file_list: Operation = {
   name: 'file_list',
@@ -6072,8 +6073,9 @@ const file_upload: Operation = {
     if (ctx.dryRun) return { dry_run: true, action: 'file_upload', path: p.path };
 
     const { readFileSync, statSync } = await import('fs');
-    const { basename, extname } = await import('path');
+    const { basename } = await import('path');
     const { createHash } = await import('crypto');
+    const { detectMimeType } = await import('./file-mime.ts');
 
     const filePath = p.path as string;
     const pageSlug = (p.page_slug as string) || null;
@@ -6083,12 +6085,7 @@ const file_upload: Operation = {
     const filename = basename(filePath);
     const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
 
-    const MIME_TYPES: Record<string, string> = {
-      '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-      '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
-      '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg',
-    };
-    const mimeType = MIME_TYPES[extname(filePath).toLowerCase()] || null;
+    const mimeType = detectMimeType(filePath, content);
 
     const sql = db.getConnection();
     const existing = await sql`SELECT id FROM files WHERE content_hash = ${hash} AND storage_path = ${storagePath}`;
@@ -6138,6 +6135,7 @@ const file_url: Operation = {
   capabilityRequired: 'files',
   params: {
     storage_path: { type: 'string', required: true },
+    expires_in_seconds: { type: 'number', description: 'Signed URL TTL in seconds when cloud storage is configured.' },
   },
   handler: async (ctx, p) => {
     assertCapabilitySupported(ctx.config, 'files');
@@ -6146,7 +6144,22 @@ const file_url: Operation = {
     if (rows.length === 0) {
       throw new OperationError('storage_error', `File not found: ${p.storage_path}`);
     }
-    // TODO: generate signed URL from Supabase Storage
+    const expiresInSeconds = typeof p.expires_in_seconds === 'number'
+      ? Math.floor(p.expires_in_seconds)
+      : FILE_URL_TTL_SECONDS;
+    if (expiresInSeconds <= 0) {
+      throw new OperationError('invalid_params', 'expires_in_seconds must be greater than zero');
+    }
+    if (ctx.config.storage) {
+      const { createStorage } = await import('./storage.ts');
+      const storage = await createStorage(ctx.config.storage as any);
+      const url = await storage.getUrl(String(rows[0].storage_path), { expiresInSeconds });
+      return {
+        storage_path: rows[0].storage_path,
+        url,
+        expires_in_seconds: expiresInSeconds,
+      };
+    }
     return { storage_path: rows[0].storage_path, url: `mbrain:files/${rows[0].storage_path}` };
   },
 };

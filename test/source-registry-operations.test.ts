@@ -289,6 +289,65 @@ describe('source registry operations', () => {
     }
   });
 
+  test('list_sources batches inspection reads across returned sources', async () => {
+    const harness = await createSqliteHarness('connector-list-batched-inspection');
+    try {
+      for (const [suffix, locator] of [['primary', 'gmail://me@example.com'], ['team', 'gmail://team@example.com']] as const) {
+        await getOperation('register_connector_source').handler(harness.ctx(), {
+          connector_id: 'gmail',
+          display_name: `Gmail ${suffix}`,
+          account_locator: locator,
+          consent_state: 'granted',
+          credential_ref: {
+            provider: 'credential_gateway',
+            reference: `credential-gateway://gmail/${suffix}`,
+            scopes: ['gmail.readonly'],
+          },
+          now: '2026-05-22T02:14:00.000Z',
+        });
+      }
+
+      const db = (harness.engine as any).database;
+      const originalQuery = db.query.bind(db);
+      const counts = {
+        source_policies: 0,
+        source_policy_overrides: 0,
+        connector_accounts: 0,
+        connector_grants: 0,
+        connector_sync_states: 0,
+        credential_refs: 0,
+      };
+      db.query = ((sql: string) => {
+        for (const table of Object.keys(counts) as Array<keyof typeof counts>) {
+          if (new RegExp(`FROM\\s+${table}\\b`, 'i').test(sql)) counts[table] += 1;
+        }
+        return originalQuery(sql);
+      }) as typeof db.query;
+      try {
+        const listed = await getOperation('list_sources').handler(harness.ctx(), {
+          connector_id: 'gmail',
+        }) as any;
+
+        expect(listed.sources).toHaveLength(2);
+        expect(listed.sources.every((row: any) => row.connector_account?.connector_id === 'gmail')).toBe(true);
+        expect(listed.sources.every((row: any) => row.connector_grants.length === 1)).toBe(true);
+        expect(listed.sources.every((row: any) => row.credential_ref?.provider === 'credential_gateway')).toBe(true);
+        expect(counts).toEqual({
+          source_policies: 1,
+          source_policy_overrides: 1,
+          connector_accounts: 1,
+          connector_grants: 1,
+          connector_sync_states: 1,
+          credential_refs: 1,
+        });
+      } finally {
+        db.query = originalQuery;
+      }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   test('connector registration can persist and inspect credential references without raw DB writes', async () => {
     const harness = await createSqliteHarness('connector-inline-credential');
     try {
@@ -403,6 +462,57 @@ describe('source registry operations', () => {
 
       expect(skipped.status).toBe('skipped');
       expect(skipped.reason).toBe('unchanged_content_hash');
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('list_source_items batches chunk reads when include_chunks is enabled', async () => {
+    const harness = await createSqliteHarness('connector-raw-ingest-batched-chunks');
+    try {
+      insertCredentialReference(harness.engine, 'credential-ref:gmail:primary');
+      const registered = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'gmail',
+        display_name: 'Primary Gmail',
+        account_locator: 'gmail://me@example.com',
+        consent_state: 'granted',
+        credential_ref_id: 'credential-ref:gmail:primary',
+        now: '2026-05-22T02:30:00.000Z',
+      }) as any;
+      await getOperation('ingest_connector_item').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        connector_id: 'gmail',
+        external_id: 'message-1',
+        body: 'First chunked message.',
+        now: '2026-05-22T02:31:00.000Z',
+      });
+      await getOperation('ingest_connector_item').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        connector_id: 'gmail',
+        external_id: 'message-2',
+        body: 'Second chunked message.',
+        now: '2026-05-22T02:32:00.000Z',
+      });
+
+      const db = (harness.engine as any).database;
+      const originalQuery = db.query.bind(db);
+      let chunkSelects = 0;
+      db.query = ((sql: string) => {
+        if (/FROM\s+source_chunks/i.test(sql)) chunkSelects += 1;
+        return originalQuery(sql);
+      }) as typeof db.query;
+      try {
+        const listed = await getOperation('list_source_items').handler(harness.ctx(), {
+          source_id: registered.source.id,
+          include_chunks: true,
+        }) as any;
+
+        expect(listed.items).toHaveLength(2);
+        expect(listed.items.every((item: any) => item.chunks.length === 1)).toBe(true);
+        expect(chunkSelects).toBe(1);
+      } finally {
+        db.query = originalQuery;
+      }
     } finally {
       await harness.cleanup();
     }

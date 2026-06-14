@@ -154,6 +154,31 @@ describe('runAutoPromote', () => {
       expect(rows).toHaveLength(1);
     });
   });
+  it('excludes candidates when the auto-promote time budget is exhausted', async () => {
+    await withEngine(async (engine) => {
+      await seedTargetPage(engine);
+      const candidate = await seedEligibleCandidate(engine);
+      let calls = 0;
+
+      const res = await runAutoPromote({
+        engine,
+        config: { ...defaultAutoPromoteConfig(), enabled: true, dry_run: false },
+        now: NOW,
+        runner: { kind: 'claude_code' } as any,
+        runnerExecutor: async (request) => {
+          calls += 1;
+          return stubExecutor('promote', 0.95)(request);
+        },
+        contextLoader: (targetRef) => pageContext(engine, targetRef),
+        scope_id: 'workspace:default',
+        time_budget_ms: 0,
+      });
+
+      expect(calls).toBe(0);
+      expect(res.excluded).toEqual([{ id: candidate.id, reason: 'time_budget_exceeded' }]);
+      expect((await engine.getMemoryCandidateEntry(candidate.id))?.status).toBe('captured');
+    });
+  });
   it('tries the next runner when the first runner returns an unparsable verdict', async () => {
     await withEngine(async (engine) => {
       await seedTargetPage(engine);

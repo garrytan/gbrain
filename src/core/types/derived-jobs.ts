@@ -58,6 +58,7 @@ export interface DerivedJobFilters {
   slug?: string;
   artifact_kind?: DerivedArtifactKind;
   status?: DerivedJobStatus;
+  manifest_path?: string;
   limit?: number;
   offset?: number;
 }

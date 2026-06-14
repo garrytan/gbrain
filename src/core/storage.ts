@@ -11,7 +11,11 @@ export interface StorageBackend {
   delete(path: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   list(prefix: string): Promise<string[]>;
-  getUrl(path: string): Promise<string>;
+  getUrl(path: string, options?: StorageUrlOptions): Promise<string>;
+}
+
+export interface StorageUrlOptions {
+  expiresInSeconds?: number;
 }
 
 export interface StorageConfig {

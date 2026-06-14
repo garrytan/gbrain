@@ -103,7 +103,7 @@ export class LocalStorage implements StorageBackend {
     return results;
   }
 
-  async getUrl(path: string): Promise<string> {
+  async getUrl(path: string, _options?: { expiresInSeconds?: number }): Promise<string> {
     const full = this.contained(path);
     if (existsSync(full)) {
       this.assertRealContained(full, path);

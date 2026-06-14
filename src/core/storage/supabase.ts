@@ -1,5 +1,7 @@
 import type { StorageBackend, StorageConfig } from '../storage.ts';
 
+const DEFAULT_SIGNED_URL_TTL_SECONDS = 300;
+
 /**
  * Supabase Storage — uses the Supabase Storage REST API.
  * Auth via the service role key (not the anon key).
@@ -18,8 +20,12 @@ export class SupabaseStorage implements StorageBackend {
     }
   }
 
+  private encodedPath(path: string): string {
+    return path.split('/').map(segment => encodeURIComponent(segment)).join('/');
+  }
+
   private url(path: string): string {
-    return `${this.projectUrl}/storage/v1/object/${this.bucket}/${path}`;
+    return `${this.projectUrl}/storage/v1/object/${this.bucket}/${this.encodedPath(path)}`;
   }
 
   private headers(): Record<string, string> {
@@ -81,8 +87,22 @@ export class SupabaseStorage implements StorageBackend {
     return items.map(i => `${prefix}/${i.name}`);
   }
 
-  async getUrl(path: string): Promise<string> {
-    // Public URL (if bucket is public) or signed URL
-    return `${this.projectUrl}/storage/v1/object/public/${this.bucket}/${path}`;
+  async getUrl(path: string, options?: { expiresInSeconds?: number }): Promise<string> {
+    const expiresIn = options?.expiresInSeconds ?? DEFAULT_SIGNED_URL_TTL_SECONDS;
+    const res = await fetch(`${this.projectUrl}/storage/v1/object/sign/${this.bucket}/${this.encodedPath(path)}`, {
+      method: 'POST',
+      headers: { ...this.headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expiresIn }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Supabase signed URL failed: ${res.status} ${body}`);
+    }
+    const data = await res.json() as { signedURL?: string; signedUrl?: string };
+    const signedPath = data.signedURL ?? data.signedUrl;
+    if (!signedPath) throw new Error('Supabase signed URL response did not include signedURL');
+    if (/^https?:\/\//i.test(signedPath)) return signedPath;
+    if (signedPath.startsWith('/storage/v1/')) return `${this.projectUrl}${signedPath}`;
+    return `${this.projectUrl}/storage/v1${signedPath.startsWith('/') ? signedPath : `/${signedPath}`}`;
   }
 }

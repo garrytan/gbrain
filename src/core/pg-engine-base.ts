@@ -100,6 +100,7 @@ import {
   rowToMemorySession,
   rowToMemorySessionAttachment,
   rowToPage,
+  rowToPageVersion,
   rowToPersonalEpisodeEntry,
   rowToSearchResult,
   rowToProfileMemoryEntry,
@@ -623,17 +624,22 @@ export abstract class PgEngineBase {
         JOIN links l ON l.from_page_id = g.id
         JOIN pages p2 ON p2.id = l.to_page_id
         WHERE g.depth < $2
+      ),
+      ranked AS (
+        SELECT DISTINCT ON (g.slug) g.id, g.slug, g.title, g.type, g.depth
+        FROM graph g
+        ORDER BY g.slug, g.depth ASC
       )
-      SELECT DISTINCT g.slug, g.title, g.type, g.depth,
+      SELECT ranked.slug, ranked.title, ranked.type, ranked.depth,
         coalesce(
           (SELECT jsonb_agg(jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
            FROM links l2
            JOIN pages p3 ON p3.id = l2.to_page_id
-           WHERE l2.from_page_id = g.id),
+           WHERE l2.from_page_id = ranked.id),
           '[]'::jsonb
         ) as links
-      FROM graph g
-      ORDER BY g.depth, g.slug`,
+      FROM ranked
+      ORDER BY ranked.depth, ranked.slug`,
       [slug, depth]
     );
 
@@ -695,7 +701,7 @@ export abstract class PgEngineBase {
         `SELECT te.* FROM timeline_entries te
          JOIN pages p ON p.id = te.page_id
          WHERE p.slug = $1 AND te.date >= $2::date AND te.date <= $3::date
-         ORDER BY te.date DESC LIMIT $4 OFFSET $5`,
+         ORDER BY te.date DESC, te.id DESC LIMIT $4 OFFSET $5`,
         [slug, opts.after, opts.before, limit, offset]
       );
     } else if (opts?.after) {
@@ -703,7 +709,7 @@ export abstract class PgEngineBase {
         `SELECT te.* FROM timeline_entries te
          JOIN pages p ON p.id = te.page_id
          WHERE p.slug = $1 AND te.date >= $2::date
-         ORDER BY te.date DESC LIMIT $3 OFFSET $4`,
+         ORDER BY te.date DESC, te.id DESC LIMIT $3 OFFSET $4`,
         [slug, opts.after, limit, offset]
       );
     } else {
@@ -711,7 +717,7 @@ export abstract class PgEngineBase {
         `SELECT te.* FROM timeline_entries te
          JOIN pages p ON p.id = te.page_id
          WHERE p.slug = $1
-         ORDER BY te.date DESC LIMIT $2 OFFSET $3`,
+         ORDER BY te.date DESC, te.id DESC LIMIT $2 OFFSET $3`,
         [slug, limit, offset]
       );
     }
@@ -769,10 +775,10 @@ export abstract class PgEngineBase {
       `SELECT pv.* FROM page_versions pv
        JOIN pages p ON p.id = pv.page_id
        WHERE p.slug = $1
-       ORDER BY pv.snapshot_at DESC`,
+       ORDER BY pv.snapshot_at DESC, pv.id DESC`,
       [slug]
     );
-    return rows as unknown as PageVersion[];
+    return (rows as Record<string, unknown>[]).map(rowToPageVersion);
   }
 
   async revertToVersion(slug: string, versionId: number): Promise<void> {
@@ -3047,6 +3053,10 @@ export abstract class PgEngineBase {
       params.push(validateSlug(filters.page_slug));
       clauses.push(`page_slug = $${params.length}`);
     }
+    if (filters?.page_path) {
+      params.push(filters.page_path);
+      clauses.push(`page_path = $${params.length}`);
+    }
     if (filters?.page_slugs && filters.page_slugs.length > 0) {
       const pageSlugs = filters.page_slugs.map((slug) => validateSlug(slug));
       const placeholders = pageSlugs.map((_, index) => `$${params.length + index + 1}`).join(', ');
@@ -3056,6 +3066,10 @@ export abstract class PgEngineBase {
     if (filters?.section_id) {
       params.push(filters.section_id);
       clauses.push(`section_id = $${params.length}`);
+    }
+    if (filters?.source_ref) {
+      params.push(JSON.stringify([filters.source_ref]));
+      clauses.push(`source_refs @> $${params.length}::jsonb`);
     }
 
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
@@ -3123,34 +3137,33 @@ export abstract class PgEngineBase {
   }
 
   private async claimNextDerivedJobInTransaction(input: DerivedJobLeaseInput): Promise<DerivedJob | null> {
-    await this.queryable.query(`LOCK TABLE derived_jobs IN EXCLUSIVE MODE`);
     const leaseDurationMs = normalizeDerivedJobLeaseDurationMs(input.lease_duration_ms);
-    const { rows } = await this.queryable.query(
-      `SELECT id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
-              derived_parameters, status, attempts, last_error, lease_owner,
-              lease_expires_at, created_at, updated_at
-       FROM derived_jobs
-       WHERE status = 'pending'
-          OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= now()))
-       ORDER BY created_at ASC, updated_at ASC, id ASC
-       LIMIT 1`,
-    );
-    if (rows.length === 0) return null;
-    const job = rowToDerivedJob(rows[0] as Record<string, unknown>);
     const updated = await this.queryable.query(
-      `UPDATE derived_jobs
+      `WITH candidate AS (
+         SELECT id,
+                status = 'running' AS reclaim_expired
+         FROM derived_jobs
+         WHERE status = 'pending'
+            OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= now()))
+         ORDER BY created_at ASC, updated_at ASC, id ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT 1
+       )
+       UPDATE derived_jobs AS job
        SET status = 'running',
-           attempts = attempts + 1,
+           attempts = job.attempts + CASE WHEN candidate.reclaim_expired THEN 1 ELSE 0 END,
            last_error = NULL,
            lease_owner = $1,
            lease_expires_at = now() + ($2 * interval '1 millisecond'),
            updated_at = now()
-       WHERE id = $3
-       RETURNING id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
-                 derived_parameters, status, attempts, last_error, lease_owner,
-                 lease_expires_at, created_at, updated_at`,
-      [input.lease_owner, leaseDurationMs, job.id],
+       FROM candidate
+       WHERE job.id = candidate.id
+       RETURNING job.id, job.scope_id, job.slug, job.artifact_kind, job.target_content_hash,
+                 job.manifest_path, job.derived_parameters, job.status, job.attempts, job.last_error,
+                 job.lease_owner, job.lease_expires_at, job.created_at, job.updated_at`,
+      [input.lease_owner, leaseDurationMs],
     );
+    if (updated.rows.length === 0) return null;
     return rowToDerivedJob(updated.rows[0] as Record<string, unknown>);
   }
 
@@ -3176,7 +3189,6 @@ export abstract class PgEngineBase {
     const { rows } = await this.queryable.query(
       `UPDATE derived_jobs
        SET status = 'pending',
-           attempts = GREATEST(attempts - 1, 0),
            lease_owner = NULL,
            lease_expires_at = NULL,
            updated_at = now()
@@ -3198,10 +3210,12 @@ export abstract class PgEngineBase {
     if (input.lease_owner !== undefined && existing.lease_owner !== input.lease_owner) return existing;
 
     const maxAttempts = normalizeDerivedJobMaxAttempts(input.max_attempts);
-    const nextStatus = existing.attempts < maxAttempts ? 'pending' : 'failed';
+    const nextAttempts = existing.attempts + 1;
+    const nextStatus = nextAttempts < maxAttempts ? 'pending' : 'failed';
     const { rows } = await this.queryable.query(
       `UPDATE derived_jobs
        SET status = $1,
+           attempts = attempts + 1,
            last_error = $2,
            lease_owner = NULL,
            lease_expires_at = NULL,
@@ -3334,6 +3348,10 @@ export abstract class PgEngineBase {
     if (filters?.status) {
       params.push(filters.status);
       clauses.push(`status = $${params.length}`);
+    }
+    if (filters?.manifest_path) {
+      params.push(filters.manifest_path);
+      clauses.push(`manifest_path = $${params.length}`);
     }
     params.push(limit);
     params.push(offset);
@@ -3956,23 +3974,23 @@ export abstract class PgEngineBase {
       SELECT DISTINCT ON (ranked.slug)
         ranked.slug, ranked.page_id, ranked.title, ranked.type,
         CASE
-          WHEN ranked.frontmatter_score >= ranked.compiled_score
-            AND ranked.frontmatter_score >= ranked.timeline_score
-            AND ranked.frontmatter_score >= ranked.chunk_score THEN ranked.search_text
-          WHEN ranked.timeline_score >= ranked.compiled_score
-            AND ranked.timeline_score >= ranked.chunk_score THEN ranked.timeline
-          WHEN ranked.chunk_score > ranked.compiled_score THEN ranked.chunk_text
+          WHEN ranked.chunk_score > 0
+            AND ranked.chunk_source = ranked.selected_source THEN ranked.chunk_text
+          WHEN ranked.selected_source = 'frontmatter' THEN ranked.search_text
+          WHEN ranked.selected_source = 'timeline' THEN ranked.timeline
           ELSE ranked.compiled_truth
         END AS chunk_text,
+        ranked.selected_source AS chunk_source,
         CASE
-          WHEN ranked.frontmatter_score >= ranked.compiled_score
-            AND ranked.frontmatter_score >= ranked.timeline_score
-            AND ranked.frontmatter_score >= ranked.chunk_score THEN 'frontmatter'
-          WHEN ranked.timeline_score >= ranked.compiled_score
-            AND ranked.timeline_score >= ranked.chunk_score THEN 'timeline'
-          WHEN ranked.chunk_score > ranked.compiled_score THEN ranked.chunk_source
-          ELSE 'compiled_truth'
-        END AS chunk_source,
+          WHEN ranked.chunk_score > 0
+            AND ranked.chunk_source = ranked.selected_source THEN ranked.chunk_index
+          ELSE NULL
+        END AS chunk_index,
+        CASE
+          WHEN ranked.chunk_score > 0
+            AND ranked.chunk_source = ranked.selected_source THEN ranked.chunk_content_hash
+          ELSE NULL
+        END AS chunk_content_hash,
         ranked.page_score AS score,
         ranked.stale,
         ranked.derived_artifact_kind,
@@ -3981,15 +3999,29 @@ export abstract class PgEngineBase {
         ranked.derived_indexed_content_hash
       FROM (
         SELECT
-          pm.*,
-          cc.chunk_text,
-          cc.chunk_source,
-          cc.chunk_index,
-          coalesce(ts_rank(to_tsvector('english', coalesce(cc.chunk_text, '')), websearch_to_tsquery('english', $1)), 0) AS chunk_score
-        FROM pm
-        LEFT JOIN content_chunks cc ON cc.page_id = pm.page_id
+          scored.*,
+          CASE
+            WHEN scored.frontmatter_score >= scored.compiled_score
+              AND scored.frontmatter_score >= scored.timeline_score
+              AND scored.frontmatter_score >= scored.chunk_score THEN 'frontmatter'
+            WHEN scored.timeline_score >= scored.compiled_score
+              AND scored.timeline_score >= scored.chunk_score THEN 'timeline'
+            WHEN scored.chunk_score > scored.compiled_score THEN scored.chunk_source
+            ELSE 'compiled_truth'
+          END AS selected_source
+        FROM (
+          SELECT
+            pm.*,
+            cc.chunk_text,
+            cc.chunk_source,
+            cc.chunk_index,
+            cc.chunk_content_hash,
+            coalesce(ts_rank(to_tsvector('english', coalesce(cc.chunk_text, '')), websearch_to_tsquery('english', $1)), 0) AS chunk_score
+          FROM pm
+          LEFT JOIN content_chunks cc ON cc.page_id = pm.page_id
+        ) scored
       ) ranked
-      ORDER BY ranked.slug, GREATEST(ranked.frontmatter_score, ranked.compiled_score, ranked.timeline_score, ranked.chunk_score) DESC, ranked.page_score DESC, ranked.chunk_index ASC`,
+      ORDER BY ranked.slug, GREATEST(ranked.frontmatter_score, ranked.compiled_score, ranked.timeline_score, ranked.chunk_score) DESC, ranked.page_score DESC, (ranked.chunk_score > 0 AND ranked.chunk_source = ranked.selected_source) DESC, ranked.chunk_index ASC`,
       params
       );
 
@@ -4026,7 +4058,7 @@ export abstract class PgEngineBase {
       const { rows } = await q.query(
         `SELECT
           p.slug, p.id as page_id, p.title, p.type,
-          cc.chunk_text, cc.chunk_source,
+          cc.chunk_text, cc.chunk_source, cc.chunk_index, cc.chunk_content_hash,
           1 - (cc.embedding <=> $1::vector) AS score,
           CASE WHEN p.updated_at < (
             SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id

@@ -5,6 +5,7 @@ import {
   encryptContent,
   generatePassword,
   generateHtml,
+  PUBLISH_PBKDF2_ITERATIONS,
 } from '../src/commands/publish.ts';
 
 describe('makeShareable', () => {
@@ -28,6 +29,14 @@ describe('makeShareable', () => {
     expect(result).not.toContain('[Source:');
     expect(result).toContain('Fact one');
     expect(result).toContain('Fact two');
+  });
+
+  test('strips source citations that contain nested markdown links', () => {
+    const input = 'Fact [Source: User, [private note](../raw/meeting.md), 2026-04-01] remains public.';
+    const result = makeShareable(input);
+    expect(result).toBe('Fact remains public.');
+    expect(result).not.toContain('../raw/');
+    expect(result).not.toContain('[Source:');
   });
 
   test('redacts confirmation numbers', () => {
@@ -61,6 +70,22 @@ describe('makeShareable', () => {
     expect(result).toContain('Public content.');
     expect(result).not.toContain('Timeline');
     expect(result).not.toContain('Secret event');
+  });
+
+  test('removes private evidence below the brain page separator even without a Timeline heading', () => {
+    const input = '# Title\n\nPublic content.\n\n---\n\n- **2026-04-01** | Secret event [Source: User, private thread]';
+    const result = makeShareable(input);
+    expect(result).toBe('# Title\n\nPublic content.');
+    expect(result).not.toContain('Secret event');
+    expect(result).not.toContain('[Source:');
+  });
+
+  test('preserves public horizontal rules in compiled truth', () => {
+    const input = '# Title\n\nBefore\n\n---\n\nAfter public section';
+    const result = makeShareable(input);
+    expect(result).toContain('Before');
+    expect(result).toContain('---');
+    expect(result).toContain('After public section');
   });
 
   test('collapses excessive blank lines', () => {
@@ -107,6 +132,10 @@ describe('extractTitle', () => {
 });
 
 describe('encryptContent', () => {
+  test('uses hardened PBKDF2 iterations', () => {
+    expect(PUBLISH_PBKDF2_ITERATIONS).toBeGreaterThanOrEqual(600_000);
+  });
+
   test('returns salt, iv, and ciphertext', () => {
     const result = encryptContent('hello world', 'password123');
     expect(result.salt).toBeTruthy();
@@ -197,6 +226,21 @@ describe('generateHtml', () => {
     expect(html).toContain('window.__SALT');
     expect(html).toContain('window.__IV');
     expect(html).toContain('window.__CT');
+  });
+
+  test('uses hardened browser PBKDF2 iterations for password unlock', () => {
+    const encrypted = encryptContent('secret', 'pw');
+    const html = generateHtml({ title: 'T', markdown: 'x', encrypted });
+    expect(html).toContain('iterations: 600000');
+  });
+
+  test('renders sanitized markdown without assigning untrusted HTML to live innerHTML', () => {
+    const html = generateHtml({ title: 'T', markdown: '<img src=x onerror=alert(1)><svg><script>alert(2)</script></svg>' });
+    expect(html).toContain('new DOMParser().parseFromString');
+    expect(html).toContain('replaceChildren');
+    expect(html).toContain('ALLOWED_TAGS');
+    expect(html).not.toContain('div.innerHTML = html');
+    expect(html).not.toContain("document.getElementById('content').innerHTML");
   });
 
   test('no password UI when unencrypted', () => {

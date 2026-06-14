@@ -1172,6 +1172,69 @@ describe('read context service', () => {
     });
   });
 
+  test('pushes source_ref lookup predicates into note section filters', async () => {
+    await withEngine('source-ref-filter-pushdown', async (engine) => {
+      const sourceRef = 'User, filtered source, 2026-05-07 10:18 KST';
+      await importFromContent(engine, 'concepts/filter-pushdown', [
+        '---',
+        'type: concept',
+        'title: Filter Pushdown',
+        '---',
+        '# Compiled Truth',
+        'Filtered source-ref evidence.',
+        `[Source: ${sourceRef}]`,
+      ].join('\n'), { path: 'concepts/filter-pushdown.md' });
+      const calls: unknown[] = [];
+      const originalListSections = engine.listNoteSectionEntries.bind(engine);
+      engine.listNoteSectionEntries = async (filters) => {
+        calls.push(filters);
+        return originalListSections(filters);
+      };
+
+      const result = await readContext(engine, {
+        selectors: [{
+          kind: 'source_ref',
+          slug: 'concepts/filter-pushdown',
+          source_ref: sourceRef,
+        }],
+      });
+
+      expect(result.answer_ready.ready).toBe(true);
+      expect(calls[0]).toMatchObject({
+        scope_id: 'workspace:default',
+        page_slug: 'concepts/filter-pushdown',
+        source_ref: sourceRef,
+      });
+    });
+  });
+
+  test('pushes manifest_path into derived job lookup for path-scoped source_ref freshness', async () => {
+    await withEngine('source-ref-derived-job-filter', async (engine) => {
+      const sourceRef = 'User, missing path source, 2026-05-07 10:19 KST';
+      const calls: unknown[] = [];
+      const originalListJobs = engine.listDerivedJobs.bind(engine);
+      engine.listDerivedJobs = async (filters) => {
+        calls.push(filters);
+        return originalListJobs(filters);
+      };
+
+      await readContext(engine, {
+        selectors: [{
+          kind: 'source_ref',
+          path: 'concepts/missing-path.md',
+          source_ref: sourceRef,
+        }],
+      });
+
+      expect(calls[0]).toMatchObject({
+        scope_id: 'workspace:default',
+        artifact_kind: 'note_sections',
+        status: 'pending',
+        manifest_path: 'concepts/missing-path.md',
+      });
+    });
+  });
+
   test('reads source_ref selectors under arbitrary sub-brain paths when work scope allows retrieval', async () => {
     await withEngine('source-ref-sub-brain-prefix', async (engine) => {
       const sourceRef = 'User, personal source, 2026-05-07 10:20 KST';
@@ -1196,6 +1259,69 @@ describe('read context service', () => {
       expect(result.canonical_reads[0]!.selector.slug).toBe('personal/private-note');
       expect(result.canonical_reads[0]!.text).toContain('Source-ref evidence can live under arbitrary sub-brain paths.');
       expect(result.unread_required).toEqual([]);
+    });
+  });
+
+  test('continues reading selectors after one source_ref is blocked by scope gate', async () => {
+    await withEngine('source-ref-scope-block-continue', async (engine) => {
+      const privateSourceRef = 'User, private source, 2026-05-07 10:24 KST';
+      await importFromContent(engine, 'concepts/public-followup', [
+        '---',
+        'type: concept',
+        'title: Public Followup',
+        '---',
+        '# Compiled Truth',
+        'Public evidence after a blocked selector should still be read.',
+      ].join('\n'), { path: 'concepts/public-followup.md' });
+      const privatePage = await engine.putPage('personal/private-source', {
+        type: 'concept',
+        title: 'Private Source',
+        compiled_truth: 'Private text.',
+        frontmatter: {},
+        content_hash: 'private-source-hash',
+      });
+      const [privateSection] = await engine.replaceNoteSectionEntries('personal:default', privatePage.slug, [{
+        scope_id: 'personal:default',
+        page_id: privatePage.id,
+        page_slug: privatePage.slug,
+        page_path: 'personal/private-source.md',
+        section_id: 'personal-private-source#compiled-truth',
+        parent_section_id: null,
+        heading_slug: 'compiled-truth',
+        heading_path: ['Compiled Truth'],
+        heading_text: 'Compiled Truth',
+        depth: 1,
+        line_start: 1,
+        line_end: 3,
+        section_text: `Private evidence. [Source: ${privateSourceRef}]`,
+        outgoing_wikilinks: [],
+        outgoing_urls: [],
+        source_refs: [privateSourceRef],
+        content_hash: privatePage.content_hash ?? 'private-source-hash',
+        extractor_version: 'test',
+      }]);
+      if (!privateSection) throw new Error('private source section fixture missing');
+      const originalListSections = engine.listNoteSectionEntries.bind(engine);
+      engine.listNoteSectionEntries = async (filters) => {
+        if (filters?.scope_id === 'workspace:default') return [privateSection];
+        return originalListSections(filters);
+      };
+
+      const result = await readContext(engine, {
+        selectors: [
+          { kind: 'source_ref', source_ref: privateSourceRef },
+          { kind: 'compiled_truth', slug: 'concepts/public-followup' },
+        ],
+        requested_scope: 'work',
+      });
+
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(result.canonical_reads[0]!.text).toContain('Public evidence after a blocked selector should still be read.');
+      expect(result.unread_required).toHaveLength(1);
+      expect(result.unread_required[0]!.kind).toBe('source_ref');
+      expect(result.selector_warnings?.[0]?.code).toBe('scope_blocked');
+      expect(result.answer_ready.ready).toBe(false);
+      expect(result.answer_ready.unsupported_reasons).toContain('scope_blocked');
     });
   });
 
@@ -1263,6 +1389,49 @@ describe('read context service', () => {
       expect(result.answer_ready.ready).toBe(true);
       expect(result.canonical_reads[0]!.authority).toBe('source_or_timeline_evidence');
       expect(result.evidence_claims[0]!.claim_kind).toBe('timeline_evidence');
+    });
+  });
+
+  test('reads timeline_entry ids beyond the default timeline window', async () => {
+    await withEngine('timeline-entry-beyond-default-window', async (engine) => {
+      const slug = 'concepts/deep-timeline-entry';
+      await importFromContent(engine, slug, [
+        '---',
+        'type: concept',
+        'title: Deep Timeline Entry',
+        '---',
+        '# Compiled Truth',
+        'Timeline entry lookup should use the requested entry id.',
+      ].join('\n'), { path: `${slug}.md` });
+      await engine.addTimelineEntry(slug, {
+        date: '2025-01-01',
+        source: 'User, old timeline source, 2025-01-01 09:00 KST',
+        summary: 'Old target entry beyond the default window.',
+      });
+      for (let index = 0; index < 101; index += 1) {
+        const date = new Date(Date.UTC(2026, 0, index + 1)).toISOString().slice(0, 10);
+        await engine.addTimelineEntry(slug, {
+          date,
+          source: `User, newer timeline source ${index + 1}, ${date} 09:00 KST`,
+          summary: `Newer entry ${index + 1}`,
+        });
+      }
+      const target = (await engine.getTimeline(slug, { limit: 200 }))
+        .find((entry) => entry.summary === 'Old target entry beyond the default window.');
+      if (!target) throw new Error('target timeline entry fixture missing');
+
+      const result = await readContext(engine, {
+        selectors: [{
+          kind: 'timeline_entry',
+          slug,
+          object_id: String(target.id),
+        }],
+      });
+
+      expect(result.answer_ready.ready).toBe(true);
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(result.canonical_reads[0]!.text).toContain('Old target entry beyond the default window.');
+      expect(result.unread_required).toEqual([]);
     });
   });
 

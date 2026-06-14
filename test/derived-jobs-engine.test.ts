@@ -276,7 +276,7 @@ describe('derived job engine APIs', () => {
       expect(claimed).toMatchObject({
         id: pending.id,
         status: 'running',
-        attempts: 1,
+        attempts: 0,
         lease_owner: `${label}-worker-a`,
       });
       expect(await api.claimNextDerivedJob({ lease_owner: `${label}-worker-b` })).toBeNull();
@@ -297,7 +297,7 @@ describe('derived job engine APIs', () => {
       expect(reclaimed).toMatchObject({
         id: pending.id,
         status: 'running',
-        attempts: 2,
+        attempts: 1,
         lease_owner: `${label}-worker-b`,
       });
     });
@@ -321,7 +321,7 @@ describe('derived job engine APIs', () => {
       });
 
       const first = await api.claimNextDerivedJob({ lease_owner: `${label}-worker` });
-      expect(first?.attempts).toBe(1);
+      expect(first?.attempts).toBe(0);
       const retried = await api.markDerivedJobFailed({
         id: first.id,
         error: 'temporary failure',
@@ -335,7 +335,7 @@ describe('derived job engine APIs', () => {
       });
 
       const second = await api.claimNextDerivedJob({ lease_owner: `${label}-worker` });
-      expect(second?.attempts).toBe(2);
+      expect(second?.attempts).toBe(1);
       const failed = await api.markDerivedJobFailed({
         id: second.id,
         error: 'permanent failure',
@@ -376,14 +376,14 @@ describe('derived job engine APIs', () => {
       const claimed = await api.claimNextDerivedJob({ lease_owner: `${label}-worker-a` });
       expect(claimed).toMatchObject({
         status: 'running',
-        attempts: 1,
+        attempts: 0,
         lease_owner: `${label}-worker-a`,
       });
 
       const ownerless = await api.releaseDerivedJobLease({ id: claimed.id });
       expect(ownerless).toMatchObject({
         status: 'running',
-        attempts: 1,
+        attempts: 0,
         lease_owner: `${label}-worker-a`,
       });
 
@@ -393,7 +393,7 @@ describe('derived job engine APIs', () => {
       });
       expect(ignored).toMatchObject({
         status: 'running',
-        attempts: 1,
+        attempts: 0,
         lease_owner: `${label}-worker-a`,
       });
 
@@ -639,6 +639,14 @@ describe('derived job engine APIs', () => {
         expect(pageLockIndex).toBeLessThan(derivedLockIndex);
       }
     }
+  });
+
+  test('postgres claim uses row-level skip-locked leasing without a derived_jobs table lock', () => {
+    const sharedBaseSource = readFileSync(join(import.meta.dir, '../src/core/pg-engine-base.ts'), 'utf-8');
+    const body = methodBody(sharedBaseSource, 'claimNextDerivedJobInTransaction');
+    expect(body).not.toContain('LOCK TABLE derived_jobs');
+    expect(body).toContain('FOR UPDATE SKIP LOCKED');
+    expect(body).toContain('candidate.reclaim_expired');
   });
 
   test('enqueueDerivedJob supersedes stale running work before inserting the newer target', async () => {
@@ -912,7 +920,7 @@ describe('derived job engine APIs', () => {
         expect(firstClaim).toMatchObject({
           slug,
           status: 'running',
-          attempts: 1,
+          attempts: 0,
           lease_owner: 'postgres-worker-a',
         });
 
@@ -951,7 +959,7 @@ describe('derived job engine APIs', () => {
         });
         expect(ignoredRelease).toMatchObject({
           status: 'running',
-          attempts: 1,
+          attempts: 0,
           lease_owner: 'postgres-worker-a',
         });
 
@@ -964,7 +972,7 @@ describe('derived job engine APIs', () => {
         expect(reclaimed).toMatchObject({
           id: firstClaim!.id,
           status: 'running',
-          attempts: 2,
+          attempts: 1,
           lease_owner: 'postgres-worker-b',
         });
 
@@ -982,7 +990,7 @@ describe('derived job engine APIs', () => {
         expect(finalClaim).toMatchObject({
           id: firstClaim!.id,
           status: 'running',
-          attempts: 2,
+          attempts: 1,
         });
         const failed = await engine.markDerivedJobFailed({
           id: finalClaim!.id,

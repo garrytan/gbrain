@@ -24,6 +24,7 @@ import type {
   NoteSectionEntry,
   Page,
   PageType,
+  PageVersion,
   PersonalEpisodeEntry,
   ProfileMemoryEntry,
   RetrievalTrace,
@@ -46,6 +47,16 @@ export function rowToPage(row: Record<string, unknown>): Page {
     content_hash: row.content_hash as string | undefined,
     created_at: new Date(row.created_at as string),
     updated_at: new Date(row.updated_at as string),
+  };
+}
+
+export function rowToPageVersion(row: Record<string, unknown>): PageVersion {
+  return {
+    id: Number(row.id),
+    page_id: Number(row.page_id),
+    compiled_truth: String(row.compiled_truth),
+    frontmatter: parseJsonObject(row.frontmatter),
+    snapshot_at: new Date(String(row.snapshot_at)),
   };
 }
 
@@ -74,10 +85,22 @@ export function rowToSearchResult(row: Record<string, unknown>, query?: string):
       ? boundedSearchSnippet(String(row.chunk_text ?? ''), query)
       : row.chunk_text as string,
     chunk_source: row.chunk_source as SearchResult['chunk_source'],
+    chunk_index: nullableNumber(row.chunk_index),
+    chunk_content_hash: nullableString(row.chunk_content_hash),
     score: Number(row.score),
     stale: Boolean(row.stale),
     ...searchResultDerivedFields(row),
   };
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function nullableString(value: unknown): string | null {
+  return value == null ? null : String(value);
 }
 
 export function boundedSearchSnippet(text: string, query: string, maxChars = 320): string {
