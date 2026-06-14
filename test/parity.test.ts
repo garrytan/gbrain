@@ -208,12 +208,91 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
       }
     }
   });
+
+  test('agree on shallow graph traversal when a node is reachable at multiple depths', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-pglite-graph-parity-'));
+    const sqlite = new SQLiteEngine();
+    const pglite = new PGLiteEngine();
+
+    try {
+      await sqlite.connect({ engine: 'sqlite', database_path: join(root, 'brain.db') });
+      await sqlite.initSchema();
+      await pglite.connect({ engine: 'pglite', database_path: join(root, 'brain.pglite') });
+      await pglite.initSchema();
+
+      await seedGraphTraversalFixture(sqlite);
+      await seedGraphTraversalFixture(pglite);
+
+      const sqliteGraph = await collectGraphTraversalSnapshot(sqlite);
+      const pgliteGraph = await collectGraphTraversalSnapshot(pglite);
+
+      expect(sqliteGraph).toEqual({
+        'concepts/root': 0,
+        'concepts/mid': 1,
+        'concepts/target': 1,
+      });
+      expect(pgliteGraph).toEqual(sqliteGraph);
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      for (const engine of [sqlite, pglite]) {
+        try {
+          await engine.disconnect();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      try {
+        rmSync(root, { recursive: true, force: true });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, 'Failed to clean up graph parity fixtures');
+      }
+    }
+  });
+
+  test('SQLite keyword results use stored chunk source when a matching chunk exists', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-search-chunk-source-'));
+    const sqlite = new SQLiteEngine();
+
+    try {
+      await sqlite.connect({ engine: 'sqlite', database_path: join(root, 'brain.db') });
+      await sqlite.initSchema();
+
+      await seedStoredChunkSearchFixture(sqlite);
+
+      const sqliteResult = (await sqlite.searchKeyword('needle-token', { limit: 1 }))[0];
+
+      expect(sqliteResult?.chunk_source).toBe('frontmatter');
+      expect(sqliteResult?.chunk_text).toContain('frontmatter needle-token');
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      try {
+        await sqlite.disconnect();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        rmSync(root, { recursive: true, force: true });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, 'Failed to clean up SQLite search chunk-source fixtures');
+      }
+    }
+  });
 });
 
 type ListAndLinkEngine = Pick<
   SQLiteEngine,
   'putPage' | 'addTag' | 'addLink' | 'listPages' | 'getLinksForSlugs' | 'getBacklinksForSlugs'
 >;
+
+type GraphTraversalEngine = Pick<SQLiteEngine, 'putPage' | 'addLink' | 'traverseGraph'>;
+
+type StoredChunkSearchEngine = Pick<SQLiteEngine, 'putPage' | 'upsertChunks' | 'searchKeyword'>;
 
 async function seedListAndLinkFixture(engine: ListAndLinkEngine): Promise<void> {
   await engine.putPage('concepts/parity-alpha', {
@@ -272,6 +351,61 @@ function normalizeLinkMap(map: Map<string, Link[]>): Record<string, string[]> {
       ] as const)
       .sort(([left], [right]) => left.localeCompare(right)),
   );
+}
+
+async function seedGraphTraversalFixture(engine: GraphTraversalEngine): Promise<void> {
+  await engine.putPage('concepts/root', {
+    type: 'concept',
+    title: 'Root',
+    compiled_truth: 'Root graph node.',
+  });
+  await engine.putPage('concepts/mid', {
+    type: 'concept',
+    title: 'Mid',
+    compiled_truth: 'Intermediate graph node.',
+  });
+  await engine.putPage('concepts/target', {
+    type: 'concept',
+    title: 'Target',
+    compiled_truth: 'Target graph node.',
+  });
+
+  await engine.addLink('concepts/root', 'concepts/target', 'direct', 'mentions');
+  await engine.addLink('concepts/root', 'concepts/mid', 'indirect start', 'mentions');
+  await engine.addLink('concepts/mid', 'concepts/target', 'indirect end', 'mentions');
+}
+
+async function collectGraphTraversalSnapshot(engine: GraphTraversalEngine): Promise<Record<string, number>> {
+  return Object.fromEntries(
+    (await engine.traverseGraph('concepts/root', 2))
+      .map((node) => [node.slug, node.depth] as const)
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+async function seedStoredChunkSearchFixture(engine: StoredChunkSearchEngine): Promise<void> {
+  await engine.putPage('concepts/stored-chunk-search', {
+    type: 'concept',
+    title: 'Stored Chunk Search',
+    compiled_truth: 'Compiled truth also mentions needle-token so the page is searchable.',
+    frontmatter: {
+      codemap: 'frontmatter needle-token canonical snippet',
+    },
+  });
+  await engine.upsertChunks('concepts/stored-chunk-search', [
+    {
+      chunk_index: 0,
+      chunk_text: 'frontmatter needle-token canonical snippet',
+      chunk_source: 'frontmatter',
+      token_count: 4,
+    },
+    {
+      chunk_index: 1,
+      chunk_text: 'Compiled truth also mentions needle-token so the page is searchable.',
+      chunk_source: 'compiled_truth',
+      token_count: 8,
+    },
+  ]);
 }
 
 // ─────────────────────────────────────────────────────────────────

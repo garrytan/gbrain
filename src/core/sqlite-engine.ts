@@ -1120,6 +1120,7 @@ export class SQLiteEngine implements BrainEngine {
     const limit = opts?.limit ?? 20;
     const params: unknown[] = [prepared];
     let sql = `
+      WITH matched_pages AS (
       SELECT
         p.id AS page_id,
         p.slug,
@@ -1156,12 +1157,22 @@ export class SQLiteEngine implements BrainEngine {
       params.push(...opts.exclude_slugs.map(slug => validateSlug(slug)));
     }
 
-    sql += ` ORDER BY rank ASC LIMIT ?`;
+    sql += ` ORDER BY rank ASC LIMIT ?
+      )
+      SELECT
+        matched_pages.*,
+        cc.chunk_text AS stored_chunk_text,
+        cc.chunk_source AS stored_chunk_source,
+        cc.chunk_index AS stored_chunk_index,
+        cc.chunk_content_hash AS stored_chunk_content_hash
+      FROM matched_pages
+      LEFT JOIN content_chunks cc ON cc.page_id = matched_pages.page_id
+      ORDER BY matched_pages.rank ASC, cc.chunk_index ASC`;
     params.push(limit);
 
     try {
       const rows = this.database.query(sql).all(...sqliteBindings(params)) as Record<string, unknown>[];
-      return rows.map(row => rowToSearchResult(row, query));
+      return keywordRowsToSearchResults(rows, query);
     } catch (error) {
       if (isRecoverableFtsQueryError(error)) {
         // Malformed FTS5 queries degrade to empty results; operational failures must surface.
@@ -8561,22 +8572,56 @@ function extractSnippet(text: string, queryTerms: string[], windowSize: number =
   return prefix + slice + suffix;
 }
 
+function keywordRowsToSearchResults(rows: Record<string, unknown>[], query: string): SearchResult[] {
+  const normalizedTerms = extractSearchTerms(query).map(term => term.toLowerCase());
+  const grouped = new Map<number, Record<string, unknown>[]>();
+  for (const row of rows) {
+    const pageId = Number(row.page_id);
+    const group = grouped.get(pageId);
+    if (group) {
+      group.push(row);
+    } else {
+      grouped.set(pageId, [row]);
+    }
+  }
+
+  return [...grouped.values()].map((group) => rowToSearchResult(bestKeywordRow(group, normalizedTerms), query));
+}
+
+function bestKeywordRow(
+  rows: Record<string, unknown>[],
+  normalizedTerms: string[],
+): Record<string, unknown> {
+  return rows.find((row) => storedChunkMatches(row, normalizedTerms)) ?? rows[0]!;
+}
+
+function storedChunkMatches(row: Record<string, unknown>, normalizedTerms: string[]): boolean {
+  if (row.stored_chunk_text == null || row.stored_chunk_source == null) return false;
+  const text = String(row.stored_chunk_text).toLowerCase();
+  return normalizedTerms.some(term => text.includes(term));
+}
+
 function rowToSearchResult(row: Record<string, unknown>, query: string): SearchResult {
   const compiled = String(row.compiled_truth || '');
   const timeline = String(row.timeline || '');
   const searchText = String(row.search_text || '');
   const normalizedTerms = extractSearchTerms(query).map(term => term.toLowerCase());
+  const hasStoredChunkMatch = storedChunkMatches(row, normalizedTerms);
   const compiledMatch = normalizedTerms.some(term => compiled.toLowerCase().includes(term));
   const timelineMatch = normalizedTerms.some(term => timeline.toLowerCase().includes(term));
   const frontmatterMatch = normalizedTerms.some(term => searchText.toLowerCase().includes(term));
-  const chunk_source = compiledMatch
+  const chunk_source = hasStoredChunkMatch
+    ? row.stored_chunk_source as SearchResult['chunk_source']
+    : compiledMatch
     ? 'compiled_truth'
     : timelineMatch
       ? 'timeline'
       : frontmatterMatch
         ? 'frontmatter'
         : 'compiled_truth';
-  const sourceText = chunk_source === 'compiled_truth'
+  const sourceText = hasStoredChunkMatch
+    ? String(row.stored_chunk_text)
+    : chunk_source === 'compiled_truth'
     ? compiled || timeline || searchText || String(row.title)
     : chunk_source === 'timeline'
       ? timeline || compiled || searchText || String(row.title)
@@ -8591,6 +8636,8 @@ function rowToSearchResult(row: Record<string, unknown>, query: string): SearchR
     type: row.type as PageType,
     chunk_text,
     chunk_source,
+    chunk_index: hasStoredChunkMatch ? nullableNumber(row.stored_chunk_index) : null,
+    chunk_content_hash: hasStoredChunkMatch ? nullableString(row.stored_chunk_content_hash) : null,
     score: Math.max(0, -rawRank),
     stale: Boolean(row.stale),
     ...searchResultDerivedFields(row),

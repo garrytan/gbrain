@@ -624,17 +624,22 @@ export abstract class PgEngineBase {
         JOIN links l ON l.from_page_id = g.id
         JOIN pages p2 ON p2.id = l.to_page_id
         WHERE g.depth < $2
+      ),
+      ranked AS (
+        SELECT DISTINCT ON (g.slug) g.id, g.slug, g.title, g.type, g.depth
+        FROM graph g
+        ORDER BY g.slug, g.depth ASC
       )
-      SELECT DISTINCT g.slug, g.title, g.type, g.depth,
+      SELECT ranked.slug, ranked.title, ranked.type, ranked.depth,
         coalesce(
           (SELECT jsonb_agg(jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
            FROM links l2
            JOIN pages p3 ON p3.id = l2.to_page_id
-           WHERE l2.from_page_id = g.id),
+           WHERE l2.from_page_id = ranked.id),
           '[]'::jsonb
         ) as links
-      FROM graph g
-      ORDER BY g.depth, g.slug`,
+      FROM ranked
+      ORDER BY ranked.depth, ranked.slug`,
       [slug, depth]
     );
 
