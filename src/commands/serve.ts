@@ -14,10 +14,16 @@ export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args:
   const oauthSigningSecret = process.env.MBRAIN_OAUTH_SIGNING_SECRET;
 
   if (http) {
-    if (oauth && (!oauthApprovalToken || !oauthSigningSecret)) {
-      console.error('OAuth requires both MBRAIN_OAUTH_APPROVAL_TOKEN and MBRAIN_OAUTH_SIGNING_SECRET to be set.');
-      console.error('The previous fallback (signing refresh tokens with the approval token) was removed for security.');
-      console.error('Generate a dedicated secret, e.g.: openssl rand -hex 32');
+    const oauthStartupErrors = getHttpOAuthServeStartupErrors({
+      oauth,
+      publicBaseUrl,
+      oauthApprovalToken,
+      oauthSigningSecret,
+    });
+    if (oauthStartupErrors.length > 0) {
+      for (const error of oauthStartupErrors) {
+        console.error(error);
+      }
       process.exit(1);
     }
     const config = loadConfig() ?? DEFAULT_RUNTIME_CONFIG;
@@ -49,6 +55,28 @@ export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args:
 
   console.error('Starting MBrain MCP server (stdio)...');
   await startMcpServer(engine);
+}
+
+export interface HttpOAuthServeStartupOptions {
+  oauth: boolean;
+  publicBaseUrl?: string;
+  oauthApprovalToken?: string;
+  oauthSigningSecret?: string;
+}
+
+export function getHttpOAuthServeStartupErrors(options: HttpOAuthServeStartupOptions): string[] {
+  if (!options.oauth) return [];
+
+  const errors: string[] = [];
+  if (!options.oauthApprovalToken || !options.oauthSigningSecret) {
+    errors.push('OAuth requires both MBRAIN_OAUTH_APPROVAL_TOKEN and MBRAIN_OAUTH_SIGNING_SECRET to be set.');
+    errors.push('The previous fallback (signing refresh tokens with the approval token) was removed for security.');
+    errors.push('Generate a dedicated secret, e.g.: openssl rand -hex 32');
+  }
+  if (!options.publicBaseUrl?.trim()) {
+    errors.push('OAuth requires --public-url or MBRAIN_HTTP_PUBLIC_URL when OAuth is enabled.');
+  }
+  return errors;
 }
 
 export async function prepareHttpServeEngine(

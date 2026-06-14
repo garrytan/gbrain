@@ -156,6 +156,26 @@ describe('CLI source shape', () => {
     expect(serveSource).toContain('process.exit(1)');
   });
 
+  test('serve refuses OAuth startup without an explicit public URL', async () => {
+    const { getHttpOAuthServeStartupErrors } = await import('../src/commands/serve.ts');
+
+    expect(getHttpOAuthServeStartupErrors({
+      oauth: true,
+      publicBaseUrl: undefined,
+      oauthApprovalToken: 'owner-secret',
+      oauthSigningSecret: 'test-signing-secret',
+    })).toEqual([
+      'OAuth requires --public-url or MBRAIN_HTTP_PUBLIC_URL when OAuth is enabled.',
+    ]);
+
+    expect(getHttpOAuthServeStartupErrors({
+      oauth: true,
+      publicBaseUrl: 'https://brain.example.com',
+      oauthApprovalToken: 'owner-secret',
+      oauthSigningSecret: 'test-signing-secret',
+    })).toEqual([]);
+  });
+
   test('init guidance keeps pgvector troubleshooting backend-neutral', () => {
     expect(initSource).toContain('Run this on your Postgres database');
     expect(initSource).not.toContain('Run in Supabase SQL Editor');
