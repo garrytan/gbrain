@@ -56,6 +56,7 @@ agent planning/spec files are intentionally not tracked.
 | S33 | `s33-agent-session-memory-loop.test.ts` | G1, L6, L7 | ✅ green |
 | S34 | `s34-agent-session-auto-capture.test.ts` | G1, L6, L7 | ✅ green |
 | S35 | `s35-prompt-injection-suppression-health.test.ts` | G1, L6, G2 | ✅ green |
+| S36 | `s36-config-repointing-guard.test.ts` | E-29 | ✅ green |
 
 Legend:
 - ✅ green = passes on current code
@@ -71,7 +72,7 @@ GA-P5 code lane derived-orientation coverage, S31 GA-P6 personal maintenance
 cycle report/control-plane coverage, S32 GA-P7 consolidation and
 upstream-discipline coverage, S33 agent-session memory loop coverage, S34
 agent-session auto-capture raw-ingest coverage, and S35 prompt-injection
-suppression health coverage.
+suppression health coverage, plus S36 config-repointing guard replay coverage.
 Run this as
 part of final acceptance:
 
