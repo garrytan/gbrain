@@ -116,6 +116,9 @@ Expected:
   claims across CLI, MCP, and autopilot as proven only after checking the actual
   configured agent command and Postgres profile, not from the isolated installed
   MCP smoke alone.
+- Before making a release-readiness claim, verify the MBrain project self-brain
+  page. If the page is stale, refresh it or state explicitly that the
+  source-tree release checks did not update durable project memory.
 - The smoke command discovers MCP tools and completes the page lifecycle,
   search, and `route_memory_writeback` dry-run checks in its temporary local
   profile.

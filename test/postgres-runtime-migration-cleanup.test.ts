@@ -993,6 +993,10 @@ describe('postgres runtime migration cleanup', () => {
     expect(verify).toContain('`runtime_db_identity` is evidence from the active process');
     expect(verify).toContain('not from the isolated installed');
     expect(verify).toContain('MCP smoke alone');
+    expect(verify).toContain('Before making a release-readiness claim');
+    expect(verify).toContain('MBrain project self-brain');
+    expect(verify).toContain('refresh it or state explicitly');
+    expect(verify).toContain('source-tree release checks did not update durable project memory');
     expect(verify).toContain('without OpenAI or Anthropic API keys');
     expect(verify).toContain('Phase 13 evidence is deterministic replay plus live-eval budget gating');
     expect(verify).toContain('Do not report live LLM eval evidence unless the budgeted live eval was actually run');
@@ -1017,6 +1021,7 @@ describe('postgres runtime migration cleanup', () => {
     expect(readme).toContain('Legacy local SQLite verification is isolated compatibility coverage');
     expect(readme).toContain('For release or installed-command confidence, also run the installed-command');
     expect(readme).toContain('MCP smoke starts the command in an isolated temporary local profile');
+    expect(readme).toContain('Release-readiness notes should also verify the MBrain project self-brain page');
     expect(readme).toContain('Phase 13 is deterministic replay plus live-eval budget gating');
     expect(readme).toContain('by default, not evidence that paid live LLM evals ran');
     expect(readme).not.toContain('For source-tree unit and legacy local SQLite verification, run:');

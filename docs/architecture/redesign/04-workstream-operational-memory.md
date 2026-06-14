@@ -186,16 +186,22 @@ verify_code_reference
 
 The exact command and tool names can evolve, but the public contract should preserve the same semantics across CLI and MCP surfaces.
 
-## Unreleased Operational Memory Scenario Evidence
+## Current Operational Memory Scenario Evidence
 
-The Unreleased scenario suite adds operational-memory evidence that is newer
-than the GA-P0 through GA-P7 roadmap checkpoints.
+The current scenario suite adds operational-memory evidence that is newer than
+the GA-P0 through GA-P7 roadmap checkpoints.
 
 - S33 agent-session memory loop is operational-memory evidence: session-derived
   signals still need the task, scope, and continuation boundaries defined here.
 - S34 agent-session auto-capture proves agent-session raw-ingest and capture
   behavior. It is raw-ingest evidence, not connector acceptance, and it does not
   move source-choice ownership out of Phase 11.
+- S35 prompt-injection suppression health proves suppression/report visibility
+  around quarantined session-derived signals. It supports Phase 12 health
+  evidence without moving report ownership into this workstream.
+- S36 config-repointing guard proves init/config target changes remain explicit:
+  a different local database path is refused without `--force`, and forced
+  repointing preserves the prior config as a backup.
 - These scenarios support the operational-memory contract, but they do not
   replace the Phase 10 projection, Phase 11 connector, or Phase 12 report
   acceptance boundaries owned by their respective workstreams.

@@ -299,15 +299,20 @@ describe('personal gbrain absorption docs contracts', () => {
     expect(scenarios).toContain('| S32 | `s32-gbrain-upstream-discipline.test.ts` | GA-P7, E1, L4, L6, G1 | ✅ green |');
   });
 
-  test('anchors Phase 10 through 12 and Unreleased evidence in workstream owners', () => {
+  test('anchors Phase 10 through 12 and current scenario evidence in workstream owners', () => {
     const operational = readRepoFile('docs/architecture/redesign/04-workstream-operational-memory.md');
     const contextMap = readRepoFile('docs/architecture/redesign/05-workstream-context-map.md');
     const governance = readRepoFile('docs/architecture/redesign/06-workstream-governance-and-inbox.md');
     const scope = readRepoFile('docs/architecture/redesign/07-workstream-profile-memory-and-scope.md');
 
-    expect(operational).toContain('## Unreleased Operational Memory Scenario Evidence');
+    expect(operational).toContain('## Current Operational Memory Scenario Evidence');
+    expect(operational).not.toContain('The Unreleased scenario suite');
     expect(operational).toContain('S33 agent-session memory loop');
     expect(operational).toContain('S34 agent-session auto-capture');
+    expect(operational).toContain('S35 prompt-injection suppression health');
+    expect(operational).toContain('S36 config-repointing guard');
+    expect(operational).toContain('init/config target changes remain explicit');
+    expect(operational).not.toContain('during agent-session capture and resume flows');
     expect(operational).toContain('raw-ingest evidence, not connector acceptance');
 
     expect(contextMap).toContain('## Phase 10 Projection Reconciliation Owner Notes');

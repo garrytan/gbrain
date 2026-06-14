@@ -730,6 +730,10 @@ the binary can serve MCP, not that the configured agent MCP shares the validated
 Postgres profile. Phase 13 is deterministic replay plus live-eval budget gating
 by default, not evidence that paid live LLM evals ran.
 
+Release-readiness notes should also verify the MBrain project self-brain page.
+If the durable project memory is stale, refresh it or say explicitly that the
+source-tree release checks did not update that page.
+
 Legacy local SQLite verification is isolated compatibility coverage. Run it
 when changing the explicit legacy profile, not as proof that new Postgres target
 runtime behavior is complete:
