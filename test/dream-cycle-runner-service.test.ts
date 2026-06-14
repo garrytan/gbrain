@@ -563,6 +563,41 @@ describe('dream cycle phase runner', () => {
     });
   });
 
+  test('safety scan treats flagged prompt-injection flags as actionable work', async () => {
+    const queries: string[] = [];
+    const engine = {
+      sql: {
+        unsafe: async (statement: string) => {
+          queries.push(statement);
+          if (statement.includes('FROM prompt_injection_flags')) {
+            if (statement.includes("risk IN ('flagged', 'quarantined')")) {
+              return [{ count: 2 }];
+            }
+            return [{ count: 0 }];
+          }
+          return [{ count: 0 }];
+        },
+      },
+    } as any;
+
+    const result = await runDreamCycle(engine, {
+      scope_id: 'workspace:default',
+      now: '2026-05-21T10:00:00.000Z',
+      dry_run: true,
+    });
+
+    const safety = result.phases.find((phase) => phase.family === 'safety_scan');
+    expect(queries.some((query) =>
+      query.includes('FROM prompt_injection_flags')
+      && query.includes("risk IN ('flagged', 'quarantined')")
+    )).toBe(true);
+    expect(safety).toMatchObject({
+      status: 'warn',
+      counts: { flagged_or_quarantined_prompt_injection_flags: 2 },
+      next_recommended_action: 'Resolve safety flags before runner or LLM access.',
+    });
+  });
+
   test('read-only landed phases surface count errors and do not claim runner usage', async () => {
     const engine = {
       sql: {

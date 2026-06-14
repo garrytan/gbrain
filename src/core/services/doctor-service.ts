@@ -22,6 +22,8 @@ import { spawnSync } from 'child_process';
 const INBOX_BACKLOG_SCAN_LIMIT = 200;
 // A configured sync that has not succeeded in this many days is stale.
 const SYNC_RECENCY_WARN_DAYS = 7;
+// Autopilot is normally daily; allow slack before warning on a missed cycle.
+const AUTOPILOT_RECENCY_WARN_HOURS = 36;
 // A serve process older than this likely predates the current code/config:
 // MCP servers hold both in memory from the moment they start (2026-06-12
 // incident: week-old serve processes replayed an already-fixed regression).
@@ -53,6 +55,7 @@ export interface DoctorAutopilotCycleSummary {
 export interface DoctorInputs {
   connectionOk: boolean;
   connectionError?: string;
+  now?: string | Date;
   stats?: BrainStats;
   config: MBrainConfig | null;
   profile: OfflineProfile | null;
@@ -77,7 +80,7 @@ export interface DoctorInputs {
     unavailable_runners: number;
     unhealthy_connectors: number;
     credential_warnings: number;
-    quarantine_count: number;
+    prompt_injection_safety_count: number;
     purge_candidates: number;
     autopilot_stuck_jobs?: number;
     autopilot_last_cycle?: DoctorAutopilotCycleSummary | null;
@@ -387,7 +390,7 @@ async function checkMemoryRuntimeHealth(
         'credential_refs',
         "health_status IN ('unhealthy', 'expired') OR rotation_status IN ('rotation_due', 'revoked')",
       ),
-      quarantine_count: await countTableRows(deps, 'prompt_injection_flags', "risk = 'quarantined'"),
+      prompt_injection_safety_count: await countTableRows(deps, 'prompt_injection_flags', "risk IN ('flagged', 'quarantined')"),
       purge_candidates: await countTableRows(
         deps,
         'purge_plan_items',
@@ -498,7 +501,7 @@ function queryCount(
     `;
   }
   if (tableName === 'prompt_injection_flags') {
-    return sql`SELECT count(*)::int AS count FROM prompt_injection_flags WHERE risk = 'quarantined'`;
+    return sql`SELECT count(*)::int AS count FROM prompt_injection_flags WHERE risk IN ('flagged', 'quarantined')`;
   }
   if (tableName === 'purge_plan_items') {
     return sql`SELECT count(*)::int AS count FROM purge_plan_items WHERE status IN ('planned', 'approved')`;
@@ -744,7 +747,7 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
       `${runtime.unavailable_runners} unavailable runners`,
       `${runtime.unhealthy_connectors} unhealthy connectors`,
       `${runtime.credential_warnings} credential warnings`,
-      `${runtime.quarantine_count} quarantined chunks`,
+      `${runtime.prompt_injection_safety_count} prompt-injection safety flag${runtime.prompt_injection_safety_count === 1 ? '' : 's'}`,
       `${runtime.purge_candidates} purge candidates`,
     ];
     checks.push({
@@ -754,6 +757,7 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
           || runtime.unavailable_runners > 0
           || runtime.unhealthy_connectors > 0
           || runtime.credential_warnings > 0
+          || runtime.prompt_injection_safety_count > 0
           ? 'warn'
           : 'ok',
       message: parts.join(', '),
@@ -780,15 +784,28 @@ function buildAutopilotCheck(input: DoctorInputs): DoctorCheck | null {
   const runtime = input.memoryRuntime;
   if (!runtime) return null;
   const enabled = isAutopilotEnabled(input.config);
+  const nowMs = doctorNowMs(input);
   const stuckJobs = runtime.autopilot_stuck_jobs ?? 0;
   const lastCycle = runtime.autopilot_last_cycle ?? null;
   if (!enabled && stuckJobs === 0 && !lastCycle) return null;
 
   const parts = [enabled ? 'enabled' : 'not enabled'];
   if (lastCycle) {
-    parts.push(`last cycle ${lastCycle.status || 'unknown'} (${lastCycle.id || 'unknown'})`);
+    const observedAt = autopilotCycleObservedAt(lastCycle);
+    const ageMs = observedAt ? Math.max(0, nowMs - observedAt.getTime()) : null;
+    parts.push(
+      `last cycle ${lastCycle.status || 'unknown'} (${lastCycle.id || 'unknown'})`
+      + (observedAt ? ` at ${observedAt.toISOString()} (${formatAutopilotAge(ageMs)} ago)` : ''),
+    );
     if (lastCycle.failure_class) parts.push(`failure ${lastCycle.failure_class}`);
     if (lastCycle.last_error) parts.push(lastCycle.last_error);
+    if (enabled && lastCycle.status === 'completed') {
+      if (!observedAt) {
+        parts.push('last successful cycle timestamp is unavailable');
+      } else if (isAutopilotCompletedCycleStale(lastCycle, nowMs)) {
+        parts.push(`last successful cycle is stale (>${AUTOPILOT_RECENCY_WARN_HOURS}h)`);
+      }
+    }
   } else {
     parts.push('last cycle not recorded');
   }
@@ -798,7 +815,7 @@ function buildAutopilotCheck(input: DoctorInputs): DoctorCheck | null {
 
   return {
     name: 'autopilot',
-    status: autopilotStatus(enabled, stuckJobs, lastCycle),
+    status: autopilotStatus(enabled, stuckJobs, lastCycle, nowMs),
     message: parts.join(', '),
   };
 }
@@ -807,11 +824,46 @@ function autopilotStatus(
   enabled: boolean,
   stuckJobs: number,
   lastCycle: DoctorAutopilotCycleSummary | null,
+  nowMs: number,
 ): DoctorCheck['status'] {
   if (stuckJobs > 0 || lastCycle?.status === 'dead') return 'fail';
   if (lastCycle?.status === 'failed' || lastCycle?.status === 'cancelled') return 'warn';
+  if (enabled && lastCycle?.status === 'completed' && isAutopilotCompletedCycleStale(lastCycle, nowMs)) return 'warn';
   if (enabled && !lastCycle) return 'warn';
   return 'ok';
+}
+
+function isAutopilotCompletedCycleStale(lastCycle: DoctorAutopilotCycleSummary, nowMs: number): boolean {
+  const observedAt = autopilotCycleObservedAt(lastCycle);
+  if (!observedAt) return true;
+  return nowMs - observedAt.getTime() > AUTOPILOT_RECENCY_WARN_HOURS * 60 * 60 * 1000;
+}
+
+function doctorNowMs(input: Pick<DoctorInputs, 'now'>): number {
+  if (!input.now) return Date.now();
+  const value = input.now instanceof Date ? input.now.getTime() : Date.parse(input.now);
+  return Number.isFinite(value) ? value : Date.now();
+}
+
+function autopilotCycleObservedAt(lastCycle: DoctorAutopilotCycleSummary): Date | null {
+  const value = lastCycle.finished_at ?? lastCycle.updated_at;
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatAutopilotAge(ageMs: number | null): string {
+  if (ageMs === null) return 'unknown';
+  const minutes = Math.max(1, Math.floor(ageMs / 60_000));
+  if (minutes >= 60 * 48) {
+    const days = Math.floor(minutes / (60 * 24));
+    return `${days} day${days === 1 ? '' : 's'}`;
+  }
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    return `${hours} hour${hours === 1 ? '' : 's'}`;
+  }
+  return `${minutes} minute${minutes === 1 ? '' : 's'}`;
 }
 
 function isAutopilotEnabled(config: MBrainConfig | null): boolean {

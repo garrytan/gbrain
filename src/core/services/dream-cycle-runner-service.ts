@@ -390,7 +390,7 @@ async function readImplementedPhaseCounts(
     case 'safety_scan':
       return {
         pending_secret_redactions: await count('secret_detections', "WHERE redaction_status = 'pending'"),
-        quarantined_prompt_injection_flags: await count('prompt_injection_flags', "WHERE risk = 'quarantined'"),
+        flagged_or_quarantined_prompt_injection_flags: await count('prompt_injection_flags', "WHERE risk IN ('flagged', 'quarantined')"),
       };
     case 'claim_extraction':
       return {
@@ -455,7 +455,7 @@ function hasActionablePhaseWork(
       return (counts.pending_items ?? 0) > 0 || (counts.failed_items ?? 0) > 0;
     case 'safety_scan':
       return (counts.pending_secret_redactions ?? 0) > 0
-        || (counts.quarantined_prompt_injection_flags ?? 0) > 0;
+        || (counts.flagged_or_quarantined_prompt_injection_flags ?? counts.quarantined_prompt_injection_flags ?? 0) > 0;
     case 'claim_extraction':
       return (counts.pending_claims ?? 0) > 0;
     case 'assertion_resolution':

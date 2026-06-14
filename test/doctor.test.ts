@@ -222,6 +222,61 @@ describe('doctor command', () => {
     )).toBe(true);
   });
 
+  test('collectDoctorInputs counts flagged prompt-injection flags in safety health', async () => {
+    const observedQueries: string[] = [];
+    const sql = async (strings: TemplateStringsArray) => {
+      const query = strings.join('');
+      observedQueries.push(query.replace(/\s+/g, ' ').trim());
+      if (query.includes('pg_extension')) return [{ extname: 'vector' }];
+      if (query.includes('pg_tables')) return [];
+      if (query.includes('to_regclass')) return [{ table_name: 'prompt_injection_flags' }];
+      if (query.includes('FROM prompt_injection_flags')) {
+        if (query.includes("risk IN ('flagged', 'quarantined')")) return [{ count: 3 }];
+        return [{ count: 1 }];
+      }
+      return [{ count: 0 }];
+    };
+    const engine = {
+      getStats: async () => ({
+        page_count: 0,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      }),
+      getConfig: async () => '44',
+      getHealth: async () => ({
+        page_count: 0,
+        embed_coverage: 1,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+      }),
+    };
+
+    const inputs = await collectDoctorInputs(engine as any, {
+      getConnection: () => sql as any,
+      loadConfig: () => ({
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      }),
+      resolveOfflineProfile,
+      supportsRawPostgresAccess: () => true,
+    });
+
+    expect(inputs.memoryRuntime?.prompt_injection_safety_count).toBe(3);
+    expect(observedQueries.some((query) =>
+      query.includes('FROM prompt_injection_flags')
+      && query.includes("risk IN ('flagged', 'quarantined')")
+    )).toBe(true);
+  });
+
   test('buildDoctorReport detects stuck memory runtime locks and failed runtime work', () => {
     const report = buildDoctorReport({
       connectionOk: true,
@@ -267,7 +322,7 @@ describe('doctor command', () => {
         unavailable_runners: 1,
         unhealthy_connectors: 1,
         credential_warnings: 1,
-        quarantine_count: 2,
+        prompt_injection_safety_count: 2,
         purge_candidates: 3,
       },
     });
@@ -281,7 +336,57 @@ describe('doctor command', () => {
     expect(check?.message).toContain('1 dead job');
     expect(check?.message).toContain('1 stuck lock');
     expect(check?.message).toContain('1 unhealthy connector');
+    expect(check?.message).toContain('2 prompt-injection safety flags');
     expect(check?.message).toContain('3 purge candidates');
+  });
+
+  test('buildDoctorReport warns when prompt-injection safety flags are present', () => {
+    const report = buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 0,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: {
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      },
+      profile: resolveOfflineProfile({
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      }),
+      rawPostgresChecksSupported: true,
+      latestVersion: 44,
+      schemaVersion: '44',
+      memoryRuntime: {
+        queue_depth: 0,
+        failed_jobs: 0,
+        dead_jobs: 0,
+        stuck_locks: 0,
+        unavailable_runners: 0,
+        unhealthy_connectors: 0,
+        credential_warnings: 0,
+        prompt_injection_safety_count: 1,
+        purge_candidates: 0,
+      },
+    });
+
+    const check = report.checks.find((candidate) => candidate.name === 'memory_runtime');
+    expect(check).toMatchObject({
+      status: 'warn',
+      message: expect.stringContaining('1 prompt-injection safety flag'),
+    });
   });
 
   test('buildDoctorReport surfaces autopilot cycle health separately from generic runtime counts', () => {
@@ -330,7 +435,7 @@ describe('doctor command', () => {
         unavailable_runners: 1,
         unhealthy_connectors: 1,
         credential_warnings: 1,
-        quarantine_count: 2,
+        prompt_injection_safety_count: 2,
         purge_candidates: 3,
         autopilot_stuck_jobs: 1,
         autopilot_last_cycle: {
@@ -364,7 +469,7 @@ describe('doctor command', () => {
       unavailable_runners: 0,
       unhealthy_connectors: 0,
       credential_warnings: 0,
-      quarantine_count: 0,
+      prompt_injection_safety_count: 0,
       purge_candidates: 0,
       ...overrides,
     });
@@ -401,13 +506,14 @@ describe('doctor command', () => {
     });
     const checkFor = (input: { enabled: boolean; runtime: Record<string, unknown> }) =>
       reportFor(input).checks.find((candidate) => candidate.name === 'autopilot');
-    const lastCycle = (status: string) => ({
+    const recentTimestamp = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const lastCycle = (status: string, timestamp = recentTimestamp) => ({
       id: `job:autopilot-${status}`,
       status,
       failure_class: status === 'completed' ? null : 'internal',
       last_error: status === 'completed' ? null : `${status} cycle`,
-      updated_at: '2026-06-13T00:00:00.000Z',
-      finished_at: '2026-06-13T00:01:00.000Z',
+      updated_at: timestamp,
+      finished_at: timestamp,
     });
 
     expect(checkFor({ enabled: false, runtime: memoryRuntime() })).toBeUndefined();
@@ -425,6 +531,127 @@ describe('doctor command', () => {
       .toMatchObject({ status: 'fail' });
     expect(checkFor({ enabled: false, runtime: memoryRuntime({ autopilot_stuck_jobs: 1 }) }))
       .toMatchObject({ status: 'fail' });
+  });
+
+  test('buildDoctorReport warns when enabled autopilot has only a stale completed cycle', () => {
+    const now = '2030-01-03T00:00:00.000Z';
+    const staleTimestamp = '2030-01-01T00:00:00.000Z';
+    const report = buildDoctorReport({
+      connectionOk: true,
+      now,
+      stats: {
+        page_count: 0,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: {
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+        autopilot: { enabled: true },
+      } as any,
+      profile: resolveOfflineProfile({
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      }),
+      rawPostgresChecksSupported: true,
+      latestVersion: 44,
+      schemaVersion: '44',
+      memoryRuntime: {
+        queue_depth: 0,
+        failed_jobs: 0,
+        dead_jobs: 0,
+        stuck_locks: 0,
+        unavailable_runners: 0,
+        unhealthy_connectors: 0,
+        credential_warnings: 0,
+        prompt_injection_safety_count: 0,
+        purge_candidates: 0,
+        autopilot_last_cycle: {
+          id: 'job:autopilot-stale',
+          status: 'completed',
+          failure_class: null,
+          last_error: null,
+          updated_at: staleTimestamp,
+          finished_at: staleTimestamp,
+        },
+      },
+    });
+
+    const check = report.checks.find((candidate) => candidate.name === 'autopilot');
+    const message = String(check?.message ?? '');
+    expect(check?.status).toBe('warn');
+    expect(message.includes('last successful cycle is stale')).toBe(true);
+    expect(message.includes(staleTimestamp)).toBe(true);
+    expect(message.includes('2 days')).toBe(true);
+  });
+
+  test('buildDoctorReport keeps just-stale autopilot age in hours', () => {
+    const now = '2030-01-02T13:00:00.000Z';
+    const staleTimestamp = '2030-01-01T00:00:00.000Z';
+    const report = buildDoctorReport({
+      connectionOk: true,
+      now,
+      stats: {
+        page_count: 0,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: {
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+        autopilot: { enabled: true },
+      } as any,
+      profile: resolveOfflineProfile({
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      }),
+      rawPostgresChecksSupported: true,
+      latestVersion: 44,
+      schemaVersion: '44',
+      memoryRuntime: {
+        queue_depth: 0,
+        failed_jobs: 0,
+        dead_jobs: 0,
+        stuck_locks: 0,
+        unavailable_runners: 0,
+        unhealthy_connectors: 0,
+        credential_warnings: 0,
+        prompt_injection_safety_count: 0,
+        purge_candidates: 0,
+        autopilot_last_cycle: {
+          id: 'job:autopilot-37h',
+          status: 'completed',
+          failure_class: null,
+          last_error: null,
+          updated_at: staleTimestamp,
+          finished_at: staleTimestamp,
+        },
+      },
+    });
+
+    const message = String(report.checks.find((candidate) => candidate.name === 'autopilot')?.message ?? '');
+    expect(message).toContain('37 hours ago');
+    expect(message).not.toContain('1 day ago');
   });
 
   test('buildDoctorReport marks sqlite local profile honestly', () => {
