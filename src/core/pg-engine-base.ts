@@ -776,57 +776,68 @@ export abstract class PgEngineBase {
   }
 
   async revertToVersion(slug: string, versionId: number): Promise<void> {
-    const { rows } = await this.queryable.query(
-      `SELECT pv.compiled_truth, pv.frontmatter, p.title, p.type, p.timeline
-       FROM page_versions pv
-       JOIN pages p ON p.id = pv.page_id
-       WHERE p.slug = $1 AND pv.id = $2
-       LIMIT 1`,
-      [slug, versionId]
-    );
-    if (rows.length === 0) return;
+    const normalizedSlug = validateSlug(slug);
+    await this.transaction(async (txBase) => {
+      const q = this.txq(txBase);
+      const txEngine = txBase as unknown as BrainEngine;
 
-    const version = rows[0] as {
-      compiled_truth: string;
-      frontmatter: unknown;
-      title: string;
-      type: PageType;
-      timeline?: unknown;
-    };
-    const frontmatter = (
-      version.frontmatter && typeof version.frontmatter === 'object' && !Array.isArray(version.frontmatter)
-    )
-      ? version.frontmatter as Record<string, unknown>
-      : typeof version.frontmatter === 'string' && version.frontmatter.length > 0
-        ? JSON.parse(version.frontmatter) as Record<string, unknown>
-        : {};
-    const tags = await this.getTags(slug);
-    const searchText = buildFrontmatterSearchText(frontmatter);
-    const hash = importContentHash({
-      title: version.title as string,
-      type: version.type as PageType,
-      compiled_truth: version.compiled_truth,
-      timeline: String(version.timeline ?? ''),
-      frontmatter,
-      tags,
+      const lockedPage = await q.query(
+        `SELECT id FROM pages WHERE slug = $1 FOR UPDATE`,
+        [normalizedSlug],
+      );
+      if (lockedPage.rows.length === 0) return;
+
+      const { rows } = await q.query(
+        `SELECT pv.compiled_truth, pv.frontmatter, p.title, p.type, p.timeline
+         FROM page_versions pv
+         JOIN pages p ON p.id = pv.page_id
+         WHERE p.slug = $1 AND pv.id = $2
+         LIMIT 1`,
+        [normalizedSlug, versionId]
+      );
+      if (rows.length === 0) return;
+
+      const version = rows[0] as {
+        compiled_truth: string;
+        frontmatter: unknown;
+        title: string;
+        type: PageType;
+        timeline?: unknown;
+      };
+      const frontmatter = (
+        version.frontmatter && typeof version.frontmatter === 'object' && !Array.isArray(version.frontmatter)
+      )
+        ? version.frontmatter as Record<string, unknown>
+        : typeof version.frontmatter === 'string' && version.frontmatter.length > 0
+          ? JSON.parse(version.frontmatter) as Record<string, unknown>
+          : {};
+      const tags = await txEngine.getTags(normalizedSlug);
+      const searchText = buildFrontmatterSearchText(frontmatter);
+      const hash = importContentHash({
+        title: version.title as string,
+        type: version.type as PageType,
+        compiled_truth: version.compiled_truth,
+        timeline: String(version.timeline ?? ''),
+        frontmatter,
+        tags,
+      });
+
+      await q.query(
+        `UPDATE pages
+         SET compiled_truth = $1,
+             search_text = $2,
+             frontmatter = $3::jsonb,
+             content_hash = $4,
+             updated_at = now()
+         WHERE slug = $5`,
+        [version.compiled_truth, searchText, JSON.stringify(frontmatter), hash, normalizedSlug]
+      );
+
+      const page = await txEngine.getPage(normalizedSlug);
+      if (page) {
+        await ensurePageChunks(txEngine, page);
+      }
     });
-
-    await this.queryable.query(
-      `UPDATE pages
-       SET compiled_truth = $1,
-           search_text = $2,
-           frontmatter = $3::jsonb,
-           content_hash = $4,
-           updated_at = now()
-       WHERE slug = $5`,
-      [version.compiled_truth, searchText, JSON.stringify(frontmatter), hash, slug]
-    );
-
-    const page = await this.getPage(slug);
-    if (page) {
-      // Subclasses are always full BrainEngine implementations.
-      await ensurePageChunks(this as unknown as BrainEngine, page);
-    }
   }
 
   // Stats + health
