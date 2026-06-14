@@ -101,6 +101,11 @@ async function withSqliteEngine<T>(fn: (engine: SQLiteEngine) => Promise<T>): Pr
   }
 }
 
+function countSqliteRows(engine: SQLiteEngine, sql: string, ...params: unknown[]): number {
+  const row = (engine as any).database.query(sql).get(...params) as { count: number };
+  return Number(row.count);
+}
+
 describe('performSync incremental safety', () => {
   test('does not advance last_commit when a syncable import is skipped with an error', async () => {
     const repoPath = makeRepo();
@@ -155,6 +160,61 @@ describe('performSync incremental safety', () => {
     expect(deletedPages).toEqual(['people/alice']);
     expect(setConfigCalls).toContainEqual(['sync.last_commit', headCommit]);
     expect(setConfigCalls).toContainEqual(['markdown.repo_path', repoPath]);
+  });
+
+  test('SQLite incremental sync removes DB state when a syncable file is renamed to an unsyncable path', async () => {
+    const repoPath = makeRepo();
+    mkdirSync(join(repoPath, 'people'), { recursive: true });
+    writeFileSync(join(repoPath, 'people', 'alice.md'), [
+      '---',
+      'title: Alice',
+      'tags: [friend]',
+      '---',
+      '',
+      'Alice is indexed as a durable page.',
+      '',
+      '- **2026-06-14** | Alice timeline note.',
+    ].join('\n'));
+    commitAll(repoPath, 'seed alice');
+
+    await withSqliteEngine(async (engine) => {
+      await performSync(engine, { repoPath, noPull: true });
+
+      const originalPage = await engine.getPage('people/alice');
+      expect(originalPage).not.toBeNull();
+      if (!originalPage) throw new Error('expected people/alice page after initial sync');
+      expect((await engine.getChunks('people/alice')).length).toBeGreaterThan(0);
+      const originalManifest = await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, 'people/alice');
+      expect(originalManifest?.path).toBe('people/alice.md');
+
+      renameSync(join(repoPath, 'people', 'alice.md'), join(repoPath, 'people', 'README.md'));
+      const headCommit = commitAll(repoPath, 'rename alice to unsyncable readme');
+
+      const result = await performSync(engine, { repoPath, noPull: true });
+
+      expect(result.status).toBe('synced');
+      expect(result.added).toBe(0);
+      expect(result.modified).toBe(0);
+      expect(result.renamed).toBe(0);
+      expect(result.deleted).toBe(1);
+      expect(result.pagesAffected).toContain('people/alice');
+      expect(await engine.getPage('people/alice')).toBeNull();
+      expect(await engine.getPage('people/readme')).toBeNull();
+      expect(await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, 'people/alice')).toBeNull();
+      expect(await engine.getChunks('people/alice')).toEqual([]);
+      expect(countSqliteRows(
+        engine,
+        'SELECT count(*) AS count FROM content_chunks WHERE page_id = ?',
+        originalPage.id,
+      )).toBe(0);
+      expect(countSqliteRows(
+        engine,
+        'SELECT count(*) AS count FROM note_manifest_entries WHERE scope_id = ? AND slug = ?',
+        DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+        'people/alice',
+      )).toBe(0);
+      expect(await engine.getConfig('sync.last_commit')).toBe(headCommit);
+    });
   });
 
   test('records markdown repo path when the repo is already up to date', async () => {
