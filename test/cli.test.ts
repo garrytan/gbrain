@@ -110,6 +110,11 @@ describe('CLI source shape', () => {
     expect(cliSource).toContain("from './core/operations.ts'");
   });
 
+  test('generic CLI dispatch validates operation params before handler execution', () => {
+    expect(cliSource).toContain('validateOperationParams');
+    expect(cliSource).toContain('op.handler(ctx, validateOperationParams(op, params))');
+  });
+
   test('builds cliOps map from operations', () => {
     expect(cliSource).toContain('cliOps');
   });

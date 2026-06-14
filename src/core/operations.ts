@@ -2807,6 +2807,21 @@ function putPageMetadata(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
+function rawDataObject(value: unknown): object {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new OperationError('invalid_params', 'data must be an object');
+  }
+  assertJsonSerializable(value, 'data', new WeakSet<object>());
+  return value as object;
+}
+
+function rawDataRequiredString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new OperationError('invalid_params', `${field} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
 function assertJsonSerializable(value: unknown, path: string, seen: WeakSet<object>): void {
   if (value === null) return;
   switch (typeof value) {
@@ -3565,8 +3580,11 @@ const put_raw_data: Operation = {
   },
   mutating: true,
   handler: async (ctx, p) => {
-    if (ctx.dryRun) return { dry_run: true, action: 'put_raw_data', slug: p.slug, source: p.source };
-    await ctx.engine.putRawData(p.slug as string, p.source as string, p.data as object);
+    const slug = rawDataRequiredString(p.slug, 'slug');
+    const source = rawDataRequiredString(p.source, 'source');
+    const data = rawDataObject(p.data);
+    if (ctx.dryRun) return { dry_run: true, action: 'put_raw_data', slug, source };
+    await ctx.engine.putRawData(slug, source, data);
     return { status: 'ok' };
   },
 };

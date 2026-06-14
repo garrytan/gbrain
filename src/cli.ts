@@ -11,6 +11,7 @@ import {
   formatResult as formatSharedResult,
   getMissingRequiredParams,
   parseOpArgs as parseSharedOpArgs,
+  validateOperationParams,
 } from './core/operations.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
 import { VERSION } from './version.ts';
@@ -353,7 +354,7 @@ async function main() {
     }
 
     const ctx = makeContext(engine, params);
-    const result = await op.handler(ctx, params);
+    const result = await op.handler(ctx, validateOperationParams(op, params));
     const output = formatResult(op.name, result, params);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
