@@ -20,6 +20,7 @@ import { createRequire } from 'module';
 // Inline marked.js so published HTML is truly self-contained (no CDN dependency)
 const require = createRequire(import.meta.url);
 const MARKED_JS = readFileSync(join(dirname(require.resolve('marked')), 'marked.umd.js'), 'utf8');
+export const PUBLISH_PBKDF2_ITERATIONS = 600_000;
 
 // ── Content stripping ──────────────────────────────────────────────
 
@@ -30,8 +31,11 @@ export function makeShareable(content: string): string {
   // Remove YAML frontmatter
   clean = clean.replace(/^---[\s\S]*?---\n*/, '');
 
+  // Remove the private evidence/timeline zone used by brain pages.
+  clean = clean.replace(/\n---\n[\s\S]*$/, '');
+
   // Remove [Source: ...] citations (all formats)
-  clean = clean.replace(/\s*\[Source:[^\]]*\]/g, '');
+  clean = stripSourceCitations(clean);
 
   // Remove confirmation numbers
   clean = clean.replace(/\*\*Confirmation:\*\*\s*[A-Z0-9]{6,}/gi, '**Confirmation:** on file');
@@ -44,13 +48,41 @@ export function makeShareable(content: string): string {
   // Remove "See also" brain-internal lines
   clean = clean.replace(/^-?\s*See also:.*$/gm, '');
 
-  // Remove Timeline section (below the --- separator near end)
-  clean = clean.replace(/\n---\n\n## Timeline[\s\S]*$/, '');
-
   // Clean up excessive blank lines
   clean = clean.replace(/\n{3,}/g, '\n\n');
 
   return clean.trim();
+}
+
+function stripSourceCitations(content: string): string {
+  let result = '';
+  for (let i = 0; i < content.length;) {
+    if (content.startsWith('[Source:', i)) {
+      const closing = findClosingBracket(content, i);
+      if (closing >= 0) {
+        i = closing + 1;
+        continue;
+      }
+      const newline = content.indexOf('\n', i);
+      i = newline >= 0 ? newline : content.length;
+      continue;
+    }
+    result += content[i];
+    i += 1;
+  }
+  return result.replace(/[ \t]{2,}/g, ' ');
+}
+
+function findClosingBracket(content: string, start: number): number {
+  let depth = 0;
+  for (let i = start; i < content.length; i += 1) {
+    if (content[i] === '[') depth += 1;
+    if (content[i] === ']') {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
 }
 
 // ── Title extraction ───────────────────────────────────────────────
@@ -71,7 +103,7 @@ export interface EncryptedContent {
 export function encryptContent(plaintext: string, password: string): EncryptedContent {
   const salt = randomBytes(16);
   const iv = randomBytes(12);
-  const key = pbkdf2Sync(password, salt, 100_000, 32, 'sha256');
+  const key = pbkdf2Sync(password, salt, PUBLISH_PBKDF2_ITERATIONS, 32, 'sha256');
   const cipher = createCipheriv('aes-256-gcm', key, iv);
 
   let encrypted = cipher.update(plaintext, 'utf8');
@@ -177,7 +209,7 @@ async function deriveKey(password, salt) {
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations: ${PUBLISH_PBKDF2_ITERATIONS}, hash: 'SHA-256' },
     keyMaterial,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -210,7 +242,7 @@ async function unlock(pw, remember) {
       try { localStorage.setItem(STORAGE_KEY, pw); } catch {}
     }
     document.getElementById('pw-overlay').remove();
-    document.getElementById('content').innerHTML = marked.parse(result);
+    renderMarkdownInto(document.getElementById('content'), result);
     return true;
   }
   return false;
@@ -280,31 +312,77 @@ export function generateHtml({ title, markdown, encrypted }: GenerateHtmlOptions
       window.__CT = ${JSON.stringify(encrypted.ciphertext)};
     </script>` : '';
 
-  // Sanitize markdown rendering to prevent XSS from embedded HTML in brain pages
+  // Sanitize markdown rendering to prevent XSS from embedded HTML in brain pages.
   const sanitizeScript = `
-    function sanitizeHtml(html) {
-      const div = document.createElement('div');
-      div.innerHTML = html;
-      div.querySelectorAll('script,iframe,object,embed,form').forEach(el => el.remove());
-      div.querySelectorAll('*').forEach(el => {
-        for (const attr of [...el.attributes]) {
-          if (attr.name.startsWith('on') || attr.value.startsWith('javascript:')) {
-            el.removeAttribute(attr.name);
-          }
-        }
-      });
-      return div.innerHTML;
+    const ALLOWED_TAGS = new Set([
+      'a', 'blockquote', 'br', 'code', 'del', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+      'hr', 'li', 'ol', 'p', 'pre', 's', 'strong', 'table', 'tbody', 'td', 'th', 'thead',
+      'tr', 'ul'
+    ]);
+    const DROP_TAGS = new Set([
+      'audio', 'button', 'canvas', 'embed', 'form', 'iframe', 'img', 'input', 'link', 'math',
+      'meta', 'object', 'option', 'script', 'select', 'source', 'style', 'svg', 'textarea',
+      'video'
+    ]);
+    const ALLOWED_ATTRS = {
+      a: new Set(['href', 'title']),
+      td: new Set(['colspan', 'rowspan']),
+      th: new Set(['colspan', 'rowspan'])
+    };
+    function isSafeUrl(value) {
+      try {
+        const url = new URL(value, window.location.href);
+        return url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'mailto:';
+      } catch {
+        return false;
+      }
+    }
+    function copySafeAttributes(source, target, tag) {
+      const allowed = ALLOWED_ATTRS[tag];
+      if (!allowed) return;
+      for (const attr of Array.from(source.attributes)) {
+        const name = attr.name.toLowerCase();
+        const value = attr.value.trim();
+        if (!allowed.has(name)) continue;
+        if (name === 'href' && !isSafeUrl(value)) continue;
+        if ((name === 'colspan' || name === 'rowspan') && !/^[1-9]\\d{0,2}$/.test(value)) continue;
+        target.setAttribute(name, value);
+      }
+      if (tag === 'a' && target.hasAttribute('href')) {
+        target.setAttribute('rel', 'noopener noreferrer');
+      }
+    }
+    function sanitizeNode(node) {
+      if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.textContent || '');
+      if (node.nodeType !== Node.ELEMENT_NODE) return document.createDocumentFragment();
+      const tag = node.nodeName.toLowerCase();
+      if (DROP_TAGS.has(tag)) return document.createDocumentFragment();
+      const output = ALLOWED_TAGS.has(tag) ? document.createElement(tag) : document.createDocumentFragment();
+      if (output.nodeType === Node.ELEMENT_NODE) copySafeAttributes(node, output, tag);
+      for (const child of Array.from(node.childNodes)) {
+        output.appendChild(sanitizeNode(child));
+      }
+      return output;
+    }
+    function sanitizedMarkdownFragment(markdown) {
+      const rendered = marked.parse(markdown);
+      const parsed = new DOMParser().parseFromString(String(rendered), 'text/html');
+      const fragment = document.createDocumentFragment();
+      for (const child of Array.from(parsed.body.childNodes)) {
+        fragment.appendChild(sanitizeNode(child));
+      }
+      return fragment;
+    }
+    function renderMarkdownInto(target, markdown) {
+      target.replaceChildren(sanitizedMarkdownFragment(markdown));
     }
   `;
 
   const contentScript = encrypted
-    ? `<script>${sanitizeScript}${DECRYPT_JS.replace(
-        'document.getElementById(\'content\').innerHTML = marked.parse(result)',
-        'document.getElementById(\'content\').innerHTML = sanitizeHtml(marked.parse(result))'
-      )}<\/script>`
+    ? `<script>${sanitizeScript}${DECRYPT_JS}<\/script>`
     : `<script>${sanitizeScript}
         const md = ${JSON.stringify(markdown)};
-        document.getElementById('content').innerHTML = sanitizeHtml(marked.parse(md));
+        renderMarkdownInto(document.getElementById('content'), md);
       <\/script>`;
 
   return `<!DOCTYPE html>
