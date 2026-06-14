@@ -152,6 +152,19 @@ describe('pathToSlug', () => {
     expect(pathToSlug('concepts/한글테스트.md')).toBe('concepts/한글테스트');
     expect(pathToSlug('inbox/品牌圣经.md')).toBe('inbox/品牌圣经');
   });
+
+  test('normalizes equivalent Korean NFC and NFD path segments to the same slug', () => {
+    const nfcPath = 'concepts/문서/한글.md';
+    const nfdPath = nfcPath.normalize('NFD');
+
+    expect(pathToSlug(nfcPath)).toBe('concepts/문서/한글');
+    expect(pathToSlug(nfdPath)).toBe('concepts/문서/한글');
+  });
+
+  test('normalizes compatibility Hangul path segments before filtering', () => {
+    expect(pathToSlug('concepts/㉮.md')).toBe('concepts/가');
+    expect(pathToSlug('concepts/㈜.md')).toBe('concepts/주');
+  });
 });
 
 describe('isSyncable edge cases', () => {
