@@ -97,8 +97,11 @@ const MEMORY_REPORT_CLI_SPEC: Operation = {
   description: 'Show the exception-first memory review report for the configured brain.',
   params: {
     json: { type: 'boolean', description: 'Emit JSON instead of human-readable output' },
+    save: { type: 'boolean', description: 'Save the formatted report under brain/reports/memory-review-report' },
+    report_dir: { type: 'string', description: 'Brain directory for --save (default: current directory)' },
     scope_id: { type: 'string', description: 'Scope to report (default: workspace:default)' },
     limit: { type: 'number', description: 'Maximum mutation and candidate rows to inspect (default: 100)' },
+    now: { type: 'string', description: 'Override report generation timestamp as an ISO string' },
   },
   handler: noopHandler,
   cliHints: { name: 'memory-report' },
@@ -575,7 +578,7 @@ SETUP
                                     Health check (engine, schema, embeddings, local/managed capabilities)
   integrations [subcommand]          Manage integration recipes
   connectors [list|show|sync]        Inspect or sync personal data connector sources
-  memory-report [--json]             Show the memory review report surface
+  memory-report [--json] [--save]    Show the memory review report surface
   agent-session preview|capture      Preview or capture a JSON agent-session envelope file
 
 PAGES

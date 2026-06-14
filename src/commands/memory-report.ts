@@ -17,6 +17,7 @@ import {
   type ReportSource,
   type ReportSourceItem,
 } from '../core/services/memory-review-report-service.ts';
+import { saveBrainReport } from './report.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type {
   DecisionProjectionMemoryCandidate,
@@ -40,20 +41,43 @@ export async function runMemoryReport(engine: BrainEngine, args: string[]): Prom
   const scopeId = valueAfter(args, '--scope-id') ?? DEFAULT_SCOPE_ID;
   const limit = parsePositiveInt(valueAfter(args, '--limit')) ?? DEFAULT_LIMIT;
   const now = valueAfter(args, '--now') ?? new Date().toISOString();
+  const reportDir = args.includes('--report-dir') ? requiredValueAfter(args, '--report-dir') : '.';
   const report = buildMemoryReviewReport(await collectMemoryReportInput(engine, scopeId, limit, now));
+  const formatted = formatMemoryReviewReport(report);
+  const savedReportPath = args.includes('--save')
+    ? saveBrainReport({
+      brainDir: reportDir,
+      type: 'memory-review-report',
+      title: 'Memory Review Report',
+      content: formatted,
+      now: new Date(now),
+    })
+    : undefined;
 
   if (args.includes('--json')) {
-    console.log(JSON.stringify(report, null, 2));
+    console.log(JSON.stringify(savedReportPath ? { ...report, saved_report_path: savedReportPath } : report, null, 2));
     return;
   }
 
-  console.log(formatMemoryReviewReport(report));
+  console.log(formatted);
+  if (savedReportPath) console.log(`Saved report: ${savedReportPath}`);
 }
 
 function valueAfter(args: string[], flag: string): string | undefined {
+  const inlinePrefix = `${flag}=`;
+  const inline = args.find((arg) => arg.startsWith(inlinePrefix));
+  if (inline !== undefined) return inline.slice(inlinePrefix.length);
   const index = args.indexOf(flag);
   if (index === -1) return undefined;
   return args[index + 1];
+}
+
+function requiredValueAfter(args: string[], flag: string): string {
+  const value = valueAfter(args, flag);
+  if (!value || value.startsWith('-')) {
+    throw new Error(`${flag} expects a path value`);
+  }
+  return value;
 }
 
 export async function collectMemoryReportInput(
@@ -629,7 +653,11 @@ async function collectConnectorHealth(engine: BrainEngine, limit: number): Promi
   const rows = await queryRows(engine, `
     SELECT ca.connector_id, ca.id AS account_id,
            COALESCE(css.health_status, cr.health_status, 'unknown') AS health_status,
-           COALESCE(cr.rotation_status, 'current') AS credential_status
+           COALESCE(cr.rotation_status, 'current') AS credential_status,
+           css.last_success_at,
+           css.last_failure_at,
+           COALESCE(css.failure_count, 0) AS failure_count,
+           css.last_error
     FROM connector_accounts ca
     LEFT JOIN credential_refs cr ON cr.id = ca.credential_ref_id
     LEFT JOIN connector_sync_states css ON css.account_id = ca.id
@@ -638,7 +666,11 @@ async function collectConnectorHealth(engine: BrainEngine, limit: number): Promi
   `, [limit], `
     SELECT ca.connector_id, ca.id AS account_id,
            COALESCE(css.health_status, cr.health_status, 'unknown') AS health_status,
-           COALESCE(cr.rotation_status, 'current') AS credential_status
+           COALESCE(cr.rotation_status, 'current') AS credential_status,
+           css.last_success_at,
+           css.last_failure_at,
+           COALESCE(css.failure_count, 0) AS failure_count,
+           css.last_error
     FROM connector_accounts ca
     LEFT JOIN credential_refs cr ON cr.id = ca.credential_ref_id
     LEFT JOIN connector_sync_states css ON css.account_id = ca.id
@@ -650,6 +682,10 @@ async function collectConnectorHealth(engine: BrainEngine, limit: number): Promi
     account_id: stringFromUnknown(row.account_id),
     health_status: connectorHealthStatus(row.health_status),
     credential_status: credentialStatus(row.credential_status),
+    last_success_at: nullableString(row.last_success_at),
+    last_failure_at: nullableString(row.last_failure_at),
+    failure_count: numberFromUnknown(row.failure_count) ?? 0,
+    last_error: nullableString(row.last_error),
   }));
 }
 
@@ -822,6 +858,6 @@ function printMemoryReportHelp(): void {
   console.log(`mbrain memory-report -- show the memory review report surface
 
 USAGE
-  mbrain memory-report [--json] [--scope-id <scope>] [--limit <n>] [--now <iso>]
+  mbrain memory-report [--json] [--save] [--report-dir <brain>] [--scope-id <scope>] [--limit <n>] [--now <iso>]
 `);
 }

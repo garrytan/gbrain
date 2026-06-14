@@ -3,8 +3,18 @@ import type { CandidateDebtMetrics, NegativeMemoryProjection } from '../types.ts
 // Above this many staged-for-review candidates, the backlog gets a prominent
 // warning in both the memory report and `mbrain doctor`.
 export const MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD = 50;
+export const CONNECTOR_HEALTH_OVERDUE_MS = 24 * 60 * 60 * 1000;
 
 export type ReportHealthStatus = 'ok' | 'warn' | 'fail';
+export type ReportConnectorStalenessStatus = 'fresh' | 'overdue' | 'never_succeeded' | 'unknown';
+export type ReportConnectorFailureClass = 'auth_expired' | 'rate_limited' | 'network' | 'schema' | 'unknown';
+export type ReportConnectorRetryPosture =
+  | 'no_action'
+  | 'retry_now'
+  | 'wait_for_rate_limit'
+  | 'reauthenticate'
+  | 'inspect_schema'
+  | 'investigate';
 export type ReportActionKind =
   | 'undo'
   | 'restore'
@@ -161,6 +171,15 @@ export interface ReportConnectorHealth {
   account_id: string;
   health_status: 'healthy' | 'unhealthy' | 'expired' | 'unknown';
   credential_status: 'current' | 'rotation_due' | 'rotating' | 'revoked';
+  last_success_at?: string | null;
+  last_failure_at?: string | null;
+  failure_count?: number;
+  last_error?: string | null;
+  staleness_status?: ReportConnectorStalenessStatus;
+  overdue?: boolean;
+  failure_class?: ReportConnectorFailureClass;
+  retry_posture?: ReportConnectorRetryPosture;
+  next_action?: string;
 }
 
 export interface AutoPromoteReportSummary {
@@ -308,16 +327,18 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
   const secretDetections = redactReportValues(input.secret_detections ?? []);
   const runnerJobs = redactReportValues(input.runner_jobs ?? []);
   const jobs = redactReportValues(input.jobs ?? []);
-  const connectorHealth = redactReportValues(input.connector_health ?? []);
+  const connectorHealth = redactReportValues(
+    (input.connector_health ?? []).map((connector) =>
+      enrichConnectorHealth(connector, input.generated_at)
+    ),
+  );
 
   const failedRunnerJobs = runnerJobs.filter((job) => job.status === 'failed' || job.status === 'degraded');
   const failedMaintenanceJobs = jobs.filter((job) => job.status === 'failed' || job.status === 'dead');
   const reconciliationFailures = projectionTargets.filter((target) => target.status === 'failed' || target.status === 'conflict');
   const unhealthySources = sources.filter((source) => source.health_status === 'unhealthy');
   const failedSourceItems = sourceItems.filter((item) => item.status === 'failed');
-  const unhealthyConnectors = connectorHealth.filter(
-    (connector) => connector.health_status !== 'healthy' || connector.credential_status === 'revoked',
-  );
+  const unhealthyConnectors = connectorHealth.filter(connectorRequiresAttention);
   const candidateDebt = input.candidate_debt ?? emptyCandidateDebtMetrics();
   const projectionFreshness = summarizeProjectionFreshness(projectionTargets);
   const safetyStates = buildReportOnlySafetyStates({
@@ -443,6 +464,15 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
       for (const action of report.actions) {
         lines.push(`- ${action.kind}: ${action.target_kind}/${action.target_id} via ${action.route}`);
       }
+    }
+  }
+
+  const reportableConnectors = report.sections.connector_health.filter(connectorRequiresAttention);
+  if (reportableConnectors.length > 0) {
+    lines.push('', 'Connector Health');
+    for (const connector of reportableConnectors) {
+      lines.push(formatConnectorHealthLine(connector));
+      if (connector.last_error) lines.push(`  last_error: ${redactSecrets(connector.last_error)}`);
     }
   }
 
@@ -587,6 +617,129 @@ function buildReportHealth(summary: MemoryReviewReportSummary): MemoryReviewRepo
     status: reasons.length === 0 ? 'ok' : summary.failed_jobs > 0 || summary.reconciliation_failures > 0 ? 'fail' : 'warn',
     reasons,
   };
+}
+
+function enrichConnectorHealth(connector: ReportConnectorHealth, generatedAt: string): ReportConnectorHealth {
+  const normalized: ReportConnectorHealth = {
+    ...connector,
+    last_success_at: connector.last_success_at ?? null,
+    last_failure_at: connector.last_failure_at ?? null,
+    failure_count: connector.failure_count ?? 0,
+    last_error: connector.last_error ?? null,
+  };
+  const stalenessStatus = connectorStalenessStatus(normalized, generatedAt);
+  const failureClass = connector.failure_class ?? connectorFailureClass(normalized);
+  const retryPosture = connector.retry_posture ?? connectorRetryPosture(normalized, stalenessStatus, failureClass);
+
+  return {
+    ...normalized,
+    staleness_status: stalenessStatus,
+    overdue: stalenessStatus === 'overdue' || stalenessStatus === 'never_succeeded',
+    ...(failureClass ? { failure_class: failureClass } : {}),
+    retry_posture: retryPosture,
+    next_action: connectorNextAction(normalized, stalenessStatus, failureClass, retryPosture),
+  };
+}
+
+function connectorRequiresAttention(connector: ReportConnectorHealth): boolean {
+  return connector.health_status !== 'healthy'
+    || connector.credential_status === 'revoked'
+    || connector.credential_status === 'rotation_due'
+    || connector.staleness_status === 'overdue'
+    || connector.staleness_status === 'never_succeeded'
+    || (connector.failure_count ?? 0) > 0
+    || connector.failure_class !== undefined;
+}
+
+function connectorStalenessStatus(
+  connector: ReportConnectorHealth,
+  generatedAt: string,
+): ReportConnectorStalenessStatus {
+  const generatedTime = Date.parse(generatedAt);
+  if (!Number.isFinite(generatedTime)) return 'unknown';
+  const lastSuccessTime = connector.last_success_at ? Date.parse(connector.last_success_at) : NaN;
+  if (Number.isFinite(lastSuccessTime)) {
+    return generatedTime - lastSuccessTime > CONNECTOR_HEALTH_OVERDUE_MS ? 'overdue' : 'fresh';
+  }
+  if ((connector.failure_count ?? 0) > 0 || connector.health_status !== 'healthy') return 'never_succeeded';
+  return 'unknown';
+}
+
+function connectorFailureClass(connector: ReportConnectorHealth): ReportConnectorFailureClass | undefined {
+  if (connector.health_status === 'expired' || connector.credential_status === 'revoked') return 'auth_expired';
+  const error = (connector.last_error ?? '').toLowerCase();
+  if (!error) {
+    return connector.health_status !== 'healthy' || (connector.failure_count ?? 0) > 0 ? 'unknown' : undefined;
+  }
+  if (/(^|[^0-9])429([^0-9]|$)|rate limit|too many requests/.test(error)) return 'rate_limited';
+  if (/401|403|unauthori[sz]ed|forbidden|oauth|token|credential|expired|revoked/.test(error)) return 'auth_expired';
+  if (/econnreset|econnrefused|etimedout|enotfound|eai_again|network|timeout|temporar/.test(error)) return 'network';
+  if (/schema|json|parse|validation|constraint|column|syntax|typeerror/.test(error)) return 'schema';
+  return 'unknown';
+}
+
+function connectorRetryPosture(
+  connector: ReportConnectorHealth,
+  stalenessStatus: ReportConnectorStalenessStatus,
+  failureClass: ReportConnectorFailureClass | undefined,
+): ReportConnectorRetryPosture {
+  if (
+    failureClass === 'auth_expired'
+    || connector.credential_status === 'revoked'
+    || connector.credential_status === 'rotation_due'
+  ) return 'reauthenticate';
+  if (failureClass === 'rate_limited') return 'wait_for_rate_limit';
+  if (failureClass === 'schema') return 'inspect_schema';
+  if (failureClass === 'network' || stalenessStatus === 'overdue' || stalenessStatus === 'never_succeeded') return 'retry_now';
+  if (failureClass === 'unknown' || (connector.failure_count ?? 0) > 0 || connector.health_status !== 'healthy') return 'investigate';
+  return 'no_action';
+}
+
+function connectorNextAction(
+  connector: ReportConnectorHealth,
+  stalenessStatus: ReportConnectorStalenessStatus,
+  failureClass: ReportConnectorFailureClass | undefined,
+  retryPosture: ReportConnectorRetryPosture,
+): string {
+  if (retryPosture === 'reauthenticate') {
+    return connector.credential_status === 'rotation_due'
+      ? 'Rotate the connector credential, then rerun sync.'
+      : 'Refresh connector authorization, then rerun sync.';
+  }
+  if (retryPosture === 'wait_for_rate_limit') {
+    return 'Wait for the rate limit window or reduce batch size, then retry sync.';
+  }
+  if (retryPosture === 'inspect_schema') {
+    return 'Inspect connector payload schema or mapper before retrying sync.';
+  }
+  if (retryPosture === 'retry_now') {
+    return stalenessStatus === 'overdue'
+      ? 'Rerun connector sync and confirm last_success_at advances.'
+      : 'Retry connector sync and confirm the account records a success.';
+  }
+  if (retryPosture === 'investigate') {
+    return failureClass
+      ? 'Inspect connector logs and last_error before retrying sync.'
+      : 'Inspect connector health before retrying sync.';
+  }
+  return 'No connector action required.';
+}
+
+function formatConnectorHealthLine(connector: ReportConnectorHealth): string {
+  const parts: string[] = [connector.health_status];
+  if (connector.credential_status !== 'current') parts.push(`credential:${connector.credential_status}`);
+  if (connector.staleness_status === 'overdue' || connector.staleness_status === 'never_succeeded') {
+    parts.push(connector.staleness_status);
+  }
+  if (connector.failure_class) parts.push(`failure:${connector.failure_class}`);
+  if (connector.retry_posture && connector.retry_posture !== 'no_action') {
+    parts.push(`retry:${connector.retry_posture}`);
+  }
+  if ((connector.failure_count ?? 0) > 0) parts.push(`failures:${connector.failure_count}`);
+  if (connector.last_success_at) parts.push(`last_success:${connector.last_success_at}`);
+  if (connector.last_failure_at) parts.push(`last_failure:${connector.last_failure_at}`);
+
+  return `- ${connector.connector_id}/${connector.account_id}: ${parts.join(' | ')} | ${connector.next_action ?? 'No connector action required.'}`;
 }
 
 function summarizeSourceIngest(items: ReportSourceItem[]): SourceIngestSummary[] {
@@ -888,6 +1041,11 @@ function redactReportValues<T>(value: T): T {
 
 function redactSecrets(value: string): string {
   return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, 'Bearer [REDACTED_SECRET]')
+    .replace(/\bBasic\s+[A-Za-z0-9+/=]{12,}/gi, 'Basic [REDACTED_SECRET]')
+    .replace(/(^|[?&\s])((?:access_token|refresh_token|id_token|oauth_token|client_secret|api_key|apikey|secret|token)=)[^&\s]+/gi, '$1$2[REDACTED_SECRET]')
+    .replace(/((?:authorization)\s*:\s*(?:bearer|basic)\s+)[^\s,;]+/gi, '$1[REDACTED_SECRET]')
+    .replace(/((?:x-api-key|api-key)\s*:\s*)[^\s,;]+/gi, '$1[REDACTED_SECRET]')
     .replace(/sk-[A-Za-z0-9_-]{12,}/g, '[REDACTED_SECRET]')
     .replace(/xox[baprs]-[A-Za-z0-9-]{12,}/g, '[REDACTED_SECRET]')
     .replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED_SECRET]')

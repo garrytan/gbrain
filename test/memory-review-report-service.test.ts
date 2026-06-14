@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { collectMemoryReportInput } from '../src/commands/memory-report.ts';
+import { collectMemoryReportInput, runMemoryReport } from '../src/commands/memory-report.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -470,6 +470,133 @@ describe('memory review report service', () => {
     const formatted = formatMemoryReviewReport(report);
     expect(formatted).toContain('Canonical Memories');
     expect(formatted).not.toContain('No reportable memory exceptions.');
+  });
+
+  test('classifies stale and failed connector health in the daily report', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: '2026-06-15T00:00:00.000Z',
+      connector_health: [
+        {
+          connector_id: 'calendar',
+          account_id: 'connector-account:calendar:primary',
+          health_status: 'healthy',
+          credential_status: 'current',
+          last_success_at: '2026-06-13T23:00:00.000Z',
+          failure_count: 0,
+        },
+        {
+          connector_id: 'slack',
+          account_id: 'connector-account:slack:team',
+          health_status: 'unhealthy',
+          credential_status: 'current',
+          last_failure_at: '2026-06-14T22:30:00.000Z',
+          failure_count: 3,
+          last_error: 'access_token=ya29.leadingSecretToken123456 HTTP 429 rate limit exceeded for sk-testsecret123456 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9 access_token=ya29.testSecretToken123456',
+        },
+        {
+          connector_id: 'gmail',
+          account_id: 'connector-account:gmail:primary',
+          health_status: 'expired',
+          credential_status: 'revoked',
+          last_failure_at: '2026-06-14T21:00:00.000Z',
+          failure_count: 1,
+          last_error: 'OAuth token revoked',
+        },
+      ],
+    });
+
+    expect(report.summary.unhealthy_connectors).toBe(3);
+    expect(report.health.reasons).toContain('3 unhealthy connectors');
+    expect(report.sections.connector_health).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        connector_id: 'calendar',
+        staleness_status: 'overdue',
+        retry_posture: 'retry_now',
+        overdue: true,
+      }),
+      expect.objectContaining({
+        connector_id: 'slack',
+        failure_class: 'rate_limited',
+        retry_posture: 'wait_for_rate_limit',
+        last_error: 'access_token=[REDACTED_SECRET] HTTP 429 rate limit exceeded for [REDACTED_SECRET] Authorization: Bearer [REDACTED_SECRET] access_token=[REDACTED_SECRET]',
+      }),
+      expect.objectContaining({
+        connector_id: 'gmail',
+        failure_class: 'auth_expired',
+        retry_posture: 'reauthenticate',
+      }),
+    ]));
+
+    const formatted = formatMemoryReviewReport(report);
+    expect(formatted).toContain('Connector Health');
+    expect(formatted).toContain('calendar/connector-account:calendar:primary: healthy | overdue | retry:retry_now');
+    expect(formatted).toContain('slack/connector-account:slack:team: unhealthy | never_succeeded | failure:rate_limited | retry:wait_for_rate_limit | failures:3');
+    expect(formatted).toContain('gmail/connector-account:gmail:primary: expired | credential:revoked | never_succeeded | failure:auth_expired | retry:reauthenticate | failures:1');
+    expect(formatted).toContain('last_error: access_token=[REDACTED_SECRET] HTTP 429 rate limit exceeded for [REDACTED_SECRET] Authorization: Bearer [REDACTED_SECRET] access_token=[REDACTED_SECRET]');
+    expect(formatted).not.toContain('sk-testsecret123456');
+    expect(formatted).not.toContain('ya29.leadingSecretToken123456');
+    expect(formatted).not.toContain('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9');
+    expect(formatted).not.toContain('ya29.testSecretToken123456');
+  });
+
+  test('memory-report --save writes the formatted report to brain reports', async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), 'mbrain-memory-report-save-db-'));
+    const reportDir = mkdtempSync(join(tmpdir(), 'mbrain-memory-report-save-brain-'));
+    tempPaths.push(dbDir, reportDir);
+    const engine = new SQLiteEngine();
+    const logs: string[] = [];
+    const originalLog = console.log;
+
+    await engine.connect({ database_path: join(dbDir, 'brain.sqlite') });
+    await engine.initSchema();
+    console.log = (...args: unknown[]) => {
+      logs.push(args.map(String).join(' '));
+    };
+
+    try {
+      await runMemoryReport(engine, [
+        '--now',
+        '2026-06-15T03:04:00.000Z',
+        '--save',
+        '--report-dir',
+        reportDir,
+      ]);
+    } finally {
+      console.log = originalLog;
+      await engine.disconnect();
+    }
+
+    const savedDir = join(reportDir, 'reports', 'memory-review-report');
+    const files = readdirSync(savedDir);
+    expect(files.length).toBe(1);
+    const saved = readFileSync(join(savedDir, files[0]), 'utf-8');
+    expect(saved).toContain('report_type: memory-review-report');
+    expect(saved).toContain('Memory Review Report');
+    expect(saved).toContain('No reportable memory exceptions.');
+    expect(logs.join('\n')).toContain('Saved report:');
+  });
+
+  test('memory-report --save rejects a missing report directory value before writing', async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), 'mbrain-memory-report-save-db-'));
+    const accidentalDir = join(process.cwd(), '--json');
+    rmSync(accidentalDir, { recursive: true, force: true });
+    tempPaths.push(dbDir, accidentalDir);
+    const engine = new SQLiteEngine();
+
+    await engine.connect({ database_path: join(dbDir, 'brain.sqlite') });
+    await engine.initSchema();
+
+    try {
+      await expect(runMemoryReport(engine, [
+        '--save',
+        '--report-dir',
+        '--json',
+      ])).rejects.toThrow('--report-dir expects a path value');
+      expect(() => readdirSync(join(accidentalDir, 'reports'))).toThrow();
+    } finally {
+      await engine.disconnect();
+    }
   });
 
   test('candidate debt checks promoted handoffs by candidate id, not by a limited scoped handoff page', async () => {

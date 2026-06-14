@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { operations } from '../src/core/operations.ts';
@@ -100,7 +100,8 @@ describe('CLI source shape', () => {
 
   test('memory-report command is exposed as the review report surface', () => {
     expect(cliSource).toContain("'memory-report': async () => (await import('./commands/memory-report.ts')).runMemoryReport");
-    expect(cliSource).toContain('memory-report [--json]');
+    expect(cliSource).toContain('memory-report [--json] [--save]');
+    expect(cliSource).toContain('Save the formatted report under brain/reports/memory-review-report');
 
     const noEngineBlock = cliSource.match(/const DIRECT_NO_ENGINE_COMMANDS:.*?= \{(.*?)\};/s)?.[1] ?? '';
     const engineBlock = cliSource.match(/const DIRECT_ENGINE_COMMANDS:.*?= \{(.*?)\};/s)?.[1] ?? '';
@@ -546,6 +547,60 @@ describe('CLI dispatch integration', () => {
     expect(stdout).not.toContain('No reportable memory exceptions');
     expect(stdout).not.toContain('"status":"ok"');
     expect(stderr).toContain('No brain configured');
+  });
+
+  test('memory-report --save preserves --now through the top-level CLI path', async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), 'mbrain-memory-report-cli-db-'));
+    const reportDir = mkdtempSync(join(tmpdir(), 'mbrain-memory-report-cli-brain-'));
+    const databasePath = join(dbDir, 'brain.sqlite');
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: databasePath,
+      offline: true,
+      embedding_provider: 'none',
+      query_rewrite_provider: 'none',
+    });
+
+    try {
+      const { SQLiteEngine } = await import('../src/core/sqlite-engine.ts');
+      const engine = new SQLiteEngine();
+      await engine.connect({ database_path: databasePath });
+      await engine.initSchema();
+      await engine.disconnect();
+
+      const proc = Bun.spawn([
+        'bun',
+        'run',
+        'src/cli.ts',
+        'memory-report',
+        '--save',
+        '--report-dir',
+        reportDir,
+        '--now',
+        '2026-06-15T03:04:00.000Z',
+      ], {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: tempHome },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+      const exitCode = await proc.exited;
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe('');
+      expect(stdout).toContain('Saved report:');
+      expect(stdout).toContain('Generated: 2026-06-15T03:04:00.000Z');
+      const savedDir = join(reportDir, 'reports', 'memory-review-report');
+      const savedFiles = readdirSync(savedDir);
+      expect(savedFiles).toHaveLength(1);
+      const saved = readFileSync(join(savedDir, savedFiles[0]), 'utf-8');
+      expect(saved).toContain('Generated: 2026-06-15T03:04:00.000Z');
+    } finally {
+      rmSync(dbDir, { recursive: true, force: true });
+      rmSync(reportDir, { recursive: true, force: true });
+    }
   });
 
   test('dream --help prints usage without DB connection', async () => {
