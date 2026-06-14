@@ -18,6 +18,11 @@ import {
   type CanonicalWritePolicyInput,
   type CanonicalWritePolicyResult,
 } from '../canonical-write/write-policy.ts';
+import type {
+  CanonicalWriteAuditInput,
+  CanonicalWriteAuditStatus,
+  CanonicalProjectionAuditStatus,
+} from '../assertions/canonical-write-audit-store.ts';
 
 export {
   explainCanonicalWritePolicy,
@@ -72,6 +77,7 @@ export interface GovernedCanonicalWriteServiceOptions {
     error: string;
   }) => Promise<void>;
   recordMutationLedger: (event: Record<string, unknown>) => Promise<void>;
+  recordCanonicalAuditLedger?: (event: CanonicalWriteAuditInput) => Promise<void>;
 }
 
 export interface GovernedCanonicalWriteService {
@@ -150,6 +156,20 @@ export function createGovernedCanonicalWriteService(
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await options.recordMutationLedger(failedDbLedgerEvent(input, plan.policy, message));
+        await recordCanonicalAuditLedger(options, canonicalAuditInput({
+          input,
+          now: options.now(),
+          policy: plan.policy,
+          status: 'failed_db',
+          projection_status: 'not_attempted',
+          assertionIds: [],
+          assertionEvidenceIds: [],
+          extractedClaimIds: [input.claim.id],
+          before_db_hash: null,
+          after_db_hash: null,
+          error_code: 'failed_db',
+          error_message: message,
+        }));
         return {
           ...plan,
           status: 'failed_db',
@@ -194,7 +214,27 @@ export function createGovernedCanonicalWriteService(
           error_code: 'failed_markdown',
           error_message: message,
         });
-        await recordLedgerBestEffort(options, ledgerEvent(input, dbResult, 'failed', metadata, projectionMutation.projection_target.slug));
+        await recordLedgerBestEffort(options, ledgerEvent(input, dbResult, 'failed', metadata, projectionMutation.projection_target.slug), canonicalAuditInput({
+          input,
+          now: options.now(),
+          policy: plan.policy,
+          status: 'pending_reconcile',
+          projection_status: 'failed_markdown',
+          assertionIds,
+          assertionEvidenceIds,
+          extractedClaimIds,
+          before_db_hash: dbResult.before_db_hash,
+          after_db_hash: dbResult.after_db_hash,
+          target: {
+            projection_target: projectionMutation.projection_target,
+            mutation_kind: projectionMutation.mutation_kind,
+            projection_id: undefined,
+            before_markdown_hash: null,
+            after_markdown_hash: null,
+          },
+          error_code: 'failed_markdown',
+          error_message: message,
+        }));
         return {
           ...plan,
           status: 'pending_reconcile',
@@ -235,7 +275,27 @@ export function createGovernedCanonicalWriteService(
           error_code: 'failed_markdown',
           error_message: message,
         });
-        await recordLedgerBestEffort(options, ledgerEvent(input, dbResult, 'failed', metadata, projectionMutation.projection_target.slug));
+        await recordLedgerBestEffort(options, ledgerEvent(input, dbResult, 'failed', metadata, projectionMutation.projection_target.slug), canonicalAuditInput({
+          input,
+          now: options.now(),
+          policy: plan.policy,
+          status: 'pending_reconcile',
+          projection_status: 'failed_markdown',
+          assertionIds,
+          assertionEvidenceIds,
+          extractedClaimIds,
+          before_db_hash: dbResult.before_db_hash,
+          after_db_hash: dbResult.after_db_hash,
+          target: {
+            projection_target: projectionMutation.projection_target,
+            mutation_kind: projectionMutation.mutation_kind,
+            projection_id: beforeProjection.projection_id,
+            before_markdown_hash: beforeProjection.markdown_hash,
+            after_markdown_hash: null,
+          },
+          error_code: 'failed_markdown',
+          error_message: message,
+        }));
         return {
           ...plan,
           status: 'pending_reconcile',
@@ -260,8 +320,30 @@ export function createGovernedCanonicalWriteService(
         assertionEvidenceIds,
         extractedClaimIds,
       });
+      const appliedAuditEvent = canonicalAuditInput({
+        input,
+        now: options.now(),
+        policy: plan.policy,
+        status: 'applied',
+        projection_status: 'applied',
+        assertionIds,
+        assertionEvidenceIds,
+        extractedClaimIds,
+        before_db_hash: dbResult.before_db_hash,
+        after_db_hash: dbResult.after_db_hash,
+        target: {
+          projection_target: projectionMutation.projection_target,
+          mutation_kind: projectionMutation.mutation_kind,
+          projection_id: afterProjection.projection_id,
+          before_markdown_hash: beforeProjection.markdown_hash,
+          after_markdown_hash: afterProjection.markdown_hash,
+        },
+      });
+      let mutationLedgerRecorded = false;
       try {
         await options.recordMutationLedger(ledgerEvent(input, dbResult, 'applied', metadata, projectionMutation.projection_target.slug));
+        mutationLedgerRecorded = true;
+        await recordCanonicalAuditLedger(options, appliedAuditEvent);
         return {
           ...plan,
           status: 'applied',
@@ -272,6 +354,16 @@ export function createGovernedCanonicalWriteService(
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        if (!mutationLedgerRecorded) {
+          await recordCanonicalAuditLedgerBestEffort(options, {
+            ...appliedAuditEvent,
+            status: 'pending_reconcile',
+            error: {
+              code: 'failed_ledger',
+              message,
+            },
+          });
+        }
         await options.markPendingReconcile({
           assertion_ids: assertionIds,
           projection_ids: [afterProjection.projection_id],
@@ -372,12 +464,91 @@ function failedDbLedgerEvent(
 async function recordLedgerBestEffort(
   options: GovernedCanonicalWriteServiceOptions,
   event: Record<string, unknown>,
+  auditEvent?: CanonicalWriteAuditInput,
 ): Promise<void> {
   try {
     await options.recordMutationLedger(event);
   } catch {
     // Reconcile state has already been recorded for this failure path; keep the structured write result.
   }
+  await recordCanonicalAuditLedgerBestEffort(options, auditEvent);
+}
+
+async function recordCanonicalAuditLedger(
+  options: GovernedCanonicalWriteServiceOptions,
+  event: CanonicalWriteAuditInput | undefined,
+): Promise<void> {
+  if (!event || !options.recordCanonicalAuditLedger) return;
+  await options.recordCanonicalAuditLedger(event);
+}
+
+async function recordCanonicalAuditLedgerBestEffort(
+  options: GovernedCanonicalWriteServiceOptions,
+  event: CanonicalWriteAuditInput | undefined,
+): Promise<void> {
+  try {
+    await recordCanonicalAuditLedger(options, event);
+  } catch {
+    // The caller already has a structured write/reconcile result; keep that result stable.
+  }
+}
+
+function canonicalAuditInput(input: {
+  input: GovernedCanonicalWriteInput;
+  now: string;
+  policy: CanonicalWritePolicyResult;
+  status: CanonicalWriteAuditStatus;
+  projection_status: CanonicalProjectionAuditStatus;
+  assertionIds: string[];
+  assertionEvidenceIds: string[];
+  extractedClaimIds: string[];
+  before_db_hash: string | null;
+  after_db_hash: string | null;
+  target?: {
+    projection_target: ProjectionTarget;
+    mutation_kind: string;
+    projection_id: string | undefined;
+    before_markdown_hash: string | null;
+    after_markdown_hash: string | null;
+  };
+  error_code?: string;
+  error_message?: string;
+}): CanonicalWriteAuditInput {
+  return {
+    now: input.now,
+    policy_decision: input.policy.decision,
+    policy_explanation: input.policy.explanation,
+    status: input.status,
+    projection_status: input.projection_status,
+    assertion_ids: input.assertionIds,
+    assertion_evidence_ids: input.assertionEvidenceIds,
+    extracted_claim_ids: input.extractedClaimIds,
+    source_refs: input.input.source_refs,
+    before_db_hash: input.before_db_hash,
+    after_db_hash: input.after_db_hash,
+    actor: input.input.actor,
+    ...(input.target ? {
+      target_projection: {
+        id: input.target.projection_id,
+        kind: input.target.projection_target.kind,
+        slug: input.target.projection_target.slug,
+        mutation_kind: input.target.mutation_kind,
+        before_markdown_hash: input.target.before_markdown_hash,
+        after_markdown_hash: input.target.after_markdown_hash,
+      },
+    } : {}),
+    ...(input.error_code && input.error_message ? {
+      error: {
+        code: input.error_code,
+        message: input.error_message,
+      },
+    } : {}),
+    metadata_json: {
+      policy_explanation: input.policy.explanation,
+      realm: input.input.realm,
+      target_slug: input.input.claim.target_slug,
+    },
+  };
 }
 
 function projectionFailureMetadata(input: {

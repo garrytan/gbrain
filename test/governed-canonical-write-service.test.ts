@@ -106,6 +106,32 @@ describe('governed canonical write service immediate projections', () => {
         runner_id: 'runner:codex',
       },
     });
+    expect(harness.auditEvents).toHaveLength(1);
+    expect(harness.auditEvents[0]).toMatchObject({
+      status: 'applied',
+      policy_decision: 'auto_canonical',
+      policy_explanation: 'user_direct decision is source-backed and safe for immediate canonical projection',
+      actor: {
+        actor: 'codex',
+        session_id: 'session:phase-04-red',
+        job_id: 'job:projection-red',
+        runner_id: 'runner:codex',
+      },
+      assertion_ids: ['assertion:decision-runtime'],
+      assertion_evidence_ids: ['assertion-evidence:decision-runtime'],
+      extracted_claim_ids: ['extracted-claim:decision-runtime'],
+      source_refs: [SOURCE_REF],
+      before_db_hash: 'dbhash:before:projects/mbrain',
+      after_db_hash: 'dbhash:after:projects/mbrain',
+      target_projection: {
+        id: 'projection:project-decisions',
+        kind: 'project_decision_timeline',
+        slug: 'projects/mbrain/decisions',
+        mutation_kind: 'append_decision_timeline',
+        before_markdown_hash: 'mdhash:before:projects/mbrain/decisions',
+        after_markdown_hash: 'mdhash:after:projects/mbrain/decisions',
+      },
+    });
   });
 
   test('project system compiled-truth projection records lineage on every projection mutation', async () => {
@@ -560,6 +586,26 @@ describe('governed canonical write service immediate projections', () => {
     });
     expect(harness.dbMutations).toHaveLength(1);
     expect(harness.projectionMutations).toHaveLength(1);
+    expect(harness.auditEvents).toHaveLength(1);
+    expect(harness.auditEvents[0]).toMatchObject({
+      status: 'pending_reconcile',
+      projection_status: 'applied',
+      assertion_ids: ['assertion:decision-failed-ledger'],
+      assertion_evidence_ids: ['assertion-evidence:decision-failed-ledger'],
+      extracted_claim_ids: ['extracted-claim:decision-failed-ledger'],
+      error: {
+        code: 'failed_ledger',
+        message: 'simulated ledger failure',
+      },
+      target_projection: {
+        id: 'projection:project-decisions',
+        kind: 'project_decision_timeline',
+        slug: 'projects/mbrain/decisions',
+        mutation_kind: 'append_decision_timeline',
+        before_markdown_hash: 'mdhash:before:projects/mbrain/decisions',
+        after_markdown_hash: 'mdhash:after:projects/mbrain/decisions',
+      },
+    });
     expect(harness.reconcileMarks).toEqual([{
       assertion_ids: ['assertion:decision-failed-ledger'],
       projection_ids: ['projection:project-decisions'],
@@ -568,6 +614,73 @@ describe('governed canonical write service immediate projections', () => {
       status: 'pending_reconcile',
       reason: 'failed_ledger',
       error: 'simulated ledger failure',
+    }]);
+  });
+
+  test('failed canonical audit ledger after DB and Markdown mutation marks reconcile', async () => {
+    const harness = createHarness({
+      recordCanonicalAuditLedger: async () => {
+        throw new Error('simulated canonical audit ledger failure');
+      },
+    });
+
+    const result = await harness.service.applyCanonicalWrite({
+      claim: {
+        id: 'extracted-claim:decision-failed-audit-ledger',
+        source_kind: 'user_direct',
+        claim_type: 'decision',
+        target_type: 'project',
+        target_id: 'project:mbrain',
+        target_slug: 'projects/mbrain',
+        property: 'decision.timeline',
+        value_json: { decision: 'Audit ledger failures require reconcile after projection.' },
+        confidence: 1,
+        sensitivity: 'normal',
+        prompt_injection_flag: false,
+        secret_flag: false,
+      },
+      evidence: {
+        id: 'assertion-evidence:decision-failed-audit-ledger',
+        source_id: 'source:user-direct',
+        source_item_id: 'source-item:turn-6',
+        source_chunk_id: 'source-chunk:turn-6',
+      },
+      source_refs: [SOURCE_REF],
+      conflict_state: { kind: 'none' },
+      assertion_state: 'canonical',
+      user_override_policy: 'none',
+      session_write_grant: activeWriteGrant(['auto_canonical']),
+      realm: 'project:mbrain',
+      runner_trust: 'trusted_interactive',
+      actor: {
+        actor: 'codex',
+        session_id: 'session:phase-04-red-failed-audit-ledger',
+        job_id: 'job:projection-red-failed-audit-ledger',
+        runner_id: 'runner:codex',
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: 'pending_reconcile',
+      projection_status: 'applied',
+      assertion_ids: ['assertion:decision-failed-audit-ledger'],
+      assertion_evidence_ids: ['assertion-evidence:decision-failed-audit-ledger'],
+      extracted_claim_ids: ['extracted-claim:decision-failed-audit-ledger'],
+      error: {
+        code: 'failed_ledger',
+        message: 'simulated canonical audit ledger failure',
+      },
+    });
+    expect(harness.ledgerEvents).toHaveLength(1);
+    expect(harness.auditEvents).toHaveLength(0);
+    expect(harness.reconcileMarks).toEqual([{
+      assertion_ids: ['assertion:decision-failed-audit-ledger'],
+      projection_ids: ['projection:project-decisions'],
+      projection_kind: 'project_decision_timeline',
+      projection_slug: 'projects/mbrain/decisions',
+      status: 'pending_reconcile',
+      reason: 'failed_ledger',
+      error: 'simulated canonical audit ledger failure',
     }]);
   });
 
@@ -1006,6 +1119,7 @@ function createHarness(overrides: Partial<GovernedCanonicalWriteServiceOptions> 
   const dbMutations: Array<Record<string, unknown>> = [];
   const projectionMutations: ProjectionMutationInput[] = [];
   const ledgerEvents: Array<Record<string, unknown>> = [];
+  const auditEvents: Array<Record<string, unknown>> = [];
   const reconcileMarks: Array<Record<string, unknown>> = [];
 
   const service = createGovernedCanonicalWriteService({
@@ -1051,6 +1165,9 @@ function createHarness(overrides: Partial<GovernedCanonicalWriteServiceOptions> 
     recordMutationLedger: async (event) => {
       ledgerEvents.push(event as Record<string, unknown>);
     },
+    recordCanonicalAuditLedger: async (event) => {
+      auditEvents.push(event as unknown as Record<string, unknown>);
+    },
     ...overrides,
   });
 
@@ -1059,6 +1176,7 @@ function createHarness(overrides: Partial<GovernedCanonicalWriteServiceOptions> 
     dbMutations,
     projectionMutations,
     ledgerEvents,
+    auditEvents,
     reconcileMarks,
   };
 }
