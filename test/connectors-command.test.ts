@@ -213,6 +213,193 @@ describe('connectors sync command', () => {
     }
   });
 
+  test('directory sync archives missing transcript items without purging retained raw ingest', async () => {
+    const harness = await createSqliteHarness('deleted-item');
+    const transcriptDir = makeTempDir('mbrain-meeting-transcripts-deleted-item-');
+    const betaPath = join(transcriptDir, 'beta.md');
+    try {
+      writeFileSync(join(transcriptDir, 'alpha.md'), 'Alpha transcript body');
+      writeFileSync(betaPath, 'Beta transcript body');
+
+      const first = await captureJsonLog(() => runConnectors(harness.engine, [
+        'sync',
+        'meeting_transcripts',
+        '--path',
+        transcriptDir,
+      ]));
+      expect(first).toMatchObject({
+        planned: 2,
+        persisted: 2,
+        skipped_unchanged: 0,
+        deleted_archived: 0,
+      });
+
+      const listed = await operationsByName.list_sources.handler(harness.ctx(), {
+        connector_id: 'meeting_transcripts',
+      }) as any;
+      const sourceId = listed.sources[0].source.id;
+      const itemsBeforeDelete = await operationsByName.list_source_items.handler(harness.ctx(), {
+        source_id: sourceId,
+        include_chunks: true,
+      }) as any;
+      const betaItem = itemsBeforeDelete.items.find((item: any) => item.external_id === 'beta.md');
+      expect(betaItem).toBeTruthy();
+
+      rmSync(betaPath);
+      const dryRun = await captureJsonLog(() => runConnectors(harness.engine, [
+        'sync',
+        'meeting_transcripts',
+        '--path',
+        transcriptDir,
+        '--dry-run',
+      ]));
+      expect(dryRun).toMatchObject({
+        planned: 1,
+        persisted: 0,
+        skipped_unchanged: 0,
+        deleted_archived: 1,
+      });
+
+      const db = (harness.engine as any).database;
+      expect(db.query('SELECT COUNT(*) AS count FROM source_item_events WHERE source_item_id = ? AND event_type = ?').get(
+        betaItem.id,
+        'source_deleted_archived',
+      ).count).toBe(0);
+
+      const second = await captureJsonLog(() => runConnectors(harness.engine, [
+        'sync',
+        'meeting_transcripts',
+        '--path',
+        transcriptDir,
+      ]));
+      expect(second).toMatchObject({
+        planned: 1,
+        persisted: 0,
+        skipped_unchanged: 1,
+        deleted_archived: 1,
+      });
+
+      expect(db.query('SELECT COUNT(*) AS count FROM source_items WHERE external_id = ?').get('beta.md').count).toBe(1);
+      expect(db.query('SELECT COUNT(*) AS count FROM source_chunks WHERE source_item_id = ?').get(betaItem.id).count).toBe(1);
+      expect(db.query('SELECT COUNT(*) AS count FROM source_item_events WHERE source_item_id = ? AND event_type = ?').get(
+        betaItem.id,
+        'source_deleted_archived',
+      ).count).toBe(1);
+      expect(db.query('SELECT COUNT(*) AS count FROM pages').get().count).toBe(0);
+
+      const third = await captureJsonLog(() => runConnectors(harness.engine, [
+        'sync',
+        'meeting_transcripts',
+        '--path',
+        transcriptDir,
+      ]));
+      expect(third).toMatchObject({
+        planned: 1,
+        persisted: 0,
+        skipped_unchanged: 1,
+        deleted_archived: 0,
+      });
+      expect(db.query('SELECT COUNT(*) AS count FROM source_item_events WHERE source_item_id = ? AND event_type = ?').get(
+        betaItem.id,
+        'source_deleted_archived',
+      ).count).toBe(1);
+
+      writeFileSync(betaPath, '');
+      const skippedReappearance = await captureJsonLog(() => runConnectors(harness.engine, [
+        'sync',
+        'meeting_transcripts',
+        '--path',
+        transcriptDir,
+      ]));
+      expect(skippedReappearance).toMatchObject({
+        planned: 1,
+        persisted: 0,
+        skipped_unchanged: 1,
+        deleted_archived: 0,
+        skipped_files: [{
+          relative_path: 'beta.md',
+          reason: 'empty_file',
+        }],
+      });
+      expect(db.query('SELECT COUNT(*) AS count FROM source_item_events WHERE source_item_id = ? AND event_type = ?').get(
+        betaItem.id,
+        'source_deleted_archived',
+      ).count).toBe(1);
+
+      writeFileSync(betaPath, 'Beta transcript body');
+      const fourth = await captureJsonLog(() => runConnectors(harness.engine, [
+        'sync',
+        'meeting_transcripts',
+        '--path',
+        transcriptDir,
+      ]));
+      expect(fourth).toMatchObject({
+        planned: 2,
+        persisted: 1,
+        skipped_unchanged: 1,
+        deleted_archived: 0,
+      });
+      expect(db.query('SELECT COUNT(*) AS count FROM source_item_events WHERE source_item_id = ? AND event_type = ?').get(
+        betaItem.id,
+        'source_deleted_archived',
+      ).count).toBe(0);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('directory sync does not archive retained items when matching files are skipped', async () => {
+    const harness = await createSqliteHarness('skipped-existing-item');
+    const transcriptDir = makeTempDir('mbrain-meeting-transcripts-skipped-existing-');
+    const transcriptPath = join(transcriptDir, 'review.md');
+    try {
+      writeFileSync(transcriptPath, 'Review transcript body');
+      await captureJsonLog(() => runConnectors(harness.engine, [
+        'sync',
+        'meeting_transcripts',
+        '--path',
+        transcriptDir,
+      ]));
+
+      const listed = await operationsByName.list_sources.handler(harness.ctx(), {
+        connector_id: 'meeting_transcripts',
+      }) as any;
+      const sourceId = listed.sources[0].source.id;
+      const items = await operationsByName.list_source_items.handler(harness.ctx(), {
+        source_id: sourceId,
+        include_chunks: false,
+      }) as any;
+      const retainedItem = items.items[0];
+
+      writeFileSync(transcriptPath, '');
+      const output = await captureJsonLog(() => runConnectors(harness.engine, [
+        'sync',
+        'meeting_transcripts',
+        '--path',
+        transcriptDir,
+      ]));
+      expect(output).toMatchObject({
+        planned: 0,
+        persisted: 0,
+        skipped_unchanged: 0,
+        deleted_archived: 0,
+        skipped_files: [{
+          relative_path: 'review.md',
+          reason: 'empty_file',
+        }],
+      });
+
+      const db = (harness.engine as any).database;
+      expect(db.query('SELECT COUNT(*) AS count FROM source_item_events WHERE source_item_id = ? AND event_type = ?').get(
+        retainedItem.id,
+        'source_deleted_archived',
+      ).count).toBe(0);
+      expect(db.query('SELECT COUNT(*) AS count FROM source_chunks WHERE source_item_id = ?').get(retainedItem.id).count).toBe(1);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   test('revoked matching meeting transcript source blocks sync for the same path', async () => {
     const harness = await createSqliteHarness('revoked');
     const transcriptDir = makeTempDir('mbrain-meeting-transcripts-revoked-');

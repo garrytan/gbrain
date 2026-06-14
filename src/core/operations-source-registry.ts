@@ -1320,7 +1320,10 @@ async function ingestConnectorItem(
   };
 
   const existing = await readSourceItemByExternalId(ctx.engine, source.id, input.external_id);
-  if (existing?.content_hash === plan.item.content_hash) {
+  const existingArchived = existing
+    ? await sourceItemHasEvent(ctx.engine, existing.id, 'source_deleted_archived')
+    : false;
+  if (existing?.content_hash === plan.item.content_hash && !existingArchived) {
     return {
       status: 'skipped',
       reason: 'unchanged_content_hash',
@@ -1473,9 +1476,25 @@ async function recordConnectorItemDeletion(
   input: ConnectorDeletionOperationInput,
 ): Promise<Record<string, unknown>> {
   const source = await requireConnectorSource(deps, ctx.engine, input.source_id, input.connector_id);
+  const policy = (await inspectSourcePolicy(ctx.engine, source)).resolved;
+  if (!policy.processing.can_ingest) {
+    throw invalidParams(deps, 'source policy prevents connector deletion/archive');
+  }
   const item = await readSourceItemByExternalId(ctx.engine, source.id, input.external_id);
   if (!item) {
     throw invalidParams(deps, `source item not found for external_id: ${input.external_id}`);
+  }
+  if (await sourceItemHasEvent(ctx.engine, item.id, 'source_deleted_archived')) {
+    return {
+      status: 'skipped',
+      reason: 'already_archived',
+      action: 'archive_for_retention',
+      purge_immediately: false,
+      source_item_id: item.id,
+      source_id: source.id,
+      external_id: item.external_id,
+      deleted_at: input.deleted_at,
+    };
   }
   const event: SourceItemEventRecord = {
     id: stableId('source-item-event', item.id, 'source_deleted_archived', input.deleted_at),
@@ -1511,6 +1530,31 @@ async function recordConnectorItemDeletion(
     deleted_at: input.deleted_at,
     event,
   };
+}
+
+async function sourceItemHasEvent(
+  engine: BrainEngine,
+  sourceItemId: string,
+  eventType: string,
+): Promise<boolean> {
+  const candidate = engine as QueryableEngine;
+  const sql = `
+    SELECT 1 AS found
+    FROM source_item_events
+    WHERE source_item_id = ? AND event_type = ?
+    LIMIT 1
+  `;
+  if (candidate.database) {
+    return Boolean(candidate.database.query(sql).get(sourceItemId, eventType));
+  }
+  const pgSql = sql.replace('?', '$1').replace('?', '$2');
+  const rows = candidate.sql?.unsafe
+    ? await candidate.sql.unsafe(pgSql, [sourceItemId, eventType])
+    : candidate.db
+      ? (await candidate.db.query(pgSql, [sourceItemId, eventType])).rows
+      : null;
+  if (!rows) throw new Error('source item event lookup requires a SQL-backed engine');
+  return rows.length > 0;
 }
 
 async function requireConnectorSource(

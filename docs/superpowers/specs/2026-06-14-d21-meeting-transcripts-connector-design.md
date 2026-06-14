@@ -72,6 +72,11 @@ In scope:
 - A non-dry run registers or reuses the matching connector source, persists
   changed source items and chunks through raw ingest operations, records sync
   success, and reports skipped unchanged items.
+- When a previously ingested transcript disappears from a directory sync, rerun
+  records a `source_deleted_archived` retention event through the source registry
+  deletion operation without purging retained raw chunks.
+- Files that are still present but skipped, such as empty or oversized files, are
+  not treated as deleted.
 - Existing source revocation, pause, and consent rules remain authoritative.
 
 Out of scope:
@@ -79,7 +84,6 @@ Out of scope:
 - Audio, video, OCR, PDF, or image parsing.
 - Calendar, Zoom, Google Meet, Microsoft Teams, Slack, or remote OAuth sync.
 - Background watchers or daemonized filesystem monitoring.
-- Deleting or archiving source items when files disappear from disk.
 - LLM extraction, meeting summarization, assertion creation, candidate
   promotion, or canonical page writes.
 - Exposing raw transcript text in command output.
@@ -128,8 +132,10 @@ Each accepted file maps to one connector source item:
 
 `external_id` is path-stable across content edits. Content changes are detected
 by the raw ingest content hash. File renames produce a new `external_id`; missing
-old paths are retained under normal source retention policy until a separate
-deletion slice implements archive signals.
+old paths record a `source_deleted_archived` event while retained raw ingest data
+remains available under source retention policy. A skipped-but-present file does
+not create a new archive signal, but it also does not restore a previously
+archived item until a successful reingest replaces that source item.
 
 ## Command Output
 
@@ -146,6 +152,7 @@ shape:
   "planned": 2,
   "persisted": 2,
   "skipped_unchanged": 0,
+  "deleted_archived": 0,
   "skipped_files": [
     {
       "relative_path": "archive/call.pdf",

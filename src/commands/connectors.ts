@@ -13,6 +13,7 @@ import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
 import { operationsByName, type OperationContext } from '../core/operations.ts';
 
 const MEETING_TRANSCRIPTS_CONNECTOR_ID = 'meeting_transcripts';
+let lastConnectorSyncTimestampMs = 0;
 
 export async function runConnectors(
   engineOrArgs: BrainEngine | string[],
@@ -79,8 +80,19 @@ interface MeetingTranscriptSyncResult {
   planned: number;
   persisted: number;
   skipped_unchanged: number;
+  deleted_archived: number;
   skipped_files: MeetingTranscriptFilesystemLoad['skipped_files'];
 }
+
+type QueryableEngine = BrainEngine & {
+  database?: {
+    query<T = Record<string, unknown>>(sql: string): {
+      all(...params: unknown[]): T[];
+    };
+  };
+  db?: { query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> };
+  sql?: { unsafe(sql: string, params?: unknown[]): Promise<Record<string, unknown>[]> };
+};
 
 async function syncMeetingTranscripts(
   engine: BrainEngine,
@@ -100,6 +112,7 @@ async function syncMeetingTranscripts(
     throw new Error('Usage: mbrain connectors sync meeting_transcripts --path <file-or-directory>');
   }
   const dryRun = hasFlag(args, '--dry-run');
+  const syncStartedAt = nextConnectorSyncTimestamp();
   const target = resolveMeetingTranscriptFilesystemTarget(path);
   const blockingSource = await findBlockingMeetingTranscriptSource(engine, target.source_locator);
   if (blockingSource) {
@@ -120,6 +133,7 @@ async function syncMeetingTranscripts(
 
   let persisted = 0;
   let skippedUnchanged = 0;
+  let deletedArchived = 0;
 
   if (!dryRun && !sourceId) {
     const registered = await operationsByName.register_connector_source.handler(ctx(engine), {
@@ -132,8 +146,13 @@ async function syncMeetingTranscripts(
         source_scope: loaded.source_scope,
         path_display: loaded.path_display,
       },
+      now: syncStartedAt,
     }) as any;
     sourceId = registered.source.id;
+  }
+
+  if (dryRun && sourceId) {
+    deletedArchived = await archiveMissingMeetingTranscriptItems(engine, sourceId, loaded, true, syncStartedAt);
   }
 
   if (!dryRun && sourceId) {
@@ -150,6 +169,7 @@ async function syncMeetingTranscripts(
           source_updated_at: item.updated_at ?? null,
           metadata_json: item.metadata_json,
           parser_version: 'meeting-transcripts-filesystem:v1',
+          now: syncStartedAt,
         }) as any;
         if (ingested.status === 'skipped') {
           skippedUnchanged++;
@@ -157,6 +177,8 @@ async function syncMeetingTranscripts(
           persisted++;
         }
       }
+      const syncFinishedAt = nextConnectorSyncTimestamp();
+      deletedArchived = await archiveMissingMeetingTranscriptItems(engine, sourceId, loaded, false, syncFinishedAt);
       await operationsByName.record_connector_sync_success.handler(ctx(engine), {
         source_id: sourceId,
         connector_id: MEETING_TRANSCRIPTS_CONNECTOR_ID,
@@ -164,11 +186,14 @@ async function syncMeetingTranscripts(
           source_scope: loaded.source_scope,
           source_locator: loaded.source_locator,
         },
+        sync_started_at: syncStartedAt,
         ingested_count: persisted,
         skipped_count: skippedUnchanged,
+        now: syncFinishedAt,
         metadata_json: {
           planned_count: loaded.items.length,
           skipped_files_count: loaded.skipped_files.length,
+          deleted_archived_count: deletedArchived,
           source_scope: loaded.source_scope,
           path_display: loaded.path_display,
         },
@@ -188,8 +213,65 @@ async function syncMeetingTranscripts(
     planned: loaded.items.length,
     persisted,
     skipped_unchanged: skippedUnchanged,
+    deleted_archived: deletedArchived,
     skipped_files: loaded.skipped_files,
   };
+}
+
+async function archiveMissingMeetingTranscriptItems(
+  engine: BrainEngine,
+  sourceId: string,
+  loaded: MeetingTranscriptFilesystemLoad,
+  dryRun: boolean,
+  syncTimestamp: string,
+): Promise<number> {
+  const presentExternalIds = new Set([
+    ...loaded.items.map((item) => item.external_id),
+    ...loaded.skipped_files.map((file) => file.relative_path),
+  ]);
+  const persistedExternalIds = await listPersistedSourceItemExternalIds(engine, sourceId);
+  let archived = 0;
+  for (const externalId of persistedExternalIds) {
+    if (presentExternalIds.has(externalId)) continue;
+    const deletion = await operationsByName.record_connector_item_deletion.handler(ctx(engine, dryRun), {
+      source_id: sourceId,
+      connector_id: MEETING_TRANSCRIPTS_CONNECTOR_ID,
+      external_id: externalId,
+      deleted_at: syncTimestamp,
+      now: syncTimestamp,
+    }) as any;
+    if (deletion.status === 'recorded' || deletion.status === 'dry_run') archived++;
+  }
+  return archived;
+}
+
+function nextConnectorSyncTimestamp(): string {
+  const now = Date.now();
+  const next = Math.max(now, lastConnectorSyncTimestampMs + 1);
+  lastConnectorSyncTimestampMs = next;
+  return new Date(next).toISOString();
+}
+
+async function listPersistedSourceItemExternalIds(
+  engine: BrainEngine,
+  sourceId: string,
+): Promise<string[]> {
+  const candidate = engine as QueryableEngine;
+  const sql = `
+    SELECT external_id
+    FROM source_items
+    WHERE source_id = ?
+    ORDER BY external_id ASC
+  `;
+  const rows = candidate.database
+    ? candidate.database.query<Record<string, unknown>>(sql).all(sourceId)
+    : candidate.sql?.unsafe
+      ? await candidate.sql.unsafe(sql.replace('?', '$1'), [sourceId])
+      : candidate.db
+        ? (await candidate.db.query(sql.replace('?', '$1'), [sourceId])).rows
+        : null;
+  if (!rows) throw new Error('connectors sync requires a SQL-backed source registry');
+  return rows.map((row) => String(row.external_id));
 }
 
 async function findBlockingMeetingTranscriptSource(
