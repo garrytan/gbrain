@@ -2,8 +2,31 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, symlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { detectMimeType } from '../src/core/file-mime.ts';
 import { LocalStorage } from '../src/core/storage/local.ts';
 import { createStorage } from '../src/core/storage.ts';
+import { S3Storage } from '../src/core/storage/s3.ts';
+import { SupabaseStorage } from '../src/core/storage/supabase.ts';
+
+describe('detectMimeType', () => {
+  test('prefers sniffed binary signatures over file extensions', () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(detectMimeType('photo.jpg', png)).toBe('image/png');
+  });
+
+  test('stores active SVG/HTML content as octet-stream instead of trusted renderable content', () => {
+    expect(detectMimeType('icon.svg', Buffer.from('<svg><script>alert(1)</script></svg>')))
+      .toBe('application/octet-stream');
+    expect(detectMimeType('index.html', Buffer.from('<!doctype html><script>alert(1)</script>')))
+      .toBe('application/octet-stream');
+    expect(detectMimeType('icon.svg')).toBe('application/octet-stream');
+  });
+
+  test('detects common safe binary formats from content', () => {
+    expect(detectMimeType('download.bin', Buffer.from('%PDF-1.7'))).toBe('application/pdf');
+    expect(detectMimeType('download.bin', Buffer.from([0xff, 0xd8, 0xff, 0x00]))).toBe('image/jpeg');
+  });
+});
 
 describe('LocalStorage', () => {
   let storage: LocalStorage;
@@ -78,6 +101,63 @@ describe('LocalStorage', () => {
     const url = await storage.getUrl('missing/nested/file.txt');
     expect(url).toContain('/missing/nested/file.txt');
     expect(url.startsWith('file://')).toBe(true);
+  });
+});
+
+describe('signed storage URLs', () => {
+  test('S3Storage getUrl returns a scoped presigned URL with the requested TTL', async () => {
+    const storage = new S3Storage({
+      backend: 's3',
+      bucket: 'brain-files',
+      region: 'us-east-1',
+      accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
+      secretAccessKey: 'test-secret',
+    });
+
+    const url = await storage.getUrl('pages/report.pdf', { expiresInSeconds: 60 });
+
+    expect(url).toContain('X-Amz-Signature=');
+    expect(url).toContain('X-Amz-Expires=60');
+    expect(url).toContain('/pages/report.pdf');
+  });
+
+  test('SupabaseStorage getUrl requests a signed URL instead of returning a public object URL', async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({
+        signedURL: '/object/sign/brain-files/pages/report.pdf?token=signed-token',
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    try {
+      const storage = new SupabaseStorage({
+        backend: 'supabase',
+        bucket: 'brain-files',
+        projectUrl: 'https://example.supabase.co',
+        serviceRoleKey: 'service-role',
+      });
+
+      const url = await storage.getUrl('pages/report.pdf', { expiresInSeconds: 120 });
+
+      expect(url).toBe('https://example.supabase.co/storage/v1/object/sign/brain-files/pages/report.pdf?token=signed-token');
+      expect(calls[0].url).toBe('https://example.supabase.co/storage/v1/object/sign/brain-files/pages/report.pdf');
+      expect(calls[0].init?.method).toBe('POST');
+      expect(JSON.parse(String(calls[0].init?.body))).toEqual({ expiresIn: 120 });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('file_url operation delegates to configured storage backends for signed URLs', () => {
+    const operationsSource = readFileSync(new URL('../src/core/operations.ts', import.meta.url), 'utf-8');
+
+    expect(operationsSource).toContain('expires_in_seconds');
+    expect(operationsSource).toContain('storage.getUrl(String(rows[0].storage_path), { expiresInSeconds })');
+    expect(operationsSource).toContain('mbrain:files/${rows[0].storage_path}');
   });
 });
 

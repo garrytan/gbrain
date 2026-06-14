@@ -1,10 +1,11 @@
 import { readFileSync, readdirSync, statSync, lstatSync, existsSync, writeFileSync, unlinkSync } from 'fs';
-import { join, relative, extname, basename } from 'path';
+import { join, relative, basename } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import * as db from '../core/db.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildExecutionEnvelope } from '../core/execution-envelope.ts';
+import { detectMimeType } from '../core/file-mime.ts';
 
 interface FileRecord {
   id: number;
@@ -16,21 +17,6 @@ interface FileRecord {
   content_hash: string;
   metadata: Record<string, unknown>;
   created_at: string;
-}
-
-const MIME_TYPES: Record<string, string> = {
-  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-  '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
-  '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.m4a': 'audio/mp4',
-  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.heic': 'image/heic',
-  '.tiff': 'image/tiff', '.tif': 'image/tiff', '.dng': 'image/x-adobe-dng',
-  '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-};
-
-function getMimeType(filePath: string): string | null {
-  const ext = extname(filePath).toLowerCase();
-  return MIME_TYPES[ext] || null;
 }
 
 function fileHash(filePath: string): string {
@@ -134,7 +120,7 @@ async function uploadFile(args: string[]) {
   const hash = fileHash(filePath);
   const filename = basename(filePath);
   const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
-  const mimeType = getMimeType(filePath);
+  const mimeType = detectMimeType(filePath, readFileSync(filePath));
 
   const sql = db.getConnection();
 
@@ -189,7 +175,7 @@ async function syncFiles(dir?: string) {
     const hash = fileHash(filePath);
     const filename = basename(filePath);
     const storagePath = relativePath.replace(/\\/g, '/');
-    const mimeType = getMimeType(filePath);
+    const mimeType = detectMimeType(filePath, readFileSync(filePath));
     const stat = statSync(filePath);
 
     const sql = db.getConnection();
@@ -280,7 +266,7 @@ async function mirrorFiles(args: string[]) {
   for (const filePath of files) {
     const relPath = relative(dir, filePath);
     const data = readFileSync(filePath);
-    const mime = getMimeType(filePath);
+    const mime = detectMimeType(filePath, data);
     await storage.upload(relPath, data, mime || undefined);
     uploaded++;
   }
