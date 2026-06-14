@@ -162,6 +162,119 @@ describe('assertion audit explain operations', () => {
     }
   });
 
+  test('SQLite explain_assertion reports unrecorded audit ledgers instead of silent empty rows', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-assertion-lineage-unrecorded-sqlite-'));
+    tempPaths.push(dir);
+    const engine = new SQLiteEngine();
+    try {
+      await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+      await engine.initSchema();
+      seedLineageFixture(engine);
+      const database = (engine as any).database;
+      database.run('DELETE FROM canonical_projection_mutations');
+      database.run('DELETE FROM canonical_write_attempts');
+      database.run('DELETE FROM canonical_projection_targets');
+      const ctx = operationContext(engine, {
+        engine: 'sqlite',
+        database_path: join(dir, 'brain.db'),
+        offline: true,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      });
+
+      const result = await operationsByName.explain_assertion.handler(ctx, {
+        assertion_id: 'assertion:runtime',
+      }) as any;
+
+      expect(result.canonical_write_attempts).toEqual([]);
+      expect(result.projection_targets).toEqual([]);
+      expect(result.projection_mutations).toEqual([]);
+      expect(result.recording_status).toMatchObject({
+        canonical_write_attempts: { status: 'not_recorded' },
+        canonical_projection_targets: { status: 'not_recorded' },
+        canonical_projection_mutations: { status: 'not_recorded' },
+        assertion_events: { status: 'not_recorded' },
+        conflict_sets: { status: 'not_applicable' },
+      });
+      expect(result.missing_links).toContain('projection_target_missing');
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('SQLite explain_assertion reports recorded assertion event and conflict ledgers when rows exist', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-assertion-lineage-recorded-sqlite-'));
+    tempPaths.push(dir);
+    const engine = new SQLiteEngine();
+    try {
+      await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+      await engine.initSchema();
+      seedLineageFixture(engine);
+      const database = (engine as any).database;
+      database.run(`
+        INSERT INTO assertion_events (
+          id, assertion_id, event_type, from_authority_state, to_authority_state,
+          from_lifecycle_state, to_lifecycle_state, reason, source_refs_json,
+          actor, job_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        'assertion-event:runtime',
+        'assertion:runtime',
+        'created',
+        null,
+        'canonical',
+        null,
+        'active',
+        'recorded event',
+        JSON.stringify([]),
+        'test',
+        null,
+        NOW,
+      ]);
+      database.run(`
+        INSERT INTO conflict_sets (
+          id, target_type, target_id, property, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [
+        'conflict-set:runtime',
+        'system',
+        'systems/mbrain',
+        'runtime',
+        'open',
+        NOW,
+        NOW,
+      ]);
+      database.run(`
+        INSERT INTO conflict_set_assertions (
+          conflict_set_id, assertion_id, role, created_at
+        ) VALUES (?, ?, ?, ?)
+      `, [
+        'conflict-set:runtime',
+        'assertion:runtime',
+        'member',
+        NOW,
+      ]);
+      const ctx = operationContext(engine, {
+        engine: 'sqlite',
+        database_path: join(dir, 'brain.db'),
+        offline: true,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      });
+
+      const result = await operationsByName.explain_assertion.handler(ctx, {
+        assertion_id: 'assertion:runtime',
+      }) as any;
+
+      expect(result.recording_status).toMatchObject({
+        assertion_events: { status: 'recorded' },
+        conflict_sets: { status: 'recorded' },
+      });
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
   test('SQLite explain_projection traces projection back to assertion evidence and source', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-projection-lineage-sqlite-'));
     tempPaths.push(dir);

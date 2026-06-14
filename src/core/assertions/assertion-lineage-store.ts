@@ -44,6 +44,7 @@ interface LineageBuildInput {
 
 const REDACTED_SECRET = '[REDACTED_SECRET]';
 const REDACTED_JSON = { redacted: true };
+type LineageRecordingStatusValue = 'recorded' | 'not_recorded' | 'not_applicable';
 
 export async function explainAssertionForEngine(
   engine: BrainEngine,
@@ -190,6 +191,21 @@ async function buildLineageExplanation(
       }))
       .map((attempt) => attempt.id)),
   }) ? redactProjectionMutationRow(mutation) : mutation);
+  const [assertionEventCount, conflictSetCount] = await Promise.all([
+    countAssertionEventsLinked(engine, assertionIds),
+    countConflictSetsLinked(engine, assertionIds),
+  ]);
+  const recordingStatus = buildLineageRecordingStatus({
+    query: input.query,
+    assertions: assertionRows,
+    evidence: evidenceRows,
+    claims: extractedClaimRows,
+    writeAttempts,
+    projectionTargets,
+    projectionMutations: safeProjectionMutations,
+    assertionEventCount,
+    conflictSetCount,
+  });
 
   return {
     query: input.query,
@@ -200,6 +216,7 @@ async function buildLineageExplanation(
     canonical_write_attempts: writeAttempts,
     projection_targets: projectionTargets,
     projection_mutations: safeProjectionMutations,
+    recording_status: recordingStatus,
     missing_links: findMissingLinks({
       assertions: assertionRows,
       evidence: evidenceRows,
@@ -210,6 +227,60 @@ async function buildLineageExplanation(
       projectionTargets,
     }),
   };
+}
+
+function buildLineageRecordingStatus(input: {
+  query: Record<string, string>;
+  assertions: Array<{ conflict_set_id: string | null }>;
+  evidence: unknown[];
+  claims: unknown[];
+  writeAttempts: unknown[];
+  projectionTargets: unknown[];
+  projectionMutations: unknown[];
+  assertionEventCount: number;
+  conflictSetCount: number;
+}): Record<string, { status: LineageRecordingStatusValue; reason?: string }> {
+  const hasAssertionSubject = input.assertions.length > 0;
+  const hasProjectionQuery = Boolean(input.query.projection_target_id || input.query.target_type || input.query.target_id);
+  const hasLineageSubject = hasAssertionSubject || input.evidence.length > 0 || input.claims.length > 0 || input.projectionTargets.length > 0;
+  const hasConflictSubject = input.assertions.some((assertion) => assertion.conflict_set_id);
+  return {
+    canonical_write_attempts: ledgerStatus(
+      input.writeAttempts.length,
+      hasLineageSubject,
+      'No canonical write attempts are recorded for the matched assertion/projection lineage.',
+    ),
+    canonical_projection_targets: ledgerStatus(
+      input.projectionTargets.length,
+      hasAssertionSubject || hasProjectionQuery,
+      'No canonical projection targets are recorded for the matched assertion/projection query.',
+    ),
+    canonical_projection_mutations: ledgerStatus(
+      input.projectionMutations.length,
+      hasLineageSubject,
+      'No canonical projection mutations are recorded for the matched assertion/projection lineage.',
+    ),
+    assertion_events: ledgerStatus(
+      input.assertionEventCount,
+      hasAssertionSubject,
+      'Assertion events are not recorded for the matched assertions.',
+    ),
+    conflict_sets: ledgerStatus(
+      input.conflictSetCount,
+      hasConflictSubject,
+      'Conflict-set ledger rows are not recorded for the matched assertions.',
+    ),
+  };
+}
+
+function ledgerStatus(
+  rowCount: number,
+  relevant: boolean,
+  reason: string,
+): { status: LineageRecordingStatusValue; reason?: string } {
+  if (rowCount > 0) return { status: 'recorded' };
+  if (!relevant) return { status: 'not_applicable' };
+  return { status: 'not_recorded', reason };
 }
 
 async function selectAssertionsByTargetSlug(
@@ -459,6 +530,56 @@ async function selectProjectionMutationsLinked(
   });
   return rows
     .map(normalizeProjectionMutationRow);
+}
+
+async function countAssertionEventsLinked(
+  engine: BrainEngine,
+  assertionIds: string[],
+): Promise<number> {
+  const uniqueIds = uniqueStrings(assertionIds);
+  if (uniqueIds.length === 0) return 0;
+  const sqlitePlaceholders = uniqueIds.map(() => '?').join(', ');
+  const pgPlaceholders = uniqueIds.map((_, index) => `$${index + 1}`).join(', ');
+  const rows = await queryRows(engine, {
+    sqlite: `
+      SELECT COUNT(*) AS count
+      FROM assertion_events
+      WHERE assertion_id IN (${sqlitePlaceholders})
+    `,
+    pg: `
+      SELECT COUNT(*) AS count
+      FROM assertion_events
+      WHERE assertion_id IN (${pgPlaceholders})
+    `,
+    params: uniqueIds,
+  });
+  return numberValue(rows[0]?.count);
+}
+
+async function countConflictSetsLinked(
+  engine: BrainEngine,
+  assertionIds: string[],
+): Promise<number> {
+  const uniqueIds = uniqueStrings(assertionIds);
+  if (uniqueIds.length === 0) return 0;
+  const sqlitePlaceholders = uniqueIds.map(() => '?').join(', ');
+  const pgPlaceholders = uniqueIds.map((_, index) => `$${index + 1}`).join(', ');
+  const rows = await queryRows(engine, {
+    sqlite: `
+      SELECT COUNT(DISTINCT cs.id) AS count
+      FROM conflict_sets cs
+      JOIN conflict_set_assertions csa ON csa.conflict_set_id = cs.id
+      WHERE csa.assertion_id IN (${sqlitePlaceholders})
+    `,
+    pg: `
+      SELECT COUNT(DISTINCT cs.id) AS count
+      FROM conflict_sets cs
+      JOIN conflict_set_assertions csa ON csa.conflict_set_id = cs.id
+      WHERE csa.assertion_id IN (${pgPlaceholders})
+    `,
+    params: uniqueIds,
+  });
+  return numberValue(rows[0]?.count);
 }
 
 type LinkedWherePart =
