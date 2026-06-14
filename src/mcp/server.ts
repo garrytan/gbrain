@@ -325,7 +325,7 @@ export function formatMcpToolResult(
   const guardedJson = JSON.stringify(guarded);
   if (byteLength(guardedJson) <= maxResultTextBytes) return guardedJson;
 
-  return buildFallbackMcpResultText(toolName, rawJson, rawBytes, maxResultTextBytes);
+  return buildFallbackMcpResultText(toolName, rawJson, rawBytes, maxResultTextBytes, result);
 }
 
 function normalizeMcpMaxResultTextBytes(value?: number): number {
@@ -358,14 +358,14 @@ function buildGuardedMcpResult(
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const truncated = truncateJsonStrings(parsed, perStringBytes);
-    const withMetadata = attachMcpTruncationMetadata(toolName, truncated, rawBytes, false);
+    const withMetadata = attachMcpTruncationMetadata(toolName, truncated, rawBytes, false, parsed);
     if (byteLength(JSON.stringify(withMetadata)) <= maxResultTextBytes) {
       return withMetadata;
     }
     perStringBytes = Math.max(64, Math.floor(perStringBytes / 2));
   }
 
-  return attachMcpTruncationMetadata(toolName, parsed, rawBytes, true);
+  return attachMcpTruncationMetadata(toolName, parsed, rawBytes, true, parsed);
 }
 
 function buildGuardedGetPageResult(
@@ -523,14 +523,12 @@ function attachMcpTruncationMetadata(
   value: unknown,
   originalResponseBytes: number,
   fallback_required: boolean,
+  sourceResult?: unknown,
 ): unknown {
-  const metadata = {
-    truncated: true,
-    tool: toolName,
-    original_response_bytes: originalResponseBytes,
-    hint: mcpTruncationHint(toolName),
-    ...(fallback_required ? { fallback_required } : {}),
-  };
+  const metadata = buildMcpTruncationMetadata(toolName, originalResponseBytes, {
+    fallback_required,
+    sourceResult,
+  });
 
   if (isRecord(value) && !Array.isArray(value)) {
     return {
@@ -545,19 +543,137 @@ function attachMcpTruncationMetadata(
   };
 }
 
+function buildMcpTruncationMetadata(
+  toolName: string,
+  originalResponseBytes: number,
+  options: {
+    fallback_required?: boolean;
+    fallback?: boolean;
+    omitContinuations?: boolean;
+    sourceResult?: unknown;
+  } = {},
+): Record<string, unknown> {
+  const continuations = buildContextReadContinuations(toolName, options.sourceResult);
+  return {
+    truncated: true,
+    tool: toolName,
+    original_response_bytes: originalResponseBytes,
+    hint: mcpTruncationHint(toolName),
+    ...(options.fallback_required ? { fallback_required: true } : {}),
+    ...(options.fallback ? { fallback: true } : {}),
+    ...(continuations && options.omitContinuations ? { continuations_omitted: true } : {}),
+    ...(continuations && !options.omitContinuations ? { continuations } : {}),
+  };
+}
+
+function buildContextReadContinuations(
+  toolName: string,
+  sourceResult: unknown,
+): Record<string, unknown> | undefined {
+  if (!isRecord(sourceResult) || Array.isArray(sourceResult)) return undefined;
+
+  const continuations: Record<string, unknown> = {};
+
+  if (toolName === 'retrieve_context') {
+    const requiredReads = selectedRetrieveContextRequiredReads(sourceResult);
+    if (requiredReads.length > 0) {
+      continuations.required_reads = buildReadContextContinuation(requiredReads);
+    }
+  }
+
+  if (toolName === 'read_context') {
+    const continuationSelectors = selectorArray(sourceResult.continuations);
+    if (continuationSelectors.length > 0) {
+      continuations.continuation_selectors = buildReadContextContinuation(continuationSelectors);
+    }
+
+    const unreadRequired = selectorArray(sourceResult.unread_required);
+    if (unreadRequired.length > 0) {
+      continuations.unread_required = buildReadContextContinuation(unreadRequired);
+    }
+  }
+
+  return Object.keys(continuations).length > 0 ? continuations : undefined;
+}
+
+function selectedRetrieveContextRequiredReads(sourceResult: Record<string, unknown>): Record<string, unknown>[] {
+  const requiredReads = selectorArray(sourceResult.required_reads);
+  const selectedSelectorIds = selectedReadPlanSelectorIds(sourceResult.read_plan);
+  if (requiredReads.length === 0 || selectedSelectorIds.length === 0) return requiredReads;
+
+  const readsById = new Map(
+    requiredReads
+      .map((selector): [string, Record<string, unknown>] | null => (
+        typeof selector.selector_id === 'string' ? [selector.selector_id, selector] : null
+      ))
+      .filter((entry): entry is [string, Record<string, unknown>] => entry !== null),
+  );
+  const selectedReads = selectedSelectorIds
+    .map(selectorId => readsById.get(selectorId))
+    .filter((selector): selector is Record<string, unknown> => selector !== undefined);
+  return selectedReads.length > 0 ? selectedReads : requiredReads;
+}
+
+function selectedReadPlanSelectorIds(value: unknown): string[] {
+  if (!isRecord(value) || Array.isArray(value)) return [];
+  const selectedSelectors = value.selected_selectors;
+  if (!Array.isArray(selectedSelectors)) return [];
+  return selectedSelectors.filter((selectorId): selectorId is string => typeof selectorId === 'string');
+}
+
+function selectorArray(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((selector): selector is Record<string, unknown> => (
+    isRecord(selector) && !Array.isArray(selector)
+  ));
+}
+
+function buildReadContextContinuation(selectors: Record<string, unknown>[]): Record<string, unknown> {
+  return {
+    tool: 'read_context',
+    arguments: {
+      selectors,
+      token_budget: 900,
+    },
+  };
+}
+
 function buildFallbackMcpResultText(
   toolName: string,
   rawJson: string,
   rawBytes: number,
   maxResultTextBytes: number,
+  sourceResult?: unknown,
 ): string {
-  const metadata = {
-    truncated: true,
-    tool: toolName,
-    original_response_bytes: rawBytes,
+  const metadata = buildMcpTruncationMetadata(toolName, rawBytes, {
     fallback: true,
-    hint: mcpTruncationHint(toolName),
-  };
+    sourceResult,
+  });
+  const envelope = buildFallbackEnvelope(metadata, rawJson, maxResultTextBytes);
+  if (envelope) return envelope;
+
+  const compactMetadata = buildMcpTruncationMetadata(toolName, rawBytes, {
+    fallback: true,
+    omitContinuations: true,
+    sourceResult,
+  });
+  const compactEnvelope = buildFallbackEnvelope(compactMetadata, rawJson, maxResultTextBytes);
+  if (compactEnvelope) return compactEnvelope;
+
+  return JSON.stringify({
+    _mbrain_mcp_response: {
+      truncated: true,
+      tool: toolName,
+      fallback: true,
+    },
+  });
+}
+
+function buildFallbackEnvelope(
+  metadata: Record<string, unknown>,
+  rawJson: string,
+  maxResultTextBytes: number,
+): string | undefined {
   const emptyEnvelope = { _mbrain_mcp_response: metadata, partial_json: '' };
   const emptyBytes = byteLength(JSON.stringify(emptyEnvelope));
   let partialBudget = Math.max(0, maxResultTextBytes - emptyBytes - 32);
@@ -573,13 +689,7 @@ function buildFallbackMcpResultText(
   const minimal = JSON.stringify({ _mbrain_mcp_response: metadata, partial_json: '' });
   if (byteLength(minimal) <= maxResultTextBytes) return minimal;
 
-  return JSON.stringify({
-    _mbrain_mcp_response: {
-      truncated: true,
-      tool: toolName,
-      fallback: true,
-    },
-  });
+  return undefined;
 }
 
 function truncateJsonStrings(value: unknown, maxStringBytes: number): unknown {
@@ -610,8 +720,10 @@ function mcpTruncationHint(toolName: string): string {
   switch (toolName) {
     case 'get_page':
       return 'Use read_context with a bounded token_budget or a narrower selector to read the remaining page content.';
+    case 'retrieve_context':
+      return 'Call read_context using _mbrain_mcp_response.continuations.required_reads.arguments when present.';
     case 'read_context':
-      return 'Lower token_budget, max_selectors, or include_timeline; follow continuation_selector for additional bounded reads.';
+      return 'Lower token_budget, max_selectors, or include_timeline; follow _mbrain_mcp_response.continuations for additional bounded reads.';
     case 'get_skillpack':
       return 'Request a narrower skillpack section instead of the full document.';
     default:

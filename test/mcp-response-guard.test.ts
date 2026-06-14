@@ -310,4 +310,160 @@ describe('MCP response guard', () => {
     expect(parsed._mbrain_mcp_response.hint).toContain('MBRAIN_MCP_MAX_STDIO_FRAME_BYTES');
     expect(parsed.partial_json.length).toBeGreaterThan(0);
   });
+
+  test('adds runnable required_reads continuation metadata for truncated retrieve_context results', () => {
+    const requiredRead = {
+      kind: 'section',
+      slug: 'systems/mbrain',
+      selector_id: 'section:workspace:default:systems/mbrain#compiled-truth@chars:120:',
+      section_id: 'systems/mbrain#compiled-truth',
+      content_hash: 'hash-systems-mbrain',
+      char_start: 120,
+      line_start: 3,
+      line_end: 9,
+    };
+    const orientationOnlyRead = {
+      kind: 'compiled_truth',
+      slug: 'concepts/orientation-only',
+      selector_id: 'compiled_truth:workspace:default:concepts/orientation-only',
+      content_hash: 'hash-orientation-only',
+    };
+
+    const text = formatMcpToolResult('retrieve_context', {
+      request_id: 'req-oversized-retrieve',
+      required_reads: [requiredRead],
+      read_plan: {
+        mode: 'bounded_evidence',
+        max_depth: 1,
+        max_selectors: 1,
+        selected_selectors: [requiredRead.selector_id],
+        deferred_candidate_ids: [],
+        gap_reasons: [],
+        next_actions: ['Call read_context with read_plan.selected_selectors before making factual claims.'],
+      },
+      orientation: {
+        derived_consulted: [],
+        recommended_reads: [orientationOnlyRead],
+        summary_lines: ['Orientation only.'],
+      },
+      candidates: [{
+        candidate_id: 'candidate-large',
+        summary: 'x'.repeat(8_000),
+      }],
+    }, { maxResultTextBytes: 2_400 });
+
+    expect(byteLength(text)).toBeLessThanOrEqual(2_400);
+
+    const parsed = JSON.parse(text);
+    expect(parsed._mbrain_mcp_response.hint).toContain('continuations.required_reads.arguments');
+    const continuation = parsed._mbrain_mcp_response.continuations.required_reads;
+    expect(continuation.tool).toBe('read_context');
+    expect(continuation.arguments).toEqual({
+      selectors: [requiredRead],
+      token_budget: 900,
+    });
+    expect(JSON.stringify(continuation.arguments.selectors)).not.toContain('orientation-only');
+  });
+
+  test('adds runnable continuation selector metadata for truncated read_context results', () => {
+    const continuationSelector = {
+      kind: 'compiled_truth',
+      slug: 'concepts/large-context',
+      selector_id: 'compiled_truth:workspace:default:concepts/large-context@chars:2400:',
+      content_hash: 'hash-large-context',
+      char_start: 2_400,
+    };
+    const unreadRequired = {
+      kind: 'timeline_range',
+      slug: 'concepts/deferred-context',
+      selector_id: 'timeline_range:workspace:default:concepts/deferred-context@chars:800:',
+      content_hash: 'hash-deferred-context',
+      char_start: 800,
+      line_start: 30,
+      line_end: 44,
+    };
+
+    const text = formatMcpToolResult('read_context', {
+      answer_ready: {
+        ready: false,
+        answer_ground: [],
+        unsupported_reasons: ['continuation_required'],
+        citation_policy: 'cite canonical reads',
+      },
+      canonical_reads: [{
+        selector: {
+          kind: 'compiled_truth',
+          slug: 'concepts/large-context',
+          content_hash: 'hash-large-context',
+        },
+        authority: 'canonical',
+        title: 'Large Context',
+        text: 'Canonical evidence. '.repeat(800),
+        source_refs: [],
+        token_estimate: 5_000,
+        has_more: true,
+        continuation_selector: continuationSelector,
+      }],
+      evidence_claims: [],
+      conflicts: [],
+      warnings: [],
+      unread_required: [unreadRequired],
+      continuations: [continuationSelector],
+    }, { maxResultTextBytes: 2_800 });
+
+    expect(byteLength(text)).toBeLessThanOrEqual(2_800);
+
+    const parsed = JSON.parse(text);
+    expect(parsed._mbrain_mcp_response.hint).toContain('_mbrain_mcp_response.continuations');
+    const metadataContinuations = parsed._mbrain_mcp_response.continuations;
+    expect(metadataContinuations.continuation_selectors).toEqual({
+      tool: 'read_context',
+      arguments: {
+        selectors: [continuationSelector],
+        token_budget: 900,
+      },
+    });
+    expect(metadataContinuations.unread_required).toEqual({
+      tool: 'read_context',
+      arguments: {
+        selectors: [unreadRequired],
+        token_budget: 900,
+      },
+    });
+  });
+
+  test('keeps tiny continuation fallback budgets bounded without throwing', () => {
+    const text = formatMcpToolResult('retrieve_context', {
+      request_id: 'req-tiny-budget',
+      required_reads: Array.from({ length: 20 }, (_, index) => ({
+        kind: 'compiled_truth',
+        slug: `concepts/tiny-budget-${index}`,
+        selector_id: `compiled_truth:workspace:default:concepts/tiny-budget-${index}@chars:${index * 100}:`,
+        content_hash: `hash-tiny-budget-${index}`,
+        char_start: index * 100,
+      })),
+      read_plan: {
+        mode: 'bounded_evidence',
+        max_depth: 1,
+        max_selectors: 20,
+        selected_selectors: [],
+        deferred_candidate_ids: [],
+        gap_reasons: [],
+        next_actions: [],
+      },
+      candidates: [{
+        candidate_id: 'large-candidate',
+        summary: 'oversized '.repeat(2_000),
+      }],
+    }, { maxResultTextBytes: 64 });
+
+    expect(byteLength(text)).toBeLessThanOrEqual(512);
+    const parsed = JSON.parse(text);
+    expect(parsed._mbrain_mcp_response.truncated).toBe(true);
+    expect(parsed._mbrain_mcp_response.tool).toBe('retrieve_context');
+    expect(parsed._mbrain_mcp_response.original_response_bytes).toBeGreaterThan(512);
+    expect(parsed._mbrain_mcp_response.hint).toContain('continuations.required_reads.arguments');
+    expect(parsed._mbrain_mcp_response.continuations_omitted).toBe(true);
+    expect(parsed._mbrain_mcp_response.continuations).toBeUndefined();
+  });
 });
