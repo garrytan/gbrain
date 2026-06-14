@@ -1508,7 +1508,7 @@ export class SQLiteEngine implements BrainEngine {
       params.push(opts.before);
     }
 
-    sql += ` ORDER BY te.date DESC LIMIT ? OFFSET ?`;
+    sql += ` ORDER BY te.date DESC, te.id DESC LIMIT ? OFFSET ?`;
     params.push(opts?.limit ?? 100, opts?.offset ?? 0);
 
     const rows = this.database.query(sql).all(...sqliteBindings(params)) as Record<string, unknown>[];
@@ -8606,13 +8606,22 @@ function bestKeywordRow(
   rows: Record<string, unknown>[],
   normalizedTerms: string[],
 ): Record<string, unknown> {
-  return rows.find((row) => storedChunkMatches(row, normalizedTerms)) ?? rows[0]!;
+  return [...rows].sort((a, b) => {
+    const scoreDelta = storedChunkMatchScore(b, normalizedTerms) - storedChunkMatchScore(a, normalizedTerms);
+    if (scoreDelta !== 0) return scoreDelta;
+    return (nullableNumber(a.stored_chunk_index) ?? Number.MAX_SAFE_INTEGER)
+      - (nullableNumber(b.stored_chunk_index) ?? Number.MAX_SAFE_INTEGER);
+  })[0]!;
 }
 
 function storedChunkMatches(row: Record<string, unknown>, normalizedTerms: string[]): boolean {
-  if (row.stored_chunk_text == null || row.stored_chunk_source == null) return false;
+  return storedChunkMatchScore(row, normalizedTerms) > 0;
+}
+
+function storedChunkMatchScore(row: Record<string, unknown>, normalizedTerms: string[]): number {
+  if (row.stored_chunk_text == null || row.stored_chunk_source == null) return 0;
   const text = String(row.stored_chunk_text).toLowerCase();
-  return normalizedTerms.some(term => text.includes(term));
+  return normalizedTerms.filter(term => text.includes(term)).length;
 }
 
 function rowToSearchResult(row: Record<string, unknown>, query: string): SearchResult {

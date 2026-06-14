@@ -283,6 +283,156 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
       }
     }
   });
+
+  test('PGLite keyword results keep stored chunk identity when compiled truth also matches', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mbrain-pglite-search-chunk-identity-'));
+    const pglite = new PGLiteEngine();
+
+    try {
+      await pglite.connect({ engine: 'pglite', database_path: join(root, 'brain.pglite') });
+      await pglite.initSchema();
+
+      await pglite.putPage('concepts/pglite-stored-chunk-search', {
+        type: 'concept',
+        title: 'PGLite Stored Chunk Search',
+        compiled_truth: 'Compiled truth carries needle-token inside a stored chunk.',
+      });
+      await pglite.upsertChunks('concepts/pglite-stored-chunk-search', [{
+        chunk_index: 0,
+        chunk_text: 'Compiled truth carries needle-token inside a stored chunk.',
+        chunk_source: 'compiled_truth',
+        token_count: 8,
+      }]);
+
+      const result = (await pglite.searchKeyword('needle-token', { limit: 1 }))[0];
+
+      expect(result?.chunk_source).toBe('compiled_truth');
+      expect(result?.chunk_index).toBe(0);
+      expect(result?.chunk_content_hash).toBeTruthy();
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      try {
+        await pglite.disconnect();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        rmSync(root, { recursive: true, force: true });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, 'Failed to clean up PGLite search chunk-identity fixtures');
+      }
+    }
+  });
+
+  test('SQLite keyword results prefer the stored chunk with the strongest query match', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-search-best-chunk-'));
+    const sqlite = new SQLiteEngine();
+
+    try {
+      await sqlite.connect({ engine: 'sqlite', database_path: join(root, 'brain.db') });
+      await sqlite.initSchema();
+
+      await sqlite.putPage('concepts/sqlite-best-chunk-search', {
+        type: 'concept',
+        title: 'SQLite Best Chunk Search',
+        compiled_truth: 'alpha beta are both present somewhere on the page.',
+      });
+      await sqlite.upsertChunks('concepts/sqlite-best-chunk-search', [
+        {
+          chunk_index: 0,
+          chunk_text: 'alpha only partial match',
+          chunk_source: 'compiled_truth',
+          token_count: 4,
+        },
+        {
+          chunk_index: 1,
+          chunk_text: 'alpha beta strongest match',
+          chunk_source: 'compiled_truth',
+          token_count: 4,
+        },
+      ]);
+
+      const result = (await sqlite.searchKeyword('alpha beta', { limit: 1 }))[0];
+
+      expect(result?.chunk_index).toBe(1);
+      expect(result?.chunk_text).toContain('alpha beta strongest match');
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      try {
+        await sqlite.disconnect();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        rmSync(root, { recursive: true, force: true });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, 'Failed to clean up SQLite search best-chunk fixtures');
+      }
+    }
+  });
+
+  test('same-date timeline entries are ordered by id descending across engines', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-pglite-timeline-order-'));
+    const sqlite = new SQLiteEngine();
+    const pglite = new PGLiteEngine();
+
+    try {
+      await sqlite.connect({ engine: 'sqlite', database_path: join(root, 'brain.db') });
+      await sqlite.initSchema();
+      await pglite.connect({ engine: 'pglite', database_path: join(root, 'brain.pglite') });
+      await pglite.initSchema();
+
+      for (const engine of [sqlite, pglite]) {
+        await engine.putPage('concepts/timeline-order', {
+          type: 'concept',
+          title: 'Timeline Order',
+          compiled_truth: 'Timeline ordering should be stable.',
+        });
+        await engine.addTimelineEntry('concepts/timeline-order', {
+          date: '2026-01-01',
+          source: 'first',
+          summary: 'first same-date entry',
+        });
+        await engine.addTimelineEntry('concepts/timeline-order', {
+          date: '2026-01-01',
+          source: 'second',
+          summary: 'second same-date entry',
+        });
+      }
+
+      const sqliteTimeline = await sqlite.getTimeline('concepts/timeline-order', { limit: 2 });
+      const pgliteTimeline = await pglite.getTimeline('concepts/timeline-order', { limit: 2 });
+
+      expect(sqliteTimeline.map(entry => entry.summary)).toEqual([
+        'second same-date entry',
+        'first same-date entry',
+      ]);
+      expect(pgliteTimeline.map(entry => entry.summary)).toEqual(sqliteTimeline.map(entry => entry.summary));
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      for (const engine of [sqlite, pglite]) {
+        try {
+          await engine.disconnect();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      try {
+        rmSync(root, { recursive: true, force: true });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, 'Failed to clean up timeline order fixtures');
+      }
+    }
+  });
 });
 
 type ListAndLinkEngine = Pick<

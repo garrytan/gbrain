@@ -80,6 +80,14 @@ describe('makeShareable', () => {
     expect(result).not.toContain('[Source:');
   });
 
+  test('preserves public horizontal rules in compiled truth', () => {
+    const input = '# Title\n\nBefore\n\n---\n\nAfter public section';
+    const result = makeShareable(input);
+    expect(result).toContain('Before');
+    expect(result).toContain('---');
+    expect(result).toContain('After public section');
+  });
+
   test('collapses excessive blank lines', () => {
     const input = '# Title\n\n\n\n\nContent.';
     expect(makeShareable(input)).toBe('# Title\n\nContent.');

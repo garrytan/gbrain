@@ -32,7 +32,10 @@ export function makeShareable(content: string): string {
   clean = clean.replace(/^---[\s\S]*?---\n*/, '');
 
   // Remove the private evidence/timeline zone used by brain pages.
-  clean = clean.replace(/\n---\n[\s\S]*$/, '');
+  clean = clean.replace(
+    /\n---\n\s*(?:##\s+Timeline\b|-\s+(?:\*\*)?\d{4}-\d{2}-\d{2}(?:\*\*)?\s*\|)[\s\S]*$/,
+    '',
+  );
 
   // Remove [Source: ...] citations (all formats)
   clean = stripSourceCitations(clean);
