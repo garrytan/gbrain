@@ -195,12 +195,27 @@ export function validateOperationParams(
   operation: { name: string; params: Record<string, ParamDef> },
   params: Record<string, unknown>,
 ): Record<string, unknown> {
+  const missing = getMissingRequiredParams(operation, params);
+  if (missing.length > 0) {
+    const label = missing.length === 1 ? 'parameter' : 'parameters';
+    throw new OperationError('invalid_params', `Missing required ${label}: ${missing.join(', ')}`);
+  }
+
   for (const [name, value] of Object.entries(params)) {
     const paramDef = operation.params[name];
     if (!paramDef || value === undefined) continue;
     validateOperationParamValue(name, value, paramDef);
   }
   return params;
+}
+
+export async function dispatchOperation(
+  ctx: OperationContext,
+  operation: Operation,
+  params: Record<string, unknown> | null | undefined,
+): Promise<unknown> {
+  const preparedParams = params ?? {};
+  return operation.handler(ctx, validateOperationParams(operation, preparedParams));
 }
 
 function validateOperationParamValue(path: string, value: unknown, paramDef: ParamDef): void {
@@ -213,6 +228,10 @@ function validateOperationParamValue(path: string, value: unknown, paramDef: Par
   const matched = types.some(type => valueMatchesParamType(value, type));
   if (!matched) {
     throw new OperationError('invalid_params', `${path} must be ${formatExpectedParamTypes(paramDef)}.`);
+  }
+
+  if (typeof value === 'string' && paramDef.enum && !paramDef.enum.includes(value)) {
+    throw new OperationError('invalid_params', `${path} must be one of: ${paramDef.enum.join(', ')}`);
   }
 
   const itemDef = paramDef.items;

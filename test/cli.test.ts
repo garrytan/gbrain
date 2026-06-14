@@ -9,6 +9,8 @@ const repoRootUrl = new URL('..', import.meta.url).href;
 const cliSource = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf-8');
 const initSource = readFileSync(new URL('../src/commands/init.ts', import.meta.url), 'utf-8');
 const serveSource = readFileSync(new URL('../src/commands/serve.ts', import.meta.url), 'utf-8');
+const agentSessionSource = readFileSync(new URL('../src/commands/agent-session.ts', import.meta.url), 'utf-8');
+const edgeIndexSource = readFileSync(new URL('../supabase/functions/mbrain-mcp/index.ts', import.meta.url), 'utf-8');
 const originalEnv = { ...process.env };
 let tempHome: string;
 
@@ -111,8 +113,17 @@ describe('CLI source shape', () => {
   });
 
   test('generic CLI dispatch validates operation params before handler execution', () => {
-    expect(cliSource).toContain('validateOperationParams');
-    expect(cliSource).toContain('op.handler(ctx, validateOperationParams(op, params))');
+    expect(cliSource).toContain('dispatchOperation');
+    expect(cliSource).toContain('const result = await dispatchOperation(ctx, op, params)');
+  });
+
+  test('edge and agent-session dispatch through shared operation validation', () => {
+    expect(agentSessionSource).toContain('dispatchOperation');
+    expect(agentSessionSource).toContain('const result = await dispatchOperation(ctx, op, input)');
+    expect(agentSessionSource).not.toContain('op.handler(ctx, input)');
+    expect(edgeIndexSource).toContain('dispatchOperation');
+    expect(edgeIndexSource).toContain('const result = await dispatchOperation(ctx, op, params || {})');
+    expect(edgeIndexSource).not.toContain('op.handler(ctx, params || {})');
   });
 
   test('builds cliOps map from operations', () => {

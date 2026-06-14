@@ -56,6 +56,24 @@ describe('agent-session CLI command', () => {
     });
   });
 
+  test('rejects envelope params outside the shared operation schema', () => {
+    const envelopePath = join(rootDir, 'invalid-source-kind.json');
+    writeFileSync(envelopePath, JSON.stringify({
+      source_kind: 'browser_session',
+      session_id: 'invalid-source-kind-session',
+      events: [{
+        event_kind: 'explicit_memory_note',
+        text: 'Remember that the user prefers concise implementation checkpoints.',
+      }],
+    }, null, 2));
+
+    const result = runCli(['agent-session', 'preview', '--file', envelopePath, '--json']);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('source_kind must be one of: codex_session, claude_session, agent_session');
+  });
+
   test('captures a JSON envelope file through governed direct personal preflight', () => {
     const envelopePath = writeEnvelope('capture-session', [{
       event_kind: 'explicit_memory_note',

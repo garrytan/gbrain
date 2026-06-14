@@ -2,7 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { ListResourcesRequestSchema, ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
 import { startDerivedWorker, type DerivedWorkerController } from '../core/derived-worker.ts';
-import { operations as defaultOperations, OperationError, MCP_INSTRUCTIONS, isOperationSupportedByConfig, validateOperationParams } from '../core/operations.ts';
+import { dispatchOperation, operations as defaultOperations, OperationError, MCP_INSTRUCTIONS, isOperationSupportedByConfig } from '../core/operations.ts';
 import type { Operation, OperationContext } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
@@ -826,7 +826,7 @@ export function createMcpServer(
           dryRun: !!(params?.dry_run),
         };
         const preparedParams = prepareMcpToolParams(name, params);
-        return op.handler(ctx, validateOperationParams(op, preparedParams));
+        return dispatchOperation(ctx, op, preparedParams);
       });
       return {
         content: [{
@@ -872,5 +872,5 @@ export async function handleToolCall(
     dryRun: !!(params?.dry_run),
   };
 
-  return op.handler(ctx, validateOperationParams(op, params));
+  return dispatchOperation(ctx, op, params);
 }

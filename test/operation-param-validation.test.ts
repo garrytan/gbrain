@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  dispatchOperation,
   OperationError,
   operations,
   validateOperationParams,
@@ -73,28 +74,80 @@ describe('operation parameter validation', () => {
     });
   });
 
+  test('rejects missing required params before operation handlers run', async () => {
+    const op = operation({
+      slug: { type: 'string', required: true },
+    });
+    let called = false;
+    op.handler = async () => {
+      called = true;
+      return { ok: true };
+    };
+    const ctx = {} as OperationContext;
+
+    expect(() => validateOperationParams(op, {})).toThrow(OperationError);
+    expect(() => validateOperationParams(op, {})).toThrow('Missing required parameter: slug');
+    await expect(dispatchOperation(ctx, op, {})).rejects.toThrow('Missing required parameter: slug');
+    expect(called).toBe(false);
+  });
+
+  test('rejects enum params outside the declared operation contract', async () => {
+    const op = operation({
+      source_kind: { type: 'string', enum: ['chat', 'note'] },
+    });
+    let called = false;
+    op.handler = async () => {
+      called = true;
+      return { ok: true };
+    };
+    const ctx = {} as OperationContext;
+
+    expect(() => validateOperationParams(op, { source_kind: 'email' })).toThrow(OperationError);
+    expect(() => validateOperationParams(op, { source_kind: 'email' }))
+      .toThrow('source_kind must be one of: chat, note');
+    await expect(dispatchOperation(ctx, op, { source_kind: 'email' }))
+      .rejects.toThrow('source_kind must be one of: chat, note');
+    expect(called).toBe(false);
+  });
+
   test('keeps documented string-list operation params schema-compatible', () => {
     expect(validateOperationParams(operationByName('put_page'), {
+      slug: 'people/alice',
+      content: 'Alice profile.',
       source_refs: 'Source: one\nSource: two',
-    })).toEqual({ source_refs: 'Source: one\nSource: two' });
+    })).toEqual({ slug: 'people/alice', content: 'Alice profile.', source_refs: 'Source: one\nSource: two' });
     expect(validateOperationParams(operationByName('record_retrieval_trace'), {
+      task_id: 'task-1',
+      outcome: 'answered',
       route: 'retrieve_context,read_context',
       source_refs: 'Source: one',
       derived_consulted: 'atlas',
       verification: 'checked locally',
     })).toEqual({
+      task_id: 'task-1',
+      outcome: 'answered',
       route: 'retrieve_context,read_context',
       source_refs: 'Source: one',
       derived_consulted: 'atlas',
       verification: 'checked locally',
     });
     expect(validateOperationParams(operationByName('route_memory_writeback'), {
+      content: 'Remember that Alice prefers concise checkpoints.',
+      evidence_kind: 'direct_user_statement',
       source_refs: 'Source: one',
-    })).toEqual({ source_refs: 'Source: one' });
+    })).toEqual({
+      content: 'Remember that Alice prefers concise checkpoints.',
+      evidence_kind: 'direct_user_statement',
+      source_refs: 'Source: one',
+    });
     expect(validateOperationParams(operationByName('upsert_memory_realm'), {
+      id: 'realm:test',
+      name: 'Test Realm',
+      scope: 'work',
       source_refs: 'Source: one',
-    })).toEqual({ source_refs: 'Source: one' });
+    })).toEqual({ id: 'realm:test', name: 'Test Realm', scope: 'work', source_refs: 'Source: one' });
     expect(validateOperationParams(operationByName('refresh_task_working_set'), {
+      task_id: 'task-1',
       active_paths: 'src/core/operations.ts,test/operation-param-validation.test.ts',
       active_symbols: 'validateOperationParams',
       blockers: 'none',
@@ -102,6 +155,7 @@ describe('operation parameter validation', () => {
       next_steps: 'ship PR',
       verification_notes: 'focused tests passed',
     })).toEqual({
+      task_id: 'task-1',
       active_paths: 'src/core/operations.ts,test/operation-param-validation.test.ts',
       active_symbols: 'validateOperationParams',
       blockers: 'none',
@@ -110,11 +164,19 @@ describe('operation parameter validation', () => {
       verification_notes: 'focused tests passed',
     });
     expect(validateOperationParams(operationByName('reverify_code_claims'), {
+      repo_path: '/Users/meghendra/Work/mbrain',
       claims: 'code_claim:src/core/operations.ts:validateOperationParams',
-    })).toEqual({ claims: 'code_claim:src/core/operations.ts:validateOperationParams' });
+    })).toEqual({
+      repo_path: '/Users/meghendra/Work/mbrain',
+      claims: 'code_claim:src/core/operations.ts:validateOperationParams',
+    });
     expect(validateOperationParams(operationByName('reverify_code_claims'), {
+      repo_path: '/Users/meghendra/Work/mbrain',
       claims: ['code_claim:src/core/operations.ts:validateOperationParams'],
-    })).toEqual({ claims: ['code_claim:src/core/operations.ts:validateOperationParams'] });
+    })).toEqual({
+      repo_path: '/Users/meghendra/Work/mbrain',
+      claims: ['code_claim:src/core/operations.ts:validateOperationParams'],
+    });
   });
 
   test('put_raw_data rejects non-JSON-serializable data before engine writes', async () => {

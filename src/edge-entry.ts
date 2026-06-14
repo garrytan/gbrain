@@ -8,7 +8,7 @@
  * - import-file.ts (uses readFileSync/statSync)
  * - sync.ts (git-based, local filesystem)
  */
-export { operations, operationsByName, OperationError, MCP_INSTRUCTIONS } from './core/operations.ts';
+export { dispatchOperation, operations, operationsByName, OperationError, MCP_INSTRUCTIONS } from './core/operations.ts';
 export type { Operation, OperationContext, ParamDef } from './core/operations.ts';
 export { operationToMcpTool, paramToMcpSchema } from './mcp/tool-schema.ts';
 export { PostgresEngine } from './core/postgres-engine.ts';

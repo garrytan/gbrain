@@ -14,7 +14,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import postgres from 'postgres';
 import { createHash } from 'crypto';
-import { operations, operationToMcpTool, OperationError, PostgresEngine, VERSION, MCP_INSTRUCTIONS } from './mbrain-core.js';
+import { dispatchOperation, operations, operationToMcpTool, OperationError, PostgresEngine, VERSION, MCP_INSTRUCTIONS } from './mbrain-core.js';
 import type { OperationContext } from './mbrain-core.js';
 
 // Operations excluded from remote (may exceed 60s Edge Function timeout)
@@ -168,7 +168,7 @@ function createMcpServer(eng: PostgresEngine): Server {
     };
 
     try {
-      const result = await op.handler(ctx, params || {});
+      const result = await dispatchOperation(ctx, op, params || {});
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (e: unknown) {
       if (e instanceof OperationError) {

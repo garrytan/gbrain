@@ -2,7 +2,7 @@ import { readFileSync, statSync } from 'fs';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig } from '../core/config.ts';
 import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
-import { operationsByName, type OperationContext } from '../core/operations.ts';
+import { dispatchOperation, operationsByName, type OperationContext } from '../core/operations.ts';
 import {
   normalizeAgentSessionCaptureEnvelope,
   parseClaudeCodeTranscript,
@@ -68,7 +68,7 @@ export async function runAgentSession(engine: BrainEngine, args: string[]): Prom
   const op = parsed.action === 'preview'
     ? operationsByName.preview_agent_session_memory
     : operationsByName.capture_agent_session_memory;
-  const result = await op.handler(ctx, input);
+  const result = await dispatchOperation(ctx, op, input);
 
   if (parsed.json) {
     console.log(JSON.stringify(
