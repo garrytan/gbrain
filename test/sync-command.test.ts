@@ -217,6 +217,53 @@ describe('performSync incremental safety', () => {
     });
   });
 
+  test('SQLite incremental sync deletes the old page when a rename collides with an occupied slug', async () => {
+    const repoPath = makeRepo();
+    mkdirSync(join(repoPath, 'people'), { recursive: true });
+    writeFileSync(join(repoPath, 'people', 'alice.md'), [
+      '---',
+      'title: Alice',
+      '---',
+      '',
+      'Alice is the original page.',
+    ].join('\n'));
+    const lastCommit = commitAll(repoPath, 'seed alice');
+
+    renameSync(join(repoPath, 'people', 'alice.md'), join(repoPath, 'people', 'bob.md'));
+    const headCommit = commitAll(repoPath, 'rename alice to bob');
+
+    await withSqliteEngine(async (engine) => {
+      await engine.putPage('people/alice', {
+        type: 'person',
+        title: 'Alice',
+        compiled_truth: 'Old Alice content.',
+        timeline: '',
+        frontmatter: {},
+      });
+      await engine.putPage('people/bob', {
+        type: 'person',
+        title: 'Existing Bob',
+        compiled_truth: 'Existing Bob content.',
+        timeline: '',
+        frontmatter: {},
+      });
+      await engine.setConfig('sync.last_commit', lastCommit);
+
+      const result = await performSync(engine, { repoPath, noPull: true });
+
+      expect(result.status).toBe('synced');
+      expect(result.renamed).toBe(1);
+      expect(result.pagesAffected).toContain('people/alice');
+      expect(result.pagesAffected).toContain('people/bob');
+      expect(await engine.getPage('people/alice')).toBeNull();
+      expect(await engine.getPage('people/bob')).toMatchObject({
+        title: 'Alice',
+        compiled_truth: 'Alice is the original page.',
+      });
+      expect(await engine.getConfig('sync.last_commit')).toBe(headCommit);
+    });
+  });
+
   test('records markdown repo path when the repo is already up to date', async () => {
     const repoPath = makeRepo();
     mkdirSync(join(repoPath, 'concepts'), { recursive: true });

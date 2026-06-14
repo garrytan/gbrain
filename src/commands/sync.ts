@@ -285,7 +285,9 @@ async function performSyncTarget(engine: BrainEngine, opts: SyncOpts, target: Sy
       try {
         await tx.updateSlug(oldSlug, newSlug);
       } catch {
-        // Slug doesn't exist or collision, treat as add.
+        // Slug doesn't exist or collision, treat as add and remove stale old slug if present.
+        await tx.deletePage(oldSlug);
+        addPageAffected(oldSlug);
       }
       // Reimport at new path (picks up content changes)
       const filePath = join(repoPath, to);
