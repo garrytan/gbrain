@@ -595,6 +595,7 @@ export interface ContextConflict {
 export type RetrievalSelectorWarningCode =
   | 'stale_selector'
   | 'stale_continuation'
+  | 'scope_blocked'
   | 'derived_pending'
   | 'derived_failed';
 
@@ -604,8 +605,9 @@ export interface RetrievalSelectorWarning {
   selector_id: string;
   selector: RetrievalSelector;
   slug?: string;
-  expected_content_hash: string;
-  current_content_hash: string | null;
+  expected_content_hash?: string;
+  current_content_hash?: string | null;
+  scope_gate?: ScopeGateDecisionResult;
   message: string;
 }
 

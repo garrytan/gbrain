@@ -106,7 +106,11 @@ export async function readContext(
       });
     } catch (error) {
       if (error instanceof ScopeBlockedReadError) {
-        return maybePersistReadTrace(engine, blockedByScopeGate(error.scopeGate, [selector]), input);
+        const warning = scopeBlockedSelectorWarning(selector, error.scopeGate);
+        selectorWarnings.push(warning);
+        unreadRequired.push(warning.selector);
+        warnings.push(`${warning.code}: ${warning.message}`);
+        continue;
       }
       if (error instanceof StaleSelectorReadError) {
         selectorWarnings.push(error.warning);
@@ -1199,6 +1203,22 @@ function extractSourceRefs(text: string): string[] {
 
 function textHasSourceMarkers(text: string): boolean {
   return /\[Source:\s*[^\]\n]+\]/.test(text);
+}
+
+function scopeBlockedSelectorWarning(
+  selector: RetrievalSelector,
+  scopeGate: ScopeGateDecisionResult,
+): RetrievalSelectorWarning {
+  const normalizedSelector = normalizeRetrievalSelector(selector);
+  return {
+    code: 'scope_blocked',
+    severity: 'warning',
+    selector_id: retrievalSelectorId(normalizedSelector),
+    selector: normalizedSelector,
+    slug: normalizedSelector.slug,
+    scope_gate: scopeGate,
+    message: `Selector blocked by scope gate: ${scopeGate.policy} (${scopeGate.decision_reason}).`,
+  };
 }
 
 async function resolveReadSelectors(

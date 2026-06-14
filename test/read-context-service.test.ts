@@ -1199,6 +1199,69 @@ describe('read context service', () => {
     });
   });
 
+  test('continues reading selectors after one source_ref is blocked by scope gate', async () => {
+    await withEngine('source-ref-scope-block-continue', async (engine) => {
+      const privateSourceRef = 'User, private source, 2026-05-07 10:24 KST';
+      await importFromContent(engine, 'concepts/public-followup', [
+        '---',
+        'type: concept',
+        'title: Public Followup',
+        '---',
+        '# Compiled Truth',
+        'Public evidence after a blocked selector should still be read.',
+      ].join('\n'), { path: 'concepts/public-followup.md' });
+      const privatePage = await engine.putPage('personal/private-source', {
+        type: 'concept',
+        title: 'Private Source',
+        compiled_truth: 'Private text.',
+        frontmatter: {},
+        content_hash: 'private-source-hash',
+      });
+      const [privateSection] = await engine.replaceNoteSectionEntries('personal:default', privatePage.slug, [{
+        scope_id: 'personal:default',
+        page_id: privatePage.id,
+        page_slug: privatePage.slug,
+        page_path: 'personal/private-source.md',
+        section_id: 'personal-private-source#compiled-truth',
+        parent_section_id: null,
+        heading_slug: 'compiled-truth',
+        heading_path: ['Compiled Truth'],
+        heading_text: 'Compiled Truth',
+        depth: 1,
+        line_start: 1,
+        line_end: 3,
+        section_text: `Private evidence. [Source: ${privateSourceRef}]`,
+        outgoing_wikilinks: [],
+        outgoing_urls: [],
+        source_refs: [privateSourceRef],
+        content_hash: privatePage.content_hash ?? 'private-source-hash',
+        extractor_version: 'test',
+      }]);
+      if (!privateSection) throw new Error('private source section fixture missing');
+      const originalListSections = engine.listNoteSectionEntries.bind(engine);
+      engine.listNoteSectionEntries = async (filters) => {
+        if (filters?.scope_id === 'workspace:default') return [privateSection];
+        return originalListSections(filters);
+      };
+
+      const result = await readContext(engine, {
+        selectors: [
+          { kind: 'source_ref', source_ref: privateSourceRef },
+          { kind: 'compiled_truth', slug: 'concepts/public-followup' },
+        ],
+        requested_scope: 'work',
+      });
+
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(result.canonical_reads[0]!.text).toContain('Public evidence after a blocked selector should still be read.');
+      expect(result.unread_required).toHaveLength(1);
+      expect(result.unread_required[0]!.kind).toBe('source_ref');
+      expect(result.selector_warnings?.[0]?.code).toBe('scope_blocked');
+      expect(result.answer_ready.ready).toBe(false);
+      expect(result.answer_ready.unsupported_reasons).toContain('scope_blocked');
+    });
+  });
+
   test('reads timeline_entry object ids under arbitrary sub-brain paths when work scope allows retrieval', async () => {
     await withEngine('timeline-entry-sub-brain-prefix', async (engine) => {
       await importFromContent(engine, 'personal/timeline-note', [
