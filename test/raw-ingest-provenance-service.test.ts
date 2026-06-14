@@ -13,6 +13,20 @@ const grantedChunksPolicy = {
   automatic_canonical_write_authority: 'task_outcomes_auto',
 } as const;
 
+const AWS_ACCESS_KEY_FIXTURE = ['AKIA', 'IOSFODNN7EXAMPLE'].join('');
+const GITHUB_TOKEN_FIXTURE = ['ghp', '1234567890abcdefghijklmnopqrstuvwxyzABCD'].join('_');
+const ANTHROPIC_KEY_FIXTURE = ['sk-ant', 'testvalue1234567890abcdef'].join('-');
+const SLACK_TOKEN_FIXTURE = ['xoxb', '123456789012', 'abcdefghijklmnopqrstuvwx'].join('-');
+const AWS_SECRET_ACCESS_KEY_FIXTURE = [
+  'abcdefghijklmnopqrst',
+  'uvwxyzABCD12345678/+',
+].join('');
+const PEM_PRIVATE_KEY_FIXTURE = [
+  ['-----BEGIN ', 'PRIVATE KEY-----'].join(''),
+  'abc123secret',
+  ['-----END ', 'PRIVATE KEY-----'].join(''),
+].join('\n');
+
 describe('raw ingest provenance helpers', () => {
   test('creates source item provenance and chunk safety records with stable hashes', () => {
     const plan = buildRawIngestPlan({
@@ -197,11 +211,15 @@ describe('raw ingest provenance helpers', () => {
     const chunk = plan.chunks[0]!;
     const payload = buildRunnerChunkPayload(chunk);
 
-    expect(chunk.secret_risk).toBe('flagged');
+    expect(chunk.secret_risk).toBe('redacted');
     expect(chunk.sensitivity_flags).toContain('secret');
     expect(chunk.redacted_text).toContain('[REDACTED:openai_api_key]');
     expect(payload.text).toBe(chunk.redacted_text);
     expect(payload.text).not.toContain('sk-test1234567890abcdef');
+    expect(canChunkAutoWrite(chunk, grantedChunksPolicy)).toMatchObject({
+      allowed: false,
+      reason: 'secret_detected',
+    });
     expect(plan.secret_detections[0]).toMatchObject({
       source_item_id: plan.item.id,
       source_chunk_id: chunk.id,
@@ -209,5 +227,124 @@ describe('raw ingest provenance helpers', () => {
       redaction_status: 'redacted',
       purge_plan_status: 'pending',
     });
+  });
+
+  test('common non-OpenAI secrets are detected before runner access', () => {
+    const cases = [
+      {
+        label: 'aws',
+        text: `AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_FIXTURE} must not reach a runner.`,
+        secretType: 'aws_access_key_id',
+        leaked: AWS_ACCESS_KEY_FIXTURE,
+        marker: '[REDACTED:aws_access_key_id]',
+      },
+      {
+        label: 'aws-secret',
+        text: `AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY_FIXTURE} must not reach a runner.`,
+        secretType: 'aws_secret_access_key',
+        leaked: AWS_SECRET_ACCESS_KEY_FIXTURE,
+        marker: '[REDACTED:aws_secret_access_key]',
+      },
+      {
+        label: 'aws-secret-double-quoted',
+        text: `AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY_FIXTURE}" must not reach a runner.`,
+        secretType: 'aws_secret_access_key',
+        leaked: AWS_SECRET_ACCESS_KEY_FIXTURE,
+        marker: '[REDACTED:aws_secret_access_key]',
+      },
+      {
+        label: 'aws-secret-single-quoted',
+        text: `aws-secret-access-key:'${AWS_SECRET_ACCESS_KEY_FIXTURE}' must not reach a runner.`,
+        secretType: 'aws_secret_access_key',
+        leaked: AWS_SECRET_ACCESS_KEY_FIXTURE,
+        marker: '[REDACTED:aws_secret_access_key]',
+      },
+      {
+        label: 'github',
+        text: `Use ${GITHUB_TOKEN_FIXTURE} for this repo.`,
+        secretType: 'github_token',
+        leaked: GITHUB_TOKEN_FIXTURE,
+        marker: '[REDACTED:github_token]',
+      },
+      {
+        label: 'anthropic',
+        text: `ANTHROPIC_API_KEY=${ANTHROPIC_KEY_FIXTURE} belongs in the vault.`,
+        secretType: 'anthropic_api_key',
+        leaked: ANTHROPIC_KEY_FIXTURE,
+        marker: '[REDACTED:anthropic_api_key]',
+      },
+      {
+        label: 'slack',
+        text: `Slack bot token ${SLACK_TOKEN_FIXTURE} should be redacted.`,
+        secretType: 'slack_token',
+        leaked: SLACK_TOKEN_FIXTURE,
+        marker: '[REDACTED:slack_token]',
+      },
+      {
+        label: 'pem',
+        text: `Private key:\n${PEM_PRIVATE_KEY_FIXTURE}`,
+        secretType: 'pem_private_key',
+        leaked: 'abc123secret',
+        marker: '[REDACTED:pem_private_key]',
+      },
+      {
+        label: 'db-url',
+        text: 'DATABASE_URL=postgresql://user:password123@db.example.com/mbrain',
+        secretType: 'database_connection_string',
+        leaked: 'password123',
+        marker: '[REDACTED:database_connection_string]',
+      },
+    ];
+
+    for (const variant of cases) {
+      const plan = buildRawIngestPlan({
+        source_id: 'source:codex',
+        external_id: `session-secret-${variant.label}`,
+        origin_event: 'session_capture',
+        locator: `codex://sessions/secret-${variant.label}`,
+        chunk_texts: [variant.text],
+        parser_version: 'raw-parser:v1',
+        now: '2026-05-20T08:00:00.000Z',
+      }, grantedChunksPolicy);
+
+      const chunk = plan.chunks[0]!;
+      const payload = buildRunnerChunkPayload(chunk);
+
+      expect(chunk.secret_risk).toBe('redacted');
+      expect(chunk.sensitivity_flags).toContain('secret');
+      expect(chunk.redacted_text).toContain(variant.marker);
+      expect(payload.text).toBe(chunk.redacted_text);
+      expect(payload.text).not.toContain(variant.leaked);
+      expect(canChunkAutoWrite(chunk, grantedChunksPolicy)).toMatchObject({
+        allowed: false,
+        reason: 'secret_detected',
+      });
+      expect(plan.secret_detections[0]).toMatchObject({
+        source_item_id: plan.item.id,
+        source_chunk_id: chunk.id,
+        secret_type: variant.secretType,
+        redaction_status: 'redacted',
+        purge_plan_status: 'pending',
+      });
+    }
+  });
+
+  test('benign Slack-like docs are not over-redacted', () => {
+    const plan = buildRawIngestPlan({
+      source_id: 'source:docs',
+      external_id: 'slack-doc-example',
+      origin_event: 'manual_entry',
+      locator: 'docs://slack-example',
+      chunk_texts: ['Document the placeholder xoxb-development-mode in local examples.'],
+      parser_version: 'raw-parser:v1',
+      now: '2026-05-20T08:00:00.000Z',
+    }, grantedChunksPolicy);
+
+    expect(plan.chunks[0]).toMatchObject({
+      redacted_text: 'Document the placeholder xoxb-development-mode in local examples.',
+      secret_risk: 'none',
+      sensitivity_flags: [],
+    });
+    expect(plan.secret_detections).toHaveLength(0);
   });
 });

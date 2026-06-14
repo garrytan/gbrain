@@ -152,7 +152,7 @@ describe('connectors sync command', () => {
         },
         chunks: [{
           prompt_injection_risk: 'flagged',
-          secret_risk: 'flagged',
+          secret_risk: 'redacted',
         }],
       });
       expect(items.items[0].chunks[0].redacted_text).toContain('[REDACTED:openai_api_key]');

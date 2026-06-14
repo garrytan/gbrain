@@ -12,6 +12,7 @@ import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
 const PGLITE_SOURCE_REGISTRY_TEST_TIMEOUT_MS = 60_000;
+const AWS_ACCESS_KEY_FIXTURE = ['AKIA', 'IOSFODNN7EXAMPLE'].join('');
 
 function getOperation(name: string): Operation {
   const operation = operations.find((candidate) => candidate.name === name);
@@ -167,7 +168,7 @@ describe('source registry operations', () => {
         external_id: 'session-1/event-1',
         origin_event: 'session_capture',
         title: 'Agent session event',
-        chunk_texts: ['The user pasted sk-testsecret1234567890 and asked to remember a preference.'],
+        chunk_texts: [`The user pasted AWS key ${AWS_ACCESS_KEY_FIXTURE} and asked to remember a preference.`],
         parser_version: 'agent-session:v1',
         policy: {
           consent_state: 'granted',
@@ -178,8 +179,10 @@ describe('source registry operations', () => {
         now: '2026-06-03T01:01:00.000Z',
       }) as any;
 
-      expect(preview.chunks[0].redacted_text).toContain('[REDACTED:openai_api_key]');
+      expect(preview.chunks[0].redacted_text).toContain('[REDACTED:aws_access_key_id]');
+      expect(preview.chunks[0].redacted_text).not.toContain(AWS_ACCESS_KEY_FIXTURE);
       expect(preview.secret_detections).toHaveLength(1);
+      expect(preview.secret_detections[0].secret_type).toBe('aws_access_key_id');
     } finally {
       await harness.cleanup();
     }

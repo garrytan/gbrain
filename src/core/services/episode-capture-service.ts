@@ -32,7 +32,7 @@ export function buildEpisodeCapturePreview(
         ...(chunk ? [`source_chunk:${chunk.id}`] : []),
       ],
       safety: {
-        secret_risk: chunk?.secret_risk ?? 'none',
+        secret_risk: (chunk?.secret_risk ?? 'none') === 'none' ? 'none' : 'flagged',
         prompt_injection_flagged: (chunk?.prompt_injection_risk ?? 'none') !== 'none',
         redacted: Boolean(chunk && chunk.redacted_text !== chunk.chunk_text),
       },

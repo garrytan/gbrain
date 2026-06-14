@@ -6,6 +6,12 @@ import {
 } from '../src/core/runners/runner-policy.ts';
 import { buildRawIngestPlan } from '../src/core/source-registry/raw-ingest.ts';
 
+const AWS_ACCESS_KEY_FIXTURE = ['AKIA', 'IOSFODNN7EXAMPLE'].join('');
+const AWS_SECRET_ACCESS_KEY_FIXTURE = [
+  'abcdefghijklmnopqrst',
+  'uvwxyzABCD12345678/+',
+].join('');
+
 const sourcePolicy = {
   consent_state: 'granted',
   enabled: true,
@@ -122,7 +128,10 @@ describe('restricted runner policy', () => {
       external_id: 'session-secret',
       origin_event: 'session_capture',
       parser_version: 'test-parser',
-      chunk_texts: ['The API key is sk-secretvalue123456789 and should stay private.'],
+      chunk_texts: [
+        `The API key is sk-secretvalue123456789, AWS key ${AWS_ACCESS_KEY_FIXTURE}, `
+        + `and AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY_FIXTURE} should stay private.`,
+      ],
       now: '2026-05-21T09:00:00.000Z',
     }, {
       consent_state: 'granted',
@@ -151,7 +160,11 @@ describe('restricted runner policy', () => {
     expect(access.status).toBe('allowed');
     expect(access.payloads).toHaveLength(1);
     expect(access.payloads[0]?.text).toContain('[REDACTED:openai_api_key]');
+    expect(access.payloads[0]?.text).toContain('[REDACTED:aws_access_key_id]');
+    expect(access.payloads[0]?.text).toContain('[REDACTED:aws_secret_access_key]');
     expect(access.payloads[0]?.text).not.toContain('sk-secretvalue123456789');
+    expect(access.payloads[0]?.text).not.toContain(AWS_ACCESS_KEY_FIXTURE);
+    expect(access.payloads[0]?.text).not.toContain(AWS_SECRET_ACCESS_KEY_FIXTURE);
     expect(access.ledger_entries).toHaveLength(1);
     expect(access.ledger_entries[0]).toMatchObject({
       actor_type: 'runner',

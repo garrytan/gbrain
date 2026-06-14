@@ -133,7 +133,46 @@ const PROMPT_INJECTION_PATTERNS = [
   /\byou\s+are\s+now\s+(?:in\s+)?(?:developer|jailbreak|admin|root)\s+mode\b/,
   /\b(?:exfiltrat\w*|tool misuse|remote command)\b/,
 ];
-const OPENAI_KEY_PATTERN = /sk-[A-Za-z0-9_-]{12,}/g;
+const SECRET_PATTERNS: Array<{
+  type: string;
+  pattern: RegExp;
+  replacement?: (secret: string) => string;
+}> = [
+  {
+    type: 'database_connection_string',
+    pattern: /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis):\/\/[^/\s:@]+:[^@\s]+@/gi,
+    replacement: (secret) => `${secret.slice(0, secret.indexOf('://') + 3)}[REDACTED:database_connection_string]@`,
+  },
+  {
+    type: 'pem_private_key',
+    pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
+  },
+  {
+    type: 'anthropic_api_key',
+    pattern: /\bsk-ant-[A-Za-z0-9_-]{12,}\b/g,
+  },
+  {
+    type: 'openai_api_key',
+    pattern: /\bsk-[A-Za-z0-9_-]{12,}\b/g,
+  },
+  {
+    type: 'github_token',
+    pattern: /\b(?:gh[opsru]_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255})\b/g,
+  },
+  {
+    type: 'slack_token',
+    pattern: /\bxox[baprs]-(?:\d{10,}-)?[A-Za-z0-9-]{24,}\b/g,
+  },
+  {
+    type: 'aws_access_key_id',
+    pattern: /\bA[KS]IA[0-9A-Z]{16}\b/g,
+  },
+  {
+    type: 'aws_secret_access_key',
+    pattern: /\baws[ _-]?secret[ _-]?access[ _-]?key\s*[:=]\s*(['"]?)[A-Za-z0-9/+=]{40}\1(?=$|[^A-Za-z0-9/+=])/gi,
+    replacement: (secret) => `${secret.slice(0, secret.search(/[:=]/) + 1)}[REDACTED:aws_secret_access_key]`,
+  },
+];
 
 export function buildRawIngestPlan(input: RawIngestInput, policy: RawIngestPolicy): RawIngestPlan {
   assertIngestAllowed(policy);
@@ -188,7 +227,7 @@ export function buildRawIngestPlan(input: RawIngestInput, policy: RawIngestPolic
       extractor_version: input.extractor_version ?? '',
       sensitivity_flags: sensitivityFlags,
       prompt_injection_risk: promptInjectionRisk,
-      secret_risk: redaction.secretDetections.length === 0 ? 'none' : 'flagged',
+      secret_risk: redaction.secretDetections.length === 0 ? 'none' : 'redacted',
       created_at: now,
       expires_at: input.expires_at ?? null,
     };
@@ -311,14 +350,17 @@ function redactSecrets(text: string): {
   secretDetections: Array<{ secret_type: string; secret_hash: string; confidence: number }>;
 } {
   const detections: Array<{ secret_type: string; secret_hash: string; confidence: number }> = [];
-  const redacted = text.replace(OPENAI_KEY_PATTERN, (secret) => {
-    detections.push({
-      secret_type: 'openai_api_key',
-      secret_hash: sha256(secret),
-      confidence: 0.99,
+  let redacted = text;
+  for (const secretPattern of SECRET_PATTERNS) {
+    redacted = redacted.replace(secretPattern.pattern, (secret) => {
+      detections.push({
+        secret_type: secretPattern.type,
+        secret_hash: sha256(secret),
+        confidence: 0.99,
+      });
+      return secretPattern.replacement?.(secret) ?? `[REDACTED:${secretPattern.type}]`;
     });
-    return '[REDACTED:openai_api_key]';
-  });
+  }
   return { text: redacted, secretDetections: detections };
 }
 

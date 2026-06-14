@@ -77,7 +77,7 @@ describe('S34 - agent-session auto capture', () => {
         parser_version: 'agent-session:v1',
         extractor_version: 'agent-session-memory:v1',
         prompt_injection_risk: 'none',
-        secret_risk: 'flagged',
+        secret_risk: 'redacted',
       });
       expect(chunks[0]?.redacted_text).toContain('[REDACTED:openai_api_key]');
       expect(chunks[0]?.redacted_text).not.toContain(rawSecret);
