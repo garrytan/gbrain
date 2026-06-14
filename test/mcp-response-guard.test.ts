@@ -62,6 +62,26 @@ describe('MCP response guard', () => {
     expect(compactTools.length).toBeLessThan(operations.length);
   });
 
+  test('pglite MCP tool catalog hides unsupported file operations', () => {
+    const catalog = createMcpToolCatalogProvider(operations, {
+      config: resolveConfig({
+        engine: 'pglite',
+        database_path: '/tmp/mbrain-local.pglite',
+      }),
+    });
+    const compactTools = catalog.getTools({ compact: true });
+    const fullTools = catalog.getTools({ compact: false });
+    const compactNames = compactTools.map(tool => tool.name);
+    const fullNames = fullTools.map(tool => tool.name);
+
+    expect(compactNames).not.toContain('file_list');
+    expect(compactNames).not.toContain('file_upload');
+    expect(compactNames).not.toContain('file_url');
+    expect(fullNames).toEqual(compactNames);
+    expect(compactNames).toContain('get_page');
+    expect(compactTools.length).toBeLessThan(operations.length);
+  });
+
   test('offline file operations remain guarded when called directly', async () => {
     await expect(operationsByName.file_list.handler({
       config: resolveConfig({
@@ -75,6 +95,21 @@ describe('MCP response guard', () => {
     }, {})).rejects.toMatchObject({
       code: 'unsupported_capability',
       message: expect.stringMatching(/sqlite\/local mode/i),
+    });
+  });
+
+  test('pglite file operations remain guarded when called directly', async () => {
+    await expect(operationsByName.file_upload.handler({
+      config: resolveConfig({
+        engine: 'pglite',
+        database_path: '/tmp/mbrain-local.pglite',
+      }),
+      dryRun: true,
+      engine: {} as any,
+      logger: noopLogger,
+    }, { path: '/tmp/example.txt' })).rejects.toMatchObject({
+      code: 'unsupported_capability',
+      message: expect.stringMatching(/pglite\/local mode/i),
     });
   });
 

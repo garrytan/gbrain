@@ -52,6 +52,7 @@ export function isOfflineProfile(config?: MBrainConfig | null): boolean {
 
 export function resolveOfflineProfile(config: MBrainConfig): OfflineProfile {
   const offline = isOfflineProfile(config);
+  const filesCapability = resolveFilesCapability(config, offline);
   const embedding = resolveEmbeddingProvider({ config }).capability;
   const rewrite = resolveQueryRewritePolicy(config).capability;
 
@@ -65,11 +66,19 @@ export function resolveOfflineProfile(config: MBrainConfig): OfflineProfile {
       check_update: offline
         ? unsupportedCapability('check-update is disabled in the local/offline profile.')
         : supportedCapability(),
-      files: offline
-        ? unsupportedCapability('files/storage commands require Postgres raw database access and are not supported in sqlite/local mode.')
-        : supportedCapability(),
+      files: filesCapability,
     },
   };
+}
+
+function resolveFilesCapability(config: MBrainConfig, offline: boolean): OfflineCapabilityStatus {
+  if (config.engine === 'pglite') {
+    return unsupportedCapability('files/storage commands require raw Postgres access and are not supported in pglite/local mode.');
+  }
+  if (offline) {
+    return unsupportedCapability('files/storage commands require Postgres raw database access and are not supported in sqlite/local mode.');
+  }
+  return supportedCapability();
 }
 
 export function getUnsupportedCapabilityReason(
