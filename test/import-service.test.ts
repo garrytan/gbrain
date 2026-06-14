@@ -696,6 +696,7 @@ describe('import service', () => {
       listDerivedJobs: async () => [],
       getDerivedIndexState: async () => null,
       listDerivedIndexStates: async () => [],
+      listContextMapEntries: async () => [],
       markDerivedIndexReady: async (input: Record<string, unknown>) => ({
         scope_id: input.scope_id,
         slug: input.slug,

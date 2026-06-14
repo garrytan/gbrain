@@ -9,6 +9,7 @@ import {
   computeContextMapSourceSetHash,
   getStructuralContextMapEntry,
   listStructuralContextMapEntries,
+  markContextMapEntriesStaleForSourceSetChange,
   WORKSPACE_CONTEXT_MAP_KIND,
   workspaceContextMapId,
 } from '../src/core/services/context-map-service.ts';
@@ -86,6 +87,7 @@ test('context-map service marks persisted maps stale until explicit rebuild', as
     const built = await buildStructuralContextMapEntry(engine);
     expect(built.status).toBe('ready');
     expect(built.stale_reason).toBeNull();
+    await new Promise(resolve => setTimeout(resolve, 10));
 
     await importFromContent(engine, 'concepts/note-manifest', [
       '---',
@@ -95,6 +97,12 @@ test('context-map service marks persisted maps stale until explicit rebuild', as
       '# Purpose',
       'Indexes [[systems/mbrain]] and explains refresh.',
     ].join('\n'), { path: 'concepts/note-manifest.md' });
+
+    const rawStaleEntry = await engine.getContextMapEntry(id);
+    expect(rawStaleEntry).not.toBeNull();
+    expect(rawStaleEntry?.status).toBe('stale');
+    expect(rawStaleEntry?.stale_reason).toBe('source_set_changed');
+    expect(rawStaleEntry?.generated_at.toISOString()).toBe(built.generated_at.toISOString());
 
     const staleEntry = await getStructuralContextMapEntry(engine, id);
     expect(staleEntry).not.toBeNull();
@@ -117,6 +125,48 @@ test('context-map service marks persisted maps stale until explicit rebuild', as
     await engine.disconnect();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('context-map stale marking skips already stale entries without source-set scans', async () => {
+  const generatedAt = new Date('2026-06-14T00:00:00.000Z');
+  const calls: string[] = [];
+  const engine = {
+    listContextMapEntries: async () => {
+      calls.push('listContextMapEntries');
+      return [{
+        id: workspaceContextMapId('workspace:default'),
+        scope_id: 'workspace:default',
+        kind: WORKSPACE_CONTEXT_MAP_KIND,
+        title: 'Workspace Structural Map',
+        build_mode: 'structural',
+        status: 'stale',
+        source_set_hash: 'old-hash',
+        extractor_version: 'phase2-context-map-v1',
+        node_count: 1,
+        edge_count: 0,
+        community_count: 0,
+        graph_json: { nodes: [], edges: [] },
+        generated_at: generatedAt,
+        stale_reason: 'source_set_changed',
+      }];
+    },
+    listNoteManifestEntries: async () => {
+      calls.push('listNoteManifestEntries');
+      throw new Error('stale entries should not scan manifests');
+    },
+    listNoteSectionEntries: async () => {
+      calls.push('listNoteSectionEntries');
+      throw new Error('stale entries should not scan sections');
+    },
+    upsertContextMapEntry: async () => {
+      calls.push('upsertContextMapEntry');
+      throw new Error('stale entries should not be rewritten');
+    },
+  } as any;
+
+  await markContextMapEntriesStaleForSourceSetChange(engine);
+
+  expect(calls).toEqual(['listContextMapEntries']);
 });
 
 test('context-map service preserves non-stale failure states on freshness reads', async () => {

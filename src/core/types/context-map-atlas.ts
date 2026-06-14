@@ -31,6 +31,7 @@ export interface ContextMapEntryInput {
   edge_count: number;
   community_count?: number;
   graph_json: Record<string, unknown>;
+  generated_at?: Date | string;
   stale_reason?: string | null;
 }
 

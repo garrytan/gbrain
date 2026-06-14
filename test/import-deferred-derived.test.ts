@@ -8,6 +8,7 @@ import {
 } from '../src/core/import-file.ts';
 import { operations } from '../src/core/operations.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
+import { buildStructuralContextMapEntry } from '../src/core/services/context-map-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from '../src/core/services/note-manifest-service.ts';
 
 async function withEngine(run: (engine: SQLiteEngine) => Promise<void>): Promise<void> {
@@ -371,6 +372,37 @@ test('put_page defer_derived only enqueues durable derived jobs', async () => {
       'note_sections',
       'page_chunks',
     ]);
+  });
+});
+
+test('put_page defer_derived marks existing context maps stale before read-time freshness checks', async () => {
+  await withEngine(async (engine) => {
+    const putPage = operations.find(operation => operation.name === 'put_page');
+    if (!putPage) throw new Error('put_page operation is missing');
+
+    const slug = 'concepts/put-page-context-map-stale';
+    await importFromContent(engine, slug, content);
+    const built = await buildStructuralContextMapEntry(engine);
+    expect(built.status).toBe('ready');
+    expect(built.stale_reason).toBeNull();
+
+    await putPage.handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, {
+      slug,
+      content: content.replace(
+        'Canonical content is available immediately.',
+        'Updated canonical content is available immediately.',
+      ),
+      defer_derived: true,
+    });
+
+    const rawEntry = await engine.getContextMapEntry(built.id);
+    expect(rawEntry?.status).toBe('stale');
+    expect(rawEntry?.stale_reason).toBe('source_set_changed');
   });
 });
 

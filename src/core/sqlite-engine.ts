@@ -4386,7 +4386,7 @@ export class SQLiteEngine implements BrainEngine {
   }
 
   async upsertContextMapEntry(input: ContextMapEntryInput): Promise<ContextMapEntry> {
-    const timestamp = nowIso();
+    const generatedAt = toNullableIso(input.generated_at) ?? nowIso();
     this.database.run(`
       INSERT INTO context_map_entries (
         id, scope_id, kind, title, build_mode, status, source_set_hash,
@@ -4420,7 +4420,7 @@ export class SQLiteEngine implements BrainEngine {
       input.edge_count,
       input.community_count ?? 0,
       JSON.stringify(input.graph_json ?? {}),
-      timestamp,
+      generatedAt,
       input.stale_reason ?? null,
     ]);
 

@@ -141,6 +141,34 @@ export async function listCodeLaneContextMapEntries(
   return Promise.all(entries.map((entry) => annotateContextMapFreshness(engine, entry)));
 }
 
+export async function markContextMapEntriesStaleForSourceSetChange(
+  engine: BrainEngine,
+  scopeId = DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+): Promise<void> {
+  const entries = await engine.listContextMapEntries({ scope_id: scopeId, limit: 10_000 });
+  const freshnessByScopeKind = new Map<string, { currentSourceSetHash: string; staleReason: string }>();
+
+  for (const entry of entries) {
+    if (entry.status !== 'ready') continue;
+
+    const cacheKey = `${entry.kind}\0${entry.scope_id}`;
+    let freshness = freshnessByScopeKind.get(cacheKey);
+    if (!freshness) {
+      freshness = await computeFreshnessInput(engine, entry);
+      freshnessByScopeKind.set(cacheKey, freshness);
+    }
+    const staleEntry = applyFreshness(entry, freshness.currentSourceSetHash, freshness.staleReason);
+    if (
+      staleEntry.status === entry.status
+      && staleEntry.stale_reason === entry.stale_reason
+    ) {
+      continue;
+    }
+
+    await engine.upsertContextMapEntry(staleEntry);
+  }
+}
+
 export async function computeContextMapSourceSetHash(
   engine: BrainEngine,
   scopeId = DEFAULT_NOTE_MANIFEST_SCOPE_ID,

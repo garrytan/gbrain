@@ -3579,7 +3579,7 @@ export abstract class PgEngineBase {
         id, scope_id, kind, title, build_mode, status, source_set_hash,
         extractor_version, node_count, edge_count, community_count, graph_json,
         generated_at, stale_reason
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, now(), $13)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::timestamptz, $14)
       ON CONFLICT (id) DO UPDATE SET
         scope_id = EXCLUDED.scope_id,
         kind = EXCLUDED.kind,
@@ -3610,6 +3610,7 @@ export abstract class PgEngineBase {
         input.edge_count,
         input.community_count ?? 0,
         JSON.stringify(input.graph_json ?? {}),
+        toNullableIso(input.generated_at) ?? new Date().toISOString(),
         input.stale_reason ?? null,
       ],
     );

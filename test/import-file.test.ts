@@ -70,6 +70,7 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
       if (prop === 'listDerivedJobs') return overrides.listDerivedJobs || (() => Promise.resolve([]));
       if (prop === 'getDerivedIndexState') return overrides.getDerivedIndexState || (() => Promise.resolve(null));
       if (prop === 'listDerivedIndexStates') return overrides.listDerivedIndexStates || (() => Promise.resolve([]));
+      if (prop === 'listContextMapEntries') return overrides.listContextMapEntries || (() => Promise.resolve([]));
       if (prop === 'markDerivedIndexReady') {
         return overrides.markDerivedIndexReady || ((input: Record<string, unknown>) => {
           calls.push({ method: 'markDerivedIndexReady', args: [input] });

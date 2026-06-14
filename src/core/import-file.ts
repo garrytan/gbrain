@@ -15,6 +15,7 @@ import {
   DEFAULT_NOTE_MANIFEST_SCOPE_ID,
   NOTE_MANIFEST_EXTRACTOR_VERSION,
 } from './services/note-manifest-service.ts';
+import { markContextMapEntriesStaleForSourceSetChange } from './services/context-map-service.ts';
 import { buildNoteSectionEntries, NOTE_SECTION_EXTRACTOR_VERSION } from './services/note-section-service.ts';
 import { pathToSlug, slugifyPath } from './sync.ts';
 import type { ChunkInput, DerivedArtifactKind, DerivedIndexState, DerivedJob, Page } from './types.ts';
@@ -321,6 +322,7 @@ async function replacePageDerivedStorage(
   )) {
     throw new DerivedRefreshTargetChangedError();
   }
+  await markContextMapEntriesStaleForSourceSetChange(engine);
   return resolvedChunks.length;
 }
 
@@ -338,6 +340,7 @@ async function invalidatePageDerivedStorage(
   await engine.deleteChunks(page.slug);
   await engine.deleteNoteSectionEntries(DEFAULT_NOTE_MANIFEST_SCOPE_ID, page.slug);
   await engine.deleteNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, page.slug);
+  await markContextMapEntriesStaleForSourceSetChange(engine);
   if (page.content_hash) {
     await enqueuePageDerivedRefresh(engine, page, manifestPath, await engine.getTags(page.slug));
   }
