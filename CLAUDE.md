@@ -120,6 +120,20 @@ stays small enough to load every session. Nothing was lost — the pre-move cont
 is in git, and the docs carry every load-bearing invariant (compressed to
 current-state).
 
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in GitHub Issues for this repository. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default five-label triage vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repo uses a single-context domain docs layout. See `docs/agents/domain.md`.
+
 ## Maintaining CLAUDE.md and the reference docs
 
 CLAUDE.md grew to ~592KB / ~147k tokens once the per-file index became append-only
