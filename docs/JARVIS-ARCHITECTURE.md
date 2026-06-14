@@ -4653,6 +4653,98 @@ bootout/bootstrap 后:本地 + `https://kos.chenge.ink/health` 均报
 
 ---
 
+## 6.35 Upstream v0.42.42.0 sync (2026-06-14)
+
+§6.34 之后 5 天的跟进 sync —— 上游 master **5 个 commit**(v0.42.37.0 →
+**v0.42.42.0**),merge commit **112 文件 / +6,739 / −538 LoC**。merge-base
+`1eb430a2` 即 §6.34 合并点,纯 follow-on。上游主题:jobs 死锁回收
+(#2015 reap stale dead-holder cycle/sync locks —— 正好自动化 §6.34 手清的
+2 个过期 cycle lock)、Retrieval Reflex(#2019,教 agent 何时/取什么)、
+extract/ingest 入库前修补孤立 UTF-16 surrogate(#2031,对中文+邮件语料的
+数据完整性有益)、triage wave(#2128,6 个 data-loss/availability 修复 +
+9 个社区 PR)、CLI bounded teardown + explicit exit(#2141,干掉 txn-mode
+pooler 的 10s 强退税)。Schema 自动 **v115 → v116**(单 migration
+[116] `code_edges_source_backfill_and_callee_index` + #2038 schema-drift
+自愈逻辑)。生产 `kos.chenge.ink` 部署完成,**24,298 live pages**(较 §6.34
+的 15,206 高出的部分是其间 5 天 mailagent 邮件 + omada 日增,与本 sync 正交;
+migration 不改 page count)。
+
+### Conflict resolution(3 个,vs §6.34 的 4)
+
+> **过程教训**:`/sync-upstream` 自动抓取的 "Conflict preview" 只报了 1 个
+> (test 文件),实际 `git merge-tree --write-tree` 核出 **3 个**。务必用
+> merge-tree 核实真实冲突集,勿信 auto-preview。
+
+| File | Decision | Rationale |
+|---|---|---|
+| `src/core/ai/gateway.ts` | 手工合成:fork `embedTransportWithRetry` retry wrapper **包在**上游新 `__embedInputTypeStore` context 内层,使每次重试 attempt 的 fetch shim 都看得到 threaded input_type(query/document);per-attempt `AI_EMBED_TIMEOUT_MS` 仍由 wrapper 拥有(§6.34 决定),不重复上游的 inline timeout | 双方语义都保住,且 store 现包住整个 retry loop(strictly 优于上游单次包法)。注:openai text-embedding-3-large 是**对称**模型,`input_type` 为 undefined → 走 `: doEmbed()` 分支,本 compose 对本库实为 no-op,但对将来非默认 embedding-column 正确 |
+| `src/core/pglite-engine.ts` | keep both:fork WAL `pg_switch_wal()` durability patch + 上游 `preservingProcessExitCode` 说明注释,二者纯叠加 | 生产是 Postgres 非 PGLite,此 patch 对生产 query 路径无影响;保留以防本地 PGLite pilot 回归 |
+| `test/db-lock-heartbeat-takeover.test.ts` | 取上游的 `withEnv(..., async () => {})` 形(上游 #2015 已收敛到 fork §6.34 的 withEnv 修法);**typecheck 另揪出 3-way merge 静默产生的重复 `withEnv` import**(18/20 行各一,非相邻行 git 未报冲突),删其一 | fork §6.34 的 withEnv 修法已被上游采纳 → 本文件自此向上游收敛,后续 sync 零冲突 |
+
+**Fork patch 存活清单**:`embedTransportWithRetry`(gateway,2 锚点)、WAL
+`pg_switch_wal()`(pglite)均存活。fork-protected 区域
+(`skills/kos-jarvis/`、`server/`、`workers/`、`scripts/launchd/`、
+`RESOLVER.md`)**零侵入**(merge 结果 vs 旧 master `git diff` 为空)。上游本批
+**未动** `CLAUDE.md` / `llms-full.txt`(0 marker、vs master 无 diff)→ 无需
+`--ours`、无需 llms 重生成、`docs/CLAUDE-UPSTREAM.md` 免刷。
+
+### 绿门
+
+`bun install` 干净(0 dep 变更);`bun run build` → `gbrain 0.42.42.0`;
+typecheck 0 错(修重复 import 后);`check:all` 全绿(test-isolation、
+check-privacy、skill_brain_first、gateway-no-direct-Anthropic-SDK 等全 OK);
+`bun test test/ai/` **315 pass / 0 fail / 995 expect()** + embed-retry/db-lock
+靶向 **14 pass / 0 fail**。
+
+### 生产部署 + smoke
+
+备份 `pg_dump` **625MB**(`/tmp/pg-pre-sync-v0.42.42.0-2026-06-14.dump.gz`,
+gzip -t OK)+ config 副本。Schema 在 smoke 期 `bin/gbrain doctor`(0.42.42.0
+binary)connect 时**自动跑了 v115→v116**(`connectEngine()` 幂等 auto-migrate);
+随后 `init --migrate-only` 报 "Schema up to date"。config 表 `version=116`、
+v116 `code_edges` 索引(含 `idx_code_edges_symbol_resolver`)落库、page count
+**24,298 不变**。daemon `launchctl bootout`+`bootstrap` 后本地 +
+`https://kos.chenge.ink/health` 均报 **0.42.42.0 / postgres**。查询 smoke:
+
+- ZH 复合 CJK `知识管理`(vector 路径,本库 modal query)→ **0.924
+  people/karpathy / 0.885 concepts/persistent-wiki / 0.873
+  concepts/knowledge-management** ✓(≈ §6.34 的 0.876,略升)
+- EN 关键词 `Karpathy`(body-fragment containment)→ **1.124 / 0.968** ✓
+- EN 纯跨语言 `personal knowledge management methodology`:default-mode(autocut
+  ON)**返回 "No results"** —— 不是回归。`--autocut false` 即复现 §6.34 命中:
+  **concepts/knowledge-management 0.8885**(§6.34 报 0.889,几乎一致)+ 0.94+ 的
+  persistent-wiki/knowledge-compilation 簇。**autocut(v0.42.3 smart default,
+  reranker 在 default mode 自动开)在 confidence cliff 处把低置信跨语言簇整簇切掉**
+  —— search-UX 行为,非 embedding 故障、非 sync 引入。生产 code path 是
+  PostgresEngine(pglite patch 无关)+ openai 对称模型(input_type compose 为
+  no-op),本 sync 的 3 处冲突解法均不触碰 query 语义;上游 5 commit 唯一搜索相关
+  改动是 `KNOBS_HASH_VERSION 10→11`(#1400 非对称模型 cache-bust,对本库仅一次
+  cold-miss)。**今后 sync 见 EN 跨语言 "No results" 勿惊:那是 autocut,本库
+  documented modal query 是复合 CJK,正常。**
+
+### 部署后健康快照(均为既有结构常态,非回归)
+
+1. **embedding 满覆盖**:`content_chunks` **52,529 / 0 NULL**(§6.34 收于
+   48,535/0,5 天增 +3,994 全嵌)、schema 1536d、`ze_embedding_health` 跳过
+   (模型非 ZeroEntropy)、`embed_staleness` 无 stale —— §6.32 收敛 + embed-retry
+   patch + embedding-label-normalize cron 持续兜底,健康。
+2. **doctor 5/100、FAIL = `sync_freshness` / `cycle_freshness` / `orphan_ratio`
+   (91%,22038/24293)**:沿 §6.34 既定 —— 三源 MCP 写入而非 git-sync、邮件语料
+   天然少入链,结构性常态;orphan 较 §6.34 的 86% 升 5pt 系 5 天邮件增长,非 sync。
+   WARN(oversized `docs/claude-upstream` 550KB 镜像页、extract lag、salience 等)
+   均既有。
+
+> 沿 §6.33/§6.34 P3 教训:本节全文仅用 "banned-name" 占位词,写毕已 re-run
+> check-privacy 确认 clean。
+
+### Linked docs
+
+- [`skills/kos-jarvis/TODO.md`](../skills/kos-jarvis/TODO.md) — post-sync header(更新至 2026-06-14)
+- [`docs/CLAUDE-UPSTREAM.md`](CLAUDE-UPSTREAM.md) — 本轮上游 CLAUDE.md 未变,免刷(仍 v0.42.37.0 镜像)
+- Sync plan + verification trail: this conversation's transcript
+
+---
+
 ## 8. Cost and performance snapshot
 
 | Metric | v1 | v2 |

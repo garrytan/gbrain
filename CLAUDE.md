@@ -16,13 +16,15 @@ working on this codebase, before touching anything else:
    full migration story (v1 Python/shell → v2 GBrain TS + Gemini shim),
    current deployment (launchd / kos.chenge.ink / Notion Knowledge Agent
    / OpenClaw feishu), and the Jarvis triangle (KOS compiles ↔ Notion
-   operates ↔ OpenClaw executes). Latest sync story: **§6.34 v0.42.37.0
-   upstream sync (2026-06-09, 35 commits / v0.42.1.0 → v0.42.37.0 / 374
-   files; schema v111 → v115; first fork src/ runtime patch
-   `fork(ai-gateway)` embed transport retry)**. Previous: §6.33
-   v0.42.1.0 sync (2026-06-01, schema v97 → v111); §6.31 v0.41.14.0 sync
-   (2026-05-26, schema v85 → v97). Note §6.32 (2026-05-31) was the
-   embedding convergence, not a sync.
+   operates ↔ OpenClaw executes). Latest sync story: **§6.35 v0.42.42.0
+   upstream sync (2026-06-14, 5 commits / v0.42.37.0 → v0.42.42.0 / 112
+   files; schema v115 → v116; 3 conflicts — gateway.ts retry-wrapper now
+   composed inside upstream's `__embedInputTypeStore`, pglite WAL patch +
+   upstream comment, test withEnv converged to upstream)**. Previous:
+   §6.34 v0.42.37.0 sync (2026-06-09, 35 commits, schema v111 → v115,
+   first fork src/ runtime patch `fork(ai-gateway)` embed transport
+   retry); §6.33 v0.42.1.0 sync (2026-06-01, schema v97 → v111). Note
+   §6.32 (2026-05-31) was the embedding convergence, not a sync.
 3. Read [`skills/kos-jarvis/TODO.md`](skills/kos-jarvis/TODO.md) — current
    outstanding work (P0/P1/P2). Check here before suggesting "what should
    we do next?"

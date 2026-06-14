@@ -1,5 +1,30 @@
-# kos-jarvis — Outstanding Work (post v0.42.37.0 sync, 2026-06-09)
+# kos-jarvis — Outstanding Work (post v0.42.42.0 sync, 2026-06-14)
 
+> **Updated 2026-06-14**: v0.42.42.0 upstream sync landed (5 commits,
+> v0.42.37.0 → v0.42.42.0, 112 files / +6739 / −538 LoC). Story in
+> `docs/JARVIS-ARCHITECTURE.md` §6.35. **3 merge conflicts** (the
+> auto-preview only flagged 1 — `merge-tree` surfaced all 3):
+> `src/core/ai/gateway.ts` (fork `embedTransportWithRetry` now composed
+> INSIDE upstream's `__embedInputTypeStore`; per-attempt timeout stays in
+> the wrapper — note: openai is symmetric so the input_type compose is a
+> no-op for this brain), `src/core/pglite-engine.ts` (keep both: WAL
+> patch + upstream comment), and `test/db-lock-heartbeat-takeover.test.ts`
+> (upstream #2015 converged on the fork's §6.34 withEnv fix; dropped a
+> duplicate withEnv import the 3-way merge introduced, caught by
+> typecheck). Schema **v115 → v116** (migration 116 + #2038 drift
+> self-heal). Green gate: typecheck 0, check:all OK, test/ai/ **315 pass /
+> 0 fail / 995 expect()** + embed-retry/db-lock 14 pass. Production
+> kos.chenge.ink on 0.42.42.0, **24,298 live pages** (grew vs §6.34's
+> 15,206 from 5 days of mailagent + omada ingest), content_chunks
+> **52,529 / 0 NULL**. Smoke: ZH compound-CJK `知识管理` 0.924; EN
+> cross-lingual returns "No results" under default autocut — NOT a
+> regression (autocut cuts the low-confidence cross-lingual cluster;
+> `--autocut false` reproduces §6.34's 0.8885 hit). Migration auto-ran on
+> the first 0.42.42.0 `doctor` connect (idempotent); no lock cleanup
+> needed (#2015's heartbeat reaper handles it now).
+>
+> ---
+>
 > **Updated 2026-06-09**: v0.42.37.0 upstream sync landed (35 commits,
 > v0.42.1.0 → v0.42.37.0, 374 files / +41864 / −2635 LoC). Story in
 > `docs/JARVIS-ARCHITECTURE.md` §6.34. **4 merge conflicts** (CLAUDE.md /
