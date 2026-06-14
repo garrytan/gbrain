@@ -26,6 +26,7 @@ export interface RawManifestEntry {
 
 const CJK_SLUG_CHARS = '\\u3400-\\u4DBF\\u4E00-\\u9FFF\\u3040-\\u309F\\u30A0-\\u30FF\\uAC00-\\uD7AF';
 const SLUGIFY_KEEP_RE = new RegExp(`[^a-z0-9.\\s_\\-${CJK_SLUG_CHARS}]`, 'g');
+const HANGUL_COMPATIBILITY_RE = /[\u3130-\u318F\u3200-\u321E\u3260-\u327E]/g;
 
 /**
  * Parse the output of `git diff --name-status -M LAST..HEAD` into structured entries.
@@ -106,7 +107,7 @@ export function isSyncable(path: string): boolean {
  * Slugify a single path segment: lowercase, strip special chars, spaces → hyphens.
  */
 export function slugifySegment(segment: string): string {
-  return normalizeCompatibilityWidthChars(segment)
+  return normalizeSlugCompatibilityChars(segment)
     .normalize('NFD')                     // Decompose accented chars
     .replace(/[\u0300-\u036f]/g, '')      // Strip accent marks
     .normalize('NFC')                     // Recompose Hangul syllables after NFD
@@ -117,10 +118,11 @@ export function slugifySegment(segment: string): string {
     .replace(/^-|-$/g, '');              // Strip leading/trailing hyphens
 }
 
-function normalizeCompatibilityWidthChars(value: string): string {
+function normalizeSlugCompatibilityChars(value: string): string {
   return value
     .replace(/\u3000/g, ' ')
-    .replace(/[\uFF00-\uFFEF]/g, char => char.normalize('NFKC'));
+    .replace(/[\uFF00-\uFFEF]/g, char => char.normalize('NFKC'))
+    .replace(HANGUL_COMPATIBILITY_RE, char => char.normalize('NFKC'));
 }
 
 /**
