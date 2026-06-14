@@ -362,86 +362,91 @@ export abstract class PgEngineBase {
 
   // Chunks
   async upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void> {
-    // Get page_id
-    const pageResult = await this.queryable.query('SELECT id FROM pages WHERE slug = $1', [slug]);
-    if (pageResult.rows.length === 0) throw new Error(`Page not found: ${slug}`);
-    const pageId = (pageResult.rows[0] as { id: number }).id;
+    await this.transaction(async (txEngine) => {
+      const db = this.txq(txEngine);
+      const txBase = txEngine as unknown as PgEngineBase;
 
-    // Remove chunks that no longer exist
-    const newIndices = chunks.map(c => c.chunk_index);
-    if (newIndices.length > 0) {
-      // Explicit array cast keeps both transports (postgres.js, PGlite) honest
-      await this.queryable.query(
-        `DELETE FROM content_chunks WHERE page_id = $1 AND chunk_index != ALL($2::int[])`,
-        [pageId, newIndices]
-      );
-    } else {
-      await this.queryable.query('DELETE FROM content_chunks WHERE page_id = $1', [pageId]);
-      await this.onChunksChanged(pageId);
-      return;
-    }
+      // Get page_id
+      const pageResult = await db.query('SELECT id FROM pages WHERE slug = $1', [slug]);
+      if (pageResult.rows.length === 0) throw new Error(`Page not found: ${slug}`);
+      const pageId = (pageResult.rows[0] as { id: number }).id;
 
-    const clearEmbeddingIndices = chunks
-      .filter(chunk => chunk.clear_embedding === true)
-      .map(chunk => chunk.chunk_index);
-    if (clearEmbeddingIndices.length > 0) {
-      await this.queryable.query(
-        `DELETE FROM content_chunks WHERE page_id = $1 AND chunk_index = ANY($2::int[])`,
-        [pageId, clearEmbeddingIndices],
-      );
-    }
+      // Remove chunks that no longer exist
+      const newIndices = chunks.map(c => c.chunk_index);
+      if (newIndices.length > 0) {
+        // Explicit array cast keeps both transports (postgres.js, PGlite) honest
+        await db.query(
+          `DELETE FROM content_chunks WHERE page_id = $1 AND chunk_index != ALL($2::int[])`,
+          [pageId, newIndices]
+        );
+      } else {
+        await db.query('DELETE FROM content_chunks WHERE page_id = $1', [pageId]);
+        await txBase.onChunksChanged(pageId);
+        return;
+      }
 
-    // Batch upsert: build dynamic multi-row INSERT
-    const cols = '(page_id, chunk_index, chunk_text, chunk_source, chunk_content_hash, embedding, model, token_count, embedded_at)';
-    const rowParts: string[] = [];
-    const params: unknown[] = [];
-    let paramIdx = 1;
-
-    for (const chunk of chunks) {
-      const chunkHash = chunkContentHash(chunk.chunk_text, chunk.chunk_source);
-      if (chunk.embedding) {
-        assertPgVectorEmbeddingDimensions(
-          chunk.embedding,
-          `Chunk embedding for ${slug}#${chunk.chunk_index}`,
+      const clearEmbeddingIndices = chunks
+        .filter(chunk => chunk.clear_embedding === true)
+        .map(chunk => chunk.chunk_index);
+      if (clearEmbeddingIndices.length > 0) {
+        await db.query(
+          `DELETE FROM content_chunks WHERE page_id = $1 AND chunk_index = ANY($2::int[])`,
+          [pageId, clearEmbeddingIndices],
         );
       }
-      const embeddingStr = chunk.embedding
-        ? '[' + Array.from(chunk.embedding).join(',') + ']'
-        : null;
 
-      if (embeddingStr) {
-        rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now())`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunkHash, embeddingStr, chunk.model || DEFAULT_LOCAL_EMBEDDING_MODEL, chunk.token_count || null);
-      } else {
-        rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL)`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunkHash, chunk.model || DEFAULT_LOCAL_EMBEDDING_MODEL, chunk.token_count || null);
+      // Batch upsert: build dynamic multi-row INSERT
+      const cols = '(page_id, chunk_index, chunk_text, chunk_source, chunk_content_hash, embedding, model, token_count, embedded_at)';
+      const rowParts: string[] = [];
+      const params: unknown[] = [];
+      let paramIdx = 1;
+
+      for (const chunk of chunks) {
+        const chunkHash = chunkContentHash(chunk.chunk_text, chunk.chunk_source);
+        if (chunk.embedding) {
+          assertPgVectorEmbeddingDimensions(
+            chunk.embedding,
+            `Chunk embedding for ${slug}#${chunk.chunk_index}`,
+          );
+        }
+        const embeddingStr = chunk.embedding
+          ? '[' + Array.from(chunk.embedding).join(',') + ']'
+          : null;
+
+        if (embeddingStr) {
+          rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now())`);
+          params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunkHash, embeddingStr, chunk.model || DEFAULT_LOCAL_EMBEDDING_MODEL, chunk.token_count || null);
+        } else {
+          rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL)`);
+          params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunkHash, chunk.model || DEFAULT_LOCAL_EMBEDDING_MODEL, chunk.token_count || null);
+        }
       }
-    }
 
-    await this.queryable.query(
-      `INSERT INTO content_chunks ${cols} VALUES ${rowParts.join(', ')}
-       ON CONFLICT (page_id, chunk_index) DO UPDATE SET
-         chunk_text = EXCLUDED.chunk_text,
-         chunk_source = EXCLUDED.chunk_source,
-         chunk_content_hash = EXCLUDED.chunk_content_hash,
-         embedding = CASE
-           WHEN EXCLUDED.embedding IS NOT NULL THEN EXCLUDED.embedding
-           WHEN EXCLUDED.chunk_content_hash = content_chunks.chunk_content_hash
-            AND EXCLUDED.model = content_chunks.model THEN content_chunks.embedding
-           ELSE NULL
-         END,
-         model = EXCLUDED.model,
-         token_count = EXCLUDED.token_count,
-         embedded_at = CASE
-           WHEN EXCLUDED.embedding IS NOT NULL THEN EXCLUDED.embedded_at
-           WHEN EXCLUDED.chunk_content_hash = content_chunks.chunk_content_hash
-            AND EXCLUDED.model = content_chunks.model THEN content_chunks.embedded_at
-           ELSE NULL
-         END`,
-      params
-    );
+      await db.query(
+        `INSERT INTO content_chunks ${cols} VALUES ${rowParts.join(', ')}
+         ON CONFLICT (page_id, chunk_index) DO UPDATE SET
+           chunk_text = EXCLUDED.chunk_text,
+           chunk_source = EXCLUDED.chunk_source,
+           chunk_content_hash = EXCLUDED.chunk_content_hash,
+           embedding = CASE
+             WHEN EXCLUDED.embedding IS NOT NULL THEN EXCLUDED.embedding
+             WHEN EXCLUDED.chunk_content_hash = content_chunks.chunk_content_hash
+              AND EXCLUDED.model = content_chunks.model THEN content_chunks.embedding
+             ELSE NULL
+           END,
+           model = EXCLUDED.model,
+           token_count = EXCLUDED.token_count,
+           embedded_at = CASE
+             WHEN EXCLUDED.embedding IS NOT NULL THEN EXCLUDED.embedded_at
+             WHEN EXCLUDED.chunk_content_hash = content_chunks.chunk_content_hash
+              AND EXCLUDED.model = content_chunks.model THEN content_chunks.embedded_at
+             ELSE NULL
+           END`,
+        params
+      );
 
-    await this.onChunksChanged(pageId);
+      await txBase.onChunksChanged(pageId);
+    });
   }
 
   async getChunks(slug: string): Promise<Chunk[]> {
