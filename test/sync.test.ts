@@ -165,6 +165,20 @@ describe('pathToSlug', () => {
     expect(pathToSlug('concepts/㉮.md')).toBe('concepts/가');
     expect(pathToSlug('concepts/㈜.md')).toBe('concepts/주');
   });
+
+  test('normalizes enclosed CJK compatibility ideographs before filtering', () => {
+    expect(pathToSlug('concepts/㊙.md')).toBe('concepts/秘');
+    expect(pathToSlug('concepts/㊗.md')).toBe('concepts/祝');
+  });
+
+  test('preserves CJK compatibility ideographs when NFKC has no decomposition', () => {
+    expect(pathToSlug('concepts/﨑.md')).toBe('concepts/﨑');
+  });
+
+  test('does not broaden CJK ideograph compatibility handling to square unit symbols', () => {
+    expect(pathToSlug('concepts/㎏.md')).toBe('concepts');
+    expect(pathToSlug('concepts/㏂.md')).toBe('concepts');
+  });
 });
 
 describe('isSyncable edge cases', () => {

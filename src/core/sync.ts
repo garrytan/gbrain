@@ -24,9 +24,10 @@ export interface RawManifestEntry {
   oldPath?: string;
 }
 
-const CJK_SLUG_CHARS = '\\u3400-\\u4DBF\\u4E00-\\u9FFF\\u3040-\\u309F\\u30A0-\\u30FF\\uAC00-\\uD7AF';
-const SLUGIFY_KEEP_RE = new RegExp(`[^a-z0-9.\\s_\\-${CJK_SLUG_CHARS}]`, 'g');
+const CJK_SLUG_CHARS = '\\u3400-\\u4DBF\\u4E00-\\u9FFF\\u3040-\\u309F\\u30A0-\\u30FF\\uAC00-\\uD7AF\\uF900-\\uFAFF\\u{2F800}-\\u{2FA1F}';
+const SLUGIFY_KEEP_RE = new RegExp(`[^a-z0-9.\\s_\\-${CJK_SLUG_CHARS}]`, 'gu');
 const HANGUL_COMPATIBILITY_RE = /[\u3130-\u318F\u3200-\u321E\u3260-\u327E]/g;
+const CJK_COMPATIBILITY_RE = /[\u3220-\u32FF\uF900-\uFAFF\u{2F800}-\u{2FA1F}]/gu;
 
 /**
  * Parse the output of `git diff --name-status -M LAST..HEAD` into structured entries.
@@ -122,7 +123,8 @@ function normalizeSlugCompatibilityChars(value: string): string {
   return value
     .replace(/\u3000/g, ' ')
     .replace(/[\uFF00-\uFFEF]/g, char => char.normalize('NFKC'))
-    .replace(HANGUL_COMPATIBILITY_RE, char => char.normalize('NFKC'));
+    .replace(HANGUL_COMPATIBILITY_RE, char => char.normalize('NFKC'))
+    .replace(CJK_COMPATIBILITY_RE, char => char.normalize('NFKC'));
 }
 
 /**
