@@ -1,6 +1,7 @@
 import type { MemoryCandidateEntry, MemoryCandidateEntryInput, MemoryCandidateExtractionKind, MemoryCandidateSensitivity, MemoryCandidateStatus, MemoryCandidateTargetObjectType, MemoryCandidateType } from './memory-governance.ts';
 import type { ChunkSource, PageType } from './page.ts';
-import type { PersonalEpisodeSourceKind, ProfileMemoryType } from './profile-episode.ts';
+import type { BroadSynthesisRoute, MixedScopeBridgeRoute, PrecisionLookupRoute } from './context-map-atlas.ts';
+import type { PersonalEpisodeLookupRoute, PersonalEpisodeSourceKind, PersonalProfileLookupRoute, ProfileMemoryType } from './profile-episode.ts';
 import type { RetrievalTrace } from './retrieval-trace.ts';
 
 export type RetrievalRouteIntent =
@@ -11,12 +12,40 @@ export type RetrievalRouteIntent =
   | 'personal_profile_lookup'
   | 'personal_episode_lookup';
 
-export interface RetrievalRouteSelection {
-  route_kind: RetrievalRouteIntent;
+interface RetrievalRouteSelectionBase {
   retrieval_route: string[];
   summary_lines: string[];
-  payload: unknown;
 }
+
+interface TaskResumeRoutePayload {
+  task_id: string;
+}
+
+export type RetrievalRouteSelection =
+  | (RetrievalRouteSelectionBase & {
+    route_kind: 'task_resume';
+    payload: TaskResumeRoutePayload;
+  })
+  | (RetrievalRouteSelectionBase & {
+    route_kind: 'broad_synthesis';
+    payload: BroadSynthesisRoute;
+  })
+  | (RetrievalRouteSelectionBase & {
+    route_kind: 'precision_lookup';
+    payload: PrecisionLookupRoute;
+  })
+  | (RetrievalRouteSelectionBase & {
+    route_kind: 'mixed_scope_bridge';
+    payload: MixedScopeBridgeRoute;
+  })
+  | (RetrievalRouteSelectionBase & {
+    route_kind: 'personal_profile_lookup';
+    payload: PersonalProfileLookupRoute;
+  })
+  | (RetrievalRouteSelectionBase & {
+    route_kind: 'personal_episode_lookup';
+    payload: PersonalEpisodeLookupRoute;
+  });
 
 export interface RetrievalRouteSelectorInput {
   intent: RetrievalRouteIntent;

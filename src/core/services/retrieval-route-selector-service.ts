@@ -277,16 +277,24 @@ function buildTaskResumeSelection(card: TaskResumeCard): RetrievalRouteSelection
   };
 }
 
-function buildDelegatedSelection(
-  routeKind: 'broad_synthesis' | 'precision_lookup' | 'mixed_scope_bridge' | 'personal_profile_lookup' | 'personal_episode_lookup',
-  payload: BroadSynthesisRoute | PrecisionLookupRoute | MixedScopeBridgeRoute | PersonalProfileLookupRoute | PersonalEpisodeLookupRoute,
-): RetrievalRouteSelection {
+type DelegatedRoutePayloads = {
+  broad_synthesis: BroadSynthesisRoute;
+  precision_lookup: PrecisionLookupRoute;
+  mixed_scope_bridge: MixedScopeBridgeRoute;
+  personal_profile_lookup: PersonalProfileLookupRoute;
+  personal_episode_lookup: PersonalEpisodeLookupRoute;
+};
+
+function buildDelegatedSelection<K extends keyof DelegatedRoutePayloads>(
+  routeKind: K,
+  payload: DelegatedRoutePayloads[K],
+): Extract<RetrievalRouteSelection, { route_kind: K }> {
   return {
     route_kind: routeKind,
     retrieval_route: payload.retrieval_route,
     summary_lines: payload.summary_lines,
     payload,
-  };
+  } as Extract<RetrievalRouteSelection, { route_kind: K }>;
 }
 
 async function persistSelectedRouteTrace(

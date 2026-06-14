@@ -3,7 +3,7 @@ import { execFileSync } from 'child_process';
 import { mkdirSync, mkdtempSync, rmSync, renameSync, unlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { performSync } from '../src/commands/sync.ts';
+import { formatWatchSyncSummary, performSync } from '../src/commands/sync.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { SUBBRAIN_REGISTRY_CONFIG_KEY } from '../src/core/subbrains.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from '../src/core/services/note-manifest-service.ts';
@@ -14,6 +14,22 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('watch summary reports first_sync page counts', () => {
+  const line = formatWatchSyncSummary({
+    status: 'first_sync',
+    fromCommit: null,
+    toCommit: 'abc123',
+    added: 2,
+    modified: 1,
+    deleted: 0,
+    renamed: 0,
+    chunksCreated: 3,
+    pagesAffected: ['concepts/a', 'concepts/b', 'concepts/c'],
+  }, new Date('2026-06-14T13:05:00.000Z'));
+
+  expect(line).toBe('[13:05:00] First sync: +2 ~1 -0 R0');
 });
 
 function makeRepo(): string {
