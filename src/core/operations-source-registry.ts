@@ -626,6 +626,20 @@ interface SourceInspectionFilters {
   limit: number;
 }
 
+interface SourcePolicyInspection {
+  resolved: ReturnType<typeof resolveSourceRegistryPolicy>;
+  persisted_policy: (SourcePolicy & { id: string }) | null;
+  active_overrides: SourcePolicyOverride[];
+}
+
+interface SourceInspectionBatch {
+  policyBySourceId: Map<string, SourcePolicyInspection>;
+  connectorAccountBySourceId: Map<string, ConnectorAccountRecord>;
+  connectorGrantsByAccountId: Map<string, ConnectorGrantRecord[]>;
+  connectorSyncStateByAccountKey: Map<string, ConnectorSyncStateRecord>;
+  credentialRefById: Map<string, CredentialReferenceInspectionRow>;
+}
+
 interface PersistedSourceRegistration {
   status?: 'applied' | 'dry_run' | 'already_registered';
   source: SourceRecord;
@@ -1022,6 +1036,33 @@ async function readCredentialReference(
       : null;
   if (!rows) throw new Error('credential reference inspection requires a SQL-backed engine');
   return rows[0] ? normalizeCredentialReference(rows[0]) : null;
+}
+
+async function readCredentialReferencesByIds(
+  engine: BrainEngine,
+  credentialRefIds: string[],
+): Promise<Map<string, CredentialReferenceInspectionRow>> {
+  const uniqueIds = [...new Set(credentialRefIds)].filter((id) => id.length > 0);
+  const credentialRefById = new Map<string, CredentialReferenceInspectionRow>();
+  if (uniqueIds.length === 0) return credentialRefById;
+  const select = `
+    SELECT id, connector_id, account_id, provider, reference, scopes_json,
+           expires_at, last_used_at, rotation_status, health_status, created_at, updated_at
+    FROM credential_refs
+  `;
+  const rows = await queryRowsWithParams(
+    engine,
+    `${select} WHERE id IN (${sqlitePlaceholders(uniqueIds.length)})`,
+    uniqueIds,
+    `${select} WHERE id IN (${pgPlaceholders(uniqueIds.length)})`,
+    uniqueIds,
+    'credential reference inspection requires a SQL-backed engine',
+  );
+  for (const row of rows) {
+    const credential = normalizeCredentialReference(row);
+    credentialRefById.set(credential.id, credential);
+  }
+  return credentialRefById;
 }
 
 function buildConnectorRegistrationRecords(
@@ -1720,9 +1761,8 @@ async function listSourceInspectionRows(
     .slice(0, filters.limit);
 
   const inspected = [];
-  for (const source of sources) {
-    inspected.push(await buildSourceInspection(engine, source, false));
-  }
+  const batch = await buildSourceInspectionBatch(engine, sources);
+  for (const source of sources) inspected.push(buildSourceInspectionFromBatch(source, batch));
   return { sources: inspected };
 }
 
@@ -1793,16 +1833,103 @@ async function buildSourceInspection(
   return inspection;
 }
 
+async function buildSourceInspectionBatch(
+  engine: BrainEngine,
+  sources: SourceRecord[],
+): Promise<SourceInspectionBatch> {
+  const policyBySourceId = await inspectSourcePolicies(engine, sources);
+  const connectorSources = sources.filter((source) => source.connector_id);
+  const connectorAccountBySourceId = await readConnectorAccountsBySourceIds(
+    engine,
+    connectorSources.map((source) => source.id),
+  );
+  const connectorAccounts = [...connectorAccountBySourceId.values()];
+  const [connectorGrantsByAccountId, connectorSyncStateByAccountKey] = await Promise.all([
+    readConnectorGrantsByAccountIds(engine, connectorAccounts.map((account) => account.id)),
+    readConnectorSyncStatesByAccounts(engine, connectorAccounts),
+  ]);
+  const credentialRefIds = connectorAccounts
+    .map((account) => account.credential_ref_id)
+    .filter((id): id is string => Boolean(id));
+  const credentialRefById = await readCredentialReferencesByIds(engine, credentialRefIds);
+  return {
+    policyBySourceId,
+    connectorAccountBySourceId,
+    connectorGrantsByAccountId,
+    connectorSyncStateByAccountKey,
+    credentialRefById,
+  };
+}
+
+function buildSourceInspectionFromBatch(
+  source: SourceRecord,
+  batch: SourceInspectionBatch,
+): Record<string, unknown> {
+  const policyInspection = batch.policyBySourceId.get(source.id)
+    ?? buildSourcePolicyInspection(source, null, []);
+  const connectorAccount = source.connector_id
+    ? batch.connectorAccountBySourceId.get(source.id) ?? null
+    : null;
+  const connectorGrants = connectorAccount
+    ? batch.connectorGrantsByAccountId.get(connectorAccount.id) ?? []
+    : [];
+  const connectorSyncState = connectorAccount
+    ? batch.connectorSyncStateByAccountKey.get(connectorAccountKey(connectorAccount.id, connectorAccount.connector_id)) ?? null
+    : null;
+  const credentialRef = connectorAccount?.credential_ref_id
+    ? batch.credentialRefById.get(connectorAccount.credential_ref_id) ?? null
+    : null;
+  return {
+    source,
+    policy: policyInspection.resolved,
+    policy_storage: {
+      persisted_policy: policyInspection.persisted_policy,
+      active_overrides: policyInspection.active_overrides,
+    },
+    credential_ref: credentialRef,
+    connector_account: connectorAccount,
+    connector_grants: connectorGrants,
+    connector_sync_state: connectorSyncState,
+  };
+}
+
 async function inspectSourcePolicy(
   engine: BrainEngine,
   source: SourceRecord,
-): Promise<{
-  resolved: ReturnType<typeof resolveSourceRegistryPolicy>;
-  persisted_policy: (SourcePolicy & { id: string }) | null;
-  active_overrides: SourcePolicyOverride[];
-}> {
+): Promise<SourcePolicyInspection> {
   const persistedPolicy = await readPersistedSourcePolicy(engine, source);
   const activeOverrides = await readSourcePolicyOverrides(engine, source.id);
+  return buildSourcePolicyInspection(source, persistedPolicy, activeOverrides);
+}
+
+async function inspectSourcePolicies(
+  engine: BrainEngine,
+  sources: SourceRecord[],
+): Promise<Map<string, SourcePolicyInspection>> {
+  const [persistedPolicies, overridesBySourceId] = await Promise.all([
+    readPersistedSourcePoliciesForSources(engine, sources),
+    readSourcePolicyOverridesBySourceIds(engine, sources.map((source) => source.id)),
+  ]);
+  const persistedById = new Map(persistedPolicies.map((policy) => [policy.id, policy]));
+  const persistedByKind = new Map(persistedPolicies.map((policy) => [policy.source_kind, policy]));
+  const policyBySourceId = new Map<string, SourcePolicyInspection>();
+  for (const source of sources) {
+    const persistedPolicy = source.policy_id
+      ? persistedById.get(source.policy_id) ?? persistedByKind.get(source.kind) ?? null
+      : persistedByKind.get(source.kind) ?? null;
+    policyBySourceId.set(
+      source.id,
+      buildSourcePolicyInspection(source, persistedPolicy, overridesBySourceId.get(source.id) ?? []),
+    );
+  }
+  return policyBySourceId;
+}
+
+function buildSourcePolicyInspection(
+  source: SourceRecord,
+  persistedPolicy: (SourcePolicy & { id: string }) | null,
+  activeOverrides: SourcePolicyOverride[],
+): SourcePolicyInspection {
   if (!persistedPolicy) {
     return {
       resolved: resolveSourceRegistryPolicy({
@@ -1964,6 +2091,48 @@ async function readPersistedSourcePolicy(
   return rows[0] ? normalizePersistedSourcePolicy(rows[0]) : null;
 }
 
+async function readPersistedSourcePoliciesForSources(
+  engine: BrainEngine,
+  sources: SourceRecord[],
+): Promise<Array<SourcePolicy & { id: string }>> {
+  const policyIds = [...new Set(sources.map((source) => source.policy_id).filter((id): id is string => Boolean(id)))];
+  const sourceKinds = [...new Set(sources.map((source) => source.kind))];
+  const sqlitePredicates = [];
+  const sqliteParams: string[] = [];
+  const pgPredicates = [];
+  const pgParams: string[] = [];
+  if (policyIds.length > 0) {
+    sqlitePredicates.push(`id IN (${sqlitePlaceholders(policyIds.length)})`);
+    sqliteParams.push(...policyIds);
+    pgPredicates.push(`id IN (${pgPlaceholders(policyIds.length, pgParams.length + 1)})`);
+    pgParams.push(...policyIds);
+  }
+  if (sourceKinds.length > 0) {
+    sqlitePredicates.push(`source_kind IN (${sqlitePlaceholders(sourceKinds.length)})`);
+    sqliteParams.push(...sourceKinds);
+    pgPredicates.push(`source_kind IN (${pgPlaceholders(sourceKinds.length, pgParams.length + 1)})`);
+    pgParams.push(...sourceKinds);
+  }
+  if (sqlitePredicates.length === 0) return [];
+
+  const select = `
+    SELECT id, source_kind, ingest_mode, index_mode, extraction_mode, raw_copy_mode,
+           chunk_retention, llm_access, runner_access, automatic_canonical_write_authority,
+           candidate_route_conditions, conflict_route_conditions, forgetting_lifecycle,
+           restore_window, purge_policy, export_reconcile_behavior
+    FROM source_policies
+  `;
+  const rows = await queryRowsWithParams(
+    engine,
+    `${select} WHERE ${sqlitePredicates.join(' OR ')}`,
+    sqliteParams,
+    `${select} WHERE ${pgPredicates.join(' OR ')}`,
+    pgParams,
+    'source policy inspection operations require a SQL-backed engine',
+  );
+  return rows.map(normalizePersistedSourcePolicy);
+}
+
 async function readSourcePolicyOverrides(
   engine: BrainEngine,
   sourceId: string,
@@ -1986,6 +2155,39 @@ async function readSourcePolicyOverrides(
       : null;
   if (!rows) throw new Error('source policy inspection operations require a SQL-backed engine');
   return rows.map(normalizeSourcePolicyOverride);
+}
+
+async function readSourcePolicyOverridesBySourceIds(
+  engine: BrainEngine,
+  sourceIds: string[],
+): Promise<Map<string, SourcePolicyOverride[]>> {
+  const uniqueIds = [...new Set(sourceIds)].filter((id) => id.length > 0);
+  const overridesBySourceId = new Map<string, SourcePolicyOverride[]>(uniqueIds.map((id) => [id, []]));
+  if (uniqueIds.length === 0) return overridesBySourceId;
+  const sqliteSql = `
+    SELECT source_id, dimension, override_value
+    FROM source_policy_overrides
+    WHERE source_id IN (${sqlitePlaceholders(uniqueIds.length)}) AND revoked_at IS NULL
+    ORDER BY source_id ASC, created_at ASC, id ASC
+  `;
+  const pgSql = `
+    SELECT source_id, dimension, override_value
+    FROM source_policy_overrides
+    WHERE source_id IN (${pgPlaceholders(uniqueIds.length)}) AND revoked_at IS NULL
+    ORDER BY source_id ASC, created_at ASC, id ASC
+  `;
+  const rows = await queryRowsWithParams(
+    engine,
+    sqliteSql,
+    uniqueIds,
+    pgSql,
+    uniqueIds,
+    'source policy inspection operations require a SQL-backed engine',
+  );
+  for (const row of rows) {
+    overridesBySourceId.get(String(row.source_id))?.push(normalizeSourcePolicyOverride(row));
+  }
+  return overridesBySourceId;
 }
 
 async function readSourceStatusEvents(
@@ -2039,6 +2241,35 @@ async function readConnectorAccount(
   return rows[0] ? normalizeConnectorAccount(rows[0]) : null;
 }
 
+async function readConnectorAccountsBySourceIds(
+  engine: BrainEngine,
+  sourceIds: string[],
+): Promise<Map<string, ConnectorAccountRecord>> {
+  const uniqueIds = [...new Set(sourceIds)].filter((id) => id.length > 0);
+  const accountBySourceId = new Map<string, ConnectorAccountRecord>();
+  if (uniqueIds.length === 0) return accountBySourceId;
+  const select = `
+    SELECT id, connector_id, source_id, account_locator, display_name, credential_ref_id,
+           status, metadata_json, created_at, updated_at
+    FROM connector_accounts
+  `;
+  const rows = await queryRowsWithParams(
+    engine,
+    `${select} WHERE source_id IN (${sqlitePlaceholders(uniqueIds.length)})
+     ORDER BY source_id ASC, updated_at DESC, id ASC`,
+    uniqueIds,
+    `${select} WHERE source_id IN (${pgPlaceholders(uniqueIds.length)})
+     ORDER BY source_id ASC, updated_at DESC, id ASC`,
+    uniqueIds,
+    'source inspection operations require a SQL-backed engine',
+  );
+  for (const row of rows) {
+    const account = normalizeConnectorAccount(row);
+    if (!accountBySourceId.has(account.source_id)) accountBySourceId.set(account.source_id, account);
+  }
+  return accountBySourceId;
+}
+
 async function readConnectorGrants(
   engine: BrainEngine,
   accountId: string,
@@ -2061,6 +2292,34 @@ async function readConnectorGrants(
       : null;
   if (!rows) throw new Error('source inspection operations require a SQL-backed engine');
   return rows.map(normalizeConnectorGrant);
+}
+
+async function readConnectorGrantsByAccountIds(
+  engine: BrainEngine,
+  accountIds: string[],
+): Promise<Map<string, ConnectorGrantRecord[]>> {
+  const uniqueIds = [...new Set(accountIds)].filter((id) => id.length > 0);
+  const grantsByAccountId = new Map<string, ConnectorGrantRecord[]>(uniqueIds.map((id) => [id, []]));
+  if (uniqueIds.length === 0) return grantsByAccountId;
+  const select = `
+    SELECT id, account_id, scope, grant_state, granted_at, revoked_at, metadata_json, created_at, updated_at
+    FROM connector_grants
+  `;
+  const rows = await queryRowsWithParams(
+    engine,
+    `${select} WHERE account_id IN (${sqlitePlaceholders(uniqueIds.length)})
+     ORDER BY account_id ASC, scope ASC`,
+    uniqueIds,
+    `${select} WHERE account_id IN (${pgPlaceholders(uniqueIds.length)})
+     ORDER BY account_id ASC, scope ASC`,
+    uniqueIds,
+    'source inspection operations require a SQL-backed engine',
+  );
+  for (const row of rows) {
+    const grant = normalizeConnectorGrant(row);
+    grantsByAccountId.get(grant.account_id)?.push(grant);
+  }
+  return grantsByAccountId;
 }
 
 async function readConnectorSyncState(
@@ -2091,6 +2350,42 @@ async function readConnectorSyncState(
   return rows[0] ? normalizeConnectorSyncState(rows[0]) : null;
 }
 
+async function readConnectorSyncStatesByAccounts(
+  engine: BrainEngine,
+  accounts: ConnectorAccountRecord[],
+): Promise<Map<string, ConnectorSyncStateRecord>> {
+  const accountIds = [...new Set(accounts.map((account) => account.id))].filter((id) => id.length > 0);
+  const statesByAccountKey = new Map<string, ConnectorSyncStateRecord>();
+  if (accountIds.length === 0) return statesByAccountKey;
+  const allowedKeys = new Set(accounts.map((account) => connectorAccountKey(account.id, account.connector_id)));
+  const select = `
+    SELECT id, account_id, connector_id, cursor_json, last_sync_started_at, last_sync_finished_at,
+           last_success_at, last_failure_at, health_status, failure_count, last_error, metadata_json,
+           created_at, updated_at
+    FROM connector_sync_states
+  `;
+  const rows = await queryRowsWithParams(
+    engine,
+    `${select} WHERE account_id IN (${sqlitePlaceholders(accountIds.length)})
+     ORDER BY account_id ASC, connector_id ASC, id ASC`,
+    accountIds,
+    `${select} WHERE account_id IN (${pgPlaceholders(accountIds.length)})
+     ORDER BY account_id ASC, connector_id ASC, id ASC`,
+    accountIds,
+    'source inspection operations require a SQL-backed engine',
+  );
+  for (const row of rows) {
+    const state = normalizeConnectorSyncState(row);
+    const key = connectorAccountKey(state.account_id, state.connector_id);
+    if (allowedKeys.has(key) && !statesByAccountKey.has(key)) statesByAccountKey.set(key, state);
+  }
+  return statesByAccountKey;
+}
+
+function connectorAccountKey(accountId: string, connectorId: string): string {
+  return `${accountId}\0${connectorId}`;
+}
+
 async function queryRows(engine: BrainEngine, sql: string): Promise<Record<string, unknown>[]> {
   const candidate = engine as QueryableEngine;
   if (candidate.database) {
@@ -2103,6 +2398,35 @@ async function queryRows(engine: BrainEngine, sql: string): Promise<Record<strin
     return (await candidate.db.query(sql)).rows;
   }
   throw new Error('source inspection operations require a SQL-backed engine');
+}
+
+async function queryRowsWithParams(
+  engine: BrainEngine,
+  sqliteSql: string,
+  sqliteParams: unknown[],
+  pgSql: string,
+  pgParams: unknown[],
+  errorMessage: string,
+): Promise<Record<string, unknown>[]> {
+  const candidate = engine as QueryableEngine;
+  if (candidate.database) {
+    return candidate.database.query<Record<string, unknown>>(sqliteSql).all(...sqliteParams);
+  }
+  if (candidate.sql?.unsafe) {
+    return candidate.sql.unsafe(pgSql, pgParams);
+  }
+  if (candidate.db) {
+    return (await candidate.db.query(pgSql, pgParams)).rows;
+  }
+  throw new Error(errorMessage);
+}
+
+function sqlitePlaceholders(count: number): string {
+  return Array.from({ length: count }, () => '?').join(', ');
+}
+
+function pgPlaceholders(count: number, start = 1): string {
+  return Array.from({ length: count }, (_, index) => `$${start + index}`).join(', ');
 }
 
 function normalizeSourceRecord(row: Record<string, unknown>): SourceRecord {

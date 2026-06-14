@@ -289,6 +289,65 @@ describe('source registry operations', () => {
     }
   });
 
+  test('list_sources batches inspection reads across returned sources', async () => {
+    const harness = await createSqliteHarness('connector-list-batched-inspection');
+    try {
+      for (const [suffix, locator] of [['primary', 'gmail://me@example.com'], ['team', 'gmail://team@example.com']] as const) {
+        await getOperation('register_connector_source').handler(harness.ctx(), {
+          connector_id: 'gmail',
+          display_name: `Gmail ${suffix}`,
+          account_locator: locator,
+          consent_state: 'granted',
+          credential_ref: {
+            provider: 'credential_gateway',
+            reference: `credential-gateway://gmail/${suffix}`,
+            scopes: ['gmail.readonly'],
+          },
+          now: '2026-05-22T02:14:00.000Z',
+        });
+      }
+
+      const db = (harness.engine as any).database;
+      const originalQuery = db.query.bind(db);
+      const counts = {
+        source_policies: 0,
+        source_policy_overrides: 0,
+        connector_accounts: 0,
+        connector_grants: 0,
+        connector_sync_states: 0,
+        credential_refs: 0,
+      };
+      db.query = ((sql: string) => {
+        for (const table of Object.keys(counts) as Array<keyof typeof counts>) {
+          if (new RegExp(`FROM\\s+${table}\\b`, 'i').test(sql)) counts[table] += 1;
+        }
+        return originalQuery(sql);
+      }) as typeof db.query;
+      try {
+        const listed = await getOperation('list_sources').handler(harness.ctx(), {
+          connector_id: 'gmail',
+        }) as any;
+
+        expect(listed.sources).toHaveLength(2);
+        expect(listed.sources.every((row: any) => row.connector_account?.connector_id === 'gmail')).toBe(true);
+        expect(listed.sources.every((row: any) => row.connector_grants.length === 1)).toBe(true);
+        expect(listed.sources.every((row: any) => row.credential_ref?.provider === 'credential_gateway')).toBe(true);
+        expect(counts).toEqual({
+          source_policies: 1,
+          source_policy_overrides: 1,
+          connector_accounts: 1,
+          connector_grants: 1,
+          connector_sync_states: 1,
+          credential_refs: 1,
+        });
+      } finally {
+        db.query = originalQuery;
+      }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   test('connector registration can persist and inspect credential references without raw DB writes', async () => {
     const harness = await createSqliteHarness('connector-inline-credential');
     try {
