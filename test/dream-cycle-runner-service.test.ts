@@ -243,6 +243,58 @@ describe('dream cycle phase runner', () => {
     expect(consolidationCalls).toBe(0);
   });
 
+  test('lock renewal exception includes sanitized diagnostic details in guardrails', async () => {
+    const runtime = createMaintenanceRuntimeService({ now: () => '2026-06-06T00:00:00.000Z' });
+    let acquireCount = 0;
+    const renewalError = new Error(
+      'renewal failed for postgresql://runner:super-secret@localhost:5432/mbrain with sk-test1234567890 and github_pat_abcdefghijklmnopqrstuvwxyz\nretry later',
+    );
+    renewalError.stack = `Error: renewal failed for postgresql://runner:super-secret@localhost:5432/mbrain and aws secret access key=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN\n-----BEGIN PRIVATE KEY-----\nsecret-key-material\n-----END PRIVATE KEY-----\n${
+      '    at renewDreamLockBeforePhase (/repo/src/core/services/dream-cycle-runner-service.ts:830:11)\n'.repeat(40)
+    }`;
+    const wrappedRuntime = {
+      acquireCycleLock: async (input: any) => {
+        acquireCount += 1;
+        if (acquireCount > 1) {
+          throw renewalError;
+        }
+        return runtime.acquireCycleLock(input);
+      },
+      releaseCycleLock: (input: any) => runtime.releaseCycleLock(input),
+    };
+
+    const result = await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-06-06T00:00:00.000Z',
+      dry_run: false,
+      write_candidates: true,
+    }, {
+      runtime: wrappedRuntime,
+      replayCanary: passingReplayCanary(),
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.guardrails.lock_renewal).toMatchObject({
+      status: 'aborted',
+      renewal_count: 0,
+      reason_codes: ['cycle_lock_renewal_error'],
+      last_error: {
+        message: 'renewal failed for postgresql://[REDACTED:database_connection_string]@localhost:5432/mbrain with [REDACTED:openai_api_key] and [REDACTED:github_token] retry later',
+      },
+    });
+    const renewalStack = result.guardrails.lock_renewal.last_error?.stack;
+    if (!renewalStack) throw new Error('Expected lock renewal diagnostic stack');
+    expect(renewalStack).toContain(
+      'Error: renewal failed for postgresql://[REDACTED:database_connection_string]@localhost:5432/mbrain',
+    );
+    expect(renewalStack).toContain('aws secret access key=[REDACTED:aws_secret_access_key]');
+    expect(renewalStack).toContain('[REDACTED:pem_private_key]');
+    expect(renewalStack).not.toContain('super-secret');
+    expect(renewalStack).not.toContain('secret-key-material');
+    expect(renewalStack).toContain('...[truncated]');
+    expect(renewalStack.length).toBeLessThanOrEqual(1040);
+  });
+
   test('failed phase and policy denial produce structured phase results', async () => {
     const result = await runDreamCycle(stubEngine(), {
       scope_id: 'workspace:default',

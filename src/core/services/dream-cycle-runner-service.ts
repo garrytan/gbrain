@@ -97,6 +97,10 @@ export interface DreamCycleGuardrailReport {
     renewal_count: number;
     last_renewed_at: string | null;
     reason_codes: string[];
+    last_error?: {
+      message: string;
+      stack: string | null;
+    };
   };
   replay_canary: {
     status: 'not_required' | 'passed' | 'failed' | 'not_configured';
@@ -680,6 +684,79 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const LOCK_RENEWAL_ERROR_MESSAGE_MAX_LENGTH = 512;
+const LOCK_RENEWAL_ERROR_STACK_MAX_LENGTH = 1024;
+const LOCK_RENEWAL_ERROR_TRUNCATION_MARKER = '...[truncated]';
+const LOCK_RENEWAL_SECRET_REDACTIONS: Array<{
+  pattern: RegExp;
+  replacement: string | ((secret: string) => string);
+}> = [
+  {
+    pattern: /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis):\/\/[^/\s:@]+:[^@\s]+@/gi,
+    replacement: (secret) => `${secret.slice(0, secret.indexOf('://') + 3)}[REDACTED:database_connection_string]@`,
+  },
+  {
+    pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
+    replacement: '[REDACTED:pem_private_key]',
+  },
+  {
+    pattern: /\bsk-ant-[A-Za-z0-9_-]{12,}\b/g,
+    replacement: '[REDACTED:anthropic_api_key]',
+  },
+  {
+    pattern: /\bsk-[A-Za-z0-9_-]{12,}\b/g,
+    replacement: '[REDACTED:openai_api_key]',
+  },
+  {
+    pattern: /\b(?:gh[opsru]_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255})\b/g,
+    replacement: '[REDACTED:github_token]',
+  },
+  {
+    pattern: /\bxox[baprs]-(?:\d{10,}-)?[A-Za-z0-9-]{24,}\b/g,
+    replacement: '[REDACTED:slack_token]',
+  },
+  {
+    pattern: /\bA[KS]IA[0-9A-Z]{16}\b/g,
+    replacement: '[REDACTED:aws_access_key_id]',
+  },
+  {
+    pattern: /\baws[ _-]?secret[ _-]?access[ _-]?key\s*[:=]\s*(['"]?)[A-Za-z0-9/+=]{40}\1(?=$|[^A-Za-z0-9/+=])/gi,
+    replacement: (secret) => `${secret.slice(0, secret.search(/[:=]/) + 1)}[REDACTED:aws_secret_access_key]`,
+  },
+];
+
+function lockRenewalErrorDiagnostic(error: unknown): NonNullable<DreamCycleGuardrailReport['lock_renewal']['last_error']> {
+  const message = sanitizeLockRenewalDiagnosticText(
+    errorMessage(error),
+    LOCK_RENEWAL_ERROR_MESSAGE_MAX_LENGTH,
+    true,
+  ) || 'Unknown cycle lock renewal error';
+  const stack = error instanceof Error && error.stack
+    ? sanitizeLockRenewalDiagnosticText(error.stack, LOCK_RENEWAL_ERROR_STACK_MAX_LENGTH, false)
+    : null;
+  return { message, stack };
+}
+
+function sanitizeLockRenewalDiagnosticText(value: string, maxLength: number, collapseWhitespace: boolean): string {
+  const redacted = redactLockRenewalDiagnosticSecrets(value);
+  const normalizedNewlines = redacted.replace(/\r\n?/g, '\n');
+  const withoutControls = collapseWhitespace
+    ? normalizedNewlines.replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    : normalizedNewlines.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]+/g, ' ');
+  const sanitized = collapseWhitespace ? withoutControls.replace(/\s+/g, ' ').trim() : withoutControls.trim();
+  if (sanitized.length <= maxLength) return sanitized;
+  return `${sanitized.slice(0, Math.max(0, maxLength - LOCK_RENEWAL_ERROR_TRUNCATION_MARKER.length))}${LOCK_RENEWAL_ERROR_TRUNCATION_MARKER}`;
+}
+
+function redactLockRenewalDiagnosticSecrets(value: string): string {
+  return LOCK_RENEWAL_SECRET_REDACTIONS.reduce((redacted, { pattern, replacement }) => {
+    if (typeof replacement === 'string') {
+      return redacted.replace(pattern, replacement);
+    }
+    return redacted.replace(pattern, replacement);
+  }, value);
+}
+
 function getUnsafeSql(
   engine: BrainEngine,
 ): { unsafe?: (statement: string) => Promise<Array<Record<string, unknown>>>; error?: unknown } | null {
@@ -857,6 +934,7 @@ async function renewDreamLockBeforePhase(
       renewal_count: guardrails.lock_renewal.renewal_count,
       last_renewed_at: guardrails.lock_renewal.last_renewed_at,
       reason_codes: [...guardrails.lock_renewal.reason_codes, 'cycle_lock_renewal_error'],
+      last_error: lockRenewalErrorDiagnostic(error),
     };
     return { status: 'aborted' };
   }
