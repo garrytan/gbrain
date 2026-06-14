@@ -1023,16 +1023,17 @@ export class MinionSupervisor {
           error: errMsg,
           queue: this.opts.queue,
         });
-        // Attempt to reconnect the engine if it supports it
+        // Attempt to reconnect the engine. #2034: reconnect() is now a
+        // first-class BrainEngine method on both engines (it restores the
+        // config captured at connect()), so call it directly — the old
+        // feature-detection cast is no longer needed.
         try {
-          if ('reconnect' in this.engine && typeof (this.engine as Record<string, unknown>).reconnect === 'function') {
-            await (this.engine as unknown as { reconnect(): Promise<void> }).reconnect();
-            this.consecutiveHealthFailures = 0;
-            this.emit('health_warn', {
-              reason: 'db_reconnected',
-              queue: this.opts.queue,
-            });
-          }
+          await this.engine.reconnect({ error: errMsg });
+          this.consecutiveHealthFailures = 0;
+          this.emit('health_warn', {
+            reason: 'db_reconnected',
+            queue: this.opts.queue,
+          });
         } catch (reconnErr) {
           this.emit('health_error', {
             error: `reconnect failed: ${reconnErr instanceof Error ? reconnErr.message : String(reconnErr)}`,

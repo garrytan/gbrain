@@ -38,6 +38,18 @@ describe('shouldForceExitAfterMain — daemon survival gate', () => {
     expect(shouldForceExitAfterMain(['get', 'people/alice'])).toBe(true);
   });
 
+  test('#2084 cross-model finding: space-separated global flag values cannot fake a command', () => {
+    // `--timeout 30s serve` — the old first-non-dash heuristic resolved the
+    // command as `30s` → true → the central exit seam would process.exit the
+    // freshly started daemon ~250ms after boot, exit 0, no error. The gate now
+    // resolves the command through parseGlobalFlags, matching main()'s dispatch.
+    expect(shouldForceExitAfterMain(['--timeout', '30s', 'serve'])).toBe(false);
+    expect(shouldForceExitAfterMain(['--timeout', '30s', 'serve', '--http'])).toBe(false);
+    expect(shouldForceExitAfterMain(['--progress-interval', '500', 'serve'])).toBe(false);
+    // ...and the same shape before a one-shot command still force-exits.
+    expect(shouldForceExitAfterMain(['--timeout', '30s', 'query', 'x'])).toBe(true);
+  });
+
   test('returns true for non-daemon CLI commands', () => {
     expect(shouldForceExitAfterMain(['stats'])).toBe(true);
     expect(shouldForceExitAfterMain(['doctor'])).toBe(true);

@@ -650,6 +650,15 @@ export interface BrainEngine {
   // Lifecycle
   connect(config: EngineConfig): Promise<void>;
   disconnect(): Promise<void>;
+  /**
+   * Recover a dropped connection using the config captured at the last
+   * `connect()`. Callers (autopilot health probe, batchRetry) MUST use this
+   * instead of `disconnect()` + bare `connect()`: the latter loses the config
+   * (#2034 — a bare `connect()` with no args throws `database_url undefined`
+   * forever) AND opens a null-connection window. Implemented on BOTH engines
+   * for parity so the call is never a silent no-op.
+   */
+  reconnect(ctx?: { error?: unknown }): Promise<void>;
   initSchema(): Promise<void>;
   transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T>;
   /**
@@ -1678,7 +1687,20 @@ export interface BrainEngine {
    * until the v0_32_2 migration backfills them. Cycle-phase callers in
    * commit 7 add the empty-fence-guard as a belt-and-suspenders check.
    */
-  deleteFactsForPage(slug: string, source_id: string): Promise<{ deleted: number }>;
+  /**
+   * #1928: `excludeSourcePrefixes` protects facts whose `source` matches any
+   * given prefix (e.g. `['cli:']` for conversation facts written by
+   * `extract-conversation-facts`) from a fence reconcile. Those rows are NOT
+   * fence-owned — a destructive wipe-and-reinsert pass would delete them and
+   * never recreate them (the page has no `## Facts` fence). Omitted ⇒ legacy
+   * behavior (delete every fact on the page coordinate). NULL/empty `source`
+   * rows are always deletable (fence default).
+   */
+  deleteFactsForPage(
+    slug: string,
+    source_id: string,
+    opts?: { excludeSourcePrefixes?: string[] },
+  ): Promise<{ deleted: number }>;
 
   /**
    * Mark a fact expired. Never DELETE. Returns true iff a row was updated.
