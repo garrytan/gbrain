@@ -7,7 +7,10 @@ import {
   type AssertionRecord,
   type ExtractedClaimInput,
 } from '../src/core/assertions/assertion-types.ts';
-import { createSQLiteLifecycleForgettingStore } from '../src/core/maintenance/lifecycle-forgetting.ts';
+import {
+  createSQLiteLifecycleForgettingStore,
+  lifecycleSnapshotHash,
+} from '../src/core/maintenance/lifecycle-forgetting.ts';
 import {
   createAssertionPipelineService,
   type AssertionPipelineService,
@@ -299,6 +302,61 @@ describe('lifecycle forgetting service', () => {
     expect(report.restore_window_count).toBe(1);
     expect(report.summary_lines).toContain('Purge candidates: 1.');
     expect(report.summary_lines).toContain('Open restore windows: 1.');
+
+    await harness.engine.disconnect();
+  });
+
+  test('purge rejects an approved plan item when the lifecycle snapshot changed after planning', async () => {
+    const harness = await createHarness();
+    const policy = await harness.store.upsertForgettingPolicy({
+      id: 'forgetting-policy:stale-purge-plan',
+      scope_id: 'workspace:default',
+      entity_type: 'assertion',
+      purge_eligible: true,
+      now: NOW,
+    });
+    await harness.service.transitionEntity({
+      entity_type: 'assertion',
+      entity_id: 'assertion:stale-purge-plan',
+      to_lifecycle_state: 'expired',
+      policy_id: policy.id,
+      reason: 'retention elapsed',
+      purge_after: '2026-05-20T11:00:00.000Z',
+      now: NOW,
+    });
+    const purgePlan = await harness.service.planPurgeCandidates({
+      scope_id: 'workspace:default',
+      reason: 'daily forgetting review',
+      now: NOW,
+    });
+    expect(purgePlan.items[0]?.before_hash).toEqual(expect.any(String));
+    await harness.store.reviewPurgePlan({
+      plan_id: purgePlan.plan!.id,
+      decision: 'approve',
+      review_reason: 'operator approved original snapshot',
+      reviewed_at: NOW,
+    });
+    await harness.service.transitionEntity({
+      entity_type: 'assertion',
+      entity_id: 'assertion:stale-purge-plan',
+      to_lifecycle_state: 'archived',
+      policy_id: policy.id,
+      reason: 'state changed after purge review',
+      purge_after: '2026-05-20T11:00:00.000Z',
+      now: LATER,
+    });
+
+    await expect(harness.service.purgeEntity({
+      entity_type: 'assertion',
+      entity_id: 'assertion:stale-purge-plan',
+      purge_plan_id: purgePlan.plan!.id,
+      reason: 'should not purge a changed snapshot',
+      now: LATER,
+    })).rejects.toThrow('approved purge plan item snapshot hash');
+    expect(await harness.store.getLifecycleState('assertion', 'assertion:stale-purge-plan')).toMatchObject({
+      lifecycle_state: 'archived',
+      reason: 'state changed after purge review',
+    });
 
     await harness.engine.disconnect();
   });
@@ -1130,6 +1188,9 @@ describe('lifecycle forgetting service', () => {
       lifecycle_state: 'expired',
       status: 'approved',
       purge_after: '2026-05-20T11:00:00.000Z',
+      before_hash: lifecycleSnapshotHash(
+        (await harness.store.getLifecycleState('assertion', 'assertion:planned-purge'))!,
+      ),
       created_at: NOW,
     });
 
@@ -1875,6 +1936,7 @@ async function createApprovedPurgePlan(
   options: { scope_id?: string; lifecycle_state?: 'expired' | 'archived' } = {},
 ) {
   const scopeId = options.scope_id ?? 'workspace:default';
+  const state = await harness.store.getLifecycleState(entityType, entityId, scopeId);
   const plan = await harness.store.createPurgePlan({
     id: `purge-plan:${scopeId}:${entityType}:${entityId}:${crypto.randomUUID()}`,
     scope_id: scopeId,
@@ -1890,6 +1952,7 @@ async function createApprovedPurgePlan(
     lifecycle_state: options.lifecycle_state ?? 'expired',
     status: 'approved',
     purge_after: '2026-05-20T11:00:00.000Z',
+    before_hash: state ? lifecycleSnapshotHash(state) : null,
     created_at: NOW,
   });
   return plan;

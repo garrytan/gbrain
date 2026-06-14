@@ -3,7 +3,10 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { MBrainConfig } from '../src/core/config.ts';
-import { createLifecycleForgettingStoreForEngine } from '../src/core/maintenance/lifecycle-forgetting.ts';
+import {
+  createLifecycleForgettingStoreForEngine,
+  lifecycleSnapshotHash,
+} from '../src/core/maintenance/lifecycle-forgetting.ts';
 import { type OperationContext, operationsByName } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { createLifecycleForgettingService } from '../src/core/services/lifecycle-forgetting-service.ts';
@@ -226,6 +229,7 @@ async function createApprovedPurgePlan(
   entityType: string,
   entityId: string,
 ) {
+  const state = await store.getLifecycleState(entityType, entityId);
   const plan = await store.createPurgePlan({
     id: `purge-plan:operation:${entityType}:${entityId}:${crypto.randomUUID()}`,
     scope_id: 'workspace:default',
@@ -241,6 +245,7 @@ async function createApprovedPurgePlan(
     lifecycle_state: 'expired',
     status: 'approved',
     purge_after: '2026-05-20T11:00:00.000Z',
+    before_hash: state ? lifecycleSnapshotHash(state) : null,
     created_at: NOW,
   });
   return plan;

@@ -240,7 +240,7 @@ export function createLifecycleForgettingService(options: LifecycleForgettingSer
     if (!input.purge_plan_id) {
       throw new Error(`memory purge requires purge_plan_id for approved purge plan: ${input.entity_type}:${input.entity_id}`);
     }
-    await assertApprovedPurgePlan(store, input.purge_plan_id, scopeId, input.entity_type, input.entity_id);
+    await assertApprovedPurgePlan(store, input.purge_plan_id, scopeId, current);
     const transition = await transitionEntityWithStore(store, {
       scope_id: scopeId,
       entity_type: input.entity_type,
@@ -555,17 +555,23 @@ async function assertApprovedPurgePlan(
   store: LifecycleForgettingStore,
   purgePlanId: string,
   scopeId: string,
-  entityType: string,
-  entityId: string,
+  current: MemoryLifecycleStateRecord,
 ): Promise<void> {
   const plan = await store.getPurgePlan(purgePlanId);
   if (!plan || plan.scope_id !== scopeId || plan.status !== 'approved') {
-    throw new Error(`memory purge requires an approved purge plan: ${entityType}:${entityId}`);
+    throw new Error(`memory purge requires an approved purge plan: ${current.entity_type}:${current.entity_id}`);
   }
   const matchingItem = (await store.listPurgePlanItems(plan.id))
-    .find((item) => item.entity_type === entityType && item.entity_id === entityId);
+    .find((item) => item.entity_type === current.entity_type && item.entity_id === current.entity_id);
   if (!matchingItem || matchingItem.status !== 'approved') {
-    throw new Error(`memory purge requires an approved purge plan item: ${entityType}:${entityId}`);
+    throw new Error(`memory purge requires an approved purge plan item: ${current.entity_type}:${current.entity_id}`);
+  }
+  if (!matchingItem.before_hash) {
+    throw new Error(`approved purge plan item snapshot hash is missing: ${current.entity_type}:${current.entity_id}`);
+  }
+  const currentHash = lifecycleSnapshotHash(current);
+  if (matchingItem.before_hash !== currentHash) {
+    throw new Error(`approved purge plan item snapshot hash mismatch: ${current.entity_type}:${current.entity_id}`);
   }
 }
 
