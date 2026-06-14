@@ -528,24 +528,26 @@ async function updateImportGitState(
   rootDir: string,
   options: { advanceCommit: boolean },
 ) {
-  try {
-    await engine.setConfig('markdown.repo_path', rootDir);
+  await engine.setConfig('markdown.repo_path', rootDir);
 
-    if (!existsSync(join(rootDir, '.git'))) {
-      return;
-    }
-
-    await engine.setConfig('sync.repo_path', rootDir);
-    await engine.setConfig('sync.last_run', new Date().toISOString());
-    if (!options.advanceCommit) {
-      return;
-    }
-
-    const head = execFileSync('git', ['-C', rootDir, 'rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
-    await engine.setConfig('sync.last_commit', head);
-  } catch {
-    // Not a git repo or git not available, skip sync metadata.
+  if (!existsSync(join(rootDir, '.git'))) {
+    return;
   }
+
+  await engine.setConfig('sync.repo_path', rootDir);
+  await engine.setConfig('sync.last_run', new Date().toISOString());
+  if (!options.advanceCommit) {
+    return;
+  }
+
+  let head: string;
+  try {
+    head = execFileSync('git', ['-C', rootDir, 'rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
+  } catch {
+    // Git may be unavailable even when a .git marker exists; keep import success non-fatal.
+    return;
+  }
+  await engine.setConfig('sync.last_commit', head);
 }
 
 function hasExplicitFrontmatterSlug(content: string): boolean {

@@ -283,6 +283,32 @@ describe('import service', () => {
     expect(setConfigCalls.some(([key]) => key === 'sync.last_run')).toBe(true);
   });
 
+  test('runImportService surfaces sync metadata config write failures', async () => {
+    const rootDir = makeTempDir('mbrain-import-sync-metadata-failure-');
+    writeFileSync(join(rootDir, 'note.md'), '# note\n');
+    runGit(rootDir, 'init');
+    runGit(rootDir, 'config', 'user.email', 'test@example.com');
+    runGit(rootDir, 'config', 'user.name', 'Test User');
+    runGit(rootDir, 'add', 'note.md');
+    runGit(rootDir, 'commit', '-m', 'seed');
+
+    const engine = {
+      setConfig: async (key: string) => {
+        if (key === 'sync.last_run') {
+          throw new Error('sync last_run write failed');
+        }
+      },
+    } as any;
+
+    await expect(runImportService(
+      engine,
+      { rootDir, workers: 1 },
+      importDeps({
+        importFile: async () => ({ slug: 'note', status: 'imported' as const, chunks: 1 }),
+      }),
+    )).rejects.toThrow('sync last_run write failed');
+  });
+
   test('runImportService records markdown.repo_path for non-git imports', async () => {
     const rootDir = makeTempDir('mbrain-import-markdown-root-');
     writeFileSync(join(rootDir, 'note.md'), '# note\n');
