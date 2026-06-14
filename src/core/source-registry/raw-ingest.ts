@@ -125,7 +125,14 @@ export interface RunnerChunkPayload {
   sensitivity_flags: string[];
 }
 
-const PROMPT_INJECTION_PATTERN = /\b(ignore (?:all )?(?:previous|prior) instructions|reveal the system prompt|system prompt|exfiltrat|tool misuse|remote command)\b/i;
+const INVISIBLE_FORMAT_TEXT_PATTERN = /[\u00AD\u034F\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g;
+const PROMPT_INJECTION_PATTERNS = [
+  /\b(?:ignore|disregard|forget|override|bypass)\s+(?:all\s+)?(?:previous|prior|earlier|above|system|developer)\s+(?:instructions?|prompts?|messages?|rules?)\b/,
+  /\b(?:ignore|disregard|forget|override|bypass)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message|instructions?)\b/,
+  /\b(?:reveal|show|print|display|dump|leak|exfiltrat\w*|send|share|return)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message|instructions?)\b/,
+  /\byou\s+are\s+now\s+(?:in\s+)?(?:developer|jailbreak|admin|root)\s+mode\b/,
+  /\b(?:exfiltrat\w*|tool misuse|remote command)\b/,
+];
 const OPENAI_KEY_PATTERN = /sk-[A-Za-z0-9_-]{12,}/g;
 
 export function buildRawIngestPlan(input: RawIngestInput, policy: RawIngestPolicy): RawIngestPlan {
@@ -286,7 +293,17 @@ function assertIngestAllowed(policy: RawIngestPolicy): void {
 }
 
 function classifyPromptInjection(text: string): PromptInjectionRisk {
-  return PROMPT_INJECTION_PATTERN.test(text) ? 'flagged' : 'none';
+  const detectionText = normalizePromptInjectionText(text);
+  return PROMPT_INJECTION_PATTERNS.some((pattern) => pattern.test(detectionText)) ? 'flagged' : 'none';
+}
+
+function normalizePromptInjectionText(text: string): string {
+  return text
+    .normalize('NFKC')
+    .replace(INVISIBLE_FORMAT_TEXT_PATTERN, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
 }
 
 function redactSecrets(text: string): {
