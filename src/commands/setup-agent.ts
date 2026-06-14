@@ -301,7 +301,7 @@ export async function runSetupAgent(args: string[]) {
     }
     if (autopilotResult.status === 'installed') {
       console.log(`\n  [+] Autopilot schedule: ${autopilotResult.mode} installed (${autopilotResult.target}) — daily candidate-only dream cycle at 03:00.`);
-      console.log('      Run logs append to ~/.mbrain/logs/autopilot.*.log (rotate or clear periodically).');
+      console.log('      Run logs append to ~/.mbrain/logs/autopilot.*.log and rotate automatically.');
       for (const warning of autopilotResult.warnings ?? []) {
         console.log(`      warning: ${warning}`);
       }
