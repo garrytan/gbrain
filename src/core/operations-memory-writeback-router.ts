@@ -4,16 +4,22 @@ import {
   MEMORY_WRITEBACK_EVIDENCE_KINDS,
   routeMemoryWriteback,
 } from './services/memory-writeback-router-service.ts';
-import { CORPUS_LANE_ARTIFACT_KINDS } from './services/corpus-lane-service.ts';
+import {
+  CORPUS_LANE_ARTIFACT_KINDS,
+  corpusLaneProvenanceSourceRefs,
+  mergeSourceRefs,
+} from './services/corpus-lane-service.ts';
 import { createMemoryCandidateEntryWithStatusEvent } from './services/memory-inbox-service.ts';
 import { reviewDuplicateMemory } from './services/duplicate-memory-review-service.ts';
 import type {
   CorpusLaneMetadata,
-  MemoryCandidateSensitivity,
+  MemoryCandidateGeneratedBy,
   MemoryCandidateTargetObjectType,
+  MemoryCandidateSensitivity,
   MemoryCandidateType,
   MemoryScenarioSourceKind,
   RouteMemoryWritebackInput,
+  RouteMemoryWritebackResult,
 } from './types.ts';
 
 type OperationErrorCtor = new (
@@ -316,6 +322,32 @@ export function createMemoryWritebackRouterOperations(
         };
       }
 
+      if (input.apply === true && routed.decision === 'defer') {
+        const candidateInput = deferredRouteCandidateInput(input, routed);
+        const duplicateReview = await reviewDuplicateMemory(ctx.engine, {
+          scope_id: candidateInput.scope_id,
+          subject_kind: 'memory_candidate',
+          subject_id: candidateInput.id,
+          content: candidateInput.proposed_content,
+          source_refs: candidateInput.source_refs,
+          candidate_type: candidateInput.candidate_type,
+          target_object_type: candidateInput.target_object_type ?? undefined,
+          target_object_id: candidateInput.target_object_id ?? undefined,
+          include_pages: true,
+          include_candidates: true,
+          limit: 5,
+        });
+        const created = await createMemoryCandidateEntryWithStatusEvent(ctx.engine, candidateInput);
+
+        return {
+          ...routed,
+          applied: true,
+          candidate_input: candidateInput,
+          created_candidate: created,
+          duplicate_review: duplicateReview,
+        };
+      }
+
       if (input.apply !== true || routed.decision !== 'create_candidate' || !routed.candidate_input) {
         return routed;
       }
@@ -351,6 +383,71 @@ export function createMemoryWritebackRouterOperations(
   };
 
   return [route_memory_writeback];
+}
+
+function deferredRouteCandidateInput(
+  input: RouteMemoryWritebackInput,
+  routed: RouteMemoryWritebackResult,
+) {
+  const signal = routed.normalized_signal;
+  const sourceRefs = mergeSourceRefs(
+    answerGroundingSourceRefs(input.source_refs),
+    corpusLaneProvenanceSourceRefs(input.corpus_lane),
+  );
+
+  return {
+    id: randomUUID(),
+    scope_id: signal.scope_id,
+    candidate_type: 'open_question' as const,
+    proposed_content: input.content.trim(),
+    source_refs: sourceRefs,
+    generated_by: generatedByForSourceKind(signal.source_kind),
+    extraction_kind: 'ambiguous' as const,
+    confidence_score: input.confidence_score ?? 0.5,
+    importance_score: input.importance_score ?? 0.5,
+    recurrence_score: input.recurrence_score ?? 0,
+    sensitivity: deferredRouteSensitivity(routed),
+    status: 'captured' as const,
+    target_object_type: signal.target_object_type,
+    target_object_id: signal.target_object_id,
+    review_reason: deferredRouteReviewReason(routed),
+    interaction_id: input.interaction_id ?? null,
+  };
+}
+
+function deferredRouteReviewReason(routed: RouteMemoryWritebackResult): string {
+  const reasons = routed.reasons.length > 0 ? routed.reasons.join(',') : 'unknown';
+  const missing = routed.missing_requirements.length > 0
+    ? `; missing_requirements:${routed.missing_requirements.join(',')}`
+    : '';
+  return `route_memory_writeback_deferred:${reasons}${missing}`;
+}
+
+function deferredRouteSensitivity(routed: RouteMemoryWritebackResult): MemoryCandidateSensitivity {
+  if (
+    routed.normalized_signal.target_object_type === 'profile_memory'
+    || routed.normalized_signal.target_object_type === 'personal_episode'
+    || routed.missing_requirements.some((requirement) => requirement.startsWith('personal_target_'))
+  ) {
+    return 'personal';
+  }
+  return routed.normalized_signal.sensitivity;
+}
+
+function answerGroundingSourceRefs(sourceRefs: readonly string[] | undefined): string[] {
+  return (sourceRefs ?? [])
+    .map((sourceRef) => sourceRef.trim())
+    .filter((sourceRef) => sourceRef.length > 0 && !hasNonEmptyPrefixedValue(sourceRef, 'corpus_lane:'));
+}
+
+function hasNonEmptyPrefixedValue(value: string, prefix: string): boolean {
+  return value.startsWith(prefix) && value.slice(prefix.length).trim().length > 0;
+}
+
+function generatedByForSourceKind(sourceKind: MemoryScenarioSourceKind | null): MemoryCandidateGeneratedBy {
+  if (sourceKind === 'import') return 'import';
+  if (sourceKind === 'manual') return 'manual';
+  return 'agent';
 }
 
 function deferExistingTargetForNullSnapshot(

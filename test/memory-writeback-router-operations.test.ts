@@ -2,8 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { collectMemoryReportInput } from '../src/commands/memory-report.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { operationsByName, parseOpArgs, type OperationContext } from '../src/core/operations.ts';
+import { readCandidateContext } from '../src/core/services/inbox-lead-service.ts';
+import { buildMemoryReviewReport } from '../src/core/services/memory-review-report-service.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 const sourceRefs = ['Source: User, direct message, 2026-05-10 12:00 KST'];
@@ -314,17 +317,158 @@ describe('memory writeback router operation', () => {
     });
   });
 
-  test('missing provenance defers and does not create a candidate', async () => {
+  test('apply true creates a reviewable open question when routing defers for missing provenance', async () => {
     await withEngine(async (engine) => {
       const result = await operationsByName.route_memory_writeback.handler(ctx(engine), {
         content: 'This inferred claim has no source.',
         evidence_kind: 'agent_inferred',
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/mbrain',
+        interaction_id: 'trace-router-defer',
         apply: true,
       }) as any;
 
       expect(result.decision).toBe('defer');
-      expect(result.applied).toBe(false);
+      expect(result.applied).toBe(true);
       expect(result.missing_requirements).toEqual(['source_refs']);
+      expect(result.created_candidate).toMatchObject({
+        candidate_type: 'open_question',
+        proposed_content: 'This inferred claim has no source.',
+        source_refs: [],
+        extraction_kind: 'ambiguous',
+        status: 'captured',
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/mbrain',
+        review_reason: 'route_memory_writeback_deferred:candidate_missing_provenance; missing_requirements:source_refs',
+      });
+      expect(result.duplicate_review.decision).toBeDefined();
+
+      const candidates = await engine.listMemoryCandidateEntries({ limit: 10 });
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]?.id).toBe(result.created_candidate.id);
+
+      const events = await engine.listMemoryCandidateStatusEvents({
+        candidate_id: result.created_candidate.id,
+        limit: 10,
+      });
+      expect(events).toHaveLength(1);
+      expect(events[0]?.interaction_id).toBe('trace-router-defer');
+
+      const reportInput = await collectMemoryReportInput(
+        engine,
+        'workspace:default',
+        10,
+        '2026-05-22T12:00:00.000Z',
+      );
+      expect(reportInput.review_items).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: result.created_candidate.id,
+          review_type: 'deferred_candidate',
+          summary: expect.stringContaining('open_question'),
+        }),
+      ]));
+
+      const report = buildMemoryReviewReport(reportInput);
+      expect(JSON.stringify(report)).not.toContain('This inferred claim has no source.');
+      for (const forbiddenKind of ['reject', 'stage_candidate', 'approve_candidate']) {
+        expect(report.actions).not.toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            kind: forbiddenKind,
+            target_id: result.created_candidate.id,
+          }),
+        ]));
+      }
+    });
+  });
+
+  test('deferred import candidates do not treat lane-only metadata as provenance', async () => {
+    await withEngine(async (engine) => {
+      const result = await operationsByName.route_memory_writeback.handler(ctx(engine), {
+        content: 'The imported source is missing source-record provenance.',
+        source_kind: 'import',
+        evidence_kind: 'source_extracted',
+        corpus_lane: { lane_id: 'imports' },
+        apply: true,
+      }) as any;
+
+      expect(result.decision).toBe('defer');
+      expect(result.created_candidate).toMatchObject({
+        status: 'captured',
+        source_refs: [],
+        review_reason: 'route_memory_writeback_deferred:candidate_missing_provenance; missing_requirements:source_refs',
+      });
+    });
+  });
+
+  test('deferred candidates do not treat explicit lane-only source refs as provenance', async () => {
+    await withEngine(async (engine) => {
+      const result = await operationsByName.route_memory_writeback.handler(ctx(engine), {
+        content: 'The imported source has only lane metadata in source refs.',
+        source_kind: 'import',
+        evidence_kind: 'source_extracted',
+        source_refs: ['corpus_lane:imports'],
+        apply: true,
+      }) as any;
+
+      expect(result.decision).toBe('defer');
+      expect(result.created_candidate).toMatchObject({
+        status: 'captured',
+        source_refs: [],
+        review_reason: 'route_memory_writeback_deferred:candidate_missing_provenance; missing_requirements:source_refs',
+      });
+
+      const reportInput = await collectMemoryReportInput(
+        engine,
+        'workspace:default',
+        10,
+        '2026-05-22T12:00:00.000Z',
+      );
+      expect(reportInput.candidate_debt).toMatchObject({
+        missing_provenance_count: 1,
+      });
+    });
+  });
+
+  test('deferred personal targets remain personal-gated instead of work-visible', async () => {
+    await withEngine(async (engine) => {
+      const result = await operationsByName.route_memory_writeback.handler(ctx(engine), {
+        content: 'The user may have a personal preference without explicit personal routing metadata.',
+        evidence_kind: 'agent_inferred',
+        source_refs: sourceRefs,
+        target_object_type: 'profile_memory',
+        target_object_id: 'profile:default',
+        apply: true,
+      }) as any;
+
+      expect(result.decision).toBe('defer');
+      expect(result.created_candidate).toMatchObject({
+        status: 'captured',
+        sensitivity: 'personal',
+      });
+
+      const context = readCandidateContext({
+        candidate: result.created_candidate,
+        purpose: 'review',
+        requested_scope: 'work',
+        audit_reason: 'reviewing deferred candidate',
+      });
+      expect(context.access).toBe('denied');
+      expect(context.reason_codes).toContain('personal_scope_required');
+    });
+  });
+
+  test('duplicate review failure does not leave behind a deferred candidate', async () => {
+    await withEngine(async (engine) => {
+      (engine as any).listPages = async () => {
+        throw new Error('duplicate review failed for deferred route');
+      };
+
+      await expect(operationsByName.route_memory_writeback.handler(ctx(engine), {
+        content: 'This deferred claim should not persist when duplicate review fails.',
+        evidence_kind: 'agent_inferred',
+        apply: true,
+      })).rejects.toThrow('duplicate review failed for deferred route');
+
       expect(await engine.listMemoryCandidateEntries({ limit: 10 })).toEqual([]);
     });
   });

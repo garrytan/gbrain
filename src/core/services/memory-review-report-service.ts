@@ -776,6 +776,9 @@ function reviewItemActions(item: ReportReviewItem): MemoryReportAction[] {
       }),
     ];
   }
+  if (item.review_type === 'deferred_candidate') {
+    return [];
+  }
   return [
     governedAction('reject', item.review_type, item.id, 'reject_memory_candidate_entry', {
       id: item.id,

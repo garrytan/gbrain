@@ -180,6 +180,17 @@ function memoryMutationToCanonicalMemory(event: MemoryMutationEvent): ReportCano
 }
 
 function memoryCandidateToReviewItem(candidate: MemoryCandidateEntry): ReportReviewItem[] {
+  if (isDeferredWritebackCandidate(candidate)) {
+    return [
+      {
+        id: candidate.id,
+        review_type: 'deferred_candidate',
+        target_ref: candidate.target_object_id ?? candidate.target_object_type ?? undefined,
+        summary: `Memory writeback is deferred (${candidate.candidate_type}; ${deferredWritebackSummary(candidate)}; content gated; resolve missing requirements before staging).`,
+        severity: candidate.sensitivity === 'secret' ? 'high' : 'medium',
+      },
+    ];
+  }
   if (!isReportableCandidateStatus(candidate.status)) return [];
   const sourceRefsCount = candidate.source_refs.filter((sourceRef) => sourceRef.trim().length > 0).length;
   if (candidate.status === 'candidate') {
@@ -257,6 +268,16 @@ function isCreateOperation(operation: MemoryMutationEvent['operation']): boolean
 
 function isReportableCandidateStatus(status: MemoryCandidateEntry['status']): boolean {
   return status === 'candidate' || status === 'staged_for_review';
+}
+
+function isDeferredWritebackCandidate(candidate: MemoryCandidateEntry): boolean {
+  return candidate.status === 'captured'
+    && candidate.review_reason?.startsWith('route_memory_writeback_deferred:') === true;
+}
+
+function deferredWritebackSummary(candidate: MemoryCandidateEntry): string {
+  const reason = candidate.review_reason?.replace(/^route_memory_writeback_deferred:/, '').trim();
+  return reason && reason.length > 0 ? reason : 'missing requirements pending';
 }
 
 function parsePositiveInt(value: string | undefined): number | undefined {
