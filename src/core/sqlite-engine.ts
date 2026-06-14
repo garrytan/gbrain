@@ -3872,14 +3872,39 @@ export class SQLiteEngine implements BrainEngine {
       clauses.push('page_slug = ?');
       params.push(validateSlug(filters.page_slug));
     }
+    if (filters?.page_slugs && filters.page_slugs.length > 0) {
+      clauses.push(`page_slug IN (${filters.page_slugs.map(() => '?').join(', ')})`);
+      params.push(...filters.page_slugs.map((slug) => validateSlug(slug)));
+    }
     if (filters?.section_id) {
       clauses.push('section_id = ?');
       params.push(filters.section_id);
     }
 
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    if (filters?.page_slugs && filters.page_slugs.length > 0 && filters.per_page_limit !== undefined) {
+      const rows = this.database.query(`
+        SELECT scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
+               heading_path, heading_text, depth, line_start, line_end, section_text,
+               outgoing_wikilinks, outgoing_urls, source_refs, content_hash, extractor_version, last_indexed_at
+        FROM (
+          SELECT scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
+                 heading_path, heading_text, depth, line_start, line_end, section_text,
+                 outgoing_wikilinks, outgoing_urls, source_refs, content_hash, extractor_version, last_indexed_at,
+                 ROW_NUMBER() OVER (PARTITION BY page_slug ORDER BY line_start ASC, section_id ASC) AS rn
+          FROM note_section_entries
+          ${whereClause}
+        )
+        WHERE rn <= ?
+        ORDER BY page_slug ASC, line_start ASC, section_id ASC
+        LIMIT ?
+        OFFSET ?
+      `).all(...sqliteBindings([...params, filters.per_page_limit, limit, offset])) as Record<string, unknown>[];
+      return rows.map(rowToNoteSectionEntry);
+    }
+
     params.push(limit);
     params.push(offset);
-    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = this.database.query(`
       SELECT scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
              heading_path, heading_text, depth, line_start, line_end, section_text,

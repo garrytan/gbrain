@@ -3031,14 +3031,48 @@ export abstract class PgEngineBase {
       params.push(validateSlug(filters.page_slug));
       clauses.push(`page_slug = $${params.length}`);
     }
+    if (filters?.page_slugs && filters.page_slugs.length > 0) {
+      const pageSlugs = filters.page_slugs.map((slug) => validateSlug(slug));
+      const placeholders = pageSlugs.map((_, index) => `$${params.length + index + 1}`).join(', ');
+      params.push(...pageSlugs);
+      clauses.push(`page_slug IN (${placeholders})`);
+    }
     if (filters?.section_id) {
       params.push(filters.section_id);
       clauses.push(`section_id = $${params.length}`);
     }
 
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    if (filters?.page_slugs && filters.page_slugs.length > 0 && filters.per_page_limit !== undefined) {
+      params.push(filters.per_page_limit);
+      const perPageLimitParam = params.length;
+      params.push(limit);
+      const limitParam = params.length;
+      params.push(offset);
+      const offsetParam = params.length;
+      const { rows } = await this.queryable.query(
+        `SELECT scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
+                heading_path, heading_text, depth, line_start, line_end, section_text,
+                outgoing_wikilinks, outgoing_urls, source_refs, content_hash, extractor_version, last_indexed_at
+         FROM (
+           SELECT scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
+                  heading_path, heading_text, depth, line_start, line_end, section_text,
+                  outgoing_wikilinks, outgoing_urls, source_refs, content_hash, extractor_version, last_indexed_at,
+                  ROW_NUMBER() OVER (PARTITION BY page_slug ORDER BY line_start ASC, section_id ASC) AS rn
+           FROM note_section_entries
+           ${whereClause}
+         ) ranked_sections
+         WHERE rn <= $${perPageLimitParam}
+         ORDER BY page_slug ASC, line_start ASC, section_id ASC
+         LIMIT $${limitParam}
+         OFFSET $${offsetParam}`,
+        params,
+      );
+      return (rows as Record<string, unknown>[]).map(rowToNoteSectionEntry);
+    }
+
     params.push(limit);
     params.push(offset);
-    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
     const { rows } = await this.queryable.query(
       `SELECT scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
               heading_path, heading_text, depth, line_start, line_end, section_text,

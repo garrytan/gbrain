@@ -1329,15 +1329,18 @@ describe('retrieve context service', () => {
     });
   });
 
-  test('resolves canonical read selectors for independent page candidates concurrently', async () => {
-    await withEngine('selector-resolution-concurrency', async (engine) => {
+  test('batches section lookups while resolving base and linked read selectors', async () => {
+    await withEngine('selector-resolution-batching', async (engine) => {
       await importFromContent(engine, 'concepts/alpha', [
         '---',
         'type: concept',
         'title: Alpha',
         '---',
         '# Alpha',
-        'Alpha compiled truth.',
+        'Alpha links to [[concepts/charlie]] for selector batching context.',
+        '',
+        '## Selector Batching',
+        'Alpha selector batching evidence should resolve to this section.',
       ].join('\n'), { path: 'concepts/alpha.md' });
       await importFromContent(engine, 'concepts/bravo', [
         '---',
@@ -1346,26 +1349,44 @@ describe('retrieve context service', () => {
         '---',
         '# Bravo',
         'Bravo compiled truth.',
+        '',
+        '## Selector Batching',
+        'Bravo selector batching evidence should resolve to this section.',
       ].join('\n'), { path: 'concepts/bravo.md' });
+      await importFromContent(engine, 'concepts/charlie', [
+        '---',
+        'type: concept',
+        'title: Charlie',
+        '---',
+        '# Charlie',
+        'Charlie compiled truth.',
+        '',
+        '## Linked Selector Batching',
+        'Charlie linked selector batching evidence should resolve to this section.',
+      ].join('\n'), { path: 'concepts/charlie.md' });
 
       const originalListSections = engine.listNoteSectionEntries.bind(engine);
-      let activeSectionReads = 0;
-      let maxActiveSectionReads = 0;
-      engine.listNoteSectionEntries = async (...args) => {
-        activeSectionReads += 1;
-        maxActiveSectionReads = Math.max(maxActiveSectionReads, activeSectionReads);
-        await new Promise((resolve) => setTimeout(resolve, 20));
-        try {
-          return await originalListSections(...args);
-        } finally {
-          activeSectionReads -= 1;
+      const originalGetPageProjection = engine.getPageProjection.bind(engine);
+      const sectionCalls: Array<{ page_slug?: string; page_slugs?: string[]; limit?: number }> = [];
+      engine.listNoteSectionEntries = async (filters) => {
+        sectionCalls.push({
+          page_slug: filters?.page_slug,
+          page_slugs: (filters as { page_slugs?: string[] } | undefined)?.page_slugs,
+          limit: filters?.limit,
+        });
+        return originalListSections(filters);
+      };
+      engine.getPageProjection = async (slug) => {
+        if (slug === 'concepts/alpha' || slug === 'concepts/bravo' || slug === 'concepts/charlie') {
+          throw new Error(`Unexpected selector projection lookup for ${slug}`);
         }
+        return originalGetPageProjection(slug);
       };
 
       const result = await retrieveContext(engine, {
-        query: 'compiled truth',
+        query: 'selector batching evidence',
         include_orientation: false,
-        limit: 2,
+        limit: 3,
       }, {
         candidateSearch: async () => [
           {
@@ -1373,7 +1394,7 @@ describe('retrieve context service', () => {
             page_id: 1,
             title: 'Alpha',
             type: 'concept',
-            chunk_text: 'Alpha compiled truth.',
+            chunk_text: 'Alpha selector batching evidence should resolve to this section.',
             chunk_source: 'compiled_truth',
             score: 10,
             stale: false,
@@ -1383,7 +1404,7 @@ describe('retrieve context service', () => {
             page_id: 2,
             title: 'Bravo',
             type: 'concept',
-            chunk_text: 'Bravo compiled truth.',
+            chunk_text: 'Bravo selector batching evidence should resolve to this section.',
             chunk_source: 'compiled_truth',
             score: 9,
             stale: false,
@@ -1391,8 +1412,93 @@ describe('retrieve context service', () => {
         ],
       });
 
-      expect(result.required_reads).toHaveLength(2);
-      expect(maxActiveSectionReads).toBeGreaterThan(1);
+      expect(sectionCalls).toHaveLength(2);
+      expect(sectionCalls.every((call) => call.page_slug === undefined)).toBe(true);
+      expect(sectionCalls[0]!.page_slugs).toEqual(['concepts/alpha', 'concepts/bravo']);
+      expect(sectionCalls[1]!.page_slugs).toEqual(['concepts/charlie']);
+      expect(result.required_reads).toHaveLength(3);
+      expect(result.required_reads.map((selector) => selector.section_id).sort()).toEqual([
+        'concepts/alpha#alpha/selector-batching',
+        'concepts/bravo#bravo/selector-batching',
+        'concepts/charlie#charlie/linked-selector-batching',
+      ]);
+    });
+  });
+
+  test('keeps sections for every slug when a batched selector page has many sections', async () => {
+    await withEngine('selector-resolution-batching-cap', async (engine) => {
+      const alphaSections = Array.from({ length: 110 }, (_, index) => [
+        `## Alpha Filler ${String(index).padStart(3, '0')}`,
+        `Alpha filler evidence ${index}.`,
+      ].join('\n'));
+
+      await importFromContent(engine, 'concepts/alpha', [
+        '---',
+        'type: concept',
+        'title: Alpha',
+        '---',
+        '# Alpha',
+        ...alphaSections,
+      ].join('\n\n'), { path: 'concepts/alpha.md' });
+      await importFromContent(engine, 'concepts/bravo', [
+        '---',
+        'type: concept',
+        'title: Bravo',
+        '---',
+        '# Bravo',
+        '## Retained Section',
+        'Bravo retained evidence should still resolve to this section.',
+      ].join('\n'), { path: 'concepts/bravo.md' });
+
+      const originalListSections = engine.listNoteSectionEntries.bind(engine);
+      const sectionCalls: Array<{ page_slug?: string; page_slugs?: string[]; per_page_limit?: number }> = [];
+      engine.listNoteSectionEntries = async (filters) => {
+        sectionCalls.push({
+          page_slug: filters?.page_slug,
+          page_slugs: (filters as { page_slugs?: string[] } | undefined)?.page_slugs,
+          per_page_limit: (filters as { per_page_limit?: number } | undefined)?.per_page_limit,
+        });
+        return originalListSections(filters);
+      };
+
+      const result = await retrieveContext(engine, {
+        query: 'bravo retained evidence',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async () => [
+          {
+            slug: 'concepts/alpha',
+            page_id: 1,
+            title: 'Alpha',
+            type: 'concept',
+            chunk_text: 'Alpha filler evidence 109.',
+            chunk_source: 'compiled_truth',
+            score: 10,
+            stale: false,
+          },
+          {
+            slug: 'concepts/bravo',
+            page_id: 2,
+            title: 'Bravo',
+            type: 'concept',
+            chunk_text: 'Bravo retained evidence should still resolve to this section.',
+            chunk_source: 'compiled_truth',
+            score: 9,
+            stale: false,
+          },
+        ],
+      });
+
+      expect(sectionCalls).toHaveLength(1);
+      expect(sectionCalls[0]).toMatchObject({
+        page_slug: undefined,
+        page_slugs: ['concepts/alpha', 'concepts/bravo'],
+        per_page_limit: 50,
+      });
+      expect(result.required_reads.map((selector) => selector.section_id)).toContain(
+        'concepts/bravo#bravo/retained-section',
+      );
     });
   });
 

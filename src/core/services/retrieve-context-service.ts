@@ -97,6 +97,8 @@ const LINKED_CANDIDATE_SEED_LIMIT = 5;
 const LINKED_CANDIDATE_PER_SEED_LIMIT = 4;
 const MANIFEST_LOOKUP_BATCH_SIZE = 100;
 const MANIFEST_LINK_SCAN_BATCH_SIZE = 500;
+const SECTION_LOOKUP_BATCH_SIZE = 100;
+const SECTION_SELECTOR_LOOKUP_LIMIT = 50;
 // Backlink discovery is a fallback for seeds with no recorded links; cap the
 // manifest scan so a large brain cannot turn one retrieval into a full-table
 // sweep. Targets with fewer backlinks inside the cap simply get fewer.
@@ -666,11 +668,21 @@ async function groupCandidatesByCanonicalPage(
     engine,
     groupedResults.map((group) => group.slug),
   );
+  const sectionsBySlug = await loadSectionEntriesBySlug(
+    engine,
+    groupedResults.map((group) => group.slug),
+  );
   const resolvedCandidates: RetrieveContextCandidate[] = [];
   for (let index = 0; index < groupedResults.length; index += CANDIDATE_SELECTOR_BATCH_SIZE) {
     const batch = groupedResults.slice(index, index + CANDIDATE_SELECTOR_BATCH_SIZE);
     const resolved = await Promise.all(batch.map((group) =>
-      resolveCandidateGroup(engine, group, query, manifestBySlug.get(slugLookupKey(group.slug)))));
+      resolveCandidateGroup(
+        engine,
+        group,
+        query,
+        manifestBySlug.get(slugLookupKey(group.slug)),
+        sectionsBySlug.get(slugLookupKey(group.slug)) ?? [],
+      )));
     resolvedCandidates.push(...resolved);
   }
 
@@ -753,9 +765,10 @@ async function resolveCandidateGroup(
   group: { slug: string; results: SearchResult[]; top: SearchResult },
   query: string,
   manifest?: NoteManifestEntry,
+  sections?: NoteSectionEntry[],
 ): Promise<RetrieveContextCandidate> {
   const readResult = bestTimelineSearchResult(group.results) ?? group.top;
-  const selector = await bestReadSelectorForSearchResult(engine, readResult, query);
+  const selector = await bestReadSelectorForSearchResult(engine, readResult, query, sections, manifest?.content_hash);
   const manifestCorpusLane = manifest
     ? corpusLaneForManifest(manifest)
     : await corpusLaneForPage(engine, group.slug);
@@ -859,8 +872,19 @@ async function linkedCandidatesForResolvedCandidates(
     }
   }
 
+  const sectionsBySlug = await loadSectionEntriesBySlug(
+    engine,
+    selected.map(({ manifest }) => manifest.slug),
+  );
+
   return Promise.all(selected.map(({ seedSlug, manifest }) =>
-    candidateFromLinkedManifest(engine, manifest, seedSlug, query)));
+    candidateFromLinkedManifest(
+      engine,
+      manifest,
+      seedSlug,
+      query,
+      sectionsBySlug.get(slugLookupKey(manifest.slug)) ?? [],
+    )));
 }
 
 async function loadManifestEntriesBySlug(
@@ -894,6 +918,35 @@ async function loadManifestEntriesBySlug(
   return new Map(entries
     .filter((entry): entry is readonly [string, NoteManifestEntry] => entry[1] !== null)
     .map(([slug, manifest]) => [slugLookupKey(slug), manifest]));
+}
+
+async function loadSectionEntriesBySlug(
+  engine: BrainEngine,
+  slugs: string[],
+): Promise<Map<string, NoteSectionEntry[]>> {
+  const unique = uniqueSlugs(slugs);
+  const sectionsBySlug = new Map<string, NoteSectionEntry[]>(
+    unique.map((slug) => [slugLookupKey(slug), []]),
+  );
+  if (unique.length === 0) return sectionsBySlug;
+
+  for (let index = 0; index < unique.length; index += SECTION_LOOKUP_BATCH_SIZE) {
+    const batchSlugs = unique.slice(index, index + SECTION_LOOKUP_BATCH_SIZE);
+    const sections = await engine.listNoteSectionEntries({
+      scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+      page_slugs: batchSlugs,
+      limit: batchSlugs.length * SECTION_SELECTOR_LOOKUP_LIMIT,
+      per_page_limit: SECTION_SELECTOR_LOOKUP_LIMIT,
+    });
+    for (const section of sections) {
+      const sectionKey = slugLookupKey(section.page_slug);
+      const existing = sectionsBySlug.get(sectionKey);
+      if (!existing || existing.length >= SECTION_SELECTOR_LOOKUP_LIMIT) continue;
+      existing.push(section);
+    }
+  }
+
+  return sectionsBySlug;
 }
 
 async function manifestBacklinkSlugs(
@@ -1054,8 +1107,9 @@ async function candidateFromLinkedManifest(
   manifest: NoteManifestEntry,
   seedSlug: string,
   query: string,
+  sections?: NoteSectionEntry[],
 ): Promise<RetrieveContextCandidate> {
-  const selector = await bestReadSelectorForLinkedManifest(engine, manifest, query);
+  const selector = await bestReadSelectorForLinkedManifest(engine, manifest, query, sections);
   const corpusLane = selector.corpus_lane
     ?? corpusLaneFromSourceRefs(selector.source_refs ?? [])
     ?? corpusLaneForManifest(manifest);
@@ -1087,17 +1141,15 @@ async function bestReadSelectorForLinkedManifest(
   engine: BrainEngine,
   manifest: NoteManifestEntry,
   query: string,
+  sections?: NoteSectionEntry[],
 ): Promise<RetrievalSelector> {
-  const [projection, sections] = await Promise.all([
-    engine.getPageProjection(manifest.slug),
-    engine.listNoteSectionEntries({
-      scope_id: manifest.scope_id,
-      page_slug: manifest.slug,
-      limit: 50,
-    }),
-  ]);
+  const candidateSections = sections ?? await engine.listNoteSectionEntries({
+    scope_id: manifest.scope_id,
+    page_slug: manifest.slug,
+    limit: SECTION_SELECTOR_LOOKUP_LIMIT,
+  });
   const queryTokens = tokenizeForSectionRank(query);
-  const rankedSection = sections
+  const rankedSection = candidateSections
     .map((section, index) => ({
       section,
       index,
@@ -1120,7 +1172,7 @@ async function bestReadSelectorForLinkedManifest(
       line_start: rankedSection.section.line_start,
       line_end: rankedSection.section.line_end,
       source_refs: rankedSection.section.source_refs,
-      content_hash: projection?.content_hash,
+      content_hash: manifest.content_hash,
       freshness: 'current',
     });
   }
@@ -1131,7 +1183,7 @@ async function bestReadSelectorForLinkedManifest(
     slug: manifest.slug,
     path: manifest.path,
     source_refs: manifest.source_refs,
-    content_hash: projection?.content_hash,
+    content_hash: manifest.content_hash,
     freshness: 'current',
   });
 }
@@ -1148,23 +1200,26 @@ async function bestReadSelectorForSearchResult(
   engine: BrainEngine,
   result: SearchResult,
   query: string,
+  sections?: NoteSectionEntry[],
+  pageContentHash?: string,
 ): Promise<RetrievalSelector> {
   if (result.chunk_source === 'timeline') {
     return selectorFromSearchResult(result);
   }
 
-  const sections = await engine.listNoteSectionEntries({
+  const candidateSections = sections ?? await engine.listNoteSectionEntries({
     scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
     page_slug: result.slug,
-    limit: 50,
+    limit: SECTION_SELECTOR_LOOKUP_LIMIT,
   });
-  const matchingSection = bestSectionForSearchResult(sections, result, query);
+  const matchingSection = bestSectionForSearchResult(candidateSections, result, query);
 
   if (matchingSection) {
     const charStart = matchingSection.match && matchingSection.match.index > 0
       ? Math.max(0, matchingSection.match.index - SEARCH_HIT_CONTEXT_CHARS)
       : undefined;
-    const projection = await engine.getPageProjection(result.slug);
+    const contentHash = pageContentHash
+      ?? (await engine.getPageProjection(result.slug))?.content_hash;
     return normalizeRetrievalSelector({
       kind: 'section',
       scope_id: matchingSection.section.scope_id,
@@ -1175,7 +1230,7 @@ async function bestReadSelectorForSearchResult(
       line_end: matchingSection.section.line_end,
       char_start: charStart,
       source_refs: matchingSection.section.source_refs,
-      content_hash: projection?.content_hash,
+      content_hash: contentHash,
       freshness: result.stale ? 'stale' : 'current',
     });
   }

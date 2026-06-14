@@ -98,7 +98,9 @@ export interface NoteSectionEntryInput {
 export interface NoteSectionFilters {
   scope_id?: string;
   page_slug?: string;
+  page_slugs?: string[];
   section_id?: string;
   limit?: number;
+  per_page_limit?: number;
   offset?: number;
 }
