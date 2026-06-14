@@ -836,6 +836,73 @@ Original symbol map.
     expect(await engine.searchKeyword('keyword', { type: 'person', exclude_slugs: ['people/alice.md'] })).toEqual([]);
   });
 
+  test('searchKeyword rethrows SQLite FTS schema errors instead of returning no results', async () => {
+    await putPage('people/alice.md', {
+      title: 'Alice Neural',
+      compiled_truth: 'Alice works on neural retrieval systems.',
+      timeline: '2025: shipped offline keyword search',
+    });
+    const raw = (engine as any).database as Database;
+    raw.exec('DROP TABLE pages_fts');
+
+    const errors: unknown[][] = [];
+    const originalConsoleError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
+    };
+    try {
+      await expect(engine.searchKeyword('neural retrieval')).rejects.toThrow(/no such table: pages_fts/);
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    expect(errors.some(args => args.join(' ').includes('SQLite keyword search failed'))).toBe(true);
+    expect(errors.some(args => args.join(' ').includes('no such table: pages_fts'))).toBe(true);
+  });
+
+  test('searchKeyword returns empty results for operator-only queries without logging', async () => {
+    const errors: unknown[][] = [];
+    const originalConsoleError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
+    };
+    try {
+      expect(await engine.searchKeyword('"')).toEqual([]);
+      expect(await engine.searchKeyword('*')).toEqual([]);
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    expect(errors).toEqual([]);
+  });
+
+  test('searchKeyword degrades recoverable SQLite FTS parser errors without logging', async () => {
+    const raw = (engine as any).db as Database;
+    const errors: unknown[][] = [];
+    const originalConsoleError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
+    };
+    (engine as any).db = {
+      query: () => ({
+        all: () => {
+          const error = new Error('unterminated string');
+          error.name = 'SQLiteError';
+          (error as { errno?: number }).errno = 1;
+          throw error;
+        },
+      }),
+    };
+    try {
+      expect(await engine.searchKeyword('neural')).toEqual([]);
+    } finally {
+      (engine as any).db = raw;
+      console.error = originalConsoleError;
+    }
+
+    expect(errors).toEqual([]);
+  });
+
   test('rerunning initSchema migrates downgraded legacy SQLite slugs before reporting latest version', async () => {
     await putPage('people/alice.md', {
       title: 'Alice Legacy',

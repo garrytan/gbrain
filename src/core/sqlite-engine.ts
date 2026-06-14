@@ -1162,9 +1162,13 @@ export class SQLiteEngine implements BrainEngine {
     try {
       const rows = this.database.query(sql).all(...sqliteBindings(params)) as Record<string, unknown>[];
       return rows.map(row => rowToSearchResult(row, query));
-    } catch {
-      // Malformed FTS5 queries (special chars, unmatched quotes) degrade to empty results
-      return [];
+    } catch (error) {
+      if (isRecoverableFtsQueryError(error)) {
+        // Malformed FTS5 queries degrade to empty results; operational failures must surface.
+        return [];
+      }
+      console.error(`SQLite keyword search failed: ${formatSqliteSearchError(error)}`);
+      throw error;
     }
   }
 
@@ -8112,6 +8116,23 @@ function prepareFtsQuery(query: string): string {
   const terms = extractSearchTerms(query);
   if (terms.length === 0) return '';
   return terms.map(term => `"${term}"*`).join(' AND ');
+}
+
+function isRecoverableFtsQueryError(error: unknown): boolean {
+  if (!(error instanceof Error) || error.name !== 'SQLiteError') return false;
+  const { code, errno } = error as { code?: unknown; errno?: unknown };
+  if (typeof code === 'string' && code !== 'SQLITE_ERROR') return false;
+  if (typeof errno === 'number' && errno !== 1) return false;
+  return error.message === 'unterminated string'
+    || error.message.startsWith('fts5: syntax error near ')
+    || error.message.startsWith('unknown special query:');
+}
+
+function formatSqliteSearchError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }
 
 function float32ToBlob(value: Float32Array): Uint8Array {
