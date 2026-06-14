@@ -3053,6 +3053,10 @@ export abstract class PgEngineBase {
       params.push(validateSlug(filters.page_slug));
       clauses.push(`page_slug = $${params.length}`);
     }
+    if (filters?.page_path) {
+      params.push(filters.page_path);
+      clauses.push(`page_path = $${params.length}`);
+    }
     if (filters?.page_slugs && filters.page_slugs.length > 0) {
       const pageSlugs = filters.page_slugs.map((slug) => validateSlug(slug));
       const placeholders = pageSlugs.map((_, index) => `$${params.length + index + 1}`).join(', ');
@@ -3062,6 +3066,10 @@ export abstract class PgEngineBase {
     if (filters?.section_id) {
       params.push(filters.section_id);
       clauses.push(`section_id = $${params.length}`);
+    }
+    if (filters?.source_ref) {
+      params.push(JSON.stringify([filters.source_ref]));
+      clauses.push(`source_refs @> $${params.length}::jsonb`);
     }
 
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
@@ -3340,6 +3348,10 @@ export abstract class PgEngineBase {
     if (filters?.status) {
       params.push(filters.status);
       clauses.push(`status = $${params.length}`);
+    }
+    if (filters?.manifest_path) {
+      params.push(filters.manifest_path);
+      clauses.push(`manifest_path = $${params.length}`);
     }
     params.push(limit);
     params.push(offset);

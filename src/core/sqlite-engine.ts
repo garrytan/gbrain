@@ -3887,6 +3887,10 @@ export class SQLiteEngine implements BrainEngine {
       clauses.push('page_slug = ?');
       params.push(validateSlug(filters.page_slug));
     }
+    if (filters?.page_path) {
+      clauses.push('page_path = ?');
+      params.push(filters.page_path);
+    }
     if (filters?.page_slugs && filters.page_slugs.length > 0) {
       clauses.push(`page_slug IN (${filters.page_slugs.map(() => '?').join(', ')})`);
       params.push(...filters.page_slugs.map((slug) => validateSlug(slug)));
@@ -3894,6 +3898,10 @@ export class SQLiteEngine implements BrainEngine {
     if (filters?.section_id) {
       clauses.push('section_id = ?');
       params.push(filters.section_id);
+    }
+    if (filters?.source_ref) {
+      clauses.push('EXISTS (SELECT 1 FROM json_each(source_refs) WHERE value = ?)');
+      params.push(filters.source_ref);
     }
 
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
@@ -4151,6 +4159,10 @@ export class SQLiteEngine implements BrainEngine {
     if (filters?.status) {
       clauses.push('status = ?');
       params.push(filters.status);
+    }
+    if (filters?.manifest_path) {
+      clauses.push('manifest_path = ?');
+      params.push(filters.manifest_path);
     }
     params.push(limit);
     params.push(offset);

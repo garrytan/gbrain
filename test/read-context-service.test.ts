@@ -1172,6 +1172,69 @@ describe('read context service', () => {
     });
   });
 
+  test('pushes source_ref lookup predicates into note section filters', async () => {
+    await withEngine('source-ref-filter-pushdown', async (engine) => {
+      const sourceRef = 'User, filtered source, 2026-05-07 10:18 KST';
+      await importFromContent(engine, 'concepts/filter-pushdown', [
+        '---',
+        'type: concept',
+        'title: Filter Pushdown',
+        '---',
+        '# Compiled Truth',
+        'Filtered source-ref evidence.',
+        `[Source: ${sourceRef}]`,
+      ].join('\n'), { path: 'concepts/filter-pushdown.md' });
+      const calls: unknown[] = [];
+      const originalListSections = engine.listNoteSectionEntries.bind(engine);
+      engine.listNoteSectionEntries = async (filters) => {
+        calls.push(filters);
+        return originalListSections(filters);
+      };
+
+      const result = await readContext(engine, {
+        selectors: [{
+          kind: 'source_ref',
+          slug: 'concepts/filter-pushdown',
+          source_ref: sourceRef,
+        }],
+      });
+
+      expect(result.answer_ready.ready).toBe(true);
+      expect(calls[0]).toMatchObject({
+        scope_id: 'workspace:default',
+        page_slug: 'concepts/filter-pushdown',
+        source_ref: sourceRef,
+      });
+    });
+  });
+
+  test('pushes manifest_path into derived job lookup for path-scoped source_ref freshness', async () => {
+    await withEngine('source-ref-derived-job-filter', async (engine) => {
+      const sourceRef = 'User, missing path source, 2026-05-07 10:19 KST';
+      const calls: unknown[] = [];
+      const originalListJobs = engine.listDerivedJobs.bind(engine);
+      engine.listDerivedJobs = async (filters) => {
+        calls.push(filters);
+        return originalListJobs(filters);
+      };
+
+      await readContext(engine, {
+        selectors: [{
+          kind: 'source_ref',
+          path: 'concepts/missing-path.md',
+          source_ref: sourceRef,
+        }],
+      });
+
+      expect(calls[0]).toMatchObject({
+        scope_id: 'workspace:default',
+        artifact_kind: 'note_sections',
+        status: 'pending',
+        manifest_path: 'concepts/missing-path.md',
+      });
+    });
+  });
+
   test('reads source_ref selectors under arbitrary sub-brain paths when work scope allows retrieval', async () => {
     await withEngine('source-ref-sub-brain-prefix', async (engine) => {
       const sourceRef = 'User, personal source, 2026-05-07 10:20 KST';
