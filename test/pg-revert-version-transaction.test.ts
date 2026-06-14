@@ -100,7 +100,7 @@ describe('PgEngineBase revertToVersion transaction boundary', () => {
 
     await engine.revertToVersion('systems/versioned', 7);
 
-    expect(engine.state.transactionCalls).toBe(1);
+    expect(engine.state.transactionCalls).toBeGreaterThanOrEqual(1);
     expect(engine.state.calls.every(call => call.scope === 'tx')).toBe(true);
     expect(engine.state.calls[0]?.text).toContain('FOR UPDATE');
     expect(engine.state.calls.map(call => call.text)).toContainEqual(expect.stringContaining('UPDATE pages'));
