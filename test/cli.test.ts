@@ -78,8 +78,8 @@ describe('CLI source shape', () => {
     expect(cliSource).toContain('assertion-retrieval [--target-slug S]');
   });
 
-  test('setup-agent help mentions Claude stop hook installation', () => {
-    expect(cliSource).toContain('Register MCP, inject rules, install Claude stop hook');
+  test('setup-agent help mentions Claude hook installation', () => {
+    expect(cliSource).toContain('Register MCP, inject rules, install Claude prompt/stop hooks');
     expect(cliSource).toContain('setup-agent [--preview|--diff|--apply|--uninstall]');
     expect(cliSource).toContain('Preview managed setup actions without writing files');
     expect(cliSource).toContain('Show redacted managed setup diffs without writing files');

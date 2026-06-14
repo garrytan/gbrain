@@ -570,7 +570,7 @@ SETUP
   init [--local|--pglite|--supabase|--url <conn>]
                                     Create target Postgres brain; legacy SQLite/PGLite only by explicit flag
   setup-agent [--preview|--diff|--apply|--uninstall] [--claude|--codex] [--scope user|local]
-                                    Register MCP, inject rules, install Claude stop hook
+                                    Register MCP, inject rules, install Claude prompt/stop hooks
   migrate --to <postgres|supabase>   Prepare Markdown-first migration into the Postgres target runtime
   upgrade                            Self-update
   check-update [--json]              Check for new versions
@@ -578,7 +578,8 @@ SETUP
                                     Health check (engine, schema, embeddings, local/managed capabilities)
   integrations [subcommand]          Manage integration recipes
   connectors [list|show|sync]        Inspect or sync personal data connector sources
-  memory-report [--json] [--save]    Show the memory review report surface
+  memory-report [--json] [--save] [--report-dir <brain>] [--scope-id <scope>] [--limit <n>] [--now <iso>]
+                                    Show or save the memory review report surface
   agent-session preview|capture      Preview or capture a JSON agent-session envelope file
 
 PAGES

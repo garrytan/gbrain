@@ -218,12 +218,27 @@ rules teach it when to read, when to write, how to cite, and how to avoid
 writing the wrong thing into memory.
 
 Then verify the installed command, MCP registration, prompt rules, and Claude
-stop hook:
+prompt/stop hooks:
 
 ```bash
 mbrain doctor --agent --explain --json
 MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
 ```
+
+For daily operator review, generate the exception-first memory report:
+
+```bash
+mbrain memory-report
+mbrain memory-report --save --report-dir ~/git/brain
+mbrain memory-report --json
+```
+
+The report leads with Memory Inbox pressure and includes source ingest,
+failed jobs, safety exceptions, and connector health. Connector rows classify
+staleness, auth/rate-limit/network/schema failures, retry posture, and the next
+operator action. Saved reports are written under
+`brain/reports/memory-review-report/`; JSON output includes
+`saved_report_path` when `--save` writes a report.
 
 ## What You Can Ask
 

@@ -152,6 +152,32 @@ Expected:
 - integrated acceptance reports zero authority-first safety counters in its
   deterministic fixture.
 
+## Memory review report verification
+
+Use this gate after changing report collection, connector registry/sync state,
+Memory Inbox review pressure, source safety, or saved brain reports:
+
+```bash
+bun test test/memory-review-report-service.test.ts test/cli.test.ts
+mbrain memory-report --json
+mbrain memory-report --save --report-dir <brain-dir>
+```
+
+Expected:
+
+- `memory-report --json` reflects live reportable rows instead of fabricating a
+  healthy report when no brain is configured.
+- connector health rows expose `staleness_status`, `overdue`,
+  `failure_class`, `retry_posture`, `next_action`, `last_success_at`,
+  `last_failure_at`, `failure_count`, and a redacted `last_error` when present.
+- auth failures lead to `reauthenticate`, rate limits lead to
+  `wait_for_rate_limit`, schema failures lead to `inspect_schema`, and stale or
+  network failures lead to `retry_now`.
+- `--save --report-dir <brain-dir>` writes a formatted Markdown report under
+  `<brain-dir>/reports/memory-review-report/`, and JSON output includes
+  `saved_report_path` when saving succeeds.
+- `--report-dir` without a path fails before writing anything.
+
 ## HTTP OAuth runtime confidence smoke
 
 Use this gate before claiming the ChatGPT-style OAuth foundation works at the

@@ -4,6 +4,8 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-06-15
+
 ### Security
 
 - **The HTTP MCP server no longer answers browsers with `*`.** CORS now uses an
@@ -98,6 +100,13 @@ All notable changes to MBrain will be documented in this file.
   Memory Inbox pressure once 50+ candidates sit waiting for review. The same
   backlog warning now leads the memory review report, so a drifting inbox is
   impossible to miss.
+- **Connector failures are now actionable in the memory review report.**
+  `mbrain memory-report` records connector sync freshness, failure count,
+  last failure/success timestamps, redacted last error, failure class
+  (`auth_expired`, `rate_limited`, `network`, `schema`, `unknown`), retry
+  posture, and the next operator action. `--save --report-dir <brain>` writes
+  the formatted report under `brain/reports/memory-review-report/`, and JSON
+  output includes `saved_report_path` when a report is saved.
 - **Your brain now maintains itself by default.** `mbrain setup-agent --apply`
   registers a daily 03:00 candidate-only dream cycle with your OS scheduler
   (launchd on macOS, a managed crontab block elsewhere) — it captures and
@@ -134,6 +143,9 @@ All notable changes to MBrain will be documented in this file.
   string scalar) is now covered by dedicated tests on PGlite and SQLite too,
   not just Postgres — and the PGlite/SQLite variants run in every unit-test
   environment with no database setup at all.
+- **Version metadata now reports `0.14.0`.** `VERSION`, `package.json`,
+  `skills/manifest.json`, and `openclaw.plugin.json` are aligned so the CLI,
+  skills manifest, and plugin bundle describe the same release.
 
 ## [0.13.0] - 2026-06-11
 
