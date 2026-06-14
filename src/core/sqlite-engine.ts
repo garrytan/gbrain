@@ -7911,6 +7911,8 @@ export class SQLiteEngine implements BrainEngine {
         p.type,
         cc.chunk_text,
         cc.chunk_source,
+        cc.chunk_index,
+        cc.chunk_content_hash,
         cc.embedding,
         CASE WHEN EXISTS (
           SELECT 1 FROM timeline_entries te
@@ -8603,9 +8605,21 @@ function rowToLocalVectorCandidate(row: Record<string, unknown>) {
     type: row.type as PageType,
     chunk_text: String(row.chunk_text),
     chunk_source: row.chunk_source as Chunk['chunk_source'],
+    chunk_index: nullableNumber(row.chunk_index),
+    chunk_content_hash: nullableString(row.chunk_content_hash),
     stale: Boolean(row.stale),
     embedding: blobToFloat32(row.embedding),
   };
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function nullableString(value: unknown): string | null {
+  return value == null ? null : String(value);
 }
 
 function extractSearchTerms(query: string): string[] {

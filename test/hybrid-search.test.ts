@@ -236,6 +236,98 @@ describe('hybridSearch', () => {
       slugs.indexOf('concepts/vector-lower-high-confidence'),
     );
   });
+
+  test('RRF keeps distinct chunks that share slug and first 50 text characters', async () => {
+    setEmbeddingProviderForTests({
+      capability: {
+        available: true,
+        mode: 'local',
+        implementation: 'test-local',
+        model: 'test-local-v1',
+        dimensions: 3,
+      },
+      embedBatch: async () => [new Float32Array([1, 0, 0])],
+    });
+
+    const sharedPrefix = 'x'.repeat(50);
+    const engine = {
+      searchKeyword: async () => [],
+      searchVector: async () => [
+        makeResult({
+          slug: 'systems/mbrain',
+          page_id: 42,
+          chunk_index: 0,
+          chunk_source: 'compiled_truth',
+          chunk_text: `${sharedPrefix} canonical projection audit lineage`,
+        }),
+        makeResult({
+          slug: 'systems/mbrain',
+          page_id: 42,
+          chunk_index: 1,
+          chunk_source: 'timeline',
+          chunk_text: `${sharedPrefix} historical conflict resolution note`,
+        }),
+      ],
+    } as Pick<BrainEngine, 'searchKeyword' | 'searchVector'> as BrainEngine;
+
+    const results = await hybridSearch(engine, 'assertion audit', { limit: 5 });
+
+    expect(results.map((entry) => entry.chunk_source)).toEqual([
+      'compiled_truth',
+      'timeline',
+    ]);
+    expect(results.map((entry) => entry.chunk_text)).toHaveLength(2);
+  });
+
+  test('RRF fuses the same chunk returned as keyword snippet and vector full text', async () => {
+    setEmbeddingProviderForTests({
+      capability: {
+        available: true,
+        mode: 'local',
+        implementation: 'test-local',
+        model: 'test-local-v1',
+        dimensions: 3,
+      },
+      embedBatch: async () => [new Float32Array([1, 0, 0])],
+    });
+
+    const longChunk = `${'semantic audit '.repeat(35)}stable chunk identity`;
+    const engine = {
+      searchKeyword: async () => [
+        makeResult({
+          slug: 'systems/mbrain',
+          page_id: 42,
+          chunk_index: 7,
+          chunk_source: 'compiled_truth',
+          chunk_text: `${longChunk.slice(0, 320)}...`,
+          score: 1,
+        }),
+      ],
+      searchVector: async () => [
+        makeResult({
+          slug: 'scratch/vector-only',
+          page_id: 99,
+          chunk_index: 0,
+          chunk_source: 'compiled_truth',
+          chunk_text: 'vector only competitor',
+          score: 1,
+        }),
+        makeResult({
+          slug: 'systems/mbrain',
+          page_id: 42,
+          chunk_index: 7,
+          chunk_source: 'compiled_truth',
+          chunk_text: longChunk,
+          score: 0.01,
+        }),
+      ],
+    } as Pick<BrainEngine, 'searchKeyword' | 'searchVector'> as BrainEngine;
+
+    const results = await hybridSearch(engine, 'semantic audit', { limit: 5 });
+
+    expect(results.map((entry) => entry.slug)[0]).toBe('systems/mbrain');
+    expect(results.filter((entry) => entry.page_id === 42 && entry.chunk_index === 7)).toHaveLength(1);
+  });
 });
 
 describe('hybridSearchWithMeta expansion failure flag (C-20)', () => {

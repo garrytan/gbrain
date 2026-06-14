@@ -33,6 +33,8 @@ export interface SearchResult {
   type: PageType;
   chunk_text: string;
   chunk_source: ChunkSource;
+  chunk_index?: number | null;
+  chunk_content_hash?: string | null;
   score: number;
   stale: boolean;
   derived_artifact_kind?: DerivedArtifactKind;

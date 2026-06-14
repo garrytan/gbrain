@@ -74,10 +74,22 @@ export function rowToSearchResult(row: Record<string, unknown>, query?: string):
       ? boundedSearchSnippet(String(row.chunk_text ?? ''), query)
       : row.chunk_text as string,
     chunk_source: row.chunk_source as SearchResult['chunk_source'],
+    chunk_index: nullableNumber(row.chunk_index),
+    chunk_content_hash: nullableString(row.chunk_content_hash),
     score: Number(row.score),
     stale: Boolean(row.stale),
     ...searchResultDerivedFields(row),
   };
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function nullableString(value: unknown): string | null {
+  return value == null ? null : String(value);
 }
 
 export function boundedSearchSnippet(text: string, query: string, maxChars = 320): string {

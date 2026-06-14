@@ -142,7 +142,7 @@ function rrfFusion(lists: RrfInputList[]): SearchResult[] {
   for (const list of lists) {
     for (let rank = 0; rank < list.results.length; rank++) {
       const r = list.results[rank];
-      const key = `${r.slug}:${r.chunk_text.slice(0, 50)}`;
+      const key = rrfResultKey(r);
       const existing = scores.get(key);
       const rrfScore = 1 / (RRF_K + rank);
       const vectorScore = list.semantic ? boundedVectorScore(r.score) : null;
@@ -166,6 +166,31 @@ function rrfFusion(lists: RrfInputList[]): SearchResult[] {
     })
     .sort((a, b) => b.score - a.score)
     .map(({ result, score }) => ({ ...result, score }));
+}
+
+function rrfResultKey(result: SearchResult): string {
+  if (result.chunk_index != null) {
+    return JSON.stringify([
+      'chunk-index',
+      result.page_id,
+      result.chunk_index,
+    ]);
+  }
+  if (result.chunk_content_hash) {
+    return JSON.stringify([
+      'chunk-hash',
+      result.page_id,
+      result.chunk_source,
+      result.chunk_content_hash,
+    ]);
+  }
+  return JSON.stringify([
+    'fallback',
+    result.slug,
+    result.page_id,
+    result.chunk_source,
+    result.chunk_text,
+  ]);
 }
 
 function boundedVectorScore(score: number): number | null {

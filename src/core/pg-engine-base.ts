@@ -3973,6 +3973,24 @@ export abstract class PgEngineBase {
           WHEN ranked.chunk_score > ranked.compiled_score THEN ranked.chunk_source
           ELSE 'compiled_truth'
         END AS chunk_source,
+        CASE
+          WHEN ranked.frontmatter_score >= ranked.compiled_score
+            AND ranked.frontmatter_score >= ranked.timeline_score
+            AND ranked.frontmatter_score >= ranked.chunk_score THEN NULL
+          WHEN ranked.timeline_score >= ranked.compiled_score
+            AND ranked.timeline_score >= ranked.chunk_score THEN NULL
+          WHEN ranked.chunk_score > ranked.compiled_score THEN ranked.chunk_index
+          ELSE NULL
+        END AS chunk_index,
+        CASE
+          WHEN ranked.frontmatter_score >= ranked.compiled_score
+            AND ranked.frontmatter_score >= ranked.timeline_score
+            AND ranked.frontmatter_score >= ranked.chunk_score THEN NULL
+          WHEN ranked.timeline_score >= ranked.compiled_score
+            AND ranked.timeline_score >= ranked.chunk_score THEN NULL
+          WHEN ranked.chunk_score > ranked.compiled_score THEN ranked.chunk_content_hash
+          ELSE NULL
+        END AS chunk_content_hash,
         ranked.page_score AS score,
         ranked.stale,
         ranked.derived_artifact_kind,
@@ -3985,6 +4003,7 @@ export abstract class PgEngineBase {
           cc.chunk_text,
           cc.chunk_source,
           cc.chunk_index,
+          cc.chunk_content_hash,
           coalesce(ts_rank(to_tsvector('english', coalesce(cc.chunk_text, '')), websearch_to_tsquery('english', $1)), 0) AS chunk_score
         FROM pm
         LEFT JOIN content_chunks cc ON cc.page_id = pm.page_id
@@ -4026,7 +4045,7 @@ export abstract class PgEngineBase {
       const { rows } = await q.query(
         `SELECT
           p.slug, p.id as page_id, p.title, p.type,
-          cc.chunk_text, cc.chunk_source,
+          cc.chunk_text, cc.chunk_source, cc.chunk_index, cc.chunk_content_hash,
           1 - (cc.embedding <=> $1::vector) AS score,
           CASE WHEN p.updated_at < (
             SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id

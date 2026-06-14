@@ -20,6 +20,8 @@ export function searchLocalVectors(
         type: candidate.type,
         chunk_text: candidate.chunk_text,
         chunk_source: candidate.chunk_source,
+        chunk_index: candidate.chunk_index,
+        chunk_content_hash: candidate.chunk_content_hash,
         stale: candidate.stale,
         score,
       }];
