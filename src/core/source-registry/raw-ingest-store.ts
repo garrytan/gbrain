@@ -115,6 +115,51 @@ export async function readSourceItemChunks(engine: BrainEngine, sourceItemId: st
   return rows.map(mapSourceChunk);
 }
 
+export async function readSourceItemChunksForItems(
+  engine: BrainEngine,
+  sourceItemIds: string[],
+): Promise<Map<string, SourceChunkRecord[]>> {
+  const uniqueIds = [...new Set(sourceItemIds)].filter((id) => id.length > 0);
+  const chunksByItemId = new Map<string, SourceChunkRecord[]>(uniqueIds.map((id) => [id, []]));
+  if (uniqueIds.length === 0) return chunksByItemId;
+
+  const candidate = engine as QueryableEngine;
+  let rows: Record<string, unknown>[] | null = null;
+  if (candidate.database) {
+    const placeholders = uniqueIds.map(() => '?').join(', ');
+    rows = candidate.database.query<Record<string, unknown>>(`
+      SELECT id, source_item_id, chunk_index, chunk_hash, chunk_text, redacted_text, token_count,
+             parser_version, extractor_version, sensitivity_flags, prompt_injection_risk, secret_risk,
+             created_at, expires_at
+      FROM source_chunks
+      WHERE source_item_id IN (${placeholders})
+      ORDER BY source_item_id ASC, chunk_index ASC
+    `).all(...uniqueIds);
+  } else {
+    const placeholders = uniqueIds.map((_, index) => `$${index + 1}`).join(', ');
+    const sql = `
+      SELECT id, source_item_id, chunk_index, chunk_hash, chunk_text, redacted_text, token_count,
+             parser_version, extractor_version, sensitivity_flags, prompt_injection_risk, secret_risk,
+             created_at, expires_at
+      FROM source_chunks
+      WHERE source_item_id IN (${placeholders})
+      ORDER BY source_item_id ASC, chunk_index ASC
+    `;
+    rows = candidate.sql?.unsafe
+      ? await candidate.sql.unsafe(sql, uniqueIds)
+      : candidate.db
+        ? (await candidate.db.query(sql, uniqueIds)).rows
+        : null;
+  }
+  if (!rows) throw new Error('source chunk inspection operations require a SQL-backed engine');
+
+  for (const row of rows) {
+    const chunk = mapSourceChunk(row);
+    chunksByItemId.get(chunk.source_item_id)?.push(chunk);
+  }
+  return chunksByItemId;
+}
+
 async function upsertSourceItem(engine: BrainEngine, item: SourceItemRecord): Promise<void> {
   const candidate = engine as QueryableEngine;
   const values = [

@@ -37,7 +37,7 @@ import {
   mapSourceItem,
   persistRawIngestPlan,
   readSourceItemByExternalId,
-  readSourceItemChunks,
+  readSourceItemChunksForItems,
 } from './source-registry/raw-ingest-store.ts';
 import {
   applySourcePolicyOverrides,
@@ -1893,13 +1893,18 @@ async function listSourceItems(
         : null;
   if (!rows) throw new Error('source item inspection operations require a SQL-backed engine');
 
+  const sourceItems = rows.map(mapSourceItem);
   const items: Array<SourceItemRecord & { chunks?: SourceChunkRecord[] }> = [];
-  for (const row of rows) {
-    const item = mapSourceItem(row);
-    items.push(input.include_chunks ? {
-      ...item,
-      chunks: await readSourceItemChunks(engine, item.id),
-    } : item);
+  if (input.include_chunks) {
+    const chunksByItemId = await readSourceItemChunksForItems(engine, sourceItems.map((item) => item.id));
+    for (const item of sourceItems) {
+      items.push({
+        ...item,
+        chunks: chunksByItemId.get(item.id) ?? [],
+      });
+    }
+  } else {
+    items.push(...sourceItems);
   }
   return { source_id: input.source_id, items };
 }
