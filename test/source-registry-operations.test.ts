@@ -105,6 +105,36 @@ function stableTestId(prefix: string, ...parts: string[]): string {
   return `${prefix}:${createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 24)}`;
 }
 
+async function countSourceItemEvents(
+  engine: BrainEngine,
+  sourceItemId: string,
+  eventType: string,
+): Promise<number> {
+  const candidate = engine as any;
+  if (candidate.database) {
+    return Number(candidate.database.query(`
+      SELECT COUNT(*) AS count
+      FROM source_item_events
+      WHERE source_item_id = ? AND event_type = ?
+    `).get(sourceItemId, eventType).count);
+  }
+  const rows = candidate.sql?.unsafe
+    ? await candidate.sql.unsafe(`
+      SELECT COUNT(*) AS count
+      FROM source_item_events
+      WHERE source_item_id = $1 AND event_type = $2
+    `, [sourceItemId, eventType])
+    : candidate.db
+      ? (await candidate.db.query(`
+        SELECT COUNT(*) AS count
+        FROM source_item_events
+        WHERE source_item_id = $1 AND event_type = $2
+      `, [sourceItemId, eventType])).rows
+      : null;
+  if (!rows) throw new Error('source item event count requires a SQL-backed engine');
+  return Number(rows[0]?.count ?? 0);
+}
+
 describe('source registry operations', () => {
   test('source-choice operations are exposed with CLI hints', () => {
     expect(getOperation('register_source').cliHints?.name).toBe('source-register');
@@ -538,90 +568,122 @@ describe('source registry operations', () => {
     }
   });
 
-  test('connector item deletion records archive-for-retention event without purging raw item', async () => {
-    const harness = await createSqliteHarness('connector-deletion');
-    try {
-      const registered = await getOperation('register_connector_source').handler(harness.ctx(), {
-        connector_id: 'calendar',
-        display_name: 'Work Calendar',
-        account_locator: 'calendar://work',
-        consent_state: 'granted',
-        now: '2026-05-22T03:50:00.000Z',
-      }) as any;
-      const ingested = await getOperation('ingest_connector_item').handler(harness.ctx(), {
-        source_id: registered.source.id,
-        connector_id: 'calendar',
-        external_id: 'event-deleted',
-        body: 'Event body retained for policy review.',
-        now: '2026-05-22T03:51:00.000Z',
-      }) as any;
+  for (const [label, createHarness] of [
+    ['sqlite', createSqliteHarness],
+    ['pglite', createPgliteHarness],
+  ] as const) {
+    const timeoutMs = createHarness === createPgliteHarness
+      ? PGLITE_SOURCE_REGISTRY_TEST_TIMEOUT_MS
+      : undefined;
 
-      const deletion = await getOperation('record_connector_item_deletion').handler(harness.ctx(), {
-        source_id: registered.source.id,
-        connector_id: 'calendar',
-        external_id: 'event-deleted',
-        deleted_at: '2026-05-22T03:52:00.000Z',
-        now: '2026-05-22T03:52:00.000Z',
-      }) as any;
-      const listed = await getOperation('list_source_items').handler(harness.ctx(), {
-        source_id: registered.source.id,
-        include_chunks: false,
-      }) as any;
+    test(`connector item deletion records archive-for-retention event without purging raw item on ${label}`, async () => {
+      const harness = await createHarness(`connector-deletion-${label}`);
+      try {
+        const registered = await getOperation('register_connector_source').handler(harness.ctx(), {
+          connector_id: 'calendar',
+          display_name: 'Work Calendar',
+          account_locator: 'calendar://work',
+          consent_state: 'granted',
+          now: '2026-05-22T03:50:00.000Z',
+        }) as any;
+        const ingested = await getOperation('ingest_connector_item').handler(harness.ctx(), {
+          source_id: registered.source.id,
+          connector_id: 'calendar',
+          external_id: 'event-deleted',
+          body: 'Event body retained for policy review.',
+          now: '2026-05-22T03:51:00.000Z',
+        }) as any;
 
-      expect(deletion).toMatchObject({
-        action: 'archive_for_retention',
-        purge_immediately: false,
-        source_item_id: ingested.item.id,
-      });
-      expect(listed.items[0]).toMatchObject({
-        id: ingested.item.id,
-        ingest_status: 'ready',
-      });
+        const deletion = await getOperation('record_connector_item_deletion').handler(harness.ctx(), {
+          source_id: registered.source.id,
+          connector_id: 'calendar',
+          external_id: 'event-deleted',
+          deleted_at: '2026-05-22T03:52:00.000Z',
+          now: '2026-05-22T03:52:00.000Z',
+        }) as any;
+        const listed = await getOperation('list_source_items').handler(harness.ctx(), {
+          source_id: registered.source.id,
+          include_chunks: true,
+        }) as any;
 
-      const db = (harness.engine as any).database;
-      expect(db.query('SELECT COUNT(*) AS count FROM source_item_events WHERE source_item_id = ? AND event_type = ?').get(
-        ingested.item.id,
-        'source_deleted_archived',
-      ).count).toBe(1);
-
-      const duplicateDeletion = await getOperation('record_connector_item_deletion').handler(harness.ctx(), {
-        source_id: registered.source.id,
-        connector_id: 'calendar',
-        external_id: 'event-deleted',
-        deleted_at: '2026-05-22T03:53:00.000Z',
-        now: '2026-05-22T03:53:00.000Z',
-      }) as any;
-      expect(duplicateDeletion).toMatchObject({
-        status: 'skipped',
-        reason: 'already_archived',
-        source_item_id: ingested.item.id,
-      });
-      expect(db.query('SELECT COUNT(*) AS count FROM source_item_events WHERE source_item_id = ? AND event_type = ?').get(
-        ingested.item.id,
-        'source_deleted_archived',
-      ).count).toBe(1);
-
-      const reingested = await getOperation('ingest_connector_item').handler(harness.ctx(), {
-        source_id: registered.source.id,
-        connector_id: 'calendar',
-        external_id: 'event-deleted',
-        body: 'Event body retained for policy review.',
-        now: '2026-05-22T03:54:00.000Z',
-      }) as any;
-      expect(reingested).toMatchObject({
-        status: 'updated',
-        item: {
+        expect(deletion).toMatchObject({
+          status: 'recorded',
+          action: 'archive_for_retention',
+          purge_immediately: false,
+          source_item_id: ingested.item.id,
+        });
+        expect(listed.items[0]).toMatchObject({
           id: ingested.item.id,
-        },
-      });
-      expect(db.query('SELECT COUNT(*) AS count FROM source_item_events WHERE source_item_id = ? AND event_type = ?').get(
-        ingested.item.id,
-        'source_deleted_archived',
-      ).count).toBe(0);
-    } finally {
-      await harness.cleanup();
-    }
-  });
+          ingest_status: 'ready',
+          chunks: [{
+            source_item_id: ingested.item.id,
+            chunk_text: 'Event body retained for policy review.',
+          }],
+        });
+        await expect(countSourceItemEvents(
+          harness.engine,
+          ingested.item.id,
+          'source_deleted_archived',
+        )).resolves.toBe(1);
+
+        const duplicateDeletion = await getOperation('record_connector_item_deletion').handler(harness.ctx(), {
+          source_id: registered.source.id,
+          connector_id: 'calendar',
+          external_id: 'event-deleted',
+          deleted_at: '2026-05-22T03:53:00.000Z',
+          now: '2026-05-22T03:53:00.000Z',
+        }) as any;
+        expect(duplicateDeletion).toMatchObject({
+          status: 'skipped',
+          reason: 'already_archived',
+          source_item_id: ingested.item.id,
+        });
+        await expect(countSourceItemEvents(
+          harness.engine,
+          ingested.item.id,
+          'source_deleted_archived',
+        )).resolves.toBe(1);
+
+        const reingested = await getOperation('ingest_connector_item').handler(harness.ctx(), {
+          source_id: registered.source.id,
+          connector_id: 'calendar',
+          external_id: 'event-deleted',
+          body: 'Event body retained for policy review.',
+          now: '2026-05-22T03:54:00.000Z',
+        }) as any;
+        expect(reingested).toMatchObject({
+          status: 'updated',
+          item: {
+            id: ingested.item.id,
+          },
+        });
+        await expect(countSourceItemEvents(
+          harness.engine,
+          ingested.item.id,
+          'source_deleted_archived',
+        )).resolves.toBe(0);
+
+        const deletionAfterReingest = await getOperation('record_connector_item_deletion').handler(harness.ctx(), {
+          source_id: registered.source.id,
+          connector_id: 'calendar',
+          external_id: 'event-deleted',
+          deleted_at: '2026-05-22T03:55:00.000Z',
+          now: '2026-05-22T03:55:00.000Z',
+        }) as any;
+        expect(deletionAfterReingest).toMatchObject({
+          status: 'recorded',
+          source_item_id: ingested.item.id,
+        });
+        await expect(countSourceItemEvents(
+          harness.engine,
+          ingested.item.id,
+          'source_deleted_archived',
+        )).resolves.toBe(1);
+      } finally {
+        await harness.cleanup();
+      }
+    }, timeoutMs);
+  }
 
   test('connector item deletion respects revoked source policy before archive mutation', async () => {
     const harness = await createSqliteHarness('connector-deletion-revoked');
