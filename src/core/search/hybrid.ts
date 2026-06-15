@@ -48,6 +48,15 @@ export const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
 const pendingCacheWrites = new Set<Promise<unknown>>();
 
+function normalizeUntilExclusive(until: string | undefined): string | undefined {
+  if (!until) return undefined;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) return until;
+  const d = new Date(`${until}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) return until;
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString();
+}
+
 /**
  * v0.42 (issue #1699) agent-warning channel. Stamps `SearchResult.content_flag`
  * for any result whose page carries a `frontmatter.content_flag` marker (fuzzy
@@ -849,6 +858,11 @@ export async function hybridSearch(
   // Auto-detect detail level from query intent when caller doesn't specify
   const detail = opts?.detail ?? autoDetectDetail(query);
   const detailResolved: 'low' | 'medium' | 'high' | null = detail ?? null;
+  const sinceBound = opts?.since ?? opts?.afterDate;
+  const untilBound = opts?.until !== undefined
+    ? normalizeUntilExclusive(opts.until)
+    : opts?.beforeDate;
+
   const searchOpts: SearchOpts = {
     limit: innerLimit,
     detail,
@@ -863,8 +877,8 @@ export async function hybridSearch(
     // v0.29.1: since/until take precedence over deprecated afterDate/beforeDate.
     // The engine still consumes the legacy field names; this aliasing keeps
     // PR #618 callers compiling while the new names are the public surface.
-    afterDate: opts?.since ?? opts?.afterDate,
-    beforeDate: opts?.until ?? opts?.beforeDate,
+    afterDate: sinceBound,
+    beforeDate: untilBound,
     // v0.34.1 (#861, D9 — P0 leak seal): thread source-scoping through so the
     // inner engine.searchKeyword / engine.searchVector calls apply the
     // WHERE source_id filter at SQL level. Pre-fix, this explicit pick

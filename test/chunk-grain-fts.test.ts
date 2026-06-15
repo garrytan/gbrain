@@ -84,6 +84,31 @@ describe('Cathedral II Layer 3 — searchKeyword external contract', () => {
     await engine.upsertChunks('guides/unrelated', [
       { chunk_index: 0, chunk_text: 'Ship to production on a Tuesday, never a Friday.', chunk_source: 'compiled_truth' },
     ]);
+    // Regression: date filters must use effective_date, not updated_at. Both
+    // pages are inserted during the test run, so updated_at is "now"; only the
+    // event-dated page belongs in a since=2026-05-20 result set.
+    await engine.putPage('guides/refactor-old-event', {
+      type: 'guide',
+      title: 'Old event refactor',
+      compiled_truth: 'placeholder',
+      timeline: '',
+      effective_date: new Date('2026-04-01T00:00:00.000Z'),
+      effective_date_source: 'date',
+    });
+    await engine.upsertChunks('guides/refactor-old-event', [
+      { chunk_index: 0, chunk_text: 'Refactor old event should not pass a May since filter.', chunk_source: 'compiled_truth' },
+    ]);
+    await engine.putPage('guides/refactor-boundary-event', {
+      type: 'guide',
+      title: 'Boundary event refactor',
+      compiled_truth: 'placeholder',
+      timeline: '',
+      effective_date: new Date('2026-05-20T00:00:00.000Z'),
+      effective_date_source: 'date',
+    });
+    await engine.upsertChunks('guides/refactor-boundary-event', [
+      { chunk_index: 0, chunk_text: 'Refactor boundary event should pass an inclusive May since filter.', chunk_source: 'compiled_truth' },
+    ]);
   });
 
   afterAll(async () => {
@@ -117,6 +142,16 @@ describe('Cathedral II Layer 3 — searchKeyword external contract', () => {
   test('non-matching query returns empty', async () => {
     const results = await engine.searchKeyword('zzzzznomatch');
     expect(results).toEqual([]);
+  });
+
+  test('date filters use effective_date, not updated_at', async () => {
+    const results = await engine.searchKeyword('refactor', {
+      afterDate: '2026-05-20',
+      limit: 20,
+    });
+    const slugs = results.map(r => r.slug);
+    expect(slugs).toContain('guides/refactor-boundary-event');
+    expect(slugs).not.toContain('guides/refactor-old-event');
   });
 });
 

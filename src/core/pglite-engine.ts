@@ -1548,7 +1548,7 @@ export class PGLiteEngine implements BrainEngine {
     // got reimported). Same param shape as Postgres engine.
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) >= $${params.length}::timestamptz`;
     }
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
@@ -1651,7 +1651,7 @@ export class PGLiteEngine implements BrainEngine {
     }
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) >= $${params.length}::timestamptz`;
     }
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
@@ -1777,7 +1777,7 @@ export class PGLiteEngine implements BrainEngine {
     // v0.29.1 since/until parity (codex pass-1 #10).
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) >= $${params.length}::timestamptz`;
     }
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
@@ -1868,7 +1868,7 @@ export class PGLiteEngine implements BrainEngine {
     // pages — preserves pagination contract.
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) >= $${params.length}::timestamptz`;
     }
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
