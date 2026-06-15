@@ -161,7 +161,9 @@ export class PostgresEngine implements BrainEngine {
   // When `GBRAIN_RLS_SCOPE_BINDING` is set to `1` / `true`, source-scoped
   // query methods (listPages, search*, getChunks, etc.) wrap their queries
   // in a transaction that begins with
-  //   SET LOCAL app.scopes = '<csv-of-allowed-source-ids>'
+  //   SELECT set_config('app.scopes', '<csv-of-allowed-source-ids>', true)
+  // (equivalent to `SET LOCAL app.scopes = '<value>'`, but works through
+  //  parameterised SQL — `SET LOCAL` itself doesn't accept parameters)
   // so Postgres RLS policies on source-scoped tables can filter rows by
   // `current_setting('app.scopes', true)`. The expected policy shape:
   //
@@ -199,7 +201,12 @@ export class PostgresEngine implements BrainEngine {
       scopesValue = sourceId;
     }
     return await this.sql.begin(async (tx: any) => {
-      await tx`SET LOCAL app.scopes = ${scopesValue}`;
+      // `SET LOCAL` doesn't accept parameters in PostgreSQL — using
+      // `tx\`SET LOCAL ... = ${val}\`` binds val as $1 and errors with
+      // `syntax error at or near "$1"`. set_config() is a regular function
+      // and accepts a parameterised value; passing `true` as the third
+      // argument makes it transaction-local (same scope as SET LOCAL).
+      await tx`SELECT set_config('app.scopes', ${scopesValue}, true)`;
       return await callback(tx as ReturnType<typeof postgres>);
     });
   }
