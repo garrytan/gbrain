@@ -47,7 +47,7 @@ export async function discoverPoolerUrl(
     throw new Error(`Supabase API error: ${res.status} ${res.statusText}`);
   }
 
-  const data = await res.json() as { host: string; db_port: number; db_name: string; pool_mode?: string };
+  await res.json();
 
   // Construct the pooler URL
   // The API returns the direct host, we need to derive the pooler host

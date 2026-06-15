@@ -1,6 +1,8 @@
 import type {
   AutoPromoteVerdictRow,
   CanonicalHandoffEntry,
+  CanonicalTargetProposalEntry,
+  CanonicalTargetProposalStatusEvent,
   Chunk,
   ContextAtlasEntry,
   ContextMapEntry,
@@ -391,6 +393,58 @@ export function rowToMemoryCandidateStatusEvent(
     event_kind: row.event_kind as MemoryCandidateStatusEvent['event_kind'],
     interaction_id: row.interaction_id == null ? null : String(row.interaction_id),
     reviewed_at: row.reviewed_at ? new Date(row.reviewed_at as string) : null,
+    review_reason: (row.review_reason as string | null) ?? null,
+    created_at: new Date(row.created_at as string),
+  };
+}
+
+export function rowToCanonicalTargetProposalEntry(row: Record<string, unknown>): CanonicalTargetProposalEntry {
+  return {
+    id: row.id as string,
+    scope_id: row.scope_id as string,
+    source_candidate_id: row.source_candidate_id as string,
+    linked_candidate_ids: parseJsonStringArray(row.linked_candidate_ids),
+    status: row.status as CanonicalTargetProposalEntry['status'],
+    status_reason: (row.status_reason as string | null) ?? null,
+    proposal_kind: row.proposal_kind as CanonicalTargetProposalEntry['proposal_kind'],
+    target_object_type: row.target_object_type as CanonicalTargetProposalEntry['target_object_type'],
+    proposed_slug: row.proposed_slug as string,
+    proposed_title: row.proposed_title as string,
+    proposed_page_type: row.proposed_page_type as CanonicalTargetProposalEntry['proposed_page_type'],
+    proposed_repo_path: (row.proposed_repo_path as string | null) ?? null,
+    confidence_score: Number(row.confidence_score),
+    importance_score: Number(row.importance_score),
+    rationale: row.rationale as string,
+    filing_basis: parseJsonObject(row.filing_basis),
+    source_refs: parseJsonStringArray(row.source_refs),
+    candidate_snapshot: parseJsonObject(row.candidate_snapshot),
+    duplicate_review: parseJsonObject(row.duplicate_review),
+    slug_quality_warnings: parseJsonStringArray(row.slug_quality_warnings),
+    approval_actor: (row.approval_actor as string | null) ?? null,
+    approved_at: row.approved_at == null ? null : new Date(row.approved_at as string),
+    approval_reason: (row.approval_reason as string | null) ?? null,
+    bound_candidate_ids: parseJsonStringArray(row.bound_candidate_ids),
+    stub_patch_candidate_id: (row.stub_patch_candidate_id as string | null) ?? null,
+    stub_patch_state: (row.stub_patch_state as string | null) ?? null,
+    rejected_at: row.rejected_at == null ? null : new Date(row.rejected_at as string),
+    rejection_reason: (row.rejection_reason as string | null) ?? null,
+    superseded_by: (row.superseded_by as string | null) ?? null,
+    created_at: new Date(row.created_at as string),
+    updated_at: new Date(row.updated_at as string),
+  };
+}
+
+export function rowToCanonicalTargetProposalStatusEvent(
+  row: Record<string, unknown>,
+): CanonicalTargetProposalStatusEvent {
+  return {
+    id: row.id as string,
+    proposal_id: row.proposal_id as string,
+    scope_id: row.scope_id as string,
+    from_status: (row.from_status as CanonicalTargetProposalStatusEvent['from_status']) ?? null,
+    to_status: row.to_status as CanonicalTargetProposalStatusEvent['to_status'],
+    event_kind: row.event_kind as CanonicalTargetProposalStatusEvent['event_kind'],
+    actor: (row.actor as string | null) ?? null,
     review_reason: (row.review_reason as string | null) ?? null,
     created_at: new Date(row.created_at as string),
   };

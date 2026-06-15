@@ -123,6 +123,28 @@ Expected:
   search, and `route_memory_writeback` dry-run checks in its temporary local
   profile.
 
+## GitHub release asset verification
+
+Use this gate after pushing a release tag. A tag-triggered workflow can fail
+after the tag exists, so do not call the version published until the GitHub
+Release and its assets exist:
+
+```bash
+gh run watch <release-run-id>
+gh release view vX.Y.Z --json tagName,assets,url
+```
+
+Expected:
+
+- the Release workflow `smoke`, Linux build, macOS build, and final `release`
+  jobs all pass.
+- `gh release view` finds the tag; `release not found` means the tag exists
+  without a published GitHub Release.
+- release assets include non-empty `mbrain-darwin-arm64` and
+  `mbrain-linux-x64` files.
+- on macOS, the downloaded `mbrain-darwin-arm64` asset runs `--version` and
+  reports the release being validated.
+
 ## Agent trust UX and integrated acceptance
 
 Use this gate after changing managed agent setup, installed-agent doctor output,
@@ -155,7 +177,8 @@ Expected:
 ## Memory review report verification
 
 Use this gate after changing report collection, connector registry/sync state,
-Memory Inbox review pressure, source safety, or saved brain reports:
+Memory Inbox review pressure, canonical target proposal review actions, source
+safety, or saved brain reports:
 
 ```bash
 bun test test/memory-review-report-service.test.ts test/cli.test.ts
@@ -173,6 +196,8 @@ Expected:
 - auth failures lead to `reauthenticate`, rate limits lead to
   `wait_for_rate_limit`, schema failures lead to `inspect_schema`, and stale or
   network failures lead to `retry_now`.
+- canonical target proposal rows expose proposal create, approve, reject, and
+  complete-binding actions instead of requiring direct target binding guesses.
 - `--save --report-dir <brain-dir>` writes a formatted Markdown report under
   `<brain-dir>/reports/memory-review-report/`, and JSON output includes
   `saved_report_path` when saving succeeds.

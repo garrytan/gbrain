@@ -7,18 +7,6 @@ import { loadConfig } from '../core/config.ts';
 import { buildExecutionEnvelope } from '../core/execution-envelope.ts';
 import { detectMimeType } from '../core/file-mime.ts';
 
-interface FileRecord {
-  id: number;
-  page_slug: string | null;
-  filename: string;
-  storage_path: string;
-  mime_type: string | null;
-  size_bytes: number;
-  content_hash: string;
-  metadata: Record<string, unknown>;
-  created_at: string;
-}
-
 function fileHash(filePath: string): string {
   const content = readFileSync(filePath);
   return createHash('sha256').update(content).digest('hex');

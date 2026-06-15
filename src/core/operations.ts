@@ -21,6 +21,7 @@ import { createAgentSessionActivationOperations } from './operations-agent-sessi
 import { createAgentSessionMemoryOperations } from './operations-agent-session-memory.ts';
 import { createAssertionOperations } from './operations-assertions.ts';
 import { createBrainLoopAuditOperations } from './operations-brain-loop-audit.ts';
+import { createCanonicalTargetProposalOperations } from './operations-canonical-target-proposals.ts';
 import { createLifecycleForgettingOperations } from './operations-lifecycle-forgetting.ts';
 import { createMemoryControlPlaneOperations } from './operations-memory-control-plane.ts';
 import { createMemoryInboxOperations, DEFAULT_MEMORY_INBOX_SCOPE_ID } from './operations-memory-inbox.ts';
@@ -3879,6 +3880,11 @@ const memoryWritebackRouterOperations = createMemoryWritebackRouterOperations({
   OperationError,
 });
 
+const canonicalTargetProposalOperations = createCanonicalTargetProposalOperations({
+  defaultScopeId: DEFAULT_MEMORY_INBOX_SCOPE_ID,
+  OperationError,
+});
+
 const brainLoopAuditOperations = createBrainLoopAuditOperations({
   OperationError,
 });
@@ -6322,7 +6328,7 @@ export const operations: Operation[] = [
   // Resolution & chunks
   resolve_slugs, get_chunks,
   // Profile memory
-  get_profile_memory_entry, list_profile_memory_entries, upsert_profile_memory_entry, delete_profile_memory_entry, ...memoryInboxOperations, ...memoryWritebackRouterOperations, write_profile_memory_entry,
+  get_profile_memory_entry, list_profile_memory_entries, upsert_profile_memory_entry, delete_profile_memory_entry, ...memoryInboxOperations, ...memoryWritebackRouterOperations, ...canonicalTargetProposalOperations, write_profile_memory_entry,
   // Personal episodes
   get_personal_episode_entry, list_personal_episode_entries, record_personal_episode, delete_personal_episode_entry, write_personal_episode_entry,
   // Note manifest

@@ -1,7 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import type {
   ContextAtlasEntry,
-  ContextAtlasOverviewArtifact,
   ContextAtlasOverviewInput,
   ContextAtlasOverviewRead,
   ContextAtlasOverviewResult,

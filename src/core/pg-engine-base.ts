@@ -1,5 +1,8 @@
 import type { BrainEngine } from './engine.ts';
 import {
+  isAllowedCanonicalTargetProposalStatusUpdate,
+} from './canonical-target-proposal-status.ts';
+import {
   canonicalDerivedParameters,
   derivedJobMatchesTarget,
   derivedExtractorVersion,
@@ -28,6 +31,10 @@ import type {
   AutoPromoteVerdictKey, AutoPromoteVerdictRow,
   BrainHealth, BrainStats,
   CanonicalHandoffEntry, CanonicalHandoffEntryInput, CanonicalHandoffFilters,
+  CanonicalTargetProposalDraftPatch,
+  CanonicalTargetProposalEntry, CanonicalTargetProposalEntryInput, CanonicalTargetProposalFilters,
+  CanonicalTargetProposalStatusEvent, CanonicalTargetProposalStatusEventFilters,
+  CanonicalTargetProposalStatusEventInput, CanonicalTargetProposalStatusPatch,
   ContextAtlasEntry, ContextAtlasEntryInput, ContextAtlasFilters,
   ContextMapEntry, ContextMapEntryInput, ContextMapFilters,
   DerivedArtifactKind,
@@ -43,6 +50,7 @@ import type {
   MemoryCandidateEntry, MemoryCandidateEntryInput, MemoryCandidateFilters,
   MemoryCandidatePatchOperationStatePatch, MemoryCandidatePromotionPatch,
   MemoryCandidateStatusEvent, MemoryCandidateStatusEventFilters, MemoryCandidateStatusEventInput, MemoryCandidateStatusPatch,
+  MemoryCandidateTargetBindingPatch,
   MemoryCandidateVerificationPatch,
   MemoryCandidateSupersessionEntry, MemoryCandidateSupersessionInput,
   MemoryMutationEvent, MemoryMutationEventFilters, MemoryMutationEventInput,
@@ -82,6 +90,8 @@ import {
   rowToAutoPromoteVerdict,
   compareNoteSectionEntries,
   rowToCanonicalHandoffEntry,
+  rowToCanonicalTargetProposalEntry,
+  rowToCanonicalTargetProposalStatusEvent,
   rowToChunk,
   rowToContextAtlasEntry,
   rowToContextMapEntry,
@@ -2831,6 +2841,405 @@ export abstract class PgEngineBase {
       (rows as Record<string, unknown>[]).map(rowToCanonicalHandoffEntry)
     ));
     return sortByCreatedAtDescIdAsc(entries);
+  }
+
+  async createCanonicalTargetProposalEntry(
+    input: CanonicalTargetProposalEntryInput,
+  ): Promise<CanonicalTargetProposalEntry> {
+    const { rows } = await this.queryable.query(
+      `INSERT INTO canonical_target_proposal_entries (
+        id, scope_id, source_candidate_id, linked_candidate_ids, status, status_reason,
+        proposal_kind, target_object_type, proposed_slug, proposed_title, proposed_page_type,
+        proposed_repo_path, confidence_score, importance_score, rationale, filing_basis,
+        source_refs, candidate_snapshot, duplicate_review, slug_quality_warnings,
+        approval_actor, approved_at, approval_reason, bound_candidate_ids,
+        stub_patch_candidate_id, stub_patch_state, rejected_at, rejection_reason, superseded_by
+      ) VALUES (
+        $1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+        $16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb, $20::jsonb, $21, $22, $23,
+        $24::jsonb, $25, $26, $27, $28, $29
+      )
+      RETURNING id, scope_id, source_candidate_id, linked_candidate_ids, status, status_reason,
+                proposal_kind, target_object_type, proposed_slug, proposed_title, proposed_page_type,
+                proposed_repo_path, confidence_score, importance_score, rationale, filing_basis,
+                source_refs, candidate_snapshot, duplicate_review, slug_quality_warnings,
+                approval_actor, approved_at, approval_reason, bound_candidate_ids,
+                stub_patch_candidate_id, stub_patch_state, rejected_at, rejection_reason,
+                superseded_by, created_at, updated_at`,
+      [
+        input.id,
+        input.scope_id,
+        input.source_candidate_id,
+        JSON.stringify(input.linked_candidate_ids ?? []),
+        input.status,
+        input.status_reason ?? null,
+        input.proposal_kind,
+        input.target_object_type,
+        input.proposed_slug,
+        input.proposed_title,
+        input.proposed_page_type,
+        input.proposed_repo_path ?? null,
+        input.confidence_score,
+        input.importance_score,
+        input.rationale,
+        JSON.stringify(input.filing_basis ?? {}),
+        JSON.stringify(input.source_refs),
+        JSON.stringify(input.candidate_snapshot ?? {}),
+        JSON.stringify(input.duplicate_review ?? {}),
+        JSON.stringify(input.slug_quality_warnings ?? []),
+        input.approval_actor ?? null,
+        toNullableIso(input.approved_at),
+        input.approval_reason ?? null,
+        JSON.stringify(input.bound_candidate_ids ?? []),
+        input.stub_patch_candidate_id ?? null,
+        input.stub_patch_state ?? null,
+        toNullableIso(input.rejected_at),
+        input.rejection_reason ?? null,
+        input.superseded_by ?? null,
+      ],
+    );
+    return rowToCanonicalTargetProposalEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async getCanonicalTargetProposalEntry(id: string): Promise<CanonicalTargetProposalEntry | null> {
+    const { rows } = await this.queryable.query(
+      `SELECT id, scope_id, source_candidate_id, linked_candidate_ids, status, status_reason,
+              proposal_kind, target_object_type, proposed_slug, proposed_title, proposed_page_type,
+              proposed_repo_path, confidence_score, importance_score, rationale, filing_basis,
+              source_refs, candidate_snapshot, duplicate_review, slug_quality_warnings,
+              approval_actor, approved_at, approval_reason, bound_candidate_ids,
+              stub_patch_candidate_id, stub_patch_state, rejected_at, rejection_reason,
+              superseded_by, created_at, updated_at
+       FROM canonical_target_proposal_entries
+       WHERE id = $1`,
+      [id],
+    );
+    if (rows.length === 0) return null;
+    return rowToCanonicalTargetProposalEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async listCanonicalTargetProposalEntries(
+    filters?: CanonicalTargetProposalFilters,
+  ): Promise<CanonicalTargetProposalEntry[]> {
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+
+    if (filters?.scope_id !== undefined) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (filters?.status !== undefined) {
+      params.push(filters.status);
+      clauses.push(`status = $${params.length}`);
+    }
+    if (filters?.source_candidate_id !== undefined) {
+      params.push(filters.source_candidate_id);
+      clauses.push(`source_candidate_id = $${params.length}`);
+    }
+    if (filters?.proposed_slug !== undefined) {
+      params.push(filters.proposed_slug);
+      clauses.push(`proposed_slug = $${params.length}`);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const { rows } = await this.queryable.query(
+      `SELECT id, scope_id, source_candidate_id, linked_candidate_ids, status, status_reason,
+              proposal_kind, target_object_type, proposed_slug, proposed_title, proposed_page_type,
+              proposed_repo_path, confidence_score, importance_score, rationale, filing_basis,
+              source_refs, candidate_snapshot, duplicate_review, slug_quality_warnings,
+              approval_actor, approved_at, approval_reason, bound_candidate_ids,
+              stub_patch_candidate_id, stub_patch_state, rejected_at, rejection_reason,
+              superseded_by, created_at, updated_at
+       FROM canonical_target_proposal_entries
+       ${whereClause}
+       ORDER BY updated_at DESC, id ASC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToCanonicalTargetProposalEntry);
+  }
+
+  async updateCanonicalTargetProposalDraft(
+    id: string,
+    patch: CanonicalTargetProposalDraftPatch,
+  ): Promise<CanonicalTargetProposalEntry | null> {
+    const setClauses: string[] = [];
+    const params: unknown[] = [id];
+    const addAssignment = (column: string, value: unknown, cast = '') => {
+      params.push(value);
+      setClauses.push(`${column} = $${params.length}${cast}`);
+    };
+
+    if (patch.proposed_slug !== undefined) {
+      addAssignment('proposed_slug', patch.proposed_slug);
+    }
+    if (patch.proposed_title !== undefined) {
+      addAssignment('proposed_title', patch.proposed_title);
+    }
+    if (patch.proposal_kind !== undefined) {
+      addAssignment('proposal_kind', patch.proposal_kind);
+    }
+    if (patch.proposed_page_type !== undefined) {
+      addAssignment('proposed_page_type', patch.proposed_page_type);
+    }
+    if (patch.proposed_repo_path !== undefined) {
+      addAssignment('proposed_repo_path', patch.proposed_repo_path ?? null);
+    }
+    if (patch.confidence_score !== undefined) {
+      addAssignment('confidence_score', patch.confidence_score);
+    }
+    if (patch.importance_score !== undefined) {
+      addAssignment('importance_score', patch.importance_score);
+    }
+    if (patch.rationale !== undefined) {
+      addAssignment('rationale', patch.rationale);
+    }
+    if (patch.filing_basis !== undefined) {
+      addAssignment('filing_basis', JSON.stringify(patch.filing_basis), '::jsonb');
+    }
+    if (patch.source_refs !== undefined) {
+      addAssignment('source_refs', JSON.stringify(patch.source_refs), '::jsonb');
+    }
+    if (patch.candidate_snapshot !== undefined) {
+      addAssignment('candidate_snapshot', JSON.stringify(patch.candidate_snapshot), '::jsonb');
+    }
+    if (patch.duplicate_review !== undefined) {
+      addAssignment('duplicate_review', JSON.stringify(patch.duplicate_review), '::jsonb');
+    }
+    if (patch.slug_quality_warnings !== undefined) {
+      addAssignment('slug_quality_warnings', JSON.stringify(patch.slug_quality_warnings), '::jsonb');
+    }
+    if (patch.status_reason !== undefined) {
+      addAssignment('status_reason', patch.status_reason ?? null);
+    }
+
+    addAssignment('updated_at', toNullableIso(patch.updated_at) ?? new Date().toISOString());
+    const statusCondition = patch.expected_current_status !== undefined
+      ? ` AND status = $${params.length + 1}`
+      : '';
+    if (patch.expected_current_status !== undefined) {
+      params.push(patch.expected_current_status);
+    }
+
+    const { rows } = await this.queryable.query(
+      `UPDATE canonical_target_proposal_entries
+       SET ${setClauses.join(',\n           ')}
+       WHERE id = $1${statusCondition}
+       RETURNING id, scope_id, source_candidate_id, linked_candidate_ids, status, status_reason,
+                 proposal_kind, target_object_type, proposed_slug, proposed_title, proposed_page_type,
+                 proposed_repo_path, confidence_score, importance_score, rationale, filing_basis,
+                 source_refs, candidate_snapshot, duplicate_review, slug_quality_warnings,
+                 approval_actor, approved_at, approval_reason, bound_candidate_ids,
+                 stub_patch_candidate_id, stub_patch_state, rejected_at, rejection_reason,
+                 superseded_by, created_at, updated_at`,
+      params,
+    );
+    if (rows.length === 0) return null;
+    return rowToCanonicalTargetProposalEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async updateCanonicalTargetProposalStatus(
+    id: string,
+    patch: CanonicalTargetProposalStatusPatch,
+  ): Promise<CanonicalTargetProposalEntry | null> {
+    const current = await this.getCanonicalTargetProposalEntry(id);
+    if (!current) return null;
+    if (!isAllowedCanonicalTargetProposalStatusUpdate(current.status, patch.status)) {
+      return null;
+    }
+    const expectedStatus = patch.expected_current_status ?? current.status;
+    const timestamp = toNullableIso(patch.updated_at) ?? new Date().toISOString();
+    const isApprovalTransition = current.status === 'proposed' && patch.status === 'approved';
+    const approvalActor = isApprovalTransition
+      ? (patch.actor ?? current.approval_actor)
+      : current.approval_actor;
+    const approvedAt = isApprovalTransition
+      ? (current.approved_at ? current.approved_at.toISOString() : timestamp)
+      : (current.approved_at ? current.approved_at.toISOString() : null);
+    const approvalReason = isApprovalTransition
+      ? (patch.review_reason ?? current.approval_reason)
+      : current.approval_reason;
+    const rejectedAt = patch.status === 'rejected'
+      ? timestamp
+      : (current.rejected_at ? current.rejected_at.toISOString() : null);
+    const rejectionReason = patch.status === 'rejected'
+      ? (patch.review_reason ?? patch.status_reason ?? null)
+      : current.rejection_reason;
+
+    const { rows } = await this.queryable.query(
+      `UPDATE canonical_target_proposal_entries
+       SET status = $2,
+           status_reason = $3,
+           approval_actor = $4,
+           approved_at = $5,
+           approval_reason = $6,
+           bound_candidate_ids = $7::jsonb,
+           stub_patch_candidate_id = $8,
+           stub_patch_state = $9,
+           rejected_at = $10,
+           rejection_reason = $11,
+           superseded_by = $12,
+           updated_at = $13
+       WHERE id = $1
+         AND status = $14
+       RETURNING id, scope_id, source_candidate_id, linked_candidate_ids, status, status_reason,
+                 proposal_kind, target_object_type, proposed_slug, proposed_title, proposed_page_type,
+                 proposed_repo_path, confidence_score, importance_score, rationale, filing_basis,
+                 source_refs, candidate_snapshot, duplicate_review, slug_quality_warnings,
+                 approval_actor, approved_at, approval_reason, bound_candidate_ids,
+                 stub_patch_candidate_id, stub_patch_state, rejected_at, rejection_reason,
+                 superseded_by, created_at, updated_at`,
+      [
+        id,
+        patch.status,
+        patch.status_reason !== undefined ? patch.status_reason : current.status_reason,
+        approvalActor,
+        approvedAt,
+        approvalReason,
+        JSON.stringify(patch.bound_candidate_ids ?? current.bound_candidate_ids),
+        patch.stub_patch_candidate_id !== undefined ? patch.stub_patch_candidate_id : current.stub_patch_candidate_id,
+        patch.stub_patch_state !== undefined ? patch.stub_patch_state : current.stub_patch_state,
+        rejectedAt,
+        rejectionReason,
+        patch.superseded_by !== undefined ? patch.superseded_by : current.superseded_by,
+        timestamp,
+        expectedStatus,
+      ],
+    );
+    if (rows.length === 0) return null;
+    return rowToCanonicalTargetProposalEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async createCanonicalTargetProposalStatusEvent(
+    input: CanonicalTargetProposalStatusEventInput,
+  ): Promise<CanonicalTargetProposalStatusEvent> {
+    const createdAt = toNullableIso(input.created_at) ?? new Date().toISOString();
+    const { rows } = await this.queryable.query(
+      `INSERT INTO canonical_target_proposal_status_events (
+        id, proposal_id, scope_id, from_status, to_status, event_kind, actor, review_reason, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING id, proposal_id, scope_id, from_status, to_status, event_kind,
+                actor, review_reason, created_at`,
+      [
+        input.id,
+        input.proposal_id,
+        input.scope_id,
+        input.from_status ?? null,
+        input.to_status,
+        input.event_kind,
+        input.actor ?? null,
+        input.review_reason ?? null,
+        createdAt,
+      ],
+    );
+    return rowToCanonicalTargetProposalStatusEvent(rows[0] as Record<string, unknown>);
+  }
+
+  async listCanonicalTargetProposalStatusEvents(
+    filters?: CanonicalTargetProposalStatusEventFilters,
+  ): Promise<CanonicalTargetProposalStatusEvent[]> {
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+
+    if (filters?.proposal_id !== undefined) {
+      params.push(filters.proposal_id);
+      clauses.push(`proposal_id = $${params.length}`);
+    }
+    if (filters?.scope_id !== undefined) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (filters?.event_kind !== undefined) {
+      params.push(filters.event_kind);
+      clauses.push(`event_kind = $${params.length}`);
+    }
+    if (filters?.to_status !== undefined) {
+      params.push(filters.to_status);
+      clauses.push(`to_status = $${params.length}`);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const { rows } = await this.queryable.query(
+      `SELECT id, proposal_id, scope_id, from_status, to_status, event_kind,
+              actor, review_reason, created_at
+       FROM canonical_target_proposal_status_events
+       ${whereClause}
+       ORDER BY created_at DESC, id DESC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToCanonicalTargetProposalStatusEvent);
+  }
+
+  async bindMemoryCandidateTarget(
+    id: string,
+    patch: MemoryCandidateTargetBindingPatch,
+  ): Promise<MemoryCandidateEntry | null> {
+    const current = await this.getMemoryCandidateEntry(id);
+    if (!current) return null;
+    if (!['captured', 'candidate', 'staged_for_review'].includes(current.status)) {
+      return null;
+    }
+    if (
+      !hasOwn(patch, 'expected_current_target_object_type')
+      || !hasOwn(patch, 'expected_current_target_object_id')
+    ) {
+      return null;
+    }
+    if (
+      current.target_object_type !== patch.expected_current_target_object_type
+    ) {
+      return null;
+    }
+    if (
+      current.target_object_id !== patch.expected_current_target_object_id
+    ) {
+      return null;
+    }
+
+    const { rows } = await this.queryable.query(
+      `UPDATE memory_candidate_entries
+       SET target_object_type = $2,
+           target_object_id = $3,
+           reviewed_at = $4,
+           review_reason = $5,
+           updated_at = now()
+       WHERE id = $1
+         AND status = $6
+         AND target_object_type IS NOT DISTINCT FROM $7
+         AND target_object_id IS NOT DISTINCT FROM $8
+       RETURNING id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+                 extraction_kind, confidence_score, importance_score, recurrence_score,
+                 sensitivity, status, target_object_type, target_object_id, reviewed_at,
+                 review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+                 patch_body, patch_format, patch_operation_state, patch_risk_class,
+                 patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+                 patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+                 verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
+                 created_at, updated_at`,
+      [
+        id,
+        patch.target_object_type,
+        patch.target_object_id,
+        patch.reviewed_at !== undefined ? toNullableIso(patch.reviewed_at) : toNullableIso(current.reviewed_at),
+        patch.review_reason !== undefined ? patch.review_reason : current.review_reason,
+        current.status,
+        current.target_object_type,
+        current.target_object_id,
+      ],
+    );
+    if (rows.length === 0) return null;
+    return rowToMemoryCandidateEntry(rows[0] as Record<string, unknown>);
   }
 
   async deleteMemoryCandidateEntry(id: string): Promise<void> {

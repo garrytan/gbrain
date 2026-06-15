@@ -69,6 +69,47 @@ describe('MCP tool schema metadata', () => {
     });
   });
 
+  test('canonical target proposal tools expose read/write annotations and required params', () => {
+    const catalog = new Map(operations.map(op => [op.name, operationToMcpTool(op)]));
+
+    expect(catalog.get('list_canonical_target_proposals')?.annotations).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+    });
+    expect(catalog.get('approve_canonical_target_proposal')?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: false,
+    });
+
+    const createSchema = catalog.get('create_canonical_target_proposal')?.inputSchema as any;
+    const approveSchema = catalog.get('approve_canonical_target_proposal')?.inputSchema as any;
+    const bindSchema = catalog.get('bind_memory_candidate_target')?.inputSchema as any;
+
+    expect(createSchema.required).toContain('candidate_id');
+    expect(approveSchema.required).toEqual(expect.arrayContaining([
+      'proposal_id',
+      'session_id',
+      'realm_id',
+      'actor',
+      'source_refs',
+    ]));
+    expect(approveSchema.properties.create_missing_page_stub.type).toBe('boolean');
+    expect(bindSchema.required).toEqual(expect.arrayContaining([
+      'candidate_id',
+      'proposal_id',
+      'target_object_type',
+      'target_object_id',
+      'expected_current_target_object_type',
+      'expected_current_target_object_id',
+      'session_id',
+      'realm_id',
+      'actor',
+      'source_refs',
+    ]));
+  });
+
   test('compact schemas omit ChatGPT Apps metadata to preserve stdio frame budget', () => {
     const tool = operationToMcpTool(operation({
       name: 'get_stats',

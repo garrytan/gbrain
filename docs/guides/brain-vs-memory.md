@@ -15,7 +15,10 @@ on new_information(info):
     if info.is_about_the_world:
         # MBRAIN: people, companies, deals, meetings, concepts, ideas
         # This is world knowledge -- facts about entities external to the agent
-        mbrain put <slug> --content "..."
+        route_memory_writeback(info)
+        # Direct canonical writes need router permission and a target snapshot.
+        # If the signal becomes a Memory Inbox candidate with no target, review
+        # its canonical target proposal before any page binding or promotion.
         # Examples:
         #   "Pedro is CEO of Brex"           -> mbrain (person page)
         #   "Brex raised Series D at $12B"   -> mbrain (company page)
@@ -61,7 +64,8 @@ on user_asks(question):
 2. **Don't store user preferences in MBrain.** "User likes bullet points over paragraphs" is about how the agent should behave, not about the world. It goes in agent memory. MBrain pages are for entities, not for agent configuration.
 3. **Synthesis of external ideas goes in MBrain.** "User's take on Peter Thiel's zero-to-one framework" is the user's original thinking -- it goes in MBrain under originals/, not in agent memory.
 4. **Agent memory doesn't survive agent resets on some platforms.** Critical world knowledge MUST be in MBrain, which is durable. If the agent loses memory, the brain still has everything.
-5. **When in doubt, ask: is this about the world or about how to operate?** World -> MBrain. Operations -> agent memory. Current conversation -> session.
+5. **A targetless candidate is not factual evidence.** Treat Memory Inbox candidates without canonical targets as review items only. First review the proposed canonical home, approve or reject that proposal, and bind only after approval. If the page is missing, create it through patch candidate review/apply; proposal approval itself must not write the page.
+6. **When in doubt, ask: is this about the world or about how to operate?** World -> MBrain. Operations -> agent memory. Current conversation -> session.
 
 ## How to Verify
 
@@ -70,6 +74,7 @@ on user_asks(question):
 3. Check that no person or company pages exist in agent memory storage. Run `memory_search "person"` -- it should return preferences, not dossiers.
 4. Check that MBrain doesn't contain pages about agent behavior. Run `mbrain search "user prefers"` -- it should return nothing (preferences belong in agent memory).
 5. After an agent reset, confirm MBrain knowledge is still accessible. Run `mbrain get <any_slug>` -- world knowledge should survive the reset.
+6. For a targetless Memory Inbox candidate, confirm the report asks for canonical target proposal review first; it should not use the candidate as answer evidence or call `put_page` during proposal approval.
 
 ---
 *Part of the [MBrain Skillpack](../MBRAIN_SKILLPACK.md).*

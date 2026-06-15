@@ -4,7 +4,6 @@ import type {
   NoteSectionEntry,
   PrecisionLookupRoute,
   PrecisionLookupRouteInput,
-  PrecisionLookupRouteRead,
   PrecisionLookupRouteResult,
 } from '../types.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';

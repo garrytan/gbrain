@@ -5,6 +5,9 @@ import { homedir } from 'os';
 import { dirname, join } from 'path';
 import type { BrainEngine } from './engine.ts';
 import {
+  isAllowedCanonicalTargetProposalStatusUpdate,
+} from './canonical-target-proposal-status.ts';
+import {
   canonicalDerivedParameters,
   derivedJobMatchesTarget,
   derivedExtractorVersion,
@@ -36,7 +39,11 @@ import { appendPendingDerivedSearchResults } from './search/derived-freshness.ts
 import { selectLocalVectorChunkIds, selectLocalVectorPageIds } from './search/vector-prefilter.ts';
 import { searchLocalVectors } from './search/vector-local.ts';
 import { slugifyPath } from './sync.ts';
-import { compareNoteSectionEntries } from './utils/row-mappers.ts';
+import {
+  compareNoteSectionEntries,
+  rowToCanonicalTargetProposalEntry,
+  rowToCanonicalTargetProposalStatusEvent,
+} from './utils/row-mappers.ts';
 import type {
   AutoPromoteVerdictKey,
   AutoPromoteVerdictRow,
@@ -64,10 +71,19 @@ import type {
   ContextAtlasEntryInput,
   ContextAtlasFilters,
   MemoryCandidateEntry,
+  CanonicalTargetProposalDraftPatch,
+  CanonicalTargetProposalEntry,
+  CanonicalTargetProposalEntryInput,
+  CanonicalTargetProposalFilters,
+  CanonicalTargetProposalStatusEvent,
+  CanonicalTargetProposalStatusEventFilters,
+  CanonicalTargetProposalStatusEventInput,
+  CanonicalTargetProposalStatusPatch,
   MemoryCandidateContradictionEntry,
   MemoryCandidateContradictionEntryInput,
   MemoryCandidateEntryInput,
   MemoryCandidateFilters,
+  MemoryCandidateTargetBindingPatch,
   MemoryMutationEvent,
   MemoryMutationEventFilters,
   MemoryMutationEventInput,
@@ -801,6 +817,7 @@ export class SQLiteEngine implements BrainEngine {
       migrated = true;
     }
 
+    this.ensureCanonicalTargetProposalSchema();
     this.backfillMissingPageEmbeddingsFromChunks();
 
     // Rebuild FTS index after schema migration. On a fresh database at baseline
@@ -2497,6 +2514,412 @@ export class SQLiteEngine implements BrainEngine {
       entries.push(...rows.map(rowToMemoryCandidateStatusEvent));
     }
     return sortByCreatedAtDescIdDesc(entries);
+  }
+
+  async createCanonicalTargetProposalEntry(
+    input: CanonicalTargetProposalEntryInput,
+  ): Promise<CanonicalTargetProposalEntry> {
+    const timestamp = nowIso();
+    this.database.run(`
+      INSERT INTO canonical_target_proposal_entries (
+        id, scope_id, source_candidate_id, linked_candidate_ids, status, status_reason,
+        proposal_kind, target_object_type, proposed_slug, proposed_title, proposed_page_type,
+        proposed_repo_path, confidence_score, importance_score, rationale, filing_basis,
+        source_refs, candidate_snapshot, duplicate_review, slug_quality_warnings,
+        approval_actor, approved_at, approval_reason, bound_candidate_ids,
+        stub_patch_candidate_id, stub_patch_state, rejected_at, rejection_reason,
+        superseded_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, sqliteBindings([
+      input.id,
+      input.scope_id,
+      input.source_candidate_id,
+      JSON.stringify(input.linked_candidate_ids ?? []),
+      input.status,
+      input.status_reason ?? null,
+      input.proposal_kind,
+      input.target_object_type,
+      input.proposed_slug,
+      input.proposed_title,
+      input.proposed_page_type,
+      input.proposed_repo_path ?? null,
+      input.confidence_score,
+      input.importance_score,
+      input.rationale,
+      JSON.stringify(input.filing_basis ?? {}),
+      JSON.stringify(input.source_refs ?? []),
+      JSON.stringify(input.candidate_snapshot ?? {}),
+      JSON.stringify(input.duplicate_review ?? {}),
+      JSON.stringify(input.slug_quality_warnings ?? []),
+      input.approval_actor ?? null,
+      toNullableIso(input.approved_at),
+      input.approval_reason ?? null,
+      JSON.stringify(input.bound_candidate_ids ?? []),
+      input.stub_patch_candidate_id ?? null,
+      input.stub_patch_state ?? null,
+      toNullableIso(input.rejected_at),
+      input.rejection_reason ?? null,
+      input.superseded_by ?? null,
+      timestamp,
+      timestamp,
+    ]));
+
+    const row = this.database.query(`
+      SELECT id, scope_id, source_candidate_id, linked_candidate_ids, status, status_reason,
+             proposal_kind, target_object_type, proposed_slug, proposed_title, proposed_page_type,
+             proposed_repo_path, confidence_score, importance_score, rationale, filing_basis,
+             source_refs, candidate_snapshot, duplicate_review, slug_quality_warnings,
+             approval_actor, approved_at, approval_reason, bound_candidate_ids,
+             stub_patch_candidate_id, stub_patch_state, rejected_at, rejection_reason,
+             superseded_by, created_at, updated_at
+      FROM canonical_target_proposal_entries
+      WHERE id = ?
+    `).get(input.id) as Record<string, unknown> | null;
+    if (!row) {
+      throw new Error(`Canonical target proposal entry not found after create: ${input.id}`);
+    }
+    return rowToCanonicalTargetProposalEntry(row);
+  }
+
+  async getCanonicalTargetProposalEntry(id: string): Promise<CanonicalTargetProposalEntry | null> {
+    const row = this.database.query(`
+      SELECT id, scope_id, source_candidate_id, linked_candidate_ids, status, status_reason,
+             proposal_kind, target_object_type, proposed_slug, proposed_title, proposed_page_type,
+             proposed_repo_path, confidence_score, importance_score, rationale, filing_basis,
+             source_refs, candidate_snapshot, duplicate_review, slug_quality_warnings,
+             approval_actor, approved_at, approval_reason, bound_candidate_ids,
+             stub_patch_candidate_id, stub_patch_state, rejected_at, rejection_reason,
+             superseded_by, created_at, updated_at
+      FROM canonical_target_proposal_entries
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    return row ? rowToCanonicalTargetProposalEntry(row) : null;
+  }
+
+  async listCanonicalTargetProposalEntries(
+    filters?: CanonicalTargetProposalFilters,
+  ): Promise<CanonicalTargetProposalEntry[]> {
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (filters?.scope_id !== undefined) {
+      clauses.push('scope_id = ?');
+      params.push(filters.scope_id);
+    }
+    if (filters?.status !== undefined) {
+      clauses.push('status = ?');
+      params.push(filters.status);
+    }
+    if (filters?.source_candidate_id !== undefined) {
+      clauses.push('source_candidate_id = ?');
+      params.push(filters.source_candidate_id);
+    }
+    if (filters?.proposed_slug !== undefined) {
+      clauses.push('proposed_slug = ?');
+      params.push(filters.proposed_slug);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT id, scope_id, source_candidate_id, linked_candidate_ids, status, status_reason,
+             proposal_kind, target_object_type, proposed_slug, proposed_title, proposed_page_type,
+             proposed_repo_path, confidence_score, importance_score, rationale, filing_basis,
+             source_refs, candidate_snapshot, duplicate_review, slug_quality_warnings,
+             approval_actor, approved_at, approval_reason, bound_candidate_ids,
+             stub_patch_candidate_id, stub_patch_state, rejected_at, rejection_reason,
+             superseded_by, created_at, updated_at
+      FROM canonical_target_proposal_entries
+      ${whereClause}
+      ORDER BY updated_at DESC, id ASC
+      LIMIT ?
+      OFFSET ?
+    `).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    return rows.map(rowToCanonicalTargetProposalEntry);
+  }
+
+  async updateCanonicalTargetProposalDraft(
+    id: string,
+    patch: CanonicalTargetProposalDraftPatch,
+  ): Promise<CanonicalTargetProposalEntry | null> {
+    const setClauses: string[] = [];
+    const params: unknown[] = [];
+    const addAssignment = (column: string, value: unknown) => {
+      setClauses.push(`${column} = ?`);
+      params.push(value);
+    };
+
+    if (patch.proposed_slug !== undefined) {
+      addAssignment('proposed_slug', patch.proposed_slug);
+    }
+    if (patch.proposed_title !== undefined) {
+      addAssignment('proposed_title', patch.proposed_title);
+    }
+    if (patch.proposal_kind !== undefined) {
+      addAssignment('proposal_kind', patch.proposal_kind);
+    }
+    if (patch.proposed_page_type !== undefined) {
+      addAssignment('proposed_page_type', patch.proposed_page_type);
+    }
+    if (patch.proposed_repo_path !== undefined) {
+      addAssignment('proposed_repo_path', patch.proposed_repo_path ?? null);
+    }
+    if (patch.confidence_score !== undefined) {
+      addAssignment('confidence_score', patch.confidence_score);
+    }
+    if (patch.importance_score !== undefined) {
+      addAssignment('importance_score', patch.importance_score);
+    }
+    if (patch.rationale !== undefined) {
+      addAssignment('rationale', patch.rationale);
+    }
+    if (patch.filing_basis !== undefined) {
+      addAssignment('filing_basis', JSON.stringify(patch.filing_basis));
+    }
+    if (patch.source_refs !== undefined) {
+      addAssignment('source_refs', JSON.stringify(patch.source_refs));
+    }
+    if (patch.candidate_snapshot !== undefined) {
+      addAssignment('candidate_snapshot', JSON.stringify(patch.candidate_snapshot));
+    }
+    if (patch.duplicate_review !== undefined) {
+      addAssignment('duplicate_review', JSON.stringify(patch.duplicate_review));
+    }
+    if (patch.slug_quality_warnings !== undefined) {
+      addAssignment('slug_quality_warnings', JSON.stringify(patch.slug_quality_warnings));
+    }
+    if (patch.status_reason !== undefined) {
+      addAssignment('status_reason', patch.status_reason ?? null);
+    }
+
+    addAssignment('updated_at', toNullableIso(patch.updated_at) ?? nowIso());
+    params.push(id);
+    let statusCondition = '';
+    if (patch.expected_current_status !== undefined) {
+      statusCondition = ' AND status = ?';
+      params.push(patch.expected_current_status);
+    }
+
+    const result = this.database.run(`
+      UPDATE canonical_target_proposal_entries
+      SET ${setClauses.join(',\n          ')}
+      WHERE id = ?${statusCondition}
+    `, sqliteBindings(params));
+    if (result.changes === 0) {
+      return null;
+    }
+
+    return this.getCanonicalTargetProposalEntry(id);
+  }
+
+  async updateCanonicalTargetProposalStatus(
+    id: string,
+    patch: CanonicalTargetProposalStatusPatch,
+  ): Promise<CanonicalTargetProposalEntry | null> {
+    const current = await this.getCanonicalTargetProposalEntry(id);
+    if (!current) return null;
+    if (!isAllowedCanonicalTargetProposalStatusUpdate(current.status, patch.status)) {
+      return null;
+    }
+
+    const timestamp = toNullableIso(patch.updated_at) ?? nowIso();
+    const expectedStatus = patch.expected_current_status ?? current.status;
+    const statusReason = patch.status_reason !== undefined ? patch.status_reason ?? null : current.status_reason;
+    const isApprovalTransition = current.status === 'proposed' && patch.status === 'approved';
+    const approvalActor = isApprovalTransition
+      ? patch.actor ?? current.approval_actor
+      : current.approval_actor;
+    const approvedAt = isApprovalTransition
+      ? toNullableIso(current.approved_at) ?? timestamp
+      : toNullableIso(current.approved_at);
+    const approvalReason = isApprovalTransition
+      ? patch.review_reason ?? current.approval_reason
+      : current.approval_reason;
+    const boundCandidateIds = patch.bound_candidate_ids ?? current.bound_candidate_ids;
+    const stubPatchCandidateId = patch.stub_patch_candidate_id !== undefined
+      ? patch.stub_patch_candidate_id ?? null
+      : current.stub_patch_candidate_id;
+    const stubPatchState = patch.stub_patch_state !== undefined
+      ? patch.stub_patch_state ?? null
+      : current.stub_patch_state;
+    const rejectedAt = patch.status === 'rejected'
+      ? timestamp
+      : toNullableIso(current.rejected_at);
+    const rejectionReason = patch.status === 'rejected'
+      ? patch.review_reason ?? patch.status_reason ?? null
+      : current.rejection_reason;
+    const supersededBy = patch.superseded_by !== undefined
+      ? patch.superseded_by ?? null
+      : current.superseded_by;
+
+    const result = this.database.run(`
+      UPDATE canonical_target_proposal_entries
+      SET status = ?,
+          status_reason = ?,
+          approval_actor = ?,
+          approved_at = ?,
+          approval_reason = ?,
+          bound_candidate_ids = ?,
+          stub_patch_candidate_id = ?,
+          stub_patch_state = ?,
+          rejected_at = ?,
+          rejection_reason = ?,
+          superseded_by = ?,
+          updated_at = ?
+      WHERE id = ?
+        AND status = ?
+    `, sqliteBindings([
+      patch.status,
+      statusReason,
+      approvalActor,
+      approvedAt,
+      approvalReason,
+      JSON.stringify(boundCandidateIds),
+      stubPatchCandidateId,
+      stubPatchState,
+      rejectedAt,
+      rejectionReason,
+      supersededBy,
+      timestamp,
+      id,
+      expectedStatus,
+    ]));
+    if (result.changes === 0) {
+      return null;
+    }
+
+    return this.getCanonicalTargetProposalEntry(id);
+  }
+
+  async createCanonicalTargetProposalStatusEvent(
+    input: CanonicalTargetProposalStatusEventInput,
+  ): Promise<CanonicalTargetProposalStatusEvent> {
+    const createdAt = toNullableIso(input.created_at) ?? nowIso();
+    this.database.run(`
+      INSERT INTO canonical_target_proposal_status_events (
+        id, proposal_id, scope_id, from_status, to_status, event_kind,
+        actor, review_reason, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, sqliteBindings([
+      input.id,
+      input.proposal_id,
+      input.scope_id,
+      input.from_status ?? null,
+      input.to_status,
+      input.event_kind,
+      input.actor ?? null,
+      input.review_reason ?? null,
+      createdAt,
+    ]));
+
+    const row = this.database.query(`
+      SELECT id, proposal_id, scope_id, from_status, to_status, event_kind,
+             actor, review_reason, created_at
+      FROM canonical_target_proposal_status_events
+      WHERE id = ?
+    `).get(input.id) as Record<string, unknown> | null;
+    if (!row) {
+      throw new Error(`Canonical target proposal status event not found after create: ${input.id}`);
+    }
+    return rowToCanonicalTargetProposalStatusEvent(row);
+  }
+
+  async listCanonicalTargetProposalStatusEvents(
+    filters?: CanonicalTargetProposalStatusEventFilters,
+  ): Promise<CanonicalTargetProposalStatusEvent[]> {
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (filters?.proposal_id !== undefined) {
+      clauses.push('proposal_id = ?');
+      params.push(filters.proposal_id);
+    }
+    if (filters?.scope_id !== undefined) {
+      clauses.push('scope_id = ?');
+      params.push(filters.scope_id);
+    }
+    if (filters?.event_kind !== undefined) {
+      clauses.push('event_kind = ?');
+      params.push(filters.event_kind);
+    }
+    if (filters?.to_status !== undefined) {
+      clauses.push('to_status = ?');
+      params.push(filters.to_status);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT id, proposal_id, scope_id, from_status, to_status, event_kind,
+             actor, review_reason, created_at
+      FROM canonical_target_proposal_status_events
+      ${whereClause}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+      OFFSET ?
+    `).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    return rows.map(rowToCanonicalTargetProposalStatusEvent);
+  }
+
+  async bindMemoryCandidateTarget(
+    id: string,
+    patch: MemoryCandidateTargetBindingPatch,
+  ): Promise<MemoryCandidateEntry | null> {
+    const current = await this.getMemoryCandidateEntry(id);
+    if (!current) return null;
+    if (!['captured', 'candidate', 'staged_for_review'].includes(current.status)) {
+      return null;
+    }
+    if (
+      !hasOwn(patch, 'expected_current_target_object_type')
+      || !hasOwn(patch, 'expected_current_target_object_id')
+    ) {
+      return null;
+    }
+
+    const timestamp = nowIso();
+    const expectedTargetObjectType = patch.expected_current_target_object_type;
+    const expectedTargetObjectId = patch.expected_current_target_object_id;
+    const reviewedAt = hasOwn(patch, 'reviewed_at')
+      ? toNullableIso(patch.reviewed_at ?? null)
+      : toNullableIso(current.reviewed_at);
+    const reviewReason = hasOwn(patch, 'review_reason')
+      ? patch.review_reason ?? null
+      : current.review_reason;
+
+    const result = this.database.run(`
+      UPDATE memory_candidate_entries
+      SET target_object_type = ?,
+          target_object_id = ?,
+          reviewed_at = ?,
+          review_reason = ?,
+          updated_at = ?
+      WHERE id = ?
+        AND status = ?
+        AND target_object_type IS ?
+        AND target_object_id IS ?
+    `, sqliteBindings([
+      patch.target_object_type,
+      patch.target_object_id,
+      reviewedAt,
+      reviewReason,
+      timestamp,
+      id,
+      current.status,
+      expectedTargetObjectType,
+      expectedTargetObjectId,
+    ]));
+    if (result.changes === 0) {
+      return null;
+    }
+
+    return this.getMemoryCandidateEntry(id);
   }
 
   async createMemoryMutationEvent(input: MemoryMutationEventInput): Promise<MemoryMutationEvent> {
@@ -5352,6 +5775,11 @@ export class SQLiteEngine implements BrainEngine {
         case 54:
           this.repairMemoryMutationEventSessionAttachmentContract();
           break;
+        case 55:
+          this.repairMemoryMutationEventSessionAttachmentContract();
+          this.repairMemoryCandidatePatchTargetKindContract();
+          this.ensureCanonicalTargetProposalSchema();
+          break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
       }
@@ -5422,10 +5850,16 @@ export class SQLiteEngine implements BrainEngine {
             'upsert_memory_realm',
             'create_memory_candidate_entry',
             'advance_memory_candidate_status',
+            'verify_memory_candidate_entry',
             'reject_memory_candidate_entry',
             'delete_memory_candidate_entry',
             'promote_memory_candidate_entry',
             'supersede_memory_candidate_entry',
+            'create_canonical_target_proposal',
+            'approve_canonical_target_proposal',
+            'reject_canonical_target_proposal',
+            'complete_canonical_target_proposal_binding',
+            'bind_memory_candidate_target',
             'export_memory_artifact',
             'sync_memory_artifact',
             'repair_memory_ledger',
@@ -5449,6 +5883,7 @@ export class SQLiteEngine implements BrainEngine {
             'procedure',
             'memory_candidate',
             'memory_patch_candidate',
+            'canonical_target_proposal',
             'profile_memory',
             'personal_episode',
             'memory_realm',
@@ -5589,10 +6024,16 @@ export class SQLiteEngine implements BrainEngine {
             'upsert_memory_realm',
             'create_memory_candidate_entry',
             'advance_memory_candidate_status',
+            'verify_memory_candidate_entry',
             'reject_memory_candidate_entry',
             'delete_memory_candidate_entry',
             'promote_memory_candidate_entry',
             'supersede_memory_candidate_entry',
+            'create_canonical_target_proposal',
+            'approve_canonical_target_proposal',
+            'reject_canonical_target_proposal',
+            'complete_canonical_target_proposal_binding',
+            'bind_memory_candidate_target',
             'export_memory_artifact',
             'sync_memory_artifact',
             'repair_memory_ledger',
@@ -5616,6 +6057,7 @@ export class SQLiteEngine implements BrainEngine {
             'procedure',
             'memory_candidate',
             'memory_patch_candidate',
+            'canonical_target_proposal',
             'profile_memory',
             'personal_episode',
             'memory_realm',
@@ -5783,10 +6225,16 @@ export class SQLiteEngine implements BrainEngine {
             'upsert_memory_realm',
             'create_memory_candidate_entry',
             'advance_memory_candidate_status',
+            'verify_memory_candidate_entry',
             'reject_memory_candidate_entry',
             'delete_memory_candidate_entry',
             'promote_memory_candidate_entry',
             'supersede_memory_candidate_entry',
+            'create_canonical_target_proposal',
+            'approve_canonical_target_proposal',
+            'reject_canonical_target_proposal',
+            'complete_canonical_target_proposal_binding',
+            'bind_memory_candidate_target',
             'export_memory_artifact',
             'sync_memory_artifact',
             'repair_memory_ledger',
@@ -5810,6 +6258,7 @@ export class SQLiteEngine implements BrainEngine {
             'procedure',
             'memory_candidate',
             'memory_patch_candidate',
+            'canonical_target_proposal',
             'profile_memory',
             'personal_episode',
             'memory_realm',
@@ -5978,10 +6427,16 @@ export class SQLiteEngine implements BrainEngine {
             'attach_memory_realm_to_session',
             'create_memory_candidate_entry',
             'advance_memory_candidate_status',
+            'verify_memory_candidate_entry',
             'reject_memory_candidate_entry',
             'delete_memory_candidate_entry',
             'promote_memory_candidate_entry',
             'supersede_memory_candidate_entry',
+            'create_canonical_target_proposal',
+            'approve_canonical_target_proposal',
+            'reject_canonical_target_proposal',
+            'complete_canonical_target_proposal_binding',
+            'bind_memory_candidate_target',
             'export_memory_artifact',
             'sync_memory_artifact',
             'repair_memory_ledger',
@@ -6005,6 +6460,7 @@ export class SQLiteEngine implements BrainEngine {
             'procedure',
             'memory_candidate',
             'memory_patch_candidate',
+            'canonical_target_proposal',
             'profile_memory',
             'personal_episode',
             'memory_realm',
@@ -6183,10 +6639,16 @@ export class SQLiteEngine implements BrainEngine {
             'attach_memory_realm_to_session',
             'create_memory_candidate_entry',
             'advance_memory_candidate_status',
+            'verify_memory_candidate_entry',
             'reject_memory_candidate_entry',
             'delete_memory_candidate_entry',
             'promote_memory_candidate_entry',
             'supersede_memory_candidate_entry',
+            'create_canonical_target_proposal',
+            'approve_canonical_target_proposal',
+            'reject_canonical_target_proposal',
+            'complete_canonical_target_proposal_binding',
+            'bind_memory_candidate_target',
             'export_memory_artifact',
             'sync_memory_artifact',
             'repair_memory_ledger',
@@ -6210,6 +6672,7 @@ export class SQLiteEngine implements BrainEngine {
             'procedure',
             'memory_candidate',
             'memory_patch_candidate',
+            'canonical_target_proposal',
             'profile_memory',
             'personal_episode',
             'memory_realm',
@@ -7413,6 +7876,102 @@ export class SQLiteEngine implements BrainEngine {
     `);
   }
 
+  private ensureCanonicalTargetProposalSchema(): void {
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS canonical_target_proposal_entries (
+        id TEXT PRIMARY KEY,
+        scope_id TEXT NOT NULL,
+        source_candidate_id TEXT NOT NULL REFERENCES memory_candidate_entries(id),
+        linked_candidate_ids TEXT NOT NULL DEFAULT '[]' CHECK (
+          json_valid(linked_candidate_ids)
+          AND json_type(linked_candidate_ids) = 'array'
+        ),
+        status TEXT NOT NULL CHECK (
+          status IN ('proposed', 'approved', 'patch_staged', 'bound', 'rejected', 'superseded', 'blocked')
+        ),
+        status_reason TEXT,
+        proposal_kind TEXT NOT NULL CHECK (
+          proposal_kind IN ('project_root', 'project_doc', 'system_page', 'concept_page', 'idea_page', 'original_page')
+        ),
+        target_object_type TEXT NOT NULL CHECK (target_object_type IN ('curated_note')),
+        proposed_slug TEXT NOT NULL,
+        proposed_title TEXT NOT NULL,
+        proposed_page_type TEXT NOT NULL CHECK (proposed_page_type IN ('project', 'system', 'concept')),
+        proposed_repo_path TEXT,
+        confidence_score REAL NOT NULL CHECK (confidence_score >= 0 AND confidence_score <= 1),
+        importance_score REAL NOT NULL CHECK (importance_score >= 0 AND importance_score <= 1),
+        rationale TEXT NOT NULL DEFAULT '',
+        filing_basis TEXT NOT NULL DEFAULT '{}' CHECK (
+          json_valid(filing_basis)
+          AND json_type(filing_basis) = 'object'
+        ),
+        source_refs TEXT NOT NULL DEFAULT '[]' CHECK (
+          json_valid(source_refs)
+          AND json_type(source_refs) = 'array'
+        ),
+        candidate_snapshot TEXT NOT NULL DEFAULT '{}' CHECK (
+          json_valid(candidate_snapshot)
+          AND json_type(candidate_snapshot) = 'object'
+        ),
+        duplicate_review TEXT NOT NULL DEFAULT '{}' CHECK (
+          json_valid(duplicate_review)
+          AND json_type(duplicate_review) = 'object'
+        ),
+        slug_quality_warnings TEXT NOT NULL DEFAULT '[]' CHECK (
+          json_valid(slug_quality_warnings)
+          AND json_type(slug_quality_warnings) = 'array'
+        ),
+        approval_actor TEXT,
+        approved_at TEXT,
+        approval_reason TEXT,
+        bound_candidate_ids TEXT NOT NULL DEFAULT '[]' CHECK (
+          json_valid(bound_candidate_ids)
+          AND json_type(bound_candidate_ids) = 'array'
+        ),
+        stub_patch_candidate_id TEXT REFERENCES memory_candidate_entries(id),
+        stub_patch_state TEXT,
+        rejected_at TEXT,
+        rejection_reason TEXT,
+        superseded_by TEXT REFERENCES canonical_target_proposal_entries(id),
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_canonical_target_proposals_scope_status
+        ON canonical_target_proposal_entries(scope_id, status, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_canonical_target_proposals_scope_slug
+        ON canonical_target_proposal_entries(scope_id, proposed_slug);
+      CREATE INDEX IF NOT EXISTS idx_canonical_target_proposals_source_candidate
+        ON canonical_target_proposal_entries(source_candidate_id);
+      CREATE INDEX IF NOT EXISTS idx_canonical_target_proposals_linked_candidates
+        ON canonical_target_proposal_entries(linked_candidate_ids);
+
+      CREATE TABLE IF NOT EXISTS canonical_target_proposal_status_events (
+        id TEXT PRIMARY KEY,
+        proposal_id TEXT NOT NULL REFERENCES canonical_target_proposal_entries(id) ON DELETE CASCADE,
+        scope_id TEXT NOT NULL,
+        from_status TEXT CHECK (
+          from_status IS NULL
+          OR from_status IN ('proposed', 'approved', 'patch_staged', 'bound', 'rejected', 'superseded', 'blocked')
+        ),
+        to_status TEXT NOT NULL CHECK (
+          to_status IN ('proposed', 'approved', 'patch_staged', 'bound', 'rejected', 'superseded', 'blocked')
+        ),
+        event_kind TEXT NOT NULL CHECK (
+          event_kind IN ('created', 'approved', 'patch_staged', 'bound', 'rejected', 'superseded', 'blocked')
+        ),
+        actor TEXT,
+        review_reason TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_canonical_target_proposal_status_events_proposal_created
+        ON canonical_target_proposal_status_events(proposal_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_canonical_target_proposal_status_events_scope_created
+        ON canonical_target_proposal_status_events(scope_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_canonical_target_proposal_status_events_kind_created
+        ON canonical_target_proposal_status_events(event_kind, created_at DESC, id DESC);
+    `);
+  }
+
   private ensureMemoryCandidateStatusEventSchema(): void {
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS memory_candidate_status_events (
@@ -7593,6 +8152,97 @@ export class SQLiteEngine implements BrainEngine {
     return row?.sql.includes(`'${status}'`) ?? false;
   }
 
+  private memoryCandidatePatchTargetKindCheckAllows(kind: string): boolean {
+    const row = this.database.query(`
+      SELECT sql
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name = 'memory_candidate_entries'
+    `).get() as { sql: string } | null;
+    return row?.sql.includes(`'${kind}'`) ?? false;
+  }
+
+  private repairMemoryCandidatePatchTargetKindContract(): void {
+    if (!this.sqliteTableExists('memory_candidate_entries')) {
+      return;
+    }
+    this.ensureMemoryPatchCandidateColumns();
+    this.ensureMemoryCandidateVerificationColumns();
+    if (this.memoryCandidatePatchTargetKindCheckAllows('canonical_target_proposal')) {
+      return;
+    }
+
+    const tempTableName = 'memory_candidate_entries_v55';
+    this.recoverInterruptedMemoryCandidateRebuild(tempTableName);
+    this.database.exec(`
+      DROP TABLE IF EXISTS ${tempTableName};
+      CREATE TABLE ${tempTableName} (
+        id TEXT PRIMARY KEY,
+        scope_id TEXT NOT NULL,
+        candidate_type TEXT NOT NULL CHECK (candidate_type IN ('fact', 'relationship', 'note_update', 'procedure', 'profile_update', 'open_question', 'rationale')),
+        proposed_content TEXT NOT NULL,
+        source_refs TEXT NOT NULL DEFAULT '[]',
+        generated_by TEXT NOT NULL CHECK (generated_by IN ('agent', 'map_analysis', 'dream_cycle', 'manual', 'import')),
+        extraction_kind TEXT NOT NULL CHECK (extraction_kind IN ('extracted', 'inferred', 'ambiguous', 'manual')),
+        confidence_score REAL NOT NULL,
+        importance_score REAL NOT NULL,
+        recurrence_score REAL NOT NULL,
+        sensitivity TEXT NOT NULL CHECK (sensitivity IN ('public', 'work', 'personal', 'secret', 'unknown')),
+        status TEXT NOT NULL CHECK (status IN ('captured', 'candidate', 'staged_for_review', 'rejected', 'promoted', 'superseded')),
+        target_object_type TEXT CHECK (target_object_type IS NULL OR target_object_type IN ('curated_note', 'procedure', 'profile_memory', 'personal_episode', 'other')),
+        target_object_id TEXT,
+        reviewed_at TEXT,
+        review_reason TEXT,
+        patch_target_kind TEXT CHECK (patch_target_kind IS NULL OR patch_target_kind IN ('page', 'source_record', 'task_thread', 'working_set', 'task_event', 'task_episode', 'attempt', 'decision', 'procedure', 'memory_candidate', 'memory_patch_candidate', 'canonical_target_proposal', 'profile_memory', 'personal_episode', 'memory_realm', 'memory_session', 'memory_session_attachment', 'context_map', 'context_atlas', 'file_artifact', 'export_artifact', 'ledger_event')),
+        patch_target_id TEXT,
+        patch_base_target_snapshot_hash TEXT,
+        patch_body TEXT CHECK (patch_body IS NULL OR (json_valid(patch_body) AND json_type(patch_body) IN ('object', 'array'))),
+        patch_format TEXT CHECK (patch_format IS NULL OR patch_format IN ('merge_patch', 'json_patch', 'unified_diff', 'whole_record', 'operation')),
+        patch_operation_state TEXT CHECK (patch_operation_state IS NULL OR patch_operation_state IN ('proposed', 'dry_run_validated', 'approved_for_apply', 'apply_in_progress', 'applied', 'conflicted', 'failed')),
+        patch_risk_class TEXT CHECK (patch_risk_class IS NULL OR patch_risk_class IN ('low', 'medium', 'high', 'critical', 'unknown')),
+        patch_expected_resulting_target_snapshot_hash TEXT,
+        patch_provenance_summary TEXT,
+        patch_actor TEXT,
+        patch_originating_session_id TEXT,
+        patch_ledger_event_ids TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(patch_ledger_event_ids) AND json_type(patch_ledger_event_ids) = 'array'),
+        verification_status TEXT NOT NULL DEFAULT 'unverified' CHECK (verification_status IN ('unverified', 'verified', 'refuted')),
+        verification_method TEXT CHECK (verification_method IS NULL OR verification_method IN ('command_execution', 'db_query', 'file_inspection', 'source_recheck', 'user_confirmation', 'external_lookup')),
+        verification_evidence TEXT,
+        verification_source_refs TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(verification_source_refs) AND json_type(verification_source_refs) = 'array'),
+        verified_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      INSERT INTO ${tempTableName} (
+        id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+        extraction_kind, confidence_score, importance_score, recurrence_score,
+        sensitivity, status, target_object_type, target_object_id, reviewed_at,
+        review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+        patch_body, patch_format, patch_operation_state, patch_risk_class,
+        patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+        patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+        verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
+        created_at, updated_at
+      )
+      SELECT
+        id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+        extraction_kind, confidence_score, importance_score, recurrence_score,
+        sensitivity, status, target_object_type, target_object_id, reviewed_at,
+        review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+        patch_body, patch_format, patch_operation_state, patch_risk_class,
+        patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+        patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+        verification_status, verification_method, verification_evidence, verification_source_refs, verified_at,
+        created_at, updated_at
+      FROM memory_candidate_entries;
+      DROP TABLE memory_candidate_entries;
+      ALTER TABLE ${tempTableName} RENAME TO memory_candidate_entries;
+    `);
+    this.ensureMemoryCandidateIndexes();
+    this.ensureMemoryCandidateSupersessionSchema();
+    this.ensureMemoryCandidateVerificationColumns();
+  }
+
   private rebuildMemoryCandidateEntriesTable(tempTableName: string, statuses: string[]): void {
     const statusList = statuses.map((status) => `'${status}'`).join(', ');
     this.recoverInterruptedMemoryCandidateRebuild(tempTableName);
@@ -7707,7 +8357,7 @@ export class SQLiteEngine implements BrainEngine {
     const columns = this.database.query(`PRAGMA table_info(memory_candidate_entries)`).all() as Array<{ name: string }>;
     const names = new Set(columns.map((column) => column.name));
     const additions = [
-      ['patch_target_kind', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_target_kind TEXT CHECK (patch_target_kind IS NULL OR patch_target_kind IN ('page', 'source_record', 'task_thread', 'working_set', 'task_event', 'task_episode', 'attempt', 'decision', 'procedure', 'memory_candidate', 'memory_patch_candidate', 'profile_memory', 'personal_episode', 'memory_realm', 'memory_session', 'memory_session_attachment', 'context_map', 'context_atlas', 'file_artifact', 'export_artifact', 'ledger_event'))`],
+      ['patch_target_kind', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_target_kind TEXT CHECK (patch_target_kind IS NULL OR patch_target_kind IN ('page', 'source_record', 'task_thread', 'working_set', 'task_event', 'task_episode', 'attempt', 'decision', 'procedure', 'memory_candidate', 'memory_patch_candidate', 'canonical_target_proposal', 'profile_memory', 'personal_episode', 'memory_realm', 'memory_session', 'memory_session_attachment', 'context_map', 'context_atlas', 'file_artifact', 'export_artifact', 'ledger_event'))`],
       ['patch_target_id', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_target_id TEXT`],
       ['patch_base_target_snapshot_hash', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_base_target_snapshot_hash TEXT`],
       ['patch_body', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_body TEXT CHECK (patch_body IS NULL OR (json_valid(patch_body) AND json_type(patch_body) IN ('object', 'array')))`],

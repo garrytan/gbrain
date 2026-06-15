@@ -59,6 +59,12 @@ export function assertMemoryCandidateStatusEventInput(
         !(
           (input.from_status === 'captured' && input.to_status === 'candidate')
           || (input.from_status === 'candidate' && input.to_status === 'staged_for_review')
+          || (
+            input.from_status === input.to_status
+            && input.from_status !== undefined
+            && input.from_status !== null
+            && isMemoryCandidateCreateStatus(input.from_status)
+          )
         )
       ) {
         throw invalidMemoryCandidateStatusEvent(input);

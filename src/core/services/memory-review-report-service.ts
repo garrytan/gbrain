@@ -1,4 +1,8 @@
-import type { CandidateDebtMetrics, NegativeMemoryProjection } from '../types.ts';
+import type {
+  CandidateDebtMetrics,
+  CanonicalTargetProposalStatus,
+  NegativeMemoryProjection,
+} from '../types.ts';
 
 // Above this many staged-for-review candidates, the backlog gets a prominent
 // warning in both the memory report and `mbrain doctor`.
@@ -26,6 +30,11 @@ export type ReportActionKind =
   | 'adjust_policy'
   | 'stage_candidate'
   | 'approve_candidate'
+  | 'propose_canonical_home'
+  | 'approve_canonical_target_proposal'
+  | 'reject_canonical_target_proposal'
+  | 'choose_existing_canonical_page'
+  | 'complete_canonical_target_binding'
   | 'resolve_conflict'
   | 'rerun_failed_job'
   | 'open_audit_trail';
@@ -74,6 +83,19 @@ export interface ReportReviewItem {
   target_ref?: string;
   summary: string;
   severity: 'low' | 'medium' | 'high';
+}
+
+export interface ReportCanonicalTargetProposal {
+  id: string;
+  source_candidate_id: string;
+  linked_candidate_ids: string[];
+  status: CanonicalTargetProposalStatus;
+  proposed_slug: string;
+  proposed_title: string;
+  status_reason?: string | null;
+  stub_patch_candidate_id?: string | null;
+  stub_patch_state?: string | null;
+  bound_candidate_ids?: string[];
 }
 
 export interface ReportConflict {
@@ -200,6 +222,7 @@ export interface MemoryReviewReportInput {
   lifecycle_states?: ReportLifecycleState[];
   purge_candidates?: ReportPurgeCandidate[];
   review_items?: ReportReviewItem[];
+  canonical_target_proposals?: ReportCanonicalTargetProposal[];
   conflicts?: ReportConflict[];
   sources?: ReportSource[];
   source_items?: ReportSourceItem[];
@@ -241,6 +264,7 @@ export interface MemoryReportAction {
   route: 'governed_operation';
   operation: string;
   params: Record<string, unknown>;
+  description: string;
   requires_mutation_ledger: true;
 }
 
@@ -295,6 +319,7 @@ export interface MemoryReviewReport {
     lifecycle_states: ReportLifecycleState[];
     purge_candidates: ReportPurgeCandidate[];
     review_items: ReportReviewItem[];
+    canonical_target_proposals: ReportCanonicalTargetProposal[];
     conflicts: ReportConflict[];
     source_ingest: { by_source: SourceIngestSummary[] };
     extraction: { by_status: CountByStatus[] };
@@ -318,6 +343,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
   const lifecycleStates = redactReportValues(input.lifecycle_states ?? []);
   const purgeCandidates = redactReportValues(input.purge_candidates ?? []);
   const reviewItems = redactReportValues(input.review_items ?? []);
+  const canonicalTargetProposals = redactReportValues(input.canonical_target_proposals ?? []);
   const conflicts = redactReportValues(input.conflicts ?? []);
   const sources = redactReportValues(input.sources ?? []);
   const sourceItems = redactReportValues(input.source_items ?? []);
@@ -390,6 +416,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
       lifecycle_states: lifecycleStates,
       purge_candidates: purgeCandidates,
       review_items: reviewItems,
+      canonical_target_proposals: canonicalTargetProposals,
       conflicts,
       source_ingest: { by_source: summarizeSourceIngest(sourceItems) },
       extraction: { by_status: countByStatus(extractedClaims.map((claim) => claim.status)) },
@@ -412,6 +439,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
       lifecycleStates,
       purgeCandidates,
       reviewItems,
+      canonicalTargetProposals,
       conflicts,
       failedJobs: [...failedRunnerJobs, ...failedMaintenanceJobs],
       sources: unhealthySources,
@@ -459,10 +487,17 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
       }
     }
 
+    if (report.sections.canonical_target_proposals.length > 0) {
+      lines.push('', 'Canonical Target Proposals');
+      for (const proposal of report.sections.canonical_target_proposals) {
+        lines.push(`- ${proposal.id}: ${proposal.status} ${proposal.proposed_slug} (${proposal.proposed_title})`);
+      }
+    }
+
     if (report.actions.length > 0) {
       lines.push('', 'Actions');
       for (const action of report.actions) {
-        lines.push(`- ${action.kind}: ${action.target_kind}/${action.target_id} via ${action.route}`);
+        lines.push(`- ${action.kind}: ${action.target_kind}/${action.target_id} via ${action.route} | ${action.description}`);
       }
     }
   }
@@ -792,6 +827,7 @@ function buildReportActions(input: {
   lifecycleStates: ReportLifecycleState[];
   purgeCandidates: ReportPurgeCandidate[];
   reviewItems: ReportReviewItem[];
+  canonicalTargetProposals: ReportCanonicalTargetProposal[];
   conflicts: ReportConflict[];
   failedJobs: Array<ReportRunnerJob | ReportMaintenanceJob>;
   sources: ReportSource[];
@@ -832,7 +868,8 @@ function buildReportActions(input: {
         scope_id: input.scopeId,
         reason: 'memory review report restore action',
       })),
-    ...input.reviewItems.flatMap((item) => reviewItemActions(item)),
+    ...input.reviewItems.flatMap((item) => reviewItemActions(item, actionableProposalCandidateIds(input.canonicalTargetProposals))),
+    ...input.canonicalTargetProposals.flatMap((proposal) => canonicalTargetProposalActions(proposal)),
     ...input.conflicts.map((conflict) => governedWritebackAction({
       kind: 'resolve_conflict',
       targetKind: 'conflict',
@@ -919,15 +956,23 @@ function canonicalMemoryAuditTarget(memory: ReportCanonicalMemory): { targetKind
   };
 }
 
-function reviewItemActions(item: ReportReviewItem): MemoryReportAction[] {
+function reviewItemActions(item: ReportReviewItem, proposalCandidateIds: Set<string>): MemoryReportAction[] {
   if (item.review_type === 'candidate_staging') {
-    return [
+    const actions = [
       governedAction('stage_candidate', item.review_type, item.id, 'advance_memory_candidate_status', {
         id: item.id,
         next_status: 'staged_for_review',
         review_reason: 'memory review report stage action',
       }),
     ];
+    if (!item.target_ref && !proposalCandidateIds.has(item.id)) {
+      actions.unshift(governedAction('propose_canonical_home', 'memory_candidate', item.id, 'create_canonical_target_proposal', {
+        candidate_id: item.id,
+        apply: true,
+        review_reason: 'memory review report propose canonical home action',
+      }));
+    }
+    return actions;
   }
   if (item.review_type === 'deferred_candidate') {
     return [];
@@ -942,6 +987,55 @@ function reviewItemActions(item: ReportReviewItem): MemoryReportAction[] {
       review_reason: 'memory review report approve action',
     }),
   ];
+}
+
+function actionableProposalCandidateIds(proposals: ReportCanonicalTargetProposal[]): Set<string> {
+  const actionableStatuses = new Set<CanonicalTargetProposalStatus>(['proposed', 'approved', 'patch_staged', 'bound']);
+  return new Set(proposals
+    .filter((proposal) => actionableStatuses.has(proposal.status))
+    .flatMap((proposal) => [
+      proposal.source_candidate_id,
+      ...proposal.linked_candidate_ids,
+      ...(proposal.bound_candidate_ids ?? []),
+    ]));
+}
+
+function canonicalTargetProposalActions(proposal: ReportCanonicalTargetProposal): MemoryReportAction[] {
+  if (proposal.status === 'proposed') {
+    return [
+      governedAction('approve_canonical_target_proposal', 'canonical_target_proposal', proposal.id, 'approve_canonical_target_proposal', {
+        proposal_id: proposal.id,
+        review_reason: 'memory review report approve canonical target proposal action',
+      }, canonicalTargetReviewContextDescription('approve this canonical target proposal')),
+      governedAction('reject_canonical_target_proposal', 'canonical_target_proposal', proposal.id, 'reject_canonical_target_proposal', {
+        proposal_id: proposal.id,
+        review_reason: 'memory review report reject canonical target proposal action',
+      }, canonicalTargetReviewContextDescription('reject this canonical target proposal')),
+    ];
+  }
+  if (proposal.status === 'approved') {
+    return [
+      governedAction('choose_existing_canonical_page', 'canonical_target_proposal', proposal.id, 'complete_canonical_target_proposal_binding', {
+        proposal_id: proposal.id,
+        require_stub_patch_applied: false,
+        review_reason: 'memory review report choose existing canonical page action',
+      }, canonicalTargetReviewContextDescription('bind this approved proposal to an existing canonical page')),
+    ];
+  }
+  if (proposal.status === 'patch_staged') {
+    return [
+      governedAction('complete_canonical_target_binding', 'canonical_target_proposal', proposal.id, 'complete_canonical_target_proposal_binding', {
+        proposal_id: proposal.id,
+        require_stub_patch_applied: true,
+        review_reason: 'memory review report complete canonical target binding action',
+      }, canonicalTargetReviewContextDescription('complete this patch-staged canonical target binding')),
+    ];
+  }
+  return [];
+}
+
+function canonicalTargetReviewContextDescription(action: string): string {
+  return `Operation template to ${action}; requires caller-provided review context: session_id, realm_id, actor, and source_refs.`;
 }
 
 function governedWritebackAction(input: {
@@ -983,6 +1077,7 @@ function governedAction(
   targetId: string,
   operation: string,
   params: Record<string, unknown>,
+  description = `Run ${operation} for ${targetKind}/${targetId}.`,
 ): MemoryReportAction {
   return {
     kind,
@@ -991,12 +1086,14 @@ function governedAction(
     route: 'governed_operation',
     operation,
     params,
+    description,
     requires_mutation_ledger: true,
   };
 }
 
 function isEmptyReport(report: MemoryReviewReport): boolean {
   return Object.values(report.summary).every((count) => count === 0)
+    && report.sections.canonical_target_proposals.length === 0
     && !hasMaintenanceHealthSignals(report.sections.maintenance_health);
 }
 

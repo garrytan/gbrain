@@ -1625,6 +1625,189 @@ CREATE INDEX IF NOT EXISTS idx_memory_redaction_items_target
   ON memory_redaction_plan_items(target_object_type, target_object_id);
 
 -- ============================================================
+-- memory_candidate_entries: governed inbox candidates
+-- ============================================================
+CREATE TABLE IF NOT EXISTS memory_candidate_entries (
+  id TEXT PRIMARY KEY,
+  scope_id TEXT NOT NULL,
+  candidate_type TEXT NOT NULL CHECK (candidate_type IN ('fact', 'relationship', 'note_update', 'procedure', 'profile_update', 'open_question', 'rationale')),
+  proposed_content TEXT NOT NULL,
+  source_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+  generated_by TEXT NOT NULL CHECK (generated_by IN ('agent', 'map_analysis', 'dream_cycle', 'manual', 'import')),
+  extraction_kind TEXT NOT NULL CHECK (extraction_kind IN ('extracted', 'inferred', 'ambiguous', 'manual')),
+  confidence_score REAL NOT NULL,
+  importance_score REAL NOT NULL,
+  recurrence_score REAL NOT NULL,
+  sensitivity TEXT NOT NULL CHECK (sensitivity IN ('public', 'work', 'personal', 'secret', 'unknown')),
+  status TEXT NOT NULL CHECK (status IN ('captured', 'candidate', 'staged_for_review', 'rejected', 'promoted', 'superseded')),
+  target_object_type TEXT CHECK (target_object_type IS NULL OR target_object_type IN ('curated_note', 'procedure', 'profile_memory', 'personal_episode', 'other')),
+  target_object_id TEXT,
+  reviewed_at TIMESTAMPTZ,
+  review_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  patch_target_kind TEXT CONSTRAINT chk_memory_candidate_entries_patch_target_kind CHECK (
+    patch_target_kind IS NULL
+    OR patch_target_kind IN (
+      'page',
+      'source_record',
+      'task_thread',
+      'working_set',
+      'task_event',
+      'task_episode',
+      'attempt',
+      'decision',
+      'procedure',
+      'memory_candidate',
+      'memory_patch_candidate',
+      'canonical_target_proposal',
+      'profile_memory',
+      'personal_episode',
+      'memory_realm',
+      'memory_session',
+      'memory_session_attachment',
+      'context_map',
+      'context_atlas',
+      'file_artifact',
+      'export_artifact',
+      'ledger_event'
+    )
+  ),
+  patch_target_id TEXT,
+  patch_base_target_snapshot_hash TEXT,
+  patch_body JSONB CONSTRAINT chk_memory_candidate_entries_patch_body_object
+    CHECK (patch_body IS NULL OR jsonb_typeof(patch_body) IN ('object', 'array')),
+  patch_format TEXT CONSTRAINT chk_memory_candidate_entries_patch_format
+    CHECK (patch_format IS NULL OR patch_format IN ('merge_patch', 'json_patch', 'unified_diff', 'whole_record', 'operation')),
+  patch_operation_state TEXT CONSTRAINT chk_memory_candidate_entries_patch_operation_state
+    CHECK (
+      patch_operation_state IS NULL
+      OR patch_operation_state IN (
+        'proposed',
+        'dry_run_validated',
+        'approved_for_apply',
+        'apply_in_progress',
+        'applied',
+        'conflicted',
+        'failed'
+      )
+    ),
+  patch_risk_class TEXT CONSTRAINT chk_memory_candidate_entries_patch_risk_class
+    CHECK (patch_risk_class IS NULL OR patch_risk_class IN ('low', 'medium', 'high', 'critical', 'unknown')),
+  patch_expected_resulting_target_snapshot_hash TEXT,
+  patch_provenance_summary TEXT,
+  patch_actor TEXT,
+  patch_originating_session_id TEXT,
+  patch_ledger_event_ids JSONB NOT NULL DEFAULT '[]'::jsonb
+    CONSTRAINT chk_memory_candidate_entries_patch_ledger_ids_array
+    CHECK (jsonb_typeof(patch_ledger_event_ids) = 'array'),
+  verification_status TEXT NOT NULL DEFAULT 'unverified'
+    CONSTRAINT memory_candidate_entries_verification_status_check
+    CHECK (verification_status IN ('unverified', 'verified', 'refuted')),
+  verification_method TEXT
+    CONSTRAINT memory_candidate_entries_verification_method_check
+    CHECK (verification_method IS NULL OR verification_method IN ('command_execution', 'db_query', 'file_inspection', 'source_recheck', 'user_confirmation', 'external_lookup')),
+  verification_evidence TEXT,
+  verification_source_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+  verified_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_candidates_scope_status
+  ON memory_candidate_entries(scope_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_candidates_scope_type
+  ON memory_candidate_entries(scope_id, candidate_type, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_candidates_target
+  ON memory_candidate_entries(target_object_type, target_object_id);
+CREATE INDEX IF NOT EXISTS idx_memory_candidates_patch_state
+  ON memory_candidate_entries(patch_operation_state, updated_at DESC)
+  WHERE patch_operation_state IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_memory_candidates_patch_target
+  ON memory_candidate_entries(patch_target_kind, patch_target_id)
+  WHERE patch_target_kind IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_memory_candidates_scope_verification
+  ON memory_candidate_entries(scope_id, verification_status, updated_at DESC);
+
+-- ============================================================
+-- canonical_target_proposals: reviewable homes for targetless candidates
+-- ============================================================
+CREATE TABLE IF NOT EXISTS canonical_target_proposal_entries (
+  id TEXT PRIMARY KEY,
+  scope_id TEXT NOT NULL,
+  source_candidate_id TEXT NOT NULL
+    CONSTRAINT fk_canonical_target_proposals_source_candidate
+    REFERENCES memory_candidate_entries(id),
+  linked_candidate_ids JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(linked_candidate_ids) = 'array'),
+  status TEXT NOT NULL CHECK (status IN ('proposed', 'approved', 'patch_staged', 'bound', 'rejected', 'superseded', 'blocked')),
+  status_reason TEXT,
+  proposal_kind TEXT NOT NULL CHECK (proposal_kind IN ('project_root', 'project_doc', 'system_page', 'concept_page', 'idea_page', 'original_page')),
+  target_object_type TEXT NOT NULL CHECK (target_object_type IN ('curated_note')),
+  proposed_slug TEXT NOT NULL,
+  proposed_title TEXT NOT NULL,
+  proposed_page_type TEXT NOT NULL CHECK (proposed_page_type IN ('project', 'system', 'concept')),
+  proposed_repo_path TEXT,
+  confidence_score REAL NOT NULL CHECK (confidence_score >= 0 AND confidence_score <= 1),
+  importance_score REAL NOT NULL CHECK (importance_score >= 0 AND importance_score <= 1),
+  rationale TEXT NOT NULL DEFAULT '',
+  filing_basis JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(filing_basis) = 'object'),
+  source_refs JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(source_refs) = 'array'),
+  candidate_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(candidate_snapshot) = 'object'),
+  duplicate_review JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(duplicate_review) = 'object'),
+  slug_quality_warnings JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(slug_quality_warnings) = 'array'),
+  approval_actor TEXT,
+  approved_at TIMESTAMPTZ,
+  approval_reason TEXT,
+  bound_candidate_ids JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(bound_candidate_ids) = 'array'),
+  stub_patch_candidate_id TEXT
+    CONSTRAINT fk_canonical_target_proposals_stub_patch_candidate
+    REFERENCES memory_candidate_entries(id),
+  stub_patch_state TEXT,
+  rejected_at TIMESTAMPTZ,
+  rejection_reason TEXT,
+  superseded_by TEXT
+    CONSTRAINT fk_canonical_target_proposals_superseded_by
+    REFERENCES canonical_target_proposal_entries(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_canonical_target_proposals_scope_status
+  ON canonical_target_proposal_entries(scope_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_canonical_target_proposals_scope_slug
+  ON canonical_target_proposal_entries(scope_id, proposed_slug);
+CREATE INDEX IF NOT EXISTS idx_canonical_target_proposals_source_candidate
+  ON canonical_target_proposal_entries(source_candidate_id);
+CREATE INDEX IF NOT EXISTS idx_canonical_target_proposals_linked_candidates
+  ON canonical_target_proposal_entries USING GIN (linked_candidate_ids);
+
+CREATE TABLE IF NOT EXISTS canonical_target_proposal_status_events (
+  id TEXT PRIMARY KEY,
+  proposal_id TEXT NOT NULL
+    CONSTRAINT fk_canonical_target_proposal_status_events_proposal
+    REFERENCES canonical_target_proposal_entries(id) ON DELETE CASCADE,
+  scope_id TEXT NOT NULL,
+  from_status TEXT CHECK (
+    from_status IS NULL
+    OR from_status IN ('proposed', 'approved', 'patch_staged', 'bound', 'rejected', 'superseded', 'blocked')
+  ),
+  to_status TEXT NOT NULL CHECK (
+    to_status IN ('proposed', 'approved', 'patch_staged', 'bound', 'rejected', 'superseded', 'blocked')
+  ),
+  event_kind TEXT NOT NULL CHECK (
+    event_kind IN ('created', 'approved', 'patch_staged', 'bound', 'rejected', 'superseded', 'blocked')
+  ),
+  actor TEXT,
+  review_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_canonical_target_proposal_status_events_proposal_created
+  ON canonical_target_proposal_status_events(proposal_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_canonical_target_proposal_status_events_scope_created
+  ON canonical_target_proposal_status_events(scope_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_canonical_target_proposal_status_events_kind_created
+  ON canonical_target_proposal_status_events(event_kind, created_at DESC, id DESC);
+
+-- ============================================================
 -- config: brain-level settings
 -- ============================================================
 CREATE TABLE IF NOT EXISTS config (

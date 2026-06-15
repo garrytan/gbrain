@@ -472,6 +472,204 @@ describe('memory review report service', () => {
     expect(formatted).not.toContain('No reportable memory exceptions.');
   });
 
+  test('surfaces canonical target proposal review actions by lifecycle status', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+      review_items: [
+        {
+          id: 'candidate:no-proposal',
+          review_type: 'candidate_staging',
+          summary: 'Targetless candidate needs a canonical home.',
+          severity: 'medium',
+        },
+        {
+          id: 'candidate:proposed',
+          review_type: 'candidate_staging',
+          summary: 'Targetless candidate already has a proposed canonical home.',
+          severity: 'medium',
+        },
+        {
+          id: 'candidate:approved',
+          review_type: 'candidate_staging',
+          summary: 'Targetless candidate already has an approved canonical home.',
+          severity: 'medium',
+        },
+        {
+          id: 'candidate:patch-staged',
+          review_type: 'candidate_staging',
+          summary: 'Targetless candidate already has a staged canonical home patch.',
+          severity: 'medium',
+        },
+        {
+          id: 'candidate:blocked',
+          review_type: 'candidate_staging',
+          summary: 'Blocked canonical home proposal should not strand the candidate.',
+          severity: 'medium',
+        },
+        {
+          id: 'candidate:rejected',
+          review_type: 'candidate_staging',
+          summary: 'Rejected canonical home proposal should not strand the candidate.',
+          severity: 'medium',
+        },
+        {
+          id: 'candidate:superseded',
+          review_type: 'candidate_staging',
+          summary: 'Superseded canonical home proposal should not strand the candidate.',
+          severity: 'medium',
+        },
+        {
+          id: 'candidate:bound',
+          review_type: 'note_update',
+          target_ref: 'systems/already-bound',
+          summary: 'Bound candidate can use existing promotion hints.',
+          severity: 'medium',
+        },
+      ],
+      canonical_target_proposals: [
+        canonicalTargetProposal('proposal:proposed', {
+          source_candidate_id: 'candidate:proposed',
+          status: 'proposed',
+        }),
+        canonicalTargetProposal('proposal:approved', {
+          source_candidate_id: 'candidate:approved',
+          status: 'approved',
+        }),
+        canonicalTargetProposal('proposal:patch-staged', {
+          source_candidate_id: 'candidate:patch-staged',
+          status: 'patch_staged',
+          stub_patch_candidate_id: 'patch:stub',
+          stub_patch_state: 'applied',
+        }),
+        canonicalTargetProposal('proposal:bound', {
+          source_candidate_id: 'candidate:bound',
+          status: 'bound',
+          bound_candidate_ids: ['candidate:bound'],
+        }),
+        canonicalTargetProposal('proposal:blocked', {
+          source_candidate_id: 'candidate:blocked',
+          status: 'blocked',
+        }),
+        canonicalTargetProposal('proposal:rejected', {
+          source_candidate_id: 'candidate:rejected',
+          status: 'rejected',
+        }),
+        canonicalTargetProposal('proposal:superseded', {
+          source_candidate_id: 'candidate:superseded',
+          status: 'superseded',
+        }),
+      ],
+    });
+
+    expect(report.sections.canonical_target_proposals.map((proposal) => proposal.status)).toEqual([
+      'proposed',
+      'approved',
+      'patch_staged',
+      'bound',
+      'blocked',
+      'rejected',
+      'superseded',
+    ]);
+    expect(report.actions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'propose_canonical_home',
+        target_id: 'candidate:no-proposal',
+        operation: 'create_canonical_target_proposal',
+        params: expect.objectContaining({ candidate_id: 'candidate:no-proposal' }),
+      }),
+      expect.objectContaining({
+        kind: 'propose_canonical_home',
+        target_id: 'candidate:blocked',
+        operation: 'create_canonical_target_proposal',
+        params: expect.objectContaining({ candidate_id: 'candidate:blocked' }),
+      }),
+      expect.objectContaining({
+        kind: 'propose_canonical_home',
+        target_id: 'candidate:rejected',
+        operation: 'create_canonical_target_proposal',
+        params: expect.objectContaining({ candidate_id: 'candidate:rejected' }),
+      }),
+      expect.objectContaining({
+        kind: 'propose_canonical_home',
+        target_id: 'candidate:superseded',
+        operation: 'create_canonical_target_proposal',
+        params: expect.objectContaining({ candidate_id: 'candidate:superseded' }),
+      }),
+      expect.objectContaining({
+        kind: 'approve_canonical_target_proposal',
+        target_id: 'proposal:proposed',
+        operation: 'approve_canonical_target_proposal',
+        params: expect.objectContaining({ proposal_id: 'proposal:proposed' }),
+        description: expect.stringContaining('Operation template'),
+      }),
+      expect.objectContaining({
+        kind: 'reject_canonical_target_proposal',
+        target_id: 'proposal:proposed',
+        operation: 'reject_canonical_target_proposal',
+        description: expect.stringContaining('caller-provided review context'),
+      }),
+      expect.objectContaining({
+        kind: 'choose_existing_canonical_page',
+        target_id: 'proposal:approved',
+        operation: 'complete_canonical_target_proposal_binding',
+        params: expect.objectContaining({
+          proposal_id: 'proposal:approved',
+          require_stub_patch_applied: false,
+        }),
+        description: expect.stringContaining('caller-provided review context'),
+      }),
+      expect.objectContaining({
+        kind: 'complete_canonical_target_binding',
+        target_id: 'proposal:patch-staged',
+        operation: 'complete_canonical_target_proposal_binding',
+        params: expect.objectContaining({
+          proposal_id: 'proposal:patch-staged',
+          require_stub_patch_applied: true,
+        }),
+        description: expect.stringContaining('caller-provided review context'),
+      }),
+      expect.objectContaining({
+        kind: 'approve_candidate',
+        target_id: 'candidate:bound',
+        operation: 'promote_memory_candidate_entry',
+      }),
+    ]));
+    expect(report.actions).not.toContainEqual(expect.objectContaining({
+      kind: 'create_missing_page_stub',
+    }));
+    for (const targetId of ['candidate:proposed', 'candidate:approved', 'candidate:patch-staged', 'candidate:bound']) {
+      expect(report.actions).not.toContainEqual(expect.objectContaining({
+        kind: 'propose_canonical_home',
+        target_id: targetId,
+      }));
+    }
+    expect(report.actions).not.toContainEqual(expect.objectContaining({
+      target_id: 'proposal:approved',
+      operation: 'approve_canonical_target_proposal',
+    }));
+    const templateActions = report.actions.filter((action) => [
+      'approve_canonical_target_proposal',
+      'reject_canonical_target_proposal',
+      'choose_existing_canonical_page',
+      'complete_canonical_target_binding',
+    ].includes(action.kind));
+    expect(templateActions.length).toBeGreaterThan(0);
+    for (const action of templateActions) {
+      expect(action.description).toContain('session_id, realm_id, actor, and source_refs');
+      expect(action.params).not.toHaveProperty('session_id');
+      expect(action.params).not.toHaveProperty('realm_id');
+      expect(action.params).not.toHaveProperty('actor');
+      expect(action.params).not.toHaveProperty('source_refs');
+    }
+
+    const formatted = formatMemoryReviewReport(report);
+    expect(formatted).toContain('Canonical Target Proposals');
+    expect(formatted).toContain('proposal:proposed: proposed systems/example-target');
+    expect(formatted).toContain('proposal:patch-staged: patch_staged systems/example-target');
+    expect(formatted).toContain('requires caller-provided review context');
+  });
+
   test('classifies stale and failed connector health in the daily report', () => {
     const report = buildMemoryReviewReport({
       scope_id: 'workspace:default',
@@ -1604,3 +1802,22 @@ describe('memory review report service', () => {
     expect(formatMemoryReviewReport(report)).not.toContain('WARNING: review backlog pressure');
   });
 });
+
+function canonicalTargetProposal(
+  id: string,
+  overrides: Partial<NonNullable<Parameters<typeof buildMemoryReviewReport>[0]['canonical_target_proposals']>[number]> = {},
+): NonNullable<Parameters<typeof buildMemoryReviewReport>[0]['canonical_target_proposals']>[number] {
+  return {
+    id,
+    source_candidate_id: 'candidate:source',
+    linked_candidate_ids: ['candidate:source'],
+    status: 'proposed',
+    proposed_slug: 'systems/example-target',
+    proposed_title: 'Example Target',
+    status_reason: null,
+    stub_patch_candidate_id: null,
+    stub_patch_state: null,
+    bound_candidate_ids: [],
+    ...overrides,
+  };
+}

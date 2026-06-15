@@ -3,6 +3,7 @@ import type {
   CandidateSignal,
   CandidateSignalPolicy,
   CandidateSignalPolicyMode,
+  CanonicalTargetProposalEntry,
   MemoryCandidateEntry,
   MemoryScenario,
   MemoryScenarioKnownSubject,
@@ -34,7 +35,7 @@ export interface BuildCandidateSignalsInput extends CandidateSignalPolicyInput {
 type CandidateSignalEngine = Pick<
   BrainEngine,
   'listMemoryCandidateEntries' | 'listCanonicalHandoffEntries'
->;
+> & Partial<Pick<BrainEngine, 'listCanonicalTargetProposalEntries'>>;
 
 const NORMAL_CAP = 3;
 const EXPANDED_CAP = 10;
@@ -118,8 +119,14 @@ export async function buildCandidateSignals(
   }
 
   const cap = Math.min(input.limit, capForPolicy(policy.mode));
+  const proposalsByCandidateId = await findActiveCanonicalTargetProposals(engine, visibleMatched, scopeId);
   const ranked = visibleMatched
-    .map(candidate => buildSignal(candidate, input, candidatesWithHandoff.has(candidate.id)))
+    .map(candidate => buildSignal(
+      candidate,
+      input,
+      candidatesWithHandoff.has(candidate.id),
+      proposalsByCandidateId.get(candidate.id) ?? null,
+    ))
     .sort((left, right) => {
       if (right.score !== left.score) return right.score - left.score;
       return left.candidate_id.localeCompare(right.candidate_id);
@@ -198,6 +205,7 @@ function buildSignal(
   candidate: MemoryCandidateEntry,
   input: BuildCandidateSignalsInput,
   hasCanonicalHandoff: boolean,
+  canonicalTargetProposal: CanonicalTargetProposalEntry | null,
 ): CandidateSignal {
   const sameTarget = Boolean(candidate.target_object_id && input.required_reads.some(read =>
     read.slug === candidate.target_object_id || read.object_id === candidate.target_object_id,
@@ -205,7 +213,7 @@ function buildSignal(
   const overlap = tokenOverlap(input.query ?? '', candidate.proposed_content);
   const hasProvenance = candidate.source_refs.some(ref => ref.trim().length > 0);
   const hasTarget = Boolean(candidate.target_object_type && candidate.target_object_id?.trim());
-  const pressure = buildPressure(candidate, hasProvenance, hasTarget, hasCanonicalHandoff);
+  const pressure = buildPressure(candidate, hasProvenance, hasTarget, hasCanonicalHandoff, canonicalTargetProposal);
   const score = roundScore(
     (sameTarget ? 1 : 0)
     + Math.min(0.35, overlap)
@@ -233,22 +241,31 @@ function buildSignal(
       ...(candidate.recurrence_score > 0 ? ['recurrence'] : []),
       ...(hasProvenance ? ['usable_provenance'] : []),
     ],
-    promotion_hint: promotionHint(candidate, hasProvenance, hasTarget, hasCanonicalHandoff),
+    promotion_hint: promotionHint(candidate, hasProvenance, hasTarget, hasCanonicalHandoff, canonicalTargetProposal),
     disposition_hint: dispositionHint(candidate, hasProvenance),
     pressure_score: pressure.pressure_score,
     pressure_reasons: pressure.pressure_reasons,
     review_priority_hint: pressure.review_priority_hint,
-    summary: signalSummary(candidate),
+    summary: signalSummary(candidate, canonicalTargetProposal),
   };
 }
 
-function signalSummary(candidate: MemoryCandidateEntry): string {
+function signalSummary(
+  candidate: MemoryCandidateEntry,
+  canonicalTargetProposal: CanonicalTargetProposalEntry | null,
+): string {
   if (candidate.status === 'rejected' || candidate.status === 'superseded') {
     const outcome = candidate.status === 'rejected' ? 'Rejected' : 'Superseded';
     const reason = candidate.review_reason?.trim()
       ? ` Review reason: ${candidate.review_reason.trim()}.`
       : '';
     return `${outcome} candidate ${candidate.id} is hidden from default retrieval.${reason}`;
+  }
+  if (canonicalTargetProposal) {
+    const action = canonicalTargetProposal.status === 'proposed'
+      ? 'approve or reject the proposal before promotion'
+      : 'complete canonical target binding before promotion';
+    return `Unreviewed candidate ${candidate.id} has canonical target proposal ${canonicalTargetProposal.id} (${canonicalTargetProposal.status}) for ${canonicalTargetProposal.proposed_slug}; ${action}.`;
   }
   return `${candidate.status === 'promoted' ? 'Promoted candidate' : 'Unreviewed candidate'} ${candidate.id} may be relevant to this retrieval.`;
 }
@@ -258,9 +275,10 @@ function promotionHint(
   hasProvenance: boolean,
   hasTarget: boolean,
   hasCanonicalHandoff: boolean,
+  canonicalTargetProposal: CanonicalTargetProposalEntry | null,
 ): CandidateSignal['promotion_hint'] {
   if (!hasProvenance) return 'needs_provenance';
-  if (!hasTarget) return 'needs_target';
+  if (!hasTarget) return targetlessCanonicalTargetHint(canonicalTargetProposal);
   if (candidate.sensitivity === 'unknown') return 'needs_scope_decision';
   if (candidate.status === 'staged_for_review') return 'consider_preflight';
   if (candidate.status === 'candidate') return 'advance_to_review';
@@ -293,6 +311,7 @@ function buildPressure(
   hasProvenance: boolean,
   hasTarget: boolean,
   hasCanonicalHandoff: boolean,
+  canonicalTargetProposal: CanonicalTargetProposalEntry | null,
 ): Pick<CandidateSignal, 'pressure_score' | 'pressure_reasons' | 'review_priority_hint'> {
   const pressureReasons: CandidateSignal['pressure_reasons'] = [];
   if (!hasProvenance) pressureReasons.push('missing_provenance');
@@ -308,7 +327,7 @@ function buildPressure(
   return {
     pressure_score: roundScore(Math.min(1, pressureReasons.length * 0.25)),
     pressure_reasons: pressureReasons,
-    review_priority_hint: reviewPriorityHint(candidate, hasProvenance, hasTarget, hasCanonicalHandoff),
+    review_priority_hint: reviewPriorityHint(candidate, hasProvenance, hasTarget, hasCanonicalHandoff, canonicalTargetProposal),
   };
 }
 
@@ -317,13 +336,50 @@ function reviewPriorityHint(
   hasProvenance: boolean,
   hasTarget: boolean,
   hasCanonicalHandoff: boolean,
+  canonicalTargetProposal: CanonicalTargetProposalEntry | null,
 ): CandidateSignal['review_priority_hint'] {
   if (!hasProvenance) return 'reject_missing_provenance';
-  if (!hasTarget) return 'bind_target_before_review';
+  if (!hasTarget) return targetlessCanonicalTargetHint(canonicalTargetProposal);
   if (candidate.status === 'promoted' && !hasCanonicalHandoff) return 'record_canonical_handoff';
   if (candidate.status === 'captured') return 'inspect_candidate';
   if (candidate.status === 'candidate' || candidate.status === 'staged_for_review') return 'advance_to_review';
   return 'no_priority';
+}
+
+function targetlessCanonicalTargetHint(
+  canonicalTargetProposal: CanonicalTargetProposalEntry | null,
+): 'needs_canonical_target_proposal' | 'approve_or_reject_canonical_target_proposal' | 'complete_canonical_target_binding' {
+  if (!canonicalTargetProposal) return 'needs_canonical_target_proposal';
+  if (canonicalTargetProposal.status === 'proposed') return 'approve_or_reject_canonical_target_proposal';
+  return 'complete_canonical_target_binding';
+}
+
+async function findActiveCanonicalTargetProposals(
+  engine: CandidateSignalEngine,
+  candidates: MemoryCandidateEntry[],
+  scopeId: string,
+): Promise<Map<string, CanonicalTargetProposalEntry>> {
+  const output = new Map<string, CanonicalTargetProposalEntry>();
+  if (typeof engine.listCanonicalTargetProposalEntries !== 'function') {
+    return output;
+  }
+  await Promise.all(candidates
+    .filter(candidate => !candidate.target_object_id)
+    .map(async (candidate) => {
+      const proposals = await engine.listCanonicalTargetProposalEntries!({
+        scope_id: scopeId,
+        source_candidate_id: candidate.id,
+        limit: 5,
+        offset: 0,
+      });
+      const active = proposals.find(proposal =>
+        proposal.status === 'proposed'
+        || proposal.status === 'approved'
+        || proposal.status === 'patch_staged'
+      );
+      if (active) output.set(candidate.id, active);
+    }));
+  return output;
 }
 
 function normalizeKnownSubjects(subjects: BuildCandidateSignalsInput['known_subjects']): string[] {
@@ -383,14 +439,6 @@ function tokenOverlap(left: string, right: string): number {
     if (rightTokens.has(token)) count += 1;
   }
   return count / leftTokens.size;
-}
-
-function candidateBacklogScore(candidate: MemoryCandidateEntry): number {
-  return (
-    candidate.importance_score * 0.5
-    + candidate.confidence_score * 0.3
-    + candidate.recurrence_score * 0.2
-  );
 }
 
 function tokens(value: string): string[] {

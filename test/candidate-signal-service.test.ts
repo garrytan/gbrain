@@ -5,6 +5,7 @@ import {
 } from '../src/core/services/candidate-signal-service.ts';
 import type {
   CanonicalHandoffEntry,
+  CanonicalTargetProposalEntry,
   MemoryCandidateEntry,
   RetrievalSelector,
 } from '../src/core/types.ts';
@@ -57,7 +58,51 @@ function makeHandoff(candidateId: string): CanonicalHandoffEntry {
   };
 }
 
-function fakeEngine(candidates: MemoryCandidateEntry[], handoffs: CanonicalHandoffEntry[] = []) {
+function makeProposal(
+  candidateId: string,
+  overrides: Partial<CanonicalTargetProposalEntry> = {},
+): CanonicalTargetProposalEntry {
+  return {
+    id: `proposal-${candidateId}`,
+    scope_id: 'workspace:default',
+    source_candidate_id: candidateId,
+    linked_candidate_ids: [candidateId],
+    status: 'proposed',
+    status_reason: null,
+    proposal_kind: 'system_page',
+    target_object_type: 'curated_note',
+    proposed_slug: 'systems/mbrain',
+    proposed_title: 'MBrain',
+    proposed_page_type: 'system',
+    proposed_repo_path: null,
+    confidence_score: 0.8,
+    importance_score: 0.8,
+    rationale: 'Proposal fixture.',
+    filing_basis: {},
+    source_refs: ['Source: proposal fixture'],
+    candidate_snapshot: {},
+    duplicate_review: {},
+    slug_quality_warnings: [],
+    approval_actor: null,
+    approved_at: null,
+    approval_reason: null,
+    bound_candidate_ids: [],
+    stub_patch_candidate_id: null,
+    stub_patch_state: null,
+    rejected_at: null,
+    rejection_reason: null,
+    superseded_by: null,
+    created_at: new Date('2026-05-16T03:10:00.000Z'),
+    updated_at: new Date('2026-05-16T03:10:00.000Z'),
+    ...overrides,
+  };
+}
+
+function fakeEngine(
+  candidates: MemoryCandidateEntry[],
+  handoffs: CanonicalHandoffEntry[] = [],
+  proposals: CanonicalTargetProposalEntry[] = [],
+) {
   return {
     listMemoryCandidateEntries: async (
       { scope_id, status }: { scope_id?: string; status?: MemoryCandidateEntry['status'] } = {},
@@ -70,6 +115,12 @@ function fakeEngine(candidates: MemoryCandidateEntry[], handoffs: CanonicalHando
     ) => handoffs.filter(handoff =>
       (scope_id === undefined || handoff.scope_id === scope_id)
       && (candidate_id === undefined || handoff.candidate_id === candidate_id),
+    ),
+    listCanonicalTargetProposalEntries: async (
+      { scope_id, source_candidate_id }: { scope_id?: string; source_candidate_id?: string } = {},
+    ) => proposals.filter(proposal =>
+      (scope_id === undefined || proposal.scope_id === scope_id)
+      && (source_candidate_id === undefined || proposal.source_candidate_id === source_candidate_id),
     ),
   };
 }
@@ -262,10 +313,94 @@ describe('candidate signal service ranking and hints', () => {
 
     const hints = Object.fromEntries(result.candidate_signals.map(signal => [signal.candidate_id, signal.promotion_hint]));
     expect(hints['missing-provenance']).toBe('needs_provenance');
-    expect(hints['missing-target']).toBe('needs_target');
+    expect(hints['missing-target']).toBe('needs_canonical_target_proposal');
     expect(hints.staged).toBe('consider_preflight');
     expect(hints.promoted).toBe('already_promoted_needs_handoff');
     expect(hints['promoted-handed-off']).toBe('handoff_ready_for_curated_update');
+  });
+
+  test('targetless candidates expose proposal-specific hints without becoming answer evidence', async () => {
+    const result = await buildCandidateSignals(fakeEngine([
+      makeCandidate('missing-target-without-proposal', {
+        target_object_type: null,
+        target_object_id: null,
+        proposed_content: 'MBrain retrieval direction needs a canonical home.',
+      }),
+      makeCandidate('missing-target-with-proposal', {
+        target_object_type: null,
+        target_object_id: null,
+        proposed_content: 'MBrain retrieval direction needs a canonical home.',
+      }),
+      makeCandidate('missing-target-with-approved-proposal', {
+        target_object_type: null,
+        target_object_id: null,
+        proposed_content: 'MBrain retrieval direction has an approved canonical home.',
+      }),
+      makeCandidate('missing-target-with-patch-staged-proposal', {
+        target_object_type: null,
+        target_object_id: null,
+        proposed_content: 'MBrain retrieval direction has a staged canonical binding patch.',
+      }),
+    ], [], [
+      makeProposal('missing-target-with-proposal', {
+        id: 'proposal:missing-target',
+        status: 'proposed',
+        proposed_slug: 'systems/mbrain-retrieval-direction',
+      }),
+      makeProposal('missing-target-with-approved-proposal', {
+        id: 'proposal:approved-target',
+        status: 'approved',
+        proposed_slug: 'systems/mbrain-retrieval-direction-approved',
+      }),
+      makeProposal('missing-target-with-patch-staged-proposal', {
+        id: 'proposal:patch-staged-target',
+        status: 'patch_staged',
+        proposed_slug: 'systems/mbrain-retrieval-direction-patch-staged',
+      }),
+    ]), {
+      query: 'mbrain retrieval direction',
+      scenario: 'knowledge_qa',
+      requested_scope: 'work',
+      required_reads: [requiredRead],
+      canonical_candidates: [],
+      known_subjects: [],
+      limit: 10,
+    });
+
+    expect(result.candidate_signals).toHaveLength(4);
+    const signals = Object.fromEntries(result.candidate_signals.map(signal => [signal.candidate_id, signal]));
+
+    expect(signals['missing-target-without-proposal']).toMatchObject({
+      promotion_hint: 'needs_canonical_target_proposal',
+      review_priority_hint: 'needs_canonical_target_proposal',
+      activation: 'candidate_only',
+      authority: 'unreviewed_candidate',
+    });
+    expect(signals['missing-target-without-proposal']!.promotion_hint).not.toBe('needs_target');
+
+    expect(signals['missing-target-with-proposal']).toMatchObject({
+      promotion_hint: 'approve_or_reject_canonical_target_proposal',
+      review_priority_hint: 'approve_or_reject_canonical_target_proposal',
+      activation: 'candidate_only',
+      authority: 'unreviewed_candidate',
+    });
+    expect(signals['missing-target-with-proposal']!.promotion_hint).not.toBe('consider_preflight');
+    expect(signals['missing-target-with-proposal']!.review_priority_hint).not.toBe('advance_to_review');
+    expect(signals['missing-target-with-proposal']!.summary).toContain('proposal:missing-target');
+    expect(signals['missing-target-with-proposal']!.summary).toContain('approve or reject');
+
+    expect(signals['missing-target-with-approved-proposal']).toMatchObject({
+      promotion_hint: 'complete_canonical_target_binding',
+      review_priority_hint: 'complete_canonical_target_binding',
+      activation: 'candidate_only',
+      authority: 'unreviewed_candidate',
+    });
+    expect(signals['missing-target-with-patch-staged-proposal']).toMatchObject({
+      promotion_hint: 'complete_canonical_target_binding',
+      review_priority_hint: 'complete_canonical_target_binding',
+      activation: 'candidate_only',
+      authority: 'unreviewed_candidate',
+    });
   });
 
   test('personal, secret, and unknown-sensitivity candidates are suppressed in work retrieval', async () => {

@@ -5,6 +5,14 @@ import type {AutoPromoteVerdictKey,
   CanonicalHandoffEntry,
   CanonicalHandoffEntryInput,
   CanonicalHandoffFilters,
+  CanonicalTargetProposalDraftPatch,
+  CanonicalTargetProposalEntry,
+  CanonicalTargetProposalEntryInput,
+  CanonicalTargetProposalFilters,
+  CanonicalTargetProposalStatusEvent,
+  CanonicalTargetProposalStatusEventFilters,
+  CanonicalTargetProposalStatusEventInput,
+  CanonicalTargetProposalStatusPatch,
   Chunk, ChunkInput,
   ContextAtlasEntry,
   ContextAtlasEntryInput,
@@ -31,6 +39,7 @@ import type {AutoPromoteVerdictKey,
   MemoryCandidateFilters,
   MemoryCandidatePatchOperationStatePatch,
   MemoryCandidatePromotionPatch,
+  MemoryCandidateTargetBindingPatch,
   MemoryCandidateStatusEvent,
   MemoryCandidateStatusEventFilters,
   MemoryCandidateStatusEventInput,
@@ -213,6 +222,7 @@ export interface MemoryGovernanceStore {
   updateMemoryCandidateEntryStatus(id: string, patch: MemoryCandidateStatusPatch): Promise<MemoryCandidateEntry | null>;
   updateMemoryCandidateEntryVerification(id: string, patch: MemoryCandidateVerificationPatch): Promise<MemoryCandidateEntry | null>;
   updateMemoryCandidatePatchOperationState(id: string, patch: MemoryCandidatePatchOperationStatePatch): Promise<MemoryCandidateEntry | null>;
+  bindMemoryCandidateTarget(id: string, patch: MemoryCandidateTargetBindingPatch): Promise<MemoryCandidateEntry | null>;
   promoteMemoryCandidateEntry(id: string, patch?: MemoryCandidatePromotionPatch): Promise<MemoryCandidateEntry | null>;
   supersedeMemoryCandidateEntry(input: MemoryCandidateSupersessionInput): Promise<MemoryCandidateSupersessionEntry | null>;
   getMemoryCandidateSupersessionEntry(id: string): Promise<MemoryCandidateSupersessionEntry | null>;
@@ -223,6 +233,13 @@ export interface MemoryGovernanceStore {
   getCanonicalHandoffEntry(id: string): Promise<CanonicalHandoffEntry | null>;
   listCanonicalHandoffEntries(filters?: CanonicalHandoffFilters): Promise<CanonicalHandoffEntry[]>;
   listCanonicalHandoffEntriesByInteractionIds(interactionIds: string[]): Promise<CanonicalHandoffEntry[]>;
+  createCanonicalTargetProposalEntry(input: CanonicalTargetProposalEntryInput): Promise<CanonicalTargetProposalEntry>;
+  getCanonicalTargetProposalEntry(id: string): Promise<CanonicalTargetProposalEntry | null>;
+  listCanonicalTargetProposalEntries(filters?: CanonicalTargetProposalFilters): Promise<CanonicalTargetProposalEntry[]>;
+  updateCanonicalTargetProposalDraft(id: string, patch: CanonicalTargetProposalDraftPatch): Promise<CanonicalTargetProposalEntry | null>;
+  updateCanonicalTargetProposalStatus(id: string, patch: CanonicalTargetProposalStatusPatch): Promise<CanonicalTargetProposalEntry | null>;
+  createCanonicalTargetProposalStatusEvent(input: CanonicalTargetProposalStatusEventInput): Promise<CanonicalTargetProposalStatusEvent>;
+  listCanonicalTargetProposalStatusEvents(filters?: CanonicalTargetProposalStatusEventFilters): Promise<CanonicalTargetProposalStatusEvent[]>;
   listMemoryCandidateSupersessionEntriesByInteractionIds(interactionIds: string[]): Promise<MemoryCandidateSupersessionEntry[]>;
   listMemoryCandidateContradictionEntriesByInteractionIds(interactionIds: string[]): Promise<MemoryCandidateContradictionEntry[]>;
   deleteMemoryCandidateEntry(id: string): Promise<void>;

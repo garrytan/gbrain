@@ -33,6 +33,49 @@ function runGit(cwd: string, ...args: string[]) {
   }
 }
 
+async function readStreamUntil(
+  stream: ReadableStream<Uint8Array> | null,
+  expected: string,
+  timeoutMs = 5000,
+): Promise<{ text: string; readRest: () => Promise<string> }> {
+  if (!stream) throw new Error('expected a readable process stream');
+
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  const deadline = Date.now() + timeoutMs;
+
+  while (!text.includes(expected)) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error(`timed out waiting for process output: ${expected}\n${text}`);
+    }
+
+    const chunk = await Promise.race([
+      reader.read(),
+      Bun.sleep(remainingMs).then(() => ({ timeout: true as const })),
+    ]);
+    if ('timeout' in chunk) {
+      throw new Error(`timed out waiting for process output: ${expected}\n${text}`);
+    }
+    if (chunk.done) break;
+    text += decoder.decode(chunk.value, { stream: true });
+  }
+
+  return {
+    text,
+    readRest: async () => {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+      text += decoder.decode();
+      return text;
+    },
+  };
+}
+
 beforeEach(() => {
   tempHome = mkdtempSync(join(tmpdir(), 'mbrain-cli-'));
   process.env.HOME = tempHome;
@@ -1544,15 +1587,16 @@ Engineer.
         stderr: 'pipe',
       });
 
+      const stdoutStream = await readStreamUntil(proc.stdout, 'Watching for changes every 1s');
       const earlyExit = await Promise.race([
         proc.exited.then(code => ({ exited: true as const, code })),
-        Bun.sleep(400).then(() => ({ exited: false as const })),
+        Bun.sleep(100).then(() => ({ exited: false as const })),
       ]);
       expect(earlyExit.exited).toBe(false);
 
       proc.kill();
       const [stdout, stderr] = await Promise.all([
-        new Response(proc.stdout).text(),
+        stdoutStream.readRest(),
         new Response(proc.stderr).text(),
         proc.exited,
       ]);
@@ -1600,15 +1644,16 @@ Engineer.
         },
       );
 
+      const stdoutStream = await readStreamUntil(proc.stdout, 'Watching for changes every 1s');
       const earlyExit = await Promise.race([
         proc.exited.then(code => ({ exited: true as const, code })),
-        Bun.sleep(400).then(() => ({ exited: false as const })),
+        Bun.sleep(100).then(() => ({ exited: false as const })),
       ]);
       expect(earlyExit.exited).toBe(false);
 
       proc.kill();
       const [stdout, stderr] = await Promise.all([
-        new Response(proc.stdout).text(),
+        stdoutStream.readRest(),
         new Response(proc.stderr).text(),
         proc.exited,
       ]);
@@ -1654,15 +1699,16 @@ Engineer.
         stderr: 'pipe',
       });
 
+      const stdoutStream = await readStreamUntil(proc.stdout, 'Watching for changes every 1s');
       const earlyExit = await Promise.race([
         proc.exited.then(code => ({ exited: true as const, code })),
-        Bun.sleep(400).then(() => ({ exited: false as const })),
+        Bun.sleep(100).then(() => ({ exited: false as const })),
       ]);
       expect(earlyExit.exited).toBe(false);
 
       proc.kill();
       const [stdout, stderr] = await Promise.all([
-        new Response(proc.stdout).text(),
+        stdoutStream.readRest(),
         new Response(proc.stderr).text(),
         proc.exited,
       ]);

@@ -1,6 +1,5 @@
 import type {
   MemoryActivationPolicyDecision,
-  MemoryWhyCandidateRef,
   MemoryWhyInput,
   MemoryWhyReport,
   NegativeMemoryProjection,

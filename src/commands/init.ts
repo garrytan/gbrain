@@ -1,5 +1,5 @@
 import { execSync } from 'child_process';
-import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync, lstatSync } from 'fs';
+import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import {
   configPath,
@@ -120,7 +120,6 @@ export async function runInit(args: string[]) {
   }
 
   const isLocal = args.includes('--local');
-  const isSupabase = args.includes('--supabase');
   const isPGLite = args.includes('--pglite');
   const isNonInteractive = args.includes('--non-interactive');
   const jsonOutput = args.includes('--json');
@@ -390,32 +389,6 @@ async function postgresWizard(): Promise<string> {
     process.exit(1);
   }
   return url;
-}
-
-function countMarkdownFiles(dir: string, maxScan = 1500): number {
-  let count = 0;
-  try {
-    const scan = (d: string) => {
-      if (count >= maxScan) return;
-      for (const entry of readdirSync(d)) {
-        if (count >= maxScan) return;
-        if (entry.startsWith('.') || entry === 'node_modules') continue;
-        const full = join(d, entry);
-        try {
-          const stat = lstatSync(full);
-          if (stat.isSymbolicLink()) continue;
-          if (stat.isDirectory()) scan(full);
-          else if (entry.endsWith('.md')) count++;
-        } catch {
-          // Skip unreadable paths.
-        }
-      }
-    };
-    scan(dir);
-  } catch {
-    // Skip unreadable roots.
-  }
-  return count;
 }
 
 function readLine(prompt: string): Promise<string> {

@@ -473,6 +473,9 @@ export type CandidateSignalPromotionHint =
   | 'consider_preflight'
   | 'needs_provenance'
   | 'needs_target'
+  | 'needs_canonical_target_proposal'
+  | 'approve_or_reject_canonical_target_proposal'
+  | 'complete_canonical_target_binding'
   | 'needs_scope_decision'
   | 'already_promoted_needs_handoff'
   | 'handoff_ready_for_curated_update';
@@ -500,7 +503,10 @@ export type CandidateSignalReviewPriorityHint =
   | 'advance_to_review'
   | 'record_canonical_handoff'
   | 'reject_missing_provenance'
-  | 'bind_target_before_review';
+  | 'bind_target_before_review'
+  | 'needs_canonical_target_proposal'
+  | 'approve_or_reject_canonical_target_proposal'
+  | 'complete_canonical_target_binding';
 
 export interface CandidateSignalPolicy {
   mode: CandidateSignalPolicyMode;

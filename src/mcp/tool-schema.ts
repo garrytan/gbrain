@@ -64,7 +64,7 @@ export function operationToMcpTool(op: Operation, options: McpToolSchemaOptions 
       properties: Object.fromEntries(
         Object.entries(op.params).map(([key, value]) => [key, paramToMcpSchema(value, options)]),
       ),
-      ...(!options.compact || required.length > 0 ? { required } : {}),
+      ...(!options.compact ? { required } : {}),
     },
   };
 }

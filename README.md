@@ -233,10 +233,11 @@ mbrain memory-report --save --report-dir ~/git/brain
 mbrain memory-report --json
 ```
 
-The report leads with Memory Inbox pressure and includes source ingest,
-failed jobs, safety exceptions, and connector health. Connector rows classify
-staleness, auth/rate-limit/network/schema failures, retry posture, and the next
-operator action. Saved reports are written under
+The report leads with Memory Inbox pressure and includes canonical target
+proposal review actions, source ingest, failed jobs, safety exceptions, and
+connector health. Connector rows classify staleness,
+auth/rate-limit/network/schema failures, retry posture, and the next operator
+action. Saved reports are written under
 `brain/reports/memory-review-report/`; JSON output includes
 `saved_report_path` when `--save` writes a report.
 
@@ -748,6 +749,17 @@ by default, not evidence that paid live LLM evals ran.
 Release-readiness notes should also verify the MBrain project self-brain page.
 If the durable project memory is stale, refresh it or say explicitly that the
 source-tree release checks did not update that page.
+
+For tag-driven releases, do not treat a pushed tag as published. Watch the
+Release workflow through the final `release` job, then verify the GitHub
+Release itself:
+
+```bash
+gh release view vX.Y.Z --json tagName,assets,url
+```
+
+The release must include non-empty `mbrain-darwin-arm64` and
+`mbrain-linux-x64` assets before calling the version published.
 
 Legacy local SQLite verification is isolated compatibility coverage. Run it
 when changing the explicit legacy profile, not as proof that new Postgres target

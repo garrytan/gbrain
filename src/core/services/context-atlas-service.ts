@@ -9,7 +9,6 @@ import type {
 import {
   buildStructuralContextMapEntry,
   getStructuralContextMapEntry,
-  WORKSPACE_CONTEXT_MAP_KIND,
   workspaceContextMapId,
 } from './context-map-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';

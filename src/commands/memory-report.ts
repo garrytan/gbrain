@@ -2,6 +2,7 @@ import {
   buildMemoryReviewReport,
   formatMemoryReviewReport,
   type MemoryReviewReportInput,
+  type ReportCanonicalTargetProposal,
   type ReportConflict,
   type ReportCanonicalMemory,
   type ReportConnectorHealth,
@@ -22,6 +23,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import type {
   DecisionProjectionMemoryCandidate,
   DecisionProjectionTaskAttempt,
+  CanonicalTargetProposalEntry,
   MemoryCandidateEntry,
   MemoryMutationEvent,
 } from '../core/types.ts';
@@ -103,6 +105,7 @@ export async function collectMemoryReportInput(
     jobs,
     connectorHealth,
     failedTaskAttempts,
+    canonicalTargetProposals,
   ] = await Promise.all([
     engine.listMemoryMutationEvents({ scope_id: scopeId, limit, offset: 0 }),
     engine.listMemoryCandidateEntries({ scope_id: scopeId, limit, offset: 0 }),
@@ -120,6 +123,7 @@ export async function collectMemoryReportInput(
     collectMaintenanceJobs(engine, limit),
     collectConnectorHealth(engine, limit),
     collectFailedTaskAttempts(engine, scopeId, limit),
+    collectCanonicalTargetProposals(engine, scopeId, limit),
   ]);
   const canonicalHandoffCandidateIds = await collectCanonicalHandoffCandidateIds(engine, scopeId, candidates);
   const negativeMemoryProjections = [
@@ -139,6 +143,7 @@ export async function collectMemoryReportInput(
     generated_at: generatedAt,
     canonical_memories: mutationEvents.flatMap(memoryMutationToCanonicalMemory),
     review_items: candidates.flatMap(memoryCandidateToReviewItem),
+    canonical_target_proposals: canonicalTargetProposals,
     lifecycle_states: lifecycleStates,
     purge_candidates: purgeCandidates,
     projection_targets: projectionTargets,
@@ -163,6 +168,43 @@ export async function collectMemoryReportInput(
       canonical_handoff_candidate_ids: canonicalHandoffCandidateIds,
     }),
     negative_memory_projections: negativeMemoryProjections,
+  };
+}
+
+async function collectCanonicalTargetProposals(
+  engine: BrainEngine,
+  scopeId: string,
+  limit: number,
+): Promise<ReportCanonicalTargetProposal[]> {
+  if (typeof (engine as Partial<BrainEngine>).listCanonicalTargetProposalEntries !== 'function') {
+    return [];
+  }
+  try {
+    const proposals = await engine.listCanonicalTargetProposalEntries({
+      scope_id: scopeId,
+      limit,
+      offset: 0,
+    });
+    return proposals.map(canonicalTargetProposalToReportProposal);
+  } catch {
+    return [];
+  }
+}
+
+function canonicalTargetProposalToReportProposal(
+  proposal: CanonicalTargetProposalEntry,
+): ReportCanonicalTargetProposal {
+  return {
+    id: proposal.id,
+    source_candidate_id: proposal.source_candidate_id,
+    linked_candidate_ids: proposal.linked_candidate_ids,
+    status: proposal.status,
+    proposed_slug: proposal.proposed_slug,
+    proposed_title: proposal.proposed_title,
+    status_reason: proposal.status_reason,
+    stub_patch_candidate_id: proposal.stub_patch_candidate_id,
+    stub_patch_state: proposal.stub_patch_state,
+    bound_candidate_ids: proposal.bound_candidate_ids,
   };
 }
 

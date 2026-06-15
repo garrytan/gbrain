@@ -3098,6 +3098,257 @@ const MIGRATIONS: Migration[] = [
       $$;
     `,
   },
+  {
+    version: 55,
+    name: 'canonical_target_proposal_storage',
+    sql: `
+      CREATE TABLE IF NOT EXISTS canonical_target_proposal_entries (
+        id TEXT PRIMARY KEY,
+        scope_id TEXT NOT NULL,
+        source_candidate_id TEXT NOT NULL,
+        linked_candidate_ids JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(linked_candidate_ids) = 'array'),
+        status TEXT NOT NULL CHECK (status IN ('proposed', 'approved', 'patch_staged', 'bound', 'rejected', 'superseded', 'blocked')),
+        status_reason TEXT,
+        proposal_kind TEXT NOT NULL CHECK (proposal_kind IN ('project_root', 'project_doc', 'system_page', 'concept_page', 'idea_page', 'original_page')),
+        target_object_type TEXT NOT NULL CHECK (target_object_type IN ('curated_note')),
+        proposed_slug TEXT NOT NULL,
+        proposed_title TEXT NOT NULL,
+        proposed_page_type TEXT NOT NULL CHECK (proposed_page_type IN ('project', 'system', 'concept')),
+        proposed_repo_path TEXT,
+        confidence_score REAL NOT NULL CHECK (confidence_score >= 0 AND confidence_score <= 1),
+        importance_score REAL NOT NULL CHECK (importance_score >= 0 AND importance_score <= 1),
+        rationale TEXT NOT NULL DEFAULT '',
+        filing_basis JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(filing_basis) = 'object'),
+        source_refs JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(source_refs) = 'array'),
+        candidate_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(candidate_snapshot) = 'object'),
+        duplicate_review JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(duplicate_review) = 'object'),
+        slug_quality_warnings JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(slug_quality_warnings) = 'array'),
+        approval_actor TEXT,
+        approved_at TIMESTAMPTZ,
+        approval_reason TEXT,
+        bound_candidate_ids JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(bound_candidate_ids) = 'array'),
+        stub_patch_candidate_id TEXT,
+        stub_patch_state TEXT,
+        rejected_at TIMESTAMPTZ,
+        rejection_reason TEXT,
+        superseded_by TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_canonical_target_proposals_scope_status
+        ON canonical_target_proposal_entries(scope_id, status, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_canonical_target_proposals_scope_slug
+        ON canonical_target_proposal_entries(scope_id, proposed_slug);
+      CREATE INDEX IF NOT EXISTS idx_canonical_target_proposals_source_candidate
+        ON canonical_target_proposal_entries(source_candidate_id);
+      CREATE INDEX IF NOT EXISTS idx_canonical_target_proposals_linked_candidates
+        ON canonical_target_proposal_entries USING GIN (linked_candidate_ids);
+
+      CREATE TABLE IF NOT EXISTS canonical_target_proposal_status_events (
+        id TEXT PRIMARY KEY,
+        proposal_id TEXT NOT NULL
+          CONSTRAINT fk_canonical_target_proposal_status_events_proposal
+          REFERENCES canonical_target_proposal_entries(id) ON DELETE CASCADE,
+        scope_id TEXT NOT NULL,
+        from_status TEXT CHECK (
+          from_status IS NULL
+          OR from_status IN ('proposed', 'approved', 'patch_staged', 'bound', 'rejected', 'superseded', 'blocked')
+        ),
+        to_status TEXT NOT NULL CHECK (
+          to_status IN ('proposed', 'approved', 'patch_staged', 'bound', 'rejected', 'superseded', 'blocked')
+        ),
+        event_kind TEXT NOT NULL CHECK (
+          event_kind IN ('created', 'approved', 'patch_staged', 'bound', 'rejected', 'superseded', 'blocked')
+        ),
+        actor TEXT,
+        review_reason TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_canonical_target_proposal_status_events_proposal_created
+        ON canonical_target_proposal_status_events(proposal_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_canonical_target_proposal_status_events_scope_created
+        ON canonical_target_proposal_status_events(scope_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_canonical_target_proposal_status_events_kind_created
+        ON canonical_target_proposal_status_events(event_kind, created_at DESC, id DESC);
+
+      DO $$
+      BEGIN
+        IF to_regclass('canonical_target_proposal_entries') IS NOT NULL
+          AND to_regclass('memory_candidate_entries') IS NOT NULL THEN
+          IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid = 'canonical_target_proposal_entries'::regclass
+              AND conname = 'fk_canonical_target_proposals_source_candidate'
+          ) THEN
+            ALTER TABLE canonical_target_proposal_entries
+              ADD CONSTRAINT fk_canonical_target_proposals_source_candidate
+              FOREIGN KEY (source_candidate_id)
+              REFERENCES memory_candidate_entries(id);
+          END IF;
+
+          IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid = 'canonical_target_proposal_entries'::regclass
+              AND conname = 'fk_canonical_target_proposals_stub_patch_candidate'
+          ) THEN
+            ALTER TABLE canonical_target_proposal_entries
+              ADD CONSTRAINT fk_canonical_target_proposals_stub_patch_candidate
+              FOREIGN KEY (stub_patch_candidate_id)
+              REFERENCES memory_candidate_entries(id);
+          END IF;
+        END IF;
+
+        IF to_regclass('canonical_target_proposal_entries') IS NOT NULL THEN
+          IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid = 'canonical_target_proposal_entries'::regclass
+              AND conname = 'fk_canonical_target_proposals_superseded_by'
+          ) THEN
+            ALTER TABLE canonical_target_proposal_entries
+              ADD CONSTRAINT fk_canonical_target_proposals_superseded_by
+              FOREIGN KEY (superseded_by)
+              REFERENCES canonical_target_proposal_entries(id);
+          END IF;
+        END IF;
+      END
+      $$;
+
+      DO $$
+      BEGIN
+        IF to_regclass('memory_candidate_entries') IS NOT NULL THEN
+          ALTER TABLE memory_candidate_entries
+            DROP CONSTRAINT IF EXISTS chk_memory_candidate_entries_patch_target_kind;
+          ALTER TABLE memory_candidate_entries
+            ADD CONSTRAINT chk_memory_candidate_entries_patch_target_kind
+            CHECK (
+              patch_target_kind IS NULL
+              OR patch_target_kind IN (
+                'page',
+                'source_record',
+                'task_thread',
+                'working_set',
+                'task_event',
+                'task_episode',
+                'attempt',
+                'decision',
+                'procedure',
+                'memory_candidate',
+                'memory_patch_candidate',
+                'canonical_target_proposal',
+                'profile_memory',
+                'personal_episode',
+                'memory_realm',
+                'memory_session',
+                'memory_session_attachment',
+                'context_map',
+                'context_atlas',
+                'file_artifact',
+                'export_artifact',
+                'ledger_event'
+              )
+            );
+        END IF;
+      END
+      $$;
+
+      DO $$
+      BEGIN
+        IF to_regclass('memory_mutation_events') IS NOT NULL THEN
+          ALTER TABLE memory_mutation_events
+            DROP CONSTRAINT IF EXISTS chk_memory_mutation_events_operation;
+          ALTER TABLE memory_mutation_events
+            DROP CONSTRAINT IF EXISTS memory_mutation_events_operation_check;
+          ALTER TABLE memory_mutation_events
+            ADD CONSTRAINT chk_memory_mutation_events_operation
+            CHECK (
+              operation IN (
+                'create_memory_session',
+                'close_memory_session',
+                'expire_memory_session',
+                'revoke_memory_session',
+                'dry_run_memory_mutation',
+                'list_memory_mutation_events',
+                'record_memory_mutation_event',
+                'create_memory_patch_candidate',
+                'dry_run_memory_patch_candidate',
+                'review_memory_patch_candidate',
+                'apply_memory_patch_candidate',
+                'create_redaction_plan',
+                'dry_run_redaction_plan',
+                'execute_redaction_plan',
+                'put_page',
+                'delete_page',
+                'upsert_profile_memory_entry',
+                'write_profile_memory_entry',
+                'delete_profile_memory_entry',
+                'record_personal_episode',
+                'write_personal_episode_entry',
+                'delete_personal_episode_entry',
+                'upsert_memory_realm',
+                'attach_memory_realm_to_session',
+                'create_memory_candidate_entry',
+                'advance_memory_candidate_status',
+                'verify_memory_candidate_entry',
+                'reject_memory_candidate_entry',
+                'delete_memory_candidate_entry',
+                'promote_memory_candidate_entry',
+                'supersede_memory_candidate_entry',
+                'create_canonical_target_proposal',
+                'approve_canonical_target_proposal',
+                'reject_canonical_target_proposal',
+                'complete_canonical_target_proposal_binding',
+                'bind_memory_candidate_target',
+                'export_memory_artifact',
+                'sync_memory_artifact',
+                'repair_memory_ledger',
+                'physical_delete_memory_record',
+                'governed_canonical_write',
+                'pause_source_processing',
+                'revoke_source_consent',
+                'rerun_memory_job'
+              )
+            );
+
+          ALTER TABLE memory_mutation_events
+            DROP CONSTRAINT IF EXISTS chk_memory_mutation_events_target_kind;
+          ALTER TABLE memory_mutation_events
+            DROP CONSTRAINT IF EXISTS memory_mutation_events_target_kind_check;
+          ALTER TABLE memory_mutation_events
+            ADD CONSTRAINT chk_memory_mutation_events_target_kind
+            CHECK (
+              target_kind IN (
+                'page',
+                'source_record',
+                'task_thread',
+                'working_set',
+                'task_event',
+                'task_episode',
+                'attempt',
+                'decision',
+                'procedure',
+                'memory_candidate',
+                'memory_patch_candidate',
+                'canonical_target_proposal',
+                'profile_memory',
+                'personal_episode',
+                'memory_realm',
+                'memory_session',
+                'memory_session_attachment',
+                'context_map',
+                'context_atlas',
+                'file_artifact',
+                'export_artifact',
+                'ledger_event'
+              )
+            );
+        END IF;
+      END
+      $$;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

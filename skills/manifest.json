@@ -1,6 +1,6 @@
 {
   "name": "mbrain",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "Postgres + pgvector personal knowledge brain with explicit SQLite/offline compatibility",
   "skills": [
     {

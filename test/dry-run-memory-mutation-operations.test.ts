@@ -126,6 +126,101 @@ test('dry_run_memory_mutation is exposed through operations and MCP-style schema
   ]);
 });
 
+test('canonical target proposal mutating operations support dry-run without writing rows', async () => {
+  const harness = await createSqliteHarness('canonical-target-proposals');
+  try {
+    const dryCtx = harness.ctx(true);
+    const dryRunCases: Array<{
+      operation: string;
+      params: Record<string, unknown>;
+      action: string;
+    }> = [
+      {
+        operation: 'create_canonical_target_proposal',
+        action: 'create_canonical_target_proposal',
+        params: {
+          candidate_id: 'candidate-dry-create',
+          proposed_slug: 'projects/mbrain/docs/dry-create',
+          proposal_kind: 'project_doc',
+          proposed_title: 'Dry Create',
+          review_reason: 'Dry-run create preview.',
+        },
+      },
+      {
+        operation: 'approve_canonical_target_proposal',
+        action: 'approve_canonical_target_proposal',
+        params: {
+          proposal_id: 'proposal-dry-approve',
+          create_missing_page_stub: true,
+          proposed_slug: 'projects/mbrain/docs/dry-approve',
+          proposed_title: 'Dry Approve',
+          session_id: 'session-dry',
+          realm_id: 'realm-dry',
+          actor: 'reviewer',
+          source_refs: ['Source: dry-run canonical proposal test'],
+          review_reason: 'Dry-run approve preview.',
+        },
+      },
+      {
+        operation: 'reject_canonical_target_proposal',
+        action: 'reject_canonical_target_proposal',
+        params: {
+          proposal_id: 'proposal-dry-reject',
+          session_id: 'session-dry',
+          realm_id: 'realm-dry',
+          actor: 'reviewer',
+          source_refs: ['Source: dry-run canonical proposal test'],
+          review_reason: 'Dry-run reject preview.',
+        },
+      },
+      {
+        operation: 'complete_canonical_target_proposal_binding',
+        action: 'complete_canonical_target_proposal_binding',
+        params: {
+          proposal_id: 'proposal-dry-complete',
+          require_stub_patch_applied: true,
+          session_id: 'session-dry',
+          realm_id: 'realm-dry',
+          actor: 'reviewer',
+          source_refs: ['Source: dry-run canonical proposal test'],
+          review_reason: 'Dry-run complete preview.',
+        },
+      },
+      {
+        operation: 'bind_memory_candidate_target',
+        action: 'bind_memory_candidate_target',
+        params: {
+          candidate_id: 'candidate-dry-bind',
+          proposal_id: 'proposal-dry-bind',
+          target_object_type: 'curated_note',
+          target_object_id: 'projects/mbrain/docs/dry-bind',
+          expected_current_target_object_type: null,
+          expected_current_target_object_id: null,
+          session_id: 'session-dry',
+          realm_id: 'realm-dry',
+          actor: 'reviewer',
+          source_refs: ['Source: dry-run canonical proposal test'],
+          review_reason: 'Dry-run bind preview.',
+        },
+      },
+    ];
+
+    for (const dryRunCase of dryRunCases) {
+      const operation = getOperation(dryRunCase.operation);
+      const result = await operation.handler(dryCtx, dryRunCase.params) as any;
+      expect(result).toMatchObject({
+        dry_run: true,
+        action: dryRunCase.action,
+      });
+    }
+
+    expect(await harness.engine.listCanonicalTargetProposalEntries({ limit: 10 })).toEqual([]);
+    expect(await harness.engine.listMemoryMutationEvents({ limit: 10 })).toEqual([]);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test('dry_run_memory_mutation validates apply_memory_patch_candidate for page targets', async () => {
   const harness = await createSqliteHarness('apply-patch-policy');
   try {

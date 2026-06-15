@@ -19,6 +19,9 @@ jobs:
             target: bun-linux-x64
             artifact: mbrain-linux-x64
     runs-on: ${{ matrix.os }}
+    # Mirror the PR macOS full-suite guard so tag builds fail clearly instead
+    # of hanging for the GitHub default timeout.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
         with:
@@ -31,6 +34,8 @@ jobs:
         run: bunx tsc --noEmit --pretty false
       - run: bun run test
         env:
+          # Keep release macOS full-test concurrency aligned with PR CI.
+          TEST_WORKERS: 2
           # PGLite WASM schema init regularly needs >20s on macOS runners.
           TEST_TIMEOUT_MS: 60000
       - run: bun build --compile --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts

@@ -343,10 +343,6 @@ interface SQLiteDatabaseLike {
   query<T = Record<string, unknown>>(sql: string): SQLiteStatement<T>;
 }
 
-interface PostgresLikeQueryResult {
-  rows: Record<string, unknown>[];
-}
-
 interface PostgresUnsafeLike {
   unsafe(sql: string, params?: unknown[]): Promise<Record<string, unknown>[]>;
 }

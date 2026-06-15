@@ -3,7 +3,7 @@ import type { Transport, TransportSendOptions } from '@modelcontextprotocol/sdk/
 import { JSONRPCMessageSchema, type JSONRPCMessage, type RequestId } from '@modelcontextprotocol/sdk/types.js';
 
 export const DEFAULT_MCP_MAX_STDIO_FRAME_BYTES = 24_000;
-export const DEFAULT_MCP_TOOL_LIST_FRAME_BYTES = 160_000;
+export const DEFAULT_MCP_TOOL_LIST_FRAME_BYTES = 168_000;
 export const DEFAULT_MCP_MAX_STDIO_REQUEST_BYTES = 256_000;
 const MIN_MCP_STDIO_FRAME_BYTES = 256;
 const MIN_MCP_STDIO_REQUEST_BYTES = 128;

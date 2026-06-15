@@ -140,6 +140,19 @@ test('test workflow runs the unit suite on macOS at PR time', () => {
   expect(macosJob).toContain('- run: bun run test\n');
 });
 
+test('release workflow keeps macOS full-test concurrency aligned with PR CI', () => {
+  const releaseSource = readFileSync(join(workflowsDir, 'release.yml'), 'utf-8');
+  const testSource = readFileSync(join(workflowsDir, 'test.yml'), 'utf-8');
+  const releaseBuildJob = getWorkflowJob(releaseSource, 'build');
+  const testMacosJob = getWorkflowJob(testSource, 'test-macos');
+
+  expect(testMacosJob).toContain('timeout-minutes: 40');
+  expect(releaseBuildJob).toContain('timeout-minutes: 40');
+  expect(testMacosJob).toContain('TEST_WORKERS: 2');
+  expect(releaseBuildJob).toContain('TEST_WORKERS: 2');
+  expect(releaseBuildJob).toContain('TEST_TIMEOUT_MS: 60000');
+});
+
 test('e2e workflow runs HTTP OAuth smoke in default Tier 1 CI', () => {
   const source = readFileSync(join(workflowsDir, 'e2e.yml'), 'utf-8');
   const tier1Job = getWorkflowJob(source, 'tier1');

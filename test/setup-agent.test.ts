@@ -117,6 +117,9 @@ describe('setup-agent', () => {
     expect(result.stdout).toContain('retrieve_context');
     expect(result.stdout).toContain('candidate_signals');
     expect(result.stdout).toContain('Memory Inbox has non-canonical signals');
+    expect(result.stdout).toContain('targetless candidates are not evidence for factual answers');
+    expect(result.stdout).toContain('approve or reject the proposal');
+    expect(result.stdout).toMatch(/approval must\s+not call put_page/);
     expect(result.stdout).toContain('read_context');
     expect(result.stdout).toMatch(/both pointers,\s+not answer evidence/);
     expect(result.stdout).toMatch(/canonical evidence boundary before\s+factual claims/);
@@ -126,7 +129,7 @@ describe('setup-agent', () => {
     expect(result.stdout).toContain('automatic canonical writeback exists');
     expect(result.stdout).toContain('assertion pipeline');
     expect(result.stdout).toContain('raw source access is scoped');
-    expect(result.stdout).toContain('secrets are never canonical memory');
+    expect(result.stdout).toMatch(/secrets\s+are never canonical memory/);
     expect(result.stdout).toContain('daily memory report is the primary review surface');
     expect(result.stdout).toContain('canonical_write_allowed');
     expect(result.stdout).toContain('target_snapshot_hash');
@@ -155,7 +158,7 @@ describe('setup-agent', () => {
       const result = await runSetupAgent(['--print'], { cwd: staleCwd });
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('mbrain-agent-rules-version: 0.5.9');
+      expect(result.stdout).toContain('mbrain-agent-rules-version: 0.5.10');
       expect(result.stdout).toContain('candidate_signals');
       expect(result.stdout).not.toContain('STALE CWD RULES');
       expect(result.stdout).not.toContain('9.9.9');
@@ -175,6 +178,8 @@ describe('setup-agent', () => {
     expect(claudeMd).toContain('retrieve_context');
     expect(claudeMd).toContain('candidate_signals');
     expect(claudeMd).toContain('Memory Inbox has non-canonical signals');
+    expect(claudeMd).toContain('targetless candidates are not evidence for factual answers');
+    expect(claudeMd).toMatch(/approval must\s+not call put_page/);
     expect(claudeMd).toContain('read_context');
     expect(claudeMd).toMatch(/both pointers,\s+not answer evidence/);
     expect(claudeMd).toMatch(/canonical evidence boundary before\s+factual claims/);
@@ -215,6 +220,8 @@ describe('setup-agent', () => {
     expect(agentsMd).toContain('retrieve_context');
     expect(agentsMd).toContain('candidate_signals');
     expect(agentsMd).toContain('Memory Inbox has non-canonical signals');
+    expect(agentsMd).toContain('targetless candidates are not evidence for factual answers');
+    expect(agentsMd).toMatch(/approval must\s+not call put_page/);
     expect(agentsMd).toContain('read_context');
     expect(agentsMd).toMatch(/both pointers,\s+not answer evidence/);
     expect(agentsMd).toMatch(/canonical evidence boundary before\s+factual claims/);
@@ -248,7 +255,7 @@ describe('setup-agent', () => {
     expect(result.stdout).toContain('Rules: updated');
 
     const agentsMd = readFileSync(join(tempHome, '.codex', 'AGENTS.md'), 'utf-8');
-    expect(agentsMd).toContain('mbrain-agent-rules-version: 0.5.9');
+    expect(agentsMd).toContain('mbrain-agent-rules-version: 0.5.10');
     expect(agentsMd).toContain('Route Durable Writeback');
     expect(agentsMd).toContain('route_memory_writeback');
     expect(agentsMd).toContain('expected_content_hash');

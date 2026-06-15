@@ -25,6 +25,7 @@ export type MemoryMutationTargetKind =
   | 'procedure'
   | 'memory_candidate'
   | 'memory_patch_candidate'
+  | 'canonical_target_proposal'
   | 'profile_memory'
   | 'personal_episode'
   | 'memory_realm'
@@ -68,6 +69,11 @@ export type MemoryMutationOperationName =
   | 'delete_memory_candidate_entry'
   | 'promote_memory_candidate_entry'
   | 'supersede_memory_candidate_entry'
+  | 'create_canonical_target_proposal'
+  | 'approve_canonical_target_proposal'
+  | 'reject_canonical_target_proposal'
+  | 'complete_canonical_target_proposal_binding'
+  | 'bind_memory_candidate_target'
   | 'export_memory_artifact'
   | 'sync_memory_artifact'
   | 'repair_memory_ledger'
@@ -559,6 +565,185 @@ export interface MemoryCandidateStatusEventFilters {
   created_until?: Date;
   limit?: number;
   offset?: number;
+}
+
+export type CanonicalTargetProposalStatus =
+  | 'proposed'
+  | 'approved'
+  | 'patch_staged'
+  | 'bound'
+  | 'rejected'
+  | 'superseded'
+  | 'blocked';
+
+export type CanonicalTargetProposalStatusEventKind =
+  | 'created'
+  | 'approved'
+  | 'patch_staged'
+  | 'bound'
+  | 'rejected'
+  | 'superseded'
+  | 'blocked';
+
+export type CanonicalTargetProposalKind =
+  | 'project_root'
+  | 'project_doc'
+  | 'system_page'
+  | 'concept_page'
+  | 'idea_page'
+  | 'original_page';
+
+export type CanonicalTargetProposalTargetObjectType = 'curated_note';
+
+export type CanonicalTargetProposalPageType = 'project' | 'system' | 'concept';
+
+export interface CanonicalTargetProposalEntry {
+  id: string;
+  scope_id: string;
+  source_candidate_id: string;
+  linked_candidate_ids: string[];
+  status: CanonicalTargetProposalStatus;
+  status_reason: string | null;
+  proposal_kind: CanonicalTargetProposalKind;
+  target_object_type: CanonicalTargetProposalTargetObjectType;
+  proposed_slug: string;
+  proposed_title: string;
+  proposed_page_type: CanonicalTargetProposalPageType;
+  proposed_repo_path: string | null;
+  confidence_score: number;
+  importance_score: number;
+  rationale: string;
+  filing_basis: Record<string, unknown>;
+  source_refs: string[];
+  candidate_snapshot: Record<string, unknown>;
+  duplicate_review: Record<string, unknown>;
+  slug_quality_warnings: string[];
+  approval_actor: string | null;
+  approved_at: Date | null;
+  approval_reason: string | null;
+  bound_candidate_ids: string[];
+  stub_patch_candidate_id: string | null;
+  stub_patch_state: string | null;
+  rejected_at: Date | null;
+  rejection_reason: string | null;
+  superseded_by: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface CanonicalTargetProposalEntryInput {
+  id: string;
+  scope_id: string;
+  source_candidate_id: string;
+  linked_candidate_ids?: string[];
+  status: CanonicalTargetProposalStatus;
+  status_reason?: string | null;
+  proposal_kind: CanonicalTargetProposalKind;
+  target_object_type: CanonicalTargetProposalTargetObjectType;
+  proposed_slug: string;
+  proposed_title: string;
+  proposed_page_type: CanonicalTargetProposalPageType;
+  proposed_repo_path?: string | null;
+  confidence_score: number;
+  importance_score: number;
+  rationale: string;
+  filing_basis?: Record<string, unknown>;
+  source_refs: string[];
+  candidate_snapshot?: Record<string, unknown>;
+  duplicate_review?: Record<string, unknown>;
+  slug_quality_warnings?: string[];
+  approval_actor?: string | null;
+  approved_at?: Date | string | null;
+  approval_reason?: string | null;
+  bound_candidate_ids?: string[];
+  stub_patch_candidate_id?: string | null;
+  stub_patch_state?: string | null;
+  rejected_at?: Date | string | null;
+  rejection_reason?: string | null;
+  superseded_by?: string | null;
+}
+
+export interface CanonicalTargetProposalFilters {
+  scope_id?: string;
+  status?: CanonicalTargetProposalStatus;
+  source_candidate_id?: string;
+  proposed_slug?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface CanonicalTargetProposalStatusPatch {
+  status: CanonicalTargetProposalStatus;
+  expected_current_status?: CanonicalTargetProposalStatus;
+  status_reason?: string | null;
+  actor?: string | null;
+  review_reason?: string | null;
+  bound_candidate_ids?: string[];
+  stub_patch_candidate_id?: string | null;
+  stub_patch_state?: string | null;
+  superseded_by?: string | null;
+  updated_at?: Date | string | null;
+}
+
+export interface CanonicalTargetProposalDraftPatch {
+  proposal_kind?: CanonicalTargetProposalKind;
+  proposed_slug?: string;
+  proposed_title?: string;
+  proposed_page_type?: CanonicalTargetProposalPageType;
+  proposed_repo_path?: string | null;
+  confidence_score?: number;
+  importance_score?: number;
+  rationale?: string;
+  filing_basis?: Record<string, unknown>;
+  source_refs?: string[];
+  candidate_snapshot?: Record<string, unknown>;
+  duplicate_review?: Record<string, unknown>;
+  slug_quality_warnings?: string[];
+  status_reason?: string | null;
+  expected_current_status?: CanonicalTargetProposalStatus;
+  updated_at?: Date | string | null;
+}
+
+export interface CanonicalTargetProposalStatusEvent {
+  id: string;
+  proposal_id: string;
+  scope_id: string;
+  from_status: CanonicalTargetProposalStatus | null;
+  to_status: CanonicalTargetProposalStatus;
+  event_kind: CanonicalTargetProposalStatusEventKind;
+  actor: string | null;
+  review_reason: string | null;
+  created_at: Date;
+}
+
+export interface CanonicalTargetProposalStatusEventInput {
+  id: string;
+  proposal_id: string;
+  scope_id: string;
+  from_status?: CanonicalTargetProposalStatus | null;
+  to_status: CanonicalTargetProposalStatus;
+  event_kind: CanonicalTargetProposalStatusEventKind;
+  actor?: string | null;
+  review_reason?: string | null;
+  created_at?: Date | string | null;
+}
+
+export interface CanonicalTargetProposalStatusEventFilters {
+  proposal_id?: string;
+  scope_id?: string;
+  event_kind?: CanonicalTargetProposalStatusEventKind;
+  to_status?: CanonicalTargetProposalStatus;
+  limit?: number;
+  offset?: number;
+}
+
+export interface MemoryCandidateTargetBindingPatch {
+  target_object_type: Extract<MemoryCandidateTargetObjectType, 'curated_note'>;
+  target_object_id: string;
+  expected_current_target_object_type: Extract<MemoryCandidateTargetObjectType, 'curated_note' | 'procedure' | 'other'> | null;
+  expected_current_target_object_id: null;
+  reviewed_at?: Date | string | null;
+  review_reason?: string | null;
 }
 
 export interface MemoryCandidateStatusPatch {

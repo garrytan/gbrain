@@ -4,7 +4,6 @@ import type {
   NegativeMemoryProjection,
   NegativeMemoryProjectionInput,
   ProjectionAnchors,
-  ProjectionActivation,
 } from '../types.ts';
 
 export function buildNegativeMemoryProjections(

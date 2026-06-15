@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
-import type { NoteManifestEntry, NoteSectionEntry } from '../types.ts';
+import type { NoteManifestEntry } from '../types.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
 import { listAllNoteManifestEntries, listAllNoteSectionEntries } from './structural-entry-pagination.ts';
 

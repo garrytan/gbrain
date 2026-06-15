@@ -4,6 +4,35 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-06-15
+
+### Added
+
+- **Canonical target proposals make targetless Memory Inbox work reviewable.**
+  Targetless or ambiguous candidates now flow through canonical target
+  proposals before binding to compiled memory. The MCP and CLI operation
+  surface includes `create_canonical_target_proposal`,
+  `approve_canonical_target_proposal`, `reject_canonical_target_proposal`, and
+  `complete_canonical_target_proposal_binding`, and the memory report points
+  operators to the next proposal action instead of asking them to guess a page
+  target.
+
+### Changed
+
+- **Agent rule metadata now reports `0.5.10`.** Managed Codex and Claude rules
+  describe targetless candidates as proposal-first work and keep missing-page
+  stubs behind patch-candidate review before final binding.
+- **Release macOS tests now match PR macOS guardrails.** The v0.14.0 tag
+  workflow failed before publishing because the macOS release job hit a
+  watch-mode stdout race under full-test load, so no GitHub Release or Darwin
+  asset was created. The release workflow now keeps the same constrained macOS
+  full-test concurrency and timeout bound as PR CI, and the watch-mode test
+  waits for the startup line instead of assuming it arrives within a fixed
+  sleep.
+- **Version metadata now reports `0.14.1`.** `VERSION`, `package.json`,
+  `skills/manifest.json`, and `openclaw.plugin.json` are aligned so the CLI,
+  skills manifest, and plugin bundle describe the same release.
+
 ## [0.14.0] - 2026-06-15
 
 ### Security
