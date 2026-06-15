@@ -70,7 +70,8 @@ export const SECTIONS: DocSection[] = [
       },
       {
         title: "INSTALL_FOR_AGENTS.md",
-        description: "9-step agent installation.",
+        description:
+          "Coding-agent install and operating protocol: branch map, search-mode gate, trust boundary, provider/key handling, MCP/auth guidance, verification, and upgrades.",
         path: "INSTALL_FOR_AGENTS.md",
       },
       {

@@ -17,6 +17,7 @@ runtime commands.
 | [#3](https://github.com/TheAngryPit/gbrain/issues/3) | `docs/docs-consolidation/06-documentation-status-taxonomy.md` |
 | [#4](https://github.com/TheAngryPit/gbrain/issues/4) | `README.md`, `llms-full.txt` |
 | [#5](https://github.com/TheAngryPit/gbrain/issues/5) | `docs/INSTALL.md` |
+| [#6](https://github.com/TheAngryPit/gbrain/issues/6) | `INSTALL_FOR_AGENTS.md`, `scripts/llms-config.ts`, `llms.txt`, `llms-full.txt` |
 
 ## Published Issues
 
@@ -87,6 +88,8 @@ mental models; it should first derive the current product/design state from
    - Output: agent-facing install/operation flow that mirrors the human
      branches but includes agent safety gates, MCP exposure boundaries, auth,
      provider handling, and LLM map references.
+   - Implementation artifacts: `INSTALL_FOR_AGENTS.md`,
+     `scripts/llms-config.ts`, `llms.txt`, `llms-full.txt`.
 
 6. **Add operating-model and deployment-topology decision trees**
    - Type: AFK
