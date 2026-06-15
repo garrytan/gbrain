@@ -156,6 +156,54 @@ export class PostgresEngine implements BrainEngine {
     return db.getConnection();
   }
 
+  // Source-scope binding for Postgres RLS — opt-in via env var.
+  //
+  // When `GBRAIN_RLS_SCOPE_BINDING` is set to `1` / `true`, source-scoped
+  // query methods (listPages, search*, getChunks, etc.) wrap their queries
+  // in a transaction that begins with
+  //   SET LOCAL app.scopes = '<csv-of-allowed-source-ids>'
+  // so Postgres RLS policies on source-scoped tables can filter rows by
+  // `current_setting('app.scopes', true)`. The expected policy shape:
+  //
+  //   USING (current_setting('app.scopes', true) = '*'
+  //          OR source_id = ANY(string_to_array(
+  //             current_setting('app.scopes', true), ',')))
+  //
+  // Recommended runtime-role default:
+  //   ALTER ROLE <runtime-role> SET app.scopes = '*';
+  // so admin / autopilot / cycle queries that don't pass scope info still
+  // see all rows. OAuth-scoped requests override the default per
+  // transaction with their allowed-source CSV.
+  //
+  // Default behavior (env var unset): the helper is a pass-through —
+  // returns `callback(this.sql)` with no transaction wrap and no SET
+  // LOCAL. Behaviorally equivalent to not having this helper at all,
+  // so the feature is safe to land disabled-by-default.
+  private get rlsScopeBindingEnabled(): boolean {
+    const v = process.env.GBRAIN_RLS_SCOPE_BINDING;
+    return v === '1' || v === 'true';
+  }
+
+  private async withScopedReadTransaction<T>(
+    sourceIds: string[] | undefined,
+    sourceId: string | undefined,
+    callback: (tx: ReturnType<typeof postgres>) => Promise<T>,
+  ): Promise<T> {
+    if (!this.rlsScopeBindingEnabled) {
+      return await callback(this.sql);
+    }
+    let scopesValue = '*';
+    if (sourceIds && sourceIds.length > 0) {
+      scopesValue = sourceIds.join(',');
+    } else if (sourceId) {
+      scopesValue = sourceId;
+    }
+    return await this.sql.begin(async (tx: any) => {
+      await tx`SET LOCAL app.scopes = ${scopesValue}`;
+      return await callback(tx as ReturnType<typeof postgres>);
+    });
+  }
+
   // Lifecycle
   async connect(config: EngineConfig & { poolSize?: number; parentConnectionManager?: ConnectionManager }): Promise<void> {
     this._savedConfig = config;
@@ -1213,14 +1261,18 @@ export class PostgresEngine implements BrainEngine {
     const sortKey = filters?.sort && PAGE_SORT_SQL[filters.sort] ? filters.sort : 'updated_desc';
     const orderBy = sql.unsafe(PAGE_SORT_SQL[sortKey]);
 
-    const rows = await sql`
-      SELECT p.* FROM pages p
-      ${tagJoin}
-      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${sourceCondition} ${deletedCondition}
-      ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}
-    `;
-
-    return rows.map(rowToPage);
+    // RLS scope binding (opt-in via GBRAIN_RLS_SCOPE_BINDING): when
+    // enabled, this wraps the query in a transaction that sets
+    // `app.scopes` from filters; when disabled, it's a pass-through.
+    return await this.withScopedReadTransaction(filters?.sourceIds, filters?.sourceId, async (tx) => {
+      const rows = await tx`
+        SELECT p.* FROM pages p
+        ${tagJoin}
+        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${sourceCondition} ${deletedCondition}
+        ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}
+      `;
+      return rows.map(rowToPage);
+    });
   }
 
   async getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>> {
