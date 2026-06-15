@@ -1020,6 +1020,45 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       // informational; autopilot loop continues.
     }
 
+    // 4.6 — Nightly conversation-parser probe.
+    // Same proof style as the nightly quality probe: the phase owns the
+    // 24h rate-limit, the audit row is the doctor-readable receipt, and
+    // probe failures never trip the autopilot circuit breaker.
+    try {
+      let searchMode = 'balanced';
+      try {
+        searchMode = (await engine.getConfig('search.mode')) ?? 'balanced';
+      } catch {
+        // Config read failures should not stop the probe gate; balanced is the safe default.
+      }
+      const parserProbeEnabled =
+        cfg?.autopilot?.conversation_parser_probe?.enabled === true ||
+        searchMode === 'tokenmax';
+      if (parserProbeEnabled) {
+        const { runConversationParserNightlyProbe } = await import('../core/conversation-parser/nightly-probe.ts');
+        const {
+          conversationParserProbeRanWithin24h,
+          logConversationParserProbeEvent,
+        } = await import('../core/audit-conversation-parser-probe.ts');
+        const { hasAnthropicKey } = await import('../core/ai/anthropic-key.ts');
+        const repoRoot = repoPath ?? gbrainHomePath('.');
+        const result = await runConversationParserNightlyProbe({
+          isEnabled: () => cfg?.autopilot?.conversation_parser_probe?.enabled === true,
+          searchMode: () => searchMode,
+          hasLlmKey: () => hasAnthropicKey(),
+          resolveFixturePath: () => join(repoRoot, 'test/fixtures/conversation-formats/all.jsonl'),
+          resolveAdversarialPath: () => join(repoRoot, 'test/fixtures/conversation-formats/adversarial.jsonl'),
+          now: () => new Date(),
+          shouldSkipForRateLimit: () => conversationParserProbeRanWithin24h(new Date()),
+        });
+        logConversationParserProbeEvent(result);
+      }
+    } catch (e) {
+      logError('autopilot.conversation_parser_probe', e);
+      // Intentional: do NOT bump consecutiveErrors. Probe failure is
+      // informational; autopilot loop continues.
+    }
+
     // Wait for next cycle
     await new Promise(r => setTimeout(r, interval * 1000));
   }

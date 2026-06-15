@@ -73,3 +73,33 @@ describe('autopilot wiring: nightly quality probe', () => {
     expect(SOURCE).toMatch(/max_usd\s*\?\?\s*5/);
   });
 });
+
+describe('autopilot wiring: conversation-parser nightly probe', () => {
+  test('imports runConversationParserNightlyProbe from the phase module', () => {
+    expect(SOURCE).toContain('runConversationParserNightlyProbe');
+    expect(SOURCE).toContain('conversation-parser/nightly-probe');
+  });
+
+  test('writes the parser probe audit receipt for doctor', () => {
+    expect(SOURCE).toContain('audit-conversation-parser-probe');
+    expect(SOURCE).toContain('logConversationParserProbeEvent');
+  });
+
+  test('mode gate present: opt-in flag or search.mode tokenmax', () => {
+    expect(SOURCE).toContain('conversation_parser_probe?.enabled === true');
+    expect(SOURCE).toContain(`engine.getConfig('search.mode')`);
+    expect(SOURCE).toContain(`searchMode === 'tokenmax'`);
+  });
+
+  test('DI shape uses committed fixtures and shared Anthropic key probe', () => {
+    expect(SOURCE).toContain('hasAnthropicKey');
+    expect(SOURCE).toContain('test/fixtures/conversation-formats/all.jsonl');
+    expect(SOURCE).toContain('test/fixtures/conversation-formats/adversarial.jsonl');
+    expect(SOURCE).toContain('conversationParserProbeRanWithin24h');
+  });
+
+  test('probe call wrapped in try/catch that does NOT bump consecutiveErrors', () => {
+    expect(SOURCE).toMatch(/try\s*\{[\s\S]*?conversation_parser_probe/);
+    expect(SOURCE).toMatch(/catch[\s\S]*?autopilot\.conversation_parser_probe[\s\S]*?do NOT bump consecutiveErrors/);
+  });
+});

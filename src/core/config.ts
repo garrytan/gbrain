@@ -96,6 +96,13 @@ export interface GBrainConfig {
        */
       max_usd?: number;
     };
+    conversation_parser_probe?: {
+      /**
+       * Enable the nightly conversation-parser probe in the autopilot loop.
+       * Defaults to false unless `search.mode=tokenmax`.
+       */
+      enabled?: boolean;
+    };
     /**
      * v0.42.x (#1685 GAP D) — extract_atoms backlog auto-drain. Default ON so a
      * pack-gated silent backlog never piles up unseen; daily-spend-capped so the

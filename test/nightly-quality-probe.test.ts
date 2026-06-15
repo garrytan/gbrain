@@ -304,6 +304,48 @@ describe('computeNightlyQualityProbeHealthCheck — pure doctor branch coverage'
   });
 });
 
+describe('computeConversationParserProbeHealthCheck — pure doctor branch coverage', () => {
+  test('disabled + no events → ok with paste-ready enable hint', async () => {
+    const { computeConversationParserProbeHealthCheck } = await import('../src/commands/doctor.ts');
+    const check = computeConversationParserProbeHealthCheck(false, 'balanced', []);
+    expect(check.name).toBe('conversation_parser_probe_health');
+    expect(check.status).toBe('ok');
+    expect(check.message).toMatch(/disabled \(opt-in/);
+    expect(check.message).toMatch(/gbrain config set autopilot\.conversation_parser_probe\.enabled true/);
+  });
+
+  test('tokenmax + no events → ok pending', async () => {
+    const { computeConversationParserProbeHealthCheck } = await import('../src/commands/doctor.ts');
+    const check = computeConversationParserProbeHealthCheck(false, 'tokenmax', []);
+    expect(check.status).toBe('ok');
+    expect(check.message).toMatch(/enabled but no parser probe events/);
+  });
+
+  test('enabled + all-PASS events → ok with latest timestamp', async () => {
+    const { computeConversationParserProbeHealthCheck } = await import('../src/commands/doctor.ts');
+    const check = computeConversationParserProbeHealthCheck(true, 'balanced', [
+      { outcome: 'pass', ts: '2026-05-20T03:00:00Z' },
+      { outcome: 'pass', ts: '2026-05-21T03:00:00Z' },
+    ]);
+    expect(check.status).toBe('ok');
+    expect(check.message).toMatch(/2 PASS parser probe runs/);
+    expect(check.message).toContain('2026-05-21T03:00:00Z');
+  });
+
+  test('enabled + any non-PASS event → warn with counts', async () => {
+    const { computeConversationParserProbeHealthCheck } = await import('../src/commands/doctor.ts');
+    const check = computeConversationParserProbeHealthCheck(true, 'balanced', [
+      { outcome: 'pass', ts: '2026-05-20T03:00:00Z' },
+      { outcome: 'adversarial_false_positive', ts: '2026-05-21T03:00:00Z', reason: '1 adversarial fixture parsed' },
+      { outcome: 'no_embedding_key', ts: '2026-05-22T03:00:00Z' },
+    ]);
+    expect(check.status).toBe('warn');
+    expect(check.message).toMatch(/2 non-PASS parser probe runs/);
+    expect(check.message).toContain('adversarial_fp=1');
+    expect(check.message).toContain('no_llm_key=1');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 4. Codex CDX-5 — doctor flags ALL non-PASS outcomes (no_embedding_key,
 // rate_limited, inconclusive must trip warn, not get silently reported as PASS)
