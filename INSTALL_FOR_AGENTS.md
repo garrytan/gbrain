@@ -14,6 +14,9 @@ Machine-readable context:
   one-shot ingestion.
 - [`AGENTS.md`](AGENTS.md) is the non-Claude-agent repo protocol.
 - [`CLAUDE.md`](CLAUDE.md) is the Claude Code orientation and resolver.
+- [`docs/guides/mode-selection.md`](docs/guides/mode-selection.md) explains
+  when to use retrieval, synthesis, maintenance, and push-based context
+  commands or channels.
 
 ## Agent operating map
 
@@ -42,6 +45,10 @@ when the setup is not the simple local default.
   operator confirming the cadence.
 - Do not treat `gbrain doctor` success as proof that live sync works. Use the
   live-sync verification in Step 9 or `docs/GBRAIN_VERIFY.md`.
+- Before adding retrieval reflex, `volunteer_context`, `gbrain
+  volunteer-context`, or `gbrain watch` to an agent loop, read
+  `docs/guides/mode-selection.md` and confirm the operator wants push-based
+  context.
 
 ## Trust boundary
 
@@ -202,6 +209,11 @@ An agent that silently accepts the default and starts running queries against
 a user who didn't expect tokenmax-class context loads can rack up surprise
 spend. Confirm before continuing.
 
+After the search mode is confirmed, read
+[`docs/guides/mode-selection.md`](docs/guides/mode-selection.md) before choosing
+between `gbrain search`, `gbrain think`, `gbrain dream` / autopilot, retrieval
+reflex, `volunteer_context`, `gbrain volunteer-context`, or `gbrain watch`.
+
 ## Step 4: Import and Index
 
 ```bash
@@ -314,7 +326,8 @@ platform glue entirely with `gbrain autopilot --install` (built-in self-maintain
   Entity sweep, citation fixes, memory consolidation, plus (v0.23+) overnight conversation
   synthesis and cross-session pattern detection. One cron-friendly command. This is what
   makes the brain compound. Do not skip it. See `docs/guides/cron-schedule.md` for the
-  full protocol.
+  full protocol and `docs/guides/mode-selection.md` for when to use dream/autopilot
+  instead of retrieval or synthesis.
 - **Weekly**: `gbrain doctor --json && gbrain embed --stale`
 
 ## Step 8: Integrations
@@ -353,6 +366,8 @@ Remote setup references:
 
 - `docs/mcp/DEPLOY.md` for HTTP MCP, OAuth 2.1, scopes, localOnly behavior, and
   remote deployment.
+- `docs/guides/mode-selection.md` for agent-facing choice between pull
+  retrieval, `think`, maintenance, and push-context channels.
 - `docs/mcp/CODEX.md`, `docs/mcp/CLAUDE_CODE.md`,
   `docs/mcp/CLAUDE_DESKTOP.md`, `docs/mcp/CHATGPT.md`, and
   `docs/mcp/PERPLEXITY.md` for client-specific setup.

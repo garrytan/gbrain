@@ -127,6 +127,9 @@ Search mode controls how much retrieved context GBrain sends downstream and
 which search features are enabled. Humans should choose it deliberately.
 Agents must follow the stop-and-ask protocol in
 [`../INSTALL_FOR_AGENTS.md#step-35-confirm-search-mode-with-the-user-do-not-skip`](../INSTALL_FOR_AGENTS.md#step-35-confirm-search-mode-with-the-user-do-not-skip).
+For day-to-day command selection after install, use
+[`guides/mode-selection.md`](guides/mode-selection.md). It separates raw
+retrieval, synthesis, maintenance, and push-based context.
 
 | Mode | Best fit | Shape |
 |---|---|---|
@@ -236,6 +239,10 @@ gbrain doctor --remediation-plan --json
 consolidation flows. `doctor --remediation-plan` previews fix work before
 you let GBrain apply it.
 
+To choose between `gbrain search`, `gbrain think`, maintenance cycles, and
+push-context channels such as `volunteer_context` or `gbrain watch`, read
+[`guides/mode-selection.md`](guides/mode-selection.md).
+
 ## Connect an agent
 
 For a local coding agent on the same machine:
@@ -291,6 +298,9 @@ Production checklist:
   [`architecture/topologies.md`](architecture/topologies.md),
   [`architecture/brains-and-sources.md`](architecture/brains-and-sources.md)
   and [`tutorials/company-brain.md`](tutorials/company-brain.md).
+- Choose the operational modes before wiring clients: raw retrieval,
+  synthesis, maintenance, and push-based context each have different cost and
+  safety profiles. See [`guides/mode-selection.md`](guides/mode-selection.md).
 - Use `gbrain serve --http` only when you need remote MCP. Local agents should
   use stdio.
 - For remote HTTP, configure OAuth clients and scopes through
@@ -390,6 +400,8 @@ Use [`GBRAIN_VERIFY.md`](GBRAIN_VERIFY.md) for the full runbook.
   and verification.
 - [`guides/search-modes.md`](guides/search-modes.md): command-level lookup
   choices.
+- [`guides/mode-selection.md`](guides/mode-selection.md): when to use
+  retrieval, synthesis, maintenance, and push-based context commands.
 - [`mcp/DEPLOY.md`](mcp/DEPLOY.md): HTTP MCP, OAuth clients, scopes, and
   remote deployment.
 - [`GBRAIN_VERIFY.md`](GBRAIN_VERIFY.md): install verification runbook.

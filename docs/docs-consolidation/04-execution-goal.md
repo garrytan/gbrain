@@ -248,7 +248,7 @@ Use source files only to verify docs claims. Do not change runtime code.
 | 5 | #6 | Agent Operational Center | agent_executable | #2, #3, #5 complete | `INSTALL_FOR_AGENTS.md` mirrors operational branches with safety gates | implemented in `INSTALL_FOR_AGENTS.md`; `llms.txt` and `llms-full.txt` regenerated |
 | 6 | #7 | Operating model and topology trees | agent_executable | #2 and #3 complete | Branchable choices exist and are linked | implemented in `docs/architecture/topologies.md`; linked from `README.md`, `docs/INSTALL.md`, and `INSTALL_FOR_AGENTS.md` |
 | 7 | #8 | Brain Repo Layout | agent_executable | #2, #3, #7 complete | Layout/source/brain docs exist and are linked | implemented in `docs/architecture/brain-repo-layout.md`; linked from human, agent, and production paths |
-| 8 | #9 | Mode Selection Guide | agent_executable | #2, #5, #7 complete | Guide covers current command and push-context paths | pending |
+| 8 | #9 | Mode Selection Guide | agent_executable | #2, #5, #7 complete | Guide covers current command and push-context paths | implemented in `docs/guides/mode-selection.md`; linked from human, agent, and production paths |
 | 9 | #10 | Production path and checklist | agent_executable | #5, #7, #8, #9 complete | Production branch/checklist exists inside human path | pending |
 | 10 | #11 | MCP/auth/remote/thin-client alignment | agent_executable | #2, #6, #7, #10 complete | MCP/auth docs align with current protocol truth | pending |
 | 11 | #12 | Status labels | agent_executable | #3 complete | Historical/design/deprecated/superseded docs labelled where needed | pending |

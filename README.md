@@ -38,6 +38,11 @@ It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate t
   [`docs/mcp/DEPLOY.md`](docs/mcp/DEPLOY.md), [`SECURITY.md`](SECURITY.md), and
   [`docs/GBRAIN_VERIFY.md`](docs/GBRAIN_VERIFY.md). The README stays a router;
   deployment detail belongs in those guides.
+- **Choosing search, synthesis, maintenance, or push context.** Use the
+  [`Mode Selection Guide`](docs/guides/mode-selection.md) after install. It
+  explains when to use `gbrain search`, `gbrain think`, `gbrain dream` /
+  autopilot, retrieval reflex, `volunteer_context`, `gbrain volunteer-context`,
+  and `gbrain watch`.
 - **For LLMs and coding agents.** Fetch [`llms.txt`](llms.txt) for the curated
   documentation map, or [`llms-full.txt`](llms-full.txt) for one-shot ingestion
   with core docs inlined. GBrain does not currently ship an official installable
@@ -197,6 +202,10 @@ gbrain think "who's working on AI agents at portfolio companies?"
 **Why it compounds.** Pair the brain layer with `find_trajectory` and you get answers like *"how have the company's metrics changed AND what does the team look like right now AND what did they promise / share AND when did we last meet AND what's the value-add I can offer here"*: well-scored, well-cited, in one shot. That's the strategic moat. That's why building a 100K-page brain is worth the effort.
 
 `gbrain agent run "..."` exposes the same surface to a sub-agent through the Minions queue, with crash-safe two-phase persistence. Same answers, durable.
+
+For the full decision tree across retrieval, synthesis, maintenance, and
+push-based context, read
+[`docs/guides/mode-selection.md`](docs/guides/mode-selection.md).
 
 ## How to get data in
 

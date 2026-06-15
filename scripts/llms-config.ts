@@ -165,6 +165,12 @@ export const SECTIONS: DocSection[] = [
         path: "docs/guides/push-context.md",
       },
       {
+        title: "docs/guides/mode-selection.md",
+        description:
+          "Mode Selection Guide: when to use gbrain search, gbrain think, gbrain dream/autopilot, retrieval reflex, volunteer_context, gbrain volunteer-context, and gbrain watch; includes search-mode cost, quality, and safety implications.",
+        path: "docs/guides/mode-selection.md",
+      },
+      {
         title: "docs/mcp/DEPLOY.md",
         description: "MCP server deployment.",
         path: "docs/mcp/DEPLOY.md",
