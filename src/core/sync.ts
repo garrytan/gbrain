@@ -241,6 +241,19 @@ function matchesAnyGlob(path: string, patterns?: string[]): boolean {
  */
 const PRUNE_DIR_NAMES = new Set<string>([
   'node_modules',
+  // Dependency / build-output trees that are git-ignored on virtually every
+  // repo and never contain hand-authored source worth indexing. `vendor`
+  // (PHP Composer / Go / Ruby bundle), `dist` + `build` (compiled output).
+  // Closes the silent-pollution bug where a Laravel/PHP repo's full code sync
+  // walked ~50k `vendor/` files (#1483 / #1159 / maintainer #1942).
+  'vendor',
+  'dist',
+  'build',
+  // Python venv: vendored dependency tree, the `node_modules` analogue (#2020).
+  // Like `node_modules` it lacks a leading dot so isSyncable's dot-prefix
+  // exclusion misses it; explicit entry keeps incremental sync consistent
+  // with the first-sync walker in commands/import.ts.
+  'venv',
   '.raw',
   'ops',
 ]);

@@ -945,6 +945,27 @@ CREATE TABLE IF NOT EXISTS op_checkpoint_paths (
     FOREIGN KEY (op, fingerprint) REFERENCES op_checkpoints (op, fingerprint) ON DELETE CASCADE
 );
 
+-- #2095 push-based context: feedback-loop log of volunteered pages.
+-- Mirrors migration v117 + src/schema.sql. "Used" derives from
+-- pages.last_retrieved_at > volunteered_at; 90-day prune in the dream
+-- cycle's purge phase.
+CREATE TABLE IF NOT EXISTS context_volunteer_events (
+  id             BIGSERIAL PRIMARY KEY,
+  source_id      TEXT NOT NULL,
+  slug           TEXT NOT NULL,
+  confidence     DOUBLE PRECISION NOT NULL,
+  match_arm      TEXT NOT NULL,
+  rationale      TEXT NOT NULL DEFAULT '',
+  channel        TEXT NOT NULL DEFAULT 'op',
+  session_id     TEXT,
+  turn           INTEGER,
+  volunteered_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS context_volunteer_events_src_time_idx
+  ON context_volunteer_events (source_id, volunteered_at DESC);
+CREATE INDEX IF NOT EXISTS context_volunteer_events_src_slug_idx
+  ON context_volunteer_events (source_id, slug);
+
 -- ============================================================
 -- migration_impact_log (v0.41.18.0 — gbrain onboard wave)
 -- ============================================================

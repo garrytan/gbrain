@@ -386,6 +386,11 @@ CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_to
   ON code_edges_chunk(to_chunk_id, edge_type);
 CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_to_symbol
   ON code_edges_chunk(to_symbol_qualified, edge_type);
+-- getCalleesOf filters on from_symbol_qualified; without this index every
+-- callee lookup is a sequential scan, amplified per-BFS-node by the
+-- recursive code walk. Mirrors migration v116.
+CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_from_symbol
+  ON code_edges_chunk(from_symbol_qualified);
 
 CREATE TABLE IF NOT EXISTS code_edges_symbol (
   id                    SERIAL PRIMARY KEY,
@@ -403,6 +408,10 @@ CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_from
   ON code_edges_symbol(from_chunk_id, edge_type);
 CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_to
   ON code_edges_symbol(to_symbol_qualified, edge_type);
+-- getCalleesOf companion to idx_code_edges_chunk_from_symbol above.
+-- Mirrors migration v116.
+CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_from_symbol
+  ON code_edges_symbol(from_symbol_qualified);
 
 -- ============================================================
 -- links: cross-references between pages
@@ -697,6 +706,28 @@ CREATE TABLE IF NOT EXISTS op_checkpoint_paths (
   CONSTRAINT op_checkpoint_paths_parent_fk
     FOREIGN KEY (op, fingerprint) REFERENCES op_checkpoints (op, fingerprint) ON DELETE CASCADE
 );
+
+-- #2095 push-based context: feedback-loop log of volunteered pages
+-- (volunteer_context op / retrieval-reflex pointers / gbrain watch).
+-- "Used" derives from pages.last_retrieved_at > volunteered_at; rationale is
+-- a deterministic template string, never raw conversation text. 90-day prune
+-- in the dream cycle's purge phase. Mirrors migration v117.
+CREATE TABLE IF NOT EXISTS context_volunteer_events (
+  id             BIGSERIAL PRIMARY KEY,
+  source_id      TEXT NOT NULL,
+  slug           TEXT NOT NULL,
+  confidence     DOUBLE PRECISION NOT NULL,
+  match_arm      TEXT NOT NULL,
+  rationale      TEXT NOT NULL DEFAULT '',
+  channel        TEXT NOT NULL DEFAULT 'op',
+  session_id     TEXT,
+  turn           INTEGER,
+  volunteered_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS context_volunteer_events_src_time_idx
+  ON context_volunteer_events (source_id, volunteered_at DESC);
+CREATE INDEX IF NOT EXISTS context_volunteer_events_src_slug_idx
+  ON context_volunteer_events (source_id, slug);
 
 -- migration_impact_log moved BELOW minion_jobs (was here, lines 645-676)
 -- because its `job_id BIGINT REFERENCES minion_jobs(id)` FK requires

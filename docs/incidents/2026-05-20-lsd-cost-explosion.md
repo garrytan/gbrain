@@ -208,9 +208,10 @@ architectural rounds shipped in the budget-cathedral wave that followed:
 - **P3 (judge chunking):** `runJudge` in `src/core/brainstorm/judges.ts`
   auto-chunks at 100 ideas/call. Context-window overflow is structurally
   prevented.
-- **P4 (unicode sanitization):** `sanitizeUnicode` in
-  `src/core/brainstorm/orchestrator.ts` strips unpaired surrogates before
-  serialization.
+- **P4 (unicode sanitization):** `ensureWellFormed` (in `src/core/text-safe.ts`,
+  used by `src/core/brainstorm/orchestrator.ts`) replaces unpaired surrogates
+  with U+FFFD before serialization. (Consolidated from the original hand-rolled
+  `sanitizeUnicode` in v0.42.40.0 / #2011.)
 - **P5 (BudgetTracker at the gateway layer):** new
   `src/core/budget/budget-tracker.ts` is the canonical primitive. The
   gateway's `withBudgetTracker(tracker, fn)` composes via

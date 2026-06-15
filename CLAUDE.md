@@ -38,7 +38,7 @@ mount, CEO-class with multiple team brains) and
 
 ## Architecture
 
-Contract-first: `src/core/operations.ts` defines ~47 shared operations (v0.29 adds `get_recent_salience`, `find_anomalies`, `get_recent_transcripts`). CLI and MCP
+Contract-first: `src/core/operations.ts` defines ~90 shared operations (v0.29 adds `get_recent_salience`, `find_anomalies`, `get_recent_transcripts`; v0.42.43.0 adds `volunteer_context` — push-based context, see `docs/guides/push-context.md`). CLI and MCP
 server are both generated from this single source. Engine factory (`src/core/engine-factory.ts`)
 dynamically imports the configured engine (`'pglite'` or `'postgres'`). Skills are fat
 markdown files (tool-agnostic, work with both CLI and plugin contexts).
@@ -97,6 +97,7 @@ detail on demand.)
 | any file in `src/` (what it does + its invariants) | `docs/architecture/KEY_FILES.md` — find the file's entry |
 | search / ranking / hybrid / retrieval | `docs/architecture/RETRIEVAL.md` + the `search/*` entries in `KEY_FILES.md` |
 | search modes / cost knobs | `docs/guides/search-modes.md` |
+| push-based context (volunteer/watch/reflex window) | `docs/guides/push-context.md` |
 | schema packs / page types / extraction | `docs/architecture/schema-packs.md`, `type-taxonomy.md`, `lens-packs.md` |
 | thin-client / remote MCP / cross-modal | `docs/architecture/thin-client.md` |
 | the CLI surface (commands + flags) | `gbrain --help` / `gbrain --tools-json`, plus the relevant `KEY_FILES.md` entry |

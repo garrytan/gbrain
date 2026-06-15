@@ -12,6 +12,7 @@ import {
 import { hashToken, generateToken } from '../src/core/utils.ts';
 import { PGLITE_SCHEMA_SQL } from '../src/core/pglite-schema.ts';
 import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import type { AuthInfo as CoreAuthInfo } from '../src/core/operations.ts';
 
 // ---------------------------------------------------------------------------
 // Test setup: in-memory PGLite with OAuth tables
@@ -309,6 +310,33 @@ describe('verifyAccessToken', () => {
     const authInfo = await provider.verifyAccessToken(legacyToken);
     expect(authInfo.clientId).toBe('legacy-agent');
     expect(authInfo.scopes).toEqual(['read', 'write', 'admin']); // grandfathered full access
+  });
+
+  test('legacy access_tokens fallback honors permissions.source_id array grants', async () => {
+    // oauth.test.ts initializes the static PGLite schema blob, not the full
+    // migration stack. Add the v38 permissions column here so the row matches
+    // a modern brain carrying a legacy-token source grant.
+    await sql`
+      ALTER TABLE access_tokens
+        ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{"takes_holders":["world"]}'::jsonb
+    `;
+
+    const legacyToken = generateToken('gbrain_');
+    const hash = hashToken(legacyToken);
+    await sql`
+      INSERT INTO access_tokens (id, name, token_hash, permissions)
+      VALUES (
+        ${crypto.randomUUID()},
+        ${'legacy-federated-agent'},
+        ${hash},
+        ${JSON.stringify({ source_id: ['default', 'src-a', 'src-b'] })}::jsonb
+      )
+    `;
+
+    const authInfo = await provider.verifyAccessToken(legacyToken) as CoreAuthInfo;
+    expect(authInfo.clientId).toBe('legacy-federated-agent');
+    expect(authInfo.sourceId).toBe('default');
+    expect(authInfo.allowedSources).toEqual(['default', 'src-a', 'src-b']);
   });
 });
 

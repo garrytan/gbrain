@@ -3145,6 +3145,99 @@ const get_recent_salience: Operation = {
   cliHints: { name: 'salience' },
 };
 
+// --- v0.43 (#2095): push-based context — the brain volunteers pages ---
+
+const volunteer_context: Operation = {
+  name: 'volunteer_context',
+  description:
+    'Push-based context: volunteer brain pages relevant to a rolling conversation window ' +
+    'WITHOUT being asked. Zero-LLM, confidence-gated (alias 0.9 / exact-title 0.8 / ' +
+    'slug-suffix 0.6, +0.05 for multi-turn or newest-turn mentions; default gate 0.7), ' +
+    'capped at 3 pages (max 5). Returns pointers with one-line rationales + synopses — ' +
+    'open the page (get_page) before relying on details. Pass stats: true for the ' +
+    'approximate volunteered-vs-used precision summary (the feedback loop).',
+  scope: 'read',
+  params: {
+    window: {
+      type: 'string',
+      description:
+        "Recent conversation turns, oldest → newest, as 'user:' / 'assistant:' prefixed " +
+        'lines (unprefixed text = one user turn). Required unless stats: true. ' +
+        'CLI: piped stdin fills this.',
+    },
+    prior_context: {
+      type: 'string',
+      description:
+        'Already-surfaced context (pointer blocks / opened page bodies). Pages whose slug ' +
+        'appears here are not re-volunteered.',
+    },
+    max_pages: { type: 'number', description: 'Max pages to volunteer (default 3, hard cap 5).' },
+    min_confidence: {
+      type: 'number',
+      description:
+        'Confidence gate 0..1 (default 0.7 — slug-suffix matches need an explicit lower gate).',
+    },
+    session_id: { type: 'string', description: 'Optional caller session id, logged for attribution.' },
+    turn: { type: 'number', description: 'Optional caller turn number, logged for attribution.' },
+    stats: {
+      type: 'boolean',
+      description:
+        'Return the volunteered-vs-used precision summary instead of volunteering. ' +
+        'APPROXIMATE: "used" = pages.last_retrieved_at > volunteered_at.',
+    },
+    days: { type: 'number', description: 'Stats window in days (default 30; stats mode only).' },
+  },
+  handler: async (ctx, p) => {
+    const { parseWindow, volunteerContext, volunteerUsageStats } = await import('./context/volunteer.ts');
+    const scope = sourceScopeOpts(ctx);
+    const sourceIds = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : ['default']);
+
+    if (p.stats === true) {
+      return volunteerUsageStats(ctx.engine, sourceIds, typeof p.days === 'number' ? p.days : undefined);
+    }
+
+    if (typeof p.window !== 'string' || !p.window.trim()) {
+      throw new OperationError(
+        'invalid_params',
+        'window is required unless stats: true',
+        'Pass the recent turns as a string (CLI: pipe them on stdin), or use --stats.',
+      );
+    }
+    const turns = parseWindow(p.window);
+    const pages = await volunteerContext(ctx.engine, turns, {
+      sourceIds,
+      priorContext: typeof p.prior_context === 'string' ? p.prior_context : undefined,
+      maxPages: typeof p.max_pages === 'number' ? p.max_pages : undefined,
+      minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
+    });
+
+    // Feedback-loop logging: fire-and-forget batched INSERT through the
+    // volunteer-events sink (drained at exit). Never fails the op.
+    if (pages.length) {
+      try {
+        const { logVolunteerEventsFireAndForget, volunteerEventRowsFrom } = await import('./context/volunteer-events.ts');
+        // Trust-boundary clamps (remote MCP callers): cap session_id length so
+        // a read-scoped token can't bank unbounded TEXT per request, and only
+        // log integer turns — a non-integer would throw inside the single
+        // multi-row INSERT and silently drop the whole batch.
+        const sessionId = typeof p.session_id === 'string' ? p.session_id.slice(0, 256) : null;
+        const turn =
+          typeof p.turn === 'number' && Number.isInteger(p.turn) && Math.abs(p.turn) <= 2_147_483_647
+            ? p.turn
+            : null;
+        logVolunteerEventsFireAndForget(
+          ctx.engine,
+          volunteerEventRowsFrom(pages, { channel: 'op', session_id: sessionId, turn }),
+        );
+      } catch {
+        /* telemetry only */
+      }
+    }
+    return { pages, count: pages.length, window_turns: turns.length };
+  },
+  cliHints: { name: 'volunteer-context', stdin: 'window' },
+};
+
 const find_anomalies: Operation = {
   name: 'find_anomalies',
   description: FIND_ANOMALIES_DESCRIPTION,
@@ -4856,6 +4949,8 @@ export const operations: Operation[] = [
   whoami, sources_add, sources_list, sources_remove, sources_status,
   // v0.29: Salience + anomalies + recent transcripts
   get_recent_salience, find_anomalies, get_recent_transcripts,
+  // v0.43 (#2095): push-based context
+  volunteer_context,
   // v0.31: hot memory (facts table)
   extract_facts, recall, forget_fact,
   // v0.32.6: contradiction probe MCP surface (M3)

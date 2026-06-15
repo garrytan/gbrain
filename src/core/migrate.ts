@@ -5186,6 +5186,90 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 116,
+    name: 'code_edges_source_backfill_and_callee_index',
+    // Repair + index pass for the call graph:
+    //
+    // 1. BACKFILL: importCodeFile built CodeEdgeInput rows without source_id,
+    //    so every extracted edge landed NULL. getCallersOf/getCalleesOf add
+    //    `AND source_id = <scoped>` whenever a worktree pin / --source is in
+    //    play — NULL never matches, so scoped call-graph queries silently
+    //    returned 0 rows on multi-source brains even though the edges
+    //    existed. The write path now stamps `sourceId ?? 'default'`; this
+    //    backfill repairs rows written before the fix by deriving each
+    //    edge's source from its own from_chunk's page (pages.source_id is
+    //    NOT NULL DEFAULT 'default', so COALESCE is belt-and-braces only).
+    //
+    // 2. INDEXES: getCalleesOf filters BOTH edge tables on
+    //    from_symbol_qualified, which had no index anywhere — every callee
+    //    lookup was a sequential scan, amplified per-BFS-node by the
+    //    recursive code walk (one getCalleesOf per frontier node, up to
+    //    maxNodes). With NULL edges repaired, scoped walks actually expand,
+    //    so the latent seq-scan cost becomes real. Plain CREATE INDEX (not
+    //    CONCURRENTLY): edge tables are modest (mirrors the v58 resolver
+    //    index). Keep in sync with src/schema.sql.
+    idempotent: true,
+    sql: `
+      UPDATE code_edges_symbol e
+         SET source_id = COALESCE(p.source_id, 'default')
+        FROM content_chunks c
+        JOIN pages p ON p.id = c.page_id
+       WHERE c.id = e.from_chunk_id
+         AND e.source_id IS NULL;
+
+      UPDATE code_edges_chunk e
+         SET source_id = COALESCE(p.source_id, 'default')
+        FROM content_chunks c
+        JOIN pages p ON p.id = c.page_id
+       WHERE c.id = e.from_chunk_id
+         AND e.source_id IS NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_from_symbol
+        ON code_edges_symbol (from_symbol_qualified);
+
+      CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_from_symbol
+        ON code_edges_chunk (from_symbol_qualified);
+    `,
+  },
+  {
+    // Renumbered 116 -> 117 at merge: master's v0.42.41.0 triage wave
+    // claimed v116 (code_edges_source_backfill_and_callee_index) first.
+    version: 117,
+    name: 'context_volunteer_events_table',
+    // #2095 push-based context: feedback-loop log of every page the brain
+    // VOLUNTEERED (via the volunteer_context op, the retrieval-reflex pointer
+    // path, or `gbrain watch`). "Used" is derived later by joining
+    // pages.last_retrieved_at > volunteered_at — no second write path.
+    // session_id/turn are caller-supplied attribution (nullable). rationale is
+    // a deterministic template string, NEVER raw conversation text. Rows are
+    // pruned past 90 days by the dream cycle's purge phase
+    // (purgeStaleVolunteerEvents). No ::jsonb anywhere. RLS: covered by the
+    // v35 auto_rls_on_create_table event trigger on Postgres (same as
+    // v110/v115 tables); pinned by the volunteer-context Postgres e2e.
+    // Created empty; plain CREATE INDEX is instant — no CONCURRENTLY needed.
+    // Keep in sync with src/schema.sql, src/core/pglite-schema.ts,
+    // src/core/schema-embedded.ts.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS context_volunteer_events (
+        id             BIGSERIAL PRIMARY KEY,
+        source_id      TEXT NOT NULL,
+        slug           TEXT NOT NULL,
+        confidence     DOUBLE PRECISION NOT NULL,
+        match_arm      TEXT NOT NULL,
+        rationale      TEXT NOT NULL DEFAULT '',
+        channel        TEXT NOT NULL DEFAULT 'op',
+        session_id     TEXT,
+        turn           INTEGER,
+        volunteered_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS context_volunteer_events_src_time_idx
+        ON context_volunteer_events (source_id, volunteered_at DESC);
+      CREATE INDEX IF NOT EXISTS context_volunteer_events_src_slug_idx
+        ON context_volunteer_events (source_id, slug);
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -5524,6 +5608,26 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   const sorted = [...MIGRATIONS].sort((a, b) => a.version - b.version);
 
   const pending = sorted.filter(m => m.version > current);
+
+  // #2038: schema-drift self-heal. A migration renumbered during a master
+  // merge (v102 timeline dedup, originally v99) can be recorded-as-applied
+  // without its DDL ever running — the version counter can't see it. Repair
+  // the known drift on EVERY pass, including when nothing is pending (the
+  // affected brains are stamped AHEAD of the missing migration, so they never
+  // reach the loop below). Best-effort + idempotent: a no-op on a healthy
+  // index; `doctor` surfaces it independently if this ever fails.
+  try {
+    const { repairTimelineDedupIndex } = await import('./timeline-dedup-repair.ts');
+    const r = await repairTimelineDedupIndex(engine);
+    if (r.repaired) {
+      console.error(
+        `[migrate] healed idx_timeline_dedup drift (#2038): ${r.before.join(',') || '(absent)'} ` +
+        `→ page_id,date,summary,source` +
+        (r.collapsedDuplicates > 0 ? ` (collapsed ${r.collapsedDuplicates} duplicate row(s))` : ''),
+      );
+    }
+  } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
+
   if (pending.length === 0) {
     return { applied: 0, current };
   }

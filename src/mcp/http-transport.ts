@@ -34,6 +34,8 @@ import { VERSION } from '../version.ts';
 import { dispatchToolCall } from './dispatch.ts';
 import { buildDefaultLimiters, type RateLimiter } from './rate-limit.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
+import { parseLegacyTokenScope } from '../core/legacy-token-scope.ts';
+export { parseLegacyTokenScope };
 
 const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
 
@@ -84,28 +86,8 @@ interface AuthResult {
   auth?: AuthInfo;
 }
 
-/**
- * #1336: derive a legacy bearer token's source scope from its stored
- * `permissions.source_id`. An ARRAY value is a federated_read grant →
- * `allowedSources` (scoped reads across exactly those sources). A STRING value
- * scopes the scalar floor. Anything else → 'default' (preserves pre-v0.34
- * behavior). NEVER widened to "all": an empty/garbage value keeps the 'default'
- * floor and no federated grant.
- */
-export function parseLegacyTokenScope(rawSource: unknown): { sourceId: string; allowedSources?: string[] } {
-  if (Array.isArray(rawSource)) {
-    const allowedSources = (rawSource as unknown[]).filter(s => typeof s === 'string' && s.length > 0) as string[];
-    if (allowedSources.length > 0) {
-      // Scalar floor: the first granted source (write authority); reads span the array.
-      return { sourceId: allowedSources[0], allowedSources };
-    }
-    return { sourceId: 'default' };
-  }
-  if (typeof rawSource === 'string' && rawSource.length > 0) {
-    return { sourceId: rawSource };
-  }
-  return { sourceId: 'default' };
-}
+/* Legacy token source-scope parsing lives in core/legacy-token-scope.ts and is
+ * re-exported above so the legacy HTTP transport and OAuth provider cannot drift. */
 
 /** Read up to `cap` bytes off req.body. Returns null if cap exceeded. */
 async function readBodyWithCap(req: Request, cap: number): Promise<string | null> {

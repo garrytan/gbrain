@@ -13,7 +13,7 @@
  * envelope paths don't depend on DB state.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeEach } from 'bun:test';
 import {
   EMBEDDING_COST_PER_1K_TOKENS,
   estimateEmbeddingCostUsd,
@@ -21,9 +21,20 @@ import {
   shouldBlockSync,
 } from '../src/core/embedding.ts';
 import { lookupEmbeddingPrice } from '../src/core/embedding-pricing.ts';
+import { resetGateway } from '../src/core/ai/gateway.ts';
 import { estimateTokens } from '../src/core/chunkers/code.ts';
 
 describe('Layer 8 D1 — embedding cost model', () => {
+  // The estimateEmbeddingCostUsd tests assert the gateway-UNCONFIGURED OpenAI
+  // fallback ($0.13/Mtok). That fallback only fires when no gateway is
+  // configured — so guarantee that precondition rather than depending on
+  // ambient state. Without this, a sibling test file in the same shard that
+  // configured (and didn't reset) a cheaper model leaks its rate in here and
+  // these assertions flip (the legacy-embedding preload only restores when the
+  // gateway slot is EMPTY, so a non-empty foreign config survives).
+  beforeEach(() => resetGateway());
+
+
   test('EMBEDDING_COST_PER_1K_TOKENS back-compat constant is the OpenAI 3-large rate', () => {
     // Retained only for back-compat imports. Live cost math now resolves the
     // CONFIGURED model's rate via embedding-pricing.ts (see model-aware test

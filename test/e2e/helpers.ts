@@ -49,6 +49,9 @@ const ALL_TABLES = [
   'page_versions',
   'ingest_log',
   'files',
+  // v0.43 (#2095): volunteered-context feedback log — no FK to pages (slug
+  // join), but stale rows poison stats/count assertions across runs.
+  'context_volunteer_events',
   'pages',       // last because of foreign keys
   'config',
   'minion_attachments',
