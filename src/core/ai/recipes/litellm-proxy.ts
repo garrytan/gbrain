@@ -41,5 +41,9 @@ export const litellmProxy: Recipe = {
       supports_multimodal: true,
     },
   },
-  setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',
+  setup_hint:
+    'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>. ' +
+    'Path convention: vanilla LiteLLM serves /chat/completions at the host root (LITELLM_BASE_URL=http://host:port). ' +
+    'OpenAI-shaped proxies (codex-proxy, some Azure-OpenAI mirrors, third-party translators) serve /v1/chat/completions and require the /v1 suffix (LITELLM_BASE_URL=http://host:port/v1). ' +
+    'If chat dispatch returns 401 Unauthorized but `curl $LITELLM_BASE_URL/models` returns 200 with a valid bearer, the /v1 suffix is the missing piece.',
 };
