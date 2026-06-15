@@ -1,5 +1,10 @@
 # Incident Report: LSD Brainstorm 53× Cost Overrun
 
+> Status: HISTORICAL.
+> This incident report preserves root cause and remediation history. Use
+> [`../../CHANGELOG.md`](../../CHANGELOG.md), [`../GBRAIN_VERIFY.md`](../GBRAIN_VERIFY.md),
+> and [`../INSTALL.md`](../INSTALL.md) for current operational guidance.
+
 **Date:** 2026-05-20
 **Severity:** High (financial — $50.71 actual vs $0.96 estimated)
 **Component:** `gbrain lsd` / `gbrain brainstorm`

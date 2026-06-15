@@ -7,6 +7,11 @@ date: 2026-06-03
 
 # feat: Add idea-lineage thinking skill
 
+> Status: HISTORICAL.
+> This completed implementation plan is preserved for review context. Current
+> user-facing behavior lives in [`../../skills/idea-lineage/SKILL.md`](../../skills/idea-lineage/SKILL.md)
+> and routing authority lives in [`../../skills/RESOLVER.md`](../../skills/RESOLVER.md).
+
 ## Summary
 
 Add an `idea-lineage` thinking skill that traces how one idea has evolved through a user's brain: first mention, best articulation, related concepts, reversals, contradictions, abandoned branches, and the current live version. The contribution should start as a read-only skill with routing and conformance coverage, not as a new CLI or MCP operation.

@@ -1,5 +1,10 @@
 # Code Cathedral II — v0.20.0 Design
 
+> Status: HISTORICAL.
+> This design records the v0.20 code-search expansion plan. Verify current
+> architecture against [`../architecture/KEY_FILES.md`](../architecture/KEY_FILES.md)
+> and [`../architecture/RETRIEVAL.md`](../architecture/RETRIEVAL.md).
+
 **Status:** Accepted. CEO + Eng + 2 codex passes CLEARED (2026-04-24). 16 cross-model findings absorbed total: 7 codex pass 1 (structural prereqs) + 6 codex pass 2 (absorption errors including the CHUNKER_VERSION silent-no-op gate and inbound-edge invalidation) + 3 eng-review architectural decisions. DX review recommended post-Layer 8 (new CLI surfaces) before ship.
 **Supersedes:** Cathedral I (planned v0.18.0–v0.19.0 code indexing, shipped v0.19.0).
 **Mode:** SCOPE EXPANSION (user explicit: "I want the best code search in the world").

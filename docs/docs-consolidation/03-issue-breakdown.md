@@ -23,6 +23,7 @@ runtime commands.
 | [#9](https://github.com/TheAngryPit/gbrain/issues/9) | `docs/guides/mode-selection.md`, `README.md`, `docs/INSTALL.md`, `INSTALL_FOR_AGENTS.md`, `scripts/llms-config.ts`, `llms.txt`, `llms-full.txt` |
 | [#10](https://github.com/TheAngryPit/gbrain/issues/10) | `docs/INSTALL.md` |
 | [#11](https://github.com/TheAngryPit/gbrain/issues/11) | `docs/mcp/DEPLOY.md`, `SECURITY.md`, `docs/mcp/ALTERNATIVES.md`, `docs/architecture/thin-client.md`, `INSTALL_FOR_AGENTS.md`, `docs/mcp/CODEX.md`, `docs/mcp/CLAUDE_CODE.md`, `docs/mcp/CHATGPT.md`, `docs/mcp/PERPLEXITY.md`, `llms-full.txt` |
+| [#12](https://github.com/TheAngryPit/gbrain/issues/12) | `docs/docs-consolidation/07-status-label-application.md`, status banners in selected historical/design/proposal/incident/plan docs, `TODOS.md` |
 
 ## Published Issues
 

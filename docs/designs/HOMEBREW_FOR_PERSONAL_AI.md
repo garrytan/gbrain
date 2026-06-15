@@ -1,5 +1,10 @@
 # Homebrew for Personal AI Infrastructure
 
+> Status: DESIGN.
+> This page is a long-range product vision, not current setup guidance. Current
+> integration docs live in [`../integrations/README.md`](../integrations/README.md)
+> and the install path lives in [`../INSTALL.md`](../INSTALL.md).
+
 The 10-star vision for GBrain's integration system. Ship Approach B (v0.7.0),
 build toward this over subsequent releases.
 

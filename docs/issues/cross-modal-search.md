@@ -1,5 +1,11 @@
 # Cross-Modal Search: Text↔Image Retrieval
 
+> Status: SUPERSEDED_BY: `docs/architecture/RETRIEVAL.md`.
+> This issue writeup describes the pre-implementation problem and proposed
+> design. Current retrieval behavior lives in
+> [`../architecture/RETRIEVAL.md`](../architecture/RETRIEVAL.md) and
+> [`../architecture/KEY_FILES.md`](../architecture/KEY_FILES.md).
+
 ## Summary
 
 gbrain has a working multimodal embedding pipeline (Voyage multimodal-3, `embedding_image` column, 11K image chunks indexed) but search is siloed: text queries only search text embeddings, image queries don't exist. This proposal adds cross-modal query routing so text queries can surface images and image queries can surface text, using Voyage multimodal-3's shared embedding space.

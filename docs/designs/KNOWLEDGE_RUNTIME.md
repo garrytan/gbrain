@@ -1,5 +1,11 @@
 # GBrain Knowledge Runtime — Design Doc
 
+> Status: DESIGN.
+> This page captures a CEO-review design direction. Verify current behavior
+> against [`../architecture/KEY_FILES.md`](../architecture/KEY_FILES.md),
+> [`../architecture/RETRIEVAL.md`](../architecture/RETRIEVAL.md), and the
+> relevant command docs.
+
 **Status:** DRAFT for CEO review.
 **Date:** 2026-04-18.
 **Supersedes:** The earlier "Feynman Ideas Assessment + Phase A/B" plan.
