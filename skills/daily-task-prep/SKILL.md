@@ -32,7 +32,7 @@ This skill guarantees:
 
 1. **Load calendar.** Check today's meetings. For each: load attendee brain pages, recent timeline, open threads.
 2. **Check yesterday's threads.** Search brain for yesterday's timeline entries. Flag anything unresolved.
-3. **Review active tasks.** Load `ops/tasks` from brain. Surface P0 and P1 items.
+3. **Review active tasks.** Read `ops/tasks.md` from the workspace file system. Surface P0 and P1 items.
 4. **Compile prep briefing.** Per-meeting context cards + open threads + task priorities.
 
 ## Output Format

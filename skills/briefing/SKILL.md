@@ -65,12 +65,13 @@ Compile a daily briefing from brain context.
 3. **Time-sensitive threads.** Open items from timeline entries:
    - Items with deadlines in the next 48 hours
    - Follow-ups that are overdue
-4. **Recent changes.** Pages updated in the last 24 hours:
+4. **Explicit task list.** If `ops/tasks.md` exists in the workspace, read it directly and include open P0/P1 tasks under ACTION ITEMS. Do not query `ops/tasks` through gbrain; `ops/` is intentionally excluded from sync.
+5. **Recent changes.** Pages updated in the last 24 hours:
    - What changed and why (read timeline entries from gbrain)
-5. **People in play.** List person pages in gbrain sorted by recency:
+6. **People in play.** List person pages in gbrain sorted by recency:
    - Updated in last 7 days
    - Have high activity (many recent timeline entries)
-6. **Stale alerts.** From gbrain health check:
+7. **Stale alerts.** From gbrain health check:
    - Pages flagged as stale that are relevant to today's meetings
 
 ## GBrain-Native Context Loading
