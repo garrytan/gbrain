@@ -239,6 +239,12 @@ const PHASE4_STOPLIST: ReadonlySet<string> = new Set([
   // 2026-04-29 fourth pass — remaining role/geo noise.
   "software engineer", "sales engineer", "key account manager",
   "san francisco",
+  // 2026-06-15 — doc/boilerplate + geo labels that rose to the top of the
+  // gap list once the TP-Link footer entities (truncated names + office
+  // addresses) were removed by the regex + existence-check fixes.
+  "user guide", "privacy policy", "release notes", "terms of service",
+  "project progress report", "support team", "product development team",
+  "data sheet", "kuala lumpur", "context feature", "context tp-link",
 ]);
 
 /**
@@ -257,7 +263,18 @@ const PHASE4_STOPLIST: ReadonlySet<string> = new Set([
  */
 function phase4(pages: Page[]): Gap[] {
   const counts = new Map<string, { count: number; pages: Set<string>; kinds: Set<string> }>();
-  const re = /\b([A-Z][a-zA-Z]{2,}(?:\s[A-Z][a-zA-Z]{2,}){1,3})\b/g;
+  // A "word" is a capitalized token (≥3 chars) that may carry a short
+  // all-caps hyphen prefix ("TP-Link") and/or hyphenated continuations
+  // ("Cloud-Based"). The old pattern `[A-Z][a-zA-Z]{2,}` required ≥3 letters
+  // per word and broke on hyphens, so it dropped the "TP-" from "TP-Link
+  // Systems Inc" and surfaced a phantom "Link Systems Inc" gap, split
+  // "Cloud-Based Controller" into "Based Controller", etc. (2026-06-15 fix).
+  const WORD = String.raw`(?:[A-Z][A-Za-z]?-)?[A-Z][a-zA-Z]{2,}(?:-[A-Za-z]{2,})*`;
+  // Words are joined by HORIZONTAL whitespace only ([ \t]+, not \s+). An
+  // entity name does not span a line break — Notion template "label\nvalue"
+  // pairs ("Designer\nTP-LINK SYSTEMS INC", "Context\nFeature") were gluing
+  // into phantom multi-word entities under the old \s connector (2026-06-15).
+  const re = new RegExp(String.raw`\b(${WORD}(?:[ \t]+${WORD}){1,3})\b`, "g");
   for (const p of pages) {
     // skip frontmatter
     const body = p.body.replace(/^---\n[\s\S]*?\n---/, "");
@@ -265,7 +282,8 @@ function phase4(pages: Page[]): Gap[] {
     const seen = new Set<string>();
     let m: RegExpExecArray | null;
     while ((m = re.exec(body)) !== null) {
-      const name = m[1].trim();
+      // Tidy any stray runs of horizontal whitespace to a single space.
+      const name = m[1].replace(/\s+/g, " ").trim();
       if (seen.has(name)) continue;
       seen.add(name);
       const slot = counts.get(name) ?? { count: 0, pages: new Set(), kinds: new Set() };
@@ -276,20 +294,41 @@ function phase4(pages: Page[]): Gap[] {
     }
   }
 
+  // Suffix-stripping normalizer for the existence check. The old check
+  // compared raw lowercase only, so "Lianzhou International" never matched
+  // the existing companies/lianzhou-international-co-ltd page (title ends
+  // "...Co Ltd") and "TP-Link Canada Inc" never matched companies/tp-link-
+  // canada. Strip company suffixes + non-alphanumerics on BOTH sides so a
+  // mention resolves to an existing entity page regardless of legal-suffix
+  // and punctuation drift (2026-06-15 fix).
+  const ENTITY_SUFFIX_RE = /\b(inc|llc|ltd|corp|co|company|corporation|gmbh|sa|sarl|srl|bv|ab|pty|limited|coltd|pte|sdn|bhd|nv|oy)\b/g;
+  const normEntity = (s: string): string =>
+    s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(ENTITY_SUFFIX_RE, " ")
+      .replace(/\s+/g, " ").trim();
+
   const knownTitles = new Set<string>();
   const knownSlugTails = new Set<string>();
+  const knownNorm = new Set<string>();
   for (const p of pages) {
-    if (p.title) knownTitles.add(p.title.toLowerCase());
+    if (p.title) { knownTitles.add(p.title.toLowerCase()); knownNorm.add(normEntity(p.title)); }
     const tail = p.slug.split("/").pop()?.replace(/-/g, " ").toLowerCase();
-    if (tail) knownSlugTails.add(tail);
+    if (tail) { knownSlugTails.add(tail); knownNorm.add(normEntity(tail)); }
     // Also suppress all frontmatter aliases — 2026-05-14 fix:
     // aliases like "Link Systems Inc" / "Peters Canyon" / "Link Canada Inc"
     // were registered in entity page frontmatter but phase4 never read them,
     // causing known-entity variants to surface as gaps every patrol run.
     if (p.aliases) {
-      for (const a of p.aliases) knownTitles.add(a.toLowerCase());
+      for (const a of p.aliases) { knownTitles.add(a.toLowerCase()); knownNorm.add(normEntity(a)); }
     }
   }
+
+  // Street-address and job-title tails are not entities. "5 Peters Canyon
+  // Road", "Fulton Way", "Richmond Hill" are office addresses (lifted from
+  // email-footer boilerplate); "GTM Manager", "Product Line Manager",
+  // "Technical Support Engineer", "Product Department" are roles. Both
+  // classes flooded the 2026-06-15 dashboard. (2026-06-15 fix.)
+  const ADDRESS_TAIL_RE = /\b(road|rd|street|st|avenue|ave|way|canyon|hill|drive|dr|boulevard|blvd|lane|ln|court|ct|plaza|square|suite|floor)$/;
+  const TITLE_TAIL_RE = /\b(manager|engineer|engineering|department|director|officer|lead|specialist|coordinator|consultant|analyst|representative|executive|administrator|supervisor|assistant)$/;
 
   const gaps: Gap[] = [];
   for (const [name, { count, pages: ps, kinds }] of counts) {
@@ -297,7 +336,9 @@ function phase4(pages: Page[]): Gap[] {
     if (kinds.size < 2) continue; // single-kind hits are almost always Notion noise
     const lower = name.toLowerCase();
     if (PHASE4_STOPLIST.has(lower)) continue;
+    if (ADDRESS_TAIL_RE.test(lower) || TITLE_TAIL_RE.test(lower)) continue;
     if (knownTitles.has(lower) || knownSlugTails.has(lower)) continue;
+    if (knownNorm.has(normEntity(name))) continue;
     gaps.push({ entity: name, mentions: count, sample_pages: [...ps].slice(0, 3) });
   }
   gaps.sort((a, b) => b.mentions - a.mentions);

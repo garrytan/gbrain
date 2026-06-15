@@ -1,5 +1,55 @@
 # kos-jarvis — Outstanding Work (post v0.42.42.0 sync, 2026-06-14)
 
+> **Maintenance 2026-06-15** (KB health review, no sync): brain at **24,330
+> pages** (mailagent-emails 11,088 / default 9,991 / omada 3,099 / gbrain-docs
+> 147), vectors **52,755 chunks / 0 NULL / single-model te3@1536**.
+> Four items this session:
+> 1. **zembed cosmetic relabel** — 226 freshly-ingested chunks (today's
+>    `sources/loop-engineering-orange-book-en` + daily mailagent writes) were
+>    mislabeled `zeroentropyai:zembed-1`; verified 1536-d unit-norm (= real te3
+>    via avman, the §6.32 papercut), applied the documented `UPDATE
+>    content_chunks SET model='openai:text-embedding-3-large'`. Brain back to
+>    single-model. **Recurs on every new ingest** — candidate for a kos-patrol
+>    nightly auto-relabel step (P3).
+> 2. **Synthesis layer is healthy + drained**: atoms 6,047 (default 4,394 +
+>    omada 1,653), 6,042/6,047 carry the `concepts` field (PR #2124 + bridge
+>    skill landed). `extract_atoms` has skipped "no pages to process" since
+>    06-13 = eligible backlog exhausted (remaining are P2 0-yield email
+>    threads). `synthesize_concepts` current: 06-13/06-14 both `ok — 2258
+>    concepts (T1=177 T2=271 T3=1810)`. 4,329 concept pages total.
+> 3. **`extract_facts` still permanently skipped and growing**: "242 legacy
+>    v0.31 facts pending" (was 79 @ §6.34) — all `source='mcp:put_page'` omada-
+>    sentiment dailies that lack `row_num`; the cycle guard treats them as
+>    legacy. Still waiting on the upstream issue (P1 §2026-06-09 item 3). The
+>    brain's own per-page fact extraction remains dark until then.
+> 4. **kos-patrol phase4 gap detector rewritten** (`kos-patrol/run.ts`). The
+>    daily `## Gaps` list was ~85% NER garbage: "Link Systems Inc" (3710, =
+>    truncated "TP-Link Systems Inc" — regex dropped the "TP-" hyphen prefix),
+>    "Peters Canyon"/"Peters Canyon Road"/"Fulton Way"/"Richmond Hill" (office
+>    addresses), "GTM Manager"/"Product Line Manager"/"Technical Support
+>    Engineer" (job titles), "Lianzhou International"/"Link Canada" (already
+>    have company pages but the exact-match existence check missed them),
+>    "Omada\nController" (newline-split span). Three fixes: (a) regex now
+>    captures hyphenated brand tokens (`TP-Link`, `Cloud-Based`) and joins on
+>    horizontal whitespace only so spans don't cross line breaks; (b) existence
+>    check normalizes both sides (strip legal suffixes incl. Sdn/Bhd) so a
+>    mention resolves to an existing entity page despite suffix/punct drift;
+>    (c) address-tail + job-title-tail + doc-boilerplate filters. Post-fix the
+>    20-slot list is dominated by real entities (Niko Wang, MCMC JENDELA, DHCP
+>    Option, Access Point, Vendor-Specific Attributes…). typecheck clean,
+>    patrol exit 0. Thin tail of generic terms (The Omada / Action Items /
+>    Microsoft Teams Meeting) remains — stoplist incrementally per the code
+>    comment. **NOTE the dashboard "Next action" still says "enrich-sweep →
+>    stubs"; do NOT bulk-convert gaps to stubs without eyeballing — the list is
+>    cleaner now but a coarse regex signal, not a vetted entity set.**
+> 5. **Takes calibration cold-start**: 216 pending take_proposals (holder=brain
+>    203), 0 accepted/resolved → `calibration_profile` can't run (needs ≥5
+>    resolved). Digest written to `~/brain/.agent/reports/takes-review-2026-06-15.md`
+>    for Lucien's accept/reject pass. Weights skew low (only 3 ≥0.8) — expected
+>    cold-start, not a quality issue. **Needs human action, not tokens.**
+>
+> ---
+>
 > **Updated 2026-06-14**: v0.42.42.0 upstream sync landed (5 commits,
 > v0.42.37.0 → v0.42.42.0, 112 files / +6739 / −538 LoC). Story in
 > `docs/JARVIS-ARCHITECTURE.md` §6.35. **3 merge conflicts** (the
