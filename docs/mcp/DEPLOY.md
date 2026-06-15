@@ -33,9 +33,11 @@ No server, no tunnel, no token needed. Works on both PGLite and Postgres engines
 ### Remote over OAuth 2.1 (recommended, v0.26.0+)
 
 ```bash
-gbrain serve --http --port 3131
+# Remote-host shape: accept non-loopback traffic and publish the issuer clients use.
+gbrain serve --http --port 3131 \
+  --bind 0.0.0.0 \
+  --public-url https://your-brain.ngrok.app
 ngrok http 3131 --url your-brain.ngrok.app
-gbrain serve --http --port 3131 --public-url https://your-brain.ngrok.app
 ```
 
 Built-in HTTP transport with OAuth 2.1, scoped operations, an admin dashboard
@@ -47,9 +49,14 @@ discovery metadata matches what clients hit (RFC 8414 §3.3).
 
 Supported clients:
 - **ChatGPT** — requires OAuth 2.1 + PKCE. Works natively with `--http`.
-- **Claude Desktop / Cowork** — OAuth 2.1 or legacy bearer tokens.
+- **Claude Desktop** — add the remote connector through Settings >
+  Integrations. The current client guide documents bearer-token setup.
+- **Cowork** — use the remote MCP settings exposed by the client; bearer-token
+  setup is documented in the client guide.
 - **Perplexity** — OAuth 2.1 client credentials grant.
-- **Claude Code, Cursor, Windsurf** — can use OAuth or legacy bearer.
+- **Claude Code, Codex, Cursor, Windsurf, and other coding agents** — use the
+  matching client page. The GBrain server supports OAuth and legacy bearer
+  tokens, but each client has its own supported connector/auth shape.
 
 See the OAuth 2.1 setup section below.
 
@@ -77,7 +84,8 @@ and least-privilege deployments, register OAuth clients instead.
 ### 1. Start the HTTP server
 
 ```bash
-gbrain serve --http --port 3131
+gbrain serve --http --port 3131 \
+  --public-url https://your-brain.ngrok.app
 ```
 
 On first start, the server prints an **admin bootstrap token** to stderr:
@@ -90,6 +98,11 @@ Open http://localhost:3131/admin and paste it to log in.
 Save this token. Open `http://localhost:3131/admin` and paste it to access the
 dashboard. The dashboard shows live activity, registered clients, request logs,
 and per-client config export.
+
+For local-only OAuth testing, omit `--public-url` and use
+`http://localhost:3131` as the issuer. For any public tunnel, reverse proxy, or
+cloud MCP client, set `--public-url` to the exact external URL before
+registering clients.
 
 > **v0.26.9+:** `mcp_request_log.params` and the live SSE activity feed default
 > to a redacted summary `{redacted, kind, declared_keys, unknown_key_count, approx_bytes}`.
@@ -158,16 +171,17 @@ start the server with `--enable-dcr`. DCR is off by default.
 ### 3. Expose the server
 
 **v0.34 — bind explicitly.** `gbrain serve --http` defaults to `127.0.0.1`.
-To accept connections from the ngrok tunnel (or any non-loopback source),
-restart with `--bind`:
+To accept connections from a reverse proxy, mesh, LAN, or tunnel process that is
+not on the same host, restart with `--bind`:
 
 ```bash
 gbrain serve --http --port 3131 --bind 0.0.0.0 --public-url https://your-brain.ngrok.app
 ```
 
-When `--public-url` is set without `--bind`, a stderr WARN fires at
-startup so the misconfiguration ("the tunnel is up but my agent gets
-ECONNREFUSED") is loud.
+When `--public-url` is set without `--bind`, a stderr WARN fires at startup
+because public deployments usually need an explicit network boundary. A
+same-machine tunnel can still use loopback; if the tunnel cannot reach the
+server, use the bound form above.
 
 ```bash
 brew install ngrok

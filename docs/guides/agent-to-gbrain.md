@@ -45,7 +45,8 @@ the set of ops in `src/core/operations.ts` whose `localOnly` flag is unset
 The host runs gbrain as a long-lived HTTP server:
 
 ```bash
-GBRAIN_ALLOW_SHELL_JOBS=1 gbrain serve --http --port 3131
+gbrain serve --http --port 3131 \
+  --public-url https://brain-host.example.com
 ```
 
 The agent registers as an OAuth client (one-time):
@@ -53,13 +54,16 @@ The agent registers as an OAuth client (one-time):
 ```bash
 gbrain auth register-client hermes \
   --grant-types client_credentials \
-  --scopes read,write
+  --scopes "read write"
 # Prints client_id + client_secret one-time. Store securely.
 ```
 
 The agent's runtime calls `/mcp` with a bearer token from `client_credentials`
 grant. Secrets stay in the gbrain serve process; the agent never sees
 DATABASE_URL or API keys.
+
+If the server accepts non-loopback traffic directly, add `--bind 0.0.0.0`.
+For local-only testing, omit `--public-url` and use `http://localhost:3131`.
 
 Thin-client mode (`gbrain init --mcp-only`) gives the agent the same
 client-credentials wiring, plus the `gbrain` CLI itself routes MCP-eligible
@@ -90,14 +94,16 @@ list (as of v0.36.5.0) includes:
 - `init` (creates `~/.gbrain/`)
 - `secrets` (config management)
 
-For these, the agent cannot route through HTTP MCP. The only path is to run
-`gbrain` as a CLI subprocess. The recommended pattern is to submit the
-subprocess as a shell job to the gbrain Minions worker so retry / backoff /
-DLQ / audit trail all come for free.
+For these, the agent cannot route through HTTP MCP. Current `submit_job` rejects
+protected names such as `shell` from remote MCP callers even when the worker has
+`GBRAIN_ALLOW_SHELL_JOBS=1`. The supported path is a trusted host-side CLI
+submission that runs `gbrain` as a subprocess. Use a shell job when you want
+retry, backoff, DLQ, and audit trail instead of an ad-hoc process launch.
 
 ### Setup
 
 ```bash
+# Run this on the trusted brain host, not through HTTP MCP.
 gbrain jobs submit shell --params '{
   "cmd": "gbrain sync --skip-failed && gbrain embed --stale",
   "cwd": "/data/gbrain",

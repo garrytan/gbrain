@@ -7,22 +7,24 @@ instead. That file has extra stop-and-ask gates for agent-run installs.
 Current version: [`../VERSION`](../VERSION). Release history:
 [`../CHANGELOG.md`](../CHANGELOG.md).
 
-## Start with the right shape
+## Choose your install route
 
-Pick the operating model, then the deployment topology, before you run install
-commands. The branchable decision trees live in
+Do not read this document as one linear script. Pick one route first, follow that
+route end to end, then use the reference sections for details.
+
+| Route | Use when | Follow |
+|---|---|---|
+| A. Local personal brain | One person, one machine, first install, local coding-agent memory | [Route A](#route-a-local-personal-brain-end-to-end) |
+| B. Personal multi-source brain | One owner, many repos/domains in one database | [Route B](#route-b-personal-multi-source-brain-end-to-end) |
+| C. Thin client | This machine should consume a remote hosted brain only | [Route C](#route-c-thin-client-end-to-end) |
+| D. Shared group or production brain | Family, household, team, company, or any install exposed to more than one client | [Route D](#route-d-shared-group-or-production-brain-end-to-end) |
+| E. Advanced topology modifier | Split-engine/worktree, mounted/cross-team brains, or security-driven isolation | [Route E](#route-e-advanced-topology-modifiers) |
+
+Before choosing a route, separate the operating model from the deployment
+topology. The branchable decision trees live in
 [`architecture/topologies.md#operating-model-decision-tree`](architecture/topologies.md#operating-model-decision-tree)
 and
 [`architecture/topologies.md#deployment-topology-decision-tree`](architecture/topologies.md#deployment-topology-decision-tree).
-
-| If you want | Start here | Why |
-|---|---|---|
-| A personal brain on one machine | [Local install](#local-install) | PGLite is the zero-config default and works well for solo use. |
-| A personal brain with many repos or sources | [Local install](#local-install), then [brain repo and sources](#brain-repo-and-sources) | One brain can hold many sources. Use source routing instead of creating extra databases. |
-| A team, family, household, or company brain | [Production and shared-brain branch](#production-and-shared-brain-branch) | Shared use needs a single-agent vs auth-scoped choice, plus backups and a remote MCP plan when exposed. |
-| A laptop or agent that should consume a remote brain only | [Thin-client branch](#thin-client-branch) | The local machine gets MCP config, not a local database. |
-| Per-worktree code brains plus a shared artifact brain | [`architecture/topologies.md#deployment-topology-decision-tree`](architecture/topologies.md#deployment-topology-decision-tree) | Split-engine setups need explicit `GBRAIN_HOME` and MCP alias discipline. |
-| A solo user with agent-isolation or cloud-client security needs | [`architecture/topologies.md#deployment-topology-decision-tree`](architecture/topologies.md#deployment-topology-decision-tree) | Solo ownership can still need thin-client, split-engine, or isolated homes. |
 
 Two concepts matter throughout:
 
@@ -30,6 +32,149 @@ Two concepts matter throughout:
   [`architecture/brains-and-sources.md`](architecture/brains-and-sources.md).
 - A **source** is a named repo of content inside a brain. One brain can hold
   many sources.
+
+## Route A. Local personal brain, end to end
+
+Use this for the first install and for a local coding-agent memory.
+
+1. Install the CLI with [Install GBrain](#install-gbrain).
+2. Initialize the local database with [Local install](#local-install).
+3. Pick a retrieval cost/recall posture in [Choose search mode](#choose-search-mode).
+4. Configure model provider keys only if you need semantic search, reranking,
+   `think`, or maintenance flows. See
+   [Configure providers and keys](#configure-providers-and-keys).
+5. Create or choose the Markdown brain repo described in
+   [Brain repo and sources](#brain-repo-and-sources).
+6. Load content and keep it fresh with
+   [Import, sync, and operate](#import-sync-and-operate).
+7. Connect the local agent over stdio MCP with
+   [Connect an agent](#connect-an-agent).
+8. Prove the install with [Verify](#verify).
+
+Minimum command shape:
+
+```bash
+curl -fsSL https://bun.sh/install | bash
+export PATH="$HOME/.bun/bin:$PATH"
+bun install -g github:garrytan/gbrain
+gbrain --version
+gbrain init --pglite
+gbrain doctor --json
+gbrain search modes
+gbrain import ~/brain --no-embed
+gbrain search "<known term from your brain>"
+```
+
+After provider keys are configured, add embeddings:
+
+```bash
+gbrain embed --stale
+gbrain query "key themes across these documents?"
+```
+
+If you are wiring Claude Code or Codex on the same machine, add:
+
+```bash
+claude mcp add gbrain -- gbrain serve
+codex mcp add gbrain -- gbrain serve
+```
+
+## Route B. Personal multi-source brain, end to end
+
+Use this when one person owns the brain, but the brain spans several repos,
+domains, or work areas.
+
+1. Complete [Route A](#route-a-local-personal-brain-end-to-end) through local
+   initialization.
+2. Keep one database unless the data owner, lifecycle, or access policy changes.
+3. Add each repo/domain as a source in
+   [Brain repo and sources](#brain-repo-and-sources).
+4. Add `.gbrain-source` in source checkouts that should default to a specific
+   source.
+5. Sync and verify each source independently with
+   [Import, sync, and operate](#import-sync-and-operate) and [Verify](#verify).
+
+Minimum source-routing shape:
+
+```bash
+gbrain sources add notes --path ~/brain-notes
+gbrain sources add work --path ~/work-brain
+gbrain sync --repo ~/brain-notes
+gbrain sync --repo ~/work-brain
+gbrain search "<known term>" --source notes
+```
+
+## Route C. Thin client, end to end
+
+Use this when the brain already lives on a remote host and this machine should
+only consume it. Do not run the local init, sync, embed, migrate, or serve steps
+from Route A on a thin client.
+
+1. Confirm the host operator has deployed HTTP MCP and registered an OAuth
+   client. Use [mcp/DEPLOY.md](mcp/DEPLOY.md) for host-side mechanics.
+2. Install the CLI with [Install GBrain](#install-gbrain) if `gbrain` is not
+   already available on this machine.
+3. Initialize the local config as MCP-only with
+   [Thin-client branch](#thin-client-branch).
+4. Verify remote health with `gbrain doctor`, `gbrain remote ping`, and
+   `gbrain remote doctor` when the client has the required admin scope.
+5. Let local agents call the thin-client `gbrain` CLI directly, or point their
+   MCP config at the host's `/mcp` URL using [`mcp/DEPLOY.md`](mcp/DEPLOY.md)
+   and the client-specific pages under [`mcp/`](mcp/). Do not configure local
+   stdio MCP with `gbrain serve` on the thin client.
+
+Client-side command shape:
+
+```bash
+gbrain init --mcp-only \
+  --issuer-url https://brain-host.example.com \
+  --mcp-url https://brain-host.example.com/mcp \
+  --oauth-client-id <id> \
+  --oauth-client-secret <secret>
+gbrain doctor
+gbrain remote ping
+```
+
+## Route D. Shared group or production brain, end to end
+
+Use this for a family brain, household brain, team brain, company brain, or any
+install exposed to more than one client. This route starts with design choices,
+not local commands.
+
+1. Choose the operating model and deployment topology in
+   [Production and shared-brain branch](#production-and-shared-brain-branch).
+2. Choose Postgres or Supabase for shared, multi-machine, or remote HTTP use.
+3. Define the brain repo and source layout before importing data. See
+   [Brain repo and sources](#brain-repo-and-sources) and
+   [`architecture/brain-repo-layout.md`](architecture/brain-repo-layout.md).
+4. Configure provider keys and base URLs with
+   [Configure providers and keys](#configure-providers-and-keys).
+5. Expose MCP deliberately and scope clients before handoff. See
+   [Production and shared-brain branch](#production-and-shared-brain-branch)
+   and [`mcp/DEPLOY.md`](mcp/DEPLOY.md).
+6. Back up the Markdown repos, database, config, OAuth inventory, and routing
+   files, then prove restore.
+7. Verify production health and remote clients with the checklist in
+   [Production and shared-brain branch](#production-and-shared-brain-branch).
+
+Do not hand a production/shared brain to agents until the chosen sync path,
+OAuth scope model, backup/restore path, and remote MCP smoke test are proven.
+
+## Route E. Advanced topology modifiers
+
+These are modifiers on top of Routes A-D, not replacements for choosing an
+operating model:
+
+- Split-engine/worktree: separate local homes or MCP aliases for per-worktree
+  code brains plus a shared artifact brain. Start with
+  [`architecture/topologies.md#deployment-topology-decision-tree`](architecture/topologies.md#deployment-topology-decision-tree).
+- Mounted/cross-team brains: add another governed brain beside the host brain.
+  Start with
+  [`architecture/topologies.md#topology-mounted-cross-team-brains`](architecture/topologies.md#topology-mounted-cross-team-brains).
+- Security-driven isolation: choose thin client, split homes, source scoping, or
+  mounted brains because of agent isolation, cloud-client exposure, or data
+  boundary requirements. Start with
+  [`architecture/topologies.md#topology-modifier-security-driven-isolation`](architecture/topologies.md#topology-modifier-security-driven-isolation).
 
 ## Install GBrain
 
@@ -253,13 +398,18 @@ codex mcp add gbrain -- gbrain serve
 ```
 
 This uses stdio MCP. It needs no token, no tunnel, and no HTTP server.
+Do not use this path on a thin-client install; thin-client homes have no local
+database and refuse `serve`.
 
-For an agent that connects to a remote brain:
+For an agent that connects to a remote brain with a bearer token:
 
 ```bash
 gbrain connect https://your-host/mcp --token gbrain_xxx --install
 gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex --install
 ```
+
+For OAuth remote clients, use [`mcp/DEPLOY.md`](mcp/DEPLOY.md) and the
+client-specific pages under [`mcp/`](mcp/) instead of the local stdio command.
 
 Full walkthrough:
 [`tutorials/connect-coding-agent.md`](tutorials/connect-coding-agent.md).
@@ -282,6 +432,11 @@ gbrain init --mcp-only \
 Thin-client installs refuse DB-bound commands such as local sync, embed,
 migrate, and serve. `gbrain doctor` runs remote-MCP checks instead. See
 [`architecture/topologies.md`](architecture/topologies.md).
+
+Agents running on the thin-client machine can either call `gbrain search`,
+`gbrain query`, and other MCP-eligible CLI commands directly, or connect their
+own MCP client to the remote host's `/mcp` endpoint. They should not launch a
+local `gbrain serve` process from the thin-client home.
 
 ## Production and shared-brain branch
 

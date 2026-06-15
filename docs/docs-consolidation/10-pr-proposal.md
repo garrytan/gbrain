@@ -21,6 +21,8 @@ The branch:
 - makes README a router with current version, human install, agent install,
   production, architecture, and LLM entrypoints;
 - rebuilds `docs/INSTALL.md` as the Human Operational Center;
+- adds route-based install journeys for local personal, personal multi-source,
+  thin-client, shared/production, and advanced topology setups;
 - updates `INSTALL_FOR_AGENTS.md` as the Agent Operational Center;
 - separates operating models from deployment topologies;
 - adds a central Brain Repo Layout guide;
@@ -29,6 +31,16 @@ The branch:
 - adds a production/shared-brain path and checklist;
 - aligns MCP/auth/remote/thin-client docs with current OAuth/scopes/localOnly
   behavior;
+- corrects OAuth scope examples to the current space-separated CLI contract and
+  documents the protected-onboard OAuth limitation without promising an
+  ungrantable scope;
+- adds `--public-url` guidance where remote OAuth clients use a public issuer
+  URL;
+- clarifies that protected shell jobs are trusted host-side CLI submissions,
+  not remote MCP operations;
+- keeps thin-client agent guidance off local stdio `gbrain serve`;
+- limits mounted-brain examples to currently supported `gbrain mounts`
+  management commands;
 - labels selected historical/design/superseded docs;
 - removes or qualifies brittle skill/test/generated-map count claims;
 - regenerates `llms.txt` and `llms-full.txt` where their source changed;
@@ -63,6 +75,14 @@ The branch:
   compose, or runtime config changes.
 - `bun test test/build-llms.test.ts` passed after materializing locked
   dependencies locally with `bun install --frozen-lockfile --ignore-scripts`.
+- Follow-up review used `openclaw-autoreview`, the Thermos review pattern,
+  CodeGraph, and the existing `understand-anything` graph. Accepted findings
+  were patched in README, `docs/INSTALL.md`, topology docs, agent docs, and
+  consolidation artifacts, including follow-up OAuth issuer/public URL fixes
+  and remote-MCP versus trusted-host shell-job corrections.
+- The existing `understand-anything` graph is architecture context from commit
+  `416f2ae29788a16cba1b20fb33ccf05a4eb665c1`; current CLI/auth claims were
+  verified with CodeGraph against on-disk source.
 
 ### Proof Limits
 

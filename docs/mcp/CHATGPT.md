@@ -12,14 +12,20 @@ For HTTP MCP protocol, engine, OAuth, scope, and `localOnly` rules, use
 
 ## Setup
 
-### 1. Start the HTTP server
+### 1. Choose the public URL and start the HTTP server
 
 ```bash
-gbrain serve --http --port 3131
+gbrain serve --http --port 3131 \
+  --public-url https://your-brain.ngrok.app
 ```
 
 Save the admin bootstrap token printed on stderr. Open
 `http://localhost:3131/admin` and paste it to access the dashboard.
+
+`--public-url` is the OAuth issuer URL ChatGPT will discover. If ngrok assigns a
+different URL, restart `gbrain serve` with that exact URL before connecting
+ChatGPT. Keep the default loopback bind when ngrok runs on the same machine; add
+`--bind 0.0.0.0` only when a tunnel or reverse proxy connects from another host.
 
 ### 2. Register a ChatGPT client
 

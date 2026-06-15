@@ -15,13 +15,18 @@ compatibility; see
 # 1. Install ngrok
 brew install ngrok
 
-# 2. Start the built-in HTTP transport
-gbrain serve --http --port 8787
+# 2. Start the built-in HTTP transport with the public issuer URL
+gbrain serve --http --port 8787 \
+  --bind 0.0.0.0 \
+  --public-url https://your-brain.ngrok.app
 # See docs/mcp/DEPLOY.md for token setup
 
 # 3. Expose via ngrok
 ngrok http 8787 --url your-brain.ngrok.app
 ```
+
+If ngrok gives you an ephemeral URL, restart `gbrain serve` with that exact
+`--public-url` before registering OAuth clients or connecting cloud MCP clients.
 
 See the [ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md) for full setup
 including auth token configuration and fixed domain setup.

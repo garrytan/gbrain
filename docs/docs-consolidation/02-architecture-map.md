@@ -22,9 +22,9 @@ out-of-repo `.env` files were inspected. No `gbrain` commands were run.
 
 ## Method
 
-The second pass used the installed skill at:
-
-- `/Users/vitorcepedalopes/.understand-anything/repo/understand-anything-plugin/skills/understand/SKILL.md`
+The second pass used the installed `understand-anything` `understand` skill.
+The host-local skill path is intentionally omitted from this upstream-facing
+handoff artifact.
 
 The installed skill scripts were used for:
 

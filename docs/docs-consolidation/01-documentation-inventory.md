@@ -1,6 +1,6 @@
 # Documentation Inventory
 
-Status: docs-only inventory for upstream PR preparation
+Status: frozen baseline inventory for upstream PR preparation
 
 Baseline reviewed: `docs/docs-consolidation/00-upstream-base.md`
 
@@ -11,7 +11,8 @@ Current upstream version reviewed: `0.42.44.0`
 ## Scope
 
 This inventory describes the documentation reality in the upstream GBrain
-checkout. It is intentionally limited to repository files.
+checkout at the pinned baseline before the consolidation edits in this branch.
+It is intentionally limited to repository files.
 
 No local Nexus runtime, local brain home, local corpus path, runtime configs,
 or out-of-repo environment files were inspected. No GBrain runtime commands,
@@ -25,12 +26,15 @@ Generated and execution artifacts:
 - `docs/docs-consolidation/05-current-capabilities-ledger.md`
 - `docs/docs-consolidation/06-documentation-status-taxonomy.md`
 
-The manifest lists every documentation-like file found by the metadata pass:
-path, area, role, line count, byte count, and first H1.
+The manifest lists every documentation-like file found by the baseline metadata
+pass: path, area, role, line count, byte count, and first H1. Treat those line
+counts and H1 values as a frozen pre-consolidation snapshot, not as live metadata
+after later branch edits such as the rewrite of `docs/INSTALL.md`.
 
 The architecture map records the installed Understand / CodeGraph / subagent
 analysis used to connect documentation drift back to repository code and
-manifests.
+manifests. These `docs/docs-consolidation/*` files are review and handoff
+artifacts, not canonical public product docs.
 
 The current-capabilities ledger maps the current release window from
 `CHANGELOG.md` into documentation obligations. The status taxonomy defines the
@@ -345,7 +349,7 @@ The smallest coherent PR should avoid rewriting the docs system. It should:
 | Claim | Proof level | Evidence |
 |---|---|---|
 | `00-upstream-base.md` was reviewed | code_proven | Direct file read |
-| Inventory covers documentation-like files in the checkout | code_proven | `01-documentation-manifest.tsv` has 350 rows generated from the refreshed `understand-anything` scan metadata |
+| Inventory covers documentation-like files in the baseline checkout | code_proven | `01-documentation-manifest.tsv` has 350 rows generated from the refreshed `understand-anything` scan metadata; it is a frozen pre-consolidation snapshot |
 | Test fixture docs are separated from public docs | code_proven | Manifest role column marks test and fixture support paths |
 | Installed Understand refresh completed | code_proven | `.understand-anything/knowledge-graph.json` has 13,660 nodes, 17,749 edges, 9 layers, and 6 tour steps at branch commit `416f2ae29788a16cba1b20fb33ccf05a4eb665c1` |
 | Understand graph reference validation has no broken refs | code_proven | Fresh validation found 0 broken edge, layer, or tour references; `.understand-anything/fingerprints.json` covers 2,537 files |
@@ -370,5 +374,6 @@ The smallest coherent PR should avoid rewriting the docs system. It should:
   numeric skill counts from broad entrypoints entirely?
 - Should historical design docs receive a lightweight status banner, or should
   only entrypoints and known conflicts be patched in the first PR?
-- Should `docs/INSTALL.md` remain a standalone reference, or become a shorter
-  router to `INSTALL_FOR_AGENTS.md`, tutorials, and MCP pages?
+- Should `docs/docs-consolidation/*` stay in the upstream PR as review/handoff
+  artifacts, or be kept fork-local after maintainers review the proposed docs
+  changes?

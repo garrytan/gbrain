@@ -168,18 +168,20 @@ at the remote host. `gbrain doctor` runs a dedicated thin-client check set
 **Step 1 — On the host (brain-host):**
 
 ```bash
+# v0.34: bind explicitly for remote access. The default is 127.0.0.1.
 gbrain init --supabase                         # or --pglite, doesn't matter
-gbrain serve --http --port 3001 --bind 0.0.0.0 # v0.34: bind explicitly for remote access
-                                                # (defaults to 127.0.0.1 since v0.34)
+gbrain serve --http --port 3001 \
+  --bind 0.0.0.0 \
+  --public-url https://brain-host.local:3001
 gbrain auth register-client neuromancer \
   --grant-types client_credentials \
-  --scopes read,write,admin                    # admin needed for ping/doctor
+  --scopes "read write admin"                  # admin needed for ping/doctor
 
 # v0.34: source-scoped client (write to one source, federate reads across
 # multiple sources). Omit both flags for a v0.33-compatible super-client.
 gbrain auth register-client neuromancer-dept \
   --grant-types client_credentials \
-  --scopes read,write \
+  --scopes "read write" \
   --source dept-x \
   --federated-read dept-x,shared,parent-canon
 ```
@@ -188,6 +190,11 @@ The `register-client` command prints a `client_id` and `client_secret`.
 Note both. **Scope must include `admin`** — `submit_job` (used by
 `gbrain remote ping`) and `run_doctor` (used by `gbrain remote doctor`)
 both require it.
+
+The `--public-url` value must match the thin client's `issuer_url` and the
+public URL clients use for OAuth discovery. If a tunnel or reverse proxy changes
+the external URL, restart the server with the new `--public-url` before
+registering or connecting clients.
 
 **Step 2 — On the thin client (neuromancer):**
 
@@ -206,21 +213,16 @@ is created.
 
 **Step 3 — Configure your agent's MCP client.**
 
-For Claude Desktop / Hermes / openclaw, add a single MCP server entry
-pointing at the host's `mcp_url` with the bearer token from `register-client`.
-Example for Claude Desktop's `~/.config/claude/claude_desktop_config.json`:
+Point the agent at the host `/mcp` endpoint; do not start local stdio
+`gbrain serve` from the thin-client home. Client-specific docs decide whether
+the remote entry uses OAuth client credentials or a legacy bearer token:
 
-```jsonc
-{
-  "mcpServers": {
-    "gbrain": {
-      "type": "url",
-      "url": "https://brain-host.local:3001/mcp",
-      "headers": { "Authorization": "Bearer <client_secret>" }
-    }
-  }
-}
-```
+- Claude Desktop remote connectors are added through Settings > Integrations,
+  not `claude_desktop_config.json`.
+- Claude Code, Codex, Cursor, Hermes, OpenClaw, and other HTTP-capable clients
+  should follow the matching page under `docs/mcp/`.
+- If a client only supports bearer headers, mint a compatibility token with
+  `gbrain auth create`; do not paste an OAuth `client_secret` as a bearer token.
 
 **Step 4 — Verify.**
 
@@ -411,6 +413,8 @@ MCP config generation, gitignore for the per-worktree DB) is in the gstack
 repo's setup-gbrain skill — it composes these primitives, gbrain doesn't
 have to know about Conductor.
 
+<a id="topology-mounted-cross-team-brains"></a>
+
 ## Topology 4 — Mounted/cross-team brains
 
 ```
@@ -451,8 +455,13 @@ stays the same and only the repo or domain changes.
 Setup primitives:
 
 ```bash
-gbrain mounts add team-brain --path /path/to/team-brain --db-url postgresql://...
-gbrain query "latest customer update" --brain team-brain
+gbrain mounts add team-brain \
+  --path /path/to/team-brain \
+  --engine postgres \
+  --db-url postgresql://...
+gbrain mounts list
+gbrain mounts disable team-brain
+gbrain mounts enable team-brain
 ```
 
 Inside a mounted checkout, a `.gbrain-mount` dotfile can pin commands to that
@@ -460,10 +469,12 @@ brain. Inside a source subdirectory, a `.gbrain-source` dotfile can pin commands
 to a source within that brain. See `docs/architecture/brains-and-sources.md` for
 the full routing precedence.
 
-Agent rule: cross-brain federation is explicit. The agent chooses when to query
-another brain, synthesizes the answer, and cites `brain:source:slug` or otherwise
-surfaces which brain answered. If a remote or subagent context lacks permission
-to read mounts, it must stay local-only.
+Current CLI support here is mount management and cache publication. Do not assume
+generic `gbrain query --brain <id>` dispatch is wired until the command layer
+documents it. Host agents or integrations that consume the mounts cache must
+choose when to query another brain, synthesize the answer, and cite
+`brain:source:slug` or otherwise show which brain answered. If a remote or
+subagent context lacks permission to read mounts, it must stay local-only.
 
 ## Topology modifier — Security-driven isolation
 

@@ -16,14 +16,40 @@ import, sync, or Docker lifecycle command was run.
 - `docs/docs-consolidation/03-issue-breakdown.md`
 - Current branch diff against `upstream/master`.
 - Landed docs and generated maps listed below.
+- Post-review checks with `openclaw-autoreview`, the Thermos review pattern,
+  CodeGraph, and the existing `understand-anything` knowledge graph.
+
+## Post-review corrections
+
+The first final report found the broad consolidation shape, but follow-up review
+found concrete install and auth issues that needed patching before PR handoff:
+
+| Finding | Resolution | Proof |
+| --- | --- | --- |
+| `docs/INSTALL.md` was a reference page more than a route-by-route install journey. | Added Routes A-E at the top of `docs/INSTALL.md`, each with its own end-to-end sequence and links into the detailed sections. | docs inspection plus Thermos maintainability review |
+| README still carried a competing install quickstart. | Reduced README install content to a router that points to the canonical install routes and agent protocol. | docs inspection |
+| Several OAuth examples used comma-separated scopes. | Replaced public docs examples with OAuth space-separated scope strings, for example `--scopes "read write"`. | CodeGraph trace to `src/commands/auth.ts` and `src/core/scope.ts` |
+| Mounted-brain example omitted the explicit engine flag. | Updated the topology example to include `--engine postgres` with `--db-url`; follow-up fidelity review confirmed current `mounts` management includes `add`, `list`, `remove`, `enable`, `disable`, `trust-frontmatter`, and `untrust-frontmatter` despite an older file header still mentioning `enable/disable` as future work. | CodeGraph trace to `src/commands/mounts.ts` dispatcher and help text |
+| Protected onboard scope was documented as grantable through OAuth, but current allowlist does not expose it. | Updated `INSTALL_FOR_AGENTS.md` to say protected onboard handlers stay skipped over OAuth today and require trusted local CLI operation until the registration path exposes the grant. | CodeGraph trace to `src/core/operations.ts`, `src/core/scope.ts`, and `src/core/oauth-provider.ts` |
+| Remote OAuth examples used public client URLs without setting the server issuer to that URL. | Added `--public-url` to thin-client host, MCP deploy, tunnel alternatives, ChatGPT, agent, and company-brain examples, plus notes that the value must match the URL used for OAuth discovery. | CodeGraph trace to `src/commands/serve-http.ts` |
+| Agent guide mixed HTTP MCP setup with worker-side shell-job opt-in. | Removed `GBRAIN_ALLOW_SHELL_JOBS=1` from the HTTP server example and documented that protected shell jobs require trusted host-side CLI submission, not remote MCP. | CodeGraph trace to `src/core/operations.ts` |
+| Thin-client route still pointed at the local stdio MCP section. | Updated Route C and the agent connection section to say thin-client homes must not run local `gbrain serve`; agents either call the thin-client CLI or connect directly to the host `/mcp` endpoint. | docs inspection plus thin-client dispatch contract |
+| Mounted-brain docs advertised generic `gbrain query --brain` before CLI dispatch support is documented. | Replaced the query example with supported `gbrain mounts` management commands, updated the brain/source mental model and agent routing convention, qualified schema-pack examples that implied transparent mounted-brain querying, and marked query-time cross-brain dispatch as an integration/agent responsibility until documented by the command layer. | CodeGraph trace to `src/cli.ts`, `src/core/operations.ts`, `src/commands/mounts.ts`, and brain resolver source |
+| The advanced install route linked to an unstable mounted-brains heading anchor. | Added a stable `topology-mounted-cross-team-brains` anchor before the mounted/cross-team topology heading. | docs inspection |
+| The inventory manifest looked live after later branch edits. | Labeled it as a frozen baseline snapshot before consolidation edits. | docs inspection |
+
+The `understand-anything` graph was used as architecture/onboarding context. It
+was generated at branch commit `416f2ae29788a16cba1b20fb33ccf05a4eb665c1`, so
+current command-contract claims after later edits were checked against current
+source with CodeGraph instead of treating the graph as fresh runtime truth.
 
 ## PRD Acceptance Map
 
 | PRD acceptance bar | Landed evidence | Status |
 | --- | --- | --- |
-| New user can start from README and find one correct human install/operating path. | `README.md` Start here section routes humans to `docs/INSTALL.md`; `docs/INSTALL.md` is the Human Operational Center. | pass |
+| New user can start from README and find one correct human install/operating path. | `README.md` routes installation to `docs/INSTALL.md`; `docs/INSTALL.md` now starts with Routes A-E and links each choice to a concrete end-to-end path. | pass |
 | Coding agent can start from README or `AGENTS.md` and find one correct agent operating path. | `README.md` routes coding agents to `INSTALL_FOR_AGENTS.md`, `AGENTS.md`, and `CLAUDE.md`; `INSTALL_FOR_AGENTS.md` contains the agent operating map and safety gates. | pass |
-| Production operators have a central path covering topology, safety boundaries, brain repo layout, mode selection, credentials, backups, and failure modes. | `docs/INSTALL.md` production/shared branch covers shape, modes, MCP exposure, scopes, providers/secrets, backups/restore, health, and failure-mode checklist. | pass |
+| Production operators have a central path covering topology, safety boundaries, brain repo layout, mode selection, credentials, backups, and failure modes. | Route D in `docs/INSTALL.md` points production/shared readers to the production branch, which covers shape, modes, MCP exposure, scopes, providers/secrets, backups/restore, health, and failure-mode checklist. | pass |
 | Operating Model and Deployment Topology are distinct and branchable. | `docs/architecture/topologies.md` separates operating model from deployment topology and links from `README.md`, `docs/INSTALL.md`, and `INSTALL_FOR_AGENTS.md`. | pass |
 | Shared Group Brain includes family/team/company use cases without inventing separate topology families unnecessarily. | `docs/architecture/topologies.md`, `docs/INSTALL.md`, and `INSTALL_FOR_AGENTS.md` treat family, household, team, and company as shared group brain operating models. | pass |
 | `search`, `think`, and `dream`/autopilot are explained through a mode-selection guide. | `docs/guides/mode-selection.md` covers retrieval, synthesis, maintenance, push context, and search-mode bundles; README and install docs route to it. | pass |
@@ -71,7 +97,7 @@ the only tracked file outside documentation or documentation generation/support.
 | #2 | Changelog-to-current-capabilities baseline | `docs/docs-consolidation/05-current-capabilities-ledger.md` | pass |
 | #3 | Inventory and status taxonomy | `docs/docs-consolidation/06-documentation-status-taxonomy.md`, manifest files | pass |
 | #4 | README router, current version, LLM entrypoints | `README.md`, regenerated LLM maps | pass |
-| #5 | Human Operational Center | `docs/INSTALL.md` | pass |
+| #5 | Human Operational Center | `docs/INSTALL.md` route map plus detailed install/reference sections | pass |
 | #6 | Agent Operational Center | `INSTALL_FOR_AGENTS.md`, `AGENTS.md`, regenerated LLM maps | pass |
 | #7 | Operating model and topology trees | `docs/architecture/topologies.md` plus README/install/agent routes | pass |
 | #8 | Brain Repo Layout | `docs/architecture/brain-repo-layout.md` plus routes | pass |

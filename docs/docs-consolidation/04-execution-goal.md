@@ -119,8 +119,8 @@ Do not use these by default:
 
 Do not inspect:
 
-- `/Users/nexus00`
-- `/Users/vitorcepedalopes/AgentRuntimeCoordination`
+- operator-provided local Nexus implementation paths
+- operator-provided local runtime-coordination paths
 - any local `GBRAIN_HOME`
 - any local `GBRAIN_CORPUS_PATH`
 - Hermes/OpenClaw/Hindsight runtime configs

@@ -25,8 +25,10 @@ understand both, or queries misroute silently.
 
 - **Brain** — WHICH DATABASE. Your personal brain is `host`. You can mount
   additional brains (team-published, each with their own DB and access policy)
-  via `gbrain mounts add` (v0.19+). Routing: `--brain`, `GBRAIN_BRAIN_ID`,
-  `.gbrain-mount` dotfile.
+  via `gbrain mounts add` (v0.19+). Resolver inputs include an explicit brain
+  id from command paths that wire the brain resolver, `GBRAIN_BRAIN_ID`, and
+  `.gbrain-mount` dotfiles. Do not assume every generic CLI verb accepts
+  `--brain`; check the command help.
 - **Source** — WHICH REPO INSIDE THE DATABASE. A brain can hold many sources
   (wiki, gstack, openclaw, essays). Slugs scope per source. Routing:
   `--source`, `GBRAIN_SOURCE`, `.gbrain-source` dotfile.

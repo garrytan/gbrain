@@ -6,7 +6,9 @@ lives in `docs/architecture/brains-and-sources.md` — read it once.**
 
 ## The two axes (one-line summary)
 
-- **Brain** = which DATABASE. `--brain`, `GBRAIN_BRAIN_ID`, `.gbrain-mount`.
+- **Brain** = which DATABASE. Resolver inputs include an explicit brain id from
+  a command/integration that supports brain selection, `GBRAIN_BRAIN_ID`, and
+  `.gbrain-mount`.
 - **Source** = which REPO INSIDE the database. `--source`, `GBRAIN_SOURCE`,
   `.gbrain-source`.
 
@@ -19,8 +21,9 @@ Start in the brain + source resolved by the environment:
 1. Run `gbrain mounts list` if you haven't seen the user's mounts yet.
 2. Trust the resolver. If the user is in `~/team-brains/media/`, their
    `.gbrain-mount` pins brain=media-team. Don't override that silently.
-3. For every brain op, pass the resolved brain id explicitly when calling
-   tools (even if it matches the default). Makes routing visible in logs.
+3. For every brain op, use a brain-aware command, operation, or host-agent path
+   if you need a non-host brain. Do not assume generic CLI verbs accept
+   `--brain` unless their help says so.
 
 Bare `gbrain query "X"` routes to the default brain's default source. That
 is the right answer 90% of the time. Don't cross the boundary without a
@@ -28,11 +31,12 @@ reason.
 
 ## When to switch brain
 
-Switch brain (`--brain <id>`) when:
+Switch brain through a brain-aware path when:
 
 - The user's question is specifically about a team the user belongs to
   ("what did team X decide?", "what's the status of project Y at team X?").
-  Switch BEFORE searching, not after a failed search in host.
+  Choose that brain-aware search path before searching, not after a failed
+  search in host.
 - The user is asking you to ingest data that belongs to a specific team
   (meeting notes from a team meeting, letters from a team's pipeline). The
   data owner determines the brain.
@@ -118,8 +122,8 @@ Pattern when the user asks something that might span brains:
 
 1. Query host with the obvious query.
 2. Check `gbrain mounts list` for relevant brain ids.
-3. If you think another brain has the answer, re-query THAT brain
-   explicitly (`--brain <id>`).
+3. If you think another brain has the answer, use a command, operation, or
+   host-agent integration that explicitly supports reading that mounted brain.
 4. Synthesize across results. Cite `<brain>:<source>:<slug>` so the user
    can trace.
 
@@ -135,9 +139,9 @@ Writing is stricter than reading. ASK before writing cross-brain.
 - An enrichment discovered from public data → usually host unless the user
   says otherwise.
 
-If you're about to `put_page --brain <team-brain>`, confirm with the user
-unless they explicitly said "save this to team-X". Default brain for
-writes is the user's personal brain.
+If you're about to write to a team brain through a brain-aware surface, confirm
+with the user unless they explicitly said "save this to team-X". Default brain
+for writes is the user's personal brain.
 
 ## Citations with brain context
 
@@ -155,11 +159,11 @@ with a brain prefix when relevant.
 
 | Situation | Brain | Source |
 |---|---|---|
-| User cd's into a team-brain checkout and asks a general question | dotfile-resolved team brain | dotfile-resolved source |
-| User asks "what did team X decide?" | `team-x` explicitly | resolver default |
+| User cd's into a team-brain checkout and asks a general question | dotfile-resolved team brain, when the path honors mounts | dotfile-resolved source |
+| User asks "what did team X decide?" | `team-x` through a brain-aware path | resolver default |
 | User asks "what are we doing across all teams?" | fan out across mounts, agent-driven | resolver default |
 | User asks "add this to my gstack notes" | host | `gstack` |
-| User asks "save this meeting note for team X" | `team-x` (confirm if ambiguous) | team's meetings source |
+| User asks "save this meeting note for team X" | `team-x` through a brain-aware write path (confirm if ambiguous) | team's meetings source |
 | User asks "write me an essay" | host (personal) | `essays` |
 | Unknown — can't classify | stay in host, ask the user | resolver default |
 

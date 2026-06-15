@@ -383,8 +383,11 @@ Remote-call boundary:
 - Protected job submissions are CLI-only. If MCP refuses a protected job, do
   not retry through another route unless the user explicitly switches to local
   CLI operation.
-- `run_onboard` is remote-callable with admin scope, but protected LLM-bearing
-  onboard handlers require the extra `run_protected_onboard` scope.
+- `run_onboard` is remote-callable with admin scope for health checks and
+  non-protected remediation. Protected LLM-bearing onboard handlers remain
+  skipped over OAuth in the current CLI allowlist; use trusted local CLI
+  operation for those until the dedicated protected-onboard grant is exposed
+  through the supported registration path.
 
 Thin-client verification:
 
@@ -491,10 +494,11 @@ explicit agent action needed for the autonomous path.
 The `run_onboard` MCP op (admin scope) lets thin-client agents probe
 brain health + drive remediation over OAuth-authenticated MCP. Protected
 LLM-bearing handlers (synthesize, patterns, consolidate, takes-bootstrap,
-contextual_reindex_per_chunk) require the additional `run_protected_onboard`
-scope — admin alone is insufficient. The MCP op returns
-`skipped_missing_scope[]` listing what would have run with the right
-grants.
+contextual_reindex_per_chunk) are not enabled by admin alone. In the current
+OAuth allowlist, `gbrain auth register-client` cannot mint the dedicated
+protected-onboard grant that the operation checks internally, so those handlers
+remain reported in `skipped_missing_scope[]`. Run protected remediation from a
+trusted local CLI session when the operator explicitly approves it.
 
 **Privacy + consent gates:**
 - `gbrain takes extract --from-pages` sends concept/atom/lore/briefing/
