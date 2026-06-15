@@ -7,6 +7,9 @@ this was a P0 TODO — the only major AI client that could not connect.
 ChatGPT does not support bearer-token MCP servers. You must use the OAuth 2.1
 HTTP server.
 
+For HTTP MCP protocol, engine, OAuth, scope, and `localOnly` rules, use
+[`DEPLOY.md`](DEPLOY.md). This page only covers ChatGPT wiring.
+
 ## Setup
 
 ### 1. Start the HTTP server

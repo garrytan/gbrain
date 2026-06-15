@@ -250,7 +250,7 @@ Use source files only to verify docs claims. Do not change runtime code.
 | 7 | #8 | Brain Repo Layout | agent_executable | #2, #3, #7 complete | Layout/source/brain docs exist and are linked | implemented in `docs/architecture/brain-repo-layout.md`; linked from human, agent, and production paths |
 | 8 | #9 | Mode Selection Guide | agent_executable | #2, #5, #7 complete | Guide covers current command and push-context paths | implemented in `docs/guides/mode-selection.md`; linked from human, agent, and production paths |
 | 9 | #10 | Production path and checklist | agent_executable | #5, #7, #8, #9 complete | Production branch/checklist exists inside human path | implemented in `docs/INSTALL.md`; production path remains centralized |
-| 10 | #11 | MCP/auth/remote/thin-client alignment | agent_executable | #2, #6, #7, #10 complete | MCP/auth docs align with current protocol truth | pending |
+| 10 | #11 | MCP/auth/remote/thin-client alignment | agent_executable | #2, #6, #7, #10 complete | MCP/auth docs align with current protocol truth | implemented in `docs/mcp/DEPLOY.md`, `SECURITY.md`, `docs/mcp/ALTERNATIVES.md`, client MCP recipes, and `docs/architecture/thin-client.md` |
 | 11 | #12 | Status labels | agent_executable | #3 complete | Historical/design/deprecated/superseded docs labelled where needed | pending |
 | 12 | #13 | Brittle counts and generated-map claims | agent_executable | #2, #3, #4 complete | Counts qualified/removed and generated maps handled | pending |
 | 13 | #14 | Final consistency pass | agent_executable | #2 through #13 complete | PRD/issues/changelog/operator feedback mapped to final diff | pending |

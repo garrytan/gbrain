@@ -365,7 +365,7 @@ Before configuring it, confirm:
 Remote setup references:
 
 - `docs/mcp/DEPLOY.md` for HTTP MCP, OAuth 2.1, scopes, localOnly behavior, and
-  remote deployment.
+  remote deployment. Treat it as the protocol truth; client pages are recipes.
 - `docs/guides/mode-selection.md` for agent-facing choice between pull
   retrieval, `think`, maintenance, and push-context channels.
 - `docs/mcp/CODEX.md`, `docs/mcp/CLAUDE_CODE.md`,
@@ -392,7 +392,9 @@ gbrain remote ping
 gbrain remote doctor
 ```
 
-These require the scopes described in `docs/architecture/topologies.md`.
+`get_brain_identity` is the read-scope smoke test. Full remote doctor and
+health/status checks need the admin-scope diagnostics described in
+`docs/mcp/DEPLOY.md`.
 
 ## Safe verification checklist
 

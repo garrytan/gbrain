@@ -3,6 +3,11 @@
 On-demand reference (see CLAUDE.md Reference map). Current behavior + invariants
 only; release history lives in `CHANGELOG.md` + git.
 
+Transport, OAuth, bearer-token compatibility, engine posture, bind/public-url,
+and remote `localOnly` rules live in [`../mcp/DEPLOY.md`](../mcp/DEPLOY.md).
+This page describes how a configured thin client routes commands once that MCP
+connection exists.
+
 `gbrain init --mcp-only` (v0.29.2) sets up a thin-client install: no local
 brain content, just an OAuth client pointing at a remote `gbrain serve --http`.
 v0.29.2/v0.30.0 only refused 9 obvious local-only commands; the other ~25
@@ -56,10 +61,13 @@ Key files:
 - `src/core/migrate.ts` v74 (`mcp_spend_log`) + v75 (`embedding_multimodal_column`) — Phase 2 spend-log table + Phase 3 unified column ALTER. v75 is column-only (no HNSW index — deferred to post-reindex per pgvector best practice). v74 uses BTREE on `(client_id, created_at)` + `(token_name, created_at)` — `date_trunc('day', TIMESTAMPTZ)` is NOT IMMUTABLE so can't appear in index expressions; range scan on created_at covers the per-day rollup query.
 - `src/core/operations.ts` — `get_brain_identity` op (read scope, no params,
   banner-only): cheap counter packet `{version, engine, page_count,
-  chunk_count, last_sync_iso}` for the thin-client identity banner. Reuses
+  chunk_count, last_sync_iso, update_available, latest_version}` for the
+  thin-client identity banner and remote smoke tests. Reuses
   `engine.getStats()`; banner's 60s client-side TTL bounds frequency to
   ≤1/60s per CLI process (well below the Fly.io health-check cadence that
-  motivated the original `getStats` cost warning).
+  motivated the original `getStats` cost warning). `get_health` and
+  `run_doctor` are admin-scope remote diagnostics; read-only thin-client
+  consumers can still identify the brain without `admin`.
 - `src/commands/{salience,anomalies,graph-query,think}.ts` — Per-command
   thin-client routing branches. These commands bypass the operation-layer
   dispatch in cli.ts (call `engine.foo()` directly), so each gets its own
