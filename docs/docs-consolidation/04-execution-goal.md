@@ -244,7 +244,7 @@ Use source files only to verify docs claims. Do not change runtime code.
 | 1 | #2 | Changelog-to-current-capabilities baseline | agent_executable | Clean branch, issue #2 open | Baseline artifact exists and maps current releases to doc obligations | implemented in `05-current-capabilities-ledger.md` |
 | 2 | #3 | Documentation inventory and status taxonomy | agent_executable | #2 complete | Inventory/status taxonomy updated against baseline | implemented in `06-documentation-status-taxonomy.md` |
 | 3 | #4 | README router, current version, LLM entrypoints | agent_executable | #2 and #3 complete | README routes to canonical docs and current version | implemented in `README.md`; `llms-full.txt` regenerated |
-| 4 | #5 | Human Operational Center | agent_executable | #2 and #3 complete | `docs/INSTALL.md` carries the central human path | pending |
+| 4 | #5 | Human Operational Center | agent_executable | #2 and #3 complete | `docs/INSTALL.md` carries the central human path | implemented in `docs/INSTALL.md`; `bun run build:llms` produced no generated diff |
 | 5 | #6 | Agent Operational Center | agent_executable | #2, #3, #5 complete | `INSTALL_FOR_AGENTS.md` mirrors operational branches with safety gates | pending |
 | 6 | #7 | Operating model and topology trees | agent_executable | #2 and #3 complete | Branchable choices exist and are linked | pending |
 | 7 | #8 | Brain Repo Layout | agent_executable | #2, #3, #7 complete | Layout/source/brain docs exist and are linked | pending |
