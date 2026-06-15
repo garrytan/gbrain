@@ -21,13 +21,13 @@ need to understand both of them, or queries misroute silently.
 A **brain** is one database — PGLite file, self-hosted Postgres, or Supabase.
 Each brain has:
 - Its own `pages` table, `chunks` table, `embeddings`, etc.
-- Its own OAuth surface if served over HTTP MCP (v0.19+, PR 2).
+- Its own OAuth surface when served over HTTP MCP.
 - Its own separate lifecycle, backup, access control.
 
 Brains are enumerated by:
 - **host** — your default brain, configured in `~/.gbrain/config.json`.
 - **mounts** — additional brains registered in `~/.gbrain/mounts.json` via
-  `gbrain mounts add <id>` (v0.19+).
+  `gbrain mounts add <id>`.
 
 Brain resolver inputs: an explicit brain id from a command or integration that
 wires the brain resolver, `GBRAIN_BRAIN_ID`, `.gbrain-mount` dotfile, or
@@ -35,7 +35,7 @@ longest-path match against registered mount paths. Falls back to `host`. Current
 generic `gbrain query --brain <id>` dispatch is not documented as supported; use
 only command paths that advertise brain selection.
 
-### Sources (the repo axis, v0.18.0+)
+### Sources (the repo axis)
 
 A **source** is a named content repo *inside* one brain. Every `pages` row
 carries a `source_id`. Slugs are unique per source, not globally.

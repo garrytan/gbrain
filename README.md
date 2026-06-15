@@ -280,10 +280,10 @@ diff and `content_hash` short-circuits already-imported files. The
 `--max-age 1800` first command self-heals any wedged-but-alive locks
 left by a hung previous run, using the v98 `last_refreshed_at` semantic
 (NOT `acquired_at`) so healthy long-running holders are safe by
-construction. See the v0.41.13.0 entry in [`CHANGELOG.md`](CHANGELOG.md)
-for the honest scope notes (extract + embed phases run to completion;
-30-min rollout window for `--max-age` post-migration v98; full-sync
-triggers deferred to v0.42+).
+construction. See the sync entries in [`CHANGELOG.md`](CHANGELOG.md) for the
+honest scope notes: the original v0.41.13 timeout behavior was followed by
+v0.42 resumability, full-sync delete reconciliation, and additional recovery
+work. Keep cron runbooks pinned to the release behavior you actually run.
 
 **Dream cycle silently losing wiki links on Supabase?** v0.41.19.0 fixes
 the bug class structurally. The engine now self-retries every bulk batch

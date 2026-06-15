@@ -29,7 +29,7 @@ receipt file from disk and re-renders it. The other modes need the brain.
 | `--limit N` | 100 | Random sample of N takes from the brain. |
 | `--cycles N` | 3 (TTY) / 1 (non-TTY) | Up to N panel calls before giving up; early-stop on PASS or INCONCLUSIVE. |
 | `--budget-usd N` | unset | Abort before next call's projected cost would exceed cap. Models without a `pricing.ts` entry fail loud (codex #4). |
-| `--source db|fs` | `db` | `fs` is reserved for v0.33+. |
+| `--source db|fs` | `db` | `db` is the supported public path. `fs` is accepted as a reserved value but currently fails closed; use `db`. |
 | `--slug-prefix P` | unset | Filter takes to pages whose slug starts with P. |
 | `--models a,b,c` | `openai:gpt-4o,anthropic:claude-opus-4-7,google:gemini-1.5-pro` | Comma-separated panel. |
 | `--json` | off | Emit the full receipt to stdout. |
@@ -96,8 +96,9 @@ receipt file from disk and re-renders it. The other modes need the brain.
 Receipts persist to **`eval_takes_quality_runs`** (DB-authoritative per
 codex review #6) AND to disk at `~/.gbrain/eval-receipts/takes-quality-<corpus>-<prompt>-<models>-<rubric>.json`
 as a best-effort artifact. The DB row carries the full receipt JSON in the
-`receipt_json` JSONB column, so when the disk artifact is gone, `replay`
-can still reconstruct via `loadReceiptFromDb` (v0.33+ flag wiring).
+`receipt_json` JSONB column. The core has an explicit DB loader for fallback
+tooling/tests, but the public `replay <receipt>` command is disk-only and does
+not silently fall back to the DB when the file is missing.
 
 The 4-sha primary key is unique (`UNIQUE` constraint) so re-running an
 identical eval is `INSERT ... ON CONFLICT DO NOTHING` — idempotent.

@@ -211,20 +211,25 @@ Publication to the public registries (`garrytan/gbrain-schema-registry`,
 `garrytan/gbrain-skillpack-registry`) follows the same publish-as-PR
 workflow as v0.37 skillpack publishing.
 
-## What's deferred to v0.40+
+## Current and Deferred Boundaries
 
-- **Per-source pack federation across mounts.** A query crossing multiple
-  sources currently rejects with `permission_denied` when those sources
-  have divergent active packs (T19 + codex finding #2). The v0.40+ work
-  computes a true per-source closure via the existing
-  `buildSourceClosureCte` engine surface.
+- **Divergent per-source pack reads still fail closed.**
+  When a federated read resolves to multiple active pack names, the operation
+  trust gate rejects with `permission_denied`; register the client to a single
+  source or make the sources agree on one pack. The lower-level infrastructure
+  for the eventual fix already exists:
+  `src/core/schema-pack/per-source.ts` builds per-source closure bindings and
+  a `source_closure` CTE, but read-path callers still need to thread
+  per-source pack identity before docs can advertise divergent-pack federation
+  as supported behavior.
 - **`extends` chain semver compatibility checks** between pack versions.
 - **`skillpack ↔ schemapack` cross-reference declarations** — a skillpack
   can declare "I work best with these primitives present in your pack."
 - **Live schema migration helpers** — when you add a type, auto-suggest
   backfill of existing pages.
 - **Authoring vs derivation thesis reframe (D14).** v0.39.0.0 ships the
-  full 11-verb cathedral with 6 verbs marked experimental-tier. v0.40+
-  retro reads T23 usage telemetry to decide which to deprecate.
+  full 11-verb cathedral with 6 verbs marked experimental-tier. Future
+  cleanup should use usage telemetry to decide which experimental verbs to
+  keep or deprecate.
 
-See `TODOS.md` v0.40+ section for the full deferred list.
+See `TODOS.md` for the full deferred list.
