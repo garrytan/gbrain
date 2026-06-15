@@ -221,12 +221,13 @@ export function dimsProviderOptions(
         return { openaiCompatible: { dimensions: dims } };
       }
       // MiniMax embo-01 takes a `type: 'db' | 'query'` field for asymmetric
-      // retrieval. Today still hardcoded to 'db' for back-compat — opting
-      // into the new inputType seam is a follow-up (see plan's deferred
-      // section "Fix MiniMax embo-01 asymmetry"). When fixed: map
-      // inputType==='query' → type:'query', else 'db'.
+      // retrieval. Emit `input_type` (same seam as ZE/Voyage) so embedQuery()
+      // threads 'query' and embed() threads 'document' through
+      // __embedInputTypeStore; minimaxCompatFetch maps it to the wire `type`
+      // ('query' → 'query', else 'db'). Default 'document' preserves the
+      // legacy symmetric `type:'db'` behavior for callers that thread nothing.
       if (modelId === 'embo-01') {
-        return { openaiCompatible: { type: 'db' } };
+        return { openaiCompatible: { input_type: inputType ?? 'document' } };
       }
       return undefined;
   }
