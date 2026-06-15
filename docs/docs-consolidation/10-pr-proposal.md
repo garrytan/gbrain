@@ -61,6 +61,8 @@ The branch:
 - GitHub issues #1 through #14 were used as tracker/acceptance context.
 - Final report confirms no `src/`, test, migration, package, lockfile, Docker
   compose, or runtime config changes.
+- `bun test test/build-llms.test.ts` passed after materializing locked
+  dependencies locally with `bun install --frozen-lockfile --ignore-scripts`.
 
 ### Proof Limits
 
@@ -69,10 +71,10 @@ The branch:
 - No local GBrain brain home, corpus path, runtime config, Hermes/OpenClaw,
   Hindsight, or Nexus runtime was inspected.
 - No service, Docker lifecycle, migration, import, sync, or dependency install
-  was run.
-- `bun test test/build-llms.test.ts` could not run in this checkout because Bun
-  cannot resolve package `ai` from `src/core/ai/gateway.ts`; no dependency
-  install was performed.
+  beyond local dependency materialization was run.
+- One local dependency materialization was run with `bun install
+  --frozen-lockfile --ignore-scripts`; it changed no tracked files and did not
+  run lifecycle scripts.
 
 ## Review Checklist
 

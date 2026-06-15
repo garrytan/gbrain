@@ -109,7 +109,7 @@ No runtime behavior change was introduced by this branch.
 | `git diff --check` / staged whitespace checks on implementation slices | pass |
 | Targeted stale-count search for #13 phrases | pass |
 | Secret-pattern scan over staged #13 diff | pass |
-| `bun test test/build-llms.test.ts` | `test_not_run`: Bun cannot resolve package `ai` from `src/core/ai/gateway.ts` in this checkout; no dependency install was performed. |
+| `bun test test/build-llms.test.ts` | pass: 12 tests, 102 expectations. Run after materializing locked dependencies with `bun install --frozen-lockfile --ignore-scripts`. |
 
 ## Proof Limits
 
@@ -118,10 +118,10 @@ No runtime behavior change was introduced by this branch.
 - No local GBrain brain home, corpus path, runtime config, Hermes/OpenClaw, or
   Nexus runtime was inspected.
 - No service was started.
-- No dependency install was performed.
-- The generated-doc unit test remains blocked by the local missing-package
-  condition described above; `bun run build:llms` is the fresh generated-map
-  proof available in this environment.
+- A local dependency materialization was performed after approval with
+  `bun install --frozen-lockfile --ignore-scripts`; it changed no tracked files
+  and did not run lifecycle scripts.
+- The generated-doc unit test now passes in this checkout.
 
 ## Strongest Safe Truth
 
