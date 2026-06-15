@@ -126,14 +126,22 @@ describe('v0.36.1.x #1124 — query --no-expand actually negates expand', () => 
 describe('v0.42.20.0 — background-work registry drains every sink before disconnect', () => {
   // Supersedes the v0.41.8.0 #1247/#1269/#1290 per-call last-retrieved drain:
   // last-retrieved is now one of four registry sinks; cli.ts drains the whole
-  // registry (drainAllBackgroundWorkForCliExit) before disconnect on BOTH the
-  // op-dispatch path AND the CLI_ONLY path (the latter closes #1762 for capture).
-  test('cli.ts imports + uses drainAllBackgroundWorkForCliExit', () => {
+  // registry (drainAllBackgroundWorkForCliExit) before disconnect via the shared
+  // helper used by op-dispatch, dream owner-disconnect, and CLI_ONLY fall-through.
+  test('cli shutdown helper imports + uses drainAllBackgroundWorkForCliExit', () => {
+    const src = readFileSync('src/core/cli-shutdown.ts', 'utf8');
+    expect(src).toMatch(/import\s+\{\s*drainAllBackgroundWorkForCliExit\s*\}\s*from\s+['"]\.\/background-work\.ts['"]/);
+    expect(src).toMatch(/await\s+drainAllBackgroundWorkForCliExit\s*\(/);
+    expect(src).toMatch(/await\s+engine\.disconnect\s*\(/);
+    expect(src.indexOf('await drainAllBackgroundWorkForCliExit')).toBeLessThan(src.indexOf('await engine.disconnect'));
+  });
+
+  test('cli.ts routes all engine-owning shutdown paths through the helper', () => {
     const src = readFileSync('src/cli.ts', 'utf8');
-    expect(src).toMatch(/import\s+\{\s*drainAllBackgroundWorkForCliExit\s*\}\s*from\s+['"]\.\/core\/background-work\.ts['"]/);
-    // Two call sites: op-dispatch finally + handleCliOnly finally.
-    const calls = src.match(/await\s+drainAllBackgroundWorkForCliExit\s*\(/g) ?? [];
-    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(src).toMatch(/import\s+\{\s*disconnectEngineForCliExit\s*\}\s*from\s+['"]\.\/core\/cli-shutdown\.ts['"]/);
+    const calls = src.match(/await\s+disconnectEngineForCliExit\s*\(/g) ?? [];
+    // op-dispatch finally + dream owner-disconnect + handleCliOnly fall-through.
+    expect(calls.length).toBeGreaterThanOrEqual(3);
   });
 
   test('last-retrieved.ts still exports the bounded drain + registers a drainer', () => {
@@ -155,18 +163,26 @@ describe('v0.42.20.0 — background-work registry drains every sink before disco
       .toMatch(/name:\s*'eval-capture'/);
   });
 
-  test('cli.ts behavioral positioning: registry drain appears BEFORE engine.disconnect (op-dispatch)', () => {
+  test('cli.ts behavioral positioning: op-dispatch uses shared drain-before-disconnect helper', () => {
     const src = readFileSync('src/cli.ts', 'utf8');
     const localPath = src.match(/\/\/ Local engine path \(unchanged behavior[\s\S]+?^\}/m);
     expect(localPath).not.toBeNull();
     const block = localPath![0];
-    const drainCallRe = /await\s+drainAllBackgroundWorkForCliExit\s*\(/;
-    const disconnectCallRe = /await\s+engine\.disconnect\s*\(/;
-    expect(block).toMatch(drainCallRe);
-    expect(block).toMatch(disconnectCallRe);
-    const drainIdx = block.indexOf(block.match(drainCallRe)![0]);
-    const disconnectIdx = block.indexOf(block.match(disconnectCallRe)![0]);
-    expect(drainIdx).toBeLessThan(disconnectIdx);
+    expect(block).toMatch(/await\s+disconnectEngineForCliExit\s*\(\s*engine\s*,\s*\{\s*timeoutMs:\s*1000\s*\}\s*\)/);
+  });
+
+  test('cli.ts behavioral positioning: dream owner-disconnect uses shared helper', () => {
+    const src = readFileSync('src/cli.ts', 'utf8');
+    const dreamPath = src.match(/if\s*\(command === 'dream'\)\s*\{[\s\S]+?return;\s*\n\s*\}/);
+    expect(dreamPath).not.toBeNull();
+    expect(dreamPath![0]).toMatch(/if\s*\(eng\)\s*await\s+disconnectEngineForCliExit\s*\(\s*eng\s*\)/);
+  });
+
+  test('cli.ts behavioral positioning: CLI fall-through uses shared helper', () => {
+    const src = readFileSync('src/cli.ts', 'utf8');
+    const cliOnlyFinally = src.match(/syncWatchdog\?\.dispose\(\);[\s\S]+?if\s*\(hardExitTimer\)\s*clearTimeout\(hardExitTimer\);/);
+    expect(cliOnlyFinally).not.toBeNull();
+    expect(cliOnlyFinally![0]).toMatch(/await\s+disconnectEngineForCliExit\s*\(\s*engine\s*\)/);
   });
 
   test('background-work.ts: Map registry, ordered drain, awaited abort, test seam', () => {

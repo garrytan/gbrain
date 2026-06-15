@@ -1446,14 +1446,13 @@ The original 3 items as filed (kept for traceability):
   `eval_capture_failures.reason` enum cleanup from the v0.25.0 P1 surgical
   hardenings list. Effort: human ~3 days / CC ~3 hours.
 
-- [ ] **P0 — Wire nightly quality probe into autopilot scheduler.** The
-  phase ships callable (`src/core/cycle/nightly-quality-probe.ts`) with
-  full DI surface; doctor surfaces outcomes; the audit JSONL rotates
-  cleanly. What's NOT wired: `src/commands/autopilot.ts` doesn't invoke
-  `runNightlyQualityProbe(deps)` on its 24h cadence. Add the phase
-  trigger; honor `autopilot.nightly_quality_probe.enabled` config gate.
-  Already filed in v0.40.1.0 Track D follow-ups — re-filing here as P0
-  with explicit D1-wave dependency. Effort: human ~3 hours / CC ~30 min.
+- [x] **P0 — Wire nightly quality probe into autopilot scheduler.**
+  Completed in `src/commands/autopilot.ts`: the daemon cycle loop now
+  invokes `runNightlyQualityProbe(deps)` when
+  `autopilot.nightly_quality_probe.enabled` is true. The phase keeps the
+  24h rate-limit as the single source of truth and writes the audit row
+  doctor reads. Pinned by `test/autopilot-nightly-probe-wiring.test.ts`
+  and `test/nightly-quality-probe.test.ts`.
 
 ### D2 — Code-indexing promoted to P1 (peer of Cursor/Sourcegraph)
 
@@ -1872,21 +1871,14 @@ contributor traps.
   vary too much). Estimate: ~2 weeks. Filed during v0.40.1.0 Track D
   /plan-eng-review (see `~/.claude/plans/system-instruction-you-are-working-whimsical-acorn.md`).
 
-- [ ] **v0.41+: Wire the nightly quality probe into autopilot scheduling.**
-  v0.40.1.0 Track D shipped the phase (`src/core/cycle/nightly-quality-probe.ts`),
-  the audit JSONL (`src/core/audit-quality-probe.ts`), the doctor check
-  (`nightly_quality_probe_health` in doctor.ts), and the 10-question
-  placeholder fixture. What's NOT yet wired: `src/commands/autopilot.ts`
-  doesn't yet invoke `runNightlyQualityProbe(deps)` on its 24h cadence —
-  the phase is callable in isolation (good for testing) but no scheduled
-  loop calls it. To finish: add a phase trigger to the autopilot cycle loop
-  that calls the probe with concrete deps wiring (`isEnabled`,
-  `hasEmbeddingProvider`, `resolveMaxUsd`, `resolveRepoRoot`, real
-  `runLongMemEval` / `runCrossModalBatch` invocations via subprocess or
-  direct function call). Honor `autopilot.nightly_quality_probe.enabled`
-  config gate (already in doctor's read-side; needs autopilot read-side).
-  Doctor surface is already in place to show outcomes; just need the
-  scheduling lane. Estimate: ~3 hours.
+- [x] **v0.41+: Wire the nightly quality probe into autopilot scheduling.**
+  Completed in `src/commands/autopilot.ts`: the autopilot cycle loop gates
+  on `autopilot.nightly_quality_probe.enabled`, passes concrete deps into
+  `runNightlyQualityProbe`, and leaves the 24h cadence/rate-limit inside
+  the phase's audit-backed `shouldRunNightly` path. Doctor already reads
+  the resulting audit surface. Pinned by
+  `test/autopilot-nightly-probe-wiring.test.ts` and
+  `test/nightly-quality-probe.test.ts`.
 
 ## v0.41+ e2e-test-wave follow-ups (filed during v0.40.8.0 ship)
 

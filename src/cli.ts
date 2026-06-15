@@ -25,7 +25,7 @@ import type { AIGatewayConfig } from './core/ai/types.ts';
 import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
-import { drainAllBackgroundWorkForCliExit } from './core/background-work.ts';
+import { disconnectEngineForCliExit } from './core/cli-shutdown.ts';
 import { shouldForceExitAfterMain } from './core/cli-force-exit.ts';
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
@@ -395,8 +395,7 @@ async function main() {
     // that DO enqueue pay up to 1s (+ facts shutdown grace) while in-flight
     // Haiku finishes. The unref'd hard-deadline timer above is the backstop if
     // disconnect or a lingering socket keeps Bun's loop alive.
-    await drainAllBackgroundWorkForCliExit({ timeoutMs: 1000 });
-    await engine.disconnect();
+    await disconnectEngineForCliExit(engine, { timeoutMs: 1000 });
     if (forceExitTimer) clearTimeout(forceExitTimer);
   }
 }
@@ -1243,7 +1242,7 @@ async function handleCliOnly(command: string, args: string[]) {
       // lifetime strictly dominating every borrower (lint/doctor probe engines
       // created mid-cycle). Do NOT disconnect `eng` before runDream returns, or
       // a borrower could outlive the owner and lose the shared singleton.
-      if (eng) await eng.disconnect();
+      if (eng) await disconnectEngineForCliExit(eng);
     }
     return;
   }
@@ -1916,8 +1915,7 @@ async function handleCliOnly(command: string, args: string[]) {
         }, 10_000);
         hardExitTimer.unref?.();
       }
-      await drainAllBackgroundWorkForCliExit();
-      await engine.disconnect();
+      await disconnectEngineForCliExit(engine);
       if (hardExitTimer) clearTimeout(hardExitTimer);
     }
   }

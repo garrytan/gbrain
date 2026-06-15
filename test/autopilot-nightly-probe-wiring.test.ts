@@ -37,6 +37,18 @@ describe('autopilot wiring: nightly quality probe', () => {
     expect(SOURCE).toContain(`nightly_quality_probe?.enabled === true`);
   });
 
+  test('scheduler path invokes the probe from the real autopilot cycle loop', () => {
+    const cycleInline = SOURCE.indexOf(`event: 'cycle-inline'`);
+    const qualityProbe = SOURCE.indexOf(`Nightly quality probe`);
+    const probeCall = SOURCE.indexOf(`await runNightlyQualityProbe({`);
+    const parserProbe = SOURCE.indexOf(`Nightly conversation-parser probe`);
+
+    expect(cycleInline).toBeGreaterThan(0);
+    expect(qualityProbe).toBeGreaterThan(cycleInline);
+    expect(probeCall).toBeGreaterThan(qualityProbe);
+    expect(parserProbe).toBeGreaterThan(probeCall);
+  });
+
   test('NO scheduler-side rate-limit check (D10 simplification)', () => {
     // Codex round-1 #11 caught: scheduler-side rate-limit duplicates phase-internal logic.
     // The wiring code MUST NOT call shouldRunNightly directly OR read recent events

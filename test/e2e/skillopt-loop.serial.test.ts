@@ -753,10 +753,13 @@ describe('skillopt T3 — F11 held-out gate, ablation opts, no-DB-pollution', ()
           const result = await runOnce(fixture, { noMutate: true });
           expect(result.outcome).toBe('accepted');
           expect(result.mutatedSkillFile).toBe(false);
-          expect(result.proposedPath).toBeDefined();
-          // proposed.md (best.md) exists and carries the improvement.
+          expect(result.proposedPath).toBe(bestPath(fixture.skillsDir, SKILL));
+          // best.md exists and carries the accepted improvement.
           expect(fs.existsSync(result.proposedPath!)).toBe(true);
           expect(fs.readFileSync(result.proposedPath!, 'utf8')).toContain('## Citations');
+          expect(fs.readFileSync(result.proposedPath!, 'utf8')).toBe(result.finalText);
+          // No-mutate writes the review artifact, not a versioned committed row.
+          expect(loadHistory(fixture.skillsDir, SKILL)).toHaveLength(0);
           // SKILL.md on disk is UNCHANGED (still People-only).
           const skill = fs.readFileSync(skillPath(fixture.skillsDir, SKILL), 'utf8');
           expect(skill).not.toContain('## Citations');

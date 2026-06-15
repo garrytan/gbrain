@@ -93,7 +93,7 @@ import { resolveLrSchedule } from './lr-schedule.ts';
 import { preflight, formatPreflightReport } from './preflight.ts';
 import { isRejected, loadRejectedBuffer, makeRejectedEntry, saveRejectedBuffer } from './rejected-buffer.ts';
 import { runReflect, runOneShotRewrite, describeJudges } from './reflect.ts';
-import { acceptCandidate, bestPath, revertAllPending, skillPath, writeProposed } from './version-store.ts';
+import { acceptCandidate, revertAllPending, skillPath, writeProposed } from './version-store.ts';
 import { runValidationGate, scoreSkillOnTasks } from './validate-gate.ts';
 import { ROLLOUT_SUCCESS_THRESHOLD } from './types.ts';
 import type { SkillOptOpts, EditOp, RunReceipt, BenchmarkTask } from './types.ts';
@@ -695,16 +695,17 @@ async function runOptimizationLoop(
     }
   }
 
-  // If --no-mutate or bundled+!allowMutateBundled: write proposed.md instead.
+  // If --no-mutate or bundled+!allowMutateBundled: write best.md instead.
   let mutatedSkillFile = false;
   let proposedPath: string | undefined;
   // Widen back to the full union — TS narrowed `outcome` inside the try/catch
   // to the catch's assignment values only (it can't prove the async callback ran).
   const finalOutcome = outcome as 'accepted' | 'no_improvement' | 'aborted' | 'errored';
   if (!mutateDecision.mutate && finalOutcome === 'accepted') {
-    // best.md was written by writeProposed() in the accept branch (no-mutate
-    // path); it doubles as proposed.md for human review. SKILL.md untouched.
-    proposedPath = bestPath(skillsDir, skillName);
+    // Keep the accepted no-mutate contract in one final guard too: any accepted
+    // candidate, regardless of which branch accepted it, lands in best.md via
+    // the same atomic write path. SKILL.md stays untouched.
+    proposedPath = writeProposed(skillsDir, skillName, finalText);
   } else if (mutateDecision.mutate) {
     mutatedSkillFile = finalOutcome === 'accepted';
   }
