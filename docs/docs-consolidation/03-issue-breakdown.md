@@ -15,6 +15,7 @@ runtime commands.
 |---|---|
 | [#2](https://github.com/TheAngryPit/gbrain/issues/2) | `docs/docs-consolidation/05-current-capabilities-ledger.md` |
 | [#3](https://github.com/TheAngryPit/gbrain/issues/3) | `docs/docs-consolidation/06-documentation-status-taxonomy.md` |
+| [#4](https://github.com/TheAngryPit/gbrain/issues/4) | `README.md`, `llms-full.txt` |
 
 ## Published Issues
 

@@ -17,7 +17,28 @@ It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate t
 
 > **~30 minutes to a fully working brain.** Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
 
-> **LLMs:** fetch [`llms.txt`](llms.txt) for the documentation map, or [`llms-full.txt`](llms-full.txt) for the same map with core docs inlined in one fetch. **Agents:** start with [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md) if you're Claude Code).
+## Start here
+
+- **Current version.** `0.42.44.0`, from [`VERSION`](VERSION). Read
+  [`CHANGELOG.md`](CHANGELOG.md) for release notes. For upgrades, humans start
+  with [`docs/INSTALL.md`](docs/INSTALL.md); coding agents use
+  [`INSTALL_FOR_AGENTS.md#upgrade`](INSTALL_FOR_AGENTS.md#upgrade).
+- **Humans installing or operating GBrain.** Start with
+  [`docs/INSTALL.md`](docs/INSTALL.md). It routes local PGLite, Postgres or
+  Supabase, thin-client setup, MCP, and verification.
+- **Coding agents.** Use [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md) as the
+  operating protocol. Non-Claude agents start with [`AGENTS.md`](AGENTS.md);
+  Claude Code starts with [`CLAUDE.md`](CLAUDE.md).
+- **Production or shared-brain operators.** Start with
+  [`docs/INSTALL.md`](docs/INSTALL.md), then follow
+  [`docs/architecture/topologies.md`](docs/architecture/topologies.md),
+  [`docs/mcp/DEPLOY.md`](docs/mcp/DEPLOY.md), [`SECURITY.md`](SECURITY.md), and
+  [`docs/GBRAIN_VERIFY.md`](docs/GBRAIN_VERIFY.md). The README stays a router;
+  deployment detail belongs in those guides.
+- **For LLMs and coding agents.** Fetch [`llms.txt`](llms.txt) for the curated
+  documentation map, or [`llms-full.txt`](llms-full.txt) for one-shot ingestion
+  with core docs inlined. GBrain does not currently ship an official installable
+  docs skill; use these files plus the agent entrypoints above.
 
 ## What this looks like
 
@@ -81,7 +102,9 @@ Retrieve and follow the instructions at:
 https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 ```
 
-The agent installs GBrain, creates the brain, asks for your API keys, loads 43 skills, configures the dream cycle, and verifies the install end-to-end. ~30 minutes. You answer questions, it does the work.
+The agent installs GBrain, creates the brain, asks for your API keys, loads the
+bundled skills, configures the dream cycle, and verifies the install
+end-to-end. ~30 minutes. You answer questions, it does the work.
 
 > **Never set up an AI agent platform before?** The [personal-brain tutorial](docs/tutorials/personal-brain.md) walks the whole path end-to-end — picking OpenClaw vs Hermes, deploying it, pointing it at INSTALL_FOR_AGENTS.md, getting the API keys, and verifying the first query. Start there if any of the above is new.
 
@@ -107,7 +130,9 @@ gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex --install 
 
 ### Install the full autonomous setup into your existing agent
 
-Want the whole thing — local brain, 43 skills, the overnight dream cycle that enriches while you sleep? Paste this into Codex, Claude Code, Cursor, or another coding agent:
+Want the whole thing — local brain, bundled skills, the overnight dream cycle
+that enriches while you sleep? Paste this into Codex, Claude Code, Cursor, or
+another coding agent:
 
 ```
 Retrieve and follow the instructions at:
@@ -258,7 +283,13 @@ The whole loop is described in [`docs/architecture/topologies.md`](docs/architec
 
 **Job queue (Minions).** BullMQ-shaped, Postgres-native job queue. Durable subagents (LLM tool loops that survive crashes via two-phase pending→done persistence), shell jobs with audit, child jobs with cascading timeouts, rate leases for outbound providers, attachments via S3/Supabase storage. Replaces "spawn subagent as fire-and-forget Promise" with something that recovers from anything.
 
-**43 curated skills.** Routing lives in [`skills/RESOLVER.md`](skills/RESOLVER.md). Covers signal capture, ingest (idea / media / meeting), enrichment, querying, brain ops, citation fixing, daily task management, cron scheduling, reports, voice, soul audit, skill creation, eval framework, and migrations. Skills are markdown files (tool-agnostic), packaged as a single skillpack the installer drops into your agent workspace.
+**Bundled skills.** Routing lives in
+[`skills/RESOLVER.md`](skills/RESOLVER.md). Covers signal capture, ingest
+(idea / media / meeting), enrichment, querying, brain ops, citation fixing,
+daily task management, cron scheduling, reports, voice, soul audit, skill
+creation, eval framework, and migrations. Skills are markdown files
+(tool-agnostic), packaged as a single skillpack the installer drops into your
+agent workspace.
 
 **Eval framework.** `gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark against your hybrid retrieval. `gbrain eval export` + `gbrain eval replay` capture real queries and replay them against code changes (set `GBRAIN_CONTRIBUTOR_MODE=1`). `gbrain eval cross-modal` cross-checks an output against the task using three different-provider frontier models. `gbrain eval retrieval-quality` runs NamedThingBench, which hard-gates the named-thing retrieval families (title-substring, alias-synonym, generic-to-named, multi-chunk-dilution) so a regression in "find the page this query names" fails CI loudly. Full methodology in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md).
 
