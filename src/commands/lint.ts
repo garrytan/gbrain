@@ -17,7 +17,7 @@
  */
 
 import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, existsSync } from 'fs';
-import { join, relative } from 'path';
+import { join, relative, resolve } from 'path';
 import { isAborted } from '../core/abort-check.ts';
 import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
 import {
@@ -26,7 +26,9 @@ import {
   DEFAULT_BYTES_WARN,
 } from '../core/content-sanity.ts';
 import { loadOperatorLiterals } from '../core/content-sanity-literals.ts';
-import { loadConfig, loadConfigWithEngine, gbrainPath } from '../core/config.ts';
+import { loadConfig, loadConfigWithEngine, toEngineConfig, gbrainPath } from '../core/config.ts';
+import { matchesAnyGlob } from '../core/sync.ts';
+import { parseGlobList } from './sync.ts';
 import type { BrainEngine } from '../core/engine.ts';
 
 export interface LintIssue {
@@ -378,19 +380,87 @@ async function resolveLintContentSanity(
   };
 }
 
-/** Collect markdown files from a directory */
-function collectPages(dir: string): string[] {
+/** Collect markdown files from a directory.
+ *
+ *  When `opts.include` or `opts.exclude` are set, each candidate `.md` path's
+ *  POSIX-style relative path (relative to `dir`) is matched against the same
+ *  glob semantics sync uses (`matchesAnyGlob`). `include` allow-lists;
+ *  `exclude` deny-lists. Empty or undefined arrays leave the filter
+ *  unengaged. Symmetric with `isSyncable` in `src/core/sync.ts` so a
+ *  source-config `exclude_globs` honored by `gbrain sync` is also honored
+ *  by `gbrain lint` against the same dir.
+ */
+function collectPages(
+  dir: string,
+  opts: { include?: string[]; exclude?: string[] } = {},
+): string[] {
+  const { include, exclude } = opts;
+  const haveInclude = !!(include && include.length > 0);
+  const haveExclude = !!(exclude && exclude.length > 0);
   const pages: string[] = [];
   function walk(d: string) {
     for (const entry of readdirSync(d)) {
       if (entry.startsWith('.') || entry.startsWith('_')) continue;
       const full = join(d, entry);
       if (lstatSync(full).isDirectory()) walk(full);
-      else if (entry.endsWith('.md')) pages.push(full);
+      else if (entry.endsWith('.md')) {
+        if (haveInclude || haveExclude) {
+          // Match against the path RELATIVE to `dir` (the source root),
+          // normalized to POSIX separators by matchesAnyGlob. A
+          // source-config glob like `Resources/veriff/**` is anchored at
+          // the source root; matching against the absolute path would
+          // require the user to anchor on their `$HOME` or repo prefix,
+          // which is brittle.
+          const rel = relative(dir, full);
+          if (haveInclude && !matchesAnyGlob(rel, include)) continue;
+          if (haveExclude && matchesAnyGlob(rel, exclude)) continue;
+        }
+        pages.push(full);
+      }
     }
   }
   walk(dir);
   return pages.sort();
+}
+
+/** Look up the source row whose `local_path` resolves to the same absolute
+ *  directory as `target`, and return its persisted `include_globs` /
+ *  `exclude_globs` as parsed string arrays. Returns an empty object when no
+ *  matching source exists, when the row has no globs configured, or when the
+ *  lookup throws (best-effort — auto-resolution must never break standalone
+ *  lint on brains without a sources table).
+ *
+ *  Mirrors how `syncOneSource` lifts the same fields off `src.config` before
+ *  threading them into `SyncOpts.include` / `SyncOpts.exclude`.
+ */
+async function resolveSourceGlobsForTarget(
+  engine: BrainEngine,
+  target: string,
+): Promise<{ include?: string[]; exclude?: string[] }> {
+  try {
+    const absTarget = resolve(target);
+    const rows = await engine.executeRaw<{ config: unknown }>(
+      `SELECT config FROM sources
+        WHERE archived IS NOT TRUE
+          AND local_path IS NOT NULL
+          AND local_path = $1
+        LIMIT 1`,
+      [absTarget],
+    );
+    if (rows.length === 0) return {};
+    const cfg = (rows[0].config && typeof rows[0].config === 'object')
+      ? rows[0].config as Record<string, unknown>
+      : {};
+    return {
+      include: parseGlobList(cfg.include_globs),
+      exclude: parseGlobList(cfg.exclude_globs),
+    };
+  } catch {
+    // Engine not connected, sources table missing on a fresh brain, RLS
+    // denial in an unusual scope — all best-effort. Lint proceeds without
+    // filtering rather than fail-closed.
+    return {};
+  }
 }
 
 export interface LintOpts {
@@ -414,6 +484,22 @@ export interface LintOpts {
    * yields + checks this every 200 pages.
    */
   signal?: AbortSignal;
+  /**
+   * Glob filters threaded into the file walker. When set, paths relative to
+   * `target` are matched against the patterns using the same semantics as
+   * `gbrain sync` (`matchesAnyGlob` in `src/core/sync.ts`). `include`
+   * allow-lists; `exclude` deny-lists; both unset == no filter.
+   *
+   * When BOTH are unset AND `engine` is provided, `runLintCore` attempts to
+   * auto-resolve them from the `sources` row whose `local_path` matches
+   * `target` — symmetric with `syncOneSource`, so a user who has run
+   * `gbrain sources add --exclude 'Resources/veriff/**'` sees the same
+   * exclusion applied to `gbrain lint <same-dir>` and to the cycle.lint
+   * phase without restating it on every invocation. Explicit caller-supplied
+   * arrays always win over the source-row lift.
+   */
+  include?: string[];
+  exclude?: string[];
 }
 
 export interface LintResult {
@@ -440,7 +526,21 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   }
 
   const isSingleFile = statSync(opts.target).isFile();
-  const pages = isSingleFile ? [opts.target] : collectPages(opts.target);
+
+  // Resolve glob filters. Explicit caller-supplied include/exclude win;
+  // otherwise lift from `sources.config.{include,exclude}_globs` when an
+  // engine is available and the target matches a known source's local_path.
+  // Single-file lints skip the resolve entirely — globs are a directory
+  // walk concern.
+  let include = opts.include;
+  let exclude = opts.exclude;
+  const haveExplicit = (include && include.length > 0) || (exclude && exclude.length > 0);
+  if (!isSingleFile && !haveExplicit && opts.engine) {
+    const resolved = await resolveSourceGlobsForTarget(opts.engine, opts.target);
+    include = resolved.include;
+    exclude = resolved.exclude;
+  }
+  const pages = isSingleFile ? [opts.target] : collectPages(opts.target, { include, exclude });
 
   // Resolve content-sanity config once for this lint run (D1: lift DB
   // config when reachable). Caller can pre-pass via opts.contentSanity
@@ -491,14 +591,27 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
 }
 
 export async function runLint(args: string[]) {
-  const target = args.find(a => !a.startsWith('--'));
+  const target = args.find(a => !a.startsWith('--') && !args[args.indexOf(a) - 1]?.match(/^--(include|exclude)$/));
   const doFix = args.includes('--fix');
   const dryRun = args.includes('--dry-run');
 
+  // Parse repeatable `--include <glob>` and `--exclude <glob>` flags.
+  // Symmetric with `gbrain sources add --include / --exclude` from PR #2157;
+  // explicit flags here override the source-config lift performed below for
+  // dir-mode lints.
+  const cliInclude: string[] = [];
+  const cliExclude: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--include' && i + 1 < args.length) cliInclude.push(args[++i]);
+    else if (args[i] === '--exclude' && i + 1 < args.length) cliExclude.push(args[++i]);
+  }
+
   if (!target) {
-    console.error('Usage: gbrain lint <dir|file.md> [--fix] [--dry-run]');
-    console.error('  --fix      Auto-fix fixable issues (LLM preambles, code fences)');
-    console.error('  --dry-run  Preview fixes without writing');
+    console.error('Usage: gbrain lint <dir|file.md> [--fix] [--dry-run] [--include <glob>]... [--exclude <glob>]...');
+    console.error('  --fix              Auto-fix fixable issues (LLM preambles, code fences)');
+    console.error('  --dry-run          Preview fixes without writing');
+    console.error('  --include <glob>   Repeatable; only lint paths matching at least one pattern');
+    console.error('  --exclude <glob>   Repeatable; skip paths matching any pattern (applied after --include)');
     process.exit(1);
   }
 
@@ -510,7 +623,44 @@ export async function runLint(args: string[]) {
   // Single file or directory — print human detail as we go, then rely on
   // Core for the aggregate numbers at the end.
   const isSingleFile = statSync(target).isFile();
-  const pages = isSingleFile ? [target] : collectPages(target);
+
+  // Resolve glob filters for directory lints. Explicit CLI flags win;
+  // otherwise lift from `sources.config.{include,exclude}_globs` matching
+  // `target`. Connect a transient engine for the lookup only when (a) no
+  // explicit flags were passed AND (b) file/env config suggests an engine is
+  // available — mirrors the connect-disconnect pattern in
+  // `resolveLintContentSanity` (issue #1678: standalone CLI never shares the
+  // db.ts singleton, so create + dispose here is safe).
+  let runInclude: string[] | undefined = cliInclude.length > 0 ? cliInclude : undefined;
+  let runExclude: string[] | undefined = cliExclude.length > 0 ? cliExclude : undefined;
+  if (!isSingleFile && runInclude === undefined && runExclude === undefined) {
+    const base = loadConfig();
+    if (base?.database_url || base?.database_path) {
+      try {
+        const { createEngine } = await import('../core/engine-factory.ts');
+        const { connectWithRetry } = await import('../core/db.ts');
+        const engineCfg = toEngineConfig(base);
+        const engine = await createEngine(engineCfg);
+        try {
+          // Use the same connect path the rest of the CLI uses
+          // (`connectEngine` in cli.ts). `engine.connect({})` with empty
+          // opts drops the URL — confirmed by direct probe. `noRetry: true`
+          // keeps the standalone lint snappy (no retry tax when the brain
+          // happens to be unreachable; auto-resolve degrades to no-filter).
+          await connectWithRetry(engine, engineCfg, { noRetry: true });
+          const lifted = await resolveSourceGlobsForTarget(engine, target);
+          runInclude = lifted.include;
+          runExclude = lifted.exclude;
+        } finally {
+          await engine.disconnect().catch(() => { /* best-effort */ });
+        }
+      } catch {
+        // best-effort; fall through to no-filter
+      }
+    }
+  }
+
+  const pages = isSingleFile ? [target] : collectPages(target, { include: runInclude, exclude: runExclude });
 
   // Progress on stderr. Stdout keeps the per-issue human output it always had.
   const { createProgress } = await import('../core/progress.ts');
@@ -557,7 +707,17 @@ export async function runLint(args: string[]) {
   // produces canonical numbers for the summary line).
   // Pass contentSanity through so runLintCore skips its own resolve
   // (we already resolved once for the human-detail loop above).
-  const result = await runLintCore({ target, fix: doFix, dryRun, contentSanity });
+  // Pass include/exclude so the aggregate scope matches the human-detail
+  // walk above — otherwise the summary line reports the unfiltered count
+  // even though the per-page details were already filtered.
+  const result = await runLintCore({
+    target,
+    fix: doFix,
+    dryRun,
+    contentSanity,
+    include: runInclude,
+    exclude: runExclude,
+  });
   console.log(`\n${result.pages_scanned} pages scanned. ${result.total_issues} issue(s) in ${result.pages_with_issues} page(s).`);
   if (doFix) {
     console.log(`${dryRun ? '(dry run) ' : ''}${result.total_fixed} auto-fixed.`);
