@@ -256,7 +256,9 @@ know the other.
 
 ## Further reading
 
-- v0.18.0 CHANGELOG — introduced `sources` primitive.
-- v0.19.0 CHANGELOG (TBD after PR 0+1+2 ship) — introduces `mounts`.
-- `docs/mounts/publishing-a-team-brain.md` (PR 2) — how to be the brain
-  publisher, not just the subscriber.
+- `CHANGELOG.md` — release history for `sources`, `mounts`, and topology-facing
+  behavior.
+- `docs/architecture/topologies.md` — operating-model and deployment-topology
+  choices.
+- `docs/architecture/thin-client.md` — remote-MCP/thin-client deployment
+  boundary.

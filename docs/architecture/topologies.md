@@ -252,7 +252,8 @@ Three storage paths in priority order:
    persist a config-file copy when the env var was the source.
 2. **`~/.gbrain/config.json` with 0600 perms** (default for interactive
    setup; mirrors how Supabase keys are stored today).
-3. macOS Keychain integration is on the roadmap; not in v1.
+3. macOS Keychain integration is not documented as a current storage path; use
+   one of the two supported paths above.
 
 ## Topology 3 — Split-engine, per-worktree code + remote artifacts
 
