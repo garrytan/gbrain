@@ -1,6 +1,6 @@
 # Documentation Consolidation Issue Breakdown
 
-Status: draft issue proposal, not yet published
+Status: published issue proposal and execution ledger
 
 Parent issue: <https://github.com/TheAngryPit/gbrain/issues/1>
 
@@ -8,6 +8,13 @@ Tracker mode: GitHub issues, `ready-for-agent` label where available
 
 All slices are AFK. No slice requires local runtime inspection or GBrain
 runtime commands.
+
+## Execution Artifacts
+
+| Issue | Artifact |
+|---|---|
+| [#2](https://github.com/TheAngryPit/gbrain/issues/2) | `docs/docs-consolidation/05-current-capabilities-ledger.md` |
+| [#3](https://github.com/TheAngryPit/gbrain/issues/3) | `docs/docs-consolidation/06-documentation-status-taxonomy.md` |
 
 ## Published Issues
 

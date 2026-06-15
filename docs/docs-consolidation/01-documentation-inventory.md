@@ -18,10 +18,12 @@ or out-of-repo environment files were inspected. No GBrain runtime commands,
 service commands, migrations, imports, syncs, or Docker lifecycle commands were
 run.
 
-Generated manifest:
+Generated and execution artifacts:
 
 - `docs/docs-consolidation/01-documentation-manifest.tsv`
 - `docs/docs-consolidation/02-architecture-map.md`
+- `docs/docs-consolidation/05-current-capabilities-ledger.md`
+- `docs/docs-consolidation/06-documentation-status-taxonomy.md`
 
 The manifest lists every documentation-like file found by the metadata pass:
 path, area, role, line count, byte count, and first H1.
@@ -29,6 +31,10 @@ path, area, role, line count, byte count, and first H1.
 The architecture map records the installed Understand / CodeGraph / subagent
 analysis used to connect documentation drift back to repository code and
 manifests.
+
+The current-capabilities ledger maps the current release window from
+`CHANGELOG.md` into documentation obligations. The status taxonomy defines the
+trust labels and action rules used by the remaining consolidation issues.
 
 ## Inventory Summary
 
@@ -151,6 +157,10 @@ The first executable issue should not start by rewriting entrypoints. It should
 build a current-capabilities ledger from `CHANGELOG.md`, then compare docs
 against that ledger.
 
+Execution artifact:
+
+- `docs/docs-consolidation/05-current-capabilities-ledger.md`
+
 The latest release window changes the docs problem in concrete ways:
 
 - `0.42.44.0` confirms tutorials remain part of the live operational surface:
@@ -172,6 +182,10 @@ labelled historical, but many should be evolved to include these current
 capabilities.
 
 ## Consolidation Findings
+
+Status taxonomy artifact:
+
+- `docs/docs-consolidation/06-documentation-status-taxonomy.md`
 
 ### 1. Install surface sprawl
 
@@ -342,6 +356,8 @@ The smallest coherent PR should avoid rewriting the docs system. It should:
 | Current checkout has 52 `skills/**/SKILL.md` files | code_proven | `rg --files skills -g 'SKILL.md'` count |
 | Current checkout has 147 E2E test files | code_proven | Prior inventory count from `rg --files test/e2e -g '*.test.ts'`; `scripts/run-e2e.sh` and `scripts/ci-local.sh` use dynamic globs |
 | Current release baseline is v0.42.44.0 | code_proven | `VERSION` and top of `CHANGELOG.md` |
+| Changelog-to-current-capabilities ledger exists | implemented | `docs/docs-consolidation/05-current-capabilities-ledger.md` |
+| Documentation status taxonomy exists | implemented | `docs/docs-consolidation/06-documentation-status-taxonomy.md` |
 | Current HTTP OAuth path is engine-aware | code_proven | CodeGraph trace to `src/commands/serve-http.ts`, `GBrainOAuthProvider`, and PGLite OAuth bootstrap logic |
 | Generated LLM maps are still upstream-linked in this fork | code_proven | Direct reads of `llms.txt`, `llms-full.txt`, `AGENTS.md`, and `scripts/llms-config.ts` |
 | No GBrain runtime proof was attempted | implemented | This task intentionally avoided runtime commands by instruction |
