@@ -17,12 +17,18 @@ Machine-readable context:
 
 ## Agent operating map
 
+Classify the user's operating model before choosing a deployment topology. Use
+[`docs/architecture/topologies.md#operating-model-decision-tree`](docs/architecture/topologies.md#operating-model-decision-tree)
+and
+[`docs/architecture/topologies.md#deployment-topology-decision-tree`](docs/architecture/topologies.md#deployment-topology-decision-tree)
+when the setup is not the simple local default.
+
 | User situation | Agent path | Extra gate |
 |---|---|---|
 | User wants a local personal brain | Follow Steps 1 through 9. | Stop at Step 3.5 and confirm search mode. |
 | User already has a human-installed brain | Read `docs/INSTALL.md`, then run only the verification and agent-wiring steps the user approves. | Do not reinitialize or migrate unless asked. |
-| User wants a remote or thin-client setup | Use [`docs/architecture/topologies.md`](docs/architecture/topologies.md) and [`docs/mcp/DEPLOY.md`](docs/mcp/DEPLOY.md). | Confirm OAuth/scopes and remote MCP exposure before configuring clients. |
-| User wants a team, family, household, or company brain | Use the production branch in [`docs/INSTALL.md`](docs/INSTALL.md) and [`docs/tutorials/company-brain.md`](docs/tutorials/company-brain.md). | Confirm source/brain ownership, scopes, backups, and restore plan. |
+| User wants a remote or thin-client setup | Use the [deployment-topology decision tree](docs/architecture/topologies.md#deployment-topology-decision-tree) and [`docs/mcp/DEPLOY.md`](docs/mcp/DEPLOY.md). | Confirm OAuth/scopes and remote MCP exposure before configuring clients. |
+| User wants a team, family, household, or company brain | Use the [operating-model decision tree](docs/architecture/topologies.md#operating-model-decision-tree), the production branch in [`docs/INSTALL.md`](docs/INSTALL.md), and [`docs/tutorials/company-brain.md`](docs/tutorials/company-brain.md). | Confirm single-agent vs auth-scoped mode, source/brain ownership, scopes, backups, and restore plan. |
 | User is upgrading an existing brain | Use [Upgrade](#upgrade). | Stop on the search-mode post-upgrade banner and ask the user. |
 
 ## Safety gates for agents
@@ -348,8 +354,8 @@ Remote setup references:
 - `docs/mcp/CODEX.md`, `docs/mcp/CLAUDE_CODE.md`,
   `docs/mcp/CLAUDE_DESKTOP.md`, `docs/mcp/CHATGPT.md`, and
   `docs/mcp/PERPLEXITY.md` for client-specific setup.
-- `docs/architecture/topologies.md` for thin-client, split-engine, and
-  cross-machine patterns.
+- `docs/architecture/topologies.md` for operating-model, thin-client,
+  split-engine, mounted-brain, and security-isolation decision trees.
 
 Remote-call boundary:
 

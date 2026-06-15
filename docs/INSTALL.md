@@ -9,15 +9,20 @@ Current version: [`../VERSION`](../VERSION). Release history:
 
 ## Start with the right shape
 
-Pick the operating shape before you run install commands.
+Pick the operating model, then the deployment topology, before you run install
+commands. The branchable decision trees live in
+[`architecture/topologies.md#operating-model-decision-tree`](architecture/topologies.md#operating-model-decision-tree)
+and
+[`architecture/topologies.md#deployment-topology-decision-tree`](architecture/topologies.md#deployment-topology-decision-tree).
 
 | If you want | Start here | Why |
 |---|---|---|
 | A personal brain on one machine | [Local install](#local-install) | PGLite is the zero-config default and works well for solo use. |
 | A personal brain with many repos or sources | [Local install](#local-install), then [brain repo and sources](#brain-repo-and-sources) | One brain can hold many sources. Use source routing instead of creating extra databases. |
-| A team, family, household, or company brain | [Production and shared-brain branch](#production-and-shared-brain-branch) | Shared use needs Postgres or Supabase, OAuth/scopes, backups, and a remote MCP plan. |
+| A team, family, household, or company brain | [Production and shared-brain branch](#production-and-shared-brain-branch) | Shared use needs a single-agent vs auth-scoped choice, plus backups and a remote MCP plan when exposed. |
 | A laptop or agent that should consume a remote brain only | [Thin-client branch](#thin-client-branch) | The local machine gets MCP config, not a local database. |
-| Per-worktree code brains plus a shared artifact brain | [`architecture/topologies.md`](architecture/topologies.md) | Split-engine setups need explicit `GBRAIN_HOME` and MCP alias discipline. |
+| Per-worktree code brains plus a shared artifact brain | [`architecture/topologies.md#deployment-topology-decision-tree`](architecture/topologies.md#deployment-topology-decision-tree) | Split-engine setups need explicit `GBRAIN_HOME` and MCP alias discipline. |
+| A solo user with agent-isolation or cloud-client security needs | [`architecture/topologies.md#deployment-topology-decision-tree`](architecture/topologies.md#deployment-topology-decision-tree) | Solo ownership can still need thin-client, split-engine, or isolated homes. |
 
 Two concepts matter throughout:
 
@@ -177,6 +182,7 @@ when the data owner, lifecycle, or access policy changes.
 
 For shared/team/company layouts, read:
 
+- [`architecture/topologies.md`](architecture/topologies.md)
 - [`architecture/brains-and-sources.md`](architecture/brains-and-sources.md)
 - [`tutorials/company-brain.md`](tutorials/company-brain.md)
 
@@ -271,6 +277,7 @@ Production checklist:
 - Use Postgres or Supabase for shared or multi-machine operation.
 - Decide whether the shared unit is one source with folder conventions, many
   sources with OAuth scoping, or multiple mounted brains. See
+  [`architecture/topologies.md`](architecture/topologies.md),
   [`architecture/brains-and-sources.md`](architecture/brains-and-sources.md)
   and [`tutorials/company-brain.md`](tutorials/company-brain.md).
 - Use `gbrain serve --http` only when you need remote MCP. Local agents should
@@ -360,8 +367,8 @@ Use [`GBRAIN_VERIFY.md`](GBRAIN_VERIFY.md) for the full runbook.
 
 ## Reference map
 
-- [`architecture/topologies.md`](architecture/topologies.md): where the brain
-  lives and how agents connect.
+- [`architecture/topologies.md`](architecture/topologies.md): operating model
+  and deployment topology decision trees.
 - [`architecture/brains-and-sources.md`](architecture/brains-and-sources.md):
   database vs source routing.
 - [`integrations/embedding-providers.md`](integrations/embedding-providers.md):

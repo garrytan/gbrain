@@ -30,8 +30,11 @@ It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate t
   operating protocol. Non-Claude agents start with [`AGENTS.md`](AGENTS.md);
   Claude Code starts with [`CLAUDE.md`](CLAUDE.md).
 - **Production or shared-brain operators.** Start with
-  [`docs/INSTALL.md`](docs/INSTALL.md), then follow
-  [`docs/architecture/topologies.md`](docs/architecture/topologies.md),
+  [`docs/INSTALL.md`](docs/INSTALL.md), then use the
+  [`operating-model`](docs/architecture/topologies.md#operating-model-decision-tree)
+  and
+  [`deployment-topology`](docs/architecture/topologies.md#deployment-topology-decision-tree)
+  decision trees before following
   [`docs/mcp/DEPLOY.md`](docs/mcp/DEPLOY.md), [`SECURITY.md`](SECURITY.md), and
   [`docs/GBRAIN_VERIFY.md`](docs/GBRAIN_VERIFY.md). The README stays a router;
   deployment detail belongs in those guides.
