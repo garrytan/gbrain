@@ -273,21 +273,16 @@ audit trail lives in the source repo's git history.
 
 ## Skills
 
-Read the skill files in `skills/` before doing brain operations. GBrain ships 30 skills
-organized by `skills/RESOLVER.md` (`AGENTS.md` is also accepted as of v0.19):
-
-**Original 8 (conformance-migrated):** ingest (thin router), query, maintain, enrich,
-briefing, migrate, setup, publish.
-
-**Brain skills (ported from an upstream agent fork):** signal-detector, brain-ops, idea-ingest, media-ingest,
-meeting-ingestion, citation-fixer, repo-architecture, skill-creator, daily-task-manager.
-
-**Operational + identity:** daily-task-prep, cross-modal-review, cron-scheduler, reports,
-testing, soul-audit, webhook-transforms, data-research, minion-orchestrator. As of
-v0.20.4, `minion-orchestrator` is the single unified skill for both lanes of background
-work (shell jobs via `gbrain jobs submit shell`, LLM subagents via `gbrain agent run`) ...
-the prior `gbrain-jobs` skill was merged in, Preconditions are shared, and trigger
-routing is narrowed to what the skill actually covers.
+Read `skills/RESOLVER.md`, then read the specific skill files in `skills/`
+before doing brain operations. The resolver is the source of truth for the
+current bundled skill surface (`AGENTS.md` is also accepted as of v0.19).
+Skill families include setup, ingestion, query, enrichment, maintenance,
+publishing, testing, scheduling, identity, media, meeting, research, reporting,
+and minion orchestration. As of v0.20.4, `minion-orchestrator` is the unified
+skill for both lanes of background work (shell jobs via `gbrain jobs submit
+shell`, LLM subagents via `gbrain agent run`); the prior `gbrain-jobs` skill was
+merged in, Preconditions are shared, and trigger routing is narrowed to what the
+skill actually covers.
 
 **Skillify loop (v0.19):** skillify (the markdown orchestration), skillpack-check
 (agent-readable health report).

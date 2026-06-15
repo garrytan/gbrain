@@ -12,6 +12,8 @@ Machine-readable context:
 - [`llms.txt`](llms.txt) is the curated documentation map.
 - [`llms-full.txt`](llms-full.txt) is the same map with core docs inlined for
   one-shot ingestion.
+- Both files are generated from [`scripts/llms-config.ts`](scripts/llms-config.ts).
+  Forks should regenerate them with `LLMS_REPO_BASE` set to the fork's raw URL.
 - [`AGENTS.md`](AGENTS.md) is the non-Claude-agent repo protocol.
 - [`CLAUDE.md`](CLAUDE.md) is the Claude Code orientation and resolver.
 - [`docs/guides/mode-selection.md`](docs/guides/mode-selection.md) explains
@@ -75,8 +77,8 @@ protocol (install, read order, trust boundary, common tasks). Claude Code reads
 
 If you fetched this file by URL without cloning yet, the companion files live at:
 - `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` — start here
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms.txt` — full doc map
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms-full.txt` — same map, inlined
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms.txt` — generated doc map
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms-full.txt` — generated inlined doc bundle
 - `https://raw.githubusercontent.com/garrytan/gbrain/master/docs/INSTALL.md` — human install and operating center
 
 ## Step 1: Install GBrain

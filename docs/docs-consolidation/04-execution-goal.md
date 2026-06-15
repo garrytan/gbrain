@@ -252,7 +252,7 @@ Use source files only to verify docs claims. Do not change runtime code.
 | 9 | #10 | Production path and checklist | agent_executable | #5, #7, #8, #9 complete | Production branch/checklist exists inside human path | implemented in `docs/INSTALL.md`; production path remains centralized |
 | 10 | #11 | MCP/auth/remote/thin-client alignment | agent_executable | #2, #6, #7, #10 complete | MCP/auth docs align with current protocol truth | implemented in `docs/mcp/DEPLOY.md`, `SECURITY.md`, `docs/mcp/ALTERNATIVES.md`, client MCP recipes, and `docs/architecture/thin-client.md` |
 | 11 | #12 | Status labels | agent_executable | #3 complete | Historical/design/deprecated/superseded docs labelled where needed | implemented in selected historical/design/proposal/incident/plan docs and tracked in `07-status-label-application.md` |
-| 12 | #13 | Brittle counts and generated-map claims | agent_executable | #2, #3, #4 complete | Counts qualified/removed and generated maps handled | pending |
+| 12 | #13 | Brittle counts and generated-map claims | agent_executable | #2, #3, #4 complete | Counts qualified/removed and generated maps handled | implemented in current docs, generator source, regenerated maps, and `08-brittle-counts-and-generated-maps.md` |
 | 13 | #14 | Final consistency pass | agent_executable | #2 through #13 complete | PRD/issues/changelog/operator feedback mapped to final diff | pending |
 
 Preserve order. Do not skip a row. If a row becomes human-in-loop, stop with

@@ -28,7 +28,7 @@ export type DocSection = {
 export const PROJECT = {
   name: "GBrain",
   summary:
-    "GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, 26 fat-markdown skills. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.",
+    "GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, and a resolver-routed skill surface. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.",
   repoUrl: "https://github.com/garrytan/gbrain",
   rawBaseUrl:
     process.env.LLMS_REPO_BASE ??
@@ -155,7 +155,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/guides/scaling-skills.md",
         description:
-          "Three-tier architecture for agents with 300+ skills: always-loaded, resolver-routed, and dormant. Per-turn token math, the v0.41.7.0 compact list-format resolver, and the `gbrain doctor` safety net. 306 skills, ~21K tokens freed per turn, zero capability loss.",
+          "Three-tier architecture for large agent skill surfaces: always-loaded, resolver-routed, and dormant. Includes a 306-skill production case study, per-turn token math, the v0.41.7.0 compact list-format resolver, and the `gbrain doctor` safety net.",
         path: "docs/guides/scaling-skills.md",
       },
       {

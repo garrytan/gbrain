@@ -45,8 +45,12 @@ It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate t
   and `gbrain watch`.
 - **For LLMs and coding agents.** Fetch [`llms.txt`](llms.txt) for the curated
   documentation map, or [`llms-full.txt`](llms-full.txt) for one-shot ingestion
-  with core docs inlined. GBrain does not currently ship an official installable
-  docs skill; use these files plus the agent entrypoints above.
+  with core docs inlined. These files are generated from
+  [`scripts/llms-config.ts`](scripts/llms-config.ts); update the source docs or
+  config, then run `bun run build:llms`. Forks should set `LLMS_REPO_BASE`
+  before regenerating so links point at the fork. GBrain does not currently
+  ship an official installable docs skill; use these files plus the agent
+  entrypoints above.
 
 ## What this looks like
 
@@ -163,7 +167,7 @@ Postgres-at-scale, Supabase, and thin-client setup paths live in [`docs/INSTALL.
 
 ### Connect GBrain to your AI client (MCP)
 
-GBrain exposes 30+ tools over MCP (stdio and HTTP). The specific snippet depends on which client you use:
+GBrain exposes its operation surface over MCP (stdio and HTTP). The specific snippet depends on which client you use:
 
 - **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — local: one command, `claude mcp add gbrain -- gbrain serve` (zero server, zero tunnel). Remote with just a bearer token: `gbrain connect https://your-host/mcp --token gbrain_xxx` prints a paste-ready block (or `--install` wires it up and smoke-tests the token).
 - **[Codex](docs/mcp/CODEX.md)** — `gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex` (or `--install`). Codex reads the bearer from `$GBRAIN_REMOTE_TOKEN` at runtime, so the token never lands in Codex config.
@@ -322,7 +326,7 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 
 ## Architecture
 
-**Two engines, one contract.** PGLite (Postgres 17 via WASM, zero-config, default) for personal brains up to ~50K pages. Postgres + pgvector (Supabase or self-hosted) for shared / large / multi-machine deployments. The contract-first `BrainEngine` interface in [`src/core/engine.ts`](src/core/engine.ts) defines ~47 operations both engines implement; CLI and MCP server are generated from one source.
+**Two engines, one contract.** PGLite (Postgres 17 via WASM, zero-config, default) for personal brains up to ~50K pages. Postgres + pgvector (Supabase or self-hosted) for shared / large / multi-machine deployments. The contract-first `BrainEngine` interface in [`src/core/engine.ts`](src/core/engine.ts) defines the shared operation surface both engines implement; CLI and MCP server are generated from one source.
 
 **Brain repo is the system of record.** Your knowledge lives in a regular git repo (your "brain repo") as markdown files. GBrain syncs the repo into Postgres for retrieval; deletes in git become soft-deletes in DB. You can publish public subsets, share team mounts, run thin-client setups pointing at a colleague's brain server. Layout guidance: [`docs/architecture/brain-repo-layout.md`](docs/architecture/brain-repo-layout.md). Topologies: [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
 
