@@ -25,7 +25,7 @@ runtime commands.
 | [#11](https://github.com/TheAngryPit/gbrain/issues/11) | `docs/mcp/DEPLOY.md`, `SECURITY.md`, `docs/mcp/ALTERNATIVES.md`, `docs/architecture/thin-client.md`, `INSTALL_FOR_AGENTS.md`, `docs/mcp/CODEX.md`, `docs/mcp/CLAUDE_CODE.md`, `docs/mcp/CHATGPT.md`, `docs/mcp/PERPLEXITY.md`, `llms-full.txt` |
 | [#12](https://github.com/TheAngryPit/gbrain/issues/12) | `docs/docs-consolidation/07-status-label-application.md`, status banners in selected historical/design/proposal/incident/plan docs, `TODOS.md` |
 | [#13](https://github.com/TheAngryPit/gbrain/issues/13) | `docs/docs-consolidation/08-brittle-counts-and-generated-maps.md`, `README.md`, `AGENTS.md`, `INSTALL_FOR_AGENTS.md`, `CLAUDE.md`, `docs/TESTING.md`, `scripts/llms-config.ts`, `scripts/build-llms.ts`, `llms.txt`, `llms-full.txt` |
-| [#14](https://github.com/TheAngryPit/gbrain/issues/14) | `docs/docs-consolidation/09-final-consistency-report.md` |
+| [#14](https://github.com/TheAngryPit/gbrain/issues/14) | `docs/docs-consolidation/09-final-consistency-report.md`, `docs/docs-consolidation/10-pr-proposal.md` |
 
 ## Published Issues
 
