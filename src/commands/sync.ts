@@ -2119,14 +2119,28 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     } catch { /* extraction is best-effort */ }
   }
 
-  // v0.31.2: facts extraction now routes through the shared
-  // src/core/facts/backstop.ts helper (PR1 commit 6). Sync uses
-  // queue mode (fire-and-forget) + 'high-only' filter so a 50-page
-  // sync doesn't block on N sequential Sonnet calls. The pre-fix
-  // inline loop is gone — it carried (a) a dead-code type filter
-  // ('conversation'/'transcript'/'therapy'/'call' aren't real
-  // PageTypes), (b) a divergent eligibility shape from put_page,
-  // and (c) raw extract→insert without dedup/supersede.
+  // v0.31.2: facts extraction routes through the shared
+  // src/core/facts/backstop.ts helper (PR1 commit 6) with the 'high-only'
+  // notability filter (HIGH lands now, MEDIUM waits for the dream cycle,
+  // LOW dropped at the LLM layer). The pre-fix inline loop is gone — it
+  // carried (a) a dead-code type filter ('conversation'/'transcript'/
+  // 'therapy'/'call' aren't real PageTypes), (b) a divergent eligibility
+  // shape from put_page, and (c) raw extract→insert without dedup/supersede.
+  //
+  // RC2 fix (facts:absorb abort race): this runs INLINE (await the full
+  // pipeline) rather than fire-and-forget 'queue' mode. Sync was the only
+  // surface enqueuing high-only synthesis fire-and-forget, and on CLI exit
+  // `drainAllBackgroundWorkForCliExit` gives the facts queue only a short
+  // grace before `queue.shutdown()` fires `internalAbort.abort()` — which
+  // cancels the in-flight chat() mid-synthesis and lands a recurring
+  // `pipeline_error: ... The operation was aborted` in the ingest log.
+  // A single-shot synthesis call routinely outlives that grace, so the
+  // race was effectively deterministic for sync. Awaiting here completes
+  // the synthesis WITHIN the sync command (before the exit drain runs), so
+  // it can't be raced by shutdown. Cost: sync now pays synthesis latency
+  // inline, but it's bounded by the existing `pagesAffected.length <= 50`
+  // guard AND the 'high-only' filter (only notable pages reach the LLM).
+  // Per-turn chat keeps fire-and-forget 'queue' mode where latency matters.
   if (!opts.noExtract && pagesAffected.length > 0 && pagesAffected.length <= 50) {
     const { runFactsBackstop } = await import('../core/facts/backstop.ts');
     const factsSourceId = opts.sourceId ?? 'default';
@@ -2152,11 +2166,27 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
             sourceId: factsSourceId,
             sessionId: `sync:${slug}`,
             source: 'sync:import',
-            mode: 'queue',
+            mode: 'inline',
             notabilityFilter: 'high-only',
           },
         );
-      } catch { /* per-page enqueue is best-effort */ }
+      } catch (err) {
+        // Inline mode bubbles pipeline errors to the caller (queue mode
+        // absorb-logs them in its worker). Preserve the D5 failure-visibility
+        // contract by writing the same ingest_log row here so doctor +
+        // dashboard still surface per-source facts failures. Best-effort:
+        // a sync must never fail because a single page's synthesis did.
+        try {
+          const { classifyFactsAbsorbError, writeFactsAbsorbLog } = await import('../core/facts/absorb-log.ts');
+          await writeFactsAbsorbLog(
+            engine,
+            slug,
+            classifyFactsAbsorbError(err),
+            err instanceof Error ? err.message : String(err),
+            factsSourceId,
+          );
+        } catch { /* absorb-logging is itself best-effort */ }
+      }
     }
   }
 
