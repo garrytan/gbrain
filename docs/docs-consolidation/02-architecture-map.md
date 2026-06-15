@@ -1,11 +1,13 @@
 # Architecture Map
 
 Status: static architecture map from the installed `understand-anything`
-workflow plus five read-only `gpt-5.4-mini` domain passes
+workflow, refreshed after the upstream merge
 
 Baseline reviewed: `docs/docs-consolidation/00-upstream-base.md`
 
-Pinned upstream commit: `4ee530f3c545b880cecc47c4f877e0ed014896b4`
+Pinned upstream commit: `090bb53203557f5659563ea28c1c847c32167aeb`
+
+Current branch merge commit: `416f2ae29788a16cba1b20fb33ccf05a4eb665c1`
 
 Proof level: `code_proven` static analysis only. No GBrain runtime command,
 server, migration, import, sync, or Docker lifecycle proof was attempted.
@@ -34,7 +36,7 @@ The installed skill scripts were used for:
 - inline graph validation
 - fingerprint baseline generation
 
-Five read-only `gpt-5.4-mini` subagents then reviewed independent domains:
+The original full pass used five read-only `gpt-5.4-mini` domain reviews:
 
 - CLI/runtime architecture
 - engines, schema, migrations, and storage
@@ -53,6 +55,14 @@ Execution notes:
   named in the skill contract for assemble review, architecture, or tour. Those
   phases were assembled deterministically from the merged graph and then
   validated with the inline validator.
+- After upstream advanced to `0.42.44.0`, the current branch was merged with
+  `origin/master`, CodeGraph was synced, and `understand-anything` was refreshed
+  incrementally. The refresh re-ran deterministic scan, import-map extraction,
+  changed-batch computation, structural extraction, graph update,
+  validation-reference checks, fingerprint generation, and metadata update.
+  Because the plugin subagent definitions are not available in this Codex
+  environment, the refresh does not claim a new LLM semantic review for the
+  changed batches.
 
 ## Generated Artifacts
 
@@ -69,47 +79,45 @@ Execution notes:
 
 | Metric | Value |
 |---|---:|
-| files scanned | 2,530 |
+| files scanned | 2,537 |
 | files filtered by `.understandignore` | 0 |
-| import-map files with imports | 1,673 |
-| import-map resolved edges | 4,557 |
-| semantic batches | 125 |
-| files structurally analyzed | 2,530 |
+| import-map files with imports | 1,681 |
+| import-map resolved edges | 4,588 |
+| incremental batches refreshed | 27 |
+| files structurally refreshed in current merge batches | 653 |
 | files skipped | 0 |
-| graph nodes | 13,383 |
-| graph edges | 18,383 |
+| graph nodes | 13,660 |
+| graph edges | 17,749 |
 | layers | 9 |
 | guided tour steps | 6 |
 | validation issues | 0 |
-| validation warnings | 1 |
-| orphan-node warning count | 228 |
-| fingerprint baseline | 2,530 files |
+| broken edge/layer/tour references | 0 |
+| fingerprint baseline | 2,537 files |
 
 Node types:
 
 | Type | Count |
 |---|---:|
-| file | 1,981 |
-| function | 5,297 |
+| file | 2,052 |
+| function | 5,323 |
 | class | 151 |
-| schema | 274 |
-| pipeline | 5 |
-| concept | 5,272 |
+| schema | 79 |
+| pipeline | 4 |
+| concept | 5,640 |
 | config | 52 |
-| document | 348 |
-| service | 2 |
-| resource | 1 |
+| document | 353 |
+| service | 3 |
+| table | 3 |
 
 Edge types:
 
 | Type | Count |
 |---|---:|
-| contains | 5,448 |
-| calls | 3,345 |
-| imports | 4,174 |
-| documents | 5,272 |
-| defines_schema | 133 |
-| tested_by | 11 |
+| contains | 7,544 |
+| calls | 3,362 |
+| imports | 3,267 |
+| documents | 3,570 |
+| tested_by | 6 |
 
 ## System Layers
 
@@ -219,6 +227,25 @@ and `llms-full.txt` still use upstream `garrytan/gbrain/master` raw URLs, while
 `scripts/llms-config.ts` supports it.
 
 ## Documentation Alignment Queue
+
+### 0. Changelog-To-Current-Capabilities Baseline
+
+The docs cleanup should begin by converting the latest changelog window into a
+current-capability ledger. The minimum release window is `0.42.44.0` through
+`0.42.41.0`, with special attention to `0.42.43.0` and `0.42.42.0`:
+
+- push-based volunteered context: `volunteer_context`, `gbrain
+  volunteer-context`, `gbrain watch`, rolling retrieval-reflex windows,
+  feedback stats, and suppression semantics
+- bounded teardown and truthful exit verdicts across engines
+- PGLite error exit-code correction and output flush fencing
+- data/source durability, grant hardening, reconnect, lock, and doctor
+  correctness changes from the surrounding release wave
+
+PR direction: produce a changelog-derived capability matrix first, then mark
+each doc as current, incomplete-current, contradictory, or historical. This
+keeps the PR from flattening the problem into "delete stale docs" when several
+docs need evolution instead.
 
 ### 1. Search Mode Language
 
@@ -331,6 +358,8 @@ mistaken for current install or runtime authority.
 
 ## Proposed Docs-Only PR Slices
 
+0. Changelog/current-capabilities baseline: derive the live capability matrix
+   from `CHANGELOG.md` before editing install or agent docs.
 1. Entry-point truth labels: add source-of-truth callouts to `README.md`,
    `AGENTS.md`, `INSTALL_FOR_AGENTS.md`, and `docs/INSTALL.md` without rewriting
    the install flow.

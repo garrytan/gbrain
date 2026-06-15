@@ -4,7 +4,9 @@ Status: docs-only inventory for upstream PR preparation
 
 Baseline reviewed: `docs/docs-consolidation/00-upstream-base.md`
 
-Pinned upstream commit: `4ee530f3c545b880cecc47c4f877e0ed014896b4`
+Pinned upstream commit: `090bb53203557f5659563ea28c1c847c32167aeb`
+
+Current upstream version reviewed: `0.42.44.0`
 
 ## Scope
 
@@ -30,21 +32,23 @@ manifests.
 
 ## Inventory Summary
 
-Documentation-like files found: 343
+Documentation-like files found: 350
 
 Files under `test/` or `tests/`: 80
 
-Other documentation-like files: 263
+Other documentation-like files: 270
 
-The manifest role `fixture-or-eval-support` marks 83 files because it also
-includes three recipe-bundle test/eval docs outside `test/` and `tests/`.
+The manifest excludes `docs/docs-consolidation/*` to avoid counting this
+analysis output as upstream documentation input.
 
 | Area | Count | Notes |
 |---|---:|---|
+| github templates | 3 | issue and PR templates |
 | root entrypoints and policy | 12 | README, agent entrypoints, license/security/contributing, generated LLM maps, changelog, TODOs |
-| docs root references | 22 | install, testing, releasing, verification, schema, eval, progress, storage, guardrails |
+| docs root references | 24 | install, testing, releasing, verification, schema, eval, progress, storage, guardrails |
+| agent workflow docs | 3 | repo-local issue tracker and triage vocabulary |
 | architecture references | 15 | current-state architecture, per-file index, retrieval, topology, schema packs, thin-client |
-| how-to guides | 35 | task-oriented operator and maintainer guides |
+| how-to guides | 36 | task-oriented operator and maintainer guides, including push-context |
 | tutorials | 5 | learning-oriented end-to-end walkthroughs |
 | MCP client and deploy docs | 8 | client-specific setup plus deployment choices |
 | integrations | 6 | external data and reliability integrations |
@@ -59,7 +63,7 @@ includes three recipe-bundle test/eval docs outside `test/` and `tests/`.
 | skill conventions | 11 | cross-cutting agent conventions |
 | skill migration guides | 36 | per-version downstream migration instructions |
 | recipes | 21 | integration recipes and recipe bundles |
-| examples | 5 | skillpack reference example |
+| examples | 4 | skillpack reference example |
 | eval harness docs | 6 | local eval harness documentation and variants |
 | admin docs | 1 | admin UI design system |
 | script references | 1 | upstream scrub table |
@@ -140,6 +144,32 @@ explicit current-state banner:
 
 They are valuable for provenance and roadmap context, but they can contain old
 counts, old defaults, or pre-implementation design language.
+
+## Changelog-First Drift Baseline
+
+The first executable issue should not start by rewriting entrypoints. It should
+build a current-capabilities ledger from `CHANGELOG.md`, then compare docs
+against that ledger.
+
+The latest release window changes the docs problem in concrete ways:
+
+- `0.42.44.0` confirms tutorials remain part of the live operational surface:
+  a single stale external link can break the install/deploy path.
+- `0.42.43.0` adds push-based context as a current capability:
+  `volunteer_context`, `gbrain volunteer-context`, `gbrain watch`, rolling
+  retrieval-reflex windows, volunteered-context feedback stats, suppression
+  semantics, and transaction-pooler CI coverage.
+- `0.42.42.0` changes CLI operational expectations: teardown is bounded at
+  teardown time, operation verdicts own exit codes, PGLite errors no longer
+  report success, and piped output gets an explicit flush window.
+- `0.42.41.0` and the nearby release wave harden data durability, source
+  isolation, sync/lock behavior, provider input typing, remote grants, and
+  doctor correctness.
+
+Docs consolidation must therefore treat "not wrong but incomplete for the
+current version" as a first-class drift class. Some docs should be retired or
+labelled historical, but many should be evolved to include these current
+capabilities.
 
 ## Consolidation Findings
 
@@ -301,16 +331,17 @@ The smallest coherent PR should avoid rewriting the docs system. It should:
 | Claim | Proof level | Evidence |
 |---|---|---|
 | `00-upstream-base.md` was reviewed | code_proven | Direct file read |
-| Inventory covers documentation-like files in the checkout | code_proven | `01-documentation-manifest.tsv` has 343 rows generated from `rg --files` metadata |
+| Inventory covers documentation-like files in the checkout | code_proven | `01-documentation-manifest.tsv` has 350 rows generated from the refreshed `understand-anything` scan metadata |
 | Test fixture docs are separated from public docs | code_proven | Manifest role column marks test and fixture support paths |
-| Installed Understand pass completed | code_proven | `.understand-anything/knowledge-graph.json` has 13,383 nodes, 18,383 edges, 9 layers, and 6 tour steps |
-| Understand graph validation has no issues | code_proven | `.understand-anything/intermediate/review.json` reports 0 issues and 1 orphan-node warning |
+| Installed Understand refresh completed | code_proven | `.understand-anything/knowledge-graph.json` has 13,660 nodes, 17,749 edges, 9 layers, and 6 tour steps at branch commit `416f2ae29788a16cba1b20fb33ccf05a4eb665c1` |
+| Understand graph reference validation has no broken refs | code_proven | Fresh validation found 0 broken edge, layer, or tour references; `.understand-anything/fingerprints.json` covers 2,537 files |
 | Search-time fallback is `balanced` | code_proven | CodeGraph trace to `DEFAULT_SEARCH_MODE` and `resolveSearchMode()` in `src/core/search/mode.ts` |
 | Fresh init persists a recommended search mode | code_proven | CodeGraph trace to `runModePicker()` in `src/commands/init-mode-picker.ts` and both init paths in `src/commands/init.ts` |
 | Skillpack manifest currently has 37 scaffolded skills | code_proven | `openclaw.plugin.json#skills` count; `loadBundleManifest()` and `bundledSkillSlugs()` use that manifest |
 | Skill resolver manifest currently has 51 entries | code_proven | `skills/manifest.json#skills` count |
 | Current checkout has 52 `skills/**/SKILL.md` files | code_proven | `rg --files skills -g 'SKILL.md'` count |
-| Current checkout has 147 E2E test files | code_proven | `rg --files test/e2e -g '*.test.ts'`; `scripts/run-e2e.sh` and `scripts/ci-local.sh` use dynamic globs |
+| Current checkout has 147 E2E test files | code_proven | Prior inventory count from `rg --files test/e2e -g '*.test.ts'`; `scripts/run-e2e.sh` and `scripts/ci-local.sh` use dynamic globs |
+| Current release baseline is v0.42.44.0 | code_proven | `VERSION` and top of `CHANGELOG.md` |
 | Current HTTP OAuth path is engine-aware | code_proven | CodeGraph trace to `src/commands/serve-http.ts`, `GBrainOAuthProvider`, and PGLite OAuth bootstrap logic |
 | Generated LLM maps are still upstream-linked in this fork | code_proven | Direct reads of `llms.txt`, `llms-full.txt`, `AGENTS.md`, and `scripts/llms-config.ts` |
 | No GBrain runtime proof was attempted | implemented | This task intentionally avoided runtime commands by instruction |
