@@ -191,9 +191,14 @@ export class PostgresEngine implements BrainEngine {
     sourceId: string | undefined,
     callback: (tx: ReturnType<typeof postgres>) => Promise<T>,
   ): Promise<T> {
-    if (!this.rlsScopeBindingEnabled) {
-      return await callback(this.sql);
-    }
+    // Always open a transaction so callbacks that emit `SET LOCAL` (e.g.
+    // the search methods' statement_timeout) are safely scoped. When env
+    // var is off the transaction has no scope binding; behaviorally
+    // identical to upstream + one tx round-trip overhead per read. This
+    // also avoids postgres.js's nested-`begin` pitfall: a transaction
+    // handle exposes `.savepoint()` not `.begin()`, so callbacks that
+    // tried to nest their own `tx.begin()` inside our wrap would fail
+    // with `tx.begin is not a function`.
     let scopesValue = '*';
     if (sourceIds && sourceIds.length > 0) {
       scopesValue = sourceIds.join(',');
@@ -201,12 +206,14 @@ export class PostgresEngine implements BrainEngine {
       scopesValue = sourceId;
     }
     return await this.sql.begin(async (tx: any) => {
-      // `SET LOCAL` doesn't accept parameters in PostgreSQL — using
-      // `tx\`SET LOCAL ... = ${val}\`` binds val as $1 and errors with
-      // `syntax error at or near "$1"`. set_config() is a regular function
-      // and accepts a parameterised value; passing `true` as the third
-      // argument makes it transaction-local (same scope as SET LOCAL).
-      await tx`SELECT set_config('app.scopes', ${scopesValue}, true)`;
+      if (this.rlsScopeBindingEnabled) {
+        // `SET LOCAL` doesn't accept parameters in PostgreSQL — using
+        // `tx\`SET LOCAL ... = ${val}\`` binds val as $1 and errors with
+        // `syntax error at or near "$1"`. set_config() is a regular function
+        // and accepts a parameterised value; passing `true` as the third
+        // argument makes it transaction-local (same scope as SET LOCAL).
+        await tx`SELECT set_config('app.scopes', ${scopesValue}, true)`;
+      }
       return await callback(tx as ReturnType<typeof postgres>);
     });
   }
@@ -1748,11 +1755,11 @@ export class PostgresEngine implements BrainEngine {
     // timeout. The outer withScopedReadTransaction sets `app.scopes` when
     // enabled; the inner tx.begin() scopes the statement_timeout GUC so it
     // can never leak onto a pooled connection (same shape as upstream).
+    // statement_timeout + scope binding share the same transaction (always-open
+    // wrap means SET LOCAL is safely scoped even when env var is off).
     const rows = await this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
-      return await tx.begin(async (innerTx: any) => {
-        await innerTx`SET LOCAL statement_timeout = '8s'`;
-        return await innerTx.unsafe(rawQuery, params as Parameters<typeof innerTx.unsafe>[1]);
-      });
+      await tx`SET LOCAL statement_timeout = '8s'`;
+      return await tx.unsafe(rawQuery, params as Parameters<typeof tx.unsafe>[1]);
     });
     return rows.map(rowToSearchResult);
   }
@@ -1874,11 +1881,11 @@ export class PostgresEngine implements BrainEngine {
     `;
 
     // RLS scope binding + search-only timeout.
+    // statement_timeout + scope binding share the same transaction (always-open
+    // wrap means SET LOCAL is safely scoped even when env var is off).
     const rows = await this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
-      return await tx.begin(async (innerTx: any) => {
-        await innerTx`SET LOCAL statement_timeout = '8s'`;
-        return await innerTx.unsafe(rawQuery, params as Parameters<typeof innerTx.unsafe>[1]);
-      });
+      await tx`SET LOCAL statement_timeout = '8s'`;
+      return await tx.unsafe(rawQuery, params as Parameters<typeof tx.unsafe>[1]);
     });
     return rows.map(rowToSearchResult);
   }
@@ -2048,11 +2055,11 @@ export class PostgresEngine implements BrainEngine {
     `;
 
     // RLS scope binding + search-only timeout.
+    // statement_timeout + scope binding share the same transaction (always-open
+    // wrap means SET LOCAL is safely scoped even when env var is off).
     const rows = await this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
-      return await tx.begin(async (innerTx: any) => {
-        await innerTx`SET LOCAL statement_timeout = '8s'`;
-        return await innerTx.unsafe(rawQuery, params as Parameters<typeof innerTx.unsafe>[1]);
-      });
+      await tx`SET LOCAL statement_timeout = '8s'`;
+      return await tx.unsafe(rawQuery, params as Parameters<typeof tx.unsafe>[1]);
     });
     return rows.map(rowToSearchResult);
   }
