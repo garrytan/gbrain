@@ -21,6 +21,7 @@ runtime commands.
 | [#7](https://github.com/TheAngryPit/gbrain/issues/7) | `docs/architecture/topologies.md`, `README.md`, `docs/INSTALL.md`, `INSTALL_FOR_AGENTS.md`, `llms-full.txt` |
 | [#8](https://github.com/TheAngryPit/gbrain/issues/8) | `docs/architecture/brain-repo-layout.md`, `README.md`, `docs/INSTALL.md`, `INSTALL_FOR_AGENTS.md`, `scripts/llms-config.ts`, `llms.txt`, `llms-full.txt` |
 | [#9](https://github.com/TheAngryPit/gbrain/issues/9) | `docs/guides/mode-selection.md`, `README.md`, `docs/INSTALL.md`, `INSTALL_FOR_AGENTS.md`, `scripts/llms-config.ts`, `llms.txt`, `llms-full.txt` |
+| [#10](https://github.com/TheAngryPit/gbrain/issues/10) | `docs/INSTALL.md` |
 
 ## Published Issues
 

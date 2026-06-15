@@ -288,43 +288,175 @@ migrate, and serve. `gbrain doctor` runs remote-MCP checks instead. See
 Use this branch for a family brain, household brain, team brain, company
 brain, or any install exposed to more than one client.
 
-Production checklist:
+Keep this path centralized here. Use detail docs for setup mechanics, but do not
+make operators assemble production safety from scattered snippets.
 
-- Use Postgres or Supabase for shared or multi-machine operation.
-- Decide the Brain Repo Layout for each source. See
+### 1. Choose the production shape
+
+- Pick the operating model first: solo, personal multi-source, shared group,
+  single-agent shared mode, or auth-scoped shared mode. See
+  [`architecture/topologies.md#operating-model-decision-tree`](architecture/topologies.md#operating-model-decision-tree).
+- Pick the deployment topology second: local/default, remote/thin client,
+  split-engine/worktree, mounted/cross-team brains, or security-driven
+  isolation. See
+  [`architecture/topologies.md#deployment-topology-decision-tree`](architecture/topologies.md#deployment-topology-decision-tree).
+- Use Postgres or Supabase for shared, multi-machine, or remote HTTP
+  operation. PGLite is the local/default path and is best treated as
+  single-machine.
+- Decide the Brain Repo Layout for each source before importing data. See
   [`architecture/brain-repo-layout.md`](architecture/brain-repo-layout.md).
 - Decide whether the shared unit is one source with folder conventions, many
   sources with OAuth scoping, or multiple mounted brains. See
-  [`architecture/topologies.md`](architecture/topologies.md),
   [`architecture/brains-and-sources.md`](architecture/brains-and-sources.md)
   and [`tutorials/company-brain.md`](tutorials/company-brain.md).
-- Choose the operational modes before wiring clients: raw retrieval,
-  synthesis, maintenance, and push-based context each have different cost and
-  safety profiles. See [`guides/mode-selection.md`](guides/mode-selection.md).
-- Use `gbrain serve --http` only when you need remote MCP. Local agents should
-  use stdio.
-- For remote HTTP, configure OAuth clients and scopes through
-  [`mcp/DEPLOY.md`](mcp/DEPLOY.md). Keep Dynamic Client Registration off unless
-  you have a reviewed reason to enable it.
-- Set `--public-url` to the URL clients actually use. If the server must accept
-  non-loopback connections, bind explicitly with `--bind`.
-- Keep secrets in env vars or `~/.gbrain/config.json` with 0600 permissions.
-  Do not put long-lived tokens in shared agent config.
-- Back up all three layers: the Markdown brain repos, the database, and
-  `~/.gbrain/config.json` plus OAuth/client configuration.
-- Test restore on a separate machine or home directory. A backup you have not
-  restored is only an archive.
-- Run `gbrain doctor --json`, model/provider checks, and live-sync verification
-  after deploy and after upgrades.
 
-Supabase pooler gotcha:
+### 2. Choose production modes
 
-- Use the Transaction pooler for the main database URL when appropriate.
-- Sync, migrations, DDL, and bulk work need a direct/session-capable path.
+Before wiring clients, choose the mode for each job:
+
+- Use `gbrain search` for read-only agent context by default.
+- Use `gbrain think` only where synthesized prose, citations, and gap analysis
+  are required.
+- Schedule `gbrain dream` or autopilot only after the operator approves
+  cadence, provider keys, and cost boundaries.
+- Use retrieval reflex or `volunteer_context` for agent push context. Use
+  `gbrain watch` for transcript streams, and prefer Postgres when it must run
+  concurrently with MCP serving.
+- Choose `conservative`, `balanced`, or `tokenmax` based on downstream model
+  tier, query volume, and recall tolerance.
+
+The central decision guide is
+[`guides/mode-selection.md`](guides/mode-selection.md).
+
+### 3. Expose MCP deliberately
+
+- Use local stdio MCP for agents on the same machine:
+  `claude mcp add gbrain -- gbrain serve` or
+  `codex mcp add gbrain -- gbrain serve`.
+- Use `gbrain serve --http` only when a remote client, cloud connector, shared
+  user, or thin client needs network access.
+- Set `--public-url` to the issuer URL clients actually use. OAuth discovery
+  must match the external URL.
+- If the server must accept non-loopback connections, bind explicitly with
+  `--bind`. Do not assume a tunnel can reach a loopback-only server.
+- Keep Dynamic Client Registration off unless you have a reviewed reason to
+  enable it.
+- For browser or cloud MCP clients, configure the CORS allowlist and reverse
+  proxy trust deliberately. See [`SECURITY.md`](../SECURITY.md).
+- Agent-specific setup lives in [`mcp/DEPLOY.md`](mcp/DEPLOY.md),
+  [`mcp/CODEX.md`](mcp/CODEX.md), [`mcp/CLAUDE_CODE.md`](mcp/CLAUDE_CODE.md),
+  [`mcp/CHATGPT.md`](mcp/CHATGPT.md), and
+  [`../INSTALL_FOR_AGENTS.md#mcp-auth-and-remote-operation`](../INSTALL_FOR_AGENTS.md#mcp-auth-and-remote-operation).
+
+### 4. Scope clients before handing them to agents
+
+- Prefer OAuth clients with explicit scopes over legacy bearer tokens.
+- Use `read` for search, query, get, list, and graph traversal.
+- Add `write` only for clients that should write pages, links, or timeline
+  entries.
+- Add `admin` only for clients that must manage clients, run remote doctor, or
+  submit admin-scoped work.
+- For team or company brains, use source-scoped clients when one agent should
+  write to one source but read a curated federated set.
+- Remote agents cannot bypass `localOnly` or protected-job refusals. If a tool
+  is refused over MCP, switch to a trusted local host operation only when the
+  operator approves that path.
+- Smoke-test remote clients before handoff. `gbrain connect ... --install`
+  performs a token probe for Claude Code and Codex; connector-style clients
+  should use the setup checks in `docs/mcp/`.
+
+### 5. Configure providers and secrets
+
+- Keep provider keys in env vars or `~/.gbrain/config.json` with 0600
+  permissions. Do not paste long-lived tokens into shared agent config,
+  issue comments, docs, or transcripts.
+- Prefer provider-specific base URL env vars:
+  `OPENROUTER_BASE_URL`, `LITELLM_BASE_URL`, `OLLAMA_BASE_URL`,
+  `LLAMA_SERVER_BASE_URL`, and `LLAMA_SERVER_RERANKER_BASE_URL`.
+- Persistent overrides use `provider_base_urls.<provider-id>`, for example
+  `provider_base_urls.dashscope`.
+- Do not assume `OPENAI_BASE_URL` retargets every provider.
+- Azure OpenAI needs `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, and
+  `AZURE_OPENAI_DEPLOYMENT`.
+- Smoke-test provider configuration with `gbrain providers test`, `gbrain
+  models`, or `gbrain models doctor` before scheduling maintenance.
+- Use [`integrations/embedding-providers.md`](integrations/embedding-providers.md)
+  for dimensions, provider constraints, and migration paths.
+
+### 6. Back up and prove restore
+
+Back up every layer that would be painful to rebuild:
+
+1. Markdown brain repos for every source.
+2. The database: PGLite file, Postgres dump, or Supabase backup.
+3. `~/.gbrain/config.json`, OAuth client records, bearer-token inventory, and
+   provider configuration.
+4. Schema packs, `gbrain.yml`, `.gbrain-source`, `.gbrain-mount`, and source
+   routing dotfiles.
+
+Do a restore test on a separate machine, user account, or home directory. A
+backup that has not been restored is only an archive.
+
+### 7. Keep sync and maintenance observable
+
+- Always chain sync and embeddings for repo-backed brains:
+  `gbrain sync --repo /path/to/brain && gbrain embed --stale`.
+- `gbrain sync --watch` is a polling loop, not a filesystem watcher. It exits
+  after repeated failures. Pair it with a scheduler or process manager.
+- For Supabase, use the Transaction pooler for normal reads when appropriate,
+  but give sync, migrations, DDL, and bulk work a direct/session-capable path.
 - On IPv4-only hosts, set `GBRAIN_DIRECT_DATABASE_URL` to the Supabase Session
   pooler URL, or enable Supabase's IPv4 add-on.
-- If reads work but sync imports very few pages, suspect this first. The
-  detailed runbook is [`guides/live-sync.md`](guides/live-sync.md).
+- If reads work but sync imports very few pages, suspect the direct connection
+  first. The detailed runbook is [`guides/live-sync.md`](guides/live-sync.md).
+- Review `gbrain doctor --remediation-plan --json` before running automated
+  remediation.
+
+### 8. Verify production health
+
+Run after deploy and after upgrades:
+
+```bash
+gbrain --version
+gbrain doctor --json
+gbrain models
+gbrain models doctor
+gbrain stats
+gbrain search modes
+```
+
+For synced repos, prove the end-to-end path:
+
+1. Edit a Markdown page in the brain repo.
+2. Let the production sync path run.
+3. Search for text from the edit.
+4. Confirm the new text appears, not the old version.
+
+For remote clients:
+
+- Verify OAuth discovery and token exchange.
+- Verify a read call such as `search` or `get_page`.
+- Verify a write call only for clients that should have `write`.
+- Run thin-client checks with `gbrain doctor`, `gbrain remote ping`, and
+  `gbrain remote doctor` on mcp-only clients that have the required scopes.
+
+Use [`GBRAIN_VERIFY.md`](GBRAIN_VERIFY.md) for the full install verification
+runbook.
+
+### 9. Failure-mode checklist
+
+| Symptom | First check |
+|---|---|
+| Remote client cannot connect | `--public-url`, bind address, tunnel/proxy routing, OAuth issuer URL, and token validity. |
+| Browser connector fails before auth | CORS allowlist and redirect URI registration. |
+| Client has too much access | OAuth scopes, source-scoped client settings, and old bearer tokens. |
+| Reads work but writes fail | Missing `write` scope, source grant mismatch, or `localOnly` operation. |
+| Thin-client commands return empty local results | Confirm `remote_mcp` config and rerun thin-client doctor; mcp-only clients should not open a local DB. |
+| Search returns stale text | Live-sync path failed; edit/search verification is the deciding proof. |
+| Page count is far below file count | Direct/session DB path is unreachable or sync is skipping files. |
+| Embeddings are missing | Provider key/dimensions mismatch or `gbrain embed --stale` is not running after sync. |
+| Search costs are higher than expected | Search mode is too broad for the downstream model or push context is overused. Review [`guides/mode-selection.md`](guides/mode-selection.md). |
+| Admin dashboard or logs show unexpected clients | Revoke the client, rotate affected secrets, and review DCR, CORS, and proxy exposure. |
 
 ## Upgrade
 
