@@ -1178,6 +1178,94 @@ const openAICompatAsymmetricFetch = (async (input: RequestInfo | URL, init?: Req
   return fetch(typeof input === 'string' ? input : input.toString(), baseInit);
 }) as unknown as typeof fetch;
 
+/**
+ * MiniMax (海螺AI) embeddings compatibility shim. MiniMax's `/v1/embeddings`
+ * endpoint is NOT OpenAI-shaped at the wire level despite the recipe being
+ * tagged `openai-compatible`:
+ *  - Request: the AI SDK sends `{model, input: string[], encoding_format,
+ *    dimensions?}`. MiniMax requires `{model, texts: string[], type:
+ *    'db'|'query'}` and rejects every other field (status_code 2013,
+ *    "missing required parameter texts"). Map `input` → `texts`, derive
+ *    `type` from the threaded input_type ('query' → 'query', else 'db' —
+ *    the recipe's documented symmetric default), and strip the OpenAI-only
+ *    keys.
+ *  - Response: MiniMax returns `{vectors: number[][], base_resp:
+ *    {status_code, status_msg}}`. The AI SDK's openai-compatible Zod schema
+ *    expects `{data: [{embedding, index}], usage: {prompt_tokens}}`. Rewrite
+ *    the shape. MiniMax returns HTTP 200 even on logical errors, so surface a
+ *    non-zero `base_resp.status_code` as a thrown error rather than letting a
+ *    `vectors: null` body fail downstream as "Invalid JSON response".
+ *
+ * Reference: https://www.minimaxi.com/document/guides/embeddings
+ */
+const minimaxCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  // OUTBOUND: rewrite body input→texts + derive type, strip OpenAI-only keys.
+  if (init?.body && typeof init.body === 'string') {
+    try {
+      const parsed = JSON.parse(init.body);
+      if (parsed && typeof parsed === 'object') {
+        const texts = Array.isArray(parsed.input)
+          ? parsed.input
+          : parsed.input !== undefined
+          ? [parsed.input]
+          : parsed.texts;
+        const threadedInputType = parsed.input_type ?? __embedInputTypeStore.getStore();
+        const type = threadedInputType === 'query' ? 'query' : 'db';
+        const body: Record<string, unknown> = { type };
+        if (parsed.model !== undefined) body.model = parsed.model;
+        if (texts !== undefined) body.texts = texts;
+        const headers = new Headers(init.headers ?? {});
+        headers.delete('content-length');
+        init = { ...init, body: JSON.stringify(body), headers };
+      }
+    } catch {
+      // Body wasn't JSON — pass through untouched.
+    }
+  }
+
+  const resp = await fetch(input, init);
+  if (!resp.ok) return resp;
+  const ct = resp.headers.get('content-type') ?? '';
+  if (!ct.toLowerCase().includes('application/json')) return resp;
+
+  // INBOUND: {vectors:[[...]], base_resp:{...}} → {data:[{embedding, index}], usage}.
+  try {
+    const json: any = await resp.clone().json();
+    if (!json || typeof json !== 'object') return resp;
+    // MiniMax returns HTTP 200 with a non-zero status_code on logical errors.
+    const code = json.base_resp?.status_code;
+    if (typeof code === 'number' && code !== 0) {
+      throw new Error(
+        `MiniMax embeddings error ${code}: ${json.base_resp?.status_msg ?? 'unknown'}`,
+      );
+    }
+    if (Array.isArray(json.vectors) && !Array.isArray(json.data)) {
+      json.data = json.vectors.map((v: number[], i: number) => ({
+        object: 'embedding',
+        embedding: Array.isArray(v) ? v : [],
+        index: i,
+      }));
+      delete json.vectors;
+      if (!json.usage || typeof json.usage !== 'object') {
+        json.usage = { prompt_tokens: 0, total_tokens: 0 };
+      } else if (json.usage.prompt_tokens === undefined) {
+        json.usage.prompt_tokens =
+          typeof json.usage.total_tokens === 'number' ? json.usage.total_tokens : 0;
+      }
+      return new Response(JSON.stringify(json), {
+        status: resp.status,
+        statusText: resp.statusText,
+        headers: resp.headers,
+      });
+    }
+    return resp;
+  } catch (err) {
+    // Surface MiniMax logical errors; fall back for unexpected shapes.
+    if (err instanceof Error && err.message.startsWith('MiniMax embeddings error')) throw err;
+    return resp;
+  }
+}) as unknown as typeof fetch;
+
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'embedding', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
@@ -1243,6 +1331,8 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
           ? voyageCompatFetch
           : recipe.id === 'zeroentropyai'
           ? zeroEntropyCompatFetch
+          : recipe.id === 'minimax'
+          ? minimaxCompatFetch
           : openAICompatAsymmetricFetch);
       const client = createOpenAICompatible({
         name: recipe.id,
