@@ -2805,6 +2805,52 @@ export function computeNightlyQualityProbeHealthCheck(
   };
 }
 
+export function computeConversationParserProbeHealthCheck(
+  probeEnabled: boolean,
+  searchMode: string | undefined,
+  events: ReadonlyArray<{ outcome: string; ts: string; reason?: string }>,
+): Check {
+  const name = 'conversation_parser_probe_health';
+  const effectiveEnabled = probeEnabled || searchMode === 'tokenmax';
+  if (!effectiveEnabled && events.length === 0) {
+    return {
+      name,
+      status: 'ok',
+      message:
+        'disabled (opt-in; tokenmax runs by default). Enable with: ' +
+        'gbrain config set autopilot.conversation_parser_probe.enabled true',
+    };
+  }
+  if (events.length === 0) {
+    return {
+      name,
+      status: 'ok',
+      message: 'enabled but no parser probe events in the last 7 days (next run by autopilot).',
+    };
+  }
+  const bad = events.filter(e => e.outcome !== 'pass');
+  const latest = events[events.length - 1]!;
+  if (bad.length > 0) {
+    const counts =
+      `pass=${events.filter(e => e.outcome === 'pass').length} ` +
+      `fail=${events.filter(e => e.outcome === 'fail').length} ` +
+      `adversarial_fp=${events.filter(e => e.outcome === 'adversarial_false_positive').length} ` +
+      `budget=${events.filter(e => e.outcome === 'budget_exceeded').length} ` +
+      `no_llm_key=${events.filter(e => e.outcome === 'no_embedding_key').length} ` +
+      `rate_limited=${events.filter(e => e.outcome === 'rate_limited').length}`;
+    return {
+      name,
+      status: 'warn',
+      message: `${bad.length} non-PASS parser probe run${bad.length === 1 ? '' : 's'} in last 7d (${counts}). Latest: ${latest.outcome} at ${latest.ts}${latest.reason ? ` (${latest.reason})` : ''}.`,
+    };
+  }
+  return {
+    name,
+    status: 'ok',
+    message: `${events.length} PASS parser probe run${events.length === 1 ? '' : 's'} in last 7d. Latest: ${latest.ts}.`,
+  };
+}
+
 /**
  * v0.41.11.0 — conversation_facts_backlog doctor check.
  *
@@ -4591,19 +4637,27 @@ export async function buildChecks(
 
   // 3d.5 v0.41.13.0 — conversation_parser_probe_health. Mode-gated
   // per D10: ON when search.mode=tokenmax, opt-in for other modes.
-  // Surface the last 7 days of nightly-probe events; warn on FAIL /
-  // BUDGET_EXCEEDED / adversarial_false_positive.
-  //
-  // v0.41.13.0 ships the probe as opt-in (autopilot wiring deferred
-  // to T7 in the cathedral plan); this check skips with an enable
-  // hint until the probe has at least one audit event written.
-  checks.push({
-    name: 'conversation_parser_probe_health',
-    status: 'ok',
-    message:
-      'Skipped (nightly probe is opt-in; enable with ' +
-      '`gbrain config set autopilot.conversation_parser_probe.enabled true`)',
-  });
+  // Surface the last 7 days of nightly-probe events; warn on any
+  // non-PASS outcome. The probe itself is wired into autopilot; doctor
+  // just reads the audit receipt.
+  try {
+    const { readRecentConversationParserProbeEvents } = await import('../core/audit-conversation-parser-probe.ts');
+    const { loadConfig } = await import('../core/config.ts');
+    let probeEnabled = false;
+    let searchMode: string | undefined;
+    try {
+      const cfg = loadConfig();
+      probeEnabled = Boolean((cfg as any)?.autopilot?.conversation_parser_probe?.enabled);
+    } catch { /* config unavailable → treat as disabled */ }
+    try {
+      if (!engine) throw new Error('no engine');
+      searchMode = await engine.getConfig('search.mode') ?? undefined;
+    } catch { /* DB config unavailable → balanced/opt-in semantics */ }
+    const events = readRecentConversationParserProbeEvents(7);
+    checks.push(computeConversationParserProbeHealthCheck(probeEnabled, searchMode, events));
+  } catch {
+    // Best-effort; audit-log read failure shouldn't stop doctor.
+  }
 
   // 3e. home_dir_in_worktree (v0.35.8.0). Walks up from `gbrainPath()`
   // looking for a `.git` directory OR file. If found, warns: `~/.gbrain/`

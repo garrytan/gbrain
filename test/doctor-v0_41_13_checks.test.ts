@@ -19,6 +19,9 @@
 
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 interface DoctorCheck {
   name: string;
@@ -33,27 +36,33 @@ interface DoctorEnvelope {
 }
 
 function runDoctor(): DoctorEnvelope {
-  const result = spawnSync(
-    process.execPath, // bun
-    ['src/cli.ts', 'doctor', '--json', '--fast'],
-    {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-      timeout: 60000,
-    },
-  );
-  if (result.error) throw result.error;
-  // Doctor's JSON envelope is the LAST line in stdout (CLI may print
-  // banners on stderr; --json sends the envelope to stdout).
-  const stdout = result.stdout ?? '';
-  const lines = stdout.split('\n').filter((l) => l.trim().length > 0);
-  const jsonLine = lines.reverse().find((l) => l.trim().startsWith('{'));
-  if (!jsonLine) {
-    throw new Error(
-      `No JSON envelope found in doctor output. stdout=${stdout.slice(0, 500)} stderr=${(result.stderr ?? '').slice(0, 500)}`,
+  const auditDir = mkdtempSync(join(tmpdir(), 'doctor-v041-audit-'));
+  try {
+    const result = spawnSync(
+      process.execPath, // bun
+      ['src/cli.ts', 'doctor', '--json', '--fast'],
+      {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        timeout: 60000,
+        env: { ...process.env, GBRAIN_AUDIT_DIR: auditDir },
+      },
     );
+    if (result.error) throw result.error;
+    // Doctor's JSON envelope is the LAST line in stdout (CLI may print
+    // banners on stderr; --json sends the envelope to stdout).
+    const stdout = result.stdout ?? '';
+    const lines = stdout.split('\n').filter((l) => l.trim().length > 0);
+    const jsonLine = lines.reverse().find((l) => l.trim().startsWith('{'));
+    if (!jsonLine) {
+      throw new Error(
+        `No JSON envelope found in doctor output. stdout=${stdout.slice(0, 500)} stderr=${(result.stderr ?? '').slice(0, 500)}`,
+      );
+    }
+    return JSON.parse(jsonLine) as DoctorEnvelope;
+  } finally {
+    rmSync(auditDir, { recursive: true, force: true });
   }
-  return JSON.parse(jsonLine) as DoctorEnvelope;
 }
 
 describe('doctor — v0.41.16.0 new checks emit', () => {
@@ -78,16 +87,15 @@ describe('doctor — v0.41.16.0 new checks emit', () => {
     expect(check!.message.length).toBeGreaterThan(0);
   });
 
-  test('conversation_parser_probe_health shape + opt-in hint', () => {
+  test('conversation_parser_probe_health shape + operator hint', () => {
     const env = runDoctor();
     const check = env.checks.find(
       (c) => c.name === 'conversation_parser_probe_health',
     );
     expect(check).toBeDefined();
     expect(check!.status).toBe('ok');
-    expect(check!.message).toContain('opt-in');
-    expect(check!.message).toContain(
-      'autopilot.conversation_parser_probe.enabled true',
+    expect(check!.message).toMatch(
+      /autopilot\.conversation_parser_probe\.enabled true|next run by autopilot/,
     );
   });
 

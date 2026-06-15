@@ -17,11 +17,10 @@
  * Cost: ~$0.05/night with default fixtures × Haiku polish. Bounded
  * by the active BudgetTracker the autopilot loop creates per-tick.
  *
- * **Wiring into the autopilot loop is deferred to a follow-up**
- * (filed in TODOS.md). v0.41.16.0 ships the phase as a callable
- * module so doctor + future cron drivers can invoke it; the
- * scheduler wire-up follows the same shape as
- * `src/core/cycle/nightly-quality-probe.ts` (v0.40.1.0 Track D / T6).
+ * Wired into the autopilot loop next to the nightly quality probe. The
+ * caller logs the returned result to
+ * `conversation-parser-probe-YYYY-Www.jsonl`; doctor reads that audit
+ * channel to surface recent parser regressions.
  *
  * Test seam: all dependencies are injected via NightlyProbeDeps so
  * unit tests don't touch real LLMs or real fixtures.

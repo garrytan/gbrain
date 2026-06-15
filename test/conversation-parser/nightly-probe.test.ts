@@ -14,13 +14,19 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   runConversationParserNightlyProbe,
   type NightlyProbeDeps,
 } from '../../src/core/conversation-parser/nightly-probe.ts';
+import {
+  conversationParserProbeRanWithin24h,
+  logConversationParserProbeEvent,
+  readRecentConversationParserProbeEvents,
+} from '../../src/core/audit-conversation-parser-probe.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 function tmpFixture(content: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'probe-'));
@@ -103,5 +109,26 @@ describe('runConversationParserNightlyProbe', () => {
     );
     expect(r.outcome).toBe('fail');
     expect(r.reason).toContain('missing');
+  });
+});
+
+describe('conversation-parser probe audit receipt', () => {
+  test('writes recent events and powers the 24h rate-limit gate', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'conversation-probe-audit-'));
+    try {
+      await withEnv({ GBRAIN_AUDIT_DIR: dir }, async () => {
+        const result = await runConversationParserNightlyProbe(baseDeps());
+        logConversationParserProbeEvent(result);
+
+        const events = readRecentConversationParserProbeEvents(7, new Date('2026-05-26T00:01:00Z'));
+        expect(events.length).toBe(1);
+        expect(events[0].outcome).toBe('pass');
+        expect(events[0].fixtures_total).toBe(2);
+        expect(conversationParserProbeRanWithin24h(new Date('2026-05-26T00:01:00Z'))).toBe(true);
+        expect(conversationParserProbeRanWithin24h(new Date('2026-05-28T00:01:00Z'))).toBe(false);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
