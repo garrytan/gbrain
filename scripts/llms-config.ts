@@ -95,6 +95,12 @@ export const SECTIONS: DocSection[] = [
         path: "docs/ENGINES.md",
       },
       {
+        title: "docs/architecture/brain-repo-layout.md",
+        description:
+          "Central Brain Repo Layout guide: editable Markdown structure, safe human edits, managed/generated surfaces, source-vs-brain backup implications, and schema-pack expectations.",
+        path: "docs/architecture/brain-repo-layout.md",
+      },
+      {
         title: "docs/GBRAIN_RECOMMENDED_SCHEMA.md",
         description:
           "MECE directory structure (people/, companies/, concepts/).",

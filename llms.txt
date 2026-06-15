@@ -17,6 +17,7 @@ Repo: https://github.com/garrytan/gbrain
 ## Configuration
 
 - [docs/ENGINES.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/ENGINES.md): PGLite vs Postgres trade-off and when to migrate.
+- [docs/architecture/brain-repo-layout.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/brain-repo-layout.md): Central Brain Repo Layout guide: editable Markdown structure, safe human edits, managed/generated surfaces, source-vs-brain backup implications, and schema-pack expectations.
 - [docs/GBRAIN_RECOMMENDED_SCHEMA.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md): MECE directory structure (people/, companies/, concepts/).
 - [docs/what-schemas-unlock.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/what-schemas-unlock.md): Why schemas matter: 7 killer use cases (4000 invisible meetings, founder ops brain, research brain, legal brain, team brain, agent-as-co-curator) + the structural argument for typed page kinds. Read this before pitching schema authoring (v0.40.7.0).
 - [docs/schema-author-tutorial.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/schema-author-tutorial.md): 5-minute walkthrough: fork the bundled pack, add a custom `researcher` type, backfill existing pages via `gbrain schema sync --apply`, prove the T1.5 wiring via `gbrain whoknows` (v0.40.7.0).

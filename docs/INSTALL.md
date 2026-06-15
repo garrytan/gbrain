@@ -157,16 +157,24 @@ gbrain config set search.mode balanced
 Your Markdown files are separate from the GBrain tool repository. Keep them in
 a normal Git repo that you can back up and review.
 
-Recommended starting shape for a personal brain:
+The central layout guide is
+[`architecture/brain-repo-layout.md`](architecture/brain-repo-layout.md). Use
+that for editable files, generated/managed surfaces, schema-pack expectations,
+and backup implications.
+
+Recommended starter shape for a personal brain:
 
 ```text
 brain/
+  README.md
+  RESOLVER.md
   people/
   companies/
-  meetings/
-  concepts/
-  decisions/
+  projects/
   notes/
+  sources/
+  inbox/
+  archive/
 ```
 
 Use sources when one database should hold several repos or domains:
@@ -183,6 +191,7 @@ when the data owner, lifecycle, or access policy changes.
 For shared/team/company layouts, read:
 
 - [`architecture/topologies.md`](architecture/topologies.md)
+- [`architecture/brain-repo-layout.md`](architecture/brain-repo-layout.md)
 - [`architecture/brains-and-sources.md`](architecture/brains-and-sources.md)
 - [`tutorials/company-brain.md`](tutorials/company-brain.md)
 
@@ -275,6 +284,8 @@ brain, or any install exposed to more than one client.
 Production checklist:
 
 - Use Postgres or Supabase for shared or multi-machine operation.
+- Decide the Brain Repo Layout for each source. See
+  [`architecture/brain-repo-layout.md`](architecture/brain-repo-layout.md).
 - Decide whether the shared unit is one source with folder conventions, many
   sources with OAuth scoping, or multiple mounted brains. See
   [`architecture/topologies.md`](architecture/topologies.md),
@@ -369,6 +380,8 @@ Use [`GBRAIN_VERIFY.md`](GBRAIN_VERIFY.md) for the full runbook.
 
 - [`architecture/topologies.md`](architecture/topologies.md): operating model
   and deployment topology decision trees.
+- [`architecture/brain-repo-layout.md`](architecture/brain-repo-layout.md):
+  editable Markdown layout, managed surfaces, schema packs, and backups.
 - [`architecture/brains-and-sources.md`](architecture/brains-and-sources.md):
   database vs source routing.
 - [`integrations/embedding-providers.md`](integrations/embedding-providers.md):

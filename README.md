@@ -315,7 +315,7 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 
 **Two engines, one contract.** PGLite (Postgres 17 via WASM, zero-config, default) for personal brains up to ~50K pages. Postgres + pgvector (Supabase or self-hosted) for shared / large / multi-machine deployments. The contract-first `BrainEngine` interface in [`src/core/engine.ts`](src/core/engine.ts) defines ~47 operations both engines implement; CLI and MCP server are generated from one source.
 
-**Brain repo is the system of record.** Your knowledge lives in a regular git repo (your "brain repo") as markdown files. GBrain syncs the repo into Postgres for retrieval; deletes in git become soft-deletes in DB. You can publish public subsets, share team mounts, run thin-client setups pointing at a colleague's brain server. Topologies in [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
+**Brain repo is the system of record.** Your knowledge lives in a regular git repo (your "brain repo") as markdown files. GBrain syncs the repo into Postgres for retrieval; deletes in git become soft-deletes in DB. You can publish public subsets, share team mounts, run thin-client setups pointing at a colleague's brain server. Layout guidance: [`docs/architecture/brain-repo-layout.md`](docs/architecture/brain-repo-layout.md). Topologies: [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
 
 **Two organizational axes (brain ⊥ source).** A *brain* is a database (your personal brain, a team mount you joined). A *source* is a repo inside that brain (wiki, gstack, an essay, a knowledge base). Routing lives in `.gbrain-source` dotfiles and resolves via a documented 6-tier precedence chain. Full diagrams in [`docs/architecture/brains-and-sources.md`](docs/architecture/brains-and-sources.md).
 
@@ -446,6 +446,7 @@ completes in ~1-2 seconds. (Closes #1605, #1581.)
 ## Docs
 
 - [`docs/INSTALL.md`](docs/INSTALL.md) — every install path, end to end
+- [`docs/architecture/brain-repo-layout.md`](docs/architecture/brain-repo-layout.md) — editable Markdown layout, managed/generated surfaces, schema-pack expectations, and backup implications
 - [`docs/what-schemas-unlock.md`](docs/what-schemas-unlock.md) — why schemas matter: 7 killer use cases, the structural argument for typed page kinds, the agent-co-curates pattern (v0.40.7.0)
 - [`docs/schema-author-tutorial.md`](docs/schema-author-tutorial.md) — 5-minute walkthrough: fork the bundled pack, add a custom type, backfill existing pages, prove the wiring via `gbrain whoknows`
 - [`docs/architecture/`](docs/architecture/) — system design, topologies, retrieval theory

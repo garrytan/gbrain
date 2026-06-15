@@ -139,9 +139,11 @@ Ask the user where their files are, or create a new brain repo:
 mkdir -p ~/brain && cd ~/brain && git init
 ```
 
-Read `~/gbrain/docs/GBRAIN_RECOMMENDED_SCHEMA.md` and set up the MECE directory
-structure (people/, companies/, concepts/, etc.) inside the user's brain repo,
-NOT inside ~/gbrain.
+Read `docs/architecture/brain-repo-layout.md` for the Brain Repo Layout before
+creating folders. Set up the editable Markdown structure inside the user's brain
+repo, NOT inside the GBrain tool repo. Use `docs/GBRAIN_RECOMMENDED_SCHEMA.md`
+only as the long-form design reference; the active schema pack decides the
+current path/type mapping.
 
 ## Step 3.5: Confirm search mode with the user (DO NOT SKIP)
 
