@@ -36,6 +36,11 @@ Models:
   --judge-model MODEL           Scores rollouts. Default models.tier.reasoning
 
 Modes:
+  review <skill-name>            Review an accepted --no-mutate candidate at
+                                skills/<name>/skillopt/best.md. Does not change
+                                SKILL.md unless --apply is passed.
+  --apply                       With review: promote best.md into SKILL.md
+                                via atomic write. Use after agent/human review.
   --patch                       Edit ops only (default; safer)
   --rewrite                     Allow full rewrites of sections
   --dry-run                     Plan + cost estimate, no LLM calls
@@ -85,6 +90,10 @@ Examples:
 
   # After review (sentinel deleted), run the optimizer:
   gbrain skillopt meeting-prep --bootstrap-reviewed
+
+  # Review the safe --no-mutate candidate, then explicitly promote it:
+  gbrain skillopt review meeting-prep
+  gbrain skillopt review meeting-prep --apply
 
   # Dry-run cost preview:
   gbrain skillopt meeting-prep --dry-run
