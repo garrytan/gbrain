@@ -29,7 +29,10 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import {
   findOrphans,
   readUserExcludePrefixes,
+  readSkipCodeSources,
+  readCodeSourceIds,
   USER_EXCLUDE_PREFIXES_CONFIG_KEY,
+  SKIP_CODE_SOURCES_CONFIG_KEY,
 } from '../src/commands/orphans.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
@@ -168,5 +171,196 @@ describe('findOrphans — end-to-end with user-configured prefixes', () => {
     const slugs = result.orphans.map(o => o.slug);
     expect(slugs).not.toContain('fix-orphans-4/resources/clips/baz');
     expect(slugs).toContain('fix-orphans-4/companies/foo');
+  });
+});
+
+/**
+ * `orphans.skip_code_sources` end-to-end coverage.
+ *
+ * On a brain federating multiple gstack-code-* repos, code files don't
+ * wikilink to other code files — orphan reporting on those sources is
+ * structurally meaningless noise. This knob drops them from both the
+ * orphan list AND the F6 denominator in one move.
+ *
+ * The unit-level contracts pinned:
+ *   - readSkipCodeSources is strict: only the literal string 'true'
+ *     enables the knob. Typo-tolerant default would have silently
+ *     flipped behavior in unrelated test fixtures.
+ *   - readCodeSourceIds finds every source whose config.strategy ===
+ *     'code', tolerating BOTH the proper JSONB object shape AND the
+ *     double-encoded string scalar that `gbrain sources add` writes via
+ *     `JSON.stringify(config)::jsonb`.
+ *   - findOrphans drops code-source pages from the list AND the
+ *     denominator when the toggle is on; passthrough when off.
+ *   - Empty code-source set is a no-op (no SQL exclusion clause fires).
+ */
+
+/** Insert a source row with the given strategy. */
+async function insertSourceWithStrategy(
+  id: string,
+  strategy: 'markdown' | 'code' | 'auto' | null,
+  options?: { stringifyConfig?: boolean },
+): Promise<void> {
+  const config = strategy ? { strategy } : {};
+  const stringify = options?.stringifyConfig ?? false;
+  await engine.executeRaw(
+    `INSERT INTO sources (id, name, local_path, config) VALUES ($1, $2, $3, $4::jsonb)`,
+    [
+      id,
+      id,
+      `/tmp/${id}`,
+      stringify ? JSON.stringify(JSON.stringify(config)) : JSON.stringify(config),
+    ],
+  );
+}
+
+async function insertOrphanPageOnSource(slug: string, sourceId: string): Promise<void> {
+  await engine.executeRaw(
+    `INSERT INTO pages (source_id, slug, title, type, compiled_truth, content_hash)
+     VALUES ($1, $2, $3, 'note', '', $4)`,
+    [sourceId, slug, slug.split('/').slice(-1)[0], `hash-${sourceId}-${slug}`],
+  );
+}
+
+async function clearSkipFixture(): Promise<void> {
+  await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'skip-code-%'`);
+  await engine.executeRaw(`DELETE FROM sources WHERE id LIKE 'skip-code-src-%'`);
+}
+
+describe('readSkipCodeSources — strict-parse boolean toggle', () => {
+  test('unset returns false (preserves today\'s behavior)', async () => {
+    await engine.setConfig(SKIP_CODE_SOURCES_CONFIG_KEY, '');
+    expect(await readSkipCodeSources(engine)).toBe(false);
+  });
+
+  test('literal string "true" returns true', async () => {
+    await engine.setConfig(SKIP_CODE_SOURCES_CONFIG_KEY, 'true');
+    expect(await readSkipCodeSources(engine)).toBe(true);
+  });
+
+  test('any other value returns false (strict parse)', async () => {
+    for (const v of ['false', 'True', 'TRUE', '1', 'yes', 'on', 'garbage', '  true  ']) {
+      await engine.setConfig(SKIP_CODE_SOURCES_CONFIG_KEY, v);
+      expect(await readSkipCodeSources(engine)).toBe(false);
+    }
+  });
+});
+
+describe('readCodeSourceIds — discover code-strategy sources from sources.config', () => {
+  test('empty when no sources have strategy=code', async () => {
+    await clearSkipFixture();
+    await insertSourceWithStrategy('skip-code-src-md1', 'markdown');
+    await insertSourceWithStrategy('skip-code-src-none', null);
+    const ids = await readCodeSourceIds(engine);
+    expect(ids.has('skip-code-src-md1')).toBe(false);
+    expect(ids.has('skip-code-src-none')).toBe(false);
+  });
+
+  test('finds sources where config is a proper JSONB object with strategy=code', async () => {
+    await clearSkipFixture();
+    await insertSourceWithStrategy('skip-code-src-c1', 'code');
+    await insertSourceWithStrategy('skip-code-src-md2', 'markdown');
+    const ids = await readCodeSourceIds(engine);
+    expect(ids.has('skip-code-src-c1')).toBe(true);
+    expect(ids.has('skip-code-src-md2')).toBe(false);
+  });
+
+  test('tolerates the double-encoded JSONB shape `gbrain sources add` writes', async () => {
+    // `gbrain sources add` does `JSON.stringify(config)::jsonb` which
+    // stores the value as a JSON-string scalar instead of a real object.
+    // readCodeSourceIds must defensively parse both shapes; otherwise
+    // every brain populated by the CLI would silently miss its code
+    // sources.
+    await clearSkipFixture();
+    await insertSourceWithStrategy('skip-code-src-c2', 'code', { stringifyConfig: true });
+    const ids = await readCodeSourceIds(engine);
+    expect(ids.has('skip-code-src-c2')).toBe(true);
+  });
+
+  test('skips archived sources', async () => {
+    await clearSkipFixture();
+    await insertSourceWithStrategy('skip-code-src-archived', 'code');
+    await engine.executeRaw(
+      `UPDATE sources SET archived = true WHERE id = $1`,
+      ['skip-code-src-archived'],
+    );
+    const ids = await readCodeSourceIds(engine);
+    expect(ids.has('skip-code-src-archived')).toBe(false);
+  });
+});
+
+describe('findOrphans — end-to-end with orphans.skip_code_sources', () => {
+  test('toggle off (default): code-source pages count as orphans', async () => {
+    await clearSkipFixture();
+    await engine.setConfig(SKIP_CODE_SOURCES_CONFIG_KEY, '');
+    await insertSourceWithStrategy('skip-code-src-code-a', 'code');
+    await insertSourceWithStrategy('skip-code-src-md-a', 'markdown');
+    await insertOrphanPageOnSource('skip-code-a/src/index', 'skip-code-src-code-a');
+    await insertOrphanPageOnSource('skip-code-a/notes/idea', 'skip-code-src-md-a');
+    const result = await findOrphans(engine);
+    const slugs = result.orphans.map(o => o.slug);
+    expect(slugs).toContain('skip-code-a/src/index');
+    expect(slugs).toContain('skip-code-a/notes/idea');
+  });
+
+  test('toggle on: code-source pages drop from list AND denominator', async () => {
+    await clearSkipFixture();
+    await engine.setConfig(SKIP_CODE_SOURCES_CONFIG_KEY, 'true');
+    await insertSourceWithStrategy('skip-code-src-code-b', 'code');
+    await insertSourceWithStrategy('skip-code-src-md-b', 'markdown');
+    await insertOrphanPageOnSource('skip-code-b/src/index', 'skip-code-src-code-b');
+    await insertOrphanPageOnSource('skip-code-b/src/utils', 'skip-code-src-code-b');
+    await insertOrphanPageOnSource('skip-code-b/notes/idea', 'skip-code-src-md-b');
+
+    const result = await findOrphans(engine);
+    const slugs = result.orphans.map(o => o.slug);
+    expect(slugs).not.toContain('skip-code-b/src/index');
+    expect(slugs).not.toContain('skip-code-b/src/utils');
+    expect(slugs).toContain('skip-code-b/notes/idea');
+
+    // F6 invariant: the denominator must drop the same pages so the
+    // per-vault ratio stays consistent. We can't assert a global total
+    // here (other fixtures leave residue), but the local-fixture
+    // contribution must show: 1 page from the markdown source, 0 from
+    // the code source, accumulated correctly.
+    const localPages = result.orphans.filter(o => o.slug.startsWith('skip-code-b/'));
+    expect(localPages).toHaveLength(1);
+  });
+
+  test('toggle on with no code sources is a no-op', async () => {
+    await clearSkipFixture();
+    await engine.setConfig(SKIP_CODE_SOURCES_CONFIG_KEY, 'true');
+    await insertSourceWithStrategy('skip-code-src-md-c', 'markdown');
+    await insertOrphanPageOnSource('skip-code-c/notes/idea', 'skip-code-src-md-c');
+    const result = await findOrphans(engine);
+    const slugs = result.orphans.map(o => o.slug);
+    expect(slugs).toContain('skip-code-c/notes/idea');
+  });
+
+  test('composes with userPrefixes (both fire independently)', async () => {
+    await clearSkipFixture();
+    await engine.setConfig(SKIP_CODE_SOURCES_CONFIG_KEY, 'true');
+    await engine.setConfig(USER_EXCLUDE_PREFIXES_CONFIG_KEY, 'skip-code-d/junk/');
+    await insertSourceWithStrategy('skip-code-src-code-d', 'code');
+    await insertSourceWithStrategy('skip-code-src-md-d', 'markdown');
+    // Three orphan candidates, one for each filter to drop and one to keep:
+    await insertOrphanPageOnSource('skip-code-d/src/x', 'skip-code-src-code-d');     // dropped by skip_code_sources
+    await insertOrphanPageOnSource('skip-code-d/junk/y', 'skip-code-src-md-d');      // dropped by userPrefixes
+    await insertOrphanPageOnSource('skip-code-d/notes/z', 'skip-code-src-md-d');     // kept
+    const result = await findOrphans(engine);
+    const slugs = result.orphans.map(o => o.slug);
+    expect(slugs).not.toContain('skip-code-d/src/x');
+    expect(slugs).not.toContain('skip-code-d/junk/y');
+    expect(slugs).toContain('skip-code-d/notes/z');
+  });
+
+  test('source-scoped sourceId still respects exclusion (markdown source unaffected)', async () => {
+    await clearSkipFixture();
+    await engine.setConfig(SKIP_CODE_SOURCES_CONFIG_KEY, 'true');
+    await insertSourceWithStrategy('skip-code-src-md-e', 'markdown');
+    await insertOrphanPageOnSource('skip-code-e/notes/scoped', 'skip-code-src-md-e');
+    const result = await findOrphans(engine, { sourceId: 'skip-code-src-md-e' });
+    const slugs = result.orphans.map(o => o.slug);
+    expect(slugs).toContain('skip-code-e/notes/scoped');
   });
 });
