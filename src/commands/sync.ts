@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, statSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
+import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { DELETE_BATCH_SIZE } from '../core/engine-constants.ts';
 import { importFile } from '../core/import-file.ts';
@@ -1067,6 +1068,126 @@ async function writeChunkerVersion(
 }
 
 /**
+ * #2157 follow-on: detect when sources.config has shifted in a way that
+ * affects which paths the walker will include this run. The "Already up
+ * to date" gate at performSync's git-HEAD equality check honored chunker
+ * version match but ignored config drift — a user who changes
+ * `sources.config.exclude_globs` mid-life got "Already up to date" on
+ * the next sync because git HEAD was unchanged, with no observable
+ * effect until `gbrain sync --full`.
+ *
+ * Fingerprint covers exactly the walk-affecting fields that flow from
+ * `sources.config` into `SyncOpts` at the syncOneSource call site:
+ * `strategy`, `include_globs`, `exclude_globs`. CLI-supplied --include
+ * / --exclude overrides do NOT participate — they are one-off scope
+ * changes, not source state, and shouldn't invalidate the row's
+ * checkpoint. (A user running `gbrain sync --exclude X` on a row whose
+ * stored config has no X is intentionally narrowing this one pass; on
+ * the next no-flags sync, the row config governs again.)
+ *
+ * Array order is normalized (alphabetical, post-defensive-parse) so
+ * `["a/**", "b/**"]` and `["b/**", "a/**"]` fingerprint identically.
+ * `parseGlobList` shares the same defensive coercion as the call site
+ * that builds SyncOpts, so hand-edited or pre-normalization rows
+ * fingerprint to the same shape the walker actually sees.
+ */
+export function computeSourceConfigFingerprint(rawConfig: unknown): string {
+  const cfg = (rawConfig || {}) as {
+    strategy?: unknown;
+    include_globs?: unknown;
+    exclude_globs?: unknown;
+  };
+  const canonical = JSON.stringify({
+    strategy: typeof cfg.strategy === 'string' ? cfg.strategy : null,
+    include_globs: (parseGlobList(cfg.include_globs) ?? []).slice().sort(),
+    exclude_globs: (parseGlobList(cfg.exclude_globs) ?? []).slice().sort(),
+  });
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
+/**
+ * Read the per-source fingerprint stamp. NULL on pre-migration rows or
+ * sources that have never been synced — the gate treats NULL as
+ * "fingerprint unknown" and skips the invalidation check so first-time
+ * post-upgrade syncs don't spuriously force-full.
+ */
+export async function readConfigFingerprint(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+): Promise<string | null> {
+  if (!sourceId) return null;
+  const rows = await engine.executeRaw<{ config_fingerprint: string | null }>(
+    `SELECT config_fingerprint FROM sources WHERE id = $1`,
+    [sourceId],
+  );
+  return rows[0]?.config_fingerprint ?? null;
+}
+
+export async function writeConfigFingerprint(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+  fingerprint: string,
+): Promise<void> {
+  if (!sourceId) return;
+  await engine.executeRaw(
+    `UPDATE sources SET config_fingerprint = $1 WHERE id = $2`,
+    [fingerprint, sourceId],
+  );
+}
+
+/**
+ * Read the raw `sources.config` value for the named source. Returns an
+ * empty object for missing or never-configured rows. The reader is
+ * defensive about the double-encoded JSONB shape (`{"federated":true}`
+ * stored as a JSON string scalar) that `gbrain sources add` produces
+ * via `JSON.stringify(config)::jsonb` — the engine's `r.config` may
+ * arrive as either a string or an object, and the same parseSourceConfig
+ * shape used elsewhere normalizes both to an object before the
+ * fingerprint computation walks the keys.
+ */
+async function readSourceConfig(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+): Promise<unknown> {
+  if (!sourceId) return {};
+  const rows = await engine.executeRaw<{ config: unknown }>(
+    `SELECT config FROM sources WHERE id = $1`,
+    [sourceId],
+  );
+  const raw = rows[0]?.config;
+  if (raw === null || raw === undefined) return {};
+  if (typeof raw === 'string') {
+    try { return JSON.parse(raw); } catch { return {}; }
+  }
+  return raw;
+}
+
+/**
+ * Read-hash-stamp wrapper for sync-completion sites outside the gate's
+ * scope (e.g. `performFullSync`'s `advanceFull` closure, which doesn't
+ * see `performSync`'s cached `currentConfigFp` because it's a separate
+ * function). Reads the row's current config and stamps a fresh
+ * fingerprint.
+ *
+ * Race note: if `sources.config` was mutated between the gate's read
+ * and this stamp, the freshly-read value wins. The walker still used
+ * the gate-time effective globs (already captured into `opts.include` /
+ * `opts.exclude` upstream), so the stamp can drift from what was
+ * actually walked. In practice mid-sync mutations are rare and the
+ * NEXT sync will re-evaluate against the latest config anyway, so the
+ * minor staleness is acceptable and avoids threading the gate-time
+ * fingerprint through every helper signature.
+ */
+async function stampSourceConfigFingerprint(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+): Promise<void> {
+  if (!sourceId) return;
+  const cfg = await readSourceConfig(engine, sourceId);
+  await writeConfigFingerprint(engine, sourceId, computeSourceConfigFingerprint(cfg));
+}
+
+/**
  * v0.40 Federated Sync v2: `gbrain sync trigger --source <id> [--priority high|normal|low]`
  *
  * Push-trigger entry point. Wraps `queue.add('sync', ...)` with priority -10
@@ -1813,7 +1934,33 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       detachedWorkingTreeManifest.deleted.length > 0 ||
       detachedWorkingTreeManifest.renamed.length > 0);
 
-  if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
+  // #2157 follow-on: parallel gate for sources.config drift. Without
+  // this, changing `sources.config.exclude_globs` (or include_globs /
+  // strategy) on a synced source had no observable effect on the next
+  // sync because git HEAD was unchanged — the "Already up to date"
+  // branch below returned without re-walking. Mismatch path mirrors the
+  // chunker_version gate exactly so both kinds of drift route through
+  // the same `performFullSync` recovery.
+  //
+  // NULL stored fingerprint is "never stamped" (pre-v117 brain OR fresh
+  // source whose first sync hasn't completed yet). Treated as
+  // pass-through in the up-to-date check — first post-upgrade sync
+  // stamps the column quietly so subsequent passes have a baseline.
+  const storedConfigFp = await readConfigFingerprint(engine, opts.sourceId);
+  const currentSourceConfig = await readSourceConfig(engine, opts.sourceId);
+  const currentConfigFp = computeSourceConfigFingerprint(currentSourceConfig);
+  const configMismatch = storedConfigFp !== null && storedConfigFp !== currentConfigFp;
+  const configNeverStamped = storedConfigFp === null && opts.sourceId !== undefined;
+
+  if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges && !configMismatch) {
+    // First post-v117 sync on an upgraded brain lands here with
+    // configNeverStamped=true; stamp the fingerprint so the gate has a
+    // baseline for the NEXT pass. A spurious re-walk on the upgrade
+    // pass would surprise users; quietly establishing the baseline does
+    // not.
+    if (configNeverStamped) {
+      await writeConfigFingerprint(engine, opts.sourceId, currentConfigFp);
+    }
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,
@@ -1825,13 +1972,21 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     };
   }
 
-  if ((versionMismatch || versionNeverSet) && lastCommit === headCommit) {
+  if ((versionMismatch || versionNeverSet || configMismatch) && lastCommit === headCommit) {
+    const reasons: string[] = [];
+    if (versionMismatch || versionNeverSet) {
+      reasons.push(`chunker_version=${storedVersion ?? 'unset'}→${currentVersion}`);
+    }
+    if (configMismatch) {
+      reasons.push(`config_fingerprint=${storedConfigFp?.slice(0, 8)}→${currentConfigFp.slice(0, 8)}`);
+    }
     slog(
-      `[sync] chunker_version gate: stored=${storedVersion ?? 'unset'}, current=${currentVersion}. ` +
-      `Forcing full re-chunk pass (git HEAD unchanged but pipeline version advanced).`,
+      `[sync] full re-walk forced (${reasons.join(', ')}): ` +
+      `git HEAD unchanged but a walk-affecting setting advanced.`,
     );
     const result = await performFullSync(engine, repoPath, headCommit, opts);
     await writeChunkerVersion(engine, opts.sourceId, currentVersion);
+    await writeConfigFingerprint(engine, opts.sourceId, currentConfigFp);
     return result;
   }
 
@@ -1964,6 +2119,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(repoPath, pin));
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+    await writeConfigFingerprint(engine, opts.sourceId, currentConfigFp);
     await clearOpCheckpoint(engine, ckpt.paths);
     await clearOpCheckpoint(engine, ckpt.target);
     return {
@@ -2714,6 +2870,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+    await writeConfigFingerprint(engine, opts.sourceId, currentConfigFp);
     await clearOpCheckpoint(engine, ckpt.paths);
     await clearOpCheckpoint(engine, ckpt.target);
   };
@@ -3021,6 +3178,7 @@ async function performFullSync(
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+    await stampSourceConfigFingerprint(engine, opts.sourceId);
   };
 
   const fullGate = await applySyncFailureGate({
