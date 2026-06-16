@@ -1068,11 +1068,17 @@ async function collectChildPutPageSlugs(
   const rewritten = new Map<string, number>();
   for (const r of rows) {
     if (typeof r.slug !== 'string' || r.slug.length === 0) continue;
-    const meta = childMeta.get(r.job_id);
+    // postgres.js returns `job_id` as bigint; coerce to Number so the
+    // childMeta keys (set from queue.add's number-typed child.id) actually
+    // hit. Without this the chunk-slug rewrite never fires and the
+    // reverseWriteRefs caller can't pair slugs back to their transcript
+    // metadata.
+    const jobIdNum = Number(r.job_id);
+    const meta = childMeta.get(jobIdNum);
     const finalSlug = meta && meta.chunkTotal > 1
       ? rewriteChunkedSlug(r.slug, meta.hash6, meta.idx)
       : r.slug;
-    if (!rewritten.has(finalSlug)) rewritten.set(finalSlug, r.job_id);
+    if (!rewritten.has(finalSlug)) rewritten.set(finalSlug, jobIdNum);
   }
   return [...rewritten.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
@@ -1121,7 +1127,11 @@ async function reverseWriteRefs(
     const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
     const tags = await engine.getTags(slug, { sourceId: source_id });
-    const meta = childMeta.get(jobId);
+    // postgres.js returns `job_id` as bigint while child.id from queue.add is
+    // number, so a bare childMeta.get(jobId) miss-matches on type. Coerce to
+    // Number at both lookup sites (here and in collectChildPutPageSlugs) so
+    // the orchestrator's per-child metadata reaches reverseWriteRefs.
+    const meta = childMeta.get(Number(jobId));
     const overrides = meta ? buildDeterministicFrontmatter(meta, cycleDate) : {};
 
     // Mirror the deterministic overrides into the DB row so the source-of-
