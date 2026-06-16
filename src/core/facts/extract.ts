@@ -71,6 +71,76 @@ export const ALL_EXTRACT_KINDS: readonly FactKind[] = [
   'event', 'preference', 'commitment', 'belief', 'fact',
 ] as const;
 
+const ACK_ONLY_RE = /^(ok|okay|yes|no|yep|yeah|nah|thanks|thank you|great|perfect|awesome|lol|haha|cool|sounds good|proceed|do it|go ahead|continue|yess+|wow+|fuck yeah)[.!\s]*$/i;
+const SMOKE_OR_EXACT_REPLY_RE = /\b(smoke test|config smoke|reply exactly|respond exactly|respond with exactly|reply with exactly|exactly:)\b/i;
+const QUESTION_START_RE = /^(what|why|how|when|where|who|which|can|could|should|would|do|does|did|is|are|was|were|will|am)\b/i;
+const TRANSIENT_TASK_RE = /\b(can you|could you|please|help me|open|read|compare|analyze|review|validate|build|create|install|set up|setup|run|test|audit|check|find|search|look|show|tell me|what about|what is|how do|how can|should we|do you|does he|reply|respond|perform a smoke test|report back|push|update the readme)\b/i;
+const DURABLE_SIGNAL_RE = /\b(i prefer|my preference|i like|i don't like|i hate|i love|too long|too much information|short answer|default to|i just want it back to default|tables are not bad|code blocks|telegram formatting|tool calls|verbose|remember|save it as|save this|learn a lesson|update your workflow|upgrade yourself|make sure|always|never|do not|don't|must|we decided|i decided|source of truth|1-3-1|131)\b/i;
+const COMMITMENT_KIND_RE = /\b(make sure|remember|save it as|save this|we decided|i decided|decided|decision|let'?s use|lets use|switch to|default to|use\b[^.]{0,80}\bas default|source of truth|always|never|do not|must|need to|1-3-1|131)\b/i;
+const PREFERENCE_KIND_RE = /\b(i prefer|my preference|i like|i don't like|i hate|i love|i don't want|prefer|preferred|prefers|like|likes|dislike|dislikes|too long|too much information|short answer|tables are not bad|code blocks|telegram formatting|tool calls|verbose|default)\b/i;
+const BELIEF_KIND_RE = /\b(i think|i believe|i'm thinking|i suspect|i agree|this means|that means)\b/i;
+
+function normalizeTurnTextForGuards(turnText: string): string {
+  return turnText
+    .replace(/^\s*\[Brad Mills\]\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Deterministic pre-filter for obvious non-memory turns.
+ *
+ * Runs before the LLM so ordinary task requests and smoke tests cannot be
+ * promoted into durable hot memory. Durable preference/rule markers override
+ * task/question shape; exact-reply probes, pure acknowledgements, Telegram
+ * wrappers, and ordinary questions/tasks skip.
+ */
+export function shouldSkipTurnForFactsExtraction(turnText: string): boolean {
+  const t = normalizeTurnTextForGuards(turnText);
+  if (!t) return true;
+  if (/^\s*\[(Replying to|System note|CONTEXT COMPACTION|IMPORTANT|OUT-OF-BAND)/i.test(t)) return true;
+  if (SMOKE_OR_EXACT_REPLY_RE.test(t)) return true;
+  if (ACK_ONLY_RE.test(t)) return true;
+  if (t.length < 3) return true;
+
+  const hasDurableSignal = DURABLE_SIGNAL_RE.test(t);
+  const isQuestionOrTask = t.includes('?') || QUESTION_START_RE.test(t) || TRANSIENT_TASK_RE.test(t);
+  return isQuestionOrTask && !hasDurableSignal;
+}
+
+/**
+ * Deterministic kind guard for common first-person memory markers.
+ *
+ * The LLM still writes the claim text and handles nuanced extraction. This
+ * guard only normalizes high-signal lexical cases found in real Telegram turns:
+ * rules/decisions as commitments, answer-style/taste feedback as preferences,
+ * explicit hypotheses as beliefs, and typed metric assertions as facts.
+ */
+export function normalizeExtractedFactKind(
+  kind: FactKind,
+  factText: string,
+  turnText: string,
+  hasMetric: boolean,
+): FactKind {
+  if (hasMetric) return 'fact';
+
+  // Prefer fact-text evidence over whole-turn evidence. Multi-claim turns often
+  // contain both a preference and a decision; applying the decision marker to
+  // every extracted fact collapses the split.
+  if (PREFERENCE_KIND_RE.test(factText)) return 'preference';
+  if (COMMITMENT_KIND_RE.test(factText)) return 'commitment';
+  if (BELIEF_KIND_RE.test(factText)) return 'belief';
+
+  const turnHasPreference = PREFERENCE_KIND_RE.test(turnText);
+  const turnHasCommitment = COMMITMENT_KIND_RE.test(turnText);
+  const turnHasBelief = BELIEF_KIND_RE.test(turnText);
+
+  if (turnHasCommitment && !turnHasPreference && !turnHasBelief) return 'commitment';
+  if (turnHasPreference && !turnHasCommitment && !turnHasBelief) return 'preference';
+  if (turnHasBelief && !turnHasCommitment && !turnHasPreference) return 'belief';
+  return kind;
+}
+
 export interface ExtractInput {
   turnText: string;
   /** Opaque session id (MCP _meta.session_id, CLI --session, or null). */
@@ -156,18 +226,22 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
   cleaned = cleaned.trim();
   if (!cleaned) return [];
 
-  if (!isAvailable('chat')) {
-    // No chat gateway → no extraction. Caller still inserts facts via direct
-    // `gbrain take add` paths.
-    return [];
-  }
+  if (shouldSkipTurnForFactsExtraction(cleaned)) return [];
 
   const cap = Math.max(1, Math.min(input.maxFactsPerTurn ?? 10, 25));
   const defaultModel = await getFactsExtractionModel(input.engine);
+  const model = input.model ?? defaultModel;
+
+  if (!isAvailable('chat', model)) {
+    // No chat gateway for the effective facts-extraction model → no extraction.
+    // Caller still inserts facts via direct `gbrain take add` paths.
+    return [];
+  }
+
   let result: ChatResult;
   try {
     result = await chat({
-      model: input.model ?? defaultModel,
+      model,
       system: EXTRACTOR_SYSTEM,
       messages: [
         {
@@ -207,7 +281,7 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
     for (const p of INJECTION_PATTERNS) factText = factText.replace(p.rx, p.replacement);
     if (factText.length > 500) factText = factText.slice(0, 497) + '...';
 
-    const kind = ALL_EXTRACT_KINDS.includes(candidate.kind as FactKind)
+    const rawKind = ALL_EXTRACT_KINDS.includes(candidate.kind as FactKind)
       ? (candidate.kind as FactKind)
       : 'fact';
     const confidence = clampConfidence(candidate.confidence);
@@ -233,6 +307,7 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
     const claimValue  = candidate.value ?? null;
     const claimUnit   = candidate.unit ?? null;
     const claimPeriod = candidate.period ?? null;
+    const kind = normalizeExtractedFactKind(rawKind, factText, cleaned, claimMetric !== null);
 
     facts.push({
       fact: factText,

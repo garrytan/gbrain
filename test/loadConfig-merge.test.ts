@@ -9,12 +9,16 @@ import { loadConfigWithEngine, type GBrainConfig } from '../src/core/config.ts';
 
 interface FakeEngine {
   getConfig(key: string): Promise<string | null | undefined>;
+  listConfigKeys(prefix?: string): Promise<string[]>;
 }
 
 function makeEngine(map: Record<string, string | null | undefined>): FakeEngine {
   return {
     async getConfig(key: string) {
       return map[key];
+    },
+    async listConfigKeys(prefix = '') {
+      return Object.keys(map).filter(k => k.startsWith(prefix));
     },
   };
 }
@@ -45,6 +49,29 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
     const merged = await loadConfigWithEngine(engine, null);
     expect(merged?.search_embedding_column).toBe('embedding_voyage');
     expect(merged?.embedding_columns?.embedding_voyage?.dimensions).toBe(1024);
+  });
+
+  test('DB-plane provider_base_urls.<provider> merge reaches runtime config', async () => {
+    const base: GBrainConfig = { engine: 'pglite' };
+    const engine = makeEngine({
+      'provider_base_urls.openrouter': 'http://127.0.0.1:8806/v1',
+      'provider_base_urls.llama-server': 'http://127.0.0.1:8081/v1',
+    });
+    const merged = await loadConfigWithEngine(engine, base);
+    expect(merged?.provider_base_urls?.openrouter).toBe('http://127.0.0.1:8806/v1');
+    expect(merged?.provider_base_urls?.['llama-server']).toBe('http://127.0.0.1:8081/v1');
+  });
+
+  test('file-plane provider_base_urls win over DB-plane provider overrides', async () => {
+    const base: GBrainConfig = {
+      engine: 'pglite',
+      provider_base_urls: { openrouter: 'http://file-plane/v1' },
+    };
+    const engine = makeEngine({
+      'provider_base_urls.openrouter': 'http://db-plane/v1',
+    });
+    const merged = await loadConfigWithEngine(engine, base);
+    expect(merged?.provider_base_urls?.openrouter).toBe('http://file-plane/v1');
   });
 
   test('DB flag fills in when file/env did not set it', async () => {
@@ -99,6 +126,9 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
     };
     const engine: FakeEngine = {
       async getConfig() {
+        throw new Error('config table missing');
+      },
+      async listConfigKeys() {
         throw new Error('config table missing');
       },
     };
@@ -290,6 +320,9 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
       const base: GBrainConfig = { engine: 'pglite' };
       const engine: FakeEngine = {
         async getConfig() {
+          throw new Error('config table missing');
+        },
+        async listConfigKeys() {
           throw new Error('config table missing');
         },
       };
