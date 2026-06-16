@@ -192,6 +192,24 @@ const stderrLogger: OperationContext['logger'] = {
   error: (msg: string) => process.stderr.write(`[error] ${msg}\n`),
 };
 
+let pgliteDispatchTail: Promise<void> = Promise.resolve();
+
+async function runPgliteSerialized<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = pgliteDispatchTail;
+  let release!: () => void;
+  pgliteDispatchTail = new Promise<void>(resolve => { release = resolve; });
+  await previous.catch(() => undefined);
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+export function _resetPgliteDispatchQueueForTest(): void {
+  pgliteDispatchTail = Promise.resolve();
+}
+
 export function buildOperationContext(
   engine: BrainEngine,
   params: Record<string, unknown>,
@@ -249,7 +267,7 @@ export async function dispatchToolCall(
 
   const ctx = buildOperationContext(engine, safeParams, opts);
 
-  try {
+  const invoke = async (): Promise<ToolResult> => {
     const result = await op.handler(ctx, safeParams);
     const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
@@ -266,6 +284,13 @@ export async function dispatchToolCall(
       }
     }
     return out;
+  };
+
+  try {
+    if (engine.kind === 'pglite') {
+      return await runPgliteSerialized(invoke);
+    }
+    return await invoke();
   } catch (e: unknown) {
     if (e instanceof OperationError) {
       return { content: [{ type: 'text', text: JSON.stringify(e.toJSON(), null, 2) }], isError: true };
