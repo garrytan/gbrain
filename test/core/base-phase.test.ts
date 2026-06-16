@@ -71,16 +71,22 @@ class TestPhase extends BaseCyclePhase {
 
 const captured: CapturedCall[] = [];
 
-function mockEngine(): BrainEngine {
-  return { kind: 'pglite' } as unknown as BrainEngine;
+function mockEngine(config: Record<string, string | null> = {}): BrainEngine {
+  return {
+    kind: 'pglite',
+    async getConfig(key: string) {
+      return config[key] ?? null;
+    },
+  } as unknown as BrainEngine;
 }
 
 function buildCtx(opts: {
   sourceId?: string;
   allowedSources?: string[];
+  config?: Record<string, string | null>;
 } = {}): OperationContext {
   const ctx: OperationContext = {
-    engine: mockEngine(),
+    engine: mockEngine(opts.config),
     config: {} as never,
     logger: { info() {}, warn() {}, error() {} } as never,
     dryRun: false,
@@ -260,6 +266,40 @@ describe('BaseCyclePhase', () => {
       } as unknown as OperationContext;
       const result = await phase.run(ctx);
       expect(result.details.budgetUsd).toBe(7.25);
+    });
+
+    test('prefers engine.getConfig DB-plane value over ctx.config snapshot', async () => {
+      const phase = new TestPhase();
+      phase.onProcess = async () => {
+        const meter = (phase as unknown as { meter?: { check: (e: unknown) => { budgetUsd: number } } }).meter;
+        const check = meter?.check({
+          modelId: 'claude-haiku-4-5',
+          estimatedInputTokens: 1000,
+          maxOutputTokens: 100,
+        });
+        return { summary: 'ok', details: { budgetUsd: check?.budgetUsd } };
+      };
+      const ctx = {
+        ...buildCtx({ sourceId: 'tenant-a', config: { 'cycle.test_phase.budget_usd': '2.5' } }),
+        config: { 'cycle.test_phase.budget_usd': 7.25 },
+      } as unknown as OperationContext;
+      const result = await phase.run(ctx);
+      expect(result.details.budgetUsd).toBe(2.5);
+    });
+
+    test('allows negative DB-plane budget as explicit unlimited sentinel', async () => {
+      const phase = new TestPhase();
+      phase.onProcess = async () => {
+        const meter = (phase as unknown as { meter?: { check: (e: unknown) => { budgetUsd: number } } }).meter;
+        const check = meter?.check({
+          modelId: 'claude-haiku-4-5',
+          estimatedInputTokens: 1000,
+          maxOutputTokens: 100,
+        });
+        return { summary: 'ok', details: { budgetUsd: check?.budgetUsd } };
+      };
+      const result = await phase.run(buildCtx({ sourceId: 'tenant-a', config: { 'cycle.test_phase.budget_usd': '-1' } }));
+      expect(result.details.budgetUsd).toBe(-1);
     });
   });
 });

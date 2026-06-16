@@ -312,6 +312,33 @@ export interface PhaseResult {
   error?: PhaseError;
 }
 
+const PAID_CALIBRATION_PHASES = ['propose_takes', 'grade_takes', 'calibration_profile'] as const;
+type PaidCalibrationPhase = typeof PAID_CALIBRATION_PHASES[number];
+
+function isTruthyConfig(raw: string | null | undefined): boolean {
+  if (raw == null) return false;
+  const v = raw.trim().toLowerCase();
+  return !['false', '0', 'no', 'off', ''].includes(v);
+}
+
+async function isPaidCalibrationPhaseEnabled(engine: BrainEngine, phase: PaidCalibrationPhase): Promise<boolean> {
+  const raw = await engine.getConfig(`cycle.${phase}.enabled`).catch(() => null);
+  return isTruthyConfig(raw);
+}
+
+function disabledPaidCalibrationPhaseResult(phase: PaidCalibrationPhase): PhaseResult {
+  return {
+    phase,
+    status: 'skipped',
+    duration_ms: 0,
+    summary: `cycle.${phase}.enabled=false (default OFF)`,
+    details: {
+      reason: 'disabled',
+      enable_hint: `gbrain config set cycle.${phase}.enabled true`,
+    },
+  };
+}
+
 export type CycleStatus = 'ok' | 'clean' | 'partial' | 'skipped' | 'failed';
 
 export interface CycleReport {
@@ -2008,34 +2035,46 @@ export async function runCycle(
 
         if (phases.includes('propose_takes')) {
           checkAborted(opts.signal);
-          progress.start('cycle.propose_takes');
-          const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined }) as Promise<PhaseResult>);
-          result.duration_ms = duration_ms;
-          phaseResults.push(result);
-          progress.finish();
+          if (!(await isPaidCalibrationPhaseEnabled(engine, 'propose_takes'))) {
+            phaseResults.push(disabledPaidCalibrationPhaseResult('propose_takes'));
+          } else {
+            progress.start('cycle.propose_takes');
+            const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
+            const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined }) as Promise<PhaseResult>);
+            result.duration_ms = duration_ms;
+            phaseResults.push(result);
+            progress.finish();
+          }
           await safeYield(opts.yieldBetweenPhases);
         }
 
         if (phases.includes('grade_takes')) {
           checkAborted(opts.signal);
-          progress.start('cycle.grade_takes');
-          const { runPhaseGradeTakes } = await import('./cycle/grade-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, {}) as Promise<PhaseResult>);
-          result.duration_ms = duration_ms;
-          phaseResults.push(result);
-          progress.finish();
+          if (!(await isPaidCalibrationPhaseEnabled(engine, 'grade_takes'))) {
+            phaseResults.push(disabledPaidCalibrationPhaseResult('grade_takes'));
+          } else {
+            progress.start('cycle.grade_takes');
+            const { runPhaseGradeTakes } = await import('./cycle/grade-takes.ts');
+            const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, {}) as Promise<PhaseResult>);
+            result.duration_ms = duration_ms;
+            phaseResults.push(result);
+            progress.finish();
+          }
           await safeYield(opts.yieldBetweenPhases);
         }
 
         if (phases.includes('calibration_profile')) {
           checkAborted(opts.signal);
-          progress.start('cycle.calibration_profile');
-          const { runPhaseCalibrationProfile } = await import('./cycle/calibration-profile.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseCalibrationProfile(calibrationCtx, {}) as Promise<PhaseResult>);
-          result.duration_ms = duration_ms;
-          phaseResults.push(result);
-          progress.finish();
+          if (!(await isPaidCalibrationPhaseEnabled(engine, 'calibration_profile'))) {
+            phaseResults.push(disabledPaidCalibrationPhaseResult('calibration_profile'));
+          } else {
+            progress.start('cycle.calibration_profile');
+            const { runPhaseCalibrationProfile } = await import('./cycle/calibration-profile.ts');
+            const { result, duration_ms } = await timePhase(() => runPhaseCalibrationProfile(calibrationCtx, {}) as Promise<PhaseResult>);
+            result.duration_ms = duration_ms;
+            phaseResults.push(result);
+            progress.finish();
+          }
           await safeYield(opts.yieldBetweenPhases);
         }
       } else {
