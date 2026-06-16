@@ -651,11 +651,17 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     enabled,
     corpusDir: corpusDir ?? null,
     meetingTranscriptsDir: meetingTranscriptsDir ?? null,
-    minChars: minCharsStr ? Math.max(0, parseInt(minCharsStr, 10) || 2000) : 2000,
+    minChars: (() => {
+      const parsed = parseInt(minCharsStr ?? '', 10);
+      return Number.isFinite(parsed) ? Math.max(0, parsed) : 2000;
+    })(),
     excludePatterns,
     model,
     verdictModel,
-    cooldownHours: cooldownHoursStr ? Math.max(0, parseInt(cooldownHoursStr, 10) || 12) : 12,
+    cooldownHours: (() => {
+      const parsed = parseInt(cooldownHoursStr ?? '', 10);
+      return Number.isFinite(parsed) ? Math.max(0, parsed) : 12;
+    })(),
     maxPromptTokens,
     maxChunksPerTranscript,
   };
