@@ -55,13 +55,61 @@ const DENY_PREFIXES = [
 /** First slug segments where no inbound links is expected */
 const FIRST_SEGMENT_EXCLUSIONS = new Set(['scratch', 'thoughts', 'catalog', 'entities']);
 
+/**
+ * Brain-level config key for user-specified additional deny prefixes.
+ * Value is a comma-separated string of slug prefixes; whitespace around
+ * commas is tolerated, empty entries are dropped. Example:
+ *
+ *   gbrain config set orphans.exclude_prefixes 'resources/,transcripts/,agents/'
+ *
+ * The shipped `DENY_PREFIXES` constant ABOVE covers gbrain-internal
+ * convention dirs (output, scripts, templates, openclaw/config). User
+ * brains organized by other conventions (PARA's `resources/` +
+ * `archives/`, Obsidian vaults with `clips/`, code corpora with
+ * `transcripts/`, etc.) leak hundreds-to-thousands of "orphan" pages
+ * that are reference material by design — not authored content meant to
+ * be linked. This config knob lets the user extend the deny list without
+ * patching source. Empty / unset preserves today's behavior exactly.
+ */
+export const USER_EXCLUDE_PREFIXES_CONFIG_KEY = 'orphans.exclude_prefixes';
+
+/**
+ * Parse a comma-separated config string into a normalized list of slug
+ * prefixes. Tolerant of whitespace, drops empties, returns `[]` for any
+ * non-string or empty input. Exported for the unit tests that pin the
+ * parse semantics independent of the DB roundtrip.
+ */
+export function parseUserExcludePrefixes(raw: unknown): string[] {
+  if (typeof raw !== 'string') return [];
+  return raw.split(',').map(s => s.trim()).filter(s => s.length > 0);
+}
+
+/**
+ * Read + parse the user-configured deny prefixes from the engine. Returns
+ * `[]` when the key is unset OR when the stored value isn't a usable
+ * string. Callers pass the result into `shouldExclude` so the
+ * config-aware exclusion is additive on top of the shipped defaults.
+ */
+export async function readUserExcludePrefixes(engine: BrainEngine): Promise<string[]> {
+  const raw = await engine.getConfig(USER_EXCLUDE_PREFIXES_CONFIG_KEY);
+  return parseUserExcludePrefixes(raw);
+}
+
 // --- Filter logic ---
 
 /**
  * Returns true if a slug should be excluded from orphan reporting by default.
  * These are pages where having no inbound links is expected / not a content problem.
+ *
+ * `userPrefixes` (optional, default `[]`) extends `DENY_PREFIXES` with
+ * deny prefixes from the brain config (`orphans.exclude_prefixes`). The
+ * shipped defaults always apply; user prefixes are additive, not
+ * replacing — there's no way for an empty/unset config to undo a shipped
+ * default. That's intentional: the defaults capture gbrain-internal
+ * conventions (e.g. `output/`, `templates/`) that downstream tooling
+ * relies on. User prefixes capture per-brain conventions on top.
  */
-export function shouldExclude(slug: string): boolean {
+export function shouldExclude(slug: string, userPrefixes: string[] = []): boolean {
   // Pseudo-pages (exact match)
   if (PSEUDO_SLUGS.has(slug)) return true;
 
@@ -73,8 +121,15 @@ export function shouldExclude(slug: string): boolean {
   // Raw source slugs
   if (slug.includes(RAW_SEGMENT)) return true;
 
-  // Deny-prefix slugs
+  // Deny-prefix slugs (shipped defaults)
   for (const prefix of DENY_PREFIXES) {
+    if (slug.startsWith(prefix)) return true;
+  }
+
+  // Deny-prefix slugs (user-configured additions, additive to defaults).
+  // Same startsWith semantics as the shipped list so the user-facing
+  // mental model is "extend the deny list, don't replace it".
+  for (const prefix of userPrefixes) {
     if (slug.startsWith(prefix)) return true;
   }
 
@@ -142,6 +197,14 @@ export async function findOrphans(
   // pagination was considered and rejected: without an index on
   // links.to_page_id it does no useful work. Adding that index is a
   // follow-up (v0.14.3 schema migration).
+  // User-configured deny prefixes — read once per findOrphans call so
+  // both the per-page-filter pass below AND the denominator pass apply
+  // the same set. If they fell out of sync (e.g. caller-supplied vs
+  // engine-read), the F6 invariant about denominator correctness would
+  // break and excluded pages with inbound links would silently re-enter
+  // total_linkable.
+  const userPrefixes = await readUserExcludePrefixes(engine);
+
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('orphans.scan');
   const stopHb = startHeartbeat(progress, 'scanning pages for missing inbound links…');
@@ -176,7 +239,7 @@ export async function findOrphans(
     total = liveRows.length;
     excludedAll = includePseudo
       ? 0
-      : liveRows.reduce((n, r) => n + (shouldExclude(r.slug) ? 1 : 0), 0);
+      : liveRows.reduce((n, r) => n + (shouldExclude(r.slug, userPrefixes) ? 1 : 0), 0);
   } finally {
     stopHb();
     progress.finish();
@@ -184,7 +247,7 @@ export async function findOrphans(
 
   const filtered = includePseudo
     ? allOrphans
-    : allOrphans.filter(row => !shouldExclude(row.slug));
+    : allOrphans.filter(row => !shouldExclude(row.slug, userPrefixes));
 
   const orphans: OrphanPage[] = filtered.map(row => ({
     slug: row.slug,
@@ -283,6 +346,17 @@ Options:
 
 Output (default): grouped by domain, sorted alphabetically within each group
 Summary line: N orphans out of M linkable pages (K total; K-M excluded)
+
+The shipped exclusion set covers gbrain-internal convention dirs (output/,
+templates/, scripts/, dashboards/, openclaw/config/), pseudo-pages
+(_index, _atlas, _scratch, ...), auto-generated suffixes (/_index, /log),
+raw-source slug segments (/raw/), and first-segment dirs (scratch/,
+thoughts/, catalog/, entities/). Brains organized by other conventions
+extend the list via config:
+
+  gbrain config set orphans.exclude_prefixes 'resources/,transcripts/,agents/'
+
+Comma-separated, whitespace tolerated, additive to the shipped defaults.
 `);
     return;
   }
