@@ -180,16 +180,29 @@ async function runTest(args: string[]): Promise<void> {
       }
     } catch { /* loadConfig throws when no brain configured — first-time install path; the no-config branch above handles it. */ }
 
+    const cfg = loadConfig();
     if (tpArg === 'embedding') {
-      const dims = recipe?.touchpoints.embedding?.default_dims ?? 1536;
+      const dims =
+        cfg?.embedding_dimensions ??
+        recipe?.touchpoints.embedding?.default_dims ??
+        1536;
       configureGateway({
         embedding_model: modelArg,
         embedding_dimensions: dims,
+        expansion_model: cfg?.expansion_model,
+        chat_model: cfg?.chat_model,
+        chat_fallback_chain: cfg?.chat_fallback_chain,
+        base_urls: cfg?.provider_base_urls,
         env: { ...process.env },
       });
     } else {
       configureGateway({
         chat_model: modelArg,
+        embedding_model: cfg?.embedding_model,
+        embedding_dimensions: cfg?.embedding_dimensions,
+        expansion_model: cfg?.expansion_model,
+        chat_fallback_chain: cfg?.chat_fallback_chain,
+        base_urls: cfg?.provider_base_urls,
         env: { ...process.env },
       });
     }
