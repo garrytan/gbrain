@@ -2669,6 +2669,15 @@ async function resolveChatProvider(modelStr: string): Promise<{ model: any; reci
 }
 
 function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig): any {
+  if (recipe.id === 'openai-codex') {
+    const compat = applyOpenAICompatConfig(recipe, cfg);
+    return createOpenAI({
+      apiKey: 'codex-oauth',
+      baseURL: compat.baseURL,
+      ...(compat.fetch ? { fetch: compat.fetch } : {}),
+    }).responses(modelId);
+  }
+
   switch (recipe.implementation) {
     case 'native-openai': {
       const apiKey = cfg.env.OPENAI_API_KEY;

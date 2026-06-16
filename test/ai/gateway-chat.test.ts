@@ -31,8 +31,8 @@ import { AIConfigError } from '../../src/core/ai/errors.ts';
 import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
 
 describe('chat touchpoint — recipe registry', () => {
-  test('all six chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {
-    const expected = ['anthropic', 'openai', 'google', 'deepseek', 'groq', 'together'];
+  test('all seven chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {
+    const expected = ['anthropic', 'openai', 'openai-codex', 'google', 'deepseek', 'groq', 'together'];
     for (const id of expected) {
       const r = getRecipe(id);
       expect(r, `recipe missing: ${id}`).toBeDefined();
@@ -105,6 +105,7 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
   test('assertTouchpoint accepts chat for chat-capable native + openai-compat providers', () => {
     expect(() => assertTouchpoint(getRecipe('anthropic')!, 'chat', 'claude-opus-4-7')).not.toThrow();
     expect(() => assertTouchpoint(getRecipe('openai')!, 'chat', 'gpt-5.2')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('openai-codex')!, 'chat', 'gpt-5.6-sol')).not.toThrow();
     expect(() => assertTouchpoint(getRecipe('google')!, 'chat', 'gemini-2.0-flash')).not.toThrow();
     expect(() => assertTouchpoint(getRecipe('deepseek')!, 'chat', 'deepseek-chat')).not.toThrow();
   });
