@@ -302,6 +302,7 @@ describe('judgeSignificance', () => {
       content: 'A short conversation about something interesting.',
       basename: 'x',
       inferredDate: null,
+      transcriptSource: null,
     };
   }
 
@@ -415,6 +416,7 @@ describe('judgeSignificance — UTF-16 safety (v0.41.13)', () => {
       content,
       basename: 'long',
       inferredDate: null,
+      transcriptSource: null,
     };
   }
 
