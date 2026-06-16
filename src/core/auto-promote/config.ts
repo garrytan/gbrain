@@ -38,7 +38,7 @@ export function defaultAutoPromoteConfig(): AutoPromoteConfig {
       evidence_kinds: ['direct_user_statement', 'source_extracted'],
       sensitivities: ['public', 'work'],
       allow_contradictions: false,
-      require_verification: false,
+      require_verification: true,
       allow_verified_risky_upgrade: true,
     },
     escalation: { enabled: true, max_per_cycle: 20 },

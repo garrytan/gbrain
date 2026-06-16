@@ -18,10 +18,10 @@ describe('auto_promote config', () => {
     const c = normalizeAutoPromoteConfig({ eligibility: { sensitivities: ['work', 'secret', 'unknown', 'personal'] } as any });
     expect(c.eligibility.sensitivities).toEqual(['work', 'personal']);
   });
-  it('defaults require_verification to false and accepts an explicit opt-in', () => {
-    expect(defaultAutoPromoteConfig().eligibility.require_verification).toBe(false);
-    const c = normalizeAutoPromoteConfig({ eligibility: { require_verification: true } as any });
-    expect(c.eligibility.require_verification).toBe(true);
+  it('defaults require_verification to true and accepts an explicit opt-out', () => {
+    expect(defaultAutoPromoteConfig().eligibility.require_verification).toBe(true);
+    const c = normalizeAutoPromoteConfig({ eligibility: { require_verification: false } as any });
+    expect(c.eligibility.require_verification).toBe(false);
   });
   it('defaults allow_verified_risky_upgrade to true and accepts an explicit opt-out', () => {
     expect(defaultAutoPromoteConfig().eligibility.allow_verified_risky_upgrade).toBe(true);

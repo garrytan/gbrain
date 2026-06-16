@@ -76,12 +76,13 @@ jobs:
       - run: bun run test
         env:
           TEST_WORKERS: 2
-          # PGLite WASM schema init regularly needs >20s on macOS runners.
-          TEST_TIMEOUT_MS: 60000
+          # PGLite WASM schema init and source-registry persistence tests can
+          # exceed 60s on loaded macOS runners.
+          TEST_TIMEOUT_MS: 120000
 
   test:
     runs-on: ubuntu-latest
-    needs: [typecheck, test-shard, test-macos]
+    needs: [typecheck, test-shard, test-macos, postgres-jsonb]
     if: ${{ always() }}
     steps:
       - name: Verify typecheck and all unit test shards passed
@@ -98,9 +99,14 @@ jobs:
             echo "macOS unit tests did not pass: ${{ needs.test-macos.result }}"
             exit 1
           fi
+          if [ "${{ needs.postgres-jsonb.result }}" != "success" ]; then
+            echo "Postgres runtime tests did not pass: ${{ needs.postgres-jsonb.result }}"
+            exit 1
+          fi
           echo "Typecheck and all unit test shards passed"
 
   postgres-jsonb:
+    name: Postgres Target Runtime
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -122,6 +128,11 @@ jobs:
         with:
           bun-version: 1.3.12
       - run: bun install
-      - run: bun test test/postgres-jsonb-engine.test.ts
+      - run: >
+          bun test
+          test/postgres-jsonb-engine.test.ts
+          test/memory-inbox-schema.test.ts
+          test/memory-mutation-ledger-engine.test.ts
+          test/canonical-handoff-engine.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mbrain_test

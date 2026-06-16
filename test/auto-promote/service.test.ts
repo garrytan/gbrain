@@ -7,7 +7,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 const NOW = '2026-06-01T00:00:00Z';
 
 async function seedEligibleCandidate(engine: BrainEngine, id = 'cand-1', overrides: Record<string, unknown> = {}) {
-  return engine.createMemoryCandidateEntry({
+  const candidate = await engine.createMemoryCandidateEntry({
     id, scope_id: 'workspace:default', candidate_type: 'fact',
     proposed_content: 'Acme raised a seed round.',
     source_refs: ['User, direct message, 2026-04-22 3:01 PM KST'],
@@ -18,6 +18,16 @@ async function seedEligibleCandidate(engine: BrainEngine, id = 'cand-1', overrid
     reviewed_at: null, review_reason: null,
     ...overrides,
   });
+  const verificationStatus = overrides.verification_status;
+  if (verificationStatus === 'unverified') return candidate;
+  const updated = await engine.updateMemoryCandidateEntryVerification(candidate.id, {
+    verification_status: verificationStatus === 'refuted' ? 'refuted' : 'verified',
+    verification_method: 'source_recheck',
+    verification_evidence: `Verified ${candidate.id} for auto-promote service testing.`,
+    verification_source_refs: [`Source: auto-promote service fixture for ${candidate.id}`],
+    verified_at: '2026-06-16T00:00:00Z',
+  });
+  return updated ?? candidate;
 }
 async function seedTargetPage(engine: BrainEngine, content = 'Acme is tracked in MBrain. [Source: User, direct message, 2026-04-20 9:00 AM KST]') {
   return engine.putPage('concepts/acme', {
@@ -313,6 +323,10 @@ describe('runAutoPromote', () => {
         enabled: true,
         first_pass_model: 'first-pass',
         escalation_model: 'escalation',
+        eligibility: {
+          ...defaultAutoPromoteConfig().eligibility,
+          allow_verified_risky_upgrade: false,
+        },
       };
 
       await runAutoPromote({ engine, config: cfg, now: NOW, runnerExecutor: executor, contextLoader: stubContext, runner: { kind: 'claude_code' } as any });

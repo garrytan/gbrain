@@ -98,6 +98,7 @@ export async function seedMemoryCandidate(
   opts: {
     id: string;
     status?: 'captured' | 'candidate' | 'staged_for_review';
+    verified?: boolean;
     scope_id?: string;
     source_refs?: string[];
     target_object_type?: 'curated_note' | 'procedure' | 'profile_memory' | 'personal_episode' | 'other' | null;
@@ -128,7 +129,7 @@ export async function seedMemoryCandidate(
 
   if (status === 'captured') return;
 
-  const { advanceMemoryCandidateStatus } = await import(
+  const { advanceMemoryCandidateStatus, verifyMemoryCandidateEntry } = await import(
     '../../src/core/services/memory-inbox-service.ts'
   );
   await advanceMemoryCandidateStatus(engine, {
@@ -142,4 +143,14 @@ export async function seedMemoryCandidate(
     next_status: 'staged_for_review',
     review_reason: 'Scenario seeded to staged_for_review.',
   });
+  if (opts.verified !== false) {
+    await verifyMemoryCandidateEntry(engine, {
+      id: opts.id,
+      verification_status: 'verified',
+      verification_method: 'source_recheck',
+      verification_evidence: `Scenario fixture verified candidate ${opts.id} before promotion.`,
+      verification_source_refs: [`Scenario fixture verification for ${opts.id}`],
+      verified_at: '2026-06-16T00:00:00Z',
+    });
+  }
 }

@@ -100,6 +100,39 @@ describe('put_page content hash preconditions and mutation ledger', () => {
     });
   });
 
+  test('missing expected_content_hash rejects existing page updates without overwriting', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const slug = 'concepts/precondition-required-for-update';
+      const initial = pageContent(
+        'Precondition Required For Update',
+        'Original compiled truth.',
+        '- 2026-04-25 | Initial evidence.',
+      );
+      const updated = pageContent(
+        'Precondition Required For Update',
+        'Updated compiled truth should not be written.',
+        '- 2026-04-25 | Updated evidence should not appear.',
+      );
+
+      await put.handler(ctx, { slug, content: initial });
+      const before = await ctx.engine.getPage(slug);
+      expect(before?.content_hash).toBeTruthy();
+
+      await expect(put.handler(ctx, {
+        slug,
+        content: updated,
+        session_id: 'put-page-missing-precondition-session',
+        source_refs: ['Source: missing expected hash update test'],
+      })).rejects.toMatchObject({ code: 'write_conflict' });
+
+      expect(await ctx.engine.getPage(slug)).toMatchObject({
+        content_hash: before?.content_hash,
+        compiled_truth: before?.compiled_truth,
+      });
+    });
+  });
+
   test('stale expected_content_hash rejects without mutating existing page and records one conflict event', async () => {
     await withSqliteEngine(async (ctx) => {
       const put = getOperation('put_page');
@@ -534,6 +567,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
             slug,
             content: agentUpdate,
             repo: repoPath,
+            expected_content_hash: before?.content_hash,
             session_id: 'put-page-markdown-file-conflict-session',
             source_refs: ['Source: markdown conflict test'],
           });
@@ -774,6 +808,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
         const result = await put.handler(ctx, {
           slug: 'systems/foo',
           content,
+          expected_content_hash: (await ctx.engine.getPage('systems/foo'))?.content_hash,
           session_id: 'put-page-prefix-hash-repeat',
           source_refs: ['Source: prefix hash repeat test'],
         }) as any;
@@ -844,6 +879,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           slug,
           content: `${'x'.repeat(5_000_001)} ${DEFAULT_PAGE_SOURCE}`,
           repo: repoPath,
+          expected_content_hash: before?.content_hash,
           session_id: 'put-page-oversized-markdown-first-session',
           source_refs: ['Source: oversized markdown-first test'],
         }) as any;
@@ -953,6 +989,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           slug,
           content,
           repo: repoPath,
+          expected_content_hash: (await ctx.engine.getPage(slug))?.content_hash,
           session_id: 'put-page-unchanged-markdown-first-session',
           source_refs: ['Source: unchanged markdown-first optimization test'],
         }) as any;
@@ -1408,6 +1445,26 @@ describe('put_page content hash preconditions and mutation ledger', () => {
       expect(result).toEqual({ dry_run: true, action: 'put_page', slug });
       expect(await ctx.engine.getPage(slug)).toBeNull();
       expect(await ctx.engine.listMemoryMutationEvents({ session_id: 'put-page-dry-run-session' })).toEqual([]);
+    });
+  });
+});
+
+describe('timeline operation preconditions', () => {
+  test('add_timeline_entry rejects missing pages instead of silently succeeding', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const addTimelineEntry = getOperation('add_timeline_entry');
+
+      await expect(addTimelineEntry.handler(ctx, {
+        slug: 'concepts/missing-timeline-target',
+        date: '2026-06-16',
+        summary: 'This should not be recorded.',
+        source: 'timeline precondition test',
+      })).rejects.toMatchObject({
+        name: 'OperationError',
+        code: 'page_not_found',
+      } satisfies Partial<OperationError>);
+
+      expect(await ctx.engine.getTimeline('concepts/missing-timeline-target')).toEqual([]);
     });
   });
 });

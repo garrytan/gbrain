@@ -430,6 +430,7 @@ const MEMORY_SCENARIO_KNOWN_SUBJECT_KINDS = [
 const RETRIEVAL_SELECTOR_KINDS = [
   'page',
   'compiled_truth',
+  'frontmatter',
   'section',
   'line_span',
   'timeline_entry',
@@ -1709,6 +1710,7 @@ function parseRetrievalSelectorId(value: string, key: string): RetrievalSelector
   switch (kind) {
     case 'page':
     case 'compiled_truth':
+    case 'frontmatter':
     case 'timeline_range':
       selector.slug = target;
       break;
@@ -3010,7 +3012,7 @@ const put_page: Operation = {
         assertPutPageSourceAttribution(slug, content);
         return {
           audit: putPageAuditContext(p),
-          expectedContentHash: putPageExpectedContentHash(p.expected_content_hash),
+          expectedContentHash: putPageExpectedContentHash(p.expected_content_hash ?? null),
         };
       })();
     let outcome: PutPageTransactionOutcome;
@@ -3027,7 +3029,7 @@ const put_page: Operation = {
         const audit = prevalidatedPutPage ? prevalidatedPutPage.audit : putPageAuditContext(p);
         const expectedContentHash = prevalidatedPutPage
           ? prevalidatedPutPage.expectedContentHash
-          : putPageExpectedContentHash(p.expected_content_hash);
+          : putPageExpectedContentHash(p.expected_content_hash ?? null);
         const existing = expectedContentHash !== undefined
           ? await tx.getPageForUpdate(slug)
           : await tx.getPage(slug);
@@ -3483,7 +3485,16 @@ const add_timeline_entry: Operation = {
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'add_timeline_entry', slug: p.slug };
-    await ctx.engine.addTimelineEntry(p.slug as string, {
+    const slug = p.slug as string;
+    const existing = await ctx.engine.getPage(slug);
+    if (!existing) {
+      throw new OperationError(
+        'page_not_found',
+        `Page not found for timeline entry: ${slug}`,
+        'Create the page before appending timeline evidence.',
+      );
+    }
+    await ctx.engine.addTimelineEntry(slug, {
       date: p.date as string,
       source: (p.source as string) || '',
       summary: p.summary as string,
@@ -5478,7 +5489,7 @@ const plan_retrieval_request: Operation = {
 
 const retrieve_context: Operation = {
   name: 'retrieve_context',
-  description: 'Agentic MBrain retrieval probe. Returns a bounded read_plan, required canonical reads, and non-canonical candidate_signals from Memory Inbox; chunks and candidate signals are not answer evidence. Call read_context on read_plan.selected_selectors before answering factual questions.',
+  description: 'Agentic MBrain retrieval probe. Returns a bounded read_plan, required canonical reads, and non-canonical candidate_signals from Memory Inbox; chunks and candidate signals are not answer evidence. Call read_context on read_plan.selected_selector_snapshots before answering factual questions; use read_plan.selected_selectors only as a legacy selector-id fallback.',
   params: {
     query: { type: 'string', description: 'Raw user request or memory query' },
     selectors: {

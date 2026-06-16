@@ -6,7 +6,10 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
-import { advanceMemoryCandidateStatus } from '../src/core/services/memory-inbox-service.ts';
+import {
+  advanceMemoryCandidateStatus,
+  verifyMemoryCandidateEntry,
+} from '../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../src/core/services/memory-inbox-promotion-service.ts';
 
 setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
@@ -210,6 +213,14 @@ async function seedPromotedCandidate(engine: BrainEngine, id: string, scopeId: s
     id,
     next_status: 'staged_for_review',
     review_reason: 'Prepared for handoff persistence.',
+  });
+  await verifyMemoryCandidateEntry(engine, {
+    id,
+    verification_status: 'verified',
+    verification_method: 'source_recheck',
+    verification_evidence: `Verified canonical handoff engine fixture ${id}.`,
+    verification_source_refs: [`Fixture verification for ${id}`],
+    verified_at: '2026-06-16T00:00:00Z',
   });
   await promoteMemoryCandidateEntry(engine, {
     id,

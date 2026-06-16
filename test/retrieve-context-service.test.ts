@@ -704,8 +704,180 @@ describe('retrieve context service', () => {
       expect(result.read_plan.deferred_candidate_ids).toHaveLength(1);
       expect(result.read_plan.gap_reasons).toContain('candidate_pool_exceeds_read_budget');
       expect(result.read_plan.next_actions).toContain(
-        'Call read_context with read_plan.selected_selectors before making factual claims.',
+        'Call read_context with read_plan.selected_selector_snapshots before making factual claims.',
       );
+    });
+  });
+
+  test('read plan snapshots preserve content_hash for stale selector guards', async () => {
+    await withEngine('read-plan-snapshot-hash', async (engine) => {
+      await importFromContent(engine, 'concepts/read-plan-snapshot', [
+        '---',
+        'type: concept',
+        'title: Read Plan Snapshot',
+        '---',
+        '# Snapshot Evidence',
+        'Snapshot handoff phrase is bound to the original page hash.',
+      ].join('\n'), { path: 'concepts/read-plan-snapshot.md' });
+
+      const result = await retrieveContext(engine, {
+        query: 'snapshot handoff phrase',
+        include_orientation: false,
+        limit: 1,
+      }, {
+        candidateSearch: async () => [{
+          slug: 'concepts/read-plan-snapshot',
+          page_id: 1,
+          title: 'Read Plan Snapshot',
+          type: 'concept',
+          chunk_text: 'Snapshot handoff phrase is bound to the original page hash.',
+          chunk_source: 'compiled_truth',
+          score: 8,
+          stale: false,
+        }],
+      });
+
+      expect(result.required_reads).toHaveLength(1);
+      const snapshotHash = result.required_reads[0]!.content_hash;
+      expect(snapshotHash).toBeDefined();
+      const snapshots = (result.read_plan as any).selected_selector_snapshots;
+      expect(snapshots).toEqual([expect.objectContaining({
+        selector_id: result.required_reads[0]!.selector_id,
+        content_hash: snapshotHash,
+      })]);
+
+      await importFromContent(engine, 'concepts/read-plan-snapshot', [
+        '---',
+        'type: concept',
+        'title: Read Plan Snapshot',
+        '---',
+        '# Snapshot Evidence',
+        'Updated evidence must not satisfy an old read-plan selector snapshot.',
+      ].join('\n'), { path: 'concepts/read-plan-snapshot.md' });
+
+      const staleRead = await readContext(engine, {
+        selectors: snapshots,
+        token_budget: 50,
+      });
+
+      expect(staleRead.canonical_reads).toEqual([]);
+      const firstWarningCode = staleRead.selector_warnings?.[0]?.code;
+      expect(firstWarningCode).toBeDefined();
+      expect(['stale_selector', 'stale_continuation']).toContain(firstWarningCode!);
+      expect(staleRead.answer_ready.ready).toBe(false);
+      expect(staleRead.answer_ready.unsupported_reasons.some((reason) =>
+        reason === 'stale_selector' || reason === 'stale_continuation'
+      )).toBe(true);
+    });
+  });
+
+  test('frontmatter-only matches read back frontmatter evidence', async () => {
+    await withEngine('frontmatter-evidence-read', async (engine) => {
+      await importFromContent(engine, 'systems/frontmatter-only-tooling', [
+        '---',
+        'type: system',
+        'title: Frontmatter Only Tooling',
+        'build_command: bun run frontmatter-evidence-only',
+        '---',
+        '# Frontmatter Only Tooling',
+        'Compiled truth intentionally omits the unique command.',
+      ].join('\n'), { path: 'systems/frontmatter-only-tooling.md' });
+
+      const result = await retrieveContext(engine, {
+        query: 'frontmatter evidence only',
+        include_orientation: false,
+        limit: 1,
+      }, {
+        candidateSearch: async () => [{
+          slug: 'systems/frontmatter-only-tooling',
+          page_id: 1,
+          title: 'Frontmatter Only Tooling',
+          type: 'system',
+          chunk_text: 'build command: bun run frontmatter-evidence-only',
+          chunk_source: 'frontmatter',
+          score: 8,
+          stale: false,
+        }],
+      });
+
+      const selectors = (result.read_plan as any).selected_selector_snapshots ?? result.required_reads;
+      const read = await readContext(engine, {
+        selectors,
+        token_budget: 80,
+      });
+
+      expect(result.required_reads[0]!.kind).toBe('frontmatter');
+      expect(read.canonical_reads).toHaveLength(1);
+      expect(read.canonical_reads[0]!.selector.kind).toBe('frontmatter');
+      expect(read.canonical_reads[0]!.text).toContain('build command');
+      expect(read.canonical_reads[0]!.text).toContain('bun run frontmatter-evidence-only');
+      expect(read.answer_ready.ready).toBe(true);
+    });
+  });
+
+  test('surfaces candidate search failures even when fallback variants return candidates', async () => {
+    await withEngine('candidate-search-partial-failure', async (engine) => {
+      await importFromContent(engine, 'concepts/backend-fallback-signal', [
+        '---',
+        'type: concept',
+        'title: Backend Fallback Signal',
+        '---',
+        '# Backend Fallback Signal',
+        'Backend fallback signal evidence remains readable after partial search failure.',
+      ].join('\n'), { path: 'concepts/backend-fallback-signal.md' });
+      const originalQuery = 'backend fallback signal';
+
+      const result = await retrieveContext(engine, {
+        query: originalQuery,
+        include_orientation: false,
+        limit: 1,
+      }, {
+        candidateSearch: async (candidateQuery) => {
+          if (candidateQuery === originalQuery) {
+            throw new Error('keyword backend unavailable');
+          }
+          return [{
+            slug: 'concepts/backend-fallback-signal',
+            page_id: 1,
+            title: 'Backend Fallback Signal',
+            type: 'concept',
+            chunk_text: 'Backend fallback signal evidence remains readable after partial search failure.',
+            chunk_source: 'compiled_truth',
+            score: 6,
+            stale: false,
+          }];
+        },
+      });
+
+      expect(result.required_reads).toHaveLength(1);
+      expect(result.read_plan.gap_reasons).toContain('retrieval_backend_partial_failure');
+      expect(result.warnings.some((warning) =>
+        warning.includes('Candidate search failed for 1 of')
+        && warning.includes('keyword backend unavailable')
+      )).toBe(true);
+    });
+  });
+
+  test('distinguishes candidate search backend failure from no candidate', async () => {
+    await withEngine('candidate-search-total-failure', async (engine) => {
+      const result = await retrieveContext(engine, {
+        query: 'backend down evidence',
+        include_orientation: false,
+        limit: 1,
+      }, {
+        candidateSearch: async () => {
+          throw new Error('search backend down');
+        },
+      });
+
+      expect(result.required_reads).toEqual([]);
+      expect(result.answerability.reason_codes).toContain('retrieval_backend_failed');
+      expect(result.answerability.reason_codes).not.toContain('no_candidate');
+      expect(result.read_plan.gap_reasons).toContain('retrieval_backend_failed');
+      expect(result.warnings.some((warning) =>
+        warning.includes('Candidate search failed for')
+        && warning.includes('search backend down')
+      )).toBe(true);
     });
   });
 
@@ -1718,6 +1890,10 @@ describe('retrieve context service', () => {
 
       expect(result.required_reads).toHaveLength(1);
       expect(result.required_reads[0]!.kind).toBe('timeline_range');
+      expect(result.required_reads[0]!.content_hash).toBeTruthy();
+      const snapshots = result.read_plan.selected_selector_snapshots ?? [];
+      expect(snapshots).toHaveLength(1);
+      expect(snapshots[0]!.content_hash).toBe(result.required_reads[0]!.content_hash);
     });
   });
 
@@ -1813,7 +1989,7 @@ describe('retrieve context service', () => {
       expect(result.read_plan.selected_selectors).toEqual([]);
       expect(result.read_plan.gap_reasons).toContain('orientation_reads_deferred');
       expect(result.read_plan.next_actions).toContain(
-        'Broad-synthesis route contributes orientation reads only; read_plan.selected_selectors remains the evidence boundary.',
+        'Broad-synthesis route contributes orientation reads only; read_plan.selected_selector_snapshots remains the evidence boundary.',
       );
     });
   });
@@ -1872,7 +2048,7 @@ describe('retrieve context service', () => {
       expect(result.read_plan.selected_selectors.some((selectorId) =>
         selectorId.includes('systems/derived-memory-map'))).toBe(false);
       expect(result.read_plan.next_actions).toContain(
-        'Broad-synthesis route contributes orientation reads only; read_plan.selected_selectors remains the evidence boundary.',
+        'Broad-synthesis route contributes orientation reads only; read_plan.selected_selector_snapshots remains the evidence boundary.',
       );
     });
   });

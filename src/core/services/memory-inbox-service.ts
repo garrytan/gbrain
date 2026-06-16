@@ -125,6 +125,9 @@ export async function preflightPromoteMemoryCandidate(
   if (entry.verification_status === 'refuted') {
     denyReasons.push('candidate_refuted');
   }
+  if (entry.verification_status === 'unverified') {
+    deferReasons.push('candidate_requires_verification');
+  }
   if (entry.sensitivity === 'unknown') {
     deferReasons.push('candidate_unknown_sensitivity');
   }
@@ -487,6 +490,8 @@ function formatReasonLabel(reason: MemoryCandidatePromotionPreflightReason): str
       return 'candidate scope conflicts with its target';
     case 'candidate_unknown_sensitivity':
       return 'candidate sensitivity is unknown';
+    case 'candidate_requires_verification':
+      return 'candidate requires verification';
     case 'candidate_requires_revalidation':
       return 'candidate requires revalidation';
     case 'candidate_refuted':

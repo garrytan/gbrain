@@ -5,7 +5,7 @@ import { defaultAutoPromoteConfig } from '../../src/core/auto-promote/config.ts'
 import type { BrainEngine } from '../../src/core/engine.ts';
 
 async function seedEligibleCandidate(engine: BrainEngine, id = 'cand-1', overrides: Record<string, unknown> = {}) {
-  return engine.createMemoryCandidateEntry({
+  const candidate = await engine.createMemoryCandidateEntry({
     id, scope_id: 'workspace:default', candidate_type: 'fact',
     proposed_content: 'Acme raised a seed round.',
     source_refs: ['User, direct message, 2026-04-22 3:01 PM KST'],
@@ -16,6 +16,16 @@ async function seedEligibleCandidate(engine: BrainEngine, id = 'cand-1', overrid
     reviewed_at: null, review_reason: null,
     ...overrides,
   });
+  const verificationStatus = overrides.verification_status;
+  if (verificationStatus === 'unverified') return candidate;
+  const updated = await engine.updateMemoryCandidateEntryVerification(candidate.id, {
+    verification_status: verificationStatus === 'refuted' ? 'refuted' : 'verified',
+    verification_method: 'source_recheck',
+    verification_evidence: `Verified ${candidate.id} for auto-promote gate testing.`,
+    verification_source_refs: [`Source: auto-promote gate fixture for ${candidate.id}`],
+    verified_at: '2026-06-16T00:00:00Z',
+  });
+  return updated ?? candidate;
 }
 
 async function seedTargetPage(engine: BrainEngine) {

@@ -8,6 +8,7 @@ const base = {
   extraction_kind: 'manual', confidence_score: 0.9, importance_score: 0.5,
   recurrence_score: 0, sensitivity: 'work', status: 'candidate',
   target_object_type: 'curated_note', target_object_id: 'brain/concepts/x',
+  verification_status: 'verified',
 } as any;
 
 describe('selectAutoPromoteCandidates', () => {
@@ -27,8 +28,8 @@ describe('selectAutoPromoteCandidates', () => {
     expect(r.excluded).toHaveLength(0);
   });
   it('routes inferred and ambiguous targeted candidates with source refs to risky handoff', () => {
-    const inferred = selectAutoPromoteCandidates([{ ...base, extraction_kind: 'inferred' }], policy);
-    const ambiguous = selectAutoPromoteCandidates([{ ...base, extraction_kind: 'ambiguous' }], policy);
+    const inferred = selectAutoPromoteCandidates([{ ...base, extraction_kind: 'inferred', verification_status: 'unverified' }], policy);
+    const ambiguous = selectAutoPromoteCandidates([{ ...base, extraction_kind: 'ambiguous', verification_status: 'unverified' }], policy);
 
     expect(inferred.low_risk).toHaveLength(0);
     expect(inferred.risky).toHaveLength(1);
@@ -82,7 +83,7 @@ describe('selectAutoPromoteCandidates', () => {
     expect(r.excluded[0].reason).toBe('verification_refuted');
   });
   it('upgrades verified inferred candidates from risky handoff to low_risk', () => {
-    const unverified = selectAutoPromoteCandidates([{ ...base, extraction_kind: 'inferred' }], policy);
+    const unverified = selectAutoPromoteCandidates([{ ...base, extraction_kind: 'inferred', verification_status: 'unverified' }], policy);
     const verified = selectAutoPromoteCandidates([{
       ...base,
       extraction_kind: 'inferred',
@@ -112,11 +113,19 @@ describe('selectAutoPromoteCandidates', () => {
       ...policy,
       eligibility: { ...policy.eligibility, require_verification: true },
     };
-    const unverified = selectAutoPromoteCandidates([{ ...base }], strict);
+    const unverified = selectAutoPromoteCandidates([{ ...base, verification_status: 'unverified' }], strict);
     const verified = selectAutoPromoteCandidates([{ ...base, verification_status: 'verified' }], strict);
 
     expect(unverified.low_risk).toHaveLength(0);
     expect(unverified.risky).toHaveLength(1);
     expect(verified.low_risk).toHaveLength(1);
+  });
+
+  it('routes unverified candidates to risky handoff by default', () => {
+    const r = selectAutoPromoteCandidates([{ ...base, verification_status: 'unverified' }], policy);
+
+    expect(r.low_risk).toHaveLength(0);
+    expect(r.risky).toHaveLength(1);
+    expect(r.risky[0]?.id).toBe('c');
   });
 });

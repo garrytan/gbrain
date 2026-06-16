@@ -16,11 +16,12 @@ test('historical validity operation assesses a handed-off candidate', async () =
   const engine = new SQLiteEngine();
   const create = operations.find((entry) => entry.name === 'create_memory_candidate_entry');
   const advance = operations.find((entry) => entry.name === 'advance_memory_candidate_status');
+  const verify = operations.find((entry) => entry.name === 'verify_memory_candidate_entry');
   const promote = operations.find((entry) => entry.name === 'promote_memory_candidate_entry');
   const handoff = operations.find((entry) => entry.name === 'record_canonical_handoff');
   const assess = operations.find((entry) => entry.name === 'assess_historical_validity');
 
-  if (!create || !advance || !promote || !handoff || !assess) {
+  if (!create || !advance || !verify || !promote || !handoff || !assess) {
     throw new Error('historical validity prerequisite operations are missing');
   }
 
@@ -44,6 +45,14 @@ test('historical validity operation assesses a handed-off candidate', async () =
       id: 'candidate-validity-op',
       next_status: 'staged_for_review',
       review_reason: 'Prepared for validity operation.',
+    });
+    await verify.handler({ engine, config: {} as any, logger: console, dryRun: false }, {
+      id: 'candidate-validity-op',
+      verification_status: 'verified',
+      verification_method: 'source_recheck',
+      verification_evidence: 'Checked historical validity operation fixture before promotion.',
+      verification_source_refs: ['Fixture verification for candidate-validity-op'],
+      verified_at: '2026-06-16T00:00:00Z',
     });
     await promote.handler({ engine, config: {} as any, logger: console, dryRun: false }, {
       id: 'candidate-validity-op',

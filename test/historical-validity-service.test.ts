@@ -3,7 +3,10 @@ import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
-import { advanceMemoryCandidateStatus } from '../src/core/services/memory-inbox-service.ts';
+import {
+  advanceMemoryCandidateStatus,
+  verifyMemoryCandidateEntry,
+} from '../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../src/core/services/memory-inbox-promotion-service.ts';
 import { recordCanonicalHandoff } from '../src/core/services/canonical-handoff-service.ts';
 import { assessHistoricalValidity } from '../src/core/services/historical-validity-service.ts';
@@ -289,6 +292,14 @@ async function seedPromotedCandidate(
     id: input.id,
     next_status: 'staged_for_review',
     review_reason: 'Prepared for validity checks.',
+  });
+  await verifyMemoryCandidateEntry(engine, {
+    id: input.id,
+    verification_status: 'verified',
+    verification_method: 'source_recheck',
+    verification_evidence: `Verified historical-validity fixture ${input.id}.`,
+    verification_source_refs: [`Fixture verification for ${input.id}`],
+    verified_at: '2026-06-16T00:00:00Z',
   });
   await promoteMemoryCandidateEntry(engine, {
     id: input.id,

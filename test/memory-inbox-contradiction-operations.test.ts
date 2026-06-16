@@ -26,10 +26,11 @@ test('memory inbox contradiction operation resolves unresolved contradictions an
   const engine = new SQLiteEngine();
   const create = operations.find((operation) => operation.name === 'create_memory_candidate_entry');
   const advance = operations.find((operation) => operation.name === 'advance_memory_candidate_status');
+  const verify = operations.find((operation) => operation.name === 'verify_memory_candidate_entry');
   const promote = operations.find((operation) => operation.name === 'promote_memory_candidate_entry');
   const resolve = operations.find((operation) => operation.name === 'resolve_memory_candidate_contradiction');
 
-  if (!create || !advance || !promote || !resolve) {
+  if (!create || !advance || !verify || !promote || !resolve) {
     throw new Error('memory inbox contradiction operation is missing');
   }
 
@@ -52,6 +53,14 @@ test('memory inbox contradiction operation resolves unresolved contradictions an
     await advance.handler({ engine, config: {} as any, logger: console, dryRun: false }, {
       id: 'challenged',
       next_status: 'staged_for_review',
+    });
+    await verify.handler({ engine, config: {} as any, logger: console, dryRun: false }, {
+      id: 'challenged',
+      verification_status: 'verified',
+      verification_method: 'source_recheck',
+      verification_evidence: 'Checked contradiction operation baseline before promotion.',
+      verification_source_refs: ['Fixture verification for challenged'],
+      verified_at: '2026-06-16T00:00:00Z',
     });
     await promote.handler({ engine, config: {} as any, logger: console, dryRun: false }, {
       id: 'challenged',

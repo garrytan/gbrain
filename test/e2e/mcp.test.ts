@@ -569,6 +569,7 @@ describe('E2E: MCP Tool Generation', () => {
         'create_memory_candidate_entry',
         'get_memory_candidate_entry',
         'delete_memory_candidate_entry',
+        'verify_memory_candidate_entry',
         'record_canonical_handoff',
         'record_memory_mutation_event',
         'list_memory_mutation_events',
@@ -695,6 +696,17 @@ describe('E2E: MCP Tool Generation', () => {
       parseMcpText(await client.callTool({
         name: 'advance_memory_candidate_status',
         arguments: { id: handoffCandidateId, next_status: 'staged_for_review', interaction_id: 'mcp-trace-handoff' },
+      }));
+      parseMcpText(await client.callTool({
+        name: 'verify_memory_candidate_entry',
+        arguments: {
+          id: handoffCandidateId,
+          verification_status: 'verified',
+          verification_method: 'source_recheck',
+          verification_evidence: 'Checked MCP handoff candidate before governed promotion.',
+          verification_source_refs: ['MCP E2E fixture verification for mcp-candidate-handoff'],
+          verified_at: '2026-06-16T00:00:00Z',
+        },
       }));
       parseMcpText(await client.callTool({
         name: 'promote_memory_candidate_entry',

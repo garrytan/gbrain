@@ -53,10 +53,16 @@ test('release workflow smoke-tests compiled binaries before upload', () => {
   expect(buildJob).toContain('codesign --sign - --force bin/${{ matrix.artifact }}');
   expect(buildJob).toContain('name: Smoke compiled binary');
   expect(buildJob).toContain('bin/${{ matrix.artifact }} --version');
+  expect(buildJob).toContain('name: Smoke compiled MCP binary');
+  expect(buildJob).toContain('bun run smoke:installed-mcp');
+  expect(buildJob).toContain('MBRAIN_SMOKE_COMMAND: bin/${{ matrix.artifact }}');
   expect(buildJob.indexOf('name: Repair macOS compiled signature')).toBeLessThan(
     buildJob.indexOf('name: Smoke compiled binary'),
   );
   expect(buildJob.indexOf('name: Smoke compiled binary')).toBeLessThan(
+    buildJob.indexOf('name: Smoke compiled MCP binary'),
+  );
+  expect(buildJob.indexOf('name: Smoke compiled MCP binary')).toBeLessThan(
     buildJob.indexOf('actions/upload-artifact@'),
   );
 });
@@ -119,13 +125,29 @@ test('test workflow keeps the legacy test check as a shard aggregator', () => {
   const source = readFileSync(join(workflowsDir, 'test.yml'), 'utf-8');
   const testJob = getWorkflowJob(source, 'test');
 
-  expect(testJob).toContain('needs: [typecheck, test-shard, test-macos]');
+  expect(testJob).toContain('needs: [typecheck, test-shard, test-macos, postgres-jsonb]');
   expect(testJob).toContain('if: ${{ always() }}');
   expect(testJob).toContain('needs.typecheck.result');
   expect(testJob).toContain('needs.test-shard.result');
   expect(testJob).toContain('needs.test-macos.result');
+  expect(testJob).toContain('needs.postgres-jsonb.result');
   expect(testJob).toContain('exit 1');
   expect(testJob).toContain('Typecheck and all unit test shards passed');
+});
+
+test('test workflow gates PRs on Postgres target-runtime coverage', () => {
+  const source = readFileSync(join(workflowsDir, 'test.yml'), 'utf-8');
+  const postgresJob = getWorkflowJob(source, 'postgres-jsonb');
+  const testJob = getWorkflowJob(source, 'test');
+
+  expect(postgresJob).toContain('name: Postgres Target Runtime');
+  expect(postgresJob).toContain('image: pgvector/pgvector:pg16');
+  expect(postgresJob).toContain('test/postgres-jsonb-engine.test.ts');
+  expect(postgresJob).toContain('test/memory-inbox-schema.test.ts');
+  expect(postgresJob).toContain('test/memory-mutation-ledger-engine.test.ts');
+  expect(postgresJob).toContain('test/canonical-handoff-engine.test.ts');
+  expect(postgresJob).toContain('DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mbrain_test');
+  expect(testJob).toContain('needs.postgres-jsonb.result');
 });
 
 test('test workflow runs the unit suite on macOS at PR time', () => {
@@ -150,7 +172,8 @@ test('release workflow keeps macOS full-test concurrency aligned with PR CI', ()
   expect(releaseBuildJob).toContain('timeout-minutes: 40');
   expect(testMacosJob).toContain('TEST_WORKERS: 2');
   expect(releaseBuildJob).toContain('TEST_WORKERS: 2');
-  expect(releaseBuildJob).toContain('TEST_TIMEOUT_MS: 60000');
+  expect(testMacosJob).toContain('TEST_TIMEOUT_MS: 120000');
+  expect(releaseBuildJob).toContain('TEST_TIMEOUT_MS: 120000');
 });
 
 test('e2e workflow runs HTTP OAuth smoke in default Tier 1 CI', () => {
@@ -168,6 +191,18 @@ test('e2e workflow runs HTTP OAuth smoke in default Tier 1 CI', () => {
   expect(httpOAuthSmokeBlock).toContain('DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mbrain_test');
   expect(tier1Job.indexOf('Run Tier 1 E2E tests')).toBeLessThan(
     tier1Job.indexOf('HTTP OAuth smoke'),
+  );
+});
+
+test('e2e workflow passes DATABASE_URL into Tier 2 MCP configuration', () => {
+  const source = readFileSync(join(workflowsDir, 'e2e.yml'), 'utf-8');
+  const tier2Job = getWorkflowJob(source, 'tier2');
+
+  expect(tier2Job).toContain('env:');
+  expect(tier2Job).toContain('DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mbrain_test');
+  expect(tier2Job).toContain('"DATABASE_URL": "${{ env.DATABASE_URL }}"');
+  expect(tier2Job.indexOf('DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mbrain_test')).toBeLessThan(
+    tier2Job.indexOf('"DATABASE_URL": "${{ env.DATABASE_URL }}"'),
   );
 });
 

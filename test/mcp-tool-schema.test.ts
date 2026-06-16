@@ -121,6 +121,17 @@ describe('MCP tool schema metadata', () => {
     expect(tool.annotations).toBeUndefined();
   });
 
+  test('compact schemas preserve required params for validation-aware clients', () => {
+    const tool = operationToMcpTool(operation({
+      params: {
+        slug: { type: 'string', required: true },
+        content: { type: 'string' },
+      },
+    }), { compact: true });
+
+    expect(tool.inputSchema.required).toEqual(['slug']);
+  });
+
   test('compact schemas omit bare object array item hints while preserving scalar item hints', () => {
     const tool = operationToMcpTool(operation({
       params: {

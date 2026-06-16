@@ -5,7 +5,11 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { performance } from 'perf_hooks';
 import { SQLiteEngine } from '../../src/core/sqlite-engine.ts';
-import { advanceMemoryCandidateStatus, preflightPromoteMemoryCandidate } from '../../src/core/services/memory-inbox-service.ts';
+import {
+  advanceMemoryCandidateStatus,
+  preflightPromoteMemoryCandidate,
+  verifyMemoryCandidateEntry,
+} from '../../src/core/services/memory-inbox-service.ts';
 
 type Phase5MemoryInboxPromotionPreflightWorkloadResult =
   | {
@@ -96,6 +100,7 @@ async function runLatencyWorkload(
       next_status: 'staged_for_review',
       review_reason: 'Prepared for promotion review.',
     });
+    await verifyFixtureCandidate(engine, id);
 
     const start = performance.now();
     await preflightPromoteMemoryCandidate(engine, { id });
@@ -126,6 +131,7 @@ async function runCorrectnessWorkload(
     next_status: 'staged_for_review',
     review_reason: 'Ready for promotion review.',
   });
+  await verifyFixtureCandidate(engine, 'phase5-promotion-preflight-allow');
   const allow = await preflightPromoteMemoryCandidate(engine, { id: 'phase5-promotion-preflight-allow' });
   checks += 1;
   if (allow.decision === 'allow' && allow.reasons[0] === 'candidate_ready_for_promotion') {
@@ -159,6 +165,7 @@ async function runCorrectnessWorkload(
     status: 'staged_for_review',
     sensitivity: 'unknown',
   });
+  await verifyFixtureCandidate(engine, 'phase5-promotion-preflight-defer');
   const defer = await preflightPromoteMemoryCandidate(engine, { id: 'phase5-promotion-preflight-defer' });
   checks += 1;
   if (defer.decision === 'defer' && defer.reasons.includes('candidate_unknown_sensitivity')) {
@@ -172,9 +179,10 @@ async function runCorrectnessWorkload(
     target_object_type: 'procedure',
     target_object_id: 'procedures/rebuild-context-map',
   });
+  await verifyFixtureCandidate(engine, 'phase5-promotion-preflight-procedure');
   const procedure = await preflightPromoteMemoryCandidate(engine, { id: 'phase5-promotion-preflight-procedure' });
   checks += 1;
-  if (procedure.decision === 'defer' && procedure.reasons.includes('candidate_requires_revalidation')) {
+  if (procedure.decision === 'allow' && procedure.reasons[0] === 'candidate_ready_for_promotion') {
     passes += 1;
   }
 
@@ -191,13 +199,15 @@ async function runCorrectnessWorkload(
 
   await engine.createMemoryCandidateEntry({
     ...buildCandidateInput('phase5-promotion-preflight-other'),
+    proposed_content: 'Other target fixture has a distinct checked note for promotion preflight.',
     status: 'staged_for_review',
     target_object_type: 'other',
     target_object_id: 'misc/unknown-target',
   });
+  await verifyFixtureCandidate(engine, 'phase5-promotion-preflight-other');
   const otherTarget = await preflightPromoteMemoryCandidate(engine, { id: 'phase5-promotion-preflight-other' });
   checks += 1;
-  if (otherTarget.decision === 'defer' && otherTarget.reasons.includes('candidate_requires_revalidation')) {
+  if (otherTarget.decision === 'allow' && otherTarget.reasons[0] === 'candidate_ready_for_promotion') {
     passes += 1;
   }
 
@@ -219,6 +229,17 @@ async function runCorrectnessWorkload(
     unit: 'percent',
     success_rate: formatPercent((passes / checks) * 100),
   };
+}
+
+async function verifyFixtureCandidate(engine: SQLiteEngine, id: string) {
+  await verifyMemoryCandidateEntry(engine, {
+    id,
+    verification_status: 'verified',
+    verification_method: 'source_recheck',
+    verification_evidence: `Verified promotion preflight benchmark fixture ${id}.`,
+    verification_source_refs: [`Fixture verification for ${id}`],
+    verified_at: '2026-06-16T00:00:00Z',
+  });
 }
 
 function buildCandidateInput(id: string) {

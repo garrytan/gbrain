@@ -34,6 +34,16 @@ async function seed(engine: BrainEngine, id: string, overrides: Record<string, u
   } as any);
 }
 
+async function verifyFixtureCandidate(engine: BrainEngine, id: string) {
+  return engine.updateMemoryCandidateEntryVerification(id, {
+    verification_status: 'verified',
+    verification_method: 'source_recheck',
+    verification_evidence: `Verified auto-promote E2E fixture ${id}.`,
+    verification_source_refs: [`Fixture verification for ${id}`],
+    verified_at: '2026-06-16T00:00:00Z',
+  });
+}
+
 // Stub executor: promote the low-risk candidate, defer the risky one. Branches on prompt content.
 function makeStubExecutor(counter: { calls: number }) {
   return async (req: any) => {
@@ -53,6 +63,7 @@ describe('auto-promote E2E pipeline (PGLite, stub runner)', () => {
   it('promotes low-risk, defers risky, excludes secret; counts + cache correct', async () => {
     await withEngine(async (engine) => {
       await seed(engine, 'low', { proposed_content: 'LOW RISK eligible fact', extraction_kind: 'manual', sensitivity: 'work' });
+      await verifyFixtureCandidate(engine, 'low');
       await seed(engine, 'risky', { proposed_content: 'RISKY inferred fact', extraction_kind: 'inferred', sensitivity: 'work' });
       await seed(engine, 'secret', { proposed_content: 'SECRET fact', extraction_kind: 'manual', sensitivity: 'secret' });
 
@@ -98,6 +109,7 @@ describe('auto-promote E2E pipeline (PGLite, stub runner)', () => {
   it('dry_run promotes nothing', async () => {
     await withEngine(async (engine) => {
       await seed(engine, 'low', { proposed_content: 'LOW RISK eligible fact' });
+      await verifyFixtureCandidate(engine, 'low');
       const counter = { calls: 0 };
       const cfg = { ...defaultAutoPromoteConfig(), enabled: true, dry_run: true };
       const res = await runAutoPromote({ engine, config: cfg, now: NOW, runnerExecutor: makeStubExecutor(counter), contextLoader: stubContext, runner: { kind: 'claude_code' } as any });

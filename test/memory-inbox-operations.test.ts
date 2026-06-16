@@ -2206,10 +2206,11 @@ test('memory inbox promotion preflight operation returns explicit allow and not-
   const engine = new SQLiteEngine();
   const create = operations.find((operation) => operation.name === 'create_memory_candidate_entry');
   const advance = operations.find((operation) => operation.name === 'advance_memory_candidate_status');
+  const verify = operations.find((operation) => operation.name === 'verify_memory_candidate_entry');
   const preflight = operations.find((operation) => operation.name === 'preflight_promote_memory_candidate');
 
-  if (!create || !advance || !preflight) {
-    throw new Error('memory inbox create/advance/preflight operations are missing');
+  if (!create || !advance || !verify || !preflight) {
+    throw new Error('memory inbox create/advance/verify/preflight operations are missing');
   }
 
   try {
@@ -2249,6 +2250,19 @@ test('memory inbox promotion preflight operation returns explicit allow and not-
       id: 'candidate-preflight',
       next_status: 'staged_for_review',
       review_reason: 'Ready for promotion governance.',
+    });
+
+    await verify.handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, {
+      id: 'candidate-preflight',
+      verification_status: 'verified',
+      verification_method: 'source_recheck',
+      verification_evidence: 'Verified before promotion preflight.',
+      verification_source_refs: ['Source: memory inbox operation verification fixture'],
     });
 
     const result = await preflight.handler({
@@ -2294,11 +2308,12 @@ test('memory inbox promotion operation promotes staged candidates and rejects bl
   const engine = new SQLiteEngine();
   const create = operations.find((operation) => operation.name === 'create_memory_candidate_entry');
   const advance = operations.find((operation) => operation.name === 'advance_memory_candidate_status');
+  const verify = operations.find((operation) => operation.name === 'verify_memory_candidate_entry');
   const promote = operations.find((operation) => operation.name === 'promote_memory_candidate_entry');
   const listStatusEvents = operations.find((operation) => operation.name === 'list_memory_candidate_status_events');
 
-  if (!create || !advance || !promote || !listStatusEvents) {
-    throw new Error('memory inbox create/advance/promote operations are missing');
+  if (!create || !advance || !verify || !promote || !listStatusEvents) {
+    throw new Error('memory inbox create/advance/verify/promote operations are missing');
   }
 
   try {
@@ -2327,6 +2342,13 @@ test('memory inbox promotion operation promotes staged candidates and rejects bl
       id: 'candidate-promote',
       next_status: 'staged_for_review',
       review_reason: 'Ready for promotion.',
+    });
+    await verify.handler({ engine, config: {} as any, logger: console, dryRun: false }, {
+      id: 'candidate-promote',
+      verification_status: 'verified',
+      verification_method: 'source_recheck',
+      verification_evidence: 'Verified before promotion operation.',
+      verification_source_refs: ['Source: memory inbox operation verification fixture'],
     });
 
     const promoted = await promote.handler({
@@ -2439,11 +2461,12 @@ test('memory inbox supersession operation records explicit old/new links', async
   const engine = new SQLiteEngine();
   const create = operations.find((operation) => operation.name === 'create_memory_candidate_entry');
   const advance = operations.find((operation) => operation.name === 'advance_memory_candidate_status');
+  const verify = operations.find((operation) => operation.name === 'verify_memory_candidate_entry');
   const promote = operations.find((operation) => operation.name === 'promote_memory_candidate_entry');
   const supersede = operations.find((operation) => operation.name === 'supersede_memory_candidate_entry');
   const listStatusEvents = operations.find((operation) => operation.name === 'list_memory_candidate_status_events');
 
-  if (!create || !advance || !promote || !supersede || !listStatusEvents) {
+  if (!create || !advance || !verify || !promote || !supersede || !listStatusEvents) {
     throw new Error('memory inbox supersession operation is missing');
   }
 
@@ -2467,6 +2490,13 @@ test('memory inbox supersession operation records explicit old/new links', async
       await advance.handler({ engine, config: {} as any, logger: console, dryRun: false }, {
         id,
         next_status: 'staged_for_review',
+      });
+      await verify.handler({ engine, config: {} as any, logger: console, dryRun: false }, {
+        id,
+        verification_status: 'verified',
+        verification_method: 'source_recheck',
+        verification_evidence: `Verified ${id} before supersession operation.`,
+        verification_source_refs: ['Source: memory inbox operation verification fixture'],
       });
       await promote.handler({ engine, config: {} as any, logger: console, dryRun: false }, {
         id,

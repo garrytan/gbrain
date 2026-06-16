@@ -70,9 +70,21 @@ export function splitBody(body: string): { compiled_truth: string; timeline: str
   // Must not be at the very start (that would be frontmatter)
   const lines = body.split('\n');
   let splitIndex = -1;
+  let fenceMarker: '```' | '~~~' | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
+    const fence = trimmed.startsWith('```')
+      ? '```'
+      : trimmed.startsWith('~~~')
+        ? '~~~'
+        : null;
+    if (fence) {
+      fenceMarker = fenceMarker === fence ? null : (fenceMarker ?? fence);
+      continue;
+    }
+    if (fenceMarker) continue;
+
     if (trimmed === '---') {
       // Skip if this is the very first non-empty line (leftover from frontmatter parsing)
       const beforeContent = lines.slice(0, i).join('\n').trim();

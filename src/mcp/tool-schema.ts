@@ -13,11 +13,16 @@ export function paramToMcpSchema(
   return {
     type: schemaTypes.length === 1 ? schemaTypes[0] : schemaTypes,
     ...(param.description && !options.compact ? { description: param.description } : {}),
-    ...(param.enum && (!options.compact || param.compactEnum !== false) ? { enum: param.enum } : {}),
+    ...(param.enum && shouldIncludeEnumSchema(param, options) ? { enum: param.enum } : {}),
     ...(param.items && shouldIncludeItemsSchema(param.items, options)
       ? { items: paramToMcpSchema(param.items, options) }
       : {}),
   };
+}
+
+function shouldIncludeEnumSchema(param: ParamDef, options: McpToolSchemaOptions): boolean {
+  if (!options.compact) return true;
+  return param.required === true && param.compactEnum !== false;
 }
 
 function shouldIncludeItemsSchema(param: ParamDef, options: McpToolSchemaOptions): boolean {
@@ -64,7 +69,7 @@ export function operationToMcpTool(op: Operation, options: McpToolSchemaOptions 
       properties: Object.fromEntries(
         Object.entries(op.params).map(([key, value]) => [key, paramToMcpSchema(value, options)]),
       ),
-      ...(!options.compact ? { required } : {}),
+      ...(!options.compact || required.length > 0 ? { required } : {}),
     },
   };
 }

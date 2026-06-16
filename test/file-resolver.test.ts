@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { resolveFile, parseRedirect, parseMarker } from '../src/core/file-resolver.ts';
@@ -61,6 +61,20 @@ describe('file-resolver', () => {
     await expect(resolveFile('../../etc/passwd', brainRoot, storage)).rejects.toThrow('Path traversal blocked');
   });
 
+  test('blocks resolveFile symlink escape outside brain root', async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), 'mbrain-resolver-outside-'));
+    try {
+      writeFileSync(join(outsideDir, 'secret.json'), '{"secret":true}');
+      mkdirSync(join(brainRoot, 'raw'), { recursive: true });
+      symlinkSync(join(outsideDir, 'secret.json'), join(brainRoot, 'raw/secret-link.json'));
+
+      await expect(resolveFile('raw/secret-link.json', brainRoot, storage))
+        .rejects.toThrow('Path traversal blocked');
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
   test('blocks .supabase marker with traversal prefix', async () => {
     const subDir = join(brainRoot, 'poisoned');
     mkdirSync(subDir, { recursive: true });
@@ -89,6 +103,29 @@ describe('file-resolver', () => {
     const result = await resolveFile('media/photo.jpg', brainRoot, storage);
     expect(result.source).toBe('storage');
     expect(result.data.toString()).toBe('jpeg-data');
+  });
+
+  test('blocks .supabase local fallback when the target escapes through a symlink', async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), 'mbrain-resolver-outside-'));
+    const subDir = join(brainRoot, 'fallback-symlink');
+    try {
+      writeFileSync(join(outsideDir, 'secret.json'), '{"secret":true}');
+      mkdirSync(subDir, { recursive: true });
+      writeFileSync(join(subDir, '.supabase'),
+        'synced_at: 2026-04-12\nbucket: brain-files\nprefix: fallback-symlink/\nfile_count: 1\n'
+      );
+      const failingStorage = {
+        download: async () => {
+          symlinkSync(join(outsideDir, 'secret.json'), join(subDir, 'secret.json'));
+          throw new Error('storage unavailable');
+        },
+      } as any;
+
+      await expect(resolveFile('fallback-symlink/secret.json', brainRoot, failingStorage))
+        .rejects.toThrow('Path traversal blocked');
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
   });
 });
 

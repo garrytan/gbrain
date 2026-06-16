@@ -370,6 +370,7 @@ export interface ScenarioMemoryRequestPlan {
 export type RetrievalSelectorKind =
   | 'page'
   | 'compiled_truth'
+  | 'frontmatter'
   | 'section'
   | 'line_span'
   | 'timeline_entry'
@@ -553,13 +554,16 @@ export type RetrieveContextReadPlanGapReason =
   | 'no_canonical_read_candidates'
   | 'candidate_pool_exceeds_read_budget'
   | 'orientation_reads_deferred'
-  | 'candidate_signals_are_non_canonical';
+  | 'candidate_signals_are_non_canonical'
+  | 'retrieval_backend_partial_failure'
+  | 'retrieval_backend_failed';
 
 export interface RetrieveContextReadPlan {
   mode: RetrieveContextReadPlanMode;
   max_depth: number;
   max_selectors: number;
   selected_selectors: string[];
+  selected_selector_snapshots?: RetrievalSelector[];
   deferred_candidate_ids: string[];
   gap_reasons: RetrieveContextReadPlanGapReason[];
   next_actions: string[];

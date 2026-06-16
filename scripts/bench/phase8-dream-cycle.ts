@@ -7,7 +7,10 @@ import { performance } from 'perf_hooks';
 import { createLocalConfigDefaults } from '../../src/core/config.ts';
 import { createConnectedEngine } from '../../src/core/engine-factory.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { advanceMemoryCandidateStatus } from '../../src/core/services/memory-inbox-service.ts';
+import {
+  advanceMemoryCandidateStatus,
+  verifyMemoryCandidateEntry,
+} from '../../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../../src/core/services/memory-inbox-promotion-service.ts';
 import { recordCanonicalHandoff } from '../../src/core/services/canonical-handoff-service.ts';
 import { runDreamCycleMaintenance } from '../../src/core/services/dream-cycle-maintenance-service.ts';
@@ -173,6 +176,14 @@ async function seedStalePromotedCandidate(engine: BrainEngine, id: string) {
     review_reason: null,
   });
   await advanceMemoryCandidateStatus(engine, { id, next_status: 'staged_for_review' });
+  await verifyMemoryCandidateEntry(engine, {
+    id,
+    verification_status: 'verified',
+    verification_method: 'source_recheck',
+    verification_evidence: `Verified dream-cycle benchmark fixture ${id}.`,
+    verification_source_refs: [`Fixture verification for ${id}`],
+    verified_at: '2026-06-16T00:00:00Z',
+  });
   await promoteMemoryCandidateEntry(engine, {
     id,
     reviewed_at: '2026-02-01T10:00:00.000Z',

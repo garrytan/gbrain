@@ -56,7 +56,8 @@ describe('core tool descriptions include trigger context', () => {
     expect(retrieveContext!.description).toContain('required canonical reads');
     expect(retrieveContext!.description).toContain('candidate_signals');
     expect(retrieveContext!.description).toContain('non-canonical');
-    expect(retrieveContext!.description).toContain('read_plan.selected_selectors');
+    expect(retrieveContext!.description).toContain('read_plan.selected_selector_snapshots');
+    expect(retrieveContext!.description).toContain('legacy selector-id fallback');
     expect(retrieveContext!.description).toContain('read_context');
   });
 

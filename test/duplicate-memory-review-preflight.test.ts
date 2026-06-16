@@ -4,7 +4,10 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
-import { preflightPromoteMemoryCandidate } from '../src/core/services/memory-inbox-service.ts';
+import {
+  preflightPromoteMemoryCandidate,
+  verifyMemoryCandidateEntry,
+} from '../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../src/core/services/memory-inbox-promotion-service.ts';
 import type { MemoryCandidateEntryInput } from '../src/core/types.ts';
 
@@ -53,7 +56,18 @@ async function seedCandidate(
   id: string,
   overrides: Partial<MemoryCandidateEntryInput> = {},
 ) {
-  return engine.createMemoryCandidateEntry(makeCandidateInput(id, overrides));
+  const candidate = await engine.createMemoryCandidateEntry(makeCandidateInput(id, overrides));
+  if (candidate.status === 'staged_for_review' && candidate.verification_status === 'unverified') {
+    return verifyMemoryCandidateEntry(engine, {
+      id,
+      verification_status: 'verified',
+      verification_method: 'source_recheck',
+      verification_evidence: `Verified duplicate-review fixture ${id}.`,
+      verification_source_refs: [`Fixture verification for ${id}`],
+      verified_at: '2026-06-16T00:00:00Z',
+    });
+  }
+  return candidate;
 }
 
 test('promotion preflight defers likely duplicate against a different canonical page', async () => {

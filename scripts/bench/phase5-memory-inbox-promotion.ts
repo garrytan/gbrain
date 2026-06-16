@@ -5,7 +5,10 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { performance } from 'perf_hooks';
 import { SQLiteEngine } from '../../src/core/sqlite-engine.ts';
-import { advanceMemoryCandidateStatus } from '../../src/core/services/memory-inbox-service.ts';
+import {
+  advanceMemoryCandidateStatus,
+  verifyMemoryCandidateEntry,
+} from '../../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../../src/core/services/memory-inbox-promotion-service.ts';
 
 type Phase5MemoryInboxPromotionWorkloadResult =
@@ -97,6 +100,7 @@ async function runLatencyWorkload(
       next_status: 'staged_for_review',
       review_reason: 'Prepared for promotion.',
     });
+    await verifyFixtureCandidate(engine, id);
 
     const start = performance.now();
     await promoteMemoryCandidateEntry(engine, {
@@ -130,6 +134,7 @@ async function runCorrectnessWorkload(
     next_status: 'staged_for_review',
     review_reason: 'Prepared for promotion.',
   });
+  await verifyFixtureCandidate(engine, 'phase5-promotion-correctness-allow');
   const promoted = await promoteMemoryCandidateEntry(engine, {
     id: 'phase5-promotion-correctness-allow',
     review_reason: 'Promoted after passing preflight.',
@@ -203,6 +208,17 @@ async function runCorrectnessWorkload(
     unit: 'percent',
     success_rate: formatPercent((passes / checks) * 100),
   };
+}
+
+async function verifyFixtureCandidate(engine: SQLiteEngine, id: string) {
+  await verifyMemoryCandidateEntry(engine, {
+    id,
+    verification_status: 'verified',
+    verification_method: 'source_recheck',
+    verification_evidence: `Verified promotion benchmark fixture ${id}.`,
+    verification_source_refs: [`Fixture verification for ${id}`],
+    verified_at: '2026-06-16T00:00:00Z',
+  });
 }
 
 function buildCandidateInput(id: string) {

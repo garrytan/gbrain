@@ -9,9 +9,14 @@ import { type Operation, type OperationContext, operations } from '../src/core/o
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
-setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
+function configuredTestTimeoutMs(fallback: number): number {
+  const parsed = Number(process.env.TEST_TIMEOUT_MS);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
 
-const PGLITE_SOURCE_REGISTRY_TEST_TIMEOUT_MS = 60_000;
+setDefaultTimeout(configuredTestTimeoutMs(20_000));
+
+const PGLITE_SOURCE_REGISTRY_TEST_TIMEOUT_MS = Math.max(60_000, configuredTestTimeoutMs(20_000));
 const AWS_ACCESS_KEY_FIXTURE = ['AKIA', 'IOSFODNN7EXAMPLE'].join('');
 
 function getOperation(name: string): Operation {
@@ -136,6 +141,38 @@ async function countSourceItemEvents(
   return Number(rows[0]?.count ?? 0);
 }
 
+async function readRawAccessLedgerRows(
+  engine: BrainEngine,
+  sourceItemId: string,
+): Promise<Array<Record<string, unknown>>> {
+  const candidate = engine as any;
+  if (candidate.database) {
+    return candidate.database.query(`
+      SELECT source_id, source_item_id, chunk_ids, policy_decision, policy_reason, metadata_json
+      FROM raw_access_ledger
+      WHERE source_item_id = ?
+      ORDER BY created_at DESC
+    `).all(sourceItemId);
+  }
+  const rows = candidate.sql?.unsafe
+    ? await candidate.sql.unsafe(`
+      SELECT source_id, source_item_id, chunk_ids, policy_decision, policy_reason, metadata_json
+      FROM raw_access_ledger
+      WHERE source_item_id = $1
+      ORDER BY created_at DESC
+    `, [sourceItemId])
+    : candidate.db
+      ? (await candidate.db.query(`
+        SELECT source_id, source_item_id, chunk_ids, policy_decision, policy_reason, metadata_json
+        FROM raw_access_ledger
+        WHERE source_item_id = $1
+        ORDER BY created_at DESC
+      `, [sourceItemId])).rows
+      : null;
+  if (!rows) throw new Error('raw access ledger read requires a SQL-backed engine');
+  return rows;
+}
+
 describe('source registry operations', () => {
   test('source-choice operations are exposed with CLI hints', () => {
     expect(getOperation('register_source').cliHints?.name).toBe('source-register');
@@ -149,6 +186,7 @@ describe('source registry operations', () => {
     expect(getOperation('get_source').cliHints?.name).toBe('source-get');
     expect(getOperation('register_source').mutating).toBe(true);
     expect(getOperation('ingest_connector_item').mutating).toBe(true);
+    expect(getOperation('evaluate_raw_access').mutating).toBe(true);
     expect(getOperation('list_sources').mutating).toBe(false);
   });
 
@@ -448,9 +486,15 @@ describe('source registry operations', () => {
         external_id: 'message-1',
         chunks: [{
           id: ingested.chunks[0].id,
-          chunk_text: 'Remember that connector output must stay in raw ingest.',
+          chunk_hash: ingested.chunks[0].chunk_hash,
+          redacted_text: 'Remember that connector output must stay in raw ingest.',
+          sensitivity_flags: [],
+          prompt_injection_risk: 'none',
+          secret_risk: 'none',
+          token_count: ingested.chunks[0].token_count,
         }],
       });
+      expect(listed.items[0].chunks[0]).not.toHaveProperty('chunk_text');
 
       const skipped = await getOperation('ingest_connector_item').handler(harness.ctx(), {
         source_id: registered.source.id,
@@ -460,6 +504,261 @@ describe('source registry operations', () => {
         now: '2026-05-22T02:22:00.000Z',
       }) as any;
 
+      expect(skipped.status).toBe('skipped');
+      expect(skipped.reason).toBe('unchanged_content_hash');
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('evaluate_raw_access resolves registered source policy and records ledger decisions', async () => {
+    const harness = await createSqliteHarness('raw-access-ledger');
+    try {
+      insertCredentialReference(harness.engine, 'credential-ref:gmail:primary');
+      const registered = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'gmail',
+        display_name: 'Primary Gmail',
+        account_locator: 'gmail://me@example.com',
+        consent_state: 'granted',
+        credential_ref_id: 'credential-ref:gmail:primary',
+        now: '2026-05-22T02:22:00.000Z',
+      }) as any;
+      const ingested = await getOperation('ingest_connector_item').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        connector_id: 'gmail',
+        external_id: 'message-raw-access-1',
+        body: 'Raw text gated by registered source policy.',
+        now: '2026-05-22T02:23:00.000Z',
+      }) as any;
+
+      await getOperation('revoke_source_consent').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        reason: 'owner revoked connector source',
+        actor_ref: 'test:owner',
+        now: '2026-05-22T02:24:00.000Z',
+      });
+
+      const evaluation = await getOperation('evaluate_raw_access').handler(harness.ctx(), {
+        actor_type: 'llm',
+        actor_id: 'agent:reader',
+        source_id: registered.source.id,
+        source_item_id: ingested.item.id,
+        chunk_ids: [ingested.chunks[0].id],
+        reason: 'Need exact quote for canonical writeback.',
+        requested_at: '2026-05-22T02:25:00.000Z',
+        policy: {
+          consent_state: 'granted',
+          enabled: true,
+          llm_access: 'local_only_raw',
+        },
+      }) as any;
+
+      expect(evaluation).toMatchObject({
+        audited: true,
+        policy_source: 'registered_source',
+        decision: {
+          policy_decision: 'deny',
+          reason: 'source_consent_revoked',
+        },
+      });
+
+      const ledgerRows = await readRawAccessLedgerRows(harness.engine, ingested.item.id);
+      expect(ledgerRows).toHaveLength(1);
+      expect(ledgerRows[0]).toMatchObject({
+        source_id: registered.source.id,
+        source_item_id: ingested.item.id,
+        policy_decision: 'deny',
+        policy_reason: 'source_consent_revoked',
+      });
+      expect(JSON.parse(String(ledgerRows[0].chunk_ids))).toEqual([ingested.chunks[0].id]);
+      expect(JSON.parse(String(ledgerRows[0].metadata_json))).toMatchObject({
+        policy_source: 'registered_source',
+        redaction_required: true,
+      });
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('evaluate_raw_access denies item and chunk ids that do not belong to the evaluated source', async () => {
+    const harness = await createSqliteHarness('raw-access-cross-source-scope');
+    try {
+      const allowedSource = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'gmail',
+        display_name: 'Allowed Gmail',
+        account_locator: 'gmail://allowed@example.com',
+        consent_state: 'granted',
+        now: '2026-05-22T02:22:00.000Z',
+      }) as any;
+      const otherSource = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'gmail',
+        display_name: 'Other Gmail',
+        account_locator: 'gmail://other@example.com',
+        consent_state: 'granted',
+        now: '2026-05-22T02:23:00.000Z',
+      }) as any;
+      const otherItem = await getOperation('ingest_connector_item').handler(harness.ctx(), {
+        source_id: otherSource.source.id,
+        connector_id: 'gmail',
+        external_id: 'message-raw-access-cross-source',
+        body: 'Raw text from a different registered source.',
+        now: '2026-05-22T02:24:00.000Z',
+      }) as any;
+
+      const evaluation = await getOperation('evaluate_raw_access').handler(harness.ctx(), {
+        actor_type: 'llm',
+        actor_id: 'agent:reader',
+        source_id: allowedSource.source.id,
+        source_item_id: otherItem.item.id,
+        chunk_ids: [otherItem.chunks[0].id],
+        reason: 'Attempt to pair a permissive source with another source item.',
+        requested_at: '2026-05-22T02:25:00.000Z',
+      }) as any;
+
+      expect(evaluation).toMatchObject({
+        audited: true,
+        policy_source: 'registered_source',
+        decision: {
+          policy_decision: 'deny',
+          reason: 'raw_scope_mismatch',
+        },
+      });
+
+      const ledgerRows = await readRawAccessLedgerRows(harness.engine, otherItem.item.id);
+      expect(ledgerRows).toHaveLength(1);
+      expect(ledgerRows[0]).toMatchObject({
+        source_id: allowedSource.source.id,
+        source_item_id: otherItem.item.id,
+        policy_decision: 'deny',
+        policy_reason: 'raw_scope_mismatch',
+      });
+      expect(JSON.parse(String(ledgerRows[0].chunk_ids))).toEqual([otherItem.chunks[0].id]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('list_source_items with chunks omits raw chunk_text and returns redacted metadata by default', async () => {
+    const harness = await createSqliteHarness('connector-list-redacted-chunks');
+    try {
+      insertCredentialReference(harness.engine, 'credential-ref:gmail:primary');
+      const registered = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'gmail',
+        display_name: 'Primary Gmail',
+        account_locator: 'gmail://me@example.com',
+        consent_state: 'granted',
+        credential_ref_id: 'credential-ref:gmail:primary',
+        now: '2026-05-22T02:23:00.000Z',
+      }) as any;
+      const rawBody = `Message includes AWS key ${AWS_ACCESS_KEY_FIXTURE} for redaction.`;
+      const ingested = await getOperation('ingest_connector_item').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        connector_id: 'gmail',
+        external_id: 'message-secret-1',
+        body: rawBody,
+        now: '2026-05-22T02:24:00.000Z',
+      }) as any;
+
+      const listed = await getOperation('list_source_items').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        include_chunks: true,
+      }) as any;
+
+      expect(listed.items).toHaveLength(1);
+      expect(listed.items[0].chunks).toHaveLength(1);
+      expect(listed.items[0].chunks[0]).toMatchObject({
+        id: ingested.chunks[0].id,
+        source_item_id: ingested.item.id,
+        chunk_index: 0,
+        chunk_hash: ingested.chunks[0].chunk_hash,
+        redacted_text: ingested.chunks[0].redacted_text,
+        sensitivity_flags: ingested.chunks[0].sensitivity_flags,
+        prompt_injection_risk: 'none',
+        secret_risk: ingested.chunks[0].secret_risk,
+        token_count: ingested.chunks[0].token_count,
+      });
+      expect(listed.items[0].chunks[0]).not.toHaveProperty('chunk_text');
+      expect(listed.items[0].chunks[0].redacted_text).not.toContain(AWS_ACCESS_KEY_FIXTURE);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('connector ingest updates metadata-only changes when content hash is unchanged', async () => {
+    const harness = await createSqliteHarness('connector-metadata-only-update');
+    try {
+      insertCredentialReference(harness.engine, 'credential-ref:gmail:primary');
+      const registered = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'gmail',
+        display_name: 'Primary Gmail',
+        account_locator: 'gmail://me@example.com',
+        consent_state: 'granted',
+        credential_ref_id: 'credential-ref:gmail:primary',
+        now: '2026-05-22T02:25:00.000Z',
+      }) as any;
+      await getOperation('ingest_connector_item').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        connector_id: 'gmail',
+        external_id: 'message-metadata-1',
+        locator: 'gmail://message/metadata-1',
+        title: 'Original metadata title',
+        body: 'Same body with metadata updates.',
+        source_updated_at: '2026-05-22T02:25:30.000Z',
+        metadata_json: { label: 'original' },
+        now: '2026-05-22T02:26:00.000Z',
+      });
+
+      const updated = await getOperation('ingest_connector_item').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        connector_id: 'gmail',
+        external_id: 'message-metadata-1',
+        locator: 'gmail://message/metadata-1-renamed',
+        title: 'Updated metadata title',
+        body: 'Same body with metadata updates.',
+        source_updated_at: '2026-05-22T02:27:30.000Z',
+        metadata_json: { label: 'updated', thread_id: 'thread-1' },
+        now: '2026-05-22T02:28:00.000Z',
+      }) as any;
+
+      expect(updated.status).toBe('updated');
+      expect(updated.item).toMatchObject({
+        locator: 'gmail://message/metadata-1-renamed',
+        title: 'Updated metadata title',
+        source_updated_at: '2026-05-22T02:27:30.000Z',
+        metadata_json: {
+          connector_id: 'gmail',
+          label: 'updated',
+          thread_id: 'thread-1',
+        },
+      });
+
+      const listed = await getOperation('list_source_items').handler(harness.ctx(), {
+        source_id: registered.source.id,
+      }) as any;
+      expect(listed.items).toHaveLength(1);
+      expect(listed.items[0]).toMatchObject({
+        external_id: 'message-metadata-1',
+        locator: 'gmail://message/metadata-1-renamed',
+        title: 'Updated metadata title',
+        source_updated_at: '2026-05-22T02:27:30.000Z',
+        metadata_json: {
+          connector_id: 'gmail',
+          label: 'updated',
+          thread_id: 'thread-1',
+        },
+      });
+
+      const skipped = await getOperation('ingest_connector_item').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        connector_id: 'gmail',
+        external_id: 'message-metadata-1',
+        locator: 'gmail://message/metadata-1-renamed',
+        title: 'Updated metadata title',
+        body: 'Same body with metadata updates.',
+        source_updated_at: '2026-05-22T02:27:30.000Z',
+        metadata_json: { thread_id: 'thread-1', label: 'updated' },
+        now: '2026-05-22T02:29:00.000Z',
+      }) as any;
       expect(skipped.status).toBe('skipped');
       expect(skipped.reason).toBe('unchanged_content_hash');
     } finally {
@@ -730,9 +1029,11 @@ describe('source registry operations', () => {
           ingest_status: 'ready',
           chunks: [{
             source_item_id: ingested.item.id,
-            chunk_text: 'Event body retained for policy review.',
+            chunk_hash: ingested.chunks[0].chunk_hash,
+            redacted_text: 'Event body retained for policy review.',
           }],
         });
+        expect(listed.items[0].chunks[0]).not.toHaveProperty('chunk_text');
         await expect(countSourceItemEvents(
           harness.engine,
           ingested.item.id,
@@ -910,9 +1211,11 @@ describe('source registry operations', () => {
         external_id: 'event-1',
         chunks: [{
           source_item_id: ingested.item.id,
-          chunk_text: 'Runtime review with connector persistence follow-up.',
+          chunk_hash: ingested.chunks[0].chunk_hash,
+          redacted_text: 'Runtime review with connector persistence follow-up.',
         }],
       });
+      expect(listed.items[0].chunks[0]).not.toHaveProperty('chunk_text');
     } finally {
       await harness.cleanup();
     }

@@ -51,6 +51,8 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     needs: tier1
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mbrain_test
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -92,6 +94,5 @@ jobs:
       - name: Run Tier 2 skill tests
         run: bun test test/e2e/skills.test.ts
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mbrain_test
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

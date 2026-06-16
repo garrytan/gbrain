@@ -20,11 +20,12 @@ test('canonical handoff operations record and list explicit handoff rows', async
   const engine = new SQLiteEngine();
   const create = operations.find((operation) => operation.name === 'create_memory_candidate_entry');
   const advance = operations.find((operation) => operation.name === 'advance_memory_candidate_status');
+  const verify = operations.find((operation) => operation.name === 'verify_memory_candidate_entry');
   const promote = operations.find((operation) => operation.name === 'promote_memory_candidate_entry');
   const record = operations.find((operation) => operation.name === 'record_canonical_handoff');
   const list = operations.find((operation) => operation.name === 'list_canonical_handoff_entries');
 
-  if (!create || !advance || !promote || !record || !list) {
+  if (!create || !advance || !verify || !promote || !record || !list) {
     throw new Error('canonical handoff prerequisite operations are missing');
   }
 
@@ -47,6 +48,14 @@ test('canonical handoff operations record and list explicit handoff rows', async
     await advance.handler({ engine, config: {} as any, logger: console, dryRun: false }, {
       id: 'candidate-handoff-op',
       next_status: 'staged_for_review',
+    });
+    await verify.handler({ engine, config: {} as any, logger: console, dryRun: false }, {
+      id: 'candidate-handoff-op',
+      verification_status: 'verified',
+      verification_method: 'source_recheck',
+      verification_evidence: 'Checked canonical handoff operation fixture before promotion.',
+      verification_source_refs: ['Fixture verification for candidate-handoff-op'],
+      verified_at: '2026-06-16T00:00:00Z',
     });
     await promote.handler({ engine, config: {} as any, logger: console, dryRun: false }, {
       id: 'candidate-handoff-op',

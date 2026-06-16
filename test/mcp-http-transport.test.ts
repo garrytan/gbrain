@@ -245,6 +245,105 @@ describe('MCP HTTP transport', () => {
     expect(authCalls).toBe(0);
   });
 
+  test('rejects MCP bodies that exceed the limit even when Content-Length is under-reported', async () => {
+    let authCalls = 0;
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      authenticate: async () => {
+        authCalls++;
+        return { ok: true, tokenName: 'test-client' };
+      },
+      logRequest: async () => {},
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(1_048_577));
+        controller.close();
+      },
+    });
+
+    const response = await handler(new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-token',
+        'Content-Length': '1',
+      },
+      body,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' }));
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: 'request_too_large' });
+    expect(authCalls).toBe(0);
+  });
+
+  test('rejects oversized OAuth request bodies before parsing endpoint payloads', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+      },
+    });
+
+    const response = await handler(new Request('http://localhost/oauth/register', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': String(1_048_577),
+      },
+      body: JSON.stringify({
+        client_name: 'ChatGPT',
+        redirect_uris: ['https://chat.openai.com/aip/callback'],
+        token_endpoint_auth_method: 'none',
+      }),
+    }));
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: 'request_too_large' });
+  });
+
+  test('rejects OAuth bodies that exceed the limit even when Content-Length is under-reported', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+      },
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(1_048_577));
+        controller.close();
+      },
+    });
+
+    const response = await handler(new Request('http://localhost/oauth/register', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': '1',
+      },
+      body,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' }));
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: 'request_too_large' });
+  });
+
   test('default bearer auth rejects revoked SQLite access tokens', async () => {
     const { db, dbPath } = createSqliteTokenDb();
     const tokenHash = createHash('sha256').update('revoked-token').digest('hex');

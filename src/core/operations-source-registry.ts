@@ -21,13 +21,15 @@ import {
   type SourceStatusEventRecord,
 } from './services/source-registry-service.ts';
 import type {
+  RawAccessDecision,
+  RawAccessLedgerEntry,
   RawAccessPolicy,
   RawAccessRequest,
 } from './source-registry/raw-access-ledger.ts';
+import { buildRawAccessLedgerEntry } from './source-registry/raw-access-ledger.ts';
 import type {
   RawIngestInput,
   RawIngestPolicy,
-  SourceChunkRecord,
   SourceItemEventRecord,
   SourceItemRecord,
   SourceOriginEvent,
@@ -38,6 +40,8 @@ import {
   persistRawIngestPlan,
   readSourceItemByExternalId,
   readSourceItemChunksForItems,
+  redactSourceChunkForInspection,
+  type SourceChunkInspectionRecord,
 } from './source-registry/raw-ingest-store.ts';
 import {
   applySourcePolicyOverrides,
@@ -45,6 +49,7 @@ import {
   getDefaultSourcePolicy,
   isSourceConsentState,
   isSourceKind,
+  type ResolvedSourcePolicy,
   SOURCE_KINDS,
   type SourceConsentState,
   type SourceKind,
@@ -500,9 +505,10 @@ export function createSourceRegistryOperations(
       input: { type: 'string', description: 'Optional input text to hash in the ledger.' },
       prompt: { type: 'string', description: 'Optional prompt text to hash in the ledger.' },
       requested_at: { type: 'string', description: 'Optional ISO request timestamp.' },
-      policy: { type: 'object', required: true, description: 'Resolved source policy subset for raw access.' },
+      policy: { type: 'object', description: 'Deprecated dry-run-only raw access policy override. Non-dry-run evaluation resolves policy from the registered source.' },
     },
-    handler: async (_ctx, p) => evaluateRawSourceAccess(rawAccessRequest(deps, p), rawAccessPolicy(deps, p.policy)),
+    handler: async (ctx, p) => evaluateRawAccessOperation(deps, ctx, p),
+    mutating: true,
     cliHints: { name: 'raw-access-evaluate' },
   };
 
@@ -1364,7 +1370,11 @@ async function ingestConnectorItem(
   const existingArchived = existing
     ? await sourceItemHasEvent(ctx.engine, existing.id, 'source_deleted_archived')
     : false;
-  if (existing?.content_hash === plan.item.content_hash && !existingArchived) {
+  if (
+    existing?.content_hash === plan.item.content_hash
+    && !existingArchived
+    && !connectorItemMetadataChanged(existing, plan.item, input)
+  ) {
     return {
       status: 'skipped',
       reason: 'unchanged_content_hash',
@@ -1387,6 +1397,41 @@ async function ingestConnectorItem(
     status: existing ? 'updated' : 'ingested',
     ...plan,
   };
+}
+
+function connectorItemMetadataChanged(
+  existing: SourceItemRecord,
+  next: SourceItemRecord,
+  input: ConnectorItemIngestInput,
+): boolean {
+  return (
+    (input.locator !== undefined && existing.locator !== next.locator)
+    || (input.title !== undefined && existing.title !== next.title)
+    || (input.source_created_at !== undefined && existing.source_created_at !== next.source_created_at)
+    || (input.source_updated_at !== undefined && existing.source_updated_at !== next.source_updated_at)
+    || (input.metadata_json !== undefined && !jsonRecordsEqual(existing.metadata_json, next.metadata_json))
+  );
+}
+
+function jsonRecordsEqual(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  return canonicalJson(left) === canonicalJson(right);
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonicalizeJson(value));
+}
+
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeJson);
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, nested]) => nested !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, canonicalizeJson(nested)]),
+    );
+  }
+  return value;
 }
 
 function rawIngestPolicyFromResolved(
@@ -1571,6 +1616,64 @@ async function recordConnectorItemDeletion(
     deleted_at: input.deleted_at,
     event,
   };
+}
+
+async function evaluateRawAccessOperation(
+  deps: { OperationError: OperationErrorCtor },
+  ctx: OperationContext,
+  p: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const request = rawAccessRequest(deps, p);
+  const policySource = ctx.dryRun && p.policy !== undefined
+    ? 'dry_run_override'
+    : 'registered_source';
+  const policy = policySource === 'dry_run_override'
+    ? rawAccessPolicy(deps, p.policy)
+    : await resolveRegisteredRawAccessPolicy(deps, ctx.engine, request.source_id);
+  const scopeMatches = await rawAccessScopeMatches(ctx.engine, request);
+  const evaluation = scopeMatches
+    ? evaluateRawSourceAccess(request, policy)
+    : denyRawAccessEvaluation(request, 'raw_scope_mismatch');
+
+  if (ctx.dryRun) {
+    return {
+      ...evaluation,
+      audited: false,
+      policy_source: policySource,
+    };
+  }
+
+  await insertRawAccessLedgerEntry(ctx.engine, evaluation.ledger_entry, {
+    policy_source: policySource,
+    redaction_required: evaluation.decision.redaction_required,
+  });
+
+  return {
+    ...evaluation,
+    audited: true,
+    policy_source: policySource,
+  };
+}
+
+function denyRawAccessEvaluation(request: RawAccessRequest, reason: string) {
+  const decision: RawAccessDecision = {
+    policy_decision: 'deny',
+    reason,
+    redaction_required: true,
+  };
+  return {
+    decision,
+    ledger_entry: buildRawAccessLedgerEntry(request, decision),
+  };
+}
+
+async function rawAccessScopeMatches(engine: BrainEngine, request: RawAccessRequest): Promise<boolean> {
+  const itemSourceId = await readRawAccessItemSourceId(engine, request.source_item_id);
+  if (itemSourceId !== request.source_id) return false;
+  if (request.chunk_ids.length === 0) return true;
+  const distinctChunkIds = Array.from(new Set(request.chunk_ids));
+  const matchedChunkCount = await countRawAccessChunksForItem(engine, request.source_item_id, distinctChunkIds);
+  return matchedChunkCount === distinctChunkIds.length;
 }
 
 async function sourceItemHasEvent(
@@ -2000,7 +2103,7 @@ async function readAllSourceRecords(engine: BrainEngine): Promise<SourceRecord[]
 async function listSourceItems(
   engine: BrainEngine,
   input: SourceItemsListInput,
-): Promise<{ source_id: string; items: Array<SourceItemRecord & { chunks?: SourceChunkRecord[] }> }> {
+): Promise<{ source_id: string; items: Array<SourceItemRecord & { chunks?: SourceChunkInspectionRecord[] }> }> {
   const candidate = engine as QueryableEngine;
   const sql = `
     SELECT id, source_id, external_id, origin_event, locator, title, source_created_at, source_updated_at,
@@ -2021,13 +2124,13 @@ async function listSourceItems(
   if (!rows) throw new Error('source item inspection operations require a SQL-backed engine');
 
   const sourceItems = rows.map(mapSourceItem);
-  const items: Array<SourceItemRecord & { chunks?: SourceChunkRecord[] }> = [];
+  const items: Array<SourceItemRecord & { chunks?: SourceChunkInspectionRecord[] }> = [];
   if (input.include_chunks) {
     const chunksByItemId = await readSourceItemChunksForItems(engine, sourceItems.map((item) => item.id));
     for (const item of sourceItems) {
       items.push({
         ...item,
-        chunks: chunksByItemId.get(item.id) ?? [],
+        chunks: (chunksByItemId.get(item.id) ?? []).map(redactSourceChunkForInspection),
       });
     }
   } else {
@@ -2723,6 +2826,25 @@ async function readSourceRow(engine: BrainEngine, sourceId: string): Promise<Sou
   throw new Error('source control operations require a SQL-backed engine');
 }
 
+async function readSourceRecordById(engine: BrainEngine, sourceId: string): Promise<SourceRecord | null> {
+  const sqliteSql = `
+    SELECT id, kind, display_name, connector_id, locator, consent_state, enabled, paused_at,
+           policy_id, metadata_json, created_at, updated_at, archived_at
+    FROM sources
+    WHERE id = ?
+  `;
+  const pgSql = sqliteSql.replace('?', '$1');
+  const rows = await queryRowsWithParams(
+    engine,
+    sqliteSql,
+    [sourceId],
+    pgSql,
+    [sourceId],
+    'source inspection operations require a SQL-backed engine',
+  );
+  return rows[0] ? normalizeSourceRecord(rows[0]) : null;
+}
+
 async function applySourcePatch(engine: BrainEngine, input: SourceControlMutationInput): Promise<boolean> {
   const candidate = engine as QueryableEngine;
   if (candidate.database) {
@@ -2778,6 +2900,142 @@ async function applySourcePatch(engine: BrainEngine, input: SourceControlMutatio
     return result.rows.length > 0;
   }
   throw new Error('source control operations require a SQL-backed engine');
+}
+
+async function resolveRegisteredRawAccessPolicy(
+  deps: { OperationError: OperationErrorCtor },
+  engine: BrainEngine,
+  sourceId: string,
+): Promise<RawAccessPolicy> {
+  const source = await readSourceRecordById(engine, sourceId);
+  if (!source) {
+    throw invalidParams(deps, `source_id not found: ${sourceId}`);
+  }
+  return rawAccessPolicyFromResolvedSource(source, (await inspectSourcePolicy(engine, source)).resolved);
+}
+
+async function readRawAccessItemSourceId(engine: BrainEngine, sourceItemId: string): Promise<string | null> {
+  const candidate = engine as QueryableEngine;
+  if (candidate.database) {
+    const row = candidate.database.query<{ source_id: string }>(`
+      SELECT source_id FROM source_items WHERE id = ?
+    `).get(sourceItemId);
+    return row?.source_id ?? null;
+  }
+  if (candidate.sql?.unsafe) {
+    const rows = await candidate.sql.unsafe(`
+      SELECT source_id FROM source_items WHERE id = $1
+    `, [sourceItemId]);
+    return typeof rows[0]?.source_id === 'string' ? rows[0].source_id : null;
+  }
+  if (candidate.db) {
+    const result = await candidate.db.query(`
+      SELECT source_id FROM source_items WHERE id = $1
+    `, [sourceItemId]);
+    return typeof result.rows[0]?.source_id === 'string' ? result.rows[0].source_id : null;
+  }
+  throw new Error('raw access scope checks require a SQL-backed engine');
+}
+
+async function countRawAccessChunksForItem(
+  engine: BrainEngine,
+  sourceItemId: string,
+  chunkIds: readonly string[],
+): Promise<number> {
+  if (chunkIds.length === 0) return 0;
+  const candidate = engine as QueryableEngine;
+  if (candidate.database) {
+    const placeholders = chunkIds.map(() => '?').join(', ');
+    const row = candidate.database.query<{ count: number }>(`
+      SELECT COUNT(*) AS count
+      FROM source_chunks
+      WHERE source_item_id = ? AND id IN (${placeholders})
+    `).get(sourceItemId, ...chunkIds);
+    return Number(row?.count ?? 0);
+  }
+  if (candidate.sql?.unsafe) {
+    const rows = await candidate.sql.unsafe(`
+      SELECT COUNT(*)::int AS count
+      FROM source_chunks
+      WHERE source_item_id = $1 AND id = ANY($2::text[])
+    `, [sourceItemId, chunkIds]);
+    return Number(rows[0]?.count ?? 0);
+  }
+  if (candidate.db) {
+    const result = await candidate.db.query(`
+      SELECT COUNT(*)::int AS count
+      FROM source_chunks
+      WHERE source_item_id = $1 AND id = ANY($2::text[])
+    `, [sourceItemId, chunkIds]);
+    return Number(result.rows[0]?.count ?? 0);
+  }
+  throw new Error('raw access scope checks require a SQL-backed engine');
+}
+
+function rawAccessPolicyFromResolvedSource(
+  source: SourceRecord,
+  resolved: ResolvedSourcePolicy,
+): RawAccessPolicy {
+  return {
+    consent_state: source.consent_state,
+    enabled: source.enabled,
+    paused_at: source.paused_at,
+    runner_access: resolved.policy.runner_access,
+    llm_access: resolved.policy.llm_access,
+  };
+}
+
+async function insertRawAccessLedgerEntry(
+  engine: BrainEngine,
+  entry: RawAccessLedgerEntry,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  const candidate = engine as QueryableEngine;
+  const values = [
+    entry.id,
+    entry.actor_type,
+    entry.actor_id,
+    entry.session_id,
+    entry.job_id,
+    entry.source_id,
+    entry.source_item_id,
+    JSON.stringify(entry.chunk_ids),
+    entry.reason,
+    entry.policy_decision,
+    entry.policy_reason,
+    entry.prompt_hash,
+    entry.input_hash,
+    JSON.stringify(metadata),
+    entry.timestamp,
+  ];
+  if (candidate.database) {
+    candidate.database.query(`
+      INSERT INTO raw_access_ledger (
+        id, actor_type, actor_id, session_id, job_id, source_id, source_item_id, chunk_ids,
+        reason, policy_decision, policy_reason, prompt_hash, input_hash, metadata_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(...values);
+    return;
+  }
+  if (candidate.sql?.unsafe) {
+    await candidate.sql.unsafe(`
+      INSERT INTO raw_access_ledger (
+        id, actor_type, actor_id, session_id, job_id, source_id, source_item_id, chunk_ids,
+        reason, policy_decision, policy_reason, prompt_hash, input_hash, metadata_json, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14::jsonb, $15)
+    `, values);
+    return;
+  }
+  if (candidate.db) {
+    await candidate.db.query(`
+      INSERT INTO raw_access_ledger (
+        id, actor_type, actor_id, session_id, job_id, source_id, source_item_id, chunk_ids,
+        reason, policy_decision, policy_reason, prompt_hash, input_hash, metadata_json, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14::jsonb, $15)
+    `, values);
+    return;
+  }
+  throw new Error('raw access ledger writes require a SQL-backed engine');
 }
 
 function changedRows(result: unknown): number {

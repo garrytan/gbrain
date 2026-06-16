@@ -13,7 +13,10 @@ import { operationsByName, type OperationContext } from '../../src/core/operatio
 import { recordCanonicalHandoff } from '../../src/core/services/canonical-handoff-service.ts';
 import { buildStructuralContextMapEntry } from '../../src/core/services/context-map-service.ts';
 import { runDreamCycleMaintenance } from '../../src/core/services/dream-cycle-maintenance-service.ts';
-import { advanceMemoryCandidateStatus } from '../../src/core/services/memory-inbox-service.ts';
+import {
+  advanceMemoryCandidateStatus,
+  verifyMemoryCandidateEntry,
+} from '../../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../../src/core/services/memory-inbox-promotion-service.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { allocateSqliteBrain } from './helpers.ts';
@@ -300,6 +303,14 @@ async function seedStalePromotedCandidate(engine: BrainEngine): Promise<void> {
     id: 'candidate-ga-p6-stale',
     next_status: 'staged_for_review',
     review_reason: 'Prepared for GA-P6 stale validation.',
+  });
+  await verifyMemoryCandidateEntry(engine, {
+    id: 'candidate-ga-p6-stale',
+    verification_status: 'verified',
+    verification_method: 'source_recheck',
+    verification_evidence: 'Verified GA-P6 stale fixture before promotion.',
+    verification_source_refs: ['Fixture verification for candidate-ga-p6-stale'],
+    verified_at: '2026-06-16T00:00:00Z',
   });
   await promoteMemoryCandidateEntry(engine, {
     id: 'candidate-ga-p6-stale',

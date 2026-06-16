@@ -1,12 +1,28 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig } from '../core/config.ts';
 
-function redactUrl(url: string): string {
-  // Redact password in postgresql:// URLs
-  return url.replace(
-    /(postgresql:\/\/[^:]+:)([^@]+)(@)/,
-    '$1***$3',
-  );
+export function redactUrl(url: string): string {
+  const scheme = url.match(/^(postgres(?:ql)?:\/\/)/i);
+  if (!scheme) return url;
+
+  const authorityStart = scheme[0].length;
+  const at = url.lastIndexOf('@');
+  const passwordSeparator = url.indexOf(':', authorityStart);
+  const withRedactedPassword = at < 0 || passwordSeparator < 0 || passwordSeparator > at
+    ? url
+    : `${url.slice(0, passwordSeparator + 1)}***${url.slice(at)}`;
+
+  try {
+    const parsed = new URL(withRedactedPassword);
+    for (const key of Array.from(parsed.searchParams.keys())) {
+      if (/(password|pass|secret|token|key|credential)/i.test(key)) {
+        parsed.searchParams.set(key, '***');
+      }
+    }
+    return parsed.toString();
+  } catch {
+    return withRedactedPassword;
+  }
 }
 
 export async function runConfig(engine: BrainEngine, args: string[]) {
@@ -44,10 +60,10 @@ export function runConfigShow(): void {
   }
   console.log('MBrain config:');
   for (const [k, v] of Object.entries(config)) {
-    const display = typeof v === 'string' && v.includes('postgresql://')
-      ? redactUrl(v)
-      : typeof v === 'string' && (k.includes('key') || k.includes('secret'))
-        ? '***'
+    const display = typeof v === 'string' && (k.includes('key') || k.includes('secret'))
+      ? '***'
+      : typeof v === 'string'
+        ? redactUrl(v)
         : v;
     console.log(`  ${k}: ${display}`);
   }

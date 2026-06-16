@@ -12,6 +12,7 @@
 
 import { readFileSync, writeFileSync, readdirSync, lstatSync, existsSync } from 'fs';
 import { join, relative, posix } from 'path';
+import { parseMarkdown, serializeMarkdown } from '../core/markdown.ts';
 
 interface BacklinkGap {
   /** The page that mentions the entity */
@@ -257,6 +258,7 @@ export function fixBacklinkGaps(brainDir: string, gaps: BacklinkGap[], dryRun: b
     if (!existsSync(targetPath)) continue;
 
     let content = readFileSync(targetPath, 'utf-8');
+    const entries: string[] = [];
 
     for (const gap of targetGaps) {
       // Compute relative path from target to source
@@ -266,31 +268,50 @@ export function fixBacklinkGaps(brainDir: string, gaps: BacklinkGap[], dryRun: b
       const relPath = relPrefix + gap.sourcePage;
 
       const entry = buildBacklinkEntry(gap.sourceTitle, relPath, today);
-
-      // Insert into Timeline section
-      if (content.includes('## Timeline')) {
-        const parts = content.split('## Timeline');
-        const afterTimeline = parts[1];
-        const nextSection = afterTimeline.match(/\n## /);
-        if (nextSection) {
-          const insertIdx = parts[0].length + '## Timeline'.length + nextSection.index!;
-          content = content.slice(0, insertIdx) + '\n' + entry + content.slice(insertIdx);
-        } else {
-          content = content.trimEnd() + '\n' + entry + '\n';
-        }
-      } else {
-        // Add Timeline section
-        content = content.trimEnd() + '\n\n## Timeline\n\n' + entry + '\n';
-      }
+      entries.push(entry);
       fixed++;
     }
 
     if (!dryRun) {
-      writeFileSync(targetPath, content);
+      writeFileSync(targetPath, appendTimelineEntries(content, targetPage, entries));
     }
   }
 
   return fixed;
+}
+
+function appendTimelineEntries(content: string, targetPage: string, entries: string[]): string {
+  const parsed = parseMarkdown(content, targetPage);
+  const { compiledTruth, timeline } = splitLegacyTimelineHeading(parsed.compiled_truth, parsed.timeline);
+  const nextTimeline = [timeline, ...entries].filter(Boolean).join('\n');
+  return serializeMarkdown(
+    parsed.frontmatter,
+    compiledTruth,
+    nextTimeline,
+    { type: parsed.type, title: parsed.title, tags: parsed.tags },
+  );
+}
+
+function splitLegacyTimelineHeading(compiledTruth: string, timeline: string): { compiledTruth: string; timeline: string } {
+  if (timeline.trim().length > 0) {
+    return { compiledTruth, timeline };
+  }
+
+  const lines = compiledTruth.split('\n');
+  let inFence = false;
+  for (let index = 0; index < lines.length; index++) {
+    const trimmed = lines[index]!.trim();
+    if (/^(```|~~~)/.test(trimmed)) {
+      inFence = !inFence;
+    }
+    if (!inFence && /^## Timeline\s*$/.test(lines[index]!)) {
+      return {
+        compiledTruth: lines.slice(0, index).join('\n').trimEnd(),
+        timeline: lines.slice(index + 1).join('\n').trim(),
+      };
+    }
+  }
+  return { compiledTruth, timeline };
 }
 
 export async function runBacklinks(args: string[]) {

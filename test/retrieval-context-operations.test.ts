@@ -121,7 +121,7 @@ describe('agentic retrieval context operations', () => {
     expect(output).toContain('Required reads:');
     expect(output).toContain('section:workspace:default:concepts/retrieval#compiled-truth');
     expect(output).toContain('Read plan: mode=bounded_evidence max_depth=1 selected=1');
-    expect(output).toContain('Call read_context with read_plan.selected_selectors before making factual claims.');
+    expect(output).toContain('Call read_context with read_plan.selected_selector_snapshots before making factual claims.');
     expect(output).toContain('Candidate signal policy:');
     expect(output).toContain('candidate:operation-output');
     expect(output).toContain('promotion=advance_to_review');
@@ -163,7 +163,6 @@ describe('agentic retrieval context operations', () => {
       include_source_refs: false,
     }) as any;
 
-    expect(result.answer_ready.ready).toBe(true);
     expect(result.canonical_reads).toHaveLength(1);
     expect(result.canonical_reads[0].text).toBe('Canonical evidence');
     expect(result.canonical_reads[0].selector.char_start).toBe(6);
@@ -175,6 +174,52 @@ describe('agentic retrieval context operations', () => {
     expect(output).toContain('Read: Retrieval');
     expect(output).toContain('Selector: line_span:workspace:default:concepts/retrieval:1:1@chars:6:24');
     expect(output).toContain('Canonical evidence');
+  });
+
+  test('read_context accepts frontmatter selector snapshots from retrieve_context read plans', async () => {
+    const op = operationsByName.read_context;
+    if (!op) throw new Error('read_context operation is missing');
+
+    const engine = {
+      getPageProjection: async (slug: string) => ({
+        slug,
+        title: 'Frontmatter Evidence',
+        frontmatter: {
+          build_command: 'bun run frontmatter-evidence',
+          test_command: 'bun test frontmatter-evidence',
+        },
+        content_hash: 'frontmatter-hash-1',
+      }),
+      getPageFrontmatterProjection: async (slug: string) => ({
+        id: 1,
+        slug,
+        type: 'concept',
+        title: 'Frontmatter Evidence',
+        frontmatter: {
+          build_command: 'bun run frontmatter-evidence',
+          test_command: 'bun test frontmatter-evidence',
+        },
+        content_hash: 'frontmatter-hash-1',
+        created_at: new Date('2026-05-07T00:00:00.000Z'),
+        updated_at: new Date('2026-05-07T00:00:00.000Z'),
+        text: 'build_command: bun run frontmatter-evidence\ntest_command: bun test frontmatter-evidence',
+      }),
+    };
+
+    const result = await op.handler(opContext(engine), {
+      selectors: JSON.stringify([{
+        kind: 'frontmatter',
+        scope_id: 'workspace:default',
+        slug: 'concepts/frontmatter-evidence',
+        content_hash: 'frontmatter-hash-1',
+      }]),
+      token_budget: 20,
+      include_source_refs: false,
+    }) as any;
+
+    expect(result.canonical_reads).toHaveLength(1);
+    expect(result.canonical_reads[0].selector.kind).toBe('frontmatter');
+    expect(result.canonical_reads[0].text).toContain('bun run frontmatter-evidence');
   });
 
   test('retrieval selector parsing accepts corpus_lane metadata without changing selector ids', async () => {

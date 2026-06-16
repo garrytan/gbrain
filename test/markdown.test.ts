@@ -110,6 +110,29 @@ describe('splitBody', () => {
     expect(compiled_truth).toContain('Content here');
     expect(timeline.trim()).toBe('');
   });
+
+  test('ignores standalone --- inside fenced code blocks', () => {
+    const body = [
+      'Use this example:',
+      '',
+      '```yaml',
+      '---',
+      'title: Example',
+      '---',
+      '```',
+      '',
+      'Still compiled truth.',
+      '',
+      '---',
+      '',
+      '- **2026-06-16** | Evidence entry',
+    ].join('\n');
+
+    const { compiled_truth, timeline } = splitBody(body);
+    expect(compiled_truth).toContain('title: Example');
+    expect(compiled_truth).toContain('Still compiled truth.');
+    expect(timeline).toContain('Evidence entry');
+  });
 });
 
 describe('serializeMarkdown', () => {

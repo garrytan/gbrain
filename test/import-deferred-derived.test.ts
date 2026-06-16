@@ -382,6 +382,8 @@ test('put_page defer_derived marks existing context maps stale before read-time 
 
     const slug = 'concepts/put-page-context-map-stale';
     await importFromContent(engine, slug, content);
+    const current = await engine.getPage(slug);
+    if (!current?.content_hash) throw new Error(`missing content hash for ${slug}`);
     const built = await buildStructuralContextMapEntry(engine);
     expect(built.status).toBe('ready');
     expect(built.stale_reason).toBeNull();
@@ -393,6 +395,7 @@ test('put_page defer_derived marks existing context maps stale before read-time 
       dryRun: false,
     }, {
       slug,
+      expected_content_hash: current.content_hash,
       content: content.replace(
         'Canonical content is available immediately.',
         'Updated canonical content is available immediately.',

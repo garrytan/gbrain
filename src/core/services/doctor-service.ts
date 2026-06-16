@@ -329,7 +329,7 @@ async function checkRls(deps: DoctorServiceDeps): Promise<{ status: 'ok' | 'warn
     `;
     const noRls = tables.filter((table: any) => !table.rowsecurity);
     if (noRls.length === 0) {
-      return { status: 'ok', message: 'RLS enabled on all tables' };
+      return { status: 'ok', message: 'RLS enabled on configured core tables' };
     }
     const names = noRls.map((table: any) => table.tablename).join(', ');
     return { status: 'warn', message: `RLS not enabled on: ${names}` };

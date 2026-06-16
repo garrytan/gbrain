@@ -1,10 +1,15 @@
 import { describe, test, expect } from 'bun:test';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import {
   extractEntityRefs,
   extractPageTitle,
   hasBacklink,
   buildBacklinkEntry,
+  fixBacklinkGaps,
 } from '../src/commands/backlinks.ts';
+import { parseMarkdown } from '../src/core/markdown.ts';
 
 describe('extractEntityRefs', () => {
   test('extracts people links', () => {
@@ -194,5 +199,73 @@ describe('buildBacklinkEntry', () => {
   test('builds properly formatted entry', () => {
     const entry = buildBacklinkEntry('Q1 Review', '../../meetings/q1-review.md', '2026-04-11');
     expect(entry).toBe('- **2026-04-11** | Referenced in [Q1 Review](../../meetings/q1-review.md)');
+  });
+});
+
+describe('fixBacklinkGaps', () => {
+  test('writes generated backlinks to timeline rather than compiled truth when target has no separator', () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'mbrain-backlinks-'));
+    try {
+      mkdirSync(join(brainDir, 'people'), { recursive: true });
+      writeFileSync(join(brainDir, 'people/jane.md'), [
+        '---',
+        'type: person',
+        'title: Jane',
+        '---',
+        '',
+        'Jane is a person.',
+        '',
+      ].join('\n'));
+
+      const fixed = fixBacklinkGaps(brainDir, [{
+        sourcePage: 'meetings/q1.md',
+        targetPage: 'people/jane.md',
+        entityName: 'Jane',
+        sourceTitle: 'Q1 Review',
+      }]);
+
+      expect(fixed).toBe(1);
+      const parsed = parseMarkdown(readFileSync(join(brainDir, 'people/jane.md'), 'utf-8'));
+      expect(parsed.compiled_truth).toBe('Jane is a person.');
+      expect(parsed.timeline).toContain('Referenced in [Q1 Review](../meetings/q1.md)');
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+    }
+  });
+
+  test('does not treat similarly named compiled headings as legacy Timeline sections', () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'mbrain-backlinks-'));
+    try {
+      mkdirSync(join(brainDir, 'people'), { recursive: true });
+      writeFileSync(join(brainDir, 'people/jane.md'), [
+        '---',
+        'type: person',
+        'title: Jane',
+        '---',
+        '',
+        'Jane is a person.',
+        '',
+        '## Timeline Architecture',
+        '',
+        'The product uses timelines as a retrieval concept.',
+        '',
+      ].join('\n'));
+
+      const fixed = fixBacklinkGaps(brainDir, [{
+        sourcePage: 'meetings/q1.md',
+        targetPage: 'people/jane.md',
+        entityName: 'Jane',
+        sourceTitle: 'Q1 Review',
+      }]);
+
+      expect(fixed).toBe(1);
+      const parsed = parseMarkdown(readFileSync(join(brainDir, 'people/jane.md'), 'utf-8'));
+      expect(parsed.compiled_truth).toContain('## Timeline Architecture');
+      expect(parsed.compiled_truth).toContain('The product uses timelines as a retrieval concept.');
+      expect(parsed.timeline).toContain('Referenced in [Q1 Review](../meetings/q1.md)');
+      expect(parsed.timeline).not.toContain('Architecture');
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+    }
   });
 });

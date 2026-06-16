@@ -10,6 +10,7 @@ import {
   MemoryInboxServiceError,
   preflightPromoteMemoryCandidate,
   rejectMemoryCandidateEntry,
+  verifyMemoryCandidateEntry,
 } from '../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../src/core/services/memory-inbox-promotion-service.ts';
 import { supersedeMemoryCandidateEntry } from '../src/core/services/memory-inbox-supersession-service.ts';
@@ -47,6 +48,7 @@ async function seedPromotedCandidate(
   scopeId = 'workspace:default',
 ) {
   await seedCandidate(engine, id, 'captured', { scope_id: scopeId });
+  await verifyCandidate(engine, id);
   await advanceMemoryCandidateStatus(engine, {
     id,
     next_status: 'candidate',
@@ -58,6 +60,17 @@ async function seedPromotedCandidate(
   return promoteMemoryCandidateEntry(engine, {
     id,
     review_reason: `Promoted ${id} for supersession testing.`,
+  });
+}
+
+async function verifyCandidate(engine: SQLiteEngine, id: string) {
+  return verifyMemoryCandidateEntry(engine, {
+    id,
+    verification_status: 'verified',
+    verification_method: 'source_recheck',
+    verification_evidence: `Verified ${id} for promotion.`,
+    verification_source_refs: [`Source: verification fixture for ${id}`],
+    verified_at: '2026-06-16T00:00:00Z',
   });
 }
 
@@ -413,12 +426,34 @@ test('memory inbox service allows promotion preflight for staged candidates with
     await engine.connect({ engine: 'sqlite', database_path: databasePath });
     await engine.initSchema();
     await seedCandidate(engine, 'candidate-8', 'staged_for_review');
+    await verifyCandidate(engine, 'candidate-8');
 
     const result = await preflightPromoteMemoryCandidate(engine, { id: 'candidate-8' });
 
     expect(result.decision).toBe('allow');
     expect(result.reasons).toEqual(['candidate_ready_for_promotion']);
     expect(result.summary_lines).toContain('Promotion preflight decision: allow.');
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('memory inbox service defers promotion preflight for unverified staged candidates', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-inbox-service-preflight-unverified-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+    await seedCandidate(engine, 'candidate-unverified', 'staged_for_review');
+
+    const result = await preflightPromoteMemoryCandidate(engine, { id: 'candidate-unverified' });
+
+    expect(result.decision).toBe('defer');
+    expect(result.reasons).toContain('candidate_requires_verification');
+    expect(result.summary_lines).toContain('Reasons: candidate requires verification.');
   } finally {
     await engine.disconnect();
     rmSync(dir, { recursive: true, force: true });
@@ -598,6 +633,7 @@ test('memory inbox service allows fact candidates that target procedures', async
       target_object_type: 'procedure',
       target_object_id: 'procedures/rebuild-context-map',
     });
+    await verifyCandidate(engine, 'candidate-17');
 
     const result = await preflightPromoteMemoryCandidate(engine, { id: 'candidate-17' });
 
@@ -646,6 +682,7 @@ test('memory inbox promotion service promotes staged candidates that pass prefli
     await engine.connect({ engine: 'sqlite', database_path: databasePath });
     await engine.initSchema();
     await seedCandidate(engine, 'candidate-18', 'staged_for_review');
+    await verifyCandidate(engine, 'candidate-18');
 
     const promoted = await promoteMemoryCandidateEntry(engine, {
       id: 'candidate-18',
@@ -675,6 +712,7 @@ test('memory inbox promotion service preserves explicit null reviewed_at', async
     await engine.connect({ engine: 'sqlite', database_path: databasePath });
     await engine.initSchema();
     await seedCandidate(engine, 'candidate-19', 'staged_for_review');
+    await verifyCandidate(engine, 'candidate-19');
 
     const promoted = await promoteMemoryCandidateEntry(engine, {
       id: 'candidate-19',

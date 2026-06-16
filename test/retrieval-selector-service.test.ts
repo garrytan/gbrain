@@ -218,7 +218,7 @@ describe('retrieval selector service', () => {
     expect(selector.freshness).toBe('current');
   });
 
-  test('converts frontmatter search results to page selectors', () => {
+  test('converts frontmatter search results to frontmatter selectors', () => {
     const result: SearchResult = {
       slug: 'concepts/retrieval',
       page_id: 10,
@@ -232,7 +232,7 @@ describe('retrieval selector service', () => {
 
     const selector = selectorFromSearchResult(result);
 
-    expect(selector.kind).toBe('page');
+    expect(selector.kind).toBe('frontmatter');
     expect(selector.slug).toBe('concepts/retrieval');
   });
 

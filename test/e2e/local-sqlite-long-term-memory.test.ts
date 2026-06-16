@@ -220,6 +220,14 @@ describe('local SQLite long-term memory lifecycle', () => {
       review_reason: 'Ready for governed promotion.',
       interaction_id: trace.id,
     });
+    h.call('verify_memory_candidate_entry', {
+      id: 'candidate-old-procedure',
+      verification_status: 'verified',
+      verification_method: 'source_recheck',
+      verification_evidence: 'Checked local SQLite lifecycle fixture before governed promotion.',
+      verification_source_refs: ['Fixture verification for candidate-old-procedure'],
+      verified_at: '2026-06-16T00:00:00Z',
+    });
     const preflight = h.call<any>('preflight_promote_memory_candidate', { id: 'candidate-old-procedure' });
     expect(preflight.decision).toBe('allow');
     h.call('promote_memory_candidate_entry', {
@@ -268,6 +276,14 @@ describe('local SQLite long-term memory lifecycle', () => {
       target_object_id: 'profile-caffeine',
       status: 'staged_for_review',
       interaction_id: trace.id,
+    });
+    h.call('verify_memory_candidate_entry', {
+      id: 'candidate-new-procedure',
+      verification_status: 'verified',
+      verification_method: 'source_recheck',
+      verification_evidence: 'Checked local SQLite replacement fixture before governed promotion.',
+      verification_source_refs: ['Fixture verification for candidate-new-procedure'],
+      verified_at: '2026-06-16T00:00:00Z',
     });
     h.call('promote_memory_candidate_entry', {
       id: 'candidate-new-procedure',

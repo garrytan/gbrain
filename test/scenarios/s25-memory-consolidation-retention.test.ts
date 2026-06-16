@@ -14,6 +14,7 @@ import { readContext } from '../../src/core/services/read-context-service.ts';
 import {
   advanceMemoryCandidateStatus,
   createMemoryCandidateEntryWithStatusEvent,
+  verifyMemoryCandidateEntry,
 } from '../../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../../src/core/services/memory-inbox-promotion-service.ts';
 import { recordCanonicalHandoff } from '../../src/core/services/canonical-handoff-service.ts';
@@ -77,6 +78,14 @@ describe('S25 — memory consolidation retention', () => {
         next_status: 'staged_for_review',
         interaction_id: trace.id,
       });
+      await verifyMemoryCandidateEntry(handle.engine, {
+        id: 'candidate-s25-old',
+        verification_status: 'verified',
+        verification_method: 'source_recheck',
+        verification_evidence: 'Verified S25 old candidate before promotion.',
+        verification_source_refs: ['Fixture verification for candidate-s25-old'],
+        verified_at: '2026-06-16T00:00:00Z',
+      });
       await promoteMemoryCandidateEntry(handle.engine, {
         id: 'candidate-s25-old',
         interaction_id: trace.id,
@@ -112,6 +121,14 @@ describe('S25 — memory consolidation retention', () => {
         id: 'candidate-s25-new',
         next_status: 'staged_for_review',
         interaction_id: trace.id,
+      });
+      await verifyMemoryCandidateEntry(handle.engine, {
+        id: 'candidate-s25-new',
+        verification_status: 'verified',
+        verification_method: 'source_recheck',
+        verification_evidence: 'Verified S25 replacement candidate before promotion.',
+        verification_source_refs: ['Fixture verification for candidate-s25-new'],
+        verified_at: '2026-06-16T00:00:00Z',
       });
       await promoteMemoryCandidateEntry(handle.engine, {
         id: 'candidate-s25-new',

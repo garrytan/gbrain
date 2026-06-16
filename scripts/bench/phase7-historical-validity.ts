@@ -5,7 +5,10 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { performance } from 'perf_hooks';
 import { SQLiteEngine } from '../../src/core/sqlite-engine.ts';
-import { advanceMemoryCandidateStatus } from '../../src/core/services/memory-inbox-service.ts';
+import {
+  advanceMemoryCandidateStatus,
+  verifyMemoryCandidateEntry,
+} from '../../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../../src/core/services/memory-inbox-promotion-service.ts';
 import { recordCanonicalHandoff } from '../../src/core/services/canonical-handoff-service.ts';
 import { assessHistoricalValidity } from '../../src/core/services/historical-validity-service.ts';
@@ -225,6 +228,14 @@ async function seedPromotedCandidate(
     id,
     next_status: 'staged_for_review',
     review_reason: 'Prepared for validity benchmark.',
+  });
+  await verifyMemoryCandidateEntry(engine, {
+    id,
+    verification_status: 'verified',
+    verification_method: 'source_recheck',
+    verification_evidence: `Verified historical validity benchmark fixture ${id}.`,
+    verification_source_refs: [`Fixture verification for ${id}`],
+    verified_at: '2026-06-16T00:00:00Z',
   });
   await promoteMemoryCandidateEntry(engine, {
     id,

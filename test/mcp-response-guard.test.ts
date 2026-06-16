@@ -215,20 +215,24 @@ describe('MCP response guard', () => {
     delete process.env.MBRAIN_MCP_DEFER_PUT_PAGE_DERIVED;
     expect(prepareMcpToolParams('put_page', { slug: 'concepts/write' })).toEqual({
       slug: 'concepts/write',
+      expected_content_hash: null,
       defer_derived: true,
     });
 
     expect(prepareMcpToolParams('put_page', {
       slug: 'concepts/write',
+      expected_content_hash: 'a'.repeat(64),
       defer_derived: false,
     })).toEqual({
       slug: 'concepts/write',
+      expected_content_hash: 'a'.repeat(64),
       defer_derived: false,
     });
 
     process.env.MBRAIN_MCP_DEFER_PUT_PAGE_DERIVED = 'false';
     expect(prepareMcpToolParams('put_page', { slug: 'concepts/write' })).toEqual({
       slug: 'concepts/write',
+      expected_content_hash: null,
     });
   });
 
@@ -372,9 +376,13 @@ describe('MCP response guard', () => {
         max_depth: 1,
         max_selectors: 1,
         selected_selectors: [requiredRead.selector_id],
+        selected_selector_snapshots: [{
+          ...requiredRead,
+          content_hash: 'hash-from-read-plan-snapshot',
+        }],
         deferred_candidate_ids: [],
         gap_reasons: [],
-        next_actions: ['Call read_context with read_plan.selected_selectors before making factual claims.'],
+        next_actions: ['Call read_context with read_plan.selected_selector_snapshots before making factual claims.'],
       },
       orientation: {
         derived_consulted: [],
@@ -394,7 +402,10 @@ describe('MCP response guard', () => {
     const continuation = parsed._mbrain_mcp_response.continuations.required_reads;
     expect(continuation.tool).toBe('read_context');
     expect(continuation.arguments).toEqual({
-      selectors: [requiredRead],
+      selectors: [{
+        ...requiredRead,
+        content_hash: 'hash-from-read-plan-snapshot',
+      }],
       token_budget: 900,
     });
     expect(JSON.stringify(continuation.arguments.selectors)).not.toContain('orientation-only');

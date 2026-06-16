@@ -160,6 +160,13 @@ export async function readSourceItemChunksForItems(
   return chunksByItemId;
 }
 
+export type SourceChunkInspectionRecord = Omit<SourceChunkRecord, 'chunk_text'>;
+
+export function redactSourceChunkForInspection(chunk: SourceChunkRecord): SourceChunkInspectionRecord {
+  const { chunk_text: _chunkText, ...inspectionChunk } = chunk;
+  return inspectionChunk;
+}
+
 async function upsertSourceItem(engine: BrainEngine, item: SourceItemRecord): Promise<void> {
   const candidate = engine as QueryableEngine;
   const values = [

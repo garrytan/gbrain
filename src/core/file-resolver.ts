@@ -1,5 +1,5 @@
-import { readFileSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { readFileSync, existsSync, realpathSync } from 'fs';
+import { join, dirname, resolve as resolvePath, relative, isAbsolute } from 'path';
 import { parse as parseYaml } from './yaml-lite.ts';
 import type { StorageBackend } from './storage.ts';
 
@@ -36,23 +36,19 @@ export async function resolveFile(
   brainRoot: string,
   storage?: StorageBackend,
 ): Promise<ResolvedFile> {
-  const { resolve: resolvePath } = await import('path');
-  const resolvedRoot = resolvePath(brainRoot);
-  const resolvedFull = resolvePath(brainRoot, filePath);
-  if (!resolvedFull.startsWith(resolvedRoot + '/') && resolvedFull !== resolvedRoot) {
-    throw new Error(`Path traversal blocked: ${filePath} resolves outside brain root`);
-  }
-
-  const fullPath = join(brainRoot, filePath);
+  const fullPath = resolvePath(brainRoot, filePath);
+  assertPathInsideBrainRoot(fullPath, brainRoot, filePath);
 
   // 1. Local file exists
   if (existsSync(fullPath)) {
+    assertPathInsideBrainRoot(fullPath, brainRoot, filePath);
     return { data: readFileSync(fullPath), source: 'local' };
   }
 
   // 2. .redirect breadcrumb
   const redirectPath = fullPath + '.redirect';
   if (existsSync(redirectPath)) {
+    assertPathInsideBrainRoot(redirectPath, brainRoot, `${filePath}.redirect`);
     if (!storage) throw new Error(`File redirected to storage but no storage backend configured: ${filePath}`);
     const info = parseRedirect(redirectPath);
     const data = await storage.download(info.path);
@@ -62,6 +58,7 @@ export async function resolveFile(
   // 3. .supabase marker in parent directory
   const markerPath = join(dirname(fullPath), '.supabase');
   if (existsSync(markerPath)) {
+    assertPathInsideBrainRoot(markerPath, brainRoot, `${filePath} parent .supabase`);
     if (!storage) throw new Error(`Directory mirrored to storage but no storage backend configured: ${filePath}`);
     const marker = parseMarker(markerPath);
     if (marker.prefix) {
@@ -80,6 +77,7 @@ export async function resolveFile(
     } catch {
       // Fall back to local if storage fails and local exists
       if (existsSync(fullPath)) {
+        assertPathInsideBrainRoot(fullPath, brainRoot, filePath);
         return { data: readFileSync(fullPath), source: 'local' };
       }
       throw new Error(`File not found locally or in storage: ${filePath}`);
@@ -87,6 +85,15 @@ export async function resolveFile(
   }
 
   throw new Error(`File not found: ${filePath}`);
+}
+
+function assertPathInsideBrainRoot(candidatePath: string, brainRoot: string, displayPath: string): void {
+  const candidateExists = existsSync(candidatePath);
+  const rootPath = candidateExists ? realpathSync(brainRoot) : resolvePath(brainRoot);
+  const targetPath = candidateExists ? realpathSync(candidatePath) : resolvePath(candidatePath);
+  const rel = relative(rootPath, targetPath);
+  if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return;
+  throw new Error(`Path traversal blocked: ${displayPath} resolves outside brain root`);
 }
 
 export function parseRedirect(path: string): RedirectInfo {

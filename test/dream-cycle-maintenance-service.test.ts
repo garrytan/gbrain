@@ -4,7 +4,10 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
-import { advanceMemoryCandidateStatus } from '../src/core/services/memory-inbox-service.ts';
+import {
+  advanceMemoryCandidateStatus,
+  verifyMemoryCandidateEntry,
+} from '../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../src/core/services/memory-inbox-promotion-service.ts';
 import { recordCanonicalHandoff } from '../src/core/services/canonical-handoff-service.ts';
 import { runDreamCycleMaintenance } from '../src/core/services/dream-cycle-maintenance-service.ts';
@@ -491,6 +494,14 @@ async function seedStalePromotedCandidate(engine: SQLiteEngine, id: string, scop
     id,
     next_status: 'staged_for_review',
     review_reason: 'Prepared for stale validation.',
+  });
+  await verifyMemoryCandidateEntry(engine, {
+    id,
+    verification_status: 'verified',
+    verification_method: 'source_recheck',
+    verification_evidence: `Verified dream-cycle stale fixture ${id}.`,
+    verification_source_refs: [`Fixture verification for ${id}`],
+    verified_at: '2026-06-16T00:00:00Z',
   });
   await promoteMemoryCandidateEntry(engine, {
     id,

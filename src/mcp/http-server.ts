@@ -96,8 +96,12 @@ export function createMcpHttpHandler(
           { 'Retry-After': '60' },
         );
       }
+      const boundedRequest = await boundHttpRequestBody(request);
+      if (!boundedRequest.ok) {
+        return jsonResponse(boundedRequest.body, 413);
+      }
       return handleMcpOAuthRequest({
-        request,
+        request: boundedRequest.request,
         state: oauthState,
         issueAccessToken: (input) => issueMcpHttpAccessToken(options.config, input),
       });
@@ -111,7 +115,7 @@ export function createMcpHttpHandler(
       return jsonResponse({ error: 'not_found' }, 404);
     }
 
-    const boundedRequest = await boundMcpRequestBody(request);
+    const boundedRequest = await boundHttpRequestBody(request);
     if (!boundedRequest.ok) {
       return jsonResponse(boundedRequest.body, 413);
     }
@@ -449,18 +453,17 @@ async function handleHealth(enginePromise: Promise<BrainEngine>): Promise<Respon
   }
 }
 
-type BoundedMcpRequest =
+type BoundedHttpRequest =
   | { ok: true; request: Request }
   | { ok: false; body: Record<string, unknown> };
 
-async function boundMcpRequestBody(request: Request): Promise<BoundedMcpRequest> {
+async function boundHttpRequestBody(request: Request): Promise<BoundedHttpRequest> {
   const contentLength = request.headers.get('content-length');
   if (contentLength) {
     const bodyBytes = Number(contentLength);
     if (Number.isFinite(bodyBytes) && bodyBytes > MAX_MCP_HTTP_BODY_BYTES) {
       return mcpRequestTooLarge();
     }
-    return { ok: true, request };
   }
 
   if (request.method !== 'POST' || !request.body) {
@@ -499,7 +502,7 @@ async function boundMcpRequestBody(request: Request): Promise<BoundedMcpRequest>
   };
 }
 
-function mcpRequestTooLarge(): BoundedMcpRequest {
+function mcpRequestTooLarge(): BoundedHttpRequest {
   return {
     ok: false,
     body: {

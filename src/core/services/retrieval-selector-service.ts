@@ -34,6 +34,7 @@ export function retrievalSelectorId(selector: RetrievalSelector): string {
   switch (selector.kind) {
     case 'page':
     case 'compiled_truth':
+    case 'frontmatter':
       baseId = `${selector.kind}:${scopeId}:${requireValue(selector.slug, `${selector.kind} selector requires slug`)}`;
       break;
     case 'section':
@@ -87,7 +88,7 @@ export function selectorFromSearchResult(result: SearchResult): RetrievalSelecto
     ? 'timeline_range'
     : result.chunk_source === 'compiled_truth'
       ? 'compiled_truth'
-      : 'page';
+      : 'frontmatter';
   return normalizeRetrievalSelector({
     kind,
     slug: result.slug,
@@ -109,6 +110,7 @@ function assertSelectorTarget(selector: RetrievalSelector): void {
   switch (selector.kind) {
     case 'page':
     case 'compiled_truth':
+    case 'frontmatter':
       requireValue(selector.slug, `${selector.kind} selector requires slug`);
       return;
     case 'section':

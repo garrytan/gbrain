@@ -92,6 +92,7 @@ describe('doctor command', () => {
       failed: 1,
       conflict: 3,
     });
+    expect(inputs.rls?.message).toBe('RLS enabled on configured core tables');
   });
 
   test('collectDoctorInputs detects active jobs with expired lock leases as stuck runtime work', async () => {

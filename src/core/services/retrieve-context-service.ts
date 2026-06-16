@@ -48,6 +48,23 @@ export type RetrieveContextCandidateSearch = (
   options: { limit: number },
 ) => Promise<SearchResult[]>;
 
+type CandidateSearchBackendGap =
+  | 'retrieval_backend_partial_failure'
+  | 'retrieval_backend_failed';
+
+interface CandidateSearchFailure {
+  query: string;
+  original_query: boolean;
+  message: string;
+}
+
+interface CandidateSearchPoolResult {
+  results: SearchResult[];
+  failures: CandidateSearchFailure[];
+  total_queries: number;
+  successful_queries: number;
+}
+
 export type RetrieveContextCandidateSignalBuilder = (
   engine: BrainEngine,
   input: BuildCandidateSignalsInput,
@@ -251,14 +268,15 @@ export async function retrieveContext(
     engine.searchKeyword(candidateQuery, { limit: options.limit }));
   // Orientation only depends on the query, not on the candidate search
   // results, so both run concurrently.
-  const [searchResults, orientation] = await Promise.all([
+  const [candidatePool, orientation] = await Promise.all([
     query.length > 0
-      ? searchCandidatePool(candidateSearch, query, searchLimit).then((pool) => rankSearchResults(pool))
-      : Promise.resolve([]),
+      ? searchCandidatePool(candidateSearch, query, searchLimit)
+      : Promise.resolve(emptyCandidateSearchPool()),
     input.include_orientation === false || query.length === 0
       ? Promise.resolve(emptyOrientation())
       : buildOrientation(engine, query, limit),
   ]);
+  const searchResults = rankSearchResults(candidatePool.results);
   const candidates = await groupCandidatesByCanonicalPage(engine, searchResults, limit, query, scopeGate);
   const baseRequiredReads = dedupeSelectorsByEvidence([
     ...candidates.map((candidate) => candidate.read_selector),
@@ -292,7 +310,7 @@ export async function retrieveContext(
       answerable_from_probe: false,
       allowed_probe_answer_kind: 'none',
       must_read_context: requiredReads.length > 0,
-      reason_codes: broadRetrievalReasonCodes(requiredReads, candidateSignals),
+      reason_codes: broadRetrievalReasonCodes(requiredReads, candidateSignals, candidateSearchBackendGap(candidatePool)),
     },
     candidates,
     required_reads: requiredReads,
@@ -302,10 +320,12 @@ export async function retrieveContext(
       orientation: graphAugmentation.orientation,
       candidate_signals: candidateSignals,
       required_read_limit: requiredReadLimit,
+      backend_gap_reason: candidateSearchBackendGap(candidatePool),
     }),
     orientation: graphAugmentation.orientation,
     ...candidateSignals,
     warnings: [
+      ...candidateSearchWarnings(candidatePool),
       ...(searchResults.length > 0 ? [SEARCH_CHUNK_WARNING] : []),
       ...graphAugmentation.warnings,
       ...(requiredReads.length === 0 && candidateSignals.candidate_signals.length > 0
@@ -542,27 +562,90 @@ function candidateSignalScopeId(input: RetrieveContextInput, requiredReads: Retr
 function broadRetrievalReasonCodes(
   requiredReads: RetrievalSelector[],
   candidateSignals: CandidateSignalResult,
+  backendGapReason?: CandidateSearchBackendGap,
 ): string[] {
-  if (requiredReads.length > 0) return ['probe_candidates_are_not_answer_ground'];
-  if (candidateSignals.candidate_signals.length > 0) return ['no_canonical_evidence_candidate_signals_present'];
-  return ['no_candidate'];
+  const reasonCodes = requiredReads.length > 0
+    ? ['probe_candidates_are_not_answer_ground']
+    : candidateSignals.candidate_signals.length > 0
+      ? ['no_canonical_evidence_candidate_signals_present']
+      : ['no_candidate'];
+  if (!backendGapReason) return reasonCodes;
+  if (backendGapReason === 'retrieval_backend_failed' && reasonCodes[0] === 'no_candidate') {
+    return ['retrieval_backend_failed'];
+  }
+  return [...reasonCodes, backendGapReason];
 }
 
 async function searchCandidatePool(
   candidateSearch: RetrieveContextCandidateSearch,
   query: string,
   limit: number,
-): Promise<SearchResult[]> {
+): Promise<CandidateSearchPoolResult> {
   const queries = candidateSearchQueries(query);
   const settled = await Promise.allSettled(
     queries.map((candidateQuery) => candidateSearch(candidateQuery, { limit })),
   );
+  const failures = settled.flatMap((result, index): CandidateSearchFailure[] => (
+    result.status === 'rejected'
+      ? [{
+        query: queries[index]!,
+        original_query: index === 0,
+        message: errorMessage(result.reason),
+      }]
+      : []
+  ));
   const resultLists = settled.flatMap((result) => (
     result.status === 'fulfilled' ? [result.value] : []
   ));
-  if (resultLists.length === 0) return [];
-  if (resultLists.length === 1) return resultLists[0]!;
-  return fuseCandidateSearchResults(resultLists);
+  const successfulQueries = settled.length - failures.length;
+  const results = resultLists.length === 0
+    ? []
+    : resultLists.length === 1
+      ? resultLists[0]!
+      : fuseCandidateSearchResults(resultLists);
+  return {
+    results,
+    failures,
+    total_queries: queries.length,
+    successful_queries: successfulQueries,
+  };
+}
+
+function emptyCandidateSearchPool(): CandidateSearchPoolResult {
+  return {
+    results: [],
+    failures: [],
+    total_queries: 0,
+    successful_queries: 0,
+  };
+}
+
+function candidateSearchBackendGap(pool: CandidateSearchPoolResult): CandidateSearchBackendGap | undefined {
+  if (pool.failures.length === 0) return undefined;
+  return pool.successful_queries === 0
+    ? 'retrieval_backend_failed'
+    : 'retrieval_backend_partial_failure';
+}
+
+function candidateSearchWarnings(pool: CandidateSearchPoolResult): string[] {
+  const gap = candidateSearchBackendGap(pool);
+  if (!gap) return [];
+  const firstFailure = pool.failures[0];
+  const firstFailureDetail = firstFailure
+    ? ` First failure${firstFailure.original_query ? ' on original query' : ''}: ${firstFailure.message}.`
+    : '';
+  const suffix = gap === 'retrieval_backend_failed'
+    ? 'No fallback query variant succeeded; do not treat this as absence of memory.'
+    : 'Continuing with successful fallback query variants; results may be incomplete.';
+  return [
+    `Candidate search failed for ${pool.failures.length} of ${pool.total_queries} query variant${pool.total_queries === 1 ? '' : 's'}. ${suffix}${firstFailureDetail}`,
+  ];
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error && error.message.trim().length > 0
+    ? error.message.trim()
+    : String(error);
 }
 
 function candidateSearchQueries(query: string): string[] {
@@ -1204,7 +1287,20 @@ async function bestReadSelectorForSearchResult(
   pageContentHash?: string,
 ): Promise<RetrievalSelector> {
   if (result.chunk_source === 'timeline') {
-    return selectorFromSearchResult(result);
+    const contentHash = pageContentHash
+      ?? (await engine.getPageProjection(result.slug))?.content_hash;
+    return normalizeRetrievalSelector({
+      ...selectorFromSearchResult(result),
+      content_hash: contentHash,
+    });
+  }
+  if (result.chunk_source === 'frontmatter') {
+    const contentHash = pageContentHash
+      ?? (await engine.getPageProjection(result.slug))?.content_hash;
+    return normalizeRetrievalSelector({
+      ...selectorFromSearchResult(result),
+      content_hash: contentHash,
+    });
   }
 
   const candidateSections = sections ?? await engine.listNoteSectionEntries({
@@ -1417,6 +1513,7 @@ function emptyReadPlan(nextActions: string[] = []): RetrieveContextReadPlan {
     max_depth: READ_PLAN_MAX_DEPTH,
     max_selectors: 0,
     selected_selectors: [],
+    selected_selector_snapshots: [],
     deferred_candidate_ids: [],
     gap_reasons: [],
     next_actions: nextActions,
@@ -1429,9 +1526,11 @@ function buildReadPlan(input: {
   orientation: RetrieveContextOrientation;
   candidate_signals: CandidateSignalResult;
   required_read_limit: number;
+  backend_gap_reason?: CandidateSearchBackendGap;
 }): RetrieveContextReadPlan {
-  const selectedSelectors = input.required_reads.map(retrievalSelectorId);
-  const selectedEvidence = new Set(input.required_reads.map(selectorEvidencePlanKey));
+  const selectedSelectorSnapshots = input.required_reads.map((selector) => normalizeRetrievalSelector(selector));
+  const selectedSelectors = selectedSelectorSnapshots.map(retrievalSelectorId);
+  const selectedEvidence = new Set(selectedSelectorSnapshots.map(selectorEvidencePlanKey));
   const deferredCandidateIds = input.candidates
     .filter((candidate) => !selectedEvidence.has(selectorEvidencePlanKey(candidate.read_selector)))
     .map((candidate) => candidate.candidate_id);
@@ -1451,12 +1550,16 @@ function buildReadPlan(input: {
   if (input.candidate_signals.candidate_signals.length > 0) {
     gapReasons.push('candidate_signals_are_non_canonical');
   }
+  if (input.backend_gap_reason) {
+    gapReasons.push(input.backend_gap_reason);
+  }
 
   return {
     mode: 'bounded_evidence',
     max_depth: READ_PLAN_MAX_DEPTH,
     max_selectors: input.required_read_limit,
     selected_selectors: selectedSelectors,
+    selected_selector_snapshots: selectedSelectorSnapshots,
     deferred_candidate_ids: deferredCandidateIds,
     gap_reasons: [...new Set(gapReasons)],
     next_actions: readPlanNextActions(
@@ -1464,6 +1567,7 @@ function buildReadPlan(input: {
       deferredCandidateIds,
       deferredOrientationReads.length > 0,
       input.candidate_signals,
+      input.backend_gap_reason,
     ),
   };
 }
@@ -1477,10 +1581,11 @@ function readPlanNextActions(
   deferredCandidateIds: string[],
   hasOrientationReads: boolean,
   candidateSignals: CandidateSignalResult,
+  backendGapReason?: CandidateSearchBackendGap,
 ): string[] {
   const actions: string[] = [];
   if (selectedSelectors.length > 0) {
-    actions.push('Call read_context with read_plan.selected_selectors before making factual claims.');
+    actions.push('Call read_context with read_plan.selected_selector_snapshots before making factual claims.');
   } else {
     actions.push('Do not answer factual claims until retrieve_context finds canonical read selectors.');
   }
@@ -1488,10 +1593,13 @@ function readPlanNextActions(
     actions.push('If read_context reports gaps, rerun retrieve_context with a narrower query or higher limit.');
   }
   if (hasOrientationReads) {
-    actions.push('Broad-synthesis route contributes orientation reads only; read_plan.selected_selectors remains the evidence boundary.');
+    actions.push('Broad-synthesis route contributes orientation reads only; read_plan.selected_selector_snapshots remains the evidence boundary.');
   }
   if (candidateSignals.candidate_signals.length > 0) {
     actions.push('Inspect candidate_signals separately; they are non-canonical and not answer evidence.');
+  }
+  if (backendGapReason) {
+    actions.push('Retrieval backend failures occurred; treat fallback or empty results as incomplete and retry when the backend is healthy.');
   }
   return actions;
 }
@@ -1510,7 +1618,12 @@ function toMatchedChunk(result: SearchResult, corpusLane?: RetrievalMatchedChunk
 }
 
 function canonicalEvidenceKey(selector: RetrievalSelector): string | undefined {
-  if (selector.kind !== 'section' && selector.kind !== 'compiled_truth' && selector.kind !== 'page') return undefined;
+  if (
+    selector.kind !== 'section'
+    && selector.kind !== 'compiled_truth'
+    && selector.kind !== 'frontmatter'
+    && selector.kind !== 'page'
+  ) return undefined;
   const contentHash = selector.content_hash?.trim();
   const retrievalPath = selector.path
     ? canonicalRetrievalPath(selector.path)

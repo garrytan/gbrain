@@ -107,6 +107,22 @@ describe('config loading', () => {
 });
 
 describe('redactUrl', () => {
+  test('redacts password in postgres:// URL through command helper', async () => {
+    const { redactUrl: redactCommandUrl } = await import('../src/commands/config.ts');
+    const url = 'postgres://user:secretpass@host:5432/dbname';
+    expect(redactCommandUrl(url)).toBe('postgres://user:***@host:5432/dbname');
+  });
+
+  test('redacts secret-like postgres URL query parameters through command helper', async () => {
+    const { redactUrl: redactCommandUrl } = await import('../src/commands/config.ts');
+    const url = 'postgresql://user:secretpass@host:5432/dbname?password=querypass&sslpassword=sslpass&application_name=mbrain';
+    const redacted = redactCommandUrl(url);
+    expect(redacted).toBe('postgresql://user:***@host:5432/dbname?password=***&sslpassword=***&application_name=mbrain');
+    expect(redacted).not.toContain('password=querypass');
+    expect(redacted).not.toContain('sslpassword=sslpass');
+    expect(redacted).not.toContain(':secretpass@');
+  });
+
   test('redacts password in postgresql:// URL', () => {
     const url = 'postgresql://user:secretpass@host:5432/dbname';
     expect(redactUrl(url)).toBe('postgresql://user:***@host:5432/dbname');
@@ -152,6 +168,6 @@ describe('config source correctness', () => {
       new URL('../src/commands/config.ts', import.meta.url),
       'utf-8',
     );
-    expect(configSource).toContain('postgresql:\\/\\/');
+    expect(configSource).toContain('postgres(?:ql)?');
   });
 });

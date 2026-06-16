@@ -179,8 +179,13 @@ describe('local SQLite CLI end-to-end', () => {
     });
     expect(timeline.some(entry => entry.summary.includes('Verified local SQLite CLI'))).toBe(true);
 
+    const sqliteCliPage = harness.call<{ content_hash: string }>('get_page', {
+      slug: 'systems/sqlite-cli',
+    });
+
     harness.call('put_page', {
       slug: 'systems/sqlite-cli',
+      expected_content_hash: sqliteCliPage.content_hash,
       content: pageMarkdown({
         type: 'system',
         title: 'SQLite CLI',

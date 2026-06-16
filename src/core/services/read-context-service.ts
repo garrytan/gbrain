@@ -28,6 +28,7 @@ import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
 import { normalizeRetrievalSelector, retrievalSelectorId } from './retrieval-selector-service.ts';
 import { retrieveContext } from './retrieve-context-service.ts';
 import { evaluateScopeGate } from './scope-gate-service.ts';
+import { buildFrontmatterSearchText } from '../markdown.ts';
 import { pathToSlug } from '../sync.ts';
 
 const DEFAULT_TOKEN_BUDGET = 900;
@@ -157,6 +158,8 @@ async function readSelector(
       return readPage(engine, selector, options, true);
     case 'compiled_truth':
       return readPage(engine, selector, options, false);
+    case 'frontmatter':
+      return readFrontmatter(engine, selector, options);
     case 'section':
       return readSection(engine, selector, options);
     case 'line_span':
@@ -193,6 +196,29 @@ async function readPage(
   }
 
   return readProjectedPageWithTimeline(engine, selector, options);
+}
+
+async function readFrontmatter(
+  engine: BrainEngine,
+  selector: RetrievalSelector,
+  options: Pick<ReadSelectorOptions, 'token_budget' | 'include_source_refs'>,
+): Promise<CanonicalContextRead | null> {
+  if (!selector.slug) return null;
+  const projection = await currentPageProjectionOrStale(engine, selector, selector.slug);
+  if (!projection) return null;
+
+  const text = buildFrontmatterSearchText(projection.frontmatter ?? {});
+  if (!text) return null;
+
+  return buildRead({
+    selector: selectorWithCurrentContentHash(selector, projection.content_hash),
+    title: `Frontmatter: ${projection.title}`,
+    text,
+    authority: 'canonical_compiled_truth',
+    source_refs: options.include_source_refs ? extractFrontmatterSourceRefs(projection.frontmatter) : [],
+    include_source_refs: options.include_source_refs,
+    token_budget: options.token_budget,
+  });
 }
 
 async function readSection(

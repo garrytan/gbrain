@@ -4,7 +4,10 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import type { MemoryCandidateCreateStatus, MemoryCandidateEntryInput } from '../src/core/types.ts';
-import { advanceMemoryCandidateStatus } from '../src/core/services/memory-inbox-service.ts';
+import {
+  advanceMemoryCandidateStatus,
+  verifyMemoryCandidateEntry,
+} from '../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../src/core/services/memory-inbox-promotion-service.ts';
 import { recordCanonicalHandoff } from '../src/core/services/canonical-handoff-service.ts';
 
@@ -41,6 +44,14 @@ async function seedPromotedCandidate(engine: SQLiteEngine, id: string, overrides
   await advanceMemoryCandidateStatus(engine, { id, next_status: 'staged_for_review' });
   const hasCanonicalTarget = overrides.target_object_type != null && overrides.target_object_id != null;
   if (hasCanonicalTarget) {
+    await verifyMemoryCandidateEntry(engine, {
+      id,
+      verification_status: 'verified',
+      verification_method: 'source_recheck',
+      verification_evidence: `Verified canonical handoff fixture ${id}.`,
+      verification_source_refs: [`Fixture verification for ${id}`],
+      verified_at: '2026-06-16T00:00:00Z',
+    });
     return promoteMemoryCandidateEntry(engine, {
       id,
       review_reason: `Promoted ${id} for canonical handoff.`,

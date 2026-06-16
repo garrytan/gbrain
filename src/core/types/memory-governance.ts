@@ -431,6 +431,7 @@ export type MemoryCandidatePromotionPreflightReason =
   | 'candidate_missing_target_object'
   | 'candidate_scope_conflict'
   | 'candidate_unknown_sensitivity'
+  | 'candidate_requires_verification'
   | 'candidate_requires_revalidation'
   | 'candidate_refuted'
   | 'candidate_possible_duplicate'

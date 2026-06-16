@@ -2032,6 +2032,16 @@ export function createMemoryInboxOperations(
         if (!patchedCandidate) {
           throw invalidParams(deps, `memory patch candidate changed before apply completed: ${candidateId}`);
         }
+        const verifiedCandidate = await tx.updateMemoryCandidateEntryVerification(candidate.id, {
+          verification_status: 'verified',
+          verification_method: 'command_execution',
+          verification_evidence: `Patch candidate ${candidate.id} was applied by apply_memory_patch_candidate with ledger event ${event.id}.`,
+          verification_source_refs: sourceRefs,
+          verified_at: reviewedAt,
+        });
+        if (!verifiedCandidate) {
+          throw invalidParams(deps, `memory patch candidate changed before apply verification completed: ${candidateId}`);
+        }
         const promoted = await promoteMemoryCandidateEntry(tx, {
           id: candidate.id,
           reviewed_at: reviewedAt,

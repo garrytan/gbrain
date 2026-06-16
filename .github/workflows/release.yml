@@ -36,8 +36,9 @@ jobs:
         env:
           # Keep release macOS full-test concurrency aligned with PR CI.
           TEST_WORKERS: 2
-          # PGLite WASM schema init regularly needs >20s on macOS runners.
-          TEST_TIMEOUT_MS: 60000
+          # PGLite WASM schema init and source-registry persistence tests can
+          # exceed 60s on loaded macOS runners.
+          TEST_TIMEOUT_MS: 120000
       - run: bun build --compile --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts
       - name: Repair macOS compiled signature
         if: matrix.os == 'macos-latest'
@@ -46,6 +47,10 @@ jobs:
           codesign --sign - --force bin/${{ matrix.artifact }}
       - name: Smoke compiled binary
         run: bin/${{ matrix.artifact }} --version
+      - name: Smoke compiled MCP binary
+        run: bun run smoke:installed-mcp
+        env:
+          MBRAIN_SMOKE_COMMAND: bin/${{ matrix.artifact }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: ${{ matrix.artifact }}

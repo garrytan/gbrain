@@ -3,7 +3,10 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
-import { advanceMemoryCandidateStatus } from '../src/core/services/memory-inbox-service.ts';
+import {
+  advanceMemoryCandidateStatus,
+  verifyMemoryCandidateEntry,
+} from '../src/core/services/memory-inbox-service.ts';
 import { resolveMemoryCandidateContradiction } from '../src/core/services/memory-inbox-contradiction-service.ts';
 import { promoteMemoryCandidateEntry } from '../src/core/services/memory-inbox-promotion-service.ts';
 
@@ -320,5 +323,13 @@ async function seedStagedCandidate(engine: SQLiteEngine, id: string, scopeId = '
 
 async function seedPromotedCandidate(engine: SQLiteEngine, id: string, scopeId = 'workspace:default') {
   await seedStagedCandidate(engine, id, scopeId);
+  await verifyMemoryCandidateEntry(engine, {
+    id,
+    verification_status: 'verified',
+    verification_method: 'source_recheck',
+    verification_evidence: `Verified contradiction fixture ${id}.`,
+    verification_source_refs: [`Fixture verification for ${id}`],
+    verified_at: '2026-06-16T00:00:00Z',
+  });
   await promoteMemoryCandidateEntry(engine, { id, review_reason: `Promoted ${id} for contradiction testing.` });
 }

@@ -268,6 +268,12 @@ export function prepareMcpToolParams(
   }
   if (
     toolName === 'put_page'
+    && prepared.expected_content_hash === undefined
+  ) {
+    prepared.expected_content_hash = null;
+  }
+  if (
+    toolName === 'put_page'
     && prepared.defer_derived === undefined
     && shouldDeferMcpPutPageDerived()
   ) {
@@ -597,6 +603,9 @@ function buildContextReadContinuations(
 }
 
 function selectedRetrieveContextRequiredReads(sourceResult: Record<string, unknown>): Record<string, unknown>[] {
+  const selectedSelectorSnapshots = selectedReadPlanSelectorSnapshots(sourceResult.read_plan);
+  if (selectedSelectorSnapshots.length > 0) return selectedSelectorSnapshots;
+
   const requiredReads = selectorArray(sourceResult.required_reads);
   const selectedSelectorIds = selectedReadPlanSelectorIds(sourceResult.read_plan);
   if (requiredReads.length === 0 || selectedSelectorIds.length === 0) return requiredReads;
@@ -612,6 +621,11 @@ function selectedRetrieveContextRequiredReads(sourceResult: Record<string, unkno
     .map(selectorId => readsById.get(selectorId))
     .filter((selector): selector is Record<string, unknown> => selector !== undefined);
   return selectedReads.length > 0 ? selectedReads : requiredReads;
+}
+
+function selectedReadPlanSelectorSnapshots(value: unknown): Record<string, unknown>[] {
+  if (!isRecord(value) || Array.isArray(value)) return [];
+  return selectorArray(value.selected_selector_snapshots);
 }
 
 function selectedReadPlanSelectorIds(value: unknown): string[] {

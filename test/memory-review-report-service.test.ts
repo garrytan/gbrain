@@ -8,7 +8,10 @@ import { operationsByName } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { createLifecycleForgettingServiceForEngine } from '../src/core/services/lifecycle-forgetting-engine-service.ts';
-import { advanceMemoryCandidateStatus } from '../src/core/services/memory-inbox-service.ts';
+import {
+  advanceMemoryCandidateStatus,
+  verifyMemoryCandidateEntry,
+} from '../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../src/core/services/memory-inbox-promotion-service.ts';
 import type { MemoryCandidateEntry } from '../src/core/types.ts';
 import {
@@ -1123,6 +1126,14 @@ describe('memory review report service', () => {
         next_status: 'staged_for_review',
         review_reason: 'Prepared for promotion.',
         reviewed_at: now,
+      });
+      await verifyMemoryCandidateEntry(engine, {
+        id: 'candidate:promoted-without-handoff',
+        verification_status: 'verified',
+        verification_method: 'source_recheck',
+        verification_evidence: 'Checked memory report fixture before promotion.',
+        verification_source_refs: ['Fixture verification for candidate:promoted-without-handoff'],
+        verified_at: '2026-06-16T00:00:00Z',
       });
       await promoteMemoryCandidateEntry(engine, {
         id: 'candidate:promoted-without-handoff',
