@@ -100,11 +100,9 @@ function resolveWorkspaceSkillsDir(
  * to gbrain's own skills/. Explicit env should win. Unset env → behavior
  * is unchanged from before.
  *
- * Write-path callers (skillpack install, skillify scaffold,
- * post-install-advisory) MUST use this function, not the read-only variant —
- * a write-path install-path fallback would let `gbrain skillpack install`
- * from `~` silently target the bundled gbrain repo's skills/ instead of the
- * user's workspace.
+ * write-path-fallbacks (like `gbrain skillpack scaffold` or `skillify scaffold`)
+ * must avoid install-path fallback, otherwise running from `~` could silently
+ * target the bundled gbrain repo's skills/ instead of the user's workspace.
  *
  * `startDir` + `env` params keep tests hermetic.
  */
@@ -211,9 +209,9 @@ function isGbrainRepoRoot(dir: string): boolean {
  * `gbrain check-resolvable`, `gbrain routing-eval`. Never from write paths.
  *
  * Why a separate function? `autoDetectSkillsDir` is shared with write paths
- * (`skillpack install`, `skillify scaffold`, `post-install-advisory`).
+ * (`skillpack scaffold`, `skillify scaffold`, `post-install-advisory`).
  * Adding the install-path fallback to the shared function would let
- * `gbrain skillpack install` from `~` silently target the bundled gbrain
+ * `gbrain skillpack scaffold` from `~` silently target the bundled gbrain
  * repo's skills/ instead of the user's actual workspace — a quiet data-flow
  * regression. Read-only callers don't write anything to the resolved path,
  * so the install-path fallback is safe for them.

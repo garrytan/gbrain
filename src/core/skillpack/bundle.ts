@@ -3,7 +3,7 @@
  *
  * gbrain ships a curated set of skills (plus shared rule/convention
  * files they depend on) that agents install into their OpenClaw
- * workspace via `gbrain skillpack install`. The source of truth is
+ * workspace via `gbrain skillpack scaffold`. The source of truth is
  * `openclaw.plugin.json` at the gbrain repo root.
  */
 
