@@ -2,6 +2,15 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.45.0] - 2026-06-16
+
+### Added
+- **Embedding fallback chain.** `embedding_fallback_chain` / `GBRAIN_EMBEDDING_FALLBACK_CHAIN` lets `embed()` try configured secondary embedding models on transient provider failures without masking config errors. Explicit per-call embedding-model overrides remain exact and do not use the global chain.
+- **Qwen3-Embedding via Ollama.** The Ollama recipe now lists Qwen3-Embedding models and threads flexible `dimensions` through the OpenAI-compatible path so a local fallback can match the active vector column width.
+
+### To take advantage of v0.42.45.0
+Set `GBRAIN_EMBEDDING_FALLBACK_CHAIN` to a comma-separated list such as `ollama:qwen3-embedding:4b`, ensure the fallback provider returns the same dimensions as the active column, then restart long-running gbrain daemons. See `skills/migrations/v0.42.45.0.md` for the operator runbook.
+
 ## [0.42.44.0] - 2026-06-13
 
 ### Fixed

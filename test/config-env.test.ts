@@ -128,4 +128,27 @@ describe('loadConfig env database URL precedence', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  test('GBRAIN_EMBEDDING_FALLBACK_CHAIN parses comma-separated model ids', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-config-env-'));
+    try {
+      await withEnv(
+        {
+          GBRAIN_HOME: home,
+          GBRAIN_DATABASE_URL: undefined,
+          DATABASE_URL: 'postgres://only:***@gbrain.test:5432/db',
+          GBRAIN_EMBEDDING_FALLBACK_CHAIN: ' ollama:qwen3-embedding:4b, voyage:voyage-3-large ',
+        },
+        () => {
+          const cfg = loadConfig();
+          expect(cfg?.embedding_fallback_chain).toEqual([
+            'ollama:qwen3-embedding:4b',
+            'voyage:voyage-3-large',
+          ]);
+        },
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

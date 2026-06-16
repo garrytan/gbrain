@@ -13,10 +13,11 @@ export const ollama: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm'],
-      default_dims: 768, // nomic-embed-text native dim
+      models: ['qwen3-embedding:4b', 'qwen3-embedding', 'qwen3-embedding:0.6b', 'qwen3-embedding:8b', 'nomic-embed-text', 'mxbai-embed-large', 'all-minilm'],
+      default_dims: 1536, // Qwen3-Embedding supports user-defined 32-4096 dims; keep existing OpenAI-sized brains compatible.
+      dims_options: [768, 1024, 1536, 2048, 2560, 4096],
       cost_per_1m_tokens_usd: 0,
-      price_last_verified: '2026-04-20',
+      price_last_verified: '2026-06-15',
       // Ollama's batch capacity depends on the locally loaded model + the
       // OLLAMA_NUM_PARALLEL config; no static cap to declare. v0.32 (#779).
       no_batch_cap: true,

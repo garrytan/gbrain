@@ -395,6 +395,7 @@ export function configureGateway(config: AIGatewayConfig): void {
     embedding_model: config.embedding_model ?? DEFAULT_EMBEDDING_MODEL,
     embedding_dimensions: config.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS,
     embedding_multimodal_model: config.embedding_multimodal_model,
+    embedding_fallback_chain: config.embedding_fallback_chain,
     expansion_model: config.expansion_model ?? DEFAULT_EXPANSION_MODEL,
     chat_model: config.chat_model ?? DEFAULT_CHAT_MODEL,
     chat_fallback_chain: config.chat_fallback_chain,
@@ -414,6 +415,7 @@ export function configureGateway(config: AIGatewayConfig): void {
   for (const m of [
     _config.embedding_model,
     _config.embedding_multimodal_model,
+    ...(_config.embedding_fallback_chain ?? []),
     _config.expansion_model,
     _config.chat_model,
     _config.reranker_model,
@@ -473,6 +475,7 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
   for (const m of [
     _config.embedding_model,
     _config.embedding_multimodal_model,
+    ...(_config.embedding_fallback_chain ?? []),
     _config.expansion_model,
     _config.chat_model,
     _config.reranker_model,
@@ -621,6 +624,20 @@ export function getChatModel(): string {
 
 export function getChatFallbackChain(): string[] {
   return requireConfig().chat_fallback_chain ?? [];
+}
+
+/**
+ * Get the configured embedding fallback chain. Returns [] when unset.
+ *
+ * Each entry is a "provider:modelId" string. On `AITransientError` from
+ * the primary `embedding_model`, `embed()` tries each entry in order before
+ * propagating the last error.
+ *
+ * Schema caveat: all entries must produce the same `embedding_dimensions`
+ * as the primary (the gateway does not cross-decode between sizes).
+ */
+export function getEmbeddingFallbackChain(): string[] {
+  return requireConfig().embedding_fallback_chain ?? [];
 }
 
 /**
@@ -1357,14 +1374,43 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   if (!texts || texts.length === 0) return [];
 
   const cfg = requireConfig();
-  // v0.36 (D10): caller may override the model. Used by the dynamic-embedding-
-  // column path so hybridSearch can embed via the column's provider, not the
-  // global default. resolveEmbeddingProvider validates the override at the
-  // recipe layer — bad model strings throw AIConfigError with a clear hint.
-  const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
-  const tracker = __budgetStore.getStore() ?? null;
-  const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
+  const primary = opts?.embeddingModel ?? getEmbeddingModel();
+  // v0.42 port: explicit per-call embeddingModel overrides are used by
+  // dynamic embedding columns and must remain exact. Do not apply the global
+  // fallback chain to those calls; a fallback vector for the wrong column is
+  // worse than a loud failure.
+  const chain = opts?.embeddingModel
+    ? [primary]
+    : [primary, ...getEmbeddingFallbackChain()].filter((m, i, arr) => !!m && arr.indexOf(m) === i);
   const truncated = texts.map(t => (t ?? '').slice(0, MAX_CHARS));
+
+  let lastTransient: AITransientError | null = null;
+  for (let i = 0; i < chain.length; i++) {
+    const modelStr = chain[i]!;
+    const isLast = i === chain.length - 1;
+    try {
+      return await embedWithModel(truncated, modelStr, cfg, opts);
+    } catch (err) {
+      if (err instanceof AITransientError && !isLast) {
+        lastTransient = err;
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  if (lastTransient) throw lastTransient;
+  throw new AIConfigError('No embedding model configured.');
+}
+
+async function embedWithModel(
+  truncated: string[],
+  modelStr: string,
+  cfg: AIGatewayConfig,
+  opts?: EmbedOpts,
+): Promise<Float32Array[]> {
+  const tracker = __budgetStore.getStore() ?? null;
+  const { model, recipe, modelId } = await resolveEmbeddingProvider(modelStr);
 
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the
@@ -1381,10 +1427,10 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
       label: 'gateway.embed',
     });
   }
+
   // Dim override (D10) — when caller passes `dimensions`, use it. Otherwise
   // fall back to the global cfg default. dimsProviderOptions throws a
-  // clear AIConfigError when a Voyage flexible-dim model gets an
-  // unsupported value (the existing v0.33.1.1 fail-loud path).
+  // clear AIConfigError when a flexible-dim model gets an unsupported value.
   const effectiveDims = opts?.dimensions ?? cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
   const providerOpts = dimsProviderOptions(
     recipe.implementation,
@@ -1399,7 +1445,8 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const charsPerToken = embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
 
   // Pre-split is gated on max_batch_tokens. Recipes without it (e.g. OpenAI)
-  // ride the fast path: one embedMany call, no recursion safety net.
+  // ride the fast path: one embedMany call, no recursion safety net. Each
+  // fallback link uses its own recipe policy and shrink state.
   const batches = maxBatchTokens
     ? splitByTokenBudget(truncated, Math.floor(maxBatchTokens * effectiveSafetyFactor(recipe)), charsPerToken)
     : [truncated];
@@ -1422,9 +1469,9 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
       // chars-per-token. On failure, A3 amended says charge the pessimistic
       // estimate too — embed has no output side, so the input estimate IS
       // the worst case.
-      const charsPerToken = recipe.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
+      const recordCharsPerToken = recipe.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
       const totalChars = truncated.reduce((s, t) => s + t.length, 0);
-      const inputTokens = Math.ceil(totalChars / Math.max(charsPerToken, 1));
+      const inputTokens = Math.ceil(totalChars / Math.max(recordCharsPerToken, 1));
       try {
         tracker.record({
           modelId: `${recipe.id}:${modelId}`,

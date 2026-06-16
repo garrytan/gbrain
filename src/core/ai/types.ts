@@ -347,6 +347,12 @@ export interface AIGatewayConfig {
    * Allows brains using OpenAI for text to use Voyage for image embeddings.
    */
   embedding_multimodal_model?: string;
+  /**
+   * Optional transient-failure fallback chain for `embed()`.
+   * Each entry is a "provider:modelId" string. See
+   * `GBrainConfig.embedding_fallback_chain` for semantics.
+   */
+  embedding_fallback_chain?: string[];
   /** Current expansion model as "provider:modelId". */
   expansion_model?: string;
   /** Default chat model for `gateway.chat()` callers (subagent default). */

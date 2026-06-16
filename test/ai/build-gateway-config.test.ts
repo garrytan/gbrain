@@ -84,4 +84,13 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
       },
     );
   });
+
+  test('threads embedding_fallback_chain into AIGatewayConfig', async () => {
+    await withEnv(envFor(null), async () => {
+      const cfg = buildGatewayConfig({
+        embedding_fallback_chain: ['ollama:qwen3-embedding:4b'],
+      } as unknown as GBrainConfig);
+      expect(cfg.embedding_fallback_chain).toEqual(['ollama:qwen3-embedding:4b']);
+    });
+  });
 });

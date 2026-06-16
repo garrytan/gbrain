@@ -45,6 +45,16 @@ export interface GBrainConfig {
   embedding_model?: string;
   embedding_dimensions?: number;
   /**
+   * Optional transient-failure fallback chain for `embed()`.
+   * Each entry is a "provider:modelId" string. On `AITransientError` from
+   * the primary embedding model, the gateway tries each entry in order
+   * before giving up.
+   *
+   * Schema caveat: all entries must produce the same `embedding_dimensions`
+   * as the primary (the gateway does not cross-decode between sizes).
+   */
+  embedding_fallback_chain?: string[];
+  /**
    * v0.37 (D9): user opted into deferred-setup mode at init time via
    * `gbrain init --no-embedding`. When true, embed callsites and `gbrain
    * import` refuse with a `gbrain config set embedding_model <id>` hint
@@ -521,6 +531,9 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.ZEROENTROPY_API_KEY ? { zeroentropy_api_key: process.env.ZEROENTROPY_API_KEY } : {}),
     ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
     ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
+    ...(process.env.GBRAIN_EMBEDDING_FALLBACK_CHAIN
+      ? { embedding_fallback_chain: process.env.GBRAIN_EMBEDDING_FALLBACK_CHAIN.split(',').map(s => s.trim()).filter(Boolean) }
+      : {}),
     ...(process.env.GBRAIN_EXPANSION_MODEL ? { expansion_model: process.env.GBRAIN_EXPANSION_MODEL } : {}),
     ...(process.env.GBRAIN_CHAT_MODEL ? { chat_model: process.env.GBRAIN_CHAT_MODEL } : {}),
     ...(process.env.GBRAIN_CHAT_FALLBACK_CHAIN

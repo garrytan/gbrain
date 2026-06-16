@@ -271,6 +271,7 @@ function configureGatewayForCli(): boolean {
     configureGateway({
       embedding_model: undefined,
       embedding_dimensions: undefined,
+      embedding_fallback_chain: undefined,
       expansion_model: undefined,
       chat_model: undefined,
       chat_fallback_chain: undefined,
@@ -282,6 +283,7 @@ function configureGatewayForCli(): boolean {
   configureGateway({
     embedding_model: config.embedding_model,
     embedding_dimensions: config.embedding_dimensions,
+    embedding_fallback_chain: config.embedding_fallback_chain,
     expansion_model: config.expansion_model,
     chat_model: config.chat_model,
     chat_fallback_chain: config.chat_fallback_chain,

@@ -173,6 +173,11 @@ describe('dims.dimsProviderOptions', () => {
     expect(opts).toBeUndefined();
   });
 
+  test('Qwen3 Ollama openai-compatible returns dimensions param', () => {
+    const opts = dimsProviderOptions('openai-compatible', 'qwen3-embedding:4b', 1536);
+    expect(opts).toEqual({ openaiCompatible: { dimensions: 1536 } });
+  });
+
   test('Voyage flexible-dim models return dimensions for the SDK shim', () => {
     const opts = dimsProviderOptions('openai-compatible', 'voyage-3-large', 1024);
     expect(opts).toEqual({ openaiCompatible: { dimensions: 1024 } });
