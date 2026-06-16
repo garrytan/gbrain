@@ -506,18 +506,61 @@ export async function runPhaseSynthesize(
 
     // Wait for every child to reach a terminal state. Tick yieldDuringPhase
     // every 5 min so the cycle lock TTL refreshes.
+    //
+    // Verbose progress is emitted to stderr (so `--json` mode still gets a
+    // clean stdout). Without this, an operator running the CLI in a tmux
+    // pane sees nothing between `[cycle.synthesize] start` and the final
+    // JSON payload — for a 50-subagent chunk that can be 15-25 minutes of
+    // silence, which makes it hard to tell a slow chunk apart from a stuck
+    // one. The per-child poll runs serially in childIds order, so emissions
+    // bunch when several children finish during a long wait on an earlier
+    // sibling; a background heartbeat fills the gap with queue snapshots.
+    process.stderr.write(`[dream:sync] orchestrator waiting on ${childIds.length} subagent(s)\n`);
+
+    const phaseStartMs = Date.now();
+    const heartbeat = setInterval(() => {
+      // Best-effort: query the queue for a fresh snapshot, no throw.
+      engine.executeRaw<{ status: string; n: string }>(
+        `SELECT status, COUNT(*)::text AS n
+           FROM minion_jobs
+          WHERE id = ANY($1::bigint[])
+          GROUP BY status`,
+        [childIds],
+      ).then((rows) => {
+        const c: Record<string, number> = { waiting: 0, active: 0, completed: 0, dead: 0, cancelled: 0, failed: 0 };
+        for (const r of rows) {
+          c[r.status] = parseInt(r.n, 10);
+        }
+        const elapsed = Math.round((Date.now() - phaseStartMs) / 1000);
+        process.stderr.write(
+          `[dream:sync] heartbeat (${elapsed}s) waiting=${c.waiting} active=${c.active} ` +
+          `completed=${c.completed} dead=${c.dead} cancelled=${c.cancelled} failed=${c.failed}\n`,
+        );
+      }).catch(() => { /* best-effort, never throw from heartbeat */ });
+    }, 20_000);
+
     const childOutcomes: Array<{ jobId: number; status: string }> = [];
     for (const jobId of childIds) {
+      const startWait = Date.now();
       try {
         const job = await waitForCompletion(queue, jobId, {
           timeoutMs: 35 * 60 * 1000,
           pollMs: 5 * 1000,
         });
         childOutcomes.push({ jobId, status: job.status });
+        const dur = Math.round((Date.now() - startWait) / 1000);
+        process.stderr.write(
+          `[dream:sync] subagent ${childOutcomes.length}/${childIds.length} ${job.status} ` +
+          `(job=${jobId} duration=${dur}s)\n`,
+        );
       } catch (e) {
         if (e instanceof TimeoutError) {
           childOutcomes.push({ jobId, status: 'timeout' });
+          process.stderr.write(
+            `[dream:sync] subagent ${childOutcomes.length}/${childIds.length} TIMEOUT (job=${jobId})\n`,
+          );
         } else {
+          clearInterval(heartbeat);
           throw e;
         }
       }
@@ -527,6 +570,8 @@ export async function runPhaseSynthesize(
       }
     }
 
+    clearInterval(heartbeat);
+
     // Collect slugs from put_page tool executions across the children
     // (codex finding #2: deterministic provenance, NOT pages.updated_at).
     // D6 orchestrator slug rewrite: chunkInfo drives post-hoc rewrite of
@@ -535,6 +580,9 @@ export async function runPhaseSynthesize(
     // v0.32.8: refs carry source_id so reverseWriteRefs picks the correct
     // (source, slug) row (currently always 'default' from subagent put_page).
     const writtenRefs = await collectChildPutPageSlugs(engine, childIds, childMeta);
+    process.stderr.write(
+      `[dream:sync] all subagents settled; dual-writing ${writtenRefs.length} page(s) to disk\n`,
+    );
 
     // Dual-write: reverse-render each DB row → markdown file, with the
     // orchestrator-computed deterministic frontmatter merged in (date,
@@ -548,6 +596,9 @@ export async function runPhaseSynthesize(
       writtenRefs,
       childMeta,
       cycleDate,
+    );
+    process.stderr.write(
+      `[dream:sync] dual-write complete (${reverseWriteCount} disk page(s))\n`,
     );
 
     // Summary index page (deterministic; orchestrator-written via direct
