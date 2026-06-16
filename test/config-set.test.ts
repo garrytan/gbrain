@@ -45,6 +45,10 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('orphans.exclude_prefixes');
   });
 
+  test('contains the orphans page-type exclusion knob (issue #2215)', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('orphans.exclude_types');
+  });
+
   test('no duplicate entries', () => {
     const set = new Set(KNOWN_CONFIG_KEYS);
     expect(set.size).toBe(KNOWN_CONFIG_KEYS.length);
