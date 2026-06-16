@@ -1332,16 +1332,6 @@ export interface BrainEngine {
   findOrphanPages(opts?: {
     sourceId?: string;
     sourceIds?: string[];
-    /**
-     * Drop pages whose `source_id` matches any entry here from the
-     * candidate set. Used by `gbrain orphans` when
-     * `orphans.skip_code_sources` is set so code-strategy sources don't
-     * contribute structurally meaningless orphans (files don't wikilink
-     * to files). Composes with `sourceId` / `sourceIds` (inclusion
-     * filters): the exclusion fires AFTER the inclusion narrows the
-     * candidate set. Empty array = no-op.
-     */
-    excludeSourceIds?: string[];
   }): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
 
   // Tags
