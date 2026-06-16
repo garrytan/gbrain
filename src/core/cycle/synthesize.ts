@@ -404,6 +404,9 @@ export async function runPhaseSynthesize(
     }
 
     const queue = new MinionQueue(engine);
+    const childQueueName = engine.kind === 'pglite'
+      ? `dream-inline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      : 'default';
     const childIds: number[] = [];
     /** Map child job_id → chunk metadata for D6 orchestrator-side slug rewrite. */
     const chunkInfo = new Map<number, { idx: number; hash6: string }>();
@@ -479,6 +482,7 @@ export async function runPhaseSynthesize(
           on_child_fail: 'continue',
           idempotency_key,
           timeout_ms: 30 * 60 * 1000, // 30 min per chunk
+          ...(childQueueName !== 'default' ? { queue: childQueueName } : {}),
         };
         const child = await queue.add(
           'subagent',
@@ -491,6 +495,15 @@ export async function runPhaseSynthesize(
           chunkInfo.set(child.id, { idx: i, hash6 });
         }
       }
+    }
+
+    // PGLite cannot be drained by a separate `gbrain jobs work` process: the
+    // file-backed engine is exclusive-lock single-process. For CLI/cron dream
+    // runs, spin a tiny in-process worker scoped to the private queue above so
+    // synthesize's subagent jobs actually execute instead of sitting in
+    // `waiting` until waitForCompletion times out.
+    if (engine.kind === 'pglite' && childIds.length > 0) {
+      await runPgliteSubagentsInline(engine, childIds, childQueueName);
     }
 
     // Wait for every child to reach a terminal state. Tick yieldDuringPhase
@@ -532,10 +545,12 @@ export async function runPhaseSynthesize(
     // engine.putPage so no allow-list path needed).
     const summaryDate = opts.date ?? today();
     const summarySlug = `dream-cycle-summaries/${summaryDate}`;
-    // Back-compat: writeSummaryPage takes string[] for display; map refs back to slugs.
+    // Keep report slugs as DB identity, but render source-aware disk/link slugs
+    // in the human summary so Obsidian links resolve to the files we actually write.
     const writtenSlugs = writtenRefs.map(r => r.slug);
+    const summarySlugs = writtenRefs.map(r => resolveDreamReverseWriteSlug(opts.brainDir, r.slug, r.source_id));
     if (SUMMARY_SLUG_RE.test(summarySlug)) {
-      await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, writtenSlugs, childOutcomes);
+      await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, summarySlugs, childOutcomes);
     }
 
     // Write completion timestamp ON SUCCESS only.
@@ -565,6 +580,40 @@ export async function runPhaseSynthesize(
   } catch (e) {
     return failed(makeError('InternalError', 'SYNTH_PHASE_FAIL',
       e instanceof Error ? (e.message || 'synthesize phase threw') : String(e)));
+  }
+}
+
+async function runPgliteSubagentsInline(
+  engine: BrainEngine,
+  childIds: number[],
+  queueName: string,
+): Promise<void> {
+  const { MinionWorker } = await import('../minions/worker.ts');
+  const { makeSubagentHandler } = await import('../minions/handlers/subagent.ts');
+
+  const queue = new MinionQueue(engine);
+  const worker = new MinionWorker(engine, {
+    queue: queueName,
+    concurrency: 1,
+    pollInterval: 100,
+    healthCheckInterval: 0,
+  });
+  worker.register('subagent', makeSubagentHandler({ engine }));
+
+  const workerDone = worker.start();
+  try {
+    await Promise.race([
+      Promise.all(childIds.map((jobId) => waitForCompletion(queue, jobId, {
+        timeoutMs: 35 * 60 * 1000,
+        pollMs: 250,
+      }))),
+      workerDone.then(() => {
+        throw new Error('PGLite inline subagent worker stopped before synthesize children completed');
+      }),
+    ]);
+  } finally {
+    worker.stop();
+    await workerDone.catch(() => {});
   }
 }
 
@@ -1070,6 +1119,56 @@ async function hasLegacySingleChunkCompletion(
 
 // ── Reverse-write DB rows → markdown files ───────────────────────────
 
+/**
+ * Resolve the slug used for reverse-written markdown inside `brainDir`.
+ *
+ * Dream subagents historically wrote virtual slugs prefixed with the repo
+ * source id (for example `wiki/personal/reflections/...`). In a source-aware
+ * checkout with `.gbrain-source = wiki`, `brainDir` is already the wiki root,
+ * so writing that slug literally creates `wiki/wiki/...`. Strip only this
+ * explicit active-source prefix for default-source dream rows; all other paths
+ * retain the old behavior.
+ */
+export function resolveDreamReverseWriteSlug(
+  brainDir: string,
+  slug: string,
+  sourceId: string,
+): string {
+  if (sourceId !== 'default') return slug;
+  const activeSourceId = readDotfileSourceId(brainDir);
+  if (!activeSourceId) return slug;
+  const prefix = `${activeSourceId}/`;
+  return slug.startsWith(prefix) ? slug.slice(prefix.length) : slug;
+}
+
+export function resolveDreamReverseWriteFilePath(
+  brainDir: string,
+  slug: string,
+  sourceId: string,
+): string {
+  // v0.32.8 F6: non-default sources land at brainDir/.sources/<id>/<slug>.md
+  // so same-slug-different-source pages don't collide. Default-source pages
+  // stay at brainDir/<slug>.md, except source-aware checkouts strip a matching
+  // virtual source prefix to avoid brainDir/<source>/<source>/... nesting.
+  if (sourceId !== 'default') {
+    return join(brainDir, '.sources', sourceId, `${slug}.md`);
+  }
+  return join(brainDir, `${resolveDreamReverseWriteSlug(brainDir, slug, sourceId)}.md`);
+}
+
+function readDotfileSourceId(brainDir: string): string | null {
+  const sourcePath = join(brainDir, '.gbrain-source');
+  if (!existsSync(sourcePath)) return null;
+  try {
+    const sourceId = readFileSync(sourcePath, 'utf8').trim();
+    if (!sourceId) return null;
+    validateSourceId(sourceId);
+    return sourceId;
+  } catch {
+    return null;
+  }
+}
+
 async function reverseWriteRefs(
   engine: BrainEngine,
   brainDir: string,
@@ -1084,12 +1183,7 @@ async function reverseWriteRefs(
     const tags = await engine.getTags(slug, { sourceId: source_id });
     try {
       const md = renderPageToMarkdown(page, tags);
-      // v0.32.8 F6: non-default sources land at brainDir/.sources/<id>/<slug>.md
-      // so same-slug-different-source pages don't collide. Default-source
-      // pages stay at brainDir/<slug>.md so single-source brains see no change.
-      const filePath = source_id === 'default'
-        ? join(brainDir, `${slug}.md`)
-        : join(brainDir, '.sources', source_id, `${slug}.md`);
+      const filePath = resolveDreamReverseWriteFilePath(brainDir, slug, source_id);
       mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(filePath, md, 'utf8');
       count++;

@@ -17,7 +17,15 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { splitTranscriptByBudget, rewriteChunkedSlug } from '../src/core/cycle/synthesize.ts';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  splitTranscriptByBudget,
+  rewriteChunkedSlug,
+  resolveDreamReverseWriteFilePath,
+  resolveDreamReverseWriteSlug,
+} from '../src/core/cycle/synthesize.ts';
 
 describe('splitTranscriptByBudget — single chunk path', () => {
   test('returns single-element array when content <= maxChars', () => {
@@ -172,6 +180,45 @@ describe('rewriteChunkedSlug — D6 zero-Sonnet-trust slug rewrite', () => {
 
   test('empty slug passes through', () => {
     expect(rewriteChunkedSlug('', 'abc123', 0)).toBe('');
+  });
+});
+
+describe('resolveDreamReverseWriteFilePath — source-aware wiki checkout guard', () => {
+  function withTempBrainDir(fn: (dir: string) => void): void {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-dream-reverse-'));
+    try {
+      fn(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test('strips active source prefix for default-source dream rows', () => {
+    withTempBrainDir((dir) => {
+      writeFileSync(join(dir, '.gbrain-source'), 'wiki\n', 'utf8');
+      expect(resolveDreamReverseWriteSlug(dir, 'wiki/personal/reflections/foo', 'default'))
+        .toBe('personal/reflections/foo');
+      expect(resolveDreamReverseWriteFilePath(dir, 'wiki/personal/reflections/foo', 'default'))
+        .toBe(join(dir, 'personal/reflections/foo.md'));
+    });
+  });
+
+  test('leaves default-source slugs unchanged without a matching source prefix', () => {
+    withTempBrainDir((dir) => {
+      writeFileSync(join(dir, '.gbrain-source'), 'wiki\n', 'utf8');
+      expect(resolveDreamReverseWriteSlug(dir, 'personal/reflections/foo', 'default'))
+        .toBe('personal/reflections/foo');
+      expect(resolveDreamReverseWriteFilePath(dir, 'personal/reflections/foo', 'default'))
+        .toBe(join(dir, 'personal/reflections/foo.md'));
+    });
+  });
+
+  test('preserves non-default source isolation under .sources', () => {
+    withTempBrainDir((dir) => {
+      writeFileSync(join(dir, '.gbrain-source'), 'wiki\n', 'utf8');
+      expect(resolveDreamReverseWriteFilePath(dir, 'wiki/personal/reflections/foo', 'team'))
+        .toBe(join(dir, '.sources/team/wiki/personal/reflections/foo.md'));
+    });
   });
 });
 
