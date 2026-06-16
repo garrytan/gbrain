@@ -3194,7 +3194,6 @@ export class PGLiteEngine implements BrainEngine {
   async findOrphanPages(opts?: {
     sourceId?: string;
     sourceIds?: string[];
-    excludeSourceIds?: string[];
   }): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
     // Soft-delete filter on BOTH sides:
     //   - candidate: p.deleted_at IS NULL — soft-deleted pages aren't orphan candidates
@@ -3216,17 +3215,6 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.sourceId);
       sourceFilter = `AND p.source_id = $${params.length}`;
     }
-    // Issue #2215 follow-on: drop pages from explicitly-excluded sources
-    // (e.g. code-strategy sources via `orphans.skip_code_sources`).
-    // Applied AFTER the inclusion filter so a caller that scopes to a
-    // single source can still pass an exclusion list. Empty array stays
-    // out of the query so the generated SQL is identical to the
-    // pre-patch version when the knob is unused.
-    let excludeFilter = '';
-    if (opts?.excludeSourceIds && opts.excludeSourceIds.length > 0) {
-      params.push(opts.excludeSourceIds);
-      excludeFilter = `AND p.source_id <> ALL($${params.length}::text[])`;
-    }
     const { rows } = await this.db.query(
       `SELECT
          p.slug,
@@ -3235,7 +3223,6 @@ export class PGLiteEngine implements BrainEngine {
        FROM pages p
        WHERE p.deleted_at IS NULL
          ${sourceFilter}
-         ${excludeFilter}
          AND NOT EXISTS (
            SELECT 1
            FROM links l

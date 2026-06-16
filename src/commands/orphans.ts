@@ -95,60 +95,6 @@ export async function readUserExcludePrefixes(engine: BrainEngine): Promise<stri
   return parseUserExcludePrefixes(raw);
 }
 
-/**
- * Brain-level config key for the source-class skip toggle. When set to
- * `'true'`, `findOrphans` excludes pages from sources whose
- * `sources.config.strategy === 'code'` (the strategy the sync walker uses
- * to recognize code repos rather than markdown vaults). Code files don't
- * wikilink to other code files; surfacing them as orphans is structurally
- * meaningless noise.
- *
- *   gbrain config set orphans.skip_code_sources true
- *
- * On a brain with N code-source repos federated, this knob is the single
- * biggest signal-to-noise win in `gbrain orphans` reporting. Default is
- * unset (preserves today's behavior exactly — code-source pages count as
- * orphans). Opt-in.
- */
-export const SKIP_CODE_SOURCES_CONFIG_KEY = 'orphans.skip_code_sources';
-
-/**
- * Read the brain-level skip-code-sources toggle. Returns `true` only when
- * the config key is explicitly set to the string `'true'`; any other
- * value (unset, `'false'`, garbage, empty) returns `false`. Strict-parse
- * because a typo silently flipping the default would surprise users.
- */
-export async function readSkipCodeSources(engine: BrainEngine): Promise<boolean> {
-  const raw = await engine.getConfig(SKIP_CODE_SOURCES_CONFIG_KEY);
-  return raw === 'true';
-}
-
-/**
- * Enumerate the source IDs whose `config.strategy` equals `'code'`.
- * Returned set is used at the SQL filter layer to drop their pages from
- * both the orphan-list pass AND the F6 denominator pass. Defensive about
- * the double-encoded JSONB shape (`{"strategy":"code"}` stored as a JSON
- * string scalar): mirrors `readSourceConfig`'s `typeof === 'string'`
- * branch from the cache-fingerprint helper. Empty set when no
- * code-strategy sources exist; the caller treats empty as a no-op.
- */
-export async function readCodeSourceIds(engine: BrainEngine): Promise<Set<string>> {
-  const rows = await engine.executeRaw<{ id: string; config: unknown }>(
-    `SELECT id, config FROM sources WHERE archived = false`,
-  );
-  const result = new Set<string>();
-  for (const r of rows) {
-    let cfg: { strategy?: unknown } = {};
-    if (typeof r.config === 'string') {
-      try { cfg = JSON.parse(r.config); } catch { /* fall through with empty */ }
-    } else if (r.config && typeof r.config === 'object') {
-      cfg = r.config as { strategy?: unknown };
-    }
-    if (cfg.strategy === 'code') result.add(r.id);
-  }
-  return result;
-}
-
 // --- Filter logic ---
 
 /**
@@ -259,18 +205,6 @@ export async function findOrphans(
   // total_linkable.
   const userPrefixes = await readUserExcludePrefixes(engine);
 
-  // Issue #2215 follow-on: source-class skip. `orphans.skip_code_sources`
-  // routes to a Set<source_id> of every source with
-  // `config.strategy === 'code'`. Empty set when the toggle is off OR no
-  // code sources exist; engine queries fall through to the pre-patch
-  // path. Same single-read discipline as `userPrefixes`: read once,
-  // apply to both the orphan-list scan AND the denominator. A mismatch
-  // would break the F6 invariant.
-  const skipCode = await readSkipCodeSources(engine);
-  const excludeSourceIds: string[] = skipCode
-    ? [...(await readCodeSourceIds(engine))]
-    : [];
-
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('orphans.scan');
   const stopHb = startHeartbeat(progress, 'scanning pages for missing inbound links…');
@@ -278,10 +212,9 @@ export async function findOrphans(
   let total: number;
   let excludedAll: number;
   try {
-    allOrphans = await engine.findOrphanPages({
-      ...(sourceIds ? { sourceIds } : sourceId ? { sourceId } : {}),
-      ...(excludeSourceIds.length > 0 ? { excludeSourceIds } : {}),
-    });
+    allOrphans = await engine.findOrphanPages(
+      sourceIds ? { sourceIds } : sourceId ? { sourceId } : undefined,
+    );
     // v0.41.29.0 (Codex F6): correct the `total_linkable` denominator.
     // Enumerate ALL live pages (scoped) and count excluded-by-slug across
     // the WHOLE set — not just among orphans. The old
@@ -290,12 +223,6 @@ export async function findOrphans(
     // total_linkable and suppressing orphan warnings. `getAllSlugs` is NOT
     // used here because it does not filter soft-deleted rows; `total` must
     // match `findOrphanPages`'s `deleted_at IS NULL` candidate universe.
-    //
-    // Issue #2215 follow-on: when skipCode is on, the denominator also
-    // drops code-source pages so `total_linkable` matches the
-    // candidate-set semantics. Without this, the ratio would understate
-    // the per-vault orphan rate by counting code pages in the
-    // denominator that the numerator never saw.
     let scopeClause = '';
     const liveParams: unknown[] = [];
     if (sourceIds) {
@@ -304,10 +231,6 @@ export async function findOrphans(
     } else if (sourceId) {
       liveParams.push(sourceId);
       scopeClause = ` AND source_id = $${liveParams.length}`;
-    }
-    if (excludeSourceIds.length > 0) {
-      liveParams.push(excludeSourceIds);
-      scopeClause += ` AND source_id <> ALL($${liveParams.length}::text[])`;
     }
     const liveRows = await engine.executeRaw<{ slug: string }>(
       `SELECT slug FROM pages WHERE deleted_at IS NULL${scopeClause}`,
@@ -434,16 +357,6 @@ extend the list via config:
   gbrain config set orphans.exclude_prefixes 'resources/,transcripts/,agents/'
 
 Comma-separated, whitespace tolerated, additive to the shipped defaults.
-
-On a brain with code-strategy sources federated (e.g. gstack-code-* repos),
-files-do-not-wikilink-to-files makes their "orphan" count structurally
-meaningless. Skip those entirely with:
-
-  gbrain config set orphans.skip_code_sources true
-
-Opt-in; default unchanged. When on, every source whose
-sources.config.strategy equals 'code' drops out of both the orphan list
-AND the total_linkable denominator (so the per-vault ratio stays honest).
 `);
     return;
   }

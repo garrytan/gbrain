@@ -930,11 +930,6 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Comma-separated slug prefixes additive to the shipped DENY_PREFIXES in
   // src/commands/orphans.ts. See `gbrain orphans --help`.
   'orphans.exclude_prefixes',
-  // Orphans (issue #2215): brain-wide toggle that drops code-strategy
-  // sources from orphan reporting. Value is the string 'true' (opt-in).
-  // Any other value (unset / 'false' / garbage) preserves today's
-  // include-everything behavior. See `gbrain orphans --help`.
-  'orphans.skip_code_sources',
 ];
 
 /**
