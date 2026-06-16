@@ -1329,6 +1329,17 @@ export interface BrainEngine {
   findOrphanPages(opts?: {
     sourceId?: string;
     sourceIds?: string[];
+    /**
+     * Issue #2215 follow-on: drop pages whose `pages.type` matches any
+     * entry here from the candidate set. Used by `gbrain orphans` when
+     * `orphans.exclude_types` is set so code-symbol pages and
+     * system-artifact types don't contribute structurally meaningless
+     * orphans. Composes with `sourceId` / `sourceIds` (inclusion
+     * filters): the exclusion fires AFTER the inclusion narrows the
+     * candidate set. Empty array = no-op (SQL stays identical to the
+     * pre-patch shape).
+     */
+    excludeTypes?: string[];
   }): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
 
   // Tags
