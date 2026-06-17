@@ -12,7 +12,7 @@ export function paramToMcpSchema(
   const schemaTypes = param.nullable ? [...types, 'null'] : types;
   return {
     type: schemaTypes.length === 1 ? schemaTypes[0] : schemaTypes,
-    ...(param.description && !options.compact ? { description: param.description } : {}),
+    ...(param.description && (!options.compact || param.compactDescription) ? { description: param.description } : {}),
     ...(param.enum && shouldIncludeEnumSchema(param, options) ? { enum: param.enum } : {}),
     ...(param.items && shouldIncludeItemsSchema(param.items, options)
       ? { items: paramToMcpSchema(param.items, options) }
@@ -52,15 +52,17 @@ export function operationToMcpTool(op: Operation, options: McpToolSchemaOptions 
   const title = operationTitle(op.name);
   const isMutating = op.mutating === true;
   const isDestructive = isMutating && isDestructiveOperation(op.name);
-  const metadata = options.compact ? {} : {
-    title,
-    description: op.description,
-    annotations: {
-      readOnlyHint: !isMutating,
-      destructiveHint: isDestructive,
-      openWorldHint: false,
-    },
-  };
+  const metadata = options.compact
+    ? compactOperationMetadata(op)
+    : {
+      title,
+      description: op.description,
+      annotations: {
+        readOnlyHint: !isMutating,
+        destructiveHint: isDestructive,
+        openWorldHint: false,
+      },
+    };
   return {
     name: op.name,
     ...metadata,
@@ -72,6 +74,11 @@ export function operationToMcpTool(op: Operation, options: McpToolSchemaOptions 
       ...(!options.compact || required.length > 0 ? { required } : {}),
     },
   };
+}
+
+function compactOperationMetadata(op: Operation): { description?: string } {
+  if (!op.discovery?.compactDescription) return {};
+  return { description: op.discovery.description ?? op.description };
 }
 
 function operationTitle(name: string): string {

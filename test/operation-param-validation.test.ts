@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import {
   dispatchOperation,
+  type Operation,
+  type OperationContext,
   OperationError,
   operations,
   validateOperationParams,
-  type Operation,
-  type OperationContext,
 } from '../src/core/operations.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
 
@@ -108,6 +108,52 @@ describe('operation parameter validation', () => {
     await expect(dispatchOperation(ctx, op, { source_kind: 'email' }))
       .rejects.toThrow('source_kind must be one of: chat, note');
     expect(called).toBe(false);
+  });
+
+  test('retrieval enum validation explains semantic fields', async () => {
+    const ctx = {} as OperationContext;
+    const invalidScopeError = 'requested_scope is the access scope; put retrieval details in query';
+    const invalidScopeParams = { requested_scope: 'compiled technical context' };
+
+    await expect(dispatchOperation(ctx, operationByName('retrieve_context'), {
+      requested_scope: 'compiled technical context',
+    })).rejects.toThrow(invalidScopeError);
+    await expect(dispatchOperation(ctx, operationByName('read_context'), invalidScopeParams))
+      .rejects.toThrow(invalidScopeError);
+    await expect(handleToolCall({} as OperationContext['engine'], 'retrieve_context', invalidScopeParams))
+      .rejects.toThrow(invalidScopeError);
+    await expect(handleToolCall({} as OperationContext['engine'], 'read_context', invalidScopeParams))
+      .rejects.toThrow(invalidScopeError);
+
+    const directRequestedScopeCases: Array<[string, Record<string, unknown>]> = [
+      ['write_profile_memory_entry', { ...invalidScopeParams, source_ref: 'Source: test' }],
+      ['write_personal_episode_entry', { ...invalidScopeParams, source_ref: 'Source: test' }],
+      ['get_mixed_scope_bridge', { ...invalidScopeParams, personal_route_kind: 'profile', query: 'topic', subject: 'Alice' }],
+      ['get_mixed_scope_disclosure', { ...invalidScopeParams, personal_route_kind: 'profile', query: 'topic', subject: 'Alice' }],
+      ['get_personal_profile_lookup_route', { ...invalidScopeParams, subject: 'Alice' }],
+      ['get_personal_episode_lookup_route', { ...invalidScopeParams, title: 'Episode' }],
+      ['select_personal_write_target', { ...invalidScopeParams, target_kind: 'profile_memory' }],
+      ['preview_personal_export', invalidScopeParams],
+      ['evaluate_scope_gate', { ...invalidScopeParams, intent: 'broad_synthesis' }],
+      ['select_retrieval_route', { ...invalidScopeParams, intent: 'broad_synthesis', query: 'topic' }],
+      ['plan_retrieval_request', invalidScopeParams],
+      ['retrieve_context', invalidScopeParams],
+      ['read_context', invalidScopeParams],
+      ['classify_memory_scenario', invalidScopeParams],
+      ['plan_scenario_memory_request', invalidScopeParams],
+    ];
+
+    for (const [name, params] of directRequestedScopeCases) {
+      await expect(operationByName(name).handler(ctx, params)).rejects.toThrow(invalidScopeError);
+    }
+
+    await expect(dispatchOperation(ctx, operationByName('read_context'), {
+      include_timeline: 'none',
+    })).rejects.toThrow('use exclude when timeline text should be omitted');
+    await expect(operationByName('read_context').handler(ctx, { include_timeline: 'none' }))
+      .rejects.toThrow('use exclude when timeline text should be omitted');
+    await expect(handleToolCall({} as OperationContext['engine'], 'read_context', { include_timeline: 'none' }))
+      .rejects.toThrow('use exclude when timeline text should be omitted');
   });
 
   test('keeps documented string-list operation params schema-compatible', () => {

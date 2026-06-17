@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { type Operation, operations } from '../src/core/operations.ts';
 import { operationToMcpTool } from '../src/mcp/tool-schema.ts';
-import { operations, type Operation } from '../src/core/operations.ts';
 
 function operation(overrides: Partial<Operation>): Operation {
   return {
@@ -130,6 +130,31 @@ describe('MCP tool schema metadata', () => {
     }), { compact: true });
 
     expect(tool.inputSchema.required).toEqual(['slug']);
+  });
+
+  test('compact schemas preserve only explicitly opted-in descriptions', () => {
+    const tool = operationToMcpTool(operation({
+      description: 'Full tool description.',
+      discovery: {
+        compactDescription: true,
+        description: 'Compact tool description.',
+      },
+      params: {
+        compact_hint: {
+          type: 'string',
+          description: 'Compact parameter description.',
+          compactDescription: true,
+        },
+        verbose_hint: {
+          type: 'string',
+          description: 'Full parameter description.',
+        },
+      },
+    }), { compact: true });
+
+    expect(tool.description).toBe('Compact tool description.');
+    expect((tool.inputSchema.properties as any).compact_hint.description).toBe('Compact parameter description.');
+    expect((tool.inputSchema.properties as any).verbose_hint.description).toBeUndefined();
   });
 
   test('compact schemas omit bare object array item hints while preserving scalar item hints', () => {

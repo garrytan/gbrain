@@ -110,13 +110,13 @@ import type {
   PageProjection,
   PersonalEpisodeSourceKind,
   ProfileMemoryType,
-  RetrieveContextGraphFrontierOptions,
   RetrievalRequestPlannerInput,
   RetrievalRouteIntent,
   RetrievalSelector,
   RetrievalSelectorKind,
   RetrievalTrace,
   RetrievalTraceWriteOutcome,
+  RetrieveContextGraphFrontierOptions,
   ScopeGatePolicy,
 } from './types.ts';
 import { importContentHash, validateSlug } from './utils.ts';
@@ -180,9 +180,11 @@ export interface ParamDef {
   required?: boolean;
   nullable?: boolean;
   description?: string;
+  compactDescription?: boolean;
   capabilityRequired?: OperationCapability;
   default?: unknown;
   enum?: string[];
+  enumErrorHint?: string;
   compactEnum?: boolean;
   items?: ParamDef;
 }
@@ -232,7 +234,7 @@ function validateOperationParamValue(path: string, value: unknown, paramDef: Par
   }
 
   if (typeof value === 'string' && paramDef.enum && !paramDef.enum.includes(value)) {
-    throw new OperationError('invalid_params', `${path} must be one of: ${paramDef.enum.join(', ')}`);
+    throw new OperationError('invalid_params', formatEnumParamError(path, paramDef));
   }
 
   const itemDef = paramDef.items;
@@ -241,6 +243,15 @@ function validateOperationParamValue(path: string, value: unknown, paramDef: Par
       validateOperationParamValue(`${path}[${index}]`, item, itemDef);
     });
   }
+}
+
+function formatEnumParamError(path: string, paramDef: ParamDef): string {
+  return formatEnumError(path, paramDef.enum ?? [], paramDef.enumErrorHint);
+}
+
+function formatEnumError(path: string, allowed: readonly string[], hint?: string): string {
+  const base = `${path} must be one of: ${allowed.join(', ')}`;
+  return hint ? `${base}. ${hint}` : base;
 }
 
 function valueMatchesParamType(value: unknown, type: ParamType): boolean {
@@ -296,6 +307,10 @@ export interface OperationContext {
 export interface Operation {
   name: string;
   description: string;
+  discovery?: {
+    compactDescription?: boolean;
+    description?: string;
+  };
   params: Record<string, ParamDef>;
   handler: (ctx: OperationContext, params: Record<string, unknown>) => Promise<unknown>;
   mutating?: boolean;
@@ -453,6 +468,37 @@ const CONTEXT_TIMELINE_MODES = [
   'include',
   'exclude',
 ] as const;
+
+const REQUESTED_SCOPE_ENUM_ERROR_HINT = 'requested_scope is the access scope; put retrieval details in query.';
+const INCLUDE_TIMELINE_ENUM_ERROR_HINT = 'include_timeline controls returned timeline text; use exclude when timeline text should be omitted.';
+
+function requestedScopeParam(description: string): ParamDef {
+  return {
+    type: 'string',
+    description,
+    compactDescription: true,
+    enum: [...REQUESTED_SCOPES],
+    enumErrorHint: REQUESTED_SCOPE_ENUM_ERROR_HINT,
+  };
+}
+
+function parseRequestedScopeParam(value: unknown): typeof REQUESTED_SCOPES[number] | undefined {
+  return parseEnumParam(value, 'requested_scope', REQUESTED_SCOPES, REQUESTED_SCOPE_ENUM_ERROR_HINT);
+}
+
+function includeTimelineParam(): ParamDef {
+  return {
+    type: 'string',
+    description: 'Timeline inclusion mode: auto, include, or exclude. Use exclude to omit timeline text.',
+    compactDescription: true,
+    enum: [...CONTEXT_TIMELINE_MODES],
+    enumErrorHint: INCLUDE_TIMELINE_ENUM_ERROR_HINT,
+  };
+}
+
+function parseIncludeTimelineParam(value: unknown): typeof CONTEXT_TIMELINE_MODES[number] | undefined {
+  return parseEnumParam(value, 'include_timeline', CONTEXT_TIMELINE_MODES, INCLUDE_TIMELINE_ENUM_ERROR_HINT);
+}
 
 const MEMORY_ARTIFACT_KINDS = [
   'current_artifact',
@@ -1977,13 +2023,14 @@ function parseEnumParam<T extends string>(
   value: unknown,
   key: string,
   allowed: readonly T[],
+  hint?: string,
 ): T | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string') {
     throw new OperationError('invalid_params', `${key} must be a string.`);
   }
   if (!(allowed as readonly string[]).includes(value)) {
-    throw new OperationError('invalid_params', `${key} must be one of: ${allowed.join(', ')}.`);
+    throw new OperationError('invalid_params', formatEnumError(key, allowed, hint));
   }
   return value as T;
 }
@@ -4259,7 +4306,7 @@ const write_profile_memory_entry: Operation = {
     subject: { type: 'string', required: true, description: 'Exact profile-memory subject' },
     content: { type: 'string', required: true, description: 'Canonical profile-memory content' },
     query: { type: 'string', description: 'Plain-text request used for personal write-target preflight' },
-    requested_scope: { type: 'string', description: 'Optional explicit scope override', enum: ['work', 'personal', 'mixed'] },
+    requested_scope: requestedScopeParam('Optional access scope override for personal write preflight. Use query for topical retrieval details.'),
     source_ref: { type: 'string', required: true, description: 'Required single provenance string' },
     sensitivity: { type: 'string', description: 'Sensitivity classification', enum: ['public', 'personal', 'secret'] },
     export_status: { type: 'string', description: 'Export visibility status', enum: ['private_only', 'exportable'] },
@@ -4271,7 +4318,7 @@ const write_profile_memory_entry: Operation = {
     const sourceRef = requirePersonalSourceRef(p.source_ref);
     const preflight = await selectPersonalWriteTarget(ctx.engine, {
       target_kind: 'profile_memory',
-      requested_scope: typeof p.requested_scope === 'string' ? p.requested_scope as any : undefined,
+      requested_scope: parseRequestedScopeParam(p.requested_scope),
       query: typeof p.query === 'string' ? p.query : undefined,
       subject: typeof p.subject === 'string' ? p.subject : undefined,
     });
@@ -4327,7 +4374,7 @@ const write_personal_episode_entry: Operation = {
     },
     summary: { type: 'string', required: true, description: 'Episode summary' },
     query: { type: 'string', description: 'Plain-text request used for personal write-target preflight' },
-    requested_scope: { type: 'string', description: 'Optional explicit scope override', enum: ['work', 'personal', 'mixed'] },
+    requested_scope: requestedScopeParam('Optional access scope override for personal write preflight. Use query for topical retrieval details.'),
     source_ref: { type: 'string', required: true, description: 'Required single provenance string' },
     candidate_id: { type: 'string', description: 'Optional linked candidate or profile id' },
   },
@@ -4336,7 +4383,7 @@ const write_personal_episode_entry: Operation = {
     const sourceRef = requirePersonalSourceRef(p.source_ref);
     const preflight = await selectPersonalWriteTarget(ctx.engine, {
       target_kind: 'personal_episode',
-      requested_scope: typeof p.requested_scope === 'string' ? p.requested_scope as any : undefined,
+      requested_scope: parseRequestedScopeParam(p.requested_scope),
       query: typeof p.query === 'string' ? p.query : undefined,
       title: typeof p.title === 'string' ? p.title : undefined,
     });
@@ -5082,7 +5129,7 @@ const get_mixed_scope_bridge: Operation = {
   name: 'get_mixed_scope_bridge',
   description: 'Resolve the published explicit mixed-scope bridge across one work route and one personal route.',
   params: {
-    requested_scope: { type: 'string', description: 'Explicit scope override; must be mixed for this route', enum: ['work', 'personal', 'mixed'] },
+    requested_scope: requestedScopeParam('Access scope override; must be mixed for this route. Use query for topical retrieval details.'),
     personal_route_kind: { type: 'string', required: true, description: 'Personal-side route kind for the bridge', enum: ['profile', 'episode'] },
     map_id: { type: 'string', description: 'Optional context map id for the work-side broad synthesis route' },
     scope_id: { type: 'string', description: 'Work-side scope id for broad synthesis (default: workspace:default)' },
@@ -5115,7 +5162,7 @@ const get_mixed_scope_bridge: Operation = {
     }
 
     return getMixedScopeBridge(ctx.engine, {
-      requested_scope: typeof p.requested_scope === 'string' ? p.requested_scope as any : undefined,
+      requested_scope: parseRequestedScopeParam(p.requested_scope),
       personal_route_kind: personalRouteKind as any,
       map_id: typeof p.map_id === 'string' ? p.map_id : undefined,
       scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
@@ -5135,7 +5182,7 @@ const get_mixed_scope_disclosure: Operation = {
   name: 'get_mixed_scope_disclosure',
   description: 'Project a resolved mixed-scope bridge into a visibility-safe disclosure artifact.',
   params: {
-    requested_scope: { type: 'string', description: 'Explicit scope override; must be mixed for this route', enum: ['work', 'personal', 'mixed'] },
+    requested_scope: requestedScopeParam('Access scope override; must be mixed for this route. Use query for topical retrieval details.'),
     personal_route_kind: { type: 'string', required: true, description: 'Personal-side route kind for the bridge', enum: ['profile', 'episode'] },
     map_id: { type: 'string', description: 'Optional context map id for the work-side broad synthesis route' },
     scope_id: { type: 'string', description: 'Work-side scope id for broad synthesis (default: workspace:default)' },
@@ -5168,7 +5215,7 @@ const get_mixed_scope_disclosure: Operation = {
     }
 
     return getMixedScopeDisclosure(ctx.engine, {
-      requested_scope: typeof p.requested_scope === 'string' ? p.requested_scope as any : undefined,
+      requested_scope: parseRequestedScopeParam(p.requested_scope),
       personal_route_kind: personalRouteKind as any,
       map_id: typeof p.map_id === 'string' ? p.map_id : undefined,
       scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
@@ -5189,7 +5236,7 @@ const get_personal_profile_lookup_route: Operation = {
   description: 'Resolve an exact personal profile-memory route for personal/profile lookup intent.',
   params: {
     scope_id: { type: 'string', description: 'Personal profile-memory scope id (default: personal:default)' },
-    requested_scope: { type: 'string', description: 'Optional explicit scope override for gate enforcement', enum: ['work', 'personal', 'mixed'] },
+    requested_scope: requestedScopeParam('Optional access scope override for gate enforcement. Use query for topical retrieval details.'),
     query: { type: 'string', description: 'Optional natural-language query for gate inference' },
     subject: { type: 'string', required: true, description: 'Exact personal profile subject' },
     profile_type: {
@@ -5201,7 +5248,7 @@ const get_personal_profile_lookup_route: Operation = {
   handler: async (ctx, p) => {
     return getPersonalProfileLookupRoute(ctx.engine, {
       scope_id: String(p.scope_id ?? DEFAULT_PROFILE_MEMORY_SCOPE_ID),
-      requested_scope: typeof p.requested_scope === 'string' ? p.requested_scope as any : undefined,
+      requested_scope: parseRequestedScopeParam(p.requested_scope),
       query: typeof p.query === 'string' ? p.query : undefined,
       subject: String(p.subject),
       profile_type: typeof p.profile_type === 'string' ? p.profile_type as any : undefined,
@@ -5215,7 +5262,7 @@ const get_personal_episode_lookup_route: Operation = {
   description: 'Resolve an exact personal episode route for personal/episode lookup intent.',
   params: {
     scope_id: { type: 'string', description: 'Personal episode scope id (default: personal:default)' },
-    requested_scope: { type: 'string', description: 'Optional explicit scope override for gate enforcement', enum: ['work', 'personal', 'mixed'] },
+    requested_scope: requestedScopeParam('Optional access scope override for gate enforcement. Use query for topical retrieval details.'),
     query: { type: 'string', description: 'Optional natural-language query for gate inference' },
     title: { type: 'string', required: true, description: 'Exact personal episode title' },
     source_kind: {
@@ -5227,7 +5274,7 @@ const get_personal_episode_lookup_route: Operation = {
   handler: async (ctx, p) => {
     return getPersonalEpisodeLookupRoute(ctx.engine, {
       scope_id: String(p.scope_id ?? DEFAULT_PERSONAL_EPISODE_SCOPE_ID),
-      requested_scope: typeof p.requested_scope === 'string' ? p.requested_scope as any : undefined,
+      requested_scope: parseRequestedScopeParam(p.requested_scope),
       query: typeof p.query === 'string' ? p.query : undefined,
       title: String(p.title),
       source_kind: typeof p.source_kind === 'string' ? p.source_kind as any : undefined,
@@ -5246,7 +5293,7 @@ const select_personal_write_target: Operation = {
       description: 'One of profile_memory or personal_episode',
       enum: ['profile_memory', 'personal_episode'],
     },
-    requested_scope: { type: 'string', description: 'Optional explicit scope override', enum: ['work', 'personal', 'mixed'] },
+    requested_scope: requestedScopeParam('Optional access scope override for personal write-target selection. Use query for topical retrieval details.'),
     query: { type: 'string', description: 'Optional plain-text request used for scope classification' },
     subject: { type: 'string', description: 'Optional profile-memory subject when target_kind is profile_memory' },
     title: { type: 'string', description: 'Optional personal-episode title when target_kind is personal_episode' },
@@ -5259,7 +5306,7 @@ const select_personal_write_target: Operation = {
 
     return selectPersonalWriteTarget(ctx.engine, {
       target_kind: targetKind as any,
-      requested_scope: typeof p.requested_scope === 'string' ? p.requested_scope as any : undefined,
+      requested_scope: parseRequestedScopeParam(p.requested_scope),
       query: typeof p.query === 'string' ? p.query : undefined,
       subject: typeof p.subject === 'string' ? p.subject : undefined,
       title: typeof p.title === 'string' ? p.title : undefined,
@@ -5272,13 +5319,13 @@ const preview_personal_export: Operation = {
   name: 'preview_personal_export',
   description: 'Preview the personal records that are currently exportable under published visibility rules.',
   params: {
-    requested_scope: { type: 'string', description: 'Optional explicit scope override', enum: ['work', 'personal', 'mixed'] },
+    requested_scope: requestedScopeParam('Optional access scope override for personal export preview. Use query for topical retrieval details.'),
     query: { type: 'string', description: 'Optional plain-text request used for scope classification' },
     scope_id: { type: 'string', description: 'Optional personal scope id for the export preview (default: personal:default)' },
   },
   handler: async (ctx, p) => {
     return previewPersonalExport(ctx.engine, {
-      requested_scope: typeof p.requested_scope === 'string' ? p.requested_scope as any : undefined,
+      requested_scope: parseRequestedScopeParam(p.requested_scope),
       query: typeof p.query === 'string' ? p.query : undefined,
       scope_id: typeof p.scope_id === 'string' ? p.scope_id : undefined,
     });
@@ -5291,7 +5338,7 @@ const evaluate_scope_gate: Operation = {
   description: 'Evaluate the deterministic scope gate for the current published retrieval stack.',
   params: {
     intent: { type: 'string', required: true, description: 'One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup' },
-    requested_scope: { type: 'string', description: 'Optional explicit scope override', enum: ['work', 'personal', 'mixed'] },
+    requested_scope: requestedScopeParam('Optional access scope override for scope-gate evaluation. Use query for topical retrieval details.'),
     task_id: { type: 'string', description: 'Task id used to derive task scope when present' },
     query: { type: 'string', description: 'Optional plain-text request used for signal detection' },
     repo_path: { type: 'string', description: 'Optional repo path or file path used for work-signal detection' },
@@ -5313,7 +5360,7 @@ const evaluate_scope_gate: Operation = {
 
     return evaluateScopeGate(ctx.engine, {
       intent,
-      requested_scope: typeof p.requested_scope === 'string' ? p.requested_scope as any : undefined,
+      requested_scope: parseRequestedScopeParam(p.requested_scope),
       task_id: typeof p.task_id === 'string' ? p.task_id : undefined,
       query: typeof p.query === 'string' ? p.query : undefined,
       repo_path: typeof p.repo_path === 'string' ? p.repo_path : undefined,
@@ -5331,7 +5378,7 @@ const select_retrieval_route: Operation = {
     intent: { type: 'string', required: true, description: 'One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup' },
     task_id: { type: 'string', description: 'Task id for task_resume intent' },
     persist_trace: { type: 'boolean', description: 'Persist a Retrieval Trace for the selected route; task_id is optional and task-less traces are stored with task_id=null' },
-    requested_scope: { type: 'string', description: 'Optional explicit scope override', enum: ['work', 'personal', 'mixed'] },
+    requested_scope: requestedScopeParam('Optional access scope override for route selection. Use query for topical retrieval details.'),
     personal_route_kind: { type: 'string', description: 'Personal-side route kind for mixed_scope_bridge intent', enum: ['profile', 'episode'] },
     map_id: { type: 'string', description: 'Optional context map id for broad_synthesis intent' },
     scope_id: { type: 'string', description: 'Scope id for delegated route selection' },
@@ -5400,7 +5447,7 @@ const select_retrieval_route: Operation = {
       intent,
       task_id: typeof p.task_id === 'string' ? p.task_id : undefined,
       persist_trace: p.persist_trace === true,
-      requested_scope: typeof p.requested_scope === 'string' ? p.requested_scope as any : undefined,
+      requested_scope: parseRequestedScopeParam(p.requested_scope),
       personal_route_kind: typeof p.personal_route_kind === 'string' ? p.personal_route_kind as any : undefined,
       map_id: typeof p.map_id === 'string' ? p.map_id : undefined,
       scope_id: String(p.scope_id ?? (
@@ -5434,7 +5481,7 @@ const plan_retrieval_request: Operation = {
     allow_decomposition: { type: 'boolean', description: 'Allow deterministic decomposition into multiple route intents' },
     task_id: { type: 'string', description: 'Task id for task_resume decomposition or inference' },
     persist_trace: { type: 'boolean', description: 'Forwarded trace preference for planned selector inputs' },
-    requested_scope: { type: 'string', description: 'Optional explicit scope override', enum: [...REQUESTED_SCOPES] },
+    requested_scope: requestedScopeParam('Optional access scope override for retrieval planning. Use query for topical retrieval details.'),
     personal_route_kind: { type: 'string', description: 'Personal-side route kind for mixed_scope_bridge planning', enum: [...PERSONAL_ROUTE_KINDS] },
     map_id: { type: 'string', description: 'Optional context map id for broad_synthesis planning' },
     scope_id: { type: 'string', description: 'Scope id for planned route selection' },
@@ -5465,7 +5512,7 @@ const plan_retrieval_request: Operation = {
       allow_decomposition: p.allow_decomposition === true,
       task_id: typeof p.task_id === 'string' ? p.task_id : undefined,
       persist_trace: p.persist_trace === true,
-      requested_scope: parseEnumParam(p.requested_scope, 'requested_scope', REQUESTED_SCOPES),
+      requested_scope: parseRequestedScopeParam(p.requested_scope),
       personal_route_kind: parseEnumParam(p.personal_route_kind, 'personal_route_kind', PERSONAL_ROUTE_KINDS),
       map_id: typeof p.map_id === 'string' ? p.map_id : undefined,
       scope_id: typeof p.scope_id === 'string' ? p.scope_id : undefined,
@@ -5490,6 +5537,10 @@ const plan_retrieval_request: Operation = {
 const retrieve_context: Operation = {
   name: 'retrieve_context',
   description: 'Agentic MBrain retrieval probe. Returns a bounded read_plan, required canonical reads, and non-canonical candidate_signals from Memory Inbox; chunks and candidate signals are not answer evidence. Call read_context on read_plan.selected_selector_snapshots before answering factual questions; use read_plan.selected_selectors only as a legacy selector-id fallback.',
+  discovery: {
+    compactDescription: true,
+    description: 'Core knowledge lookup: retrieve_context finds candidate context and required canonical reads. For factual answers, call read_context on read_plan.selected_selector_snapshots; read_plan.selected_selectors is a legacy fallback.',
+  },
   params: {
     query: { type: 'string', description: 'Raw user request or memory query' },
     selectors: {
@@ -5499,7 +5550,7 @@ const retrieve_context: Operation = {
     },
     task_id: { type: 'string', description: 'Optional active task id' },
     repo_path: { type: 'string', description: 'Optional active repository path' },
-    requested_scope: { type: 'string', description: 'Optional explicit scope override', enum: [...REQUESTED_SCOPES] },
+    requested_scope: requestedScopeParam('Optional access scope override for memory retrieval. Use query for topical retrieval details.'),
     source_kind: { type: 'string', description: 'Optional source kind for classification', enum: [...MEMORY_SCENARIO_SOURCE_KINDS] },
     known_subjects: {
       type: ['array', 'string'],
@@ -5521,7 +5572,7 @@ const retrieve_context: Operation = {
     selectors: parseRetrievalSelectors(p.selectors, 'selectors'),
     task_id: parseOptionalStringParam(p.task_id, 'task_id'),
     repo_path: parseOptionalStringParam(p.repo_path, 'repo_path'),
-    requested_scope: parseEnumParam(p.requested_scope, 'requested_scope', REQUESTED_SCOPES),
+    requested_scope: parseRequestedScopeParam(p.requested_scope),
     source_kind: parseEnumParam(p.source_kind, 'source_kind', MEMORY_SCENARIO_SOURCE_KINDS),
     known_subjects: parseKnownSubjectsParam(p.known_subjects, 'known_subjects'),
     limit: parsePositiveIntegerParam(p.limit, 'limit'),
@@ -5536,6 +5587,10 @@ const retrieve_context: Operation = {
 const read_context: Operation = {
   name: 'read_context',
   description: 'Read bounded canonical evidence for retrieval selectors. This is the evidence boundary before answering factual questions.',
+  discovery: {
+    compactDescription: true,
+    description: 'Core knowledge lookup: read_context reads canonical evidence for retrieval selectors and is the evidence boundary before factual answers.',
+  },
   params: {
     query: { type: 'string', description: 'Optional natural-language request for automatic reads' },
     selectors: {
@@ -5546,11 +5601,11 @@ const read_context: Operation = {
     reads: { type: 'string', description: 'Read selection mode', enum: [...CONTEXT_READ_MODES] },
     token_budget: { type: 'number', description: 'Approximate canonical read token budget' },
     max_selectors: { type: 'number', description: 'Maximum selectors to read before returning unread selectors' },
-    include_timeline: { type: 'string', description: 'Timeline inclusion mode', enum: [...CONTEXT_TIMELINE_MODES] },
+    include_timeline: includeTimelineParam(),
     include_source_refs: { type: 'boolean', description: 'Include extracted source refs when available' },
     persist_trace: { type: 'boolean', description: 'Persist a retrieval trace for this canonical read' },
     task_id: { type: 'string', description: 'Optional active task id' },
-    requested_scope: { type: 'string', description: 'Optional explicit scope override for scope-gate enforcement', enum: [...REQUESTED_SCOPES] },
+    requested_scope: requestedScopeParam('Optional access scope override for scope-gate enforcement. Use query for topical retrieval details.'),
   },
   mutating: false,
   handler: async (ctx, p) => withSelectorParamErrors(() => readContext(ctx.engine, {
@@ -5559,11 +5614,11 @@ const read_context: Operation = {
     reads: parseEnumParam(p.reads, 'reads', CONTEXT_READ_MODES),
     token_budget: parsePositiveIntegerParam(p.token_budget, 'token_budget'),
     max_selectors: parsePositiveIntegerParam(p.max_selectors, 'max_selectors'),
-    include_timeline: parseEnumParam(p.include_timeline, 'include_timeline', CONTEXT_TIMELINE_MODES),
+    include_timeline: parseIncludeTimelineParam(p.include_timeline),
     include_source_refs: typeof p.include_source_refs === 'boolean' ? p.include_source_refs : undefined,
     persist_trace: p.persist_trace === true,
     task_id: parseOptionalStringParam(p.task_id, 'task_id') ?? null,
-    requested_scope: parseEnumParam(p.requested_scope, 'requested_scope', REQUESTED_SCOPES),
+    requested_scope: parseRequestedScopeParam(p.requested_scope),
   })),
   cliHints: { name: 'read-context', aliases: { n: 'max_selectors' } },
 };
@@ -5575,7 +5630,7 @@ const classify_memory_scenario: Operation = {
     query: { type: 'string', description: 'Raw user request or system task' },
     task_id: { type: 'string', description: 'Optional active task id' },
     repo_path: { type: 'string', description: 'Optional active repository path' },
-    requested_scope: { type: 'string', description: 'Optional explicit scope override', enum: [...REQUESTED_SCOPES] },
+    requested_scope: requestedScopeParam('Optional access scope override for scenario classification. Use query for topical retrieval details.'),
     source_kind: { type: 'string', description: 'Optional source kind for classification', enum: [...MEMORY_SCENARIO_SOURCE_KINDS] },
     known_subjects: {
       type: ['array', 'string'],
@@ -5588,7 +5643,7 @@ const classify_memory_scenario: Operation = {
     query: parseOptionalStringParam(p.query, 'query'),
     task_id: parseOptionalStringParam(p.task_id, 'task_id'),
     repo_path: parseOptionalStringParam(p.repo_path, 'repo_path'),
-    requested_scope: parseEnumParam(p.requested_scope, 'requested_scope', REQUESTED_SCOPES),
+    requested_scope: parseRequestedScopeParam(p.requested_scope),
     source_kind: parseEnumParam(p.source_kind, 'source_kind', MEMORY_SCENARIO_SOURCE_KINDS),
     known_subjects: parseKnownSubjectsParam(p.known_subjects, 'known_subjects'),
   }),
@@ -5641,7 +5696,7 @@ const plan_scenario_memory_request: Operation = {
     query: { type: 'string', description: 'Raw user request or system task' },
     task_id: { type: 'string', description: 'Optional active task id' },
     repo_path: { type: 'string', description: 'Optional active repository path' },
-    requested_scope: { type: 'string', description: 'Optional explicit scope override', enum: [...REQUESTED_SCOPES] },
+    requested_scope: requestedScopeParam('Optional access scope override for scenario memory planning. Use query for topical retrieval details.'),
     source_kind: { type: 'string', description: 'Optional source kind for classification', enum: [...MEMORY_SCENARIO_SOURCE_KINDS] },
     known_subjects: {
       type: ['array', 'string'],
@@ -5659,7 +5714,7 @@ const plan_scenario_memory_request: Operation = {
     query: parseOptionalStringParam(p.query, 'query'),
     task_id: parseOptionalStringParam(p.task_id, 'task_id'),
     repo_path: parseOptionalStringParam(p.repo_path, 'repo_path'),
-    requested_scope: parseEnumParam(p.requested_scope, 'requested_scope', REQUESTED_SCOPES),
+    requested_scope: parseRequestedScopeParam(p.requested_scope),
     source_kind: parseEnumParam(p.source_kind, 'source_kind', MEMORY_SCENARIO_SOURCE_KINDS),
     known_subjects: parseKnownSubjectsParam(p.known_subjects, 'known_subjects'),
     artifacts: parseActivationArtifacts(p.artifacts, 'artifacts'),

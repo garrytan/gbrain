@@ -6,16 +6,16 @@
  * and exercises tools/call against an isolated explicit local SQLite brain.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { operations } from '../../src/core/operations.ts';
-import { operationToMcpTool } from '../../src/mcp/tool-schema.ts';
 import { DEFAULT_MCP_MAX_STDIO_FRAME_BYTES } from '../../src/mcp/stdio-frame-budget.ts';
+import { operationToMcpTool } from '../../src/mcp/tool-schema.ts';
 import { assertOk, createSqliteCliHarness, parseJsonSuffix } from './sqlite-cli-helpers.ts';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -270,6 +270,40 @@ describe('E2E: MCP Tool Generation', () => {
     expect((routeWriteback?.inputSchema.properties as any).evidence_kind.enum).toContain('agent_inferred');
     expect((routeWriteback?.inputSchema.properties as any).apply.type).toBe('boolean');
     expect((routeWriteback?.inputSchema.properties as any).target_snapshot_hash.type).toEqual(['string', 'null']);
+  });
+
+  test('compact MCP catalog keeps discovery text for canonical retrieval tools', () => {
+    const tools = operations.map((operation) => operationToMcpTool(operation, { compact: true }));
+    const retrieve = tools.find((tool) => tool.name === 'retrieve_context');
+    const read = tools.find((tool) => tool.name === 'read_context');
+    const sessionCapture = tools.find((tool) => tool.name === 'capture_agent_session_memory');
+
+    expect(retrieve?.description).toContain('canonical');
+    expect(retrieve?.description).toContain('read_context');
+    expect(retrieve?.description).toContain('read_plan.selected_selector_snapshots');
+    expect(retrieve?.description).toContain('read_plan.selected_selectors');
+    expect(read?.description).toContain('evidence');
+    expect(read?.description).toContain('selectors');
+    expect((retrieve?.inputSchema.properties as any).requested_scope.description).toContain('access scope');
+    expect((read?.inputSchema.properties as any).include_timeline.description).toContain('exclude');
+    expect(sessionCapture?.description).toBeUndefined();
+  });
+
+  test('server compact tool catalog preserves retrieval discovery contract', async () => {
+    const { createMcpToolCatalogProvider } = await import('../../src/mcp/server.ts');
+    const tools = createMcpToolCatalogProvider(operations).getTools({ compact: true });
+    const retrieve = tools.find((tool) => tool.name === 'retrieve_context');
+    const read = tools.find((tool) => tool.name === 'read_context');
+    const planRetrieval = tools.find((tool) => tool.name === 'plan_retrieval_request');
+    const classifyScenario = tools.find((tool) => tool.name === 'classify_memory_scenario');
+    const planScenario = tools.find((tool) => tool.name === 'plan_scenario_memory_request');
+
+    expect(retrieve?.description).toContain('required canonical reads');
+    expect(retrieve?.description).toContain('read_plan.selected_selector_snapshots');
+    expect(read?.description).toContain('evidence boundary');
+    for (const tool of [planRetrieval, classifyScenario, planScenario]) {
+      expect((tool?.inputSchema.properties as any).requested_scope.description).toContain('access scope');
+    }
   });
 
   test('MCP server module can be imported', async () => {
