@@ -16,7 +16,7 @@ Remote HTTP servers must be added through the GUI.
    Replace `YOUR-DOMAIN` with your ngrok domain (see
    [ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md) for setup).
 5. Set authentication to **Bearer Token** and paste your token
-   (create one with `bun run src/commands/auth.ts create "claude-desktop"`)
+   (create one with `gbrain auth create "claude-desktop"`)
 6. Save
 
 ## Verify

@@ -1,0 +1,23 @@
+// Routing eval fixtures for skills/functional-area-resolver. Each
+// positive-intent fixture contains at least one trigger string from the
+// skill's RESOLVER.md row as substring (structural matcher requirement
+// in src/core/routing-eval.ts:170).
+// Adversarial negative fixtures at the bottom guard against the
+// broadened triggers (D5:B) over-capturing intents that belong to
+// adjacent meta-skills like skillify, skill-creator, book-mirror,
+// concept-synthesis.
+{"intent":"My AGENTS.md too large at 30KB and hitting context limits, how do I shrink it","expected_skill":"functional-area-resolver"}
+{"intent":"The daily doctor says context-health is red because AGENTS.md too large","expected_skill":"functional-area-resolver"}
+{"intent":"How do I compress my resolver without losing routing accuracy","expected_skill":"functional-area-resolver"}
+{"intent":"RESOLVER.md too big — convert my 200-row skill resolver into functional areas","expected_skill":"functional-area-resolver"}
+{"intent":"What's the functional area dispatcher pattern for AGENTS.md","expected_skill":"functional-area-resolver"}
+{"intent":"My RESOLVER.md too big at 25KB, how do I shrink it","expected_skill":"functional-area-resolver"}
+{"intent":"I want to compress my resolver while keeping all the sub-skills reachable","expected_skill":"functional-area-resolver"}
+{"intent":"Explain the functional area dispatcher pattern and when to use it","expected_skill":"functional-area-resolver"}
+// Adversarial negatives. These intents pattern-match the broadened
+// triggers ("compress my resolver", "shrink routing table", etc.) but
+// the correct route is the target skill, not functional-area-resolver.
+{"intent":"Skillify this — make this proper from the routing-pattern notes","expected_skill":"skillify","ambiguous_with":["functional-area-resolver"]}
+{"intent":"Create a skill that compacts a routing file using AI","expected_skill":"skill-creator","ambiguous_with":["functional-area-resolver"]}
+{"intent":"Personalized version of this book about resolver and dispatcher design","expected_skill":"book-mirror","ambiguous_with":["functional-area-resolver"]}
+{"intent":"Synthesize my concepts about how routing files grow over time","expected_skill":"concept-synthesis","ambiguous_with":["functional-area-resolver"]}

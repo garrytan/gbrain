@@ -75,6 +75,73 @@ describe('LocalStorage', () => {
   });
 });
 
+// --- Path traversal containment ---
+
+describe('LocalStorage path traversal', () => {
+  test('blocks upload path traversal via ../', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-traversal-'));
+    try {
+      const storage = new LocalStorage(tmpDir);
+      await expect(storage.upload('../../etc/evil', Buffer.from('pwned'))).rejects.toThrow('Path traversal blocked');
+      await expect(storage.upload('../sibling/file', Buffer.from('x'))).rejects.toThrow('Path traversal blocked');
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  test('blocks download path traversal via ../', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-traversal-'));
+    try {
+      const storage = new LocalStorage(tmpDir);
+      await expect(storage.download('../../etc/passwd')).rejects.toThrow('Path traversal blocked');
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  test('blocks delete path traversal via ../', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-traversal-'));
+    try {
+      const storage = new LocalStorage(tmpDir);
+      await expect(storage.delete('../../../tmp/important')).rejects.toThrow('Path traversal blocked');
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  test('blocks list path traversal via ../', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-traversal-'));
+    try {
+      const storage = new LocalStorage(tmpDir);
+      await expect(storage.list('../../etc')).rejects.toThrow('Path traversal blocked');
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  test('blocks getUrl path traversal via ../', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-traversal-'));
+    try {
+      const storage = new LocalStorage(tmpDir);
+      await expect(storage.getUrl('../../etc/passwd')).rejects.toThrow('Path traversal blocked');
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  test('allows legitimate nested paths', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-traversal-'));
+    try {
+      const storage = new LocalStorage(tmpDir);
+      await storage.upload('pages/people/elon/avatar.png', Buffer.from('img'));
+      const data = await storage.download('pages/people/elon/avatar.png');
+      expect(data.toString()).toBe('img');
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+});
+
 describe('createStorage', () => {
   test('creates LocalStorage for backend: local', async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-factory-test-'));

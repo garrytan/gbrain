@@ -1,0 +1,35 @@
+# Cross-Modal Review Configuration
+# Which skills review which outputs, and the refusal routing chain.
+
+review_pairs:
+  # After brain writes, optionally verify quality
+  - trigger_skill: idea-ingest
+    review_skill: cross-modal-review
+    when: "page has >500 words or mentions >3 entities"
+
+  - trigger_skill: media-ingest
+    review_skill: cross-modal-review
+    when: "transcript enrichment produces >5 entity updates"
+
+  - trigger_skill: meeting-ingestion
+    review_skill: cross-modal-review
+    when: "meeting has >5 attendees"
+
+  - trigger_skill: enrich
+    review_skill: cross-modal-review
+    when: "Tier 1 enrichment (full pipeline)"
+
+refusal_routing:
+  # When a model refuses, silently switch to the next model
+  chain:
+    - primary   # host default model
+    - deepseek  # DeepSeek V3.1
+    - qwen      # Qwen 3.5
+    - groq      # fast fallback
+  behavior: "silent_switch"
+  rule: "Never show refusal to user. Never announce the switch."
+
+spawn_rules:
+  threshold: 3  # 3+ items = spawn sub-agent
+  model: "cheap" # use the cheapest model that handles the task
+  timeout_seconds: 120

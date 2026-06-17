@@ -35,6 +35,12 @@ const FIXTURES_DIR = resolve(import.meta.dir, 'fixtures');
 let engine: PostgresEngine | null = null;
 
 const ALL_TABLES = [
+  // v0.31: facts must come BEFORE pages too (FK to sources, but tests
+  // seed via direct SQL so the row stays referenced until truncated).
+  'facts',
+  // v0.28: takes + synthesis_evidence MUST come BEFORE pages because they FK pages.id
+  'synthesis_evidence',
+  'takes',
   'content_chunks',
   'links',
   'tags',
@@ -43,8 +49,14 @@ const ALL_TABLES = [
   'page_versions',
   'ingest_log',
   'files',
+  // v0.43 (#2095): volunteered-context feedback log — no FK to pages (slug
+  // join), but stale rows poison stats/count assertions across runs.
+  'context_volunteer_events',
   'pages',       // last because of foreign keys
   'config',
+  'minion_attachments',
+  'minion_inbox',
+  'minion_jobs',
 ];
 
 /**
@@ -70,10 +82,17 @@ export async function setupDB(): Promise<PostgresEngine> {
   await db.connect({ database_url: DATABASE_URL });
   await db.initSchema();
 
-  // Truncate all data tables (preserves schema + extensions)
+  // Truncate all data tables (preserves schema + extensions).
+  // Some tables (e.g. v0.28 takes/synthesis_evidence) only exist after
+  // migrations run via engine.connect() below, so skip non-existent tables.
   const conn = db.getConnection();
   for (const table of ALL_TABLES) {
-    await conn.unsafe(`TRUNCATE ${table} CASCADE`);
+    try {
+      await conn.unsafe(`TRUNCATE ${table} CASCADE`);
+    } catch (e: unknown) {
+      const code = (e as { code?: string })?.code;
+      if (code !== '42P01') throw e; // 42P01 = undefined_table; ignore those
+    }
   }
 
   // Re-seed config (initSchema inserts default config rows)
@@ -84,6 +103,11 @@ export async function setupDB(): Promise<PostgresEngine> {
 
   engine = new PostgresEngine();
   await engine.connect({ database_url: DATABASE_URL });
+  // Apply MIGRATIONS via the engine path. db.initSchema above only runs the
+  // embedded SCHEMA_SQL baseline; migrations like v31 (takes) live in the
+  // MIGRATIONS array and only run when engine.initSchema() executes them.
+  // Idempotent: re-running migrations on an already-migrated DB is a no-op.
+  await engine.initSchema();
   return engine;
 }
 
@@ -197,3 +221,74 @@ export async function dumpDBState(): Promise<string> {
  * Get the fixtures directory path.
  */
 export const FIXTURES_PATH = FIXTURES_DIR;
+
+/**
+ * Rewind schema state to `targetVersion` and re-apply migrations in
+ * version order up to (and including) `targetVersion`.
+ *
+ * Used by the v15→v23 chain E2E to simulate the field report's starting
+ * state (schema at v15, ~100 real rows, kick off full migration). Before
+ * this helper, no CLI flag or test hook existed to stop the migration
+ * chain at an intermediate version — `gbrain init --migrate-only` always
+ * ran to latest.
+ *
+ * Caveats:
+ *   - Postgres-only (the v15→v23 chain only matters for Postgres anyway;
+ *     PGLite's schema is monolithic).
+ *   - Destructive to existing DDL: dropping a migration that created
+ *     a table leaves tables behind. This helper re-runs migrations from
+ *     the CURRENT version (whatever config.version says) upward. It
+ *     does NOT rewind down. Pair with `setupDB()` to truncate first.
+ *   - After calling this, the schema is whatever `v1..targetVersion`
+ *     produced. Columns added by v(targetVersion+1)+ will be missing.
+ *
+ * Call order in a test:
+ *   const engine = await setupDB();         // latest schema, empty tables
+ *   await conn.unsafe('ALTER TABLE ...');   // optional: drop forward columns
+ *   await setConfigVersion(1);              // reset schema version
+ *   await runMigrationsUpTo(engine, 15);    // advance to v15
+ *   // ... seed fixture data at v15 shape ...
+ *   await runMigrationsFromCurrent(engine); // advance to latest
+ */
+export async function runMigrationsUpTo(
+  engine: PostgresEngine,
+  targetVersion: number,
+): Promise<void> {
+  const { MIGRATIONS } = await import('../../src/core/migrate.ts');
+  const sorted = [...MIGRATIONS].sort((a, b) => a.version - b.version);
+
+  const currentStr = await engine.getConfig('version');
+  const current = parseInt(currentStr || '1', 10);
+
+  const pending = sorted.filter(m => m.version > current && m.version <= targetVersion);
+
+  for (const m of pending) {
+    const sql = m.sqlFor?.[engine.kind] ?? m.sql;
+    if (sql) {
+      // Inline the transactional wrap from runMigrationSQL so we can
+      // stop cleanly at targetVersion without re-invoking the full
+      // runMigrations loop.
+      await engine.transaction(async (tx) => {
+        await tx.runMigration(m.version, sql);
+      });
+    }
+    if (m.handler) {
+      await m.handler(engine);
+    }
+    await engine.setConfig('version', String(m.version));
+  }
+}
+
+/**
+ * Reset `config.version` to the given value. Used to simulate a brain
+ * at an older schema state before applying partial migrations via
+ * `runMigrationsUpTo`. Does NOT undo DDL — just moves the version
+ * marker that the migration runner uses to decide what's pending.
+ */
+export async function setConfigVersion(version: number): Promise<void> {
+  const conn = db.getConnection();
+  await conn.unsafe(`
+    INSERT INTO config (key, value) VALUES ('version', $1)
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+  `, [String(version)]);
+}

@@ -1,0 +1,13 @@
+# Procfile — Render / Railway / Heroku.
+#
+# Fly.io users: see fly.toml.partial instead.
+#
+# Set secrets via the platform's env UI or CLI (e.g. `heroku config:set`,
+# `render env:set`, `railway variables set`). At minimum:
+#   DATABASE_URL=postgresql://...
+#   GBRAIN_ALLOW_SHELL_JOBS=1   # only if submitting shell jobs
+
+# Two-layer supervision: the platform restarts the container on host
+# events (OOM, deploy); `gbrain jobs supervisor` restarts the worker
+# on in-process crashes with exponential backoff.
+worker: gbrain jobs supervisor --concurrency 2

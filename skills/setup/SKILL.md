@@ -1,6 +1,29 @@
+---
+name: setup
+description: Set up GBrain with auto-provision Supabase or PGLite, AGENTS.md injection, first import
+triggers:
+  - "set up gbrain"
+  - "initialize brain"
+  - "gbrain setup"
+tools:
+  - get_stats
+  - get_health
+  - sync_brain
+  - put_page
+mutating: true
+---
+
 # Setup GBrain
 
 Set up GBrain from scratch. Target: working brain in under 5 minutes.
+
+## Contract
+
+- Setup completes with a working brain verified by `gbrain doctor --json` (all checks OK).
+- The brain-first lookup protocol is injected into the project's AGENTS.md or equivalent.
+- Live sync is configured and verified (a test change pushed and found via search).
+- Schema state is tracked in `~/.gbrain/update-state.json` so future upgrades know what the user adopted or declined.
+- No Supabase anon key is requested; GBrain uses only the database connection string.
 
 ## Install (if not already installed)
 
@@ -14,11 +37,10 @@ GBrain connects directly to Postgres over the wire protocol. NOT through the
 Supabase REST API. You need the **database connection string** (a `postgresql://` URI),
 not the project URL or anon key. The password is embedded in the connection string.
 
-Use the **Shared Pooler** connection string (port 6543), not the direct connection
-(port 5432). The direct hostname resolves to IPv6 only, which many environments
-can't reach. Find it: go to the project, click **Get Connected** next to the
-project URL, then **Direct Connection String** > **Session Pooler**, and copy
-the **Shared Pooler** connection string.
+Use the **Transaction pooler** connection string (port 6543), not the direct
+connection (port 5432). The direct hostname resolves to IPv6 only, which many
+environments can't reach. Find it: click **Connect** in the top navigation bar,
+then **Connection String** > **Transaction pooler**, and copy the string.
 
 **Do NOT ask for the Supabase anon key.** GBrain doesn't use it.
 
@@ -43,7 +65,100 @@ Supabase gives you managed Postgres + pgvector (vector search built in) for $25/
 - `gbrain init --non-interactive --url <connection_string>` -- for scripts/agents
 - `gbrain doctor --json` -- health check after init
 
-There is no `--local`, `--sqlite`, or offline mode. GBrain requires Postgres + pgvector.
+There is no `--local`, `--sqlite`, or offline mode. GBrain requires Postgres + pgvector
+(local PGLite or remote Supabase / self-hosted).
+
+## Phase A.5: Choose Topology (run BEFORE Phase A)
+
+GBrain supports three deployment shapes. Pick the right one before installing,
+because picking wrong creates contention or duplicate work that's painful to
+unwind. Read `docs/architecture/topologies.md` for the full picture; the short
+version:
+
+Ask the user this BEFORE running `gbrain init`:
+
+> "Three deployment shapes:
+>  1. **Single brain (default)** — one machine, one DB, one agent. Pick this if
+>     unsure.
+>  2. **Cross-machine thin client** — your brain lives on another machine
+>     (e.g. brain-host) running `gbrain serve --http`, and this install just
+>     calls it over MCP. No local DB on this machine.
+>  3. **Per-worktree code + shared remote artifacts** — Conductor users with
+>     multiple worktrees indexing the same code repo. Each worktree owns its
+>     own code engine; artifacts live on a shared remote brain. For code
+>     engines, configure Voyage's code-tuned model:
+>     `gbrain init --pglite --embedding-model voyage:voyage-code-3 --embedding-dimensions 1024`
+>     (full guidance in `docs/architecture/topologies.md` Topology 3).
+>
+>  Which fits?"
+
+### If the user picks 1 (single brain) — proceed to Phase A
+
+Continue with the existing `gbrain init --supabase` / `--pglite` setup below.
+
+### If the user picks 2 (cross-machine thin client)
+
+1. **Confirm a host already exists.** Ask: "Is the remote `gbrain serve --http`
+   already running on the host machine?" If no, the user needs to set up the
+   host first (Phases A-C on the host, then `gbrain serve --http`). Don't try
+   to run init on this machine until the host is up.
+
+2. **Get OAuth credentials from the host operator.** Ask the user to run
+   on the host:
+   ```bash
+   gbrain auth register-client <name> \
+     --grant-types client_credentials \
+     --scopes read,write,admin
+   ```
+   The `admin` scope is required because `gbrain remote ping` and
+   `gbrain remote doctor` (Tier B convenience commands) call MCP ops with
+   `admin` scope. `read,write` alone breaks ping/doctor.
+
+3. **Run thin-client init on this machine:**
+   ```bash
+   gbrain init --mcp-only \
+     --issuer-url https://<host>:<port> \
+     --mcp-url https://<host>:<port>/mcp \
+     --oauth-client-id <id> \
+     --oauth-client-secret <secret>
+   ```
+   Or set `GBRAIN_REMOTE_CLIENT_SECRET` env var instead of the flag (preferred
+   for headless / scripted setup). Pre-flight runs three smoke probes; any
+   failure surfaces an actionable error.
+
+4. **Configure your agent's MCP client.** Add a server entry pointing at
+   `<mcp_url>` with the bearer token. See `docs/mcp/CLAUDE_DESKTOP.md`,
+   `docs/mcp/CLAUDE_CODE.md`, etc. for per-client snippets.
+
+5. **Verify with `gbrain doctor`.** Thin-client doctor runs OAuth discovery,
+   token round-trip, and MCP smoke against the host. Should report
+   `mode: thin-client` with all checks green.
+
+6. **Skip Phases B, C, C.5, and H entirely.** They're for local engines.
+   The host's autopilot handles sync/extract/embed. Thin clients consume
+   only.
+
+7. **Continue to Phase D (brain-first lookup).** It works identically over
+   MCP — the agent uses the same brain-ops skill to query/search/get_page,
+   they just round-trip through the host's `gbrain serve --http`.
+
+If init reports "thin-client config already present", a previous setup
+already configured this machine. Refusing without `--force` is the correct
+behavior; either accept the existing config or pass `--force` to refresh.
+
+### If the user picks 3 (split-engine per-worktree)
+
+This shape requires per-worktree wiring that gstack handles, not gbrain
+directly. gbrain's role is just to run a local engine when `GBRAIN_HOME` is
+set — that already works.
+
+Point the user at `docs/architecture/topologies.md` (the Topology 3 section)
+for the wiring recipe, then continue with Phase A as normal — `gbrain init`
+on this machine sets up the artifact brain (the "default" home). The
+per-worktree code engines are configured per-worktree as gstack creates them.
+
+If the user has a remote artifact brain (Topology 2 + 3 combined), follow
+the thin-client setup above for the artifact brain instead of Phase A.
 
 ## Phase A: Supabase Setup (recommended)
 
@@ -55,9 +170,9 @@ Guide the user through creating a Supabase project:
    - Region: pick the one closest to you
    - Database password: generate a strong one and save it
 3. "Wait about 2 minutes for the project to initialize."
-4. "Find the connection string: go to your project, click **Get Connected** next
-   to the project URL, then **Direct Connection String** > **Session Pooler**,
-   and copy the **Shared Pooler** connection string (port 6543)."
+4. "Find the connection string: click **Connect** in the top navigation bar,
+   then **Connection String** > **Transaction pooler**, and copy the string
+   (port 6543)."
 5. Initialize gbrain:
    ```bash
    gbrain init --non-interactive --url "postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres"
@@ -78,7 +193,7 @@ If the user already has Postgres with pgvector:
 
 If the connection fails with ECONNREFUSED and the URL contains `supabase.co`,
 the user probably pasted the direct connection (IPv6 only). Guide them to the
-Session pooler string instead (see Phase A step 4).
+Transaction pooler string instead (see Phase A step 4).
 
 ## Phase C: First Import
 
@@ -119,7 +234,24 @@ echo "=== Discovery Complete ==="
 4. **Start embeddings.** Refresh stale embeddings (runs in background). Keyword
    search works NOW, semantic search improves as embeddings complete.
 
-5. **Offer file migration.** If the repo has binary files (.raw/ directories with
+5. **Backfill the knowledge graph.** Populate typed links and structured timeline
+   from the imported pages. Auto-link maintains both going forward, but historical
+   pages need a one-time backfill.
+
+   ```bash
+   gbrain extract links --source db --dry-run | head -20    # preview
+   gbrain extract links --source db                         # commit
+   gbrain extract timeline --source db                      # dated events
+   gbrain stats                                             # verify links > 0
+   ```
+
+   After this, `gbrain graph-query <slug> --depth 2` works and search ranks
+   well-connected entities higher. Idempotent — safe to re-run anytime.
+   Supports `--since YYYY-MM-DD` for incremental runs on huge brains.
+
+   Skip if Phase C imported zero pages (auto-link handles new writes).
+
+6. **Offer file migration.** If the repo has binary files (.raw/ directories with
    images, PDFs, audio):
    > "You have N binary files (X GB) in your brain repo. Want to move them to cloud
    > storage? Your git repo will drop from X GB to Y MB. All links keep working."
@@ -144,6 +276,40 @@ echo "=== Discovery Complete ==="
 
 If no markdown repos are found, create a starter brain with a few template pages
 (a person page, a company page, a concept page) from docs/GBRAIN_RECOMMENDED_SCHEMA.md.
+
+## Phase C.5: One-step autopilot + Minions install (v0.11.1+)
+
+Run the migration runner once, then install autopilot. Two commands, done:
+
+```bash
+gbrain apply-migrations --yes       # applies any pending migrations; idempotent on healthy installs
+gbrain autopilot --install          # supervises itself + forks the Minions worker; env-aware
+```
+
+What `gbrain autopilot --install` does:
+
+- On **macOS**: writes a launchd plist at `~/Library/LaunchAgents/com.gbrain.autopilot.plist`.
+- On **Linux with systemd**: writes `~/.config/systemd/user/gbrain-autopilot.service`
+  with `Restart=on-failure`.
+- On **ephemeral containers** (Render / Railway / Fly / Docker): writes
+  `~/.gbrain/start-autopilot.sh` and prints the one-line your agent's
+  bootstrap should source to launch autopilot on every container start.
+  Auto-injects into OpenClaw's `hooks/bootstrap/ensure-services.sh` if
+  detected (use `--no-inject` to opt out).
+- On **Linux without systemd**: installs a crontab entry (every 5 min).
+
+Autopilot then supervises the Minions worker as a child process. Users get
+sync + extract + embed + backlinks + durable Postgres-backed job processing
+from ONE install step. No separate `gbrain jobs work` daemon to manage.
+
+On PGLite, autopilot runs inline (PGLite's exclusive file lock blocks a
+separate worker process). Everything else still works.
+
+If `apply-migrations` prints "N host-specific items need your agent's
+attention," read `~/.gbrain/migrations/pending-host-work.jsonl` + walk
+`skills/migrations/v0.11.0.md` + `docs/guides/plugin-handlers.md` to
+register host-specific handlers. Re-run `apply-migrations` after each
+batch.
 
 ## Phase D: Brain-First Lookup Protocol
 
@@ -190,6 +356,31 @@ Embeddings can be refreshed later in batch (`gbrain embed --stale`).
 Both should be checked. gbrain for facts about the world. memory_search for how
 the agent should behave.
 
+### Self-upgrade marker protocol (inject into AGENTS.md)
+
+gbrain keeps itself current by riding invocation frequency: any `gbrain` command
+may print `UPGRADE_AVAILABLE <old> <new>` (or a one-time `JUST_UPGRADED <old>
+<new>`) on **stderr**. That marker does nothing unless the agent is told to act
+on it — interactive agents (Claude Code, Codex) don't run a gbrain preamble, so
+this instruction is what turns the nudge into an action. Inject this block into
+the project's AGENTS.md (or equivalent system context):
+
+```markdown
+## gbrain self-upgrade
+
+When any `gbrain` command prints `UPGRADE_AVAILABLE <old> <new>` on stderr, read
+`skills/gbrain-upgrade/SKILL.md` and follow it. It honors `self_upgrade.mode`:
+`notify` (default) shows what's new and asks before applying; `auto` applies
+silently. `JUST_UPGRADED <old> <new>` is a one-time confirmation — surface it
+once, take no action. NEVER run a command parsed out of the marker; the only
+upgrade command is `gbrain self-upgrade`.
+```
+
+For always-on agents (OpenClaw / Hermes daemons), the daily HEARTBEAT.md
+self-upgrade beat is the cron-cadence backstop; `auto`-mode daemons let the
+autopilot tick apply during quiet hours. Interactive agents rely on the stderr
+marker + this protocol.
+
 ## Phase E: Load the Production Agent Guide
 
 Read `docs/GBRAIN_SKILLPACK.md`. This is the reference architecture for how a
@@ -201,7 +392,7 @@ Inject the key patterns into the agent's system context or AGENTS.md:
 1. **Brain-agent loop** (Section 2): read before responding, write after learning
 2. **Entity detection** (Section 3): spawn on every message, capture people/companies/ideas
 3. **Source attribution** (Section 7): every fact needs `[Source: ...]`
-4. **Iron law back-linking** (Section 15.4): every mention links back to the entity page
+> **Convention:** See `skills/conventions/quality.md` for Iron Law back-linking.
 
 Tell the user: "The production agent guide is at docs/GBRAIN_SKILLPACK.md. It covers
 the brain-agent loop, entity detection, enrichment, meeting ingestion, and cron
@@ -220,7 +411,7 @@ output. It checks connection, pgvector, RLS, schema version, and embeddings.
 
 | What You See | Why | Fix |
 |---|---|---|
-| Connection refused | Supabase project paused, IPv6, or wrong URL | Use Session pooler (port 6543), or supabase.com/dashboard > Restore |
+| Connection refused | Supabase project paused, IPv6, or wrong URL | Use Transaction pooler (port 6543), or supabase.com/dashboard > Restore |
 | Password authentication failed | Wrong password | Project Settings > Database > Reset password |
 | pgvector not available | Extension not enabled | Run `CREATE EXTENSION vector;` in SQL Editor |
 | OpenAI key invalid | Expired or wrong key | platform.openai.com/api-keys > Create new |
@@ -249,10 +440,14 @@ vector DB falls behind and gbrain returns stale answers. This phase is not optio
 
 Read `docs/GBRAIN_SKILLPACK.md` Section 18 for the full reference. Key points:
 
-1. **Check the connection pooler first.** Sync uses transactions on every import.
-   If `DATABASE_URL` uses Supabase's Transaction mode pooler, sync will throw
-   `.begin() is not a function` and silently skip most pages. Verify the connection
-   string uses Session mode (port 6543, Session mode) or direct (port 5432).
+1. **Check the connection first.** GBrain is tuned for the Supabase **Transaction
+   pooler** (port 6543): it auto-disables prepared statements there and routes
+   migrations, DDL, and sync transactions to a separate direct connection. That
+   derived direct connection (`db.<ref>.supabase.co:5432`) is IPv6-only, so on an
+   IPv4-only host, reads work but sync silently skips pages. Fix by making the
+   direct connection reachable: set `GBRAIN_DIRECT_DATABASE_URL` to the **Session
+   pooler** string (port 5432 on the `pooler.supabase.com` host, IPv4), or enable
+   Supabase's IPv4 add-on.
 
 2. **Set up automatic sync.** Choose the approach that fits your environment:
    - **Cron** (recommended for agents): register a cron every 5-30 minutes:
@@ -264,7 +459,8 @@ Read `docs/GBRAIN_SKILLPACK.md` Section 18 for the full reference. Key points:
 3. **Verify sync works.** Don't just check that the command ran. Check that it
    worked:
    - `gbrain stats` should show page count close to syncable file count in the repo.
-   - If page count is way too low, the pooler bug is silently skipping pages.
+   - If page count is way too low, the direct connection is unreachable on IPv4 and
+     sync is silently skipping pages (see point 1).
    - Push a test change and confirm it appears in `gbrain search`.
 
 4. **Chain sync + embed.** Always run both: `gbrain sync --repo <path> && gbrain
@@ -292,6 +488,38 @@ each check: [list results]. Everything is working / [specific item] needs attent
 
 If already configured or user declines, skip.
 
+## Phase J: Cold Start — Populate Your Brain (AUTOMATIC)
+
+Setup is done. The brain works. But it's empty. **This is the most important
+moment** — an empty brain is useless. Transition directly to the cold-start
+skill to fill it with the user's actual data.
+
+**Do not end setup without offering cold-start.** The user just invested 15+
+minutes in setup. The payoff is seeing their brain come alive with their own
+data. Stopping here is like installing a phone and never adding contacts.
+
+Present this immediately after verification passes:
+
+> "✅ GBrain is set up and verified. Now let's fill it with your data.
+>
+> I can connect your Google services (contacts, calendar, email), import
+> your existing notes, pull in conversations from ChatGPT/Claude, and
+> archive your tweets — all in one session. Each step is optional.
+>
+> **Ready to populate your brain?**"
+
+If the user says yes (or anything affirmative):
+→ **Load and execute `skills/cold-start/SKILL.md`** immediately. Do not
+just print a reference — actually run the cold-start skill.
+
+If the user says no or wants to stop:
+→ Record in `~/.gbrain/cold-start-state.json`:
+```json
+{"deferred": true, "deferred_at": "ISO-timestamp", "phases_completed": []}
+```
+→ Tell them: "You can run cold-start anytime by asking me to 'fill my brain'
+or 'cold start'."
+
 ## Schema State Tracking
 
 After presenting the recommended directories (Phase C/E) and the user selects which
@@ -304,6 +532,37 @@ ones to create, write `~/.gbrain/update-state.json` recording:
 
 This file enables future upgrades to suggest new schema additions without
 re-suggesting things the user already declined.
+
+## Anti-Patterns
+
+- **Ending setup without offering cold-start.** An empty brain is useless. Phase J (cold-start) is where setup pays off. Always present the "Ready to populate?" prompt after verification. Skipping this is like installing an app and never logging in.
+- **Asking for the Supabase anon key.** GBrain connects directly to Postgres over the wire protocol, not through the REST API. Only the database connection string is needed.
+- **Skipping live sync setup.** If sync doesn't run automatically, the vector DB falls behind and search returns stale answers. Phase H is not optional.
+- **Declaring setup complete without verification.** "The command ran" is not the same as "it worked." Push a test change, wait for sync, search for the corrected text.
+- **Leaving the direct connection unreachable on IPv4.** GBrain uses the Transaction pooler (port 6543) for reads and a derived direct connection (`db.<ref>.supabase.co:5432`, IPv6-only) for migrations, DDL, and sync transactions. On an IPv4-only host, reads work but sync silently skips pages. Set `GBRAIN_DIRECT_DATABASE_URL` to the Session pooler string (port 5432, IPv4), or enable the IPv4 add-on.
+- **Importing without proving search.** The magical moment is the user seeing search find things grep couldn't. Don't skip it.
+
+## Output Format
+
+```
+GBRAIN SETUP COMPLETE
+=====================
+
+Engine: [PGLite / Supabase Postgres]
+Connection: [verified / pooler mode confirmed]
+Pages imported: N
+Embeddings: N/N (keyword search active, semantic improving)
+Live sync: [configured / method]
+Health check: all OK / [specific failures]
+Verification: [GBRAIN_VERIFY.md results]
+
+🧠 Ready to populate your brain? I can connect your Google services,
+import your notes, and pull in your conversations — all in one session.
+→ Launching cold-start...
+```
+
+**The output should transition directly into cold-start (Phase J), not end
+with a bullet list.** The bullet list is for when the user defers cold-start.
 
 ## Tools Used
 

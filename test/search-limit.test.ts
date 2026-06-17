@@ -41,6 +41,37 @@ describe('clampSearchLimit', () => {
   it('MAX_SEARCH_LIMIT is 100', () => {
     expect(MAX_SEARCH_LIMIT).toBe(100);
   });
+
+  // H6: the third parameter is a caller-specified cap.
+  it('honors a caller-specified cap lower than MAX_SEARCH_LIMIT', () => {
+    expect(clampSearchLimit(10_000_000, 20, 50)).toBe(50);
+    expect(clampSearchLimit(75, 20, 50)).toBe(50);
+    expect(clampSearchLimit(49, 20, 50)).toBe(49);
+  });
+
+  it('caller cap higher than MAX_SEARCH_LIMIT is still respected', () => {
+    // Backward-compatible: if someone passes a cap above MAX, the cap wins.
+    expect(clampSearchLimit(1000, 20, 200)).toBe(200);
+  });
+
+  it('default is returned when cap is lower than default would suggest', () => {
+    expect(clampSearchLimit(undefined, 50, 100)).toBe(50);
+    expect(clampSearchLimit(undefined, 20, 50)).toBe(20);
+  });
+
+  it('operation layer list_pages clamp: default 50, max 100', () => {
+    // These are the exact calls made by src/core/operations.ts list_pages handler.
+    expect(clampSearchLimit(undefined, 50, 100)).toBe(50);
+    expect(clampSearchLimit(10_000_000, 50, 100)).toBe(100);
+    expect(clampSearchLimit(25, 50, 100)).toBe(25);
+  });
+
+  it('operation layer get_ingest_log clamp: default 20, max 50', () => {
+    // These are the exact calls made by src/core/operations.ts get_ingest_log handler.
+    expect(clampSearchLimit(undefined, 20, 50)).toBe(20);
+    expect(clampSearchLimit(10_000_000, 20, 50)).toBe(50);
+    expect(clampSearchLimit(10, 20, 50)).toBe(10);
+  });
 });
 
 describe('listPages is NOT affected by search clamp', () => {

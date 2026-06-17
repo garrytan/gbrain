@@ -1,0 +1,132 @@
+import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { execFileSync } from 'child_process';
+import { installHook, uninstallHook } from '../src/commands/frontmatter-install-hook.ts';
+
+function gitInit(dir: string) {
+  execFileSync('git', ['init', '-q', dir]);
+  execFileSync('git', ['-C', dir, 'config', 'user.email', 'test@example.com']);
+  execFileSync('git', ['-C', dir, 'config', 'user.name', 'Test']);
+}
+
+describe('frontmatter install-hook (B13)', () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'fm-hook-'));
+    gitInit(tmp);
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('installHook writes executable .githooks/pre-commit and sets core.hooksPath', () => {
+    const result = installHook(tmp, false);
+    expect(result).toBe('installed');
+    const hookPath = join(tmp, '.githooks', 'pre-commit');
+    expect(existsSync(hookPath)).toBe(true);
+    const content = readFileSync(hookPath, 'utf8');
+    expect(content).toContain('gbrain frontmatter');
+    expect(content).toContain('git diff --cached');
+    // installHook's contract is "set core.hooksPath unless it's already set
+    // elsewhere". Test BOTH branches deterministically by reading the local
+    // scope only: clean CI → local should be `.githooks`; developer with a
+    // global core.hooksPath (e.g. dotfiles → ~/.config/git/hooks) → local
+    // should be empty because installHook correctly skipped clobbering.
+    // Reading via `--get` without `--local` falls back to global scope when
+    // local is unset, which made this test environmentally fragile.
+    let globalHooksPath = '';
+    try {
+      globalHooksPath = execFileSync('git', ['config', '--global', '--get', 'core.hooksPath'], { encoding: 'utf8' }).trim();
+    } catch { /* unset is the expected clean-env case */ }
+    let localHooksPath = '';
+    try {
+      localHooksPath = execFileSync('git', ['-C', tmp, 'config', '--local', '--get', 'core.hooksPath'], { encoding: 'utf8' }).trim();
+    } catch { /* unset is fine when global was present */ }
+    if (globalHooksPath) {
+      expect(localHooksPath).toBe('');
+    } else {
+      expect(localHooksPath).toBe('.githooks');
+    }
+  });
+
+  test('#1840 — generated hook matches .md/.mdx (single-backslash regex, not over-escaped)', () => {
+    installHook(tmp, false);
+    const content = readFileSync(join(tmp, '.githooks', 'pre-commit'), 'utf8');
+    // The shell must see `grep -E '\.mdx?$'`. Pre-fix it emitted `'\\.mdx?$'`
+    // (literal backslash), so the hook matched nothing and silently no-opped.
+    expect(content).toContain("grep -E '\\.mdx?$'");
+    expect(content).not.toContain("grep -E '\\\\.mdx?$'");
+
+    // Prove the emitted pattern actually selects markdown files. Extract the
+    // exact pattern between the single quotes and run it through ripgrep-free
+    // JS regex parity (POSIX ERE `\.mdx?$` == JS `/\.mdx?$/`).
+    const m = content.match(/grep -E '([^']+)'/);
+    expect(m).not.toBeNull();
+    const re = new RegExp(m![1]);
+    expect(re.test('notes/thing.md')).toBe(true);
+    expect(re.test('notes/thing.mdx')).toBe(true);
+    expect(re.test('notes/thing.txt')).toBe(false);
+  });
+
+  test('installHook refuses to clobber existing hook without --force', () => {
+    const hooksDir = join(tmp, '.githooks');
+    mkdirSync(hooksDir, { recursive: true });
+    const hookPath = join(hooksDir, 'pre-commit');
+    writeFileSync(hookPath, '#!/bin/sh\necho "user hook"');
+    const result = installHook(tmp, false);
+    expect(result).toBe('skipped_existing');
+    // Original survives.
+    expect(readFileSync(hookPath, 'utf8')).toContain('user hook');
+    expect(existsSync(hookPath + '.bak')).toBe(false);
+  });
+
+  test('installHook with force overwrites and saves .bak', () => {
+    const hooksDir = join(tmp, '.githooks');
+    mkdirSync(hooksDir, { recursive: true });
+    const hookPath = join(hooksDir, 'pre-commit');
+    writeFileSync(hookPath, '#!/bin/sh\necho "user hook"');
+    const result = installHook(tmp, true);
+    expect(result).toBe('installed');
+    expect(existsSync(hookPath + '.bak')).toBe(true);
+    expect(readFileSync(hookPath + '.bak', 'utf8')).toContain('user hook');
+    expect(readFileSync(hookPath, 'utf8')).toContain('gbrain frontmatter');
+  });
+
+  test('installHook on existing gbrain hook refreshes silently (no .bak)', () => {
+    installHook(tmp, false);
+    const hookPath = join(tmp, '.githooks', 'pre-commit');
+    expect(existsSync(hookPath + '.bak')).toBe(false);
+    // Re-run; should be 'unchanged' (banner already present).
+    const second = installHook(tmp, false);
+    expect(second).toBe('unchanged');
+  });
+
+  test('uninstallHook removes the gbrain hook and restores .bak when present', () => {
+    const hooksDir = join(tmp, '.githooks');
+    mkdirSync(hooksDir, { recursive: true });
+    const hookPath = join(hooksDir, 'pre-commit');
+    writeFileSync(hookPath, '#!/bin/sh\necho "user hook"');
+    installHook(tmp, true);
+    expect(existsSync(hookPath + '.bak')).toBe(true);
+
+    const removed = uninstallHook(tmp);
+    expect(removed).toBe(true);
+    // .bak content restored as the active hook.
+    expect(readFileSync(hookPath, 'utf8')).toContain('user hook');
+    expect(existsSync(hookPath + '.bak')).toBe(false);
+  });
+
+  test('uninstallHook on a non-gbrain hook returns false (does not remove user hook)', () => {
+    const hooksDir = join(tmp, '.githooks');
+    mkdirSync(hooksDir, { recursive: true });
+    const hookPath = join(hooksDir, 'pre-commit');
+    writeFileSync(hookPath, '#!/bin/sh\necho "user hook"');
+    const removed = uninstallHook(tmp);
+    expect(removed).toBe(false);
+    expect(readFileSync(hookPath, 'utf8')).toContain('user hook');
+  });
+});

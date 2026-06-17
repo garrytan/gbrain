@@ -1,0 +1,16 @@
+[test]
+# PGLite WASM cold start + initSchema() runs ~5–20s on loaded machines.
+# Default 5s is too short for those tests' beforeAll hooks. 60s is the
+# empirical ceiling we observed for the slowest cold-init paths.
+#
+# v0.26.4: scripts/run-unit-parallel.sh and scripts/run-unit-shard.sh
+# also pass `--timeout=60000` explicitly so the ceiling is consistent
+# whether tests are invoked through the wrapper or directly via bun test.
+timeout = 60_000
+
+# v0.37 fix wave: pin gateway defaults to legacy OpenAI/1536 BEFORE any
+# test runs, so the 20+ test files with hardcoded 1536-d Float32Array
+# fixtures still match the schema. v0.37's production default is ZE/1280;
+# tests that want the new default call configureGateway() explicitly in
+# their own beforeAll.
+preload = ["./test/helpers/legacy-embedding-preload.ts"]

@@ -2,29 +2,18 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
-import { operations, OperationError } from '../core/operations.ts';
-import type { Operation, OperationContext } from '../core/operations.ts';
-import { loadConfig } from '../core/config.ts';
+import { operations } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
-
-/** Validate required params exist and have the expected type */
-function validateParams(op: Operation, params: Record<string, unknown>): string | null {
-  for (const [key, def] of Object.entries(op.params)) {
-    if (def.required && (params[key] === undefined || params[key] === null)) {
-      return `Missing required parameter: ${key}`;
-    }
-    if (params[key] !== undefined && params[key] !== null) {
-      const val = params[key];
-      const expected = def.type;
-      if (expected === 'string' && typeof val !== 'string') return `Parameter "${key}" must be a string`;
-      if (expected === 'number' && typeof val !== 'number') return `Parameter "${key}" must be a number`;
-      if (expected === 'boolean' && typeof val !== 'boolean') return `Parameter "${key}" must be a boolean`;
-      if (expected === 'object' && (typeof val !== 'object' || Array.isArray(val))) return `Parameter "${key}" must be an object`;
-      if (expected === 'array' && !Array.isArray(val)) return `Parameter "${key}" must be an array`;
-    }
-  }
-  return null;
-}
+import { buildToolDefs } from './tool-defs.ts';
+import { dispatchToolCall, validateParams, buildOperationContext } from './dispatch.ts';
+import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
+import { loadConfig } from '../core/config.ts';
+import {
+  resolveSocketPath,
+  startResolveIpcServer,
+  cleanupStaleSocket,
+} from '../core/context/resolve-ipc.ts';
+import { resolveEntitiesToPointers, logDeliveredReflexPointers } from '../core/context/retrieval-reflex.ts';
 
 export async function startMcpServer(engine: BrainEngine) {
   const server = new Server(
@@ -32,74 +21,116 @@ export async function startMcpServer(engine: BrainEngine) {
     { capabilities: { tools: {} } },
   );
 
-  // Generate tool definitions from operations
+  // Generate tool definitions from operations. Extracted to buildToolDefs so
+  // the subagent tool registry (v0.15+) can call the same mapper against a
+  // filtered OPERATIONS subset instead of duplicating this shape.
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: operations.map(op => ({
-      name: op.name,
-      description: op.description,
-      inputSchema: {
-        type: 'object' as const,
-        properties: Object.fromEntries(
-          Object.entries(op.params).map(([k, v]) => [k, {
-            type: v.type === 'array' ? 'array' : v.type,
-            ...(v.description ? { description: v.description } : {}),
-            ...(v.enum ? { enum: v.enum } : {}),
-            ...(v.items ? { items: { type: v.items.type } } : {}),
-          }]),
-        ),
-        required: Object.entries(op.params)
-          .filter(([, v]) => v.required)
-          .map(([k]) => k),
-      },
-    })),
+    tools: buildToolDefs(operations),
   }));
 
-  // Dispatch tool calls to operation handlers
-  server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
+  // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).
+  // MCP stdio callers are remote/untrusted; dispatch defaults remote=true.
+  // The MCP SDK's response type widened in 1.29 to allow a managed-task wrapper;
+  // gbrain ops are synchronous, so we return the legacy `{ content, isError? }`
+  // shape and cast through `any` (the SDK accepts it via the ServerResult union).
+  server.setRequestHandler(CallToolRequestSchema, async (request: any): Promise<any> => {
     const { name, arguments: params } = request.params;
-    const op = operations.find(o => o.name === name);
-    if (!op) {
-      return { content: [{ type: 'text', text: `Error: Unknown tool: ${name}` }], isError: true };
-    }
-
-    const ctx: OperationContext = {
-      engine,
-      config: loadConfig() || { engine: 'postgres' },
-      logger: {
-        info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
-        warn: (msg: string) => process.stderr.write(`[warn] ${msg}\n`),
-        error: (msg: string) => process.stderr.write(`[error] ${msg}\n`),
-      },
-      dryRun: !!(params?.dry_run),
-    };
-
-    const safeParams = params || {};
-    const validationError = validateParams(op, safeParams);
-    if (validationError) {
-      return { content: [{ type: 'text', text: JSON.stringify({ error: 'invalid_params', message: validationError }, null, 2) }], isError: true };
-    }
-
-    try {
-      const result = await op.handler(ctx, safeParams);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    } catch (e: unknown) {
-      if (e instanceof OperationError) {
-        return { content: [{ type: 'text', text: JSON.stringify(e.toJSON(), null, 2) }], isError: true };
-      }
-      const msg = e instanceof Error ? e.message : String(e);
-      return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
-    }
+    // v0.28: stdio MCP has no per-token auth (local pipe). Default the
+    // takes-holder allow-list to ['world'] so agent-facing callers don't
+    // see private hunches via takes_list / takes_search / query. Operators
+    // who want stdio to see everything should call ops directly via
+    // `gbrain call <op>` (sets remote=false in src/cli.ts).
+    return dispatchToolCall(engine, name, params, {
+      remote: true,
+      takesHoldersAllowList: ['world'],
+      // v0.31: source defaults to 'default' for stdio (no per-token scope).
+      // Operators who want a different source on stdio MCP should set
+      // GBRAIN_SOURCE in the env or use --source via `gbrain call`.
+      sourceId: process.env.GBRAIN_SOURCE || 'default',
+      // v0.31 (eD3): _meta.brain_hot_memory injection so Claude Desktop /
+      // Code see the brain's relevant hot memory automatically alongside
+      // every tool-call response. Best-effort; absorbs errors.
+      metaHook: getBrainHotMemoryMeta,
+    });
   });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Retrieval Reflex (#1981, D9=C): on a PGLite brain, serve owns the single
+  // connection, so the context engine resolves salient entities THROUGH us over
+  // a local unix socket rather than opening a second (impossible) connection.
+  // Best-effort; failure to bind never blocks the MCP server.
+  let resolveServer: import('node:net').Server | null = null;
+  let resolveSocket: string | null = null;
+  try {
+    const cfg = loadConfig();
+    if (cfg?.engine === 'pglite' && cfg.database_path) {
+      resolveSocket = resolveSocketPath(cfg.database_path);
+      const defaultSource = process.env.GBRAIN_SOURCE || 'default';
+      resolveServer = await startResolveIpcServer(
+        resolveSocket,
+        (req) =>
+          resolveEntitiesToPointers(
+            engine,
+            req.sourceId || defaultSource,
+            req.candidates ?? [],
+            {
+              priorContextText: req.priorContextText,
+              maxPointers: req.maxPointers,
+              suppression: req.suppression,
+            },
+          ),
+        // The IPC resolve path IS the ambient reflex channel. Logging happens
+        // at DELIVERY (post-write), not inside the resolver — a block the
+        // client's 250ms budget abandoned was never injected, and counting it
+        // would corrupt the volunteered-vs-used precision stats (red-team).
+        (block) => logDeliveredReflexPointers(engine, block.pointers),
+      );
+    }
+  } catch {
+    /* resolve IPC is best-effort; never block serve */
+  }
+
+  // Exit cleanly when MCP client disconnects (stdin EOF) or on signals.
+  // Without this, orphaned serve processes accumulate and contend for the
+  // PGLite write lock, causing ingest jobs (email-sync) to time out.
+  let shuttingDown = false;
+  const shutdown = (reason: string, code = 0) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.stderr.write(`[gbrain-serve] shutdown: ${reason}\n`);
+    try { resolveServer?.close(); } catch { /* noop */ }
+    if (resolveSocket) cleanupStaleSocket(resolveSocket);
+    Promise.resolve(engine.disconnect?.())
+      .catch(() => {})
+      .finally(() => process.exit(code));
+  };
+  // v0.34.1 (#870): when MCP_STDIO=1, the wrapping gateway (OpenClaw's
+  // bundle-mcp layer, others) often pipes the JSON-RPC handshake then
+  // closes its stdin half. Treating that as a permanent disconnect kills
+  // the server before the first tool call arrives. Signal handlers and
+  // transport.onclose still cover the legitimate shutdown paths.
+  if (process.env.MCP_STDIO !== '1') {
+    process.stdin.on('end', () => shutdown('stdin end'));
+    process.stdin.on('close', () => shutdown('stdin close'));
+  }
+  // @ts-ignore — SDK exposes onclose on transport
+  transport.onclose = () => shutdown('transport close');
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGHUP', () => shutdown('SIGHUP'));
 }
 
-// Backward compat: used by `gbrain call` command
+// Backward compat: used by `gbrain call` command (trusted local path).
+// v0.31.8 (D22): accept opts.sourceId so `gbrain call --source X <op> <json>`
+// can scope the op handler to that source. resolveSourceId() in call.ts is
+// the upstream resolver; this layer just passes the resolved id through.
 export async function handleToolCall(
   engine: BrainEngine,
   tool: string,
   params: Record<string, unknown>,
+  opts?: { sourceId?: string },
 ): Promise<unknown> {
   const op = operations.find(o => o.name === tool);
   if (!op) throw new Error(`Unknown tool: ${tool}`);
@@ -107,12 +138,11 @@ export async function handleToolCall(
   const validationError = validateParams(op, params);
   if (validationError) throw new Error(validationError);
 
-  const ctx: OperationContext = {
-    engine,
-    config: loadConfig() || { engine: 'postgres' },
+  const ctx = buildOperationContext(engine, params, {
+    remote: false,
     logger: { info: console.log, warn: console.warn, error: console.error },
-    dryRun: !!(params?.dry_run),
-  };
+    ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
+  });
 
   return op.handler(ctx, params);
 }

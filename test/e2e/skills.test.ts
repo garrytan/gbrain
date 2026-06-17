@@ -153,7 +153,7 @@ describeT2('E2E Tier 2: Query Skill', () => {
   beforeAll(async () => {
     await setupDB();
     await importFixtures();
-  });
+  }, 30_000);
   afterAll(teardownDB);
 
   test('query skill returns results for known topic', async () => {
@@ -178,7 +178,7 @@ describeT2('E2E Tier 2: Health Skill', () => {
   beforeAll(async () => {
     await setupDB();
     await importFixtures();
-  });
+  }, 30_000);
   afterAll(teardownDB);
 
   test('health skill reports brain status', async () => {

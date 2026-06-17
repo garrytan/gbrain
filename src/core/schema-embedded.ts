@@ -10,60 +10,481 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ============================================================
+-- sources: multi-repo / multi-brain tenancy (v0.18.0)
+-- ============================================================
+-- A source is a logical brain-within-the-DB: wiki, gstack, yc-media, etc.
+-- Every page/file/ingest_log row carries source_id.
+--
+-- id:         immutable citation key. [a-z0-9-]{1,32} enforced at app layer.
+--             Used in [source:slug] citations, --source flag, wikilink syntax.
+-- name:       mutable display label. Rename via \`gbrain sources rename\`.
+-- local_path: optional git checkout root for filesystem-backed sources.
+-- config:     forward-compat JSONB. Currently used for federation + ACL slot.
+--             { "federated": bool, "access_policy": {...} }
+--             - federated=true (or missing-but-explicit on 'default'):
+--               participates in cross-source default search.
+--             - federated=false (default for new sources):
+--               only searched when explicitly named via --source.
+--             - access_policy: forward-compat slot, no enforcement in v0.17.
+--               Write-side lockdown: mutated only when ctx.remote=false.
+CREATE TABLE IF NOT EXISTS sources (
+  id              TEXT PRIMARY KEY,
+  name            TEXT NOT NULL UNIQUE,
+  local_path      TEXT,
+  last_commit     TEXT,
+  last_sync_at    TIMESTAMPTZ,
+  config          JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- v0.20.0 Cathedral II (SP-1): chunker version last used to sync this source.
+  -- performSync forces a full walk when this mismatches CURRENT_CHUNKER_VERSION,
+  -- bypassing the git-HEAD up_to_date early-return so CHUNKER_VERSION bumps
+  -- actually trigger re-chunking on upgrade.
+  chunker_version TEXT,
+  -- v0.26.5: soft-delete + recovery window. \`archive\` flips archived=true and
+  -- sets archive_expires_at = now() + 72h. The autopilot purge phase
+  -- hard-deletes rows where archive_expires_at <= now(). Promoted from a
+  -- JSONB key to real columns to avoid reserved-key footguns and to make the
+  -- search visibility filter (\`NOT s.archived\`) a column lookup.
+  archived            BOOLEAN NOT NULL DEFAULT false,
+  archived_at         TIMESTAMPTZ,
+  archive_expires_at  TIMESTAMPTZ,
+  -- v0.40.3.0: per-source CR mode override + mount-frontmatter trust gate.
+  -- contextual_retrieval_mode NULL = fall through to global mode bundle.
+  -- trust_frontmatter_overrides FALSE for mounts by default; host source
+  -- (id='default') is always trusted regardless of this column.
+  contextual_retrieval_mode   TEXT,
+  trust_frontmatter_overrides BOOLEAN NOT NULL DEFAULT false,
+  -- v0.41.32.0 (supersedes #1623): newest COMMIT timestamp (HEAD committer
+  -- time) recorded at last sync. The REMOTE staleness path reads this instead
+  -- of shelling out to git on a DB-supplied local_path, preserving the
+  -- v0.41.27.0 trust boundary. NULL → reader falls back to wall-clock.
+  newest_content_at TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Seed the default source. 'default' is federated=true for backward compat
+-- (pre-v0.17 brains behave exactly as before — every page appears in search).
+-- Pre-existing sync.repo_path / sync.last_commit are copied in by the v16
+-- migration, not here; fresh installs have no local_path until \`sources add\`
+-- or the first \`sync\`.
+INSERT INTO sources (id, name, config)
+  VALUES ('default', 'default', '{"federated": true}'::jsonb)
+  ON CONFLICT (id) DO NOTHING;
+
+-- v0.40 Federated Sync v2: partial expression index on config->>'github_repo'
+-- so POST /webhooks/github's source-by-repo lookup hits an index. Only rows
+-- with a configured webhook actually take up index entries. Both Postgres and
+-- PGLite support partial expression indexes. Migration v87 installs the same
+-- index on legacy brains (idempotent IF NOT EXISTS).
+CREATE INDEX IF NOT EXISTS sources_github_repo_idx
+  ON sources ((config->>'github_repo'))
+  WHERE config ? 'github_repo';
+
+-- ============================================================
 -- pages: the core content table
 -- ============================================================
+-- v0.18.0 (Step 2): pages.source_id scopes each row to a sources(id) row.
+-- Slugs are unique per source, NOT globally. The default source is
+-- seeded in the sources block above so the DEFAULT 'default' FK is
+-- always valid at INSERT time.
 CREATE TABLE IF NOT EXISTS pages (
   id            SERIAL PRIMARY KEY,
-  slug          TEXT    NOT NULL UNIQUE,
+  source_id     TEXT    NOT NULL DEFAULT 'default'
+                REFERENCES sources(id) ON DELETE CASCADE,
+  slug          TEXT    NOT NULL,
   type          TEXT    NOT NULL,
+  -- v0.19.0: distinguishes markdown vs code pages at the DB level.
+  -- Drives orphans filter, auto-link bypass, and \`query --lang\`.
+  page_kind     TEXT    NOT NULL DEFAULT 'markdown'
+                CHECK (page_kind IN ('markdown','code','image')),
   title         TEXT    NOT NULL,
   compiled_truth TEXT   NOT NULL DEFAULT '',
   timeline      TEXT    NOT NULL DEFAULT '',
   frontmatter   JSONB   NOT NULL DEFAULT '{}',
   content_hash  TEXT,
+  -- v0.29: deterministic 0..1 score (tag emotion + take density + Garry-as-holder ratio).
+  -- Populated by the \`recompute_emotional_weight\` cycle phase. Default 0.0 so freshly
+  -- imported pages don't pollute salience ranking before the cycle has run.
+  emotional_weight REAL NOT NULL DEFAULT 0.0,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- v0.26.5: soft-delete + recovery window. \`delete_page\` sets deleted_at = now()
+  -- instead of issuing DELETE. The autopilot purge phase hard-deletes pages
+  -- where deleted_at < now() - 72h. Search and \`get_page\` filter
+  -- \`WHERE deleted_at IS NULL\` by default; \`include_deleted: true\` opts in.
+  deleted_at    TIMESTAMPTZ,
+  -- v0.29.1: salience-and-recency, additive opt-in. All NULL by default;
+  -- only consulted when a caller passes \`salience='on'\` / \`recency='on'\` or
+  -- the new \`since\`/\`until\` filter. effective_date_source is a sentinel for
+  -- the doctor's effective_date_health check (values: 'event_date' | 'date'
+  -- | 'published' | 'filename' | 'fallback'). salience_touched_at is bumped
+  -- by recompute_emotional_weight when emotional_weight changes so the
+  -- salience window picks up newly-salient old pages.
+  effective_date        TIMESTAMPTZ,
+  effective_date_source TEXT,
+  import_filename       TEXT,
+  salience_touched_at   TIMESTAMPTZ,
+  -- v0.37.0 (migration v79): real stale-page signal for \`gbrain lsd\`. Bumped
+  -- by op-layer write-back inside \`search\`/\`query\`/\`get_page\` op handlers
+  -- (NOT inside engine methods — internal callers must not pollute the
+  -- signal). NULL = never retrieved (LSD prioritizes these first).
+  last_retrieved_at     TIMESTAMPTZ,
+  -- v0.42.7 (migration v112): link-extraction freshness watermark. Set when
+  -- link/timeline extraction last ran for this page (inline sync, \`extract
+  -- --source db\`, or \`extract --stale\`). A page is stale for extraction when
+  -- this is NULL, older than LINK_EXTRACTOR_VERSION_TS, or older than
+  -- updated_at (edited-since-extract — the MCP put_page / sync --no-extract
+  -- path). Powers \`gbrain extract --stale\` + the \`links_extraction_lag\` doctor
+  -- check. NULL = never extracted.
+  links_extracted_at    TIMESTAMPTZ,
+  -- v0.40.3.0 contextual retrieval (renumbered from v81 to v90 on master
+  -- merge). contextual_retrieval_mode is what tier the page was last embedded
+  -- under (NULL = pre-v90 = treated as 'none' for drift detection).
+  -- corpus_generation is the composite hash of (synopsis_prompt_version,
+  -- haiku_model, title_wrapper_version, embedding_model) — document-side
+  -- provenance for query_cache invalidation per D27 P1-5. NULL means pre-v90;
+  -- the page_generations JSONB check correctly invalidates pre-v90 cache
+  -- rows against any current generation.
+  contextual_retrieval_mode  TEXT,
+  corpus_generation          TEXT,
+  -- v0.40.3.0 cache invalidation gate (migration v91). Monotonic per-page
+  -- counter bumped by bump_page_generation_trg on INSERT (initial value =
+  -- MAX(generation) + 1 so the bookmark fires for any cache row stored
+  -- before this page existed — codex #4) and on UPDATE when any column in
+  -- the content allow-list IS DISTINCT FROM. Read by the per-page snapshot
+  -- check in query-cache-gate.ts.
+  generation     BIGINT NOT NULL DEFAULT 1,
+  CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
 );
+
+-- v0.40.3.0 cache invalidation trigger (migration v91; mirrored in
+-- src/core/pglite-schema.ts). BEFORE INSERT OR UPDATE so every write path
+-- bumps generation per D6 / codex #4. INSERT: pages get
+-- COALESCE(MAX(generation), 0) + 1 so the bookmark gate fires for any
+-- cache row stored before the new page existed. UPDATE: bumps only when
+-- content columns IS DISTINCT FROM (allow-list widened per D6 + codex #3
+-- to include title/type/page_kind/corpus_generation/content_hash) so
+-- read-time mutations don't invalidate every cache row.
+CREATE OR REPLACE FUNCTION bump_page_generation_fn() RETURNS trigger AS \$func\$
+BEGIN
+  IF (TG_OP = 'INSERT') THEN
+    NEW.generation := COALESCE((SELECT MAX(generation) FROM pages), 0) + 1;
+  ELSIF (OLD.compiled_truth IS DISTINCT FROM NEW.compiled_truth)
+     OR (OLD.timeline IS DISTINCT FROM NEW.timeline)
+     OR (OLD.frontmatter IS DISTINCT FROM NEW.frontmatter)
+     OR (OLD.deleted_at IS DISTINCT FROM NEW.deleted_at)
+     OR (OLD.contextual_retrieval_mode IS DISTINCT FROM NEW.contextual_retrieval_mode)
+     OR (OLD.title IS DISTINCT FROM NEW.title)
+     OR (OLD.type IS DISTINCT FROM NEW.type)
+     OR (OLD.page_kind IS DISTINCT FROM NEW.page_kind)
+     OR (OLD.corpus_generation IS DISTINCT FROM NEW.corpus_generation)
+     OR (OLD.content_hash IS DISTINCT FROM NEW.content_hash)
+  THEN
+    NEW.generation := OLD.generation + 1;
+  END IF;
+  RETURN NEW;
+END;
+\$func\$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS bump_page_generation_trg ON pages;
+CREATE TRIGGER bump_page_generation_trg
+  BEFORE INSERT OR UPDATE ON pages
+  FOR EACH ROW
+  EXECUTE FUNCTION bump_page_generation_fn();
+
+-- v0.40.3.0 supports O(log N) MAX(generation) for the Layer 1 bookmark
+-- check in query-cache-gate.ts. Plain btree (DESC unnecessary; Postgres
+-- backward-scans plain btrees for MAX per codex #8). CONCURRENTLY would
+-- be used inside a migration; in the schema-bootstrap path it's a plain
+-- CREATE INDEX since the table is empty.
+CREATE INDEX IF NOT EXISTS pages_generation_idx ON pages (generation);
+
+-- v0.41.19.0 (D18/D19, codex outside-voice): global page-generation clock.
+-- The pre-v0.41.19.0 Layer 1 bookmark read \`MAX(generation) FROM pages\` to
+-- detect "writes happened since cache-store". Two bugs in that contract:
+--   1. The row-level trigger above sets \`NEW.generation = OLD.generation + 1\`
+--      on UPDATE. Updating a NON-MAX page didn't advance MAX(generation),
+--      silently serving stale cached results.
+--   2. The trigger is \`BEFORE INSERT OR UPDATE\` so DELETE doesn't fire it
+--      at all — and even if it did, DELETE doesn't touch surviving rows,
+--      so MAX(generation) wouldn't budge.
+--
+-- The fix: a single-row counter, bumped per-statement (FOR EACH STATEMENT
+-- — codex CDX-4: per-row would turn 73K-row batch DELETE into 73K UPDATEs
+-- on the same counter, recreating the bottleneck this PR is fixing). Layer
+-- 1 reads \`page_generation_clock.value\` directly. The per-row
+-- \`pages.generation\` column above stays as the Layer 2 (per-page snapshot)
+-- substrate.
+--
+-- Seeded with COALESCE(MAX(pages.generation), 0) so existing query_cache
+-- rows stored under the old MAX semantics aren't all instantly invalidated
+-- on upgrade (their max_generation_at_store stamp compares cleanly against
+-- the seeded clock; future writes bump the clock, bookmark fires correctly).
+CREATE TABLE IF NOT EXISTS page_generation_clock (
+  id    INTEGER PRIMARY KEY CHECK (id = 1),
+  value BIGINT  NOT NULL DEFAULT 0
+);
+INSERT INTO page_generation_clock (id, value)
+  VALUES (1, COALESCE((SELECT MAX(generation) FROM pages), 0))
+  ON CONFLICT (id) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger AS \$func\$
+BEGIN
+  UPDATE page_generation_clock SET value = value + 1 WHERE id = 1;
+  RETURN NULL;
+END;
+\$func\$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS bump_page_generation_clock_trg ON pages;
+CREATE TRIGGER bump_page_generation_clock_trg
+  AFTER INSERT OR UPDATE OR DELETE ON pages
+  FOR EACH STATEMENT
+  EXECUTE FUNCTION bump_page_generation_clock_fn();
 
 CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 CREATE INDEX IF NOT EXISTS idx_pages_frontmatter ON pages USING GIN(frontmatter);
 CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops);
+-- v0.13.1 #170: avoids 14.6s seqscan on large brains when listing pages newest-first.
+CREATE INDEX IF NOT EXISTS idx_pages_updated_at_desc ON pages (updated_at DESC);
+-- v0.18.0: source-scoped scans (per /plan-eng-review Section 4).
+CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
+-- v0.26.5: partial index supports the autopilot purge sweep
+-- (\`WHERE deleted_at IS NOT NULL AND deleted_at < now() - INTERVAL '72 hours'\`).
+-- Search filters (\`WHERE deleted_at IS NULL\`) do not benefit from this index
+-- (predicate doesn't match) and don't need their own — soft-deleted cardinality
+-- stays low. Don't add a regular \`(deleted_at)\` index without measuring.
+CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
+  ON pages (deleted_at) WHERE deleted_at IS NOT NULL;
+-- v0.37.0: full B-tree index on last_retrieved_at supports LSD's stale-page
+-- query \`WHERE last_retrieved_at IS NULL OR last_retrieved_at < NOW() -
+-- INTERVAL '90 days'\`. Postgres handles NULL in B-tree indexes (sorted to
+-- one end) so one index covers both branches. A partial WHERE NOT NULL
+-- would miss the NULL branch that LSD prioritizes (codex round 2 #6).
+CREATE INDEX IF NOT EXISTS pages_last_retrieved_at_idx
+  ON pages (last_retrieved_at);
+-- v0.42.7 (migration v112): composite B-tree backing \`extract --stale\` and the
+-- \`links_extraction_lag\` doctor check. source_id leads so source-scoped staleness
+-- scans (\`extract --stale --source X\`, \`gbrain doctor --source X\`) are indexed;
+-- the brain-wide COUNT still uses it via the leading column. NOT partial-NULL —
+-- the staleness predicate has a NULL arm AND a \`< \$versionTs\` arm (B-tree sorts
+-- NULLs to one end, covering both). The \`updated_at > links_extracted_at\` arm is
+-- a cross-column filter no index covers; acceptable for a watermark COUNT.
+CREATE INDEX IF NOT EXISTS pages_links_extracted_at_idx
+  ON pages (source_id, links_extracted_at);
+-- v0.29.1: expression index used by since/until date-range filters that read
+-- COALESCE(effective_date, updated_at). A partial index on effective_date
+-- alone would NOT help — the planner can't use it for the negative side of
+-- the COALESCE. Expression index is what actually accelerates the filter.
+CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx
+  ON pages ((COALESCE(effective_date, updated_at)));
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
 -- ============================================================
 CREATE TABLE IF NOT EXISTS content_chunks (
-  id            SERIAL PRIMARY KEY,
-  page_id       INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-  chunk_index   INTEGER NOT NULL,
-  chunk_text    TEXT    NOT NULL,
-  chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
-  embedding     vector(1024),
-  model         TEXT    NOT NULL DEFAULT 'bge-m3',
-  token_count   INTEGER,
-  embedded_at   TIMESTAMPTZ,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  id                    SERIAL PRIMARY KEY,
+  page_id               INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  chunk_index           INTEGER NOT NULL,
+  chunk_text            TEXT    NOT NULL,
+  chunk_source          TEXT    NOT NULL DEFAULT 'compiled_truth',
+  embedding             vector(1536),
+  model                 TEXT    NOT NULL DEFAULT 'text-embedding-3-large',
+  token_count           INTEGER,
+  embedded_at           TIMESTAMPTZ,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- v0.19.0: code chunk metadata. Nullable — markdown chunks leave these NULL.
+  -- Powers \`query --lang\`, \`code-def <symbol>\`, and \`code-refs <symbol>\`.
+  language              TEXT,
+  symbol_name           TEXT,
+  symbol_type           TEXT,
+  start_line            INTEGER,
+  end_line              INTEGER,
+  -- v0.20.0 Cathedral II: qualified symbol identity + parent scope + doc-comment
+  -- + chunk-grain FTS. All nullable — markdown chunks leave these NULL.
+  parent_symbol_path    TEXT[],
+  doc_comment           TEXT,
+  symbol_name_qualified TEXT,
+  search_vector         TSVECTOR,
+  -- v0.27.1 multimodal. modality discriminates text vs image rows for search
+  -- filtering. embedding_image holds 1024-dim Voyage multimodal vectors;
+  -- mixed-provider brains (e.g. OpenAI 1536 text + Voyage 1024 images) keep
+  -- both columns populated with distinct dim spaces.
+  modality              TEXT NOT NULL DEFAULT 'text',
+  embedding_image       vector(1024),
+  -- v0.36 Phase 3 cross-modal: unified column populated by reindex.
+  -- Migration v75 also adds it for upgrade paths.
+  embedding_multimodal  vector(1024)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_chunks_page ON content_chunks(page_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
+-- v0.19.0: partial indexes — only code chunks populate these columns.
+CREATE INDEX IF NOT EXISTS idx_chunks_symbol_name ON content_chunks(symbol_name) WHERE symbol_name IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_chunks_language ON content_chunks(language) WHERE language IS NOT NULL;
+-- v0.27.1: partial HNSW for multimodal images. Footprint stays proportional
+-- to image-chunk count, not table size.
+CREATE INDEX IF NOT EXISTS idx_chunks_embedding_image
+  ON content_chunks USING hnsw (embedding_image vector_cosine_ops)
+  WHERE embedding_image IS NOT NULL;
+-- v0.20.0 Cathedral II: GIN index on the new chunk-grain FTS vector.
+CREATE INDEX IF NOT EXISTS idx_chunks_search_vector ON content_chunks USING GIN(search_vector);
+CREATE INDEX IF NOT EXISTS idx_chunks_symbol_qualified
+  ON content_chunks(symbol_name_qualified) WHERE symbol_name_qualified IS NOT NULL;
+-- v0.41.18.0 (codex finding #9): partial index for \`gbrain embed --stale\`
+-- + \`--priority recent\`. content_chunks has no updated_at column (chunks
+-- are re-INSERTed on page change, not UPDATEd), so the "recent-first"
+-- ORDER BY happens at the JOIN site: outer ORDER BY p.updated_at DESC
+-- uses idx_pages_updated_at_desc; inner partial uses this index.
+CREATE INDEX IF NOT EXISTS content_chunks_stale_idx
+  ON content_chunks(page_id, chunk_index) WHERE embedding IS NULL;
+
+-- v0.20.0 Cathedral II: chunk-grain FTS trigger.
+-- Weight 'A' on doc_comment + symbol_name_qualified; weight 'B' on chunk_text.
+-- NL queries ("how do we handle errors") rank doc-comment hits above body text.
+-- BEFORE INSERT OR UPDATE OF specific columns — only refires when those change,
+-- not on every chunk update (e.g., embedding refresh doesn't trigger rebuild).
+CREATE OR REPLACE FUNCTION update_chunk_search_vector() RETURNS TRIGGER AS \$fn\$
+BEGIN
+  NEW.search_vector :=
+    setweight(to_tsvector('english', COALESCE(NEW.doc_comment, '')), 'A') ||
+    setweight(to_tsvector('english', COALESCE(NEW.symbol_name_qualified, '')), 'A') ||
+    setweight(to_tsvector('english', COALESCE(NEW.chunk_text, '')), 'B');
+  RETURN NEW;
+END;
+\$fn\$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS chunk_search_vector_trigger ON content_chunks;
+CREATE TRIGGER chunk_search_vector_trigger
+  BEFORE INSERT OR UPDATE OF chunk_text, doc_comment, symbol_name_qualified
+  ON content_chunks
+  FOR EACH ROW EXECUTE FUNCTION update_chunk_search_vector();
+
+-- ============================================================
+-- code_edges_chunk + code_edges_symbol: v0.20.0 Cathedral II structural edges
+-- ============================================================
+-- Two-table design (codex F4 + SP-7):
+--   - code_edges_chunk: resolved edges (both endpoints = known chunk IDs)
+--   - code_edges_symbol: unresolved refs (target known by qualified name,
+--     defining chunk not yet imported)
+-- Readers UNION both tables; no promotion step.
+-- Source scoping: from_chunk_id -> content_chunks -> pages.source_id
+-- determines the source. Resolution logic MUST scope on source (codex SP-3);
+-- only --all-sources callers bypass this. UNIQUE keys don't include source_id
+-- because from_chunk_id already pins it.
+CREATE TABLE IF NOT EXISTS code_edges_chunk (
+  id                    SERIAL PRIMARY KEY,
+  from_chunk_id         INTEGER NOT NULL REFERENCES content_chunks(id) ON DELETE CASCADE,
+  to_chunk_id           INTEGER NOT NULL REFERENCES content_chunks(id) ON DELETE CASCADE,
+  from_symbol_qualified TEXT NOT NULL,
+  to_symbol_qualified   TEXT NOT NULL,
+  edge_type             TEXT NOT NULL,
+  edge_metadata         JSONB NOT NULL DEFAULT '{}',
+  source_id             TEXT REFERENCES sources(id) ON DELETE CASCADE,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT code_edges_chunk_unique UNIQUE (from_chunk_id, to_chunk_id, edge_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_from
+  ON code_edges_chunk(from_chunk_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_to
+  ON code_edges_chunk(to_chunk_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_to_symbol
+  ON code_edges_chunk(to_symbol_qualified, edge_type);
+-- getCalleesOf filters on from_symbol_qualified; without this index every
+-- callee lookup is a sequential scan, amplified per-BFS-node by the
+-- recursive code walk. Mirrors migration v116.
+CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_from_symbol
+  ON code_edges_chunk(from_symbol_qualified);
+
+CREATE TABLE IF NOT EXISTS code_edges_symbol (
+  id                    SERIAL PRIMARY KEY,
+  from_chunk_id         INTEGER NOT NULL REFERENCES content_chunks(id) ON DELETE CASCADE,
+  from_symbol_qualified TEXT NOT NULL,
+  to_symbol_qualified   TEXT NOT NULL,
+  edge_type             TEXT NOT NULL,
+  edge_metadata         JSONB NOT NULL DEFAULT '{}',
+  source_id             TEXT REFERENCES sources(id) ON DELETE CASCADE,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT code_edges_symbol_unique UNIQUE (from_chunk_id, to_symbol_qualified, edge_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_from
+  ON code_edges_symbol(from_chunk_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_to
+  ON code_edges_symbol(to_symbol_qualified, edge_type);
+-- getCalleesOf companion to idx_code_edges_chunk_from_symbol above.
+-- Mirrors migration v116.
+CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_from_symbol
+  ON code_edges_symbol(from_symbol_qualified);
 
 -- ============================================================
 -- links: cross-references between pages
 -- ============================================================
+-- Provenance model (v0.13; opened to kebab provenance in v114 / issue #1941):
+--   link_source       — open kebab-case provenance tag, NOT a closed allowlist.
+--                       Format gate (CHECK): ^[a-z][a-z0-9]*(-[a-z0-9]+)*\$ and
+--                       char_length <= 64. NULL = legacy row (pre-v0.13).
+--                       Reconciliation-managed built-ins written internally:
+--                         'markdown'         — body markdown links
+--                         'frontmatter'      — YAML frontmatter edges (see origin_*)
+--                         'mentions'         — auto-linked body-text mentions
+--                         'wikilink-resolved'— opt-in global-basename [[name]] (#972)
+--                       User/tool-facing:
+--                         'manual'           — hand- or tool-created edges (the
+--                                              add_link op default + CLI link-add)
+--                         '<your-tag>'       — external derivers, e.g. 'citation-graph',
+--                                              stamp their own kebab tag (no migration).
+--                       The add_link OP forbids callers from passing the four
+--                       managed built-ins (they imply reconciliation semantics a
+--                       hand-created row can't honor); the DB CHECK still admits
+--                       them because internal writers use them. See operations.ts.
+--   origin_page_id    — for link_source='frontmatter', the page whose YAML
+--                       frontmatter created this edge; scopes reconciliation
+--   origin_field      — the frontmatter field name (e.g. 'key_people')
+--
+-- The unique constraint includes link_source + origin_page_id so a manual edge
+-- and a frontmatter-derived edge with the same (from, to, type) tuple coexist.
+-- Reconciliation on put_page filters by (link_source='frontmatter' AND
+-- origin_page_id = written_page) — never touches other pages' edges. (This is
+-- exactly why a CLI-forged 'frontmatter' row with NULL origin would be a phantom
+-- edge reconciliation never cleans — hence the op-layer guard.)
 CREATE TABLE IF NOT EXISTS links (
-  id           SERIAL PRIMARY KEY,
-  from_page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-  to_page_id   INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-  link_type    TEXT    NOT NULL DEFAULT '',
-  context      TEXT    NOT NULL DEFAULT '',
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(from_page_id, to_page_id)
+  id             SERIAL PRIMARY KEY,
+  from_page_id   INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  to_page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  link_type      TEXT    NOT NULL DEFAULT '',
+  context        TEXT    NOT NULL DEFAULT '',
+  -- v0.41.18.0: 'mentions' added for auto-linked body-text mentions
+  -- (gbrain extract links --by-mention). Filtered OUT of backlink-count
+  -- for search ranking; only counts toward orphan-ratio + graph traversal.
+  -- v0.40.8.2 (#972): 'wikilink-resolved' added for opt-in global-basename
+  -- wikilink resolution (bare [[name]] resolved by slug tail).
+  link_source    TEXT    CHECK (link_source IS NULL OR (link_source ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*\$' AND char_length(link_source) <= 64)),
+  -- v0.41.18.0: nullable link_kind distinguishes "plain body mention" from
+  -- "verb-pattern-derived typed link" within link_source='mentions'.
+  -- Codex finding #12 design: keep link_source stable; add link_kind
+  -- so callers can distinguish without breaking existing mentions queries.
+  -- NULL = legacy / unknown / pre-v98 row (semantically 'plain').
+  link_kind      TEXT    CHECK (link_kind IS NULL OR link_kind IN ('plain', 'typed_ner')),
+  origin_page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
+  origin_field   TEXT,
+  -- v0.18.0 Step 4: 'qualified' when the link was written as
+  -- [[source:slug]] (target source pinned). 'unqualified' when written
+  -- as bare [[slug]] and resolved via local-first fallback at
+  -- extraction time. NULL for legacy/manual/frontmatter edges.
+  resolution_type TEXT   CHECK (resolution_type IS NULL OR resolution_type IN ('qualified', 'unqualified')),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- NULLS NOT DISTINCT (PG15+) so two rows with link_source IS NULL or
+  -- origin_page_id IS NULL collide as expected. Without this, every row with
+  -- NULL origin_page_id (markdown/manual edges) would be treated as unique.
+  CONSTRAINT links_from_to_type_source_origin_unique
+    UNIQUE NULLS NOT DISTINCT (from_page_id, to_page_id, link_type, link_source, origin_page_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_links_from ON links(from_page_id);
 CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_page_id);
+CREATE INDEX IF NOT EXISTS idx_links_source ON links(link_source);
+CREATE INDEX IF NOT EXISTS idx_links_origin ON links(origin_page_id);
 
 -- ============================================================
 -- tags
@@ -107,6 +528,10 @@ CREATE TABLE IF NOT EXISTS timeline_entries (
 
 CREATE INDEX IF NOT EXISTS idx_timeline_page ON timeline_entries(page_id);
 CREATE INDEX IF NOT EXISTS idx_timeline_date ON timeline_entries(date);
+-- v0.41.18.0 (codex finding #11): widened from (page_id, date, summary) to
+-- include \`source\` so distinct meeting provenance survives. Legacy rows
+-- have source='' (schema default) so legacy dedup behavior is preserved.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_dedup ON timeline_entries(page_id, date, summary, source);
 
 -- ============================================================
 -- page_versions: snapshot history for compiled_truth
@@ -124,14 +549,23 @@ CREATE INDEX IF NOT EXISTS idx_versions_page ON page_versions(page_id);
 -- ============================================================
 -- ingest_log
 -- ============================================================
+-- v0.31.2 (codex P1 #3): source_id added so facts:absorb logging
+-- (runFactsBackstop / writeFactsAbsorbLog) and doctor's
+-- facts_extraction_health check can scope failure counts per source.
+-- Migration v47 ALTERs existing brains; this inline definition covers
+-- fresh installs.
 CREATE TABLE IF NOT EXISTS ingest_log (
   id            SERIAL PRIMARY KEY,
+  source_id     TEXT    NOT NULL DEFAULT 'default',
   source_type   TEXT    NOT NULL,
   source_ref    TEXT    NOT NULL,
   pages_updated JSONB   NOT NULL DEFAULT '[]',
   summary       TEXT    NOT NULL DEFAULT '',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS idx_ingest_log_source_type_created
+  ON ingest_log (source_id, source_type, created_at DESC);
 
 -- ============================================================
 -- config: brain-level settings
@@ -167,20 +601,157 @@ CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens (token_hash) 
 -- mcp_request_log: usage logging for remote MCP requests
 -- ============================================================
 CREATE TABLE IF NOT EXISTS mcp_request_log (
-  id         SERIAL PRIMARY KEY,
-  token_name TEXT,
-  operation  TEXT NOT NULL,
-  latency_ms INTEGER,
-  status     TEXT NOT NULL DEFAULT 'success',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  id            SERIAL PRIMARY KEY,
+  token_name    TEXT,
+  agent_name    TEXT,
+  operation     TEXT NOT NULL,
+  latency_ms    INTEGER,
+  status        TEXT NOT NULL DEFAULT 'success',
+  params        JSONB,
+  error_message TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ============================================================
+-- OAuth 2.1: clients, tokens, authorization codes
+-- ============================================================
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  client_id               TEXT PRIMARY KEY,
+  client_secret_hash      TEXT,
+  client_name             TEXT NOT NULL,
+  redirect_uris           TEXT[],
+  grant_types             TEXT[] DEFAULT '{"client_credentials"}',
+  scope                   TEXT,
+  token_endpoint_auth_method TEXT,
+  client_id_issued_at     BIGINT,
+  client_secret_expires_at BIGINT,
+  token_ttl               INTEGER,
+  deleted_at              TIMESTAMPTZ,
+  source_id               TEXT REFERENCES sources(id) ON DELETE RESTRICT,
+  federated_read          TEXT[] NOT NULL DEFAULT '{}',
+  -- v0.38 Slice 2 + 3: per-client daily budget cap (v84) + agent binding (v85).
+  budget_usd_per_day      NUMERIC(10, 2) NULL,
+  bound_tools             TEXT[] NULL,
+  bound_source_id         TEXT NULL,
+  bound_brain_id          TEXT NULL,
+  bound_slug_prefixes     TEXT[] NULL,
+  bound_max_concurrent    INTEGER NOT NULL DEFAULT 1,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- v0.34.1 (#861, D13 + #876): source_id is the write-source scope;
+-- federated_read is the read-source array. Migrations v60-v65 land both
+-- columns on upgrade; fresh installs include them inline above.
+CREATE INDEX IF NOT EXISTS idx_oauth_clients_source_id
+  ON oauth_clients(source_id) WHERE source_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_oauth_clients_federated_read
+  ON oauth_clients USING GIN (federated_read);
+
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+  token_hash   TEXT PRIMARY KEY,
+  token_type   TEXT NOT NULL,
+  client_id    TEXT NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  scopes       TEXT[],
+  expires_at   BIGINT,
+  resource     TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_expiry ON oauth_tokens(expires_at);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_client ON oauth_tokens(client_id);
+
+CREATE TABLE IF NOT EXISTS oauth_codes (
+  code_hash              TEXT PRIMARY KEY,
+  client_id              TEXT NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  scopes                 TEXT[],
+  code_challenge         TEXT NOT NULL,
+  code_challenge_method  TEXT NOT NULL DEFAULT 'S256',
+  redirect_uri           TEXT NOT NULL,
+  state                  TEXT,
+  resource               TEXT,
+  expires_at             BIGINT NOT NULL,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Composite indexes for admin dashboard request log queries
+CREATE INDEX IF NOT EXISTS idx_mcp_log_time_agent ON mcp_request_log(created_at, token_name);
+CREATE INDEX IF NOT EXISTS idx_mcp_log_agent_time ON mcp_request_log(agent_name, created_at DESC);
+
+-- ============================================================
+-- op_checkpoints: shared checkpoint table for long-running ops
+-- ============================================================
+-- v0.36+ autonomous-remediation wave (migration v67). Pre-fix each op
+-- carried its own file-backed checkpoint (or none); that broke on
+-- Postgres multi-worker hosts and fingerprint-collided across param
+-- variations. Fingerprint = sha8 of canonical-JSON of relevant params
+-- per op (mode, source, chunker_version, embedding_model+dims, etc.).
+-- completed_keys = op-defined string array. GC: cycle purge phase
+-- drops rows older than 7 days.
+CREATE TABLE IF NOT EXISTS op_checkpoints (
+  op             TEXT NOT NULL,
+  fingerprint    TEXT NOT NULL,
+  completed_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (op, fingerprint)
+);
+CREATE INDEX IF NOT EXISTS op_checkpoints_updated_at_idx
+  ON op_checkpoints (updated_at);
+
+-- #1794: append-only delta storage. One row per completed path; sync's
+-- appendCompleted INSERTs only the delta instead of rewriting the whole
+-- completed_keys JSONB array each flush (O(N^2) -> O(delta)). FK cascade drops
+-- children with the parent (clearOpCheckpoint + 7-day purge). PK prefix
+-- (op,fingerprint) serves all reads; no separate index. Mirrors migration v115.
+CREATE TABLE IF NOT EXISTS op_checkpoint_paths (
+  op          TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  path        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (op, fingerprint, path),
+  CONSTRAINT op_checkpoint_paths_parent_fk
+    FOREIGN KEY (op, fingerprint) REFERENCES op_checkpoints (op, fingerprint) ON DELETE CASCADE
+);
+
+-- #2095 push-based context: feedback-loop log of volunteered pages
+-- (volunteer_context op / retrieval-reflex pointers / gbrain watch).
+-- "Used" derives from pages.last_retrieved_at > volunteered_at; rationale is
+-- a deterministic template string, never raw conversation text. 90-day prune
+-- in the dream cycle's purge phase. Mirrors migration v117.
+CREATE TABLE IF NOT EXISTS context_volunteer_events (
+  id             BIGSERIAL PRIMARY KEY,
+  source_id      TEXT NOT NULL,
+  slug           TEXT NOT NULL,
+  confidence     DOUBLE PRECISION NOT NULL,
+  match_arm      TEXT NOT NULL,
+  rationale      TEXT NOT NULL DEFAULT '',
+  channel        TEXT NOT NULL DEFAULT 'op',
+  session_id     TEXT,
+  turn           INTEGER,
+  volunteered_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS context_volunteer_events_src_time_idx
+  ON context_volunteer_events (source_id, volunteered_at DESC);
+CREATE INDEX IF NOT EXISTS context_volunteer_events_src_slug_idx
+  ON context_volunteer_events (source_id, slug);
+
+-- migration_impact_log moved BELOW minion_jobs (was here, lines 645-676)
+-- because its \`job_id BIGINT REFERENCES minion_jobs(id)\` FK requires
+-- minion_jobs to exist FIRST during SCHEMA_SQL replay. v0.41.25.0 fix.
 
 -- ============================================================
 -- files: binary attachments stored in Supabase Storage
 -- ============================================================
+-- v0.18.0 Step 7: files gains source_id + page_id alongside the
+-- legacy page_slug (kept for backward compat until a later release).
+-- The file_migration_ledger below drives the storage object rewrite.
+-- page_slug FK had ON UPDATE CASCADE — removed because slugs are no
+-- longer global (composite UNIQUE) so CASCADE on-update is ambiguous.
+-- ON DELETE SET NULL is preserved via both page_slug and page_id.
 CREATE TABLE IF NOT EXISTS files (
   id           SERIAL PRIMARY KEY,
-  page_slug    TEXT   REFERENCES pages(slug) ON DELETE SET NULL ON UPDATE CASCADE,
+  source_id    TEXT   NOT NULL DEFAULT 'default'
+               REFERENCES sources(id) ON DELETE CASCADE,
+  page_slug    TEXT,
+  page_id      INTEGER REFERENCES pages(id) ON DELETE SET NULL,
   filename     TEXT   NOT NULL,
   storage_path TEXT   NOT NULL,
   mime_type    TEXT,
@@ -195,7 +766,29 @@ CREATE TABLE IF NOT EXISTS files (
 ALTER TABLE files DROP COLUMN IF EXISTS storage_url;
 
 CREATE INDEX IF NOT EXISTS idx_files_page ON files(page_slug);
+CREATE INDEX IF NOT EXISTS idx_files_page_id ON files(page_id);
+CREATE INDEX IF NOT EXISTS idx_files_source_id ON files(source_id);
 CREATE INDEX IF NOT EXISTS idx_files_hash ON files(content_hash);
+
+-- ============================================================
+-- file_migration_ledger (v0.18.0 Step 7)
+-- Drives the storage-object rewrite performed by the v0_18_0
+-- orchestrator's phase B. Keyed on file_id so two sources can share
+-- an old path during migration without PK collision (Codex second-
+-- pass caught this).
+-- Status state machine: pending → copy_done → db_updated → complete
+-- ============================================================
+CREATE TABLE IF NOT EXISTS file_migration_ledger (
+  file_id           INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+  storage_path_old  TEXT   NOT NULL,
+  storage_path_new  TEXT   NOT NULL,
+  status            TEXT   NOT NULL DEFAULT 'pending',
+  error             TEXT,
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT chk_ledger_status CHECK (status IN ('pending','copy_done','db_updated','complete','failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_file_migration_ledger_status
+  ON file_migration_ledger(status) WHERE status != 'complete';
 
 -- ============================================================
 -- Trigger-based search_vector (spans pages + timeline_entries)
@@ -232,23 +825,531 @@ CREATE TRIGGER trg_pages_search_vector
   FOR EACH ROW
   EXECUTE FUNCTION update_page_search_vector();
 
--- When timeline_entries change, update the parent page's search_vector
-CREATE OR REPLACE FUNCTION update_page_search_vector_from_timeline() RETURNS trigger AS \$\$
-DECLARE
-  page_row pages%ROWTYPE;
+-- Note: timeline_entries trigger removed (v0.10.1).
+-- Structured timeline_entries power temporal queries (graph layer).
+-- The markdown timeline section in pages.timeline still feeds search_vector via
+-- the trg_pages_search_vector trigger above. Removing the timeline_entries
+-- trigger avoids double-weighting the same content in search and prevents
+-- mutation-induced reordering during timeline-extract pagination.
+DROP TRIGGER IF EXISTS trg_timeline_search_vector ON timeline_entries;
+DROP FUNCTION IF EXISTS update_page_search_vector_from_timeline();
+
+-- ============================================================
+-- Minion Jobs: BullMQ-inspired Postgres-native job queue
+-- ============================================================
+CREATE TABLE IF NOT EXISTS minion_jobs (
+  id               SERIAL PRIMARY KEY,
+  name             TEXT        NOT NULL,
+  queue            TEXT        NOT NULL DEFAULT 'default',
+  status           TEXT        NOT NULL DEFAULT 'waiting',
+  priority         INTEGER     NOT NULL DEFAULT 0,
+  data             JSONB       NOT NULL DEFAULT '{}',
+  max_attempts     INTEGER     NOT NULL DEFAULT 3,
+  attempts_made    INTEGER     NOT NULL DEFAULT 0,
+  attempts_started INTEGER     NOT NULL DEFAULT 0,
+  backoff_type     TEXT        NOT NULL DEFAULT 'exponential',
+  backoff_delay    INTEGER     NOT NULL DEFAULT 1000,
+  backoff_jitter   REAL        NOT NULL DEFAULT 0.2,
+  stalled_counter  INTEGER     NOT NULL DEFAULT 0,
+  max_stalled      INTEGER     NOT NULL DEFAULT 5,
+  lock_token       TEXT,
+  lock_until       TIMESTAMPTZ,
+  delay_until      TIMESTAMPTZ,
+  parent_job_id    INTEGER     REFERENCES minion_jobs(id) ON DELETE SET NULL,
+  on_child_fail    TEXT        NOT NULL DEFAULT 'fail_parent',
+  tokens_input     INTEGER     NOT NULL DEFAULT 0,
+  tokens_output    INTEGER     NOT NULL DEFAULT 0,
+  tokens_cache_read INTEGER    NOT NULL DEFAULT 0,
+  result           JSONB,
+  progress         JSONB,
+  error_text       TEXT,
+  stacktrace       JSONB       DEFAULT '[]',
+  depth            INTEGER     NOT NULL DEFAULT 0,
+  max_children     INTEGER,
+  timeout_ms       INTEGER,
+  timeout_at       TIMESTAMPTZ,
+  remove_on_complete BOOLEAN   NOT NULL DEFAULT FALSE,
+  remove_on_fail   BOOLEAN     NOT NULL DEFAULT FALSE,
+  idempotency_key  TEXT,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  started_at       TIMESTAMPTZ,
+  finished_at      TIMESTAMPTZ,
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT chk_status CHECK (status IN ('waiting','active','completed','failed','delayed','dead','cancelled','waiting-children','paused')),
+  CONSTRAINT chk_backoff_type CHECK (backoff_type IN ('fixed','exponential')),
+  CONSTRAINT chk_on_child_fail CHECK (on_child_fail IN ('fail_parent','remove_dep','ignore','continue')),
+  CONSTRAINT chk_jitter_range CHECK (backoff_jitter >= 0.0 AND backoff_jitter <= 1.0),
+  CONSTRAINT chk_attempts_order CHECK (attempts_made <= attempts_started),
+  CONSTRAINT chk_nonnegative CHECK (attempts_made >= 0 AND attempts_started >= 0 AND stalled_counter >= 0 AND max_attempts >= 1 AND max_stalled >= 0),
+  CONSTRAINT chk_depth_nonnegative CHECK (depth >= 0),
+  CONSTRAINT chk_max_children_positive CHECK (max_children IS NULL OR max_children > 0),
+  CONSTRAINT chk_timeout_positive CHECK (timeout_ms IS NULL OR timeout_ms > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_minion_jobs_claim ON minion_jobs (queue, priority ASC, created_at ASC) WHERE status = 'waiting';
+CREATE INDEX IF NOT EXISTS idx_minion_jobs_status ON minion_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_minion_jobs_stalled ON minion_jobs (lock_until) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_minion_jobs_delayed ON minion_jobs (delay_until) WHERE status = 'delayed';
+CREATE INDEX IF NOT EXISTS idx_minion_jobs_parent ON minion_jobs(parent_job_id);
+CREATE INDEX IF NOT EXISTS idx_minion_jobs_timeout ON minion_jobs (timeout_at) WHERE status = 'active' AND timeout_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_minion_jobs_parent_status ON minion_jobs (parent_job_id, status) WHERE parent_job_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_minion_jobs_idempotency ON minion_jobs (idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+-- Inbox table for sidechannel messaging
+CREATE TABLE IF NOT EXISTS minion_inbox (
+  id          SERIAL PRIMARY KEY,
+  job_id      INTEGER NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
+  sender      TEXT NOT NULL,
+  payload     JSONB NOT NULL,
+  sent_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  read_at     TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_minion_inbox_unread ON minion_inbox (job_id) WHERE read_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_minion_inbox_child_done ON minion_inbox (job_id, sent_at) WHERE payload->>'type' = 'child_done';
+
+-- Attachments table: per-job binary blobs (manifests, agent outputs, files)
+CREATE TABLE IF NOT EXISTS minion_attachments (
+  id            SERIAL PRIMARY KEY,
+  job_id        INTEGER NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
+  filename      TEXT NOT NULL,
+  content_type  TEXT NOT NULL,
+  content       BYTEA,
+  storage_uri   TEXT,
+  size_bytes    INTEGER NOT NULL,
+  sha256        TEXT NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uniq_minion_attachments_job_filename UNIQUE (job_id, filename),
+  CONSTRAINT chk_attachment_storage CHECK (content IS NOT NULL OR storage_uri IS NOT NULL),
+  CONSTRAINT chk_attachment_size CHECK (size_bytes >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_minion_attachments_job ON minion_attachments (job_id);
+ALTER TABLE minion_attachments ALTER COLUMN content SET STORAGE EXTERNAL;
+
+-- ============================================================
+-- migration_impact_log: before/after metric stats per onboard remediation
+-- ============================================================
+-- v0.41.18.0 (gbrain onboard wave). Every completion captured by the
+-- onboard remediation pipeline records before/after metric stats so
+-- \`gbrain onboard --history --json\` can show "you reduced orphans 47%".
+-- delta computed at read time (NOT a stored GENERATED column —
+-- zero PGLite parity risk per eng-review D2).
+--
+-- Attribution columns (job_id, source_id, brain_id, started_at,
+-- idempotency_key) per codex finding #10 so concurrent onboard /
+-- autopilot / manual runs can't misattribute deltas to the wrong
+-- migration when overlapping runs change the same metric.
+--
+-- v0.41.25.0 SCHEMA_SQL ordering fix: this block lives AFTER the
+-- minion_jobs CREATE TABLE so the \`job_id REFERENCES minion_jobs(id)\`
+-- FK can resolve on fresh-install schema replay. Originally placed above
+-- minion_jobs in v0.41.18.0; that fired ERROR: relation "minion_jobs"
+-- does not exist on every fresh-install initSchema() (silent on master
+-- because postgres-js's unsafe() continued past the error, but the
+-- table never got created so any later query on migration_impact_log
+-- threw 42P01 — which cascaded as "relation minion_jobs does not exist"
+-- whenever subsequent statements that referenced minion_jobs ran AFTER
+-- the failed CREATE TABLE statement, aborting the entire SCHEMA_SQL batch).
+CREATE TABLE IF NOT EXISTS migration_impact_log (
+  id              BIGSERIAL PRIMARY KEY,
+  remediation_id  TEXT      NOT NULL,
+  metric_name     TEXT      NOT NULL,
+  metric_before   NUMERIC,
+  metric_after    NUMERIC,
+  job_id          BIGINT    REFERENCES minion_jobs(id) ON DELETE SET NULL,
+  source_id       TEXT,
+  brain_id        TEXT,
+  started_at      TIMESTAMPTZ,
+  idempotency_key TEXT,
+  applied_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  applied_by      TEXT,
+  details         JSONB     DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS migration_impact_log_remediation_idx
+  ON migration_impact_log(remediation_id, applied_at DESC);
+CREATE INDEX IF NOT EXISTS migration_impact_log_attribution_idx
+  ON migration_impact_log(job_id, source_id) WHERE job_id IS NOT NULL;
+
+-- ============================================================
+-- Subagent runtime (v0.16.0) — durable LLM loops
+-- ============================================================
+-- Anthropic-native message blocks, one row per Messages API message. Parallel
+-- tool_use blocks in one assistant message live in content_blocks JSONB,
+-- not across rows.
+CREATE TABLE IF NOT EXISTS subagent_messages (
+  id                  BIGSERIAL PRIMARY KEY,
+  job_id              BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
+  message_idx         INTEGER     NOT NULL,
+  role                TEXT        NOT NULL,
+  -- v0.27+ stores provider-neutral ChatBlock[] when schema_version=2; legacy
+  -- Anthropic-shape blocks when schema_version=1 (pre-v0.27 jobs replay).
+  content_blocks      JSONB       NOT NULL,
+  schema_version      INTEGER     NOT NULL DEFAULT 1,
+  -- Recipe id of the provider that produced this turn (e.g. 'anthropic',
+  -- 'openai', 'deepseek'). NULL on legacy v1 rows; set on v2.
+  provider_id         TEXT,
+  tokens_in           INTEGER,
+  tokens_out          INTEGER,
+  tokens_cache_read   INTEGER,
+  tokens_cache_create INTEGER,
+  model               TEXT,
+  ended_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uniq_subagent_messages_idx UNIQUE (job_id, message_idx),
+  CONSTRAINT chk_subagent_messages_role CHECK (role IN ('user','assistant'))
+);
+CREATE INDEX IF NOT EXISTS idx_subagent_messages_job ON subagent_messages (job_id, message_idx);
+CREATE INDEX IF NOT EXISTS idx_subagent_messages_provider ON subagent_messages (job_id, provider_id);
+
+-- Two-phase tool execution ledger. Before tool call: INSERT status='pending'.
+-- After success: UPDATE to 'complete' + output. On failure: 'failed' + error.
+-- Replay re-runs 'pending' rows only if the tool is idempotent.
+CREATE TABLE IF NOT EXISTS subagent_tool_executions (
+  id                  BIGSERIAL PRIMARY KEY,
+  job_id              BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
+  message_idx         INTEGER     NOT NULL,
+  tool_use_id         TEXT        NOT NULL,
+  tool_name           TEXT        NOT NULL,
+  input               JSONB       NOT NULL,
+  status              TEXT        NOT NULL,
+  output              JSONB,
+  error               TEXT,
+  schema_version      INTEGER     NOT NULL DEFAULT 1,
+  provider_id         TEXT,
+  -- v0.38 D11: gbrain-owned stable IDs (ordinal assigned at first
+  -- observation of a tool call; gbrain_tool_use_id is uuid v7). Reconciliation
+  -- on crash-replay uses (job_id, message_idx, ordinal) as the unique key.
+  -- Legacy rows (pre-v82) have ordinal=NULL + gbrain_tool_use_id=NULL and
+  -- are resolved by the read-time D5 shim that recomputes the key from
+  -- (job_id, message_idx, content_blocks index, tool_name).
+  ordinal             INTEGER,
+  gbrain_tool_use_id  UUID,
+  started_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ended_at            TIMESTAMPTZ,
+  CONSTRAINT uniq_subagent_tools_use_id UNIQUE (job_id, tool_use_id),
+  CONSTRAINT subagent_tool_executions_stable_id UNIQUE (job_id, message_idx, ordinal),
+  CONSTRAINT chk_subagent_tools_status CHECK (status IN ('pending','complete','failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_subagent_tools_job ON subagent_tool_executions (job_id, status);
+
+-- Rate-lease table — concurrency cap on outbound providers (e.g.
+-- anthropic:messages). Acquire: INSERT if active < max_concurrent under
+-- advisory lock. Release: DELETE. Stale leases (expires_at past) auto-prune
+-- on next acquire so crashed workers can't strand capacity.
+CREATE TABLE IF NOT EXISTS subagent_rate_leases (
+  id            BIGSERIAL PRIMARY KEY,
+  key           TEXT        NOT NULL,
+  owner_job_id  BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
+  acquired_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at    TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_leases_key_expires ON subagent_rate_leases (key, expires_at);
+
+-- ============================================================
+-- Dream-cycle significance verdict cache — v0.21 synthesize phase
+-- ============================================================
+-- Caches the cheap Haiku "is this transcript worth processing?" verdict
+-- per (file_path, content_hash) so backfill re-runs skip already-judged
+-- files. Distinct from raw_data (which is page-scoped); transcripts
+-- aren't pages.
+CREATE TABLE IF NOT EXISTS dream_verdicts (
+  file_path        TEXT        NOT NULL,
+  content_hash     TEXT        NOT NULL,
+  worth_processing BOOLEAN     NOT NULL,
+  reasons          JSONB,
+  judged_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (file_path, content_hash)
+);
+
+-- ============================================================
+-- Cycle coordination lock — v0.17 runCycle primitive
+-- ============================================================
+-- One row per active cycle. Any caller (autopilot daemon, Minions
+-- autopilot-cycle handler, gbrain dream CLI) tries to acquire this
+-- row before running a DB-write phase. Holders refresh ttl_expires_at
+-- between phases; crashed holders auto-release once TTL expires.
+-- Works through PgBouncer transaction pooling, unlike session-scoped
+-- pg_try_advisory_lock.
+CREATE TABLE IF NOT EXISTS gbrain_cycle_locks (
+  id                 TEXT        PRIMARY KEY,
+  holder_pid         INT         NOT NULL,
+  holder_host        TEXT,
+  acquired_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ttl_expires_at     TIMESTAMPTZ NOT NULL,
+  -- v0.41.13.0 (migration v97 + D-V3-4): bumped on every withRefreshingLock
+  -- refresh tick. Used by \`gbrain sync --break-lock --max-age <s>\` to
+  -- identify wedged-but-alive holders without stealing healthy long-running
+  -- holders that are actively refreshing.
+  last_refreshed_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_cycle_locks_ttl ON gbrain_cycle_locks(ttl_expires_at);
+
+-- ============================================================
+-- Eval capture (v0.25.0 — BrainBench-Real substrate)
+-- ============================================================
+-- eval_candidates: captured query/search calls from the op-layer wrapper
+-- in src/core/operations.ts. PII is scrubbed before insert by
+-- src/core/eval-capture-scrub.ts. query is CHECK-capped at 50KB.
+-- eval_capture_failures: cross-process audit of insert failures, surfaced
+-- by \`gbrain doctor\` (in-process counters can't bridge MCP server + doctor
+-- CLI process boundaries).
+CREATE TABLE IF NOT EXISTS eval_candidates (
+  id                    SERIAL PRIMARY KEY,
+  tool_name             TEXT         NOT NULL CHECK (tool_name IN ('query', 'search')),
+  query                 TEXT         NOT NULL CHECK (length(query) <= 51200),
+  retrieved_slugs       TEXT[]       NOT NULL DEFAULT '{}',
+  retrieved_chunk_ids   INTEGER[]    NOT NULL DEFAULT '{}',
+  source_ids            TEXT[]       NOT NULL DEFAULT '{}',
+  expand_enabled        BOOLEAN,
+  detail                TEXT         CHECK (detail IS NULL OR detail IN ('low', 'medium', 'high')),
+  detail_resolved       TEXT         CHECK (detail_resolved IS NULL OR detail_resolved IN ('low', 'medium', 'high')),
+  vector_enabled        BOOLEAN      NOT NULL,
+  expansion_applied     BOOLEAN      NOT NULL,
+  latency_ms            INTEGER      NOT NULL,
+  remote                BOOLEAN      NOT NULL,
+  job_id                INTEGER,
+  subagent_id           INTEGER,
+  created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  -- v0.29.1 — agent-explicit recency + salience capture for replay reproducibility.
+  -- All nullable + additive. NDJSON schema_version stays at 1; consumers ignore unknown fields.
+  as_of_ts              TIMESTAMPTZ,
+  salience_param        TEXT,
+  recency_param         TEXT,
+  salience_resolved     TEXT,
+  recency_resolved      TEXT,
+  salience_source       TEXT,
+  recency_source        TEXT,
+  -- v0.36.3.0 (D16 / CDX-10) — embedding column resolved at capture time so
+  -- \`gbrain eval replay\` reproduces the same column the capture ran against.
+  -- Nullable; pre-v0.36 rows have NULL and replay falls back to current
+  -- default. Migration v68 (src/core/migrate.ts) adds the same column on
+  -- upgrade brains.
+  embedding_column      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_eval_candidates_created_at ON eval_candidates(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS eval_capture_failures (
+  id      SERIAL       PRIMARY KEY,
+  ts      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  reason  TEXT         NOT NULL CHECK (reason IN ('db_down', 'rls_reject', 'check_violation', 'scrubber_exception', 'other'))
+);
+CREATE INDEX IF NOT EXISTS idx_eval_capture_failures_ts ON eval_capture_failures(ts DESC);
+
+-- eval_takes_quality_runs (v0.32 — EXP-5): DB-authoritative receipts for the
+-- takes-quality eval CLI. 4-sha unique key (corpus, prompt, models, rubric)
+-- so re-running the same run is a no-op (ON CONFLICT DO NOTHING) and a
+-- future rubric tweak segregates trend rows cleanly. receipt_json carries
+-- the full receipt blob so \`replay\` can reconstruct when the disk artifact
+-- is missing. Mirrored in src/core/pglite-schema.ts + migration v49.
+CREATE TABLE IF NOT EXISTS eval_takes_quality_runs (
+  id                    BIGSERIAL    PRIMARY KEY,
+  receipt_sha8_corpus   TEXT         NOT NULL,
+  receipt_sha8_prompt   TEXT         NOT NULL,
+  receipt_sha8_models   TEXT         NOT NULL,
+  receipt_sha8_rubric   TEXT         NOT NULL,
+  rubric_version        TEXT         NOT NULL,
+  verdict               TEXT         NOT NULL CHECK (verdict IN ('pass','fail','inconclusive')),
+  overall_score         REAL         NOT NULL,
+  dim_scores            JSONB        NOT NULL,
+  cost_usd              REAL         NOT NULL,
+  receipt_json          JSONB        NOT NULL,
+  receipt_disk_path     TEXT,
+  created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  UNIQUE (receipt_sha8_corpus, receipt_sha8_prompt, receipt_sha8_models, receipt_sha8_rubric)
+);
+CREATE INDEX IF NOT EXISTS eval_takes_quality_runs_trend_idx
+  ON eval_takes_quality_runs (rubric_version, created_at DESC);
+
+-- eval_contradictions_cache (v0.32.6): persistent judge verdicts for the
+-- contradiction probe. Composite primary key includes prompt_version +
+-- truncation_policy so any prompt edit cleanly invalidates prior verdicts
+-- (Codex outside-voice fix). TTL via expires_at; cache.ts sweeps periodically.
+CREATE TABLE IF NOT EXISTS eval_contradictions_cache (
+  chunk_a_hash       TEXT         NOT NULL,
+  chunk_b_hash       TEXT         NOT NULL,
+  model_id           TEXT         NOT NULL,
+  prompt_version     TEXT         NOT NULL,
+  truncation_policy  TEXT         NOT NULL,
+  verdict            JSONB        NOT NULL,
+  created_at         TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  expires_at         TIMESTAMPTZ  NOT NULL,
+  PRIMARY KEY (chunk_a_hash, chunk_b_hash, model_id, prompt_version, truncation_policy)
+);
+CREATE INDEX IF NOT EXISTS eval_contradictions_cache_expires_idx
+  ON eval_contradictions_cache (expires_at);
+
+-- eval_contradictions_runs (v0.32.6): time-series tracking for the probe.
+-- One row per run; source for the \`trend\` sub-subcommand and the doctor
+-- \`contradictions\` check. report_json carries the full ProbeReport for replay.
+CREATE TABLE IF NOT EXISTS eval_contradictions_runs (
+  run_id                       TEXT         PRIMARY KEY,
+  ran_at                       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  schema_version               INTEGER      NOT NULL DEFAULT 1,
+  judge_model                  TEXT         NOT NULL,
+  prompt_version               TEXT         NOT NULL,
+  queries_evaluated            INTEGER      NOT NULL,
+  queries_with_contradiction   INTEGER      NOT NULL,
+  total_contradictions_flagged INTEGER      NOT NULL,
+  wilson_ci_lower              REAL         NOT NULL,
+  wilson_ci_upper              REAL         NOT NULL,
+  judge_errors_total           INTEGER      NOT NULL,
+  cost_usd_total               REAL         NOT NULL,
+  duration_ms                  INTEGER      NOT NULL,
+  source_tier_breakdown        JSONB        NOT NULL,
+  report_json                  JSONB        NOT NULL
+);
+CREATE INDEX IF NOT EXISTS eval_contradictions_runs_ran_at_idx
+  ON eval_contradictions_runs (ran_at DESC);
+
+-- ============================================================
+-- v0.36.1.0 Hindsight calibration wave (migrations v67-v71)
+-- ============================================================
+-- See src/core/migrate.ts for full design notes per table.
+--
+-- calibration_profiles: per-holder LLM-narrative aggregation of
+-- TakesScorecard data. source_id-scoped per v0.34.1 isolation discipline.
+-- published flag gates E8 cross-brain mount sharing (D15 asymmetric opt-in).
+CREATE TABLE IF NOT EXISTS calibration_profiles (
+  id                      BIGSERIAL PRIMARY KEY,
+  source_id               TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  holder                  TEXT         NOT NULL,
+  wave_version            TEXT         NOT NULL DEFAULT 'v0.36.1.0',
+  generated_at            TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  published               BOOLEAN      NOT NULL DEFAULT false,
+  total_resolved          INTEGER      NOT NULL,
+  brier                   REAL,
+  accuracy                REAL,
+  partial_rate            REAL,
+  grade_completion        REAL         NOT NULL DEFAULT 1.0,
+  domain_scorecards       JSONB        NOT NULL,
+  pattern_statements      TEXT[]       NOT NULL,
+  voice_gate_passed       BOOLEAN      NOT NULL,
+  voice_gate_attempts     SMALLINT     NOT NULL,
+  active_bias_tags        TEXT[]       NOT NULL,
+  model_id                TEXT         NOT NULL,
+  cost_usd                NUMERIC(10,4),
+  judge_model_agreement   REAL
+);
+CREATE INDEX IF NOT EXISTS calibration_profiles_holder_recent_idx
+  ON calibration_profiles (source_id, holder, generated_at DESC);
+CREATE INDEX IF NOT EXISTS calibration_profiles_bias_tags_gin
+  ON calibration_profiles USING GIN (active_bias_tags);
+CREATE INDEX IF NOT EXISTS calibration_profiles_published_idx
+  ON calibration_profiles (source_id, published, holder)
+  WHERE published = true;
+
+-- take_proposals: propose_takes phase queue. Idempotency cache via the
+-- composite unique index (source_id, page_slug, content_hash, prompt_version)
+-- mirrors v0.23 dream_verdicts. proposal_run_id supports --rollback by run.
+CREATE TABLE IF NOT EXISTS take_proposals (
+  id                          BIGSERIAL PRIMARY KEY,
+  source_id                   TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  page_slug                   TEXT         NOT NULL,
+  content_hash                TEXT         NOT NULL,
+  prompt_version              TEXT         NOT NULL,
+  wave_version                TEXT         NOT NULL DEFAULT 'v0.36.1.0',
+  proposed_at                 TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  proposal_run_id             TEXT         NOT NULL,
+  status                      TEXT         NOT NULL DEFAULT 'pending'
+                                           CHECK (status IN ('pending','accepted','rejected','superseded')),
+  claim_text                  TEXT         NOT NULL,
+  kind                        TEXT         NOT NULL,
+  holder                      TEXT         NOT NULL,
+  weight                      REAL         NOT NULL,
+  domain                      TEXT,
+  dedup_against_fence_rows    JSONB,
+  model_id                    TEXT         NOT NULL,
+  acted_at                    TIMESTAMPTZ,
+  acted_by                    TEXT,
+  promoted_row_num            INTEGER,
+  predicted_brier             REAL,
+  predicted_brier_bucket_n    INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_idempotency_idx
+  ON take_proposals (source_id, page_slug, content_hash, prompt_version);
+CREATE INDEX IF NOT EXISTS take_proposals_pending_idx
+  ON take_proposals (source_id, status, proposed_at DESC)
+  WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS take_proposals_run_id_idx
+  ON take_proposals (proposal_run_id);
+
+-- take_grade_cache: grade_takes verdict cache. Composite PK on
+-- (take_id, prompt_version, judge_model_id, evidence_signature) means
+-- prompt edits OR evidence changes cleanly invalidate prior verdicts.
+-- applied=false default + D17 auto-resolve-off-by-default = every fresh
+-- install needs operator opt-in before grade verdicts mutate takes table.
+CREATE TABLE IF NOT EXISTS take_grade_cache (
+  take_id            BIGINT       NOT NULL,
+  prompt_version     TEXT         NOT NULL,
+  judge_model_id     TEXT         NOT NULL,
+  evidence_signature TEXT         NOT NULL,
+  wave_version       TEXT         NOT NULL DEFAULT 'v0.36.1.0',
+  graded_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  verdict            TEXT         NOT NULL
+                                  CHECK (verdict IN ('correct','incorrect','partial','unresolvable')),
+  confidence         REAL         NOT NULL,
+  applied            BOOLEAN      NOT NULL DEFAULT false,
+  cost_usd           NUMERIC(10,4),
+  PRIMARY KEY (take_id, prompt_version, judge_model_id, evidence_signature)
+);
+CREATE INDEX IF NOT EXISTS take_grade_cache_applied_idx
+  ON take_grade_cache (take_id, applied);
+CREATE INDEX IF NOT EXISTS take_grade_cache_wave_idx
+  ON take_grade_cache (wave_version, graded_at DESC);
+
+-- take_nudge_log: E7 nudge cooldown state. Polymorphic FK — a nudge fires
+-- on either a canonical take OR a pending proposal (CDX-5). CHECK enforces
+-- exactly one is set.
+CREATE TABLE IF NOT EXISTS take_nudge_log (
+  id              BIGSERIAL PRIMARY KEY,
+  source_id       TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  take_id         BIGINT,
+  proposal_id     BIGINT       REFERENCES take_proposals(id) ON DELETE CASCADE,
+  nudge_pattern   TEXT         NOT NULL,
+  fired_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  channel         TEXT         NOT NULL DEFAULT 'stderr',
+  wave_version    TEXT         NOT NULL DEFAULT 'v0.36.1.0',
+  CONSTRAINT take_nudge_log_target_xor
+    CHECK ((take_id IS NOT NULL) <> (proposal_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS take_nudge_log_take_cooldown_idx
+  ON take_nudge_log (take_id, nudge_pattern, fired_at DESC)
+  WHERE take_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS take_nudge_log_proposal_cooldown_idx
+  ON take_nudge_log (proposal_id, nudge_pattern, fired_at DESC)
+  WHERE proposal_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS take_nudge_log_wave_idx
+  ON take_nudge_log (wave_version, fired_at DESC);
+
+-- think_ab_results (v0.36.1.0 T18 / D19): A/B harness data for
+-- \`gbrain think --ab\`. One row per side-by-side comparison.
+CREATE TABLE IF NOT EXISTS think_ab_results (
+  id              BIGSERIAL PRIMARY KEY,
+  source_id       TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  wave_version    TEXT         NOT NULL DEFAULT 'v0.36.1.0',
+  ran_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  question        TEXT         NOT NULL,
+  baseline_answer TEXT         NOT NULL,
+  with_calibration_answer TEXT NOT NULL,
+  preferred       TEXT         NOT NULL CHECK (preferred IN ('baseline','with_calibration','neither','tie')),
+  model_id        TEXT,
+  notes           TEXT
+);
+CREATE INDEX IF NOT EXISTS think_ab_results_recent_idx
+  ON think_ab_results (source_id, ran_at DESC);
+
+-- NOTIFY trigger for real-time job events (Postgres only, not PGLite)
+CREATE OR REPLACE FUNCTION notify_minion_job_change() RETURNS trigger AS \$\$
 BEGIN
-  -- Touch the page to re-fire its trigger
-  UPDATE pages SET updated_at = now()
-  WHERE id = coalesce(NEW.page_id, OLD.page_id);
+  PERFORM pg_notify('minion_jobs', json_build_object(
+    'id', NEW.id, 'status', NEW.status, 'name', NEW.name,
+    'queue', NEW.queue, 'prev_status', COALESCE(OLD.status, 'new')
+  )::text);
   RETURN NEW;
 END;
 \$\$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_timeline_search_vector ON timeline_entries;
-CREATE TRIGGER trg_timeline_search_vector
-  AFTER INSERT OR UPDATE OR DELETE ON timeline_entries
-  FOR EACH ROW
-  EXECUTE FUNCTION update_page_search_vector_from_timeline();
+DROP TRIGGER IF EXISTS minion_job_notify ON minion_jobs;
+CREATE TRIGGER minion_job_notify AFTER INSERT OR UPDATE OF status ON minion_jobs
+  FOR EACH ROW EXECUTE FUNCTION notify_minion_job_change();
 
 -- ============================================================
 -- Row Level Security: block anon access, postgres role bypasses
@@ -273,6 +1374,33 @@ BEGIN
     ALTER TABLE ingest_log ENABLE ROW LEVEL SECURITY;
     ALTER TABLE config ENABLE ROW LEVEL SECURITY;
     ALTER TABLE files ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE minion_jobs ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE sources ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE file_migration_ledger ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE access_tokens ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE mcp_request_log ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE minion_inbox ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE minion_attachments ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE subagent_messages ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE subagent_tool_executions ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE subagent_rate_leases ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE gbrain_cycle_locks ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE dream_verdicts ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE eval_candidates ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE eval_capture_failures ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE eval_takes_quality_runs ENABLE ROW LEVEL SECURITY;
+    -- v0.32.6 contradiction probe tables
+    ALTER TABLE eval_contradictions_cache ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE eval_contradictions_runs ENABLE ROW LEVEL SECURITY;
+    -- v0.36.1.0 Hindsight calibration wave tables
+    ALTER TABLE calibration_profiles ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE take_proposals ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE take_grade_cache ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE take_nudge_log ENABLE ROW LEVEL SECURITY;
+    -- v0.26 OAuth 2.1 tables
+    ALTER TABLE oauth_clients ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE oauth_tokens ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE oauth_codes ENABLE ROW LEVEL SECURITY;
     RAISE NOTICE 'RLS enabled on all tables (role % has BYPASSRLS)', current_user;
   ELSE
     RAISE WARNING 'Skipping RLS: role % does not have BYPASSRLS privilege. Run as postgres role to enable.', current_user;

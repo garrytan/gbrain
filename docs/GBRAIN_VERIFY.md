@@ -88,14 +88,15 @@ find /data/brain -name '*.md' \
 Some difference is normal (files added since last sync), but if page count is
 less than half the file count, sync is silently skipping pages.
 
-**If page count is way too low:** The #1 cause is the connection pooler bug.
-Check your `DATABASE_URL`:
-- If it contains `pooler.supabase.com:6543`, verify it's using **Session mode**,
-  not Transaction mode.
-- Transaction mode breaks `engine.transaction()` and causes `.begin() is not a
-  function` errors.
-- Fix: switch to Session mode pooler string, then run `gbrain sync --full`
-  to reimport everything.
+**If page count is way too low:** The #1 cause is an unreachable direct
+connection on an IPv4-only host. GBrain uses the Transaction pooler (port 6543)
+for reads, but routes migrations, DDL, and sync transactions to a derived direct
+connection (`db.<ref>.supabase.co:5432`), which is IPv6-only.
+- On an IPv4-only host, reads work but sync transactions fail and silently skip
+  pages.
+- Fix: set `GBRAIN_DIRECT_DATABASE_URL` to the **Session pooler** string (port
+  5432 on the `pooler.supabase.com` host, IPv4), or enable Supabase's IPv4
+  add-on. Then run `gbrain sync --full` to reimport everything.
 
 ### 4b. Embed Check
 
@@ -142,7 +143,8 @@ gbrain search "<text from the correction>"
 - Is `gbrain sync --watch` still alive (if using watch mode)?
 - Run `gbrain config get sync.last_run` to see when sync last ran.
 - Run `gbrain sync --repo /data/brain` manually and check for errors.
-- If you see `.begin() is not a function`, fix the pooler (see 4a above).
+- If sync errors mention an unreachable host or connection timeout, the direct
+  connection isn't reachable on IPv4 (see 4a above).
 
 ---
 
@@ -183,6 +185,84 @@ system context. See `skills/setup/SKILL.md` Phase D.
 
 ---
 
+## 7. Knowledge Graph Wired
+
+The v0.12.0 graph layer needs to be populated for existing brains. New writes are
+auto-linked, but historical pages need a one-time backfill.
+
+**Command:**
+
+```bash
+gbrain stats | grep -E 'links|timeline'
+```
+
+**Expected:** Both `links` and `timeline_entries` are non-zero (assuming the brain
+has content with entity references and dated markdown).
+
+**If it's zero on a brain with imported content:** Run the backfill.
+
+```bash
+gbrain extract links --source db --dry-run | head -5    # preview
+gbrain extract links --source db                         # commit
+gbrain extract timeline --source db
+gbrain stats                                             # confirm > 0
+```
+
+**Bonus check** — graph traversal works:
+
+```bash
+# Pick any well-connected slug from your brain
+gbrain graph-query people/<some-person-slug> --depth 2
+```
+
+**Expected:** Indented tree of typed edges (`--attended-->`, `--works_at-->`, etc.).
+If the slug has no inbound or outbound links, try a different one or run extract
+again.
+
+**If extract finds nothing:** Your pages may not use entity-reference syntax. The
+extractor matches `[Name](people/slug)`, `[Name](../people/slug.md)`, and bare
+`people/slug` references. If your brain uses a different format, the auto-link
+heuristics won't find them — file an issue with a sample page.
+
+---
+
+## 8. JSONB Frontmatter Integrity (v0.12.2)
+
+Postgres-backed brains created before v0.12.2 had double-encoded JSONB columns
+(`frontmatter->>'key'` returned NULL, GIN indexes were inert). `gbrain upgrade`
+runs `gbrain repair-jsonb` automatically via the `v0_12_2` orchestrator.
+Verify the repair succeeded.
+
+**Command:**
+
+```bash
+gbrain repair-jsonb --dry-run --json
+```
+
+**Expected:** `totalRepaired: 0` across all 5 columns (`pages.frontmatter`,
+`raw_data.data`, `ingest_log.pages_updated`, `files.metadata`,
+`page_versions.frontmatter`). A zero count means every row is properly-typed
+JSON objects, not string-encoded JSON.
+
+**If the count is > 0:** The repair didn't run or was interrupted. Re-run
+without `--dry-run`:
+
+```bash
+gbrain repair-jsonb
+```
+
+Idempotent. PGLite brains always report 0 (unaffected by the original bug).
+
+**Bonus check** — frontmatter-keyed queries actually resolve:
+
+```bash
+gbrain call list_pages '{"frontmatterKey": "type", "frontmatterValue": "person"}'
+```
+
+If this returns rows on a brain with person pages, the JSONB path is healthy.
+
+---
+
 ## Quick Verification (all checks in one pass)
 
 ```bash
@@ -203,7 +283,13 @@ gbrain embed --stale
 
 # 6. Auto-update
 gbrain check-update --json
+
+# 7. Knowledge graph populated (links + timeline > 0)
+gbrain stats | grep -E 'links|timeline'
+
+# 8. JSONB integrity (v0.12.2 — Postgres only, PGLite always 0)
+gbrain repair-jsonb --dry-run --json
 ```
 
-If all six return successfully, the installation is healthy. For the full
+If all eight return successfully, the installation is healthy. For the full
 end-to-end sync test (4c), push a real change and verify it appears in search.
