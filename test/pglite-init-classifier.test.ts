@@ -17,6 +17,8 @@ import { describe, test, expect } from 'bun:test';
 import {
   classifyPgliteInitError,
   buildPgliteInitErrorMessage,
+  isPgliteDataDirRecoveryCandidate,
+  type PgliteDataDirPreflightSnapshot,
 } from '../src/core/pglite-engine.ts';
 
 describe('classifyPgliteInitError', () => {
@@ -51,6 +53,71 @@ describe('classifyPgliteInitError', () => {
   test('case-insensitive matching on bunfs marker', () => {
     expect(classifyPgliteInitError('SYSCALL ENOENT on /$$BUNFS/root')).toBe('bunfs');
   });
+
+  test('persistent existing PGLite-shaped data dir can be a recovery candidate', () => {
+    const snapshot: PgliteDataDirPreflightSnapshot = {
+      persistent: true,
+      exists: true,
+      isDirectory: true,
+      entries: ['PG_VERSION', 'base', 'global', 'pg_wal'],
+      hasPgVersion: true,
+      hasBaseDir: true,
+      hasGlobalDir: true,
+      hasPgWalDir: true,
+    };
+    expect(classifyPgliteInitError('Aborted(native code)', snapshot)).toBe(
+      'pglite-data-dir-recovery-candidate',
+    );
+  });
+
+  test('data-dir recovery candidate does not apply to in-memory or fresh missing dataDir', () => {
+    expect(classifyPgliteInitError('Aborted(native code)', {
+      persistent: false,
+      exists: false,
+    })).toBe('unknown');
+    expect(classifyPgliteInitError('Aborted(native code)', {
+      persistent: true,
+      exists: false,
+    })).toBe('unknown');
+  });
+
+  test('known bunfs and macOS signatures keep precedence over data-dir snapshot', () => {
+    const snapshot: PgliteDataDirPreflightSnapshot = {
+      persistent: true,
+      exists: true,
+      isDirectory: true,
+      hasPgVersion: true,
+    };
+    expect(classifyPgliteInitError('ENOENT: cannot open pglite.data', snapshot)).toBe(
+      'bunfs',
+    );
+    expect(classifyPgliteInitError(
+      'abort() called from wasm runtime on macOS 26.3 build',
+      snapshot,
+    )).toBe(
+      'macos-26-3',
+    );
+  });
+});
+
+describe('isPgliteDataDirRecoveryCandidate', () => {
+  test('accepts fabricated Postgres-shaped snapshot entries', () => {
+    expect(isPgliteDataDirRecoveryCandidate({
+      persistent: true,
+      exists: true,
+      isDirectory: true,
+      entries: ['base', 'global'],
+    })).toBe(true);
+  });
+
+  test('rejects generic non-empty persistent directories', () => {
+    expect(isPgliteDataDirRecoveryCandidate({
+      persistent: true,
+      exists: true,
+      isDirectory: true,
+      entries: ['README.md', 'tmp'],
+    })).toBe(false);
+  });
 });
 
 describe('buildPgliteInitErrorMessage — hint routing', () => {
@@ -81,10 +148,24 @@ describe('buildPgliteInitErrorMessage — hint routing', () => {
   });
 
   test('all verdicts produce the canonical header line', () => {
-    for (const v of ['bunfs', 'macos-26-3', 'unknown'] as const) {
+    const verdicts = [
+      'bunfs',
+      'macos-26-3',
+      'pglite-data-dir-recovery-candidate',
+      'unknown',
+    ] as const;
+    for (const v of verdicts) {
       const msg = buildPgliteInitErrorMessage(v, original);
       expect(msg.startsWith('PGLite failed to initialize its WASM runtime.')).toBe(true);
     }
+  });
+
+  test('data-dir recovery candidate surfaces rebuild hint and avoids corruption wording', () => {
+    const msg = buildPgliteInitErrorMessage('pglite-data-dir-recovery-candidate', original);
+    expect(msg).toContain('existing PGLite data directory may need recovery/rebuild');
+    expect(msg).toContain('gbrain doctor --rebuild-pglite');
+    expect(msg).not.toMatch(/wal-corruption|WAL corruption/i);
+    expect(msg).toContain(original);
   });
 });
 
