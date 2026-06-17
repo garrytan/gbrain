@@ -44,7 +44,7 @@ echo "OK: no JSON.stringify(x)::jsonb interpolation pattern in src/"
 POSITIONAL_HITS="$(
   find src -type f -name '*.ts' -print0 \
   | xargs -0 perl -0777 -ne '
-      while (/executeRaw\s*\((.*?)\)\s*;/sg) {
+      while (/executeRaw\s*(?:<[^()]*>\s*)?\((.*?)\)\s*;/sg) {
         my $call = $1;
         next unless $call =~ /::jsonb/ && $call =~ /JSON\.stringify\s*\(/;
         my $line = (substr($_, 0, pos()) =~ tr/\n//) + 1;
