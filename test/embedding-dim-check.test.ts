@@ -257,6 +257,37 @@ describe('resolveSchemaEmbeddingDim', () => {
     if (got.ok) expect(got.dim).toBe(768);
   });
 
+  test('Ollama bge-m3 resolves to its native 1024 dims', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:bge-m3' });
+    expect(got).toEqual({
+      ok: true,
+      dim: 1024,
+      model: 'ollama:bge-m3',
+      provider: 'ollama',
+      recipeDefault: 1024,
+    });
+  });
+
+  test('Ollama :latest aliases still resolve to the canonical native dim', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:bge-m3:latest' });
+    expect(got).toEqual({
+      ok: true,
+      dim: 1024,
+      model: 'ollama:bge-m3',
+      provider: 'ollama',
+      recipeDefault: 1024,
+    });
+  });
+
+  test('Ollama nomic-embed-text still rejects an impossible 1024-dim override', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'ollama:nomic-embed-text',
+      embedding_dimensions: 1024,
+    });
+    expect(got.ok).toBe(false);
+    if (!got.ok) expect(got.error).toMatch(/does not support custom dimensions 1024|only emits/);
+  });
+
   test('unknown provider rejected with provider list hint', () => {
     const got = resolveSchemaEmbeddingDim({ embedding_model: 'notarealprovider:foo' });
     expect(got.ok).toBe(false);
