@@ -17,6 +17,11 @@ interface RecordedCall {
   params: unknown[];
 }
 
+function jsonbParam(value: unknown): Record<string, unknown> {
+  if (typeof value === 'string') return JSON.parse(value) as Record<string, unknown>;
+  return value as Record<string, unknown>;
+}
+
 function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
   engine: BrainEngine;
   calls: RecordedCall[];
@@ -109,7 +114,7 @@ describe('sources add', () => {
     expect(insert!.params[0]).toBe('gstack');
     expect(insert!.params[1]).toBe('gstack'); // name defaults to id
     expect(insert!.params[2]).toBe('/tmp/gstack');
-    expect(insert!.params[3]).toBe('{}'); // federated unset → empty config
+    expect(jsonbParam(insert!.params[3])).toEqual({}); // federated unset → empty config
   });
 
   test('--federated sets config.federated = true', async () => {
@@ -126,7 +131,7 @@ describe('sources add', () => {
     });
     await runSources(engine, ['add', 'wiki', '--path', '/tmp/wiki', '--federated']);
     const insert = calls.find(c => c.sql.includes('INSERT INTO sources'));
-    expect(insert!.params[3]).toBe('{"federated":true}');
+    expect(jsonbParam(insert!.params[3])).toEqual({ federated: true });
   });
 
   test('--no-federated sets config.federated = false (isolation opt-in)', async () => {
@@ -143,7 +148,7 @@ describe('sources add', () => {
     });
     await runSources(engine, ['add', 'yc-media', '--path', '/tmp/yc', '--no-federated']);
     const insert = calls.find(c => c.sql.includes('INSERT INTO sources'));
-    expect(insert!.params[3]).toBe('{"federated":false}');
+    expect(jsonbParam(insert!.params[3])).toEqual({ federated: false });
   });
 
   test('rejects overlapping paths (per eng review finding 4.1)', async () => {
@@ -233,7 +238,8 @@ describe('sources federate / unfederate', () => {
     await runSources(engine, ['federate', 'gstack']);
     const upd = calls.find(c => c.sql.includes('UPDATE sources SET config'));
     expect(upd).toBeDefined();
-    expect(JSON.parse(upd!.params[0] as string)).toEqual({ federated: true });
+    expect(upd!.params[0]).toBe('gstack');
+    expect(jsonbParam(upd!.params[1])).toEqual({ federated: true });
   });
 
   test('unfederate preserves other config keys', async () => {
@@ -244,7 +250,8 @@ describe('sources federate / unfederate', () => {
     });
     await runSources(engine, ['unfederate', 'gstack']);
     const upd = calls.find(c => c.sql.includes('UPDATE sources SET config'));
-    const parsed = JSON.parse(upd!.params[0] as string);
+    expect(upd!.params[0]).toBe('gstack');
+    const parsed = jsonbParam(upd!.params[1]);
     // Must preserve ttl_days while flipping federated.
     expect(parsed.ttl_days).toBe(90);
     expect(parsed.federated).toBe(false);

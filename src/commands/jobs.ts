@@ -1591,7 +1591,7 @@ export async function registerBuiltinHandlers(
     // postgres brain should skip filesystem phases (no_brain_dir) and run the
     // DB-only phases (resolve_symbol_edges, embed, ...) — not silently lint/sync
     // against whatever directory the worker happens to be running in.
-    const repoPath: string | null = typeof job.data.repoPath === 'string'
+    const queuedRepoPath: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
       : (await engine.getConfig('sync.repo_path')) ?? null;
 
@@ -1605,8 +1605,11 @@ export async function registerBuiltinHandlers(
     //     Missing/undefined keeps the legacy `true` for back-compat.
     //   - Archive recheck: if source_id is set but the source was
     //     archived between fan-out and worker claim, skip cleanly.
+    //   - Brain dir resolution: if source_id is set, filesystem phases use the
+    //     source row's local_path, not a stale/global repoPath from the queue.
     const rawSourceId = job.data.source_id;
     let sourceId: string | undefined;
+    let repoPath = queuedRepoPath;
     if (rawSourceId !== undefined && rawSourceId !== null) {
       if (typeof rawSourceId !== 'string') {
         throw new Error(`autopilot-cycle: invalid source_id (not a string): ${JSON.stringify(rawSourceId)}`);
@@ -1621,8 +1624,8 @@ export async function registerBuiltinHandlers(
       // Archive recheck (codex r1 P1-5): cheap pre-cycle lookup. Returns
       // immediately if source is gone or archived; runCycle never even
       // acquires a lock.
-      const rows = await engine.executeRaw<{ archived: boolean | null }>(
-        `SELECT archived FROM sources WHERE id = $1`,
+      const rows = await engine.executeRaw<{ archived: boolean | null; local_path: string | null }>(
+        `SELECT archived, local_path FROM sources WHERE id = $1`,
         [rawSourceId],
       );
       if (rows.length === 0) {
@@ -1639,7 +1642,11 @@ export async function registerBuiltinHandlers(
           report: { reason: 'source_archived', source_id: rawSourceId },
         };
       }
+      const { existsSync } = await import('fs');
       sourceId = rawSourceId;
+      repoPath = rows[0].local_path && existsSync(rows[0].local_path)
+        ? rows[0].local_path
+        : null;
     }
 
     // Allow callers to select phases via job data (e.g. skip embed for

@@ -19,6 +19,7 @@ import { MinionQueue } from '../core/minions/queue.ts';
 import { waitForCompletion, TimeoutError } from '../core/minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData, AggregatorHandlerData } from '../core/minions/types.ts';
 import { runAgentLogs } from './agent-logs.ts';
+import { executeRawJsonb } from '../core/sql-query.ts';
 
 // ── arg parsing helpers ────────────────────────────────────
 
@@ -250,9 +251,11 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
   // Update the aggregator's data with the final children_ids. We have to
   // do this after submission because each add() returns the committed
   // row's id; the aggregator's seed started with an empty array.
-  await engine.executeRaw(
-    `UPDATE minion_jobs SET data = jsonb_set(data, '{children_ids}', $1::jsonb) WHERE id = $2`,
-    [JSON.stringify(childIds), aggregator.id],
+  await executeRawJsonb(
+    engine,
+    `UPDATE minion_jobs SET data = jsonb_set(data, '{children_ids}', ($2::jsonb)->'children_ids') WHERE id = $1`,
+    [aggregator.id],
+    [{ children_ids: childIds }],
   );
 
   process.stderr.write(

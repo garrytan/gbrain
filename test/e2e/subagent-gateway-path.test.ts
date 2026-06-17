@@ -253,6 +253,24 @@ describe('runSubagentViaGateway (v0.38 Slice 1 — full handler path through gat
     expect(String(toolRows[0].gbrain_tool_use_id)).toMatch(/^[0-9a-f-]{36}$/); // UUID v7
     expect(toolRows[0].tool_use_id).toBe('provider-tc-1'); // provider id preserved
 
+    const messages = await engine.executeRaw<Record<string, unknown>>(
+      `SELECT message_idx, role, content_blocks
+         FROM subagent_messages
+        WHERE job_id = $1
+        ORDER BY message_idx`,
+      [jobId],
+    );
+    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
+    expect(messages[2].message_idx).toBe(2);
+    const toolResultBlocks = typeof messages[2].content_blocks === 'string'
+      ? JSON.parse(messages[2].content_blocks as string)
+      : messages[2].content_blocks;
+    expect(toolResultBlocks[0]).toMatchObject({
+      type: 'tool-result',
+      toolCallId: 'provider-tc-1',
+      toolName: 'search',
+    });
+
     // Token accumulation across both turns.
     expect(result.tokens.in).toBe(45); // 20 + 25
     expect(result.tokens.out).toBe(12); // 8 + 4

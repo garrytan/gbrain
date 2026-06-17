@@ -292,6 +292,38 @@ describe('#1794 — resumable incremental sync (pinned target)', () => {
     expect(banked).not.toContain('notes/bad.md');
   }, 60_000);
 
+  test('up_to_date sync still advances last_sync_at for a source-scoped run', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+
+    const sid = 'srcUpToDate';
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
+      [sid, sid, repoPath],
+    );
+
+    await performSync(engine, { repoPath, sourceId: sid, full: true, noPull: true, noEmbed: true });
+    const beforeRows = await engine.executeRaw<{ last_commit: string | null; last_sync_at: string | null }>(
+      `SELECT last_commit, last_sync_at FROM sources WHERE id = $1`,
+      [sid],
+    );
+    const c0 = beforeRows[0].last_commit!;
+    const t0 = String(beforeRows[0].last_sync_at);
+    expect(c0).toBeTruthy();
+    expect(t0).toBeTruthy();
+
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
+    const res = await performSync(engine, { repoPath, sourceId: sid, noPull: true, noEmbed: true });
+    expect(res.status).toBe('up_to_date');
+
+    const afterRows = await engine.executeRaw<{ last_commit: string | null; last_sync_at: string | null }>(
+      `SELECT last_commit, last_sync_at FROM sources WHERE id = $1`,
+      [sid],
+    );
+    expect(afterRows[0].last_commit).toBe(c0);
+    expect(String(afterRows[0].last_sync_at)).not.toBe(t0);
+  }, 60_000);
+
   // ── F. Codex #3: file added in range but deleted from disk → skip, not block
   test('[Codex #3] vanished-on-disk added file is skipped, not a failure', async () => {
     const { performSync } = await import('../src/commands/sync.ts');

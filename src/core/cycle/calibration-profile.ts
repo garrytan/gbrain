@@ -29,6 +29,7 @@ import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-
 import { chat as gatewayChat } from '../ai/gateway.ts';
 import { gateVoice, type VoiceGateGenerator, type VoiceGateJudge } from '../calibration/voice-gate.ts';
 import { patternStatementTemplate, type PatternStatementSlots } from '../calibration/templates.ts';
+import { executeRawJsonb } from '../sql-query.ts';
 // v0.41 T10 — domain widening. The aggregator module resolves the active
 // pack's calibration_domains declarations into per-domain Brier+accuracy+
 // extras scorecards stored in calibration_profiles.domain_scorecards JSONB.
@@ -347,7 +348,8 @@ class CalibrationProfilePhase extends BaseCyclePhase {
       );
     }
 
-    await engine.executeRaw(
+    await executeRawJsonb(
+      engine,
       `INSERT INTO calibration_profiles (
          source_id, holder, generated_at, published,
          total_resolved, brier, accuracy, partial_rate, grade_completion,
@@ -356,9 +358,11 @@ class CalibrationProfilePhase extends BaseCyclePhase {
          active_bias_tags, model_id, cost_usd, judge_model_agreement
        ) VALUES ($1, $2, now(), false,
                  $3, $4, $5, $6, $7,
-                 $8::jsonb, $9::text[],
-                 $10, $11,
-                 $12::text[], $13, NULL, NULL)`,
+                 $11::jsonb,
+                 ARRAY(SELECT jsonb_array_elements_text(($12::jsonb)->'pattern_statements')),
+                 $8, $9,
+                 ARRAY(SELECT jsonb_array_elements_text(($13::jsonb)->'active_bias_tags')),
+                 $10, NULL, NULL)`,
       [
         sourceId,
         holder,
@@ -367,15 +371,17 @@ class CalibrationProfilePhase extends BaseCyclePhase {
         scorecard.accuracy,
         scorecard.partial_rate,
         gradeCompletion,
+        result.voice_gate_passed,
+        result.voice_gate_attempts,
+        modelId,
+      ],
+      [
         // v0.41 T10 — domain_scorecards JSONB populated by the
         // domain-aggregators pass above. Empty {} when no active pack
         // declares calibration_domains (R1 byte-identical regression).
-        JSON.stringify(domainScorecards),
-        result.pattern_statements,
-        result.voice_gate_passed,
-        result.voice_gate_attempts,
-        result.active_bias_tags,
-        modelId,
+        domainScorecards,
+        { pattern_statements: result.pattern_statements },
+        { active_bias_tags: result.active_bias_tags },
       ],
     );
     result.profile_written = true;

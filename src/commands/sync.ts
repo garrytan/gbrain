@@ -1767,6 +1767,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       detachedWorkingTreeManifest.renamed.length > 0);
 
   if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
+    // A no-op sync still proves freshness. Stamp the source/config anchor so
+    // operator surfaces stop looking stale after an `up_to_date` check ran.
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, commitTimeMs(repoPath, headCommit));
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,

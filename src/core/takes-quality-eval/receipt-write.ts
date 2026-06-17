@@ -22,18 +22,20 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { TakesQualityReceipt } from './receipt.ts';
 import { buildReceiptFilename, buildReceiptPath } from './receipt-name.ts';
+import { executeRawJsonb } from '../sql-query.ts';
 
 /** Insert the full receipt into the DB. Throws on failure (DB is authoritative). */
 export async function writeReceiptToDb(engine: BrainEngine, receipt: TakesQualityReceipt): Promise<void> {
-  await engine.executeRaw(
+  await executeRawJsonb(
+    engine,
     `INSERT INTO eval_takes_quality_runs (
        receipt_sha8_corpus, receipt_sha8_prompt, receipt_sha8_models, receipt_sha8_rubric,
        rubric_version, verdict, overall_score, dim_scores, cost_usd,
        receipt_json, receipt_disk_path, created_at
      ) VALUES (
        $1, $2, $3, $4,
-       $5, $6, $7, $8::jsonb, $9,
-       $10::jsonb, $11, $12::timestamptz
+       $5, $6, $7, $10::jsonb, $8,
+       $11::jsonb, $9, $12::timestamptz
      )
      ON CONFLICT (receipt_sha8_corpus, receipt_sha8_prompt, receipt_sha8_models, receipt_sha8_rubric)
      DO NOTHING`,
@@ -45,9 +47,7 @@ export async function writeReceiptToDb(engine: BrainEngine, receipt: TakesQualit
       receipt.rubric_version,
       receipt.verdict,
       receipt.overall_score ?? 0,
-      JSON.stringify(receipt.scores),
       receipt.cost_usd,
-      JSON.stringify(receipt),
       buildReceiptPath({
         corpus_sha8: receipt.corpus.corpus_sha8,
         prompt_sha8: receipt.prompt_sha8,
@@ -56,6 +56,7 @@ export async function writeReceiptToDb(engine: BrainEngine, receipt: TakesQualit
       }),
       receipt.ts,
     ],
+    [receipt.scores, receipt],
   );
 }
 

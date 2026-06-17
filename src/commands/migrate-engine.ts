@@ -14,6 +14,7 @@ import type { EngineConfig } from '../core/types.ts';
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'fs';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { executeRawJsonb } from '../core/sql-query.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -127,16 +128,17 @@ export async function copySourceRowsForMigration(
   );
 
   for (const row of sourceRows) {
-    await targetEngine.executeRaw(
+    await executeRawJsonb(
+      targetEngine,
       `INSERT INTO sources (
          id, name, local_path, last_commit, last_sync_at, config,
          chunker_version, archived, archived_at, archive_expires_at,
          contextual_retrieval_mode, trust_frontmatter_overrides,
          newest_content_at, created_at
        ) VALUES (
-         $1, $2, $3, $4, $5::timestamptz, $6::jsonb,
-         $7, $8, $9::timestamptz, $10::timestamptz,
-         $11, $12, $13::timestamptz, $14::timestamptz
+         $1, $2, $3, $4, $5::timestamptz, $14::jsonb,
+         $6, $7, $8::timestamptz, $9::timestamptz,
+         $10, $11, $12::timestamptz, $13::timestamptz
        )
        ON CONFLICT (id) DO UPDATE SET
          name = EXCLUDED.name,
@@ -158,7 +160,6 @@ export async function copySourceRowsForMigration(
         row.local_path,
         row.last_commit,
         asIsoTimestamp(row.last_sync_at),
-        JSON.stringify(normalizeSourceConfig(row.config)),
         row.chunker_version,
         row.archived,
         asIsoTimestamp(row.archived_at),
@@ -168,6 +169,7 @@ export async function copySourceRowsForMigration(
         asIsoTimestamp(row.newest_content_at),
         asIsoTimestamp(row.created_at),
       ],
+      [normalizeSourceConfig(row.config)],
     );
   }
 

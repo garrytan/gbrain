@@ -31,6 +31,41 @@ fi
 
 echo "OK: no JSON.stringify(x)::jsonb interpolation pattern in src/"
 
+# v0.42: also catch the POSITIONAL form the interpolated check above misses:
+#   engine.executeRaw(`... $N::jsonb`, [..., JSON.stringify(x)])
+# Here the `$N::jsonb` cast lives in the SQL string and the JSON.stringify(x)
+# arrives as a positional bind param — so it never appears as the inlined
+# `${JSON.stringify(x)}::jsonb` literal the PATTERN above looks for, yet it
+# double-encodes identically on postgres.js. The fix is executeRawJsonb()
+# (pass the raw object), which is why this guard EXCLUDES `executeRawJsonb(`.
+#
+# Best-effort multi-line scan: flag any executeRaw(...) call (terminated by
+# `);`) whose body contains BOTH a `::jsonb` cast and a `JSON.stringify(`.
+POSITIONAL_HITS="$(
+  find src -type f -name '*.ts' -print0 \
+  | xargs -0 perl -0777 -ne '
+      while (/executeRaw\s*\((.*?)\)\s*;/sg) {
+        my $call = $1;
+        next unless $call =~ /::jsonb/ && $call =~ /JSON\.stringify\s*\(/;
+        my $line = (substr($_, 0, pos()) =~ tr/\n//) + 1;
+        print "$ARGV:$line: executeRaw(... JSON.stringify(...) ... \$N::jsonb) — positional double-encode\n";
+      }
+    ' 2>/dev/null
+)"
+
+if [ -n "$POSITIONAL_HITS" ]; then
+  echo "$POSITIONAL_HITS"
+  echo
+  echo "ERROR: Found positional JSON.stringify(...) bound to a \$N::jsonb cast via executeRaw()."
+  echo "       postgres.js re-encodes the string, producing a JSONB STRING literal"
+  echo "       (jsonb_typeof='string'); PGLite hides it. Pass the raw object through"
+  echo "       executeRawJsonb(engine, sql, [scalars], [obj]) instead — see"
+  echo "       src/core/sql-query.ts and feedback_postgres_jsonb_double_encode.md."
+  exit 1
+fi
+
+echo "OK: no positional executeRaw + JSON.stringify(x) + \$N::jsonb pattern in src/"
+
 # v0.13.1 #219: guard against max_stalled DEFAULT 1 regressing in any schema
 # source file. DEFAULT 1 dead-lettered any SIGKILL'd job on first stall, making
 # the "10/10 rescued" claim false for out-of-the-box users. Default is 5 now.

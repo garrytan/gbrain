@@ -41,6 +41,7 @@ import { realpathSync } from 'fs';
 import { join, dirname, basename, resolve as resolvePath } from 'path';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
+import { executeRawJsonb } from './sql-query.ts';
 import {
   parseRemoteUrl,
   cloneRepo,
@@ -406,10 +407,12 @@ export async function addSource(
     const displayName = opts.name ?? opts.id;
 
     try {
-      await engine.executeRaw(
+      await executeRawJsonb(
+        engine,
         `INSERT INTO sources (id, name, local_path, config)
              VALUES ($1, $2, $3, $4::jsonb)`,
-        [opts.id, displayName, finalPath, JSON.stringify(config)],
+        [opts.id, displayName, finalPath],
+        [config],
       );
     } catch (e) {
       rmSync(tempDir, { recursive: true, force: true });
@@ -452,10 +455,12 @@ export async function addSource(
       config.federated = opts.federated;
     }
     const displayName = opts.name ?? opts.id;
-    await engine.executeRaw(
+    await executeRawJsonb(
+      engine,
       `INSERT INTO sources (id, name, local_path, config)
            VALUES ($1, $2, $3, $4::jsonb)`,
-      [opts.id, displayName, finalPath, JSON.stringify(config)],
+      [opts.id, displayName, finalPath],
+      [config],
     );
   }
 

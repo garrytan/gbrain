@@ -37,6 +37,7 @@ import type {
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import { loadConfig } from '../../config.ts';
+import { executeRawJsonb } from '../../sql-query.ts';
 import { buildBrainTools, filterAllowedTools } from '../tools/brain-allowlist.ts';
 import {
   acquireLease,
@@ -875,25 +876,29 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       // circuit silently breaks and the tool re-executes. Pinned by
       // test/e2e/subagent-crash-replay-multi-provider.test.ts.
       const candidateId = randomUUIDv7();
-      const rows = await engine.executeRaw<{ gbrain_tool_use_id: string }>(
+      const rows = await executeRawJsonb<{ gbrain_tool_use_id: string }>(
+        engine,
         `INSERT INTO subagent_tool_executions
            (job_id, message_idx, tool_use_id, tool_name, input, status, schema_version, ordinal, gbrain_tool_use_id, provider_id)
-         VALUES ($1, $2, $3, $4, $5::jsonb, 'pending', 2, $6, $7, $8)
+         VALUES ($1, $2, $3, $4, ($8::jsonb)->'input', 'pending', 2, $5, $6, $7)
          ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
            SET status = subagent_tool_executions.status
          RETURNING gbrain_tool_use_id::text AS gbrain_tool_use_id`,
-        [ctx.id, messageIdx, providerToolCallId, toolName, JSON.stringify(input ?? null), ordinal, candidateId, recipeIdFromModel(model)],
+        [ctx.id, messageIdx, providerToolCallId, toolName, ordinal, candidateId, recipeIdFromModel(model)],
+        [{ input: input ?? null }],
       );
       const gbrainToolUseId = rows[0]?.gbrain_tool_use_id ?? candidateId;
       heartbeat('tool_called', { turn_idx: turnIdx, tool_name: toolName });
       return { gbrainToolUseId };
     },
     onToolCallComplete: async (gbrainToolUseId, output) => {
-      await engine.executeRaw(
+      await executeRawJsonb(
+        engine,
         `UPDATE subagent_tool_executions
-           SET status = 'complete', output = $1::jsonb, ended_at = now()
-         WHERE gbrain_tool_use_id::text = $2`,
-        [JSON.stringify(output ?? null), gbrainToolUseId],
+           SET status = 'complete', output = ($2::jsonb)->'output', ended_at = now()
+         WHERE gbrain_tool_use_id::text = $1`,
+        [gbrainToolUseId],
+        [{ output: output ?? null }],
       );
     },
     onToolCallFailed: async (gbrainToolUseId, errorMsg) => {
@@ -903,6 +908,18 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
          WHERE gbrain_tool_use_id::text = $2`,
         [errorMsg, gbrainToolUseId],
       );
+    },
+    onToolResults: async (_turnIdx, messageIdx, blocks) => {
+      await persistMessage(engine, ctx.id, {
+        message_idx: messageIdx,
+        role: 'user',
+        content_blocks: blocks as unknown as ContentBlock[],
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cache_read: null,
+        tokens_cache_create: null,
+        model: null,
+      });
     },
     onHeartbeat: heartbeat,
   });
@@ -1104,22 +1121,23 @@ async function loadPriorTools(engine: BrainEngine, jobId: number): Promise<Persi
 }
 
 async function persistMessage(engine: BrainEngine, jobId: number, msg: PersistedMessage): Promise<void> {
-  await engine.executeRaw(
+  await executeRawJsonb(
+    engine,
     `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks,
         tokens_in, tokens_out, tokens_cache_read, tokens_cache_create, model)
-     VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)
+     VALUES ($1, $2, $3, ($9::jsonb)->'content_blocks', $4, $5, $6, $7, $8)
      ON CONFLICT (job_id, message_idx) DO NOTHING`,
     [
       jobId,
       msg.message_idx,
       msg.role,
-      JSON.stringify(msg.content_blocks),
       msg.tokens_in,
       msg.tokens_out,
       msg.tokens_cache_read,
       msg.tokens_cache_create,
       msg.model,
     ],
+    [{ content_blocks: msg.content_blocks }],
   );
 }
 
@@ -1131,15 +1149,13 @@ async function persistToolExecPending(
   toolName: string,
   input: unknown,
 ): Promise<void> {
-  // Serialize to JSON string for the ::jsonb cast. When `input` is already a
-  // string (e.g. pre-serialized), avoid double-encoding which produces a jsonb
-  // scalar string instead of a jsonb object — breaking `input->>'key'` lookups.
-  const jsonStr = typeof input === 'string' ? input : JSON.stringify(input);
-  await engine.executeRaw(
+  await executeRawJsonb(
+    engine,
     `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status)
-     VALUES ($1, $2, $3, $4, $5::jsonb, 'pending')
+     VALUES ($1, $2, $3, $4, ($5::jsonb)->'input', 'pending')
      ON CONFLICT (job_id, tool_use_id) DO NOTHING`,
-    [jobId, messageIdx, toolUseId, toolName, jsonStr],
+    [jobId, messageIdx, toolUseId, toolName],
+    [{ input }],
   );
 }
 
@@ -1149,11 +1165,13 @@ async function persistToolExecComplete(
   toolUseId: string,
   output: unknown,
 ): Promise<void> {
-  await engine.executeRaw(
+  await executeRawJsonb(
+    engine,
     `UPDATE subagent_tool_executions
-        SET status = 'complete', output = $3::jsonb, ended_at = now()
+        SET status = 'complete', output = ($3::jsonb)->'output', ended_at = now()
       WHERE job_id = $1 AND tool_use_id = $2`,
-    [jobId, toolUseId, typeof output === 'string' ? output : JSON.stringify(output)],
+    [jobId, toolUseId],
+    [{ output }],
   );
 }
 
@@ -1168,12 +1186,14 @@ async function persistToolExecFailed(
 ): Promise<void> {
   // INSERT-or-UPDATE to failed — covers both "no pending row yet" (tool
   // rejected upfront) and "pending row exists" (tool threw mid-execute).
-  await engine.executeRaw(
+  await executeRawJsonb(
+    engine,
     `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status, error, ended_at)
-     VALUES ($1, $2, $3, $4, $5::jsonb, 'failed', $6, now())
+     VALUES ($1, $2, $3, $4, ($6::jsonb)->'input', 'failed', $5, now())
      ON CONFLICT (job_id, tool_use_id) DO UPDATE
        SET status = 'failed', error = EXCLUDED.error, ended_at = now()`,
-    [jobId, messageIdx, toolUseId, toolName, typeof input === 'string' ? input : JSON.stringify(input), error],
+    [jobId, messageIdx, toolUseId, toolName, error],
+    [{ input }],
   );
 }
 

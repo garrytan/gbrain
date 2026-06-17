@@ -33,6 +33,7 @@ import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, HybridSearchMeta } from '../types.ts';
 import { buildPageGenerationsSnapshot, CACHE_GATE_WHERE_CLAUSE } from './query-cache-gate.ts';
+import { executeRawJsonb } from '../sql-query.ts';
 
 /** Default cosine similarity threshold for cache hits. */
 export const DEFAULT_SIMILARITY_THRESHOLD = 0.92;
@@ -230,13 +231,12 @@ export class SemanticQueryCache {
       // so ON CONFLICT (id) DO UPDATE just refreshes the same-mode row.
       //
       // v0.40.3.0: page_generations JSONB + max_generation_at_store BIGINT
-      // stamped per D11 (cache invalidation gate). page_generations is
-      // sent as a JSON.stringify and cast to JSONB inside the SQL; pre-v91
-      // brains store an empty `{}` + zero bookmark (legacy compat per
-      // the v0.40.3.0 IRON-RULE).
-      await this.engine.executeRaw(
+      // stamped per D11 (cache invalidation gate). pre-v91 brains store an
+      // empty `{}` + zero bookmark (legacy compat per the IRON-RULE).
+      await executeRawJsonb(
+        this.engine,
         `INSERT INTO query_cache (id, query_text, source_id, knobs_hash, embedding, results, meta, ttl_seconds, page_generations, max_generation_at_store, created_at)
-         VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb, $7::jsonb, $8, $9::jsonb, $10, now())
+         VALUES ($1, $2, $3, $4, $5::vector, ($8::jsonb)->'results', $9::jsonb, $6, $10::jsonb, $7, now())
          ON CONFLICT (id) DO UPDATE SET
            query_text = EXCLUDED.query_text,
            knobs_hash = EXCLUDED.knobs_hash,
@@ -253,12 +253,10 @@ export class SemanticQueryCache {
           sourceId,
           knobsHash,
           vec,
-          JSON.stringify(results),
-          JSON.stringify(meta),
           ttl,
-          JSON.stringify(snapshot.page_generations),
           snapshot.max_generation_at_store,
         ],
+        [{ results }, meta, snapshot.page_generations],
       );
     } catch {
       // swallow \u2014 cache write must never break the search hot path.

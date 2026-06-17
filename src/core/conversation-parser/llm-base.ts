@@ -36,6 +36,7 @@ import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import type { BrainEngine } from '../engine.ts';
+import { executeRawJsonb } from '../sql-query.ts';
 
 /**
  * Test-seam transport. Real callers pass undefined → `gatewayChat`.
@@ -266,15 +267,14 @@ async function writeDbCache<T>(
 ): Promise<void> {
   const [, , contentSha] = splitCacheKey(key);
   if (!contentSha) return;
-  // executeRaw with positional binding for JSONB. Per the sql-query.ts
-  // contract: object values passed via positional params reach the
-  // wire as proper jsonb when cast.
-  await engine.executeRaw(
+  await executeRawJsonb(
+    engine,
     `INSERT INTO conversation_parser_llm_cache
        (content_sha256, model_id, call_shape, value_json)
-     VALUES ($1, $2, $3, $4::jsonb)
+     VALUES ($1, $2, $3, ($4::jsonb)->'value')
      ON CONFLICT (content_sha256, model_id, call_shape) DO NOTHING`,
-    [contentSha, modelStr, shape, JSON.stringify(value)],
+    [contentSha, modelStr, shape],
+    [{ value }],
   );
 }
 

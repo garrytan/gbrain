@@ -671,7 +671,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                     idempotency_key: `autopilot-sync:${src.id}:${slot}`,
                     max_attempts: 2,
                     timeout_ms: timeoutMs,
-                    maxWaiting: 1,
+                    // No maxWaiting here: it coalesces by (name, queue), not
+                    // source, so it can collapse all source-specific freshness
+                    // syncs into one waiting job.
                   },
                 );
                 if (jsonMode) {

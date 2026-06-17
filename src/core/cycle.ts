@@ -2303,7 +2303,20 @@ export async function runCycle(
   // Best-effort: a write failure does NOT change the CycleReport status.
   // The cost of writing the wrong timestamp post-failure is higher than
   // the cost of missing a successful write (next cycle will redo work).
-  if (opts.sourceId && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || status === 'partial')) {
+  //
+  // Do not stamp a source fresh when every requested phase was skipped.
+  // The load-bearing case is a source-scoped cycle with no local checkout:
+  // filesystem phases skip with reason `no_brain_dir`, and marking that source
+  // fresh would suppress the next real attempt.
+  const ranAnyPhase = phaseResults.some((p) => p.status !== 'skipped');
+  if (
+    opts.sourceId &&
+    engine &&
+    !dryRun &&
+    !aborted &&
+    ranAnyPhase &&
+    (status === 'ok' || status === 'clean' || status === 'partial')
+  ) {
     try {
       await engine.updateSourceConfig(opts.sourceId, {
         last_full_cycle_at: new Date().toISOString(),

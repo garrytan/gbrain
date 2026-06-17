@@ -109,4 +109,20 @@ describe('autopilot-cycle handler source_id validation + archive recheck', () =>
     const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'echo', pull: false, phases: ['lint'] });
     expect(['ok', 'clean']).toContain(result.status);
   });
+
+  test('source with no local_path skips filesystem phases without stamping fresh', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+       VALUES ('db-only', 'db-only', NULL, '{}'::jsonb, false, NOW())`,
+    );
+
+    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'db-only', phases: ['lint'] });
+
+    expect(result.status).toBe('clean');
+    expect(result.report.phases[0]?.details?.reason).toBe('no_brain_dir');
+    const rows = await engine.executeRaw<{ config: { last_full_cycle_at?: string } | null }>(
+      `SELECT config FROM sources WHERE id = 'db-only'`,
+    );
+    expect(rows[0]?.config?.last_full_cycle_at ?? null).toBeNull();
+  });
 });
