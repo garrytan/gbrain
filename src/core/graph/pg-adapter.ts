@@ -34,7 +34,7 @@ export class PostgresGraphAdapter implements GraphRepository {
   }
 
   async createRelation(relation: Relation): Promise<void> {
-    await this.engine.addLink(
+    await this.engine.addLink( // gbrain-allow-direct-insert: PostgresGraphAdapter is the authorized graph-repository layer for link writes
       relation.from_slug,
       relation.to_slug,
       relation.context,
