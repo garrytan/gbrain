@@ -2130,6 +2130,35 @@ const runtimeImport = new Function('specifier', 'return import(specifier)') as (
   specifier: string,
 ) => Promise<any>;
 
+export interface SyncBrainHandlerOptions {
+  repoPath?: string;
+  subbrain?: string;
+  allSubbrains?: boolean;
+  dryRun?: boolean;
+  full?: boolean;
+  noPull?: boolean;
+  noEmbed?: boolean;
+}
+
+export type SyncBrainHandler = (
+  engine: BrainEngine,
+  opts: SyncBrainHandlerOptions,
+) => Promise<unknown>;
+
+let registeredSyncBrainHandler: SyncBrainHandler | null = null;
+
+export function registerSyncBrainHandler(handler: SyncBrainHandler): void {
+  registeredSyncBrainHandler = handler;
+}
+
+async function loadSyncBrainHandler(): Promise<SyncBrainHandler> {
+  if (registeredSyncBrainHandler) return registeredSyncBrainHandler;
+
+  // Keep sync local-only so the remote Edge bundle doesn't pull in CLI/import engine code.
+  const { performSync } = await runtimeImport('../commands/sync.ts');
+  return performSync;
+}
+
 // --- Page CRUD ---
 
 const get_page: Operation = {
@@ -3631,8 +3660,7 @@ const sync_brain: Operation = {
   },
   mutating: true,
   handler: async (ctx, p) => {
-    // Keep sync local-only so the remote Edge bundle doesn't pull in CLI/import engine code.
-    const { performSync } = await runtimeImport('../commands/sync.ts');
+    const performSync = await loadSyncBrainHandler();
     return performSync(ctx.engine, {
       repoPath: p.repo as string | undefined,
       subbrain: p.subbrain as string | undefined,

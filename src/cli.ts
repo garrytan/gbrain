@@ -12,8 +12,10 @@ import {
   formatResult as formatSharedResult,
   getMissingRequiredParams,
   parseOpArgs as parseSharedOpArgs,
+  registerSyncBrainHandler,
 } from './core/operations.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
+import { performSync as performSyncCommand, runSync as runSyncCommand } from './commands/sync.ts';
 import { VERSION } from './version.ts';
 
 // Build CLI name -> operation lookup
@@ -274,6 +276,8 @@ const CLI_ENGINE_COMMANDS: Record<string, CliEngineLoader> = {
 };
 
 async function main() {
+  registerSyncBrainHandler(performSyncCommand);
+
   const args = process.argv.slice(2);
   const command = args[0];
 
@@ -482,8 +486,7 @@ async function handleCliOnly(command: string, args: string[]) {
 async function handleSyncCliExtension(args: string[]) {
   const engine = await connectEngine();
   try {
-    const { runSync } = await import('./commands/sync.ts');
-    await runSync(engine, args);
+    await runSyncCommand(engine, args);
   } finally {
     await engine.disconnect();
   }

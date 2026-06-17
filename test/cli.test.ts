@@ -646,6 +646,90 @@ describe('CLI dispatch integration', () => {
     }
   });
 
+  test('compiled CLI embeds sync implementation for sync_brain dispatch', async () => {
+    const buildDir = mkdtempSync(join(tmpdir(), 'mbrain-compiled-sync-cli-'));
+    const binPath = join(buildDir, 'mbrain');
+    const repoDir = join(buildDir, 'repo');
+    mkdirSync(repoDir, { recursive: true });
+
+    try {
+      runGit(repoDir, 'init', '-q');
+      runGit(repoDir, 'config', 'user.email', 'test@example.com');
+      runGit(repoDir, 'config', 'user.name', 'Test User');
+      writeFileSync(join(repoDir, 'note.md'), '# Note\n\nCompiled sync smoke.');
+      runGit(repoDir, 'add', 'note.md');
+      runGit(repoDir, 'commit', '-q', '-m', 'init');
+
+      const build = Bun.spawn(['bun', 'build', '--compile', '--outfile', binPath, 'src/cli.ts'], {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: tempHome },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const buildStdout = await new Response(build.stdout).text();
+      const buildStderr = await new Response(build.stderr).text();
+      const buildExitCode = await build.exited;
+      expect(buildExitCode, `${buildStdout}\n${buildStderr}`).toBe(0);
+
+      const configDir = join(tempHome, '.mbrain');
+      const env = {
+        ...process.env,
+        HOME: tempHome,
+        MBRAIN_CONFIG_DIR: configDir,
+        OPENAI_API_KEY: '',
+        ANTHROPIC_API_KEY: '',
+      };
+
+      const init = Bun.spawn([binPath, 'init', '--local', '--json'], {
+        cwd: repoRoot,
+        env,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const initStdout = await new Response(init.stdout).text();
+      const initStderr = await new Response(init.stderr).text();
+      const initExitCode = await init.exited;
+      expect(initExitCode, `${initStdout}\n${initStderr}`).toBe(0);
+
+      const sync = Bun.spawn([binPath, 'sync', '--repo', repoDir, '--no-pull', '--dry-run'], {
+        cwd: repoRoot,
+        env,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const stdout = await new Response(sync.stdout).text();
+      const stderr = await new Response(sync.stderr).text();
+      const exitCode = await sync.exited;
+
+      expect(exitCode, stderr).toBe(0);
+      expect(stderr).toBe('');
+      expect(stdout).toContain('Sync dry run: full import');
+      expect(stdout).toContain('Added: note');
+
+      const call = Bun.spawn([
+        binPath,
+        'call',
+        'sync_brain',
+        JSON.stringify({ repo: repoDir, no_pull: true, dry_run: true }),
+      ], {
+        cwd: repoRoot,
+        env,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const callStdout = await new Response(call.stdout).text();
+      const callStderr = await new Response(call.stderr).text();
+      const callExitCode = await call.exited;
+
+      expect(callExitCode, callStderr).toBe(0);
+      expect(callStderr).toBe('');
+      expect(callStdout).toContain('"status": "dry_run"');
+      expect(callStdout).toContain('"pagesAffected"');
+    } finally {
+      rmSync(buildDir, { recursive: true, force: true });
+    }
+  });
+
   test('dream --help prints usage without DB connection', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'dream', '--help'], {
       cwd: repoRoot,
