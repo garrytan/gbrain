@@ -19,9 +19,9 @@ It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate t
 
 ## Start here
 
-- **Current version.** `0.42.50.0`, from [`VERSION`](VERSION). Read
-  [`CHANGELOG.md`](CHANGELOG.md) for release notes. For upgrades, humans start
-  with [`docs/INSTALL.md`](docs/INSTALL.md); coding agents use
+- **Current version.** [`VERSION`](VERSION) is the source of truth; the latest
+  release notes are at the top of [`CHANGELOG.md`](CHANGELOG.md). For upgrades,
+  humans start with [`docs/INSTALL.md`](docs/INSTALL.md); coding agents use
   [`INSTALL_FOR_AGENTS.md#upgrade`](INSTALL_FOR_AGENTS.md#upgrade).
 - **Humans installing or operating GBrain.** Start with
   [`docs/INSTALL.md`](docs/INSTALL.md). It routes local PGLite, Postgres or

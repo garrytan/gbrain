@@ -5,7 +5,7 @@ workflow, refreshed after the upstream rebase
 
 Baseline reviewed: `docs/docs-consolidation/00-upstream-base.md`
 
-Pinned upstream commit: `70d5f36db60d435b40f83031473f1911f6bc2f9a`
+Pinned upstream commit: `9bf96db807c2f050449142f2f0b05726f58e5054`
 
 Current branch state: rebased onto upstream/master at the pinned commit
 
@@ -55,7 +55,7 @@ Execution notes:
   named in the skill contract for assemble review, architecture, or tour. Those
   phases were assembled deterministically from the merged graph and then
   validated with the inline validator.
-- After upstream advanced to `0.42.50.0`, the current branch was rebased onto
+- After upstream advanced to `0.42.51.0`, the current branch was rebased onto
   `upstream/master`, CodeGraph was synced, and `understand-anything` was
   refreshed incrementally. The refresh re-ran deterministic scan, import-map
   extraction, changed-batch computation, structural extraction, graph update,
@@ -80,14 +80,14 @@ Execution notes:
 | Metric | Value |
 |---|---:|
 | files scanned | 2,593 |
-| files filtered by `.understandignore` | 0 |
+| files filtered by `.understandignore` | 3 |
 | import-map files with imports | 1,721 |
 | import-map resolved edges | 4,708 |
-| incremental batches refreshed | 33 |
-| files structurally refreshed in current merge batches | 892 |
+| latest incremental batches refreshed | 2 |
+| files structurally refreshed in latest merge batches | 28 |
 | files skipped | 0 |
-| graph nodes | 12,632 |
-| graph edges | 20,473 |
+| graph nodes | 12,602 |
+| graph edges | 20,398 |
 | layers | 9 |
 | guided tour steps | 6 |
 | validation issues | 0 |
@@ -98,26 +98,26 @@ Node types:
 
 | Type | Count |
 |---|---:|
-| file | 2,052 |
-| function | 5,323 |
-| class | 151 |
+| file | 2,122 |
+| function | 5,455 |
+| class | 139 |
 | schema | 79 |
-| pipeline | 4 |
-| concept | 5,640 |
-| config | 52 |
-| document | 353 |
-| service | 3 |
-| table | 3 |
+| pipeline | 8 |
+| concept | 4,378 |
+| document | 366 |
+| config | 51 |
+| table | 2 |
+| service | 2 |
 
 Edge types:
 
 | Type | Count |
 |---|---:|
-| contains | 7,544 |
-| calls | 3,362 |
-| imports | 3,267 |
-| documents | 3,570 |
-| tested_by | 6 |
+| contains | 7,781 |
+| calls | 5,768 |
+| imports | 4,593 |
+| documents | 2,244 |
+| tested_by | 12 |
 
 ## System Layers
 
@@ -235,10 +235,13 @@ and `llms-full.txt` still use upstream `garrytan/gbrain/master` raw URLs, while
 ### 0. Changelog-To-Current-Capabilities Baseline
 
 The docs cleanup should begin by converting the latest changelog window into a
-current-capability ledger. The minimum release window is `0.42.50.0` through
-`0.42.41.0`, with special attention to `0.42.50.0` through `0.42.45.0`,
+current-capability ledger. The minimum release window is `0.42.51.0` through
+`0.42.41.0`, with special attention to `0.42.51.0` through `0.42.45.0`,
 `0.42.43.0`, and `0.42.42.0`:
 
+- sync reliability/performance hardening: contention-free page-generation
+  clock, structurally constrained/repaired checkpoints, active-vs-stale
+  `doctor` freshness, and honest `sync --force-break-lock` no-lock reporting
 - CI reliability, hermetic E2E environment handling, and actionlint checks
 - opt-in pacing and shared DB pressure handling for large embed/sync work
 - brain-repo durability commands for Git-backed sources

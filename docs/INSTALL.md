@@ -587,6 +587,12 @@ backup that has not been restored is only an archive.
   pooler URL, or enable Supabase's IPv4 add-on.
 - If reads work but sync imports very few pages, suspect the direct connection
   first. The detailed runbook is [`guides/live-sync.md`](guides/live-sync.md).
+- On v0.42.51.0 and newer, `doctor` distinguishes an actively running sync
+  from a truly stale one. Treat a live sync lock as progress to observe, not as
+  a reason to break the lock.
+- Malformed sync checkpoints are repaired and structurally constrained by
+  upgrade migrations. If sync still appears wedged after upgrade, use `doctor`
+  and the live-sync runbook before reaching for `--force-break-lock`.
 - Review `gbrain doctor --remediation-plan --json` before running automated
   remediation.
 
@@ -635,6 +641,7 @@ runbook.
 | Embeddings are missing | Provider key/dimensions mismatch or `gbrain embed --stale` is not running after sync. |
 | Search costs are higher than expected | Search mode is too broad for the downstream model or push context is overused. Review [`guides/mode-selection.md`](guides/mode-selection.md). |
 | Embed backfill starves other jobs | Enable pacing with `gbrain embed --stale --pace` or `GBRAIN_PACE_MODE`; for persistent `pace.mode`, use `gbrain config set pace.mode balanced --force` until the allowlist catches up. |
+| Sync looks stale during a long import | Run `gbrain doctor --json`; v0.42.51.0 reports live sync locks as active instead of stale. Break locks only when the holder is dead. |
 | Brain repo writes stay local-only | Harden repo-backed sources with `gbrain sources harden <source-id>` or `gbrain sources harden --all`, then use the committed `scripts/brain-commit-push.sh` helper. |
 | Admin dashboard or logs show unexpected clients | Revoke the client, rotate affected secrets, and review DCR, CORS, and proxy exposure. |
 
@@ -663,6 +670,8 @@ After an upgrade, re-check:
 - provider/model checks with `gbrain models` and `gbrain models doctor`
 - spend-control posture and any pacing config if this install runs large embed
   backfills or syncs
+- sync freshness and checkpoint health with `gbrain doctor --json` after
+  v0.42.51.0+ upgrades
 - live sync if this install owns a brain repo
 - brain repo durability hardening if this install owns source Git repos
 - MCP connectivity if this install serves agents
@@ -697,6 +706,7 @@ Use [`GBRAIN_VERIFY.md`](GBRAIN_VERIFY.md) for the full runbook.
 | Semantic search returns little or nothing | Embeddings missing or provider misconfigured | Run `gbrain doctor --json`, then `gbrain embed --stale` after fixing the provider. |
 | Keyword search works but `query` is weak | Embeddings or reranker are stale/missing | Check provider keys, dimensions, and `gbrain stats`. |
 | Sync says it ran but page count is low | Direct/session DB path unreachable, often on IPv4-only Supabase hosts | Set `GBRAIN_DIRECT_DATABASE_URL` to the Session pooler or enable IPv4. |
+| `sync --force-break-lock` says no lock was held | No active sync lock existed | Use `gbrain doctor --json` and the live-sync runbook to inspect the actual stale or wedged condition. |
 | Remote agent cannot connect | HTTP server bound to loopback or issuer URL mismatch | Set `--public-url`; use `--bind` only when remote access is intended. |
 | Token works for too much | Client has broad scopes or legacy bearer access | Register a scoped OAuth client and revoke old tokens. |
 | Local checkout's `.env` points GBrain at the wrong DB | Generic `DATABASE_URL` belongs to another app | Use `GBRAIN_DATABASE_URL` for deliberate GBrain DB overrides. |

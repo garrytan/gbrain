@@ -44,16 +44,21 @@ RUN bun install -g github:garrytan/gbrain
 # width, but no embed callsite will actually run until runtime config.
 RUN gbrain init --pglite --no-embedding
 
-# At container start (entrypoint), provide the real provider:
+# At container start (entrypoint), provide the real provider and re-run init
+# through the supported schema-sizing path:
 ENTRYPOINT ["/bin/sh", "-c", "\
-  gbrain config set embedding_model openai:text-embedding-3-large \
-  && gbrain init --force --pglite \
+  gbrain init --force --pglite \
+    --embedding-model openai:text-embedding-3-large \
+    --embedding-dimensions 1536 \
   && exec gbrain serve"]
 ```
 
-The `gbrain init --no-embedding` opt-in writes `embedding_disabled: true` to config. Every embed callsite (`gbrain import`, `gbrain embed`, the `runEmbedCore` library entry point) checks this and refuses cleanly with a `gbrain config set embedding_model <id>` hint rather than proceeding with a silent default.
+The `gbrain init --no-embedding` opt-in writes `embedding_disabled: true` to config. Every embed callsite (`gbrain import`, `gbrain embed`, the `runEmbedCore` library entry point) checks this and refuses cleanly rather than proceeding with a silent default.
 
-The runtime `gbrain init --force` re-runs the init flow against the now-populated env, which:
+As of v0.37.11.0, `gbrain config set embedding_model` and `gbrain config set
+embedding_dimensions` are refused: those fields size the schema and cannot be
+changed by a DB-plane config write. The runtime `gbrain init --force ...` command
+above re-runs the init flow through the schema-sizing path, which:
 
 - Removes `embedding_disabled` from config.
 - Resolves the provider via env detection.

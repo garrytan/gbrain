@@ -5,9 +5,9 @@ Status: upstream documentation consolidation baseline
 ## Git
 
 - Current branch: docs/consolidate-entrypoints-and-install-modes
-- Pinned upstream commit: 70d5f36db60d435b40f83031473f1911f6bc2f9a
+- Pinned upstream commit: 9bf96db807c2f050449142f2f0b05726f58e5054
 - Current branch state: rebased onto upstream/master at the pinned commit
-- Current upstream version: 0.42.50.0
+- Current upstream version: 0.42.51.0
 
 ## Current release baseline
 
@@ -18,6 +18,10 @@ rewrites are proposed.
 
 Latest release entries reviewed:
 
+- `0.42.51.0` - sync reliability/performance hardening: page-generation clock
+  moved to a contention-free sequence, malformed checkpoints are
+  repaired/constrained, `doctor` distinguishes active sync locks from stale
+  syncs, and `sync --force-break-lock` reports no-lock cases honestly.
 - `0.42.50.0` - CI reliability hardening: superseded PR runs cancel, jobs have
   explicit timeouts, E2E scrubs operator/agent environment variables, and
   workflow YAML is actionlint-checked.
@@ -46,8 +50,8 @@ Latest release entries reviewed:
 ## Remotes
 
 ```
-origin	https://github.com/TheAngryPit/gbrain.git (fetch)
-origin	https://github.com/TheAngryPit/gbrain.git (push)
+origin	analysis fork remote (fetch)
+origin	analysis fork remote (push)
 upstream	https://github.com/garrytan/gbrain.git (fetch)
 upstream	https://github.com/garrytan/gbrain.git (push)
 ```

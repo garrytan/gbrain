@@ -115,20 +115,31 @@ registering clients.
 
 ### 2. Register OAuth clients
 
-Register clients from the **`/admin` dashboard**:
+For machine-to-machine clients, register from the **`/admin` dashboard**:
 
 1. Click **Register client**.
-2. Enter a name (e.g. `perplexity`, `chatgpt`).
+2. Enter a name, for example `perplexity` or `claude-code-remote`.
 3. Pick scopes: `read`, `write`, `admin` (checkboxes).
-4. Pick grant type: `client_credentials` for machine-to-machine (Perplexity,
-   Claude Desktop bearer mode) or `authorization_code` for browser-based
-   clients with PKCE (ChatGPT).
-5. For `authorization_code` clients, paste the redirect URI.
-6. Hit **Register**. The credential-reveal modal shows the `client_id` (and
-   `client_secret` for confidential clients) once. Copy or Download JSON
-   immediately — secrets are hashed on storage and never shown again.
+4. Hit **Register**. The credential-reveal modal shows the `client_id` and
+   `client_secret` once. Copy or Download JSON immediately — secrets are
+   hashed on storage and never shown again.
 
-Or from the CLI — faster for scripting:
+The dashboard modal currently creates confidential `client_credentials`
+clients. For browser-based PKCE clients such as ChatGPT, use the CLI so you can
+set grant type, redirect URI, and public-client auth method:
+
+```bash
+gbrain auth register-client chatgpt \
+  --grant-types authorization_code,refresh_token \
+  --scopes "read write" \
+  --redirect-uri https://chatgpt.com/connector/oauth/<HASH> \
+  --token-endpoint-auth-method none
+```
+
+Copy the exact redirect URI from the connector setup screen; the `<HASH>` value
+is specific to that connector registration.
+
+The CLI is also the easiest path for scripted machine-to-machine registration:
 
 ```bash
 gbrain auth register-client perplexity \

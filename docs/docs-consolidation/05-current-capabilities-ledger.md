@@ -8,9 +8,9 @@ migration, import, sync, or Docker lifecycle command was run.
 
 Baseline:
 
-- Current upstream commit: `70d5f36db60d435b40f83031473f1911f6bc2f9a`
-- Current upstream version: `0.42.50.0`
-- Primary release window: `0.42.50.0` through `0.42.41.0`
+- Current upstream commit: `9bf96db807c2f050449142f2f0b05726f58e5054`
+- Current upstream version: `0.42.51.0`
+- Primary release window: `0.42.51.0` through `0.42.41.0`
 - Supporting release window for drift classification: `0.42.40.0` through
   `0.42.20.0`
 
@@ -37,6 +37,7 @@ input. Do not count this ledger as proof that the public docs are fixed.
 
 | Release | Current capability or design semantic | Documentation obligation | Current docs status | Follow-up |
 |---|---|---|---|---|
+| `0.42.51.0` | Sync reliability and performance are current: page-generation clock is contention-free, malformed checkpoint rows are repaired and constrained, `doctor` treats live sync locks as actively syncing rather than stale, and `sync --force-break-lock` reports no-lock cases honestly. | Production/sync docs should describe current active-vs-stale sync diagnosis and checkpoint recovery, and avoid implying parallel sync always bottlenecks on a single generation row. | `incomplete-current`: `docs/INSTALL.md` now routes upgrade/production checks to doctor/live-sync proof; deeper sync architecture remains in existing guides and release notes. | #10, #14 |
 | `0.42.50.0` | CI reliability hardening is current: superseded PR runs cancel, workflow jobs have explicit timeouts, E2E scrubs operator/agent environment variables, and workflow YAML gets actionlint coverage. | Contributor and release docs should describe current CI behavior without relying on stale job-count claims or machine-local environment assumptions. | `current`: `AGENTS.md`, `docs/TESTING.md`, `CLAUDE.md`, and release notes cover the supported gates. `incomplete-current`: consolidation docs needed this baseline refresh. | #13, #14 |
 | `0.42.49.0` | Large embed and sync work can opt into shared pacing: `gbrain embed --stale --pace`, `pace.mode`, `GBRAIN_PACE_*`, sync shared permits, and pacing telemetry. | Install, mode-selection, and production docs should teach pacing as the supported operator path for shared DB pressure, not external wrapper scripts. | `incomplete-current`: `CLAUDE.md` documents the release contract; `docs/INSTALL.md` and `docs/guides/mode-selection.md` now route operators to per-run/env pacing and note the strict `config set` allowlist caveat for persistent `pace.mode`. | #9, #10 |
 | `0.42.48.0` | Git-backed brain sources have explicit durability commands: `gbrain sources harden`, `gbrain sources pull`, `gbrain sources unharden`, out-of-repo PAT files, and `scripts/brain-commit-push.sh`. | Brain/source docs must separate DB backup from source-repo durability and token handling. | `incomplete-current`: `docs/architecture/brain-repo-layout.md` now covers the central concept; deeper command reference can remain linked to changelog/CLI docs. | #8, #10 |
@@ -155,7 +156,7 @@ input. Do not count this ledger as proof that the public docs are fixed.
 
 | Claim | Proof level | Evidence |
 |---|---|---|
-| Current version is `0.42.50.0` | `code_proven` | `VERSION`, top of `CHANGELOG.md`, `docs/docs-consolidation/00-upstream-base.md` |
+| Current version is `0.42.51.0` | `code_proven` | `VERSION`, top of `CHANGELOG.md`, `docs/docs-consolidation/00-upstream-base.md` |
 | Push-context docs exist and are current for v0.42.43.0 surfaces | `code_proven` | `CHANGELOG.md`, `docs/guides/push-context.md`, `CLAUDE.md`, `docs/TESTING.md`, `docs/architecture/KEY_FILES.md` |
 | Teardown/exit-verdict behavior is documented in maintainer proof surfaces | `code_proven` | `CHANGELOG.md`, `docs/TESTING.md`, `docs/architecture/KEY_FILES.md` |
 | Relational retrieval is current in architecture docs but missing from the old search-mode skill guide | `code_proven` | `CHANGELOG.md`, `README.md`, `docs/architecture/RETRIEVAL.md`, `docs/guides/search-modes.md` |
@@ -168,7 +169,7 @@ input. Do not count this ledger as proof that the public docs are fixed.
 The first docs consolidation move should not delete large blocks of older docs.
 The safer current baseline is a mixed strategy:
 
-- Update docs that are accurate but incomplete for v0.42.50.0.
+- Update docs that are accurate but incomplete for v0.42.51.0.
 - Mark historical/design docs when their trust level is ambiguous.
 - Route users through one human path and one agent path.
 - Fix direct contradictions where current docs conflict with current source or

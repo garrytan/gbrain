@@ -11,6 +11,7 @@ Repo: https://github.com/garrytan/gbrain
 - [docs/architecture/KEY_FILES.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/KEY_FILES.md): Per-file index for the gbrain repo: what each src/ file does + its load-bearing invariants. The on-demand detail CLAUDE.md's reference map routes to.
 - [docs/architecture/thin-client.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/thin-client.md): The thin-client / remote-MCP / cross-modal routing seam: isThinClient detection, callRemoteTool, SSRF-hardened URL validation, per-command routing.
 - [INSTALL_FOR_AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md): Coding-agent install and operating protocol: branch map, search-mode gate, trust boundary, provider/key handling, MCP/auth guidance, verification, and upgrades.
+- [docs/INSTALL.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/INSTALL.md): Human install and operate center: route-based local, multi-source, thin-client, shared/production, and advanced topology setup plus provider, sync, verification, and upgrade guidance.
 - [skills/RESOLVER.md](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/RESOLVER.md): Skill dispatcher. Read first for any task.
 - [README.md](https://raw.githubusercontent.com/garrytan/gbrain/master/README.md): Project overview, benchmarks, 30-minute setup.
 

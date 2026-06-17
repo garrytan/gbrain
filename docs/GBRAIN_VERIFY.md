@@ -7,6 +7,10 @@ The most important check is #4 (live sync). "Sync ran" is not the same as
 "sync worked." A sync that silently skips pages because of a pooler bug is
 worse than no sync at all, because you think it's working.
 
+On v0.42.51.0 and newer, `gbrain doctor` also tells an actively running sync
+apart from a stale one. A live sync lock is progress to observe; a dead or
+expired holder is the case to investigate before breaking locks.
+
 ---
 
 ## 1. Schema Verification
@@ -26,6 +30,10 @@ gbrain doctor --json
 
 **If it fails:** The doctor output includes specific fix instructions for each
 check. See `skills/setup/SKILL.md` Error Recovery table.
+
+For sync freshness, read the lock status carefully. A live holder means sync is
+currently running. If no lock is held but the source still looks wedged, inspect
+the live-sync path instead of assuming `--force-break-lock` fixed anything.
 
 ---
 

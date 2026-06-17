@@ -108,8 +108,13 @@ restart the shell or add the PATH export to the shell profile.
 ## Step 2: API Keys
 
 Ask the user for these. GBrain defaults to the ZeroEntropy embedding + reranker
-stack. OpenAI and Voyage are supported fallbacks via
-`gbrain config set embedding_model <provider:model>`.
+stack. For a new brain, choose OpenAI, Voyage, or another provider before init
+with `gbrain init --embedding-model <provider:model> --embedding-dimensions <N>`
+(or let init auto-detect from provider env vars). For an existing brain, do not
+use `gbrain config set embedding_model`: current CLI refuses
+`embedding_model` / `embedding_dimensions` writes because they size the schema.
+Use `docs/integrations/embedding-providers.md` and `docs/embedding-migrations.md`
+for the supported PGLite/Postgres switch paths.
 
 ```bash
 export ZEROENTROPY_API_KEY=ze-...     # default embedding + reranker (v0.36.2.0+)

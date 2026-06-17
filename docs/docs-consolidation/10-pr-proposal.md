@@ -5,7 +5,7 @@ operator approval.
 
 ## Proposed Title
 
-Docs: consolidate GBrain operational entrypoints and current-state guidance
+v0.42.51.0 docs: consolidate GBrain operational documentation (#2211)
 
 ## Proposed Body
 
@@ -45,7 +45,7 @@ The branch:
 - removes or qualifies brittle skill/test/generated-map count claims;
 - regenerates `llms.txt` and `llms-full.txt` where their source changed;
 - adds a final consistency report mapping PRD acceptance, changelog-current
-  capabilities, operator feedback, and issues #2 through #14.
+  capabilities, operator feedback, and slices S-01 through S-13.
 
 ### Key Artifacts
 
@@ -80,7 +80,7 @@ The branch:
   were patched in README, `docs/INSTALL.md`, topology docs, agent docs, and
   consolidation artifacts, including follow-up OAuth issuer/public URL fixes
   and remote-MCP versus trusted-host shell-job corrections.
-- The existing `understand-anything` graph was refreshed during the v0.42.50.0
+- The existing `understand-anything` graph was refreshed during the v0.42.51.0
   rebase pass and validated with 0 broken edge, layer, or tour references.
   Current CLI/auth claims were verified with CodeGraph against on-disk source.
 

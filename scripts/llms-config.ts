@@ -75,6 +75,12 @@ export const SECTIONS: DocSection[] = [
         path: "INSTALL_FOR_AGENTS.md",
       },
       {
+        title: "docs/INSTALL.md",
+        description:
+          "Human install and operate center: route-based local, multi-source, thin-client, shared/production, and advanced topology setup plus provider, sync, verification, and upgrade guidance.",
+        path: "docs/INSTALL.md",
+      },
+      {
         title: "skills/RESOLVER.md",
         description: "Skill dispatcher. Read first for any task.",
         path: "skills/RESOLVER.md",

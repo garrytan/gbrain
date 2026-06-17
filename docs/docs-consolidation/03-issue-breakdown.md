@@ -1,49 +1,33 @@
 # Documentation Consolidation Issue Breakdown
 
-Status: published issue proposal and execution ledger
+Status: upstream issue proposal and local execution ledger
 
-Parent issue: <https://github.com/TheAngryPit/gbrain/issues/1>
+Parent issue: to be tracked in the upstream repository review flow.
 
-Tracker mode: GitHub issues, `ready-for-agent` label where available
+Tracker mode: GitHub issues when maintainers promote these slices; this file
+keeps neutral slice IDs so the upstream docs tree does not publish fork-local
+issue state.
 
 All slices are AFK. No slice requires local runtime inspection or GBrain
 runtime commands.
 
 ## Execution Artifacts
 
-| Issue | Artifact |
+| Slice | Artifact |
 |---|---|
-| [#2](https://github.com/TheAngryPit/gbrain/issues/2) | `docs/docs-consolidation/05-current-capabilities-ledger.md` |
-| [#3](https://github.com/TheAngryPit/gbrain/issues/3) | `docs/docs-consolidation/06-documentation-status-taxonomy.md` |
-| [#4](https://github.com/TheAngryPit/gbrain/issues/4) | `README.md`, `llms-full.txt` |
-| [#5](https://github.com/TheAngryPit/gbrain/issues/5) | `docs/INSTALL.md` |
-| [#6](https://github.com/TheAngryPit/gbrain/issues/6) | `INSTALL_FOR_AGENTS.md`, `scripts/llms-config.ts`, `llms.txt`, `llms-full.txt` |
-| [#7](https://github.com/TheAngryPit/gbrain/issues/7) | `docs/architecture/topologies.md`, `README.md`, `docs/INSTALL.md`, `INSTALL_FOR_AGENTS.md`, `llms-full.txt` |
-| [#8](https://github.com/TheAngryPit/gbrain/issues/8) | `docs/architecture/brain-repo-layout.md`, `README.md`, `docs/INSTALL.md`, `INSTALL_FOR_AGENTS.md`, `scripts/llms-config.ts`, `llms.txt`, `llms-full.txt` |
-| [#9](https://github.com/TheAngryPit/gbrain/issues/9) | `docs/guides/mode-selection.md`, `README.md`, `docs/INSTALL.md`, `INSTALL_FOR_AGENTS.md`, `scripts/llms-config.ts`, `llms.txt`, `llms-full.txt` |
-| [#10](https://github.com/TheAngryPit/gbrain/issues/10) | `docs/INSTALL.md` |
-| [#11](https://github.com/TheAngryPit/gbrain/issues/11) | `docs/mcp/DEPLOY.md`, `SECURITY.md`, `docs/mcp/ALTERNATIVES.md`, `docs/architecture/thin-client.md`, `INSTALL_FOR_AGENTS.md`, `docs/mcp/CODEX.md`, `docs/mcp/CLAUDE_CODE.md`, `docs/mcp/CHATGPT.md`, `docs/mcp/PERPLEXITY.md`, `llms-full.txt` |
-| [#12](https://github.com/TheAngryPit/gbrain/issues/12) | `docs/docs-consolidation/07-status-label-application.md`, status banners in selected historical/design/proposal/incident/plan docs, `TODOS.md` |
-| [#13](https://github.com/TheAngryPit/gbrain/issues/13) | `docs/docs-consolidation/08-brittle-counts-and-generated-maps.md`, `README.md`, `AGENTS.md`, `INSTALL_FOR_AGENTS.md`, `CLAUDE.md`, `docs/TESTING.md`, `scripts/llms-config.ts`, `scripts/build-llms.ts`, `llms.txt`, `llms-full.txt` |
-| [#14](https://github.com/TheAngryPit/gbrain/issues/14) | `docs/docs-consolidation/09-final-consistency-report.md`, `docs/docs-consolidation/10-pr-proposal.md` |
-
-## Published Issues
-
-| Issue | Title |
-|---|---|
-| [#2](https://github.com/TheAngryPit/gbrain/issues/2) | Docs: build changelog-to-current-capabilities baseline |
-| [#3](https://github.com/TheAngryPit/gbrain/issues/3) | Docs: refresh documentation inventory and status taxonomy |
-| [#4](https://github.com/TheAngryPit/gbrain/issues/4) | Docs: add README router, current version, and LLM entrypoints |
-| [#5](https://github.com/TheAngryPit/gbrain/issues/5) | Docs: rebuild INSTALL.md as the Human Operational Center |
-| [#6](https://github.com/TheAngryPit/gbrain/issues/6) | Docs: update INSTALL_FOR_AGENTS.md as the Agent Operational Center |
-| [#7](https://github.com/TheAngryPit/gbrain/issues/7) | Docs: add operating-model and deployment-topology decision trees |
-| [#8](https://github.com/TheAngryPit/gbrain/issues/8) | Docs: document Brain Repo Layout and brain/source relationships |
-| [#9](https://github.com/TheAngryPit/gbrain/issues/9) | Docs: add Mode Selection Guide for search, think, dream, and push context |
-| [#10](https://github.com/TheAngryPit/gbrain/issues/10) | Docs: add production operational path and checklist |
-| [#11](https://github.com/TheAngryPit/gbrain/issues/11) | Docs: align MCP, auth, remote, thin-client, and agent exposure docs |
-| [#12](https://github.com/TheAngryPit/gbrain/issues/12) | Docs: apply status labels to historical, design, deprecated, and superseded docs |
-| [#13](https://github.com/TheAngryPit/gbrain/issues/13) | Docs: remove or qualify brittle counts and generated-map claims |
-| [#14](https://github.com/TheAngryPit/gbrain/issues/14) | Docs: run final docs-only consistency pass against changelog, source, PRD, and feedback |
+| S-01 | `docs/docs-consolidation/05-current-capabilities-ledger.md` |
+| S-02 | `docs/docs-consolidation/06-documentation-status-taxonomy.md` |
+| S-03 | `README.md`, `llms-full.txt` |
+| S-04 | `docs/INSTALL.md` |
+| S-05 | `INSTALL_FOR_AGENTS.md`, `scripts/llms-config.ts`, `llms.txt`, `llms-full.txt` |
+| S-06 | `docs/architecture/topologies.md`, `README.md`, `docs/INSTALL.md`, `INSTALL_FOR_AGENTS.md`, `llms-full.txt` |
+| S-07 | `docs/architecture/brain-repo-layout.md`, `README.md`, `docs/INSTALL.md`, `INSTALL_FOR_AGENTS.md`, `scripts/llms-config.ts`, `llms.txt`, `llms-full.txt` |
+| S-08 | `docs/guides/mode-selection.md`, `README.md`, `docs/INSTALL.md`, `INSTALL_FOR_AGENTS.md`, `scripts/llms-config.ts`, `llms.txt`, `llms-full.txt` |
+| S-09 | `docs/INSTALL.md` |
+| S-10 | `docs/mcp/DEPLOY.md`, `SECURITY.md`, `docs/mcp/ALTERNATIVES.md`, `docs/architecture/thin-client.md`, `INSTALL_FOR_AGENTS.md`, `docs/mcp/CODEX.md`, `docs/mcp/CLAUDE_CODE.md`, `docs/mcp/CHATGPT.md`, `docs/mcp/PERPLEXITY.md`, `llms-full.txt` |
+| S-11 | `docs/docs-consolidation/07-status-label-application.md`, status banners in selected historical/design/proposal/incident/plan docs, `TODOS.md` |
+| S-12 | `docs/docs-consolidation/08-brittle-counts-and-generated-maps.md`, `README.md`, `AGENTS.md`, `INSTALL_FOR_AGENTS.md`, `CLAUDE.md`, `docs/TESTING.md`, `scripts/llms-config.ts`, `scripts/build-llms.ts`, `llms.txt`, `llms-full.txt` |
+| S-13 | `docs/docs-consolidation/09-final-consistency-report.md`, `docs/docs-consolidation/10-pr-proposal.md` |
 
 ## Ground Rule
 

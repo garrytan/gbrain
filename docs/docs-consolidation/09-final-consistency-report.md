@@ -1,6 +1,6 @@
 # Final Docs-Only Consistency Report
 
-Status: issue #14 final pass
+Status: S-13 final pass
 
 Proof level: `docs_complete` with static/source inspection only. No GBrain
 runtime command, local brain home, local corpus path, service, migration,
@@ -8,9 +8,9 @@ import, sync, or Docker lifecycle command was run.
 
 ## Inputs Checked
 
-- GitHub PRD issue: <https://github.com/TheAngryPit/gbrain/issues/1>
-- GitHub final-pass issue: <https://github.com/TheAngryPit/gbrain/issues/14>
-- Operator feedback comment by `Ben-Home` on issue #1.
+- `docs/docs-consolidation/03-issue-breakdown.md`
+- Final-pass slice S-13.
+- Operator feedback previously reviewed during the planning pass.
 - `docs/docs-consolidation/05-current-capabilities-ledger.md`
 - `docs/docs-consolidation/06-documentation-status-taxonomy.md`
 - `docs/docs-consolidation/03-issue-breakdown.md`
@@ -41,9 +41,9 @@ found concrete install and auth issues that needed patching before PR handoff:
 | Several live docs still used old release-roadmap wording as current guidance. | Removed stale version promises from plugin-author docs, brain/source architecture, schema-pack boundaries, PDF skill prerequisites, sync troubleshooting, and takes-quality eval guidance. | CodeGraph trace to `src/core/minions/plugin-loader.ts`, `src/core/schema-pack/per-source.ts`, `src/commands/eval-takes-quality.ts`, `src/core/takes-quality-eval/replay.ts`, plus current `CHANGELOG.md` sync entries |
 
 The `understand-anything` graph was used as architecture/onboarding context and
-refreshed during the v0.42.50.0 rebase pass. Fresh validation found 0 broken
-edge, layer, or tour references; the refreshed local graph has 12,632 nodes,
-20,473 edges, 9 layers, 6 tour steps, and 2,593 fingerprints. Command-contract
+refreshed during the v0.42.51.0 rebase pass. Fresh validation found 0 broken
+edge, layer, or tour references; the refreshed local graph has 12,602 nodes,
+20,398 edges, 9 layers, 6 tour steps, and 2,593 fingerprints. Command-contract
 claims were still checked against current source with CodeGraph instead of
 treating the graph as runtime truth.
 
@@ -71,6 +71,7 @@ the only tracked file outside documentation or documentation generation/support.
 | Capability group from ledger | Docs now explaining or routing to it |
 | --- | --- |
 | Current version and release evolution | `README.md`, `VERSION`, `CHANGELOG.md`, `docs/docs-consolidation/05-current-capabilities-ledger.md` |
+| Sync reliability/performance, active-vs-stale sync diagnosis, checkpoint integrity, and honest no-lock force-break-lock reporting | `docs/INSTALL.md`, `docs/GBRAIN_VERIFY.md`, `CHANGELOG.md`, `docs/docs-consolidation/05-current-capabilities-ledger.md` |
 | CI reliability, job timeouts, hermetic E2E environment handling, and actionlint | `AGENTS.md`, `CLAUDE.md`, `docs/TESTING.md`, `docs/docs-consolidation/05-current-capabilities-ledger.md` |
 | Spend posture, non-TTY deferred embeddings, and high-volume cost gates | `docs/operations/spend-controls.md`, `docs/INSTALL.md`, `docs/guides/mode-selection.md` |
 | Pacing for large embed/sync work under shared DB pressure | `CLAUDE.md`, `docs/INSTALL.md`, `docs/guides/mode-selection.md` |
@@ -91,7 +92,7 @@ the only tracked file outside documentation or documentation generation/support.
 
 ## Operator Feedback Map
 
-| Feedback from issue #1 | Landed resolution |
+| Operator feedback | Landed resolution |
 | --- | --- |
 | Single "getting started in production" path. | Implemented as the production/shared-brain branch inside `docs/INSTALL.md`, not a separate overlapping `OPERATING.md`. |
 | Search vs chat vs dream scattered across files. | Implemented as `docs/guides/mode-selection.md`, using current GBrain surfaces: `search`, `think`, `dream`/autopilot, retrieval reflex, volunteer context, and watch. |
@@ -100,23 +101,23 @@ the only tracked file outside documentation or documentation generation/support.
 | Production checklist should cover base URL gotcha, keys, backup strategy. | Implemented in `docs/INSTALL.md` production branch and failure-mode checklist. |
 | Local glossary and ADR from grill session should be included. | `CONTEXT.md` and `docs/adr/0001-centralize-operational-documentation.md` are present in the branch. |
 
-## Issue Ledger
+## Slice Ledger
 
-| Issue | Slice | Evidence | Status |
+| Slice | Workstream | Evidence | Status |
 | --- | --- | --- | --- |
-| #2 | Changelog-to-current-capabilities baseline | `docs/docs-consolidation/05-current-capabilities-ledger.md` | pass |
-| #3 | Inventory and status taxonomy | `docs/docs-consolidation/06-documentation-status-taxonomy.md`, manifest files | pass |
-| #4 | README router, current version, LLM entrypoints | `README.md`, regenerated LLM maps | pass |
-| #5 | Human Operational Center | `docs/INSTALL.md` route map plus detailed install/reference sections | pass |
-| #6 | Agent Operational Center | `INSTALL_FOR_AGENTS.md`, `AGENTS.md`, regenerated LLM maps | pass |
-| #7 | Operating model and topology trees | `docs/architecture/topologies.md` plus README/install/agent routes | pass |
-| #8 | Brain Repo Layout | `docs/architecture/brain-repo-layout.md` plus routes | pass |
-| #9 | Mode Selection Guide | `docs/guides/mode-selection.md` plus routes | pass |
-| #10 | Production operational path and checklist | `docs/INSTALL.md` production/shared branch | pass |
-| #11 | MCP/auth/remote/thin-client alignment | `docs/mcp/DEPLOY.md`, `SECURITY.md`, `docs/mcp/ALTERNATIVES.md`, `docs/architecture/thin-client.md`, MCP client docs | pass |
-| #12 | Status labels | `docs/docs-consolidation/07-status-label-application.md` and selected banners | pass |
-| #13 | Brittle counts and generated maps | `docs/docs-consolidation/08-brittle-counts-and-generated-maps.md`, generator updates, regenerated LLM maps | pass |
-| #14 | Final consistency pass | This report | pass |
+| S-01 | Changelog-to-current-capabilities baseline | `docs/docs-consolidation/05-current-capabilities-ledger.md` | pass |
+| S-02 | Inventory and status taxonomy | `docs/docs-consolidation/06-documentation-status-taxonomy.md`, manifest files | pass |
+| S-03 | README router, current version, LLM entrypoints | `README.md`, regenerated LLM maps | pass |
+| S-04 | Human Operational Center | `docs/INSTALL.md` route map plus detailed install/reference sections | pass |
+| S-05 | Agent Operational Center | `INSTALL_FOR_AGENTS.md`, `AGENTS.md`, regenerated LLM maps | pass |
+| S-06 | Operating model and topology trees | `docs/architecture/topologies.md` plus README/install/agent routes | pass |
+| S-07 | Brain Repo Layout | `docs/architecture/brain-repo-layout.md` plus routes | pass |
+| S-08 | Mode Selection Guide | `docs/guides/mode-selection.md` plus routes | pass |
+| S-09 | Production operational path and checklist | `docs/INSTALL.md` production/shared branch | pass |
+| S-10 | MCP/auth/remote/thin-client alignment | `docs/mcp/DEPLOY.md`, `SECURITY.md`, `docs/mcp/ALTERNATIVES.md`, `docs/architecture/thin-client.md`, MCP client docs | pass |
+| S-11 | Status labels | `docs/docs-consolidation/07-status-label-application.md` and selected banners | pass |
+| S-12 | Brittle counts and generated maps | `docs/docs-consolidation/08-brittle-counts-and-generated-maps.md`, generator updates, regenerated LLM maps | pass |
+| S-13 | Final consistency pass | This report | pass |
 
 ## Branch Scope Check
 
@@ -139,8 +140,8 @@ No runtime behavior change was introduced by this branch.
 | Check | Result |
 | --- | --- |
 | CodeGraph-first exploration before raw search on final pass | pass |
-| GitHub issue #1 and #14 bodies read | pass |
-| GitHub issue #1 comments read, including operator feedback | pass |
+| Planning issue feedback and final-pass slice notes read | pass |
+| Operator feedback comments read during planning | pass |
 | `bun run build:llms` after generator/content changes | pass |
 | `git diff --check` / staged whitespace checks on implementation slices | pass |
 | Targeted stale-count search for #13 phrases | pass |
