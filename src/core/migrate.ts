@@ -5270,6 +5270,42 @@ export const MIGRATIONS: Migration[] = [
         ON context_volunteer_events (source_id, slug);
     `,
   },
+  {
+    version: 118,
+    name: 'oauth_clients_federated_write_column',
+    // federated_write is the WRITE-side mirror of federated_read (#876).
+    // source_id (v60) is the single write-AUTHORITY axis; federated_read (v61)
+    // is the read-SCOPE array. federated_write is the write-SCOPE array: the
+    // set of sources a token may write to. Write ops choose a target source per
+    // call, authorized against `source_id ∪ federated_write` (resolveWriteSource
+    // in operations.ts). A "directorio" curator client can write to
+    // source_id='directorio' while also writing to ['campo', 'lideres'].
+    //
+    // Default '{}' (empty array) — UNLIKE federated_read, there is NO backfill.
+    // Empty means "writes are locked to source_id" (the pre-v118 behavior),
+    // which is exactly the safe default for every existing client. A client only
+    // gains multi-source write by an operator explicitly setting the column
+    // (via `--federated-write` at registration). Keep in sync with
+    // src/schema.sql, src/core/pglite-schema.ts, src/core/schema-embedded.ts.
+    idempotent: true,
+    sql: `
+      ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS federated_write TEXT[] NOT NULL DEFAULT '{}';
+    `,
+  },
+  {
+    version: 119,
+    name: 'oauth_clients_federated_write_gin_index',
+    // GIN index for array-containment lookups, mirroring v65's
+    // idx_oauth_clients_federated_read. Write authorization checks the set in
+    // application code (resolveWriteSource), but the index keeps operator
+    // queries (`WHERE 'campo' = ANY(federated_write)`) and any future
+    // DB-side scoping cheap.
+    idempotent: true,
+    sql: `
+      CREATE INDEX IF NOT EXISTS idx_oauth_clients_federated_write
+        ON oauth_clients USING GIN (federated_write);
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

@@ -272,6 +272,25 @@ export interface AuthInfo {
    * case (back-compat).
    */
   allowedSources?: string[];
+  /**
+   * v118: array of source ids this OAuth client may WRITE to, beyond its
+   * single write-authority `sourceId`. The WRITE-side mirror of
+   * `allowedSources` (federated_read). Sourced from
+   * `oauth_clients.federated_write`.
+   *
+   * Write ops (`put_page`, `put_raw_data`) accept an optional per-call write
+   * target and authorize it via `resolveWriteSource`: the target must be in
+   * `{sourceId} ∪ federatedWrite` or the call is rejected. A "directorio"
+   * curator client with `sourceId='directorio'` and
+   * `federatedWrite=['campo','lideres']` can write to any of the three
+   * without re-minting tokens.
+   *
+   * Empty array `[]` (or undefined, on a pre-v118 brain) means "writes are
+   * locked to `sourceId`" — the pre-v118 default. Like `allowedSources`, an
+   * empty/attacker-supplied `[]` MUST NOT widen scope; resolveWriteSource only
+   * ever ADDS to the always-allowed `sourceId`.
+   */
+  federatedWrite?: string[];
 }
 
 export interface OperationContext {
@@ -491,6 +510,42 @@ export function resolveRequestedScope(
     return { sourceId: sourceIdParam };
   }
   return sourceScopeOpts(ctx);
+}
+
+/**
+ * v118: resolve the WRITE target source for a mutating op, authorized against
+ * the caller's grant. The write-side mirror of `resolveRequestedScope`.
+ *
+ * FAIL-CLOSED, mirroring the read-side defensive posture (`sourceScopeOpts` /
+ * `resolveRequestedScope`): the always-allowed set is `{ctx.sourceId}` plus
+ * the client's `federatedWrite` grant. A client-supplied `requested` source is
+ * NEVER trusted unchecked — it must be a member of that set or the call is
+ * rejected.
+ *
+ *   - no `requested` (omitted/empty)       → `ctx.sourceId` (UNCHANGED behavior;
+ *                                            pre-v118 clients never sent one)
+ *   - `requested` ∈ {sourceId} ∪ fedWrite  → `requested`
+ *   - `requested` ∉ that set               → throw permission_denied
+ *
+ * An empty / undefined `federatedWrite` collapses the allowed set to just
+ * `ctx.sourceId`, so omitting the grant preserves the single-source write lock.
+ * `ctx.sourceId` is REQUIRED on OperationContext (defaults to 'default'), so
+ * the always-allowed set is never empty.
+ */
+export function resolveWriteSource(ctx: OperationContext, requested?: string): string {
+  if (requested === undefined || requested === '') {
+    return ctx.sourceId;
+  }
+  const federated = ctx.auth?.federatedWrite;
+  const allowed = new Set<string>([ctx.sourceId, ...(federated ?? [])]);
+  if (allowed.has(requested)) {
+    return requested;
+  }
+  throw new OperationError(
+    'permission_denied',
+    `source '${requested}' not in this client's federated_write set`,
+    'Write to your source_id, or ask an operator to add this source to --federated-write.',
+  );
 }
 
 /**
@@ -727,6 +782,12 @@ const put_page: Operation = {
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
+    // v118: optional per-call write target (the sala/source to write into).
+    // Authorized against the client's source_id ∪ federated_write set
+    // (resolveWriteSource). Omitted → writes to the client's source_id, the
+    // pre-v118 behavior. A client cannot widen scope by passing an out-of-grant
+    // source — the call is rejected.
+    source: { type: 'string', required: false, description: 'Target source/sala to write into. Must be the client\'s source_id or one of its federated_write sources. Omit to write to the client\'s default source_id.' },
     // v0.39.3.0 provenance write-through (WARN-8 + A1 + CV6). Optional fields
     // for trusted local callers (capture CLI, autopilot, dream cycle). Remote
     // MCP callers (ctx.remote !== false) have their values OVERRIDDEN with
@@ -741,6 +802,14 @@ const put_page: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     const slug = p.slug as string;
+
+    // v118: resolve + authorize the write-target source. FAIL-CLOSED: a
+    // client-supplied `source` must be in {ctx.sourceId} ∪ federated_write or
+    // resolveWriteSource throws permission_denied. Runs BEFORE the dry-run
+    // short-circuit so preview calls surface the same rejection (matches the
+    // subagent-namespace check below). Omitted `source` → ctx.sourceId
+    // (unchanged pre-v118 behavior).
+    const writeSourceId = resolveWriteSource(ctx, p.source as string | undefined);
 
     // v0.39.3.0 CV6 trust gate for provenance write-through (WARN-8).
     // Only trusted LOCAL callers (ctx.remote === false — capture CLI,
@@ -803,7 +872,7 @@ const put_page: Operation = {
       }
     }
 
-    if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
+    if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug, source: writeSourceId };
     // Skip embedding when the AI gateway has no embedding provider configured.
     // Checks all auth env vars for the resolved provider, not just OPENAI_API_KEY,
     // so Gemini / Ollama / Voyage brains don't silently drop embeddings (Codex C2).
@@ -825,7 +894,7 @@ const put_page: Operation = {
       const resolved = await loadActivePack({
         cfg: loadConfig(),
         remote: ctx.remote === false ? false : true,
-        sourceId: ctx.sourceId,
+        sourceId: writeSourceId,
       });
       activePack = { page_types: resolved.manifest.page_types };
     } catch {
@@ -838,7 +907,8 @@ const put_page: Operation = {
       // markers (quarantine/content_flag/embed_skip). Fail-closed — anything
       // not strictly local is remote (matches CV6 / v0.26.9 F7b posture).
       remote: ctx.remote !== false,
-      ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}),
+      // v118: write to the authorized target source (resolveWriteSource).
+      ...(writeSourceId ? { sourceId: writeSourceId } : {}),
       // v0.39.0.0 T1.5: pack-aware type inference (loaded above; legacy
       // inferType behavior when undefined).
       ...(activePack ? { activePack } : {}),
@@ -901,7 +971,8 @@ const put_page: Operation = {
     const isSandboxSubagent = ctx.viaSubagent === true
       && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
     if (!ctx.dryRun && result.status !== 'error' && !isSandboxSubagent) {
-      const sourceId = ctx.sourceId ?? 'default';
+      // v118: write-through to disk under the authorized write-target source.
+      const sourceId = writeSourceId ?? 'default';
       const provenanceVia = ctx.remote === false ? 'put_page' : 'mcp:put_page';
       // Shared canonical write-through (also used by `gbrain brainstorm/lsd
       // --save`). Renders the file from the saved DB row and writes it
@@ -954,7 +1025,7 @@ const put_page: Operation = {
       try {
         const enabled = await isAutoLinkEnabled(ctx.engine);
         if (enabled) {
-          autoLinks = await runAutoLink(ctx.engine, slug, result.parsedPage, ctx.sourceId ? { sourceId: ctx.sourceId } : undefined);
+          autoLinks = await runAutoLink(ctx.engine, slug, result.parsedPage, writeSourceId ? { sourceId: writeSourceId } : undefined);
         }
       } catch (e) {
         autoLinks = { error: e instanceof Error ? e.message : String(e) };
@@ -1012,7 +1083,7 @@ const put_page: Operation = {
         },
         {
           engine: ctx.engine,
-          sourceId: ctx.sourceId ?? 'default',
+          sourceId: writeSourceId ?? 'default',
           sessionId: (ctx as { source_session?: string }).source_session ?? null,
           source: 'mcp:put_page',
           mode: 'queue',
@@ -2527,18 +2598,26 @@ const sync_brain: Operation = {
 
 const put_raw_data: Operation = {
   name: 'put_raw_data',
-  description: 'Store raw API response data for a page',
+  description: 'Store raw API response data for a page. `source` is the DATA provenance label (e.g. crustdata); `write_source` (v118) is the brain source/sala to write into, authorized against the client\'s source_id ∪ federated_write set.',
   params: {
     slug: { type: 'string', required: true },
-    source: { type: 'string', required: true, description: 'Data source (e.g., crustdata, happenstance)' },
+    source: { type: 'string', required: true, description: 'Data source label (e.g., crustdata, happenstance). NOT the write-target brain source — see write_source.' },
     data: { type: 'object', required: true, description: 'Raw data object' },
+    // v118: optional per-call write target (the sala/brain source to write
+    // into). Named `write_source` to avoid colliding with `source`, which here
+    // is the data-provenance label. Authorized via resolveWriteSource; omitted
+    // → the client's source_id (pre-v118 behavior).
+    write_source: { type: 'string', required: false, description: 'Target brain source/sala to write into. Must be the client\'s source_id or one of its federated_write sources. Omit to write to the client\'s default source_id.' },
   },
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    if (ctx.dryRun) return { dry_run: true, action: 'put_raw_data', slug: p.slug, source: p.source };
-    // v0.31.8 (D7 + D21): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // v118: resolve + authorize the write-target source FAIL-CLOSED, before the
+    // dry-run short-circuit so preview surfaces the rejection too.
+    const writeSourceId = resolveWriteSource(ctx, p.write_source as string | undefined);
+    if (ctx.dryRun) return { dry_run: true, action: 'put_raw_data', slug: p.slug, source: p.source, write_source: writeSourceId };
+    // v0.31.8 (D7 + D21): thread the authorized write-target source.
+    const sourceOpts = writeSourceId ? { sourceId: writeSourceId } : {};
     await ctx.engine.putRawData(p.slug as string, p.source as string, p.data as object, sourceOpts);
     return { status: 'ok' };
   },

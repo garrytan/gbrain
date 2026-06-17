@@ -121,6 +121,10 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // them before SCHEMA_SQL replay creates the FK + index.
   { kind: 'column', table: 'oauth_clients', column: 'source_id' },
   { kind: 'column', table: 'oauth_clients', column: 'federated_read' },
+  // v118/v119 — forward-referenced by `idx_oauth_clients_federated_write ON
+  // oauth_clients USING GIN (federated_write)`. Pre-v118 brains lack the column;
+  // bootstrap adds it before SCHEMA_SQL replay creates the index.
+  { kind: 'column', table: 'oauth_clients', column: 'federated_write' },
   // v0.26.5 (v34) — promotes archive lifecycle from JSONB config to real
   // columns on sources. CREATE TABLE IF NOT EXISTS is a no-op on existing
   // sources tables, so the visibility filters in search/list_pages that
@@ -238,8 +242,10 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       ALTER TABLE files DROP COLUMN IF EXISTS page_id;
 
       DROP INDEX IF EXISTS idx_oauth_clients_federated_read;
+      DROP INDEX IF EXISTS idx_oauth_clients_federated_write;
       ALTER TABLE oauth_clients DROP COLUMN IF EXISTS source_id;
       ALTER TABLE oauth_clients DROP COLUMN IF EXISTS federated_read;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS federated_write;
 
       -- v0.40.3.0 v90 + v91 column strips so applyForwardReferenceBootstrap
       -- has work to do. Only strip pages columns + the trigger; sources
@@ -828,6 +834,8 @@ test('extractAddedColumnsFromMigrations sanity-checks against known migration co
   // v60+v61 oauth_clients.*
   expect(has('oauth_clients', 'source_id')).toBe(true);
   expect(has('oauth_clients', 'federated_read')).toBe(true);
+  // v118 oauth_clients.federated_write (write-side mirror of federated_read)
+  expect(has('oauth_clients', 'federated_write')).toBe(true);
   // v18 files.*
   expect(has('files', 'source_id')).toBe(true);
   expect(has('files', 'page_id')).toBe(true);

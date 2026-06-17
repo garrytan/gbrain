@@ -629,6 +629,7 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   deleted_at              TIMESTAMPTZ,
   source_id               TEXT REFERENCES sources(id) ON DELETE RESTRICT,
   federated_read          TEXT[] NOT NULL DEFAULT '{}',
+  federated_write         TEXT[] NOT NULL DEFAULT '{}',
   -- v0.38 Slice 2 + 3: per-client daily budget cap (v84) + agent binding (v85).
   budget_usd_per_day      NUMERIC(10, 2) NULL,
   bound_tools             TEXT[] NULL,
@@ -641,10 +642,16 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
 -- v0.34.1 (#861, D13 + #876): source_id is the write-source scope;
 -- federated_read is the read-source array. Migrations v60-v65 land both
 -- columns on upgrade; fresh installs include them inline above.
+-- federated_write (v118) is the WRITE-side mirror of federated_read: the set
+-- of sources a token may write to (write ops choose the target per call,
+-- authorized against source_id ∪ federated_write). Empty '{}' = writes locked
+-- to source_id (the pre-v118 default).
 CREATE INDEX IF NOT EXISTS idx_oauth_clients_source_id
   ON oauth_clients(source_id) WHERE source_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_oauth_clients_federated_read
   ON oauth_clients USING GIN (federated_read);
+CREATE INDEX IF NOT EXISTS idx_oauth_clients_federated_write
+  ON oauth_clients USING GIN (federated_write);
 
 CREATE TABLE IF NOT EXISTS oauth_tokens (
   token_hash   TEXT PRIMARY KEY,

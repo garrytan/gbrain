@@ -568,18 +568,27 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     try {
       oauthRows = await this.sql`
         SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
-               c.source_id, c.federated_read
+               c.source_id, c.federated_read, c.federated_write
         FROM oauth_tokens t
         LEFT JOIN oauth_clients c ON c.client_id = t.client_id
         WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
       `;
     } catch (err) {
       // v0.34.1: pre-v60 brain → source_id column missing. Pre-v61 brain →
-      // federated_read column missing. Both classes degrade to legacy
-      // projection so auth keeps working until the operator runs
-      // apply-migrations. Probe both column names so partial-upgrade brains
-      // (v60 applied but v61 didn't yet) also fall through cleanly.
-      if (isUndefinedColumnError(err, 'source_id') || isUndefinedColumnError(err, 'federated_read')) {
+      // federated_read column missing. Pre-v118 brain → federated_write column
+      // missing. All classes degrade to a narrower projection so auth keeps
+      // working until the operator runs apply-migrations. Probe each column
+      // name so partial-upgrade brains fall through cleanly.
+      if (isUndefinedColumnError(err, 'federated_write')) {
+        // Pre-v118 brain: source_id + federated_read present, no federated_write.
+        oauthRows = await this.sql`
+          SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
+                 c.source_id, c.federated_read
+          FROM oauth_tokens t
+          LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+          WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+        `;
+      } else if (isUndefinedColumnError(err, 'source_id') || isUndefinedColumnError(err, 'federated_read')) {
         // Try the v60-only projection first (source_id but no federated_read).
         try {
           oauthRows = await this.sql`
@@ -624,6 +633,15 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       const allowedSources = Array.isArray(federatedRaw)
         ? (federatedRaw as string[])
         : undefined;
+      // v118: federated_write normalization, same shape as federated_read.
+      // Array (post-v118 brain) → the write-scope set; undefined (pre-v118
+      // projection ran) → column missing on this brain. resolveWriteSource in
+      // operations.ts treats undefined the same as empty: writes stay locked to
+      // sourceId until an operator grants federated_write.
+      const federatedWriteRaw = row.federated_write;
+      const federatedWrite = Array.isArray(federatedWriteRaw)
+        ? (federatedWriteRaw as string[])
+        : undefined;
       return {
         token,
         clientId: row.client_id as string,
@@ -639,6 +657,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // operations.ts prefers this array over scalar sourceId when set
         // and non-empty.
         allowedSources,
+        // v118: federated write scope. resolveWriteSource in operations.ts
+        // authorizes a per-call write target against sourceId ∪ federatedWrite.
+        federatedWrite,
       } as CoreAuthInfo as SdkAuthInfo;
     }
 
@@ -857,6 +878,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     sourceId: string = 'default',
     federatedRead?: string[],
     tokenEndpointAuthMethod?: string,
+    federatedWrite?: string[],
   ): Promise<{ clientId: string; clientSecret?: string }> {
     // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
     // at registration so meaningless scope strings can't pile up in the DB.
@@ -888,6 +910,32 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     //   federated_read = [source_id] when omitted (a non-federated client
     //                    has read scope == write scope, the v0.33 default)
     const federated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
+    // v118: federated_write is the WRITE-side mirror. Default '{}' (empty) when
+    // omitted — writes locked to source_id, the pre-v118 behavior. UNLIKE
+    // federated_read it does NOT default to [sourceId]: resolveWriteSource
+    // already admits ctx.sourceId, so an empty set is the no-op default.
+    const federatedW = federatedWrite && federatedWrite.length > 0 ? federatedWrite : [];
+    try {
+      await this.sql`
+        INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                    grant_types, scope, token_endpoint_auth_method,
+                                    client_id_issued_at,
+                                    source_id, federated_read, federated_write)
+        VALUES (${clientId}, ${secretHash}, ${name},
+                ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${authMethod}, ${now},
+                ${sourceId}, ${pgArray(federated)}, ${pgArray(federatedW)})
+      `;
+      return { clientId, clientSecret };
+    } catch (errW) {
+      // Pre-v118 brain: federated_write column missing. Fall back to the
+      // pre-v118 INSERT (source_id + federated_read), which carries its own
+      // cascade for pre-v60/pre-v61 brains. The federated_write grant is
+      // dropped until the operator runs apply-migrations — the client lands
+      // with writes locked to source_id (the safe pre-v118 default).
+      if (!isUndefinedColumnError(errW, 'federated_write')) {
+        throw errW;
+      }
+    }
     try {
       await this.sql`
         INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,

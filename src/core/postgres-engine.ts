@@ -418,6 +418,7 @@ export class PostgresEngine implements BrainEngine {
       oauth_clients_exists: boolean;
       oauth_clients_source_id_exists: boolean;
       oauth_clients_federated_read_exists: boolean;
+      oauth_clients_federated_write_exists: boolean;
       sources_exists: boolean;
       sources_archived_exists: boolean;
       sources_archived_at_exists: boolean;
@@ -472,6 +473,8 @@ export class PostgresEngine implements BrainEngine {
                 WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'source_id') AS oauth_clients_source_id_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'federated_read') AS oauth_clients_federated_read_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'federated_write') AS oauth_clients_federated_write_exists,
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema = current_schema() AND table_name = 'sources') AS sources_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
@@ -541,7 +544,7 @@ export class PostgresEngine implements BrainEngine {
     // FK to sources(id) + GIN index idx_oauth_clients_federated_read in
     // SCHEMA_SQL crash without them.
     const needsOauthClientsBootstrap = probe.oauth_clients_exists
-      && (!probe.oauth_clients_source_id_exists || !probe.oauth_clients_federated_read_exists);
+      && (!probe.oauth_clients_source_id_exists || !probe.oauth_clients_federated_read_exists || !probe.oauth_clients_federated_write_exists);
     // v0.26.5 (v34): sources.archived + archived_at + archive_expires_at added
     // for soft-delete lifecycle. SCHEMA_SQL's `CREATE TABLE IF NOT EXISTS sources`
     // is a no-op on pre-existing sources tables (won't add columns), so the
@@ -769,6 +772,8 @@ export class PostgresEngine implements BrainEngine {
         ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS source_id TEXT
           DEFAULT 'default' REFERENCES sources(id) ON DELETE SET NULL;
         ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS federated_read TEXT[]
+          NOT NULL DEFAULT '{}';
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS federated_write TEXT[]
           NOT NULL DEFAULT '{}';
       `);
     }

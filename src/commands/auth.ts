@@ -344,6 +344,7 @@ interface RegisterClientArgs {
   scopes: string;
   sourceId: string;
   federatedRead: string[] | undefined;
+  federatedWrite: string[] | undefined;
   redirectUris: string[];
   tokenEndpointAuthMethod: string | undefined;
 }
@@ -354,6 +355,7 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
     scopes: 'read',
     sourceId: 'default',
     federatedRead: undefined,
+    federatedWrite: undefined,
     redirectUris: [],
     tokenEndpointAuthMethod: undefined,
   };
@@ -383,6 +385,11 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
         out.federatedRead = v.split(',').map(s => s.trim()).filter(Boolean);
         i += 2; break;
       }
+      case '--federated-write': {
+        const v = requireValue();
+        out.federatedWrite = v.split(',').map(s => s.trim()).filter(Boolean);
+        i += 2; break;
+      }
       case '--redirect-uri':
         out.redirectUris.push(requireValue());
         i += 2; break;
@@ -405,7 +412,7 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
 
 async function registerClient(name: string, args: string[]) {
   if (!name) {
-    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--federated-write SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
     process.exit(1);
   }
   let parsed: RegisterClientArgs;
@@ -413,19 +420,23 @@ async function registerClient(name: string, args: string[]) {
     parsed = parseRegisterClientArgs(args);
   } catch (e: any) {
     console.error(`Error: ${e.message}`);
-    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--federated-write SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
     process.exit(1);
   }
-  const { grantTypes, scopes, sourceId, federatedRead, redirectUris, tokenEndpointAuthMethod } = parsed;
+  const { grantTypes, scopes, sourceId, federatedRead, federatedWrite, redirectUris, tokenEndpointAuthMethod } = parsed;
 
   try {
     await withConfiguredSql(async (sql) => {
       const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
       const provider = new GBrainOAuthProvider({ sql });
       const { clientId, clientSecret } = await provider.registerClientManual(
-        name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod,
+        name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, federatedWrite,
       );
       const effectiveFederated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
+      // federated_write defaults to '{}' (empty) when omitted: writes are locked
+      // to source_id, the pre-v118 behavior. Only an explicit --federated-write
+      // widens the write scope.
+      const effectiveFederatedWrite = federatedWrite && federatedWrite.length > 0 ? federatedWrite : [];
       const effectiveAuthMethod = tokenEndpointAuthMethod || 'client_secret_post';
       console.log(`OAuth client registered: "${name}"\n`);
       console.log(`  Client ID:           ${clientId}`);
@@ -441,7 +452,8 @@ async function registerClient(name: string, args: string[]) {
         console.log(`  Redirect URIs:       ${redirectUris.join(', ')}`);
       }
       console.log(`  Write source:        ${sourceId}`);
-      console.log(`  Federated reads:     ${effectiveFederated.join(', ')}\n`);
+      console.log(`  Federated reads:     ${effectiveFederated.join(', ')}`);
+      console.log(`  Federated writes:    ${effectiveFederatedWrite.length > 0 ? effectiveFederatedWrite.join(', ') : `<none — writes locked to ${sourceId}>`}\n`);
       if (clientSecret) {
         console.log('Save the client secret — it will not be shown again.');
       } else {

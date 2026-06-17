@@ -20,6 +20,7 @@ describe('parseRegisterClientArgs', () => {
     expect(out.scopes).toBe('read');
     expect(out.sourceId).toBe('default');
     expect(out.federatedRead).toBeUndefined();
+    expect(out.federatedWrite).toBeUndefined();
     expect(out.redirectUris).toEqual([]);
     expect(out.tokenEndpointAuthMethod).toBeUndefined();
   });
@@ -42,6 +43,16 @@ describe('parseRegisterClientArgs', () => {
   test('--federated-read comma-separated → array', () => {
     const out = parseRegisterClientArgs(['--federated-read', 'dept-x,wecare,shared']);
     expect(out.federatedRead).toEqual(['dept-x', 'wecare', 'shared']);
+  });
+
+  test('--federated-write comma-separated → array (v118 write-side mirror)', () => {
+    const out = parseRegisterClientArgs(['--federated-write', 'campo,lideres,directorio']);
+    expect(out.federatedWrite).toEqual(['campo', 'lideres', 'directorio']);
+  });
+
+  test('--federated-write omitted → undefined (writes locked to source_id)', () => {
+    const out = parseRegisterClientArgs(['--source', 'directorio']);
+    expect(out.federatedWrite).toBeUndefined();
   });
 
   // T3 REGRESSION: pre-fix indexOf parser only took the first --redirect-uri
