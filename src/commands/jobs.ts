@@ -1697,14 +1697,28 @@ export async function registerBuiltinHandlers(
   const { makeSubagentHandler } = await import('../core/minions/handlers/subagent.ts');
   const { subagentAggregatorHandler } = await import('../core/minions/handlers/subagent-aggregator.ts');
 
-  // GBRAIN_USE_CLAUDE_CLI=1 routes subagent LLM calls through `claude --print`
-  // instead of the Anthropic SDK. Lets Claude Max subscribers run Minions
-  // without paying additional API costs. Default behavior unchanged when unset.
+  // GBRAIN_SUBAGENT_PROVIDER selects the LLM backend for subagent dispatch.
+  // 'anthropic-sdk' (default) keeps the historical Anthropic SDK path —
+  // requires ANTHROPIC_API_KEY. 'claude-cli' shells out to `claude --print`
+  // so Claude Max subscribers can run Minions on their OAuth subscription
+  // without API credits. Value-extensible: future backends (codex-cli,
+  // meridian-proxy, etc.) plug in here without a new env var.
+  //
+  // Matches the existing GBRAIN_<noun>_<role>=<value> convention used by
+  // GBRAIN_CHAT_MODEL, GBRAIN_EMBEDDING_MODEL, GBRAIN_EXPANSION_MODEL.
   let subagentClient: import('../core/minions/handlers/subagent.ts').MessagesClient | undefined;
-  if (process.env.GBRAIN_USE_CLAUDE_CLI === '1') {
+  const subagentProvider = process.env.GBRAIN_SUBAGENT_PROVIDER;
+  if (subagentProvider === 'claude-cli') {
     const { makeClaudeCliClient } = await import('../core/minions/handlers/claude-cli-adapter.ts');
     subagentClient = makeClaudeCliClient();
-    process.stderr.write('[minion worker] subagent routing via claude-cli (GBRAIN_USE_CLAUDE_CLI=1)\n');
+    process.stderr.write('[minion worker] subagent routing via claude-cli (GBRAIN_SUBAGENT_PROVIDER=claude-cli)\n');
+  } else if (subagentProvider && subagentProvider !== 'anthropic-sdk') {
+    // Unknown value: fail fast rather than silently fall through to the
+    // default. Mirrors fail-fast posture from other GBRAIN_* config readers.
+    throw new Error(
+      `GBRAIN_SUBAGENT_PROVIDER='${subagentProvider}' is not recognized. ` +
+      `Valid values: 'anthropic-sdk' (default), 'claude-cli'.`,
+    );
   }
   worker.register('subagent', makeSubagentHandler({ engine, client: subagentClient }));
   worker.register('subagent_aggregator', subagentAggregatorHandler);
