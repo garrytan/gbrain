@@ -2323,6 +2323,23 @@ export interface ChatToolDef {
   inputSchema: Record<string, unknown>;
 }
 
+/** JSON.stringify that never throws (bigint / circular → best-effort string). */
+function safeStringify(v: unknown): string {
+  try { return JSON.stringify(v) ?? 'null'; } catch { return String(v); }
+}
+
+/**
+ * Coerce an arbitrary tool-output value into a plain JSON value the AI SDK's
+ * strict JSONValue schema accepts. Round-tripping through JSON converts `Date`
+ * to an ISO string, drops `undefined` object properties, and normalizes nested
+ * structures. Non-serializable inputs (bigint, circular) fall back to a string.
+ * Returns `null` for nullish input so the json part always has a defined value.
+ */
+function toJsonValue(v: unknown): unknown {
+  if (v === null || v === undefined) return null;
+  try { return JSON.parse(JSON.stringify(v)); } catch { return String(v); }
+}
+
 /**
  * Convert gbrain's provider-neutral ChatMessage[] into AI SDK v6 ModelMessage[].
  *
@@ -2351,10 +2368,20 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
             toolCallId: b.toolCallId,
             toolName: b.toolName,
             output: b.isError
-              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(b.output) }
+              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : safeStringify(b.output) }
               : (typeof b.output === 'string'
                 ? { type: 'text' as const, value: b.output }
-                : { type: 'json' as const, value: (b.output ?? null) as never }),
+                // v6 validates the json `value` against a strict JSONValue Zod
+                // schema. gbrain tool outputs routinely carry non-JSON values —
+                // e.g. node-postgres returns `timestamptz` columns as JS `Date`,
+                // so brain_get_page / brain_list_pages rows include Date-typed
+                // updated_at/created_at fields. A raw Date (or undefined/bigint)
+                // makes the whole tool message fail the union ("messages do not
+                // match the ModelMessage[] schema"). Normalize to a plain JSON
+                // value (Date → ISO string, undefined dropped) first. Replay
+                // didn't hit this because the value was already JSON-round-tripped
+                // through the jsonb column.
+                : { type: 'json' as const, value: toJsonValue(b.output) as never }),
           })),
       };
     }
