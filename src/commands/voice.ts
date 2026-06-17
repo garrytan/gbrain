@@ -3,6 +3,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { MockSTTAdapter } from '../core/voice/stt.ts';
 import { MockTTSAdapter } from '../core/voice/tts.ts';
 import { VoiceSessionService } from '../core/voice/session-service.ts';
+import { consolidateVoiceSession } from '../core/voice/consolidation.ts';
+import { PostgresGraphAdapter } from '../core/graph/pg-adapter.ts';
 
 const HELP = `Usage: gbrain voice <subcommand> [options]
 
@@ -79,6 +81,7 @@ export async function runVoice(engine: BrainEngine, args: string[]): Promise<voi
       const pages = ((listResult as any)?.pages ?? listResult ?? []) as any[];
       const voicePages = pages.filter((p: any) => (p.type ?? p.page_type) === 'voice_session');
 
+      const graph = new PostgresGraphAdapter(engine as any);
       let consolidated = 0;
       for (const page of voicePages) {
         const pageContent = await engine.getPage(page.slug);
@@ -91,29 +94,23 @@ export async function runVoice(engine: BrainEngine, args: string[]): Promise<voi
             ? tagsMatch[1].split(',').map((t: string) => t.trim().replace(/"/g, ''))
             : ['voice'];
 
-          const memorySlug = `memory-${page.slug}`;
-          const memoryContent = [
-            '---',
-            `type: memory`,
-            `source: voice`,
-            `tags: [${tags.map((t: string) => `"${t}"`).join(', ')}]`,
-            `---`,
-            '',
-            `# ${page.slug}`,
-            '',
-            transcript,
-          ].join('\n');
-
-          await engine.putPage(memorySlug, {
-            title: page.slug,
-            type: 'memory',
-            content: memoryContent,
-            tags,
-          } as any);
-          consolidated++;
+          try {
+            const result = await consolidateVoiceSession({
+              transcript,
+              summary: transcript.slice(0, 200),
+              tags,
+              source: 'voice',
+            }, graph);
+            if (result.entities.length > 0) {
+              console.error(`Consolidated ${result.entities.length} entit(ies) from ${page.slug}`);
+            }
+            consolidated++;
+          } catch (err) {
+            console.error(`Failed to consolidate ${page.slug}:`, err);
+          }
         }
       }
-      console.log(`Consolidated ${consolidated} voice session(s) into memory page(s).`);
+      console.log(`Consolidated ${consolidated} voice session(s).`);
       break;
     }
     default:

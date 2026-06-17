@@ -4,6 +4,7 @@ import { computeFreshness } from './freshness.ts';
 export interface FreshnessDigestItem {
   slug: string;
   title: string;
+  pageType: string;
   status: FreshnessStatus;
   days_since_verified: number;
   recommended_action: string;
@@ -42,6 +43,7 @@ export function generateDigest(pages: DigestPage[]): FreshnessDigest {
     return {
       slug: page.slug,
       title: page.title,
+      pageType: page.pageType,
       status,
       days_since_verified,
       recommended_action,

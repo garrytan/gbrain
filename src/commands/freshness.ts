@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import type { FreshnessMeta } from '../core/freshness/types.ts';
 import type { DigestPage } from '../core/freshness/digest.ts';
-import { generateDigest, digestToMarkdown } from '../core/freshness/index.ts';
+import { generateDigest, digestToMarkdown, getDecayClassForType, getSourcePrecision, getDefaultStaleDays } from '../core/freshness/index.ts';
 import { runReconcileCheck } from '../core/freshness/index.ts';
 
 const HELP = `Usage: gbrain freshness <subcommand> [options]
@@ -14,14 +14,15 @@ Subcommands:
 `;
 
 function deriveFreshnessMeta(page: any): FreshnessMeta {
-  const source = page.metadata?.source ?? 'unknown';
-  const decayClass = source === 'code' ? 'fast' : source === 'file' ? 'medium' : 'slow';
+  const pageType = page.type ?? 'unknown';
+  const decayClass = getDecayClassForType(pageType);
+  const sp = getSourcePrecision(page.metadata?.source ?? 'unknown');
   return {
     last_verified_at: page.updated_at ?? page.created_at ?? new Date().toISOString(),
     decay_class: decayClass,
-    source_precision: 'medium',
-    confidence: 0.8,
-    stale_after_days: decayClass === 'fast' ? 30 : decayClass === 'medium' ? 90 : 180,
+    source_precision: sp.source_precision,
+    confidence: page.confidence ?? sp.confidence,
+    stale_after_days: getDefaultStaleDays(decayClass),
   };
 }
 
@@ -61,9 +62,27 @@ export async function runFreshness(engine: BrainEngine, args: string[]): Promise
       const listResult = await engine.listPages({ limit: parseLimit() });
       const pages = ((listResult as any)?.pages ?? listResult ?? []) as any[];
       const reconcilePages = pages.map((p: any) => ({ slug: p.slug, tags: p.tags as string[] | undefined }));
-      const report = await runReconcileCheck(reconcilePages, {
-        getRelatedEntities: async () => [],
-      }, []);
+
+      const graph = {
+        getRelatedEntities: async (slug: string) => {
+          const [links, backlinks] = await Promise.all([
+            engine.getLinks(slug),
+            engine.getBacklinks(slug),
+          ]);
+          const outgoing = links.map((l: any) => ({ slug: l.to_slug, relation_type: l.link_type ?? 'related', direction: 'outgoing' as const }));
+          const incoming = backlinks.map((l: any) => ({ slug: l.from_slug, relation_type: l.link_type ?? 'related', direction: 'incoming' as const }));
+          return [...outgoing, ...incoming];
+        },
+      };
+
+      const links = pages.flatMap((page: any) =>
+        ((page as any)?.links ?? []).map((link: any) => ({
+          from_slug: page.slug,
+          to_slug: typeof link === 'string' ? link : link.slug,
+        })),
+      );
+
+      const report = await runReconcileCheck(reconcilePages, graph, links);
       console.log(JSON.stringify(report, null, 2));
       break;
     }
