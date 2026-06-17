@@ -426,6 +426,29 @@ export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sou
 }
 
 /**
+ * #2200: source scope for the LINK read ops (get_links / get_backlinks). A link
+ * row references three pages (from, to, origin); the engine's federated
+ * (`sourceIds[]`) branch scopes ALL THREE, but its scalar (`sourceId`) branch
+ * scopes only the near endpoint — by design, because trusted internal callers
+ * (reconcileLinks, back-link validators, enrich) call the engine directly with a
+ * scalar scope and need the cross-source view.
+ *
+ * An UNTRUSTED remote caller carrying only a scalar scope (a legacy bearer token
+ * or a pre-`federated_read` OAuth client) would otherwise hit that scalar branch
+ * and have a foreign far/origin slug disclosed. So for remote callers we promote a
+ * scalar scope to a single-element `sourceIds:[id]`, routing them through the
+ * all-endpoint branch. Trusted local CLI (`ctx.remote === false`) keeps the scalar
+ * cross-source view, and a federated array passes through unchanged.
+ */
+export function linkReadScopeOpts(ctx: OperationContext): { sourceId?: string; sourceIds?: string[] } {
+  const scope = sourceScopeOpts(ctx);
+  if (ctx.remote !== false && scope.sourceId && !scope.sourceIds) {
+    return { sourceIds: [scope.sourceId] };
+  }
+  return scope;
+}
+
+/**
  * Resolve a per-call requested source scope against the caller's trust + grant.
  * FAIL-CLOSED: anything not strictly `ctx.remote === false` is untrusted.
  *
@@ -642,7 +665,12 @@ const get_page: Operation = {
     // inside bumpLastRetrievedAt (D2).
     bumpLastRetrievedAt(ctx.engine, [page.id]);
 
-    const tags = await ctx.engine.getTags(page.slug, sourceOpts);
+    // #2200: resolve tags against the concrete page's source. `sourceOpts` may
+    // be { sourceIds:[...] } (federated) with no scalar sourceId, which getTags
+    // would otherwise fall back to 'default' for — the wrong source for a
+    // non-default page. We already hold the resolved page, so its source is
+    // unambiguous.
+    const tags = await ctx.engine.getTags(page.slug, { sourceId: page.source_id });
     // Privacy boundary for the per-token allow-list (v0.28.6 for takes,
     // v0.32.2 for facts).
     //
@@ -1875,8 +1903,11 @@ const get_tags: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D20): thread ctx.sourceId for read-side ops on multi-source brains.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // #2200: route through sourceScopeOpts so a federated read grant
+    // (ctx.auth.allowedSources) reaches the engine, not just scalar ctx.sourceId.
+    // Was `ctx.sourceId ? {sourceId} : {}` — a federated client got '{}' →
+    // engine fell back to 'default' (functionality gap + cross-source leak).
+    const sourceOpts = sourceScopeOpts(ctx);
     return ctx.engine.getTags(p.slug as string, sourceOpts);
   },
   scope: 'read',
@@ -1972,9 +2003,10 @@ const get_links: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D16): thread ctx.sourceId. When unset, engine falls through
-    // to cross-source view (back-compat).
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // #2200: linkReadScopeOpts so a federated grant — and an untrusted remote
+    // scalar scope (promoted to sourceIds[]) — reaches the engine's all-endpoint
+    // branch. Trusted local/internal callers keep the scalar cross-source view.
+    const sourceOpts = linkReadScopeOpts(ctx);
     return ctx.engine.getLinks(p.slug as string, sourceOpts);
   },
   scope: 'read',
@@ -1987,7 +2019,9 @@ const get_backlinks: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // #2200: linkReadScopeOpts — federated grant + untrusted remote scalar
+    // (promoted to sourceIds[]) reach the engine's all-endpoint branch.
+    const sourceOpts = linkReadScopeOpts(ctx);
     return ctx.engine.getBacklinks(p.slug as string, sourceOpts);
   },
   scope: 'read',
@@ -2106,9 +2140,9 @@ const get_timeline: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D20): thread ctx.sourceId.
-    const sourceId = ctx.sourceId;
-    return ctx.engine.getTimeline(p.slug as string, sourceId ? { sourceId } : undefined);
+    // #2200: route through sourceScopeOpts so a federated grant reaches the
+    // engine via TimelineOpts.sourceIds; scalar/unset unchanged.
+    return ctx.engine.getTimeline(p.slug as string, sourceScopeOpts(ctx));
   },
   scope: 'read',
   cliHints: { name: 'timeline', positional: ['slug'] },

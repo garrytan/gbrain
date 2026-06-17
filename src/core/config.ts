@@ -904,6 +904,15 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Link resolution (issue #972)
   'link_resolution',
   'link_resolution.global_basename',
+  // Spend controls (v0.42.42.0, issue #2139). Previously `--force`-only — the
+  // operator had to discover these by reading source. Registered so `config
+  // set` accepts them directly. See docs/operations/spend-controls.md.
+  'spend.posture',
+  'sync.cost_gate_min_usd',
+  'sync.federated_v2',
+  'embed.backfill_cooldown_min',
+  'embed.backfill_max_usd_per_source_24h',
+  'embed.backfill_max_usd',
 ];
 
 /**

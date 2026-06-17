@@ -38,6 +38,7 @@ import { embedStaleForSource } from '../../embed-stale.ts';
 import { currentEmbeddingSignature } from '../../embedding.ts';
 import type { BrainEngine } from '../../engine.ts';
 import type { MinionJobContext } from '../types.ts';
+import { parseUsdLimit, usdLimitToCap, resolveSpendPosture } from '../../spend-posture.ts';
 
 const DEFAULT_MAX_USD_PER_JOB = 10;
 const EMBED_BACKFILL_LOCK_TTL_MIN = 60;
@@ -66,12 +67,21 @@ function embedBackfillLockId(sourceId: string): string {
   return `gbrain-embed-backfill:${sourceId}`;
 }
 
-/** Read embed.backfill_max_usd config or default. */
-async function readMaxUsd(engine: BrainEngine): Promise<number> {
+/**
+ * Resolve the per-job budget cap (USD) for the BudgetTracker.
+ *
+ * v0.42.42.0 (#2139): returns `undefined` = "no cap" (which BudgetTracker
+ * treats as cap-absent) when the config is `off`/`unlimited`/`none` OR when
+ * `spend.posture=tokenmax`. NEVER returns Infinity (that would pass through as
+ * a real ceiling and serialize to `null` in audit rows). Spend is still
+ * ledgered by the tracker either way — posture removes the ceiling, not the
+ * accounting. `0`/garbage fall back to the $10 default.
+ */
+async function readMaxUsd(engine: BrainEngine): Promise<number | undefined> {
+  const posture = await resolveSpendPosture(engine);
+  if (posture === 'tokenmax') return undefined;
   const raw = await engine.getConfig('embed.backfill_max_usd');
-  if (raw === null || raw === undefined) return DEFAULT_MAX_USD_PER_JOB;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_USD_PER_JOB;
+  return usdLimitToCap(parseUsdLimit(raw, DEFAULT_MAX_USD_PER_JOB));
 }
 
 /** Validate + extract typed job params. Throws on malformed input. */

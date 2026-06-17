@@ -23,6 +23,13 @@ import {
 import { lookupEmbeddingPrice } from '../src/core/embedding-pricing.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
 import { estimateTokens } from '../src/core/chunkers/code.ts';
+import {
+  parseUsdLimit,
+  formatUsdLimit,
+  usdLimitToCap,
+  normalizeSpendPosture,
+  isValidSpendPosture,
+} from '../src/core/spend-posture.ts';
 
 describe('Layer 8 D1 — embedding cost model', () => {
   // The estimateEmbeddingCostUsd tests assert the gateway-UNCONFIGURED OpenAI
@@ -126,6 +133,73 @@ describe('v0.41.31 — shouldBlockSync (cost-gate decision)', () => {
   test('floor of 0 makes inline block on any nonzero cost', () => {
     expect(shouldBlockSync(0.0001, 0, 'inline')).toBe(true);
     expect(shouldBlockSync(0, 0, 'inline')).toBe(false);
+  });
+
+  // v0.42.42.0 (#2139): posture + Infinity-floor behavior.
+  test('spend.posture=tokenmax never blocks, even above floor', () => {
+    expect(shouldBlockSync(999, 0.5, 'inline', 'tokenmax')).toBe(false);
+    expect(shouldBlockSync(999, 0, 'inline', 'tokenmax')).toBe(false);
+  });
+  test('default posture (gated) preserves the legacy decision', () => {
+    expect(shouldBlockSync(0.51, 0.5, 'inline', 'gated')).toBe(true);
+    expect(shouldBlockSync(0.03, 0.5, 'inline', 'gated')).toBe(false);
+  });
+  test('off/unlimited floor (Infinity) is never exceeded → never blocks', () => {
+    expect(shouldBlockSync(999, Infinity, 'inline')).toBe(false);
+    expect(shouldBlockSync(1e9, Infinity, 'inline', 'gated')).toBe(false);
+  });
+});
+
+describe('v0.42.42.0 (#2139) — spend-posture USD-limit parsing', () => {
+  test('off / unlimited / none (case-insensitive) → Infinity', () => {
+    for (const v of ['off', 'OFF', 'unlimited', 'Unlimited', 'none', 'NONE', '  off  ']) {
+      expect(parseUsdLimit(v, 25)).toBe(Infinity);
+    }
+  });
+  test('finite positive numbers pass through', () => {
+    expect(parseUsdLimit('5', 25)).toBe(5);
+    expect(parseUsdLimit(0.5, 25)).toBe(0.5);
+    expect(parseUsdLimit('100000', 25)).toBe(100000);
+  });
+  test('0 falls back to default unless allowZero', () => {
+    expect(parseUsdLimit('0', 25)).toBe(25); // backfill cap: off ≠ 0
+    expect(parseUsdLimit('0', 0.5, { allowZero: true })).toBe(0); // floor: 0 = block-on-any
+  });
+  test('garbage / negative / empty / null → default', () => {
+    expect(parseUsdLimit('abc', 25)).toBe(25);
+    expect(parseUsdLimit('-3', 25)).toBe(25);
+    expect(parseUsdLimit('', 25)).toBe(25);
+    expect(parseUsdLimit(null, 25)).toBe(25);
+    expect(parseUsdLimit(undefined, 0.5)).toBe(0.5);
+  });
+  test('formatUsdLimit: Infinity → "unlimited" (never the JSON.stringify=null trap), finite passthrough', () => {
+    expect(formatUsdLimit(Infinity)).toBe('unlimited');
+    expect(formatUsdLimit(5)).toBe(5);
+    expect(formatUsdLimit(0)).toBe(0);
+    // The trap this guards: raw Infinity serializes to null.
+    expect(JSON.stringify({ cap: Infinity })).toBe('{"cap":null}');
+    expect(JSON.stringify({ cap: formatUsdLimit(Infinity) })).toBe('{"cap":"unlimited"}');
+  });
+  test('usdLimitToCap: Infinity → undefined (no cap), finite passthrough', () => {
+    expect(usdLimitToCap(Infinity)).toBeUndefined();
+    expect(usdLimitToCap(10)).toBe(10);
+  });
+  test('normalizeSpendPosture: only tokenmax is tokenmax; everything else gated', () => {
+    expect(normalizeSpendPosture('tokenmax')).toBe('tokenmax');
+    expect(normalizeSpendPosture('TokenMax')).toBe('tokenmax');
+    expect(normalizeSpendPosture('gated')).toBe('gated');
+    expect(normalizeSpendPosture('max')).toBe('gated');
+    expect(normalizeSpendPosture('')).toBe('gated');
+    expect(normalizeSpendPosture(null)).toBe('gated');
+    expect(normalizeSpendPosture(42)).toBe('gated');
+  });
+  test('isValidSpendPosture accepts gated/tokenmax (case-insensitive), rejects the rest', () => {
+    expect(isValidSpendPosture('gated')).toBe(true);
+    expect(isValidSpendPosture('tokenmax')).toBe(true);
+    expect(isValidSpendPosture('TokenMax')).toBe(true); // normalized lowercase
+    expect(isValidSpendPosture('max')).toBe(false);
+    expect(isValidSpendPosture('')).toBe(false);
+    expect(isValidSpendPosture(7)).toBe(false);
   });
 });
 

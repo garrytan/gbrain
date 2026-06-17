@@ -2,6 +2,52 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.46.0] - 2026-06-16
+
+**Federated read scope now reaches every by-slug read, not just search and query (gbrain#2200).** A client that mounts several sources (a `federated_read` grant) could find a page through search and query, but the by-slug reads — `get_page`'s tags, plus `get_tags`, `get_links`, `get_backlinks`, and `get_timeline` — didn't honor the same grant. For a page living outside the default source that meant two wrong outcomes: the read came back empty for content the client was authorized to see, or it resolved against the wrong source. This release routes all of those reads through the same source-scope ladder that already governs search/query, so a federated client reads exactly the sources it's granted — no more, no less. Thanks to @mlobo2012 for the report and the proposed fix.
+
+Link reads are scoped on every endpoint. A link connects up to three pages (the source page, the target, and the page that authored the edge); a federated read now constrains all three to the grant, so a link that crosses out of your granted sources doesn't surface a foreign page's slug. Untrusted remote callers carrying a single-source token get the same all-endpoint scoping; trusted local CLI keeps its cross-source view for link reconciliation and validators.
+
+The semantic query cache was already corrected in v0.42.34.0 (cache rows key on the full source set, so a federated result can't be served to a caller with a different scope); this release closes the read-path half of the same theme.
+
+### Fixed
+- **By-slug reads honor the federated read grant.** `get_page` resolves a page's tags against that page's own source, and `get_tags` / `get_links` / `get_backlinks` / `get_timeline` route through the federated source scope. A multi-source client reads tags, links, backlinks, and timeline across exactly its granted sources (union), instead of falling back to a single source.
+- **Link reads are scoped on all three endpoints** (source, target, and authoring page) under a federated grant, and untrusted remote single-source callers are scoped the same way — so a cross-source link can't disclose a foreign slug. Trusted local reads keep the full cross-source view.
+
+### Changed
+- The engine's `getTags` / `getLinks` / `getBacklinks` / `getTimeline` and `TimelineOpts` accept a `sourceIds[]` federated scope (precedence over the scalar source), mirroring `getPage` from v0.42.37.0. Write-side operations are unchanged — a read grant never widens writes.
+
+### To take advantage of v0.42.46.0
+`gbrain upgrade`. No configuration needed — federated clients immediately read tags, links, backlinks, and timeline across their full granted source set, and cross-source link reads stop surfacing foreign slugs. Single-source brains are unaffected.
+
+## [0.42.45.0] - 2026-06-13
+
+**The daily sync cron stops wedging on cost, and the embedding-spend estimate finally matches what a sync actually does (gbrain#2139).** On an active brain the inline-embed cost gate priced the *entire* corpus every time the working tree was dirty — which is always, since agents and crons write to it constantly — so a routine daily sync estimated ~158M tokens / ~$8 when the real delta was a few hundred files / ~$0.04, then blocked the cron with a confirmation it could never answer. Embeds silently stalled until someone noticed. The estimate now mirrors execution: it fetches first and prices only the files this run will pull and import, through the same diff machinery the sync itself uses. A brain whose commits are caught up but whose tree is dirty estimates $0, because an attached-HEAD sync imports only the committed diff.
+
+When the gate does fire in a non-interactive session, it no longer exits with an error — it imports now and defers embedding to capped background jobs (which drain via the jobs worker or `gbrain embed --stale`), so a cron is never wedged again. Operators who have decided cost isn't the constraint get one switch — `gbrain config set spend.posture tokenmax` — that makes every cost gate informational across sync, reindex, enrich, and onboard (spend is still recorded; the switch removes the ceiling, not the accounting). The USD knobs accept `off` / `unlimited`, and every gate message now carries paste-ready commands so the controls are discoverable at the moment they fire.
+
+This release also lifts the rule that blocked `--skip-failed` / `--retry-failed` under parallel sync — failure recovery no longer has to drop to `--serial` (which is what armed the inline gate in the first place).
+
+### Added
+- **`spend.posture` config** — `tokenmax` makes every embedding-cost gate informational (print the estimate, proceed, keep the ledger); `gated` (default) enforces as before. Documented end-to-end in `docs/operations/spend-controls.md`.
+- **First-class off switches** — `sync.cost_gate_min_usd`, `embed.backfill_max_usd_per_source_24h`, `embed.backfill_max_usd`, and `reindex --max-cost` / `enrich --max-usd` accept `off` / `unlimited` / `none`. No more sentinel values like `100000`.
+- **Single-source `gbrain sync` cost preview** — plain `gbrain sync` previously embedded inline with no preview; it now carries the same gate as `sync --all` (auto-defers in non-TTY sessions, never blocks).
+- **Self-describing gate messages** — every cost-gate / FYI line ends with the exact `gbrain config set` commands to widen, disable, or switch posture, plus a docs pointer.
+
+### Changed
+- **`gbrain sync --all` is no longer blocked by the cost gate in cron/agent contexts.** Above the floor in a non-interactive session it auto-defers embeds (exit 0) instead of emitting a `cost_preview_requires_yes` envelope and exiting 2. Cron wrappers that branched on exit 2 now see exit 0 with `status: "auto_deferred"`. A TTY still prompts `[y/N]`; `--yes` still embeds inline.
+- **`--skip-failed` / `--retry-failed` now work under parallel sync.** The failure ledger is per-source and lock-serialized, so the previous "not supported under parallel — re-run with --serial" refusal is retired.
+- **The six spend-control config keys are now first-class** (`gbrain config set` accepts them without `--force`).
+
+### To take advantage of v0.42.45.0
+`gbrain upgrade`. Nothing to configure for the headline fix — the daily sync cron stops wedging and the estimate is accurate out of the box. If you run a high-volume brain where cost genuinely isn't the constraint, `gbrain config set spend.posture tokenmax` makes every gate informational. To widen or disable a specific gate instead, see the table in `docs/operations/spend-controls.md` (e.g. `gbrain config set sync.cost_gate_min_usd off`). Failure-recovery syncs can now stay parallel: `gbrain sync --all --skip-failed` no longer forces `--serial`.
+
+## [0.42.44.0] - 2026-06-13
+
+### Fixed
+
+- **Personal-brain tutorial points at the correct AlphaClaw site.** Step 4 of `docs/tutorials/personal-brain.md` ("Deploy via AlphaClaw on Render") linked to the wrong top-level domain, sending readers to a site that isn't the official AlphaClaw. The link now resolves to the right destination, so the deploy step works as written (gbrain#2165).
+
 ## [0.42.43.0] - 2026-06-12
 
 **The brain now volunteers relevant pages instead of waiting to be asked (gbrain#2095).** Retrieval used to be pull-only: a deep session could run for hours with zero brain contributions — not because the brain had nothing, but because nothing prompted the agent to ask, and pages stored under coined names were missed by literal-string queries. Push-based context inverts that, on three channels sharing one zero-LLM, confidence-gated core: the ambient retrieval reflex now reads the last few conversation turns (an entity your assistant introduced two turns ago resolves on the "what did she invest in?" follow-up), a new `volunteer_context` operation gives any agent a per-turn volunteer surface over CLI stdin or MCP, and `gbrain watch` streams volunteered pages as a transcript flows through it.

@@ -1,5 +1,48 @@
 # TODOS
 
+## gbrain#2200 federated-read follow-ups (filed v0.42.46.0)
+
+- [ ] **P1 — Close the federated-read scope on the remaining same-class by-slug read ops.**
+  v0.42.46.0 (#2200) routed `get_page` tags + `get_tags` / `get_links` / `get_backlinks` /
+  `get_timeline` through the federated source scope and taught the engine methods to honor
+  `sourceIds[]`. The adversarial review (Codex + Claude) flagged sibling read ops in the
+  SAME class that still use scalar-only `ctx.sourceId ? {sourceId} : {}` and never thread
+  `ctx.auth.allowedSources`: `get_chunks`, `get_raw_data`, `get_versions`, and `resolve_slugs`
+  (the standalone op — `resolve_slugs` passes NO scope at all). A remote federated client
+  (grant set, dispatch-default `ctx.sourceId='default'`) reads these against `default` or
+  unscoped, not its grant.
+  - **Why:** same cross-source correctness/isolation class #2200 targets; a federated client
+    can't read chunks/raw-data/versions for an authorized non-default source, and `resolve_slugs`
+    can fuzzy-resolve across all sources.
+  - **How to start:** mirror the #2200 pattern — route each handler through `sourceScopeOpts(ctx)`
+    (or `linkReadScopeOpts` if a far endpoint exists), add `sourceIds?: string[]` to the engine
+    methods (`getChunks` / `getRawData` / `getVersions` / `resolveSlugs`) with `source_id = ANY($::text[])`
+    precedence, and add federated/isolation tests + engine-parity arms.
+  - **Depends on:** nothing; #2200 established the pattern and the `linkReadScopeOpts` helper.
+
+## Spend-controls wave follow-ups (filed v0.42.45.0, #2139)
+
+Deferred from the #2139 delta-estimator wave. See plan + GSTACK REVIEW REPORT at
+`~/.claude/plans/system-instruction-you-are-working-lovely-balloon.md`.
+
+- [ ] **P3 — Measured post-import chunk-count gating (#2139 proposal 2b).**
+  **What:** Gate the inline cost decision on the actual chunk count sync produced
+  (known after import, before embedding) instead of the pre-sync token estimate.
+  **Why:** A fully execution-accurate gate with zero estimate error. **Context:**
+  After v0.42.42.0 the estimator already mirrors execution (fetch-first delta via the
+  shared `computeSyncDelta`, `--full`=delta+stale, dirty-tree→$0). This is the
+  belt-and-suspenders fallback if a future case still drifts. **Trigger:** only if the
+  delta estimator proves insufficient in practice. **Start:** the gate call site in
+  `src/commands/sync.ts` (`runInlineCostGate`), gate on post-import `chunksCreated`.
+- [ ] **P3 — Per-source defer granularity (#2139, D8A road-not-taken).**
+  **What:** When the aggregate inline gate trips in a non-TTY session, defer embeds
+  only for sources above a per-source floor; let cheap sources keep embedding inline.
+  **Why:** Cheap sources would get embeddings minutes sooner instead of waiting for a
+  backfill-worker drain. **Context:** v0.42.42.0 chose GLOBAL defer (one flag, strictly
+  dominates the exit-2 it replaced). This is the granularity upgrade. **Trigger:** a
+  filed embedding-latency-by-minutes complaint. **Start:** thread per-source estimates
+  through `runOne` (`src/commands/sync.ts`); design worked out at D8A in the plan.
+
 ## gbrain#2095 push-based context follow-ups (v0.43+)
 
 Filed from the #2095 wave (volunteer_context op + reflex window + `gbrain watch`).
