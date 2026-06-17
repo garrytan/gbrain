@@ -182,6 +182,10 @@ function maybeEmitUpdateMarker(command: string): void {
       const child = spawn('gbrain', ['check-update', '--refresh-cache'], {
         detached: true,
         stdio: 'ignore',
+        // Windows: detached without windowsHide pops a console window (and can
+        // surface a launch-error dialog). Hide it — this is a best-effort
+        // background refresh, never user-facing.
+        windowsHide: true,
         env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
       });
       // ChildProcess is an EventEmitter — an unhandled 'error' (e.g. ENOENT when
