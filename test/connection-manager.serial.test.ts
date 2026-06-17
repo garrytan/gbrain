@@ -2,6 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import {
   isSupabasePoolerUrl,
   deriveDirectUrl,
+  resolveDirectUrl,
   readKillSwitchEnv,
   resolveDirectPoolSize,
   ConnectionManager,
@@ -78,6 +79,26 @@ describe('deriveDirectUrl', () => {
   });
 });
 
+describe('resolveDirectUrl', () => {
+  test('derives a real direct host when override is still a Supabase pooler', () => {
+    const direct = resolveDirectUrl(
+      'postgresql://postgres.abcxyz:p@aws-0-us-west-2.pooler.supabase.com:6543/postgres',
+      'postgresql://postgres.abcxyz:p@aws-0-us-west-2.pooler.supabase.com:5432/postgres',
+    );
+
+    expect(direct).toBe('postgresql://postgres:p@db.abcxyz.supabase.co:5432/postgres');
+    expect(direct).not.toContain('pooler.supabase.com');
+  });
+
+  test('keeps a non-pooler direct override', () => {
+    const direct = resolveDirectUrl(
+      'postgresql://postgres.abc:p@aws.pooler.supabase.com:6543/db',
+      'postgresql://u:p@custom-direct.example.com:5432/db',
+    );
+    expect(direct).toBe('postgresql://u:p@custom-direct.example.com:5432/db');
+  });
+});
+
 describe('readKillSwitchEnv', () => {
   let original: string | undefined;
   beforeEach(() => { original = process.env.GBRAIN_DISABLE_DIRECT_POOL; });
@@ -145,13 +166,18 @@ describe('resolveDirectPoolSize', () => {
 
 describe('ConnectionManager — describeMode + dual-pool routing', () => {
   let originalKillSwitch: string | undefined;
+  let originalDirectUrl: string | undefined;
   beforeEach(() => {
     originalKillSwitch = process.env.GBRAIN_DISABLE_DIRECT_POOL;
+    originalDirectUrl = process.env.GBRAIN_DIRECT_DATABASE_URL;
     delete process.env.GBRAIN_DISABLE_DIRECT_POOL;
+    delete process.env.GBRAIN_DIRECT_DATABASE_URL;
   });
   afterEach(() => {
     if (originalKillSwitch === undefined) delete process.env.GBRAIN_DISABLE_DIRECT_POOL;
     else process.env.GBRAIN_DISABLE_DIRECT_POOL = originalKillSwitch;
+    if (originalDirectUrl === undefined) delete process.env.GBRAIN_DIRECT_DATABASE_URL;
+    else process.env.GBRAIN_DIRECT_DATABASE_URL = originalDirectUrl;
   });
 
   test('non-Supabase URL → single mode', () => {
@@ -188,6 +214,25 @@ describe('ConnectionManager — describeMode + dual-pool routing', () => {
       directUrl: 'postgresql://u:p@custom-direct.example.com:5432/db',
     });
     expect(cm.resolveDirectUrl()).toContain('custom-direct.example.com');
+  });
+
+  test('explicit pooler directUrl override is normalized to direct host', () => {
+    const cm = new ConnectionManager({
+      url: 'postgresql://postgres.abc:p@aws.pooler.supabase.com:6543/db',
+      directUrl: 'postgresql://postgres.abc:p@aws.pooler.supabase.com:5432/db',
+    });
+    expect(cm.resolveDirectUrl()).toContain('db.abc.supabase.co:5432');
+    expect(cm.resolveDirectUrl()).not.toContain('pooler.supabase.com');
+  });
+
+  test('env pooler directUrl override is normalized to direct host', () => {
+    process.env.GBRAIN_DIRECT_DATABASE_URL =
+      'postgresql://postgres.abc:p@aws.pooler.supabase.com:5432/db';
+    const cm = new ConnectionManager({
+      url: 'postgresql://postgres.abc:p@aws.pooler.supabase.com:6543/db',
+    });
+    expect(cm.resolveDirectUrl()).toContain('db.abc.supabase.co:5432');
+    expect(cm.resolveDirectUrl()).not.toContain('pooler.supabase.com');
   });
 
   test('host string contains creds neither in describeMode nor resolveDirectUrl logging', () => {

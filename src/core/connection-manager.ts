@@ -168,6 +168,24 @@ export function deriveDirectUrl(url: string): string | null {
 }
 
 /**
+ * Resolve the direct-pool URL from explicit/env override + primary URL.
+ *
+ * A direct override that still points at a Supabase pooler is unsafe: the
+ * manager would believe DDL/bulk work is on a long-timeout direct connection
+ * while still routing through Supavisor. Treat that as misconfiguration and
+ * derive the real direct host from the primary/override pooler shape instead.
+ */
+export function resolveDirectUrl(primaryUrl: string, override?: string | null): string | null {
+  const candidate = override ?? deriveDirectUrl(primaryUrl);
+  if (!candidate) return null;
+  if (!isSupabasePoolerUrl(candidate)) return candidate;
+
+  const derived = deriveDirectUrl(primaryUrl) ?? deriveDirectUrl(candidate);
+  if (!derived || isSupabasePoolerUrl(derived)) return null;
+  return derived;
+}
+
+/**
  * Read kill-switch state from env. Subordinate to parent manager's state
  * when present (A2 inheritance).
  */
@@ -215,7 +233,7 @@ export class ConnectionManager {
       this._isSupabase = isSupabasePoolerUrl(opts.url);
       // Direct URL: explicit override > env > derive > null
       const envOverride = process.env.GBRAIN_DIRECT_DATABASE_URL;
-      this._directUrl = opts.directUrl ?? envOverride ?? deriveDirectUrl(opts.url);
+      this._directUrl = resolveDirectUrl(opts.url, opts.directUrl ?? envOverride);
     }
   }
 

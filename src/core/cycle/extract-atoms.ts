@@ -70,6 +70,8 @@ const EXTRACTABLE_PAGE_TYPES = [
 ] as const;
 const PAGE_DISCOVERY_BUDGET = 50;
 const MIN_PAGE_CHARS_FOR_EXTRACTION = 500;
+const RAW_SOURCE_HOLDER_EXCLUSION_SQL =
+  `AND NOT (p.type = 'source' AND COALESCE(p.frontmatter ? 'raw', false))`;
 
 export interface ExtractAtomsOpts {
   brainDir?: string;
@@ -162,6 +164,9 @@ interface DiscoveredPage {
  *      participate in the NOT EXISTS check anyway.
  *   #4 dream_generated exclusion — prevents the phase from chewing
  *      its own output (e.g. dream-generated originals).
+ *   #5 raw source-holder exclusion — source pages that only point at a raw
+ *      import payload are not extractable prose; counting them creates a
+ *      permanent backlog/no_progress loop.
  */
 export async function discoverExtractablePages(
   engine: BrainEngine,
@@ -180,6 +185,7 @@ export async function discoverExtractablePages(
       AND p.content_hash IS NOT NULL
       AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
       AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+      ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
       AND length(COALESCE(p.compiled_truth, '')) >= $3
       ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
       AND NOT EXISTS (
@@ -252,6 +258,7 @@ export async function countExtractAtomsBacklog(
            AND p.content_hash IS NOT NULL
            AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+           ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND length(COALESCE(p.compiled_truth, '')) >= $3
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
@@ -265,6 +272,7 @@ export async function countExtractAtomsBacklog(
            AND p.content_hash IS NOT NULL
            AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+           ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND length(COALESCE(p.compiled_truth, '')) >= $2
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
