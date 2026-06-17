@@ -4899,6 +4899,195 @@ const run_skillopt: Operation = {
   },
 };
 
+// --- Voice operations ---
+
+const voice_transcribe: Operation = {
+  name: 'voice_transcribe',
+  description: 'Transcribe audio to text using the configured STT provider. Accepts base64-encoded audio bytes. Returns transcript with confidence.',
+  scope: 'write',
+  params: {
+    audio_base64: { type: 'string', required: true, description: 'Base64-encoded audio data' },
+    mime_type: { type: 'string', description: 'MIME type of audio (e.g. audio/webm, audio/wav). Default: audio/webm' },
+  },
+  handler: async (ctx, p) => {
+    const { MockSTTAdapter } = await import('./voice/stt.ts');
+    const stt = new MockSTTAdapter();
+    const buf = Buffer.from(p.audio_base64 as string, 'base64');
+    const audio = { buffer: new Uint8Array(buf).buffer as ArrayBuffer, mimeType: (p.mime_type as string) ?? 'audio/webm' };
+    const result = await stt.transcribe(audio);
+    return result;
+  },
+  cliHints: { name: 'voice-transcribe' },
+};
+
+const voice_synthesize: Operation = {
+  name: 'voice_synthesize',
+  description: 'Synthesize text to speech using the configured TTS provider. Returns base64-encoded audio.',
+  scope: 'write',
+  params: {
+    text: { type: 'string', required: true, description: 'Text to synthesize' },
+  },
+  handler: async (ctx, p) => {
+    const { MockTTSAdapter } = await import('./voice/tts.ts');
+    const tts = new MockTTSAdapter();
+    const audio = await tts.synthesize(p.text as string);
+    return { audio_base64: Buffer.from(new Uint8Array(audio)).toString('base64'), format: 'audio/wav' };
+  },
+  cliHints: { name: 'voice-synthesize' },
+};
+
+const voice_process: Operation = {
+  name: 'voice_process',
+  description: 'Full voice session: transcribe audio, summarize, synthesize response, persist as voice_session page. Returns session result with transcript, summary, and audio.',
+  scope: 'write',
+  mutating: true,
+  params: {
+    audio_base64: { type: 'string', required: true, description: 'Base64-encoded audio data' },
+    title: { type: 'string', description: 'Optional title for the voice session page' },
+    tags: { type: 'string', description: 'Comma-separated tags' },
+  },
+  handler: async (ctx, p) => {
+    const { VoiceSessionService } = await import('./voice/session-service.ts');
+    const { MockSTTAdapter } = await import('./voice/stt.ts');
+    const { MockTTSAdapter } = await import('./voice/tts.ts');
+    const engine = ctx.engine;
+    if (!engine) throw new Error('Engine required for voice_process');
+
+    const stt = new MockSTTAdapter();
+    const tts = new MockTTSAdapter();
+    const buf = Buffer.from(p.audio_base64 as string, 'base64');
+
+    const service = new VoiceSessionService({
+      stt,
+      tts,
+      onSave: async (session) => {
+        await engine.putPage(session.slug, {
+          title: session.slug,
+          type: 'voice_session',
+          content: session.content,
+          tags: ['voice'],
+        } as any);
+      },
+    });
+    const audio = { buffer: new Uint8Array(buf).buffer as ArrayBuffer, mimeType: 'audio/webm' };
+    const result = await service.processAudio(audio, {
+      title: (p.title as string) ?? undefined,
+      tags: (p.tags as string)?.split(',').map(s => s.trim()).filter(Boolean) ?? [],
+    });
+    return result;
+  },
+  cliHints: { name: 'voice-process' },
+};
+
+// --- Freshness operations ---
+
+const freshness_digest: Operation = {
+  name: 'freshness_digest',
+  description: 'Generate a freshness digest for the brain: scan pages, compute staleness by type, return JSON summary.',
+  scope: 'read',
+  params: {
+    limit: { type: 'number', description: 'Max pages to scan (default: 100)' },
+    format: { type: 'string', description: 'Output format: "json" or "markdown" (default: "json")' },
+  },
+  handler: async (ctx, p) => {
+    const { generateDigest, digestToMarkdown } = await import('./freshness/index.ts');
+    const engine = ctx.engine;
+    if (!engine) throw new Error('Engine required for freshness_digest');
+    const listResult = await engine.listPages({ limit: (p.limit as number) ?? 100 });
+    const pages = ((listResult as any)?.pages ?? listResult ?? []) as any[];
+
+    const { getDecayClassForType, getDefaultStaleDays, getSourcePrecision } = await import('./freshness/index.ts');
+    const digestPages = pages.map((page: any) => {
+      const pageType = (page as any)?.type ?? 'unknown';
+      const decayClass = getDecayClassForType(pageType);
+      const sp = getSourcePrecision((page as any)?.metadata?.source ?? 'unknown');
+      return {
+        slug: page.slug,
+        title: (page as any)?.title ?? page.slug,
+        pageType,
+        freshness: {
+          last_verified_at: (page as any)?.updated_at ?? (page as any)?.created_at ?? new Date().toISOString(),
+          decay_class: decayClass,
+          source_precision: sp.source_precision,
+          confidence: (page as any)?.confidence ?? sp.confidence,
+          stale_after_days: getDefaultStaleDays(decayClass),
+        },
+      };
+    });
+
+    const digest = generateDigest(digestPages);
+    if ((p.format as string) === 'markdown') {
+      return { digest: digestToMarkdown(digest) };
+    }
+    return digest;
+  },
+  cliHints: { name: 'freshness-digest' },
+};
+
+const freshness_reconcile: Operation = {
+  name: 'freshness_reconcile',
+  description: 'Run a reconciliation check: find orphaned pages, dangling links, duplicates. Returns a report with issues grouped by category.',
+  scope: 'read',
+  params: {
+    limit: { type: 'number', description: 'Max pages to scan (default: 100)' },
+  },
+  handler: async (ctx, p) => {
+    const { runReconcileCheck } = await import('./freshness/index.ts');
+    const engine = ctx.engine;
+    if (!engine) throw new Error('Engine required for freshness_reconcile');
+    const listResult = await engine.listPages({ limit: (p.limit as number) ?? 100 });
+    const pages = ((listResult as any)?.pages ?? listResult ?? []) as any[];
+    const pageMetas = pages.map((page: any) => ({
+      slug: page.slug,
+      tags: (page as any)?.tags ?? [],
+    }));
+
+    const graph = {
+      getRelatedEntities: async (slug: string) => {
+        const [links, backlinks] = await Promise.all([
+          engine.getLinks(slug),
+          engine.getBacklinks(slug),
+        ]);
+        const outgoing = links.map(l => ({ slug: l.to_slug, relation_type: l.link_type ?? 'related', direction: 'outgoing' as const }));
+        const incoming = backlinks.map(l => ({ slug: l.from_slug, relation_type: l.link_type ?? 'related', direction: 'incoming' as const }));
+        return [...outgoing, ...incoming];
+      },
+    };
+
+    const links = (pages as any[]).flatMap((page: any) =>
+      ((page as any)?.links ?? []).map((link: any) => ({
+        from_slug: page.slug,
+        to_slug: typeof link === 'string' ? link : link.slug,
+      })),
+    );
+
+    const report = await runReconcileCheck(pageMetas, graph, links);
+    return report;
+  },
+  cliHints: { name: 'freshness-reconcile' },
+};
+
+// --- Graph operation ---
+
+const graph_traverse: Operation = {
+  name: 'graph_traverse',
+  description: 'Traverse the memory graph from a seed slug, returning related nodes and edges at specified depth.',
+  scope: 'read',
+  params: {
+    slug: { type: 'string', required: true, description: 'Seed page slug' },
+    depth: { type: 'number', description: 'Traversal depth (default: 1, max: 5)' },
+  },
+  handler: async (ctx, p) => {
+    const { PostgresGraphAdapter } = await import('./graph/pg-adapter.ts');
+    const engine = ctx.engine;
+    if (!engine) throw new Error('Engine required for graph_traverse');
+    const adapter = new PostgresGraphAdapter(engine as any);
+    const result = await adapter.traverseGraph(p.slug as string, (p.depth as number) ?? 1);
+    return result;
+  },
+  cliHints: { name: 'graph-traverse' },
+};
+
 export const operations: Operation[] = [
   // Page CRUD
   get_page, put_page, delete_page, list_pages,
@@ -4980,6 +5169,12 @@ export const operations: Operation[] = [
   // deny-all for remote callers). NOT localOnly so admin OAuth clients
   // can submit; CLI bypass via ctx.remote === false.
   run_skillopt,
+  // Voice operations
+  voice_transcribe, voice_synthesize, voice_process,
+  // Freshness operations
+  freshness_digest, freshness_reconcile,
+  // Graph operations
+  graph_traverse,
 ];
 
 export const operationsByName = Object.fromEntries(
