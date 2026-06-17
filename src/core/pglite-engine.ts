@@ -2583,12 +2583,29 @@ export class PGLiteEngine implements BrainEngine {
     }
   }
 
-  async getLinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
-    // v0.31.8 (D16): two-branch query. Without opts.sourceId, no source filter
-    // (preserves pre-v0.31.8 cross-source semantics for back-link validators
-    // and read-side op handlers that haven't threaded sourceId yet). With
-    // opts.sourceId, scope to that source — used by reconcileLinks and any
-    // ctx.sourceId-aware read op (D20).
+  async getLinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Link[]> {
+    // #2200: federated grant scopes ALL THREE page endpoints — from, to, AND the
+    // origin (the authoring page, surfaced as origin_slug). The origin LEFT JOIN
+    // carries the same ANY($) filter so an out-of-grant origin's slug nulls out.
+    // Remote MCP clients always land here.
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      const { rows } = await this.db.query(
+        `SELECT f.slug as from_slug, t.slug as to_slug,
+                l.link_type, l.context, l.link_source,
+                o.slug as origin_slug, l.origin_field
+         FROM links l
+         JOIN pages f ON f.id = l.from_page_id
+         JOIN pages t ON t.id = l.to_page_id
+         LEFT JOIN pages o ON o.id = l.origin_page_id AND o.source_id = ANY($2::text[])
+         WHERE f.slug = $1 AND f.source_id = ANY($2::text[]) AND t.source_id = ANY($2::text[])`,
+        [slug, opts.sourceIds]
+      );
+      return rows as unknown as Link[];
+    }
+    // v0.31.8 (D16) + #2200: the federated arm above is the first branch; the two
+    // below preserve pre-v0.31.8 semantics. Without opts.sourceId, no source filter
+    // (cross-source view for back-link validators and reconcileLinks). With
+    // opts.sourceId, scope to that source (D20).
     if (opts?.sourceId) {
       const { rows } = await this.db.query(
         `SELECT f.slug as from_slug, t.slug as to_slug,
@@ -2617,8 +2634,25 @@ export class PGLiteEngine implements BrainEngine {
     return rows as unknown as Link[];
   }
 
-  async getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
-    // v0.31.8 (D16): two-branch query. See getLinks() comment.
+  async getBacklinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Link[]> {
+    // #2200: federated grant scopes all three endpoints (mirrors getLinks) — the
+    // referrer (from), the queried page (to), AND the origin — so neither a
+    // foreign referrer nor a foreign origin slug is disclosed to the caller.
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      const { rows } = await this.db.query(
+        `SELECT f.slug as from_slug, t.slug as to_slug,
+                l.link_type, l.context, l.link_source,
+                o.slug as origin_slug, l.origin_field
+         FROM links l
+         JOIN pages f ON f.id = l.from_page_id
+         JOIN pages t ON t.id = l.to_page_id
+         LEFT JOIN pages o ON o.id = l.origin_page_id AND o.source_id = ANY($2::text[])
+         WHERE t.slug = $1 AND t.source_id = ANY($2::text[]) AND f.source_id = ANY($2::text[])`,
+        [slug, opts.sourceIds]
+      );
+      return rows as unknown as Link[];
+    }
+    // v0.31.8 (D16) + #2200: federated arm above is first; two below mirror getLinks.
     if (opts?.sourceId) {
       const { rows } = await this.db.query(
         `SELECT f.slug as from_slug, t.slug as to_slug,
@@ -3231,14 +3265,20 @@ export class PGLiteEngine implements BrainEngine {
     );
   }
 
-  async getTags(slug: string, opts?: { sourceId?: string }): Promise<string[]> {
-    const sourceId = opts?.sourceId ?? 'default';
-    // Source-qualify the page-id subquery; slugs are only unique per source.
+  async getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<string[]> {
+    // #2200: federated grant (sourceIds[]) wins over scalar. `page_id IN (..)`
+    // (not `= (..)`) so a slug present in >1 allowed source doesn't blow up;
+    // DISTINCT unions tags across the matched pages. Scalar/unscoped keeps the
+    // legacy `?? 'default'` default. Source-qualify; slugs are unique per source.
+    const scope =
+      opts?.sourceIds && opts.sourceIds.length > 0
+        ? { sql: 'source_id = ANY($2::text[])', param: opts.sourceIds }
+        : { sql: 'source_id = $2', param: opts?.sourceId ?? 'default' };
     const { rows } = await this.db.query(
-      `SELECT tag FROM tags
-       WHERE page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = $2)
+      `SELECT DISTINCT tag FROM tags
+       WHERE page_id IN (SELECT id FROM pages WHERE slug = $1 AND ${scope.sql})
        ORDER BY tag`,
-      [slug, sourceId]
+      [slug, scope.param]
     );
     return (rows as { tag: string }[]).map(r => r.tag);
   }
@@ -3300,9 +3340,11 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]> {
-    // v0.31.8 (D16): build WHERE clause dynamically so opts.sourceId composes
-    // cleanly with the existing after/before filters. Without sourceId, no
-    // source filter applies (preserves pre-v0.31.8 cross-source semantics).
+    // v0.31.8 (D16) + #2200: build WHERE clause dynamically so the source scope
+    // composes cleanly with the after/before filters. Precedence: federated
+    // sourceIds[] > scalar sourceId > unscoped (cross-source, pre-v0.31.8).
+    // (Postgres builds the equivalent via sql`` fragment composition — different
+    // idiom, same result; the engines stay lockstep on behavior, not on builder.)
     const limit = opts?.limit || 100;
     const where: string[] = ['p.slug = $1'];
     const params: unknown[] = [slug];
@@ -3314,7 +3356,12 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.before);
       where.push(`te.date <= $${params.length}::date`);
     }
-    if (opts?.sourceId) {
+    // #2200: federated grant (sourceIds[]) wins over scalar sourceId. The join
+    // unions timeline entries across every same-slug page in the grant.
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      where.push(`p.source_id = ANY($${params.length}::text[])`);
+    } else if (opts?.sourceId) {
       params.push(opts.sourceId);
       where.push(`p.source_id = $${params.length}`);
     }

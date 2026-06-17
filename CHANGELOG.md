@@ -2,6 +2,44 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.47.0] - 2026-06-16
+
+**A brain now travels with its own operating manual, and gbrain finally tells you how to run it better (gbrain#2180).** Two long-standing gaps closed. First: a brain repo can carry its own skillpack — skills authored for and versioned with that specific brain — and any harness that connects is offered it. Connect a fresh Claude Code or a thin client to a mature brain and it learns, on the spot, which meeting-ingestion or diligence protocol the brain expects, instead of starting blind. Second: gbrain stops being purely passive. `gbrain advisor` reads the brain's own state and hands back a ranked, read-only list of high-leverage actions — pending migrations, version drift, stalled backfills, low embedding coverage, setup smells — each with the exact command to fix it. It never acts on its own; it shows you and asks.
+
+Discovery works on both connection topologies. Add a federated source that ships a brain-resident pack and gbrain prints what's in it and how to install it (with bounded, escalate-then-suppress nagging while it stays uninstalled — it never nags off a cron or an MCP call, only a real CLI prompt). Over MCP, a connecting agent calls `list_brain_skillpack` (source-scoped, so a multi-source brain attributes each pack to its source) and `get_skill --source_id` to fetch a specific pack skill. The advisor is also available over MCP behind its own gate, read-only, so a thin client can coach you in its own voice without ever exposing a fix it could run itself.
+
+Nothing here forks the manifest, the installer, or the trust model — brain packs go through the same TOFU gate and SSRF allowlist as any third-party pack. Thin-client *binary* install (download-and-unpack) remains the separate, still-deferred PR2 work; today a thin client resolves a pack from its git source on its own machine.
+
+### Added
+- **Brain-resident skillpacks** — optional `brain_resident` + `schema_pack` fields on the v1 manifest (additive, forward-compatible); `gbrain skillpack init-brain-pack` scaffolds one (with a machine-parseable README a connecting harness can scan) pinned to the exact serving version so a pack can't install on a binary that lacks its ops.
+- **Connect-time discovery** — `gbrain sources add` surfaces a brain-resident pack and offers to install it; a new `list_brain_skillpack` MCP tool (source-scoped, `mcp.publish_skills`-gated) plus `get_skill --source_id` let a thin client discover and fetch per-source pack skills. `gbrain connect` now teaches agents to call it.
+- **`gbrain advisor`** — ranked, read-only "what to do next" for this brain (version drift, pending migrations, schema-pack issues, stalled jobs/sync, embedding coverage, setup smells, uninstalled skills). `--json` with severity-based exit codes for CI/cron; `--apply <id>` runs one fix locally behind an explicit confirm (structured argv, never a shell). Exposed over MCP behind `mcp.publish_advisor` (default off, read-only).
+- **`gbrain-advisor` bundled skill + weekly cron recipe** — teaches a harness to run the advisor on a cadence and ping you with what's new since last run.
+- **Brain-pack version-skew lint** — `init-brain-pack` validates each pack skill's declared `tools:` against the serving op set, so a pack fails loud on drift instead of silently half-working.
+
+### Changed
+- **The post-install/upgrade advisory is now state-aware and current.** It reads a single current-state recommended set (not a version-pinned constant) and the install ledger, and it speaks `gbrain skillpack scaffold` (the removed `install` verb is gone from the copy).
+
+### To take advantage of v0.42.47.0
+`gbrain upgrade`, then run `gbrain advisor` to see the top things worth doing on your brain right now. To publish a brain's skills to anyone who connects, run `gbrain skillpack init-brain-pack <name>` in the brain repo, fill in the README's five sections, and commit it. To let connecting agents discover packs over MCP, `gbrain config set mcp.publish_skills true`; to let a thin client run the advisor, `gbrain config set mcp.publish_advisor true` (both default off). Install the `gbrain-advisor` skill and its weekly cron recipe for a standing brain checkup.
+## [0.42.46.0] - 2026-06-16
+
+**Federated read scope now reaches every by-slug read, not just search and query (gbrain#2200).** A client that mounts several sources (a `federated_read` grant) could find a page through search and query, but the by-slug reads — `get_page`'s tags, plus `get_tags`, `get_links`, `get_backlinks`, and `get_timeline` — didn't honor the same grant. For a page living outside the default source that meant two wrong outcomes: the read came back empty for content the client was authorized to see, or it resolved against the wrong source. This release routes all of those reads through the same source-scope ladder that already governs search/query, so a federated client reads exactly the sources it's granted — no more, no less. Thanks to @mlobo2012 for the report and the proposed fix.
+
+Link reads are scoped on every endpoint. A link connects up to three pages (the source page, the target, and the page that authored the edge); a federated read now constrains all three to the grant, so a link that crosses out of your granted sources doesn't surface a foreign page's slug. Untrusted remote callers carrying a single-source token get the same all-endpoint scoping; trusted local CLI keeps its cross-source view for link reconciliation and validators.
+
+The semantic query cache was already corrected in v0.42.34.0 (cache rows key on the full source set, so a federated result can't be served to a caller with a different scope); this release closes the read-path half of the same theme.
+
+### Fixed
+- **By-slug reads honor the federated read grant.** `get_page` resolves a page's tags against that page's own source, and `get_tags` / `get_links` / `get_backlinks` / `get_timeline` route through the federated source scope. A multi-source client reads tags, links, backlinks, and timeline across exactly its granted sources (union), instead of falling back to a single source.
+- **Link reads are scoped on all three endpoints** (source, target, and authoring page) under a federated grant, and untrusted remote single-source callers are scoped the same way — so a cross-source link can't disclose a foreign slug. Trusted local reads keep the full cross-source view.
+
+### Changed
+- The engine's `getTags` / `getLinks` / `getBacklinks` / `getTimeline` and `TimelineOpts` accept a `sourceIds[]` federated scope (precedence over the scalar source), mirroring `getPage` from v0.42.37.0. Write-side operations are unchanged — a read grant never widens writes.
+
+### To take advantage of v0.42.46.0
+`gbrain upgrade`. No configuration needed — federated clients immediately read tags, links, backlinks, and timeline across their full granted source set, and cross-source link reads stop surfacing foreign slugs. Single-source brains are unaffected.
+
 ## [0.42.45.0] - 2026-06-13
 
 **The daily sync cron stops wedging on cost, and the embedding-spend estimate finally matches what a sync actually does (gbrain#2139).** On an active brain the inline-embed cost gate priced the *entire* corpus every time the working tree was dirty — which is always, since agents and crons write to it constantly — so a routine daily sync estimated ~158M tokens / ~$8 when the real delta was a few hundred files / ~$0.04, then blocked the cron with a confirmation it could never answer. Embeds silently stalled until someone noticed. The estimate now mirrors execution: it fetches first and prices only the files this run will pull and import, through the same diff machinery the sync itself uses. A brain whose commits are caught up but whose tree is dirty estimates $0, because an attached-HEAD sync imports only the committed diff.

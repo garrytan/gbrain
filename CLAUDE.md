@@ -254,7 +254,7 @@ audit trail lives in the source repo's git history.
 
 ## Skills
 
-Read the skill files in `skills/` before doing brain operations. GBrain ships 29 skills
+Read the skill files in `skills/` before doing brain operations. GBrain ships 30 skills
 organized by `skills/RESOLVER.md` (`AGENTS.md` is also accepted as of v0.19):
 
 **Original 8 (conformance-migrated):** ingest (thin router), query, maintain, enrich,
@@ -272,6 +272,17 @@ routing is narrowed to what the skill actually covers.
 
 **Skillify loop (v0.19):** skillify (the markdown orchestration), skillpack-check
 (agent-readable health report).
+
+**Brain-resident skillpacks + advisor (v0.42.47.0, #2180):** A brain repo can carry its
+own publishable skillpack (`brain_resident: true` in `skillpack.json` + `schema_pack`);
+`gbrain skillpack init-brain-pack` scaffolds one with a 5-section machine-parseable README.
+Connecting harnesses discover it on `gbrain sources add` (Topology A advisory, bounded nag
+via `nag-state.ts`) and over MCP via the source-scoped `list_brain_skillpack` op +
+`get_skill --source_id` (gated by `mcp.publish_skills`). The bundled `gbrain-advisor` skill
++ `gbrain advisor` op compute a ranked, read-only list of high-leverage actions from brain
+state (8 collectors in `src/core/advisor/`); `--json`+exit codes for CI/cron, local-only
+`--apply <id>` behind confirm, exposed over MCP behind `mcp.publish_advisor` (default off,
+read-only on remote). Thin-client binary install stays deferred to PR2 `build_skillpack`.
 
 **Routing-table compression (v0.32.3.0):** `skills/functional-area-resolver/` —
 two-layer dispatch pattern for shrinking large AGENTS.md / RESOLVER.md files
