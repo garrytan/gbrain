@@ -34,8 +34,8 @@ export async function writeReceiptToDb(engine: BrainEngine, receipt: TakesQualit
        receipt_json, receipt_disk_path, created_at
      ) VALUES (
        $1, $2, $3, $4,
-       $5, $6, $7, $10::jsonb, $8,
-       $11::jsonb, $9, $12::timestamptz
+       $5, $6, $7, $11::jsonb, $8,
+       $12::jsonb, $9, $10::timestamptz
      )
      ON CONFLICT (receipt_sha8_corpus, receipt_sha8_prompt, receipt_sha8_models, receipt_sha8_rubric)
      DO NOTHING`,

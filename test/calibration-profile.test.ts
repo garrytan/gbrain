@@ -228,15 +228,13 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
 
     const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
     expect(insert).toBeDefined();
-    // Params: source_id, holder, total_resolved, brier, accuracy, partial_rate,
-    // grade_completion, domain_scorecards_json, patterns[], voice_passed, voice_attempts,
-    // bias_tags[], model_id
+    // Params: scalar values first, then JSONB helper payloads.
     expect(insert!.params[0]).toBe('default'); // source_id
     expect(insert!.params[1]).toBe('garry'); // holder
     expect(insert!.params[2]).toBe(12); // total_resolved
-    expect(insert!.params[9]).toBe(true); // voice_gate_passed
-    expect(insert!.params[10]).toBe(1); // voice_gate_attempts
-    expect(insert!.params[11]).toEqual(['over-confident-geography']); // active_bias_tags
+    expect(insert!.params[7]).toBe(true); // voice_gate_passed
+    expect(insert!.params[8]).toBe(1); // voice_gate_attempts
+    expect(insert!.params[12]).toEqual({ active_bias_tags: ['over-confident-geography'] });
   });
 
   test('voice gate rejects both attempts → template fallback written, voice_gate_passed=false', async () => {
@@ -257,8 +255,8 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     expect(patterns[0]).toContain('overall'); // template fallback contains "overall" domain
 
     const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
-    expect(insert!.params[9]).toBe(false); // voice_gate_passed=false
-    expect(insert!.params[10]).toBe(2); // voice_gate_attempts=2
+    expect(insert!.params[7]).toBe(false); // voice_gate_passed=false
+    expect(insert!.params[8]).toBe(2); // voice_gate_attempts=2
   });
 
   test('grade_completion is plumbed through to the row', async () => {
