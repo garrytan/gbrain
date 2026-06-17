@@ -1696,7 +1696,17 @@ export async function registerBuiltinHandlers(
   // cost-ceremony env flag needed.
   const { makeSubagentHandler } = await import('../core/minions/handlers/subagent.ts');
   const { subagentAggregatorHandler } = await import('../core/minions/handlers/subagent-aggregator.ts');
-  worker.register('subagent', makeSubagentHandler({ engine }));
+
+  // GBRAIN_USE_CLAUDE_CLI=1 routes subagent LLM calls through `claude --print`
+  // instead of the Anthropic SDK. Lets Claude Max subscribers run Minions
+  // without paying additional API costs. Default behavior unchanged when unset.
+  let subagentClient: import('../core/minions/handlers/subagent.ts').MessagesClient | undefined;
+  if (process.env.GBRAIN_USE_CLAUDE_CLI === '1') {
+    const { makeClaudeCliClient } = await import('../core/minions/handlers/claude-cli-adapter.ts');
+    subagentClient = makeClaudeCliClient();
+    process.stderr.write('[minion worker] subagent routing via claude-cli (GBRAIN_USE_CLAUDE_CLI=1)\n');
+  }
+  worker.register('subagent', makeSubagentHandler({ engine, client: subagentClient }));
   worker.register('subagent_aggregator', subagentAggregatorHandler);
   process.stderr.write('[minion worker] subagent handlers enabled\n');
 
