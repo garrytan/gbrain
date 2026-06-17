@@ -1,6 +1,7 @@
 import matter from 'gray-matter';
 import { safeLoad as yamlSafeLoad } from 'js-yaml';
 import type { Page, PageType } from './types.ts';
+import { ALL_PAGE_TYPES } from './types.ts';
 import { slugifyPath } from './sync.ts';
 
 export type ParseValidationCode =
@@ -38,6 +39,14 @@ export interface ParseOpts {
   activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> };
 }
 
+export interface ImportWarning {
+  field: string;
+  message: string;
+  fallback?: unknown;
+}
+
+const DEFAULT_CONFIDENCE = 0.8;
+
 export interface ParsedMarkdown {
   frontmatter: Record<string, unknown>;
   compiled_truth: string;
@@ -46,6 +55,10 @@ export interface ParsedMarkdown {
   type: PageType;
   title: string;
   tags: string[];
+  confidence: number;
+  source?: string;
+  consent?: boolean;
+  warnings: ImportWarning[];
   /** Present iff opts.validate. Empty array means no errors. */
   errors?: ParseValidationError[];
 }
@@ -132,18 +145,71 @@ export function parseMarkdown(
   // coerceFrontmatterString turns a scalar/date into a usable string (a date slug
   // `2024-06-01` is legitimate); the NON_STRING_FIELD lint finding below still
   // surfaces the un-quoted field so it can be cleaned up.
-  const type = coerceFrontmatterString(frontmatter.type) || (
-    opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath)
-  );
   const title = coerceFrontmatterString(frontmatter.title).trim() || inferTitle(filePath);
   const tags = extractTags(frontmatter);
   const slug = coerceFrontmatterString(frontmatter.slug) || inferSlug(filePath);
+
+  const warnings: ImportWarning[] = [];
+
+  // Warn about unknown frontmatter-only types, fall back to inferred
+  let type: PageType;
+  const rawType = coerceFrontmatterString(frontmatter.type);
+  if (rawType && !ALL_PAGE_TYPES.includes(rawType)) {
+    const fallbackType = opts?.activePack
+      ? inferTypeFromPack(filePath, opts.activePack)
+      : inferType(filePath);
+    warnings.push({
+      field: 'type',
+      message: `Unknown page type "${rawType}", falling back to inferred type "${fallbackType}"`,
+      fallback: fallbackType,
+    });
+    type = fallbackType;
+  } else if (rawType) {
+    type = rawType;
+  } else {
+    type = opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath);
+  }
+
+  // Provenance extraction
+  let confidence = DEFAULT_CONFIDENCE;
+  if (frontmatter.confidence !== undefined) {
+    if (typeof frontmatter.confidence === 'number' && isFinite(frontmatter.confidence)) {
+      if (frontmatter.confidence >= 0 && frontmatter.confidence <= 1) {
+        confidence = frontmatter.confidence;
+      } else {
+        warnings.push({
+          field: 'confidence',
+          message: `Confidence value ${frontmatter.confidence} is out of range [0,1], using default ${DEFAULT_CONFIDENCE}`,
+          fallback: DEFAULT_CONFIDENCE,
+        });
+      }
+    } else {
+      warnings.push({
+        field: 'confidence',
+        message: `Confidence must be a number, got ${typeof frontmatter.confidence}, using default ${DEFAULT_CONFIDENCE}`,
+        fallback: DEFAULT_CONFIDENCE,
+      });
+    }
+  }
+
+  const source = frontmatter.source as string | undefined;
+  if (!source) {
+    warnings.push({
+      field: 'source',
+      message: 'Source is missing from frontmatter; page will be imported without provenance',
+    });
+  }
+
+  const consent = typeof frontmatter.consent === 'boolean' ? frontmatter.consent : undefined;
 
   const cleanFrontmatter = { ...frontmatter };
   delete cleanFrontmatter.type;
   delete cleanFrontmatter.title;
   delete cleanFrontmatter.tags;
   delete cleanFrontmatter.slug;
+  delete cleanFrontmatter.confidence;
+  delete cleanFrontmatter.source;
+  delete cleanFrontmatter.consent;
 
   const result: ParsedMarkdown = {
     frontmatter: cleanFrontmatter,
@@ -153,6 +219,10 @@ export function parseMarkdown(
     type,
     title,
     tags,
+    confidence,
+    source,
+    consent,
+    warnings,
   };
   if (opts?.validate) result.errors = errors;
   return result;
@@ -466,6 +536,7 @@ const GBRAIN_BASE_PATH_PREFIXES: ReadonlyArray<{ prefixes: string[]; type: PageT
   { prefixes: ['/cal/', '/calendar/'], type: 'calendar-event' },
   { prefixes: ['/notes/', '/note/'], type: 'note' },
   { prefixes: ['/meetings/', '/meeting/'], type: 'meeting' },
+  { prefixes: ['/voice/', '/voice-sessions/'], type: 'voice_session' },
 ];
 
 function inferType(filePath?: string): PageType {

@@ -58,6 +58,7 @@ export const ALL_PAGE_TYPES: readonly string[] = [
   // loops via the dream_generated:true + type:extract_receipt belt-and-
   // suspenders pattern per plan D-EXTRACT-19.
   'extract_receipt',
+  'voice_session',
 ] as const;
 
 /**
