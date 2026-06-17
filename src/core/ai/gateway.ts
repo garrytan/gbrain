@@ -2908,6 +2908,22 @@ export interface ToolLoopOpts {
   ) => Promise<{ gbrainToolUseId: string }>;
   onToolCallComplete?: (gbrainToolUseId: string, output: unknown) => Promise<void>;
   onToolCallFailed?: (gbrainToolUseId: string, error: string) => Promise<void>;
+  /**
+   * Persist the user-role message that carries this turn's tool results back to
+   * the model. Fires once per turn, AFTER every tool execution settles and
+   * BEFORE the results are appended to the in-memory history (write-before-use).
+   *
+   * The legacy Anthropic-direct path always persisted this message; the
+   * gateway path originally dropped it (`void userMessageIdx`), so on
+   * crash-replay `loadPriorMessages` rebuilt a history that ended with an
+   * assistant turn whose tool-calls had NO matching tool-result message. AI SDK
+   * v6 then rejected the prompt — "Tool results are missing for tool calls ..."
+   * (when another assistant turn followed) or "messages do not match the
+   * ModelMessage[] schema" (when it was the last message) — and the job retried
+   * the same broken history until max_attempts. Pinned by
+   * test/e2e/subagent-gateway-resume.test.ts.
+   */
+  onToolResultMessage?: (messageIdx: number, blocks: ChatBlock[]) => Promise<void>;
 
   /** Optional per-call heartbeat for observability. */
   onHeartbeat?: (event: string, data: Record<string, unknown>) => void;
@@ -3131,9 +3147,13 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
 
     if (stopReason === 'aborted') break;
 
-    // Feed all tool results back as a single user message.
+    // Feed all tool results back as a single user message. Persist it BEFORE
+    // appending to the in-memory history (write-before-use) so a crash here
+    // leaves the DB holding a complete, replayable turn: the assistant's
+    // tool-calls AND the matching tool-result message. Dropping this write was
+    // the root cause of the gateway-path resume failures (see onToolResultMessage).
     const userMessageIdx = messageIdx++;
-    void userMessageIdx;
+    await opts.onToolResultMessage?.(userMessageIdx, toolResultBlocks);
     messages.push({ role: 'user', content: toolResultBlocks });
 
     turnIdx++;
