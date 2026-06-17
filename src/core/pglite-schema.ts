@@ -164,9 +164,17 @@ INSERT INTO page_generation_clock (id, value)
   VALUES (1, COALESCE((SELECT MAX(generation) FROM pages), 0))
   ON CONFLICT (id) DO NOTHING;
 
+-- v0.42.x: contention-free clock. nextval() takes a microsecond LWLock, not a
+-- transaction-length row lock. Load-bearing setval (2-arg -> is_called=true) so
+-- the first write strictly exceeds the seed; floor 1 (sequence MINVALUE).
+-- Layer-1 reads last_value. Table + trigger names retained.
+CREATE SEQUENCE IF NOT EXISTS page_generation_clock_seq;
+SELECT setval('page_generation_clock_seq',
+  GREATEST(1, COALESCE((SELECT MAX(generation) FROM pages), 0)));
+
 CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger AS $func$
 BEGIN
-  UPDATE page_generation_clock SET value = value + 1 WHERE id = 1;
+  PERFORM nextval('page_generation_clock_seq');
   RETURN NULL;
 END;
 $func$ LANGUAGE plpgsql;
