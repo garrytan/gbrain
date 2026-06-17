@@ -806,6 +806,51 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     nextMessageIdx = 1;
   }
 
+  // Crash-replay reconciliation. The gateway loop persists the assistant
+  // tool-call turn (onAssistantTurn) before executing tools and persisting the
+  // tool-result turn (onToolResultTurn). A crash in that window leaves the last
+  // persisted message an assistant turn with unanswered tool-calls, so the first
+  // chat() on resume throws "Tool results are missing". Re-synthesize the
+  // tool-result turn from the settled execution rows (keyed by provider id).
+  // Mirrors the legacy Anthropic path's reconciliation.
+  const lastPrior = priorChatMessages[priorChatMessages.length - 1];
+  if (lastPrior && lastPrior.role === 'assistant' && Array.isArray(lastPrior.content)) {
+    const pendingCalls = lastPrior.content.filter(
+      (b): b is Extract<ChatBlock, { type: 'tool-call' }> =>
+        typeof b === 'object' && b !== null && (b as { type?: unknown }).type === 'tool-call',
+    );
+    if (pendingCalls.length > 0) {
+      const settledByProviderId = new Map(
+        (await loadPriorTools(engine, ctx.id)).map(t => [t.tool_use_id, t]),
+      );
+      const reconciled: ChatBlock[] = [];
+      for (const call of pendingCalls) {
+        const outcome = settledByProviderId.get(call.toolCallId);
+        if (outcome?.status === 'complete') {
+          reconciled.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: outcome.output });
+        } else if (outcome?.status === 'failed') {
+          reconciled.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: outcome.error ?? 'tool failed', isError: true });
+        } else {
+          // A tool was still mid-execute (or never persisted) at the crash — we
+          // cannot safely reconstruct its result without risking a re-run of a
+          // non-idempotent tool. Leave it to the loop's own replay short-circuit.
+          reconciled.length = 0;
+          break;
+        }
+      }
+      if (reconciled.length === pendingCalls.length) {
+        await persistMessage(engine, ctx.id, {
+          message_idx: nextMessageIdx,
+          role: 'user',
+          content_blocks: reconciled as unknown as ContentBlock[],
+          tokens_in: null, tokens_out: null, tokens_cache_read: null, tokens_cache_create: null, model: null,
+        });
+        priorChatMessages.push({ role: 'user', content: reconciled });
+        nextMessageIdx++;
+      }
+    }
+  }
+
   // Capability detection drives cache_control injection.
   const verdict = classifyCapabilities(model);
   const cacheSystem = verdict === 'ok' || verdict === 'degraded:no_parallel';
@@ -903,6 +948,22 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
          WHERE gbrain_tool_use_id::text = $2`,
         [errorMsg, gbrainToolUseId],
       );
+    },
+    onToolResultTurn: async (_turnIdx, messageIdx, blocks) => {
+      // Persist the tool-result user turn so crash-replay reconstructs a
+      // balanced conversation. The gateway loop persists assistant turns via
+      // onAssistantTurn; without this symmetric write the tool-result turns
+      // were dropped and resume failed with "Tool results are missing".
+      await persistMessage(engine, ctx.id, {
+        message_idx: messageIdx,
+        role: 'user',
+        content_blocks: blocks as unknown as ContentBlock[],
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cache_read: null,
+        tokens_cache_create: null,
+        model: null,
+      });
     },
     onHeartbeat: heartbeat,
   });
