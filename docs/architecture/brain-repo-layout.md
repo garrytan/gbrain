@@ -21,6 +21,7 @@ wikilinks from an existing Obsidian or Notion export.
 | Source | A named content repo inside one brain. | Pages are scoped by `source_id`; the same slug can exist in two sources. |
 | Brain repo | The Git repo or folder holding Markdown for one source. | Humans and agents edit this; sync imports it into the database. |
 | Schema pack | The active typing and filing contract. | It maps paths to page types, extract behavior, expert routing, and migration rules. |
+| Brain-resident skillpack | Optional skillpack committed inside a brain repo. | Connecting harnesses can discover brain-specific operating protocols when `mcp.publish_skills` allows it. |
 
 Rule of thumb: use a new source when the owner stays the same but the repo,
 domain, or access scope changes. Use a new brain when ownership, lifecycle,
@@ -183,3 +184,36 @@ Back up all layers that would be painful to reconstruct:
 
 A Git remote for one source is not a full brain backup. A database dump without
 the Markdown repos is not a full brain backup either.
+
+## Durability hardening for repo-backed sources
+
+Repo-backed sources can be hardened when GBrain knows the source GitHub URL and
+has a PAT or existing credential helper. Hardening is per source and is not the
+same as database backup.
+
+Current hardening surfaces include:
+
+- `gbrain sources add <id> --url <repo> --pat-file <path>` to add and
+  auto-harden a managed clone;
+- `gbrain sources harden <id>` to audit/harden an existing source;
+- `gbrain sources pull <id>` or `--path <dir>` for divergence-safe pulls;
+- `gbrain sources unharden <id>` to remove installed local safety rails.
+
+The hardening path installs local automation and a committed
+`scripts/brain-commit-push.sh` helper so agents have a deterministic
+commit-and-push route. The token must stay outside the repo, tracked remotes,
+logs, docs, and transcripts.
+
+## Brain-resident skillpacks
+
+A mature brain repo can carry a brain-resident skillpack so connecting agents
+learn the protocols that belong to that brain. The manifest uses
+`brain_resident: true` and can bind to the brain's schema pack. Discovery is
+explicitly gated:
+
+- CLI connection can surface a bounded advisory when a source contains a pack.
+- MCP discovery uses `list_brain_skillpack` and `get_skill --source_id` only
+  when `mcp.publish_skills` is enabled.
+
+Use this for brain-specific operating manuals, not for replacing the global
+GBrain install docs.

@@ -16,6 +16,7 @@ uses "mode" in two different ways:
 | Get a written answer with citations and gap analysis | `gbrain think "<question>"` | Runs retrieval, then composes an answer and calls out stale, missing, or conflicting evidence. |
 | Keep the brain healthy over time | `gbrain dream` or `gbrain autopilot --install` | Runs maintenance, extraction, consolidation, and enrichment work instead of answering one question. |
 | Let the brain volunteer context during an agent session | retrieval reflex, `volunteer_context`, `gbrain volunteer-context`, or `gbrain watch` | Pushes confidence-gated page pointers from recent conversation turns, so agents do not need to guess when to ask. |
+| Get a ranked read-only "what should I do next?" list | `gbrain advisor` | Surfaces pending migrations, stalled work, setup smells, embedding coverage, and other high-leverage actions without taking action automatically. |
 
 Do not invent a separate `chat` command in docs or agent protocols. The current
 public answer command is `gbrain think`; raw retrieval is `gbrain search` or
@@ -155,6 +156,29 @@ gbrain config set search.mode balanced
 Agents must not silently accept the install default. Follow the stop-and-ask
 protocol in `INSTALL_FOR_AGENTS.md` and show the cost matrix before continuing.
 
+Search mode is not the same as spend posture. Search mode controls retrieval
+recall and token shape; `spend.posture` controls embedding cost gates. Use
+`docs/operations/spend-controls.md` when deciding whether gates should enforce,
+warn, or be disabled for a high-volume brain.
+
+## Pacing and backlog work
+
+Use pacing when the job is not one user-facing query but a large embed or sync
+backlog that can contend with the job queue or a transaction-mode pooler.
+Pacing is opt-in and cooperative:
+
+```bash
+gbrain embed --stale --pace
+GBRAIN_PACE_MODE=balanced gbrain embed --stale
+```
+
+It caps in-flight DB writes, measures query latency in-band, and sleeps between
+safe points rather than freezing the process mid-transaction. Do not replace it
+with external `SIGSTOP`/`SIGCONT` wrapper scripts. v0.42.49.0 also defines
+persistent `pace.mode`; in the current strict `config set` allowlist, persist it
+with `gbrain config set pace.mode balanced --force` until `pace.mode` is
+registered as a known key.
+
 ## Production choices
 
 For production or shared-brain operation:
@@ -169,3 +193,6 @@ For production or shared-brain operation:
 6. Prefer ambient retrieval reflex or one-shot `volunteer_context` for agent
    push context. Use `watch` for transcript streams, and prefer Postgres when
    it must run concurrently with MCP serving.
+7. Use `gbrain advisor` as a read-only operating review after install, upgrade,
+   or handoff. Enable MCP advisor publication only when a thin client should be
+   allowed to ask for that review.

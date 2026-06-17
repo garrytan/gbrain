@@ -40,10 +40,12 @@ found concrete install and auth issues that needed patching before PR handoff:
 | The multi-source guide still spoke from the v0.18 planning moment and taught `--source a,b` as if a comma-separated source list were supported. | Reframed sources as current infrastructure, updated the command list to the current dispatcher, replaced the source-list example with one-source-per-invocation guidance, and moved absent `sources prune` / `sources import-from-github` commands into an explicit current-boundaries note. | CodeGraph trace to `src/core/source-resolver.ts`, `src/commands/sources.ts`, and `src/cli.ts` search dispatch |
 | Several live docs still used old release-roadmap wording as current guidance. | Removed stale version promises from plugin-author docs, brain/source architecture, schema-pack boundaries, PDF skill prerequisites, sync troubleshooting, and takes-quality eval guidance. | CodeGraph trace to `src/core/minions/plugin-loader.ts`, `src/core/schema-pack/per-source.ts`, `src/commands/eval-takes-quality.ts`, `src/core/takes-quality-eval/replay.ts`, plus current `CHANGELOG.md` sync entries |
 
-The `understand-anything` graph was used as architecture/onboarding context. It
-was generated at branch commit `416f2ae29788a16cba1b20fb33ccf05a4eb665c1`, so
-current command-contract claims after later edits were checked against current
-source with CodeGraph instead of treating the graph as fresh runtime truth.
+The `understand-anything` graph was used as architecture/onboarding context and
+refreshed during the v0.42.50.0 rebase pass. Fresh validation found 0 broken
+edge, layer, or tour references; the refreshed local graph has 12,632 nodes,
+20,473 edges, 9 layers, 6 tour steps, and 2,593 fingerprints. Command-contract
+claims were still checked against current source with CodeGraph instead of
+treating the graph as runtime truth.
 
 ## PRD Acceptance Map
 
@@ -69,6 +71,12 @@ the only tracked file outside documentation or documentation generation/support.
 | Capability group from ledger | Docs now explaining or routing to it |
 | --- | --- |
 | Current version and release evolution | `README.md`, `VERSION`, `CHANGELOG.md`, `docs/docs-consolidation/05-current-capabilities-ledger.md` |
+| CI reliability, job timeouts, hermetic E2E environment handling, and actionlint | `AGENTS.md`, `CLAUDE.md`, `docs/TESTING.md`, `docs/docs-consolidation/05-current-capabilities-ledger.md` |
+| Spend posture, non-TTY deferred embeddings, and high-volume cost gates | `docs/operations/spend-controls.md`, `docs/INSTALL.md`, `docs/guides/mode-selection.md` |
+| Pacing for large embed/sync work under shared DB pressure | `CLAUDE.md`, `docs/INSTALL.md`, `docs/guides/mode-selection.md` |
+| Brain repo durability hardening and source push helpers | `docs/architecture/brain-repo-layout.md`, `docs/INSTALL.md` |
+| Brain-resident skillpacks and `gbrain advisor` | `CLAUDE.md`, `docs/architecture/brain-repo-layout.md`, `docs/INSTALL.md`, `docs/guides/mode-selection.md` |
+| Federated read scope across intentionally selected sources | `docs/architecture/brains-and-sources.md`, `docs/architecture/brain-repo-layout.md`, `skills/conventions/brain-routing.md` |
 | Push-based context: retrieval reflex, `volunteer_context`, `gbrain volunteer-context`, `gbrain watch` | `docs/guides/mode-selection.md`, `docs/guides/push-context.md`, `README.md`, `docs/INSTALL.md`, `INSTALL_FOR_AGENTS.md` |
 | Search, synthesis, dream/autopilot, and search-mode cost/quality choices | `docs/guides/mode-selection.md`, `docs/INSTALL.md`, `INSTALL_FOR_AGENTS.md` |
 | Brain/source routing, source-local write-through, repo layout, managed/generated surfaces, backup implications | `docs/architecture/brain-repo-layout.md`, `docs/architecture/brains-and-sources.md`, `docs/INSTALL.md`, `INSTALL_FOR_AGENTS.md` |

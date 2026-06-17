@@ -4,9 +4,9 @@ Status: frozen baseline inventory for upstream PR preparation
 
 Baseline reviewed: `docs/docs-consolidation/00-upstream-base.md`
 
-Pinned upstream commit: `090bb53203557f5659563ea28c1c847c32167aeb`
+Pinned upstream commit: `70d5f36db60d435b40f83031473f1911f6bc2f9a`
 
-Current upstream version reviewed: `0.42.44.0`
+Current upstream version reviewed: `0.42.50.0`
 
 ## Scope
 
@@ -167,6 +167,18 @@ Execution artifact:
 
 The latest release window changes the docs problem in concrete ways:
 
+- `0.42.50.0` confirms CI reliability and environment isolation are part of
+  the current contributor contract, not tribal maintainer knowledge.
+- `0.42.49.0` adds opt-in pacing as the supported answer for large embed
+  backfills and shared DB pressure.
+- `0.42.48.0` adds explicit brain-repo durability commands, so source-backed
+  pages need backup guidance beyond "the DB is backed up."
+- `0.42.47.0` adds brain-resident skillpacks and `gbrain advisor`, so agent
+  docs must distinguish repo-bundled skills from brain-published skills.
+- `0.42.46.0` makes cross-source read federation a current, intentional read
+  scope rather than an accidental gap.
+- `0.42.45.0` adds spend posture controls, making cost policy separate from
+  search-mode selection.
 - `0.42.44.0` confirms tutorials remain part of the live operational surface:
   a single stale external link can break the install/deploy path.
 - `0.42.43.0` adds push-based context as a current capability:
@@ -238,15 +250,18 @@ states. Entry points should distinguish:
 
 ### 3. Skill count drift
 
-Observed counts and claims:
+Pre-cleanup observed counts and claims from the frozen inventory:
 
-- `scripts/llms-config.ts` and generated `llms.txt` say "26 fat-markdown skills."
-- `CLAUDE.md` says the repo ships 29 skills.
-- `README.md` and `docs/INSTALL.md` say "43 skills."
+- `scripts/llms-config.ts` and generated `llms.txt` said "26 fat-markdown skills."
+- `CLAUDE.md` said the repo shipped 29 skills.
+- `README.md` and `docs/INSTALL.md` said "43 skills."
+
+Current rebased checkout counts after the consolidation edits:
+
 - `openclaw.plugin.json#skills`, which is the runtime skillpack manifest read
-  by `src/core/skillpack/bundle.ts`, currently lists 37 scaffolded skills.
-- `skills/manifest.json` currently lists 51 resolver/registry entries.
-- A repo metadata count finds 52 `skills/**/SKILL.md` files.
+  by `src/core/skillpack/bundle.ts`, currently lists 38 scaffolded skills.
+- `skills/manifest.json` currently lists 52 resolver/registry entries.
+- A repo metadata count finds 53 `skills/**/SKILL.md` files.
 - The broader `skills/` documentation area contains 57 files when resolver and
   shared markdown files are included, excluding conventions and migrations.
 
@@ -277,7 +292,7 @@ regenerate the LLM maps with the fork URL base before publishing.
 Observed tension:
 
 - `AGENTS.md` and `docs/RELEASING.md` say local CI runs "all 29 E2E files."
-- The current checkout has 147 `test/e2e/*.test.ts` files.
+- The current checkout has 149 `test/e2e/*.test.ts` files.
 - `scripts/run-e2e.sh` falls back to the full `test/e2e/*.test.ts` glob.
 - `scripts/ci-local.sh` computes `EXPECTED_ALL` dynamically from that glob.
 
@@ -351,15 +366,15 @@ The smallest coherent PR should avoid rewriting the docs system. It should:
 | `00-upstream-base.md` was reviewed | code_proven | Direct file read |
 | Inventory covers documentation-like files in the baseline checkout | code_proven | `01-documentation-manifest.tsv` has 350 rows generated from the refreshed `understand-anything` scan metadata; it is a frozen pre-consolidation snapshot |
 | Test fixture docs are separated from public docs | code_proven | Manifest role column marks test and fixture support paths |
-| Installed Understand refresh completed | code_proven | `.understand-anything/knowledge-graph.json` has 13,660 nodes, 17,749 edges, 9 layers, and 6 tour steps at branch commit `416f2ae29788a16cba1b20fb33ccf05a4eb665c1` |
-| Understand graph reference validation has no broken refs | code_proven | Fresh validation found 0 broken edge, layer, or tour references; `.understand-anything/fingerprints.json` covers 2,537 files |
+| Installed Understand refresh completed | code_proven | `.understand-anything/knowledge-graph.json` has 12,632 nodes, 20,473 edges, 9 layers, and 6 tour steps after the v0.42.50.0 rebase refresh |
+| Understand graph reference validation has no broken refs | code_proven | Fresh validation found 0 broken edge, layer, or tour references; `.understand-anything/fingerprints.json` covers 2,593 files |
 | Search-time fallback is `balanced` | code_proven | CodeGraph trace to `DEFAULT_SEARCH_MODE` and `resolveSearchMode()` in `src/core/search/mode.ts` |
 | Fresh init persists a recommended search mode | code_proven | CodeGraph trace to `runModePicker()` in `src/commands/init-mode-picker.ts` and both init paths in `src/commands/init.ts` |
-| Skillpack manifest currently has 37 scaffolded skills | code_proven | `openclaw.plugin.json#skills` count; `loadBundleManifest()` and `bundledSkillSlugs()` use that manifest |
-| Skill resolver manifest currently has 51 entries | code_proven | `skills/manifest.json#skills` count |
-| Current checkout has 52 `skills/**/SKILL.md` files | code_proven | `rg --files skills -g 'SKILL.md'` count |
-| Current checkout has 147 E2E test files | code_proven | Prior inventory count from `rg --files test/e2e -g '*.test.ts'`; `scripts/run-e2e.sh` and `scripts/ci-local.sh` use dynamic globs |
-| Current release baseline is v0.42.44.0 | code_proven | `VERSION` and top of `CHANGELOG.md` |
+| Skillpack manifest currently has 38 scaffolded skills | code_proven | `openclaw.plugin.json#skills` count; `loadBundleManifest()` and `bundledSkillSlugs()` use that manifest |
+| Skill resolver manifest currently has 52 entries | code_proven | `skills/manifest.json#skills` count |
+| Current checkout has 53 `skills/**/SKILL.md` files | code_proven | `rg --files skills -g 'SKILL.md'` count |
+| Current checkout has 149 E2E test files | code_proven | Fresh count from `rg --files test/e2e -g '*.test.ts'`; `scripts/run-e2e.sh` and `scripts/ci-local.sh` use dynamic globs |
+| Current release baseline is v0.42.50.0 | code_proven | `VERSION` and top of `CHANGELOG.md` |
 | Changelog-to-current-capabilities ledger exists | implemented | `docs/docs-consolidation/05-current-capabilities-ledger.md` |
 | Documentation status taxonomy exists | implemented | `docs/docs-consolidation/06-documentation-status-taxonomy.md` |
 | Current HTTP OAuth path is engine-aware | code_proven | CodeGraph trace to `src/commands/serve-http.ts`, `GBrainOAuthProvider`, and PGLite OAuth bootstrap logic |

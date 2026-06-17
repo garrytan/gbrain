@@ -1,13 +1,13 @@
 # Architecture Map
 
 Status: static architecture map from the installed `understand-anything`
-workflow, refreshed after the upstream merge
+workflow, refreshed after the upstream rebase
 
 Baseline reviewed: `docs/docs-consolidation/00-upstream-base.md`
 
-Pinned upstream commit: `090bb53203557f5659563ea28c1c847c32167aeb`
+Pinned upstream commit: `70d5f36db60d435b40f83031473f1911f6bc2f9a`
 
-Current branch merge commit: `416f2ae29788a16cba1b20fb33ccf05a4eb665c1`
+Current branch state: rebased onto upstream/master at the pinned commit
 
 Proof level: `code_proven` static analysis only. No GBrain runtime command,
 server, migration, import, sync, or Docker lifecycle proof was attempted.
@@ -55,10 +55,10 @@ Execution notes:
   named in the skill contract for assemble review, architecture, or tour. Those
   phases were assembled deterministically from the merged graph and then
   validated with the inline validator.
-- After upstream advanced to `0.42.44.0`, the current branch was merged with
-  `origin/master`, CodeGraph was synced, and `understand-anything` was refreshed
-  incrementally. The refresh re-ran deterministic scan, import-map extraction,
-  changed-batch computation, structural extraction, graph update,
+- After upstream advanced to `0.42.50.0`, the current branch was rebased onto
+  `upstream/master`, CodeGraph was synced, and `understand-anything` was
+  refreshed incrementally. The refresh re-ran deterministic scan, import-map
+  extraction, changed-batch computation, structural extraction, graph update,
   validation-reference checks, fingerprint generation, and metadata update.
   Because the plugin subagent definitions are not available in this Codex
   environment, the refresh does not claim a new LLM semantic review for the
@@ -79,20 +79,20 @@ Execution notes:
 
 | Metric | Value |
 |---|---:|
-| files scanned | 2,537 |
+| files scanned | 2,593 |
 | files filtered by `.understandignore` | 0 |
-| import-map files with imports | 1,681 |
-| import-map resolved edges | 4,588 |
-| incremental batches refreshed | 27 |
-| files structurally refreshed in current merge batches | 653 |
+| import-map files with imports | 1,721 |
+| import-map resolved edges | 4,708 |
+| incremental batches refreshed | 33 |
+| files structurally refreshed in current merge batches | 892 |
 | files skipped | 0 |
-| graph nodes | 13,660 |
-| graph edges | 17,749 |
+| graph nodes | 12,632 |
+| graph edges | 20,473 |
 | layers | 9 |
 | guided tour steps | 6 |
 | validation issues | 0 |
 | broken edge/layer/tour references | 0 |
-| fingerprint baseline | 2,537 files |
+| fingerprint baseline | 2,593 files |
 
 Node types:
 
@@ -205,18 +205,22 @@ compatibility, not as the primary current path.
 
 ### Skills, Skillpacks, And Generated Maps
 
-The repo has several skill-related surfaces with different scopes:
+The repo has several skill-related surfaces with different scopes. Current
+rebased checkout counts:
 
-- `openclaw.plugin.json#skills`: 37 scaffolded bundled skills consumed by the
+- `openclaw.plugin.json#skills`: 38 scaffolded bundled skills consumed by the
   skillpack runtime.
-- `skills/manifest.json`: 51 resolver/registry entries.
-- `skills/**/SKILL.md`: 52 skill markdown files.
+- `skills/manifest.json`: 52 resolver/registry entries.
+- `skills/**/SKILL.md`: 53 skill markdown files.
 - `skills/` documentation area in the inventory: 57 files when resolver/shared
   markdown is included, excluding conventions and migrations.
-- `scripts/llms-config.ts`, `llms.txt`, and `llms-full.txt`: "26
-  fat-markdown skills."
-- `CLAUDE.md`: says the repo ships 29 skills.
-- `README.md` and `docs/INSTALL.md`: currently say "43 skills."
+
+Pre-cleanup drift findings from the frozen inventory:
+
+- `scripts/llms-config.ts`, `llms.txt`, and `llms-full.txt` used the phrase
+  "26 fat-markdown skills."
+- `CLAUDE.md` said the repo shipped 29 skills.
+- `README.md` and `docs/INSTALL.md` said "43 skills."
 
 Docs implication: this is definition drift. A docs-only PR should remove bare
 skill counts or qualify each number with its source.
@@ -231,9 +235,16 @@ and `llms-full.txt` still use upstream `garrytan/gbrain/master` raw URLs, while
 ### 0. Changelog-To-Current-Capabilities Baseline
 
 The docs cleanup should begin by converting the latest changelog window into a
-current-capability ledger. The minimum release window is `0.42.44.0` through
-`0.42.41.0`, with special attention to `0.42.43.0` and `0.42.42.0`:
+current-capability ledger. The minimum release window is `0.42.50.0` through
+`0.42.41.0`, with special attention to `0.42.50.0` through `0.42.45.0`,
+`0.42.43.0`, and `0.42.42.0`:
 
+- CI reliability, hermetic E2E environment handling, and actionlint checks
+- opt-in pacing and shared DB pressure handling for large embed/sync work
+- brain-repo durability commands for Git-backed sources
+- brain-resident skillpacks, `gbrain advisor`, and MCP publishing toggles
+- federated read scope across intentionally selected sources
+- spend posture controls separate from search-mode selection
 - push-based volunteered context: `volunteer_context`, `gbrain
   volunteer-context`, `gbrain watch`, rolling retrieval-reflex windows,
   feedback stats, and suppression semantics
@@ -314,11 +325,11 @@ thin-client/security alternatives as pointers or compatibility notes.
 
 ### 6. Skill Count Drift
 
-Skill counts differ by surface: 26, 29, 37, 43, 51, 52, and 57 all appear
+Skill counts differ by surface: 26, 29, 38, 43, 52, 53, and 57 all appear
 depending on source and definition.
 
 PR direction: remove broad numeric skill claims, or replace them with scoped
-phrasing such as "37 scaffolded skills in the OpenClaw bundle."
+phrasing such as "38 scaffolded skills in the OpenClaw bundle."
 
 ### 7. Generated LLM Map Fork Gap
 
@@ -333,7 +344,7 @@ docs cleanup.
 ### 8. E2E Count Drift
 
 `AGENTS.md` and `docs/RELEASING.md` mention "all 29 E2E files", while this
-checkout contains 147 `test/e2e/*.test.ts` files and CI scripts compute the set
+checkout contains 149 `test/e2e/*.test.ts` files and CI scripts compute the set
 dynamically.
 
 PR direction: replace hard-coded E2E counts with count-free wording or a

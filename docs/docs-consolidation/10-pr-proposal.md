@@ -80,9 +80,9 @@ The branch:
   were patched in README, `docs/INSTALL.md`, topology docs, agent docs, and
   consolidation artifacts, including follow-up OAuth issuer/public URL fixes
   and remote-MCP versus trusted-host shell-job corrections.
-- The existing `understand-anything` graph is architecture context from commit
-  `416f2ae29788a16cba1b20fb33ccf05a4eb665c1`; current CLI/auth claims were
-  verified with CodeGraph against on-disk source.
+- The existing `understand-anything` graph was refreshed during the v0.42.50.0
+  rebase pass and validated with 0 broken edge, layer, or tour references.
+  Current CLI/auth claims were verified with CodeGraph against on-disk source.
 
 ### Proof Limits
 

@@ -8,9 +8,9 @@ migration, import, sync, or Docker lifecycle command was run.
 
 Baseline:
 
-- Current upstream commit: `090bb53203557f5659563ea28c1c847c32167aeb`
-- Current upstream version: `0.42.44.0`
-- Primary release window: `0.42.44.0` through `0.42.41.0`
+- Current upstream commit: `70d5f36db60d435b40f83031473f1911f6bc2f9a`
+- Current upstream version: `0.42.50.0`
+- Primary release window: `0.42.50.0` through `0.42.41.0`
 - Supporting release window for drift classification: `0.42.40.0` through
   `0.42.20.0`
 
@@ -37,6 +37,12 @@ input. Do not count this ledger as proof that the public docs are fixed.
 
 | Release | Current capability or design semantic | Documentation obligation | Current docs status | Follow-up |
 |---|---|---|---|---|
+| `0.42.50.0` | CI reliability hardening is current: superseded PR runs cancel, workflow jobs have explicit timeouts, E2E scrubs operator/agent environment variables, and workflow YAML gets actionlint coverage. | Contributor and release docs should describe current CI behavior without relying on stale job-count claims or machine-local environment assumptions. | `current`: `AGENTS.md`, `docs/TESTING.md`, `CLAUDE.md`, and release notes cover the supported gates. `incomplete-current`: consolidation docs needed this baseline refresh. | #13, #14 |
+| `0.42.49.0` | Large embed and sync work can opt into shared pacing: `gbrain embed --stale --pace`, `pace.mode`, `GBRAIN_PACE_*`, sync shared permits, and pacing telemetry. | Install, mode-selection, and production docs should teach pacing as the supported operator path for shared DB pressure, not external wrapper scripts. | `incomplete-current`: `CLAUDE.md` documents the release contract; `docs/INSTALL.md` and `docs/guides/mode-selection.md` now route operators to per-run/env pacing and note the strict `config set` allowlist caveat for persistent `pace.mode`. | #9, #10 |
+| `0.42.48.0` | Git-backed brain sources have explicit durability commands: `gbrain sources harden`, `gbrain sources pull`, `gbrain sources unharden`, out-of-repo PAT files, and `scripts/brain-commit-push.sh`. | Brain/source docs must separate DB backup from source-repo durability and token handling. | `incomplete-current`: `docs/architecture/brain-repo-layout.md` now covers the central concept; deeper command reference can remain linked to changelog/CLI docs. | #8, #10 |
+| `0.42.47.0` | Brain-resident skillpacks and advisor are current: `gbrain advisor`, MCP `list_brain_skillpack`, source-scoped `get_skill`, and opt-in `mcp.publish_skills` / `mcp.publish_advisor`. | Agent docs must distinguish repo-bundled skills, brain-published skills, and advisor recommendations. | `incomplete-current`: `CLAUDE.md` has the architecture reference; `docs/INSTALL.md`, `docs/guides/mode-selection.md`, and Brain Repo Layout now route readers to the concept. | #6, #8, #9 |
+| `0.42.46.0` | By-slug reads, tags, links, backlinks, and timeline support intentional federated read scope across sources. | Brain/source/topology docs should explain federated reads as an intentional read scope, while keeping write ownership source-local. | `current`: `docs/architecture/brains-and-sources.md` and `skills/conventions/brain-routing.md` carry the two-axis model. `incomplete-current`: `docs/architecture/brain-repo-layout.md` now adds layout framing. | #7, #8 |
+| `0.42.45.0` | Spend posture is a first-class policy: `spend.posture`, `off` and `unlimited`, improved sync estimates, and non-TTY embedding deferral. | Search-mode and install docs must not conflate retrieval mode with spend authority. | `incomplete-current`: `docs/operations/spend-controls.md` is current; `docs/INSTALL.md` and `docs/guides/mode-selection.md` now link it from the operational flow. | #5, #9, #10 |
 | `0.42.44.0` | Tutorials are part of the live operational surface; the personal-brain AlphaClaw link was fixed because a stale deploy link broke the path. | Treat tutorials as live install/deploy docs, not archive examples. | `current` for the specific link fix; broader tutorial routing still needs the final consistency pass. | #14 |
 | `0.42.43.0` | Push-based context is current: `volunteer_context`, `gbrain volunteer-context`, `gbrain watch`, rolling-window retrieval reflex, volunteered-vs-used stats, deterministic rationales, slug-only suppression under windows, privacy-stripped synopses. | Public and agent docs must explain when the brain volunteers context, when an agent should call the op, and when watch is appropriate. | `current`: `docs/guides/push-context.md`, `CLAUDE.md` reference map, `docs/TESTING.md`, `docs/architecture/KEY_FILES.md`. `incomplete-current`: `README.md`, `docs/INSTALL.md`, `INSTALL_FOR_AGENTS.md`, and `docs/guides/search-modes.md` do not route readers to push-context in the operational flow. | #4, #5, #6, #9 |
 | `0.42.43.0` | Transaction-pooler teardown coverage is part of local CI; `doctor` exit-verdict sweep was completed; raw exit-code writes are structurally guarded. | Testing/release docs should describe the current CI gate without brittle counts; operational docs should not imply the old force-exit banner is normal. | `current`: `AGENTS.md`, `docs/TESTING.md`, `docs/architecture/KEY_FILES.md`. `incomplete-current`: production troubleshooting has no central path yet. | #10, #13, #14 |
@@ -112,10 +118,12 @@ input. Do not count this ledger as proof that the public docs are fixed.
   `gbrain serve --http` is Postgres-only because of `access_tokens` and
   `mcp_request_log`. Current source/docs authority shows OAuth/admin/audit SQL
   routing through engine-aware adapters.
-- Hard-coded skill counts: `README.md` and `docs/INSTALL.md` say 43 skills,
-  `CLAUDE.md` says 29 skills, and `scripts/llms-config.ts` / `llms.txt` say 26
-  fat-markdown skills. The runtime-facing manifest surfaces have different
-  scopes and must not be collapsed into one bare number.
+- Hard-coded skill counts in the frozen pre-cleanup inventory: `README.md` and
+  `docs/INSTALL.md` said 43 skills, `CLAUDE.md` said 29 skills, and generated
+  LLM-map wording said 26 fat-markdown skills. The runtime-facing manifest
+  surfaces have different scopes and must not be collapsed into one bare
+  number. The consolidation edits remove or qualify those broad current-user
+  claims.
 - Hard-coded E2E count claims: `AGENTS.md` and `docs/RELEASING.md` still say
   local CI runs all 29 E2E files while the checkout currently has many more and
   CI scripts compute the set dynamically.
@@ -147,12 +155,12 @@ input. Do not count this ledger as proof that the public docs are fixed.
 
 | Claim | Proof level | Evidence |
 |---|---|---|
-| Current version is `0.42.44.0` | `code_proven` | `VERSION`, top of `CHANGELOG.md`, `docs/docs-consolidation/00-upstream-base.md` |
+| Current version is `0.42.50.0` | `code_proven` | `VERSION`, top of `CHANGELOG.md`, `docs/docs-consolidation/00-upstream-base.md` |
 | Push-context docs exist and are current for v0.42.43.0 surfaces | `code_proven` | `CHANGELOG.md`, `docs/guides/push-context.md`, `CLAUDE.md`, `docs/TESTING.md`, `docs/architecture/KEY_FILES.md` |
 | Teardown/exit-verdict behavior is documented in maintainer proof surfaces | `code_proven` | `CHANGELOG.md`, `docs/TESTING.md`, `docs/architecture/KEY_FILES.md` |
 | Relational retrieval is current in architecture docs but missing from the old search-mode skill guide | `code_proven` | `CHANGELOG.md`, `README.md`, `docs/architecture/RETRIEVAL.md`, `docs/guides/search-modes.md` |
 | MCP docs contain current OAuth authority and stale bearer/Postgres-only framing in separate pages | `code_proven` | `docs/mcp/DEPLOY.md`, `docs/mcp/ALTERNATIVES.md`, `SECURITY.md`, `docs/architecture/KEY_FILES.md` |
-| Skill/test count claims drift across docs | `code_proven` | `README.md`, `docs/INSTALL.md`, `CLAUDE.md`, `AGENTS.md`, `docs/RELEASING.md`, `scripts/llms-config.ts`, `llms.txt`, prior inventory counts |
+| Skill/test count claims drifted across docs before cleanup | `code_proven` | Frozen inventory plus current counts from `openclaw.plugin.json`, `skills/manifest.json`, `rg --files skills -g 'SKILL.md'`, and `rg --files test/e2e -g '*.test.ts'` |
 | No runtime proof was attempted | `implemented` | This pass used static reads, CodeGraph, GitHub issue reads, and text searches only |
 
 ## Strongest Safe Truth
@@ -160,7 +168,7 @@ input. Do not count this ledger as proof that the public docs are fixed.
 The first docs consolidation move should not delete large blocks of older docs.
 The safer current baseline is a mixed strategy:
 
-- Update docs that are accurate but incomplete for v0.42.44.0.
+- Update docs that are accurate but incomplete for v0.42.50.0.
 - Mark historical/design docs when their trust level is ambiguous.
 - Route users through one human path and one agent path.
 - Fix direct contradictions where current docs conflict with current source or

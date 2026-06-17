@@ -1,9 +1,10 @@
 # GBrain — Full Context
 
-> GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, 26 fat-markdown skills. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.
+> GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, and a resolver-routed skill surface. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.
 
 This file concatenates core GBrain documentation for single-fetch ingestion.
 For the link-only index, see `llms.txt`. Source of truth: https://github.com/garrytan/gbrain.
+Generated from `scripts/llms-config.ts`; forks should set `LLMS_REPO_BASE` and rerun `bun run build:llms` before publishing.
 
 # Core entry points
 
@@ -112,7 +113,8 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   them.
 - **Everything else:** [`./llms.txt`](./llms.txt) is the full documentation map.
   [`./llms-full.txt`](./llms-full.txt) is the same map with core docs inlined for
-  single-fetch ingestion.
+  single-fetch ingestion. They are generated from `scripts/llms-config.ts`; do
+  not hand-edit generated map output without updating the generator source.
 
 ## Before shipping
 
@@ -138,8 +140,9 @@ use generic placeholders (`alice-example`, `acme-example`, `fund-a`).
 
 ## Forks
 
-If you are a fork, regenerate `llms.txt` + `llms-full.txt` with your own URL base before
-publishing: `LLMS_REPO_BASE=https://raw.githubusercontent.com/your-org/your-fork/main bun run build:llms`.
+If you are a fork, regenerate `llms.txt` + `llms-full.txt` with your own URL
+base before publishing:
+`LLMS_REPO_BASE=https://raw.githubusercontent.com/your-org/your-fork/main bun run build:llms`.
 
 ---
 
@@ -174,8 +177,10 @@ understand both, or queries misroute silently.
 
 - **Brain** — WHICH DATABASE. Your personal brain is `host`. You can mount
   additional brains (team-published, each with their own DB and access policy)
-  via `gbrain mounts add` (v0.19+). Routing: `--brain`, `GBRAIN_BRAIN_ID`,
-  `.gbrain-mount` dotfile.
+  via `gbrain mounts add` (v0.19+). Resolver inputs include an explicit brain
+  id from command paths that wire the brain resolver, `GBRAIN_BRAIN_ID`, and
+  `.gbrain-mount` dotfiles. Do not assume every generic CLI verb accepts
+  `--brain`; check the command help.
 - **Source** — WHICH REPO INSIDE THE DATABASE. A brain can hold many sources
   (wiki, gstack, openclaw, essays). Slugs scope per source. Routing:
   `--source`, `GBRAIN_SOURCE`, `.gbrain-source` dotfile.
@@ -422,21 +427,16 @@ audit trail lives in the source repo's git history.
 
 ## Skills
 
-Read the skill files in `skills/` before doing brain operations. GBrain ships 30 skills
-organized by `skills/RESOLVER.md` (`AGENTS.md` is also accepted as of v0.19):
-
-**Original 8 (conformance-migrated):** ingest (thin router), query, maintain, enrich,
-briefing, migrate, setup, publish.
-
-**Brain skills (ported from an upstream agent fork):** signal-detector, brain-ops, idea-ingest, media-ingest,
-meeting-ingestion, citation-fixer, repo-architecture, skill-creator, daily-task-manager.
-
-**Operational + identity:** daily-task-prep, cross-modal-review, cron-scheduler, reports,
-testing, soul-audit, webhook-transforms, data-research, minion-orchestrator. As of
-v0.20.4, `minion-orchestrator` is the single unified skill for both lanes of background
-work (shell jobs via `gbrain jobs submit shell`, LLM subagents via `gbrain agent run`) ...
-the prior `gbrain-jobs` skill was merged in, Preconditions are shared, and trigger
-routing is narrowed to what the skill actually covers.
+Read `skills/RESOLVER.md`, then read the specific skill files in `skills/`
+before doing brain operations. The resolver is the source of truth for the
+current bundled skill surface (`AGENTS.md` is also accepted as of v0.19).
+Skill families include setup, ingestion, query, enrichment, maintenance,
+publishing, testing, scheduling, identity, media, meeting, research, reporting,
+and minion orchestration. As of v0.20.4, `minion-orchestrator` is the unified
+skill for both lanes of background work (shell jobs via `gbrain jobs submit
+shell`, LLM subagents via `gbrain agent run`); the prior `gbrain-jobs` skill was
+merged in, Preconditions are shared, and trigger routing is narrowed to what the
+skill actually covers.
 
 **Skillify loop (v0.19):** skillify (the markdown orchestration), skillpack-check
 (agent-readable health report).
@@ -1016,6 +1016,8 @@ Machine-readable context:
 - [`llms.txt`](llms.txt) is the curated documentation map.
 - [`llms-full.txt`](llms-full.txt) is the same map with core docs inlined for
   one-shot ingestion.
+- Both files are generated from [`scripts/llms-config.ts`](scripts/llms-config.ts).
+  Forks should regenerate them with `LLMS_REPO_BASE` set to the fork's raw URL.
 - [`AGENTS.md`](AGENTS.md) is the non-Claude-agent repo protocol.
 - [`CLAUDE.md`](CLAUDE.md) is the Claude Code orientation and resolver.
 - [`docs/guides/mode-selection.md`](docs/guides/mode-selection.md) explains
@@ -1079,8 +1081,8 @@ protocol (install, read order, trust boundary, common tasks). Claude Code reads
 
 If you fetched this file by URL without cloning yet, the companion files live at:
 - `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` — start here
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms.txt` — full doc map
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms-full.txt` — same map, inlined
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms.txt` — generated doc map
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms-full.txt` — generated inlined doc bundle
 - `https://raw.githubusercontent.com/garrytan/gbrain/master/docs/INSTALL.md` — human install and operating center
 
 ## Step 1: Install GBrain
@@ -1385,8 +1387,11 @@ Remote-call boundary:
 - Protected job submissions are CLI-only. If MCP refuses a protected job, do
   not retry through another route unless the user explicitly switches to local
   CLI operation.
-- `run_onboard` is remote-callable with admin scope, but protected LLM-bearing
-  onboard handlers require the extra `run_protected_onboard` scope.
+- `run_onboard` is remote-callable with admin scope for health checks and
+  non-protected remediation. Protected LLM-bearing onboard handlers remain
+  skipped over OAuth in the current CLI allowlist; use trusted local CLI
+  operation for those until the dedicated protected-onboard grant is exposed
+  through the supported registration path.
 
 Thin-client verification:
 
@@ -1493,10 +1498,11 @@ explicit agent action needed for the autonomous path.
 The `run_onboard` MCP op (admin scope) lets thin-client agents probe
 brain health + drive remediation over OAuth-authenticated MCP. Protected
 LLM-bearing handlers (synthesize, patterns, consolidate, takes-bootstrap,
-contextual_reindex_per_chunk) require the additional `run_protected_onboard`
-scope — admin alone is insufficient. The MCP op returns
-`skipped_missing_scope[]` listing what would have run with the right
-grants.
+contextual_reindex_per_chunk) are not enabled by admin alone. In the current
+OAuth allowlist, `gbrain auth register-client` cannot mint the dedicated
+protected-onboard grant that the operation checks internally, so those handlers
+remain reported in `skipped_missing_scope[]`. Run protected remediation from a
+trusted local CLI session when the operator explicitly approves it.
 
 **Privacy + consent gates:**
 - `gbrain takes extract --from-pages` sends concept/atom/lore/briefing/
@@ -1682,7 +1688,7 @@ It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate t
 
 ## Start here
 
-- **Current version.** `0.42.44.0`, from [`VERSION`](VERSION). Read
+- **Current version.** `0.42.50.0`, from [`VERSION`](VERSION). Read
   [`CHANGELOG.md`](CHANGELOG.md) for release notes. For upgrades, humans start
   with [`docs/INSTALL.md`](docs/INSTALL.md); coding agents use
   [`INSTALL_FOR_AGENTS.md#upgrade`](INSTALL_FOR_AGENTS.md#upgrade).
@@ -1708,8 +1714,12 @@ It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate t
   and `gbrain watch`.
 - **For LLMs and coding agents.** Fetch [`llms.txt`](llms.txt) for the curated
   documentation map, or [`llms-full.txt`](llms-full.txt) for one-shot ingestion
-  with core docs inlined. GBrain does not currently ship an official installable
-  docs skill; use these files plus the agent entrypoints above.
+  with core docs inlined. These files are generated from
+  [`scripts/llms-config.ts`](scripts/llms-config.ts); update the source docs or
+  config, then run `bun run build:llms`. Forks should set `LLMS_REPO_BASE`
+  before regenerating so links point at the fork. GBrain does not currently
+  ship an official installable docs skill; use these files plus the agent
+  entrypoints above.
 
 ## What this looks like
 
@@ -1757,94 +1767,18 @@ This is the difference between a search engine and a brain. Search finds the pag
 
 ## Install
 
-GBrain is designed to be installed and operated by an AI agent. The fastest path is to have your agent do it for you. The CLI and MCP paths below are for people who want to wire it up themselves.
+The canonical install and operating runbook is [`docs/INSTALL.md`](docs/INSTALL.md).
+Choose one route there and follow it end to end:
 
-### Have your agent install it (recommended)
+- **Local personal brain:** [`Route A`](docs/INSTALL.md#route-a-local-personal-brain-end-to-end)
+- **Personal multi-source brain:** [`Route B`](docs/INSTALL.md#route-b-personal-multi-source-brain-end-to-end)
+- **Thin client for a hosted brain:** [`Route C`](docs/INSTALL.md#route-c-thin-client-end-to-end)
+- **Family, team, company, or production brain:** [`Route D`](docs/INSTALL.md#route-d-shared-group-or-production-brain-end-to-end)
+- **Split-engine, mounted-brain, or security-isolation modifiers:** [`Route E`](docs/INSTALL.md#route-e-advanced-topology-modifiers)
 
-If you don't already have an AI agent platform running, start with one of these. Both are designed to read GBrain's install protocol and execute it:
-
-- **[OpenClaw](https://github.com/openclawagents/openclaw)** — deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/alphaclaw) (one click, 8GB+ RAM)
-- **[Hermes](https://github.com/openclawagents/hermes)** — deploy on [Railway](https://github.com/praveen-ks-2001/hermes-agent-template) (one click)
-
-Then paste this into your agent:
-
-```
-Retrieve and follow the instructions at:
-https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
-```
-
-The agent installs GBrain, creates the brain, asks for your API keys, loads the
-bundled skills, configures the dream cycle, and verifies the install
-end-to-end. ~30 minutes. You answer questions, it does the work.
-
-> **Never set up an AI agent platform before?** The [personal-brain tutorial](docs/tutorials/personal-brain.md) walks the whole path end-to-end — picking OpenClaw vs Hermes, deploying it, pointing it at INSTALL_FOR_AGENTS.md, getting the API keys, and verifying the first query. Start there if any of the above is new.
-
-### Quick start: Claude Code or Codex
-
-Already running Claude Code or Codex? There are two ways to wire GBrain in, depending on what you want.
-
-**Just want a memory for your coding agent (recommended starting point).** Spin up a local brain and connect it in two commands — zero server, zero token, zero tunnel:
-
-```bash
-gbrain init --pglite                     # 2-second local brain (no Docker)
-claude mcp add gbrain -- gbrain serve    # or: codex mcp add gbrain -- gbrain serve
-```
-
-**Already have a brain on a remote host** (OpenClaw, Hermes, or any `gbrain serve --http`)? Point your laptop agents at it with one command each — `--install` wires it up and smoke-tests the token before handoff:
-
-```bash
-gbrain connect https://your-host/mcp --token gbrain_xxx --install               # Claude Code
-gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex --install # Codex
-```
-
-**[→ Full walkthrough: give your coding agent a memory](docs/tutorials/connect-coding-agent.md)** — both paths end to end, plus the brain-first protocol you paste into `CLAUDE.md` / `AGENTS.md` and the four habits that make it actually change how you work.
-
-### Install the full autonomous setup into your existing agent
-
-Want the whole thing — local brain, bundled skills, the overnight dream cycle
-that enriches while you sleep? Paste this into Codex, Claude Code, Cursor, or
-another coding agent:
-
-```
-Retrieve and follow the instructions at:
-https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
-```
-
-This works in any agent that can read files over HTTPS and execute shell commands. Tested with Codex, Claude Code, Claude Cowork, Cursor, and AlphaClaw.
-
-### CLI standalone (no agent)
-
-```bash
-bun install -g github:garrytan/gbrain
-gbrain init --pglite     # 2 seconds; no server, no Docker
-gbrain doctor            # verify health
-gbrain import ~/notes/   # index your markdown
-gbrain query "what themes show up across my notes?"
-```
-
-Postgres-at-scale, Supabase, and thin-client setup paths live in [`docs/INSTALL.md`](docs/INSTALL.md).
-
-### Connect GBrain to your AI client (MCP)
-
-GBrain exposes 30+ tools over MCP (stdio and HTTP). The specific snippet depends on which client you use:
-
-- **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — local: one command, `claude mcp add gbrain -- gbrain serve` (zero server, zero tunnel). Remote with just a bearer token: `gbrain connect https://your-host/mcp --token gbrain_xxx` prints a paste-ready block (or `--install` wires it up and smoke-tests the token).
-- **[Codex](docs/mcp/CODEX.md)** — `gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex` (or `--install`). Codex reads the bearer from `$GBRAIN_REMOTE_TOKEN` at runtime, so the token never lands in Codex config.
-- **[Cursor / Windsurf / any stdio MCP client](docs/mcp/CLAUDE_CODE.md)** — same shape, add `{"command": "gbrain", "args": ["serve"]}` to your MCP config.
-- **[Claude Desktop (Cowork)](docs/mcp/CLAUDE_DESKTOP.md)** — Settings → Integrations → add the URL of your HTTP server. Remote only; the local `claude_desktop_config.json` does not work for remote servers.
-- **[Claude Cowork (team plan)](docs/mcp/CLAUDE_COWORK.md)** — org Owner adds the connector under Organization Settings → Connectors.
-- **[Perplexity Computer](docs/mcp/PERPLEXITY.md)** — `gbrain connect https://your-host/mcp --agent perplexity --oauth --register` mints a least-privilege OAuth client and prints the Issuer/Client ID/Secret to paste into Settings → Connectors (OAuth is the right path for a cloud connector; a bearer token also works for local use). Pro subscription required.
-- **[ChatGPT](docs/mcp/CHATGPT.md)** — uses OAuth 2.1 with PKCE (the hard requirement). Register a `chatgpt` client from the admin dashboard with grant type `authorization_code`.
-
-For the HTTP server itself:
-
-```bash
-gbrain serve              # stdio MCP (local subprocess; for Claude Code, Cursor, Windsurf)
-gbrain serve --http       # HTTP MCP with OAuth 2.1 + admin dashboard at /admin
-                          # (required for Claude Desktop, Cowork, Perplexity, ChatGPT)
-```
-
-The HTTP server includes DCR-style client registration, scope-gated access (`read` / `write` / `admin`), and rate limiting. Deployment guides (ngrok, Railway, Fly.io) live under [`docs/mcp/`](docs/mcp/).
+Coding agents use [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md), which adds
+agent-specific stop-and-ask gates. Client-specific MCP recipes live under
+[`docs/mcp/`](docs/mcp/), but the route choice belongs in the install runbook.
 
 ## Two ways to query your brain
 
@@ -1985,7 +1919,7 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 
 ## Architecture
 
-**Two engines, one contract.** PGLite (Postgres 17 via WASM, zero-config, default) for personal brains up to ~50K pages. Postgres + pgvector (Supabase or self-hosted) for shared / large / multi-machine deployments. The contract-first `BrainEngine` interface in [`src/core/engine.ts`](src/core/engine.ts) defines ~47 operations both engines implement; CLI and MCP server are generated from one source.
+**Two engines, one contract.** PGLite (Postgres 17 via WASM, zero-config, default) for personal brains up to ~50K pages. Postgres + pgvector (Supabase or self-hosted) for shared / large / multi-machine deployments. The contract-first `BrainEngine` interface in [`src/core/engine.ts`](src/core/engine.ts) defines the shared operation surface both engines implement; CLI and MCP server are generated from one source.
 
 **Brain repo is the system of record.** Your knowledge lives in a regular git repo (your "brain repo") as markdown files. GBrain syncs the repo into Postgres for retrieval; deletes in git become soft-deletes in DB. You can publish public subsets, share team mounts, run thin-client setups pointing at a colleague's brain server. Layout guidance: [`docs/architecture/brain-repo-layout.md`](docs/architecture/brain-repo-layout.md). Topologies: [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
 
@@ -2453,6 +2387,7 @@ wikilinks from an existing Obsidian or Notion export.
 | Source | A named content repo inside one brain. | Pages are scoped by `source_id`; the same slug can exist in two sources. |
 | Brain repo | The Git repo or folder holding Markdown for one source. | Humans and agents edit this; sync imports it into the database. |
 | Schema pack | The active typing and filing contract. | It maps paths to page types, extract behavior, expert routing, and migration rules. |
+| Brain-resident skillpack | Optional skillpack committed inside a brain repo. | Connecting harnesses can discover brain-specific operating protocols when `mcp.publish_skills` allows it. |
 
 Rule of thumb: use a new source when the owner stays the same but the repo,
 domain, or access scope changes. Use a new brain when ownership, lifecycle,
@@ -2616,6 +2551,39 @@ Back up all layers that would be painful to reconstruct:
 A Git remote for one source is not a full brain backup. A database dump without
 the Markdown repos is not a full brain backup either.
 
+## Durability hardening for repo-backed sources
+
+Repo-backed sources can be hardened when GBrain knows the source GitHub URL and
+has a PAT or existing credential helper. Hardening is per source and is not the
+same as database backup.
+
+Current hardening surfaces include:
+
+- `gbrain sources add <id> --url <repo> --pat-file <path>` to add and
+  auto-harden a managed clone;
+- `gbrain sources harden <id>` to audit/harden an existing source;
+- `gbrain sources pull <id>` or `--path <dir>` for divergence-safe pulls;
+- `gbrain sources unharden <id>` to remove installed local safety rails.
+
+The hardening path installs local automation and a committed
+`scripts/brain-commit-push.sh` helper so agents have a deterministic
+commit-and-push route. The token must stay outside the repo, tracked remotes,
+logs, docs, and transcripts.
+
+## Brain-resident skillpacks
+
+A mature brain repo can carry a brain-resident skillpack so connecting agents
+learn the protocols that belong to that brain. The manifest uses
+`brain_resident: true` and can bind to the brain's schema pack. Discovery is
+explicitly gated:
+
+- CLI connection can surface a bounded advisory when a source contains a pack.
+- MCP discovery uses `list_brain_skillpack` and `get_skill --source_id` only
+  when `mcp.publish_skills` is enabled.
+
+Use this for brain-specific operating manuals, not for replacing the global
+GBrain install docs.
+
 ---
 
 ## docs/what-schemas-unlock.md
@@ -2715,7 +2683,7 @@ gbrain schema add-link-type filed-in --page-type motion --target-type case
 gbrain schema add-link-type cites    --page-type motion --target-type precedent
 ```
 
-Now `## Facts` fences in your case notes can carry typed claims (`damages=5000000`, `filed_date=2026-05-23`, `judge=jane-doe`) that gbrain stores as first-class columns. `gbrain eval trajectory legal/cases/acme-v-widget` prints the case history with regressions flagged. `gbrain founder scorecard` (renamed for legal: roll up plaintiff success rate, average damages, settlement-vs-trial ratio) gives you a structured view of how your practice is performing.
+Now `## Facts` fences in your case notes can carry typed claims (`damages=5000000`, `filed_date=2026-05-23`, `judge=jane-doe`) that gbrain stores as first-class columns. `gbrain eval trajectory legal/cases/acme-v-widget` prints the case history with regressions flagged. The same trajectory substrate can support a legal-specific scorecard layer; the built-in `gbrain founder scorecard` command remains founder/company focused today.
 
 This isn't possible without typed page kinds. You can write the same prose in any note-taking app. Only gbrain treats the numbers as comparable across pages of the same type.
 
@@ -2723,7 +2691,7 @@ This isn't possible without typed page kinds. You can write the same prose in an
 
 `gbrain mounts add` lets you stack additional brains alongside your personal one. Each mounted brain has its OWN schema pack. The eng team's brain has `incident`, `runbook`, `service`, `oncall-rotation`. The design team's brain has `component`, `experiment`, `ab-test`, `figma-link`. The legal team's brain has cases and depositions.
 
-When you query, the schema pack governs how each source's content is routed. An eng query against the mounted eng brain knows that `incidents/2026-05-23-db-outage.md` is an `incident` page with `severity=p0`, `mttr=47min`, `on_call=alice-example` — extractable typed facts. Your personal query against the same brain still works, but the routing is sharper because the eng team has invested in their ontology.
+When an agent or integration deliberately routes a query to the mounted eng brain, that brain's schema pack governs how its content is interpreted. The eng brain knows that `incidents/2026-05-23-db-outage.md` is an `incident` page with `severity=p0`, `mttr=47min`, `on_call=alice-example` — extractable typed facts. Current generic CLI query dispatch does not document `gbrain query --brain <id>` as a supported path, so cross-brain querying should be treated as an agent/integration routing responsibility until that command layer is wired.
 
 The schema is the team's tribal knowledge made explicit. Two engineers on different teams searching the same brain get DIFFERENT routing because their personal packs declare different expert types.
 
@@ -3990,6 +3958,7 @@ uses "mode" in two different ways:
 | Get a written answer with citations and gap analysis | `gbrain think "<question>"` | Runs retrieval, then composes an answer and calls out stale, missing, or conflicting evidence. |
 | Keep the brain healthy over time | `gbrain dream` or `gbrain autopilot --install` | Runs maintenance, extraction, consolidation, and enrichment work instead of answering one question. |
 | Let the brain volunteer context during an agent session | retrieval reflex, `volunteer_context`, `gbrain volunteer-context`, or `gbrain watch` | Pushes confidence-gated page pointers from recent conversation turns, so agents do not need to guess when to ask. |
+| Get a ranked read-only "what should I do next?" list | `gbrain advisor` | Surfaces pending migrations, stalled work, setup smells, embedding coverage, and other high-leverage actions without taking action automatically. |
 
 Do not invent a separate `chat` command in docs or agent protocols. The current
 public answer command is `gbrain think`; raw retrieval is `gbrain search` or
@@ -4129,6 +4098,29 @@ gbrain config set search.mode balanced
 Agents must not silently accept the install default. Follow the stop-and-ask
 protocol in `INSTALL_FOR_AGENTS.md` and show the cost matrix before continuing.
 
+Search mode is not the same as spend posture. Search mode controls retrieval
+recall and token shape; `spend.posture` controls embedding cost gates. Use
+`docs/operations/spend-controls.md` when deciding whether gates should enforce,
+warn, or be disabled for a high-volume brain.
+
+## Pacing and backlog work
+
+Use pacing when the job is not one user-facing query but a large embed or sync
+backlog that can contend with the job queue or a transaction-mode pooler.
+Pacing is opt-in and cooperative:
+
+```bash
+gbrain embed --stale --pace
+GBRAIN_PACE_MODE=balanced gbrain embed --stale
+```
+
+It caps in-flight DB writes, measures query latency in-band, and sleeps between
+safe points rather than freezing the process mid-transaction. Do not replace it
+with external `SIGSTOP`/`SIGCONT` wrapper scripts. v0.42.49.0 also defines
+persistent `pace.mode`; in the current strict `config set` allowlist, persist it
+with `gbrain config set pace.mode balanced --force` until `pace.mode` is
+registered as a known key.
+
 ## Production choices
 
 For production or shared-brain operation:
@@ -4143,6 +4135,9 @@ For production or shared-brain operation:
 6. Prefer ambient retrieval reflex or one-shot `volunteer_context` for agent
    push context. Use `watch` for transcript streams, and prefer Postgres when
    it must run concurrently with MCP serving.
+7. Use `gbrain advisor` as a read-only operating review after install, upgrade,
+   or handoff. Enable MCP advisor publication only when a thin client should be
+   allowed to ask for that review.
 
 ---
 
@@ -4185,9 +4180,11 @@ No server, no tunnel, no token needed. Works on both PGLite and Postgres engines
 ### Remote over OAuth 2.1 (recommended, v0.26.0+)
 
 ```bash
-gbrain serve --http --port 3131
+# Remote-host shape: accept non-loopback traffic and publish the issuer clients use.
+gbrain serve --http --port 3131 \
+  --bind 0.0.0.0 \
+  --public-url https://your-brain.ngrok.app
 ngrok http 3131 --url your-brain.ngrok.app
-gbrain serve --http --port 3131 --public-url https://your-brain.ngrok.app
 ```
 
 Built-in HTTP transport with OAuth 2.1, scoped operations, an admin dashboard
@@ -4199,9 +4196,14 @@ discovery metadata matches what clients hit (RFC 8414 §3.3).
 
 Supported clients:
 - **ChatGPT** — requires OAuth 2.1 + PKCE. Works natively with `--http`.
-- **Claude Desktop / Cowork** — OAuth 2.1 or legacy bearer tokens.
+- **Claude Desktop** — add the remote connector through Settings >
+  Integrations. The current client guide documents bearer-token setup.
+- **Cowork** — use the remote MCP settings exposed by the client; bearer-token
+  setup is documented in the client guide.
 - **Perplexity** — OAuth 2.1 client credentials grant.
-- **Claude Code, Cursor, Windsurf** — can use OAuth or legacy bearer.
+- **Claude Code, Codex, Cursor, Windsurf, and other coding agents** — use the
+  matching client page. The GBrain server supports OAuth and legacy bearer
+  tokens, but each client has its own supported connector/auth shape.
 
 See the OAuth 2.1 setup section below.
 
@@ -4229,7 +4231,8 @@ and least-privilege deployments, register OAuth clients instead.
 ### 1. Start the HTTP server
 
 ```bash
-gbrain serve --http --port 3131
+gbrain serve --http --port 3131 \
+  --public-url https://your-brain.ngrok.app
 ```
 
 On first start, the server prints an **admin bootstrap token** to stderr:
@@ -4242,6 +4245,11 @@ Open http://localhost:3131/admin and paste it to log in.
 Save this token. Open `http://localhost:3131/admin` and paste it to access the
 dashboard. The dashboard shows live activity, registered clients, request logs,
 and per-client config export.
+
+For local-only OAuth testing, omit `--public-url` and use
+`http://localhost:3131` as the issuer. For any public tunnel, reverse proxy, or
+cloud MCP client, set `--public-url` to the exact external URL before
+registering clients.
 
 > **v0.26.9+:** `mcp_request_log.params` and the live SSE activity feed default
 > to a redacted summary `{redacted, kind, declared_keys, unknown_key_count, approx_bytes}`.
@@ -4310,16 +4318,17 @@ start the server with `--enable-dcr`. DCR is off by default.
 ### 3. Expose the server
 
 **v0.34 — bind explicitly.** `gbrain serve --http` defaults to `127.0.0.1`.
-To accept connections from the ngrok tunnel (or any non-loopback source),
-restart with `--bind`:
+To accept connections from a reverse proxy, mesh, LAN, or tunnel process that is
+not on the same host, restart with `--bind`:
 
 ```bash
 gbrain serve --http --port 3131 --bind 0.0.0.0 --public-url https://your-brain.ngrok.app
 ```
 
-When `--public-url` is set without `--bind`, a stderr WARN fires at
-startup so the misconfiguration ("the tunnel is up but my agent gets
-ECONNREFUSED") is loud.
+When `--public-url` is set without `--bind`, a stderr WARN fires at startup
+because public deployments usually need an explicit network boundary. A
+same-machine tunnel can still use loopback; if the tunnel cannot reach the
+server, use the bound form above.
 
 ```bash
 brew install ngrok

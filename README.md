@@ -19,7 +19,7 @@ It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate t
 
 ## Start here
 
-- **Current version.** `0.42.44.0`, from [`VERSION`](VERSION). Read
+- **Current version.** `0.42.50.0`, from [`VERSION`](VERSION). Read
   [`CHANGELOG.md`](CHANGELOG.md) for release notes. For upgrades, humans start
   with [`docs/INSTALL.md`](docs/INSTALL.md); coding agents use
   [`INSTALL_FOR_AGENTS.md#upgrade`](INSTALL_FOR_AGENTS.md#upgrade).

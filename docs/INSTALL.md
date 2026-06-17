@@ -479,6 +479,17 @@ Before wiring clients, choose the mode for each job:
   concurrently with MCP serving.
 - Choose `conservative`, `balanced`, or `tokenmax` based on downstream model
   tier, query volume, and recall tolerance.
+- Choose spend posture separately from search mode. `spend.posture=tokenmax`
+  makes embedding cost gates informational; `gated` remains the default. See
+  [`operations/spend-controls.md`](operations/spend-controls.md).
+- For large embed backfills or busy transaction-mode poolers, opt in to pacing
+  per run with `gbrain embed --stale --pace` or for the current process with
+  `GBRAIN_PACE_MODE=balanced`. v0.42.49.0 also defines persistent
+  `pace.mode`; in current strict `config set` builds, persist it with
+  `gbrain config set pace.mode balanced --force` until the allowlist catches up.
+- Use `gbrain advisor` after install or upgrade for a read-only ranked list of
+  high-leverage actions. Expose it to thin clients only when
+  `mcp.publish_advisor` is deliberately enabled.
 
 The central decision guide is
 [`guides/mode-selection.md`](guides/mode-selection.md).
@@ -549,6 +560,13 @@ Back up every layer that would be painful to rebuild:
 4. Schema packs, `gbrain.yml`, `.gbrain-source`, `.gbrain-mount`, and source
    routing dotfiles.
 
+A source Git remote is not a complete backup, but repo-backed sources can now
+be hardened for source durability. For sources added from a GitHub URL with a
+PAT, or existing sources audited with `gbrain sources harden <source-id>`,
+GBrain installs local pull/push safety rails and a committed
+`scripts/brain-commit-push.sh` helper. Keep token storage out of the repo and
+still back up the database.
+
 Do a restore test on a separate machine, user account, or home directory. A
 backup that has not been restored is only an archive.
 
@@ -556,6 +574,11 @@ backup that has not been restored is only an archive.
 
 - Always chain sync and embeddings for repo-backed brains:
   `gbrain sync --repo /path/to/brain && gbrain embed --stale`.
+- If a large embed backlog or sync competes with a busy transaction-mode
+  pooler, pace the work instead of relying on external pause/resume scripts:
+  `gbrain embed --stale --pace` or `GBRAIN_PACE_MODE=balanced`. For persistent
+  pacing, v0.42.49.0 defines `pace.mode`; in current strict `config set`
+  builds, persist it with `gbrain config set pace.mode balanced --force`.
 - `gbrain sync --watch` is a polling loop, not a filesystem watcher. It exits
   after repeated failures. Pair it with a scheduler or process manager.
 - For Supabase, use the Transaction pooler for normal reads when appropriate,
@@ -611,6 +634,8 @@ runbook.
 | Page count is far below file count | Direct/session DB path is unreachable or sync is skipping files. |
 | Embeddings are missing | Provider key/dimensions mismatch or `gbrain embed --stale` is not running after sync. |
 | Search costs are higher than expected | Search mode is too broad for the downstream model or push context is overused. Review [`guides/mode-selection.md`](guides/mode-selection.md). |
+| Embed backfill starves other jobs | Enable pacing with `gbrain embed --stale --pace` or `GBRAIN_PACE_MODE`; for persistent `pace.mode`, use `gbrain config set pace.mode balanced --force` until the allowlist catches up. |
+| Brain repo writes stay local-only | Harden repo-backed sources with `gbrain sources harden <source-id>` or `gbrain sources harden --all`, then use the committed `scripts/brain-commit-push.sh` helper. |
 | Admin dashboard or logs show unexpected clients | Revoke the client, rotate affected secrets, and review DCR, CORS, and proxy exposure. |
 
 ## Upgrade
@@ -636,7 +661,10 @@ After an upgrade, re-check:
 - `gbrain doctor --json`
 - `gbrain search modes`
 - provider/model checks with `gbrain models` and `gbrain models doctor`
+- spend-control posture and any pacing config if this install runs large embed
+  backfills or syncs
 - live sync if this install owns a brain repo
+- brain repo durability hardening if this install owns source Git repos
 - MCP connectivity if this install serves agents
 
 ## Verify
@@ -672,6 +700,8 @@ Use [`GBRAIN_VERIFY.md`](GBRAIN_VERIFY.md) for the full runbook.
 | Remote agent cannot connect | HTTP server bound to loopback or issuer URL mismatch | Set `--public-url`; use `--bind` only when remote access is intended. |
 | Token works for too much | Client has broad scopes or legacy bearer access | Register a scoped OAuth client and revoke old tokens. |
 | Local checkout's `.env` points GBrain at the wrong DB | Generic `DATABASE_URL` belongs to another app | Use `GBRAIN_DATABASE_URL` for deliberate GBrain DB overrides. |
+| Large embed jobs wedge queue progress | Unpaced backfill on a busy pooler | Use `gbrain embed --stale --pace` or `GBRAIN_PACE_MODE`; for persistent `pace.mode`, use `gbrain config set pace.mode balanced --force` until the allowlist catches up. |
+| Brain repo changes do not reach GitHub | Source durability not hardened or push helper not used | Run `gbrain sources harden <source-id>` or `gbrain sources harden --all` for repo-backed sources and verify push access. |
 
 ## Reference map
 
@@ -689,6 +719,8 @@ Use [`GBRAIN_VERIFY.md`](GBRAIN_VERIFY.md) for the full runbook.
   choices.
 - [`guides/mode-selection.md`](guides/mode-selection.md): when to use
   retrieval, synthesis, maintenance, and push-based context commands.
+- [`operations/spend-controls.md`](operations/spend-controls.md): embedding
+  cost gates, `spend.posture`, and off/unlimited controls.
 - [`mcp/DEPLOY.md`](mcp/DEPLOY.md): HTTP MCP, OAuth clients, scopes, and
   remote deployment.
 - [`GBRAIN_VERIFY.md`](GBRAIN_VERIFY.md): install verification runbook.
