@@ -33,6 +33,24 @@ function runGit(cwd: string, ...args: string[]) {
   }
 }
 
+function signCompiledBinaryForLocalMacos(binPath: string) {
+  if (process.platform !== 'darwin') return;
+
+  Bun.spawnSync({
+    cmd: ['codesign', '--remove-signature', binPath],
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const result = Bun.spawnSync({
+    cmd: ['codesign', '--sign', '-', '--force', binPath],
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  if (result.exitCode !== 0) {
+    throw new Error(new TextDecoder().decode(result.stderr) || `codesign ${binPath} failed`);
+  }
+}
+
 async function readStreamUntil(
   stream: ReadableStream<Uint8Array> | null,
   expected: string,
@@ -670,6 +688,7 @@ describe('CLI dispatch integration', () => {
       const buildStderr = await new Response(build.stderr).text();
       const buildExitCode = await build.exited;
       expect(buildExitCode, `${buildStdout}\n${buildStderr}`).toBe(0);
+      signCompiledBinaryForLocalMacos(binPath);
 
       const configDir = join(tempHome, '.mbrain');
       const env = {

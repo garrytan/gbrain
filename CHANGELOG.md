@@ -4,6 +4,28 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-06-18
+
+### Fixed
+
+- **MCP retrieval tools now advertise complete input schemas.** Retrieval
+  operations expose the tool discovery metadata clients need for reliable
+  argument construction and validation.
+- **Compiled CLI builds include the sync handler.** The release binary path now
+  carries the same sync command wiring as the source CLI and edge bundle.
+- **Stale embedding refreshes preserve chunk freshness correctly.** Import and
+  embedding refresh paths now keep repeated refreshes scoped to genuinely stale
+  chunks.
+- **Local compiled-binary smoke tests match macOS release signing.** The compiled
+  CLI regression test now ad hoc signs its temporary binary on macOS before
+  executing it, matching the release workflow's signed-binary path.
+
+### Changed
+
+- **Version metadata now reports `0.14.2`.** `VERSION`, `package.json`,
+  `skills/manifest.json`, and `openclaw.plugin.json` are aligned so the CLI,
+  skills manifest, and plugin bundle describe the same release.
+
 ## [0.14.1] - 2026-06-15
 
 ### Added
