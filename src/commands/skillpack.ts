@@ -216,9 +216,9 @@ async function cmdList(args: string[]): Promise<void> {
       let description: string | null = null;
       if (existsSync(skillMd)) {
         const body = readFileSync(skillMd, 'utf-8');
-        const fm = body.match(/^---\n([\s\S]*?)\n---/);
+        const fm = body.match(/^---\r?\n([\s\S]*?)\r?\n---/);
         if (fm) {
-          const descMatch = fm[1].match(/^description:\s*["']?([^\n"']+)/m);
+          const descMatch = fm[1].match(/^description:\s*["']?([^\r\n"']+)/m);
           if (descMatch) description = descMatch[1].trim();
         }
       }

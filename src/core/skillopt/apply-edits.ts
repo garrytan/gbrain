@@ -97,8 +97,8 @@ interface FrontmatterSplit {
  * fence, the whole text IS the body and bodyStart=0.
  */
 export function splitFrontmatter(text: string): FrontmatterSplit {
-  // Match the leading `---\n...frontmatter...\n---\n` block.
-  const m = text.match(/^---\n[\s\S]*?\n---\n/);
+  // Match the leading `---\r?\n...frontmatter...\r?\n---\r?\n` block.
+  const m = text.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n/);
   if (!m) return { body: text, bodyStart: 0 };
   return { body: text.slice(m[0].length), bodyStart: m[0].length };
 }

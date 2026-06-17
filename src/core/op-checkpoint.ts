@@ -152,7 +152,7 @@ export async function loadOpCheckpoint(
 export async function recordCompleted(
   engine: BrainEngine,
   key: OpCheckpointKey,
-  keys: string[],
+  keys: string | string[],
 ): Promise<boolean> {
   // REPLACE semantics (kept deliberately — #1794 V3). Callers like
   // extract-conversation-facts serialize a MUTABLE map through here and rely on
@@ -161,7 +161,8 @@ export async function recordCompleted(
   // exactly as before. JSON.stringify into `$3::jsonb` is correct (the text→jsonb
   // cast yields a proper array; NOT the double-encode trap, which is the template
   // form). Sync uses `appendCompleted` (below) instead, never this.
-  const sorted = [...keys].sort();
+  const arr = Array.isArray(keys) ? keys : (keys ? [keys] : []);
+  const sorted = [...arr].sort();
   return durableWrite(engine, key, 'write', () =>
     engine.executeRawDirect(
       `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)

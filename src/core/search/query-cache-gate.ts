@@ -80,6 +80,8 @@ export interface PageGenerationsSnapshot {
  *   but the bookmark still captures MAX(generation).
  * @returns PageGenerationsSnapshot suitable for INSERT into query_cache.
  */
+let useSequence = true;
+
 export async function buildPageGenerationsSnapshot(
   engine: BrainEngine,
   pageIds: number[],
@@ -92,35 +94,57 @@ export async function buildPageGenerationsSnapshot(
     max_generation_at_store: 0,
   };
 
+  const getClockVal = async () => {
+    if (useSequence) {
+      try {
+        const rows = await engine.executeRaw<{ v: number }>(
+          `SELECT COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::bigint AS v`
+        );
+        return Number(rows[0]?.v ?? 0);
+      } catch (err) {
+        useSequence = false;
+      }
+    }
+    const rows = await engine.executeRaw<{ v: number }>(
+      `SELECT COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), 0)::bigint AS v`
+    ).catch(() => [{ v: 0 }]);
+    return Number(rows[0]?.v ?? 0);
+  };
+
   try {
     if (pageIds.length === 0) {
-      // Empty-result query: only need the Layer 1 bookmark (clock value).
-      // Per D20, empty-result cache rows trust Layer 1 exclusively;
-      // bumping the clock on subsequent writes correctly invalidates them.
-      const rows = await engine.executeRaw<{ v: number }>(
-        `SELECT COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), 0)::bigint AS v`,
-      );
-      snapshot.max_generation_at_store = Number(rows[0]?.v ?? 0);
+      snapshot.max_generation_at_store = await getClockVal();
       return snapshot;
     }
 
-    // Combined query: per-page generation (Layer 2 substrate) + global
-    // clock value (Layer 1 bookmark). UNION ALL folds both into one
-    // round trip. The 'CLOCK' tag row is identified by `is_max = true`
-    // (field name preserved for back-compat at the call site).
-    const rows = await engine.executeRaw<{
-      k: string;
-      v: number;
-      is_max: boolean;
-    }>(
-      `SELECT id::text AS k, generation::bigint AS v, FALSE AS is_max
-         FROM pages WHERE id = ANY($1::int[])
-       UNION ALL
-       SELECT 'CLOCK' AS k,
-              COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), 0)::bigint AS v,
-              TRUE AS is_max`,
-      [pageIds],
-    );
+    let rows: { k: string; v: number; is_max: boolean }[] = [];
+    if (useSequence) {
+      try {
+        rows = await engine.executeRaw<{ k: string; v: number; is_max: boolean }>(
+          `SELECT id::text AS k, generation::bigint AS v, FALSE AS is_max
+             FROM pages WHERE id = ANY($1::int[])
+           UNION ALL
+           SELECT 'CLOCK' AS k,
+                  COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::bigint AS v,
+                  TRUE AS is_max`,
+          [pageIds],
+        );
+      } catch (err) {
+        useSequence = false;
+      }
+    }
+
+    if (!useSequence) {
+      rows = await engine.executeRaw<{ k: string; v: number; is_max: boolean }>(
+        `SELECT id::text AS k, generation::bigint AS v, FALSE AS is_max
+           FROM pages WHERE id = ANY($1::int[])
+         UNION ALL
+         SELECT 'CLOCK' AS k,
+                COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), 0)::bigint AS v,
+                TRUE AS is_max`,
+        [pageIds],
+      );
+    }
 
     for (const row of rows) {
       const v = Number(row.v);
@@ -132,12 +156,6 @@ export async function buildPageGenerationsSnapshot(
     }
     return snapshot;
   } catch {
-    // Pre-v105 brain (no `page_generation_clock` table yet). Return the
-    // empty snapshot with zero bookmark — every cache row will fall
-    // through to Layer 2 (which is stricter post-v0.41.19.0 and will
-    // invalidate empty snapshots). Acceptable upgrade-path one-time
-    // cache miss; migration v105 fills the table within the same
-    // initSchema() call so this branch is short-lived.
     return snapshot;
   }
 }
@@ -157,11 +175,11 @@ export async function buildPageGenerationsSnapshot(
  */
 export const CACHE_GATE_WHERE_CLAUSE = `
   (
-    -- Layer 1 (cheap bookmark): O(1) single-row read from page_generation_clock.
+    -- Layer 1 (cheap bookmark): O(1) single-row read from page_generation_clock_seq.
     -- Bumped per-statement by bump_page_generation_clock_trg on every INSERT,
     -- UPDATE, or DELETE on pages. If no statement has fired since this row
     -- stored, the row is fresh corpus-wide.
-    COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), 0)
+    COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)
       <= qc.max_generation_at_store
     OR
     -- Layer 2 (per-page snapshot): bookmark fired, but maybe THIS row's

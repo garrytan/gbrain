@@ -5270,6 +5270,76 @@ export const MIGRATIONS: Migration[] = [
         ON context_volunteer_events (source_id, slug);
     `,
   },
+  {
+    version: 118,
+    name: 'contention_free_clock_and_op_checkpoints_array_check',
+    idempotent: true,
+    sql: `
+      -- 1. Create contention-free page generation clock sequence
+      CREATE SEQUENCE IF NOT EXISTS page_generation_clock_seq MINVALUE 0 START WITH 0;
+
+      -- 2. Re-create the statement trigger function to update sequence instead of table
+      CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger AS $func$
+      BEGIN
+        PERFORM nextval('page_generation_clock_seq');
+        RETURN NULL;
+      END;
+      $func$ LANGUAGE plpgsql;
+
+      -- 3. Repair any legacy non-array completed_keys in op_checkpoints
+      UPDATE op_checkpoints
+         SET completed_keys = jsonb_build_array(completed_keys)
+       WHERE jsonb_typeof(completed_keys) <> 'array';
+
+      -- 4. Add the array-type CHECK constraint to op_checkpoints
+      ALTER TABLE op_checkpoints DROP CONSTRAINT IF EXISTS completed_keys_array_check;
+      ALTER TABLE op_checkpoints ADD CONSTRAINT completed_keys_array_check CHECK (jsonb_typeof(completed_keys) = 'array');
+    `,
+    sqlFor: {
+      pglite: `
+        -- 1. Create contention-free page generation clock sequence
+        CREATE SEQUENCE IF NOT EXISTS page_generation_clock_seq MINVALUE 0 START WITH 0;
+
+        -- 2. Re-create the statement trigger function to update sequence instead of table
+        CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger AS $func$
+        BEGIN
+          PERFORM nextval('page_generation_clock_seq');
+          RETURN NULL;
+        END;
+        $func$ LANGUAGE plpgsql;
+
+        -- 3. Repair any legacy non-array completed_keys in op_checkpoints
+        UPDATE op_checkpoints
+           SET completed_keys = jsonb_build_array(completed_keys)
+         WHERE jsonb_typeof(completed_keys) <> 'array';
+
+        -- 4. Add the array-type CHECK constraint to op_checkpoints
+        ALTER TABLE op_checkpoints DROP CONSTRAINT IF EXISTS completed_keys_array_check;
+        ALTER TABLE op_checkpoints ADD CONSTRAINT completed_keys_array_check CHECK (jsonb_typeof(completed_keys) = 'array');
+      `,
+    },
+    handler: async (engine) => {
+      // Seed sequence from existing table or pages.generation, then drop the table
+      let tableExists = false;
+      try {
+        await engine.executeRaw('SELECT 1 FROM page_generation_clock LIMIT 1');
+        tableExists = true;
+      } catch {
+        // Table does not exist or was already dropped
+      }
+
+      if (tableExists) {
+        await engine.runMigration(118, `
+          SELECT setval('page_generation_clock_seq', COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), (SELECT MAX(generation) FROM pages), 0), true);
+          DROP TABLE IF EXISTS page_generation_clock;
+        `);
+      } else {
+        await engine.runMigration(118, `
+          SELECT setval('page_generation_clock_seq', COALESCE((SELECT MAX(generation) FROM pages), 0), true);
+        `);
+      }
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

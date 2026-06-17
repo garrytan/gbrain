@@ -1521,6 +1521,14 @@ export async function registerBuiltinHandlers(
     const importArgs: string[] = [];
     if (job.data.dir) importArgs.push(String(job.data.dir));
     if (job.data.noEmbed) importArgs.push('--no-embed');
+
+    const workers = typeof job.data.concurrency === 'number'
+      ? job.data.concurrency
+      : (typeof job.data.workers === 'number' ? job.data.workers : undefined);
+    if (workers !== undefined) {
+      importArgs.push('--workers', String(workers));
+    }
+
     await runImport(engine, importArgs);
     return { imported: true };
   });
@@ -1640,10 +1648,15 @@ export async function registerBuiltinHandlers(
     // Pull default: legacy `true` for back-compat; explicit boolean wins.
     const pull = typeof job.data.pull === 'boolean' ? job.data.pull : true;
 
+    const concurrency = typeof job.data.concurrency === 'number'
+      ? job.data.concurrency
+      : (typeof job.data.workers === 'number' ? job.data.workers : undefined);
+
     const report = await runCycle(engine, {
       brainDir: repoPath,
       pull,
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
+      concurrency,
       ...(sourceId ? { sourceId } : {}),
       ...(requestedPhases && requestedPhases.length > 0 ? { phases: requestedPhases as any } : {}),
       yieldBetweenPhases: async () => {

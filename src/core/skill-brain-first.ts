@@ -164,7 +164,7 @@ export const PHASE_HEADING_RE = /^##+\s*(?:Phase\s*1|Step\s*0)\b[^\n]*brain/im;
  * leading `---\n` through the next `\n---` (greedy stop). Matches the
  * shape `parseSkillFrontmatter` already accepts.
  */
-const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
+const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
 
 // ---------------------------------------------------------------------------
 // Hardcoded EXEMPT_SKILLS (CMT1 — replaces the dropped upgrade migration)

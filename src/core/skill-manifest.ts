@@ -47,11 +47,11 @@ export interface ManifestLoadResult {
 function parseSkillName(skillMdPath: string): string | null {
   try {
     const content = readFileSync(skillMdPath, 'utf-8');
-    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+    const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     if (!fmMatch) return null;
     const fm = fmMatch[1];
     // Match `name: foo` or `name: "foo"` or `name: 'foo'`
-    const nameMatch = fm.match(/^name:\s*["']?([^"'\n]+?)["']?\s*$/m);
+    const nameMatch = fm.match(/^name:\s*["']?([^"'\r\n]+?)["']?\s*$/m);
     if (!nameMatch) return null;
     const name = nameMatch[1].trim();
     return name || null;
