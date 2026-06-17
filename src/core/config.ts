@@ -128,6 +128,22 @@ export interface GBrainConfig {
   };
 
   /**
+   * Voice module config (STT/TTS providers + keys).
+   * stt_provider: 'mock' | 'deepgram' (default: 'mock')
+   * tts_provider: 'mock' | 'supertonic' (default: 'mock')
+   * deepgram_api_key: for Deepgram STT
+   * supertonic_base_url: for Supertonic TTS API endpoint
+   * page_title_prefix: prefix for auto-generated voice session pages
+   */
+  voice?: {
+    stt_provider?: string;
+    tts_provider?: string;
+    deepgram_api_key?: string;
+    supertonic_base_url?: string;
+    page_title_prefix?: string;
+  };
+
+  /**
    * v0.42 — self-upgrade settings (file plane; read on the hot path before any
    * DB connect, so it must live here, not the DB plane). `mode` is the only
    * knob most users touch: `notify` (default — emit a marker + 4-option prompt),
@@ -555,6 +571,18 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.GBRAIN_REMOTE_CLIENT_SECRET && fileConfig?.remote_mcp
       ? { remote_mcp: { ...fileConfig.remote_mcp, oauth_client_secret: process.env.GBRAIN_REMOTE_CLIENT_SECRET } }
       : {}),
+    // Voice env overrides
+    ...(process.env.DEEPGRAM_API_KEY || process.env.SUPERTONIC_BASE_URL || process.env.GBRAIN_VOICE_STT_PROVIDER || process.env.GBRAIN_VOICE_TTS_PROVIDER
+      ? {
+          voice: {
+            ...((fileConfig as GBrainConfig | null)?.voice ?? {}),
+            ...(process.env.DEEPGRAM_API_KEY ? { deepgram_api_key: process.env.DEEPGRAM_API_KEY } : {}),
+            ...(process.env.SUPERTONIC_BASE_URL ? { supertonic_base_url: process.env.SUPERTONIC_BASE_URL } : {}),
+            ...(process.env.GBRAIN_VOICE_STT_PROVIDER ? { stt_provider: process.env.GBRAIN_VOICE_STT_PROVIDER } : {}),
+            ...(process.env.GBRAIN_VOICE_TTS_PROVIDER ? { tts_provider: process.env.GBRAIN_VOICE_TTS_PROVIDER } : {}),
+          },
+        }
+      : {}),
   };
 
   // v0.41 content-sanity env overrides. Built up as a sparse object so
@@ -920,6 +948,13 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'embed.backfill_cooldown_min',
   'embed.backfill_max_usd_per_source_24h',
   'embed.backfill_max_usd',
+  // Voice module (STT/TTS)
+  'voice',
+  'voice.stt_provider',
+  'voice.tts_provider',
+  'voice.deepgram_api_key',
+  'voice.supertonic_base_url',
+  'voice.page_title_prefix',
 ];
 
 /**
@@ -938,6 +973,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'mcp.',               // mcp.publish_skills, mcp.skills_dir (PR1 skill catalog)
   'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
   'self_upgrade.',      // v0.42 self-upgrade (mode, quiet_hours, state)
+  'voice.',            // voice.stt_provider, voice.tts_provider, ...
 ];
 
 export function saveConfig(config: GBrainConfig): void {
