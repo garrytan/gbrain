@@ -156,17 +156,12 @@ CREATE TRIGGER bump_page_generation_trg
 -- rationale comment. Layer 1 bookmark reads page_generation_clock.value;
 -- per-row pages.generation above stays as the Layer 2 (per-page snapshot)
 -- substrate.
-CREATE TABLE IF NOT EXISTS page_generation_clock (
-  id    INTEGER PRIMARY KEY CHECK (id = 1),
-  value BIGINT  NOT NULL DEFAULT 0
-);
-INSERT INTO page_generation_clock (id, value)
-  VALUES (1, COALESCE((SELECT MAX(generation) FROM pages), 0))
-  ON CONFLICT (id) DO NOTHING;
+CREATE SEQUENCE IF NOT EXISTS page_generation_clock_seq MINVALUE 0 START WITH 0;
+SELECT setval('page_generation_clock_seq', COALESCE((SELECT MAX(generation) FROM pages), 0), true);
 
 CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger AS $func$
 BEGIN
-  UPDATE page_generation_clock SET value = value + 1 WHERE id = 1;
+  PERFORM nextval('page_generation_clock_seq');
   RETURN NULL;
 END;
 $func$ LANGUAGE plpgsql;
@@ -926,7 +921,8 @@ CREATE TABLE IF NOT EXISTS op_checkpoints (
   fingerprint    TEXT NOT NULL,
   completed_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (op, fingerprint)
+  PRIMARY KEY (op, fingerprint),
+  CONSTRAINT completed_keys_array_check CHECK (jsonb_typeof(completed_keys) = 'array')
 );
 CREATE INDEX IF NOT EXISTS op_checkpoints_updated_at_idx
   ON op_checkpoints (updated_at);

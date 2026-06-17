@@ -29,7 +29,9 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import type { Subprocess } from 'bun';
 
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+import { fileURLToPath } from 'url';
+
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]$/, '');
 
 interface ServeProc {
   proc: Subprocess;

@@ -29,7 +29,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, chmodSync } 
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+import { fileURLToPath } from 'url';
+
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]$/, '');
 
 /**
  * Make a shim `gbrain` binary that routes to `bun run <repo>/src/cli.ts`.
@@ -44,12 +46,12 @@ const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
  */
 function makeGbrainShim(): { binDir: string; cleanup: () => void } {
   const binDir = mkdtempSync(join(tmpdir(), 'gbrain-shim-'));
-  const shimPath = join(binDir, 'gbrain');
-  writeFileSync(
-    shimPath,
-    `#!/bin/sh\nexec bun run ${REPO}/src/cli.ts "$@"\n`,
-    { mode: 0o755 },
-  );
+  const isWin = process.platform === 'win32';
+  const shimPath = join(binDir, isWin ? 'gbrain.cmd' : 'gbrain');
+  const content = isWin
+    ? `@echo off\nbun run "${REPO}/src/cli.ts" %*\n`
+    : `#!/bin/sh\nexec bun run ${REPO}/src/cli.ts "$@"\n`;
+  writeFileSync(shimPath, content, { mode: 0o755 });
   chmodSync(shimPath, 0o755);
   return {
     binDir,
@@ -106,10 +108,15 @@ describe('apply-migrations on fresh PGLite (v0.36.1.x #1100)', () => {
       // and similar resolve to our shim instead of requiring a global
       // install. This matches the contract users hit in production
       // (gbrain on PATH) without depending on `bun link` having run.
+      const isWin = process.platform === 'win32';
+      const pathKey = Object.keys(process.env).find(k => k.toLowerCase() === 'path') ?? 'PATH';
+      const pathSep = isWin ? ';' : ':';
+      const originalPath = process.env[pathKey] ?? '';
+
       const env = {
         HOME: home,
         GBRAIN_HOME: home,
-        PATH: `${shim.binDir}:${process.env.PATH ?? ''}`,
+        [pathKey]: `${shim.binDir}${pathSep}${originalPath}`,
       };
 
       // Step 1: init --migrate-only seeds the schema. Pre-fix on PGLite this

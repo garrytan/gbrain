@@ -1245,7 +1245,7 @@ async function runBreakLock(
   if (!snap) {
     if (opts.json) console.log(JSON.stringify({ status: 'absent', lock: lockKey, source_id: sourceId }));
     else console.log(`Lock ${lockKey} is not held (nothing to break).`);
-    return 0;
+    return opts.force ? 1 : 0;
   }
 
   // v0.41.13.0 (T4 / D-V3-4 / D-V4-mech-4) — --max-age path: route through
@@ -1579,7 +1579,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // order doesn't matter for correctness. Ancestry validation below still
   // happens AFTER pull (so a `git pull` that brings in missing commits
   // can restore a valid ancestor chain).
-  const lastCommit = opts.full ? null : await readSyncAnchor(engine, opts.sourceId, 'last_commit');
+  let lastCommit = opts.full ? null : await readSyncAnchor(engine, opts.sourceId, 'last_commit');
 
   // v0.41.13.0 (T2): pre-pull abort check. If --timeout already fired
   // (e.g. cron invoked sync after the previous run took the full budget),
@@ -1715,7 +1715,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   //   - valid in-flight checkpoint (pin still reachable from HEAD) → resume it.
   //   - rewrite / force-push (pin no longer an ancestor) → discard, re-pin to HEAD.
   //   - no checkpoint → pin = HEAD (the normal single-shot case).
-  const ckpt = syncCheckpointKeys(opts.sourceId, lastCommit);
+  let ckpt = syncCheckpointKeys(opts.sourceId, lastCommit);
   const checkpointEvery = resolveSyncCheckpointEvery();
   let pin = headCommit;
   let completedPaths: string[] = [];
@@ -1835,6 +1835,39 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     ]),
     renamed: manifest.renamed.filter(r => isSyncable(r.to, syncOpts)),
   };
+
+  // Chronological list of commits in the range lastCommit..pin
+  // and the syncable files changed in each commit.
+  const commitFiles: { commit: string; files: string[] }[] = [];
+  if (lastCommit) {
+    try {
+      const logOutput = git(repoPath, ['log', '--reverse', '--name-only', '--format=COMMIT:%H', `${lastCommit}..${pin}`]);
+      let currentCommit: string | null = null;
+      let currentFiles: string[] = [];
+      const lines = logOutput.split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (trimmed.startsWith('COMMIT:')) {
+          if (currentCommit) {
+            commitFiles.push({ commit: currentCommit, files: currentFiles });
+          }
+          currentCommit = trimmed.slice(7);
+          currentFiles = [];
+        } else {
+          if (isSyncable(trimmed, syncOpts)) {
+            currentFiles.push(trimmed);
+          }
+        }
+      }
+      if (currentCommit) {
+        commitFiles.push({ commit: currentCommit, files: currentFiles });
+      }
+    } catch (err) {
+      // If git log fails, we just don't do incremental anchor updates.
+      serr(`[sync] failed to build commit history for incremental checkpointing: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   // Delete pages that became un-syncable (modified but filtered out).
   // v0.20.0 Cathedral II SP-5: resolveSlugForPath picks the right slug shape
@@ -1973,6 +2006,45 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       if (ok) {
         consecutiveFlushFailures = 0;
         bankedFiles += batch.length;
+
+        // Check if we can incrementally advance the anchor commit
+        if (commitFiles.length > 0) {
+          let latestAdvanceCommit: string | null = null;
+          for (const cf of commitFiles) {
+            const allDone = cf.files.every(f => completed.has(f));
+            if (!allDone) {
+              break;
+            }
+            latestAdvanceCommit = cf.commit;
+          }
+
+          if (latestAdvanceCommit && latestAdvanceCommit !== lastCommit) {
+            const newCkpt = syncCheckpointKeys(opts.sourceId, latestAdvanceCommit);
+            try {
+              const timeMs = commitTimeMs(repoPath, latestAdvanceCommit);
+              // Write the target pin for new checkpoint
+              await recordCompleted(engine, newCkpt.target, [pin]);
+              // Write completed paths to new checkpoint
+              const currentCompleted = [...completed];
+              await appendCompleted(engine, newCkpt.paths, currentCompleted);
+              // Update anchor in DB
+              await writeSyncAnchor(engine, opts.sourceId, 'last_commit', latestAdvanceCommit, timeMs);
+              
+              // Clear old checkpoint
+              const oldCkpt = ckpt;
+              await clearOpCheckpoint(engine, oldCkpt.paths);
+              await clearOpCheckpoint(engine, oldCkpt.target);
+              
+              // Update local tracking variables
+              lastCommit = latestAdvanceCommit;
+              ckpt = newCkpt;
+              bankedFiles = currentCompleted.length;
+              slog(`[sync] incrementally advanced commit anchor to ${lastCommit.slice(0, 8)}`);
+            } catch (err) {
+              serr(`[sync] failed to incrementally advance commit anchor: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+        }
       } else {
         // Not durably banked — re-merge so the next flush retries this batch.
         for (const p of batch) pendingCheckpointPaths.add(p);

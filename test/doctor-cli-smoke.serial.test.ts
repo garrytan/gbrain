@@ -22,13 +22,19 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+import { fileURLToPath } from 'url';
+
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]$/, '');
 const SKIP = process.env.GBRAIN_SKIP_SUBPROCESS_TESTS === '1';
 
 function makeGbrainShim(): { binDir: string; cleanup: () => void } {
   const binDir = mkdtempSync(join(tmpdir(), 'gbrain-shim-doctor-'));
-  const shimPath = join(binDir, 'gbrain');
-  writeFileSync(shimPath, `#!/bin/sh\nexec bun run ${REPO}/src/cli.ts "$@"\n`, { mode: 0o755 });
+  const isWin = process.platform === 'win32';
+  const shimPath = join(binDir, isWin ? 'gbrain.cmd' : 'gbrain');
+  const content = isWin
+    ? `@echo off\nbun run "${REPO}/src/cli.ts" %*\n`
+    : `#!/bin/sh\nexec bun run ${REPO}/src/cli.ts "$@"\n`;
+  writeFileSync(shimPath, content, { mode: 0o755 });
   chmodSync(shimPath, 0o755);
   return {
     binDir,
@@ -78,10 +84,15 @@ describe('gbrain doctor --json subprocess smoke (D10/CMT-2)', () => {
           embedding_dimensions: 1536,
         }) + '\n',
       );
+      const isWin = process.platform === 'win32';
+      const pathKey = Object.keys(process.env).find(k => k.toLowerCase() === 'path') ?? 'PATH';
+      const pathSep = isWin ? ';' : ':';
+      const originalPath = process.env[pathKey] ?? '';
+
       const env = {
         HOME: home,
         GBRAIN_HOME: home,
-        PATH: `${shim.binDir}:${process.env.PATH ?? ''}`,
+        [pathKey]: `${shim.binDir}${pathSep}${originalPath}`,
       };
 
       // Step 1: init + apply migrations so the brain is at head before doctor runs.

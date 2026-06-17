@@ -45,28 +45,17 @@ beforeEach(async () => {
 
 async function clockValue(): Promise<number> {
   const rows = await engine.executeRaw<{ value: number }>(
-    `SELECT value FROM page_generation_clock WHERE id = 1`,
+    `SELECT last_value AS value FROM page_generation_clock_seq`,
   );
   return Number(rows[0]?.value ?? -1);
 }
 
-describe('page_generation_clock table + statement-level trigger', () => {
-  test('table exists and is single-row enforced', async () => {
+describe('page_generation_clock sequence + statement-level trigger', () => {
+  test('sequence exists', async () => {
     const rows = await engine.executeRaw<{ count: number }>(
-      `SELECT COUNT(*)::int AS count FROM page_generation_clock`,
+      `SELECT COUNT(*)::int AS count FROM pg_sequences WHERE sequencename = 'page_generation_clock_seq'`,
     );
     expect(Number(rows[0].count)).toBe(1);
-
-    // CHECK (id = 1) prevents a second row.
-    let threw = false;
-    try {
-      await engine.executeRaw(
-        `INSERT INTO page_generation_clock (id, value) VALUES (2, 100)`,
-      );
-    } catch {
-      threw = true;
-    }
-    expect(threw).toBe(true);
   });
 
   test('seed: clock starts at COALESCE(MAX(pages.generation), 0)', async () => {
