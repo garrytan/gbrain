@@ -7,8 +7,9 @@ import { createLocalConfigDefaults } from '../src/core/config.ts';
 import { embedChunks, getEmbeddingProvider, resetEmbeddingProviderForTests, setEmbeddingProviderForTests } from '../src/core/embedding.ts';
 import { defaultLocalEmbeddingUrlForPlatform } from '../src/core/embedding/provider.ts';
 import { getEngineCapabilities } from '../src/core/engine-capabilities.ts';
-import { buildPageChunks, importFile } from '../src/core/import-file.ts';
+import { buildPageChunks, importFile, importFromContent } from '../src/core/import-file.ts';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
+import { runImportService } from '../src/core/services/import-service.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 const originalEnv = { ...process.env };
@@ -93,7 +94,7 @@ function createUnavailableProvider(reason: string) {
 
 
 
-function writeUserConfig(config: Record<string, unknown>) {
+function writeUserConfig(config: unknown) {
   const configDir = join(tempDir, '.mbrain');
   mkdirSync(configDir, { recursive: true });
   writeFileSync(join(configDir, 'config.json'), JSON.stringify(config, null, 2));
@@ -1641,6 +1642,100 @@ Updated chunk content for the same page.
     expect(output).toContain(`batch 1/${expectedBatchCount}, 100/${expectedChunks.length} chunks`);
     expect(output).toContain(`batch ${expectedBatchCount}/${expectedBatchCount}, ${expectedChunks.length}/${expectedChunks.length} chunks`);
     expect(output).toContain(`1/1 pages, ${expectedChunks.length} chunks embedded`);
+  });
+
+  test('stale-only embedding completes deferred chunk refresh so repeated imports do not force re-embedding', async () => {
+    writeUserConfig(createLocalConfigDefaults({
+      engine: 'sqlite',
+      database_path: dbPath,
+      offline: true,
+      embedding_provider: 'local',
+      query_rewrite_provider: 'heuristic',
+    }));
+    const rootDir = join(tempDir, 'brain');
+    mkdirSync(join(rootDir, 'concepts'), { recursive: true });
+    writeFileSync(join(rootDir, 'concepts', 'deferred-repeat.md'), `---
+type: concept
+title: Deferred Repeat
+---
+
+Repeated imports should not make stale embedding start over.
+`);
+    const logger = { log: () => {}, warn: () => {}, error: () => {} };
+
+    const imported = await runImportService(engine, {
+      rootDir,
+      workers: 2,
+      fresh: true,
+      updateSyncMetadata: false,
+      slugPrefix: 'personal',
+      logger,
+    });
+    expect(imported).toMatchObject({ imported: 1, chunksCreated: 0 });
+    expect(await engine.getChunks('personal/concepts/deferred-repeat')).toHaveLength(0);
+
+    const firstProvider = createFakeProvider();
+    setEmbeddingProviderForTests(firstProvider.provider);
+    await runEmbed(engine, ['--stale']);
+    expect(firstProvider.batches).toEqual([['Repeated imports should not make stale embedding start over.']]);
+    expect(await engine.getChunks('personal/concepts/deferred-repeat')).toHaveLength(1);
+
+    const repeated = await runImportService(engine, {
+      rootDir,
+      workers: 2,
+      fresh: true,
+      updateSyncMetadata: false,
+      slugPrefix: 'personal',
+      logger,
+    });
+    expect(repeated).toMatchObject({ imported: 0, chunksCreated: 0 });
+    expect(await engine.getChunks('personal/concepts/deferred-repeat')).toHaveLength(1);
+
+    const secondProvider = createFakeProvider();
+    setEmbeddingProviderForTests(secondProvider.provider);
+    await runEmbed(engine, ['--stale']);
+
+    expect(secondProvider.batches).toEqual([]);
+  });
+
+  test('stale-only embedding skips an old page snapshot when derived refresh sees newer content', async () => {
+    await importFromContent(engine, 'concepts/concurrent-refresh', `---
+type: concept
+title: Concurrent Refresh
+---
+
+Old snapshot text should not be embedded after the page changes.
+`, { path: 'concepts/concurrent-refresh.md', deferDerived: true });
+
+    const originalListPages = engine.listPages.bind(engine);
+    let changedAfterSnapshot = false;
+    engine.listPages = async (filters?: Parameters<typeof engine.listPages>[0]) => {
+      const pages = await originalListPages(filters);
+      if (!changedAfterSnapshot) {
+        changedAfterSnapshot = true;
+        await importFromContent(engine, 'concepts/concurrent-refresh', `---
+type: concept
+title: Concurrent Refresh
+---
+
+New current text is waiting for its own deferred refresh.
+`, { path: 'concepts/concurrent-refresh.md', deferDerived: true });
+      }
+      return pages;
+    };
+
+    const fake = createFakeProvider();
+    setEmbeddingProviderForTests(fake.provider);
+    try {
+      await runEmbed(engine, ['--stale']);
+    } finally {
+      engine.listPages = originalListPages;
+    }
+
+    expect(fake.batches).toEqual([]);
+    expect(await engine.getChunks('concepts/concurrent-refresh')).toHaveLength(0);
+    const current = await engine.getPage('concepts/concurrent-refresh');
+    expect(current?.compiled_truth).toBe('New current text is waiting for its own deferred refresh.');
   });
 
   test('unchanged content does not trigger re-embedding', async () => {

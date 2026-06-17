@@ -269,6 +269,46 @@ export async function refreshDerivedStorageForPage(
   };
 }
 
+export async function refreshPageDerivedStorageIfStale(
+  engine: BrainEngine,
+  page: Page,
+  options: { path?: string } = {},
+): Promise<ImportResult | null> {
+  if (!canRefreshDerivedStorage(page)) return null;
+  const manifestPath = options.path ?? await resolvePageDerivedRefreshManifestPath(engine, page);
+  if (await isPageDerivedStorageCurrent(engine, page, manifestPath)) return null;
+
+  return refreshDerivedStorageForPage(engine, page.slug, {
+    path: manifestPath,
+    expectedContentHash: page.content_hash,
+  });
+}
+
+async function resolvePageDerivedRefreshManifestPath(engine: BrainEngine, page: Page): Promise<string> {
+  const manifest = await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, page.slug);
+  if (manifest?.path) return manifest.path;
+
+  const activeJobs = [
+    ...await engine.listDerivedJobs({
+      scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+      slug: page.slug,
+      status: 'pending',
+    }),
+    ...await engine.listDerivedJobs({
+      scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+      slug: page.slug,
+      status: 'running',
+    }),
+  ];
+  const matchingJob = activeJobs.find((job) => (
+    job.target_content_hash === page.content_hash
+    && job.manifest_path
+  ));
+  if (matchingJob?.manifest_path) return matchingJob.manifest_path;
+
+  return `${validateSlug(page.slug)}.md`;
+}
+
 async function replacePageDerivedStorage(
   engine: BrainEngine,
   page: Page,

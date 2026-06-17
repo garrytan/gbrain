@@ -4,9 +4,10 @@ import type { EmbeddedChunkBatch } from '../core/embedding.ts';
 import { createEmbeddingQueue } from '../core/embedding-queue.ts';
 import { formatOpHelp, parseOpArgs } from '../core/operations.ts';
 import type { Operation } from '../core/operations.ts';
+import { refreshPageDerivedStorageIfStale } from '../core/import-file.ts';
 import { resolvePageChunkOptions } from '../core/page-chunk-options.ts';
 import { ensurePageChunks } from '../core/page-chunks.ts';
-import type { Chunk, ChunkInput } from '../core/types.ts';
+import type { Chunk, ChunkInput, Page } from '../core/types.ts';
 
 const EMBED_ALL_QUEUE_WARNING_CHUNKS = 10_000;
 
@@ -65,6 +66,7 @@ async function embedPage(
     process.exit(1);
   }
 
+  if (!await refreshPageDerivedStorageBeforeEmbedding(engine, page)) return;
   const chunks = await ensurePageChunks(engine, page);
   const targetChunks = selectChunksToEmbed(chunks, staleOnly, provider.capability.model);
   if (targetChunks.length === 0) {
@@ -117,6 +119,7 @@ async function embedAll(
 
   for (let index = 0; index < pages.length; index++) {
     const page = pages[index];
+    if (!await refreshPageDerivedStorageBeforeEmbedding(engine, page)) continue;
     const chunks = await ensurePageChunks(engine, page, chunkOptions);
     const targetChunks = selectChunksToEmbed(chunks, staleOnly, provider.capability.model);
     if (targetChunks.length === 0) {
@@ -164,6 +167,15 @@ async function embedAll(
   }
 
   console.log(`\nEmbedded ${embedded} chunks across ${touchedPages} pages`);
+}
+
+async function refreshPageDerivedStorageBeforeEmbedding(engine: BrainEngine, page: Page): Promise<boolean> {
+  const refreshed = await refreshPageDerivedStorageIfStale(engine, page);
+  if (refreshed?.status === 'skipped' && refreshed.error) {
+    console.error(`  Warning: skipped derived refresh for ${page.slug}: ${refreshed.error}`);
+    return false;
+  }
+  return true;
 }
 
 function selectChunksToEmbed(chunks: Chunk[], staleOnly: boolean, currentModel?: string | null): Chunk[] {

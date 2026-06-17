@@ -1,5 +1,7 @@
 import { setDefaultTimeout, afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'crypto';
+import { runEmbed } from '../src/commands/embed.ts';
+import { resetEmbeddingProviderForTests, setEmbeddingProviderForTests } from '../src/core/embedding.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -78,6 +80,11 @@ describe('chunk embedding freshness identity', () => {
   beforeEach(async () => {
     await clearEngine(pglite!);
     await clearEngine(sqlite!);
+    resetEmbeddingProviderForTests();
+  });
+
+  afterAll(() => {
+    resetEmbeddingProviderForTests();
   });
 
   test('SQLite clears preserved embeddings when chunk text changes without a replacement embedding', async () => {
@@ -121,5 +128,46 @@ describe('chunk embedding freshness identity', () => {
     expect(unchanged.chunk_content_hash).toBe(migratedHash);
     expect(unchanged.embedding).not.toBeNull();
     expect(unchanged.embedded_at).not.toBeNull();
+  });
+
+  test('PGLite stale-only embedding skips valid pgvector chunks on repeat runs', async () => {
+    const batches: string[][] = [];
+    setEmbeddingProviderForTests({
+      capability: {
+        available: true,
+        mode: 'local',
+        implementation: 'test-local',
+        model: 'qwen3-embedding:0.6b',
+        dimensions: 1024,
+      },
+      embedBatch: async (texts: string[]) => {
+        batches.push([...texts]);
+        return texts.map((text, index) => {
+          const vector = new Float32Array(1024);
+          vector[0] = text.length;
+          vector[1] = index + 1;
+          return vector;
+        });
+      },
+    });
+
+    await pglite!.putPage('concepts/pglite-stale-repeat', {
+      type: 'concept',
+      title: 'PGLite Stale Repeat',
+      compiled_truth: 'PGLite stale embedding should run once.',
+      timeline: '',
+      frontmatter: {},
+    });
+
+    await runEmbed(pglite!, ['--stale']);
+    expect(batches).toEqual([['PGLite stale embedding should run once.']]);
+    batches.length = 0;
+
+    await runEmbed(pglite!, ['--stale']);
+
+    expect(batches).toEqual([]);
+    const after = await pglite!.getChunks('concepts/pglite-stale-repeat');
+    expect(after).toHaveLength(1);
+    expect(after[0]?.embedded_at).toBeInstanceOf(Date);
   });
 });

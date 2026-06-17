@@ -70,11 +70,35 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
     chunk_text: row.chunk_text as string,
     chunk_source: row.chunk_source as Chunk['chunk_source'],
     chunk_content_hash: String(row.chunk_content_hash ?? ''),
-    embedding: includeEmbedding && row.embedding ? row.embedding as Float32Array : null,
+    embedding: includeEmbedding ? vectorValueToFloat32(row.embedding) : null,
     model: row.model as string,
     token_count: row.token_count as number | null,
     embedded_at: row.embedded_at ? new Date(row.embedded_at as string) : null,
   };
+}
+
+export function vectorValueToFloat32(value: unknown): Float32Array | null {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Float32Array) return value;
+  if (Array.isArray(value)) return float32FromNumbers(value);
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const body = trimmed.startsWith('[') && trimmed.endsWith(']')
+      ? trimmed.slice(1, -1)
+      : trimmed;
+    if (body.length === 0) return new Float32Array(0);
+
+    return float32FromNumbers(body.split(',').map((entry) => Number(entry.trim())));
+  }
+
+  return null;
+}
+
+function float32FromNumbers(values: unknown[]): Float32Array | null {
+  const numbers = values.map((entry) => Number(entry));
+  if (numbers.some((entry) => !Number.isFinite(entry))) return null;
+  return new Float32Array(numbers);
 }
 
 export function rowToSearchResult(row: Record<string, unknown>, query?: string): SearchResult {

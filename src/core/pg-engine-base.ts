@@ -119,6 +119,7 @@ import {
   rowToTaskDecision,
   rowToTaskThread,
   rowToTaskWorkingSet,
+  vectorValueToFloat32,
 } from './utils.ts';
 import { ensurePageChunks } from './page-chunks.ts';
 import { appendPendingDerivedSearchResults } from './search/derived-freshness.ts';
@@ -4494,26 +4495,6 @@ export abstract class PgEngineBase {
 
 function vectorLiteral(embedding: Float32Array): string {
   return `[${Array.from(embedding).join(',')}]`;
-}
-
-function vectorValueToFloat32(value: unknown): Float32Array | null {
-  if (value === null || value === undefined) return null;
-  if (value instanceof Float32Array) return value;
-  if (Array.isArray(value)) return new Float32Array(value.map((entry) => Number(entry)));
-
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    const body = trimmed.startsWith('[') && trimmed.endsWith(']')
-      ? trimmed.slice(1, -1)
-      : trimmed;
-    if (body.length === 0) return new Float32Array(0);
-
-    const parts = body.split(',').map((entry) => Number(entry.trim()));
-    if (parts.some((entry) => Number.isNaN(entry))) return null;
-    return new Float32Array(parts);
-  }
-
-  return null;
 }
 
 const INTERACTION_ID_LOOKUP_BATCH_SIZE = 500;
