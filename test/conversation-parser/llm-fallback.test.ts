@@ -12,10 +12,17 @@
  */
 
 import { describe, expect, test, beforeEach } from 'bun:test';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { withEnv } from '../helpers/with-env.ts';
 import { runLlmFallback } from '../../src/core/conversation-parser/llm-fallback.ts';
 import { _resetLlmCacheForTests } from '../../src/core/conversation-parser/llm-base.ts';
 import { makeChatResult } from './helpers.ts';
+
+// See llm-base.test.ts: neutralize BOTH key sources (env + ~/.gbrain config)
+// for the "no key" test so it's hermetic on machines with a real config key.
+const EMPTY_CONFIG_HOME = mkdtempSync(join(tmpdir(), 'gbrain-nokey-'));
 
 beforeEach(() => {
   _resetLlmCacheForTests();
@@ -71,7 +78,7 @@ describe('runLlmFallback', () => {
 
   test('provider unavailable: returns null without calling transport', async () => {
     await withEnv(
-      { ANTHROPIC_API_KEY: undefined as unknown as string },
+      { ANTHROPIC_API_KEY: undefined as unknown as string, GBRAIN_HOME: EMPTY_CONFIG_HOME },
       async () => {
         let calls = 0;
         const result = await runLlmFallback({
