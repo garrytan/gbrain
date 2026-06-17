@@ -46,7 +46,7 @@ export class ValidationError extends Error {
   }
 }
 
-const VALID_MEMORY_TYPES: ReadonlySet<string> = new Set(['person', 'company', 'project', 'concept', 'meeting']);
+export const VALID_MEMORY_TYPES: ReadonlySet<string> = new Set(['person', 'company', 'project', 'concept', 'meeting']);
 
 function assertString(value: unknown, field: string): string {
   if (typeof value !== 'string') {
