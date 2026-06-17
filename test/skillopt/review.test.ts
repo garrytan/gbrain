@@ -60,7 +60,6 @@ describe('reviewSkillOptCandidate', () => {
     expect(result.changed).toBe(false);
   });
 });
-
 describe('parseFlags — review route', () => {
   test('parses review subcommand and explicit apply', () => {
     const parsed = parseFlags(['review', SKILL, '--apply', '--json']);
@@ -71,4 +70,3 @@ describe('parseFlags — review route', () => {
     expect(parsed.json).toBe(true);
   });
 });
-
