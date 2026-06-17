@@ -63,11 +63,12 @@ export async function runPhasePatterns(
       });
     }
 
-    // Submit one subagent for pattern detection.
-    if (!process.env.ANTHROPIC_API_KEY) {
-      return skipped('no_api_key', 'ANTHROPIC_API_KEY unset; pattern detection skipped');
-    }
-
+    // Submit one subagent for pattern detection. The subagent dispatches via
+    // the gateway model-tier resolver, so a hardcoded ANTHROPIC_API_KEY gate
+    // here misclassifies non-Anthropic stacks (litellm/codex-proxy) as
+    // "no upstream" even though synthesize routes through the same gateway
+    // happily. Synthesize already dropped its cheap-skip gate (see
+    // makeJudgeClient docstring); patterns now matches.
     const allowedSlugPrefixes = await loadAllowedSlugPrefixes();
     if (allowedSlugPrefixes.length === 0) {
       return failed(makeError('InternalError', 'NO_ALLOWLIST',
