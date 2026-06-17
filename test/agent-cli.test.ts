@@ -85,6 +85,35 @@ describe('parseRunFlags', () => {
     const { flags } = agentTesting.parseRunFlags(['--fanout-manifest', '/tmp/m.json']);
     expect(flags.fanoutManifest).toBe('/tmp/m.json');
   });
+
+  // Regression for #1738: flags after the prompt were being swallowed into
+  // the prompt (`agent run "x" --detach` → prompt "x --detach", detach ignored).
+  test('a flag after the prompt is consumed, not leaked into the prompt', () => {
+    const { flags, rest } = agentTesting.parseRunFlags(['test prompt', '--detach']);
+    expect(rest).toEqual(['test prompt']);
+    expect(flags.detach).toBe(true);
+    expect(flags.follow).toBe(false);
+  });
+
+  test('value-flags after the prompt consume their value', () => {
+    const { flags, rest } = agentTesting.parseRunFlags(['do the thing', '--model', 'm', '--max-turns', '5']);
+    expect(rest).toEqual(['do the thing']);
+    expect(flags.model).toBe('m');
+    expect(flags.maxTurns).toBe(5);
+  });
+
+  test('flags on both sides of the prompt are all consumed', () => {
+    const { flags, rest } = agentTesting.parseRunFlags(['--model', 'm', 'summarize', 'this', '--detach']);
+    expect(flags.model).toBe('m');
+    expect(flags.detach).toBe(true);
+    expect(rest).toEqual(['summarize', 'this']);
+  });
+
+  test('`--` after a positional keeps flag-shaped tokens as literal prompt', () => {
+    const { flags, rest } = agentTesting.parseRunFlags(['explain', '--', '--detach', '--model']);
+    expect(flags.detach).toBe(false);
+    expect(rest).toEqual(['explain', '--detach', '--model']);
+  });
 });
 
 describe('parseSince', () => {
