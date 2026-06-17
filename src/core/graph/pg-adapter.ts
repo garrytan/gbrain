@@ -6,10 +6,12 @@ interface BrainEngineLike {
   getPage(slug: string): Promise<Record<string, unknown> | null>;
   putPage(slug: string, data: Record<string, unknown>): Promise<void>;
   deletePage(slug: string): Promise<void>;
+  addTag(slug: string, tag: string): Promise<void>;
   addLink(from: string, to: string, context?: string, linkType?: string, linkSource?: string): Promise<void>;
-  getRelatedEntities(slug: string): Promise<Array<{ slug: string; relation_type: string; direction: 'outgoing' | 'incoming' }>>;
-  traverseGraph(slug: string, depth?: number): Promise<Record<string, unknown> | null>;
-  listPages(opts?: { limit?: number; offset?: number }): Promise<{ pages: Record<string, unknown>[]; total: number }>;
+  getLinks(slug: string): Promise<Array<{ to_slug: string; link_type: string; link_source?: string }>>;
+  getBacklinks(slug: string): Promise<Array<{ from_slug: string; link_type: string; link_source?: string }>>;
+  traverseGraph(slug: string, depth?: number): Promise<Array<{ slug: string; title: string; type: string; depth: number; links: Array<{ to_slug: string; link_type: string }> }>>;
+  listPages(opts?: { limit?: number; offset?: number }): Promise<Array<Record<string, unknown>>>;
 }
 
 export class PostgresGraphAdapter implements GraphRepository {
@@ -19,9 +21,8 @@ export class PostgresGraphAdapter implements GraphRepository {
     await this.engine.putPage(node.slug, {
       title: node.title,
       type: VALID_MEMORY_TYPES.has(node.type) ? node.type : 'concept',
-      content: node.summary,
-      tags: node.tags,
-      metadata: {
+      compiled_truth: node.summary,
+      frontmatter: {
         source: node.source,
         confidence: node.confidence,
         consent: node.consent,
@@ -31,6 +32,9 @@ export class PostgresGraphAdapter implements GraphRepository {
         ...node.metadata,
       },
     });
+    for (const tag of node.tags) {
+      await this.engine.addTag(node.slug, tag);
+    }
   }
 
   async createRelation(relation: Relation): Promise<void> {
@@ -39,14 +43,25 @@ export class PostgresGraphAdapter implements GraphRepository {
       relation.to_slug,
       relation.context,
       relation.relation_type,
-      'manual',
+      relation.source,
     );
   }
 
   async getRelatedEntities(
     slug: string,
   ): Promise<Array<{ slug: string; relation_type: string; direction: 'outgoing' | 'incoming' }>> {
-    return this.engine.getRelatedEntities(slug);
+    const [outgoing, incoming] = await Promise.all([
+      this.engine.getLinks(slug),
+      this.engine.getBacklinks(slug),
+    ]);
+    const result: Array<{ slug: string; relation_type: string; direction: 'outgoing' | 'incoming' }> = [];
+    for (const link of outgoing) {
+      result.push({ slug: link.to_slug, relation_type: link.link_type, direction: 'outgoing' });
+    }
+    for (const link of incoming) {
+      result.push({ slug: link.from_slug, relation_type: link.link_type, direction: 'incoming' });
+    }
+    return result;
   }
 
   async traverseGraph(slug: string, depth: number = 1): Promise<GraphTraversalResult> {
@@ -55,7 +70,16 @@ export class PostgresGraphAdapter implements GraphRepository {
       return { root: { slug: '', title: '', type: '' }, nodes: [], edges: [] };
     }
 
-    const traversalResult = await this.engine.traverseGraph(slug, depth);
+    const graphNodes = await this.engine.traverseGraph(slug, depth);
+    const nodes: Array<{ slug: string; title: string; type: string; depth: number }> = [];
+    const edges: Array<{ from: string; to: string; relation_type: string }> = [];
+
+    for (const gn of graphNodes) {
+      nodes.push({ slug: gn.slug, title: gn.title, type: gn.type, depth: gn.depth });
+      for (const link of gn.links) {
+        edges.push({ from: gn.slug, to: link.to_slug, relation_type: link.link_type });
+      }
+    }
 
     return {
       root: {
@@ -63,8 +87,8 @@ export class PostgresGraphAdapter implements GraphRepository {
         title: ((page as any)?.title as string) ?? slug,
         type: ((page as any)?.type as string) ?? 'unknown',
       },
-      nodes: ((traversalResult as any)?.nodes as Array<{ slug: string; title: string; type: string; depth: number }>) ?? [],
-      edges: ((traversalResult as any)?.edges as Array<{ from: string; to: string; relation_type: string }>) ?? [],
+      nodes,
+      edges,
     };
   }
 

@@ -5021,14 +5021,16 @@ const run_skillopt: Operation = {
 const voice_transcribe: Operation = {
   name: 'voice_transcribe',
   description: 'Transcribe audio to text using the configured STT provider. Accepts base64-encoded audio bytes. Returns transcript with confidence.',
-  scope: 'write',
+  scope: 'read',
   params: {
     audio_base64: { type: 'string', required: true, description: 'Base64-encoded audio data' },
     mime_type: { type: 'string', description: 'MIME type of audio (e.g. audio/webm, audio/wav). Default: audio/webm' },
   },
   handler: async (ctx, p) => {
-    const { MockSTTAdapter } = await import('./voice/stt.ts');
-    const stt = new MockSTTAdapter();
+    const sttCfg = ctx.config?.voice;
+    const stt = sttCfg?.stt_provider === 'deepgram' && sttCfg?.deepgram_api_key
+      ? new (await import('./voice/stt.ts')).DeepgramSTTAdapter(sttCfg.deepgram_api_key)
+      : new (await import('./voice/stt.ts')).MockSTTAdapter();
     const buf = Buffer.from(p.audio_base64 as string, 'base64');
     const audio = { buffer: new Uint8Array(buf).buffer as ArrayBuffer, mimeType: (p.mime_type as string) ?? 'audio/webm' };
     const result = await stt.transcribe(audio);
@@ -5040,13 +5042,15 @@ const voice_transcribe: Operation = {
 const voice_synthesize: Operation = {
   name: 'voice_synthesize',
   description: 'Synthesize text to speech using the configured TTS provider. Returns base64-encoded audio.',
-  scope: 'write',
+  scope: 'read',
   params: {
     text: { type: 'string', required: true, description: 'Text to synthesize' },
   },
   handler: async (ctx, p) => {
-    const { MockTTSAdapter } = await import('./voice/tts.ts');
-    const tts = new MockTTSAdapter();
+    const ttsCfg = ctx.config?.voice;
+    const tts = ttsCfg?.tts_provider === 'supertonic' && ttsCfg?.supertonic_base_url
+      ? new (await import('./voice/tts.ts')).SupertonicTTSAdapter(ttsCfg.supertonic_base_url)
+      : new (await import('./voice/tts.ts')).MockTTSAdapter();
     const audio = await tts.synthesize(p.text as string);
     return { audio_base64: Buffer.from(new Uint8Array(audio)).toString('base64'), format: 'audio/wav' };
   },
@@ -5065,13 +5069,17 @@ const voice_process: Operation = {
   },
   handler: async (ctx, p) => {
     const { VoiceSessionService } = await import('./voice/session-service.ts');
-    const { MockSTTAdapter } = await import('./voice/stt.ts');
-    const { MockTTSAdapter } = await import('./voice/tts.ts');
     const engine = ctx.engine;
     if (!engine) throw new Error('Engine required for voice_process');
 
-    const stt = new MockSTTAdapter();
-    const tts = new MockTTSAdapter();
+    const sttCfg = ctx.config?.voice;
+    const stt = sttCfg?.stt_provider === 'deepgram' && sttCfg?.deepgram_api_key
+      ? new (await import('./voice/stt.ts')).DeepgramSTTAdapter(sttCfg.deepgram_api_key)
+      : new (await import('./voice/stt.ts')).MockSTTAdapter();
+    const ttsCfg = ctx.config?.voice;
+    const tts = ttsCfg?.tts_provider === 'supertonic' && ttsCfg?.supertonic_base_url
+      ? new (await import('./voice/tts.ts')).SupertonicTTSAdapter(ttsCfg.supertonic_base_url)
+      : new (await import('./voice/tts.ts')).MockTTSAdapter();
     const buf = Buffer.from(p.audio_base64 as string, 'base64');
 
     const service = new VoiceSessionService({
@@ -5080,7 +5088,7 @@ const voice_process: Operation = {
       onSave: async (session) => {
         await engine.putPage(session.slug, {
           title: session.slug,
-          type: 'voice_session',
+          type: 'concept',
           content: session.content,
           tags: ['voice'],
         } as any);
@@ -5184,27 +5192,6 @@ const freshness_reconcile: Operation = {
   cliHints: { name: 'freshness-reconcile' },
 };
 
-// --- Graph operation ---
-
-const graph_traverse: Operation = {
-  name: 'graph_traverse',
-  description: 'Traverse the memory graph from a seed slug, returning related nodes and edges at specified depth.',
-  scope: 'read',
-  params: {
-    slug: { type: 'string', required: true, description: 'Seed page slug' },
-    depth: { type: 'number', description: 'Traversal depth (default: 1, max: 5)' },
-  },
-  handler: async (ctx, p) => {
-    const { PostgresGraphAdapter } = await import('./graph/pg-adapter.ts');
-    const engine = ctx.engine;
-    if (!engine) throw new Error('Engine required for graph_traverse');
-    const adapter = new PostgresGraphAdapter(engine as any);
-    const result = await adapter.traverseGraph(p.slug as string, (p.depth as number) ?? 1);
-    return result;
-  },
-  cliHints: { name: 'graph-traverse' },
-};
-
 export const operations: Operation[] = [
   // Page CRUD
   get_page, put_page, delete_page, list_pages,
@@ -5290,8 +5277,6 @@ export const operations: Operation[] = [
   voice_transcribe, voice_synthesize, voice_process,
   // Freshness operations
   freshness_digest, freshness_reconcile,
-  // Graph operations
-  graph_traverse,
 ];
 
 export const operationsByName = Object.fromEntries(

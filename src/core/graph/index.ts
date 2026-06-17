@@ -10,8 +10,9 @@ export function pageToMemoryNode(page: {
   type: string;
   tags: string[];
   content?: string;
+  createdAt?: string;
 }): MemoryNode {
-  const now = new Date().toISOString();
+  const ts = page.createdAt ?? new Date().toISOString();
   return {
     id: page.slug,
     slug: page.slug,
@@ -22,8 +23,8 @@ export function pageToMemoryNode(page: {
     confidence: 0.8,
     consent: true,
     tags: page.tags,
-    created_at: now,
-    last_verified_at: now,
+    created_at: ts,
+    last_verified_at: ts,
     metadata: { original_type: page.type },
   };
 }

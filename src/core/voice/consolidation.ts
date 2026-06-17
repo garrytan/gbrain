@@ -42,7 +42,7 @@ function parseTagEntities(tags: string[]): Array<{ type: MemoryType; name: strin
 }
 
 export async function consolidateVoiceSession(
-  session: { transcript: string; summary: string; tags: string[]; source: string },
+  session: { transcript: string; summary: string; tags: string[]; source: string; consent?: boolean },
   graph: GraphRepository,
 ): Promise<ConsolidationResult> {
   const entities: Array<{ slug: string; type: string }> = [];
@@ -66,7 +66,7 @@ export async function consolidateVoiceSession(
       summary: '',
       source: session.source,
       confidence: 0.6,
-      consent: false,
+      consent: session.consent ?? false,
       tags: [],
       created_at: now,
       last_verified_at: now,
