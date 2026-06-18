@@ -27,6 +27,15 @@ async function waitForOrigin(bare: string, expectSha: string, ms = 8000): Promis
   }
   return false;
 }
+async function waitForGitIndex(workTree: string, ms = 8000): Promise<boolean> {
+  const lock = join(workTree, '.git', 'index.lock');
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (!existsSync(lock)) return true;
+    await new Promise(r => setTimeout(r, 150));
+  }
+  return !existsSync(lock);
+}
 
 let root: string, work: string, bare: string;
 let oldHome: string | undefined, oldGbrainHome: string | undefined;
@@ -46,6 +55,7 @@ beforeEach(async () => {
   git(work, 'add', 'README.md'); git(work, 'commit', '-qm', 'init'); git(work, 'push', '-q', 'origin', 'main');
   git(work, 'remote', 'set-head', 'origin', 'main');
   await hardenBrainRepo({ repoPath: work, sourceId: 'wiki', pat: 'ghp_x', installCron: false });
+  if (!(await waitForGitIndex(work))) throw new Error('git index lock remained after hardenBrainRepo');
 });
 afterEach(() => {
   if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
