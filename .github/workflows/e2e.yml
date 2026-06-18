@@ -79,7 +79,22 @@ jobs:
           bun-version: 1.3.13
       - run: bun install
       - name: Install OpenClaw
-        run: npm install -g openclaw@2026.4.9
+        # Bound + retry the install: a transient npm/registry stall here used to
+        # hang unbounded and (since the v0.42.50.0 job timeout) burn the entire
+        # 30m Tier 2 budget before failing — even though the install normally
+        # finishes in well under a minute. `timeout` kills a hung attempt fast;
+        # up to 3 attempts ride out a flaky registry. Step cap is a backstop.
+        timeout-minutes: 8
+        run: |
+          for attempt in 1 2 3; do
+            if timeout 120 npm install -g openclaw@2026.4.9; then
+              exit 0
+            fi
+            echo "::warning::openclaw install attempt $attempt failed or timed out; retrying in 10s" >&2
+            sleep 10
+          done
+          echo "::error::openclaw install failed after 3 attempts" >&2
+          exit 1
       - name: Configure OpenClaw MCP
         run: |
           mkdir -p ~/.openclaw

@@ -44,8 +44,11 @@ beforeEach(async () => {
 });
 
 async function clockValue(): Promise<number> {
+  // v0.42.x: the Layer-1 bookmark moved from the locked single-row
+  // page_generation_clock table to a contention-free SEQUENCE bumped by
+  // nextval() in the statement trigger. Read last_value.
   const rows = await engine.executeRaw<{ value: number }>(
-    `SELECT value FROM page_generation_clock WHERE id = 1`,
+    `SELECT last_value AS value FROM page_generation_clock_seq`,
   );
   return Number(rows[0]?.value ?? -1);
 }
@@ -69,13 +72,20 @@ describe('page_generation_clock table + statement-level trigger', () => {
     expect(threw).toBe(true);
   });
 
-  test('seed: clock starts at COALESCE(MAX(pages.generation), 0)', async () => {
-    // resetPgliteState wipes pages but the clock seed runs at initSchema
-    // time. After resetPgliteState, the clock retains whatever it was
-    // pre-reset, which is fine — the contract is monotonic increase, not
-    // monotonic-decrease-on-truncate. (Production resets don't happen.)
+  test('seed: clock sequence starts at >= 1 with is_called=true', async () => {
+    // v0.42.x: the sequence is seeded via setval(GREATEST(1, MAX(generation)))
+    // at initSchema with is_called=true (2-arg setval), so the FIRST write's
+    // nextval strictly exceeds the seed. Without is_called=true a fresh
+    // sequence's first nextval returns the start value and last_value would not
+    // visibly advance — that would let a fresh install serve a stale cache row.
+    // resetPgliteState does NOT reset the sequence (sequences aren't pg_tables),
+    // so last_value only ever increases — monotonic, never decrease-on-truncate.
     const v = await clockValue();
-    expect(v).toBeGreaterThanOrEqual(0);
+    expect(v).toBeGreaterThanOrEqual(1);
+    const meta = await engine.executeRaw<{ is_called: boolean }>(
+      `SELECT is_called FROM page_generation_clock_seq`,
+    );
+    expect(meta[0].is_called).toBe(true);
   });
 
   test('INSERT bumps clock by exactly 1 (single-row insert via raw SQL)', async () => {
@@ -223,5 +233,83 @@ describe('query-cache integration (D14 + CDX-6 + CDX-7 end-to-end)', () => {
     );
     const afterClock = await clockValue();
     expect(afterClock).toBe(beforeClock + 1);
+  });
+});
+
+describe('v0.42.x sequence-backed clock (BUG 1: contention removal)', () => {
+  test('mechanism: trigger function uses nextval, NOT a locked row UPDATE', async () => {
+    // The contention source was `UPDATE page_generation_clock SET value=value+1
+    // WHERE id=1` (a transaction-length RowExclusiveLock on one tuple). Prove at
+    // the schema level that it is gone and replaced by nextval (a microsecond
+    // LWLock). This is the deterministic, PGLite-runnable contention proof.
+    const rows = await engine.executeRaw<{ src: string }>(
+      `SELECT prosrc AS src FROM pg_proc WHERE proname = 'bump_page_generation_clock_fn'`,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].src).toContain("nextval('page_generation_clock_seq')");
+    expect(rows[0].src).not.toContain('UPDATE page_generation_clock');
+  });
+
+  test('rollback still advances the sequence (over-invalidation is the SAFE direction)', async () => {
+    const before = await clockValue();
+    // Aborted import: the statement trigger fires nextval (sequences are
+    // non-transactional), so last_value advances even though the page never
+    // commits. A cache row stamped before this now fails Layer 1 and
+    // re-validates — a LOST HIT, never a stale serve.
+    try {
+      await engine.transaction(async (tx) => {
+        await tx.executeRaw(
+          `INSERT INTO pages (source_id, slug, type, title, compiled_truth, timeline, frontmatter)
+           VALUES ('default', 'test/rollback-page', 'note', 't', 'body', '', '{}'::jsonb)`,
+        );
+        throw new Error('abort');
+      });
+    } catch {
+      /* expected */
+    }
+    const after = await clockValue();
+    expect(after).toBeGreaterThan(before);
+    // The page itself did NOT persist — rollback worked.
+    const pages = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM pages WHERE slug = 'test/rollback-page' AND source_id = 'default'`,
+    );
+    expect(Number(pages[0].n)).toBe(0);
+  });
+
+  test('PGLite supports sequences: CREATE / nextval / setval / last_value round-trip', async () => {
+    // codex flagged: no existing sequence usage in the repo — prove (not assert)
+    // that PGLite's WASM Postgres supports the constructs migration v118 relies
+    // on, including the is_called gotcha the load-bearing setval guards against.
+    await engine.executeRaw(`CREATE SEQUENCE IF NOT EXISTS test_probe_seq`);
+    // Fresh sequence (is_called=false): first nextval returns the START value 1,
+    // and last_value does NOT visibly advance past it — the exact trap.
+    const n1 = await engine.executeRaw<{ v: number }>(`SELECT nextval('test_probe_seq') AS v`);
+    expect(Number(n1[0].v)).toBe(1);
+    const n2 = await engine.executeRaw<{ v: number }>(`SELECT nextval('test_probe_seq') AS v`);
+    expect(Number(n2[0].v)).toBe(2);
+    // 2-arg setval → last_value=N, is_called=true; the next nextval = N+1.
+    await engine.executeRaw(`SELECT setval('test_probe_seq', 100)`);
+    const lv = await engine.executeRaw<{ v: number }>(`SELECT last_value AS v FROM test_probe_seq`);
+    expect(Number(lv[0].v)).toBe(100);
+    const n3 = await engine.executeRaw<{ v: number }>(`SELECT nextval('test_probe_seq') AS v`);
+    expect(Number(n3[0].v)).toBe(101);
+    await engine.executeRaw(`DROP SEQUENCE test_probe_seq`);
+  });
+
+  test('re-seeding is monotonic: the GREATEST guard never moves last_value backward', async () => {
+    // Regression for the codex P1: initSchema replays the schema blob, whose
+    // setval must NOT reset the clock below its current value — a backward move
+    // would let a stored query_cache bookmark serve stale rows. Push the
+    // sequence high, then run the EXACT monotonic seed the blob + v118 use.
+    await engine.executeRaw(`SELECT setval('page_generation_clock_seq', 999999)`);
+    await engine.executeRaw(
+      `SELECT setval('page_generation_clock_seq', GREATEST(
+         1,
+         COALESCE((SELECT last_value FROM page_generation_clock_seq), 0),
+         COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), 0),
+         COALESCE((SELECT MAX(generation) FROM pages), 0)
+       ))`,
+    );
+    expect(await clockValue()).toBeGreaterThanOrEqual(999999);
   });
 });

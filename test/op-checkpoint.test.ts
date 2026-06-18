@@ -243,6 +243,82 @@ describe('resumeFilter (pure)', () => {
   });
 });
 
+describe('BUG 3: completed_keys array-shape guard (v119 CHECK + defensive loader)', () => {
+  const CONSTRAINT = 'op_checkpoints_completed_keys_array';
+
+  test('CHECK rejects a scalar completed_keys write — exactly one constraint (no blob+migration dupe)', async () => {
+    // Fresh PGLite install: the schema blob ships the NAMED inline CHECK and
+    // migration v119's IF NOT EXISTS skips re-adding it. Exactly one constraint.
+    const c = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_constraint WHERE conname = $1`,
+      [CONSTRAINT],
+    );
+    expect(Number(c[0].n)).toBe(1);
+
+    let threw = false;
+    try {
+      await engine.executeRaw(
+        `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+         VALUES ('embed', 'fp-reject', '"not-an-array"'::jsonb, now())`,
+      );
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+  });
+
+  test('loader survives a scalar parent: returns child rows (not []), does not throw', async () => {
+    const key = { op: 'sync', fingerprint: 'fp-scalar-survive' };
+    // Bypass the CHECK to simulate pre-migration / out-of-band corruption.
+    await engine.executeRaw(`ALTER TABLE op_checkpoints DROP CONSTRAINT ${CONSTRAINT}`);
+    try {
+      await engine.executeRaw(
+        `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+         VALUES ('sync', 'fp-scalar-survive', '"corrupt-scalar"'::jsonb, now())`,
+      );
+      await engine.executeRaw(
+        `INSERT INTO op_checkpoint_paths (op, fingerprint, path)
+         VALUES ('sync', 'fp-scalar-survive', 'child-a.md')`,
+      );
+      // Pre-guard, jsonb_array_elements_text on the scalar threw and the catch
+      // returned [] — losing child-a.md. The typeof guard skips the scalar so
+      // the valid child survives.
+      const loaded = await loadOpCheckpoint(engine, key);
+      expect(loaded).toEqual(['child-a.md']);
+    } finally {
+      await engine.executeRaw(
+        `UPDATE op_checkpoints SET completed_keys = '[]'::jsonb WHERE jsonb_typeof(completed_keys) <> 'array'`,
+      );
+      await engine.executeRaw(
+        `ALTER TABLE op_checkpoints ADD CONSTRAINT ${CONSTRAINT} CHECK (jsonb_typeof(completed_keys) = 'array')`,
+      );
+    }
+  });
+
+  test('v119 repair converts a scalar parent to an empty array', async () => {
+    await engine.executeRaw(`ALTER TABLE op_checkpoints DROP CONSTRAINT ${CONSTRAINT}`);
+    try {
+      await engine.executeRaw(
+        `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+         VALUES ('embed', 'fp-repair', '"scalar"'::jsonb, now())`,
+      );
+      // Migration v119's repair statement.
+      await engine.executeRaw(
+        `UPDATE op_checkpoints SET completed_keys = '[]'::jsonb, updated_at = now()
+         WHERE jsonb_typeof(completed_keys) <> 'array'`,
+      );
+      const typ = await engine.executeRaw<{ t: string }>(
+        `SELECT jsonb_typeof(completed_keys) AS t FROM op_checkpoints WHERE op = 'embed' AND fingerprint = 'fp-repair'`,
+      );
+      expect(typ[0].t).toBe('array');
+    } finally {
+      await engine.executeRaw(
+        `ALTER TABLE op_checkpoints ADD CONSTRAINT ${CONSTRAINT} CHECK (jsonb_typeof(completed_keys) = 'array')`,
+      );
+    }
+  });
+});
+
 describe('purgeStaleCheckpoints', () => {
   test('no stale rows: returns 0', async () => {
     await recordCompleted(engine, { op: 'embed', fingerprint: 'fresh' }, ['x']);

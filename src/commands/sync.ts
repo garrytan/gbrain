@@ -1224,7 +1224,7 @@ async function formatLockBusyMessage(engine: BrainEngine, lockKey: string): Prom
  * with another break-lock or with TTL-eviction can't produce confusing
  * post-conditions.
  */
-async function runBreakLock(
+export async function runBreakLock(
   engine: BrainEngine,
   lockKey: string,
   sourceId: string,
@@ -1243,6 +1243,25 @@ async function runBreakLock(
   }
 
   if (!snap) {
+    // BUG 5 (v0.42.x): --force-break-lock used to emit the same terse "not
+    // held" line and exit 0 even when a sync was genuinely wedged — sending the
+    // operator down a dead end (the wedge was not a held lock). Keep rc=0
+    // (breaking a non-existent lock is idempotently successful; flipping the
+    // exit code would break automation that treats it as success), but under
+    // --force say plainly that nothing was broken and point at the real next
+    // step. The non-force path message is unchanged.
+    if (opts.force) {
+      const wedgeHint =
+        `No lock is held on ${lockKey} — nothing to break. If a sync still ` +
+        `appears wedged, the cause is not a held lock; inspect checkpoint/resume ` +
+        `state with \`gbrain sync --source ${sourceId}\` or \`gbrain doctor\`.`;
+      if (opts.json) {
+        console.log(JSON.stringify({ status: 'absent', lock: lockKey, source_id: sourceId, wedge_hint: wedgeHint }));
+      } else {
+        console.log(wedgeHint);
+      }
+      return 0;
+    }
     if (opts.json) console.log(JSON.stringify({ status: 'absent', lock: lockKey, source_id: sourceId }));
     else console.log(`Lock ${lockKey} is not held (nothing to break).`);
     return 0;

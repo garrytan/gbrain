@@ -164,9 +164,24 @@ INSERT INTO page_generation_clock (id, value)
   VALUES (1, COALESCE((SELECT MAX(generation) FROM pages), 0))
   ON CONFLICT (id) DO NOTHING;
 
+-- v0.42.x: contention-free clock. nextval() takes a microsecond LWLock, not a
+-- transaction-length row lock. Load-bearing setval (2-arg -> is_called=true) so
+-- the first write strictly exceeds the seed; floor 1 (sequence MINVALUE).
+-- Layer-1 reads last_value. Table + trigger names retained.
+CREATE SEQUENCE IF NOT EXISTS page_generation_clock_seq;
+-- Monotonic seed: GREATEST over the sequence's OWN last_value too, so replaying
+-- this blob on an already-upgraded brain (initSchema is re-runnable) can never
+-- move last_value BACKWARD below a stored query_cache bookmark.
+SELECT setval('page_generation_clock_seq', GREATEST(
+  1,
+  COALESCE((SELECT last_value FROM page_generation_clock_seq), 0),
+  COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), 0),
+  COALESCE((SELECT MAX(generation) FROM pages), 0)
+));
+
 CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger AS $func$
 BEGIN
-  UPDATE page_generation_clock SET value = value + 1 WHERE id = 1;
+  PERFORM nextval('page_generation_clock_seq');
   RETURN NULL;
 END;
 $func$ LANGUAGE plpgsql;
@@ -924,7 +939,11 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
 CREATE TABLE IF NOT EXISTS op_checkpoints (
   op             TEXT NOT NULL,
   fingerprint    TEXT NOT NULL,
-  completed_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+  -- v0.42.x: must be a JSONB array. The loader runs jsonb_array_elements_text
+  -- over it; a scalar would throw and wipe the whole checkpoint load. CHECK is
+  -- the DB-enforced always-on guard (mirrors migration v119).
+  completed_keys JSONB NOT NULL DEFAULT '[]'::jsonb
+    CONSTRAINT op_checkpoints_completed_keys_array CHECK (jsonb_typeof(completed_keys) = 'array'),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (op, fingerprint)
 );
