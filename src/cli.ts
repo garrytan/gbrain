@@ -1451,6 +1451,25 @@ async function handleCliOnly(command: string, args: string[]) {
     }
   }
 
+  // `gbrain capture` on thin-client installs bypasses connectEngine entirely —
+  // capture routes through the `put_page` MCP op (runCapture's own thin-client
+  // branch, which passes engine=null). capture is a CLI_ONLY command, so unlike
+  // put / search / whoami it does NOT pass through the shared-op routing seam in
+  // main(); without this bypass it fell through to the unconditional
+  // connectEngine() below and died with "No database URL: database_url is
+  // missing from config" on thin-client configs — while put routed remote fine.
+  // capture is intentionally NOT in THIN_CLIENT_REFUSED_COMMANDS because it CAN
+  // run remotely (the server exposes put_page). Mirrors the `status` /
+  // `eval whoknows` thin-client bypasses above.
+  if (command === 'capture') {
+    const cfgPre = loadConfig();
+    if (isThinClient(cfgPre)) {
+      const { runCapture } = await import('./commands/capture.ts');
+      await runCapture(null, args);
+      return;
+    }
+  }
+
   // v0.37 fix wave (Lane D.4 + CDX2-12): short-circuit `gbrain sync --help`
   // BEFORE the engine bind. runSync has its own --help branch but can't
   // reach it without an engine — which means a user running `--help` from
