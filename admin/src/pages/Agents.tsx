@@ -381,8 +381,15 @@ function CredentialsModal({ credentials, onClose }: {
   );
 }
 
+type ConfigExportTab = 'claude-code' | 'chatgpt' | 'claude-cowork' | 'perplexity' | 'cursor' | 'json';
+const OAUTH_ONLY_TAB_LABELS: Partial<Record<ConfigExportTab, string>> = {
+  chatgpt: 'ChatGPT',
+  'claude-cowork': 'Claude.ai',
+  perplexity: 'Perplexity',
+};
+
 function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () => void; onRevoked: () => void }) {
-  const [tab, setTab] = useState<'claude-code' | 'chatgpt' | 'claude-cowork' | 'perplexity' | 'cursor' | 'json'>('claude-code');
+  const [tab, setTab] = useState<ConfigExportTab>('claude-code');
   const copy = (text: string) => navigator.clipboard.writeText(text);
   const serverUrl = window.location.origin;
 
@@ -577,9 +584,8 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
           <div className={`tab ${tab === 'json' ? 'active' : ''}`} onClick={() => setTab('json')}>JSON</div>
         </div>
         {(() => {
-          const oauthOnlyTabs = new Set(['chatgpt', 'claude-cowork', 'perplexity']);
-          if (!isOAuth && oauthOnlyTabs.has(tab)) {
-            const clientName = { chatgpt: 'ChatGPT', 'claude-cowork': 'Claude.ai', perplexity: 'Perplexity' }[tab] || tab;
+          const clientName = OAUTH_ONLY_TAB_LABELS[tab];
+          if (!isOAuth && clientName) {
             return (
               <div style={{
                 background: 'rgba(255, 200, 100, 0.08)',
