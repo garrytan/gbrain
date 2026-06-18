@@ -24,6 +24,7 @@ import { logLeasePressure } from './lease-pressure-audit.ts';
 import {
   runLockRenewalTick,
   resolveLockRenewalKnobs,
+  parsePositiveInt,
   type LockRenewalDeps,
   type LockRenewalState,
 } from './lock-renewal-tick.ts';
@@ -142,6 +143,24 @@ interface InFlightJob {
   promise: Promise<void>;
 }
 
+/** GBRAIN_DB_FAIL_EXIT_AFTER: consecutive failed DB liveness probes before the
+ *  worker self-exits for process-manager restart. Default 3; clamped to [1, 10]
+ *  so a high-latency pooler link can tolerate more transient probe failures
+ *  without nuking an otherwise-healthy worker mid-job. */
+export function resolveDbFailExitAfter(): number {
+  const n = parsePositiveInt(process.env.GBRAIN_DB_FAIL_EXIT_AFTER, 3, 'GBRAIN_DB_FAIL_EXIT_AFTER');
+  return Math.min(10, Math.max(1, n));
+}
+/** GBRAIN_DB_PROBE_TIMEOUT_MS: per-probe wall-clock timeout (ms). Default 10000;
+ *  effective range [10000, 120000] ms — floored at 10000 so a too-small value
+ *  can't make every probe spuriously fail on a slow cross-region link, and
+ *  capped at 120000 so a very large value combined with GBRAIN_DB_FAIL_EXIT_AFTER
+ *  can't mask a dead DB for an unreasonably long time. */
+export function resolveDbProbeTimeoutMs(): number {
+  const n = parsePositiveInt(process.env.GBRAIN_DB_PROBE_TIMEOUT_MS, 10_000, 'GBRAIN_DB_PROBE_TIMEOUT_MS');
+  return Math.min(120_000, Math.max(10_000, n));
+}
+
 /** Type-safe `on('unhealthy', ...)` for callers. */
 export interface MinionWorker {
   on(event: 'unhealthy', listener: (info: UnhealthyReason) => void): this;
@@ -208,8 +227,8 @@ export class MinionWorker extends EventEmitter {
       healthCheckInterval: opts?.healthCheckInterval ?? 60000,
       stallWarnAfterMs: opts?.stallWarnAfterMs ?? 5 * 60_000,
       stallExitAfterMs: opts?.stallExitAfterMs ?? 10 * 60_000,
-      dbFailExitAfter: opts?.dbFailExitAfter ?? 3,
-      dbProbeTimeoutMs: opts?.dbProbeTimeoutMs ?? 10_000,
+      dbFailExitAfter: opts?.dbFailExitAfter ?? resolveDbFailExitAfter(),
+      dbProbeTimeoutMs: opts?.dbProbeTimeoutMs ?? resolveDbProbeTimeoutMs(),
     };
     // Stall thresholds contract: exit MUST be strictly greater than warn.
     // If exit <= warn, the warn-then-exit semantics break: a single tick at

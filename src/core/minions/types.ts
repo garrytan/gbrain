@@ -182,12 +182,12 @@ export interface MinionWorkerOpts {
    *  reason='stalled'. Default: 600000 (10 minutes). Must be > stallWarnAfterMs. */
   stallExitAfterMs?: number;
   /** DB liveness probe: number of consecutive failed `SELECT 1` probes before
-   *  emitting `'unhealthy'` with reason='db_dead'. Default: 3. */
+   *  emitting `'unhealthy'` with reason='db_dead'. Default: 3. Overridable via env GBRAIN_DB_FAIL_EXIT_AFTER (clamped 1-10). */
   dbFailExitAfter?: number;
   /** Per-probe wall-clock timeout in ms. A `SELECT 1` that hangs longer than
    *  this counts as a failure (fed into dbFailExitAfter). Without this, a
    *  hung probe would wedge the recursive setTimeout chain forever and
-   *  silently disable the health monitor. Default: 10000 (10 seconds). */
+   *  silently disable the health monitor. Default: 10000 (10 seconds). Overridable via env GBRAIN_DB_PROBE_TIMEOUT_MS (floored at 10000). */
   dbProbeTimeoutMs?: number;
 }
 
