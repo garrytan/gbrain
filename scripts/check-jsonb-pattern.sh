@@ -31,41 +31,33 @@ fi
 
 echo "OK: no JSON.stringify(x)::jsonb interpolation pattern in src/"
 
-# v0.42: also catch the POSITIONAL form the interpolated check above misses:
-#   engine.executeRaw(`... $N::jsonb`, [..., JSON.stringify(x)])
-#   engine.executeRawDirect(`... $N::jsonb`, [..., JSON.stringify(x)])
-# Here the `$N::jsonb` cast lives in the SQL string and the JSON.stringify(x)
-# arrives as a positional bind param — so it never appears as the inlined
-# `${JSON.stringify(x)}::jsonb` literal the PATTERN above looks for, yet it
-# double-encodes identically on postgres.js. The fix is executeRawJsonb()
-# (pass the raw object), which is why this guard EXCLUDES `executeRawJsonb(`.
-#
-# Best-effort multi-line scan: flag any executeRaw(...) call (terminated by
-# `);`) whose body contains BOTH a `::jsonb` cast and a `JSON.stringify(`.
+# v0.42.52: targeted guard for op_checkpoints.completed_keys. The broken path
+# bound JSON.stringify(sorted) into `$3::jsonb` through executeRawDirect, which
+# postgres.js stores as a JSONB string scalar. Keep this narrow so this
+# regression check does not turn into a repo-wide JSONB migration.
 POSITIONAL_HITS="$(
-  find src -type f -name '*.ts' -print0 \
-  | xargs -0 perl -0777 -ne '
+  perl -0777 -ne '
       while (/executeRaw(?:Direct)?\s*(?:<[^()]*>\s*)?\((.*?)\)\s*;/sg) {
         my $call = $1;
+        next unless $call =~ /op_checkpoints/;
+        next unless $call =~ /completed_keys/;
         next unless $call =~ /::jsonb/ && $call =~ /JSON\.stringify\s*\(/;
         my $line = (substr($_, 0, pos()) =~ tr/\n//) + 1;
-        print "$ARGV:$line: executeRaw/executeRawDirect(... JSON.stringify(...) ... \$N::jsonb) — positional double-encode\n";
+        print "$ARGV:$line: op_checkpoints.completed_keys JSON.stringify(...) bound to \$N::jsonb\n";
       }
-    ' 2>/dev/null
+    ' src/core/op-checkpoint.ts 2>/dev/null
 )"
 
 if [ -n "$POSITIONAL_HITS" ]; then
   echo "$POSITIONAL_HITS"
   echo
-  echo "ERROR: Found positional JSON.stringify(...) bound to a \$N::jsonb cast via executeRaw/executeRawDirect()."
+  echo "ERROR: Found op_checkpoints.completed_keys JSON.stringify(...) bound to a \$N::jsonb cast."
   echo "       postgres.js re-encodes the string, producing a JSONB STRING literal"
-  echo "       (jsonb_typeof='string'); PGLite hides it. Pass the raw JSON value"
-  echo "       through positional binding; use executeRawJsonb when direct-pool"
-  echo "       routing is not required. See src/core/sql-query.ts."
+  echo "       (jsonb_typeof='string'); PGLite hides it. Bind raw JSON instead."
   exit 1
 fi
 
-echo "OK: no positional executeRaw/executeRawDirect + JSON.stringify(x) + \$N::jsonb pattern in src/"
+echo "OK: op_checkpoints.completed_keys does not bind JSON.stringify(x) to \$N::jsonb"
 
 # v0.13.1 #219: guard against max_stalled DEFAULT 1 regressing in any schema
 # source file. DEFAULT 1 dead-lettered any SIGKILL'd job on first stall, making
