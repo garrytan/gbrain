@@ -96,6 +96,14 @@ If any answer is no, fix it before continuing.
 - Upgrade instructions: `gbrain upgrade` + any manual step if needed.
 - Credit to external contributors when a community PR was incorporated.
 
+**Privacy guard:** public release artifacts must use placeholder people,
+companies, funds, deals, and private agent names. Do not copy real brain queries,
+private fork names, or customer/contact examples into `CHANGELOG.md`,
+`README.md`, `docs/`, PR text, commit messages, or checked-in comments. If you
+need an example, use `alice-example`, `widget-co`, `fund-a`, or `your OpenClaw`.
+The literal denylist belongs in the privacy-check scripts and their explicit
+meta-rule allowlist, not in public docs.
+
 ## CHANGELOG voice + release-summary format
 
 **IRON RULE: the CHANGELOG describes what the user gets, not how the work
@@ -432,4 +440,3 @@ Why this over alternatives: adding `garrytan-agents` as a collaborator, or
 flipping the repo-wide "send secrets to fork PRs" toggle, both broaden
 secret distribution to every fork PR from that account or any fork. Moving
 the branch keeps secret scope tight to just the one PR being shipped.
-
