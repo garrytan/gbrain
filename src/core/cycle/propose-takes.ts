@@ -153,6 +153,8 @@ export interface ProposeTakesResult {
   cache_misses: number;
   proposals_inserted: number;
   budget_exhausted: boolean;
+  /** v0.42.20.0+ — true when PHASE_DEADLINE_MS fired before page loop completed. */
+  deadline_hit?: boolean;
   warnings: string[];
 }
 
@@ -211,9 +213,25 @@ export function extractExistingTakesForDedup(pageBody: string): Array<{
 }
 
 /**
+ * v0.42.20.0+ — Per-call wall-clock timeout for the extractor. The default
+ * gateway timeout (`GBRAIN_AI_CHAT_TIMEOUT_MS`, 300s) is too generous for
+ * extraction: 100 pages × stalled 5-min call = 500min, far past any cron
+ * budget. We bound each call to 90s — extraction prompts are short, 90s
+ * is "something is wrong" territory. Caller catches the abort, the page
+ * is logged as a warning, and the phase continues. Fixes the
+ * `propose_takes aborted SIGTERM` pattern that has hit the nightly dream
+ * since 2026-06-15 (v0.42.20.0 ship note).
+ */
+const EXTRACTOR_CALL_TIMEOUT_MS = 90_000;
+
+/**
  * Production extractor — calls gateway.chat with the EXTRACT_TAKES_PROMPT
  * and parses the JSON array output. Returns [] on parse failure (logged as
  * warning, not thrown — one bad page must not abort the phase).
+ *
+ * Bound by EXTRACTOR_CALL_TIMEOUT_MS via AbortSignal so a single stalled
+ * provider socket can't pin the phase past its deadline. Mirrors the
+ * `withDefaultTimeout` shape used in `core/ai/gateway.ts`.
  *
  * Stub-prompt note: the v0.36.1.0 ship-state prompt is a placeholder. Real
  * extractor lands when T19 corpus build produces the tuned prompt. Until
@@ -231,6 +249,7 @@ export async function defaultExtractor(
     messages: [{ role: 'user', content: prompt }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
     maxTokens: 2048,
+    abortSignal: AbortSignal.timeout(EXTRACTOR_CALL_TIMEOUT_MS),
   });
 
   // ChatResult.text is already the concatenated text content.
@@ -287,6 +306,16 @@ class ProposeTakesPhase extends BaseCyclePhase {
   readonly name = 'propose_takes' as CyclePhase;
   protected readonly budgetUsdKey = 'cycle.propose_takes.budget_usd';
   protected readonly budgetUsdDefault = 5.0;
+  /**
+   * v0.42.20.0+ — Hard wall-clock deadline for the phase. Even with the
+   * per-call timeout in defaultExtractor (90s), a long tail of slow
+   * non-aborting responses (rate-limit retries, gateway queueing) can
+   * accumulate. 30 min matches the patterns.ts deadline and guarantees
+   * the phase either completes cleanly or returns a partial result
+   * with `deadline_hit: true` instead of being killed by an outer
+   * `timeout 600` wrapper. Fixes the recurring SIGTERM in dream.log.
+   */
+  private static readonly PHASE_DEADLINE_MS = 30 * 60 * 1000;
 
   protected override mapErrorCode(err: unknown): string {
     if (err instanceof GBrainError) return err.problem;
@@ -305,9 +334,16 @@ class ProposeTakesPhase extends BaseCyclePhase {
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
     const extractor = opts.extractor ?? defaultExtractor;
     const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
-    const pageLimit = opts.pageLimit ?? 100;
+    // v0.42.20.0+ — default 100 → 30. 100 pages × ~30s/extract = 50 min,
+    // which blew past the cron wrapper's 600s budget and triggered the
+    // recurring SIGTERM. 30 pages × ~30s = 15 min, fits well inside the
+    // 30-min phase deadline. Callers that need more can opt in via
+    // opts.pageLimit (e.g. drain mode). 30 also keeps a $5 budget in
+    // comfortable reach (~1500 input tokens × 30 = 45K input tokens).
+    const pageLimit = opts.pageLimit ?? 30;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
+    const phaseStartMs = Date.now();
 
     const result: ProposeTakesResult = {
       pages_scanned: 0,
@@ -333,6 +369,22 @@ class ProposeTakesPhase extends BaseCyclePhase {
     for (const page of pages) {
       result.pages_scanned += 1;
       this.tick(opts);
+
+      // v0.42.20.0+ — Phase deadline check. Even with the per-call 90s
+      // abortSignal, a long tail of slow-but-completing responses can
+      // accumulate past 30 min. Break here (not throw) so the phase
+      // returns a partial result with deadline_hit:true instead of
+      // being killed by the outer 600s `timeout` wrapper.
+      const elapsedMs = Date.now() - phaseStartMs;
+      if (elapsedMs > ProposeTakesPhase.PHASE_DEADLINE_MS) {
+        result.warnings.push(
+          `phase deadline hit at page ${result.pages_scanned}/${pages.length} ` +
+          `after ${(elapsedMs / 1000).toFixed(0)}s (cap ${ProposeTakesPhase.PHASE_DEADLINE_MS / 1000}s); ` +
+          `partial completion`,
+        );
+        result.deadline_hit = true;
+        break;
+      }
 
       // Skip pages that have NO prose body (e.g. metadata-only entity stubs).
       const body = page.compiled_truth ?? '';
