@@ -926,6 +926,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'embed.backfill_cooldown_min',
   'embed.backfill_max_usd_per_source_24h',
   'embed.backfill_max_usd',
+  // Monthly cloud-chat budget gate (Claude + DeepSeek by default). Read by
+  // CLI startup and applied as a BudgetTracker default.
+  'budget.monthly.chat_max_usd',
+  'budget.monthly.mode',
 ];
 
 /**
@@ -944,6 +948,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'mcp.',               // mcp.publish_skills, mcp.skills_dir (PR1 skill catalog)
   'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
   'self_upgrade.',      // v0.42 self-upgrade (mode, quiet_hours, state)
+  'budget.',            // budget.monthly.* cloud-chat spend controls
 ];
 
 export function saveConfig(config: GBrainConfig): void {
