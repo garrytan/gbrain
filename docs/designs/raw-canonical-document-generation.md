@@ -4,7 +4,7 @@
 
 MBrain should accept raw source observations and produce reviewable brain-page
 drafts in the canonical Markdown shape. The generator exists to make import
-quality consistent across meetings, PDFs, papers, technical documents, personal
+quality consistent across meetings, PDFs, Markdown/text files, technical
 notes, and source-code snapshots without bypassing governed canonical writes.
 
 ## Non-Goals
@@ -28,10 +28,43 @@ Raw ingestion or an extractor supplies structured observations:
 The generator treats `source_refs` as the evidence boundary for each fact. A
 request without a target slug, source item, source ref, or observation is blocked.
 
-## How To Use
+## Path-First Preview
 
-Use the generator after raw source registration or extraction has already
-produced structured observations. The preview does not mutate canonical memory.
+Most users should start with a path. The command is preview-only and works
+without a configured brain database:
+
+```bash
+mbrain canonicalize ~/Downloads/acme-board-deck.pdf
+mbrain canonicalize ./meeting-notes.md --target-slug projects/acme/docs/meeting-notes
+mbrain canonicalize-code ~/src/acme-api
+```
+
+What happens:
+
+1. MBrain detects whether the path is a PDF, Markdown/text document, or source
+   tree.
+2. It computes stable provenance: opaque local locator, content hash, source
+   item id, update timestamp, and for source trees a file manifest plus git
+   commit when present.
+3. It scans sampled text/metadata with the raw ingest safety scanner.
+4. It renders a reviewable canonical Markdown draft by calling the same
+   preview generator described below.
+
+For PDFs, the current MVP is metadata-only. It records the file provenance and
+warns that PDF text/OCR extraction was not performed. Word/docx files are not
+handled by this wrapper yet. Use `--json` when another tool or agent should
+consume the full structured preview result.
+
+The path wrapper is intentionally local CLI-only because it reads local files.
+It is not exposed as an MCP operation. The output is not written to canonical
+memory. Review the draft, enrich it when needed, then submit accepted content
+through memory writeback or patch review.
+
+## Advanced Structured Preview
+
+Use the structured generator after raw source registration or extraction has
+already produced observations. This path is for agents, importers, and custom
+extractors. The preview does not mutate canonical memory.
 
 1. Identify or register the source and raw item.
 2. Extract observations into one or more document requests.
@@ -175,9 +208,11 @@ The first implementation provides:
 
 - `generateRawCanonicalDocumentDrafts()` pure service.
 - `preview_raw_canonical_document` non-mutating operation.
+- `mbrain canonicalize <path>` and `mbrain canonicalize-code <path>` path-first,
+  preview-only local CLI commands.
 - Markdown serialization and parse round-trip validation for type, title, tags,
   frontmatter, compiled truth, and timeline.
 - blocked-draft sanitization for unsafe or incomplete observations.
 
 Follow-up work can add parser-specific extractors, graph edge planning,
-candidate creation, and richer CLI wrappers once the preview contract is stable.
+candidate creation, and richer PDF/source-code extractors.

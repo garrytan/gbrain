@@ -174,6 +174,37 @@ const AGENT_SESSION_CLI_SPEC: Operation = {
   cliHints: { name: 'agent-session', positional: ['action'] },
 };
 
+const CANONICALIZE_CLI_SPEC: Operation = {
+  name: 'canonicalize',
+  description: 'Preview draft from a PDF, Markdown/text file, or source tree path. Preview-only; does not write memory. PDFs are metadata-only in this MVP.',
+  params: {
+    path: { type: 'string', required: true, description: 'PDF, Markdown/text file, or source-code project path to preview. PDF text/OCR extraction is not performed.' },
+    target_slug: { type: 'string', description: 'Optional canonical target slug override.' },
+    title: { type: 'string', description: 'Optional title override for the generated draft.' },
+    type: { type: 'string', description: 'Optional page type override.' },
+    source_kind: { type: 'string', description: 'Optional source-kind override.' },
+    now: { type: 'string', description: 'Optional ISO timestamp for deterministic timeline draft entries.' },
+    json: { type: 'boolean', description: 'Emit JSON instead of concise review text.' },
+  },
+  handler: noopHandler,
+  cliHints: { name: 'canonicalize', positional: ['path'] },
+};
+
+const CANONICALIZE_CODE_CLI_SPEC: Operation = {
+  name: 'preview_canonicalize_code_path',
+  description: 'Preview source-code project draft from a repository path. Preview-only; does not write memory.',
+  params: {
+    path: { type: 'string', required: true, description: 'Source-code project or repository path to preview.' },
+    target_slug: { type: 'string', description: 'Optional canonical target slug override.' },
+    title: { type: 'string', description: 'Optional title override for the generated draft.' },
+    type: { type: 'string', description: 'Optional page type override.' },
+    now: { type: 'string', description: 'Optional ISO timestamp for deterministic timeline draft entries.' },
+    json: { type: 'boolean', description: 'Emit JSON instead of concise review text.' },
+  },
+  handler: noopHandler,
+  cliHints: { name: 'canonicalize-code', positional: ['path'] },
+};
+
 const CONNECTORS_CLI_SPEC: Operation = {
   name: 'connectors',
   description: 'Inspect connector definitions or sync supported personal connector sources.',
@@ -214,6 +245,8 @@ const CLI_ONLY_SPECS: Partial<Record<string, Operation>> = {
   'memory-report': MEMORY_REPORT_CLI_SPEC,
   'auto-promote': AUTO_PROMOTE_CLI_SPEC,
   'agent-session': AGENT_SESSION_CLI_SPEC,
+  canonicalize: CANONICALIZE_CLI_SPEC,
+  'canonicalize-code': CANONICALIZE_CODE_CLI_SPEC,
   'setup-agent': SETUP_AGENT_CLI_SPEC,
 };
 
@@ -225,6 +258,8 @@ const DIRECT_NO_ENGINE_COMMANDS: Record<string, CliNoEngineLoader> = {
   'check-backlinks': async () => (await import('./commands/backlinks.ts')).runBacklinks,
   lint: async () => (await import('./commands/lint.ts')).runLint,
   report: async () => (await import('./commands/report.ts')).runReport,
+  canonicalize: async () => (await import('./commands/canonicalize.ts')).runCanonicalize,
+  'canonicalize-code': async () => (await import('./commands/canonicalize.ts')).runCanonicalizeCode,
 };
 
 const CLI_NO_ENGINE_COMMANDS: Record<string, CliNoEngineLoader> = {
@@ -597,6 +632,9 @@ SEARCH
 
 IMPORT/EXPORT
   import <dir> [--no-embed]          Import markdown directory
+  canonicalize <path> [--json]       Preview draft from a PDF, Markdown/text file, or source tree
+                                    PDFs are metadata-only in this MVP
+  canonicalize-code <path> [--json]  Preview source-code project draft from a repository path
   sync [--repo <path>] [flags]       Git-to-brain incremental sync
   export [--dir ./out/] [--personal-export]  Export pages or curated personal markdown
 

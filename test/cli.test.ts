@@ -11,6 +11,7 @@ const initSource = readFileSync(new URL('../src/commands/init.ts', import.meta.u
 const serveSource = readFileSync(new URL('../src/commands/serve.ts', import.meta.url), 'utf-8');
 const agentSessionSource = readFileSync(new URL('../src/commands/agent-session.ts', import.meta.url), 'utf-8');
 const edgeIndexSource = readFileSync(new URL('../supabase/functions/mbrain-mcp/index.ts', import.meta.url), 'utf-8');
+const readmeSource = readFileSync(new URL('../README.md', import.meta.url), 'utf-8');
 const originalEnv = { ...process.env };
 let tempHome: string;
 
@@ -168,6 +169,24 @@ describe('CLI source shape', () => {
     const engineBlock = cliSource.match(/const DIRECT_ENGINE_COMMANDS:.*?= \{(.*?)\};/s)?.[1] ?? '';
     expect(noEngineBlock).not.toContain("'memory-report'");
     expect(engineBlock).toContain("'memory-report'");
+  });
+
+  test('canonicalize commands are path-first preview-only commands that do not require a configured DB', () => {
+    const operation = operations.find(op => op.name === 'preview_canonicalize_path');
+    expect(operation).toBeUndefined();
+
+    const noEngineBlock = cliSource.match(/const DIRECT_NO_ENGINE_COMMANDS:.*?= \{(.*?)\};/s)?.[1] ?? '';
+    const engineBlock = cliSource.match(/const DIRECT_ENGINE_COMMANDS:.*?= \{(.*?)\};/s)?.[1] ?? '';
+    expect(noEngineBlock).toContain('canonicalize');
+    expect(noEngineBlock).toContain("'canonicalize-code'");
+    expect(engineBlock).not.toContain('canonicalize');
+    expect(cliSource).toContain('canonicalize <path>');
+    expect(cliSource).toContain('Preview draft from a PDF, Markdown/text file, or source tree');
+    expect(cliSource).toContain('PDFs are metadata-only in this MVP');
+    expect(cliSource).toContain('Preview source-code project draft from a repository path');
+    expect(readmeSource).toContain('PDFs are metadata-only in this MVP');
+    expect(readmeSource).toContain('mbrain canonicalize-code ~/src/acme-api');
+    expect(readmeSource).not.toContain('mbrain canonicalize-code ~/src/acme-api --json');
   });
 
   test('imports operations from operations.ts', () => {
@@ -517,6 +536,52 @@ describe('CLI dispatch integration', () => {
     expect(stdout).toContain('--path');
     expect(stderr).toBe('');
     expect(exitCode).toBe(0);
+  });
+
+  test('canonicalize previews a local document without DB connection', async () => {
+    const docPath = join(tempHome, 'meeting-notes.md');
+    writeFileSync(docPath, '# Meeting Notes\n\nThe launch review moved to Monday.\n');
+
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'canonicalize', docPath], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe('');
+    expect(stdout).toContain('Preview only: no canonical memory was written.');
+    expect(stdout).toContain('Kind: markdown_file');
+    expect(stdout).toContain('The document states: "The launch review moved to Monday."');
+  });
+
+  test('canonicalize rejects invalid type and timestamp before previewing', async () => {
+    const docPath = join(tempHome, 'meeting-notes.md');
+    writeFileSync(docPath, '# Meeting Notes\n\nThe launch review moved to Monday.\n');
+
+    const invalidType = Bun.spawn(['bun', 'run', 'src/cli.ts', 'canonicalize', docPath, '--type', 'nonsense'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const invalidTypeStderr = await new Response(invalidType.stderr).text();
+    expect(await invalidType.exited).toBe(1);
+    expect(invalidTypeStderr).toContain('--type must be one of:');
+
+    const invalidNow = Bun.spawn(['bun', 'run', 'src/cli.ts', 'canonicalize', docPath, '--now', 'not-a-date'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const invalidNowStderr = await new Response(invalidNow.stderr).text();
+    expect(await invalidNow.exited).toBe(1);
+    expect(invalidNowStderr).toContain('--now must be a valid ISO timestamp');
   });
 
   test('connectors list prints registry definitions without DB connection', async () => {

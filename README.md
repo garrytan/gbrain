@@ -142,6 +142,22 @@ brain is usable immediately.
 When you are ready, replace `~/tmp/mbrain-demo` with your real notes directory,
 for example `~/git/brain` or an Obsidian vault.
 
+### Preview PDFs, Markdown/text files, and source projects
+
+For raw files or project source trees, start with a review-only canonical draft:
+
+```bash
+mbrain canonicalize ~/Downloads/acme-report.pdf
+mbrain canonicalize ./meeting-notes.md --target-slug projects/acme/docs/meeting-notes
+mbrain canonicalize-code ~/src/acme-api
+```
+
+These commands compute provenance and render draft Markdown, but do not write
+canonical memory. Review the draft first, then route accepted content through
+the memory writeback or patch review flow. PDFs are metadata-only in this MVP:
+text/OCR is not extracted yet. Use `--json` when an agent or script needs the
+full structured preview result.
+
 ### 5. Search
 
 ```bash

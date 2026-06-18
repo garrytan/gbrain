@@ -128,6 +128,7 @@ export interface RunnerChunkPayload {
 const INVISIBLE_FORMAT_TEXT_PATTERN = /[\u00AD\u034F\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g;
 const PROMPT_INJECTION_PATTERNS = [
   /\b(?:ignore|disregard|forget|override|bypass)\s+(?:all\s+)?(?:previous|prior|earlier|above|system|developer)\s+(?:instructions?|prompts?|messages?|rules?)\b/,
+  /\b(?:ignore|disregard|forget|override|bypass)\s+(?:all\s+)?(?:previous|prior|earlier|above)\s+(?:system|developer)\s+(?:instructions?|prompts?|messages?|rules?)\b/,
   /\b(?:ignore|disregard|forget|override|bypass)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message|instructions?)\b/,
   /\b(?:reveal|show|print|display|dump|leak|exfiltrat\w*|send|share|return)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message|instructions?)\b/,
   /\byou\s+are\s+now\s+(?:in\s+)?(?:developer|jailbreak|admin|root)\s+mode\b/,
