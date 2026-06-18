@@ -484,6 +484,16 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     1,
     Number(process.env.GBRAIN_AUTOPILOT_MAX_RECONNECT_FAILS) || 30,
   );
+  // v0.42.x — wall-clock bound on the per-tick DB health probe. A half-open
+  // pooler connection can leave `engine.getConfig` pending forever (never
+  // resolves OR rejects), parking this dispatch loop (the alive-but-idle wedge:
+  // process up, logs frozen, 0 cycles enqueued). Bounding it turns a hang into a
+  // thrown error the existing reconnect/exit machinery below already handles.
+  // Mirrors the worker's probeWithTimeout idiom. Default 10s; floored at 5s.
+  const AUTOPILOT_PROBE_TIMEOUT_MS = Math.max(
+    5_000,
+    Number(process.env.GBRAIN_AUTOPILOT_PROBE_TIMEOUT_MS) || 10_000,
+  );
   // Peer-worker liveness for --no-worker mode. The probe is a proxy, not
   // ground truth: SELECT count(*) of active jobs with a recent lock_until
   // refresh. A queue with only waiting jobs and a healthy idle worker
@@ -526,7 +536,24 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     //     launchd's KeepAlive backoff actually backs off instead of
     //     thrashing.
     try {
-      await engine.getConfig('version');
+      // Bound the probe (see AUTOPILOT_PROBE_TIMEOUT_MS) so a half-open pooler
+      // connection that never settles can't hang the dispatch loop forever.
+      const probe = engine.getConfig('version');
+      probe.catch(() => {}); // swallow a late settle if the deadline wins first
+      let probeTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          probe,
+          new Promise<never>((_, reject) => {
+            probeTimer = setTimeout(
+              () => reject(new Error(`autopilot health probe timeout after ${AUTOPILOT_PROBE_TIMEOUT_MS}ms`)),
+              AUTOPILOT_PROBE_TIMEOUT_MS,
+            );
+          }),
+        ]);
+      } finally {
+        if (probeTimer) clearTimeout(probeTimer);
+      }
       autopilotReconnectFails = 0; // reset on success
     } catch (probeErr) {
       try {

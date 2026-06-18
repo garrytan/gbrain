@@ -1657,6 +1657,12 @@ export async function registerBuiltinHandlers(
       brainDir: repoPath,
       pull,
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
+      // v0.42.x: enable the per-phase soft timeout for autopilot cycles (default
+      // 600s; GBRAIN_PHASE_TIMEOUT_SECONDS overrides). A slow heavy phase
+      // (resolve_symbol_edges / embed) then defers to the next cycle instead of
+      // dragging the whole cycle into the 1800s job-timeout dead-letter. Other
+      // runCycle callers (dream, manual `gbrain cycle`) leave it unset (off).
+      phaseTimeoutSeconds: Number(process.env.GBRAIN_PHASE_TIMEOUT_SECONDS) || 600,
       ...(sourceId ? { sourceId } : {}),
       ...(requestedPhases && requestedPhases.length > 0 ? { phases: requestedPhases as any } : {}),
       yieldBetweenPhases: async () => {
