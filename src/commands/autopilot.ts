@@ -18,6 +18,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync } from 'fs';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
@@ -529,8 +530,13 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       autopilotReconnectFails = 0; // reset on success
     } catch (probeErr) {
       try {
-        await engine.disconnect();
-        await (engine as any).connect?.();
+        // #2034: use reconnect() — it restores the config captured at connect()
+        // and avoids the null-connection window. The previous
+        // `disconnect()` + bare `connect()` lost the config (throwing
+        // `database_url undefined` on every retry → FATAL restart-loop on any
+        // transient DB blip) AND tore down the pool postgres.js can otherwise
+        // self-heal.
+        await engine.reconnect({ error: probeErr });
         autopilotReconnectFails = 0;
       } catch (e) {
         logError('reconnect', e);
@@ -542,7 +548,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             `Exiting so launchd ThrottleInterval can apply backoff.`,
           );
           stopping = true;
-          process.exitCode = 1;
+          setCliExitVerdict(1);
           break;
         }
         if (autopilotReconnectFails >= AUTOPILOT_MAX_RECONNECT_FAILS) {
@@ -551,7 +557,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             `Last error: ${(e as Error).message ?? 'unknown'}. Exiting.`,
           );
           stopping = true;
-          process.exitCode = 1;
+          setCliExitVerdict(1);
           break;
         }
       }

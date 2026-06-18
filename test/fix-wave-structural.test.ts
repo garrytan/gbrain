@@ -125,15 +125,15 @@ describe('v0.36.1.x #1124 — query --no-expand actually negates expand', () => 
 
 describe('v0.42.20.0 — background-work registry drains every sink before disconnect', () => {
   // Supersedes the v0.41.8.0 #1247/#1269/#1290 per-call last-retrieved drain:
-  // last-retrieved is now one of four registry sinks; cli.ts drains the whole
-  // registry (drainAllBackgroundWorkForCliExit) before disconnect on BOTH the
-  // op-dispatch path AND the CLI_ONLY path (the latter closes #1762 for capture).
-  test('cli.ts imports + uses drainAllBackgroundWorkForCliExit', () => {
-    const src = readFileSync('src/cli.ts', 'utf8');
-    expect(src).toMatch(/import\s+\{\s*drainAllBackgroundWorkForCliExit\s*\}\s*from\s+['"]\.\/core\/background-work\.ts['"]/);
-    // Two call sites: op-dispatch finally + handleCliOnly finally.
-    const calls = src.match(/await\s+drainAllBackgroundWorkForCliExit\s*\(/g) ?? [];
-    expect(calls.length).toBeGreaterThanOrEqual(2);
+  // last-retrieved is one of four registry sinks. #2084 moved the registry
+  // drain out of cli.ts's inline finallys into finishCliTeardown
+  // (cli-force-exit.ts), which every cli.ts teardown site routes through —
+  // the drain-before-disconnect invariant is pinned there (and behaviorally
+  // by test/cli-finish-teardown.test.ts).
+  test('cli-force-exit.ts imports + drains the registry inside finishCliTeardown', () => {
+    const src = readFileSync('src/core/cli-force-exit.ts', 'utf8');
+    expect(src).toMatch(/import\s+\{\s*drainAllBackgroundWorkForCliExit[\s\S]*?\}\s*from\s+['"]\.\/background-work\.ts['"]/);
+    expect(src).toMatch(/export async function finishCliTeardown/);
   });
 
   test('last-retrieved.ts still exports the bounded drain + registers a drainer', () => {
@@ -155,17 +155,17 @@ describe('v0.42.20.0 — background-work registry drains every sink before disco
       .toMatch(/name:\s*'eval-capture'/);
   });
 
-  test('cli.ts behavioral positioning: registry drain appears BEFORE engine.disconnect (op-dispatch)', () => {
-    const src = readFileSync('src/cli.ts', 'utf8');
-    const localPath = src.match(/\/\/ Local engine path \(unchanged behavior[\s\S]+?^\}/m);
-    expect(localPath).not.toBeNull();
-    const block = localPath![0];
-    const drainCallRe = /await\s+drainAllBackgroundWorkForCliExit\s*\(/;
-    const disconnectCallRe = /await\s+engine\.disconnect\s*\(/;
-    expect(block).toMatch(drainCallRe);
-    expect(block).toMatch(disconnectCallRe);
-    const drainIdx = block.indexOf(block.match(drainCallRe)![0]);
-    const disconnectIdx = block.indexOf(block.match(disconnectCallRe)![0]);
+  test('finishCliTeardown positioning: registry drain appears BEFORE engine disconnect', () => {
+    // #2084: the invariant moved from cli.ts's inline finallys into the shared
+    // helper. The drain must run against a live engine (facts abort-path
+    // logIngest, #1762) before disconnect tears the pools down.
+    const src = readFileSync('src/core/cli-force-exit.ts', 'utf8');
+    const drainCallRe = /await\s+drain\s*\(\s*\{\s*timeoutMs:\s*drainTimeoutMs\s*\}\s*\)/;
+    const disconnectCallRe = /await\s+opts\.engine\.disconnect\s*\(/;
+    expect(src).toMatch(drainCallRe);
+    expect(src).toMatch(disconnectCallRe);
+    const drainIdx = src.indexOf(src.match(drainCallRe)![0]);
+    const disconnectIdx = src.indexOf(src.match(disconnectCallRe)![0]);
     expect(drainIdx).toBeLessThan(disconnectIdx);
   });
 
@@ -184,6 +184,56 @@ describe('v0.42.20.0 — background-work registry drains every sink before disco
   });
 });
 
+describe('#2084 — cli.ts owns process-exit teardown via finishCliTeardown', () => {
+  test('no bare awaited engine disconnects remain in cli.ts', () => {
+    // The awaited forms are the call-site contract (comments never use the
+    // awaited literal, so this is comment-proof — eng-review D13.2). A bare
+    // disconnect skips the bounded drain + computed-deadline backstop and
+    // reopens the lingering-socket hang class.
+    const src = readFileSync('src/cli.ts', 'utf8');
+    expect(src).not.toContain('await engine.disconnect()');
+    expect(src).not.toContain('await eng.disconnect()');
+  });
+
+  test('the pre-handler hard-deadline timer is gone (handler time is not teardown budget)', () => {
+    // Pre-#2084 the op-dispatch timer armed BEFORE the op handler, so any op
+    // slower than 10s was force-killed mid-run with exit 0 and truncated
+    // output. The deadline now arms inside finishCliTeardown, at teardown
+    // start only.
+    const src = readFileSync('src/cli.ts', 'utf8');
+    expect(src).not.toContain('DISCONNECT_HARD_DEADLINE_MS');
+  });
+
+  test('all nine swept sites route through finishCliTeardown; one exit seam', () => {
+    const src = readFileSync('src/cli.ts', 'utf8');
+    const calls = src.match(/await finishCliTeardown\(/g) ?? [];
+    expect(calls.length).toBeGreaterThanOrEqual(9);
+    // The single process-exit seam: flushThenExit in the import.meta.main
+    // block, fed by currentExitCode().
+    expect(src).toMatch(/import\.meta\.main/);
+    expect(src).toMatch(/flushThenExit\(currentExitCode\(\)\)/);
+  });
+
+  test('pglite-engine contains the Emscripten process.exitCode hijack', () => {
+    // PGLite's WASM runtime writes its own status into process.exitCode (99
+    // alive / exit status on close) and ignores `undefined` assignment. The
+    // create call runs inside preservingProcessExitCode to keep the global
+    // tidy; close is deliberately unwrapped (see below) — the CLI's verdict
+    // is immune either way via the owned channel.
+    const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
+    expect(src).toMatch(/preservingProcessExitCode\(\(\)\s*=>\s*\n?\s*PGlite\.create/);
+    // close stays UNWRAPPED by design: its status write is baseline behavior
+    // test runners depend on; the CLI's verdict is immune because it lives in
+    // the gbrain-owned channel, never read back from process.exitCode.
+    const helper = readFileSync('src/core/cli-force-exit.ts', 'utf8');
+    expect(helper).toMatch(/let cliVerdict: number \| null = null/);
+    expect(helper).toMatch(/return cliVerdict \?\? 0/);
+    // The op-dispatch catch must set the verdict through the owned channel.
+    const cli = readFileSync('src/cli.ts', 'utf8');
+    expect(cli).toMatch(/setCliExitVerdict\(1\);/);
+  });
+});
+
 describe('v0.41.8.0 #1340 — PGLite WASM init classifier', () => {
   test('pglite-engine.ts exports classifyPgliteInitError + buildPgliteInitErrorMessage', () => {
     const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
@@ -198,5 +248,22 @@ describe('v0.41.8.0 #1340 — PGLite WASM init classifier', () => {
     const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
     expect(src).toMatch(/classifyPgliteInitError\(original\)/);
     expect(src).toMatch(/buildPgliteInitErrorMessage\(verdict, original\)/);
+  });
+});
+
+describe('v0.42.43.0 #2095 — volunteer-events sink + cycle purge wiring (structural pins)', () => {
+  test('volunteer-events registers a background-work drainer (order 4)', () => {
+    // Deleting this registration would silently drop volunteer events on
+    // every CLI exit with no behavioral test failing — same pin class as the
+    // other four sinks above.
+    const src = readFileSync('src/core/context/volunteer-events.ts', 'utf8');
+    expect(src).toMatch(/registerBackgroundWorkDrainer\(\{[\s\S]*?name:\s*'volunteer-events'/);
+    expect(src).toMatch(/order:\s*4/);
+  });
+
+  test("the dream cycle's purge phase invokes purgeStaleVolunteerEvents and reports the count", () => {
+    const src = readFileSync('src/core/cycle.ts', 'utf8');
+    expect(src).toMatch(/purgeStaleVolunteerEvents\(engine\)/);
+    expect(src).toMatch(/purged_volunteer_events_count/);
   });
 });

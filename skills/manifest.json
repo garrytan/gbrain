@@ -240,6 +240,11 @@
       "description": "Compress an agent's routing file (RESOLVER.md or AGENTS.md) by replacing skill-per-row tables with functional-area dispatcher entries. Two-layer dispatch keeps every sub-skill reachable at ~50% of the file size."
     },
     {
+      "name": "gbrain-advisor",
+      "path": "gbrain-advisor/SKILL.md",
+      "description": "Proactive 'make the most of gbrain' coaching. Runs gbrain advisor on a cadence and pings the user with the top high-leverage actions for their brain. Read-only; always asks before fixing."
+    },
+    {
       "name": "brain-taxonomist",
       "path": "brain-taxonomist/SKILL.md",
       "description": "Filing gate consulted before every brain page write. Reads the active schema pack via `gbrain schema show --json`; emits a recommended filing path with reasoning."

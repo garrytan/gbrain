@@ -142,6 +142,27 @@ describe('buildFactsAlterRecipe', () => {
     const recipe = buildFactsAlterRecipe(1536, 1280, 'halfvec');
     expect(recipe).toMatch(/DROP INDEX[\s\S]*ALTER TABLE[\s\S]*CREATE INDEX/);
   });
+
+  test('dimension change NULLs embeddings BEFORE the alter (pgvector refuses cross-dim casts)', () => {
+    // Same defect class fixed for content_chunks in embeddingMismatchMessage:
+    // pgvector aborts a cross-dimension ALTER while rows still hold old-width
+    // vectors. The dims-change recipe must wipe first; order pinned.
+    const recipe = buildFactsAlterRecipe(1536, 1280, 'halfvec');
+    const nullIdx = recipe.indexOf('UPDATE facts SET embedding = NULL');
+    const alterIdx = recipe.indexOf('ALTER TABLE facts ALTER COLUMN embedding TYPE');
+    expect(nullIdx).toBeGreaterThan(-1);
+    expect(alterIdx).toBeGreaterThan(-1);
+    expect(nullIdx).toBeLessThan(alterIdx);
+  });
+
+  test('same-dim type swap PRESERVES embeddings (no NULL wipe)', () => {
+    // halfvec(1536) <-> vector(1536): the USING cast is lossless and the
+    // whole point is keeping the data. A wipe here would destroy valid
+    // embeddings for no reason.
+    const recipe = buildFactsAlterRecipe(1536, 1536, 'vector');
+    expect(recipe).not.toContain('UPDATE facts SET embedding = NULL');
+    expect(recipe).toContain('USING embedding::vector(1536)');
+  });
 });
 
 describe('FactsEmbeddingDimMismatchError', () => {

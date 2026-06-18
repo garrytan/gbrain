@@ -222,10 +222,15 @@ export async function runExtractFacts(
 
     if (opts.dryRun) continue;
 
-    // Wipe-and-reinsert per page. The deleteFactsForPage call targets
-    // source_markdown_slug = slug only, so NULL-source_markdown_slug
-    // legacy rows survive (the partial-UNIQUE-index keyspace).
-    const deleted = await engine.deleteFactsForPage(slug, sourceId);
+    // Wipe-and-reinsert per page. The delete targets source_markdown_slug =
+    // slug only, so NULL-source_markdown_slug legacy rows survive (the
+    // partial-UNIQUE-index keyspace). #1928: `cli:`-origin facts (conversation
+    // facts from extract-conversation-facts) are NOT fence-owned — the page
+    // carries no `## Facts` fence to recreate them — so they MUST survive this
+    // reconcile. Exclude them from the wipe.
+    const deleted = await engine.deleteFactsForPage(slug, sourceId, {
+      excludeSourcePrefixes: ['cli:'],
+    });
     result.factsDeleted += deleted.deleted;
 
     if (parsed.facts.length === 0) continue;

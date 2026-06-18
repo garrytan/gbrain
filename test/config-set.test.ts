@@ -29,6 +29,15 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('models.tier.subagent');
   });
 
+  test('contains the spend-control keys (v0.42.42.0, #2139) — no --force archaeology', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('spend.posture');
+    expect(KNOWN_CONFIG_KEYS).toContain('sync.cost_gate_min_usd');
+    expect(KNOWN_CONFIG_KEYS).toContain('sync.federated_v2');
+    expect(KNOWN_CONFIG_KEYS).toContain('embed.backfill_cooldown_min');
+    expect(KNOWN_CONFIG_KEYS).toContain('embed.backfill_max_usd_per_source_24h');
+    expect(KNOWN_CONFIG_KEYS).toContain('embed.backfill_max_usd');
+  });
+
   test('no duplicate entries', () => {
     const set = new Set(KNOWN_CONFIG_KEYS);
     expect(set.size).toBe(KNOWN_CONFIG_KEYS.length);

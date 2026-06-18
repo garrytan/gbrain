@@ -217,8 +217,10 @@ export function embeddingMismatchMessage(opts: EmbeddingMismatchOpts): string {
     ``,
     `  BEGIN;`,
     `  DROP INDEX IF EXISTS idx_chunks_embedding;`,
-    `  ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(${requestedDims});`,
+    `  -- NULL embeddings BEFORE the alter: pgvector refuses to cast existing`,
+    `  -- vectors across dimensions and aborts the transaction. NULLs cast fine.`,
     `  UPDATE content_chunks SET embedding = NULL, embedded_at = NULL;`,
+    `  ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(${requestedDims});`,
     `  ${reindexLine.split('\n').join('\n  ')}`,
     `  COMMIT;`,
     ``,
@@ -573,11 +575,25 @@ export function buildFactsAlterRecipe(
 ): string {
   const opclass = columnType === 'halfvec' ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
   const targetType = columnType === 'halfvec' ? `halfvec(${configuredDims})` : `vector(${configuredDims})`;
+  const dimsChanged = columnDims !== configuredDims;
   return [
     `-- ALTER ${columnType}(${columnDims}) → ${columnType}(${configuredDims}) on indexed column.`,
     `-- HOLD a maintenance window: this rewrites every row's embedding.`,
     `-- Coordinate with any active extract-conversation-facts backfill.`,
     `DROP INDEX IF EXISTS idx_facts_embedding_hnsw;`,
+    // Same-dim type swaps (halfvec <-> vector) cast row data losslessly and
+    // MUST keep it. Cross-dimension changes are different: pgvector refuses
+    // to cast existing vectors across dimensions ("expected N dimensions,
+    // not M") and aborts the transaction — and the old-space vectors are
+    // unusable at the new width anyway. NULL them first; the facts pipeline
+    // re-embeds on the next write.
+    ...(dimsChanged
+      ? [
+          `-- Dimension change: NULL embeddings BEFORE the alter — pgvector`,
+          `-- refuses cross-dimension casts and aborts the transaction.`,
+          `UPDATE facts SET embedding = NULL;`,
+        ]
+      : []),
     `ALTER TABLE facts ALTER COLUMN embedding TYPE ${targetType}`,
     `  USING embedding::${targetType};`,
     `CREATE INDEX idx_facts_embedding_hnsw`,
