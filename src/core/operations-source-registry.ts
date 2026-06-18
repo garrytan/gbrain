@@ -20,6 +20,11 @@ import {
   type SourceRecord,
   type SourceStatusEventRecord,
 } from './services/source-registry-service.ts';
+import {
+  generateRawCanonicalDocumentDrafts,
+  type RawCanonicalDocumentGeneratorInput,
+  type RawCanonicalDocumentRequest,
+} from './services/raw-canonical-document-generator-service.ts';
 import type {
   RawAccessDecision,
   RawAccessLedgerEntry,
@@ -56,7 +61,7 @@ import {
   type SourcePolicy,
   type SourcePolicyOverride,
 } from './source-registry/source-policy.ts';
-import type { MemoryMutationOperationName } from './types.ts';
+import type { MemoryMutationOperationName, PageType } from './types.ts';
 import {
   invalidParams,
   optionalBoolean,
@@ -91,6 +96,19 @@ const SOURCE_POLICY_DIMENSIONS = [
   'purge_policy',
   'export_reconcile_behavior',
 ] as const satisfies readonly (keyof SourcePolicy)[];
+
+const PAGE_TYPE_VALUES = [
+  'person',
+  'company',
+  'deal',
+  'yc',
+  'civic',
+  'project',
+  'concept',
+  'source',
+  'media',
+  'system',
+] as const satisfies readonly PageType[];
 
 const CREDENTIAL_ROTATION_STATUSES = ['current', 'rotation_due', 'rotating', 'revoked'] as const;
 const CREDENTIAL_HEALTH_STATUSES = ['healthy', 'unhealthy', 'expired', 'unknown'] as const;
@@ -373,6 +391,31 @@ export function createSourceRegistryOperations(
     cliHints: { name: 'raw-ingest-preview' },
   };
 
+  const preview_raw_canonical_document: Operation = {
+    name: 'preview_raw_canonical_document',
+    description: 'Render non-mutating canonical Markdown drafts from structured raw-source observations.',
+    params: {
+      source_kind: { type: 'string', required: true, enum: [...SOURCE_KINDS], description: 'Source kind behind these observations.' },
+      source_id: { type: 'string', required: true, description: 'Source registry id for provenance.' },
+      source_item_id: { type: 'string', description: 'Optional source item id represented by the observations.' },
+      source_item_title: { type: 'string', description: 'Optional source item title.' },
+      source_content_hash: { type: 'string', description: 'Optional source item or raw content hash.' },
+      source_locator: { type: 'string', description: 'Optional stable source locator.' },
+      source_updated_at: { type: 'string', description: 'Optional source-updated timestamp or version timestamp.' },
+      parser_version: { type: 'string', description: 'Parser version used before generating observations.' },
+      extractor_version: { type: 'string', description: 'Extractor version used before generating observations.' },
+      generator_version: { type: 'string', description: 'Generator version to record in draft frontmatter.' },
+      now: { type: 'string', description: 'Optional ISO timestamp for deterministic timeline draft entries.' },
+      documents: { type: ['array', 'string'], required: true, items: { type: 'object' }, description: 'Structured document draft requests, or a JSON array string for CLI usage.' },
+    },
+    handler: async (_ctx, p) => ({
+      status: 'preview',
+      ...generateRawCanonicalDocumentDrafts(rawCanonicalDocumentInput(deps, p)),
+    }),
+    mutating: false,
+    cliHints: { name: 'raw-canonical-preview' },
+  };
+
   const ingest_connector_item: Operation = {
     name: 'ingest_connector_item',
     description: 'Persist one connector item into raw source items and chunks without direct canonical writes.',
@@ -572,6 +615,7 @@ export function createSourceRegistryOperations(
     get_source,
     resolve_source_policy,
     preview_raw_ingest,
+    preview_raw_canonical_document,
     ingest_connector_item,
     list_source_items,
     record_connector_failure,
@@ -3182,6 +3226,15 @@ function stringArray(
   return value.map((entry, index) => requiredString(deps, `${field}[${index}]`, entry));
 }
 
+function optionalStringArray(
+  deps: { OperationError: OperationErrorCtor },
+  field: string,
+  value: unknown,
+): string[] | undefined {
+  if (value == null) return undefined;
+  return stringArray(deps, field, value);
+}
+
 function credentialProvider(
   deps: { OperationError: OperationErrorCtor },
   field: string,
@@ -3259,12 +3312,82 @@ function optionalSourceKind(
   return sourceKind(deps, value);
 }
 
+function optionalPageType(
+  deps: { OperationError: OperationErrorCtor },
+  field: string,
+  value: unknown,
+): PageType | undefined {
+  if (value == null) return undefined;
+  const raw = requiredString(deps, field, value);
+  if (PAGE_TYPE_VALUES.includes(raw as PageType)) return raw as PageType;
+  throw invalidParams(deps, `${field} must be one of: ${PAGE_TYPE_VALUES.join(', ')}`);
+}
+
 function optionalConsentState(
   deps: { OperationError: OperationErrorCtor },
   value: unknown,
 ): SourceConsentState | undefined {
   if (value == null) return undefined;
   return consentState(deps, value);
+}
+
+function rawCanonicalDocumentInput(
+  deps: { OperationError: OperationErrorCtor },
+  p: Record<string, unknown>,
+): RawCanonicalDocumentGeneratorInput {
+  return removeUndefinedRecord({
+    source_kind: sourceKind(deps, p.source_kind),
+    source_id: requiredString(deps, 'source_id', p.source_id),
+    source_item_id: optionalString(deps, 'source_item_id', p.source_item_id),
+    source_item_title: optionalString(deps, 'source_item_title', p.source_item_title),
+    source_content_hash: optionalString(deps, 'source_content_hash', p.source_content_hash),
+    source_locator: optionalString(deps, 'source_locator', p.source_locator),
+    source_updated_at: optionalString(deps, 'source_updated_at', p.source_updated_at),
+    parser_version: optionalString(deps, 'parser_version', p.parser_version),
+    extractor_version: optionalString(deps, 'extractor_version', p.extractor_version),
+    generator_version: optionalString(deps, 'generator_version', p.generator_version),
+    now: optionalString(deps, 'now', p.now),
+    documents: rawCanonicalDocumentRequests(deps, p.documents),
+  }) as unknown as RawCanonicalDocumentGeneratorInput;
+}
+
+function rawCanonicalDocumentRequests(
+  deps: { OperationError: OperationErrorCtor },
+  value: unknown,
+): RawCanonicalDocumentRequest[] {
+  let documents = value;
+  if (typeof value === 'string') {
+    try {
+      documents = JSON.parse(value);
+    } catch {
+      throw invalidParams(deps, 'documents must be valid JSON when passed as a string');
+    }
+  }
+  if (!Array.isArray(documents)) {
+    throw invalidParams(deps, 'documents must be an array of objects');
+  }
+  return documents.map((entry, index) => {
+    const field = `documents[${index}]`;
+    const document = requiredObject(deps, field, entry);
+    return removeUndefinedRecord({
+      target_slug: optionalString(deps, `${field}.target_slug`, document.target_slug),
+      type: optionalPageType(deps, `${field}.type`, document.type),
+      title: optionalString(deps, `${field}.title`, document.title),
+      tags: optionalStringArray(deps, `${field}.tags`, document.tags),
+      source_refs: optionalStringArray(deps, `${field}.source_refs`, document.source_refs),
+      source_chunk_ids: optionalStringArray(deps, `${field}.source_chunk_ids`, document.source_chunk_ids),
+      facts: optionalStringArray(deps, `${field}.facts`, document.facts),
+      timeline_events: optionalStringArray(deps, `${field}.timeline_events`, document.timeline_events),
+      frontmatter: optionalObject(deps, `${field}.frontmatter`, document.frontmatter),
+      safety_flags: optionalStringArray(deps, `${field}.safety_flags`, document.safety_flags),
+    }) as RawCanonicalDocumentRequest;
+  });
+}
+
+function removeUndefinedRecord(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined),
+  );
 }
 
 function rawIngestInput(
