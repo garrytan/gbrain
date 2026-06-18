@@ -8,8 +8,9 @@
  *   - eval-contradictions/cost-tracker.ts (silent-Haiku-fallback view)
  *   - cross-modal-eval/runner.ts    (multi-provider eval panel)
  *   - skillopt/preflight.ts         (Sonnet-fallback warn-only estimate)
- * The bare-keyed `ANTHROPIC_PRICING` view is itself consumed by budget/budget-tracker.ts,
- * minions/batch-projection.ts, and cycle/budget-meter.ts — so those inherit canonical too.
+ * BudgetTracker reads this table directly for chat caps; the bare-keyed
+ * `ANTHROPIC_PRICING` view is consumed by legacy Claude-only paths like
+ * minions/batch-projection.ts and cycle/budget-meter.ts.
  *
  * The dollar amounts live HERE ONCE — update prices in this file only. Each
  * consumer keeps its own key allowlist and miss-handling policy (fail-closed

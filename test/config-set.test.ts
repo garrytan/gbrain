@@ -36,6 +36,8 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('embed.backfill_cooldown_min');
     expect(KNOWN_CONFIG_KEYS).toContain('embed.backfill_max_usd_per_source_24h');
     expect(KNOWN_CONFIG_KEYS).toContain('embed.backfill_max_usd');
+    expect(KNOWN_CONFIG_KEYS).toContain('budget.monthly.chat_max_usd');
+    expect(KNOWN_CONFIG_KEYS).toContain('budget.monthly.mode');
   });
 
   test('no duplicate entries', () => {
@@ -49,6 +51,7 @@ describe('KNOWN_CONFIG_KEY_PREFIXES', () => {
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('search.');
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('models.');
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('dream.');
+    expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('budget.');
   });
 
   test('prefixes end in `.` (consistent shape)', () => {

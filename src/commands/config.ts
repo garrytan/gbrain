@@ -195,6 +195,28 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
     }
 
+    if (key === 'budget.monthly.chat_max_usd') {
+      const { parseMonthlyBudgetMaxUsd } = await import('../core/budget/monthly-cap.ts');
+      if (parseMonthlyBudgetMaxUsd(value) === undefined) {
+        console.error(
+          `[config] budget.monthly.chat_max_usd must be a positive USD number (got '${value}').\n` +
+          `[config]   gbrain config set budget.monthly.chat_max_usd 50`,
+        );
+        process.exit(1);
+      }
+    }
+
+    if (key === 'budget.monthly.mode') {
+      const { parseMonthlyBudgetMode } = await import('../core/budget/monthly-cap.ts');
+      if (parseMonthlyBudgetMode(value) === undefined) {
+        console.error(
+          `[config] budget.monthly.mode must be 'warn' or 'block' (got '${value}').\n` +
+          `[config]   gbrain config set budget.monthly.mode block`,
+        );
+        process.exit(1);
+      }
+    }
+
     if (key === 'embedding_columns') {
       try {
         const parsed = JSON.parse(value);
