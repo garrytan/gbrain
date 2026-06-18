@@ -249,9 +249,12 @@ export async function runPhaseConversationFactsBackfill(
             // v0.41.15.0 (D6 + D11): new counters from the per-page lock
             // + delete-orphans-first replay safety.
             pages_lock_skipped: 0,
+            pages_failed: 0,
+            pages_curator_blocked: 0,
             orphan_facts_cleaned: 0,
             segments_processed: 0,
             facts_extracted: 0,
+            facts_rejected: 0,
             facts_inserted: 0,
             error: (err as Error).message,
           };

@@ -13,6 +13,7 @@
 
 import { describe, expect, test, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import type { NewFact } from '../src/core/engine.ts';
 import {
   __setChatTransportForTests,
   __setEmbedTransportForTests,
@@ -24,6 +25,10 @@ import {
   splitIntoSegments,
   renderSegmentForExtraction,
   runExtractConversationFactsCore,
+  curateConversationExtractedFacts,
+  ConversationFactCuratorBlockedError,
+  CONVERSATION_FACT_CURATOR_MIN_KEEP_RATIO,
+  type ConversationFactCuratorRejectReason,
   extractConversationFactsFingerprint,
   encodeCheckpointEntry,
   decodeCheckpointEntry,
@@ -446,6 +451,182 @@ describe('runExtractConversationFactsCore', () => {
       overrideDisabled: true,
     });
     expect(result.pages_processed).toBe(1);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// conversation fact curator gate — Track B safety net.
+// ---------------------------------------------------------------------------
+
+function candidateFact(text: string): NewFact {
+  return {
+    fact: text,
+    kind: 'fact',
+    source: PER_SEGMENT_SOURCE_PREFIX,
+    confidence: 1.0,
+    notability: 'medium',
+  };
+}
+
+function chatResultWithFacts(texts: string[]): ChatResult {
+  return {
+    text: JSON.stringify({
+      facts: texts.map((fact) => ({
+        fact,
+        kind: 'fact',
+        confidence: 1.0,
+        notability: 'medium',
+      })),
+    }),
+    blocks: [],
+    stopReason: 'end',
+    usage: {
+      input_tokens: 100,
+      output_tokens: 50,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+    },
+    model: 'stub:stub',
+    providerId: 'stub',
+  };
+}
+
+const ONE_KEEP_SIX_REJECT = [
+  'Tony owns the durable CaptureClient fulfillment system.',
+  'Kai gave Tony the go-ahead to run the workflow.',
+  'typecheck passed for the branch.',
+  'Disk usage is 12GiB used out of 40GiB.',
+  'Use curl to hit the smoke endpoint.',
+  'The extraction is currently running in the current brain.',
+  'The receipt path is .agent-runs/example/RESULT.md.',
+];
+
+describe('conversation fact curator gate', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    __setEmbedTransportForTests(
+      (async () => ({
+        embeddings: [Array.from({ length: 1536 }, () => 0.1)],
+      })) as never,
+    );
+  });
+
+  afterAll(async () => {
+    __setChatTransportForTests(null);
+    __setEmbedTransportForTests(null);
+    resetGateway();
+    await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await engine.executeRaw(`DELETE FROM facts WHERE source LIKE 'cli:extract-conversation-facts%'`);
+    await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op = 'extract-conversation-facts'`);
+    await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'conversations/%'`);
+    await engine.setConfig('facts.extraction_enabled', 'true');
+    await engine.putPage('conversations/imessage/alice-example', {
+      type: 'conversation',
+      title: 'iMessage: Alice Example',
+      compiled_truth: SAMPLE_BODY,
+      timeline: '',
+      frontmatter: {},
+    });
+  });
+
+  test('pins min keep ratio and rejects each operational-sludge reason', () => {
+    expect(CONVERSATION_FACT_CURATOR_MIN_KEEP_RATIO).toBe(0.70);
+
+    const curated = curateConversationExtractedFacts(ONE_KEEP_SIX_REJECT.map(candidateFact));
+    expect(curated.kept.map((f) => f.fact)).toEqual([
+      'Tony owns the durable CaptureClient fulfillment system.',
+    ]);
+    expect(curated.keepRatio).toBeCloseTo(1 / 7, 6);
+    const expectedReasons: ConversationFactCuratorRejectReason[] = [
+      'receipt_owned_result',
+      'receipt_owned_result',
+      'procedural_lesson',
+      'session_progress',
+      'temporal_state',
+      'volatile_metric',
+    ];
+    expect(curated.rejected.map((r) => r.reason).sort()).toEqual(expectedReasons.sort());
+  });
+
+  test('keeps legitimate near-misses that contain noisy-looking words', () => {
+    const nearMisses = [
+      'Tony currently leads the platform reliability group.',
+      'Use of CaptureClient rose 20% after the onboarding refresh.',
+      'Tony treats typecheck as part of the release discipline.',
+      'The team maintains a smoke test environment for client demos.',
+      'Tony wants concise operator summaries.',
+    ];
+
+    const curated = curateConversationExtractedFacts(nearMisses.map(candidateFact));
+    expect(curated.rejected).toHaveLength(0);
+    expect(curated.kept.map((f) => f.fact)).toEqual(nearMisses);
+    expect(curated.keepRatio).toBe(1);
+  });
+
+  test('single --slug write below the keep-ratio gate fails loud and writes nothing', async () => {
+    __setChatTransportForTests(async () => chatResultWithFacts(ONE_KEEP_SIX_REJECT));
+
+    await expect(runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/alice-example',
+      sleepMs: 0,
+      segmentLimit: 1,
+    })).rejects.toBeInstanceOf(ConversationFactCuratorBlockedError);
+
+    const rows = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM facts WHERE source_markdown_slug = $1`,
+      ['conversations/imessage/alice-example'],
+    );
+    expect(Number(rows[0]?.count ?? 0)).toBe(0);
+  });
+
+  test('single --slug write at or above the keep-ratio gate writes kept facts only', async () => {
+    __setChatTransportForTests(async () => chatResultWithFacts([
+      'Tony owns the durable CaptureClient fulfillment system.',
+      'CaptureClient serves local service businesses.',
+      'Tony prefers concise operator summaries.',
+      'Tony expects client writes to stay gated.',
+      'The system stores durable procedural reuse in skills.',
+      'typecheck passed for the branch.',
+      'Use curl to hit the smoke endpoint.',
+    ]));
+
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/alice-example',
+      sleepMs: 0,
+      segmentLimit: 1,
+    });
+
+    expect(result.facts_rejected).toBe(2);
+    expect(result.facts_extracted).toBe(5);
+    expect(result.facts_inserted).toBe(5);
+    expect(result.pages_curator_blocked).toBe(0);
+  });
+
+  test('multi-page enumeration surfaces curator-blocked pool failures', async () => {
+    __setChatTransportForTests(async () => chatResultWithFacts(ONE_KEEP_SIX_REJECT));
+
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      types: ['conversation'],
+      limit: 1,
+      sleepMs: 0,
+      segmentLimit: 1,
+    });
+
+    expect(result.pages_failed).toBe(1);
+    expect(result.pages_curator_blocked).toBe(1);
+    expect(result.facts_rejected).toBe(6);
+    expect(result.facts_inserted).toBe(0);
   });
 });
 

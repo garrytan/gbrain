@@ -167,6 +167,13 @@ export const PER_SEGMENT_SOURCE_PREFIX = 'cli:extract-conversation-facts';
  */
 export const TERMINAL_AUDIT_SOURCE = 'cli:extract-conversation-facts:terminal';
 
+/**
+ * Minimum curator pass rate before a real conversation-facts write is allowed.
+ * This prevents a segment that is mostly receipt sludge from writing its one
+ * decent row and hiding the quality failure behind a nonzero insert count.
+ */
+export const CONVERSATION_FACT_CURATOR_MIN_KEEP_RATIO = 0.70;
+
 // ---------------------------------------------------------------------------
 // Public types.
 // ---------------------------------------------------------------------------
@@ -254,6 +261,10 @@ export interface ExtractConversationFactsResult {
    * exit summary; exit code 3 when non-zero AND no hard failures.
    */
   pages_lock_skipped: number;
+  /** Pages whose per-page worker threw a non-lock error in multi-page mode. */
+  pages_failed: number;
+  /** Pages blocked by the conversation-fact curator quality gate in multi-page mode. */
+  pages_curator_blocked: number;
   /**
    * v0.41.15.0 (D11): facts deleted by the per-page delete-orphans-first
    * replay safety pass. Non-zero means a prior run crashed mid-extract;
@@ -263,9 +274,43 @@ export interface ExtractConversationFactsResult {
   orphan_facts_cleaned: number;
   segments_processed: number;
   facts_extracted: number;
+  facts_rejected: number;
   facts_inserted: number;
   budget_exhausted?: boolean;
   spent_usd?: number;
+}
+
+export type ConversationFactCuratorRejectReason =
+  | 'session_progress'
+  | 'volatile_metric'
+  | 'receipt_owned_result'
+  | 'procedural_lesson'
+  | 'temporal_state';
+
+export interface ConversationFactCuratorRejection {
+  fact: NewFact;
+  reason: ConversationFactCuratorRejectReason;
+}
+
+export interface ConversationFactCuratorResult<T extends NewFact = NewFact> {
+  kept: T[];
+  rejected: ConversationFactCuratorRejection[];
+  keepRatio: number;
+}
+
+export class ConversationFactCuratorBlockedError extends Error {
+  readonly tag = 'CONVERSATION_FACT_CURATOR_BLOCKED';
+
+  constructor(
+    readonly keepRatio: number,
+    readonly keptCount: number,
+    readonly totalCount: number,
+  ) {
+    super(
+      `conversation fact curator blocked write: keep ratio ${keepRatio.toFixed(2)} below ${CONVERSATION_FACT_CURATOR_MIN_KEEP_RATIO.toFixed(2)} (${keptCount}/${totalCount} kept)`,
+    );
+    this.name = 'ConversationFactCuratorBlockedError';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -665,6 +710,44 @@ function cpEntriesToMap(entries: string[]): Map<string, string> {
   return map;
 }
 
+const SESSION_PROGRESS_RX = /\b(?:gave\s+(?:kai|assistant|\w+\/assistant)?\s*the\s+go-?ahead|go-?ahead\s+to\s+run|is\s+evaluating\s+whether|wants\s+to\s+smoke\s+test\s+before\s+committing|reverted\s+(?:back\s+)?to\s+false\s+after\s+(?:the\s+)?smoke\s+test|receipts?\s+(?:are|is)\s+here)\b/i;
+const RECEIPT_OWNED_RESULT_RX = /\b(?:dry-?run|smoke\s+test\s+(?:pass(?:ed)?|fail(?:ed)?|before|after|exit)|typecheck\s+(?:pass(?:ed)?|fail(?:ed)?|exit)|tests?\s+(?:pass(?:ed)?|fail(?:ed)?)|\d+\s+facts?\s+inserted|0\s+eligible\s+conversation\s+pages|exit\s+code|receipt\s+(?:path|file|writ(?:e|ten)))\b/i;
+const VOLATILE_METRIC_RX = /\b(?:disk\s+usage|\d+\s*[GMK]i?B?\s+(?:used|free|available|total)|\d+\s*(?:MB|GB|KB)\b.*\b(?:dir|directory|state\.db|sessions?|claude|hermes)|(?:RAM|memory)\s*:\s*\d|used\s+out\s+of\s+\d+\s*[GMK]i?B?)\b/i;
+const PROCEDURAL_LESSON_RX = /^(?:when\s+testing|use\s+(?!of\b)|run\s+|verify\s+|do\s+not\s+|don't\s+|should\s+|before\s+enabling\s+)/i;
+const TEMPORAL_STATE_RX = /\b(?:currently\s+(?:working|running|testing|blocked|enabled|disabled|set\s+to|using)|right\s+now|in\s+the\s+current\s+brain|after\s+(?:the\s+)?(?:run|smoke\s+test)|as\s+of\s+now|not\s+ready\s+yet)\b/i;
+
+function rejectReasonForConversationFact(fact: NewFact): ConversationFactCuratorRejectReason | null {
+  const text = fact.fact.trim();
+  if (!text) return 'session_progress';
+  if (SESSION_PROGRESS_RX.test(text)) return 'session_progress';
+  if (RECEIPT_OWNED_RESULT_RX.test(text)) return 'receipt_owned_result';
+  if (VOLATILE_METRIC_RX.test(text)) return 'volatile_metric';
+  if (PROCEDURAL_LESSON_RX.test(text) && !/^Tony\s+(?:prefers|wants|expects)\b/i.test(text)) {
+    return 'procedural_lesson';
+  }
+  if (TEMPORAL_STATE_RX.test(text) && !/^Tony\s+(?:prefers|wants|expects)\b/i.test(text)) {
+    return 'temporal_state';
+  }
+  return null;
+}
+
+export function curateConversationExtractedFacts<T extends NewFact>(
+  facts: T[],
+): ConversationFactCuratorResult<T> {
+  const kept: T[] = [];
+  const rejected: ConversationFactCuratorRejection[] = [];
+  for (const fact of facts) {
+    const reason = rejectReasonForConversationFact(fact);
+    if (reason) rejected.push({ fact, reason });
+    else kept.push(fact);
+  }
+  return {
+    kept,
+    rejected,
+    keepRatio: facts.length === 0 ? 1 : kept.length / facts.length,
+  };
+}
+
 async function processPage(
   state: ExtractCoreState,
   page: Page,
@@ -750,6 +833,29 @@ async function processPage(
       );
       extracted = [];
     }
+
+    const curated = curateConversationExtractedFacts(extracted);
+    if (curated.rejected.length > 0) {
+      state.result.facts_rejected += curated.rejected.length;
+      const reasonCounts = new Map<ConversationFactCuratorRejectReason, number>();
+      for (const r of curated.rejected) {
+        reasonCounts.set(r.reason, (reasonCounts.get(r.reason) ?? 0) + 1);
+      }
+      const reasonSummary = Array.from(reasonCounts.entries())
+        .map(([reason, count]) => `${reason}=${count}`)
+        .join(', ');
+      process.stderr.write(
+        `[extract-conversation-facts] segment ${seg.startIso}..${seg.endIso} curator rejected ${curated.rejected.length}/${extracted.length} candidate fact(s) (${reasonSummary})\n`,
+      );
+    }
+    if (!state.dryRun && extracted.length > 0 && curated.keepRatio < CONVERSATION_FACT_CURATOR_MIN_KEEP_RATIO) {
+      throw new ConversationFactCuratorBlockedError(
+        curated.keepRatio,
+        curated.kept.length,
+        extracted.length,
+      );
+    }
+    extracted = curated.kept;
 
     state.result.segments_processed++;
     segmentsThisPage++;
@@ -876,9 +982,12 @@ export async function runExtractConversationFactsCore(
     pages_skipped_too_large: 0,
     pages_skipped_disappeared: 0,
     pages_lock_skipped: 0,
+    pages_failed: 0,
+    pages_curator_blocked: 0,
     orphan_facts_cleaned: 0,
     segments_processed: 0,
     facts_extracted: 0,
+    facts_rejected: 0,
     facts_inserted: 0,
   };
 
@@ -1026,13 +1135,26 @@ export async function runExtractConversationFactsCore(
             if (remaining < batch.length) claimable = batch.slice(0, remaining);
           }
 
-          await runSlidingPool({
+          const poolResult = await runSlidingPool({
             items: claimable,
             workers,
             signal,
             onItem: (page) => processPageWithLock(page),
             failureLabel: (page) => page.slug,
           });
+          if (poolResult.errored > 0) {
+            result.pages_failed += poolResult.errored;
+            const curatorBlocked = poolResult.failures.filter((f) => f.error instanceof ConversationFactCuratorBlockedError);
+            result.pages_curator_blocked += curatorBlocked.length;
+            const sample = poolResult.failures
+              .slice(0, 5)
+              .map((f) => `${f.label}: ${(f.error as Error).message ?? String(f.error)}`)
+              .join('; ');
+            process.stderr.write(
+              `[extract-conversation-facts] ${poolResult.errored} page(s) failed in current batch` +
+              `${curatorBlocked.length > 0 ? ` (${curatorBlocked.length} curator-blocked)` : ''}: ${sample}\n`,
+            );
+          }
 
           processedPagesCount += claimable.length;
           offset += batch.length;
@@ -1373,9 +1495,12 @@ export async function runExtractConversationFacts(
     pages_skipped_too_large: 0,
     pages_skipped_disappeared: 0,
     pages_lock_skipped: 0,
+    pages_failed: 0,
+    pages_curator_blocked: 0,
     orphan_facts_cleaned: 0,
     segments_processed: 0,
     facts_extracted: 0,
+    facts_rejected: 0,
     facts_inserted: 0,
   };
   let totalSpent = 0;
@@ -1413,9 +1538,12 @@ export async function runExtractConversationFacts(
       aggregate.pages_skipped_too_large += perSource.pages_skipped_too_large;
       aggregate.pages_skipped_disappeared += perSource.pages_skipped_disappeared;
       aggregate.pages_lock_skipped += perSource.pages_lock_skipped;
+      aggregate.pages_failed += perSource.pages_failed;
+      aggregate.pages_curator_blocked += perSource.pages_curator_blocked;
       aggregate.orphan_facts_cleaned += perSource.orphan_facts_cleaned;
       aggregate.segments_processed += perSource.segments_processed;
       aggregate.facts_extracted += perSource.facts_extracted;
+      aggregate.facts_rejected += perSource.facts_rejected;
       aggregate.facts_inserted += perSource.facts_inserted;
       if (perSource.budget_exhausted) anyBudgetExhausted = true;
       if (perSource.spent_usd) totalSpent += perSource.spent_usd;
@@ -1429,7 +1557,7 @@ export async function runExtractConversationFacts(
   const verb = parsed.dryRun ? '(dry run) would extract' : 'extracted';
   console.log(
     `\nDone: ${verb} ${aggregate.facts_extracted} facts ` +
-    `(${aggregate.facts_inserted} inserted) across ${aggregate.segments_processed} segments ` +
+    `(${aggregate.facts_inserted} inserted, ${aggregate.facts_rejected} rejected by curator) across ${aggregate.segments_processed} segments ` +
     `from ${aggregate.pages_processed}/${aggregate.pages_considered} pages ` +
     `in ${sourceIds.length} source(s). ` +
     `Spent ~$${totalSpent.toFixed(4)}.`,
@@ -1446,6 +1574,9 @@ export async function runExtractConversationFacts(
   if (aggregate.pages_lock_skipped > 0) {
     console.log(`  Skipped ${aggregate.pages_lock_skipped} page(s) held by another worker / process (will retry next run).`);
   }
+  if (aggregate.pages_failed > 0) {
+    console.log(`  Failed ${aggregate.pages_failed} page(s) during extraction (${aggregate.pages_curator_blocked} curator-blocked).`);
+  }
   if (aggregate.orphan_facts_cleaned > 0) {
     console.log(`  Cleaned ${aggregate.orphan_facts_cleaned} orphan fact(s) from prior partial runs (D11 replay safety).`);
   }
@@ -1459,6 +1590,9 @@ export async function runExtractConversationFacts(
   // anyBudgetExhausted doesn't trigger exit 3; the budget message
   // above already tells the user what to do, and exit 0 is the right
   // signal for "ran to the cap intentionally."
+  if (aggregate.pages_failed > 0 && !anyBudgetExhausted) {
+    process.exit(1);
+  }
   if (aggregate.pages_lock_skipped > 0 && !anyBudgetExhausted) {
     process.exit(3);
   }
