@@ -22,7 +22,6 @@ import {
   resolveStealGraceSeconds,
   DEFAULT_STEAL_GRACE_SECONDS,
 } from '../src/core/db-lock.ts';
-import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 
