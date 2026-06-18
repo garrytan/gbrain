@@ -27,9 +27,18 @@ fi
 
 cd admin
 
-# Idempotent install — bun is fast enough on no-op (~50ms).
-bun install --silent >/dev/null 2>&1 || bun install
+# Idempotent install. Skip the install path when the checked-in admin deps are
+# already present; under parallel verify, a redundant `bun install` can contend
+# with other checks and burn the whole per-check timeout.
+if [ ! -x node_modules/vite/bin/vite.js ] || [ ! -f node_modules/typescript/bin/tsc ]; then
+  bun install --silent >/dev/null 2>&1 || bun install
+fi
 
-# Build runs `tsc -b && vite build`. Output to admin/dist/. Exit non-zero
-# on TS error, missing symbol, or Vite bundling error.
-bun run build
+# Run TypeScript explicitly; Vite's production build transpiles and bundles but
+# does not reliably surface admin/src type errors on its own.
+node node_modules/typescript/bin/tsc -b --pretty false
+
+# Run Vite through Node directly. `bun run build` can leave the Vite wrapper
+# process alive after a successful bundle on this admin app, which makes the
+# verify gate time out even though the build itself is done.
+node node_modules/vite/bin/vite.js build
