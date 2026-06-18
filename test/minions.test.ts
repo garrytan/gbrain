@@ -1300,6 +1300,12 @@ describe('MinionQueue: handleTimeouts', () => {
     const dead = await queue.getJob(job.id);
     expect(dead!.status).toBe('dead');
     expect(dead!.error_text).toBe('timeout exceeded');
+    // #1737 regression: the timed-out run counts as a spent attempt, mirroring
+    // the wall-clock + stall dead-letter paths. Without this the job reads
+    // `attempts: 0/N (started: N)`. Asserted on both the RETURNING row and the
+    // persisted row so a future refactor can't silently drop the increment.
+    expect(timedOut[0].attempts_made).toBe(1);
+    expect(dead!.attempts_made).toBe(1);
   });
 
   test('handleTimeouts ignores stalled jobs (lock_until > now guard)', async () => {
