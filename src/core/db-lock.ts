@@ -730,6 +730,38 @@ export function syncLockId(sourceId: string): string {
 export const SYNC_LOCK_ID = syncLockId('default');
 
 /**
+ * #1950: is `sourceId` actively holding a live (non-TTL-expired) sync lock?
+ *
+ * Centralizes the live-sync signal that `gbrain doctor` already computes inline
+ * so `gbrain sources status` (and future surfaces) read the SAME truth instead
+ * of each re-deriving it. Returns the holder when a live lock is held, else
+ * null (idle, or a stale/expired lock that's structurally available for the
+ * next acquire). Inspect failures swallow to null — a status surface should
+ * degrade to "no indicator", never crash.
+ *
+ * Honest scope: a live lock proves the holder process is heartbeating, NOT that
+ * the import is making forward progress — `withRefreshingLock` refreshes
+ * `last_refreshed_at` on its own timer regardless of import progress. So callers
+ * report "running", NOT "healthy"; a wedged-but-alive holder still reads as
+ * running here. Forward-progress stall detection lives in the sync drain loop
+ * (#1950 stall-abort); stale-lock triage lives in `gbrain doctor`.
+ */
+export async function liveSyncStatus(
+  engine: BrainEngine,
+  sourceId: string,
+): Promise<{ holder_pid: number; holder_host: string } | null> {
+  try {
+    const snap = await inspectLock(engine, syncLockId(sourceId));
+    if (snap && !snap.ttl_expired) {
+      return { holder_pid: snap.holder_pid, holder_host: snap.holder_host };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * v0.30.1 (T4 + A4): wrap long-running work in a refreshing TTL lock.
  *
  * Problem: tryAcquireDbLock has a TTL but only stays exclusive if someone
