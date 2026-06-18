@@ -848,6 +848,20 @@ async function processPage(
         `[extract-conversation-facts] segment ${seg.startIso}..${seg.endIso} curator rejected ${curated.rejected.length}/${extracted.length} candidate fact(s) (${reasonSummary})\n`,
       );
     }
+    // Curator quality gate, evaluated PER SEGMENT (segment is the documented
+    // transactional boundary, same as the insert path below). Fail-closed: a
+    // segment whose keep-ratio falls below the floor throws and aborts this
+    // page mid-walk. Scope of the guarantee, stated precisely so it isn't
+    // mistaken for page-level atomicity: segments earlier in this page that
+    // already cleared the gate are ALREADY committed and are intentionally
+    // kept — they passed the quality bar, and we don't discard good facts for
+    // a later noisy segment. So this is "stop the moment a segment looks like
+    // garbage," NOT "write nothing for the whole page." The throw leaves the
+    // page without a terminal audit row, so it stays incomplete and is
+    // re-attempted next run (earlier inserts dup-skip; the page does not
+    // converge until the noisy segment is fixed upstream). If a future caller
+    // needs convergence instead of fail-closed alerting, switch this to the
+    // best-effort skip-count-continue shape the extractor/insert siblings use.
     if (!state.dryRun && extracted.length > 0 && curated.keepRatio < CONVERSATION_FACT_CURATOR_MIN_KEEP_RATIO) {
       throw new ConversationFactCuratorBlockedError(
         curated.keepRatio,

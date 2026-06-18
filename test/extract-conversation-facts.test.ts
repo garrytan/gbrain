@@ -571,7 +571,11 @@ describe('conversation fact curator gate', () => {
     expect(curated.keepRatio).toBe(1);
   });
 
-  test('single --slug write below the keep-ratio gate fails loud and writes nothing', async () => {
+  // Single-segment case (segmentLimit: 1): the blocked segment throws before
+  // its own insert, so nothing is written. NOTE the gate is per-segment — on a
+  // multi-segment page, segments that already cleared the bar are committed
+  // before a later segment can trip it (see the gate comment in the command).
+  test('single-segment --slug below the keep-ratio gate fails loud without writing the blocked segment', async () => {
     __setChatTransportForTests(async () => chatResultWithFacts(ONE_KEEP_SIX_REJECT));
 
     await expect(runExtractConversationFactsCore(engine, {
