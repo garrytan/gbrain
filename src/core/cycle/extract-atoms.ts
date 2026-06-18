@@ -68,7 +68,7 @@ const ATOM_TYPES = [
 const EXTRACTABLE_PAGE_TYPES = [
   'meeting', 'source', 'article', 'video', 'book', 'original',
 ] as const;
-const PAGE_DISCOVERY_BUDGET = 50;
+const PAGE_DISCOVERY_BUDGET = Math.max(1, Number(process.env.GBRAIN_EXTRACT_ATOMS_PAGE_BUDGET ?? '50'));
 const MIN_PAGE_CHARS_FOR_EXTRACTION = 500;
 
 export interface ExtractAtomsOpts {

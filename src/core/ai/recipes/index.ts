@@ -23,6 +23,7 @@ import { zhipu } from './zhipu.ts';
 import { azureOpenAI } from './azure-openai.ts';
 import { zeroentropyai } from './zeroentropyai.ts';
 import { llamaServerReranker } from './llama-server-reranker.ts';
+import { opencodeGo } from './opencode-go.ts';
 
 const ALL: Recipe[] = [
   openai,
@@ -42,8 +43,8 @@ const ALL: Recipe[] = [
   zhipu,
   azureOpenAI,
   zeroentropyai,
+  opencodeGo,
 ];
-
 /** Map from `provider:id` key to recipe. */
 export const RECIPES: Map<string, Recipe> = new Map(ALL.map(r => [r.id, r]));
 
