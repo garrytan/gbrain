@@ -83,30 +83,17 @@ on user_shares_media(url_or_file):
             mbrain add_link <slug> <entity_slug>
             mbrain add_link <entity_slug> <slug>
 
-    # PATTERN 3: PDFs and Documents
+    # PATTERN 3: PDFs and Markdown/Text Documents
     elif media.type == "pdf" or media.type == "document":
-        # OCR if needed (scanned PDFs)
-        content = ocr_if_needed(file) or extract_text(file)
-
-        # For books and long-form:
+        # Start with a review-only canonical draft from the path. The MVP records
+        # stable file provenance for PDFs and extracts lightweight observations
+        # from text/Markdown files. It never writes canonical memory directly.
         slug = f"sources/{document_slug}"
-        mbrain put <slug> --content """
-            # {title}
-            **Author:** {author} | **Date:** {date}
+        mbrain canonicalize <file-path> --target-slug sources/{document_slug}
 
-            ## Chapter Summaries
-            {per_chapter_summary}
-
-            ## Key Quotes
-            - p.{page}: "{quote}" -- {why_it_matters}
-
-            ## Cross-References
-            {links_to_brain_pages_for_people_and_concepts}
-
-            ---
-            ## Source
-            {full_text_or_key_sections}
-        """
+        # If OCR, Word/docx support, or richer PDF extraction is needed, enrich
+        # the preview output with extracted observations, then submit accepted
+        # content through memory writeback or patch review.
 
         for entity in document.mentioned_entities:
             mbrain add_link <slug> <entity_slug>

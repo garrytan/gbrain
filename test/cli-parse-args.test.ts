@@ -38,6 +38,19 @@ const graphOp: Operation = {
   cliHints: { name: 'graph', positional: ['slug'], aliases: { d: 'depth' } },
 };
 
+const canonicalizeOp: Operation = {
+  name: 'canonicalize',
+  description: 'test',
+  params: {
+    path: { type: 'string', required: true },
+    target_slug: { type: 'string' },
+    title: { type: 'string' },
+    json: { type: 'boolean' },
+  },
+  handler: async () => ({}),
+  cliHints: { name: 'canonicalize', positional: ['path'] },
+};
+
 const captureWarnings = () => {
   const warnings: string[] = [];
   return { warn: (msg: string) => warnings.push(msg), warnings };
@@ -204,6 +217,13 @@ describe('parseOpArgs — positional + flags', () => {
     expect(parseOpArgs(graphOp, ['-d', '3', 'my-slug'])).toEqual({
       slug: 'my-slug',
       depth: 3,
+    });
+  });
+
+  test('canonicalize maps one path plus target override', () => {
+    expect(parseOpArgs(canonicalizeOp, ['/tmp/report.pdf', '--target-slug', 'projects/acme/docs/report'])).toEqual({
+      path: '/tmp/report.pdf',
+      target_slug: 'projects/acme/docs/report',
     });
   });
 });
