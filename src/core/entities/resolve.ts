@@ -32,11 +32,14 @@ import type { BrainEngine } from '../engine.ts';
  *   2. Try fuzzy match against pages.slug + pages.title within the source
  *      (case-insensitive). Pick the highest-trgm-score match if any.
  *   3. Fall back to a deterministic slugify: lowercase-no-spaces with
- *      hyphen-collapse. NOT prefixed with a directory — caller decides
- *      whether to prefix `people/`, `companies/`, etc.
+ *      hyphen-collapse. An explicit directory prefix is PRESERVED
+ *      (`companies/Hermes Agent` → `companies/hermes-agent`) instead of
+ *      flattened to `companies-hermes-agent`.
  *
- * Returns null when raw is empty or whitespace-only. Non-empty input always
- * produces a non-null slug — the fallback path is the floor.
+ * Returns null when raw is empty, whitespace-only, a non-entity token
+ * (literal `"null"`/`"none"`/etc.), or slugifies to nothing — the caller
+ * treats null as "no entity binding" and keeps the fact UNBOUND (DB-only)
+ * rather than fabricating a junk-slug orphan (v0.42.52 Layer 1a).
  */
 export async function resolveEntitySlug(
   engine: BrainEngine,
@@ -46,6 +49,10 @@ export async function resolveEntitySlug(
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
+  // v0.42.52 — literal `"null"`/`"none"`/etc. carry no entity binding.
+  // Refuse them here so neither the LLM extractor nor a legacy row can mint
+  // a `null`-slug orphan via the floor below.
+  if (isNonEntityToken(trimmed)) return null;
 
   // 1. Exact match on slug. If raw already looks like a slug (or matches
   //    a row exactly), use it.
@@ -71,8 +78,10 @@ export async function resolveEntitySlug(
     if (expanded) return expanded;
   }
 
-  // 4. Fallback: deterministic slugify.
-  return slugify(trimmed);
+  // 4. Fallback: deterministic slugify, preserving an explicit path prefix
+  //    (slugify per-segment, rejoin on '/') so a path-shaped entity stays a
+  //    valid canonical slug. Null when it slugifies to nothing.
+  return slugifyEntityPath(trimmed) || null;
 }
 
 /**
@@ -124,6 +133,8 @@ export async function resolveEntitySlugWithSource(
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
+  // v0.42.52 — non-entity tokens carry no binding (see resolveEntitySlug).
+  if (isNonEntityToken(trimmed)) return null;
 
   // Mirror resolveEntitySlug's resolution chain but tag each branch.
   if (looksLikeSlug(trimmed)) {
@@ -139,7 +150,8 @@ export async function resolveEntitySlugWithSource(
     if (expanded) return { slug: expanded, source: 'fuzzy_match' };
   }
 
-  return { slug: slugify(trimmed), source: 'fallback_slugify' };
+  const floor = slugifyEntityPath(trimmed);
+  return floor ? { slug: floor, source: 'fallback_slugify' } : null;
 }
 
 /**
@@ -384,4 +396,50 @@ export function slugify(raw: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * v0.42.52 Layer 1a — tokens an LLM extractor or a legacy row can emit as an
+ * "entity" that carry NO entity binding: the literal strings "null"/"none",
+ * etc. A null entity binding keeps the fact UNBOUND (DB-only) — the caller
+ * MUST NOT fabricate a `null`-slug orphan from one of these.
+ *
+ * Deliberately NOT a slugify() change (slugify is a widely-shared pure
+ * helper); the junk is rejected at the entity floor instead.
+ */
+const NON_ENTITY_TOKENS: ReadonlySet<string> = new Set([
+  'null', 'none', 'undefined', 'nil', 'n/a', 'na', 'unknown', '-',
+]);
+
+/** True when `raw` is a non-entity token (see NON_ENTITY_TOKENS). */
+export function isNonEntityToken(raw: string): boolean {
+  return NON_ENTITY_TOKENS.has(raw.trim().toLowerCase());
+}
+
+/**
+ * v0.42.52 Layer 1a — floor slugify that PRESERVES an explicit ENTITY
+ * directory prefix. A path-shaped entity whose first segment is a known
+ * entity directory (`companies/Hermes Agent`) is slugified per-segment and
+ * rejoined on '/', yielding `companies/hermes-agent` (a valid canonical
+ * slug) instead of `slugify(...)` = `companies-hermes-agent` (the
+ * hyphen-flattened orphan class this fixes).
+ *
+ * For any OTHER slash-containing input (`A/B Partners`) the slash is part of
+ * the name, not a path — flatten via plain slugify so we don't bypass the
+ * stub guard and mint arbitrary nested concept pages (Codex MAJOR #2). The
+ * prefix set is the same `PREFIX_EXPANSION_DIRS` the resolver expands
+ * against, so when that list later becomes pack-derived both move together.
+ */
+export function slugifyEntityPath(raw: string): string {
+  if (!raw.includes('/')) return slugify(raw);
+  const segments = raw.split('/');
+  const firstSeg = slugify(segments[0]);
+  if (!(PREFIX_EXPANSION_DIRS as readonly string[]).includes(firstSeg)) {
+    // Slash is part of the name, not an entity-directory prefix → flatten.
+    return slugify(raw);
+  }
+  return segments
+    .map((seg) => slugify(seg))
+    .filter(Boolean)
+    .join('/');
 }

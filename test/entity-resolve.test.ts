@@ -3,6 +3,8 @@ import {
   resolveEntitySlug,
   resolveEntitySlugWithSource,
   slugify,
+  slugifyEntityPath,
+  isNonEntityToken,
   type ResolutionSource,
 } from '../src/core/entities/resolve.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -167,6 +169,77 @@ describe('slugify', () => {
 
   it('strips accents', () => {
     expect(slugify('José García')).toBe('jose-garcia');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// v0.42.52 Layer 1a — entity-slug floor: no literal-null / hyphen-flattened
+// orphans. Junk tokens become null (fact kept unbound); a path-shaped entity
+// keeps its slash instead of flattening to a `companies-x` orphan.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('isNonEntityToken (pure)', () => {
+  it.each(['null', 'NULL', 'none', 'None', 'undefined', 'nil', 'n/a', 'N/A', 'na', 'unknown', '-', '  null  '])(
+    'treats %p as a non-entity token',
+    (tok) => { expect(isNonEntityToken(tok)).toBe(true); },
+  );
+  it.each(['Alice', 'companies/stripe', 'annual', 'nullsoft', 'none-of-the-above'])(
+    'treats %p as a real entity',
+    (tok) => { expect(isNonEntityToken(tok)).toBe(false); },
+  );
+});
+
+describe('slugifyEntityPath (pure)', () => {
+  it('preserves an explicit path prefix instead of flattening the slash', () => {
+    // The exact orphan class this fixes: bare slugify() would flatten this
+    // to `companies-globex-trading`.
+    expect(slugifyEntityPath('companies/Globex Trading')).toBe('companies/globex-trading');
+    expect(slugify('companies/Globex Trading')).toBe('companies-globex-trading'); // contrast
+  });
+  it('slugifies each segment', () => {
+    expect(slugifyEntityPath('People/José García')).toBe('people/jose-garcia');
+  });
+  it('drops all-junk segments to empty', () => {
+    expect(slugifyEntityPath('///')).toBe('');
+  });
+  it('behaves like slugify for single tokens', () => {
+    expect(slugifyEntityPath('Acme')).toBe('acme');
+  });
+  it('flattens a non-entity-prefix slash (name, not a path) — no nested-page mint', () => {
+    // First segment 'a' is not a known entity directory → the slash is part
+    // of the name, so flatten (legacy slugify) to avoid bypassing the stub
+    // guard with an arbitrary nested slug.
+    expect(slugifyEntityPath('A/B Partners')).toBe('a-b-partners');
+  });
+});
+
+describe('resolveEntitySlug — non-entity tokens return null (kept unbound)', () => {
+  it.each(['null', 'NULL', 'none', 'undefined', 'n/a', '   ', ''])(
+    'returns null for junk token %p (no `null`-slug orphan)',
+    async (tok) => {
+      const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', tok);
+      expect(result).toBeNull();
+    },
+  );
+
+  it('preserves a path-shaped non-match instead of hyphen-flattening', async () => {
+    // No `companies/globex-trading` page is seeded → falls to the floor, which
+    // must keep the slash (a valid canonical slug), NOT mint
+    // `companies-globex-trading` (the orphan class).
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'companies/Globex Trading');
+    expect(result).toBe('companies/globex-trading');
+  });
+});
+
+describe('resolveEntitySlugWithSource — non-entity tokens + path floor', () => {
+  it('returns null for literal "null"', async () => {
+    const result = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', 'null');
+    expect(result).toBeNull();
+  });
+  it('tags a preserved path-shaped non-match as fallback_slugify', async () => {
+    const result = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', 'companies/Globex Trading');
+    expect(result!.slug).toBe('companies/globex-trading');
+    expect(result!.source).toBe<ResolutionSource>('fallback_slugify');
   });
 });
 

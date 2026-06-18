@@ -14,7 +14,13 @@ user-facing reference; for implementation details see
 
 ## What ships in the box
 
-Two bundled packs:
+Seven bundled packs (the canonical registry is
+`src/core/schema-pack/base/` + `src/core/schema-pack/bundled-packs.ts`; all
+seven are embedded in the compiled binary and read-only): `gbrain-base`,
+`gbrain-base-v2` (the 15-type canonical successor), `gbrain-recommended`,
+and the three lens packs `gbrain-creator` / `gbrain-investor` /
+`gbrain-engineer` plus the `gbrain-everything` meta-pack. The two most
+commonly activated:
 
 - **`gbrain-base`** (default) — reproduces pre-v0.38 hardcoded behavior
   byte-for-byte. Existing brains see zero behavior change after upgrade.

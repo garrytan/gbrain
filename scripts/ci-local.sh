@@ -188,6 +188,7 @@ bash scripts/check-jsonb-pattern.sh
 bash scripts/check-progress-to-stdout.sh
 bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
+bash scripts/check-packs-embedded.sh
 bun run typecheck
 echo "[runner] unit (unsharded, DATABASE_URL unset)"
 env -u DATABASE_URL bash scripts/run-unit-shard.sh
@@ -207,6 +208,7 @@ bash scripts/check-jsonb-pattern.sh
 bash scripts/check-progress-to-stdout.sh
 bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
+bash scripts/check-packs-embedded.sh
 bun run typecheck
 echo "[runner] unit (unsharded, DATABASE_URL unset)"
 env -u DATABASE_URL bash scripts/run-unit-shard.sh
@@ -235,6 +237,7 @@ bash scripts/check-jsonb-pattern.sh
 bash scripts/check-progress-to-stdout.sh
 bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
+bash scripts/check-packs-embedded.sh
 bun run typecheck
 echo \"[runner] Tier 3: building PGLite snapshot fixture (cached across reruns)\"
 if [ ! -f test/fixtures/pglite-snapshot.tar ] || [ ! -f test/fixtures/pglite-snapshot.version ]; then

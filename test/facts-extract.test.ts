@@ -115,4 +115,23 @@ describe('parseExtractorJson — B1 parser-pin (v0.31.2 ship-blocker fix)', () =
     expect(parsed).not.toBeNull();
     expect(parsed![0].notability).toBe('high');
   });
+
+  // v0.42.52 Layer 1a — a model that returns the literal STRING "null"
+  // (or "none"/whitespace) as the entity must NOT seed a `null`-slug orphan.
+  // parseExtractorJson coerces these to JSON null (fact stays unbound).
+  test.each(['null', 'none', 'NULL', 'undefined', 'n/a', '   ', ''])(
+    'coerces non-entity token %p to null entity',
+    (tok) => {
+      const raw = JSON.stringify({ facts: [{ fact: 'f', kind: 'fact', entity: tok }] });
+      const parsed = parseExtractorJson(raw);
+      expect(parsed).not.toBeNull();
+      expect(parsed![0].entity).toBeNull();
+    },
+  );
+
+  test('preserves a real entity binding through the parse', () => {
+    const raw = JSON.stringify({ facts: [{ fact: 'f', kind: 'fact', entity: 'companies/stripe' }] });
+    const parsed = parseExtractorJson(raw);
+    expect(parsed![0].entity).toBe('companies/stripe');
+  });
 });

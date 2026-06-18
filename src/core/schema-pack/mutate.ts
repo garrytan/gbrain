@@ -60,6 +60,7 @@ import type {
 } from './manifest-v1.ts';
 import { PACK_PRIMITIVES } from './manifest-v1.ts';
 import { loadPackFromFile, parseYamlMini } from './loader.ts';
+import { BUNDLED_PACK_NAMES } from './bundled-packs.ts';
 import { invalidatePackCache } from './registry.ts';
 import { invalidateQueryCache } from './query-cache-invalidator.ts';
 import { logMutationFailure, logMutationSuccess, type MutationActor, type MutationOp } from './mutate-audit.ts';
@@ -93,7 +94,13 @@ export class SchemaPackMutationError extends Error {
   }
 }
 
-export const BUNDLED_PACK_NAMES = new Set(['gbrain-base', 'gbrain-recommended', 'gbrain-base-v2']);
+// v0.42.52 — single source of truth lives in bundled-packs.ts (all 7
+// bundled packs are read-only). Re-exported here so existing consumers
+// (the index.ts barrel, load-active.ts findPackSuccessors, the mutability
+// gate below) keep their import path. Previously this listed only 3 names,
+// so `gbrain schema add-type --pack gbrain-creator` (and the other lens
+// packs) misreported "pack not found" instead of "bundled, read-only".
+export { BUNDLED_PACK_NAMES };
 
 export interface MutateResult {
   /** Pack name that was mutated. */
