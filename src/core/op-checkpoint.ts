@@ -180,9 +180,12 @@ export async function recordCompleted(
   // extract-conversation-facts serialize a MUTABLE map through here and rely on
   // stale keys being REMOVED; an append would make them unremovable. The full
   // set lands in the parent `completed_keys` JSONB column via a single UPSERT —
-  // exactly as before. JSON.stringify into `$3::jsonb` is correct (the text→jsonb
-  // cast yields a proper array; NOT the double-encode trap, which is the template
-  // form). Sync uses `appendCompleted` (below) instead, never this.
+  // exactly as before. With postgres.js `unsafe`, passing JSON.stringify(sorted)
+  // into a `$3::jsonb` placeholder double-encodes the value as a JSON string
+  // (violating the array CHECK). Passing the JS string[] directly lets postgres.js
+  // bind a real jsonb array on Postgres, while PGLite accepts the same shape.
+  // Sync uses `appendCompleted` (below) for path deltas, but still calls this once
+  // to pin the target commit.
   const sorted = [...keys].sort();
   return durableWrite(engine, key, 'write', () =>
     engine.executeRawDirect(
@@ -191,7 +194,7 @@ export async function recordCompleted(
        ON CONFLICT (op, fingerprint) DO UPDATE
          SET completed_keys = EXCLUDED.completed_keys,
              updated_at     = now()`,
-      [key.op, key.fingerprint, JSON.stringify(sorted)],
+      [key.op, key.fingerprint, sorted],
     ));
 }
 
