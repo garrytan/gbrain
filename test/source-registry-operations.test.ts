@@ -269,6 +269,31 @@ describe('source registry operations', () => {
     }
   });
 
+  test('preview raw canonical document accepts documents JSON string for CLI usage', async () => {
+    const harness = await createSqliteHarness('raw-canonical-preview-cli');
+    try {
+      const result = await getOperation('preview_raw_canonical_document').handler(harness.ctx(), {
+        source_kind: 'meeting_transcript',
+        source_id: 'source:weekly-sync',
+        source_item_id: 'source-item:weekly-sync-2026-06-18',
+        source_updated_at: '2026-06-18T09:00:00.000Z',
+        documents: JSON.stringify([{
+          target_slug: 'projects/search/docs/weekly-sync',
+          type: 'project',
+          title: 'Weekly Sync',
+          source_refs: ['Meeting notes "Weekly Sync", 2026-06-18 09:00 KST'],
+          facts: ['Search launch was moved to Friday.'],
+        }]),
+      }) as any;
+
+      expect(result.status).toBe('preview');
+      expect(result.drafts[0].blocked_reasons).toEqual([]);
+      expect(result.drafts[0].compiled_truth).toContain('Search launch was moved to Friday.');
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   for (const [label, createHarness] of [
     ['sqlite', createSqliteHarness],
     ['pglite', createPgliteHarness],

@@ -60,12 +60,18 @@ interface GroupedRequest {
   tags: string[];
   sourceRefs: string[];
   sourceChunkIds: string[];
-  facts: string[];
-  timelineEvents: string[];
+  facts: Observation[];
+  timelineEvents: Observation[];
   frontmatter: Record<string, unknown>;
   safetyFlags: string[];
   warnings: string[];
   blockedReasons: string[];
+}
+
+interface Observation {
+  text: string;
+  sourceRefs: string[];
+  sourceChunkIds: string[];
 }
 
 const DEFAULT_GENERATOR_VERSION = 'raw-canonical-document-generator:v1';
@@ -119,6 +125,7 @@ function prepareRequest(
   }
 
   const sourceRefs = uniqueStrings(request.source_refs ?? []);
+  const sourceChunkIds = uniqueStrings(request.source_chunk_ids ?? []);
   if (sourceRefs.length === 0) blockedReasons.push('missing_source_ref');
   if (!input.source_item_id) blockedReasons.push('missing_source_item');
 
@@ -133,6 +140,9 @@ function prepareRequest(
   const facts = uniqueStrings(request.facts ?? []);
   const timelineEvents = uniqueStrings(request.timeline_events ?? []);
   if (facts.length === 0 && timelineEvents.length === 0) blockedReasons.push('empty_observation');
+  if ([...facts, ...timelineEvents].some(hasUnsafeMarkdownObservation)) {
+    blockedReasons.push('unsafe_markdown_observation');
+  }
 
   if (normalizedSlug) {
     for (const issue of findSlugQualityIssues(normalizedSlug, `${normalizedSlug}.md`)) {
@@ -141,15 +151,15 @@ function prepareRequest(
   }
 
   return {
-    slug: normalizedSlug ?? (rawSlug || `untargeted-${index + 1}`),
+    slug: normalizedSlug ?? (rawSlug ? `invalid-target-${index + 1}` : `untargeted-${index + 1}`),
     normalizedSlug,
     type: request.type ?? 'concept',
-    title: request.title?.trim() || titleFromSlug(rawSlug) || 'Untitled Raw Canonical Draft',
+    title: request.title?.trim() || (normalizedSlug ? titleFromSlug(normalizedSlug) : 'Untitled Raw Canonical Draft'),
     tags: normalizeTags(request.tags ?? []),
     sourceRefs,
-    sourceChunkIds: uniqueStrings(request.source_chunk_ids ?? []),
-    facts,
-    timelineEvents,
+    sourceChunkIds,
+    facts: observationsFromTexts(facts, sourceRefs, sourceChunkIds),
+    timelineEvents: observationsFromTexts(timelineEvents, sourceRefs, sourceChunkIds),
     frontmatter: { ...(request.frontmatter ?? {}) },
     safetyFlags,
     warnings,
@@ -158,11 +168,23 @@ function prepareRequest(
 }
 
 function mergeGroup(target: GroupedRequest, source: GroupedRequest): void {
+  if (target.type !== source.type || target.title !== source.title) {
+    target.blockedReasons = uniqueStrings([...target.blockedReasons, 'conflicting_page_identity']);
+    target.warnings = uniqueStrings([...target.warnings, `${target.slug} page identity conflict`]);
+  }
+  const conflictKeys = frontmatterConflictKeys(target.frontmatter, source.frontmatter);
+  if (conflictKeys.length > 0) {
+    target.blockedReasons = uniqueStrings([...target.blockedReasons, 'conflicting_frontmatter']);
+    target.warnings = uniqueStrings([
+      ...target.warnings,
+      `${target.slug} frontmatter conflict: ${conflictKeys.join(', ')}`,
+    ]);
+  }
   target.tags = normalizeTags([...target.tags, ...source.tags]);
   target.sourceRefs = uniqueStrings([...target.sourceRefs, ...source.sourceRefs]);
   target.sourceChunkIds = uniqueStrings([...target.sourceChunkIds, ...source.sourceChunkIds]);
-  target.facts = uniqueStrings([...target.facts, ...source.facts]);
-  target.timelineEvents = uniqueStrings([...target.timelineEvents, ...source.timelineEvents]);
+  target.facts = uniqueObservations([...target.facts, ...source.facts]);
+  target.timelineEvents = uniqueObservations([...target.timelineEvents, ...source.timelineEvents]);
   target.safetyFlags = uniqueStrings([...target.safetyFlags, ...source.safetyFlags]);
   target.warnings = uniqueStrings([...target.warnings, ...source.warnings]);
   target.blockedReasons = uniqueStrings([...target.blockedReasons, ...source.blockedReasons]);
@@ -180,11 +202,21 @@ function buildDraft(
     blockedReasons.push('missing_now');
   }
 
-  let frontmatter = buildFrontmatter(input, group, sourceItemIds, sourceContentHashes, blockedReasons.length === 0);
+  let exposedSourceRefs = group.sourceRefs;
+  let exposedSourceChunkIds = group.sourceChunkIds;
+  let frontmatter = buildFrontmatter(
+    input,
+    group,
+    sourceItemIds,
+    sourceContentHashes,
+    blockedReasons.length === 0,
+    exposedSourceRefs,
+    exposedSourceChunkIds,
+  );
   const warnings = [...group.warnings];
   const canRenderFacts = blockedReasons.length === 0;
   const compiledTruth = canRenderFacts
-    ? renderCompiledTruth(group.facts, group.sourceRefs)
+    ? renderCompiledTruth(group.facts)
     : '';
   const timeline = canRenderFacts
     ? renderTimeline(input, group)
@@ -218,7 +250,19 @@ function buildDraft(
 
   if (blockedReasons.length > 0) {
     warnings.push(`${group.slug} blocked: ${uniqueStrings(blockedReasons).join(', ')}`);
-    frontmatter = buildFrontmatter(input, group, sourceItemIds, sourceContentHashes, false);
+    if (hasSafetyBlock(blockedReasons)) {
+      exposedSourceRefs = [];
+      exposedSourceChunkIds = [];
+    }
+    frontmatter = buildFrontmatter(
+      input,
+      group,
+      sourceItemIds,
+      sourceContentHashes,
+      false,
+      exposedSourceRefs,
+      exposedSourceChunkIds,
+    );
   }
 
   const finalBlockedReasons = uniqueStrings(blockedReasons);
@@ -232,7 +276,7 @@ function buildDraft(
     compiled_truth: canReturnRenderedContent ? compiledTruth : '',
     timeline: canReturnRenderedContent ? timeline : '',
     markdown: canReturnRenderedContent ? markdown : '',
-    source_refs: group.sourceRefs,
+    source_refs: exposedSourceRefs,
     warnings: uniqueStrings(warnings),
     blocked_reasons: finalBlockedReasons,
     review_status: 'draft',
@@ -246,6 +290,8 @@ function buildFrontmatter(
   sourceItemIds: string[],
   sourceContentHashes: string[],
   includeCallerMetadata: boolean,
+  sourceRefs: string[],
+  sourceChunkIds: string[],
 ): Record<string, unknown> {
   return removeUndefined({
     ...(includeCallerMetadata ? group.frontmatter : {}),
@@ -256,8 +302,8 @@ function buildFrontmatter(
     source_kind: input.source_kind,
     source_id: input.source_id,
     source_item_ids: sourceItemIds,
-    source_chunk_ids: group.sourceChunkIds,
-    source_refs: group.sourceRefs,
+    source_chunk_ids: sourceChunkIds,
+    source_refs: sourceRefs,
     source_content_hashes: sourceContentHashes,
     source_locator: includeCallerMetadata ? input.source_locator : undefined,
     source_updated_at: includeCallerMetadata ? input.source_updated_at : undefined,
@@ -267,11 +313,11 @@ function buildFrontmatter(
   });
 }
 
-function renderCompiledTruth(facts: string[], sourceRefs: string[]): string {
+function renderCompiledTruth(facts: Observation[]): string {
   return [
     '## Summary',
     '',
-    ...facts.map((fact) => `- ${withCitation(fact, sourceRefs)}`),
+    ...facts.map((fact) => `- ${withCitation(fact.text, fact.sourceRefs)}`),
   ].join('\n').trim();
 }
 
@@ -280,28 +326,46 @@ function renderTimeline(
   group: GroupedRequest,
 ): string {
   const date = stableEventTimestamp(input)?.slice(0, 10) ?? 'unknown-date';
-  const itemSuffix = input.source_item_id ? ` (source_item_id: ${input.source_item_id}${renderChunkSuffix(group)})` : '';
   return [
     '## Timeline',
     '',
     ...group.timelineEvents.map((event) => (
-      `- **${date}** | ${withCitation(event, group.sourceRefs)}${itemSuffix}`
+      `- **${date}** | ${withCitation(event.text, event.sourceRefs)}${renderTimelineProvenanceSuffix(input, event)}`
     )),
   ].join('\n').trim();
 }
 
-function renderChunkSuffix(group: GroupedRequest): string {
-  return group.sourceChunkIds.length > 0 ? `; source_chunk_ids: ${group.sourceChunkIds.join(', ')}` : '';
+function renderTimelineProvenanceSuffix(
+  input: RawCanonicalDocumentGeneratorInput,
+  event: Observation,
+): string {
+  const parts = [
+    input.source_item_id ? `source_item_id: ${input.source_item_id}` : '',
+    event.sourceChunkIds.length > 0 ? `source_chunk_ids: ${event.sourceChunkIds.join(', ')}` : '',
+  ].filter(Boolean);
+  return parts.length > 0 ? ` (${parts.join('; ')})` : '';
 }
 
 function withCitation(text: string, sourceRefs: string[]): string {
-  const normalized = ensureSentence(text.trim());
+  const normalized = ensureSentence(stripSourceMarkers(text).trim());
   const citations = sourceRefs
     .map((sourceRef) => `[Source: ${sourceRef}]`)
     .filter((citation) => !normalized.includes(citation))
     .join(' ');
   if (!citations) return normalized;
   return `${normalized} ${citations}`.trim();
+}
+
+function hasSafetyBlock(blockedReasons: string[]): boolean {
+  return blockedReasons.includes('secret_detected') || blockedReasons.includes('prompt_injection_flagged');
+}
+
+function hasUnsafeMarkdownObservation(text: string): boolean {
+  return /[\r\n]/.test(text);
+}
+
+function stripSourceMarkers(text: string): string {
+  return text.replace(/\s*\[Source:[^\]\r\n]*\]/g, '').trim();
 }
 
 function stableEventTimestamp(input: RawCanonicalDocumentGeneratorInput): string | undefined {
@@ -338,6 +402,48 @@ function titleFromSlug(slug: string): string {
     .replace(/\.md$/i, '')
     .replace(/[-_]+/g, ' ')
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function observationsFromTexts(
+  texts: string[],
+  sourceRefs: string[],
+  sourceChunkIds: string[],
+): Observation[] {
+  return texts.map((text) => ({
+    text,
+    sourceRefs,
+    sourceChunkIds,
+  }));
+}
+
+function uniqueObservations(values: readonly Observation[]): Observation[] {
+  const seen = new Set<string>();
+  const result: Observation[] = [];
+  for (const value of values) {
+    const key = JSON.stringify({
+      text: value.text,
+      sourceRefs: value.sourceRefs,
+      sourceChunkIds: value.sourceChunkIds,
+    });
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+  }
+  return result;
+}
+
+function frontmatterConflictKeys(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+): string[] {
+  const conflicts: string[] = [];
+  for (const [key, value] of Object.entries(source)) {
+    const existing = target[key];
+    if (existing === undefined) continue;
+    if (Array.isArray(existing) || Array.isArray(value)) continue;
+    if (!sameJsonValue(existing, value)) conflicts.push(key);
+  }
+  return conflicts;
 }
 
 function mergeFrontmatter(

@@ -406,7 +406,7 @@ export function createSourceRegistryOperations(
       extractor_version: { type: 'string', description: 'Extractor version used before generating observations.' },
       generator_version: { type: 'string', description: 'Generator version to record in draft frontmatter.' },
       now: { type: 'string', description: 'Optional ISO timestamp for deterministic timeline draft entries.' },
-      documents: { type: 'array', required: true, items: { type: 'object' }, description: 'Structured document draft requests.' },
+      documents: { type: ['array', 'string'], required: true, items: { type: 'object' }, description: 'Structured document draft requests, or a JSON array string for CLI usage.' },
     },
     handler: async (_ctx, p) => ({
       status: 'preview',
@@ -3355,10 +3355,18 @@ function rawCanonicalDocumentRequests(
   deps: { OperationError: OperationErrorCtor },
   value: unknown,
 ): RawCanonicalDocumentRequest[] {
-  if (!Array.isArray(value)) {
+  let documents = value;
+  if (typeof value === 'string') {
+    try {
+      documents = JSON.parse(value);
+    } catch {
+      throw invalidParams(deps, 'documents must be valid JSON when passed as a string');
+    }
+  }
+  if (!Array.isArray(documents)) {
     throw invalidParams(deps, 'documents must be an array of objects');
   }
-  return value.map((entry, index) => {
+  return documents.map((entry, index) => {
     const field = `documents[${index}]`;
     const document = requiredObject(deps, field, entry);
     return removeUndefinedRecord({

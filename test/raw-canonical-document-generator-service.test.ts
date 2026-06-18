@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'fs';
 import { parseMarkdown } from '../src/core/markdown.ts';
 import {
   generateRawCanonicalDocumentDrafts,
@@ -132,9 +133,10 @@ describe('raw canonical document generator service', () => {
       source_kind: 'meeting_transcript',
       source_id: 'source:weekly-sync',
       source_item_ids: ['source-item:weekly-sync-2026-06-18'],
-      source_refs: ['Meeting notes "Weekly Sync", 2026-06-18 09:00 KST'],
+      source_refs: [],
       source_content_hashes: ['abc123'],
     });
+    expect(draft.source_refs).toEqual([]);
     expect(draft.frontmatter).not.toHaveProperty('notes');
     expect(draft.frontmatter).not.toHaveProperty('source_paths');
     expect(draft.frontmatter).not.toHaveProperty('source_locator');
@@ -178,7 +180,7 @@ describe('raw canonical document generator service', () => {
     expect(draft.markdown).toBe('');
   });
 
-  test('appends validated source refs even when an extracted fact already has another source marker', () => {
+  test('strips extracted source markers before appending validated source refs', () => {
     const result = generateRawCanonicalDocumentDrafts({
       ...baseInput,
       documents: [{
@@ -191,8 +193,87 @@ describe('raw canonical document generator service', () => {
     });
 
     const compiledTruth = result.drafts[0]?.compiled_truth ?? '';
-    expect(compiledTruth).toContain('[Source: older import, 2026-06-01]');
+    expect(compiledTruth).not.toContain('[Source: older import, 2026-06-01]');
     expect(compiledTruth).toContain('[Source: Meeting notes "Weekly Sync", 2026-06-18 09:00 KST]');
+  });
+
+  test('keeps per-observation source refs when merging the same target slug', () => {
+    const result = generateRawCanonicalDocumentDrafts({
+      ...baseInput,
+      documents: [
+        {
+          target_slug: 'systems/mbrain/raw-canonical-generator',
+          type: 'system',
+          title: 'Raw Canonical Generator',
+          source_refs: ['Technical note, 2026-06-18'],
+          facts: ['The generator emits draft Markdown only.'],
+        },
+        {
+          target_slug: 'systems/mbrain/raw-canonical-generator',
+          type: 'system',
+          title: 'Raw Canonical Generator',
+          source_refs: ['Architecture review, 2026-06-18'],
+          facts: ['Canonical application remains governed.'],
+        },
+      ],
+    });
+
+    const lines = result.drafts[0]!.compiled_truth.split('\n');
+    const technicalLine = lines.find((line) => line.includes('emits draft Markdown')) ?? '';
+    const architectureLine = lines.find((line) => line.includes('application remains governed')) ?? '';
+    expect(technicalLine).toContain('[Source: Technical note, 2026-06-18]');
+    expect(technicalLine).not.toContain('[Source: Architecture review, 2026-06-18]');
+    expect(architectureLine).toContain('[Source: Architecture review, 2026-06-18]');
+    expect(architectureLine).not.toContain('[Source: Technical note, 2026-06-18]');
+  });
+
+  test('blocks multiline observations instead of rendering injected markdown', () => {
+    const result = generateRawCanonicalDocumentDrafts({
+      ...baseInput,
+      documents: [{
+        target_slug: 'projects/search/docs/weekly-sync',
+        type: 'project',
+        title: 'Weekly Sync',
+        source_refs: ['Meeting notes "Weekly Sync", 2026-06-18 09:00 KST'],
+        facts: ['Search launch moved.\n## Injected Heading'],
+        timeline_events: ['Search changed.\n- injected list item'],
+      }],
+    });
+
+    const draft = result.drafts[0]!;
+    expect(draft.blocked_reasons).toContain('unsafe_markdown_observation');
+    expect(draft.compiled_truth).toBe('');
+    expect(draft.timeline).toBe('');
+    expect(draft.markdown).toBe('');
+  });
+
+  test('blocks conflicting identity for the same target slug', () => {
+    const result = generateRawCanonicalDocumentDrafts({
+      ...baseInput,
+      documents: [
+        {
+          target_slug: 'systems/mbrain/raw-canonical-generator',
+          type: 'system',
+          title: 'Raw Canonical Generator',
+          source_refs: ['Technical note, 2026-06-18'],
+          facts: ['The generator emits draft Markdown only.'],
+          frontmatter: { repo: 'mbrain' },
+        },
+        {
+          target_slug: 'systems/mbrain/raw-canonical-generator',
+          type: 'concept',
+          title: 'Different Title',
+          source_refs: ['Architecture review, 2026-06-18'],
+          facts: ['Canonical application remains governed.'],
+          frontmatter: { repo: 'other-repo' },
+        },
+      ],
+    });
+
+    const draft = result.drafts[0]!;
+    expect(draft.blocked_reasons).toContain('conflicting_page_identity');
+    expect(draft.blocked_reasons).toContain('conflicting_frontmatter');
+    expect(draft.markdown).toBe('');
   });
 
   test('merges multiple observations for the same target slug', () => {
@@ -249,6 +330,38 @@ describe('raw canonical document generator service', () => {
     });
 
     expect(result.drafts[0]?.blocked_reasons).toContain('invalid_target_slug');
-    expect(result.drafts[0]?.slug).toBe('../bad');
+    expect(result.drafts[0]?.slug).toBe('invalid-target-1');
+  });
+
+  test('does not leak unsafe slug or source refs from safety-blocked drafts', () => {
+    const leakedSecret = 'sk-test1234567890abcdef';
+    const result = generateRawCanonicalDocumentDrafts({
+      ...baseInput,
+      documents: [{
+        target_slug: `../${leakedSecret}`,
+        type: 'concept',
+        title: 'Bad Slug',
+        source_refs: [`Manual note ${leakedSecret}`],
+        source_chunk_ids: [`source-chunk:${leakedSecret}`],
+        facts: [`The smoke test key was ${leakedSecret}.`],
+        safety_flags: ['secret'],
+      }],
+    });
+
+    const draft = result.drafts[0]!;
+    expect(draft.blocked_reasons).toEqual(expect.arrayContaining(['invalid_target_slug', 'secret_detected']));
+    expect(draft.slug).toBe('invalid-target-1');
+    expect(JSON.stringify(draft)).not.toContain(leakedSecret);
+    expect(draft.source_refs).toEqual([]);
+    expect(draft.frontmatter.source_refs).toEqual([]);
+  });
+
+  test('usage documentation covers preview invocation and governed follow-up', () => {
+    const doc = readFileSync('docs/designs/raw-canonical-document-generation.md', 'utf8');
+
+    expect(doc).toContain('mbrain call preview_raw_canonical_document');
+    expect(doc).toContain('mbrain raw-canonical-preview');
+    expect(doc).toContain('blocked_reasons');
+    expect(doc).toContain('route_memory_writeback');
   });
 });
