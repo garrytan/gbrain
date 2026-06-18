@@ -170,10 +170,10 @@ describe('Bug 9 — sync.ts CLI flag wiring', () => {
     // performSync's inner ack path only fires when failedFiles.length > 0
     // in the current run. This test pins the up-front ack at the top of
     // runSync so the flag means "ack whatever is currently flagged".
+    // v0.42.42.0 (#2139, D13C): the pre-ack is now scoped PER SOURCE — `--all`
+    // acks every source, single-source acks only its own.
     const source = await Bun.file(new URL('../src/commands/sync.ts', import.meta.url)).text();
-    // Ensure the up-front check exists before the syncAll / performSync
-    // dispatch, gated on skipFailed.
-    expect(source).toMatch(/if \(skipFailed\) \{[\s\S]*?unacknowledgedSyncFailures\(\)[\s\S]*?acknowledgeSyncFailures\(\)/);
+    expect(source).toMatch(/if \(skipFailed\) \{[\s\S]*?syncAll \? acknowledgeFailures\(\) : acknowledgeFailures\(sourceId\)/);
   });
 
   test('acknowledgeSyncFailures clears stale failures end-to-end', async () => {

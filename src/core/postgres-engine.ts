@@ -2648,11 +2648,31 @@ export class PostgresEngine implements BrainEngine {
     }
   }
 
-  async getLinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
+  async getLinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Link[]> {
     const sql = this.sql;
-    // v0.31.8 (D16): two-branch query. Without opts.sourceId, no source filter
-    // (preserves pre-v0.31.8 cross-source semantics). With opts.sourceId,
-    // scope the from-page lookup. See pglite-engine.ts:getLinks for context.
+    // #2200: federated grant scopes ALL THREE page endpoints — from, to, AND the
+    // origin (the page that authored the edge, surfaced as origin_slug). Scoping
+    // only from+to would still leak an out-of-grant origin's slug; the origin
+    // LEFT JOIN carries the same ANY($) filter so origin_slug nulls out of grant.
+    // Remote MCP clients always land here.
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      const ids = opts.sourceIds;
+      const rows = await sql`
+        SELECT f.slug as from_slug, t.slug as to_slug,
+               l.link_type, l.context, l.link_source,
+               o.slug as origin_slug, l.origin_field
+        FROM links l
+        JOIN pages f ON f.id = l.from_page_id
+        JOIN pages t ON t.id = l.to_page_id
+        LEFT JOIN pages o ON o.id = l.origin_page_id AND o.source_id = ANY(${ids}::text[])
+        WHERE f.slug = ${slug} AND f.source_id = ANY(${ids}::text[]) AND t.source_id = ANY(${ids}::text[])
+      `;
+      return rows as unknown as Link[];
+    }
+    // v0.31.8 (D16) + #2200: the federated arm above is the first branch; the
+    // two below preserve pre-v0.31.8 semantics. Without opts.sourceId, no source
+    // filter (cross-source view for internal callers). With opts.sourceId, scope
+    // the from-page lookup. See pglite-engine.ts:getLinks for context.
     if (opts?.sourceId) {
       const rows = await sql`
         SELECT f.slug as from_slug, t.slug as to_slug,
@@ -2679,9 +2699,26 @@ export class PostgresEngine implements BrainEngine {
     return rows as unknown as Link[];
   }
 
-  async getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
+  async getBacklinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Link[]> {
     const sql = this.sql;
-    // v0.31.8 (D16): two-branch query, mirrors getLinks above.
+    // #2200: federated grant scopes all three endpoints (mirrors getLinks) — the
+    // referrer (from), the queried page (to), AND the origin — so neither a
+    // foreign referrer nor a foreign origin slug is disclosed to the caller.
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      const ids = opts.sourceIds;
+      const rows = await sql`
+        SELECT f.slug as from_slug, t.slug as to_slug,
+               l.link_type, l.context, l.link_source,
+               o.slug as origin_slug, l.origin_field
+        FROM links l
+        JOIN pages f ON f.id = l.from_page_id
+        JOIN pages t ON t.id = l.to_page_id
+        LEFT JOIN pages o ON o.id = l.origin_page_id AND o.source_id = ANY(${ids}::text[])
+        WHERE t.slug = ${slug} AND t.source_id = ANY(${ids}::text[]) AND f.source_id = ANY(${ids}::text[])
+      `;
+      return rows as unknown as Link[];
+    }
+    // v0.31.8 (D16) + #2200: federated arm above is first; two below mirror getLinks.
     if (opts?.sourceId) {
       const rows = await sql`
         SELECT f.slug as from_slug, t.slug as to_slug,
@@ -3302,12 +3339,20 @@ export class PostgresEngine implements BrainEngine {
     `;
   }
 
-  async getTags(slug: string, opts?: { sourceId?: string }): Promise<string[]> {
+  async getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<string[]> {
     const sql = this.sql;
-    const sourceId = opts?.sourceId ?? 'default';
+    // #2200: federated grant (sourceIds[]) wins over scalar sourceId. Use
+    // `page_id IN (subquery)` — NOT `= (subquery)` — because a federated read of
+    // a slug present in >1 allowed source resolves multiple page-ids, which would
+    // throw under the scalar-subquery form. DISTINCT unions tags across the
+    // matched pages. Scalar/unscoped path keeps the legacy `?? 'default'` default.
+    const scope =
+      opts?.sourceIds && opts.sourceIds.length > 0
+        ? sql`source_id = ANY(${opts.sourceIds}::text[])`
+        : sql`source_id = ${opts?.sourceId ?? 'default'}`;
     const rows = await sql`
-      SELECT tag FROM tags
-      WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId})
+      SELECT DISTINCT tag FROM tags
+      WHERE page_id IN (SELECT id FROM pages WHERE slug = ${slug} AND ${scope})
       ORDER BY tag
     `;
     return rows.map((r) => r.tag as string);
@@ -3373,51 +3418,25 @@ export class PostgresEngine implements BrainEngine {
   async getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]> {
     const sql = this.sql;
     const limit = opts?.limit || 100;
-    // v0.31.8 (D16): branch on every combination of (after, before, sourceId).
-    // 8 cases is too many — use an explicit branch on sourceId, then nested
-    // branches on after/before. Mirrors pglite-engine but stays in postgres.js
-    // template-literal idiom (which doesn't compose fragment WHERE chains
-    // cleanly).
-    const sourceId = opts?.sourceId;
-    let rows;
-    if (sourceId) {
-      if (opts?.after && opts?.before) {
-        rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-          WHERE p.slug = ${slug} AND p.source_id = ${sourceId}
-            AND te.date >= ${opts.after}::date AND te.date <= ${opts.before}::date
-          ORDER BY te.date DESC LIMIT ${limit}`;
-      } else if (opts?.after) {
-        rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-          WHERE p.slug = ${slug} AND p.source_id = ${sourceId}
-            AND te.date >= ${opts.after}::date
-          ORDER BY te.date DESC LIMIT ${limit}`;
-      } else if (opts?.before) {
-        rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-          WHERE p.slug = ${slug} AND p.source_id = ${sourceId}
-            AND te.date <= ${opts.before}::date
-          ORDER BY te.date DESC LIMIT ${limit}`;
-      } else {
-        rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-          WHERE p.slug = ${slug} AND p.source_id = ${sourceId}
-          ORDER BY te.date DESC LIMIT ${limit}`;
-      }
-    } else if (opts?.after && opts?.before) {
-      rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-        WHERE p.slug = ${slug} AND te.date >= ${opts.after}::date AND te.date <= ${opts.before}::date
-        ORDER BY te.date DESC LIMIT ${limit}`;
-    } else if (opts?.after) {
-      rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-        WHERE p.slug = ${slug} AND te.date >= ${opts.after}::date
-        ORDER BY te.date DESC LIMIT ${limit}`;
-    } else if (opts?.before) {
-      rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-        WHERE p.slug = ${slug} AND te.date <= ${opts.before}::date
-        ORDER BY te.date DESC LIMIT ${limit}`;
-    } else {
-      rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-        WHERE p.slug = ${slug}
-        ORDER BY te.date DESC LIMIT ${limit}`;
-    }
+    // #2200 (D5A): collapse the former 8-branch (sourceId × after × before)
+    // cartesian tree into ONE query built from composed WHERE fragments — the
+    // same postgres.js `sql`` idiom getPage/getBacklinks/listLinkSources use.
+    // Scope precedence: federated sourceIds[] > scalar sourceId > unscoped. The
+    // federated arm unions entries across every same-slug page in the grant.
+    // (PGLite builds the equivalent via its dynamic where[]/params[] array —
+    // different idiom by design, same behavior; lockstep is on result, not builder.)
+    const sourceCond =
+      opts?.sourceIds && opts.sourceIds.length > 0
+        ? sql`AND p.source_id = ANY(${opts.sourceIds}::text[])`
+        : opts?.sourceId
+          ? sql`AND p.source_id = ${opts.sourceId}`
+          : sql``;
+    const afterCond = opts?.after ? sql`AND te.date >= ${opts.after}::date` : sql``;
+    const beforeCond = opts?.before ? sql`AND te.date <= ${opts.before}::date` : sql``;
+    const rows = await sql`
+      SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
+      WHERE p.slug = ${slug} ${sourceCond} ${afterCond} ${beforeCond}
+      ORDER BY te.date DESC LIMIT ${limit}`;
     return rows as unknown as TimelineEntry[];
   }
 

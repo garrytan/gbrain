@@ -3394,12 +3394,55 @@ export async function checkSyncFreshness(
     let hasWarnings = false;
     let hasFailures = false;
 
+    // BUG 4 (v0.42.x): a source with a LIVE, non-expired per-source sync lock is
+    // actively syncing RIGHT NOW — it must not read as stale or never-synced.
+    // The live lock is the only honest "in progress" signal. Checkpoint banking
+    // is NOT usable: a blocked sync banks the good files then writes no anchor
+    // (test/sync-resumable-import.serial.test.ts), so banking can't tell
+    // in-progress from wedged. A blocked/failed sync's process has exited (no
+    // lock row) and a wedged holder stops refreshing (TTL lapses), so either
+    // correctly falls through to the stale path and is NEVER masked. Same
+    // dynamic import as the stale_locks check; any throw (stub engine in unit
+    // tests, pre-lock-table brain) is swallowed to false, so this can only ADD
+    // an in-progress verdict, never suppress a real stale one.
+    // Notes for sources caught actively syncing (surfaced in the result
+    // message so the operator sees "in progress", not just a silent healthy
+    // bucket). Empty when nothing is syncing — keeps the steady-state messages
+    // byte-for-byte unchanged.
+    const inProgress: string[] = [];
+    let liveSyncSnap: (sourceId: string) => Promise<{ holder_pid: number; holder_host: string } | null> =
+      async () => null;
+    try {
+      const { inspectLock, syncLockId } = await import('../core/db-lock.ts');
+      liveSyncSnap = async (sourceId: string) => {
+        try {
+          const snap = await inspectLock(engine, syncLockId(sourceId));
+          return snap && !snap.ttl_expired
+            ? { holder_pid: snap.holder_pid, holder_host: snap.holder_host }
+            : null;
+        } catch {
+          return null;
+        }
+      };
+    } catch {
+      /* db-lock unavailable — skip in-progress detection, staleness stands. */
+    }
+
     for (const source of sources) {
       // Embed source.id in user-visible messages so `gbrain sync --source <id>`
       // matches what the user copy-pastes. Show display name in parens when set.
       const display = source.name && source.name !== source.id
         ? `'${source.id}' (${source.name})`
         : `'${source.id}'`;
+
+      // BUG 4: actively syncing (live lock) → healthy, count as synced_recently
+      // and skip the staleness checks. Keeps the 3-bucket invariant intact.
+      const liveSnap = await liveSyncSnap(source.id);
+      if (liveSnap) {
+        inProgress.push(`${display} sync in progress (pid ${liveSnap.holder_pid} on ${liveSnap.holder_host})`);
+        synced_recently_count++;
+        continue;
+      }
 
       if (!source.last_sync_at) {
         issues.push(`Source ${display} has never been synced`);
@@ -3486,12 +3529,15 @@ export async function checkSyncFreshness(
 
     // D6 invariant: every source incremented exactly one bucket.
     const details = { unchanged_count, synced_recently_count, stale_count };
+    // BUG 4: append in-progress context when any source is actively syncing.
+    // Empty otherwise, so steady-state messages are byte-for-byte unchanged.
+    const inProgressNote = inProgress.length ? `. ${inProgress.join('; ')}` : '';
 
     if (hasFailures) {
       return {
         name: 'sync_freshness',
         status: 'fail',
-        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` for each stale source`,
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` for each stale source${inProgressNote}`,
         details,
       };
     }
@@ -3499,7 +3545,7 @@ export async function checkSyncFreshness(
       return {
         name: 'sync_freshness',
         status: 'warn',
-        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` to refresh`,
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` to refresh${inProgressNote}`,
         details,
       };
     }
@@ -3510,7 +3556,7 @@ export async function checkSyncFreshness(
       return {
         name: 'sync_freshness',
         status: 'ok',
-        message: `All ${sources.length} federated source(s) up to date (no new commits since last sync)`,
+        message: `All ${sources.length} federated source(s) up to date (no new commits since last sync)${inProgressNote}`,
         details,
       };
     }
@@ -3518,14 +3564,14 @@ export async function checkSyncFreshness(
       return {
         name: 'sync_freshness',
         status: 'ok',
-        message: `${sources.length} federated source(s): ${synced_recently_count} synced recently, ${unchanged_count} unchanged since last sync`,
+        message: `${sources.length} federated source(s): ${synced_recently_count} synced recently, ${unchanged_count} unchanged since last sync${inProgressNote}`,
         details,
       };
     }
     return {
       name: 'sync_freshness',
       status: 'ok',
-      message: `All ${sources.length} federated source(s) synced recently`,
+      message: `All ${sources.length} federated source(s) synced recently${inProgressNote}`,
       details,
     };
   } catch (e) {

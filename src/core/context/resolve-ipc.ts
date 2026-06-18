@@ -35,6 +35,8 @@ export interface ResolveRequest {
   priorContextText?: string;
   maxPointers?: number;
   sourceId?: string;
+  /** v0.43 (#2095, codex D7): suppression mode — 'slug-only' under windowing. */
+  suppression?: 'slug-and-title' | 'slug-only';
 }
 
 export type ResolveHandler = (req: ResolveRequest) => Promise<PointerBlock | null>;
@@ -98,6 +100,13 @@ export async function resolveViaIpc(
 export async function startResolveIpcServer(
   socketPath: string,
   handler: ResolveHandler,
+  /**
+   * v0.43 (#2095, red-team): fired ONLY after the response was successfully
+   * written to the client — the accept-side seam for reflex-channel feedback
+   * logging. A block the client never received (timeout, dead socket) was
+   * never injected into a prompt and must not count as "volunteered".
+   */
+  onDelivered?: (block: PointerBlock, req: ResolveRequest) => void,
 ): Promise<net.Server | null> {
   // Remove a stale socket file if present (a previous serve that didn't clean up).
   cleanupStaleSocket(socketPath);
@@ -113,14 +122,23 @@ export async function startResolveIpcServer(
         if (nl < 0) return;
         const line = buf.slice(0, nl);
         let resp: string;
+        let delivered: { block: PointerBlock; req: ResolveRequest } | null = null;
         try {
           const req = JSON.parse(line) as ResolveRequest;
           const block = await handler(req);
           resp = JSON.stringify({ ok: true, block });
+          if (block) delivered = { block, req };
         } catch (e) {
           resp = JSON.stringify({ ok: false, error: (e as Error).message });
         }
-        try { conn.write(resp + '\n'); } catch { /* client gone */ }
+        try {
+          conn.write(resp + '\n');
+          // Write accepted — the client (250ms budget) may still have hung
+          // up, but this is the closest observable delivery point.
+          if (delivered && onDelivered) {
+            try { onDelivered(delivered.block, delivered.req); } catch { /* telemetry only */ }
+          }
+        } catch { /* client gone — do NOT log undelivered pointers */ }
         conn.end();
       });
       conn.on('error', () => { try { conn.destroy(); } catch { /* noop */ } });

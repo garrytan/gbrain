@@ -169,6 +169,14 @@ export interface GBrainConfig {
   retrieval_reflex?: boolean;
   /** Max pointers injected per turn (default 3). File-plane only. */
   retrieval_reflex_max_pointers?: number;
+  /**
+   * v0.43 (#2095) — how many recent turns the reflex extracts entities from
+   * (default 4). 1 reproduces the legacy current-turn-only behavior (and the
+   * legacy slug+title suppression). File-plane / env
+   * (GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS) only — same plane as the other
+   * reflex knobs.
+   */
+  retrieval_reflex_window_turns?: number;
   embedding_image_ocr?: boolean;
   embedding_image_ocr_model?: string;
 
@@ -319,6 +327,13 @@ export interface GBrainConfig {
      * Local CLI callers (`ctx.remote === false`) bypass the gate entirely.
      */
     publish_skills?: boolean;
+    /**
+     * Gate for the `advisor` op over a REMOTE transport (#2180). Separate from
+     * `publish_skills` because the advisor exposes operational diagnostics
+     * (version drift, stalled jobs, embedding-key presence), not prose skills.
+     * Default OFF; local CLI callers bypass. The MCP advisor is read-only.
+     */
+    publish_advisor?: boolean;
     /**
      * Explicit skills-dir override. Wins over autodetect — makes which skills
      * get published deterministic across laptop / daemon / container launches.
@@ -532,6 +547,10 @@ export function loadConfig(): GBrainConfig | null {
       : {}),
     ...(process.env.GBRAIN_RETRIEVAL_REFLEX
       ? { retrieval_reflex: !(process.env.GBRAIN_RETRIEVAL_REFLEX === 'false' || process.env.GBRAIN_RETRIEVAL_REFLEX === '0') }
+      : {}),
+    ...(process.env.GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS &&
+      Number.isFinite(Number(process.env.GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS))
+      ? { retrieval_reflex_window_turns: Number(process.env.GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS) }
       : {}),
     ...(process.env.GBRAIN_REMOTE_CLIENT_SECRET && fileConfig?.remote_mcp
       ? { remote_mcp: { ...fileConfig.remote_mcp, oauth_client_secret: process.env.GBRAIN_REMOTE_CLIENT_SECRET } }
@@ -878,6 +897,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'mcp.publish_skills',
   'mcp.publish_skills_prompted',
   'mcp.skills_dir',
+  // MCP advisor publishing (#2180): separate gate from publish_skills because
+  // the advisor exposes operational diagnostics (version/jobs/key presence),
+  // not prose skills. Default OFF; read-only over MCP.
+  'mcp.publish_advisor',
+  // Skill-nag suppression (#2180): brain-resident pack install nag off-switch.
+  'skillpack.nag_disabled',
   // Self-upgrade (v0.42; file plane, read on the hot path)
   'self_upgrade.mode',
   'self_upgrade.mode_prompted',
@@ -892,6 +917,15 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Link resolution (issue #972)
   'link_resolution',
   'link_resolution.global_basename',
+  // Spend controls (v0.42.42.0, issue #2139). Previously `--force`-only — the
+  // operator had to discover these by reading source. Registered so `config
+  // set` accepts them directly. See docs/operations/spend-controls.md.
+  'spend.posture',
+  'sync.cost_gate_min_usd',
+  'sync.federated_v2',
+  'embed.backfill_cooldown_min',
+  'embed.backfill_max_usd_per_source_24h',
+  'embed.backfill_max_usd',
 ];
 
 /**

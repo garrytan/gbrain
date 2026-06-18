@@ -1145,13 +1145,23 @@ export interface BrainEngine {
    * sources (pre-v0.31.8 behavior; preserved via two-branch query in both
    * engines). When set, the from-page filter becomes
    * `WHERE f.slug = $1 AND f.source_id = $X`.
+   *
+   * #2200: `opts.sourceIds` is a federated read grant (caller's allowedSources).
+   * It takes precedence over scalar `sourceId` and constrains BOTH endpoints
+   * (from AND to) to the grant via `source_id = ANY($::text[])` — so an in-grant
+   * page linking to an out-of-grant page does NOT leak the foreign slug/context
+   * (carries the `traversePaths` both-endpoint invariant). Remote MCP clients
+   * always route here (sourceScopeOpts emits an array for any allowedSources
+   * grant); the scalar branch is internal/CLI and keeps cross-source visibility
+   * (reconcileLinks + back-link validators depend on it).
    */
-  getLinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]>;
+  getLinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Link[]>;
   /**
    * v0.31.8 (D12 + D16): same `opts.sourceId` semantics as `getLinks`,
-   * applied to the to-page side of the join.
+   * applied to the to-page side of the join. #2200: `opts.sourceIds` federated
+   * grant constrains both endpoints (see `getLinks`).
    */
-  getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]>;
+  getBacklinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Link[]>;
   /**
    * v114 (#1941): distinct link_source provenances with edge counts, for
    * `gbrain link-sources`. Source-scoped via `{sourceId?, sourceIds?}` (both
@@ -1330,7 +1340,13 @@ export interface BrainEngine {
    */
   addTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void>;
   removeTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void>;
-  getTags(slug: string, opts?: { sourceId?: string }): Promise<string[]>;
+  /**
+   * #2200: getTags ALSO accepts a federated `sourceIds[]` read grant (precedence
+   * over scalar `sourceId`); it unions tags across the matched same-slug pages
+   * via `page_id IN (…) … DISTINCT`. The write-side addTag/removeTag deliberately
+   * stay scalar-only — `allowedSources` is a read grant; writes route to one source.
+   */
+  getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<string[]>;
 
   // Timeline
   /**

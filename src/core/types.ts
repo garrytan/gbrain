@@ -1270,6 +1270,13 @@ export interface TimelineOpts {
    * (pre-v0.31.8 behavior; preserved by the two-branch query in both engines).
    */
   sourceId?: string;
+  /**
+   * #2200: federated read grant (caller's allowedSources). Takes precedence over
+   * scalar `sourceId` when non-empty; scopes the page-id lookup to
+   * `source_id = ANY($::text[])` so a federated read honors the whole grant
+   * (union of allowed sources), not just one source. Mirrors `GetPageOpts.sourceIds`.
+   */
+  sourceIds?: string[];
 }
 
 // Raw data

@@ -182,3 +182,258 @@ describe('context-engine assemble() — Retrieval Reflex integration', () => {
     });
   });
 });
+
+describe('v0.43 (#2095) — rolling window extraction through assemble()', () => {
+  const REFLEX_ON = { GBRAIN_RETRIEVAL_REFLEX: 'true' };
+
+  test('entity named ONLY in a previous assistant turn yields a pointer now', async () => {
+    await withEnv(REFLEX_ON, async () => {
+      await seed('people/alice-example', 'Alice Example', 'Alice is a founder.');
+      const ce = createGBrainContextEngine({
+        workspaceDir: '/tmp/rr-test-ws-w1',
+        resolveEntities: (candidates, opts) =>
+          resolveEntitiesToPointers(engine, 'default', candidates, opts),
+      });
+      // Current turn is a pronoun follow-up; the antecedent was NAMED two
+      // turns back by the ASSISTANT. Pre-window this never fired.
+      const res = await ce.assemble({
+        sessionId: 'w1',
+        messages: [
+          { role: 'user', content: 'who should I talk to about the seed round?' },
+          { role: 'assistant', content: 'Alice Example led a similar round last year.' },
+          { role: 'user', content: 'what did she invest in?' },
+        ],
+      });
+      expect(res.systemPromptAddition).toContain('people/alice-example');
+    });
+  });
+
+  test('window=1 reproduces the legacy current-turn-only behavior', async () => {
+    await withEnv({ ...REFLEX_ON, GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS: '1' }, async () => {
+      await seed('people/alice-example', 'Alice Example', 'Alice is a founder.');
+      const ce = createGBrainContextEngine({
+        workspaceDir: '/tmp/rr-test-ws-w2',
+        resolveEntities: (candidates, opts) =>
+          resolveEntitiesToPointers(engine, 'default', candidates, opts),
+      });
+      const res = await ce.assemble({
+        sessionId: 'w2',
+        messages: [
+          { role: 'assistant', content: 'Alice Example led a similar round last year.' },
+          { role: 'user', content: 'what did she invest in?' },
+        ],
+      });
+      // Current turn has no extractable entity; window=1 must NOT widen.
+      expect(res.systemPromptAddition).not.toContain('people/alice-example');
+    });
+  });
+
+  test('windowed suppression is slug-only: a prior-turn MENTION does not suppress (codex D7)', async () => {
+    await withEnv(REFLEX_ON, async () => {
+      await seed('people/alice-example', 'Alice Example', 'A founder.');
+      const ce = createGBrainContextEngine({
+        workspaceDir: '/tmp/rr-test-ws-w3',
+        resolveEntities: (candidates, opts) =>
+          resolveEntitiesToPointers(engine, 'default', candidates, opts),
+      });
+      // "Alice Example" appears in a PRIOR turn (a bare mention — prior
+      // context contains the TITLE). Under the legacy title rule the pointer
+      // would be suppressed; slug-only windowing must still fire.
+      const res = await ce.assemble({
+        sessionId: 'w3',
+        messages: [
+          { role: 'user', content: 'I met Alice Example yesterday' },
+          { role: 'assistant', content: 'How did the meeting with Alice Example go?' },
+          { role: 'user', content: 'she wants to invest — thoughts?' },
+        ],
+      });
+      expect(res.systemPromptAddition).toContain('people/alice-example');
+    });
+  });
+
+  test('windowed suppression still drops an already-surfaced page (slug in prior context)', async () => {
+    await withEnv(REFLEX_ON, async () => {
+      await seed('people/alice-example', 'Alice Example', 'A founder.');
+      const ce = createGBrainContextEngine({
+        workspaceDir: '/tmp/rr-test-ws-w4',
+        resolveEntities: (candidates, opts) =>
+          resolveEntitiesToPointers(engine, 'default', candidates, opts),
+      });
+      const res = await ce.assemble({
+        sessionId: 'w4',
+        messages: [
+          { role: 'assistant', content: 'Pointer: **Alice Example** → `people/alice-example` (use get_page)' },
+          { role: 'user', content: 'tell me more about Alice Example' },
+        ],
+      });
+      expect(res.systemPromptAddition).not.toContain('Brain pages mentioned this turn');
+    });
+  });
+
+  test('fail-open: a throwing resolver under windowing never breaks the turn', async () => {
+    await withEnv(REFLEX_ON, async () => {
+      await seed('people/alice-example', 'Alice Example', 'A founder.');
+      const ce = createGBrainContextEngine({
+        workspaceDir: '/tmp/rr-test-ws-w5',
+        resolveEntities: async () => { throw new Error('resolver exploded'); },
+      });
+      const res = await ce.assemble({
+        sessionId: 'w5',
+        messages: [
+          { role: 'assistant', content: 'Alice Example is relevant here.' },
+          { role: 'user', content: 'ok tell me about her' },
+        ],
+      });
+      expect(res.systemPromptAddition).toContain('Live Context');
+      expect(res.systemPromptAddition).not.toContain('Brain pages mentioned this turn');
+    });
+  });
+});
+
+describe('ambient-channel event logging (codex D11 — accept-side logDeliveredReflexPointers)', () => {
+  test('logDeliveredReflexPointers logs channel=reflex events through the drained sink', async () => {
+    const { logDeliveredReflexPointers } = await import('../src/core/context/retrieval-reflex.ts');
+    const { awaitPendingVolunteerEventWrites, _resetPendingVolunteerEventWritesForTests } =
+      await import('../src/core/context/volunteer-events.ts');
+    _resetPendingVolunteerEventWritesForTests();
+    await engine.executeRaw('DELETE FROM context_volunteer_events').catch(() => {});
+    await seed('people/alice-example', 'Alice Example', 'A founder.');
+
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('what do you think about Alice Example?'),
+      {},
+    );
+    expect(block).not.toBeNull();
+    logDeliveredReflexPointers(engine, block!.pointers);
+    const { unfinished } = await awaitPendingVolunteerEventWrites(5_000);
+    expect(unfinished).toBe(0);
+    const rows = await engine.executeRaw<{ channel: string; slug: string; match_arm: string }>(
+      'SELECT channel, slug, match_arm FROM context_volunteer_events',
+      [],
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].channel).toBe('reflex');
+    expect(rows[0].slug).toBe('people/alice-example');
+    expect(rows[0].match_arm).toBe('title');
+  });
+
+  test('the bare resolver logs nothing — delivery is the only logging seam', async () => {
+    await engine.executeRaw('DELETE FROM context_volunteer_events').catch(() => {});
+    await seed('people/alice-example', 'Alice Example', 'A founder.');
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('about Alice Example'),
+      {},
+    );
+    expect(block).not.toBeNull();
+    const { awaitPendingVolunteerEventWrites } = await import('../src/core/context/volunteer-events.ts');
+    await awaitPendingVolunteerEventWrites(5_000);
+    const rows = await engine.executeRaw<{ channel: string }>('SELECT channel FROM context_volunteer_events', []);
+    expect(rows.length).toBe(0);
+  });
+
+  test('logDeliveredReflexPointers with an empty pointer list is a no-op', async () => {
+    const { logDeliveredReflexPointers } = await import('../src/core/context/retrieval-reflex.ts');
+    const { awaitPendingVolunteerEventWrites } = await import('../src/core/context/volunteer-events.ts');
+    await engine.executeRaw('DELETE FROM context_volunteer_events').catch(() => {});
+    logDeliveredReflexPointers(engine, []);
+    await awaitPendingVolunteerEventWrites(5_000);
+    const rows = await engine.executeRaw<{ channel: string }>('SELECT channel FROM context_volunteer_events', []);
+    expect(rows.length).toBe(0);
+  });
+});
+
+describe('serve IPC wiring — suppression passthrough + reflex-channel logging (review hardening)', () => {
+  test('the IPC round-trip honors slug-only suppression and logs channel=reflex', async () => {
+    const { startResolveIpcServer, resolveViaIpc, resolveSocketPath, IPC_UNAVAILABLE } =
+      await import('../src/core/context/resolve-ipc.ts');
+    const { awaitPendingVolunteerEventWrites, _resetPendingVolunteerEventWritesForTests } =
+      await import('../src/core/context/volunteer-events.ts');
+    const { mkdtempSync, rmSync } = await import('fs');
+    const { join } = await import('path');
+    const { tmpdir } = await import('os');
+
+    _resetPendingVolunteerEventWritesForTests();
+    await engine.executeRaw('DELETE FROM context_volunteer_events').catch(() => {});
+    await seed('people/alice-example', 'Alice Example', 'A founder.');
+
+    const dir = mkdtempSync(join(tmpdir(), 'rr-ipc-'));
+    const sock = resolveSocketPath(dir);
+    // The SAME wiring shape src/mcp/server.ts uses for serve: forwards
+    // suppression from the request; logging happens at DELIVERY via the
+    // onDelivered hook (post-write), never inside the resolver.
+    const { logDeliveredReflexPointers } = await import('../src/core/context/retrieval-reflex.ts');
+    const server = await startResolveIpcServer(
+      sock,
+      (req) =>
+        resolveEntitiesToPointers(engine, req.sourceId || 'default', req.candidates ?? [], {
+          priorContextText: req.priorContextText,
+          maxPointers: req.maxPointers,
+          suppression: req.suppression,
+        }),
+      (block) => logDeliveredReflexPointers(engine, block.pointers),
+    );
+    expect(server).not.toBeNull();
+    try {
+      // slug-only suppression: a TITLE mention in prior context must NOT
+      // suppress (the windowing contract), and the resolve must log.
+      const block = await resolveViaIpc(sock, {
+        candidates: extractCandidates('tell me about Alice Example'),
+        priorContextText: 'earlier turn merely mentioned Alice Example',
+        suppression: 'slug-only',
+      });
+      expect(block).not.toBe(IPC_UNAVAILABLE);
+      expect(block).not.toBeNull();
+      expect((block as { pointers: Array<{ slug: string }> }).pointers[0].slug).toBe('people/alice-example');
+
+      const { unfinished } = await awaitPendingVolunteerEventWrites(5_000);
+      expect(unfinished).toBe(0);
+      const rows = await engine.executeRaw<{ channel: string }>(
+        'SELECT channel FROM context_volunteer_events', [],
+      );
+      expect(rows.length).toBe(1);
+      expect(rows[0].channel).toBe('reflex');
+    } finally {
+      server!.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('windowTurnCount — knob edge semantics', () => {
+  test('0, negative, NaN, and absent all fall back to the default of 4 (1 = legacy off)', async () => {
+    const { windowTurnCount, DEFAULT_WINDOW_TURNS } = await import('../src/core/context/reflex.ts');
+    expect(DEFAULT_WINDOW_TURNS).toBe(4);
+    expect(windowTurnCount(null)).toBe(4);
+    expect(windowTurnCount({ retrieval_reflex_window_turns: 0 } as never)).toBe(4);
+    expect(windowTurnCount({ retrieval_reflex_window_turns: -3 } as never)).toBe(4);
+    expect(windowTurnCount({ retrieval_reflex_window_turns: Number.NaN } as never)).toBe(4);
+    // The documented "off" switch is 1 (legacy single-turn), not 0.
+    expect(windowTurnCount({ retrieval_reflex_window_turns: 1 } as never)).toBe(1);
+    expect(windowTurnCount({ retrieval_reflex_window_turns: 6.9 } as never)).toBe(6);
+  });
+
+  test('the env escape hatch is honored even when config is null (no config file / DB)', async () => {
+    const { windowTurnCount } = await import('../src/core/context/reflex.ts');
+    // loadConfig() returns null in a config-less environment (clean CI shard,
+    // no brain) and drops its env→config mapping — windowTurnCount must still
+    // read the env var directly, or the documented escape hatch is dead and
+    // the window silently defaults to 4. withEnv() (not raw process.env
+    // mutation) keeps the linter + isolation guard happy.
+    await withEnv({ GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS: '1' }, async () => {
+      expect(windowTurnCount(null)).toBe(1);
+    });
+    await withEnv({ GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS: '7' }, async () => {
+      expect(windowTurnCount(null)).toBe(7);
+      // Env wins over a config value too (env is the higher-precedence plane).
+      expect(windowTurnCount({ retrieval_reflex_window_turns: 3 } as never)).toBe(7);
+    });
+    await withEnv({ GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS: 'not-a-number' }, async () => {
+      // Garbage env falls through to config / default, not a crash.
+      expect(windowTurnCount(null)).toBe(4);
+    });
+  });
+});

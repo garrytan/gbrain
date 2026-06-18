@@ -1285,6 +1285,16 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     } catch {
       // Non-fatal.
     }
+    // v0.43 (#2095) — 90-day GC of the volunteered-context feedback log.
+    // Conversation-adjacent telemetry must never grow unbounded. Best-effort:
+    // purgeStaleVolunteerEvents returns 0 on pre-v117 brains (no table).
+    let purgedVolunteerEvents = 0;
+    try {
+      const { purgeStaleVolunteerEvents } = await import('./context/volunteer-events.ts');
+      purgedVolunteerEvents = await purgeStaleVolunteerEvents(engine);
+    } catch {
+      // Non-fatal.
+    }
     return {
       phase: 'purge',
       status: 'ok',
@@ -1293,7 +1303,8 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         `purged ${purgedSources.length} source(s), ${purgedPages.count} page(s), ` +
         `${purgedClones.count} orphan clone temp dir(s), ${purgedCheckpoints} stale op_checkpoint(s), ` +
         `${purgedBrainstormCheckpoints} stale brainstorm checkpoint(s), ` +
-        `and ${purgedBatchRetryAuditFiles} stale batch-retry audit file(s)`,
+        `${purgedBatchRetryAuditFiles} stale batch-retry audit file(s), ` +
+        `and ${purgedVolunteerEvents} stale volunteer event(s)`,
       details: {
         purged_sources_count: purgedSources.length,
         purged_pages_count: purgedPages.count,
@@ -1304,6 +1315,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         purged_checkpoints_count: purgedCheckpoints,
         purged_brainstorm_checkpoints_count: purgedBrainstormCheckpoints,
         purged_batch_retry_audit_files_count: purgedBatchRetryAuditFiles,
+        purged_volunteer_events_count: purgedVolunteerEvents,
       },
     };
   } catch (e) {

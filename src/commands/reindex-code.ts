@@ -444,14 +444,24 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
   }
 
   // F3: --max-cost / --max-cost-usd both accepted for symmetry with brainstorm.
+  // v0.42.42.0 (#2139): `off`/`unlimited`/`none` → no runtime cap AND an explicit
+  // "cost isn't the constraint" decision that proceeds past the confirmation gate
+  // (like --yes). Numeric must be positive; `0`/garbage is rejected.
   let maxCostUsd: number | undefined;
+  let maxCostOff = false;
   for (const flag of ['--max-cost', '--max-cost-usd']) {
     const idx = args.indexOf(flag);
     if (idx >= 0) {
       const v = args[idx + 1];
+      const t = (v ?? '').trim().toLowerCase();
+      if (['off', 'unlimited', 'none'].includes(t)) {
+        maxCostUsd = undefined; // no runtime cap (reindex skips the tracker when unset)
+        maxCostOff = true;
+        break;
+      }
       const n = v ? parseFloat(v) : NaN;
       if (!Number.isFinite(n) || n <= 0) {
-        console.error(`gbrain reindex --code: ${flag} requires a positive number in USD (got ${v ?? '(missing)'})`);
+        console.error(`gbrain reindex --code: ${flag} requires a positive number in USD, or off/unlimited (got ${v ?? '(missing)'})`);
         process.exit(2);
       }
       maxCostUsd = n;
@@ -493,20 +503,36 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
     }
 
     if (!yes) {
-      const isTTY = Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY);
-      if (!isTTY || json) {
-        // Guardrail unchanged: refuse + exit 2, no spend. Only the FORMAT splits
-        // on --json now (human refusal on stderr otherwise) — #1784.
-        const refusal = buildCostRefusal({ json, previewMsg, preview, costUsd, model: getEmbeddingModelName() });
-        if (refusal.stdout) console.log(refusal.stdout);
-        if (refusal.stderr) console.error(refusal.stderr);
-        process.exit(2);
-      }
-      console.log(previewMsg);
-      const answer = await promptYesNo('Proceed? [y/N] ');
-      if (!answer) {
-        console.log('Cancelled.');
-        return;
+      // v0.42.42.0 (#2139): spend.posture=tokenmax makes the gate informational
+      // — print the estimate and proceed (the operator declared cost isn't the
+      // constraint). The spend is still ledgered by the runtime BudgetTracker.
+      const { resolveSpendPosture } = await import('../core/spend-posture.ts');
+      const posture = await resolveSpendPosture(engine);
+      // An explicit `--max-cost off` is the same "cost isn't the constraint"
+      // signal as spend.posture=tokenmax — proceed past the confirmation gate.
+      if (posture === 'tokenmax' || maxCostOff) {
+        const gate = maxCostOff ? 'max_cost_off' : 'posture_tokenmax';
+        if (json) {
+          console.log(JSON.stringify({ status: 'proceeding', gate, codePages: preview.totalPages, totalTokens: preview.totalTokens, costUsd, model: getEmbeddingModelName() }));
+        } else {
+          console.log(`${previewMsg} ${maxCostOff ? '--max-cost off' : 'spend.posture=tokenmax'}: proceeding (informational). docs: docs/operations/spend-controls.md`);
+        }
+      } else {
+        const isTTY = Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY);
+        if (!isTTY || json) {
+          // Guardrail unchanged: refuse + exit 2, no spend. Only the FORMAT splits
+          // on --json now (human refusal on stderr otherwise) — #1784.
+          const refusal = buildCostRefusal({ json, previewMsg, preview, costUsd, model: getEmbeddingModelName() });
+          if (refusal.stdout) console.log(refusal.stdout);
+          if (refusal.stderr) console.error(refusal.stderr);
+          process.exit(2);
+        }
+        console.log(previewMsg);
+        const answer = await promptYesNo('Proceed? [y/N] ');
+        if (!answer) {
+          console.log('Cancelled.');
+          return;
+        }
       }
     }
   }

@@ -82,4 +82,20 @@ describe('shouldForceExitAfterMain — daemon survival gate', () => {
     expect(shouldForceExitAfterMain(['serves'])).toBe(true);
     expect(shouldForceExitAfterMain(['serve-cluster'])).toBe(true);
   });
+
+  test('awaited long-runners exit deliberately when their handler resolves', () => {
+    // `jobs work`, `jobs watch --follow`, `autopilot`, and `gbrain watch`
+    // (#2095) all BLOCK inside their awaited handler until done — when
+    // main() resolves for them, the work is over and the deliberate exit is
+    // correct (v0.43 #2084 contract). Only commands that RETURN from main()
+    // while the event loop carries the daemon (`serve`) belong in
+    // DAEMON_COMMANDS — `watch` blocks in its stdin iteration, so piped EOF
+    // must flow through the flush-exit instead of hanging on lingering
+    // sockets.
+    expect(shouldForceExitAfterMain(['jobs', 'work'])).toBe(true);
+    expect(shouldForceExitAfterMain(['jobs', 'watch', '--follow'])).toBe(true);
+    expect(shouldForceExitAfterMain(['autopilot'])).toBe(true);
+    expect(shouldForceExitAfterMain(['watch'])).toBe(true);
+    expect(shouldForceExitAfterMain(['watch', '--json'])).toBe(true);
+  });
 });

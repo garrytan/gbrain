@@ -250,3 +250,20 @@ describe('v0.41.8.0 #1340 — PGLite WASM init classifier', () => {
     expect(src).toMatch(/buildPgliteInitErrorMessage\(verdict, original\)/);
   });
 });
+
+describe('v0.42.43.0 #2095 — volunteer-events sink + cycle purge wiring (structural pins)', () => {
+  test('volunteer-events registers a background-work drainer (order 4)', () => {
+    // Deleting this registration would silently drop volunteer events on
+    // every CLI exit with no behavioral test failing — same pin class as the
+    // other four sinks above.
+    const src = readFileSync('src/core/context/volunteer-events.ts', 'utf8');
+    expect(src).toMatch(/registerBackgroundWorkDrainer\(\{[\s\S]*?name:\s*'volunteer-events'/);
+    expect(src).toMatch(/order:\s*4/);
+  });
+
+  test("the dream cycle's purge phase invokes purgeStaleVolunteerEvents and reports the count", () => {
+    const src = readFileSync('src/core/cycle.ts', 'utf8');
+    expect(src).toMatch(/purgeStaleVolunteerEvents\(engine\)/);
+    expect(src).toMatch(/purged_volunteer_events_count/);
+  });
+});

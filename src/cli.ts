@@ -24,6 +24,7 @@ import type { GBrainConfig } from './core/config.ts';
 import type { AIGatewayConfig } from './core/ai/types.ts';
 import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
+import { formatVolunteeredPage } from './core/context/volunteer.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict } from './core/cli-force-exit.ts';
 import { serializeMarkdown } from './core/markdown.ts';
@@ -43,7 +44,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade']);
+const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -67,6 +68,8 @@ const CLI_ONLY_SELF_HELP = new Set([
   'capture',
   // v0.42 self-upgrade ships its own usage (flags + the agent-skill story).
   'self-upgrade',
+  // v0.43 (#2095): watch ships WATCH_HELP (flags + the stdin-turn protocol).
+  'watch',
   // v0.37 fix wave (Lane D.4 + CDX2-12): sync's --no-embed flag was
   // unreachable via help because the dispatcher's generic CLI-only
   // short-circuit fired before runSync could print its own usage block.
@@ -279,6 +282,17 @@ async function main() {
       printCliOnlyHelp(command);
       return;
     }
+  }
+
+  // DB-free durability pull (v0.42.44 D2): the harden cron calls
+  // `gbrain sources pull --path <dir>` every ~30 min. It must NOT open PGLite
+  // (a live long-lived session holds the single-writer lock), so handle it
+  // BEFORE connectEngine. The `sources pull <id>` form (no --path) still routes
+  // through handleCliOnly → runSources with an engine.
+  if (command === 'sources' && subArgs[0] === 'pull' && subArgs.includes('--path')) {
+    const { runPull } = await import('./commands/sources-harden.ts');
+    await runPull(null, subArgs.slice(1));
+    return;
   }
 
   // CLI-only commands
@@ -802,8 +816,27 @@ async function makeContext(engine: BrainEngine, params: Record<string, unknown>)
   };
 }
 
-function formatResult(opName: string, result: unknown): string {
+// Exported for tests (same import-safety contract as cliAliases/printOpHelp).
+export function formatResult(opName: string, result: unknown): string {
   switch (opName) {
+    case 'volunteer_context': {
+      const r = result as any;
+      // Stats mode (the feedback loop).
+      if (r && r.approximate === true && Array.isArray(r.by_arm)) {
+        const lines = [
+          `volunteered-context precision — last ${r.days} day(s) (${r.note})`,
+          `total: ${r.total_volunteered} volunteered, ${r.total_used} used`,
+        ];
+        for (const a of r.by_arm) {
+          lines.push(`  ${a.match_arm}/${a.channel}: ${a.used}/${a.volunteered} used (precision ${a.precision})`);
+        }
+        if (!r.by_arm.length) lines.push('  (no volunteer events in the window)');
+        return lines.join('\n') + '\n';
+      }
+      const pages = (r?.pages ?? []) as any[];
+      if (!pages.length) return 'Nothing volunteered (no entity cleared the confidence gate).\n';
+      return pages.map((p) => formatVolunteeredPage(p)).join('\n') + '\n';
+    }
     case 'get_page': {
       const r = result as any;
       if (r.error === 'ambiguous_slug') {
@@ -925,6 +958,9 @@ function formatResult(opName: string, result: unknown): string {
 const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   'sync', 'embed', 'extract', 'extract-conversation-facts', 'enrich', 'migrate', 'apply-migrations',
   'repair-jsonb', 'orphans', 'integrity', 'serve',
+  // v0.43 (#2095): watch streams against a LOCAL engine; thin clients get
+  // the volunteer_context MCP op instead.
+  'watch',
   // v0.31.1 (CDX-2 op coverage matrix): more local-only commands
   'dream', 'transcripts', 'storage',
   // v0.31.1 CDX-2 audit: takes/sources have multiple subcommands; some
@@ -1156,11 +1192,14 @@ async function handleCliOnly(command: string, args: string[]) {
   }
   if (command === 'friction') {
     const { runFriction } = await import('./commands/friction.ts');
-    process.exit(runFriction(args));
+    // #2084 inner-exit sweep: verdict + return so teardown + the flush seam run.
+    setCliExitVerdict(runFriction(args));
+    return;
   }
   if (command === 'claw-test') {
     const { runClawTest } = await import('./commands/claw-test.ts');
-    process.exit(await runClawTest(args));
+    setCliExitVerdict(await runClawTest(args));
+    return;
   }
   if (command === 'report') {
     const { runReport } = await import('./commands/report.ts');
@@ -1269,7 +1308,7 @@ async function handleCliOnly(command: string, args: string[]) {
       execSync(`bash "${scriptPath}"`, { stdio: 'inherit', env: { ...process.env } });
     } catch (e: any) {
       // Non-zero exit = some tests failed (exit code = failure count)
-      process.exit(e.status ?? 1);
+      setCliExitVerdict(e.status ?? 1);
     }
     return;
   }
@@ -1318,7 +1357,8 @@ async function handleCliOnly(command: string, args: string[]) {
   // The handler self-configures the AI gateway from loadConfig() + process.env.
   if (command === 'eval' && args[0] === 'cross-modal') {
     const { runEvalCrossModal } = await import('./commands/eval-cross-modal.ts');
-    process.exit(await runEvalCrossModal(args.slice(1)));
+    setCliExitVerdict(await runEvalCrossModal(args.slice(1)));
+    return;
   }
 
   // v0.32 EXP-5 (codex review #10): `eval takes-quality replay <receipt>`
@@ -1329,7 +1369,8 @@ async function handleCliOnly(command: string, args: string[]) {
   // engine-required path below.
   if (command === 'eval' && args[0] === 'takes-quality' && args[1] === 'replay') {
     const { runReplayNoBrain } = await import('./commands/eval-takes-quality.ts');
-    process.exit(await runReplayNoBrain(args.slice(2)));
+    setCliExitVerdict(await runReplayNoBrain(args.slice(2)));
+    return;
   }
 
   // v0.28.8: longmemeval brings its own in-memory PGLite. Bypassing
@@ -1361,7 +1402,8 @@ async function handleCliOnly(command: string, args: string[]) {
   // gate runs on machines with no `~/.gbrain/config.json`.
   if (command === 'eval' && args[0] === 'conversation-parser') {
     const { runEvalConversationParser } = await import('./commands/eval-conversation-parser.ts');
-    process.exit(await runEvalConversationParser(args.slice(1)));
+    setCliExitVerdict(await runEvalConversationParser(args.slice(1)));
+    return;
   }
 
   // v0.41.13.0: `gbrain conversation-parser list-builtins | validate
@@ -1389,7 +1431,8 @@ async function handleCliOnly(command: string, args: string[]) {
     const cfgPre = loadConfig();
     if (isThinClient(cfgPre)) {
       const { runEvalWhoknows } = await import('./commands/eval-whoknows.ts');
-      process.exit(await runEvalWhoknows(null, args.slice(1)));
+      setCliExitVerdict(await runEvalWhoknows(null, args.slice(1)));
+      return;
     }
   }
 
@@ -1403,7 +1446,8 @@ async function handleCliOnly(command: string, args: string[]) {
     if (cfgPre && isThinClient(cfgPre)) {
       const { runStatus } = await import('./commands/status.ts');
       const result = await runStatus(null, args);
-      process.exit(result.exitCode);
+      setCliExitVerdict(result.exitCode);
+      return;
     }
   }
 
@@ -1716,6 +1760,15 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'status': {
         const { runStatus } = await import('./commands/status.ts');
         const result = await runStatus(engine, args);
+        // #2084 inner-exit sweep: a mid-switch exit skips the finally teardown.
+        setCliExitVerdict(result.exitCode);
+        break;
+      }
+      // v0.43 (#2180) — `gbrain advisor`: ranked, read-only "what to do next".
+      // CLI surface; the same signals are exposed over MCP via the `advisor` op.
+      case 'advisor': {
+        const { runAdvisorCli } = await import('./commands/advisor.ts');
+        const result = await runAdvisorCli(engine, args);
         process.exit(result.exitCode);
         // eslint-disable-next-line no-unreachable
         break;
@@ -1885,6 +1938,15 @@ async function handleCliOnly(command: string, args: string[]) {
         // v0.42 (#1699): content-quality gate operator surface.
         const { runQuarantine } = await import('./commands/quarantine.ts');
         await runQuarantine(engine, args);
+        break;
+      }
+      case 'watch': {
+        // v0.43 (#2095): push-based context transport. Blocks in the stdin
+        // iteration (interactive stays alive; piped exits at EOF), then the
+        // finally below runs finishCliTeardown (volunteer events drain with
+        // every other sink) and the import.meta.main seam flush-exits.
+        const { runWatch } = await import('./commands/watch.ts');
+        await runWatch(engine, args);
         break;
       }
       case 'storage': {
@@ -2267,6 +2329,8 @@ ADMIN
     --public-url URL                 Public issuer URL (required behind proxy/tunnel)
   connect <mcp-url> --token <t>      Wire Claude Code to a remote gbrain (bearer token)
         [--install] [--json]         Print the paste-ready command, or --install to run it
+  watch [--json]                     Push-based context: pipe conversation turns in,
+                                     volunteered brain pages stream out (#2095)
   call <tool> '<json>'               Raw tool invocation
   version                            Version info
   --tools-json                       Tool discovery (JSON)
