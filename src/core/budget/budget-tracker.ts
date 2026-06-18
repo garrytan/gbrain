@@ -33,8 +33,15 @@ import { dirname } from 'node:path';
 import { gbrainPath } from '../config.ts';
 import { ANTHROPIC_PRICING, type ModelPricing } from '../anthropic-pricing.ts';
 import { EMBEDDING_PRICING, lookupEmbeddingPrice } from '../embedding-pricing.ts';
+import { canonicalLookup } from '../model-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import { isoWeekFilename, resolveAuditDir } from '../audit-week-file.ts';
+import {
+  evaluateMonthlyBudget,
+  isModelInMonthlyBudgetScope,
+  type MonthlyBudgetCap,
+  type MonthlyBudgetStatus,
+} from './monthly-cap.ts';
 
 export type BudgetKind = 'chat' | 'embed' | 'rerank';
 
@@ -75,8 +82,22 @@ export interface BudgetTrackerOpts {
   maxRuntimeMs?: number;
   /** Phase/command label used in audit rows. */
   label: string;
+  /** Optional combined monthly cloud-chat cap, intended for Claude + DeepSeek. */
+  monthlyBudget?: MonthlyBudgetCap;
+  /** Test seam for month boundaries in the monthly budget gate. */
+  monthlyNow?: () => Date;
   /** Override the audit file path (tests + custom installers). */
   auditPath?: string;
+}
+
+interface BudgetTrackerDefaults {
+  monthlyBudget?: MonthlyBudgetCap;
+}
+
+let _budgetTrackerDefaults: BudgetTrackerDefaults = {};
+
+export function configureBudgetTrackerDefaults(defaults: BudgetTrackerDefaults): void {
+  _budgetTrackerDefaults = { ...defaults };
 }
 
 export class BudgetExhausted extends Error {
@@ -160,8 +181,10 @@ const FREE_LOCAL_EMBED_PROVIDERS: ReadonlySet<string> = new Set([
  * per-1M-token price tuple, or null when unknown.
  *
  * Strategy:
- *   - Chat: try the bare model id in ANTHROPIC_PRICING first (legacy keys
- *     are bare claude-* ids). Fall back to the provider-prefixed key.
+ *   - Chat: try the canonical multi-provider pricing table first so the
+ *     runtime cap and monthly cap cover native Anthropic, DeepSeek, OpenAI,
+ *     and Google chat calls. Fall back to the bare Anthropic view only for
+ *     legacy Claude ids and rerank-compatible paths.
  *   - Embed: lookupEmbeddingPrice handles the provider:model form; on a miss,
  *     local-inference providers (FREE_LOCAL_EMBED_PROVIDERS) price at $0 so
  *     `--max-cost` callers don't hard-fail.
@@ -182,7 +205,14 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
     }
     return null;
   }
-  // chat or rerank: try bare key first, then provider:model or provider/model.
+  // chat: use the canonical multi-provider pricing table first so DeepSeek,
+  // OpenAI, Google, and Anthropic all enforce `--max-cost` and monthly caps.
+  if (kind === 'chat') {
+    const canonical = canonicalLookup(modelId);
+    if (canonical) return canonical;
+  }
+  // chat miss or rerank: try bare key first, then provider:model or
+  // provider/model. This preserves the legacy Claude-priced rerank path.
   // v0.41.21.0: route through splitProviderModelId so slash-prefixed ids
   // (the form `--judge-model` and OpenRouter recipes emit) hit the pricing
   // table. Pre-fix, slash-form silently no_pricing-failed `--max-cost` on
@@ -217,10 +247,15 @@ export class BudgetTracker {
   private readonly auditPath: string;
   private readonly onExhaustedCbs: Array<() => void> = [];
   private exhaustedFired = false;
+  private readonly opts: BudgetTrackerOpts;
 
-  constructor(private readonly opts: BudgetTrackerOpts) {
+  constructor(opts: BudgetTrackerOpts) {
+    this.opts = {
+      ...opts,
+      monthlyBudget: opts.monthlyBudget ?? _budgetTrackerDefaults.monthlyBudget,
+    };
     this.startedAt = Date.now();
-    this.auditPath = opts.auditPath ?? defaultAuditPath();
+    this.auditPath = this.opts.auditPath ?? defaultAuditPath();
   }
 
   /** Public read access. */
@@ -274,8 +309,13 @@ export class BudgetTracker {
         // TX2: hard-fail when a cap is set but pricing is missing — without
         // pricing we can't enforce the cap, and silently ignoring it would
         // void the contract.
+        const pricingFile = estimate.kind === 'embed'
+          ? 'embedding-pricing.ts'
+          : estimate.kind === 'chat'
+            ? 'model-pricing.ts'
+            : 'anthropic-pricing.ts';
         const msg = `${this.opts.label}: no pricing entry for model "${estimate.modelId}" (kind=${estimate.kind}). ` +
-          `Add it to src/core/${estimate.kind === 'embed' ? 'embedding-pricing.ts' : 'anthropic-pricing.ts'} or drop --max-cost.`;
+          `Add it to src/core/${pricingFile} or drop --max-cost.`;
         this.fireExhausted();
         throw new BudgetExhausted(msg, {
           reason: 'no_pricing',
@@ -306,6 +346,8 @@ export class BudgetTracker {
       });
       return;
     }
+
+    this.assertMonthlyBudget(estimate, projected);
 
     if (this.opts.maxCostUsd !== undefined) {
       const after = this.cumulativeUsd + projected;
@@ -436,6 +478,57 @@ export class BudgetTracker {
         { reason: 'runtime', spent: elapsed, cap: this.opts.maxRuntimeMs, modelId },
       );
     }
+  }
+
+  private assertMonthlyBudget(estimate: BudgetEstimate, projectedUsd: number): void {
+    const cap = this.opts.monthlyBudget;
+    if (!cap || estimate.kind !== 'chat') return;
+    if (!isModelInMonthlyBudgetScope(estimate.modelId, cap.providerIds)) return;
+
+    const status = evaluateMonthlyBudget(cap, {
+      auditPath: this.auditPath,
+      now: this.opts.monthlyNow?.(),
+      projectedUsd,
+      providerIds: cap.providerIds,
+    });
+    if (!status || status.afterUsd <= status.capUsd) return;
+
+    appendAuditLine(this.auditPath, {
+      schema_version: 1,
+      ts: new Date().toISOString(),
+      event: status.mode === 'warn' ? 'monthly_budget_warn' : 'monthly_budget_denied',
+      label: this.opts.label,
+      kind: estimate.kind,
+      model: estimate.modelId,
+      sub_label: estimate.label,
+      month: status.month,
+      monthly_spent_usd: status.spentUsd,
+      projected_cost_usd: status.projectedUsd,
+      monthly_after_usd: status.afterUsd,
+      monthly_cap_usd: status.capUsd,
+      monthly_mode: status.mode,
+      monthly_provider_ids: status.providerIds,
+    });
+
+    const msg = this.monthlyBudgetMessage(status, estimate.modelId);
+    if (status.mode === 'warn') {
+      process.stderr.write(`[budget] ${msg}\n`);
+      return;
+    }
+
+    this.fireExhausted();
+    throw new BudgetExhausted(msg, {
+      reason: 'cost',
+      spent: status.afterUsd,
+      cap: status.capUsd,
+      modelId: estimate.modelId,
+    });
+  }
+
+  private monthlyBudgetMessage(status: MonthlyBudgetStatus, modelId: string): string {
+    return `${this.opts.label}: monthly Claude+DeepSeek budget would exceed $${status.capUsd.toFixed(2)} ` +
+      `for ${status.month} (spent $${status.spentUsd.toFixed(4)} + this call $${status.projectedUsd.toFixed(4)} ` +
+      `= $${status.afterUsd.toFixed(4)}; model ${modelId}; mode=${status.mode})`;
   }
 
   private fireExhausted(): void {

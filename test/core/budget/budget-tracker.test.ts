@@ -18,15 +18,21 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   BudgetTracker,
   BudgetExhausted,
+  configureBudgetTrackerDefaults,
   extractUsageFromError,
   _resetBudgetTrackerWarningsForTest,
 } from '../../../src/core/budget/budget-tracker.ts';
+import {
+  isModelInMonthlyBudgetScope,
+  readMonthlyChatSpendUsd,
+  resolveMonthlyBudgetCapFromEngine,
+} from '../../../src/core/budget/monthly-cap.ts';
 
 let tmp: string;
 let auditPath: string;
@@ -37,6 +43,7 @@ beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'gbrain-budget-test-'));
   auditPath = join(tmp, 'budget.jsonl');
   _resetBudgetTrackerWarningsForTest();
+  configureBudgetTrackerDefaults({});
   stderrCapture = '';
   origStderrWrite = process.stderr.write.bind(process.stderr);
   (process.stderr as { write: unknown }).write = (chunk: string | Uint8Array): boolean => {
@@ -56,6 +63,10 @@ function readAudit(): Array<Record<string, unknown>> {
     .split('\n')
     .filter((l) => l.length > 0)
     .map((l) => JSON.parse(l) as Record<string, unknown>);
+}
+
+function writeAuditRows(rows: Array<Record<string, unknown>>): void {
+  writeFileSync(auditPath, rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
 }
 
 describe('BudgetTracker.reserve', () => {
@@ -135,7 +146,88 @@ describe('BudgetTracker.reserve', () => {
     expect(caught).toBeInstanceOf(BudgetExhausted);
     expect((caught as BudgetExhausted).reason).toBe('no_pricing');
     expect((caught as BudgetExhausted).modelId).toBe('mystery:some-unreleased-model');
-    expect((caught as Error).message).toMatch(/anthropic-pricing\.ts/);
+    expect((caught as Error).message).toMatch(/model-pricing\.ts/);
+  });
+
+  test('DeepSeek chat models use canonical pricing under --max-cost', () => {
+    const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+    expect(() =>
+      t.reserve({
+        modelId: 'deepseek:deepseek-v4-pro',
+        estimatedInputTokens: 1000,
+        maxOutputTokens: 1000,
+        kind: 'chat',
+      }),
+    ).not.toThrow();
+    const audit = readAudit();
+    expect(audit[0].event).toBe('reserve');
+    expect(audit[0].projected_cost_usd).toBeCloseTo(0.001305, 8);
+  });
+
+  test('monthly Claude+DeepSeek budget blocks projected overage before reserve', () => {
+    writeAuditRows([
+      {
+        schema_version: 1,
+        ts: '2026-06-10T00:00:00.000Z',
+        event: 'record',
+        kind: 'chat',
+        model: 'deepseek:deepseek-v4-pro',
+        actual_cost_usd: 49.9,
+      },
+    ]);
+    const t = new BudgetTracker({
+      label: 'test',
+      auditPath,
+      monthlyNow: () => new Date('2026-06-18T00:00:00.000Z'),
+      monthlyBudget: { maxCostUsd: 50, mode: 'block' },
+    });
+    let caught: unknown = null;
+    try {
+      t.reserve({
+        modelId: 'deepseek:deepseek-v4-pro',
+        estimatedInputTokens: 1_000_000,
+        maxOutputTokens: 0,
+        kind: 'chat',
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(BudgetExhausted);
+    expect((caught as BudgetExhausted).reason).toBe('cost');
+    const audit = readAudit();
+    expect(audit.some((e) => e.event === 'monthly_budget_denied')).toBe(true);
+    expect(audit.some((e) => e.event === 'reserve')).toBe(false);
+  });
+
+  test('monthly Claude+DeepSeek budget can warn and still reserve', () => {
+    writeAuditRows([
+      {
+        schema_version: 1,
+        ts: '2026-06-10T00:00:00.000Z',
+        event: 'record',
+        kind: 'chat',
+        model: 'deepseek:deepseek-v4-flash',
+        actual_cost_usd: 49.9,
+      },
+    ]);
+    const t = new BudgetTracker({
+      label: 'test',
+      auditPath,
+      monthlyNow: () => new Date('2026-06-18T00:00:00.000Z'),
+      monthlyBudget: { maxCostUsd: 50, mode: 'warn' },
+    });
+    expect(() =>
+      t.reserve({
+        modelId: 'anthropic:claude-sonnet-4-6',
+        estimatedInputTokens: 100_000,
+        maxOutputTokens: 0,
+        kind: 'chat',
+      }),
+    ).not.toThrow();
+    expect(stderrCapture).toContain('monthly Claude+DeepSeek budget would exceed $50.00');
+    const audit = readAudit();
+    expect(audit.some((e) => e.event === 'monthly_budget_warn')).toBe(true);
+    expect(audit.some((e) => e.event === 'reserve')).toBe(true);
   });
 
   test('v0.41.20.0: slash-prefix anthropic/claude-* under --max-cost does NOT no_pricing throw (THE FIX)', () => {
@@ -486,5 +578,100 @@ describe('BudgetTracker.snapshot', () => {
     expect(s.maxRuntimeMs).toBe(60_000);
     expect(s.elapsedMs).toBeGreaterThanOrEqual(0);
     expect(s.callsRecorded).toBe(0);
+  });
+});
+
+describe('monthly Claude+DeepSeek budget helpers', () => {
+  test('scope includes native Claude and DeepSeek but not OpenAI or OpenRouter-wrapped Claude', () => {
+    expect(isModelInMonthlyBudgetScope('claude-opus-4-8')).toBe(true);
+    expect(isModelInMonthlyBudgetScope('anthropic:claude-sonnet-4-6')).toBe(true);
+    expect(isModelInMonthlyBudgetScope('deepseek:deepseek-v4-flash')).toBe(true);
+    expect(isModelInMonthlyBudgetScope('openai:gpt-5')).toBe(false);
+    expect(isModelInMonthlyBudgetScope('openrouter:anthropic/claude-sonnet-4-6')).toBe(false);
+  });
+
+  test('readback sums current-month record rows for scoped native chat providers only', () => {
+    writeAuditRows([
+      {
+        schema_version: 1,
+        ts: '2026-06-01T00:00:00.000Z',
+        event: 'record',
+        kind: 'chat',
+        model: 'anthropic:claude-sonnet-4-6',
+        actual_cost_usd: 10,
+      },
+      {
+        schema_version: 1,
+        ts: '2026-06-17T00:00:00.000Z',
+        event: 'record',
+        kind: 'chat',
+        model: 'deepseek:deepseek-v4-flash',
+        actual_cost_usd: 1.25,
+      },
+      {
+        schema_version: 1,
+        ts: '2026-05-31T00:00:00.000Z',
+        event: 'record',
+        kind: 'chat',
+        model: 'anthropic:claude-sonnet-4-6',
+        actual_cost_usd: 100,
+      },
+      {
+        schema_version: 1,
+        ts: '2026-06-17T00:00:00.000Z',
+        event: 'record',
+        kind: 'chat',
+        model: 'openai:gpt-5',
+        actual_cost_usd: 100,
+      },
+      {
+        schema_version: 1,
+        ts: '2026-06-17T00:00:00.000Z',
+        event: 'reserve',
+        kind: 'chat',
+        model: 'anthropic:claude-sonnet-4-6',
+        projected_cost_usd: 100,
+      },
+    ]);
+    expect(readMonthlyChatSpendUsd({ auditPath, now: new Date('2026-06-18T00:00:00.000Z') })).toBe(11.25);
+  });
+
+  test('DB config readback resolves the cap and defaults mode to block', async () => {
+    const config = new Map([
+      ['budget.monthly.chat_max_usd', '50'],
+      ['budget.monthly.mode', 'block'],
+    ]);
+    const got = await resolveMonthlyBudgetCapFromEngine({
+      getConfig: async (key: string) => config.get(key) ?? null,
+    });
+    expect(got).toEqual({ maxCostUsd: 50, mode: 'block' });
+  });
+
+  test('configured default applies to trackers without per-instance monthly options', () => {
+    writeAuditRows([
+      {
+        schema_version: 1,
+        ts: '2026-06-10T00:00:00.000Z',
+        event: 'record',
+        kind: 'chat',
+        model: 'anthropic:claude-sonnet-4-6',
+        actual_cost_usd: 49.99,
+      },
+    ]);
+    configureBudgetTrackerDefaults({ monthlyBudget: { maxCostUsd: 50, mode: 'block' } });
+    const t = new BudgetTracker({
+      label: 'test',
+      auditPath,
+      monthlyNow: () => new Date('2026-06-18T00:00:00.000Z'),
+    });
+    expect(() =>
+      t.reserve({
+        modelId: 'claude-opus-4-8',
+        estimatedInputTokens: 10_000,
+        maxOutputTokens: 0,
+        kind: 'chat',
+      }),
+    ).toThrow(BudgetExhausted);
+    expect(readAudit().some((e) => e.event === 'monthly_budget_denied')).toBe(true);
   });
 });

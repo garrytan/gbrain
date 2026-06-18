@@ -1,12 +1,12 @@
 # Spend controls
 
-GBrain's embedding-spend gates in one place: every gate, its config key, default,
+GBrain's spend gates in one place: every gate, its config key, default,
 whether it blocks or just informs, how to widen or disable it, and how the
 `spend.posture` switch governs all of them.
 
 The orienting idea: **GBrain itself is rounding error; the spend that matters is
-downstream embedding.** These gates exist so a routine sync or enrich can't run up
-an unexpected embedding bill, while never wedging an unattended cron.
+downstream provider calls.** These gates exist so a routine sync, enrich, or chat
+workflow can't run up an unexpected bill, while never wedging an unattended cron.
 
 ## `spend.posture` — one switch for "cost is not my constraint"
 
@@ -50,6 +50,7 @@ The USD-limit knobs accept `off`, `unlimited`, or `none` (case-insensitive) to m
 | Backfill cooldown | `embed.backfill_cooldown_min` | `10` | skips re-submission inside window | — (latency knob, not spend) | **not** bypassed |
 | `reindex-code` cost gate | — (preview before re-embed) | — | TTY prompt / non-TTY refuse + exit 2 | `--max-cost off` | informational |
 | `enrich` / `onboard --auto` | `--max-usd` (per-call) | — | refuse without a cap (non-TTY) | `--max-usd off` | runs uncapped (still ledgered) |
+| Monthly Claude + DeepSeek chat cap | `budget.monthly.chat_max_usd`, `budget.monthly.mode` | off | `block` refuses before call; `warn` logs and proceeds | unset the max key | **not** bypassed |
 
 ### Sync inline-embed cost gate
 
@@ -80,6 +81,28 @@ estimate is `delta + stale backlog`, labeled as such.
   version drift (forces a full re-chunk), or git being unavailable. Unchanged files
   still skip via `content_hash` at execution, so the ceiling over-states real spend.
 
+### Monthly Claude + DeepSeek chat cap
+
+Use this when you want the native Anthropic/Claude and DeepSeek chat spend to share
+a monthly ceiling:
+
+```bash
+gbrain config set budget.monthly.chat_max_usd 50
+gbrain config set budget.monthly.mode block   # or: warn
+```
+
+`BudgetTracker` reads the current month's `record` rows from
+`~/.gbrain/audit/budget-*.jsonl` and `~/.gbrain/audit/budget.jsonl`, then adds the
+next projected chat call. It counts native Anthropic/Claude and DeepSeek model ids.
+OpenRouter-wrapped Claude is not counted because OpenRouter pricing is not native
+Anthropic pricing.
+
+In `block` mode, a projected overage writes `monthly_budget_denied` and refuses the
+call before provider spend. In `warn` mode, the same projected overage writes
+`monthly_budget_warn`, prints a warning, and still records the normal reserve row.
+The cap is chat-only. Embeddings, rerankers, OpenAI, Google, Together, and local
+providers keep using their existing gates.
+
 ## Notes & limits
 
 - **Pre-pull window:** the gate fetches before estimating, so it prices what the run
@@ -108,4 +131,7 @@ gbrain config set embed.backfill_max_usd_per_source_24h off
 
 # Run enrich uncapped non-interactively:
 gbrain enrich --max-usd off        # or: gbrain config set spend.posture tokenmax
+
+# Disable the monthly Claude + DeepSeek chat cap:
+gbrain config unset budget.monthly.chat_max_usd
 ```
