@@ -368,6 +368,12 @@ export interface AIGatewayConfig {
   base_urls?: Record<string, string>;
   /** Env snapshot read once at configuration time. Gateway never reads process.env at call time. */
   env: Record<string, string | undefined>;
+  /**
+   * Max concurrent embed sub-batch HTTP calls. Sourced from brain config
+   * `embed.http_concurrency` (via buildGatewayConfig); `GBRAIN_EMBED_HTTP_CONCURRENCY`
+   * env var overrides at configureGateway time. Default 1 (sequential).
+   */
+  embed_http_concurrency?: number;
 }
 
 export interface ParsedModelId {

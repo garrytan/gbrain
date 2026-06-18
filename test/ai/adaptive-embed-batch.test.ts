@@ -37,6 +37,7 @@ import {
   isTokenLimitError,
   __setEmbedTransportForTests,
   __getShrinkStateForTests,
+  __setEmbedConcurrencyForTests,
 } from '../../src/core/ai/gateway.ts';
 import { AIConfigError, AITransientError } from '../../src/core/ai/errors.ts';
 
@@ -81,6 +82,14 @@ function configureGoogle(): void {
     embedding_model: 'google:gemini-embedding-001',
     embedding_dimensions: 768,
     env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' },
+  });
+}
+
+function configureJina(): void {
+  configureGateway({
+    embedding_model: 'jina:jina-embeddings-v2-base-code',
+    embedding_dimensions: 768,
+    env: {},
   });
 }
 
@@ -412,5 +421,198 @@ describe('startup warning for recipes missing max_batch_tokens', () => {
     expect(warnings.find(w => w.includes('"voyage"'))).toBeUndefined();
     expect(warnings.find(w => w.includes('"openai"'))).toBeUndefined();
     expect(warnings.find(w => w.includes('"google"'))).toBeDefined();
+  });
+});
+
+// --------- 8. Jina / self-hosted TEI: recipe-driven token budget + concurrent dispatch ---------
+//
+// These tests cover the two production issues solved by the Jina recipe:
+//
+//   A. max_batch_tokens=2048 in the Jina recipe triggers pre-splitting so
+//      pages with many chunks are never sent as one over-budget request.
+//
+//   B. embed.http_concurrency (set via __setEmbedConcurrencyForTests in tests)
+//      fans out sub-batches concurrently, saturating multiple TEI replicas.
+//      Output order is preserved via indexed Promise.all.
+
+describe('Jina recipe: recipe-driven pre-splitting', () => {
+  beforeEach(() => resetGateway());
+  afterEach(() => __setEmbedTransportForTests(null));
+
+  test('texts exceeding per-batch budget are split into multiple sub-batches', async () => {
+    // Jina: max_batch_tokens=2048, chars_per_token=1, safety_factor=0.5
+    // → batch budget = floor(2048 * 0.5) = 1024 chars
+    // 4 texts of 700 chars each: 700 < 1024 so one fits, 700+700=1400 > 1024
+    // → each goes into its own batch.
+    configureJina();
+
+    const stub = mock(async ({ values }: { values: string[] }) =>
+      ({ embeddings: values.map(() => new Array(768).fill(0.1)) })
+    );
+    __setEmbedTransportForTests(stub as any);
+
+    const texts = Array.from({ length: 4 }, () => 'x'.repeat(700));
+    const result = await embed(texts);
+
+    expect(result).toHaveLength(4);
+    // 4 texts × 700 chars, budget 1024 → 4 sub-batches of 1.
+    expect(stub).toHaveBeenCalledTimes(4);
+  });
+
+  test('texts fitting within budget are batched together', async () => {
+    // 4 texts of 200 chars each: 200+200=400, 400+200=600, 600+200=800 < 1024
+    // → all 4 fit in one batch.
+    configureJina();
+
+    const stub = mock(async ({ values }: { values: string[] }) =>
+      ({ embeddings: values.map(() => new Array(768).fill(0.1)) })
+    );
+    __setEmbedTransportForTests(stub as any);
+
+    const texts = Array.from({ length: 4 }, () => 'x'.repeat(200));
+    const result = await embed(texts);
+
+    expect(result).toHaveLength(4);
+    expect(stub).toHaveBeenCalledTimes(1);
+  });
+
+  test('output order preserved across sub-batches', async () => {
+    // 3 texts of 700 chars → 3 sub-batches. Each call's index encodes in
+    // slot[0] so we can verify the final concat is in input order.
+    configureJina();
+
+    let callIdx = 0;
+    const stub = mock(async ({ values }: { values: string[] }) => {
+      const idx = callIdx++;
+      return { embeddings: values.map(() => Array.from({ length: 768 }, (_, j) => j === 0 ? idx : 0)) };
+    });
+    __setEmbedTransportForTests(stub as any);
+
+    const texts = ['a'.repeat(700), 'b'.repeat(700), 'c'.repeat(700)];
+    const result = await embed(texts);
+
+    expect(result).toHaveLength(3);
+    expect(result.map(v => v[0])).toEqual([0, 1, 2]);
+  });
+});
+
+describe('Jina recipe: concurrent sub-batch dispatch', () => {
+  beforeEach(() => resetGateway());
+  afterEach(() => {
+    __setEmbedTransportForTests(null);
+    __setEmbedConcurrencyForTests(null);
+  });
+
+  test('semaphore limits concurrent in-flight calls to the configured limit', async () => {
+    configureJina();
+    // 5 sub-batches but max 2 concurrent.
+    __setEmbedConcurrencyForTests(2);
+
+    let concurrent = 0;
+    let maxSeen = 0;
+    const stub = mock(async ({ values }: { values: string[] }) => {
+      concurrent++;
+      maxSeen = Math.max(maxSeen, concurrent);
+      await new Promise(r => setTimeout(r, 0));
+      concurrent--;
+      return { embeddings: values.map(() => new Array(768).fill(0.1)) };
+    });
+    __setEmbedTransportForTests(stub as any);
+
+    // 5 texts of 700 chars → 5 sub-batches of 1.
+    const texts = Array.from({ length: 5 }, () => 'x'.repeat(700));
+    await embed(texts);
+
+    expect(maxSeen).toBeLessThanOrEqual(2);
+    expect(stub).toHaveBeenCalledTimes(5);
+  });
+
+  test('concurrency=1 (default) executes sub-batches sequentially', async () => {
+    configureJina();
+    __setEmbedConcurrencyForTests(1);
+
+    const callOrder: number[] = [];
+    const stub = mock(async ({ values }: { values: string[] }) => {
+      callOrder.push(callOrder.length);
+      await new Promise(r => setTimeout(r, 0));
+      return { embeddings: values.map(() => new Array(768).fill(0.1)) };
+    });
+    __setEmbedTransportForTests(stub as any);
+
+    // 3 sub-batches of 1 text each.
+    const texts = Array.from({ length: 3 }, () => 'x'.repeat(700));
+    const result = await embed(texts);
+
+    expect(stub).toHaveBeenCalledTimes(3);
+    expect(result).toHaveLength(3);
+    expect(callOrder).toEqual([0, 1, 2]);
+  });
+});
+
+// --------- 9. Per-text truncation from recipe token budget ---------
+//
+// When a recipe declares max_batch_tokens, embed() must cap each individual
+// text to (max_batch_tokens × safety_factor × chars_per_token) chars before
+// splitting. Without this, a single oversized chunk lands in a sub-batch of 1
+// and still hangs the provider — splitByTokenBudget operates at batch level,
+// not within a text. This fires for ANY recipe with max_batch_tokens, not
+// just Jina.
+
+describe('per-text truncation from recipe token budget', () => {
+  beforeEach(() => resetGateway());
+  afterEach(() => __setEmbedTransportForTests(null));
+
+  test('Jina recipe: texts longer than per-text budget are truncated before splitting', async () => {
+    // Jina: max_batch_tokens=2048, chars_per_token=1, safety_factor=0.5
+    // → perTextMaxChars = min(8000, floor(2048 * 0.5 * 1)) = 1024
+    configureGateway({
+      embedding_model: 'jina:jina-embeddings-v2-base-code',
+      embedding_dimensions: 768,
+      env: {},
+    });
+
+    const received: string[][] = [];
+    const stub = mock(async ({ values }: { values: string[] }) => {
+      received.push([...values]);
+      return { embeddings: values.map(() => new Array(768).fill(0.1)) };
+    });
+    __setEmbedTransportForTests(stub as any);
+
+    // 3 texts of 2000 chars each — all exceed the 1024-char per-text budget.
+    const texts = ['a'.repeat(2000), 'b'.repeat(2000), 'c'.repeat(2000)];
+    const result = await embed(texts);
+
+    expect(result).toHaveLength(3);
+    // Every text sent to the provider must be ≤ 1024 chars.
+    const allTexts = received.flat();
+    expect(allTexts).toHaveLength(3);
+    for (const t of allTexts) {
+      expect(t.length).toBeLessThanOrEqual(1024);
+    }
+  });
+
+  test('recipe with no max_batch_tokens: texts are not truncated below MAX_CHARS', async () => {
+    // OpenAI has no max_batch_tokens — fast path, no per-text budget cap.
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      env: { OPENAI_API_KEY: 'sk-fake' },
+    });
+
+    const received: string[][] = [];
+    const stub = mock(async ({ values }: { values: string[] }) => {
+      received.push([...values]);
+      return { embeddings: values.map(() => new Array(1536).fill(0.1)) };
+    });
+    __setEmbedTransportForTests(stub as any);
+
+    // 3 texts of 2000 chars — under MAX_CHARS=8000, so no truncation.
+    const texts = ['a'.repeat(2000), 'b'.repeat(2000), 'c'.repeat(2000)];
+    await embed(texts);
+
+    const allTexts = received.flat();
+    for (const t of allTexts) {
+      expect(t.length).toBe(2000); // untouched
+    }
   });
 });

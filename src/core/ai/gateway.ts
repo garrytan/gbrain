@@ -78,6 +78,44 @@ const AI_EMBED_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_EMBED_TIMEOUT_MS', 60_
 /** multimodal per request. */
 const AI_MULTIMODAL_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_MULTIMODAL_TIMEOUT_MS', 60_000);
 
+// ---------------------------------------------------------------------------
+// Embed sub-batch concurrency.
+//
+// _embedHttpConcurrency limits concurrent sub-batch HTTP calls within any
+// multi-batch embed() call (i.e. when a recipe declares max_batch_tokens and
+// the input splits into >1 sub-batch). Single-batch calls skip the semaphore
+// entirely (fast path). Set via brain config embed.http_concurrency (normal
+// path) or GBRAIN_EMBED_HTTP_CONCURRENCY env var (incident-time override;
+// env wins). Default 1 preserves the prior sequential behaviour.
+// ---------------------------------------------------------------------------
+function resolveIntEnv(envVar: string): number | undefined {
+  const raw = process.env[envVar];
+  if (raw === undefined || raw === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}
+
+let _embedHttpConcurrency = 1;
+
+// Process-global FIFO semaphore bounding concurrent embed sub-batch HTTP
+// calls at `_embedHttpConcurrency`. acquire() takes a slot or queues;
+// release() hands the slot directly to the next waiter (count unchanged)
+// or frees it. Fair FIFO; no busy-wait.
+let _embedInFlight = 0;
+const _embedSlotWaiters: Array<() => void> = [];
+async function acquireEmbedSlot(): Promise<void> {
+  if (_embedInFlight < _embedHttpConcurrency) {
+    _embedInFlight++;
+    return;
+  }
+  await new Promise<void>((resolve) => _embedSlotWaiters.push(resolve));
+}
+function releaseEmbedSlot(): void {
+  const next = _embedSlotWaiters.shift();
+  if (next) next();
+  else _embedInFlight = Math.max(0, _embedInFlight - 1);
+}
+
 /**
  * Compose a caller signal with a default wall-clock timeout. When the caller
  * supplies its own (Fix 3's 6s query deadline, the facts queue's shutdown abort,
@@ -422,6 +460,11 @@ export function configureGateway(config: AIGatewayConfig): void {
     if (m) registerExtendedModel(m);
   }
   warnRecipesMissingBatchTokens();
+  // env var wins (incident-time override); config key is normal path; default 1.
+  _embedHttpConcurrency =
+    resolveIntEnv('GBRAIN_EMBED_HTTP_CONCURRENCY') ??
+    config.embed_http_concurrency ??
+    1;
 }
 
 /**
@@ -549,6 +592,10 @@ export function resetGateway(): void {
   _chatTransport = null;
   _warnedRecipes.clear();
   _extendedModels.clear();
+  // Reset semaphore state so tests don't leak concurrent-slot accounting.
+  _embedHttpConcurrency = 1;
+  _embedInFlight = 0;
+  _embedSlotWaiters.length = 0;
 }
 
 /**
@@ -563,6 +610,17 @@ export function resetGateway(): void {
 export function __setEmbedTransportForTests(fn: EmbedManyFn | null): void {
   _embedTransport = fn ?? embedMany;
   _embedTransportInstalled = fn !== null;
+}
+
+/**
+ * Test-only seam for embed concurrency. Pass a number to set the limit;
+ * pass null to restore the default (1). Resets semaphore state.
+ * @internal
+ */
+export function __setEmbedConcurrencyForTests(n: number | null): void {
+  _embedHttpConcurrency = n ?? 1;
+  _embedInFlight = 0;
+  _embedSlotWaiters.length = 0;
 }
 
 /**
@@ -1364,13 +1422,22 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
-  const truncated = texts.map(t => (t ?? '').slice(0, MAX_CHARS));
+  // When the recipe declares a token budget, cap each text to fit within it.
+  // Without this, a single chunk exceeding max_batch_tokens lands in a
+  // sub-batch of 1 and still hangs the provider — splitting cannot help at
+  // the individual-text level. Fires for any recipe with max_batch_tokens.
+  const embedding = recipe.touchpoints?.embedding;
+  const recipeBatchTokens = embedding?.max_batch_tokens;
+  const charsPerToken = embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
+  const perTextMaxChars = recipeBatchTokens !== undefined
+    ? Math.min(MAX_CHARS, Math.floor(recipeBatchTokens * effectiveSafetyFactor(recipe) * charsPerToken))
+    : MAX_CHARS;
+  const truncated = texts.map(t => (t ?? '').slice(0, perTextMaxChars));
 
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the
   // actual total reported by the SDK across all sub-batches.
   if (tracker) {
-    const charsPerToken = recipe.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
     const totalChars = truncated.reduce((s, t) => s + t.length, 0);
     const estimatedInputTokens = Math.ceil(totalChars / Math.max(charsPerToken, 1));
     tracker.reserve({
@@ -1394,24 +1461,33 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   );
   const expected = effectiveDims;
 
-  const embedding = recipe.touchpoints?.embedding;
-  const maxBatchTokens = embedding?.max_batch_tokens;
-  const charsPerToken = embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
-
-  // Pre-split is gated on max_batch_tokens. Recipes without it (e.g. OpenAI)
-  // ride the fast path: one embedMany call, no recursion safety net.
-  const batches = maxBatchTokens
-    ? splitByTokenBudget(truncated, Math.floor(maxBatchTokens * effectiveSafetyFactor(recipe)), charsPerToken)
+  // Pre-split is gated on the recipe token budget. Recipes without it (e.g.
+  // OpenAI) ride the fast path: one embedMany call, no recursion safety net.
+  const batches = recipeBatchTokens
+    ? splitByTokenBudget(truncated, Math.floor(recipeBatchTokens * effectiveSafetyFactor(recipe)), charsPerToken)
     : [truncated];
 
-  const allEmbeddings: Float32Array[] = [];
+  const subResults: Float32Array[][] = new Array(batches.length);
   let _embedThrew = false;
   try {
-    for (const batch of batches) {
-      const result = await embedSubBatch(batch, model, providerOpts, expected, recipe, modelId, opts);
-      allEmbeddings.push(...result);
+    if (batches.length === 1) {
+      // Fast path: single batch — no concurrency overhead needed.
+      subResults[0] = await embedSubBatch(batches[0]!, model, providerOpts, expected, recipe, modelId, opts);
+    } else {
+      // Concurrent sub-batch dispatch. Preserves output order via indexed
+      // Promise.all while saturating multiple replicas of a self-hosted
+      // embedder. The semaphore caps in-flight HTTP calls (embed.http_concurrency)
+      // so a multi-batch page never swamps the server.
+      await Promise.all(batches.map(async (batch, i) => {
+        await acquireEmbedSlot();
+        try {
+          subResults[i] = await embedSubBatch(batch, model, providerOpts, expected, recipe, modelId, opts);
+        } finally {
+          releaseEmbedSlot();
+        }
+      }));
     }
-    return allEmbeddings;
+    return subResults.flat();
   } catch (err) {
     _embedThrew = true;
     throw err;
@@ -1422,7 +1498,6 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
       // chars-per-token. On failure, A3 amended says charge the pessimistic
       // estimate too — embed has no output side, so the input estimate IS
       // the worst case.
-      const charsPerToken = recipe.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
       const totalChars = truncated.reduce((s, t) => s + t.length, 0);
       const inputTokens = Math.ceil(totalChars / Math.max(charsPerToken, 1));
       try {

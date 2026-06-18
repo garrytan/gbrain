@@ -342,6 +342,16 @@ export interface GBrainConfig {
      */
     skills_dir?: string;
   };
+
+  /**
+   * Embed pipeline tunables. DB-plane keys (e.g. `embed.http_concurrency`)
+   * are merged here by `loadConfigWithEngine()`. File-plane config and
+   * env vars don't have an `embed` section; only the DB plane does.
+   */
+  embed?: {
+    /** Max concurrent embed sub-batch HTTP calls. Default 1 (sequential). */
+    http_concurrency?: number;
+  };
 }
 
 /**
@@ -790,6 +800,13 @@ export async function loadConfigWithEngine(
     merged.dream = mergedDream;
   }
 
+  // embed.* DB-plane merge. Currently only http_concurrency; extend here as
+  // more embed tunables graduate from env-only to config-key.
+  const dbEmbedHttpConcurrency = await dbInt('embed.http_concurrency');
+  if (dbEmbedHttpConcurrency !== undefined) {
+    merged.embed = { ...(merged.embed ?? {}), http_concurrency: merged.embed?.http_concurrency ?? dbEmbedHttpConcurrency };
+  }
+
   return merged;
 }
 
@@ -923,6 +940,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'spend.posture',
   'sync.cost_gate_min_usd',
   'sync.federated_v2',
+  'embed.http_concurrency',
   'embed.backfill_cooldown_min',
   'embed.backfill_max_usd_per_source_24h',
   'embed.backfill_max_usd',
