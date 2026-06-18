@@ -136,11 +136,26 @@ describe('capture — buildContent', () => {
     expect(parsed.data.title).toBe('Real first line');
   });
 
-  test('caps title at 80 chars', () => {
-    const longLine = 'x'.repeat(200);
+  test('preserves first line under the 80-char cap', () => {
+    const line = 'Verify live state before trusting memory or assumptions.';
+    const result = __testing.buildContent(line, {});
+    const parsed = matter(result);
+    expect(parsed.data.title).toBe(line);
+  });
+
+  test('preserves abbreviation and numeric text without guessing sentence boundaries', () => {
+    const line = 'Jan. 5 update: GBrain vs. OpenClaw notes for the U.S. market';
+    const result = __testing.buildContent(line, {});
+    const parsed = matter(result);
+    expect(parsed.data.title).toBe(line);
+  });
+
+  test('makes fallback title truncation explicit for overlong single-token lines', () => {
+    const longLine = 'x'.repeat(300);
     const result = __testing.buildContent(longLine, {});
     const parsed = matter(result);
     expect(typeof parsed.data.title).toBe('string');
+    expect((parsed.data.title as string).endsWith('…')).toBe(true);
     expect((parsed.data.title as string).length).toBeLessThanOrEqual(80);
   });
 

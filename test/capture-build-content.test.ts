@@ -190,9 +190,36 @@ describe('deriveTitle (no-frontmatter path)', () => {
     expect(deriveTitle('### Triple hash\nrest')).toBe('Triple hash');
   });
 
-  test('caps at 80 chars', () => {
-    const long = 'a'.repeat(120);
-    expect(deriveTitle(long)).toBe('a'.repeat(80));
+  test('caps at 80 chars with explicit ellipsis', () => {
+    const long = 'a'.repeat(300);
+    expect(deriveTitle(long).length).toBe(80);
+    expect(deriveTitle(long)).toBe('a'.repeat(79) + '…');
+  });
+
+  test('preserves dotted first-line text instead of guessing sentence boundaries', () => {
+    expect(deriveTitle('2026. Forecast continues with a full explanatory sentence.')).toBe('2026. Forecast continues with a full explanatory sentence.');
+    expect(deriveTitle('1. Ordered item continues with enough context.')).toBe('1. Ordered item continues with enough context.');
+    expect(deriveTitle('Jan. 5 update needs follow-up. This is still the first line.')).toBe('Jan. 5 update needs follow-up. This is still the first line.');
+    expect(deriveTitle('GBrain vs. OpenClaw notes')).toBe('GBrain vs. OpenClaw notes');
+    expect(deriveTitle('# U.S. Market Map')).toBe('U.S. Market Map');
+  });
+
+  test('does not split astral Unicode while truncating fallback titles', () => {
+    const shortEmojiSentence = `${'😀'.repeat(40)}.`;
+    expect(deriveTitle(shortEmojiSentence)).toBe(shortEmojiSentence);
+
+    const title = deriveTitle('😀'.repeat(300));
+    expect(title).toEndWith('…');
+    expect(Array.from(title).length).toBe(80);
+    expect([...title].some((ch) => ch.length === 1 && /[\uD800-\uDFFF]/.test(ch))).toBe(false);
+  });
+
+  test('does not collapse long URL titles to the scheme separator', () => {
+    const url = `https://example.com?${'a'.repeat(300)}`;
+    const title = deriveTitle(url);
+    expect(title).toStartWith('https://example.com?');
+    expect(title).toEndWith('…');
+    expect(title.length).toBeLessThanOrEqual(80);
   });
 
   test('falls back to Capture for empty input', () => {

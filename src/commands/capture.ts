@@ -211,15 +211,91 @@ export function maybeRewriteSourceFkError(err: unknown, sourceId: string | undef
 }
 
 /**
- * Derive a title from the first non-empty, non-`---` line of the body,
- * stripping leading markdown heading marks, capped at 80 chars.
+ * Derive a readable title from the first non-empty, non-`---` line of the body,
+ * stripping leading markdown heading marks. Preserve the existing first-line
+ * semantics, but make overlong fallback truncation explicit and Unicode-safe.
  * Falls back to 'Capture' when no usable line exists.
  */
+const MAX_DERIVED_TITLE_CHARS = 80;
+
+function isWhitespaceChar(ch: string): boolean {
+  return /\s/u.test(ch);
+}
+
+function isSkippableTitleLine(line: string): boolean {
+  let start = 0;
+  while (start < line.length && isWhitespaceChar(line[start] ?? '')) start += 1;
+  if (start >= line.length) return true;
+  if (line[start] !== '-') return false;
+
+  let end = line.length;
+  while (end > start && isWhitespaceChar(line[end - 1] ?? '')) end -= 1;
+  return end - start === 3 && line.slice(start, end) === '---';
+}
+
+function firstUsableTitleLine(rawBody: string): string {
+  let start = 0;
+  while (start <= rawBody.length) {
+    const newline = rawBody.indexOf('\n', start);
+    const end = newline === -1 ? rawBody.length : newline;
+    const lineEnd = end > start && rawBody[end - 1] === '\r' ? end - 1 : end;
+    const line = rawBody.slice(start, lineEnd);
+    if (!isSkippableTitleLine(line)) return line;
+    if (newline === -1) return '';
+    start = newline + 1;
+  }
+  return '';
+}
+
+function normalizeTitlePrefix(text: string, maxLength: number): { value: string; hasMore: boolean } {
+  const chars: string[] = [];
+  let count = 0;
+  let sawContent = false;
+  let pendingSpace = false;
+
+  for (const ch of text) {
+    if (isWhitespaceChar(ch)) {
+      if (sawContent) pendingSpace = true;
+      continue;
+    }
+
+    if (pendingSpace) {
+      if (count >= maxLength) return { value: chars.join('').trimEnd(), hasMore: true };
+      chars.push(' ');
+      count += 1;
+      pendingSpace = false;
+    }
+
+    sawContent = true;
+    if (count >= maxLength) return { value: chars.join('').trimEnd(), hasMore: true };
+    chars.push(ch);
+    count += 1;
+  }
+
+  return { value: chars.join('').trimEnd(), hasMore: false };
+}
+
+function trimAtWordBoundary(text: string, maxLength: number): string {
+  const normalized = normalizeTitlePrefix(text, maxLength);
+  if (!normalized.hasMore) return normalized.value;
+
+  const suffix = '…';
+  const limit = Math.max(1, maxLength - suffix.length);
+  let cut = normalizeTitlePrefix(text, limit).value.trimEnd();
+  const boundary = Math.max(cut.lastIndexOf(' '), cut.lastIndexOf('-'), cut.lastIndexOf('/'));
+  const minBoundary = Math.max(16, Math.floor(limit * 0.25));
+  if (boundary >= minBoundary) {
+    cut = cut.slice(0, boundary).replace(/[\s\-/]+$/g, '');
+  } else {
+    cut = cut.replace(/[\s\-/]+$/g, '');
+  }
+  return `${cut || normalizeTitlePrefix(text, limit).value.trim()}${suffix}`;
+}
+
 function deriveTitle(rawBody: string): string {
-  const firstLine = rawBody
-    .split('\n')
-    .find((l) => l.trim().length > 0 && l.trim() !== '---') ?? '';
-  return firstLine.replace(/^#+\s*/, '').slice(0, 80) || 'Capture';
+  const firstLine = firstUsableTitleLine(rawBody);
+  const withoutHeading = firstLine.replace(/^#+\s*/, '');
+  return trimAtWordBoundary(withoutHeading, MAX_DERIVED_TITLE_CHARS) || 'Capture';
 }
 
 /**
