@@ -4348,7 +4348,22 @@ export async function buildChecks(
 
     const pidStatus = readSupervisorPid(DEFAULT_PID_FILE);
     const supervisorPid = pidStatus.pid;
-    const running = pidStatus.running;
+    const pidfileRunning = pidStatus.running;
+
+    // issue #2227 fix #1/#3: DEFAULT_PID_FILE is HOME-derived, so a supervisor
+    // started under a different $HOME reads as "not running" even when healthy.
+    // Consult the queue-scoped DB singleton lock (#1849, HOME-independent) before
+    // warning. PID-reuse-safe (isLockHolderLive keys on lock freshness).
+    let detectedViaDbLock = false;
+    if (!pidfileRunning && engine) {
+      try {
+        const { inspectLock, isLockHolderLive } = await import('../core/db-lock.ts');
+        const { supervisorLockId, SUPERVISOR_LOCK_TTL_MIN } = await import('../core/minions/supervisor.ts');
+        const snap = await inspectLock(engine, supervisorLockId('default'));
+        if (snap && isLockHolderLive(snap, SUPERVISOR_LOCK_TTL_MIN)) detectedViaDbLock = true;
+      } catch { /* pre-migration / transient: pidfile-only */ }
+    }
+    const running = pidfileRunning || detectedViaDbLock;
 
     const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
     const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
@@ -4396,7 +4411,7 @@ export async function buildChecks(
         checks.push({
           name: 'supervisor',
           status: 'ok',
-          message: `running=true pid=${supervisorPid} last_start=${lastStart ?? 'unknown'} crashes_24h=${crashes24h} clean_exits_24h=${summary.clean_exits}`,
+          message: `running=true${detectedViaDbLock ? ' (detected via DB lock; pidfile not at the HOME-derived path)' : ` pid=${supervisorPid}`} last_start=${lastStart ?? 'unknown'} crashes_24h=${crashes24h} clean_exits_24h=${summary.clean_exits}`,
         });
       }
     }

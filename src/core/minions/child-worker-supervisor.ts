@@ -61,9 +61,12 @@ export type ChildSupervisorEvent =
     }
   | {
       kind: 'health_warn';
-      reason: 'clean_restart_budget_exceeded' | 'rss_watchdog_loop';
+      reason: 'clean_restart_budget_exceeded' | 'rss_watchdog_loop' | 'crash_budget_degraded';
       count: number;
-      windowMs: number;
+      /** Present for window-scoped warnings (budget/watchdog loops). */
+      windowMs?: number;
+      /** Present for crash_budget_degraded: the soft budget that was crossed. */
+      max?: number;
     };
 
 export interface ChildWorkerSupervisorOpts {
@@ -73,8 +76,24 @@ export interface ChildWorkerSupervisorOpts {
   args: string[];
   /** Child env. Defaults to a clone of process.env. */
   env?: NodeJS.ProcessEnv;
-  /** Give up after this many consecutive code != 0 exits. */
+  /**
+   * Soft crash budget. issue #1994 (#2227 tail): crossing this NO LONGER
+   * permanently gives up. Instead the supervisor enters DEGRADED mode — it
+   * keeps respawning with capped exponential backoff (60s cap) and emits a
+   * loud `crash_budget_degraded` health_warn — so a transient DB-pooler outage
+   * that trips the counter self-heals when the DB returns (the stable-run reset
+   * clears crashCount once a respawn runs > stableRunResetMs) instead of
+   * wedging the queue until a human restart.
+   */
   maxCrashes: number;
+  /**
+   * Hard ceiling: permanently give up (fire onMaxCrashesExceeded) ONLY after
+   * this many consecutive crashes — the runaway backstop for a genuinely
+   * unrecoverable hot crash-loop that the stable-run reset never escapes.
+   * Default: maxCrashes * HARD_STOP_CRASH_MULTIPLIER. Set to 0 to disable
+   * permanent give-up entirely (retry-forever-with-backoff).
+   */
+  hardStopMaxCrashes?: number;
   /** Stable-run reset window: code != 0 after this duration resets crashCount to 1. Default 5 min. */
   stableRunResetMs?: number;
 
@@ -129,6 +148,12 @@ export interface ChildWorkerSupervisorOpts {
   /** Test seed for the clean-restart window. Defaults to Date.now. @internal */
   _now?: () => number;
 }
+
+/** issue #1994: how many multiples of the soft crash budget before the hard
+ *  permanent-give-up backstop fires. 10× the default soft budget of 10 = 100
+ *  consecutive crashes (each within the stable-run window) before we conclude
+ *  it's a genuine code bug and stop. A transient outage recovers long before. */
+export const HARD_STOP_CRASH_MULTIPLIER = 10;
 
 const DEFAULTS = {
   stableRunResetMs: 5 * 60 * 1000,
@@ -287,17 +312,48 @@ export class ChildWorkerSupervisor {
   /**
    * Run the spawn-and-respawn loop. Resolves when:
    *   1. composer.isStopping() returns true, OR
-   *   2. crashCount reaches maxCrashes (after firing onMaxCrashesExceeded).
+   *   2. crashCount reaches the HARD ceiling (after firing onMaxCrashesExceeded).
+   *
+   * issue #1994 (#2227 tail): crossing the SOFT budget (`maxCrashes`) no longer
+   * stops the supervisor. It enters degraded mode — keep respawning with capped
+   * exponential backoff (60s cap, so it's a paced retry, not a hot loop) and
+   * announce loudly — so a transient DB-pooler outage that trips the counter
+   * recovers on its own (a respawn that runs > stableRunResetMs resets
+   * crashCount to 1) instead of permanently wedging the queue. Permanent
+   * give-up fires only at the much-higher hard ceiling: the runaway backstop
+   * for a genuinely unrecoverable hot crash-loop.
    */
   async run(): Promise<void> {
-    while (!this.opts.isStopping() && this._crashCount < this.opts.maxCrashes) {
+    const hardStop = this.opts.hardStopMaxCrashes ??
+      this.opts.maxCrashes * HARD_STOP_CRASH_MULTIPLIER;
+    let degradedAnnounced = false;
+    while (!this.opts.isStopping()) {
       await this.spawnOnce();
 
       if (this.opts.isStopping()) return;
 
-      if (this._crashCount >= this.opts.maxCrashes) {
-        this.opts.onMaxCrashesExceeded(this._crashCount, this.opts.maxCrashes);
+      // Hard ceiling: permanent give-up (the runaway backstop). hardStop <= 0
+      // disables it entirely (retry-forever-with-backoff for deployments that
+      // would rather never auto-stop a recoverable supervisor).
+      if (hardStop > 0 && this._crashCount >= hardStop) {
+        this.opts.onMaxCrashesExceeded(this._crashCount, hardStop);
         return;
+      }
+
+      // Soft budget crossed → degraded mode. Announce once per degradation
+      // episode; re-arm after a stable-run reset drops us back under budget.
+      if (this._crashCount >= this.opts.maxCrashes) {
+        if (!degradedAnnounced) {
+          degradedAnnounced = true;
+          this.opts.onEvent({
+            kind: 'health_warn',
+            reason: 'crash_budget_degraded',
+            count: this._crashCount,
+            max: this.opts.maxCrashes,
+          });
+        }
+      } else {
+        degradedAnnounced = false;
       }
 
       await this.applyBackoff();

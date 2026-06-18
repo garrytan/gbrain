@@ -133,6 +133,28 @@ export function isHolderDeadLocally(
 }
 
 /**
+ * issue #2227: is a lock-row holder live enough to count as "running" for an
+ * observability surface (`gbrain jobs supervisor status`, `gbrain doctor`)?
+ *
+ * PID-reuse-safe by design (`pid-liveness-alone-pid-reuse`): keys on the lock's
+ * own freshness, NEVER `process.kill`. A live holder refreshes its TTL on a
+ * timer; a dead one stops, so its `ttl_expires_at` lapses and (after the steal
+ * grace) `last_refreshed_at` ages out. The primary signal is `!ttl_expired`;
+ * the heartbeat grace covers a starved-but-alive holder whose TTL briefly
+ * lapsed between refresh ticks (the #1794 thrash class), mirroring the
+ * steal-grace semantics `tryAcquireDbLock` already uses. Cross-host holders are
+ * still "running" for visibility (a supervisor exists, just elsewhere) — we
+ * report freshness, not takeover-eligibility, so host is not consulted here.
+ */
+export function isLockHolderLive(snap: LockSnapshot, ttlMinutes: number = DEFAULT_TTL_MINUTES): boolean {
+  if (!snap.ttl_expired) return true;
+  if (snap.ms_since_last_refresh !== null) {
+    return snap.ms_since_last_refresh < resolveStealGraceSeconds(ttlMinutes) * 1000;
+  }
+  return false;
+}
+
+/**
  * Try to acquire a named DB lock.
  *
  * Returns a handle on success. Returns `null` if another live holder has
