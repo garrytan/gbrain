@@ -69,6 +69,25 @@ describe('canonicalLookup — id normalization', () => {
   });
 
   test('nested OpenRouter id → MISS (markup ≠ native pricing)', () => {
+    // Unlisted nested OpenRouter ids still miss — we never IMPLICITLY reprice a
+    // nested id as the inner vendor. Only the exact slugs explicitly listed in
+    // CANONICAL_PRICING hit (see the next test for the listed-slug HIT path).
+    expect(canonicalLookup('openrouter:anthropic/claude-sonnet-4-6')).toBeUndefined();
+  });
+
+  test('explicitly-listed OpenRouter Sonnet slug → HIT at native $3/$15', () => {
+    // Regression guard for the bounded-extraction budget path. The pilot routes
+    // Sonnet through OpenRouter as `openrouter:anthropic/claude-sonnet-4.6` (the
+    // DOTTED catalog slug). It is an EXPLICIT canonical key, not an implicit
+    // reprice of the inner Anthropic id. Before this key existed the budget
+    // tracker no_pricing-failed the `--max-cost` run; combined with the
+    // extract.ts fix that failure now surfaces as a hard BudgetExhausted instead
+    // of a misleading clean "0 facts" extraction.
+    expect(canonicalLookup('openrouter:anthropic/claude-sonnet-4.6')).toEqual({
+      input: 3.0,
+      output: 15.0,
+    });
+    // The hyphenated form stays a MISS: only the exact listed slug is priced.
     expect(canonicalLookup('openrouter:anthropic/claude-sonnet-4-6')).toBeUndefined();
   });
 

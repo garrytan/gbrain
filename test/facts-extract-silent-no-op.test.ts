@@ -27,6 +27,7 @@ import {
   getChatModel,
 } from '../src/core/ai/gateway.ts';
 import { extractFactsFromTurn } from '../src/core/facts/extract.ts';
+import { BudgetExhausted } from '../src/core/budget/budget-tracker.ts';
 
 beforeEach(() => {
   resetGateway();
@@ -126,5 +127,57 @@ describe('facts extract — silent-no-op regression (v0.31.6 bug class)', () => 
       source: 'test:smoking-gun',
     });
     expect(chatCalled).toBe(true);  // ← THE bug-class assertion
+  });
+});
+
+/**
+ * Budget-failure fail-loud regression.
+ *
+ * The bounded OpenRouter Sonnet pilot ran under `--max-cost`. On an UNPRICED
+ * model the budget tracker throws `BudgetExhausted` (reason `no_pricing`).
+ * extract.ts used to absorb every non-abort error as "no extraction", so a
+ * capped run on an unpriced model reported a clean "0 facts" — a budget/pricing
+ * failure silently laundered into a successful-looking empty result. The fix
+ * re-throws `BudgetExhausted` (alongside aborts) while still absorbing genuine
+ * provider/content errors. These tests pin both halves of that contract.
+ */
+describe('facts extract — budget failures must fail loud (not "0 facts")', () => {
+  test('BudgetExhausted from the chat path PROPAGATES (not absorbed to [])', async () => {
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      env: { ANTHROPIC_API_KEY: 'sk-ant-test' },
+    });
+    __setChatTransportForTests(async () => {
+      throw new BudgetExhausted('max-cost reached (unpriced model)', {
+        reason: 'no_pricing',
+        spent: 0.02,
+        cap: 0.01,
+        modelId: 'openrouter:anthropic/claude-sonnet-4.6',
+      });
+    });
+    await expect(
+      extractFactsFromTurn({
+        turnText: 'Garry founded Initialized in 2010 with Alexis.',
+        source: 'test:budget-exhausted',
+      }),
+    ).rejects.toBeInstanceOf(BudgetExhausted);
+  });
+
+  test('a generic provider error is STILL absorbed to [] (graceful degradation kept)', async () => {
+    // The fail-loud carve-out is scoped to BudgetExhausted (and aborts). An
+    // ordinary provider/content error must keep the old graceful-[] contract so
+    // the caller's put_page backstop still records the page.
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      env: { ANTHROPIC_API_KEY: 'sk-ant-test' },
+    });
+    __setChatTransportForTests(async () => {
+      throw new Error('provider 500 — transient upstream failure');
+    });
+    const facts = await extractFactsFromTurn({
+      turnText: 'Garry founded Initialized in 2010 with Alexis.',
+      source: 'test:generic-provider-error',
+    });
+    expect(facts).toEqual([]);
   });
 });

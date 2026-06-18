@@ -34,6 +34,7 @@ import { gbrainPath } from '../config.ts';
 import { ANTHROPIC_PRICING, type ModelPricing } from '../anthropic-pricing.ts';
 import { EMBEDDING_PRICING, lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
+import { canonicalLookup } from '../model-pricing.ts';
 import { isoWeekFilename, resolveAuditDir } from '../audit-week-file.ts';
 
 export type BudgetKind = 'chat' | 'embed' | 'rerank';
@@ -182,18 +183,12 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
     }
     return null;
   }
-  // chat or rerank: try bare key first, then provider:model or provider/model.
-  // v0.41.21.0: route through splitProviderModelId so slash-prefixed ids
-  // (the form `--judge-model` and OpenRouter recipes emit) hit the pricing
-  // table. Pre-fix, slash-form silently no_pricing-failed `--max-cost` on
-  // brainstorm/lsd.
-  const bare = ANTHROPIC_PRICING[modelId];
-  if (bare) return bare;
-  const { provider: providerId, model: modelTail } = splitProviderModelId(modelId);
-  if (modelTail) {
-    const tailHit = ANTHROPIC_PRICING[modelTail];
-    if (tailHit) return tailHit;
-  }
+  // chat or rerank: route through the canonical table so provider-prefixed
+  // models and explicitly-priced nested OpenRouter ids share one source of
+  // truth with every other pricing consumer.
+  const direct = canonicalLookup(modelId);
+  if (direct) return direct;
+  const { provider: providerId } = splitProviderModelId(modelId);
   // v0.40.6.1: zero-price local-inference rerank providers so the budget
   // tracker's TX2 hard-fail doesn't trip on `llama-server-reranker:<model>`
   // under `--max-cost`. Only the rerank kind — chat/embed already have

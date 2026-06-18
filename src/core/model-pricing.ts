@@ -64,6 +64,12 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'anthropic:claude-3-5-sonnet-20241022': { input:  3.00, output: 15.00 },
   'anthropic:claude-3-5-haiku-20241022':  { input:  0.80, output:  4.00 },
 
+  // ── OpenRouter-routed Anthropic ───────────────────────────────────────
+  // Explicit nested provider key: do not infer this from the inner Anthropic
+  // id. Verified 2026-06-18 against OpenRouter/Bifrost catalog: $3/M input,
+  // $15/M output for anthropic/claude-sonnet-4.6.
+  'openrouter:anthropic/claude-sonnet-4.6': { input: 3.00, output: 15.00 },
+
   // ── OpenAI ─────────────────────────────────────────────────────────────
   'openai:gpt-4o':                        { input:  2.50, output: 10.00 },
   'openai:gpt-4o-mini':                   { input:  0.15, output:  0.60 },
@@ -92,11 +98,10 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
  * non-Anthropic bare ids therefore miss, preserving the prior null-return
  * contract for ids like `gpt-5`.
  *
- * Nested OpenRouter ids (`openrouter:anthropic/claude-...`) intentionally MISS:
- * splitProviderModelId yields provider `openrouter`, model
- * `anthropic/claude-...`, and `openrouter:anthropic/claude-...` is not a
- * canonical key. OpenRouter markup ≠ native pricing, so we never reprice it as
- * the inner vendor.
+ * Nested OpenRouter ids (`openrouter:anthropic/claude-...`) only hit when the
+ * exact OpenRouter-routed id is explicitly listed below. We never reprice a
+ * nested OpenRouter id as the inner vendor implicitly; OpenRouter markup can
+ * differ, so each routable model needs its own canonical key.
  */
 export function canonicalLookup(
   modelId: string | null | undefined,

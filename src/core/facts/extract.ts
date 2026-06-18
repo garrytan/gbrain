@@ -28,6 +28,7 @@ import { resolveModel } from '../model-config.ts';
 import { normalizeModelId } from '../model-id.ts';
 import type { BrainEngine, NewFact, FactKind } from '../engine.ts';
 import { normalizeMetricLabel } from './extract-from-fence.ts';
+import { BudgetExhausted } from '../budget/budget-tracker.ts';
 
 /**
  * v0.31 (D15): kill-switch for fact extraction.
@@ -183,9 +184,12 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
       abortSignal: input.abortSignal,
     });
   } catch (err) {
-    // Re-throw aborts; absorb other errors as "no extraction" — caller's
-    // `put_page` backstop will still record the page itself.
+    // Re-throw aborts and budget failures; absorb provider/content errors as
+    // "no extraction" so caller's `put_page` backstop still records the page.
+    // BudgetExhausted must remain fail-loud: capped runs on unpriced models
+    // must not be reported as successful "0 facts" extractions.
     if (isAbort(err)) throw err;
+    if (err instanceof BudgetExhausted) throw err;
     return [];
   }
 

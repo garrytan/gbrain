@@ -225,6 +225,52 @@ describe('appendCompleted (delta) + union read', () => {
   });
 });
 
+// completed_keys is `JSONB NOT NULL DEFAULT '[]'` with NO array CHECK
+// constraint, so a legacy/malformed row can carry a JSONB SCALAR (number,
+// string, bool, null) instead of an array. Pre-fix, loadOpCheckpoint fed that
+// straight into `jsonb_array_elements_text(...)`, which raises
+// "cannot extract elements from a scalar". loadOpCheckpoint's own try/catch
+// then swallows that to `[]`, so a LONE scalar row already read as empty (the
+// two lone-scalar tests below pass pre- and post-fix; they pin that tolerance
+// against a future re-throw regression). The REAL damage — and what the fix
+// actually closes — is the union case: a scalar PARENT row blows up the whole
+// UNION query, so legitimately-appended child path rows are SILENTLY DISCARDED,
+// disabling resume. The 'scalar parent + appended child rows' test is the load-
+// bearing regression guard: it fails pre-fix (reads []) and passes post-fix
+// (reads the child rows). The fix coerces a non-array completed_keys to '[]'
+// inside the query so the malformed parent contributes nothing without taking
+// the path rows down with it.
+describe('malformed scalar completed_keys (defensive guard)', () => {
+  async function insertScalarRow(op: string, fp: string, scalarJsonb: string): Promise<void> {
+    await engine.executeRaw(
+      `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+       VALUES ($1, $2, ${scalarJsonb}::jsonb, now())`,
+      [op, fp],
+    );
+  }
+
+  test('scalar number completed_keys → reads as [] (no "scalar" throw)', async () => {
+    await insertScalarRow('embed', 'fp-scalar-num', "'42'");
+    expect(await loadOpCheckpoint(engine, { op: 'embed', fingerprint: 'fp-scalar-num' })).toEqual([]);
+  });
+
+  test('scalar string and JSON null completed_keys → read as [] (no throw)', async () => {
+    await insertScalarRow('embed', 'fp-scalar-str', `'"oops"'`);
+    await insertScalarRow('embed', 'fp-scalar-null', "'null'");
+    expect(await loadOpCheckpoint(engine, { op: 'embed', fingerprint: 'fp-scalar-str' })).toEqual([]);
+    expect(await loadOpCheckpoint(engine, { op: 'embed', fingerprint: 'fp-scalar-null' })).toEqual([]);
+  });
+
+  test('scalar parent + appended child path rows → union returns just the child rows', async () => {
+    // The scalar parent must not poison the union read: appended path rows
+    // still surface, the malformed parent simply contributes nothing.
+    const key = { op: 'sync', fingerprint: 'fp-scalar-union' };
+    await insertScalarRow('sync', 'fp-scalar-union', "'42'");
+    await appendCompleted(engine, key, ['real-1.md', 'real-2.md']);
+    expect((await loadOpCheckpoint(engine, key)).sort()).toEqual(['real-1.md', 'real-2.md']);
+  });
+});
+
 describe('resumeFilter (pure)', () => {
   test('empty completed returns all', () => {
     expect(resumeFilter(['a', 'b', 'c'], [])).toEqual(['a', 'b', 'c']);
