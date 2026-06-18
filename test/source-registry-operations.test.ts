@@ -182,11 +182,13 @@ describe('source registry operations', () => {
     expect(getOperation('record_connector_item_deletion').cliHints?.name).toBe('connector-record-deletion');
     expect(getOperation('record_connector_failure').cliHints?.name).toBe('connector-record-failure');
     expect(getOperation('list_source_items').cliHints?.name).toBe('source-items');
+    expect(getOperation('preview_raw_canonical_document').cliHints?.name).toBe('raw-canonical-preview');
     expect(getOperation('list_sources').cliHints?.name).toBe('source-list');
     expect(getOperation('get_source').cliHints?.name).toBe('source-get');
     expect(getOperation('register_source').mutating).toBe(true);
     expect(getOperation('ingest_connector_item').mutating).toBe(true);
     expect(getOperation('evaluate_raw_access').mutating).toBe(true);
+    expect(getOperation('preview_raw_canonical_document').mutating).toBe(false);
     expect(getOperation('list_sources').mutating).toBe(false);
   });
 
@@ -221,6 +223,47 @@ describe('source registry operations', () => {
       expect(preview.chunks[0].redacted_text).not.toContain(AWS_ACCESS_KEY_FIXTURE);
       expect(preview.secret_detections).toHaveLength(1);
       expect(preview.secret_detections[0].secret_type).toBe('aws_access_key_id');
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('preview raw canonical document returns non-mutating draft markdown', async () => {
+    const harness = await createSqliteHarness('raw-canonical-preview');
+    try {
+      const result = await getOperation('preview_raw_canonical_document').handler(harness.ctx(), {
+        source_kind: 'meeting_transcript',
+        source_id: 'source:weekly-sync',
+        source_item_id: 'source-item:weekly-sync-2026-06-18',
+        source_item_title: 'Weekly Sync',
+        source_content_hash: 'abc123',
+        source_locator: 'file:///notes/weekly-sync.md',
+        source_updated_at: '2026-06-18T09:00:00.000Z',
+        parser_version: 'meeting-parser:v1',
+        extractor_version: 'manual-structured:v1',
+        generator_version: 'raw-canonical-generator:v1',
+        now: '2026-06-18T10:00:00.000Z',
+        documents: [{
+          target_slug: 'projects/search/docs/weekly-sync',
+          type: 'project',
+          title: 'Weekly Sync',
+          tags: ['meeting'],
+          source_refs: ['Meeting notes "Weekly Sync", 2026-06-18 09:00 KST'],
+          source_chunk_ids: ['source-chunk:1'],
+          facts: ['Search launch was moved to Friday.'],
+          timeline_events: ['Search launch date changed.'],
+          frontmatter: {
+            source_paths: ['notes/weekly-sync.md'],
+            source_version: '2026-06-18',
+          },
+        }],
+      }) as any;
+
+      expect(result.status).toBe('preview');
+      expect(result.drafts).toHaveLength(1);
+      expect(result.drafts[0].blocked_reasons).toEqual([]);
+      expect(result.drafts[0].markdown).toContain('Search launch was moved to Friday.');
+      expect(result.drafts[0].markdown).toContain('review_status: draft');
     } finally {
       await harness.cleanup();
     }
