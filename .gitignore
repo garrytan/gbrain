@@ -41,3 +41,9 @@ test/fixtures/pglite-snapshot.version
 
 # Private brain reports — never check these in (per CLAUDE.md privacy rule)
 reports/network-intelligence/
+
+# Local Radar snapshot preview data (generated, private)
+admin/public/radar-snapshot/
+
+# Local Radar snapshot preview data copied by Vite build
+admin/dist/radar-snapshot/

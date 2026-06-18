@@ -5,13 +5,14 @@ import { AgentsPage } from './pages/Agents';
 import { RequestLogPage } from './pages/RequestLog';
 import { CalibrationPage } from './pages/Calibration';
 import { JobsWatchPage } from './pages/JobsWatch';
+import { RadarPage } from './pages/Radar';
 import { api } from './api';
 
-type Page = 'login' | 'dashboard' | 'agents' | 'log' | 'calibration' | 'jobs';
+type Page = 'login' | 'dashboard' | 'agents' | 'log' | 'calibration' | 'jobs' | 'radar';
 
 function getPage(): Page {
   const hash = window.location.hash.replace('#', '') || 'dashboard';
-  if (['login', 'dashboard', 'agents', 'log', 'calibration', 'jobs'].includes(hash)) return hash as Page;
+  if (['login', 'dashboard', 'agents', 'log', 'calibration', 'jobs', 'radar'].includes(hash)) return hash as Page;
   return 'dashboard';
 }
 
@@ -60,6 +61,8 @@ export function App() {
              onClick={() => navigate('calibration')}>Calibration</a>
           <a className={`nav-item ${page === 'jobs' ? 'active' : ''}`}
              onClick={() => navigate('jobs')}>Jobs Watch</a>
+          <a className={`nav-item ${page === 'radar' ? 'active' : ''}`}
+             onClick={() => navigate('radar')}>Radar</a>
         </div>
         <div style={{ marginTop: 'auto', padding: '16px 12px', borderTop: '1px solid var(--border)' }}>
           <button
@@ -86,6 +89,7 @@ export function App() {
         {page === 'log' && <RequestLogPage />}
         {page === 'calibration' && <CalibrationPage />}
         {page === 'jobs' && <JobsWatchPage />}
+        {page === 'radar' && <RadarPage />}
       </main>
     </div>
   );

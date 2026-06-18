@@ -146,6 +146,7 @@ Stable phase names shipped in v0.15.2:
 - `integrity.auto`
 - `eval.single`, `eval.ab`
 - `export.pages`
+- `radar.pages` — per-page snapshot build for `gbrain radar export`
 - `files.sync`
 
 Sub-phases exposed via `child()`:
