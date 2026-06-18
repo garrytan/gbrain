@@ -45,7 +45,7 @@ jobs:
           bun-version: 1.3.13
       - run: bun install
       - name: Run Tier 1 E2E tests
-        run: bun test test/e2e/mechanical.test.ts test/e2e/mcp.test.ts
+        run: bun test test/e2e/mechanical.test.ts test/e2e/mcp.test.ts test/e2e/migrate-source-jsonb.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
 
