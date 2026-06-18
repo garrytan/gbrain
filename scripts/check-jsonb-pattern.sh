@@ -33,6 +33,7 @@ echo "OK: no JSON.stringify(x)::jsonb interpolation pattern in src/"
 
 # v0.42: also catch the POSITIONAL form the interpolated check above misses:
 #   engine.executeRaw(`... $N::jsonb`, [..., JSON.stringify(x)])
+#   engine.executeRawDirect(`... $N::jsonb`, [..., JSON.stringify(x)])
 # Here the `$N::jsonb` cast lives in the SQL string and the JSON.stringify(x)
 # arrives as a positional bind param — so it never appears as the inlined
 # `${JSON.stringify(x)}::jsonb` literal the PATTERN above looks for, yet it
@@ -44,11 +45,11 @@ echo "OK: no JSON.stringify(x)::jsonb interpolation pattern in src/"
 POSITIONAL_HITS="$(
   find src -type f -name '*.ts' -print0 \
   | xargs -0 perl -0777 -ne '
-      while (/executeRaw\s*(?:<[^()]*>\s*)?\((.*?)\)\s*;/sg) {
+      while (/executeRaw(?:Direct)?\s*(?:<[^()]*>\s*)?\((.*?)\)\s*;/sg) {
         my $call = $1;
         next unless $call =~ /::jsonb/ && $call =~ /JSON\.stringify\s*\(/;
         my $line = (substr($_, 0, pos()) =~ tr/\n//) + 1;
-        print "$ARGV:$line: executeRaw(... JSON.stringify(...) ... \$N::jsonb) — positional double-encode\n";
+        print "$ARGV:$line: executeRaw/executeRawDirect(... JSON.stringify(...) ... \$N::jsonb) — positional double-encode\n";
       }
     ' 2>/dev/null
 )"
@@ -56,15 +57,15 @@ POSITIONAL_HITS="$(
 if [ -n "$POSITIONAL_HITS" ]; then
   echo "$POSITIONAL_HITS"
   echo
-  echo "ERROR: Found positional JSON.stringify(...) bound to a \$N::jsonb cast via executeRaw()."
+  echo "ERROR: Found positional JSON.stringify(...) bound to a \$N::jsonb cast via executeRaw/executeRawDirect()."
   echo "       postgres.js re-encodes the string, producing a JSONB STRING literal"
-  echo "       (jsonb_typeof='string'); PGLite hides it. Pass the raw object through"
-  echo "       executeRawJsonb(engine, sql, [scalars], [obj]) instead — see"
-  echo "       src/core/sql-query.ts and feedback_postgres_jsonb_double_encode.md."
+  echo "       (jsonb_typeof='string'); PGLite hides it. Pass the raw JSON value"
+  echo "       through positional binding; use executeRawJsonb when direct-pool"
+  echo "       routing is not required. See src/core/sql-query.ts."
   exit 1
 fi
 
-echo "OK: no positional executeRaw + JSON.stringify(x) + \$N::jsonb pattern in src/"
+echo "OK: no positional executeRaw/executeRawDirect + JSON.stringify(x) + \$N::jsonb pattern in src/"
 
 # v0.13.1 #219: guard against max_stalled DEFAULT 1 regressing in any schema
 # source file. DEFAULT 1 dead-lettered any SIGKILL'd job on first stall, making
