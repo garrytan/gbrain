@@ -180,18 +180,23 @@ export async function recordCompleted(
   // extract-conversation-facts serialize a MUTABLE map through here and rely on
   // stale keys being REMOVED; an append would make them unremovable. The full
   // set lands in the parent `completed_keys` JSONB column via a single UPSERT —
-  // exactly as before. JSON.stringify into `$3::jsonb` is correct (the text→jsonb
-  // cast yields a proper array; NOT the double-encode trap, which is the template
-  // form). Sync uses `appendCompleted` (below) instead, never this.
+  // exactly as before. Bind the keys as a Postgres text[] and convert with
+  // to_jsonb() — postgres.js DOUBLE-ENCODES `JSON.stringify(arr)` bound to a
+  // positional `$3::jsonb` cast (the JSON string is re-stringified into a jsonb
+  // STRING scalar, not an array), which violates the v0.42.51.0 (#2255)
+  // `op_checkpoints_completed_keys_array` CHECK. `to_jsonb($3::text[])` mirrors
+  // appendCompleted's `unnest($3::text[])` text[] idiom below and yields a true
+  // jsonb array. (Sync uses appendCompleted for paths, but its sync-target pin
+  // lands here, which is how the double-encode surfaced.)
   const sorted = [...keys].sort();
   return durableWrite(engine, key, 'write', () =>
     engine.executeRawDirect(
       `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-       VALUES ($1, $2, $3::jsonb, now())
+       VALUES ($1, $2, to_jsonb($3::text[]), now())
        ON CONFLICT (op, fingerprint) DO UPDATE
          SET completed_keys = EXCLUDED.completed_keys,
              updated_at     = now()`,
-      [key.op, key.fingerprint, JSON.stringify(sorted)],
+      [key.op, key.fingerprint, sorted],
     ));
 }
 
