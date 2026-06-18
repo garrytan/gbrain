@@ -21,10 +21,11 @@
  * regression trip-wire if anyone later re-hardcodes a view back into a duplicate)
  * and that the cross-modal panel models are all present in canonical.
  *
- * Prices verified 2026-06-17 against published provider pricing:
+ * Prices verified 2026-06-18 against published provider pricing:
  *   - Anthropic: https://platform.claude.com/docs/en/about-claude/models/overview
  *   - OpenAI:    https://openai.com/api/pricing
  *   - Google:    https://ai.google.dev/gemini-api/docs/pricing
+ *   - DeepSeek:  https://api-docs.deepseek.com/quick_start/pricing
  * The dream-budget audit JSONL snapshots the rate per call, so historical
  * estimates stay reproducible even after this table changes.
  *
@@ -83,7 +84,12 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
 
   // ── Together / DeepSeek (cross-modal-eval panel) ───────────────────────
   'together:meta-llama/Llama-3.3-70B-Instruct-Turbo': { input: 0.88, output: 0.88 },
-  'deepseek:deepseek-chat':               { input:  0.14, output:  0.28 },
+  'deepseek:deepseek-v4-flash':           { input:  0.14,  output:  0.28 },
+  'deepseek:deepseek-v4-pro':             { input:  0.435, output:  0.87 },
+  // Legacy compatibility aliases retire on 2026-07-24 15:59 UTC. Keep them
+  // priced as V4 Flash until removal so old receipts remain costed.
+  'deepseek:deepseek-chat':               { input:  0.14,  output:  0.28 },
+  'deepseek:deepseek-reasoner':           { input:  0.14,  output:  0.28 },
 };
 
 /**

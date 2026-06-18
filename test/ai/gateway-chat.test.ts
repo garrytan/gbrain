@@ -61,6 +61,13 @@ describe('chat touchpoint — recipe registry', () => {
     expect(getRecipe('groq')!.base_url_default).toBe('https://api.groq.com/openai/v1');
     expect(getRecipe('together')!.base_url_default).toBe('https://api.together.xyz/v1');
   });
+
+  test('DeepSeek recipe exposes explicit V4 ids before legacy aliases', () => {
+    expect(getRecipe('deepseek')!.touchpoints.chat!.models.slice(0, 2)).toEqual([
+      'deepseek-v4-flash',
+      'deepseek-v4-pro',
+    ]);
+  });
 });
 
 describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {

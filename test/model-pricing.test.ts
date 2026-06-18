@@ -56,6 +56,14 @@ describe('CANONICAL_PRICING — table integrity', () => {
     expect(CANONICAL_PRICING['openai:gpt-5.4-mini']).toEqual({ input: 0.75, output: 4.5 });
     expect(CANONICAL_PRICING['openai:gpt-5.4-nano']).toEqual({ input: 0.2, output: 1.25 });
   });
+
+  test('DeepSeek V4 prices are pinned from official pricing', () => {
+    expect(CANONICAL_PRICING['deepseek:deepseek-v4-flash']).toEqual({ input: 0.14, output: 0.28 });
+    expect(CANONICAL_PRICING['deepseek:deepseek-v4-pro']).toEqual({ input: 0.435, output: 0.87 });
+    expect(CANONICAL_PRICING['deepseek:deepseek-chat']).toEqual(
+      CANONICAL_PRICING['deepseek:deepseek-v4-flash'],
+    );
+  });
 });
 
 describe('canonicalLookup — id normalization', () => {
@@ -122,6 +130,8 @@ describe('DRIFT GUARD — derived views stay equal to canonical (re-hardcode tri
       'google:gemini-1.5-pro',
       'google:gemini-2.0-flash',
       'together:meta-llama/Llama-3.3-70B-Instruct-Turbo',
+      'deepseek:deepseek-v4-flash',
+      'deepseek:deepseek-v4-pro',
       'deepseek:deepseek-chat',
     ]) {
       expect(canonicalLookup(id)).toBeDefined();
