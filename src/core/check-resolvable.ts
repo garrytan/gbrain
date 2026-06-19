@@ -26,6 +26,7 @@ import {
   findPrimaryResolverPath,
   loadSkillTriggerIndex,
 } from './skill-trigger-index.ts';
+import { parseSkillFrontmatter } from './skill-frontmatter.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -219,15 +220,7 @@ export function parseResolverEntries(resolverContent: string): ResolverEntry[] {
 
 /** Simple YAML frontmatter parser — extracts triggers array if present. */
 function extractTriggers(skillContent: string): string[] {
-  const fmMatch = skillContent.match(/^---\n([\s\S]*?)\n---/);
-  if (!fmMatch) return [];
-  const fm = fmMatch[1];
-  const triggersMatch = fm.match(/^triggers:\s*\n((?:\s+-\s+.+\n?)*)/m);
-  if (!triggersMatch) return [];
-  return triggersMatch[1]
-    .split('\n')
-    .map(l => l.replace(/^\s+-\s+/, '').replace(/^["']|["']$/g, '').trim())
-    .filter(Boolean);
+  return parseSkillFrontmatter(skillContent)?.triggers ?? [];
 }
 
 /**

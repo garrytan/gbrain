@@ -9,6 +9,7 @@ import {
   resolveSocketPath,
   startResolveIpcServer,
   resolveViaIpc,
+  captureViaIpc,
   IPC_UNAVAILABLE,
 } from '../../src/core/context/resolve-ipc.ts';
 import type { PointerBlock } from '../../src/core/context/retrieval-reflex.ts';
@@ -60,6 +61,34 @@ describe('resolve IPC', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  test('capture request uses the server-owned connection instead of a second process', async () => {
+    const dir = tmpDir();
+    const sock = resolveSocketPath(dir);
+    const server = await startResolveIpcServer(
+      sock,
+      async () => null,
+      undefined,
+      async (req) => {
+        expect(req.slug).toBe('inbox/test-capture');
+        expect(req.content).toContain('durable rule');
+        expect(req.sourceKind).toBe('capture-cli');
+        return { slug: req.slug, status: 'ok' };
+      },
+    );
+    expect(server).not.toBeNull();
+    servers.push(server!);
+
+    const got = await captureViaIpc(sock, {
+      op: 'capture',
+      slug: 'inbox/test-capture',
+      content: '# durable rule\n\nsave this',
+      sourceKind: 'capture-cli',
+    });
+    expect(got).not.toBe(IPC_UNAVAILABLE);
+    expect((got as Record<string, unknown>).slug).toBe('inbox/test-capture');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   test('stale socket file is cleaned up so a fresh server can bind', async () => {
     const dir = tmpDir();
     const sock = resolveSocketPath(dir);
@@ -70,7 +99,9 @@ describe('resolve IPC', () => {
     const s2 = await startResolveIpcServer(sock, async () => null);
     expect(s2).not.toBeNull();
     servers.push(s2!);
-    expect(existsSync(sock)).toBe(true);
+    if (process.platform !== 'win32') {
+      expect(existsSync(sock)).toBe(true);
+    }
     rmSync(dir, { recursive: true, force: true });
   });
 });

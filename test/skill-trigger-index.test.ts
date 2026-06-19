@@ -91,6 +91,17 @@ describe('loadSkillTriggerIndex — frontmatter auto-registration', () => {
     expect(entries[1].source).toBe('frontmatter');
   });
 
+  test('skill with CRLF frontmatter block-form triggers parses like LF', () => {
+    const skillsDir = makeSkillsDir();
+    const body = skillWithTriggers('query', ['what do we know', 'who is']).replace(/\n/g, '\r\n');
+    writeSkill(skillsDir, 'query', body);
+
+    const entries = loadSkillTriggerIndex(skillsDir);
+
+    expect(entries.map(e => e.trigger).sort()).toEqual(['what do we know', 'who is']);
+    expect(entries.every(e => e.source === 'frontmatter')).toBe(true);
+  });
+
   test('skill with inline-form triggers (triggers: ["a", "b"]) parses the same', () => {
     const skillsDir = makeSkillsDir();
     writeSkill(skillsDir, 'lint', `---

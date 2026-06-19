@@ -5,19 +5,22 @@
  * lifetime, so the context engine cannot open its own and must NOT shell out to
  * a subprocess (that would force-steal the lock past the 5-min staleness window
  * and crash the brain — see plan D9 rejected option). Instead, `serve`
- * optionally listens on a local unix-domain socket and answers a NARROW request
- * — candidates in, pointers out — using the connection it already owns. Both
- * ends are gbrain code; raw SQL never crosses the wire (closes the trust hole).
+ * optionally listens on a local unix-domain socket and answers narrow local
+ * requests using the connection it already owns. Both ends are gbrain code;
+ * raw SQL never crosses the wire (closes the trust hole).
  *
  * Protocol: newline-delimited JSON. One request line, one response line.
- *   req:  { candidates, priorContextText?, maxPointers?, sourceId? }
- *   resp: { ok: true, block: PointerBlock | null } | { ok: false, error }
+ *   resolve req: { candidates, priorContextText?, maxPointers?, sourceId? }
+ *   resolve resp: { ok: true, block: PointerBlock | null } | { ok: false, error }
+ *   capture req: { op: "capture", slug, content, sourceId? }
+ *   capture resp: { ok: true, result } | { ok: false, error }
  *
  * Local-only (unix socket on the brain's data dir, mode 0600) — no network
  * surface.
  */
 
 import net from 'node:net';
+import { createHash } from 'node:crypto';
 import { existsSync, unlinkSync, statSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import type { EntityCandidate } from './entity-salience.ts';
@@ -31,6 +34,7 @@ const MAX_MSG_BYTES = 256 * 1024;
 export const IPC_UNAVAILABLE = Symbol('ipc-unavailable');
 
 export interface ResolveRequest {
+  op?: 'resolve';
   candidates: EntityCandidate[];
   priorContextText?: string;
   maxPointers?: number;
@@ -39,10 +43,26 @@ export interface ResolveRequest {
   suppression?: 'slug-and-title' | 'slug-only';
 }
 
+export interface CaptureIpcRequest {
+  op: 'capture';
+  slug: string;
+  content: string;
+  sourceId?: string;
+  sourceKind?: string;
+  sourceUri?: string;
+  ingestedVia?: string;
+}
+
+export type CaptureIpcResult = Record<string, unknown>;
 export type ResolveHandler = (req: ResolveRequest) => Promise<PointerBlock | null>;
+export type CaptureHandler = (req: CaptureIpcRequest) => Promise<CaptureIpcResult>;
 
 /** Canonical socket path for a PGLite data dir. */
 export function resolveSocketPath(dataDir: string): string {
+  if (process.platform === 'win32') {
+    const hash = createHash('sha256').update(dataDir).digest('hex').slice(0, 24);
+    return `\\\\.\\pipe\\gbrain-resolve-${hash}`;
+  }
   return join(dataDir, SOCK_NAME);
 }
 
@@ -55,11 +75,38 @@ export async function resolveViaIpc(
   socketPath: string,
   req: ResolveRequest,
 ): Promise<PointerBlock | null | typeof IPC_UNAVAILABLE> {
-  if (!existsSync(socketPath)) return IPC_UNAVAILABLE;
+  const resp = await sendIpcRequest(socketPath, req);
+  if (resp === IPC_UNAVAILABLE) return IPC_UNAVAILABLE;
+  if (resp && resp.ok) return (resp.block ?? null) as PointerBlock | null;
+  return IPC_UNAVAILABLE;
+}
+
+/**
+ * Client: write a capture through the already-running `gbrain serve` process.
+ * Used by local auto-capture drainers so they do not spawn a second PGLite
+ * owner and then lose messages on lock timeout.
+ */
+export async function captureViaIpc(
+  socketPath: string,
+  req: CaptureIpcRequest,
+): Promise<CaptureIpcResult | typeof IPC_UNAVAILABLE> {
+  const resp = await sendIpcRequest(socketPath, req);
+  if (resp === IPC_UNAVAILABLE) return IPC_UNAVAILABLE;
+  if (resp && resp.ok && typeof resp.result === 'object' && resp.result !== null) {
+    return resp.result as CaptureIpcResult;
+  }
+  return IPC_UNAVAILABLE;
+}
+
+async function sendIpcRequest(
+  socketPath: string,
+  req: ResolveRequest | CaptureIpcRequest,
+): Promise<Record<string, unknown> | typeof IPC_UNAVAILABLE> {
+  if (process.platform !== 'win32' && !existsSync(socketPath)) return IPC_UNAVAILABLE;
   return new Promise((resolve) => {
     let settled = false;
     let buf = '';
-    const finish = (v: PointerBlock | null | typeof IPC_UNAVAILABLE) => {
+    const finish = (v: Record<string, unknown> | typeof IPC_UNAVAILABLE) => {
       if (settled) return;
       settled = true;
       try { sock.destroy(); } catch { /* noop */ }
@@ -77,7 +124,7 @@ export async function resolveViaIpc(
       if (nl < 0) return;
       try {
         const resp = JSON.parse(buf.slice(0, nl));
-        if (resp && resp.ok) return finish(resp.block ?? null);
+        if (resp && typeof resp === 'object') return finish(resp);
         return finish(IPC_UNAVAILABLE);
       } catch {
         return finish(IPC_UNAVAILABLE);
@@ -107,6 +154,7 @@ export async function startResolveIpcServer(
    * never injected into a prompt and must not count as "volunteered".
    */
   onDelivered?: (block: PointerBlock, req: ResolveRequest) => void,
+  captureHandler?: CaptureHandler,
 ): Promise<net.Server | null> {
   // Remove a stale socket file if present (a previous serve that didn't clean up).
   cleanupStaleSocket(socketPath);
@@ -124,10 +172,16 @@ export async function startResolveIpcServer(
         let resp: string;
         let delivered: { block: PointerBlock; req: ResolveRequest } | null = null;
         try {
-          const req = JSON.parse(line) as ResolveRequest;
-          const block = await handler(req);
-          resp = JSON.stringify({ ok: true, block });
-          if (block) delivered = { block, req };
+          const req = JSON.parse(line) as ResolveRequest | CaptureIpcRequest;
+          if ((req as CaptureIpcRequest).op === 'capture') {
+            if (!captureHandler) throw new Error('capture IPC unavailable');
+            const result = await captureHandler(req as CaptureIpcRequest);
+            resp = JSON.stringify({ ok: true, result });
+          } else {
+            const block = await handler(req as ResolveRequest);
+            resp = JSON.stringify({ ok: true, block });
+            if (block) delivered = { block, req: req as ResolveRequest };
+          }
         } catch (e) {
           resp = JSON.stringify({ ok: false, error: (e as Error).message });
         }
@@ -153,6 +207,7 @@ export async function startResolveIpcServer(
 
 /** Remove a socket file whose owning process is gone (or any leftover file). */
 export function cleanupStaleSocket(socketPath: string): void {
+  if (process.platform === 'win32') return;
   try {
     if (existsSync(socketPath)) {
       // A unix socket shows up as a socket file; unlink unconditionally — if a
