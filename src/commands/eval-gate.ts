@@ -62,6 +62,7 @@ interface GateOpts {
   thresholdExpectedTop1?: number;
   drill?: boolean;
   drillLimit?: number;
+  compareLimit?: number | 'captured';
 }
 
 interface Breach {
@@ -154,6 +155,10 @@ function parseArgs(args: string[]): GateOpts {
         opts.drillLimit = Number(next);
         i++;
         break;
+      case '--compare-limit':
+        opts.compareLimit = next === 'captured' ? 'captured' : Number(next);
+        i++;
+        break;
       default:
         break;
     }
@@ -189,6 +194,8 @@ Output:
   --drill                      With --baseline, include privacy-safe per-row drivers
                                (query_hash/counts/scores only; no query text or slugs)
   --drill-limit N              Rows per drill section (default 5)
+  --compare-limit N|captured   Regression: compare current top-N or each row's
+                               captured result count (gate default: captured)
   -h, --help                   Show this help
 
 Exit codes:
@@ -205,7 +212,7 @@ function isFinitePos(n: number): boolean {
 function runRegressionGate(
   engine: BrainEngine,
   baselinePath: string,
-  cliOverrides: Pick<GateOpts, 'thresholdJaccard' | 'thresholdTop1' | 'thresholdLatencyMultiplier' | 'drill' | 'drillLimit'>,
+  cliOverrides: Pick<GateOpts, 'thresholdJaccard' | 'thresholdTop1' | 'thresholdLatencyMultiplier' | 'drill' | 'drillLimit' | 'compareLimit'>,
 ): Promise<GateResult['regression_gate']> {
   return (async () => {
     let baselineFile: BaselineFile;
@@ -236,7 +243,10 @@ function runRegressionGate(
     let summary: ReplaySummary;
     let drill: PrivacySafeReplayDrill | undefined;
     try {
-      const out = await replayCore(engine, { against: baselinePath });
+      const out = await replayCore(engine, {
+        against: baselinePath,
+        compareLimit: cliOverrides.compareLimit ?? 'captured',
+      });
       summary = out.summary;
       if (cliOverrides.drill) {
         drill = buildPrivacySafeReplayDrill(out.results, { limit: cliOverrides.drillLimit });
@@ -495,6 +505,7 @@ export async function runEvalGate(engine: BrainEngine, args: string[]): Promise<
       thresholdLatencyMultiplier: opts.thresholdLatencyMultiplier,
       drill: opts.drill,
       drillLimit: opts.drillLimit,
+      compareLimit: opts.compareLimit,
     });
     if (result.regression_gate.breaches && result.regression_gate.breaches.length > 0) {
       result.verdict = 'fail';

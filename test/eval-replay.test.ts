@@ -20,7 +20,7 @@ import type { SearchResult } from '../src/core/types.ts';
 function makeStubEngine(returns: Record<string, SearchResult[]>): BrainEngine {
   return {
     kind: 'pglite',
-    searchKeyword: async (q: string) => returns[q] ?? [],
+    searchKeyword: async (q: string, opts?: { limit?: number }) => (returns[q] ?? []).slice(0, opts?.limit),
     searchVector: async () => [],
   } as unknown as BrainEngine;
 }
@@ -242,6 +242,28 @@ describe('gbrain eval replay — happy path', () => {
       const { stdout } = cap.restore();
       const out = JSON.parse(stdout);
       expect(out.summary.rows_total).toBe(2);
+    });
+  });
+
+  test('--compare-limit captured compares current results at each captured row count', async () => {
+    await withTmp(async (dir) => {
+      const ndjson = JSON.stringify(makeCapturedRow({
+        query: 'q',
+        retrieved_slugs: ['a', 'b'],
+      })) + '\n';
+      const file = join(dir, 'baseline.ndjson');
+      writeFileSync(file, ndjson);
+
+      const engine = makeStubEngine({
+        q: [fakeResult('a'), fakeResult('b'), fakeResult('c'), fakeResult('d')],
+      });
+
+      const cap = captureStdoutStderr();
+      await runEvalReplay(engine, ['--against', file, '--json', '--verbose', '--compare-limit', 'captured']);
+      const { stdout } = cap.restore();
+      const out = JSON.parse(stdout);
+      expect(out.summary.mean_jaccard).toBe(1);
+      expect(out.results[0].current_slugs).toEqual(['a', 'b']);
     });
   });
 

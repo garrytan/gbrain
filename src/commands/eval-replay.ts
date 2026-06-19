@@ -41,7 +41,7 @@ interface ReplayOpts {
   /** v0.32.3 — search-lite mode to replay under. */
   mode?: 'conservative' | 'balanced' | 'tokenmax';
   /** v0.32.3 [CDX-13] — force the per-call limit to a constant across modes. */
-  compareLimit?: number;
+  compareLimit?: number | 'captured';
 }
 
 export interface ReplayRowResult {
@@ -141,7 +141,7 @@ function parseArgs(args: string[]): ReplayOpts {
         break;
       case '--compare-limit':
         if (!next) break;
-        opts.compareLimit = parseInt(next, 10);
+        opts.compareLimit = next === 'captured' ? 'captured' : parseInt(next, 10);
         i++;
         break;
     }
@@ -162,6 +162,10 @@ FLAGS:
                         cap aggressively when iterating locally.
   --top-regressions K   Print the K rows with the worst Jaccard scores.
                         Default 5 in human mode, 0 in --json.
+  --compare-limit N|captured
+                        Force current replay to a fixed K, or to each row's
+                        captured result count. Useful when smart result cutting
+                        changed how many rows came back.
   --json                Emit one JSON object on stdout instead of a table.
                         Stable shape for CI consumption.
   --verbose             Include every row's per-row diff (large output).
@@ -273,7 +277,9 @@ async function replayRow(engine: BrainEngine, row: CapturedRow, opts: ReplayOpts
   // v0.32.3 [CDX-13]: --compare-limit forces a constant K across modes so
   // Jaccard@k actually measures quality drift, not K-drift. When set, it
   // overrides the captured K and the mode's default searchLimit.
-  const limit = opts.compareLimit ?? Math.max(captured_slugs.length, 20);
+  const limit = opts.compareLimit === 'captured'
+    ? Math.max(captured_slugs.length, 1)
+    : opts.compareLimit ?? Math.max(captured_slugs.length, 20);
 
   // search → bare keyword path. query → hybrid path (vector + keyword + RRF).
   // detail and expansion are threaded in from the captured row so the same
