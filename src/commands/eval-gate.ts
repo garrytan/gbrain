@@ -41,7 +41,12 @@ import {
   type QrelsFile,
 } from '../core/bench/qrels-file.ts';
 import { runCorrectnessGate, type CorrectnessResult } from '../core/bench/correctness-gate.ts';
-import { replayCore, type ReplaySummary } from './eval-replay.ts';
+import {
+  buildPrivacySafeReplayDrill,
+  replayCore,
+  type PrivacySafeReplayDrill,
+  type ReplaySummary,
+} from './eval-replay.ts';
 
 interface GateOpts {
   help?: boolean;
@@ -55,6 +60,8 @@ interface GateOpts {
   thresholdRecallAtK?: number;
   thresholdFirstRelevantHit?: number;
   thresholdExpectedTop1?: number;
+  drill?: boolean;
+  drillLimit?: number;
 }
 
 interface Breach {
@@ -74,6 +81,7 @@ interface GateResult {
     summary?: ReplaySummary;
     thresholds?: BaselineThresholds;
     latency_skipped?: boolean;
+    drill?: PrivacySafeReplayDrill;
     breaches?: Breach[];
   };
   correctness_gate: {
@@ -139,6 +147,13 @@ function parseArgs(args: string[]): GateOpts {
         opts.thresholdExpectedTop1 = Number(next);
         i++;
         break;
+      case '--drill':
+        opts.drill = true;
+        break;
+      case '--drill-limit':
+        opts.drillLimit = Number(next);
+        i++;
+        break;
       default:
         break;
     }
@@ -171,6 +186,9 @@ Thresholds (override baseline metadata; CLI > embedded > defaults):
 
 Output:
   --json                       Print JSON envelope to stdout
+  --drill                      With --baseline, include privacy-safe per-row drivers
+                               (query_hash/counts/scores only; no query text or slugs)
+  --drill-limit N              Rows per drill section (default 5)
   -h, --help                   Show this help
 
 Exit codes:
@@ -187,7 +205,7 @@ function isFinitePos(n: number): boolean {
 function runRegressionGate(
   engine: BrainEngine,
   baselinePath: string,
-  cliOverrides: Pick<GateOpts, 'thresholdJaccard' | 'thresholdTop1' | 'thresholdLatencyMultiplier'>,
+  cliOverrides: Pick<GateOpts, 'thresholdJaccard' | 'thresholdTop1' | 'thresholdLatencyMultiplier' | 'drill' | 'drillLimit'>,
 ): Promise<GateResult['regression_gate']> {
   return (async () => {
     let baselineFile: BaselineFile;
@@ -216,9 +234,13 @@ function runRegressionGate(
     };
 
     let summary: ReplaySummary;
+    let drill: PrivacySafeReplayDrill | undefined;
     try {
       const out = await replayCore(engine, { against: baselinePath });
       summary = out.summary;
+      if (cliOverrides.drill) {
+        drill = buildPrivacySafeReplayDrill(out.results, { limit: cliOverrides.drillLimit });
+      }
     } catch (err) {
       // D3 fail-closed on in-process throw (codex round-2 #7).
       return {
@@ -276,6 +298,7 @@ function runRegressionGate(
       summary,
       thresholds,
       ...(latencySkipped ? { latency_skipped: true } : {}),
+      ...(drill ? { drill } : {}),
       ...(breaches.length > 0 ? { breaches } : {}),
     };
   })();
@@ -388,6 +411,16 @@ function printHumanOutput(result: GateResult): void {
       } else {
         console.log(`  latency:             SKIPPED (baseline_mean_latency_ms <= 0)`);
       }
+      if (r.drill) {
+        console.log(`  privacy-safe drill:`);
+        for (const d of r.drill.top_low_overlap) {
+          console.log(
+            `    - query_hash=${d.query_hash ?? 'unknown'} jaccard=${d.jaccard.toFixed(3)} ` +
+            `top1=${d.top1_match ? 'same' : 'changed'} captured=${d.captured_count} current=${d.current_count} ` +
+            `latency_delta=${d.latency_delta_ms >= 0 ? '+' : ''}${d.latency_delta_ms.toFixed(0)}ms`,
+          );
+        }
+      }
     }
     if (r.breaches && r.breaches.length > 0) {
       console.log(`  BREACHES:`);
@@ -460,6 +493,8 @@ export async function runEvalGate(engine: BrainEngine, args: string[]): Promise<
       thresholdJaccard: opts.thresholdJaccard,
       thresholdTop1: opts.thresholdTop1,
       thresholdLatencyMultiplier: opts.thresholdLatencyMultiplier,
+      drill: opts.drill,
+      drillLimit: opts.drillLimit,
     });
     if (result.regression_gate.breaches && result.regression_gate.breaches.length > 0) {
       result.verdict = 'fail';

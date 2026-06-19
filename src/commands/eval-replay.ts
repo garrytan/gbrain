@@ -44,10 +44,12 @@ interface ReplayOpts {
   compareLimit?: number;
 }
 
-interface RowResult {
+export interface ReplayRowResult {
   /** Captured row's id, for back-referencing into the source NDJSON. */
   id: number;
   tool_name: 'query' | 'search';
+  /** Present for baseline files written by `gbrain bench publish`. */
+  query_hash?: string;
   query: string;
   /** Set-overlap score in [0, 1]. 1.0 = identical retrieved set. */
   jaccard: number;
@@ -68,6 +70,33 @@ interface RowResult {
   /** True if the row threw during replay; current_slugs is empty. */
   errored?: boolean;
   error_message?: string;
+}
+
+export interface PrivacySafeReplayDrillRow {
+  id: number;
+  tool_name: 'query' | 'search';
+  query_hash: string | null;
+  jaccard: number;
+  top1_match: boolean;
+  captured_count: number;
+  current_count: number;
+  captured_latency_ms: number;
+  current_latency_ms: number;
+  latency_delta_ms: number;
+  skipped?: boolean;
+  errored?: boolean;
+  reason?: string;
+}
+
+export interface PrivacySafeReplayDrill {
+  rows_considered: number;
+  top_low_overlap: PrivacySafeReplayDrillRow[];
+  top_latency_regressions: PrivacySafeReplayDrillRow[];
+  skipped: PrivacySafeReplayDrillRow[];
+  errored: PrivacySafeReplayDrillRow[];
+  privacy: {
+    excludes: string[];
+  };
 }
 
 function parseArgs(args: string[]): ReplayOpts {
@@ -177,6 +206,7 @@ interface CapturedRow {
   job_id?: number | null;
   subagent_id?: number | null;
   created_at?: string;
+  query_hash?: string;
   /**
    * v0.36 (D16 / CDX-10): the embedding column that ran at capture time.
    * Optional for back-compat — pre-v0.36 exports won't have it. NULL or
@@ -235,7 +265,7 @@ function jaccardSlugs(a: string[], b: string[]): number {
   return union === 0 ? 1.0 : intersection / union;
 }
 
-async function replayRow(engine: BrainEngine, row: CapturedRow, opts: ReplayOpts = {}): Promise<RowResult> {
+async function replayRow(engine: BrainEngine, row: CapturedRow, opts: ReplayOpts = {}): Promise<ReplayRowResult> {
   const captured_slugs = row.retrieved_slugs ?? [];
   const startedAt = Date.now();
 
@@ -268,6 +298,7 @@ async function replayRow(engine: BrainEngine, row: CapturedRow, opts: ReplayOpts
     return {
       id: row.id,
       tool_name: row.tool_name,
+      query_hash: row.query_hash,
       query: row.query,
       jaccard: 0,
       top1Match: false,
@@ -294,6 +325,7 @@ async function replayRow(engine: BrainEngine, row: CapturedRow, opts: ReplayOpts
   return {
     id: row.id,
     tool_name: row.tool_name,
+    query_hash: row.query_hash,
     query: row.query,
     jaccard: jaccardSlugs(captured_slugs, current_slugs),
     top1Match: captured_slugs[0] !== undefined && current_slugs[0] === captured_slugs[0],
@@ -317,7 +349,7 @@ export interface ReplaySummary {
   rows_over_2x_latency: number;
 }
 
-function summarize(results: RowResult[]): ReplaySummary {
+function summarize(results: ReplayRowResult[]): ReplaySummary {
   const eligible = results.filter(r => !r.skipped && !r.errored);
   const meanJaccard = eligible.length === 0
     ? 0
@@ -345,7 +377,7 @@ function summarize(results: RowResult[]): ReplaySummary {
   };
 }
 
-function printHumanSummary(summary: ReplaySummary, results: RowResult[], topRegressions: number): void {
+function printHumanSummary(summary: ReplaySummary, results: ReplayRowResult[], topRegressions: number): void {
   const total = summary.rows_total;
   const eligible = summary.rows_replayed;
   console.log(`Replayed ${eligible} of ${total} captured queries (${summary.rows_skipped} skipped, ${summary.rows_errored} errored)`);
@@ -395,7 +427,7 @@ function printHumanSummary(summary: ReplaySummary, results: RowResult[], topRegr
 export async function replayCore(
   engine: BrainEngine,
   opts: ReplayOpts,
-): Promise<{ summary: ReplaySummary; results: RowResult[] }> {
+): Promise<{ summary: ReplaySummary; results: ReplayRowResult[] }> {
   if (!opts.against) {
     throw new Error('replayCore: opts.against (path to NDJSON) is required');
   }
@@ -414,12 +446,13 @@ export async function replayCore(
     try { await engine.setConfig('search.mode', opts.mode); } catch { /* swallow */ }
   }
 
-  const results: RowResult[] = [];
+  const results: ReplayRowResult[] = [];
   for (const row of capped) {
     if (!row.query || row.query.length === 0) {
       results.push({
         id: row.id,
         tool_name: row.tool_name,
+        query_hash: row.query_hash,
         query: row.query ?? '',
         jaccard: 0,
         top1Match: false,
@@ -437,6 +470,56 @@ export async function replayCore(
   }
 
   return { summary: summarize(results), results };
+}
+
+function toPrivacySafeDrillRow(row: ReplayRowResult): PrivacySafeReplayDrillRow {
+  const capturedLatency = row.current_latency_ms - row.latency_delta_ms;
+  return {
+    id: row.id,
+    tool_name: row.tool_name,
+    query_hash: row.query_hash ?? null,
+    jaccard: row.jaccard,
+    top1_match: row.top1Match,
+    captured_count: row.captured_slugs.length,
+    current_count: row.current_slugs.length,
+    captured_latency_ms: capturedLatency,
+    current_latency_ms: row.current_latency_ms,
+    latency_delta_ms: row.latency_delta_ms,
+    ...(row.skipped ? { skipped: true } : {}),
+    ...(row.errored ? { errored: true } : {}),
+    ...(row.skip_reason || row.error_message ? { reason: row.skip_reason ?? row.error_message } : {}),
+  };
+}
+
+export function buildPrivacySafeReplayDrill(
+  results: ReplayRowResult[],
+  opts: { limit?: number } = {},
+): PrivacySafeReplayDrill {
+  const limit = Math.max(1, opts.limit ?? 5);
+  const eligible = results.filter(r => !r.skipped && !r.errored);
+  const topLowOverlap = [...eligible]
+    .sort((a, b) => {
+      if (a.jaccard !== b.jaccard) return a.jaccard - b.jaccard;
+      if (a.top1Match !== b.top1Match) return a.top1Match ? 1 : -1;
+      return b.latency_delta_ms - a.latency_delta_ms;
+    })
+    .slice(0, limit)
+    .map(toPrivacySafeDrillRow);
+  const topLatencyRegressions = [...eligible]
+    .sort((a, b) => b.latency_delta_ms - a.latency_delta_ms)
+    .slice(0, limit)
+    .map(toPrivacySafeDrillRow);
+
+  return {
+    rows_considered: results.length,
+    top_low_overlap: topLowOverlap,
+    top_latency_regressions: topLatencyRegressions,
+    skipped: results.filter(r => r.skipped).slice(0, limit).map(toPrivacySafeDrillRow),
+    errored: results.filter(r => r.errored).slice(0, limit).map(toPrivacySafeDrillRow),
+    privacy: {
+      excludes: ['query', 'retrieved_slugs', 'current_slugs', 'page_titles', 'chunk_text'],
+    },
+  };
 }
 
 export async function runEvalReplay(engine: BrainEngine, args: string[]): Promise<void> {
@@ -465,7 +548,7 @@ export async function runEvalReplay(engine: BrainEngine, args: string[]): Promis
   }
 
   let summary: ReplaySummary;
-  let results: RowResult[];
+  let results: ReplayRowResult[];
   try {
     const out = await replayCore(engine, opts);
     summary = out.summary;
