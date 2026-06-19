@@ -31,6 +31,7 @@ export interface CandidateResolutionCandidate {
 }
 
 export interface CandidateResolutionProposal {
+  id?: string;
   status: CanonicalTargetProposalStatus | string;
   status_reason: string | null;
 }

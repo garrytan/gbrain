@@ -363,7 +363,10 @@ function reviewPriorityHint(
   canonicalTargetProposal: CanonicalTargetProposalEntry | null,
 ): CandidateSignal['review_priority_hint'] {
   if (!hasProvenance) return 'reject_missing_provenance';
-  if (!hasTarget) return targetlessCanonicalTargetHint(canonicalTargetProposal);
+  if (!hasTarget) {
+    const hint = targetlessCanonicalTargetHint(canonicalTargetProposal);
+    return hint === 'no_action' ? 'no_priority' : hint;
+  }
   if (candidate.status === 'promoted' && !hasCanonicalHandoff) return 'record_canonical_handoff';
   if (candidate.status === 'captured') return 'inspect_candidate';
   if (candidate.status === 'candidate' || candidate.status === 'staged_for_review') return 'advance_to_review';

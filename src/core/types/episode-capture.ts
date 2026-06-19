@@ -115,8 +115,8 @@ export interface CandidateDebtInput {
   canonical_handoff_candidate_ids?: string[];
   canonical_target_proposals?: Array<Pick<
     CanonicalTargetProposalEntry,
-    'source_candidate_id' | 'linked_candidate_ids' | 'bound_candidate_ids' | 'status' | 'status_reason'
-  >>;
+    'source_candidate_id' | 'linked_candidate_ids' | 'status'
+  > & { bound_candidate_ids?: string[]; status_reason?: string | null }>;
   now?: Date | string;
 }
 

@@ -10,7 +10,10 @@ import type {
   ReadCandidateContextResult,
 } from '../types.ts';
 import type { CanonicalTargetProposalEntry } from '../types.ts';
-import { classifyCandidateResolutionState } from './candidate-resolution-state-service.ts';
+import {
+  classifyCandidateResolutionState,
+  type CandidateResolutionProposal,
+} from './candidate-resolution-state-service.ts';
 
 export function buildInboxLeads(input: InboxLeadInput): InboxLeadResult {
   const handoffIds = new Set(input.canonical_handoff_candidate_ids ?? []);
@@ -181,26 +184,31 @@ function isTerminal(candidate: MemoryCandidateEntry): boolean {
 function activeProposalByCandidateId(
   proposals: Array<Pick<
     CanonicalTargetProposalEntry,
-    'source_candidate_id' | 'linked_candidate_ids' | 'bound_candidate_ids' | 'status' | 'status_reason'
-  >>,
-): Map<string, Pick<CanonicalTargetProposalEntry, 'status' | 'status_reason'>> {
-  const output = new Map<string, Pick<CanonicalTargetProposalEntry, 'status' | 'status_reason'>>();
+    'source_candidate_id' | 'linked_candidate_ids' | 'status'
+  > & { bound_candidate_ids?: string[]; status_reason?: string | null }>,
+): Map<string, CandidateResolutionProposal> {
+  const output = new Map<string, CandidateResolutionProposal>();
   for (const proposal of proposals) {
     if (!isActiveProposalStatus(proposal.status)) continue;
     for (const candidateId of proposalCandidateIds(proposal)) {
-      if (!output.has(candidateId)) output.set(candidateId, proposal);
+      if (!output.has(candidateId)) {
+        output.set(candidateId, {
+          status: proposal.status,
+          status_reason: proposal.status_reason ?? null,
+        });
+      }
     }
   }
   return output;
 }
 
 function proposalCandidateIds(
-  proposal: Pick<CanonicalTargetProposalEntry, 'source_candidate_id' | 'linked_candidate_ids' | 'bound_candidate_ids'>,
+  proposal: Pick<CanonicalTargetProposalEntry, 'source_candidate_id' | 'linked_candidate_ids'> & { bound_candidate_ids?: string[] },
 ): string[] {
   return [
     proposal.source_candidate_id,
     ...proposal.linked_candidate_ids,
-    ...proposal.bound_candidate_ids,
+    ...(proposal.bound_candidate_ids ?? []),
   ];
 }
 

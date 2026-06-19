@@ -193,6 +193,7 @@ describe('memory review report service', () => {
         missing_provenance_count: 1,
         stale_promoted_without_handoff_count: 1,
         unresolved_exposed_count: 3,
+        hard_blocked_by_proposal_count: 0,
         median_review_latency_ms: 5000,
       },
       negative_memory_projections: [
@@ -236,6 +237,7 @@ describe('memory review report service', () => {
         missing_provenance_count: 1,
         stale_promoted_without_handoff_count: 1,
         unresolved_exposed_count: 3,
+        hard_blocked_by_proposal_count: 0,
         median_review_latency_ms: 5000,
       },
       projection_freshness: {
