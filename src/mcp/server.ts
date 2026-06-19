@@ -583,7 +583,7 @@ function buildContextReadContinuations(
   if (toolName === 'retrieve_context') {
     const requiredReads = selectedRetrieveContextRequiredReads(sourceResult);
     if (requiredReads.length > 0) {
-      continuations.required_reads = buildReadContextContinuation(requiredReads);
+      continuations.required_reads = buildReadContextContinuation(requiredReads, { includeLazyDiscovery: true });
     }
   }
 
@@ -642,9 +642,19 @@ function selectorArray(value: unknown): Record<string, unknown>[] {
   ));
 }
 
-function buildReadContextContinuation(selectors: Record<string, unknown>[]): Record<string, unknown> {
+function buildReadContextContinuation(
+  selectors: Record<string, unknown>[],
+  options: { includeLazyDiscovery?: boolean } = {},
+): Record<string, unknown> {
   return {
     tool: 'read_context',
+    ...(options.includeLazyDiscovery ? {
+      lazy_discovery: {
+        tool: 'tool_search',
+        query: 'mbrain read_context',
+        when: 'read_context is not callable in the current tool list',
+      },
+    } : {}),
     arguments: {
       selectors,
       token_budget: 900,
@@ -735,7 +745,7 @@ function mcpTruncationHint(toolName: string): string {
     case 'get_page':
       return 'Use read_context with a bounded token_budget or a narrower selector to read the remaining page content.';
     case 'retrieve_context':
-      return 'Call read_context using _mbrain_mcp_response.continuations.required_reads.arguments when present.';
+      return 'Call read_context using _mbrain_mcp_response.continuations.required_reads.arguments. If hidden, use tool_search for mbrain read_context.';
     case 'read_context':
       return 'Lower token_budget, max_selectors, or include_timeline; follow _mbrain_mcp_response.continuations for additional bounded reads.';
     case 'get_skillpack':

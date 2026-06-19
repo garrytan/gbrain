@@ -5567,7 +5567,7 @@ const retrieve_context: Operation = {
   description: 'Agentic MBrain retrieval probe. Returns a bounded read_plan, required canonical reads, and non-canonical candidate_signals from Memory Inbox; chunks and candidate signals are not answer evidence. Call read_context on read_plan.selected_selector_snapshots before answering factual questions; use read_plan.selected_selectors only as a legacy selector-id fallback.',
   discovery: {
     compactDescription: true,
-    description: 'Core knowledge lookup: retrieve_context finds candidate context and required canonical reads. For factual answers, call read_context on read_plan.selected_selector_snapshots; read_plan.selected_selectors is a legacy fallback.',
+    description: 'Core knowledge lookup: retrieve_context finds candidate context and required canonical reads. For factual answers, call read_context on read_plan.selected_selector_snapshots; read_plan.selected_selectors is a legacy fallback. If read_context is hidden, use tool_search for mbrain read_context.',
   },
   params: {
     query: { type: 'string', description: 'Raw user request or memory query' },

@@ -399,8 +399,14 @@ describe('MCP response guard', () => {
 
     const parsed = JSON.parse(text);
     expect(parsed._mbrain_mcp_response.hint).toContain('continuations.required_reads.arguments');
+    expect(parsed._mbrain_mcp_response.hint).toContain('tool_search');
     const continuation = parsed._mbrain_mcp_response.continuations.required_reads;
     expect(continuation.tool).toBe('read_context');
+    expect(continuation.lazy_discovery).toEqual({
+      tool: 'tool_search',
+      query: 'mbrain read_context',
+      when: 'read_context is not callable in the current tool list',
+    });
     expect(continuation.arguments).toEqual({
       selectors: [{
         ...requiredRead,
