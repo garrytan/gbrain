@@ -109,6 +109,19 @@ describe('doctor command', () => {
     expect(source).toContain('console.error(`[remediate]    ${sr.id}${job} -> ${sr.status}`)');
   });
 
+  test('doctor remediate does not re-run an attempted recommendation in the same pass', async () => {
+    const source = await Bun.file(new URL('../src/core/remediation/run.ts', import.meta.url)).text();
+    expect(source).toContain('const attemptedIds = new Set<string>(completedFromCheckpoint);');
+    expect(source).toContain('attemptedIds.add(step.id);');
+    expect(source).toContain("r.status === 'remediable' && !attemptedIds.has(r.id)");
+  });
+
+  test('doctor remediate scopes minion idempotency keys to the current run', async () => {
+    const source = await Bun.file(new URL('../src/core/remediation/run.ts', import.meta.url)).text();
+    expect(source).toContain('const runScopedIdempotencyKey = `${step.idempotency_key}:run:${doctorRunId}`;');
+    expect(source).toContain('idempotency_key: runScopedIdempotencyKey');
+  });
+
   test('jsonb_integrity check covers the four JSONB sites fixed in v0.12.1', async () => {
     const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
     expect(source).toMatch(/table:\s*'pages'.*col:\s*'frontmatter'/);

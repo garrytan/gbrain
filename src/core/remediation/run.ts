@@ -222,6 +222,7 @@ export async function runRemediation(
   const runLoop = async (): Promise<void> => {
     let stepCount = 0;
     const totalSteps = recs.length;
+    const attemptedIds = new Set<string>(completedFromCheckpoint);
     while (recs.length > 0 && stepCount < maxJobs) {
       const step = recs[0];
       if (!step) break;
@@ -238,6 +239,7 @@ export async function runRemediation(
 
       // D5: if depends_on intersects aborted, skip + cascade
       if (step.depends_on && step.depends_on.some((d: string) => abortedIds.has(d))) {
+        attemptedIds.add(step.id);
         const result: StepResult = { step: stepCount, id: step.id, job_id: null, status: 'skipped_dep_aborted' };
         submitted.push(result);
         abortedIds.add(step.id);
@@ -247,14 +249,16 @@ export async function runRemediation(
       }
 
       hooks.onStepStart?.(stepCount, totalSteps, step);
+      attemptedIds.add(step.id);
       try {
         const isProtected = !!step.protected;
+        const runScopedIdempotencyKey = `${step.idempotency_key}:run:${doctorRunId}`;
         const job = await queue.add(
           step.job,
           { ...step.params, doctor_run_id: doctorRunId },
           {
             queue: 'default',
-            idempotency_key: step.idempotency_key,
+            idempotency_key: runScopedIdempotencyKey,
             max_attempts: 2,
             maxWaiting: 1,
           },
@@ -305,7 +309,8 @@ export async function runRemediation(
       // steps with bumped retry suffix (D1).
       if (recs.length === 0 || stepCount >= maxJobs) break;
       const freshHealth = await engine.getHealth();
-      recs = computeRecommendations(freshHealth, ctx).filter((r) => r.status === 'remediable');
+      recs = computeRecommendations(freshHealth, ctx)
+        .filter((r) => r.status === 'remediable' && !attemptedIds.has(r.id));
     }
   };
 

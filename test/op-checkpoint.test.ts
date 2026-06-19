@@ -114,6 +114,14 @@ describe('loadOpCheckpoint / recordCompleted / clearOpCheckpoint', () => {
     expect(result.sort()).toEqual(['chunk-1', 'chunk-2']);
   });
 
+  test('recordCompleted binds a JSONB object wrapper, not a pre-stringified array', async () => {
+    const source = await Bun.file(new URL('../src/core/op-checkpoint.ts', import.meta.url)).text();
+    expect(source).toContain('const payload = { keys: sorted };');
+    expect(source).toContain("COALESCE(($3::jsonb)->'keys', '[]'::jsonb)");
+    expect(source).toContain('[key.op, key.fingerprint, payload]');
+    expect(source).not.toContain('[key.op, key.fingerprint, JSON.stringify(sorted)]');
+  });
+
   test('different fingerprints stay isolated', async () => {
     const linksKey = { op: 'extract', fingerprint: 'fp-links' };
     const timelineKey = { op: 'extract', fingerprint: 'fp-timeline' };
