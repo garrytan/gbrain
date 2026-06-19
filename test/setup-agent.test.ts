@@ -158,8 +158,9 @@ describe('setup-agent', () => {
       const result = await runSetupAgent(['--print'], { cwd: staleCwd });
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('mbrain-agent-rules-version: 0.5.10');
+      expect(result.stdout).toContain('mbrain-agent-rules-version: 0.5.11');
       expect(result.stdout).toContain('candidate_signals');
+      expect(result.stdout).toContain('tool_search');
       expect(result.stdout).not.toContain('STALE CWD RULES');
       expect(result.stdout).not.toContain('9.9.9');
     } finally {
@@ -177,6 +178,8 @@ describe('setup-agent', () => {
     expect(claudeMd).toContain('MBRAIN:RULES:START');
     expect(claudeMd).toContain('retrieve_context');
     expect(claudeMd).toContain('candidate_signals');
+    expect(claudeMd).toContain('tool_search');
+    expect(claudeMd).toContain('lazy-loaded');
     expect(claudeMd).toContain('Memory Inbox has non-canonical signals');
     expect(claudeMd).toContain('targetless candidates are not evidence for factual answers');
     expect(claudeMd).toMatch(/approval must\s+not call put_page/);
@@ -219,6 +222,8 @@ describe('setup-agent', () => {
     expect(agentsMd).toContain('MBRAIN:RULES:START');
     expect(agentsMd).toContain('retrieve_context');
     expect(agentsMd).toContain('candidate_signals');
+    expect(agentsMd).toContain('tool_search');
+    expect(agentsMd).toContain('lazy-loaded');
     expect(agentsMd).toContain('Memory Inbox has non-canonical signals');
     expect(agentsMd).toContain('targetless candidates are not evidence for factual answers');
     expect(agentsMd).toMatch(/approval must\s+not call put_page/);
@@ -255,7 +260,7 @@ describe('setup-agent', () => {
     expect(result.stdout).toContain('Rules: updated');
 
     const agentsMd = readFileSync(join(tempHome, '.codex', 'AGENTS.md'), 'utf-8');
-    expect(agentsMd).toContain('mbrain-agent-rules-version: 0.5.10');
+    expect(agentsMd).toContain('mbrain-agent-rules-version: 0.5.11');
     expect(agentsMd).toContain('Route Durable Writeback');
     expect(agentsMd).toContain('route_memory_writeback');
     expect(agentsMd).toContain('expected_content_hash');
@@ -715,6 +720,7 @@ describe('setup-agent', () => {
     expect(output.hookSpecificOutput.hookEventName).toBe('UserPromptSubmit');
     expect(output.hookSpecificOutput.additionalContext).toContain('retrieve_context');
     expect(output.hookSpecificOutput.additionalContext).toContain('read_context');
+    expect(output.hookSpecificOutput.additionalContext).toContain('tool_search');
     expect(output.hookSpecificOutput.additionalContext).toContain('route_memory_writeback');
     expect(output.decision).toBeUndefined();
 

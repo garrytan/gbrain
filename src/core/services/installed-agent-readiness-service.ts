@@ -469,11 +469,16 @@ function buildClaudePromptHookCheck(content: string | null): InstalledAgentCheck
     };
   }
 
-  if (!content.includes('retrieve_context') || !content.includes('route_memory_writeback')) {
+  const missingTerms = [
+    ...['retrieve_context', 'read_context', 'route_memory_writeback'].filter((term) => !content.includes(term)),
+    ...(!content.includes('tool_search') ? ['lazy read_context recovery'] : []),
+  ];
+
+  if (missingTerms.length > 0) {
     return {
       name: 'claude_prompt_hook',
       status: 'fail',
-      message: 'Claude prompt hook does not inject MBrain retrieval/writeback guidance',
+      message: `Claude prompt hook does not inject MBrain retrieval/writeback guidance: missing ${missingTerms.join(', ')}`,
     };
   }
 
