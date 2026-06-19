@@ -521,6 +521,21 @@ export function isGlobalMaintenanceStale(lastGlobalAtIso: string | null, now = D
   return (now - d.getTime()) / 60_000 >= floorMin;
 }
 
+export async function resolveGlobalMaintenanceFloorMin(engine: BrainEngine): Promise<number> {
+  const floorCfg = await engine.getConfig('autopilot.global_floor_min');
+  if (floorCfg) {
+    const n = parseInt(floorCfg, 10);
+    if (Number.isFinite(n) && n >= 1) return n;
+  }
+  return GLOBAL_FLOOR_MIN;
+}
+
+export async function isGlobalMaintenanceDue(engine: BrainEngine, now = Date.now()): Promise<boolean> {
+  const floorMin = await resolveGlobalMaintenanceFloorMin(engine);
+  const lastGlobalAt = await engine.getConfig(LAST_GLOBAL_AT_KEY);
+  return isGlobalMaintenanceStale(lastGlobalAt, now, floorMin);
+}
+
 /**
  * #2194 fix #3 / #2227 bug #3 — dispatch the single brain-wide maintenance job
  * that runs the `global` cycle phases (embed, orphans, purge, …) ONCE per
@@ -538,14 +553,7 @@ export async function dispatchGlobalMaintenance(
   const emit = opts.emit ?? ((line) => process.stderr.write(line + '\n'));
   const log = opts.log ?? ((line) => console.log(line));
 
-  let floorMin = GLOBAL_FLOOR_MIN;
-  const floorCfg = await engine.getConfig('autopilot.global_floor_min');
-  if (floorCfg) {
-    const n = parseInt(floorCfg, 10);
-    if (Number.isFinite(n) && n >= 1) floorMin = n;
-  }
-  const lastGlobalAt = await engine.getConfig(LAST_GLOBAL_AT_KEY);
-  if (!isGlobalMaintenanceStale(lastGlobalAt, Date.now(), floorMin)) {
+  if (!await isGlobalMaintenanceDue(engine)) {
     return { dispatched: false, reason: 'fresh' };
   }
 

@@ -43,7 +43,7 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(dispatchIdx).toBeGreaterThan(-1);
     // Verify shouldFullCycle is structurally near the call (within
     // ~3000 chars of source, roughly the same if/else branch)
-    const fullCycleIdx = AUTOPILOT_SRC.indexOf('shouldFullCycle');
+    const fullCycleIdx = AUTOPILOT_SRC.indexOf('else if (shouldFullCycle)');
     expect(fullCycleIdx).toBeGreaterThan(-1);
     expect(Math.abs(dispatchIdx - fullCycleIdx)).toBeLessThan(3000);
   });

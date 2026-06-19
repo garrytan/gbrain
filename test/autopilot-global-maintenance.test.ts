@@ -23,9 +23,11 @@ import {
 } from '../src/core/cycle.ts';
 import {
   dispatchGlobalMaintenance,
+  isGlobalMaintenanceDue,
   isGlobalMaintenanceStale,
   dispatchPerSource,
 } from '../src/commands/autopilot-fanout.ts';
+import { decideAutopilotDispatch } from '../src/commands/autopilot.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 describe('cycle phase partition (#2194 fix #3)', () => {
@@ -58,6 +60,52 @@ describe('isGlobalMaintenanceStale', () => {
   test('older than floor → stale; within floor → fresh', () => {
     expect(isGlobalMaintenanceStale(new Date(now - 61 * 60_000).toISOString(), now, 60)).toBe(true);
     expect(isGlobalMaintenanceStale(new Date(now - 10 * 60_000).toISOString(), now, 60)).toBe(false);
+  });
+});
+
+describe('autopilot global-maintenance throttle split', () => {
+  test('stale global maintenance pierces healthy sleep without opening per-source fanout', () => {
+    const decision = decideAutopilotDispatch({
+      score: 99,
+      planLength: 0,
+      estTotal: 0,
+      minutesSinceLastFull: 10,
+      globalMaintenanceDue: true,
+      fullCycleFloorMin: 60,
+    });
+
+    expect(decision.shouldSleep).toBe(false);
+    expect(decision.shouldFullCycle).toBe(false);
+    expect(decision.shouldDispatchGlobalMaintenance).toBe(true);
+  });
+
+  test('healthy empty plan still sleeps when per-source and global gates are fresh', () => {
+    const decision = decideAutopilotDispatch({
+      score: 99,
+      planLength: 0,
+      estTotal: 0,
+      minutesSinceLastFull: 10,
+      globalMaintenanceDue: false,
+      fullCycleFloorMin: 60,
+    });
+
+    expect(decision.shouldSleep).toBe(true);
+    expect(decision.shouldFullCycle).toBe(false);
+    expect(decision.shouldDispatchGlobalMaintenance).toBe(false);
+  });
+
+  test('global due reads autopilot.last_global_at with the configured floor', async () => {
+    const now = Date.UTC(2026, 5, 16, 12, 0, 0);
+    const engine = {
+      kind: 'postgres' as const,
+      getConfig: async (k: string) => {
+        if (k === 'autopilot.global_floor_min') return '20';
+        if (k === LAST_GLOBAL_AT_KEY) return new Date(now - 30 * 60_000).toISOString();
+        return null;
+      },
+    } as unknown as BrainEngine;
+
+    expect(await isGlobalMaintenanceDue(engine, now)).toBe(true);
   });
 });
 

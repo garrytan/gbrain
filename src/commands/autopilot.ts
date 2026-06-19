@@ -75,6 +75,34 @@ export function classifyReconnectError(err: unknown): 'recoverable' | 'unrecover
   return 'recoverable';
 }
 
+export interface AutopilotDispatchDecisionInput {
+  score: number;
+  planLength: number;
+  estTotal: number;
+  minutesSinceLastFull: number;
+  globalMaintenanceDue: boolean;
+  fullCycleFloorMin?: number;
+}
+
+export function decideAutopilotDispatch(input: AutopilotDispatchDecisionInput): {
+  shouldFullCycle: boolean;
+  shouldSleep: boolean;
+  shouldDispatchGlobalMaintenance: boolean;
+} {
+  const floorMin = input.fullCycleFloorMin ?? 60;
+  const planIsEmpty = input.planLength === 0;
+  const shouldFullCycle =
+    (input.score >= 95 && planIsEmpty && input.minutesSinceLastFull >= floorMin) ||
+    input.planLength > 3 ||
+    input.estTotal >= 300 ||
+    input.score < 70;
+  return {
+    shouldFullCycle,
+    shouldSleep: input.score >= 95 && planIsEmpty && input.minutesSinceLastFull < floorMin && !input.globalMaintenanceDue,
+    shouldDispatchGlobalMaintenance: input.globalMaintenanceDue,
+  };
+}
+
 function parseArg(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
   return idx >= 0 && idx + 1 < args.length ? args[idx + 1] : undefined;
@@ -848,17 +876,26 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         const plan = computeRecommendations(health, ctx, extraRemediations).filter((r) => r.status === 'remediable');
         const estTotal = plan.reduce((s, r) => s + r.est_seconds, 0);
 
+        const { dispatchPerSource, dispatchGlobalMaintenance, resolveEffectiveFanoutMax, isGlobalMaintenanceDue } = await import('./autopilot-fanout.ts');
+        let globalMaintenanceDue = false;
+        try {
+          globalMaintenanceDue = await isGlobalMaintenanceDue(engine);
+        } catch (e) {
+          logError('dispatch.global-maintenance-gate', e);
+        }
+
         // Track time since last full cycle for the 60-min floor.
         const FULL_CYCLE_FLOOR_MIN = 60;
         const minutesSinceLastFull = (Date.now() - lastFullCycleAt) / 60000;
 
-        const shouldFullCycle =
-          (score >= 95 && plan.length === 0 && minutesSinceLastFull >= FULL_CYCLE_FLOOR_MIN) ||
-          plan.length > 3 ||
-          estTotal >= 300 ||
-          score < 70;
-
-        const shouldSleep = score >= 95 && plan.length === 0 && minutesSinceLastFull < FULL_CYCLE_FLOOR_MIN;
+        const { shouldFullCycle, shouldSleep, shouldDispatchGlobalMaintenance } = decideAutopilotDispatch({
+          score,
+          planLength: plan.length,
+          estTotal,
+          minutesSinceLastFull,
+          globalMaintenanceDue,
+          fullCycleFloorMin: FULL_CYCLE_FLOOR_MIN,
+        });
 
         if (shouldSleep) {
           if (jsonMode) {
@@ -873,7 +910,6 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // codex P1-3). Fresh-install brains with no sources rows fall
           // back to the legacy single autopilot-cycle so existing
           // behavior is preserved.
-          const { dispatchPerSource, dispatchGlobalMaintenance, resolveEffectiveFanoutMax } = await import('./autopilot-fanout.ts');
           // #2194 fix #1: clamp fan-out to the worker's effective concurrency
           // (reserve ≥1 slot), gated on a LIVE supervisor so a stale audit row
           // can't shrink throughput (codex #9/D5). autopilot-cycle jobs run on
@@ -921,6 +957,13 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             );
           }
         } else {
+          if (shouldDispatchGlobalMaintenance) {
+            try {
+              await dispatchGlobalMaintenance(engine, queue, { repoPath, slot, timeoutMs, jsonMode });
+            } catch (e) {
+              if (jsonMode) process.stderr.write(JSON.stringify({ event: 'global_maintenance_dispatch_failed', error: e instanceof Error ? e.message : String(e) }) + '\n');
+            }
+          }
           // Small targeted plan — submit individual handlers per step.
           // D9 content-hash idempotency keys (from computeRecommendations).
           // maxWaiting:1 per submit per codex #17 (closes the backpressure
