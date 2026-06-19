@@ -26,6 +26,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import {
   hasDatabase, setupDB, teardownDB, getEngine, getConn,
 } from './helpers.ts';
+import { recordCompleted } from '../../src/core/op-checkpoint.ts';
 
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
@@ -170,5 +171,32 @@ describeE2E('Postgres JSONB round-trip — frontmatter / data / pages_updated / 
     expect(rows.length).toBeGreaterThan(0);
     expect(rows[0].jt).toBe('object');
     expect(rows[0].mood).toBe('happy');
+  });
+
+  test('op_checkpoints.completed_keys — recordCompleted stores array, not string literal', async () => {
+    // Regression for #2305: recordCompleted bound `JSON.stringify(keys)` to a
+    // `$3::jsonb` param via conn.unsafe({prepare:false}), which postgres.js v3
+    // landed as a jsonb STRING scalar ("[\"x\"]") instead of an array. The
+    // op_checkpoints_completed_keys_array CHECK (jsonb_typeof = 'array') then
+    // rejected every sync-target checkpoint write, blocking all sync. PGLite
+    // hid it (different driver path) — so this assertion only bites on Postgres.
+    const engine = getEngine();
+    const conn = getConn();
+
+    await recordCompleted(engine, { op: 'sync-target', fingerprint: 'jsonbtest' }, ['6bf9661b']);
+
+    const rows = await conn.unsafe(`
+      SELECT
+        jsonb_typeof(completed_keys)       AS jt,
+        completed_keys->>0                 AS first,
+        jsonb_array_length(completed_keys) AS len
+      FROM op_checkpoints
+      WHERE op = 'sync-target' AND fingerprint = 'jsonbtest'
+    `);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].jt).toBe('array');
+    expect(rows[0].first).toBe('6bf9661b');
+    expect(rows[0].len).toBe(1);
   });
 });
