@@ -3,7 +3,7 @@ import {
   buildInboxLeads,
   computeCandidateDebtMetrics,
 } from '../src/core/services/inbox-lead-service.ts';
-import type { MemoryCandidateEntry } from '../src/core/types.ts';
+import type { CanonicalTargetProposalEntry, MemoryCandidateEntry } from '../src/core/types.ts';
 
 describe('inbox lead service', () => {
   test('builds content-light leads without proposed content', () => {
@@ -96,6 +96,36 @@ describe('inbox lead service', () => {
       median_review_latency_ms: 172800000,
     });
   });
+
+  test('does not count unstable-subject blocked proposals as unresolved exposed debt', () => {
+    const metrics = computeCandidateDebtMetrics({
+      candidates: [
+        candidate({
+          id: 'candidate:blocked',
+          status: 'captured',
+          target_object_type: null,
+          target_object_id: null,
+        }),
+      ],
+      canonical_target_proposals: [
+        proposal({
+          id: 'proposal:blocked',
+          source_candidate_id: 'candidate:blocked',
+          linked_candidate_ids: ['candidate:blocked'],
+          status: 'blocked',
+          status_reason: 'unstable_subject_identity',
+        }),
+      ],
+      canonical_handoff_candidate_ids: [],
+      now: '2026-06-06T00:00:00.000Z',
+    });
+
+    expect(metrics).toMatchObject({
+      visible_candidate_count: 1,
+      unresolved_exposed_count: 0,
+      hard_blocked_by_proposal_count: 1,
+    });
+  });
 });
 
 function candidate(overrides: Partial<MemoryCandidateEntry>): MemoryCandidateEntry {
@@ -121,6 +151,43 @@ function candidate(overrides: Partial<MemoryCandidateEntry>): MemoryCandidateEnt
     verification_evidence: null,
     verification_source_refs: [],
     verified_at: null,
+    created_at: new Date('2026-06-01T00:00:00.000Z'),
+    updated_at: new Date('2026-06-01T00:00:00.000Z'),
+    ...overrides,
+  };
+}
+
+function proposal(overrides: Partial<CanonicalTargetProposalEntry>): CanonicalTargetProposalEntry {
+  return {
+    id: 'proposal:base',
+    scope_id: 'workspace:default',
+    source_candidate_id: 'candidate:base',
+    linked_candidate_ids: [],
+    status: 'proposed',
+    status_reason: null,
+    proposal_kind: 'concept_page',
+    target_object_type: 'curated_note',
+    proposed_slug: 'concepts/example',
+    proposed_title: 'Example',
+    proposed_page_type: 'concept',
+    proposed_repo_path: null,
+    confidence_score: 0.5,
+    importance_score: 0.5,
+    rationale: 'Example proposal.',
+    filing_basis: {},
+    source_refs: ['source:1'],
+    candidate_snapshot: {},
+    duplicate_review: {},
+    slug_quality_warnings: [],
+    approval_actor: null,
+    approved_at: null,
+    approval_reason: null,
+    bound_candidate_ids: [],
+    stub_patch_candidate_id: null,
+    stub_patch_state: null,
+    rejected_at: null,
+    rejection_reason: null,
+    superseded_by: null,
     created_at: new Date('2026-06-01T00:00:00.000Z'),
     updated_at: new Date('2026-06-01T00:00:00.000Z'),
     ...overrides,

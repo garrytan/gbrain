@@ -9,6 +9,11 @@ import type {
   ReadCandidateContextInput,
   ReadCandidateContextResult,
 } from '../types.ts';
+import type { CanonicalTargetProposalEntry } from '../types.ts';
+import {
+  classifyCandidateResolutionState,
+  type CandidateResolutionProposal,
+} from './candidate-resolution-state-service.ts';
 
 export function buildInboxLeads(input: InboxLeadInput): InboxLeadResult {
   const handoffIds = new Set(input.canonical_handoff_candidate_ids ?? []);
@@ -33,6 +38,7 @@ export function buildInboxLeads(input: InboxLeadInput): InboxLeadResult {
 
 export function computeCandidateDebtMetrics(input: CandidateDebtInput): CandidateDebtMetrics {
   const handoffIds = new Set(input.canonical_handoff_candidate_ids ?? []);
+  const proposalsByCandidateId = activeProposalByCandidateId(input.canonical_target_proposals ?? []);
   const visibleCandidates = input.candidates.filter((candidate) => candidate.sensitivity !== 'secret');
   const reviewLatencies = visibleCandidates
     .flatMap((candidate) => {
@@ -50,9 +56,22 @@ export function computeCandidateDebtMetrics(input: CandidateDebtInput): Candidat
     stale_promoted_without_handoff_count: visibleCandidates.filter((candidate) =>
       candidate.status === 'promoted' && !handoffIds.has(candidate.id)
     ).length,
-    unresolved_exposed_count: visibleCandidates.filter((candidate) =>
-      !isTerminal(candidate) && !handoffIds.has(candidate.id)
-    ).length,
+    unresolved_exposed_count: visibleCandidates.filter((candidate) => {
+      const resolution = classifyCandidateResolutionState({
+        candidate,
+        has_canonical_handoff: handoffIds.has(candidate.id),
+        canonical_target_proposal: proposalsByCandidateId.get(candidate.id) ?? null,
+      });
+      return resolution.counts_as_unresolved_exposed;
+    }).length,
+    hard_blocked_by_proposal_count: visibleCandidates.filter((candidate) => {
+      const resolution = classifyCandidateResolutionState({
+        candidate,
+        has_canonical_handoff: handoffIds.has(candidate.id),
+        canonical_target_proposal: proposalsByCandidateId.get(candidate.id) ?? null,
+      });
+      return resolution.counts_as_hard_blocked_by_proposal;
+    }).length,
     median_review_latency_ms: median(reviewLatencies),
   };
 }
@@ -160,6 +179,45 @@ function isTerminal(candidate: MemoryCandidateEntry): boolean {
   return candidate.status === 'rejected'
     || candidate.status === 'superseded'
     || candidate.status === 'promoted';
+}
+
+function activeProposalByCandidateId(
+  proposals: Array<Pick<
+    CanonicalTargetProposalEntry,
+    'source_candidate_id' | 'linked_candidate_ids' | 'status'
+  > & { bound_candidate_ids?: string[]; status_reason?: string | null }>,
+): Map<string, CandidateResolutionProposal> {
+  const output = new Map<string, CandidateResolutionProposal>();
+  for (const proposal of proposals) {
+    if (!isActiveProposalStatus(proposal.status)) continue;
+    for (const candidateId of proposalCandidateIds(proposal)) {
+      if (!output.has(candidateId)) {
+        output.set(candidateId, {
+          status: proposal.status,
+          status_reason: proposal.status_reason ?? null,
+        });
+      }
+    }
+  }
+  return output;
+}
+
+function proposalCandidateIds(
+  proposal: Pick<CanonicalTargetProposalEntry, 'source_candidate_id' | 'linked_candidate_ids'> & { bound_candidate_ids?: string[] },
+): string[] {
+  return [
+    proposal.source_candidate_id,
+    ...proposal.linked_candidate_ids,
+    ...(proposal.bound_candidate_ids ?? []),
+  ];
+}
+
+function isActiveProposalStatus(status: string): boolean {
+  return status === 'proposed'
+    || status === 'approved'
+    || status === 'patch_staged'
+    || status === 'bound'
+    || status === 'blocked';
 }
 
 function median(values: number[]): number | null {

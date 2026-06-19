@@ -22,6 +22,7 @@ import {
   CanonicalTargetProposalServiceError,
   createCanonicalTargetProposal,
 } from './canonical-target-proposal-draft-service.ts';
+import { isHardBlockedCanonicalTargetProposal } from './candidate-resolution-state-service.ts';
 import { resolveTargetSnapshotHash } from './target-snapshot-hash-service.ts';
 
 type DreamCycleSuggestionType = 'recap' | 'stale_claim_challenge' | 'duplicate_merge';
@@ -117,6 +118,7 @@ export interface DreamCycleMaintenanceResult {
   canonical_target_proposals_created: number;
   canonical_target_proposals_existing: number;
   canonical_target_proposals_blocked: number;
+  canonical_target_proposals_hard_blocked: number;
   summary_lines: string[];
 }
 
@@ -140,6 +142,7 @@ interface CanonicalTargetProposalMaintenanceCounts {
   created: number;
   existing: number;
   blocked: number;
+  hard_blocked: number;
 }
 
 const DEFAULT_DREAM_CYCLE_LIMIT = 20;
@@ -176,6 +179,7 @@ export async function runDreamCycleMaintenance(
       canonical_target_proposals_created: 0,
       canonical_target_proposals_existing: 0,
       canonical_target_proposals_blocked: 0,
+      canonical_target_proposals_hard_blocked: 0,
       summary_lines: [
         `Dream-cycle maintenance inspected 0 candidates in ${scopeId}.`,
         'Emitted 0 bounded suggestions.',
@@ -231,10 +235,11 @@ export async function runDreamCycleMaintenance(
     canonical_target_proposals_created: proposalCounts.created,
     canonical_target_proposals_existing: proposalCounts.existing,
     canonical_target_proposals_blocked: proposalCounts.blocked,
+    canonical_target_proposals_hard_blocked: proposalCounts.hard_blocked,
     summary_lines: [
       `Dream-cycle maintenance inspected ${candidates.length} candidates in ${scopeId}.`,
       `Emitted ${suggestions.length} bounded suggestions.`,
-      `Canonical target proposals: created ${proposalCounts.created}, existing ${proposalCounts.existing}, blocked ${proposalCounts.blocked}.`,
+      `Canonical target proposals: created ${proposalCounts.created}, existing ${proposalCounts.existing}, blocked ${proposalCounts.blocked}, hard-blocked ${proposalCounts.hard_blocked}.`,
       `Write candidates: ${writeCandidates ? 'yes' : 'no'}.`,
       'Canonical writes: no; apply-capable work must use the memory operations control plane.',
     ],
@@ -267,6 +272,9 @@ async function generateCanonicalTargetProposals(
       if (result.proposal.status === 'blocked') {
         counts.blocked += 1;
       }
+      if (isHardBlockedCanonicalTargetProposal(result.proposal)) {
+        counts.hard_blocked += 1;
+      }
     } catch (error) {
       if (error instanceof CanonicalTargetProposalServiceError) {
         continue;
@@ -278,7 +286,7 @@ async function generateCanonicalTargetProposals(
 }
 
 function emptyCanonicalTargetProposalCounts(): CanonicalTargetProposalMaintenanceCounts {
-  return { created: 0, existing: 0, blocked: 0 };
+  return { created: 0, existing: 0, blocked: 0, hard_blocked: 0 };
 }
 
 async function toSuggestion(
