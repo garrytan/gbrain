@@ -375,11 +375,16 @@ function reviewPriorityHint(
 
 function targetlessCanonicalTargetHint(
   canonicalTargetProposal: CanonicalTargetProposalEntry | null,
-): 'no_action' | 'needs_canonical_target_proposal' | 'approve_or_reject_canonical_target_proposal' | 'complete_canonical_target_binding' {
+): 'no_action' | 'inspect_candidate' | 'needs_canonical_target_proposal' | 'approve_or_reject_canonical_target_proposal' | 'complete_canonical_target_binding' {
   if (!canonicalTargetProposal) return 'needs_canonical_target_proposal';
   if (canonicalTargetProposal.status === 'proposed') return 'approve_or_reject_canonical_target_proposal';
   if (canonicalTargetProposal.status === 'approved' || canonicalTargetProposal.status === 'patch_staged') {
     return 'complete_canonical_target_binding';
+  }
+  if (canonicalTargetProposal.status === 'blocked') {
+    return isHardBlockedCanonicalTargetProposal(canonicalTargetProposal)
+      ? 'no_action'
+      : 'inspect_candidate';
   }
   return 'no_action';
 }

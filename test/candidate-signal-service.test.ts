@@ -424,6 +424,40 @@ describe('candidate signal service ranking and hints', () => {
     expect(signals['missing-target-with-blocked-proposal']!.pressure_reasons).not.toContain('unresolved_exposed_candidate');
   });
 
+  test('non-hard-blocked blocked proposals keep actionable signal hints', async () => {
+    const result = await buildCandidateSignals(fakeEngine([
+      makeCandidate('missing-target-with-duplicate-proposal', {
+        target_object_type: null,
+        target_object_id: null,
+        proposed_content: 'MBrain retrieval direction may duplicate an existing canonical page.',
+      }),
+    ], [], [
+      makeProposal('missing-target-with-duplicate-proposal', {
+        id: 'proposal:likely-duplicate',
+        status: 'blocked',
+        status_reason: 'likely_duplicate',
+        proposed_slug: 'systems/mbrain-duplicate',
+      }),
+    ]), {
+      query: 'mbrain retrieval direction',
+      scenario: 'knowledge_qa',
+      requested_scope: 'work',
+      required_reads: [requiredRead],
+      canonical_candidates: [],
+      known_subjects: [],
+      limit: 10,
+    });
+
+    expect(result.candidate_signals).toHaveLength(1);
+    expect(result.candidate_signals[0]).toMatchObject({
+      candidate_id: 'missing-target-with-duplicate-proposal',
+      promotion_hint: 'inspect_candidate',
+      review_priority_hint: 'inspect_candidate',
+    });
+    expect(result.candidate_signals[0]!.pressure_reasons).toContain('unresolved_exposed_candidate');
+    expect(result.candidate_signals[0]!.summary).toContain('inspect proposal status before promotion');
+  });
+
   test('personal, secret, and unknown-sensitivity candidates are suppressed in work retrieval', async () => {
     const result = await buildCandidateSignals(fakeEngine([
       makeCandidate('work-visible', { sensitivity: 'work' }),

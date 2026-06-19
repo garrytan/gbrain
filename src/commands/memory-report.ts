@@ -21,6 +21,7 @@ import {
 import { saveBrainReport } from './report.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type {
+  CanonicalTargetProposalStatus,
   DecisionProjectionMemoryCandidate,
   DecisionProjectionTaskAttempt,
   CanonicalTargetProposalEntry,
@@ -33,6 +34,14 @@ import { buildNegativeMemoryProjections } from '../core/services/negative-memory
 
 const DEFAULT_SCOPE_ID = 'workspace:default';
 const DEFAULT_LIMIT = 100;
+const CANDIDATE_DEBT_PROPOSAL_PAGE_SIZE = 500;
+const CANDIDATE_DEBT_PROPOSAL_STATUSES: CanonicalTargetProposalStatus[] = [
+  'proposed',
+  'approved',
+  'patch_staged',
+  'bound',
+  'blocked',
+];
 
 export async function runMemoryReport(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
@@ -125,7 +134,13 @@ export async function collectMemoryReportInput(
     collectFailedTaskAttempts(engine, scopeId, limit),
     collectCanonicalTargetProposals(engine, scopeId, limit),
   ]);
-  const canonicalHandoffCandidateIds = await collectCanonicalHandoffCandidateIds(engine, scopeId, candidates);
+  const [
+    canonicalHandoffCandidateIds,
+    candidateDebtCanonicalTargetProposals,
+  ] = await Promise.all([
+    collectCanonicalHandoffCandidateIds(engine, scopeId, candidates),
+    collectCandidateDebtCanonicalTargetProposals(engine, scopeId),
+  ]);
   const negativeMemoryProjections = [
     ...failedTaskAttempts.flatMap((attempt) => buildNegativeMemoryProjections({
       task_attempts: [attempt],
@@ -166,7 +181,7 @@ export async function collectMemoryReportInput(
     candidate_debt: computeCandidateDebtMetrics({
       candidates,
       canonical_handoff_candidate_ids: canonicalHandoffCandidateIds,
-      canonical_target_proposals: canonicalTargetProposals,
+      canonical_target_proposals: candidateDebtCanonicalTargetProposals,
     }),
     negative_memory_projections: negativeMemoryProjections,
   };
@@ -190,6 +205,43 @@ async function collectCanonicalTargetProposals(
   } catch {
     return [];
   }
+}
+
+async function collectCandidateDebtCanonicalTargetProposals(
+  engine: BrainEngine,
+  scopeId: string,
+): Promise<ReportCanonicalTargetProposal[]> {
+  if (typeof (engine as Partial<BrainEngine>).listCanonicalTargetProposalEntries !== 'function') {
+    return [];
+  }
+  const proposalsById = new Map<string, ReportCanonicalTargetProposal>();
+  try {
+    for (const status of CANDIDATE_DEBT_PROPOSAL_STATUSES) {
+      let offset = 0;
+      while (true) {
+        const previousSize = proposalsById.size;
+        const page = await engine.listCanonicalTargetProposalEntries({
+          scope_id: scopeId,
+          status,
+          limit: CANDIDATE_DEBT_PROPOSAL_PAGE_SIZE,
+          offset,
+        });
+        for (const proposal of page) {
+          proposalsById.set(proposal.id, canonicalTargetProposalToReportProposal(proposal));
+        }
+        if (
+          page.length < CANDIDATE_DEBT_PROPOSAL_PAGE_SIZE
+          || proposalsById.size === previousSize
+        ) {
+          break;
+        }
+        offset += page.length;
+      }
+    }
+  } catch {
+    return [];
+  }
+  return [...proposalsById.values()];
 }
 
 function canonicalTargetProposalToReportProposal(
