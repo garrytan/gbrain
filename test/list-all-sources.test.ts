@@ -159,9 +159,21 @@ describe('engine.updateSourceConfig', () => {
             END
           WHEN jsonb_typeof(${configExpr}) = 'array'
             THEN COALESCE(
-              (SELECT jsonb_object_agg(kv.key, kv.value)
-                 FROM jsonb_array_elements(${configExpr}) elem,
-                      jsonb_each(elem) kv),
+              (SELECT jsonb_object_agg(kv.key, kv.value ORDER BY normalized.ord)
+                 FROM jsonb_array_elements(${configExpr}) WITH ORDINALITY AS elem(raw, ord)
+                 CROSS JOIN LATERAL (
+                   SELECT
+                     elem.ord,
+                     CASE
+                       WHEN jsonb_typeof(elem.raw) = 'object' THEN elem.raw
+                       WHEN jsonb_typeof(elem.raw) = 'string'
+                         AND (elem.raw #>> '{}') IS JSON
+                         AND jsonb_typeof((elem.raw #>> '{}')::jsonb) = 'object'
+                         THEN (elem.raw #>> '{}')::jsonb
+                       ELSE '{}'::jsonb
+                     END AS obj
+                 ) normalized
+                 CROSS JOIN LATERAL jsonb_each(normalized.obj) kv),
               '{}'::jsonb
             )
           ELSE '{}'::jsonb
@@ -181,5 +193,25 @@ describe('engine.updateSourceConfig', () => {
       [JSON.stringify(patch)],
     );
     expect(good[0].result).toEqual({ x: 1, merged_key: 'v' });
+
+    // 3. JSONB array with mixed object, JSON-string object, and junk string.
+    // Historical bad source rows took this shape after repeated `||` merges.
+    const mixed = await engine.executeRaw<{ result: Record<string, unknown> }>(
+      guarded(`
+        jsonb_build_array(
+          to_jsonb('{"federated":true,"last_full_cycle_at":"old"}'::text),
+          jsonb_build_object('remote_url', 'https://example.test'),
+          to_jsonb('not json'::text),
+          jsonb_build_object('last_full_cycle_at', 'newer')
+        )
+      `),
+      [JSON.stringify(patch)],
+    );
+    expect(mixed[0].result).toEqual({
+      federated: true,
+      last_full_cycle_at: 'newer',
+      remote_url: 'https://example.test',
+      merged_key: 'v',
+    });
   });
 });

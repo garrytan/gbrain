@@ -1320,13 +1320,25 @@ export class PostgresEngine implements BrainEngine {
                    THEN COALESCE(NULLIF((config #>> '{}'), '')::jsonb, '{}'::jsonb)
                  ELSE '{}'::jsonb
                END
-             WHEN jsonb_typeof(config) = 'array'
-               THEN COALESCE(
-                 (SELECT jsonb_object_agg(kv.key, kv.value)
-                    FROM jsonb_array_elements(config) elem,
-                         jsonb_each(elem) kv),
-                 '{}'::jsonb
-               )
+            WHEN jsonb_typeof(config) = 'array'
+              THEN COALESCE(
+                (SELECT jsonb_object_agg(kv.key, kv.value ORDER BY normalized.ord)
+                   FROM jsonb_array_elements(config) WITH ORDINALITY AS elem(raw, ord)
+                   CROSS JOIN LATERAL (
+                     SELECT
+                       elem.ord,
+                       CASE
+                         WHEN jsonb_typeof(elem.raw) = 'object' THEN elem.raw
+                         WHEN jsonb_typeof(elem.raw) = 'string'
+                           AND (elem.raw #>> '{}') IS JSON
+                           AND jsonb_typeof((elem.raw #>> '{}')::jsonb) = 'object'
+                           THEN (elem.raw #>> '{}')::jsonb
+                         ELSE '{}'::jsonb
+                       END AS obj
+                   ) normalized
+                   CROSS JOIN LATERAL jsonb_each(normalized.obj) kv),
+                '{}'::jsonb
+              )
              ELSE '{}'::jsonb
            END
            || ${sql.json(patch as Parameters<typeof sql.json>[0])}

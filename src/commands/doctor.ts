@@ -7782,6 +7782,13 @@ export async function runRemediate(
           `[remediate] est cost $${estCost.toFixed(2)} exceeds --max-usd $${cap.toFixed(2)}. Aborting.`,
         );
       },
+      onStepStart: (step, total, rec) => {
+        console.error(`[remediate] [${step}/${total}] ${rec.job} (${rec.severity})...`);
+      },
+      onStepEnd: (sr) => {
+        const job = sr.job_id === null ? '' : ` job=${sr.job_id}`;
+        console.error(`[remediate]    ${sr.id}${job} -> ${sr.status}`);
+      },
       onResumeMissed: (planHash, requested) => {
         console.error(
           `[remediate --resume] no matching checkpoint found ` +
@@ -7808,14 +7815,12 @@ export async function runRemediate(
   // Library returns synthetic result with target_unreachable populated; exit 2.
   if (result.target_unreachable) process.exit(2);
 
-  if (dryRun && result.submitted.length > 0) {
+  if (jsonOutput) {
+    console.log(JSON.stringify(result, null, 2));
+  } else if (dryRun && result.submitted.length > 0) {
     console.log(`[remediate --dry-run] Would submit ${result.submitted.length} jobs:`);
     for (const s of result.submitted) console.log(`  - ${s.id}`);
     return;
-  }
-
-  if (jsonOutput) {
-    console.log(JSON.stringify(result, null, 2));
   } else if (result.submitted.length > 0) {
     console.log(`\nBrain score: ${result.brain_score_initial} → ${result.brain_score_final} (target ${targetScore})`);
     console.log(`Submitted: ${result.submitted.length} job(s), ${result.aborted_count} aborted/failed`);

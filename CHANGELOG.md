@@ -2,6 +2,32 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.44.1.0] - 2026-06-19
+
+**`gbrain doctor --remediate` now talks while it works, keeps JSON output machine-readable, and survives old mixed source-config rows.** The doctor remediation loop could look frozen in an agent terminal because it submitted work without printing step progress until the whole run returned. The dry-run JSON path had a second papercut: `--dry-run --json` could print the human "would submit" summary instead of a JSON object, which made automation treat a safe preview as broken output.
+
+This release makes the loop easier to trust. Remediation now prints each step start and result to stderr, so humans and agents can see whether it is syncing, extracting, embedding, or waiting on a job. JSON mode stays JSON-only on stdout. Source config repair is also more defensive: if an older Postgres row stored config as a JSONB array with a mix of objects, JSON-string objects, and stray strings, updates now collapse it back into a normal object without throwing or losing the useful fields.
+
+### To take advantage of v0.44.1.0
+`gbrain upgrade`. Nothing to configure. To verify the fix:
+
+```bash
+gbrain doctor --remediate --dry-run --target-score 70 --max-usd 1 --json
+gbrain doctor --json
+```
+
+The first command should print valid JSON on stdout. A real remediation run now prints progress to stderr while keeping command output parseable.
+
+### Itemized changes
+
+### Fixed
+- **Doctor remediation progress is visible.** `doctor --remediate` wires step-start and step-end hooks, printing the current job and status to stderr instead of waiting silently for the whole remediation pass to finish.
+- **`doctor --remediate --dry-run --json` stays machine-readable.** JSON rendering now wins over the human dry-run summary, so automation can parse the preview safely.
+- **Postgres source config updates tolerate mixed JSONB arrays.** `PostgresEngine.updateSourceConfig` now normalizes object elements, JSON-string object elements, and junk strings before merging a patch, avoiding crashes on old malformed source rows.
+
+### Tests
+- Added focused regression coverage for mixed JSONB source-config arrays, doctor remediator JSON rendering, and doctor remediator progress hooks.
+
 ## [0.42.51.0] - 2026-06-17
 
 **`gbrain sync` stops bottlenecking all its workers on a single database row, a malformed checkpoint can no longer wedge a source, and `gbrain doctor` tells an actively-running sync apart from a stuck one.** A slow source that fell behind HEAD could read as permanently stale even while it imported every cycle: sync was single-core-bound at the database layer, so handing it more workers didn't help, and the freshness check couldn't see that a sync was in fact running.
