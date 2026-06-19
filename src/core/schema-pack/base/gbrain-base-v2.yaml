@@ -31,6 +31,17 @@ description: 14-type DRY/MECE canonical taxonomy + `note` catch-all (15 total). 
 gbrain_min_version: 0.42.0
 extends: null
 borrow_from: []
+
+# Cycle phases. base-v2 declares the `atom` and `concept` page types (see
+# page_types below) but, without declaring the phases that produce them, those
+# types stay empty on a base-v2 brain — extract_atoms/synthesize_concepts are
+# gated on the active pack's `phases:` list. Declaring them here makes the
+# canonical taxonomy self-consistent: the types it ships are actually populated.
+# (`phases:` is additive — the ~17 core phases always run regardless.)
+phases:
+  - extract_atoms
+  - synthesize_concepts
+
 takes_kinds:
   - fact
   - take
