@@ -1424,6 +1424,95 @@ async function handleCliOnly(command: string, args: string[]) {
   }
 
   // v0.33.1.3: `gbrain eval whoknows` on thin-client installs bypasses
+  // Fix (gh#XXXX): thin-client routing seam for CLI-only commands whose handlers
+  // already contain isThinClient → callRemoteTool branches (per v0.31.1 pattern).
+  // Without these pre-connectEngine guards, the dispatch-order bug at the
+  // `const engine = await connectEngine()` line below crashes thin-client installs
+  // before the handler can reach its own isThinClient check.
+  //
+  // Each command passes `null` for the engine — the handler skips the engine path
+  // on thin clients and routes through callRemoteTool against the remote MCP op.
+
+  // v0.31.1: graph-query → traverse_graph MCP op (read scope)
+  if (command === 'graph-query') {
+    const cfgPre = loadConfig();
+    if (isThinClient(cfgPre)) {
+      const { runGraphQuery } = await import('./commands/graph-query.ts');
+      await runGraphQuery(null as any, args);
+      return;
+    }
+  }
+
+  // v0.31.1: salience → get_recent_salience MCP op (read scope)
+  if (command === 'salience') {
+    const cfgPre = loadConfig();
+    if (isThinClient(cfgPre)) {
+      const { runSalience } = await import('./commands/salience.ts');
+      await runSalience(null as any, args);
+      return;
+    }
+  }
+
+  // v0.31.1: anomalies → find_anomalies MCP op (read scope)
+  if (command === 'anomalies') {
+    const cfgPre = loadConfig();
+    if (isThinClient(cfgPre)) {
+      const { runAnomalies } = await import('./commands/anomalies.ts');
+      await runAnomalies(null as any, args);
+      return;
+    }
+  }
+
+  // v0.31.1: think → think MCP op (write scope)
+  if (command === 'think') {
+    const cfgPre = loadConfig();
+    if (isThinClient(cfgPre)) {
+      const { runThinkCli } = await import('./commands/think.ts');
+      await runThinkCli(null as any, args);
+      return;
+    }
+  }
+
+  // v0.31: recall → recall MCP op (read scope)
+  if (command === 'recall') {
+    const cfgPre = loadConfig();
+    if (isThinClient(cfgPre)) {
+      const { runRecall } = await import('./commands/recall.ts');
+      await runRecall(null as any, args);
+      return;
+    }
+  }
+
+  // v0.31: forget → forget_fact MCP op (write scope)
+  if (command === 'forget') {
+    const cfgPre = loadConfig();
+    if (isThinClient(cfgPre)) {
+      const { runForget } = await import('./commands/recall.ts');
+      await runForget(null as any, args);
+      return;
+    }
+  }
+
+  // v0.33: whoknows → find_experts MCP op (read scope)
+  if (command === 'whoknows') {
+    const cfgPre = loadConfig();
+    if (isThinClient(cfgPre)) {
+      const { runWhoknows } = await import('./commands/whoknows.ts');
+      await runWhoknows(null as any, args);
+      return;
+    }
+  }
+
+  // v0.35.4: founder scorecard → find_trajectory MCP op (read scope)
+  if (command === 'founder') {
+    const cfgPre = loadConfig();
+    if (isThinClient(cfgPre)) {
+      const { runFounder } = await import('./commands/founder-scorecard.ts');
+      await runFounder(null as any, args);
+      return;
+    }
+  }
+
   // connectEngine entirely — the eval routes per-query through the remote
   // `find_experts` MCP op (the v0.31.1 routing seam). Local mode falls
   // through to the engine-connected path below.
