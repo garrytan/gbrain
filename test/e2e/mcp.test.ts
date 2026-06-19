@@ -282,6 +282,7 @@ describe('E2E: MCP Tool Generation', () => {
     expect(retrieve?.description).toContain('read_context');
     expect(retrieve?.description).toContain('read_plan.selected_selector_snapshots');
     expect(retrieve?.description).toContain('read_plan.selected_selectors');
+    expect(retrieve?.description).toContain('tool_search');
     expect(read?.description).toContain('evidence');
     expect(read?.description).toContain('selectors');
     expect((retrieve?.inputSchema.properties as any).requested_scope.description).toContain('access scope');

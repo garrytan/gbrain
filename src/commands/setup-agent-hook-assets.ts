@@ -211,6 +211,6 @@ fi
 
 log_line "inject" "$SESSION_ID" "context-injected"
 
-printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"MBrain is connected. If the request involves a named person, company, project, meeting, technical concept, internal system, or a prior decision, check MBrain before answering from general knowledge: call retrieve_context first, then read_context for the returned required_reads. If MBrain has nothing relevant, say so rather than guessing. Route durable new knowledge surfaced this turn through route_memory_writeback before finishing; ambiguous signals become Memory Inbox candidates."}}'
+printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"MBrain is connected. If the request involves a named person, company, project, meeting, technical concept, internal system, or a prior decision, check MBrain before answering from general knowledge: call retrieve_context first, then read_context for the returned required_reads. If read_context is not callable on a lazy-loaded tool surface such as Codex, use tool_search for mbrain read_context, then call it with the returned required_reads. If MBrain has nothing relevant, say so rather than guessing. Route durable new knowledge surfaced this turn through route_memory_writeback before finishing; ambiguous signals become Memory Inbox candidates."}}'
 exit 0
 `;

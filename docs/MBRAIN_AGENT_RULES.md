@@ -1,4 +1,4 @@
-<!-- mbrain-agent-rules-version: 0.5.10 -->
+<!-- mbrain-agent-rules-version: 0.5.11 -->
 <!-- source: https://raw.githubusercontent.com/meghendra6/mbrain/master/docs/MBRAIN_AGENT_RULES.md -->
 # MBrain Agent Rules
 
@@ -45,6 +45,8 @@ Remember: targetless candidates are not evidence for factual answers. Inspect,
 verify, promote, reject, or supersede candidates; use
 `verify_memory_candidate_entry` before promotion, and block refuted candidates.
 Known selectors/slugs: use `read_context` or `get_page`.
+Codex lazy-loaded: if `read_context` is not callable after retrieve, use
+`tool_search` for `mbrain read_context`; never answer from probe.
 Stop once enough.
 
 ## 3. Route Durable Writeback
@@ -77,7 +79,7 @@ that do not belong in the user's knowledge graph.
 Use `preview_agent_session_memory` before apply. Use
 `capture_agent_session_memory` with `apply: true` only with source refs and an
 acceptable route. Default `write_mode: candidate_only`; direct personal/profile
-writes need preflight. File/envelope capture is a wrapper, not canonical authority.
+writes need preflight. File/envelope capture is not canonical authority.
 
 ## 4. Filing Rules
 
@@ -87,30 +89,29 @@ writes need preflight. File/envelope capture is a wrapper, not canonical authori
 - Technical systems or repos -> `brain/systems/{slug}.md`
 - Project-specific docs -> `brain/projects/<project>/docs/<specific-topic>.md`
 
-Before creating a durable page, avoid vague or numeric-only slugs such as
-`readme`, `docs`, `untitled`, `90`, or `123`. Ask for clarification if the
-identity is unclear.
+Before creating a durable page, avoid vague or numeric-only slugs (`readme`,
+`docs`, `untitled`, `90`, `123`). Ask if identity is unclear.
 
 ## 5. Page Structure And Evidence
 
-Brain pages use two zones separated by `---`:
+Brain pages use two zones split by `---`:
 
 - Above the line: compiled truth, rewritten as the current best understanding.
 - Below the line: reverse-chronological timeline, append-only evidence.
 
-Every factual claim written to MBrain needs source attribution:
+Every factual claim needs source attribution:
 `[Source: User, direct message, YYYY-MM-DD HH:MM TZ]`
 
-If sources conflict, record the contradiction instead of silently choosing one.
-The user's direct statements outrank other sources.
+If sources conflict, record the contradiction. The user's direct statements
+outrank other sources.
 
 ## 6. Backlinks And Sync
 
-Every entity mention must be bidirectionally linked. When page A mentions page B,
-page B's timeline should link back to page A with context:
+Every entity mention must be bidirectionally linked: when page A mentions page B,
+page B's timeline links back to page A with context:
 `- **YYYY-MM-DD** | Referenced in [page title](path/to/page.md) -- context`
 
-After creating or updating any brain page, sync immediately:
+After creating/updating any brain page, sync immediately:
 
 Call `sync_brain` with `no_pull: true` and `no_embed: true`.
 

@@ -91,7 +91,24 @@ describe('installed-agent readiness service', () => {
     expect(check?.message).toContain('setup-agent');
   });
 
-  test('reports the Claude prompt hook ok when it injects retrieval and writeback guidance', () => {
+  test('reports the Claude prompt hook ok when it injects retrieval, lazy-load recovery, and writeback guidance', () => {
+    const report = buildInstalledAgentReadinessReport({
+      command: 'mbrain',
+      commandPath: '/opt/homebrew/bin/mbrain',
+      commandVersion: 'mbrain 0.10.3',
+      tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
+      codexPrompt: rulesBlock,
+      claudePrompt: rulesBlock,
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
+      claudePromptHook: 'additionalContext retrieve_context read_context tool_search route_memory_writeback',
+      expectedRulesVersion: '0.5.7',
+    });
+
+    const check = report.checks.find((c) => c.name === 'claude_prompt_hook');
+    expect(check?.status).toBe('ok');
+  });
+
+  test('fails when the Claude prompt hook lacks lazy read_context recovery guidance', () => {
     const report = buildInstalledAgentReadinessReport({
       command: 'mbrain',
       commandPath: '/opt/homebrew/bin/mbrain',
@@ -105,7 +122,8 @@ describe('installed-agent readiness service', () => {
     });
 
     const check = report.checks.find((c) => c.name === 'claude_prompt_hook');
-    expect(check?.status).toBe('ok');
+    expect(check?.status).toBe('fail');
+    expect(check?.message).toContain('lazy read_context recovery');
   });
 
   test('fails when the Claude prompt hook lacks retrieval guidance', () => {
