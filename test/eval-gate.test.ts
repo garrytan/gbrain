@@ -227,6 +227,41 @@ describe('eval gate: JSON envelope shape', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test('--drill adds privacy-safe row drivers without query text or slugs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'eval-gate-test-'));
+    const row: BaselineRow = {
+      ...makeRow('private query text', ['private/captured-slug']),
+      tool_name: 'search',
+    };
+    const baseline = writeBaselineFile(dir, [row]);
+    try {
+      const realLog = console.log;
+      let captured = '';
+      console.log = (msg: string) => { captured += msg + '\n'; };
+      try {
+        await withExitCapture(() => runEvalGate(engine, [
+          '--baseline',
+          baseline,
+          '--json',
+          '--drill',
+          '--drill-limit',
+          '1',
+        ]));
+      } finally {
+        console.log = realLog;
+      }
+      const envelope = JSON.parse(captured.trim());
+      const drill = envelope.regression_gate.drill;
+      expect(drill.rows_considered).toBe(1);
+      expect(drill.top_low_overlap[0].query_hash).toBe(computeQueryHash('private query text'));
+      const serialized = JSON.stringify(drill);
+      expect(serialized).not.toContain('private query text');
+      expect(serialized).not.toContain('private/captured-slug');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('eval gate: latency math (corrected per codex round-2 #2)', () => {

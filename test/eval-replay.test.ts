@@ -11,7 +11,7 @@ import { describe, test, expect } from 'bun:test';
 import { writeFileSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { runEvalReplay } from '../src/commands/eval-replay.ts';
+import { buildPrivacySafeReplayDrill, runEvalReplay, type ReplayRowResult } from '../src/commands/eval-replay.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { SearchResult } from '../src/core/types.ts';
 
@@ -318,6 +318,53 @@ describe('gbrain eval replay — happy path', () => {
       expect(stdout).toContain('Top-1 stability:');
       expect(stdout).toContain('regression');
     });
+  });
+});
+
+describe('gbrain eval replay — privacy-safe drill', () => {
+  test('reports query hashes and metrics without query text or slugs', () => {
+    const results: ReplayRowResult[] = [
+      {
+        id: 1,
+        tool_name: 'query',
+        query_hash: 'hash-low',
+        query: 'private query text',
+        jaccard: 0.1,
+        top1Match: false,
+        captured_slugs: ['private/captured'],
+        current_slugs: ['private/current'],
+        current_latency_ms: 250,
+        latency_delta_ms: 150,
+      },
+      {
+        id: 2,
+        tool_name: 'query',
+        query_hash: 'hash-good',
+        query: 'another private query',
+        jaccard: 1,
+        top1Match: true,
+        captured_slugs: ['private/same'],
+        current_slugs: ['private/same'],
+        current_latency_ms: 100,
+        latency_delta_ms: 10,
+      },
+    ];
+
+    const drill = buildPrivacySafeReplayDrill(results, { limit: 1 });
+    expect(drill.rows_considered).toBe(2);
+    expect(drill.top_low_overlap).toHaveLength(1);
+    expect(drill.top_low_overlap[0]!.query_hash).toBe('hash-low');
+    expect(drill.top_low_overlap[0]!.jaccard).toBe(0.1);
+    expect(drill.top_low_overlap[0]!.captured_count).toBe(1);
+    expect(drill.top_low_overlap[0]!.current_count).toBe(1);
+
+    const serialized = JSON.stringify(drill);
+    expect(serialized).toContain('hash-low');
+    expect(serialized).not.toContain('private query text');
+    expect(serialized).not.toContain('another private query');
+    expect(serialized).not.toContain('private/captured');
+    expect(serialized).not.toContain('private/current');
+    expect(serialized).not.toContain('private/same');
   });
 });
 
