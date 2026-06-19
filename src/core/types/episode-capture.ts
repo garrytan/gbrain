@@ -1,6 +1,6 @@
 import type { SecretRisk } from '../source-registry/raw-ingest.ts';
 import type { AgentSessionEventInput, AgentSessionSourceKind } from './agent-session-memory.ts';
-import type { MemoryCandidateEntry } from './memory-governance.ts';
+import type { CanonicalTargetProposalEntry, MemoryCandidateEntry } from './memory-governance.ts';
 import type {
   CandidateSignalDispositionHint,
   CandidateSignalPressureReason,
@@ -113,6 +113,7 @@ export interface InboxLeadResult {
 export interface CandidateDebtInput {
   candidates: MemoryCandidateEntry[];
   canonical_handoff_candidate_ids?: string[];
+  canonical_target_proposals?: CanonicalTargetProposalEntry[];
   now?: Date | string;
 }
 
@@ -121,6 +122,7 @@ export interface CandidateDebtMetrics {
   missing_provenance_count: number;
   stale_promoted_without_handoff_count: number;
   unresolved_exposed_count: number;
+  hard_blocked_by_proposal_count: number;
   median_review_latency_ms: number | null;
 }
 
