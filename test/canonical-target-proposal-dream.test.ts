@@ -142,4 +142,48 @@ describe('canonical target proposals in dream-cycle maintenance', () => {
       await engine.disconnect();
     }
   });
+
+  test('unstable-subject target proposals are counted as hard-blocked classifications', async () => {
+    const engine = await createEngine();
+    try {
+      await engine.createMemoryCandidateEntry(candidateInput('candidate:ambiguous-direction', {
+        proposed_content: 'Important direction memo with no stable canonical subject yet.',
+        target_object_type: null,
+        target_object_id: null,
+      }));
+
+      const result = await runDreamCycleMaintenance(engine, {
+        scope_id: 'workspace:default',
+        now: '2026-06-15T03:00:00.000Z',
+        limit: 5,
+        write_candidates: true,
+      });
+
+      expect(result.canonical_target_proposals_created).toBe(0);
+      expect(result.canonical_target_proposals_blocked).toBe(1);
+      expect(result.canonical_target_proposals_hard_blocked).toBe(1);
+
+      const proposals = await engine.listCanonicalTargetProposalEntries({
+        scope_id: 'workspace:default',
+        source_candidate_id: 'candidate:ambiguous-direction',
+        limit: 10,
+      });
+      expect(proposals).toHaveLength(1);
+      expect(proposals[0]).toMatchObject({
+        status: 'blocked',
+        status_reason: 'unstable_subject_identity',
+        proposed_slug: 'concepts/unstable-subject-identity',
+      });
+
+      const candidate = await engine.getMemoryCandidateEntry('candidate:ambiguous-direction');
+      expect(candidate).toMatchObject({
+        status: 'candidate',
+        target_object_type: null,
+        target_object_id: null,
+      });
+      expect(await engine.getPage('concepts/unstable-subject-identity')).toBeNull();
+    } finally {
+      await engine.disconnect();
+    }
+  });
 });
