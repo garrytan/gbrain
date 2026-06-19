@@ -434,6 +434,36 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   const skillStatus = skillPublishStatus(publishSkills);
   if (skillStatus.nudge) console.error(skillStatus.nudge);
 
+  // Note when this brain ships a brain-resident pack so the operator knows
+  // connecting harnesses will be offered it (only meaningful when publishing
+  // is on — list_brain_skillpack is gated by the same flag). Fail-open.
+  if (publishSkills) {
+    try {
+      const { loadAllSources } = await import('../core/sources-load.ts');
+      const { loadSkillpackManifest } = await import('../core/skillpack/manifest-v1.ts');
+      const { existsSync } = await import('fs');
+      const { join } = await import('path');
+      const srcs = await loadAllSources(engine);
+      let n = 0;
+      for (const s of srcs) {
+        if (!s.local_path || !existsSync(join(s.local_path, 'skillpack.json'))) continue;
+        try {
+          if (loadSkillpackManifest(s.local_path).brain_resident === true) n++;
+        } catch {
+          /* malformed pack → ignore */
+        }
+      }
+      if (n > 0) {
+        console.error(
+          `[serve-http] NOTE: ${n} source${n === 1 ? '' : 's'} ship a brain-resident skillpack — ` +
+            'connecting harnesses can discover it via list_brain_skillpack and will be offered to install it.',
+        );
+      }
+    } catch {
+      /* fail-open: banner is cosmetic */
+    }
+  }
+
   // Engine-aware SQL adapter. Routes through engine.executeRaw on both
   // Postgres and PGLite — the OAuth/admin/auth surface no longer requires
   // a postgres.js singleton, so `gbrain serve --http` works against PGLite

@@ -12,10 +12,18 @@ on:
 permissions:
   contents: read
 
+# Cancel a superseded run when a newer commit lands on the same PR/branch.
+# PR number for pull_request events (fork-safe), github.ref fallback for
+# push/scheduled runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tier1:
     name: Tier 1 (Mechanical)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -49,6 +57,7 @@ jobs:
     # from repo/org secrets. Nightly + manual triggers still supported via
     # the workflow-level `on:` list.
     needs: tier1
+    timeout-minutes: 30
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -70,7 +79,22 @@ jobs:
           bun-version: 1.3.13
       - run: bun install
       - name: Install OpenClaw
-        run: npm install -g openclaw@2026.4.9
+        # Bound + retry the install: a transient npm/registry stall here used to
+        # hang unbounded and (since the v0.42.50.0 job timeout) burn the entire
+        # 30m Tier 2 budget before failing — even though the install normally
+        # finishes in well under a minute. `timeout` kills a hung attempt fast;
+        # up to 3 attempts ride out a flaky registry. Step cap is a backstop.
+        timeout-minutes: 8
+        run: |
+          for attempt in 1 2 3; do
+            if timeout 120 npm install -g openclaw@2026.4.9; then
+              exit 0
+            fi
+            echo "::warning::openclaw install attempt $attempt failed or timed out; retrying in 10s" >&2
+            sleep 10
+          done
+          echo "::error::openclaw install failed after 3 attempts" >&2
+          exit 1
       - name: Configure OpenClaw MCP
         run: |
           mkdir -p ~/.openclaw

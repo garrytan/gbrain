@@ -8,6 +8,7 @@ import { MinionQueue } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
 import { WORKER_EXIT_RSS_WATCHDOG } from '../core/minions/worker-exit-codes.ts';
 import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
+import type { PaceKeyOverrides } from '../core/pace-mode.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { parseNiceValue, applyNiceness, getEffectiveNiceness, formatNice } from '../core/minions/niceness.ts';
@@ -1398,6 +1399,18 @@ export async function registerBuiltinHandlers(
       slugs: Array.isArray(job.data.slugs) ? (job.data.slugs as string[]) : undefined,
       all: !!job.data.all,
       stale: job.data.all ? false : (job.data.stale !== false),
+      sourceId: typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined,
+      // CX1+CX5: pace overrides ride in the job payload as explicit overrides
+      // only; runEmbedCore re-resolves env > config > bundle at execution so
+      // GBRAIN_PACE_* still wins during an incident.
+      ...(job.data.pace && typeof job.data.pace === 'object'
+        ? {
+            pace: job.data.pace as { perCallMode?: string; perCall?: PaceKeyOverrides },
+            // Serialized from the queued payload → config tier so GBRAIN_PACE_*
+            // on the worker still wins at execution (Codex P2 escape hatch).
+            paceFromBackground: true,
+          }
+        : {}),
       onProgress: (done, total, embedded) => {
         // Fire-and-forget: progress updates are best-effort and must not
         // block the worker loop.

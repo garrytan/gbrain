@@ -169,6 +169,14 @@ export interface GBrainConfig {
   retrieval_reflex?: boolean;
   /** Max pointers injected per turn (default 3). File-plane only. */
   retrieval_reflex_max_pointers?: number;
+  /**
+   * v0.43 (#2095) — how many recent turns the reflex extracts entities from
+   * (default 4). 1 reproduces the legacy current-turn-only behavior (and the
+   * legacy slug+title suppression). File-plane / env
+   * (GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS) only — same plane as the other
+   * reflex knobs.
+   */
+  retrieval_reflex_window_turns?: number;
   embedding_image_ocr?: boolean;
   embedding_image_ocr_model?: string;
 
@@ -320,6 +328,13 @@ export interface GBrainConfig {
      */
     publish_skills?: boolean;
     /**
+     * Gate for the `advisor` op over a REMOTE transport (#2180). Separate from
+     * `publish_skills` because the advisor exposes operational diagnostics
+     * (version drift, stalled jobs, embedding-key presence), not prose skills.
+     * Default OFF; local CLI callers bypass. The MCP advisor is read-only.
+     */
+    publish_advisor?: boolean;
+    /**
      * Explicit skills-dir override. Wins over autodetect — makes which skills
      * get published deterministic across laptop / daemon / container launches.
      * When unset, the ops autodetect (remote callers exclude the install-path
@@ -389,6 +404,96 @@ export function loadConfigFileOnly(): GBrainConfig | null {
   }
 }
 
+/**
+ * #427 guard — DATABASE_URL hijack via Bun's cwd .env auto-load.
+ *
+ * Bun merges `.env` files from the process cwd into process.env before any
+ * user code runs. For a globally-installed tool that is a footgun: running
+ * gbrain inside any checkout whose `.env` defines DATABASE_URL (Next.js,
+ * Hono, Supabase, most web apps) silently retargets the brain at that app's
+ * database. Reads hit the wrong DB; `apply-migrations` can write gbrain's
+ * schema — including its DDL event trigger — into a production app database
+ * (see the v0.42.8 report on #427).
+ *
+ * Bun gives no way to ask which vars came from a .env file (the merge
+ * happens before module load), so we re-parse the .env files Bun auto-loads
+ * from cwd and treat DATABASE_URL as "not operator-provided" when its value
+ * matches one of them. Deliberate overrides still work two ways:
+ *   - GBRAIN_DATABASE_URL: namespaced to this tool, never auto-ignored;
+ *   - exporting DATABASE_URL in the shell: exported vars win over .env in
+ *     Bun, and a deliberate export that happens to EQUAL the cwd .env value
+ *     would have selected the same database anyway — ignoring it changes
+ *     the outcome only by honoring the brain config, which is the safe
+ *     reading of ambiguous intent.
+ *
+ * The file list is a superset of Bun's auto-load set across NODE_ENV values
+ * so the guard doesn't depend on replicating Bun's exact selection logic.
+ */
+const CWD_DOTENV_FILES = ['.env', '.env.local', '.env.development', '.env.production', '.env.test'];
+
+/**
+ * All values assigned to `key` across the .env files in `dir`. Collecting
+ * every assignment (rather than emulating override order) keeps the guard
+ * independent of dotenv precedence rules — a match against ANY assignment
+ * means the value is file-origin. Exported for tests.
+ */
+export function dotenvValuesForKey(key: string, dir: string = process.cwd()): Set<string> {
+  const values = new Set<string>();
+  const assignment = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/;
+  for (const name of CWD_DOTENV_FILES) {
+    let content: string;
+    try {
+      content = readFileSync(join(dir, name), 'utf-8');
+    } catch {
+      continue; // missing/unreadable file — nothing to guard against
+    }
+    for (const rawLine of content.split('\n')) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      const m = line.match(assignment);
+      if (!m || m[1] !== key) continue;
+      let v = m[2].trim();
+      if ((v.startsWith('"') && v.endsWith('"') && v.length >= 2) ||
+          (v.startsWith("'") && v.endsWith("'") && v.length >= 2)) {
+        v = v.slice(1, -1);
+      } else {
+        const hash = v.indexOf(' #');
+        if (hash !== -1) v = v.slice(0, hash).trim();
+      }
+      if (v) values.add(v);
+    }
+  }
+  return values;
+}
+
+let warnedCwdEnvDbUrlIgnored = false;
+
+/**
+ * The env-provided DB URL gbrain should honor, with the #427 guard applied:
+ * a DATABASE_URL whose value matches an assignment in a cwd .env file is
+ * treated as belonging to the project in cwd, not to gbrain, and ignored
+ * with a one-time stderr notice. GBRAIN_DATABASE_URL is always honored.
+ * `dir` is injectable for tests; callers use the default.
+ */
+export function effectiveEnvDatabaseUrl(dir: string = process.cwd()): string | undefined {
+  if (process.env.GBRAIN_DATABASE_URL) return process.env.GBRAIN_DATABASE_URL;
+  const url = process.env.DATABASE_URL;
+  if (!url) return undefined;
+  if (dotenvValuesForKey('DATABASE_URL', dir).has(url)) {
+    if (!warnedCwdEnvDbUrlIgnored) {
+      warnedCwdEnvDbUrlIgnored = true;
+      console.warn(
+        '[config] Ignoring DATABASE_URL auto-loaded by Bun from a .env file in the current ' +
+        'directory — it belongs to the project here, not to gbrain. Using the engine from ' +
+        '~/.gbrain/config.json instead. To point gbrain at that database deliberately, set ' +
+        'GBRAIN_DATABASE_URL.',
+      );
+    }
+    return undefined;
+  }
+  return url;
+}
+
 export function loadConfig(): GBrainConfig | null {
   let fileConfig: GBrainConfig | null = null;
   try {
@@ -397,8 +502,8 @@ export function loadConfig(): GBrainConfig | null {
     fileConfig = migrateLegacyEmbeddingConfig(parsed) as unknown as GBrainConfig;
   } catch { /* no config file */ }
 
-  // Try env vars
-  const dbUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+  // Try env vars (cwd-.env-origin DATABASE_URL excluded — see #427 guard above)
+  const dbUrl = effectiveEnvDatabaseUrl();
 
   if (!fileConfig && !dbUrl) return null;
 
@@ -442,6 +547,10 @@ export function loadConfig(): GBrainConfig | null {
       : {}),
     ...(process.env.GBRAIN_RETRIEVAL_REFLEX
       ? { retrieval_reflex: !(process.env.GBRAIN_RETRIEVAL_REFLEX === 'false' || process.env.GBRAIN_RETRIEVAL_REFLEX === '0') }
+      : {}),
+    ...(process.env.GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS &&
+      Number.isFinite(Number(process.env.GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS))
+      ? { retrieval_reflex_window_turns: Number(process.env.GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS) }
       : {}),
     ...(process.env.GBRAIN_REMOTE_CLIENT_SECRET && fileConfig?.remote_mcp
       ? { remote_mcp: { ...fileConfig.remote_mcp, oauth_client_secret: process.env.GBRAIN_REMOTE_CLIENT_SECRET } }
@@ -788,6 +897,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'mcp.publish_skills',
   'mcp.publish_skills_prompted',
   'mcp.skills_dir',
+  // MCP advisor publishing (#2180): separate gate from publish_skills because
+  // the advisor exposes operational diagnostics (version/jobs/key presence),
+  // not prose skills. Default OFF; read-only over MCP.
+  'mcp.publish_advisor',
+  // Skill-nag suppression (#2180): brain-resident pack install nag off-switch.
+  'skillpack.nag_disabled',
   // Self-upgrade (v0.42; file plane, read on the hot path)
   'self_upgrade.mode',
   'self_upgrade.mode_prompted',
@@ -802,6 +917,15 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Link resolution (issue #972)
   'link_resolution',
   'link_resolution.global_basename',
+  // Spend controls (v0.42.42.0, issue #2139). Previously `--force`-only — the
+  // operator had to discover these by reading source. Registered so `config
+  // set` accepts them directly. See docs/operations/spend-controls.md.
+  'spend.posture',
+  'sync.cost_gate_min_usd',
+  'sync.federated_v2',
+  'embed.backfill_cooldown_min',
+  'embed.backfill_max_usd_per_source_24h',
+  'embed.backfill_max_usd',
 ];
 
 /**
@@ -933,7 +1057,12 @@ export function gbrainPath(...segments: string[]): string {
  */
 export function getDbUrlSource(): DbUrlSource {
   if (process.env.GBRAIN_DATABASE_URL) return 'env:GBRAIN_DATABASE_URL';
-  if (process.env.DATABASE_URL) return 'env:DATABASE_URL';
+  // Same #427 guard as loadConfig: a DATABASE_URL that Bun auto-loaded from
+  // a cwd .env file is not an operator-provided source. Keeping this in
+  // lockstep with loadConfig matters because doctor uses this to tell the
+  // user where the URL came from — reporting env:DATABASE_URL while
+  // loadConfig ignores it would send them debugging the wrong layer.
+  if (effectiveEnvDatabaseUrl()) return 'env:DATABASE_URL';
   if (!existsSync(configPath())) return null;
   try {
     const raw = readFileSync(configPath(), 'utf-8');

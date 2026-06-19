@@ -7,12 +7,15 @@
  * touching the brain, so it must be fast (one regex pass) and precision-biased:
  * a false candidate costs a wasted resolve and, worse, a misleading pointer.
  *
- * DELIBERATE v1 limits (documented, not bugs — see issue #1981 / eng-review):
+ * DELIBERATE limits (documented, not bugs — see issue #1981 / eng-review):
  *   - Proper-case + ASCII biased. Misses lowercase names ("garry") and many
  *     non-Latin scripts.
- *   - Current-user-message only. No pronoun follow-ups ("what about her?"), no
- *     entities the assistant introduced.
- * These are TODOs, not v1 scope. Do NOT market this as full "human-like recall".
+ *   - extractCandidates is single-turn. The v0.43 (#2095) window layer
+ *     (extractCandidatesFromWindow) widens extraction across the last N turns
+ *     — assistant-introduced entities and "what about her?" follow-ups whose
+ *     antecedent was NAMED in the window now resolve; true pronoun
+ *     coreference (never-named antecedents) remains out of scope.
+ * Do NOT market this as full "human-like recall".
  *
  * Resolution (alias/slug lookup) lives in retrieval-reflex.ts; this module only
  * decides WHAT to look up.
@@ -171,4 +174,84 @@ export function extractCandidates(text: string): EntityCandidate[] {
     if (out.length >= MAX_CANDIDATES) break;
   }
   return out;
+}
+
+// ── Rolling-window extraction (v0.43, #2095 push-based context) ──────────
+
+export interface WindowTurn {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+/**
+ * A window candidate with the salience metadata the volunteer layer's
+ * confidence boost reads: how many turns mentioned it, whether the NEWEST
+ * turn did, and whether the USER (vs only the assistant) ever said it.
+ */
+export interface WindowEntityCandidate extends EntityCandidate {
+  /** Number of distinct turns that mentioned this candidate. */
+  occurrences: number;
+  /** Mentioned in the newest (last) turn of the window. */
+  inNewestTurn: boolean;
+  /** Mentioned in at least one USER turn (assistant-only mentions rank lower). */
+  userMention: boolean;
+}
+
+/**
+ * Extract candidates across the last N turns (oldest → newest). Pure,
+ * zero-LLM: runs the per-turn extractor on each turn and merges by the
+ * normalizeAlias form. Ordering is salience-aware — recency of last mention,
+ * cross-turn frequency, and a user-role boost — so when the merged set
+ * exceeds MAX_CANDIDATES, the dropped tail is the stalest assistant-only
+ * chatter, not the entity the user just named.
+ */
+export function extractCandidatesFromWindow(turns: WindowTurn[]): WindowEntityCandidate[] {
+  if (!turns?.length) return [];
+  interface WAcc extends WindowEntityCandidate {
+    lastTurnIdx: number;
+    order: number;
+  }
+  const acc = new Map<string, WAcc>();
+  let order = 0;
+  const lastIdx = turns.length - 1;
+
+  for (let i = 0; i < turns.length; i++) {
+    const turn = turns[i];
+    if (!turn?.text) continue;
+    for (const c of extractCandidates(turn.text)) {
+      const norm = normalizeAlias(c.query);
+      if (!norm) continue;
+      const existing = acc.get(norm);
+      if (existing) {
+        existing.occurrences += 1;
+        existing.lastTurnIdx = i;
+        existing.inNewestTurn = existing.inNewestTurn || i === lastIdx;
+        if (turn.role === 'user' && !existing.userMention) {
+          // First USER-said surface form beats an assistant-introduced one
+          // for the display label.
+          existing.display = c.display;
+          existing.userMention = true;
+        }
+      } else {
+        acc.set(norm, {
+          display: c.display,
+          query: c.query,
+          occurrences: 1,
+          lastTurnIdx: i,
+          inNewestTurn: i === lastIdx,
+          userMention: turn.role === 'user',
+          order: order++,
+        });
+      }
+    }
+  }
+
+  // Salience weight: recency dominates, then frequency, then user-role.
+  // Deterministic tie-break on first-seen order.
+  const weight = (c: WAcc) =>
+    (c.lastTurnIdx + 1) / turns.length + Math.min(c.occurrences, 4) * 0.1 + (c.userMention ? 0.15 : 0);
+  return Array.from(acc.values())
+    .sort((a, b) => weight(b) - weight(a) || a.order - b.order)
+    .slice(0, MAX_CANDIDATES)
+    .map(({ lastTurnIdx: _l, order: _o, ...rest }) => rest);
 }

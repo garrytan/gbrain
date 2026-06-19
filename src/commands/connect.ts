@@ -73,7 +73,9 @@ export const LEARN_INSTRUCTION =
   'Once connected, call the `get_brain_identity` tool (whose brain this is), then ' +
   '`list_skills` (everything it can do; if it errors, the host has not enabled skill ' +
   'publishing — these core tools still work: search, query, get_page, put_page, ' +
-  'think, find_experts). Always search the brain before answering or writing.';
+  'think, find_experts). Then call `list_brain_skillpack`: if this brain ships a ' +
+  'skillpack, ask the user whether to install it (gbrain skillpack scaffold <spec>). ' +
+  'Always search the brain before answering or writing.';
 
 const SECRET_NOTE =
   'Note: that bearer token is a long-lived, full-access secret — keep it private and ' +

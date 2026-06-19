@@ -1311,7 +1311,10 @@ describe('PGLiteEngine: v0.13.1 error-wrap on connect() (#223)', () => {
     // issue and suggest gbrain doctor. Must NOT suggest "missing migrations"
     // as a cause (that was conflating #218 and #223 — migrations run AFTER
     // create()).
-    expect(src).toContain('this._db = await PGlite.create');
+    // #2084 wrapped the create call in preservingProcessExitCode (Emscripten
+    // exitCode containment); the try/catch + error wrap around it is unchanged.
+    expect(src).toContain('this._db = await preservingProcessExitCode(() =>');
+    expect(src).toContain('PGlite.create({');
     expect(src).toContain('https://github.com/garrytan/gbrain/issues/223');
     expect(src).toContain('gbrain doctor');
     expect(src).toContain('Original error:');

@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, test, beforeEach } from 'bun:test';
-import { withEnv } from '../helpers/with-env.ts';
+import { withEnv, emptyHome } from '../helpers/with-env.ts';
 import {
   runLlmCall,
   parseLlmJson,
@@ -29,7 +29,7 @@ beforeEach(() => {
 describe('probeLlmAvailability', () => {
   test('returns null when ANTHROPIC_API_KEY is unset', async () => {
     await withEnv(
-      { ANTHROPIC_API_KEY: undefined as unknown as string },
+      { ANTHROPIC_API_KEY: undefined as unknown as string, GBRAIN_HOME: emptyHome() },
       async () => {
         expect(probeLlmAvailability('claude-haiku-4-5')).toBeNull();
         expect(probeLlmAvailability('anthropic:claude-haiku-4-5')).toBeNull();
@@ -94,7 +94,7 @@ describe('runLlmCall — happy path', () => {
 describe('runLlmCall — fail-open paths', () => {
   test('provider unavailable returns null without calling transport', async () => {
     await withEnv(
-      { ANTHROPIC_API_KEY: undefined as unknown as string },
+      { ANTHROPIC_API_KEY: undefined as unknown as string, GBRAIN_HOME: emptyHome() },
       async () => {
         let calls = 0;
         const result = await runLlmCall<unknown>({

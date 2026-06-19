@@ -29,6 +29,7 @@
  */
 
 import { readFileSync, readdirSync, lstatSync, existsSync } from 'fs';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { join, relative, dirname } from 'path';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from '../core/engine.ts';
 import type { PageType } from '../core/types.ts';
@@ -854,6 +855,17 @@ Status (v0.42):
         result.pages_processed = r.meetings_scanned;
         if (!jsonMode) {
           console.log(`Timeline from meetings: ${r.entries_created} entries on ${r.entities_touched} entity pages from ${r.meetings_scanned} meetings`);
+        }
+        // #2057 (codex): batch failures are no longer swallowed silently — make
+        // them visible at the command surface (and non-zero exit) instead of
+        // printing a clean "N entries" success over failed inserts.
+        if (r.batch_errors > 0) {
+          console.error(
+            `[extract timeline] ${r.batch_errors} batch(es) failed to insert` +
+            (r.first_batch_error ? ` (first error: ${r.first_batch_error})` : '') +
+            ` — timeline is incomplete.`,
+          );
+          setCliExitVerdict(1);
         }
       } else if (byMention || ner) {
         // v0.41.18.0 (T7): combined --by-mention + --ner walk shares one

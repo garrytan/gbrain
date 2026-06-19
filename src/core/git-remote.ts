@@ -131,7 +131,7 @@ export interface CloneOpts {
 
 export class GitOperationError extends Error {
   constructor(
-    public op: 'clone' | 'pull' | 'remote_get_url',
+    public op: 'clone' | 'pull' | 'fetch' | 'remote_get_url',
     message: string,
     public cause?: unknown,
   ) {
@@ -140,13 +140,28 @@ export class GitOperationError extends Error {
   }
 }
 
-const GIT_ENV = {
+export const GIT_ENV = {
   // Confine to the gbrain SSRF model — no credential helpers, no SSH askpass,
   // no GUI prompts. Inherit PATH so git itself is findable.
   GIT_TERMINAL_PROMPT: '0',
   GCM_INTERACTIVE: 'never',
   GIT_ASKPASS: '/bin/false',
   SSH_ASKPASS: '/bin/false',
+} as const;
+
+/**
+ * Auth-capable git env for the durability push/probe paths (v0.42.44).
+ *
+ * Read-only clone/pull keep the strict GIT_ENV (askpass=/bin/false) so they can
+ * never prompt. But push, push-probe, and the durability cron's authed fetch
+ * MUST be able to consult the repo's configured credential helper (repo-scoped
+ * `store`/`osxkeychain`) — a `/bin/false` askpass would defeat that. We drop the
+ * askpass overrides but KEEP `GIT_TERMINAL_PROMPT=0` so a *missing* credential
+ * fails fast instead of hanging a non-interactive cron forever.
+ */
+export const GIT_ENV_AUTH = {
+  GIT_TERMINAL_PROMPT: '0',
+  GCM_INTERACTIVE: 'never',
 } as const;
 
 /**
@@ -217,6 +232,31 @@ export function pullRepo(repoPath: string, opts: { timeoutMs?: number } = {}): v
   }
 }
 
+/**
+ * Fetch a single remote branch with the SAME SSRF-defensive flags + no-prompt
+ * env as cloneRepo/pullRepo (GIT_SSRF_FLAGS, --no-recurse-submodules,
+ * GIT_TERMINAL_PROMPT=0). Used by the sync cost-estimator's fetch-first path
+ * (#2139) so a cost preview / dry-run never hits a remote through a
+ * less-protected route than real sync. Throws GitOperationError on failure;
+ * the estimator catches and falls back to local HEAD.
+ */
+export function fetchRemote(repoPath: string, branch: string, opts: { timeoutMs?: number } = {}): void {
+  const args: string[] = ['-C', repoPath, ...GIT_SSRF_FLAGS, 'fetch', ...GIT_SSRF_SUBCOMMAND_FLAGS, 'origin', branch];
+  try {
+    execFileSync('git', args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: opts.timeoutMs ?? 30_000,
+      env: { ...process.env, ...GIT_ENV },
+    });
+  } catch (e) {
+    throw new GitOperationError(
+      'fetch',
+      `git fetch failed in ${repoPath}: ${(e as Error).message}`,
+      e,
+    );
+  }
+}
+
 export type RepoState =
   | 'healthy'
   | 'missing'
@@ -261,4 +301,191 @@ export function validateRepoState(
     return 'url-drift';
   }
   return 'healthy';
+}
+
+// ── Durability helpers (v0.42.44) ───────────────────────────────────────────
+// Used by the brain-repo durability feature (`gbrain sources harden/pull`) and
+// the DB-free pull cron. These are the auth-capable, rebase-aware counterparts
+// to the strict read-only `pullRepo` (which stays `--ff-only` for `sync.ts`).
+
+/**
+ * Global SSRF flags for the durability fetch/pull/push paths. Identical to
+ * GIT_SSRF_FLAGS except `protocol.file.allow` honors the env escape hatch
+ * `GBRAIN_GIT_ALLOW_FILE_TRANSPORT=1` (mirrors GBRAIN_ALLOW_PRIVATE_REMOTES) so
+ * self-hosted local-filesystem remotes — and the test suite — can use the file
+ * transport. Default stays `never`. These ops act on an ALREADY-validated origin
+ * (set + checked at clone time); `http.followRedirects=false` is the live guard.
+ */
+function durableSsrfFlags(): string[] {
+  const fileAllow = process.env.GBRAIN_GIT_ALLOW_FILE_TRANSPORT === '1' ? 'always' : 'never';
+  return [
+    '-c', 'http.followRedirects=false',
+    '-c', `protocol.file.allow=${fileAllow}`,
+    '-c', 'protocol.ext.allow=never',
+  ];
+}
+
+/** Run a git subcommand, returning trimmed stdout. Throws GitOperationError. */
+function runGit(
+  repoPath: string,
+  globalFlags: readonly string[],
+  subcommand: string,
+  subArgs: readonly string[],
+  op: GitOperationError['op'],
+  opts: { timeoutMs?: number; env?: Record<string, string> } = {},
+): string {
+  try {
+    const out = execFileSync(
+      'git',
+      ['-C', repoPath, ...globalFlags, subcommand, ...subArgs],
+      {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: opts.timeoutMs ?? 120_000,
+        env: { ...process.env, ...(opts.env ?? GIT_ENV) },
+      },
+    );
+    return out.toString().trim();
+  } catch (e) {
+    throw new GitOperationError(op, `git ${subcommand} failed in ${repoPath}: ${(e as Error).message}`, e);
+  }
+}
+
+/** True if the working tree has staged or unstaged changes (untracked too). */
+export function isWorkingTreeDirty(repoPath: string): boolean {
+  const out = runGit(repoPath, [], 'status', ['--porcelain'], 'pull', { timeoutMs: 30_000 });
+  return out.length > 0;
+}
+
+/**
+ * Resolve the repo's default branch, local-only (no network):
+ *   origin/HEAD symbolic-ref → current branch (if not detached) → 'main'.
+ */
+export function detectDefaultBranch(repoPath: string): string {
+  try {
+    const sym = execFileSync('git', ['-C', repoPath, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], {
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+    }).toString().trim();
+    if (sym.startsWith('origin/')) return sym.slice('origin/'.length);
+    if (sym) return sym;
+  } catch { /* origin/HEAD not set — fall through */ }
+  try {
+    const cur = execFileSync('git', ['-C', repoPath, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+    }).toString().trim();
+    if (cur && cur !== 'HEAD') return cur;
+  } catch { /* detached or no commits */ }
+  return 'main';
+}
+
+/** True if a rebase is mid-flight (rebase-merge or rebase-apply state dir exists). */
+function rebaseInProgress(repoPath: string): boolean {
+  for (const name of ['rebase-merge', 'rebase-apply']) {
+    try {
+      const p = execFileSync('git', ['-C', repoPath, 'rev-parse', '--git-path', name], {
+        stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+      }).toString().trim();
+      const abs = p.startsWith('/') ? p : join(repoPath, p);
+      if (existsSync(abs)) return true;
+    } catch { /* ignore */ }
+  }
+  return false;
+}
+
+export type PullOutcome =
+  | { status: 'up_to_date' }
+  | { status: 'advanced'; from: string; to: string }
+  | { status: 'skipped_dirty' }
+  | { status: 'conflict_aborted'; detail: string };
+
+/**
+ * Divergence-safe pull: `fetch` + `pull --rebase`, never leaving a mid-rebase.
+ *
+ *  - Dirty working tree  → `skipped_dirty` (NORMAL mid-session state, not an
+ *    error; never auto-stashes, never touches in-progress edits).
+ *  - Rebase conflict     → `git rebase --abort`, verify no rebase state remains,
+ *    return `conflict_aborted` ("manual attention needed"). Never throws past
+ *    this — the repo is always left clean (possibly un-advanced).
+ *
+ * Auth-capable (GIT_ENV_AUTH) so it works against private remotes via the
+ * repo's configured credential helper. SSRF flags applied on every call.
+ */
+export function divergenceSafePull(
+  repoPath: string,
+  branch: string,
+  opts: { timeoutMs?: number } = {},
+): PullOutcome {
+  const timeoutMs = opts.timeoutMs ?? 300_000;
+
+  if (isWorkingTreeDirty(repoPath)) return { status: 'skipped_dirty' };
+
+  const before = runGit(repoPath, [], 'rev-parse', ['HEAD'], 'pull', { timeoutMs: 10_000 });
+  const ssrf = durableSsrfFlags();
+
+  runGit(repoPath, ssrf, 'fetch', [...GIT_SSRF_SUBCOMMAND_FLAGS, 'origin', branch], 'pull', {
+    timeoutMs, env: { ...GIT_ENV_AUTH },
+  });
+
+  try {
+    runGit(repoPath, ssrf, 'pull', [...GIT_SSRF_SUBCOMMAND_FLAGS, '--rebase', 'origin', branch], 'pull', {
+      timeoutMs, env: { ...GIT_ENV_AUTH },
+    });
+  } catch (e) {
+    // Abort any half-applied rebase so the tree is never left mid-rebase.
+    try {
+      execFileSync('git', ['-C', repoPath, 'rebase', '--abort'], {
+        stdio: 'ignore', timeout: 30_000, env: { ...process.env, ...GIT_ENV },
+      });
+    } catch { /* best-effort */ }
+    // If state STILL remains, try once more, then report regardless.
+    if (rebaseInProgress(repoPath)) {
+      try {
+        execFileSync('git', ['-C', repoPath, 'rebase', '--abort'], {
+          stdio: 'ignore', timeout: 30_000, env: { ...process.env, ...GIT_ENV },
+        });
+      } catch { /* best-effort */ }
+    }
+    return {
+      status: 'conflict_aborted',
+      detail: `pull --rebase on ${branch} conflicted; rebase aborted — manual attention needed (${(e as Error).message.slice(0, 120)})`,
+    };
+  }
+
+  const after = runGit(repoPath, [], 'rev-parse', ['HEAD'], 'pull', { timeoutMs: 10_000 });
+  return before === after ? { status: 'up_to_date' } : { status: 'advanced', from: before, to: after };
+}
+
+export type PushProbeResult =
+  | { ok: true }
+  | { ok: false; reason: 'auth' | 'protected' | 'unreachable' | 'other'; detail: string };
+
+/**
+ * Authenticated `git push --dry-run` against origin/<branch>. Proves push auth
+ * works AND surfaces read-only PATs / branch protection BEFORE harden declares
+ * "hardened" — with zero history pollution (no commit). Auth-capable env.
+ *
+ * `redactDetail` (e.g. shell-redact's value scrubber bound to the PAT) is
+ * applied to the captured stderr so a token echoed by git never reaches a log.
+ */
+export function pushProbe(
+  repoPath: string,
+  branch: string,
+  opts: { timeoutMs?: number; redactDetail?: (s: string) => string } = {},
+): PushProbeResult {
+  const redact = opts.redactDetail ?? ((s: string) => s);
+  try {
+    execFileSync(
+      'git',
+      ['-C', repoPath, ...durableSsrfFlags(), 'push', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--dry-run', 'origin', `HEAD:${branch}`],
+      { stdio: ['ignore', 'pipe', 'pipe'], timeout: opts.timeoutMs ?? 60_000, env: { ...process.env, ...GIT_ENV_AUTH } },
+    );
+    return { ok: true };
+  } catch (e) {
+    const raw = redact((e as Error).message || '');
+    const low = raw.toLowerCase();
+    let reason: 'auth' | 'protected' | 'unreachable' | 'other' = 'other';
+    if (low.includes('authentication') || low.includes('403') || low.includes('permission') || low.includes('could not read')) reason = 'auth';
+    else if (low.includes('protected') || low.includes('pre-receive') || low.includes('hook declined')) reason = 'protected';
+    else if (low.includes('could not resolve') || low.includes('unable to access') || low.includes('timed out') || low.includes('network')) reason = 'unreachable';
+    return { ok: false, reason, detail: raw.slice(0, 200) };
+  }
 }
