@@ -11,6 +11,10 @@ import type {
   RetrievalSelector,
   ScopeGateScope,
 } from '../types.ts';
+import {
+  classifyCandidateResolutionState,
+  isHardBlockedCanonicalTargetProposal,
+} from './candidate-resolution-state-service.ts';
 
 export interface CandidateSignalResult {
   candidate_signal_policy: CandidateSignalPolicy;
@@ -262,9 +266,14 @@ function signalSummary(
     return `${outcome} candidate ${candidate.id} is hidden from default retrieval.${reason}`;
   }
   if (canonicalTargetProposal) {
+    if (isHardBlockedCanonicalTargetProposal(canonicalTargetProposal)) {
+      return `Unreviewed candidate ${candidate.id} has blocked canonical target proposal ${canonicalTargetProposal.id} (${canonicalTargetProposal.status_reason}) for ${canonicalTargetProposal.proposed_slug}; choose a stable canonical subject, reject, or supersede the candidate.`;
+    }
     const action = canonicalTargetProposal.status === 'proposed'
       ? 'approve or reject the proposal before promotion'
-      : 'complete canonical target binding before promotion';
+      : canonicalTargetProposal.status === 'approved' || canonicalTargetProposal.status === 'patch_staged'
+        ? 'complete canonical target binding before promotion'
+        : 'inspect proposal status before promotion';
     return `Unreviewed candidate ${candidate.id} has canonical target proposal ${canonicalTargetProposal.id} (${canonicalTargetProposal.status}) for ${canonicalTargetProposal.proposed_slug}; ${action}.`;
   }
   return `${candidate.status === 'promoted' ? 'Promoted candidate' : 'Unreviewed candidate'} ${candidate.id} may be relevant to this retrieval.`;
@@ -314,6 +323,21 @@ function buildPressure(
   canonicalTargetProposal: CanonicalTargetProposalEntry | null,
 ): Pick<CandidateSignal, 'pressure_score' | 'pressure_reasons' | 'review_priority_hint'> {
   const pressureReasons: CandidateSignal['pressure_reasons'] = [];
+  const resolution = classifyCandidateResolutionState({
+    candidate,
+    has_canonical_handoff: hasCanonicalHandoff,
+    canonical_target_proposal: canonicalTargetProposal,
+  });
+  if (resolution.state === 'hard_blocked_by_proposal') {
+    if (!hasProvenance) pressureReasons.push('missing_provenance');
+    pressureReasons.push('canonical_target_proposal_hard_blocked');
+    if (candidate.recurrence_score >= 0.8) pressureReasons.push('high_recurrence');
+    return {
+      pressure_score: roundScore(Math.min(1, pressureReasons.length * 0.25)),
+      pressure_reasons: pressureReasons,
+      review_priority_hint: 'no_priority',
+    };
+  }
   if (!hasProvenance) pressureReasons.push('missing_provenance');
   if (!hasTarget) pressureReasons.push('missing_target');
   if (candidate.status === 'promoted' && !hasCanonicalHandoff) {
@@ -348,10 +372,13 @@ function reviewPriorityHint(
 
 function targetlessCanonicalTargetHint(
   canonicalTargetProposal: CanonicalTargetProposalEntry | null,
-): 'needs_canonical_target_proposal' | 'approve_or_reject_canonical_target_proposal' | 'complete_canonical_target_binding' {
+): 'no_action' | 'needs_canonical_target_proposal' | 'approve_or_reject_canonical_target_proposal' | 'complete_canonical_target_binding' {
   if (!canonicalTargetProposal) return 'needs_canonical_target_proposal';
   if (canonicalTargetProposal.status === 'proposed') return 'approve_or_reject_canonical_target_proposal';
-  return 'complete_canonical_target_binding';
+  if (canonicalTargetProposal.status === 'approved' || canonicalTargetProposal.status === 'patch_staged') {
+    return 'complete_canonical_target_binding';
+  }
+  return 'no_action';
 }
 
 async function findActiveCanonicalTargetProposals(
@@ -376,6 +403,7 @@ async function findActiveCanonicalTargetProposals(
         proposal.status === 'proposed'
         || proposal.status === 'approved'
         || proposal.status === 'patch_staged'
+        || proposal.status === 'blocked'
       );
       if (active) output.set(candidate.id, active);
     }));

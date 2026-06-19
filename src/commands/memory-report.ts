@@ -166,6 +166,7 @@ export async function collectMemoryReportInput(
     candidate_debt: computeCandidateDebtMetrics({
       candidates,
       canonical_handoff_candidate_ids: canonicalHandoffCandidateIds,
+      canonical_target_proposals: canonicalTargetProposals,
     }),
     negative_memory_projections: negativeMemoryProjections,
   };

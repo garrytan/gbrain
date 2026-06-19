@@ -290,6 +290,7 @@ export interface MemoryReviewReportSummary {
   candidate_missing_provenance: number;
   candidate_promoted_without_handoff: number;
   candidate_unresolved_exposed: number;
+  candidate_hard_blocked_by_proposal: number;
 }
 
 export interface ProjectionFreshnessSummary {
@@ -403,6 +404,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
     candidate_missing_provenance: candidateDebt.missing_provenance_count,
     candidate_promoted_without_handoff: candidateDebt.stale_promoted_without_handoff_count,
     candidate_unresolved_exposed: candidateDebt.unresolved_exposed_count,
+    candidate_hard_blocked_by_proposal: candidateDebt.hard_blocked_by_proposal_count,
   };
 
   return {
@@ -515,7 +517,7 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
     const candidateDebt = report.sections.maintenance_health.candidate_debt;
     const projectionFreshness = report.sections.maintenance_health.projection_freshness;
     lines.push('', 'Maintenance Health');
-    lines.push(`- Candidate debt: visible ${candidateDebt.visible_candidate_count} | missing provenance ${candidateDebt.missing_provenance_count} | promoted without handoff ${candidateDebt.stale_promoted_without_handoff_count} | unresolved exposed ${candidateDebt.unresolved_exposed_count}`);
+    lines.push(`- Candidate debt: visible ${candidateDebt.visible_candidate_count} | missing provenance ${candidateDebt.missing_provenance_count} | promoted without handoff ${candidateDebt.stale_promoted_without_handoff_count} | unresolved exposed ${candidateDebt.unresolved_exposed_count} | hard-blocked by proposal ${candidateDebt.hard_blocked_by_proposal_count}`);
     lines.push(`- Projection freshness: pending ${projectionFreshness.pending_reconcile_count} | failed ${projectionFreshness.failed_count} | conflict ${projectionFreshness.conflict_count} | stale ${projectionFreshness.stale_count}`);
   }
 
@@ -1113,6 +1115,7 @@ function emptyCandidateDebtMetrics(): CandidateDebtMetrics {
     missing_provenance_count: 0,
     stale_promoted_without_handoff_count: 0,
     unresolved_exposed_count: 0,
+    hard_blocked_by_proposal_count: 0,
     median_review_latency_ms: null,
   };
 }
@@ -1121,6 +1124,7 @@ function hasMaintenanceHealthSignals(health: MaintenanceHealthSummary): boolean 
   return health.candidate_debt.missing_provenance_count > 0
     || health.candidate_debt.stale_promoted_without_handoff_count > 0
     || health.candidate_debt.unresolved_exposed_count > 0
+    || health.candidate_debt.hard_blocked_by_proposal_count > 0
     || health.projection_freshness.pending_reconcile_count > 0
     || health.projection_freshness.failed_count > 0
     || health.projection_freshness.conflict_count > 0

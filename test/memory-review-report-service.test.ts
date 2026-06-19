@@ -13,7 +13,7 @@ import {
   verifyMemoryCandidateEntry,
 } from '../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../src/core/services/memory-inbox-promotion-service.ts';
-import type { MemoryCandidateEntry } from '../src/core/types.ts';
+import type { CanonicalTargetProposalEntry, MemoryCandidateEntry } from '../src/core/types.ts';
 import {
   buildMemoryReviewReport,
   formatMemoryReviewReport,
@@ -864,6 +864,88 @@ describe('memory review report service', () => {
     const formatted = formatMemoryReviewReport(buildMemoryReviewReport(input));
     expect(formatted).toContain('No reportable memory exceptions.');
     expect(formatted).not.toContain('Maintenance Health');
+  });
+
+  test('candidate debt collection treats unstable-subject blocked proposals as hard-blocked audit state', async () => {
+    const timestamp = new Date(now);
+    const blockedCandidate: MemoryCandidateEntry = {
+      id: 'candidate:blocked',
+      scope_id: 'workspace:default',
+      candidate_type: 'note_update',
+      proposed_content: 'Ambiguous direction note needs a stable subject.',
+      source_refs: ['Source: blocked candidate test'],
+      generated_by: 'manual',
+      extraction_kind: 'inferred',
+      confidence_score: 0.7,
+      importance_score: 0.7,
+      recurrence_score: 0,
+      sensitivity: 'work',
+      status: 'captured',
+      target_object_type: null,
+      target_object_id: null,
+      reviewed_at: null,
+      review_reason: null,
+      verification_status: 'unverified',
+      verification_method: null,
+      verification_evidence: null,
+      verification_source_refs: [],
+      verified_at: null,
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+    const blockedProposal = canonicalTargetProposal('proposal:blocked', {
+      source_candidate_id: blockedCandidate.id,
+      linked_candidate_ids: [blockedCandidate.id],
+      status: 'blocked',
+      status_reason: 'unstable_subject_identity',
+      proposed_slug: 'concepts/unstable-subject-identity',
+    }) as CanonicalTargetProposalEntry;
+    const engine = {
+      listMemoryMutationEvents: async () => [],
+      listMemoryCandidateEntries: async () => [blockedCandidate],
+      listCanonicalHandoffEntries: async () => [],
+      listCanonicalTargetProposalEntries: async () => [blockedProposal],
+    } as unknown as BrainEngine;
+
+    const input = await collectMemoryReportInput(engine, 'workspace:default', 10, now);
+
+    expect(input.candidate_debt).toMatchObject({
+      visible_candidate_count: 1,
+      unresolved_exposed_count: 0,
+      hard_blocked_by_proposal_count: 1,
+    });
+  });
+
+  test('hard-blocked proposal debt is reportable without making report health warn', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+      candidate_debt: {
+        visible_candidate_count: 1,
+        missing_provenance_count: 0,
+        stale_promoted_without_handoff_count: 0,
+        unresolved_exposed_count: 0,
+        hard_blocked_by_proposal_count: 1,
+        median_review_latency_ms: null,
+      },
+      canonical_target_proposals: [
+        canonicalTargetProposal('proposal:blocked', {
+          source_candidate_id: 'candidate:blocked',
+          linked_candidate_ids: ['candidate:blocked'],
+          status: 'blocked',
+          status_reason: 'unstable_subject_identity',
+          proposed_slug: 'concepts/unstable-subject-identity',
+        }),
+      ],
+    });
+
+    expect(report.summary).toMatchObject({
+      candidate_unresolved_exposed: 0,
+      candidate_hard_blocked_by_proposal: 1,
+    });
+    expect(report.health).toEqual({ status: 'ok', reasons: [] });
+    expect(formatMemoryReviewReport(report)).toContain('hard-blocked by proposal 1');
+    expect(formatMemoryReviewReport(report)).not.toContain('unresolved exposed 1');
   });
 
   test('collects staged candidate review items without proposed candidate content', async () => {

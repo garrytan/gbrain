@@ -341,6 +341,11 @@ describe('candidate signal service ranking and hints', () => {
         target_object_id: null,
         proposed_content: 'MBrain retrieval direction has a staged canonical binding patch.',
       }),
+      makeCandidate('missing-target-with-blocked-proposal', {
+        target_object_type: null,
+        target_object_id: null,
+        proposed_content: 'MBrain retrieval direction has no stable canonical subject yet.',
+      }),
     ], [], [
       makeProposal('missing-target-with-proposal', {
         id: 'proposal:missing-target',
@@ -357,6 +362,12 @@ describe('candidate signal service ranking and hints', () => {
         status: 'patch_staged',
         proposed_slug: 'systems/mbrain-retrieval-direction-patch-staged',
       }),
+      makeProposal('missing-target-with-blocked-proposal', {
+        id: 'proposal:blocked-target',
+        status: 'blocked',
+        status_reason: 'unstable_subject_identity',
+        proposed_slug: 'concepts/unstable-subject-identity',
+      }),
     ]), {
       query: 'mbrain retrieval direction',
       scenario: 'knowledge_qa',
@@ -367,7 +378,7 @@ describe('candidate signal service ranking and hints', () => {
       limit: 10,
     });
 
-    expect(result.candidate_signals).toHaveLength(4);
+    expect(result.candidate_signals).toHaveLength(5);
     const signals = Object.fromEntries(result.candidate_signals.map(signal => [signal.candidate_id, signal]));
 
     expect(signals['missing-target-without-proposal']).toMatchObject({
@@ -401,6 +412,16 @@ describe('candidate signal service ranking and hints', () => {
       activation: 'candidate_only',
       authority: 'unreviewed_candidate',
     });
+    expect(signals['missing-target-with-blocked-proposal']).toMatchObject({
+      promotion_hint: 'no_action',
+      review_priority_hint: 'no_priority',
+      activation: 'candidate_only',
+      authority: 'unreviewed_candidate',
+    });
+    expect(signals['missing-target-with-blocked-proposal']!.summary).toContain('blocked canonical target proposal');
+    expect(signals['missing-target-with-blocked-proposal']!.summary).toContain('proposal:blocked-target');
+    expect(signals['missing-target-with-blocked-proposal']!.promotion_hint).not.toBe('needs_canonical_target_proposal');
+    expect(signals['missing-target-with-blocked-proposal']!.pressure_reasons).not.toContain('unresolved_exposed_candidate');
   });
 
   test('personal, secret, and unknown-sensitivity candidates are suppressed in work retrieval', async () => {

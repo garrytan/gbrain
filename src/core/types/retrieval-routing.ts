@@ -496,6 +496,7 @@ export type CandidateSignalPressureReason =
   | 'missing_target'
   | 'stale_promoted_without_handoff'
   | 'unresolved_exposed_candidate'
+  | 'canonical_target_proposal_hard_blocked'
   | 'high_recurrence';
 
 export type CandidateSignalReviewPriorityHint =

@@ -179,9 +179,12 @@ function isTerminal(candidate: MemoryCandidateEntry): boolean {
 }
 
 function activeProposalByCandidateId(
-  proposals: CanonicalTargetProposalEntry[],
-): Map<string, CanonicalTargetProposalEntry> {
-  const output = new Map<string, CanonicalTargetProposalEntry>();
+  proposals: Array<Pick<
+    CanonicalTargetProposalEntry,
+    'source_candidate_id' | 'linked_candidate_ids' | 'bound_candidate_ids' | 'status' | 'status_reason'
+  >>,
+): Map<string, Pick<CanonicalTargetProposalEntry, 'status' | 'status_reason'>> {
+  const output = new Map<string, Pick<CanonicalTargetProposalEntry, 'status' | 'status_reason'>>();
   for (const proposal of proposals) {
     if (!isActiveProposalStatus(proposal.status)) continue;
     for (const candidateId of proposalCandidateIds(proposal)) {
@@ -191,7 +194,9 @@ function activeProposalByCandidateId(
   return output;
 }
 
-function proposalCandidateIds(proposal: CanonicalTargetProposalEntry): string[] {
+function proposalCandidateIds(
+  proposal: Pick<CanonicalTargetProposalEntry, 'source_candidate_id' | 'linked_candidate_ids' | 'bound_candidate_ids'>,
+): string[] {
   return [
     proposal.source_candidate_id,
     ...proposal.linked_candidate_ids,

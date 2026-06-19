@@ -113,7 +113,10 @@ export interface InboxLeadResult {
 export interface CandidateDebtInput {
   candidates: MemoryCandidateEntry[];
   canonical_handoff_candidate_ids?: string[];
-  canonical_target_proposals?: CanonicalTargetProposalEntry[];
+  canonical_target_proposals?: Array<Pick<
+    CanonicalTargetProposalEntry,
+    'source_candidate_id' | 'linked_candidate_ids' | 'bound_candidate_ids' | 'status' | 'status_reason'
+  >>;
   now?: Date | string;
 }
 
