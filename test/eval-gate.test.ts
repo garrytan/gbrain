@@ -19,6 +19,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import type { SearchResult } from '../src/core/types.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runEvalGate } from '../src/commands/eval-gate.ts';
 import {
@@ -95,6 +97,27 @@ function writeQrelsFile(dir: string, queries: unknown[]): string {
   const path = join(dir, 'test.qrels.json');
   writeFileSync(path, JSON.stringify({ schema_version: 1, queries }, null, 2));
   return path;
+}
+
+function fakeSearchResult(slug: string): SearchResult {
+  return {
+    slug,
+    chunk_id: 1,
+    chunk_index: 0,
+    chunk_text: '',
+    score: 1,
+    title: slug,
+    page_kind: 'markdown',
+    source_id: 'default',
+  } as unknown as SearchResult;
+}
+
+function makeSearchStubEngine(results: SearchResult[]): BrainEngine {
+  return {
+    kind: 'pglite',
+    searchKeyword: async (_q: string, opts?: { limit?: number }) => results.slice(0, opts?.limit),
+    searchVector: async () => [],
+  } as unknown as BrainEngine;
 }
 
 // process.exit hijacker — capture exit code without actually exiting.
@@ -258,6 +281,37 @@ describe('eval gate: JSON envelope shape', () => {
       const serialized = JSON.stringify(drill);
       expect(serialized).not.toContain('private query text');
       expect(serialized).not.toContain('private/captured-slug');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('regression gate compares current rows at captured result count by default', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'eval-gate-test-'));
+    const row: BaselineRow = {
+      ...makeRow('stable short capture', ['a', 'b']),
+      tool_name: 'search',
+    };
+    const baseline = writeBaselineFile(dir, [row]);
+    const stub = makeSearchStubEngine([
+      fakeSearchResult('a'),
+      fakeSearchResult('b'),
+      fakeSearchResult('c'),
+      fakeSearchResult('d'),
+    ]);
+    try {
+      const realLog = console.log;
+      let captured = '';
+      console.log = (msg: string) => { captured += msg + '\n'; };
+      try {
+        await withExitCapture(() => runEvalGate(stub, ['--baseline', baseline, '--json', '--drill']));
+      } finally {
+        console.log = realLog;
+      }
+      const envelope = JSON.parse(captured.trim());
+      expect(envelope.verdict).toBe('pass');
+      expect(envelope.regression_gate.summary.mean_jaccard).toBe(1);
+      expect(envelope.regression_gate.drill.top_low_overlap[0].current_count).toBe(2);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

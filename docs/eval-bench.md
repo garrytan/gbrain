@@ -39,6 +39,19 @@ gbrain bench publish --from /tmp/captured.ndjson --to ~/.gbrain/baselines/person
 gbrain eval gate --baseline ~/.gbrain/baselines/personal.baseline.ndjson
 ```
 
+When a regression gate fails, rerun it with a privacy-safe drill:
+
+```bash
+gbrain eval gate --baseline ~/.gbrain/baselines/personal.baseline.ndjson --json --drill
+```
+
+The drill lists only `query_hash`, counts, Jaccard, top-1 status, and latency.
+It deliberately omits query text, slugs, page titles, and chunks, so local
+automation can report the failing drivers without leaking brain contents.
+Regression gates compare current results at each row's captured result count by
+default; this avoids false Jaccard drops when smart result cutting captured a
+tight result set but an unconstrained replay would return a broader top-20.
+
 ### Privacy posture (D9)
 
 **Public baselines in `gbrain-evals` are hermetic-synthetic ONLY.** Real
