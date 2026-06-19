@@ -883,6 +883,13 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         } catch (e) {
           logError('dispatch.global-maintenance-gate', e);
         }
+        const dispatchGlobalMaintenanceSafely = async () => {
+          try {
+            await dispatchGlobalMaintenance(engine, queue, { repoPath, slot, timeoutMs, jsonMode });
+          } catch (e) {
+            if (jsonMode) process.stderr.write(JSON.stringify({ event: 'global_maintenance_dispatch_failed', error: e instanceof Error ? e.message : String(e) }) + '\n');
+          }
+        };
 
         // Track time since last full cycle for the 60-min floor.
         const FULL_CYCLE_FLOOR_MIN = 60;
@@ -928,11 +935,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // the brain-wide work happens (single-flight, no RSS blowout). Only on
           // the per-source path (legacy single-source still runs everything).
           if (!result.legacy_fallback) {
-            try {
-              await dispatchGlobalMaintenance(engine, queue, { repoPath, slot, timeoutMs, jsonMode });
-            } catch (e) {
-              if (jsonMode) process.stderr.write(JSON.stringify({ event: 'global_maintenance_dispatch_failed', error: e instanceof Error ? e.message : String(e) }) + '\n');
-            }
+            await dispatchGlobalMaintenanceSafely();
           }
           if (result.dispatched.length > 0 || result.legacy_fallback) {
             lastFullCycleAt = Date.now();
@@ -958,11 +961,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           }
         } else {
           if (shouldDispatchGlobalMaintenance) {
-            try {
-              await dispatchGlobalMaintenance(engine, queue, { repoPath, slot, timeoutMs, jsonMode });
-            } catch (e) {
-              if (jsonMode) process.stderr.write(JSON.stringify({ event: 'global_maintenance_dispatch_failed', error: e instanceof Error ? e.message : String(e) }) + '\n');
-            }
+            await dispatchGlobalMaintenanceSafely();
           }
           // Small targeted plan — submit individual handlers per step.
           // D9 content-hash idempotency keys (from computeRecommendations).
