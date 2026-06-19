@@ -36,7 +36,7 @@
 
 import { createHash } from 'node:crypto';
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
-import { chat as gatewayChat } from '../ai/gateway.ts';
+import { chat as gatewayChat, getChatModelSafe } from '../ai/gateway.ts';
 import { GBrainError } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine, Take, TakeResolution } from '../engine.ts';
@@ -395,7 +395,7 @@ class GradeTakesPhase extends BaseCyclePhase {
     const autoResolve = opts.autoResolve ?? false; // D17 default OFF
     const autoResolveThreshold = opts.autoResolveThreshold ?? 0.95; // D12 conservative
     const resolvedByLabel = opts.resolvedByLabel ?? 'gbrain:grade_takes';
-    const judgeModelId = opts.model ?? 'claude-sonnet-4-6';
+    const judgeModelId = opts.model ?? getChatModelSafe();
 
     const useEnsemble = opts.useEnsemble ?? false;
     const ensembleThreshold = opts.ensembleThreshold ?? 0.85;
