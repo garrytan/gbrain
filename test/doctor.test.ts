@@ -93,6 +93,22 @@ describe('doctor command', () => {
     expect(source).toContain('gbrain repair-jsonb');
   });
 
+  test('doctor remediate JSON output wins over dry-run human summary', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const jsonBranch = source.indexOf('if (jsonOutput) {\n    console.log(JSON.stringify(result, null, 2));');
+    const dryRunBranch = source.indexOf('} else if (dryRun && result.submitted.length > 0) {');
+    expect(jsonBranch).toBeGreaterThan(0);
+    expect(dryRunBranch).toBeGreaterThan(jsonBranch);
+  });
+
+  test('doctor remediate wires progress hooks to stderr', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    expect(source).toContain('onStepStart: (step, total, rec) =>');
+    expect(source).toContain('console.error(`[remediate] [${step}/${total}] ${rec.job} (${rec.severity})...`)');
+    expect(source).toContain('onStepEnd: (sr) =>');
+    expect(source).toContain('console.error(`[remediate]    ${sr.id}${job} -> ${sr.status}`)');
+  });
+
   test('jsonb_integrity check covers the four JSONB sites fixed in v0.12.1', async () => {
     const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
     expect(source).toMatch(/table:\s*'pages'.*col:\s*'frontmatter'/);
