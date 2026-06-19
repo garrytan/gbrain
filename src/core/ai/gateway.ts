@@ -619,6 +619,21 @@ export function getChatModel(): string {
   return requireConfig().chat_model ?? DEFAULT_CHAT_MODEL;
 }
 
+/**
+ * Like getChatModel() but never throws. Returns the configured chat model when
+ * the gateway is initialized, else `fallback`. Use for cost-estimate / audit
+ * labels in code paths that may run before the gateway is configured (e.g. unit
+ * tests of cycle phases) — so the recorded model matches the model actually
+ * used in production instead of a hardcoded constant.
+ */
+export function getChatModelSafe(fallback = 'claude-sonnet-4-6'): string {
+  try {
+    return getChatModel();
+  } catch {
+    return fallback;
+  }
+}
+
 export function getChatFallbackChain(): string[] {
   return requireConfig().chat_fallback_chain ?? [];
 }
