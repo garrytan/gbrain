@@ -1020,10 +1020,38 @@ HANDLER TYPES (built in)
 
         const pidStatus = readSupervisorPid(pidFile);
         const supervisorPid = pidStatus.pid;
-        const running = pidStatus.running;
+        const pidfileRunning = pidStatus.running;
 
         const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
         const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
+
+        // issue #2227 fix #1/#3: the pidfile is HOME-derived, so a supervisor
+        // started under a different $HOME (keeper=/root vs ops=/data) reads as
+        // "not running" here even when it is healthy — the false signal that
+        // makes an operator spawn a duplicate. Fall back to the queue-scoped DB
+        // singleton lock (#1849), the HOME-independent authority. PID-reuse-safe:
+        // isLockHolderLive keys on lock freshness, never process.kill.
+        const supQueue = parseFlag(args, '--queue') ?? 'default';
+        let detectedViaDbLock = false;
+        let dbLockHolder: { holder_pid: number; holder_host: string } | null = null;
+        if (!pidfileRunning) {
+          try {
+            const { inspectLock, isLockHolderLive } = await import('../core/db-lock.ts');
+            const { supervisorLockId, SUPERVISOR_LOCK_TTL_MIN } = await import('../core/minions/supervisor.ts');
+            const snap = await inspectLock(engine, supervisorLockId(supQueue));
+            if (snap && isLockHolderLive(snap, SUPERVISOR_LOCK_TTL_MIN)) {
+              detectedViaDbLock = true;
+              dbLockHolder = { holder_pid: snap.holder_pid, holder_host: snap.holder_host };
+            }
+          } catch {
+            // Pre-migration brains / transient DB errors: fall back to pidfile-only.
+          }
+        }
+        const running = pidfileRunning || detectedViaDbLock;
+        // Surface the supervisor's recorded config from the latest `started`
+        // event (concurrency + effective --max-rss) so split-$HOME deployments
+        // see what the live-but-pidfile-invisible supervisor is running.
+        const startedEvt = events.filter(e => e.event === 'started').pop() ?? null;
         // Shared classifier — same code path runs in `gbrain doctor` so the
         // two surfaces cannot drift on what counts as a crash. Supersedes
         // v0.35.4.0's binary `classifyWorkerExit({code})` on this surface;
@@ -1038,15 +1066,20 @@ HANDLER TYPES (built in)
           nice_requested: w.nice_requested,
           nice: w.nice_now,
         }));
-        const supervisorNice = running && supervisorPid !== null
+        const supervisorNice = pidfileRunning && supervisorPid !== null
           ? getEffectiveNiceness(supervisorPid)
           : null;
 
         const status = {
           running,
-          supervisor_pid: supervisorPid,
+          detected_via: detectedViaDbLock ? 'db_lock' : (pidfileRunning ? 'pidfile' : null),
+          supervisor_pid: supervisorPid ?? dbLockHolder?.holder_pid ?? null,
+          db_lock_holder: dbLockHolder,
           pid_file: pidFile,
+          queue: supQueue,
           last_start: lastStart,
+          concurrency: typeof startedEvt?.concurrency === 'number' ? startedEvt.concurrency : null,
+          max_rss_mb: typeof startedEvt?.max_rss_mb === 'number' ? startedEvt.max_rss_mb : null,
           crashes_24h: summary.total,
           clean_exits_24h: summary.clean_exits,
           crashes_by_cause: summary.by_cause,
@@ -1058,9 +1091,11 @@ HANDLER TYPES (built in)
         if (jsonMode) {
           console.log(JSON.stringify(status, null, 2));
         } else {
-          console.log(`Supervisor: ${running ? 'running' : 'not running'}`);
-          if (supervisorPid) console.log(`  PID:           ${supervisorPid}`);
+          const via = detectedViaDbLock ? ' (detected via DB lock; pidfile not found at the configured path)' : '';
+          console.log(`Supervisor: ${running ? 'running' : 'not running'}${via}`);
+          if (status.supervisor_pid) console.log(`  PID:           ${status.supervisor_pid}${detectedViaDbLock ? ` @ ${dbLockHolder?.holder_host}` : ''}`);
           console.log(`  PID file:      ${pidFile}`);
+          if (detectedViaDbLock && status.concurrency !== null) console.log(`  Concurrency:   ${status.concurrency}${status.max_rss_mb !== null ? ` (max-rss ${status.max_rss_mb}MB)` : ''}`);
           if (lastStart) console.log(`  Last start:    ${lastStart}`);
           console.log(`  Crashes (24h):     ${summary.total} (runtime=${summary.by_cause.runtime_error} oom=${summary.by_cause.oom_or_external_kill} unknown=${summary.by_cause.unknown} legacy=${summary.by_cause.legacy})`);
           console.log(`  Clean exits (24h): ${summary.clean_exits}`);
@@ -1660,6 +1695,21 @@ export async function registerBuiltinHandlers(
     // Pull default: legacy `true` for back-compat; explicit boolean wins.
     const pull = typeof job.data.pull === 'boolean' ? job.data.pull : true;
 
+    // #2194 fix #2 / codex #5 (D4): claim-time cooldown guard. A job already
+    // queued or retrying (max_attempts:2) can reach the worker after the
+    // dispatch gate decided to back this source off. Skip it here as a NO-OP
+    // (status 'skipped', NOT a failure — a failure would re-arm the cooldown).
+    if (sourceId) {
+      const { isSourceInCooldown } = await import('./autopilot-fanout.ts');
+      if (await isSourceInCooldown(engine, sourceId)) {
+        return {
+          partial: false,
+          status: 'skipped',
+          report: { reason: 'source_in_cooldown', source_id: sourceId },
+        };
+      }
+    }
+
     const report = await runCycle(engine, {
       brainDir: repoPath,
       pull,
@@ -1671,6 +1721,49 @@ export async function registerBuiltinHandlers(
         await new Promise<void>(r => setImmediate(r));
       },
     });
+
+    return {
+      partial: report.status === 'partial' || report.status === 'failed',
+      status: report.status,
+      report,
+    };
+  });
+
+  // #2194 fix #3 / #2227 bug #3 — brain-wide maintenance. Runs the `global`
+  // cycle phases (embed, orphans, purge, resolve_symbol_edges, grade_takes,
+  // calibration_profile, synthesize_concepts, skillopt) ONCE per window instead
+  // of N times concurrently across per-source cycles (the 4→10GB RSS blowout).
+  // No source_id → uses the legacy global cycle lock; stamps autopilot.last_global_at
+  // on success so the dispatch gate backs off.
+  worker.register('autopilot-global-maintenance', async (job) => {
+    const { runCycle, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY, ALL_PHASES } = await import('../core/cycle.ts');
+    const repoPath: string | null = typeof job.data.repoPath === 'string'
+      ? job.data.repoPath
+      : (await engine.getConfig('sync.repo_path')) ?? null;
+
+    const validPhases = new Set(ALL_PHASES);
+    const requested = Array.isArray(job.data.phases)
+      ? (job.data.phases as string[]).filter((p) => validPhases.has(p as never))
+      : GLOBAL_PHASES;
+    const phases = (requested.length > 0 ? requested : GLOBAL_PHASES) as typeof GLOBAL_PHASES;
+
+    const report = await runCycle(engine, {
+      brainDir: repoPath,
+      pull: false, // brain-wide DB/maintenance work never git-pulls
+      signal: job.signal,
+      phases,
+      yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
+    });
+
+    // Stamp last_global_at only on a non-failed run so a failed pass stays stale
+    // and re-dispatches next tick (self-healing retry).
+    if (report.status === 'ok' || report.status === 'clean' || report.status === 'partial') {
+      try {
+        await engine.setConfig(LAST_GLOBAL_AT_KEY, new Date().toISOString());
+      } catch (e) {
+        console.warn(`[autopilot-global-maintenance] failed to stamp last_global_at: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
 
     return {
       partial: report.status === 'partial' || report.status === 'failed',

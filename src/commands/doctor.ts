@@ -695,6 +695,9 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // issue #1801 — wedged_queue (cross-surface parity with buildChecks).
   checks.push(await computeWedgedQueueCheck(engine));
 
+  // #2194 fix #5 — warn when autopilot fan-out exceeds worker concurrency.
+  checks.push(await computeAutopilotFanoutConcurrencyCheck(engine));
+
   // v0.41 Bug 2 / Eng D8 — subagent_health surfaces rate-lease pressure to the operator.
   checks.push(await checkSubagentHealth(engine));
 
@@ -1560,6 +1563,49 @@ export async function computeWedgedQueueCheck(engine: BrainEngine): Promise<Chec
       status: 'ok',
       message: `Skipped (${e instanceof Error ? e.message : String(e)})`,
     };
+  }
+}
+
+/**
+ * #2194 fix #5: warn when autopilot's per-tick fan-out exceeds the worker's
+ * effective concurrency. Fanning out more cycles than there are worker slots
+ * guarantees waiters that race the stalled-sweeper — a silent misconfig today.
+ * Advisory (started-event concurrency is fine here; the behavior-changing clamp
+ * in resolveEffectiveFanoutMax is the one that gates on liveness). Surfaces only
+ * when a supervisor has actually started (no noise on never-supervised brains).
+ */
+export async function computeAutopilotFanoutConcurrencyCheck(engine: BrainEngine): Promise<Check> {
+  if (engine.kind !== 'postgres') {
+    return { name: 'autopilot_fanout_concurrency', status: 'ok', message: 'PGLite — single-writer, fan-out is 1' };
+  }
+  try {
+    const { resolveFanoutMax, readSupervisorConcurrency } = await import('./autopilot-fanout.ts');
+    const concurrency = await readSupervisorConcurrency('default');
+    if (concurrency === null) {
+      return { name: 'autopilot_fanout_concurrency', status: 'ok', message: 'No supervisor observed — skipping fan-out/concurrency check' };
+    }
+    const fanoutMax = await resolveFanoutMax(engine);
+    const effectiveSlots = Math.max(1, concurrency - 1);
+    if (fanoutMax > effectiveSlots) {
+      return {
+        name: 'autopilot_fanout_concurrency',
+        status: 'warn',
+        message:
+          `autopilot fan-out (${fanoutMax}/tick) exceeds worker concurrency (${concurrency}). ` +
+          `Surplus cycles queue behind the worker and race the stalled-sweeper. ` +
+          `Lower fan-out: \`gbrain config set autopilot.fanout_max_per_tick ${effectiveSlots}\`, ` +
+          `or raise the supervisor's \`--concurrency\` to ${fanoutMax + 1}. ` +
+          `(The clamp in autopilot does this automatically unless disabled.)`,
+        details: { fanout_max: fanoutMax, concurrency, effective_slots: effectiveSlots },
+      };
+    }
+    return {
+      name: 'autopilot_fanout_concurrency',
+      status: 'ok',
+      message: `fan-out ${fanoutMax}/tick within worker concurrency ${concurrency}`,
+    };
+  } catch (e) {
+    return { name: 'autopilot_fanout_concurrency', status: 'ok', message: `Skipped (${e instanceof Error ? e.message : String(e)})` };
   }
 }
 
@@ -4348,7 +4394,22 @@ export async function buildChecks(
 
     const pidStatus = readSupervisorPid(DEFAULT_PID_FILE);
     const supervisorPid = pidStatus.pid;
-    const running = pidStatus.running;
+    const pidfileRunning = pidStatus.running;
+
+    // issue #2227 fix #1/#3: DEFAULT_PID_FILE is HOME-derived, so a supervisor
+    // started under a different $HOME reads as "not running" even when healthy.
+    // Consult the queue-scoped DB singleton lock (#1849, HOME-independent) before
+    // warning. PID-reuse-safe (isLockHolderLive keys on lock freshness).
+    let detectedViaDbLock = false;
+    if (!pidfileRunning && engine) {
+      try {
+        const { inspectLock, isLockHolderLive } = await import('../core/db-lock.ts');
+        const { supervisorLockId, SUPERVISOR_LOCK_TTL_MIN } = await import('../core/minions/supervisor.ts');
+        const snap = await inspectLock(engine, supervisorLockId('default'));
+        if (snap && isLockHolderLive(snap, SUPERVISOR_LOCK_TTL_MIN)) detectedViaDbLock = true;
+      } catch { /* pre-migration / transient: pidfile-only */ }
+    }
+    const running = pidfileRunning || detectedViaDbLock;
 
     const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
     const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
@@ -4396,7 +4457,7 @@ export async function buildChecks(
         checks.push({
           name: 'supervisor',
           status: 'ok',
-          message: `running=true pid=${supervisorPid} last_start=${lastStart ?? 'unknown'} crashes_24h=${crashes24h} clean_exits_24h=${summary.clean_exits}`,
+          message: `running=true${detectedViaDbLock ? ' (detected via DB lock; pidfile not at the HOME-derived path)' : ` pid=${supervisorPid}`} last_start=${lastStart ?? 'unknown'} crashes_24h=${crashes24h} clean_exits_24h=${summary.clean_exits}`,
         });
       }
     }
@@ -7171,6 +7232,9 @@ export async function buildChecks(
     // waiting, zero live-lock active, stale completions) as a health error.
     progress.heartbeat('wedged_queue');
     checks.push(await computeWedgedQueueCheck(engine));
+    // #2194 fix #5 — autopilot fan-out vs worker concurrency mismatch.
+    progress.heartbeat('autopilot_fanout_concurrency');
+    checks.push(await computeAutopilotFanoutConcurrencyCheck(engine));
     // v0.40.4 graph_signals_coverage — global inbound-link density when
     // graph_signals is enabled in the active mode bundle.
     progress.heartbeat('graph_signals_coverage');

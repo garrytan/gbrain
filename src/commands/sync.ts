@@ -212,7 +212,7 @@ export interface SyncResult {
    * cron operators can disambiguate timeout vs pull-timeout in monitoring.
    */
   filesImported?: number;
-  reason?: 'timeout' | 'pull_timeout' | 'checkpoint_unavailable';
+  reason?: 'timeout' | 'pull_timeout' | 'stall_timeout' | 'checkpoint_unavailable';
   /**
    * v0.42.x (#1794): cumulative file paths durably banked to the checkpoint
    * across THIS run + prior resumed runs. Surfaced on every partial/blocked
@@ -1440,7 +1440,7 @@ function buildPartialResult(opts: {
   modified: number;
   deleted: number;
   renamed: number;
-  reason: 'timeout' | 'pull_timeout' | 'checkpoint_unavailable';
+  reason: 'timeout' | 'pull_timeout' | 'stall_timeout' | 'checkpoint_unavailable';
   bankedFiles?: number;
 }): SyncResult {
   return {
@@ -2053,7 +2053,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // `bankedFiles` is surfaced so a killed run shows banked progress instead of
   // looking like total loss. toCommit reports the PINNED target; last_commit is
   // never advanced on a partial (the next run resumes from the checkpoint).
-  const partial = async (reason: 'timeout' | 'pull_timeout'): Promise<SyncResult> => {
+  const partial = async (reason: 'timeout' | 'pull_timeout' | 'stall_timeout'): Promise<SyncResult> => {
     deregisterCheckpointCleanup();
     if (!checkpointDead) {
       try { await flushCheckpoint(); } catch { /* best effort — we're aborting */ }
@@ -2412,6 +2412,48 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       pacer = createNoopPacer();
     }
 
+    // #1950: progress-aware stall watchdog for the import drain. The incident
+    // was a sync wedged ~29min while ALIVE — so the lock heartbeat kept
+    // refreshing (it fires on its own timer) and the wall-clock deadline hadn't
+    // hit yet, leaving only a manual `pkill`. This keys off FORWARD IMPORT
+    // PROGRESS (progress.tick below bumps `progressAt`), not the heartbeat: if no
+    // file completes for `resolveStallAbortSeconds()`, abort. The abort signal is
+    // composed into `opts.signal`, so the existing per-iteration abort checks,
+    // pacer.acquire/pace, and parallel-worker break-loops all observe it; the
+    // drain returns partial() (last_commit unchanged, next run resumes from the
+    // checkpoint) and withRefreshingLock's finally releases the lock. Limits
+    // (TODOS: #1950 follow-up — thread a cancellation signal through importFile):
+    // the abort is observed BETWEEN files (the per-iteration checks + the next
+    // importOnePath's pre-acquire check), so a hang INSIDE a single importFile
+    // call is not interrupted until that call returns — the watchdog fires and
+    // logs, but the in-flight file finishes (or the wall-clock hard deadline is
+    // the eventual backstop). This catches the documented #1950 incident shape
+    // (a slow-but-progressing drain, many files) and a stalled between-file
+    // drain; a single wedged file or a fully starved event loop is out of scope
+    // here. stallAborted distinguishes this from a user --timeout/SIGINT so the
+    // partial result reports `stall_timeout`, not `timeout`.
+    const stallSeconds = resolveStallAbortSeconds();
+    const progressAt = { last: Date.now() };
+    let stallAborted = false;
+    let stallTimer: ReturnType<typeof setInterval> | undefined;
+    if (stallSeconds > 0) {
+      const stallMs = stallSeconds * 1000;
+      const stallController = new AbortController();
+      stallTimer = setInterval(() => {
+        if (Date.now() - progressAt.last >= stallMs) {
+          serr(
+            `[sync] no import progress for ${stallSeconds}s — aborting (stall watchdog). ` +
+            `The per-source lock will release; the next 'gbrain sync' resumes from the checkpoint.`,
+          );
+          stallAborted = true;
+          stallController.abort();
+        }
+      }, Math.min(5000, stallMs));
+      // Don't keep the process alive on the watchdog alone.
+      (stallTimer as unknown as { unref?: () => void }).unref?.();
+      opts = { ...opts, signal: composeAbortSignals(opts.signal, stallController.signal) };
+    }
+
     async function importOnePath(eng: BrainEngine, path: string): Promise<void> {
       const filePath = join(syncRepoPath, path);
       if (!existsSync(filePath)) {
@@ -2432,6 +2474,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         // its row so it can't age doctor to a permanent FAIL. (This covers the
         // net-zero add-then-delete range where the path isn't in filtered.deleted.)
         succeededPaths.push(path);
+        progressAt.last = Date.now(); // #1950: forward progress → reset stall watchdog
         progress.tick(1, `skip:${path}`);
         return;
       }
@@ -2487,6 +2530,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       } finally {
         permit.release();
       }
+      progressAt.last = Date.now(); // #1950: forward progress → reset stall watchdog
       progress.tick(1, path);
       // v0.42.x (#1794): keep the lock-refresh heartbeat alive on big imports.
       await maybeYield();
@@ -2513,7 +2557,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           // serial fallback inside the parallel branch (database_url unset).
           if (opts.signal?.aborted) {
             progress.finish();
-            return await partial('timeout');
+            return await partial(stallAborted ? 'stall_timeout' : 'timeout');
           }
           await importOnePath(engine, path);
         }
@@ -2577,7 +2621,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         // primary serial site.
         if (opts.signal?.aborted) {
           progress.finish();
-          return await partial('timeout');
+          return await partial(stallAborted ? 'stall_timeout' : 'timeout');
         }
         await importOnePath(engine, path);
       }
@@ -2586,6 +2630,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // paced-backfill: release any blocked acquirers + clear pacer state on
       // every exit path (including the early partial('timeout') returns above).
       pacer.dispose();
+      // #1950: tear down the stall watchdog on every import-phase exit (normal,
+      // partial('timeout'), or throw). The try wrapping the import loop guarantees
+      // this runs before any post-import bookmark/anchor work.
+      if (stallTimer) clearInterval(stallTimer);
     }
 
     progress.finish();
@@ -2597,7 +2645,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // the bookmark write below. By returning partial here, we preserve
     // the D-V3-1 invariant that abort means "never advance last_commit."
     if (opts.signal?.aborted) {
-      return await partial('timeout');
+      return await partial(stallAborted ? 'stall_timeout' : 'timeout');
     }
   }
 
@@ -3145,6 +3193,26 @@ export interface HardDeadlineResolution {
   graceMs: number;
   /** Where the deadline came from (for the armed-log line + tests). */
   reason: string;
+}
+
+/**
+ * #1950: default no-import-progress window before the in-band stall watchdog
+ * aborts the drain. Generous on purpose — it must clear one legitimately large
+ * file (cross-region, big page) without false-tripping; one file taking longer
+ * than this trips it (documented limit). Distinct from the wall-clock hard
+ * deadline (whole-run cap) and the lock heartbeat (refreshes regardless of
+ * import progress). Env-tunable; <=0 disables.
+ */
+export const DEFAULT_SYNC_STALL_ABORT_SEC = 900;
+
+export function resolveStallAbortSeconds(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env.GBRAIN_SYNC_STALL_ABORT_SECONDS;
+  if (raw === undefined || raw === '') return DEFAULT_SYNC_STALL_ABORT_SEC;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return DEFAULT_SYNC_STALL_ABORT_SEC;
+  return n; // n <= 0 disables the watchdog
 }
 
 /**

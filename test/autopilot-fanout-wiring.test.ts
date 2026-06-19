@@ -28,8 +28,11 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     );
   });
 
-  test('imports resolveFanoutMax (so PGLite gets fanoutMax=1 per codex P1-3)', () => {
-    expect(AUTOPILOT_SRC).toMatch(/resolveFanoutMax/);
+  test('imports resolveEffectiveFanoutMax (clamps to worker concurrency; PGLite base still 1)', () => {
+    // #2194 fix #1: autopilot now resolves the CLAMPED fan-out (gated on a live
+    // supervisor) instead of the raw resolveFanoutMax. The clamp wraps
+    // resolveFanoutMax, so PGLite's base-1 still holds (codex P1-3).
+    expect(AUTOPILOT_SRC).toMatch(/resolveEffectiveFanoutMax/);
   });
 
   test('calls dispatchPerSource within the shouldFullCycle branch', () => {
@@ -40,7 +43,7 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(dispatchIdx).toBeGreaterThan(-1);
     // Verify shouldFullCycle is structurally near the call (within
     // ~3000 chars of source, roughly the same if/else branch)
-    const fullCycleIdx = AUTOPILOT_SRC.indexOf('shouldFullCycle');
+    const fullCycleIdx = AUTOPILOT_SRC.indexOf('else if (shouldFullCycle)');
     expect(fullCycleIdx).toBeGreaterThan(-1);
     expect(Math.abs(dispatchIdx - fullCycleIdx)).toBeLessThan(3000);
   });
