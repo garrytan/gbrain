@@ -34,6 +34,9 @@
  */
 
 import type { SupportedCodeLanguage } from './code.ts';
+// Type-only cycle: qualified-names.ts imports only a TYPE from code.ts, which
+// dynamically imports this module — so this value import has no runtime cycle.
+import { buildQualifiedName } from './qualified-names.ts';
 
 export interface ExtractedEdge {
   /**
@@ -88,6 +91,11 @@ const RECEIVER_RESOLUTION_LANGS: ReadonlySet<SupportedCodeLanguage> = new Set([
   'tsx',
   'javascript',
   'python',
+  // C/C++ (and MQL, which reuses the tree-sitter-cpp shapes) resolve the
+  // IMPLICIT receiver of an intra-class call to the enclosing class. See
+  // resolveCppReceiver.
+  'cpp',
+  'mql',
 ] as const);
 
 /**
@@ -110,6 +118,10 @@ const CALL_CONFIG: Partial<Record<SupportedCodeLanguage, CallConfig>> = {
   go:         { callNodeTypes: new Set(['call_expression']), calleeFieldName: 'function' },
   rust:       { callNodeTypes: new Set(['call_expression', 'method_call_expression']), calleeFieldName: 'function' },
   java:       { callNodeTypes: new Set(['method_invocation']), calleeFieldName: 'name' },
+  // C++ / MQL (tree-sitter-cpp): bare-token call edges (no receiver-type
+  // resolution yet — same baseline as Go/Java).
+  cpp:        { callNodeTypes: new Set(['call_expression']), calleeFieldName: 'function' },
+  mql:        { callNodeTypes: new Set(['call_expression']), calleeFieldName: 'function' },
 };
 
 /**
@@ -168,6 +180,257 @@ function sanitizeIdent(s: string): string | null {
 }
 
 /**
+ * Extract a C/C++/MQL method name from a `function_definition` by walking the
+ * `declarator` chain (function_definition > [ptr/ref_declarator >]
+ * function_declarator > field_identifier/identifier). Mirrors
+ * code.ts:extractSymbolName's declarator handling; kept local to avoid a
+ * runtime import cycle (code.ts dynamically imports this module). Verified
+ * against tree-sitter-cpp: `function_definition.declarator` →
+ * `function_declarator.declarator` → `field_identifier`.
+ */
+function cppMethodName(funcDef: any): string | null {
+  let cur = funcDef;
+  for (let i = 0; i < 8 && cur; i++) {
+    if (cur.type === 'identifier' || cur.type === 'field_identifier') {
+      return sanitizeIdent(cur.text as string);
+    }
+    const d = cur.childForFieldName?.('declarator');
+    if (!d) return null;
+    cur = d;
+  }
+  return null;
+}
+
+/**
+ * Out-of-line member-definition scope. For a top-level `function_definition`
+ * whose declarator chain reaches a `qualified_identifier` (`CFoo::Bar`),
+ * returns `{ scope: 'CFoo', name: 'Bar' }`; null for ordinary definitions.
+ */
+function cppQualifiedDefScope(funcDef: any): { scope: string; name: string } | null {
+  let cur = funcDef.childForFieldName?.('declarator');
+  for (let i = 0; i < 8 && cur; i++) {
+    if (cur.type === 'qualified_identifier') {
+      const scope = cur.childForFieldName('scope')?.text as string | undefined;
+      const name = cur.childForFieldName('name')?.text as string | undefined;
+      if (!scope || !name) return null;
+      const s = sanitizeIdent(scope);
+      const n = sanitizeIdent(name);
+      return s && n ? { scope: s, name: n } : null;
+    }
+    cur = cur.childForFieldName?.('declarator');
+  }
+  return null;
+}
+
+/**
+ * Count the methods named `name` declared by a `class_specifier` /
+ * `struct_specifier` body: inline `function_definition`s AND method prototypes
+ * (`field_declaration` whose declarator is a `function_declarator`). This is
+ * the canonical overload count — out-of-line definitions are implementations of
+ * these declarations, not additional methods, so they are NOT counted here
+ * (counting both would double-count and look like a false overload).
+ */
+function countCppClassBodyMethods(classNode: any, name: string): number {
+  const body = classNode.childForFieldName?.('body');
+  if (!body) return 0;
+  let count = 0;
+  for (const child of body.namedChildren ?? []) {
+    if (child.type === 'function_definition') {
+      if (cppMethodName(child) === name) count++;
+    } else if (child.type === 'field_declaration') {
+      // Only method prototypes (declarator is a function_declarator), not data
+      // members.
+      const d = child.childForFieldName?.('declarator');
+      if (d?.type === 'function_declarator' && cppMethodName(child) === name) count++;
+    }
+  }
+  return count;
+}
+
+/** Walk to the translation_unit root. */
+function walkToRoot(node: any): any {
+  let r = node;
+  while (r.parent) r = r.parent;
+  return r;
+}
+
+/** Find a top-level `class_specifier` / `struct_specifier` named `className`. */
+function findCppClassSpecifier(root: any, className: string): any | null {
+  for (const child of root.namedChildren ?? []) {
+    if (
+      (child.type === 'class_specifier' || child.type === 'struct_specifier') &&
+      (child.childForFieldName('name')?.text as string | undefined) === className
+    ) {
+      return child;
+    }
+  }
+  return null;
+}
+
+/**
+ * Count the methods named `methodName` belonging to class `className` across a
+ * whole translation unit. Prefers the in-file `class_specifier` body (the
+ * canonical declaration site); when the class is declared in another file (the
+ * impl-only `.cpp` shape), falls back to counting out-of-line definitions whose
+ * `qualified_identifier` scope matches.
+ */
+function countCppClassMethodsInFile(root: any, className: string, methodName: string): number {
+  const classNode = findCppClassSpecifier(root, className);
+  if (classNode) return countCppClassBodyMethods(classNode, methodName);
+  let count = 0;
+  for (const child of root.namedChildren ?? []) {
+    if (child.type === 'function_definition') {
+      const ool = cppQualifiedDefScope(child);
+      if (ool && ool.scope === className && ool.name === methodName) count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * If `declNode` (a `field_declaration` or local `declaration`) declares
+ * `recvName` with a USER-CLASS type (`type_identifier`, e.g.
+ * `CWorker m_worker;`), return that type name. Returns null for primitive
+ * types (`int m_count;` → type is `primitive_type`, not a class) or a name
+ * mismatch — so a method call on a primitive never falsely qualifies.
+ */
+function cppDeclaredClassType(declNode: any, recvName: string): string | null {
+  if (cppMethodName(declNode) !== recvName) return null;
+  const typeNode = declNode.childForFieldName?.('type');
+  if (typeNode?.type === 'type_identifier') return sanitizeIdent(typeNode.text as string);
+  return null;
+}
+
+/**
+ * Resolve the declared class type of a call receiver (`m_worker` in
+ * `m_worker.DoWork()`). Checks, in order: a local variable declaration in the
+ * enclosing method body, then a member field of the enclosing class (found via
+ * the inline `class_specifier` or, for an out-of-line method, the class named
+ * by the definition's `qualified_identifier` scope). Returns null when the
+ * receiver isn't a resolvable class-typed field/local — caller stays bare.
+ */
+function resolveCppReceiverDeclaredType(callNode: any, recvName: string): string | null {
+  let node = callNode.parent;
+  let funcBody: any = null;
+  let className: string | null = null;
+  for (let i = 0; i < WALK_DEPTH_CAP && node; i++) {
+    if (!funcBody && node.type === 'function_definition') {
+      funcBody = node.childForFieldName('body');
+      const ool = cppQualifiedDefScope(node);
+      if (ool) className = className ?? ool.scope;
+    }
+    if (node.type === 'class_specifier' || node.type === 'struct_specifier') {
+      className = (node.childForFieldName('name')?.text as string | undefined) ?? className;
+      break;
+    }
+    node = node.parent;
+  }
+
+  // 1. Local variable declaration in the enclosing method body.
+  if (funcBody) {
+    for (const child of funcBody.namedChildren ?? []) {
+      if (child.type === 'declaration') {
+        const t = cppDeclaredClassType(child, recvName);
+        if (t) return t;
+      }
+    }
+  }
+
+  // 2. Member field of the enclosing class.
+  if (className) {
+    const classNode = findCppClassSpecifier(walkToRoot(callNode), className);
+    const body = classNode?.childForFieldName('body');
+    for (const child of body?.namedChildren ?? []) {
+      if (child.type === 'field_declaration') {
+        const t = cppDeclaredClassType(child, recvName);
+        if (t) return t;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * C/C++/MQL receiver resolution. Resolves an IMPLICIT-receiver call — a bare
+ * `m()` (the MQL idiom) or `this->m()` — to its class as `C.m` (dotted, matching
+ * the def's qualified name so getCallersOf/getCalleesOf align). Handles two
+ * enclosing shapes:
+ *   - INLINE: the call sits inside a method defined in the class body → walk up
+ *     to the enclosing `class_specifier`.
+ *   - OUT-OF-LINE: the call sits inside `C::m(){...}` at top level → the class
+ *     is named by the definition's `qualified_identifier` scope.
+ *
+ * The honest precision boundary for implicit-self:
+ *   - exactly 1 declaration of `m` in the class → `C.m`
+ *   - 0 (global/library call like `MathAbs`)     → null → stay bare
+ *   - >1 (overload)                              → null → stay bare (no false edge)
+ *
+ * Explicit member/object receivers (`m_field.m()`, `obj.m()`) resolve to the
+ * RECEIVER's declared class type (`CWorker m_worker;` → `CWorker.m`). The type
+ * is explicit, so the class attribution is certain — no sibling-count needed.
+ * An unresolvable receiver (parameter, unknown, primitive) stays bare.
+ */
+function resolveCppReceiver(
+  callNode: any,
+  callee: any,
+  language: SupportedCodeLanguage,
+  bareCallee: string,
+): string | null {
+  const qualify = (className: string): string =>
+    buildQualifiedName({
+      language,
+      symbolName: bareCallee,
+      symbolType: 'method',
+      parentSymbolPath: [className],
+    })!;
+
+  // A call is one of: bare `m()` (implicit self), `this->m()` (implicit self),
+  // or `recv.m()` / `recv->m()` (explicit receiver → resolve its declared type).
+  let implicitSelf = false;
+  if (callee.type === 'identifier') {
+    implicitSelf = true;
+  } else if (callee.type === 'field_expression') {
+    const arg = callee.childForFieldName('argument');
+    const argText = (arg?.text ?? '') as string;
+    if (argText === 'this' || argText === '(*this)') {
+      implicitSelf = true;
+    } else if (arg?.type === 'identifier') {
+      const recvType = resolveCppReceiverDeclaredType(callNode, argText);
+      return recvType ? qualify(recvType) : null;
+    } else {
+      return null;
+    }
+  } else {
+    return null;
+  }
+  if (!implicitSelf) return null;
+
+  // Walk up looking for the enclosing class (inline) or out-of-line definition.
+  let node = callNode.parent;
+  for (let i = 0; i < WALK_DEPTH_CAP && node; i++) {
+    if (node.type === 'class_specifier' || node.type === 'struct_specifier') {
+      const className = node.childForFieldName('name')?.text as string | undefined;
+      if (!className) return null;
+      return countCppClassBodyMethods(node, bareCallee) === 1 ? qualify(className) : null;
+    }
+    if (node.type === 'function_definition') {
+      // An out-of-line definition (`C::m(){...}`) names its class via the
+      // declarator's qualified_identifier scope. An inline method def has a
+      // plain field_identifier declarator (scope null) → keep walking up to its
+      // enclosing class_specifier.
+      const ool = cppQualifiedDefScope(node);
+      if (ool) {
+        return countCppClassMethodsInFile(walkToRoot(node), ool.scope, bareCallee) === 1
+          ? qualify(ool.scope)
+          : null;
+      }
+    }
+    node = node.parent;
+  }
+  return null;
+}
+
+/**
  * v0.34 W1 — Resolve the receiver type of a member-call expression
  * (`obj.method()`) to a qualified callee name (`Class::method` or
  * `module::method`). Tries the 3 MUST-resolve patterns from the design doc:
@@ -198,6 +461,13 @@ function resolveReceiverType(
   if (!cfg) return null;
   const callee = cfg.calleeFieldName ? callNode.childForFieldName(cfg.calleeFieldName) : null;
   if (!callee) return null;
+
+  // C/C++/MQL parse via tree-sitter-cpp (class_specifier, field_expression,
+  // function_definition) — a different AST shape from the JS/TS/Python member-
+  // expression logic below, so route to the dedicated resolver.
+  if (language === 'cpp' || language === 'mql') {
+    return resolveCppReceiver(callNode, callee, language, bareCallee);
+  }
 
   // Only resolve when the callee is a member/attribute access (obj.method).
   // Bare calls (`f()`) have no receiver to resolve.

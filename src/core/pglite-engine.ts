@@ -46,6 +46,7 @@ import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowTo
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
 import { executeRawJsonb } from './sql-query.ts';
+import { symbolMatchSql } from './code-edge-match.ts';
 import { sanitizeForJsonb, buildLinkRows, buildTimelineRows, buildTakeRows } from './batch-rows.ts';
 import { GBrainError, PAGE_SORT_SQL, ENRICH_ORDER_SQL } from './types.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
@@ -5096,16 +5097,19 @@ export class PGLiteEngine implements BrainEngine {
     const sourceClause = opts?.allSources || !opts?.sourceId
       ? ''
       : `AND source_id = '${opts.sourceId.replace(/'/g, "''")}'`;
+    // Bare names recall receiver-resolved qualified edges; qualified names match
+    // exactly (precise + index-fast). See code-edge-match.ts.
+    const matchClause = symbolMatchSql('to_symbol_qualified', qualifiedName);
     const { rows } = await this.db.query(
       `SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified,
               edge_type, edge_metadata, source_id, true as resolved
          FROM code_edges_chunk
-         WHERE to_symbol_qualified = $1 ${sourceClause}
+         WHERE ${matchClause} ${sourceClause}
        UNION ALL
        SELECT id, from_chunk_id, NULL as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
               edge_type, edge_metadata, source_id, false as resolved
          FROM code_edges_symbol
-         WHERE to_symbol_qualified = $1 ${sourceClause}
+         WHERE ${matchClause} ${sourceClause}
        LIMIT $2`,
       [qualifiedName, limit],
     );
@@ -5120,16 +5124,19 @@ export class PGLiteEngine implements BrainEngine {
     const sourceClause = opts?.allSources || !opts?.sourceId
       ? ''
       : `AND source_id = '${opts.sourceId.replace(/'/g, "''")}'`;
+    // Bare names recall qualified caller defs; qualified names match exactly
+    // (precise + index-fast). See code-edge-match.ts.
+    const matchClause = symbolMatchSql('from_symbol_qualified', qualifiedName);
     const { rows } = await this.db.query(
       `SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified,
               edge_type, edge_metadata, source_id, true as resolved
          FROM code_edges_chunk
-         WHERE from_symbol_qualified = $1 ${sourceClause}
+         WHERE ${matchClause} ${sourceClause}
        UNION ALL
        SELECT id, from_chunk_id, NULL as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
               edge_type, edge_metadata, source_id, false as resolved
          FROM code_edges_symbol
-         WHERE from_symbol_qualified = $1 ${sourceClause}
+         WHERE ${matchClause} ${sourceClause}
        LIMIT $2`,
       [qualifiedName, limit],
     );

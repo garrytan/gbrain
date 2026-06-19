@@ -52,6 +52,7 @@ import type {
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
 import { GBrainError, PAGE_SORT_SQL, ENRICH_ORDER_SQL } from './types.ts';
+import { isQualifiedSymbol, LAST_SEGMENT_REGEX } from './code-edge-match.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import * as db from './db.ts';
 import { ConnectionManager } from './connection-manager.ts';
@@ -5243,17 +5244,22 @@ export class PostgresEngine implements BrainEngine {
     const limit = Math.min(opts?.limit ?? 100, 500);
     const scopedSource: string | null =
       !opts?.allSources && opts?.sourceId ? opts.sourceId : null;
+    // Bare names recall receiver-resolved qualified edges; qualified names match
+    // exactly (precise + index-fast). Mirrors pglite via code-edge-match.ts.
+    const match = isQualifiedSymbol(qualifiedName)
+      ? sql`to_symbol_qualified = ${qualifiedName}`
+      : sql`(to_symbol_qualified = ${qualifiedName} OR regexp_replace(to_symbol_qualified, ${LAST_SEGMENT_REGEX}, '') = ${qualifiedName})`;
     const rows = await sql`
       SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified,
              edge_type, edge_metadata, source_id, true as resolved
         FROM code_edges_chunk
-        WHERE to_symbol_qualified = ${qualifiedName}
+        WHERE ${match}
         ${scopedSource ? sql`AND source_id = ${scopedSource}` : sql``}
       UNION ALL
       SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
              edge_type, edge_metadata, source_id, false as resolved
         FROM code_edges_symbol
-        WHERE to_symbol_qualified = ${qualifiedName}
+        WHERE ${match}
         ${scopedSource ? sql`AND source_id = ${scopedSource}` : sql``}
       LIMIT ${limit}
     `;
@@ -5268,17 +5274,22 @@ export class PostgresEngine implements BrainEngine {
     const limit = Math.min(opts?.limit ?? 100, 500);
     const scopedSource: string | null =
       !opts?.allSources && opts?.sourceId ? opts.sourceId : null;
+    // Bare names recall qualified caller defs; qualified names match exactly
+    // (precise + index-fast). Mirrors pglite via code-edge-match.ts.
+    const match = isQualifiedSymbol(qualifiedName)
+      ? sql`from_symbol_qualified = ${qualifiedName}`
+      : sql`(from_symbol_qualified = ${qualifiedName} OR regexp_replace(from_symbol_qualified, ${LAST_SEGMENT_REGEX}, '') = ${qualifiedName})`;
     const rows = await sql`
       SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified,
              edge_type, edge_metadata, source_id, true as resolved
         FROM code_edges_chunk
-        WHERE from_symbol_qualified = ${qualifiedName}
+        WHERE ${match}
         ${scopedSource ? sql`AND source_id = ${scopedSource}` : sql``}
       UNION ALL
       SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
              edge_type, edge_metadata, source_id, false as resolved
         FROM code_edges_symbol
-        WHERE from_symbol_qualified = ${qualifiedName}
+        WHERE ${match}
         ${scopedSource ? sql`AND source_id = ${scopedSource}` : sql``}
       LIMIT ${limit}
     `;

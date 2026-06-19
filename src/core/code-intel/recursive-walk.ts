@@ -61,7 +61,11 @@ export type WalkResult =
   | { result: 'ambiguous'; candidates: { symbol_qualified: string; lang?: string; file?: string; lines?: string }[] }
   | { result: 'unsupported_language'; supported: readonly string[] };
 
-const SUPPORTED_LANGS = ['typescript', 'tsx', 'javascript', 'python'] as const;
+// C/C++ and MQL (which reuses the tree-sitter-cpp shapes) carry precise
+// receiver-resolved call edges, so the BFS walk traverses them like any other
+// language. Sink classification is a graceful no-op for them (classifySink
+// returns 'unknown' — MQL-specific sinks are a later enhancement).
+const SUPPORTED_LANGS = ['typescript', 'tsx', 'javascript', 'python', 'cpp', 'mql'] as const;
 
 function clampConfidence(depth: number): number {
   const c = 1.0 / (1 + 0.3 * depth);
