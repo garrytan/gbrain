@@ -71,8 +71,38 @@ export async function resolveEntitySlug(
     if (expanded) return expanded;
   }
 
-  // 4. Fallback: deterministic slugify.
-  return slugify(trimmed);
+  // 4. Fallback: deterministic slugify, PRESERVING any directory prefix.
+  //    Plain slugify("people/Some Name") → "people-some-name" mangles the
+  //    slash, which (a) can never match the real people/some-name page and
+  //    (b) makes the fence-write stub-guard refuse it as unprefixed → the fact
+  //    silently drops to DB-only instead of being fenced onto a person page.
+  //    Splitting on the first slash keeps "people/Some Name" → a valid,
+  //    fenceable "people/some-name".
+  return slugifyPreservingPrefix(trimmed);
+}
+
+/**
+ * slugify() that preserves a leading directory prefix (`people/`, `companies/`,
+ * `programs/`, ...). The plain slugify collapses every non-alphanumeric run to
+ * a hyphen, so a slug the extractor already prefixed correctly
+ * (`people/some-name`) gets mangled into `people-some-name` — an unprefixed
+ * string the fence-write stub-guard rejects, forcing the fact to the DB-only
+ * path. By splitting on the FIRST slash and slugifying each side independently
+ * we keep the prefix intact:
+ *   "people/Some Name"  → "people/some-name"
+ *   "People/some-name"  → "people/some-name"
+ *   "Some Name"         → "some-name"   (no slash → unchanged behavior)
+ * Used ONLY in the resolver fallback; the exported slugify() keeps its flat
+ * contract for callers that depend on it.
+ */
+export function slugifyPreservingPrefix(raw: string): string {
+  const idx = raw.indexOf('/');
+  if (idx === -1) return slugify(raw);
+  const dir = slugify(raw.slice(0, idx));
+  const rest = slugify(raw.slice(idx + 1));
+  if (!dir) return rest;
+  if (!rest) return dir;
+  return `${dir}/${rest}`;
 }
 
 /**
@@ -139,7 +169,7 @@ export async function resolveEntitySlugWithSource(
     if (expanded) return { slug: expanded, source: 'fuzzy_match' };
   }
 
-  return { slug: slugify(trimmed), source: 'fallback_slugify' };
+  return { slug: slugifyPreservingPrefix(trimmed), source: 'fallback_slugify' };
 }
 
 /**
