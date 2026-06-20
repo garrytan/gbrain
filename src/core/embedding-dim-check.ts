@@ -384,10 +384,16 @@ function validateDimAgainstTouchpoint(
   }
 
   if (requestedDims !== undefined && requestedDims !== defaultDims) {
-    // User asked for a non-default dim. Walk the precedence chain.
-    const customDimOk = isCustomDimValidForProvider(recipe, modelId, requestedDims, dimsOptions);
-    if (!customDimOk.valid) {
-      return { ok: false, error: customDimOk.error };
+    // FORK PATCH (creaminds): local Ollama/llama-server models emit a fixed native
+    // dim that may differ from the recipe's single default_dims (bge-m3=1024 vs nomic=768).
+    // The upstream ollama recipe declares one default_dims (768) for all three models,
+    // so mxbai/bge-m3 are listed but un-initialisable. Trust the user-supplied native
+    // dim for local providers; keep the guard for cloud providers.
+    if (recipe.id !== 'ollama' && recipe.id !== 'llama-server') {
+      const customDimOk = isCustomDimValidForProvider(recipe, modelId, requestedDims, dimsOptions);
+      if (!customDimOk.valid) {
+        return { ok: false, error: customDimOk.error };
+      }
     }
   }
 
