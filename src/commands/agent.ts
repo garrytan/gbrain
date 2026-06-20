@@ -252,7 +252,8 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
   // row's id; the aggregator's seed started with an empty array.
   await engine.executeRaw(
     `UPDATE minion_jobs SET data = jsonb_set(data, '{children_ids}', $1::jsonb) WHERE id = $2`,
-    [JSON.stringify(childIds), aggregator.id],
+    // Raw array, NOT JSON.stringify — see CLAUDE.md JSONB invariant.
+    [childIds, aggregator.id],
   );
 
   process.stderr.write(

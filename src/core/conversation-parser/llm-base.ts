@@ -274,7 +274,7 @@ async function writeDbCache<T>(
        (content_sha256, model_id, call_shape, value_json)
      VALUES ($1, $2, $3, $4::jsonb)
      ON CONFLICT (content_sha256, model_id, call_shape) DO NOTHING`,
-    [contentSha, modelStr, shape, JSON.stringify(value)],
+    [contentSha, modelStr, shape, value],
   );
 }
 

@@ -44,3 +44,12 @@ if grep -rEn "$MAX_STALLED_PATTERN" src/schema.sql src/core/migrate.ts src/core/
 fi
 
 echo "OK: max_stalled defaults are 5 in all schema sources"
+
+# Parameterized companion: the interpolation grep above misses the positional
+# form `executeRaw(\`...$N::jsonb...\`, [JSON.stringify(x)])`, which double-encodes
+# the same way. Delegate that to the node scanner.
+if command -v node >/dev/null 2>&1; then
+  node "$ROOT/scripts/check-jsonb-params.mjs" || exit 1
+else
+  echo "WARN: node not found; skipping parameterized jsonb param scan"
+fi

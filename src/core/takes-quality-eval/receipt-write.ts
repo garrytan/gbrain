@@ -45,9 +45,10 @@ export async function writeReceiptToDb(engine: BrainEngine, receipt: TakesQualit
       receipt.rubric_version,
       receipt.verdict,
       receipt.overall_score ?? 0,
-      JSON.stringify(receipt.scores),
+      // Raw objects, NOT JSON.stringify — see CLAUDE.md JSONB invariant.
+      receipt.scores,
       receipt.cost_usd,
-      JSON.stringify(receipt),
+      receipt,
       buildReceiptPath({
         corpus_sha8: receipt.corpus.corpus_sha8,
         prompt_sha8: receipt.prompt_sha8,

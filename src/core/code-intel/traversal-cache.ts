@@ -135,7 +135,8 @@ export async function putCachedTraversal<T>(
         key.symbol_qualified,
         key.depth,
         key.source_id,
-        JSON.stringify(response),
+        // Raw object, NOT JSON.stringify — see CLAUDE.md JSONB invariant.
+        response,
         maxChunkUpdatedAt,
         xminMax,
         key.cluster_generation,

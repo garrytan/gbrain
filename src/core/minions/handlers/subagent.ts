@@ -882,7 +882,9 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
          ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
            SET status = subagent_tool_executions.status
          RETURNING gbrain_tool_use_id::text AS gbrain_tool_use_id`,
-        [ctx.id, messageIdx, providerToolCallId, toolName, JSON.stringify(input ?? null), ordinal, candidateId, recipeIdFromModel(model)],
+        // Raw value, NOT JSON.stringify — postgres.js double-encodes a stringified
+        // value into a jsonb string scalar, breaking input->>'key' (CLAUDE.md invariant).
+        [ctx.id, messageIdx, providerToolCallId, toolName, input ?? null, ordinal, candidateId, recipeIdFromModel(model)],
       );
       const gbrainToolUseId = rows[0]?.gbrain_tool_use_id ?? candidateId;
       heartbeat('tool_called', { turn_idx: turnIdx, tool_name: toolName });
@@ -893,7 +895,8 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
         `UPDATE subagent_tool_executions
            SET status = 'complete', output = $1::jsonb, ended_at = now()
          WHERE gbrain_tool_use_id::text = $2`,
-        [JSON.stringify(output ?? null), gbrainToolUseId],
+        // Raw value, NOT JSON.stringify — see CLAUDE.md JSONB invariant.
+        [output ?? null, gbrainToolUseId],
       );
     },
     onToolCallFailed: async (gbrainToolUseId, errorMsg) => {
@@ -1113,7 +1116,8 @@ async function persistMessage(engine: BrainEngine, jobId: number, msg: Persisted
       jobId,
       msg.message_idx,
       msg.role,
-      JSON.stringify(msg.content_blocks),
+      // Raw array, NOT JSON.stringify — see CLAUDE.md JSONB invariant.
+      msg.content_blocks,
       msg.tokens_in,
       msg.tokens_out,
       msg.tokens_cache_read,
@@ -1131,15 +1135,15 @@ async function persistToolExecPending(
   toolName: string,
   input: unknown,
 ): Promise<void> {
-  // Serialize to JSON string for the ::jsonb cast. When `input` is already a
-  // string (e.g. pre-serialized), avoid double-encoding which produces a jsonb
-  // scalar string instead of a jsonb object — breaking `input->>'key'` lookups.
-  const jsonStr = typeof input === 'string' ? input : JSON.stringify(input);
+  // Pass the raw value to the jsonb bind — NEVER JSON.stringify it. postgres.js
+  // double-encodes a stringified object into a jsonb scalar string, breaking
+  // `input->>'key'` lookups (CLAUDE.md JSONB invariant). An object lands as a
+  // proper jsonb object; an already-string input is left as-is (unchanged).
   await engine.executeRaw(
     `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status)
      VALUES ($1, $2, $3, $4, $5::jsonb, 'pending')
      ON CONFLICT (job_id, tool_use_id) DO NOTHING`,
-    [jobId, messageIdx, toolUseId, toolName, jsonStr],
+    [jobId, messageIdx, toolUseId, toolName, input],
   );
 }
 
@@ -1153,7 +1157,8 @@ async function persistToolExecComplete(
     `UPDATE subagent_tool_executions
         SET status = 'complete', output = $3::jsonb, ended_at = now()
       WHERE job_id = $1 AND tool_use_id = $2`,
-    [jobId, toolUseId, typeof output === 'string' ? output : JSON.stringify(output)],
+    // Raw value, NOT JSON.stringify — see CLAUDE.md JSONB invariant.
+    [jobId, toolUseId, output],
   );
 }
 
@@ -1173,7 +1178,8 @@ async function persistToolExecFailed(
      VALUES ($1, $2, $3, $4, $5::jsonb, 'failed', $6, now())
      ON CONFLICT (job_id, tool_use_id) DO UPDATE
        SET status = 'failed', error = EXCLUDED.error, ended_at = now()`,
-    [jobId, messageIdx, toolUseId, toolName, typeof input === 'string' ? input : JSON.stringify(input), error],
+    // Raw value, NOT JSON.stringify — see CLAUDE.md JSONB invariant.
+    [jobId, messageIdx, toolUseId, toolName, input, error],
   );
 }
 

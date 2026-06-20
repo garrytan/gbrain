@@ -132,7 +132,8 @@ export async function writeImpactLogRow(
         attribution.started_at ?? new Date().toISOString(),
         attribution.idempotency_key ?? null,
         attribution.applied_by ?? null,
-        JSON.stringify(details ?? {}),
+        // Raw object, NOT JSON.stringify — see CLAUDE.md JSONB invariant.
+        details ?? {},
       ],
     );
   } catch (err) {

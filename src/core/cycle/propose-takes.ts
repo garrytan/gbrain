@@ -407,7 +407,9 @@ class ProposeTakesPhase extends BaseCyclePhase {
             p.holder,
             p.weight,
             p.domain ?? null,
-            JSON.stringify(existingTakes),
+            // Raw object, NOT JSON.stringify — postgres.js double-encodes a
+            // stringified value into a jsonb string scalar (CLAUDE.md JSONB invariant).
+            existingTakes,
             opts.model ?? 'claude-sonnet-4-6',
           ],
         );

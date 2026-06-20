@@ -370,7 +370,8 @@ class CalibrationProfilePhase extends BaseCyclePhase {
         // v0.41 T10 — domain_scorecards JSONB populated by the
         // domain-aggregators pass above. Empty {} when no active pack
         // declares calibration_domains (R1 byte-identical regression).
-        JSON.stringify(domainScorecards),
+        // Raw object, NOT JSON.stringify — see CLAUDE.md JSONB invariant.
+        domainScorecards,
         result.pattern_statements,
         result.voice_gate_passed,
         result.voice_gate_attempts,

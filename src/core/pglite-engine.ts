@@ -925,7 +925,9 @@ export class PGLiteEngine implements BrainEngine {
          ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
          ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
        RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at`,
-      [sourceId, slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash, effectiveDate, effectiveDateSource, importFilename, chunkerVersion, sourcePath, sourceKind, sourceUri, ingestedVia, ingestedAt]
+      // frontmatter: raw object, NOT JSON.stringify — parity with postgres-engine's
+      // sql.json() twin; avoids the jsonb string-scalar double-encode (CLAUDE.md invariant).
+      [sourceId, slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', frontmatter, hash, effectiveDate, effectiveDateSource, importFilename, chunkerVersion, sourcePath, sourceKind, sourceUri, ingestedVia, ingestedAt]
     );
     return rowToPage(rows[0] as Record<string, unknown>);
   }
@@ -1218,14 +1220,15 @@ export class PGLiteEngine implements BrainEngine {
 
   async updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean> {
     // v0.38: parity with postgres-engine.updateSourceConfig. JSONB `||`
-    // concat operator (overrides same-key, no deep merge). PGLite passes
-    // `JSON.stringify(patch)` as the param; cast to jsonb on the SQL side.
+    // concat operator (overrides same-key, no deep merge). Pass the raw object,
+    // NOT JSON.stringify — postgres.js double-encodes a stringified value into a
+    // jsonb string scalar, which `||` can't concat (CLAUDE.md JSONB invariant).
     const result = await this.db.query<{ id: string }>(
       `UPDATE sources
           SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb
         WHERE id = $2
         RETURNING id`,
-      [JSON.stringify(patch), sourceId],
+      [patch, sourceId],
     );
     return result.rows.length > 0;
   }
@@ -3172,7 +3175,8 @@ export class PGLiteEngine implements BrainEngine {
          ON CONFLICT (page_id, source) DO UPDATE SET
            data = EXCLUDED.data,
            fetched_at = now()`,
-        [slug, source, JSON.stringify(data), opts.sourceId]
+        // Raw object, NOT JSON.stringify — see CLAUDE.md JSONB invariant.
+        [slug, source, data, opts.sourceId]
       );
       return;
     }
@@ -3183,7 +3187,8 @@ export class PGLiteEngine implements BrainEngine {
        ON CONFLICT (page_id, source) DO UPDATE SET
          data = EXCLUDED.data,
          fetched_at = now()`,
-      [slug, source, JSON.stringify(data)]
+      // Raw object, NOT JSON.stringify — see CLAUDE.md JSONB invariant.
+      [slug, source, data]
     );
   }
 
@@ -3237,7 +3242,8 @@ export class PGLiteEngine implements BrainEngine {
         spec.mime_type ?? null,
         spec.size_bytes ?? null,
         spec.content_hash,
-        JSON.stringify(spec.metadata ?? {}),
+        // Raw object, NOT JSON.stringify — see CLAUDE.md JSONB invariant.
+        spec.metadata ?? {},
       ]
     );
     if (result.rows.length === 0) {
@@ -3297,7 +3303,8 @@ export class PGLiteEngine implements BrainEngine {
          worth_processing = EXCLUDED.worth_processing,
          reasons = EXCLUDED.reasons,
          judged_at = now()`,
-      [filePath, contentHash, verdict.worth_processing, JSON.stringify(verdict.reasons)]
+      // Raw object, NOT JSON.stringify — see CLAUDE.md JSONB invariant.
+      [filePath, contentHash, verdict.worth_processing, verdict.reasons]
     );
   }
 
@@ -4558,7 +4565,9 @@ export class PGLiteEngine implements BrainEngine {
     await this.db.query(
       `INSERT INTO ingest_log (source_id, source_type, source_ref, pages_updated, summary)
        VALUES ($1, $2, $3, $4::jsonb, $5)`,
-      [sourceId, entry.source_type, entry.source_ref, JSON.stringify(entry.pages_updated), entry.summary]
+      // Raw array, NOT JSON.stringify — parity with postgres-engine's sql.json()
+      // twin; avoids the jsonb string-scalar double-encode (CLAUDE.md invariant).
+      [sourceId, entry.source_type, entry.source_ref, entry.pages_updated, entry.summary]
     );
   }
 

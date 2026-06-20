@@ -542,7 +542,7 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
   config.federated = value;
   await engine.executeRaw(
     `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
-    [JSON.stringify(config), id],
+    [config, id],
   );
   console.log(`Source "${id}" is now ${value ? 'federated (appears in cross-source default search)' : 'isolated (only searched when explicitly named)'}.`);
 
@@ -704,7 +704,7 @@ async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void>
   cfg.github_repo = githubRepo;
   await engine.executeRaw(
     `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
-    [JSON.stringify(cfg), id],
+    [cfg, id],
   );
 
   console.log(`Webhook configured for source "${id}":`);
@@ -760,7 +760,7 @@ async function runWebhookRotate(engine: BrainEngine, args: string[]): Promise<vo
   cfg.webhook_secret = secret;
   await engine.executeRaw(
     `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
-    [JSON.stringify(cfg), id],
+    [cfg, id],
   );
   console.log(`New webhook secret for source "${id}":`);
   console.log(`  ${secret}`);
@@ -784,7 +784,7 @@ async function runWebhookClear(engine: BrainEngine, args: string[]): Promise<voi
   delete cfg.github_repo;
   await engine.executeRaw(
     `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
-    [JSON.stringify(cfg), id],
+    [cfg, id],
   );
   console.log(`Webhook configuration cleared for source "${id}".`);
 }
@@ -809,7 +809,7 @@ async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<vo
     cfg.tracked_branch = setArg;
     await engine.executeRaw(
       `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
-      [JSON.stringify(cfg), id],
+      [cfg, id],
     );
     console.log(`Tracked branch for source "${id}" set to "${setArg}".`);
     return;
@@ -825,7 +825,7 @@ async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<vo
       cfg.tracked_branch = branch;
       await engine.executeRaw(
         `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
-        [JSON.stringify(cfg), id],
+        [cfg, id],
       );
       console.log(`Detected branch "${branch}" for source "${id}"; persisted to config.tracked_branch.`);
     } catch (e) {

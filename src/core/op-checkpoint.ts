@@ -109,7 +109,9 @@ export async function recordCompleted(
        ON CONFLICT (op, fingerprint) DO UPDATE
          SET completed_keys = EXCLUDED.completed_keys,
              updated_at     = now()`,
-      [key.op, key.fingerprint, JSON.stringify(sorted)],
+      // Raw array, NOT JSON.stringify — postgres.js double-encodes a stringified
+      // value into a jsonb string scalar (CLAUDE.md JSONB invariant).
+      [key.op, key.fingerprint, sorted],
     );
   } catch (e) {
     console.error(`[op-checkpoint] write failed (${key.op}, ${key.fingerprint}):`, (e as Error).message);

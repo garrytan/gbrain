@@ -337,7 +337,8 @@ export async function addSource(
       await engine.executeRaw(
         `INSERT INTO sources (id, name, local_path, config)
              VALUES ($1, $2, $3, $4::jsonb)`,
-        [opts.id, displayName, finalPath, JSON.stringify(config)],
+        // Raw object, NOT JSON.stringify — see CLAUDE.md JSONB invariant.
+        [opts.id, displayName, finalPath, config],
       );
     } catch (e) {
       rmSync(tempDir, { recursive: true, force: true });
@@ -383,7 +384,8 @@ export async function addSource(
     await engine.executeRaw(
       `INSERT INTO sources (id, name, local_path, config)
            VALUES ($1, $2, $3, $4::jsonb)`,
-      [opts.id, displayName, finalPath, JSON.stringify(config)],
+      // Raw object, NOT JSON.stringify — see CLAUDE.md JSONB invariant.
+      [opts.id, displayName, finalPath, config],
     );
   }
 
