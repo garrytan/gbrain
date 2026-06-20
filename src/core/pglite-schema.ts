@@ -164,9 +164,24 @@ INSERT INTO page_generation_clock (id, value)
   VALUES (1, COALESCE((SELECT MAX(generation) FROM pages), 0))
   ON CONFLICT (id) DO NOTHING;
 
+-- v0.42.x: contention-free clock. nextval() takes a microsecond LWLock, not a
+-- transaction-length row lock. Load-bearing setval (2-arg -> is_called=true) so
+-- the first write strictly exceeds the seed; floor 1 (sequence MINVALUE).
+-- Layer-1 reads last_value. Table + trigger names retained.
+CREATE SEQUENCE IF NOT EXISTS page_generation_clock_seq;
+-- Monotonic seed: GREATEST over the sequence's OWN last_value too, so replaying
+-- this blob on an already-upgraded brain (initSchema is re-runnable) can never
+-- move last_value BACKWARD below a stored query_cache bookmark.
+SELECT setval('page_generation_clock_seq', GREATEST(
+  1,
+  COALESCE((SELECT last_value FROM page_generation_clock_seq), 0),
+  COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), 0),
+  COALESCE((SELECT MAX(generation) FROM pages), 0)
+));
+
 CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger AS $func$
 BEGIN
-  UPDATE page_generation_clock SET value = value + 1 WHERE id = 1;
+  PERFORM nextval('page_generation_clock_seq');
   RETURN NULL;
 END;
 $func$ LANGUAGE plpgsql;
@@ -255,12 +270,11 @@ CREATE TABLE IF NOT EXISTS links (
   to_page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   link_type      TEXT    NOT NULL DEFAULT '',
   context        TEXT    NOT NULL DEFAULT '',
-  -- v0.41.18.0: 'mentions' added for auto-linked body-text mentions
-  -- (gbrain extract links --by-mention). Filtered OUT of backlink-count
-  -- for search ranking; only counts toward orphan-ratio + graph traversal.
-  -- v0.40.8.2 (#972): 'wikilink-resolved' added for opt-in global-basename
-  -- wikilink resolution. See src/schema.sql for full rationale.
-  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions', 'wikilink-resolved')),
+  -- v114 (#1941): open kebab-case provenance (not a closed allowlist) so
+  -- external derivers stamp their own tag. Format gate only: lowercase kebab,
+  -- <=64 chars. Managed built-ins still satisfy this; see src/schema.sql for
+  -- full rationale + the add_link op-layer guard against forging them.
+  link_source    TEXT    CHECK (link_source IS NULL OR (link_source ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$' AND char_length(link_source) <= 64)),
   -- v0.41.18.0 (codex finding #12): nullable link_kind distinguishes
   -- "plain body mention" from "verb-pattern-derived typed link" within
   -- link_source='mentions'. See src/schema.sql for full rationale.
@@ -925,12 +939,51 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
 CREATE TABLE IF NOT EXISTS op_checkpoints (
   op             TEXT NOT NULL,
   fingerprint    TEXT NOT NULL,
-  completed_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+  -- v0.42.x: must be a JSONB array. The loader runs jsonb_array_elements_text
+  -- over it; a scalar would throw and wipe the whole checkpoint load. CHECK is
+  -- the DB-enforced always-on guard (mirrors migration v119).
+  completed_keys JSONB NOT NULL DEFAULT '[]'::jsonb
+    CONSTRAINT op_checkpoints_completed_keys_array CHECK (jsonb_typeof(completed_keys) = 'array'),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (op, fingerprint)
 );
 CREATE INDEX IF NOT EXISTS op_checkpoints_updated_at_idx
   ON op_checkpoints (updated_at);
+
+-- #1794: append-only delta storage (one row per completed path). FK cascade
+-- drops children with the parent. PK prefix (op,fingerprint) serves all reads.
+-- Mirrors migration v115 + src/schema.sql. Placed after op_checkpoints so the
+-- FK target exists in the top-to-bottom replay.
+CREATE TABLE IF NOT EXISTS op_checkpoint_paths (
+  op          TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  path        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (op, fingerprint, path),
+  CONSTRAINT op_checkpoint_paths_parent_fk
+    FOREIGN KEY (op, fingerprint) REFERENCES op_checkpoints (op, fingerprint) ON DELETE CASCADE
+);
+
+-- #2095 push-based context: feedback-loop log of volunteered pages.
+-- Mirrors migration v117 + src/schema.sql. "Used" derives from
+-- pages.last_retrieved_at > volunteered_at; 90-day prune in the dream
+-- cycle's purge phase.
+CREATE TABLE IF NOT EXISTS context_volunteer_events (
+  id             BIGSERIAL PRIMARY KEY,
+  source_id      TEXT NOT NULL,
+  slug           TEXT NOT NULL,
+  confidence     DOUBLE PRECISION NOT NULL,
+  match_arm      TEXT NOT NULL,
+  rationale      TEXT NOT NULL DEFAULT '',
+  channel        TEXT NOT NULL DEFAULT 'op',
+  session_id     TEXT,
+  turn           INTEGER,
+  volunteered_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS context_volunteer_events_src_time_idx
+  ON context_volunteer_events (source_id, volunteered_at DESC);
+CREATE INDEX IF NOT EXISTS context_volunteer_events_src_slug_idx
+  ON context_volunteer_events (source_id, slug);
 
 -- ============================================================
 -- migration_impact_log (v0.41.18.0 — gbrain onboard wave)

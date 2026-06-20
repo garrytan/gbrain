@@ -44,11 +44,13 @@ describe('BRAIN_TOOL_ALLOWLIST', () => {
     expect(missing).toEqual([]);
   });
 
-  test('contains the v0.15 read-only 10 + put_page + v0.29 salience pair', () => {
+  test('contains the v0.15 read-only 10 + put_page + v0.29 salience pair + v114 list_link_sources', () => {
     // v0.29 added get_recent_salience + find_anomalies (read-only).
     // get_recent_transcripts is deliberately excluded — subagent calls always
     // have ctx.remote=true, and the v0.29 trust gate rejects remote callers.
-    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(13);
+    // v114 (#1941) added list_link_sources (read-only provenance discovery);
+    // the edge-WRITE ops add_link/remove_link stay out (separate trust call).
+    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(14);
     expect(BRAIN_TOOL_ALLOWLIST.has('query')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('search')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('get_page')).toBe(true);
@@ -56,6 +58,9 @@ describe('BRAIN_TOOL_ALLOWLIST', () => {
     expect(BRAIN_TOOL_ALLOWLIST.has('put_page')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('get_recent_salience')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('find_anomalies')).toBe(true);
+    expect(BRAIN_TOOL_ALLOWLIST.has('list_link_sources')).toBe(true);
+    expect(BRAIN_TOOL_ALLOWLIST.has('add_link')).toBe(false);
+    expect(BRAIN_TOOL_ALLOWLIST.has('remove_link')).toBe(false);
     expect(BRAIN_TOOL_ALLOWLIST.has('get_recent_transcripts')).toBe(false);
   });
 

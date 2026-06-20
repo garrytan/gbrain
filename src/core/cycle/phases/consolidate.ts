@@ -25,11 +25,18 @@
 import type { BrainEngine, FactRow } from '../../engine.ts';
 import type { PhaseResult } from '../../cycle.ts';
 import { cosineSimilarity } from '../../facts/classify.ts';
+import { isAborted } from '../../abort-check.ts';
 
 export interface ConsolidatePhaseOpts {
   dryRun?: boolean;
   /** In-phase keepalive callback. Awaited between buckets. */
   yieldDuringPhase?: () => Promise<void>;
+  /**
+   * #1972: cooperative-abort signal. Checked at the top of the bucket loop so a
+   * long consolidate relinquishes its worker slot well under the 30s
+   * force-evict instead of running to completion after cancellation.
+   */
+  signal?: AbortSignal;
   /** Cosine cluster threshold. Default 0.85. */
   clusterThreshold?: number;
   /** Minimum facts per (source, entity) bucket before consolidation. Default 3. */
@@ -83,6 +90,11 @@ export async function runPhaseConsolidate(
   }
 
   for (const b of buckets) {
+    // #1972: bail at the top of the bucket loop on abort. Each prior bucket's
+    // per-row INSERT/consolidate is already committed, so breaking returns a
+    // valid partial envelope (the inner cluster loop is bounded at limit 100,
+    // so no inner guard is needed).
+    if (isAborted(opts.signal)) break;
     if (opts.yieldDuringPhase) {
       try { await opts.yieldDuringPhase(); } catch { /* keepalive errors non-fatal */ }
     }

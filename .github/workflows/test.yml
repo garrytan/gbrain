@@ -14,6 +14,15 @@ on:
 permissions:
   contents: read
 
+# Cancel a superseded run when a newer commit lands on the same PR/branch.
+# Keyed on the PR number for pull_request events (unique per PR, so two PRs
+# from forks sharing a branch name don't cancel each other) and falls back to
+# github.ref for push/scheduled runs. Mirrors heavy-tests.yml; frees runners
+# and stops a stale-SHA run from reporting a flaky failure on an obsolete commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # ──────────────────────────────────────────────────────────────────────
   # cache-check: runs first, computes the content hash of every tracked
@@ -29,6 +38,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   cache-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       hit: ${{ steps.lookup.outputs.cache-hit }}
       hash: ${{ steps.compute.outputs.hash }}
@@ -72,6 +82,7 @@ jobs:
     needs: cache-check
     if: needs.cache-check.outputs.hit != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
@@ -90,6 +101,7 @@ jobs:
     needs: cache-check
     if: needs.cache-check.outputs.hit != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -110,6 +122,7 @@ jobs:
     needs: cache-check
     if: needs.cache-check.outputs.hit != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -134,6 +147,7 @@ jobs:
     needs: cache-check
     if: needs.cache-check.outputs.hit != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -156,6 +170,7 @@ jobs:
     needs: cache-check
     if: needs.cache-check.outputs.hit != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -191,6 +206,7 @@ jobs:
     needs: cache-check
     if: needs.cache-check.outputs.hit != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -220,6 +236,7 @@ jobs:
     needs: [cache-check, gitleaks, verify, serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, test]
     if: success() && needs.cache-check.outputs.hit != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Create cache marker
         run: |
@@ -242,6 +259,7 @@ jobs:
     needs: [cache-check, gitleaks, verify, serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, test]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Aggregate result
         run: |

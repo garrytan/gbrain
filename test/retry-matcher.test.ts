@@ -93,6 +93,34 @@ describe('isRetryableConnError', () => {
     const err = { problem: 'No database connection', message: 'instance pool torn down' };
     expect(isRetryableConnError(err)).toBe(true);
   });
+
+  // #1794: Supavisor session-pool exhaustion (EMAXCONNSESSION) + Postgres
+  // SQLSTATE 53300 too_many_connections. Transient under load — must retry so
+  // the resumable-sync checkpoint write survives the spike instead of being
+  // dropped (which is how #1794 lost 100% of progress).
+  test('matches EMAXCONNSESSION via message', () => {
+    expect(isRetryableConnError(new Error('EMAXCONNSESSION: max clients in session mode'))).toBe(true);
+  });
+
+  test('matches SQLSTATE 53300 too_many_connections via code', () => {
+    expect(isRetryableConnError(pgError('53300', 'too many connections for role'))).toBe(true);
+  });
+
+  test('matches "too many clients already" message', () => {
+    expect(isRetryableConnError(new Error('sorry, too many clients already'))).toBe(true);
+  });
+
+  test('matches reserved-slots message', () => {
+    expect(
+      isRetryableConnError(new Error('remaining connection slots are reserved for non-replication superuser connections'))
+    ).toBe(true);
+  });
+
+  // 53300 must NOT accidentally widen to other 53xxx (e.g. 53400
+  // configuration_limit_exceeded is not a transient pool blip).
+  test('does NOT match unrelated 53xxx codes', () => {
+    expect(isRetryableConnError(pgError('53400', 'configuration limit exceeded'))).toBe(false);
+  });
 });
 
 describe('isRetryableError', () => {

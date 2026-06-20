@@ -2,6 +2,434 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.51.0] - 2026-06-17
+
+**`gbrain sync` stops bottlenecking all its workers on a single database row, a malformed checkpoint can no longer wedge a source, and `gbrain doctor` tells an actively-running sync apart from a stuck one.** A slow source that fell behind HEAD could read as permanently stale even while it imported every cycle: sync was single-core-bound at the database layer, so handing it more workers didn't help, and the freshness check couldn't see that a sync was in fact running.
+
+The root cause was the page-generation clock that backs the search cache. Every page write bumped a single locked counter row, so concurrent sync workers serialized on one another's commits no matter how many you ran. It is now a contention-free sequence: the cache invalidation contract is unchanged (it still over-invalidates rather than ever serving stale), but writers no longer wait in line. The other fixes harden checkpoint state and make the freshness signal honest.
+
+### Changed
+- **Sync writes scale across cores.** The page-generation clock moved from a single locked counter row to a contention-free sequence, so parallel sync workers stop serializing on each other. A large `gbrain sync` now uses the workers you give it instead of collapsing to roughly one.
+- **`gbrain doctor` distinguishes in-progress from stale.** A source holding a live sync lock is reported as actively syncing (naming the running process), not flagged stale. A genuinely stuck, blocked, or never-completed sync still reports stale — the signal is the live lock, so a stopped sync is never masked.
+
+### Fixed
+- **A malformed checkpoint record can no longer wedge a source.** Checkpoint state is structurally constrained, repaired automatically on upgrade, and the loader survives a bad record instead of discarding all banked progress for that source.
+- **`gbrain sync --force-break-lock` is honest when there is no lock.** It now says plainly that nothing was held and points at how to inspect a genuinely wedged sync, instead of a terse no-op that read like a successful unwedge.
+
+### To take advantage of v0.42.51.0
+`gbrain upgrade`, then `gbrain doctor`. Existing brains pick up the contention-free clock and the checkpoint integrity constraint automatically on the next migration; the search cache rebuilds itself on first query. Nothing to configure.
+## [0.42.50.0] - 2026-06-17
+
+**CI reliability hardening — a wedged job can no longer run for six hours, a superseded run no longer reports a stale flaky failure, and broken workflow YAML is caught before it ships.** gbrain's CI already had the deep machinery (content-hash run-skip cache, weight-aware shard balancing, test-isolation guards, hermetic E2E). What it lacked was the cheap GitHub-Actions hygiene that was already wired into `heavy-tests.yml` but never into the two hot-path workflows. This pass closes that gap, porting the patterns from the sibling GStack project's CI-reliability work.
+
+### Changed
+- **`test.yml` and `e2e.yml` cancel a superseded run** when a newer commit lands on the same PR (`concurrency` keyed on the PR number — fork-safe — with a `github.ref` fallback so push and scheduled runs always complete). Frees runners and stops a run against an obsolete commit from reporting a flaky failure.
+- **Every job in `test.yml`/`e2e.yml` now has a `timeout-minutes` bound** (test matrix 15, verify 12, serial 15, slow jobs 12, E2E tier 1 20 / tier 2 30, trivial jobs 5-10). A wedged job is converted from a six-hour zombie (GitHub's default) into a fast, legible failure.
+- **`scripts/run-e2e.sh` scrubs operator/agent environment before E2E.** A dev or Conductor shell exporting `CONDUCTOR_*` / `MCP_*` / `GBRAIN_*` config overrides no longer bleeds into E2E child processes (which made "hermetic" E2E non-hermetic and its failures unreproducible across machines). Denylist scrub — `PATH`/`HOME`/`TMPDIR`/`DATABASE_URL` survive; `GBRAIN_HOME` is preserved for the existing HOME isolation.
+
+### Added
+- **`actionlint` workflow** (`rhysd/actionlint`, SHA-pinned) lints all workflow YAML on `.github/workflows/**` changes, catching a malformed workflow / bad action ref / missing-permission bug before it ships a broken pipeline.
+
+### To take advantage of v0.42.50.0
+Nothing to do — these are CI/test-infra changes that take effect automatically on the next push. Contributors running the suite locally get the same hermetic-E2E env scrub via `bash scripts/run-e2e.sh` (or `bun run ci:local`).
+
+## [0.42.49.0] - 2026-06-16
+
+**Big embed backfills and syncs now throttle themselves when the database gets busy, so clearing a backlog can't starve the job queue — no more external babysitter scripts.** A naive `gbrain embed --stale` or large `gbrain sync` against a PgBouncer transaction-mode pooler could saturate it and starve the minion supervisor's lock renewals, cascading `lock-renewal-failed` into dead jobs. The field workaround was an external wrapper that SIGSTOP/SIGCONT'd the process off a side-pool latency probe. That approach was blind (the side pool read low latency while the pool that mattered starved), unsafe (SIGSTOP can freeze a process mid-transaction holding locks), and couldn't touch peak pressure. gbrain now does this natively, and better.
+
+Pacing is **opt-in** (default `off`) and built on one composable primitive: it caps simultaneous in-flight DB writes (the real lever against pooler-slot starvation), measures the work's own query latency in-band (so it can never be blind), and sleeps cooperatively between safe points (never mid-transaction, so the lock heartbeat keeps firing). Turn it on per-run with `gbrain embed --stale --pace`, or set `pace.mode` in config to pace every embed path plus the production embed-backfill job automatically. `GBRAIN_PACE_*` env vars override config as an incident escape hatch.
+
+### Added
+- **`--pace[=mode]` for `gbrain embed`** — `off`/`gentle`/`balanced`/`aggressive` bundles (bare `--pace` = balanced), plus `--pace-max-concurrency=N`. `--background` carries the explicit override into the queued `embed` job; the handler re-resolves env > config > bundle at execution.
+- **`pace.mode` config + `GBRAIN_PACE_*` env** — config paces every `runEmbedCore` caller (cycle embed, catch-up, sync-auto-embed) and the prod `embed-backfill` job automatically; env beats config for incident response.
+- **Composable `db-pacer` primitive** (`src/core/db-pacer.ts`) + named bundles (`src/core/pace-mode.ts`) — concurrency permit + in-band EWMA + jittered cooperative sleep, abort-throwing, fail-open. `sync` uses the shared permit across its parallel worker engines.
+- **Pacing telemetry** — `EmbedResult.pacing` (cap, samples, EWMA latency, slept ms) in `--json`, plus a one-line stderr summary.
+
+### Changed
+- **`gbrain embed --stale` now single-flights per source** using the same lock the `embed-backfill` job holds, so a hand-run backfill and a queued job can't grind the same source concurrently. Paced runs add a bounded end-of-run rescan (catches rows that landed behind the cursor during a longer run), and the embed time budget excludes paced-sleep time so a contended DB still converges instead of exiting early.
+
+### To take advantage of v0.42.49.0
+`gbrain upgrade`. Pacing is off by default — nothing changes until you opt in. To clear a big embed backlog safely on a busy pooler: `gbrain embed --stale --pace` (or `--pace=gentle` to be extra conservative). To pace the background embed-backfill job and every embed path automatically: `gbrain config set pace.mode balanced`. During an incident you can override without a redeploy: `GBRAIN_PACE_MODE=gentle` or `GBRAIN_PACE_MAX_CONCURRENCY=4`.
+## [0.42.48.0] - 2026-06-16
+
+**Brain repos harden themselves for durability the moment gbrain is given a PAT and a GitHub URL.** Fresh agents kept drifting out of sync with their knowledge-wiki git repos: writes sat local-only and never pushed, long-lived sessions edited a stale tree, and scratch output landed outside the repo and vanished. Now `gbrain sources add --url <repo> --pat-file <p>` auto-hardens the managed clone, and `gbrain sources harden <id>` runs the same audit idempotently against any source. Hardening is six always-on guarantees: it pulls current state (divergence-safe rebase that skips a dirty tree and never leaves a half-rebase), installs a local auto-push safety net, ships a committed `scripts/brain-commit-push.sh` that refuses to report success without a confirmed push, writes always-on durability rules into the agent's context file (deterministic filing from the canonical taxonomy, commit-and-push-never-deferred, pull-before-each-write-batch), registers a 30-minute background pull so an idle session can't go stale, and verifies push access up front.
+
+This is gbrain's first push path and first credential storage, built secure by default. The push automation is installed locally per machine rather than committed into the repo, the GitHub token is wired per-repo (least-privilege; an existing credential helper is reused when present rather than writing a new one), and the token never enters the repo, the tracked remote URL, logs, or the run report. Hardening proves push works with a dry-run probe before declaring done, so a read-only token or a protected branch surfaces immediately instead of silently dropping writes later. `gbrain sources unharden <id>` cleanly removes everything it installed and runs automatically before `sources remove`.
+
+### Added
+- `gbrain sources harden <id|--all> [--pat-file <p>] [--branch <b>] [--no-cron] [--no-verify] [--dry-run] [--json]` — idempotent brain-repo durability hardening.
+- `gbrain sources pull <id> | --path <dir> [--branch <b>]` — divergence-safe rebase-pull; `--path` runs DB-free so the 30-minute cron never contends for the local engine lock.
+- `gbrain sources unharden <id>` — remove the durability cron, hook, and credential wiring.
+- `--pat-file` / `--no-harden` on `gbrain sources add`; managed clones added with a PAT auto-harden.
+- `git-remote.ts`: `divergenceSafePull`, `detectDefaultBranch`, `pushProbe`, and an env-gated `GBRAIN_GIT_ALLOW_FILE_TRANSPORT` escape hatch for self-hosted filesystem remotes.
+
+### To take advantage of v0.42.48.0
+`gbrain upgrade`. Add a brain repo with `gbrain sources add <id> --url <https-repo> --pat-file <path-to-token>` and it hardens automatically; or run `gbrain sources harden <id> --pat-file <path>` on an existing source. Use a fine-grained PAT scoped to just that repo. Existing brains are untouched until you opt in.
+
+## [0.42.47.0] - 2026-06-16
+
+**A brain now travels with its own operating manual, and gbrain finally tells you how to run it better (gbrain#2180).** Two long-standing gaps closed. First: a brain repo can carry its own skillpack — skills authored for and versioned with that specific brain — and any harness that connects is offered it. Connect a fresh Claude Code or a thin client to a mature brain and it learns, on the spot, which meeting-ingestion or diligence protocol the brain expects, instead of starting blind. Second: gbrain stops being purely passive. `gbrain advisor` reads the brain's own state and hands back a ranked, read-only list of high-leverage actions — pending migrations, version drift, stalled backfills, low embedding coverage, setup smells — each with the exact command to fix it. It never acts on its own; it shows you and asks.
+
+Discovery works on both connection topologies. Add a federated source that ships a brain-resident pack and gbrain prints what's in it and how to install it (with bounded, escalate-then-suppress nagging while it stays uninstalled — it never nags off a cron or an MCP call, only a real CLI prompt). Over MCP, a connecting agent calls `list_brain_skillpack` (source-scoped, so a multi-source brain attributes each pack to its source) and `get_skill --source_id` to fetch a specific pack skill. The advisor is also available over MCP behind its own gate, read-only, so a thin client can coach you in its own voice without ever exposing a fix it could run itself.
+
+Nothing here forks the manifest, the installer, or the trust model — brain packs go through the same TOFU gate and SSRF allowlist as any third-party pack. Thin-client *binary* install (download-and-unpack) remains the separate, still-deferred PR2 work; today a thin client resolves a pack from its git source on its own machine.
+
+### Added
+- **Brain-resident skillpacks** — optional `brain_resident` + `schema_pack` fields on the v1 manifest (additive, forward-compatible); `gbrain skillpack init-brain-pack` scaffolds one (with a machine-parseable README a connecting harness can scan) pinned to the exact serving version so a pack can't install on a binary that lacks its ops.
+- **Connect-time discovery** — `gbrain sources add` surfaces a brain-resident pack and offers to install it; a new `list_brain_skillpack` MCP tool (source-scoped, `mcp.publish_skills`-gated) plus `get_skill --source_id` let a thin client discover and fetch per-source pack skills. `gbrain connect` now teaches agents to call it.
+- **`gbrain advisor`** — ranked, read-only "what to do next" for this brain (version drift, pending migrations, schema-pack issues, stalled jobs/sync, embedding coverage, setup smells, uninstalled skills). `--json` with severity-based exit codes for CI/cron; `--apply <id>` runs one fix locally behind an explicit confirm (structured argv, never a shell). Exposed over MCP behind `mcp.publish_advisor` (default off, read-only).
+- **`gbrain-advisor` bundled skill + weekly cron recipe** — teaches a harness to run the advisor on a cadence and ping you with what's new since last run.
+- **Brain-pack version-skew lint** — `init-brain-pack` validates each pack skill's declared `tools:` against the serving op set, so a pack fails loud on drift instead of silently half-working.
+
+### Changed
+- **The post-install/upgrade advisory is now state-aware and current.** It reads a single current-state recommended set (not a version-pinned constant) and the install ledger, and it speaks `gbrain skillpack scaffold` (the removed `install` verb is gone from the copy).
+
+### To take advantage of v0.42.47.0
+`gbrain upgrade`, then run `gbrain advisor` to see the top things worth doing on your brain right now. To publish a brain's skills to anyone who connects, run `gbrain skillpack init-brain-pack <name>` in the brain repo, fill in the README's five sections, and commit it. To let connecting agents discover packs over MCP, `gbrain config set mcp.publish_skills true`; to let a thin client run the advisor, `gbrain config set mcp.publish_advisor true` (both default off). Install the `gbrain-advisor` skill and its weekly cron recipe for a standing brain checkup.
+## [0.42.46.0] - 2026-06-16
+
+**Federated read scope now reaches every by-slug read, not just search and query (gbrain#2200).** A client that mounts several sources (a `federated_read` grant) could find a page through search and query, but the by-slug reads — `get_page`'s tags, plus `get_tags`, `get_links`, `get_backlinks`, and `get_timeline` — didn't honor the same grant. For a page living outside the default source that meant two wrong outcomes: the read came back empty for content the client was authorized to see, or it resolved against the wrong source. This release routes all of those reads through the same source-scope ladder that already governs search/query, so a federated client reads exactly the sources it's granted — no more, no less. Thanks to @mlobo2012 for the report and the proposed fix.
+
+Link reads are scoped on every endpoint. A link connects up to three pages (the source page, the target, and the page that authored the edge); a federated read now constrains all three to the grant, so a link that crosses out of your granted sources doesn't surface a foreign page's slug. Untrusted remote callers carrying a single-source token get the same all-endpoint scoping; trusted local CLI keeps its cross-source view for link reconciliation and validators.
+
+The semantic query cache was already corrected in v0.42.34.0 (cache rows key on the full source set, so a federated result can't be served to a caller with a different scope); this release closes the read-path half of the same theme.
+
+### Fixed
+- **By-slug reads honor the federated read grant.** `get_page` resolves a page's tags against that page's own source, and `get_tags` / `get_links` / `get_backlinks` / `get_timeline` route through the federated source scope. A multi-source client reads tags, links, backlinks, and timeline across exactly its granted sources (union), instead of falling back to a single source.
+- **Link reads are scoped on all three endpoints** (source, target, and authoring page) under a federated grant, and untrusted remote single-source callers are scoped the same way — so a cross-source link can't disclose a foreign slug. Trusted local reads keep the full cross-source view.
+
+### Changed
+- The engine's `getTags` / `getLinks` / `getBacklinks` / `getTimeline` and `TimelineOpts` accept a `sourceIds[]` federated scope (precedence over the scalar source), mirroring `getPage` from v0.42.37.0. Write-side operations are unchanged — a read grant never widens writes.
+
+### To take advantage of v0.42.46.0
+`gbrain upgrade`. No configuration needed — federated clients immediately read tags, links, backlinks, and timeline across their full granted source set, and cross-source link reads stop surfacing foreign slugs. Single-source brains are unaffected.
+
+## [0.42.45.0] - 2026-06-13
+
+**The daily sync cron stops wedging on cost, and the embedding-spend estimate finally matches what a sync actually does (gbrain#2139).** On an active brain the inline-embed cost gate priced the *entire* corpus every time the working tree was dirty — which is always, since agents and crons write to it constantly — so a routine daily sync estimated ~158M tokens / ~$8 when the real delta was a few hundred files / ~$0.04, then blocked the cron with a confirmation it could never answer. Embeds silently stalled until someone noticed. The estimate now mirrors execution: it fetches first and prices only the files this run will pull and import, through the same diff machinery the sync itself uses. A brain whose commits are caught up but whose tree is dirty estimates $0, because an attached-HEAD sync imports only the committed diff.
+
+When the gate does fire in a non-interactive session, it no longer exits with an error — it imports now and defers embedding to capped background jobs (which drain via the jobs worker or `gbrain embed --stale`), so a cron is never wedged again. Operators who have decided cost isn't the constraint get one switch — `gbrain config set spend.posture tokenmax` — that makes every cost gate informational across sync, reindex, enrich, and onboard (spend is still recorded; the switch removes the ceiling, not the accounting). The USD knobs accept `off` / `unlimited`, and every gate message now carries paste-ready commands so the controls are discoverable at the moment they fire.
+
+This release also lifts the rule that blocked `--skip-failed` / `--retry-failed` under parallel sync — failure recovery no longer has to drop to `--serial` (which is what armed the inline gate in the first place).
+
+### Added
+- **`spend.posture` config** — `tokenmax` makes every embedding-cost gate informational (print the estimate, proceed, keep the ledger); `gated` (default) enforces as before. Documented end-to-end in `docs/operations/spend-controls.md`.
+- **First-class off switches** — `sync.cost_gate_min_usd`, `embed.backfill_max_usd_per_source_24h`, `embed.backfill_max_usd`, and `reindex --max-cost` / `enrich --max-usd` accept `off` / `unlimited` / `none`. No more sentinel values like `100000`.
+- **Single-source `gbrain sync` cost preview** — plain `gbrain sync` previously embedded inline with no preview; it now carries the same gate as `sync --all` (auto-defers in non-TTY sessions, never blocks).
+- **Self-describing gate messages** — every cost-gate / FYI line ends with the exact `gbrain config set` commands to widen, disable, or switch posture, plus a docs pointer.
+
+### Changed
+- **`gbrain sync --all` is no longer blocked by the cost gate in cron/agent contexts.** Above the floor in a non-interactive session it auto-defers embeds (exit 0) instead of emitting a `cost_preview_requires_yes` envelope and exiting 2. Cron wrappers that branched on exit 2 now see exit 0 with `status: "auto_deferred"`. A TTY still prompts `[y/N]`; `--yes` still embeds inline.
+- **`--skip-failed` / `--retry-failed` now work under parallel sync.** The failure ledger is per-source and lock-serialized, so the previous "not supported under parallel — re-run with --serial" refusal is retired.
+- **The six spend-control config keys are now first-class** (`gbrain config set` accepts them without `--force`).
+
+### To take advantage of v0.42.45.0
+`gbrain upgrade`. Nothing to configure for the headline fix — the daily sync cron stops wedging and the estimate is accurate out of the box. If you run a high-volume brain where cost genuinely isn't the constraint, `gbrain config set spend.posture tokenmax` makes every gate informational. To widen or disable a specific gate instead, see the table in `docs/operations/spend-controls.md` (e.g. `gbrain config set sync.cost_gate_min_usd off`). Failure-recovery syncs can now stay parallel: `gbrain sync --all --skip-failed` no longer forces `--serial`.
+
+## [0.42.44.0] - 2026-06-13
+
+### Fixed
+
+- **Personal-brain tutorial points at the correct AlphaClaw site.** Step 4 of `docs/tutorials/personal-brain.md` ("Deploy via AlphaClaw on Render") linked to the wrong top-level domain, sending readers to a site that isn't the official AlphaClaw. The link now resolves to the right destination, so the deploy step works as written (gbrain#2165).
+
+## [0.42.43.0] - 2026-06-12
+
+**The brain now volunteers relevant pages instead of waiting to be asked (gbrain#2095).** Retrieval used to be pull-only: a deep session could run for hours with zero brain contributions — not because the brain had nothing, but because nothing prompted the agent to ask, and pages stored under coined names were missed by literal-string queries. Push-based context inverts that, on three channels sharing one zero-LLM, confidence-gated core: the ambient retrieval reflex now reads the last few conversation turns (an entity your assistant introduced two turns ago resolves on the "what did she invest in?" follow-up), a new `volunteer_context` operation gives any agent a per-turn volunteer surface over CLI stdin or MCP, and `gbrain watch` streams volunteered pages as a transcript flows through it.
+
+Every volunteered page carries an honest confidence (alias match 0.9, exact title 0.8, slug-suffix 0.6, small boosts for repeated or newest-turn mentions; default gate 0.7) and a one-line rationale. A feedback loop closes the tuning circle: volunteered pages are logged, "used" is derived from whether the page actually got retrieved afterwards, and `gbrain volunteer-context --stats` reports per-arm precision (labeled approximate, because the retrieval signal is throttled). Suppression learned the difference between a page that was actually surfaced and one merely mentioned — under windowing only a surfaced page is held back, so prior-turn mentions can't silence themselves.
+
+This release also lands on top of v0.42.42.0's exit-contract work as a strict superset: the transaction-mode pooler topology behind three consecutive teardown waves is now reproduced in the local CI gate (a real pooler service + an end-to-end teardown test), the exit-verdict sweep is completed across every command surface (notably `gbrain doctor`, whose FAIL verdict could still report exit 0), and a structural guard makes the next raw exit-code write fail in CI instead of silently reporting success on failure.
+
+### Added
+- **`volunteer_context` operation** (CLI: `gbrain volunteer-context`, MCP tool) — pipe recent turns in (`user:` / `assistant:` prefixed lines, or plain text), get confidence-gated page pointers with rationales and synopses out. `--stats` returns the volunteered-vs-used precision summary. Per-call knobs: `max_pages`, `min_confidence`, `session_id`/`turn` attribution.
+- **`gbrain watch`** — the streaming push transport: feed a transcript on stdin, volunteered pages stream out (`--json` for JSONL), each slug at most once per session. Piped input exits cleanly at end-of-input; interactive sessions run until Ctrl-C.
+- **Rolling-window retrieval reflex** — the ambient channel extracts entities from the last 4 turns (configurable via `retrieval_reflex_window_turns` / `GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS`; 1 restores the previous single-turn behavior). Assistant-introduced entities and named-antecedent follow-ups now surface pointers with zero agent-initiated queries.
+- **Volunteered-context feedback log** — volunteered pages are recorded best-effort (channel, arm, confidence, optional session/turn) with 90-day retention handled by the nightly cycle; rationales are deterministic templates, never raw conversation text. Synopses always strip the takes/facts privacy fences before reaching a prompt.
+- **Transaction-mode pooler in the local CI gate** — `bun run ci:local` now runs a real transaction-pooling service in front of Postgres with an end-to-end teardown test, so the bug class behind gbrain#1972/#2015/#2084 is reproducible before it ships, not after.
+
+### Fixed
+- **`gbrain doctor` exits 1 on FAIL again on every engine.** Its verdict write predated the v0.42.42.0 exit-verdict channel and was being silently zeroed; swept, plus a structural test that fails CI on the next raw exit-code write anywhere in the CLI.
+- **Reflex pointer suppression under multi-turn windows** distinguishes "page already surfaced" from "entity merely mentioned earlier" — without this, window extraction would have suppressed every prior-turn entity by construction.
+
+### To take advantage of v0.42.43.0
+`gbrain upgrade` (applies the new feedback-log migration automatically). The wider reflex window is on by default for context-engine hosts — set `retrieval_reflex_window_turns: 1` in `~/.gbrain/config.json` to restore single-turn behavior. Agents without the context engine: call `volunteer_context` per turn (window in, pointers out), or pipe a transcript through `gbrain watch --json`. After a few days, `gbrain volunteer-context --stats` shows which resolution arms are earning their keep; raise or lower `min_confidence` accordingly.
+## [0.42.42.0] - 2026-06-12
+
+**`gbrain query` no longer pays a flat 10-second exit tax on managed Postgres behind a transaction-mode pooler — and CLI exit codes finally tell the truth on PGLite.** On deployments where the pooler holds sockets open past the bounded pool drain (gbrain#2084, a residual of gbrain#1972), every query printed its results and then sat for 10 seconds until the force-exit banner fired. The cause was two-layered: the hard-deadline timer was armed *before* the operation handler, so a multi-second search on a large brain burned the teardown budget (and any operation slower than 10 seconds was silently killed mid-run with exit 0 and truncated output); and the CLI never exited explicitly on success — it waited for Bun's event loop to drain, which a stuck pooler socket can hold open forever.
+
+The teardown contract now lives in one place: every cli.ts disconnect site runs a bounded background-work drain and a bounded disconnect under a backstop whose deadline is computed from the bounds it guards (so it fires only when something violated its own bound), then the process exits explicitly — after fencing stdout/stderr and holding a short aliveness window so piped output is delivered (Bun queues pipe writes in a native buffer that only drains while the process is alive). The most-used command in the CLI now exits in milliseconds-to-a-couple-seconds instead of ten.
+
+Along the way the wave fixed a deeper, silent bug: PGLite's WASM runtime writes its own status into `process.exitCode` at arbitrary points mid-run, which meant **every error exit on PGLite-engine brains has been reporting success (exit 0)** — scripts and agents keying on exit codes never saw failures. The CLI verdict now lives in a gbrain-owned channel that the WASM runtime cannot touch.
+
+### Fixed
+- **The flat 10s teardown tax + force-exit banner on transaction-mode poolers (gbrain#2084).** Queries exit promptly; the banner now appears only when a teardown component genuinely violated its own bound.
+- **Slow operations are no longer killed mid-run with a false success.** The teardown deadline starts at teardown, never before the operation handler — a 30-second sync or a deep query runs to completion.
+- **Error exits on PGLite report exit 1, not 0.** Failed operations (e.g. `gbrain get <missing-page>`) now exit non-zero on every engine; the exit code reports the operation, not the cleanup.
+- **Piped output survives the exit.** Output is fenced and given a delivery window before the process exits, on every routed exit path including the backstop (the truncation class from gbrain#1959).
+- **`gbrain doctor` no longer leaks its connection pool when DB checks throw**, and `dream`, `doctor`, `ze-switch`, and the search dashboards route their dispatcher teardown through the same bounded path (closing a long-standing drain gap on the overnight-cron path).
+- **Daemon safety with space-separated global flags.** `gbrain --timeout 30s serve` is recognized as the daemon it is — the exit gate resolves the command exactly the way dispatch does.
+
+### Added
+- **`GBRAIN_TEARDOWN_DEADLINE_MS`** — env override for the teardown backstop deadline (incident escape hatch; the default is computed from the drain and pool bounds).
+- **`GBRAIN_FLUSH_GRACE_MS`** — env override for the pre-exit output-delivery window (default 250ms on pipes, 0 on TTYs). Raise it when piping very large payloads into slow consumers; lower it for high-frequency scripted invocations that capture to files.
+
+### To take advantage of v0.42.42.0
+`gbrain upgrade`. No configuration needed. If your `gbrain query` has been printing results and then hanging ~10 seconds before a `force-exiting` banner, this release removes both the wait and the banner. If your scripts check gbrain exit codes on a PGLite brain, they will start seeing real failures — previously masked as exit 0 — so a wrapper that suddenly reports errors is the fix working, not a regression.
+## [0.42.41.0] - 2026-06-11
+
+**A correctness-and-reliability wave: your conversation facts survive a cycle, write-through stops polluting other repos, autopilot rides out a DB blip instead of crash-looping, and concurrent PGLite processes stop corrupting each other.** A triage of open reports surfaced six bugs with no fix yet plus a batch of community PRs; this ships them together, each with a regression test.
+
+The headline is data durability. The `extract_facts` cycle phase reconciles a page's facts from its `## Facts` fence by deleting then reinserting — but conversation facts (written by `extract-conversation-facts`) live on pages that have no fence, so a cycle could delete them and reinsert nothing. A failed sync made it worse by escalating the phase to a full-brain walk. Both are fixed: the reconcile now protects non-fence (`cli:`-origin) facts, the destructive phase no longer inherits the failed-sync full-walk, and a reconcile that removes far more than it adds now reports `warn` instead of a silent `ok`.
+
+Three more silent failures, each found in production and now self-healing or loud:
+- **Timeline writes that silently stopped.** A migration renumbered during a merge could be recorded as applied without its index change ever running, so every timeline insert failed its `ON CONFLICT`. `gbrain` now repairs the index shape on every migrate pass (dedupe-then-rebuild, even when nothing is pending), `gbrain doctor` reports the drift, and the meetings extractor no longer swallows batch errors.
+- **Autopilot crash-loop on transient DB errors.** The health-probe recovery called `connect()` without its config, so every reconnect threw and the process exited on any blip. It now uses `reconnect()`, which restores the captured config; `reconnect()` is a first-class method on both engines.
+- **WAL corruption from concurrent PGLite processes.** A live, working process holding the data-dir lock could have it stolen after five minutes. The lock now heartbeats while held and is only reclaimed from a dead or genuinely stalled holder.
+
+### Added
+- **`timeline_dedup_index` doctor check + always-run repair (#2038).** Detects and heals a stale `idx_timeline_dedup` shape; `gbrain apply-migrations --force-schema` triggers the repair on demand. Reported by @jbarol.
+- **`BrainEngine.reconnect()` on both engines (#2034).** Config-restoring reconnect, replacing the `disconnect()`+bare-`connect()` pattern.
+
+### Fixed
+- **Conversation facts survive a fence reconcile (#1928).** The cycle's per-page wipe now excludes non-fence (`cli:`) facts, the destructive phase no longer full-walks on a failed sync, and net-negative reconciles surface as `warn`.
+- **`put_page` write-through no longer leaks into an unrelated source's repo (#2018).** It mirrors to the assigned source's own `local_path`; a source without one is skipped rather than written into the global repo path.
+- **Autopilot survives transient DB errors instead of crash-looping (#2034).**
+- **Concurrent PGLite processes no longer corrupt the WAL (#2058).** Heartbeat + steal-grace replaces the age-only stale-lock check.
+- **Timeline migration drift self-heals; the extractor stops swallowing errors (#2038, #2057).** A Date-typed batch date round-trips correctly (verified by test).
+- **A cwd `.env` `DATABASE_URL` no longer silently retargets the brain (#2064, closes #427).** Reported by @bomliu.
+- **`gbrain sync --strategy code` honors `.gitignore` and skips `vendor`/`dist`/`build`/`venv` (#2052, #2020).** Reported by @aphaiboon and @dMac716.
+- **Asymmetric embedding `input_type` reaches the wire across every openai-compatible recipe (#2033, supersedes #1400).** Query vectors are no longer document-typed. By @pabloglzg; original diagnosis by @billy-armstrong.
+- **`updateSourceConfig` JSONB merge is atomic (#2074).** Eliminates a concurrent-writer lost-update race. Reported by @pai-scaffolde.
+- **`gbrain doctor` correctness pass (#2075):** stale-lock hints, content sanity, graph coverage, exit code, gateway guard. Reported by @pai-scaffolde.
+- **`gbrain search` returns results instead of exiting 0 empty on slow poolers; scoped `code-callers`/`code-callees` find their edges (#2073).** Migration v116 backfills NULL edge `source_id` and indexes `from_symbol_qualified`. Reported by @jbarol.
+- **OAuth scope handling (#2009, #2072):** an omitted authorize scope now defaults to the client's registered grant (clamped to it, so no widening) instead of an empty grant that never self-heals; legacy token source grants are honored through a single shared scope parser. By @austinrarnett and @maxpetrusenkoagent.
+
+### To take advantage of v0.42.41.0
+
+`gbrain upgrade`. The timeline-index repair and migration v116 run automatically on the next migrate pass — if `gbrain doctor` flagged a timeline or call-graph problem before, re-run it after upgrade. No config changes required; the facts, write-through, autopilot, and lock fixes apply on restart.
+
+## [0.42.40.0] - 2026-06-09
+
+**`gbrain extract --stale` no longer aborts partway through a brain that contains emoji or other non-BMP characters.** On a large brain, link/timeline extraction could die with `invalid input syntax for type json` and commit nothing — and because the staleness bookmark only advances on a clean finish, every retry re-hit the same point and extraction stayed wedged. The cause: the link-context excerpt was sliced by raw UTF-16 index, so a window boundary landing inside an emoji's surrogate pair left an unpaired surrogate half in the text, which Postgres rejects when the batch is serialized to JSONB — taking down the whole batch, not just the one row. (PGLite is more permissive here, so this primarily bit the managed-Postgres engine.)
+
+The fix well-forms free text before it is serialized: any unpaired surrogate half is replaced with the Unicode replacement character before it reaches the database. It is applied at the slicer and, as defense in depth, centrally at the batch-insert boundary for every free-text field — link context, timeline summary/detail/source, take claim/source — across both the batch and single-row write paths and both engines. Identity fields (slugs, source ids, holders) are deliberately left untouched, so a malformed identifier still fails loudly instead of being silently rewritten. The same well-forming helper now also backs the brainstorm prompt path, replacing a hand-rolled version that left back-to-back malformed characters half-cleaned.
+
+### Fixed
+- **`extract --stale` runs to completion on brains with emoji / non-BMP text (gbrain#2011).** The link-context slicer no longer leaves an unpaired UTF-16 surrogate that Postgres rejects at the JSONB cast and aborts the whole batch. A 192K-page brain that died at ~1,550 pages now sweeps clean.
+- **Defense in depth at the batch-insert boundary.** Every free-text field written to JSONB (link context; timeline summary/detail/source; take claim/source) is now NUL- and surrogate-sanitized centrally, in both the batch and single-row paths and on both engines, so no future slicer can re-trigger this class of crash. Identity/security fields stay un-sanitized and fail closed.
+
+### Changed
+- **One shared well-forming primitive.** The brainstorm cross-prompt path now uses the same surrogate-cleaning helper, which also fixes a case where consecutive malformed characters were only half-cleaned.
+
+### To take advantage of v0.42.40.0
+`gbrain upgrade`. No configuration needed. If a `gbrain extract` run had been stalling at the same page count every time, this is the release that unsticks it — the next run resumes and completes.
+## [0.42.39.0] - 2026-06-09
+
+**Your agent now learns a brain page exists the moment you name someone — instead of talking about a close contact for four messages without ever opening their page.** gbrain was great at *storing* knowledge and at injecting deterministic per-turn context, but it never taught the agent the *policy* of retrieval: when to look something up, and what to pull. That lived in each user's hand-rolled instructions and failed silently. The Retrieval Reflex makes it a property of having a brain.
+
+Two layers, on by default. A **deterministic pointer layer** in the context engine scans each turn's message for salient, resolvable entities (capitalized names, `@handles`) and injects a compact pointer — name → slug → one-line summary → "open the page before relying on details." Zero-LLM, fail-open, capped, and judgment-gated: it points, it never auto-dumps the page body, and it stays silent on trivial mentions or entities already in context. A **policy skill** (installed into your agent's resolver via `gbrain integrations install retrieval-reflex`) encodes the trigger policy and the pointer → full-page → graph-neighbors escalation ladder so the agent knows what to do with the pointer.
+
+It works on every engine without leaking a second database connection. PGLite holds a single connection (your `gbrain serve` owns it), so the context engine resolves *through* the live holder over a local socket rather than opening its own — and on Postgres it uses a cached direct connection. Synopses run through the same privacy boundary `get_page` applies, so private facts never reach the prompt. `gbrain doctor` reports whether the reflex is actually firing.
+
+### Added
+- **Retrieval Reflex deterministic pointer layer (gbrain#1981).** The context engine injects compact, privacy-safe entity pointers per turn — on by default, zero-LLM, fail-open, capped. Disable with `GBRAIN_RETRIEVAL_REFLEX=false` or `retrieval_reflex: false` in `~/.gbrain/config.json` (file/env plane).
+- **`retrieval-reflex` recipe + policy skill.** Installs the when/what-to-retrieve policy into your agent's resolver: `gbrain integrations install retrieval-reflex --target <host-repo>`.
+- **`retrieval_reflex_health` doctor check.** Reports the deterministic layer's real runtime status (observed firing, resolve path, policy-skill install state).
+
+### Fixed
+- **Resolver-row install fence is now keyed by recipe id.** Installing a second `copy-into-host-repo` recipe previously wrote a block mislabeled with the first recipe's name; `--refresh`/uninstall now find their own rows.
+
+### To take advantage of v0.42.39.0
+
+`gbrain upgrade`. The deterministic pointer layer is on automatically — no config needed. To give the agent the matching policy skill, run `gbrain integrations install retrieval-reflex --target <your-agent-repo>`, then `gbrain doctor` to confirm `retrieval_reflex_health` is green.
+
+## [0.42.38.0] - 2026-06-09
+
+**Three independent job-layer bugs that left autopilot wedged or swallowed a command's output are fixed, each traced to source.** A triage of the job/lock/teardown layer (gbrain#1972) pulled them into one wave.
+
+A crashed sync (OOM, a recycle, a kill) used to strand its lock row: the source looked "syncing" forever because reclaim only happened when something else came along and contended for the same lock. There was no background sweep, so a low-traffic source could sit falsely locked for a long time. Now every cycle reaps locks whose holder process is provably dead on this host — scoped to the sync/cycle lock namespaces, never to elections or the worker supervisor, and guarded against PID reuse so a recycled PID can never clear a live lock. `gbrain doctor --fix` runs the same reaper for brains that don't run autopilot.
+
+Short one-shot CLI calls also got their full latency and output back. Database teardown could block for the full force-exit deadline against a transaction-mode pooler and then exit hard mid-write, which truncated the command's real output — the reason a relational query could come back empty even though the query itself worked. Teardown is now bounded by gbrain's own deadline instead of the connection driver's, so a short command returns in milliseconds with its output intact.
+
+And the cooperative-abort work started in v0.42.29 (which only covered the embed phase) now covers every long phase a cycle runs — extract, fact extraction, and consolidation all check for cancellation between batches, so a cancelled cycle relinquishes its worker promptly instead of being force-evicted. A cancelled cycle also no longer records itself as a completed full run.
+
+### Fixed
+- **Stale dead-holder locks are reaped automatically (gbrain#1972, adjacent to #1470).** A background, host-scoped sweep at cycle start deletes `gbrain-sync:*` / `gbrain-cycle*` locks whose holder PID is dead, with a snapshot-matched delete that's safe against PID reuse and a 60s grace window. Other lock namespaces (elections, supervisor, reindex) keep their existing TTL behavior, untouched. `gbrain doctor --fix` reaps too, for no-autopilot brains.
+- **One-shot CLI calls no longer hang on teardown or lose their output (gbrain#1959).** Pool disconnect is bounded by a gbrain-owned deadline (both pools closed concurrently) instead of blocking until the hard force-exit fired and truncated stdout. A short command returns promptly with intact output.
+- **Cooperative abort now covers every long cycle phase (gbrain#1737 follow-up).** `extract` (incremental + full-walk), `extract_facts` (including its per-page embed and the phantom-redirect lock-retry), and `consolidate` check the abort signal between batches; `lint` yields periodically so it can be cancelled too. A cycle aborted mid-phase no longer stamps `last_full_cycle_at` as a completed run, and a new per-phase duration warning names any phase that overruns the worker's force-evict deadline.
+
+### To take advantage of v0.42.38.0
+
+`gbrain upgrade`. No configuration needed — the lock reaper, bounded teardown, and abort coverage are all on by default. If a source has looked stuck "syncing" with no live process, the next cycle (or `gbrain doctor --fix`) clears it automatically.
+
+## [0.42.37.0] - 2026-06-08
+
+**Cross-source reads now honor the caller's grant everywhere, a single bad frontmatter value no longer wedges a whole `lint`/`sync` run, and a handful of long-standing papercuts are gone.** A triage of the open issue backlog pulled the highest-impact bugs into one wave.
+
+The headline is a source-isolation hardening pass. Every read that can be scoped to a source now resolves through one shared, fail-closed trust+grant check, so a remote client only ever sees the sources it was granted — whether it asks for one source, all sources, or reads a page by exact slug. Reads route the same way across query, the code-intel traversals, image search, and `get_page`. Legacy bearer tokens now carry the source grant an operator already stored on them, instead of being pinned to `default`.
+
+On ingestion, a non-string frontmatter value (a bare number or date in `title:`, `slug:`, or `type:`) used to throw partway through and abort the entire run — so one malformed file could stop a whole brain from linting or syncing. Now those values are coerced to a usable string (a bare date `2024-06-01` becomes a real slug, not a crash), and `gbrain lint` flags the un-quoted field by name so you can clean it up.
+
+Plus: `gbrain embed --catch-up` runs to completion instead of stopping after the first batch (and tells you when chunks genuinely can't be embedded); the frontmatter pre-commit hook actually matches `.md`/`.mdx` files now instead of silently doing nothing; the skill catalog shows the real description for skills that write it as a YAML block scalar; and `getConfig` retries through a transient connection blip instead of silently falling back to defaults.
+
+### Fixed
+- **Source-scoped reads honor the caller's grant across every read op (gbrain#1924, #1371, #1393).** One shared resolver replaces the per-op scope logic: a remote caller's "all sources" request is bounded to its grant, an out-of-grant source is refused, and `get_page`'s exact-slug path is scoped like every other read (both engines).
+- **Legacy bearer tokens carry their stored source grant (gbrain#1336).** Tokens with an operator-set source grant read across exactly those sources instead of being limited to `default`.
+- **Non-string frontmatter no longer aborts `lint`/`sync` (gbrain#1883, #1658, #1556, #1948).** Title/slug/type are coerced to usable strings instead of throwing mid-run, and `gbrain lint` reports the un-quoted field by name.
+- **`embed --catch-up` runs to completion (gbrain#1946).** The mode no longer stops after one batch, and surfaces chunks that can't be embedded instead of looking like a clean finish.
+- **Frontmatter pre-commit hook matches `.md`/`.mdx` files (gbrain#1840).** The installed hook was a silent no-op; it now validates staged markdown on commit.
+- **Skill catalog shows block-scalar descriptions (gbrain#1711).** Skills written with `description: |` show their real text instead of a stray indicator.
+- **`getConfig` retries on a transient connection blip (gbrain#1603)** instead of silently falling through to defaults (which surfaced as the wrong search mode / empty output on remote Postgres).
+
+### To take advantage of v0.42.37.0
+
+`gbrain upgrade`. No configuration needed. If `gbrain lint` now flags a `frontmatter-non-string-field` on a page, quote the value in that page's frontmatter (e.g. `title: "123"`). Reinstall the pre-commit hook with `gbrain frontmatter install-hook` to pick up the fixed matcher.
+
+## [0.42.36.0] - 2026-06-08
+
+**A huge `gbrain sync` that keeps getting killed now converges instead of restarting from zero.** On a high-write source — hundreds of thousands of files, a generator committing faster than each sync can drain — a full sync that ran past its launching session's timeout (SIGTERM) would lose 100% of its progress and re-import the entire backlog on the next run, forever. The bookmark never advanced, the source went quietly stale for hours while the importer burned CPU the whole time, and competing hourly launches stole each other's lock and raced. This release makes a large sync **resumable, durable, and single-flight** so it banks what it imports and picks up where it left off.
+
+Progress is now banked into an append-only checkpoint as files drain, written through a direct session connection so it survives connection-pool exhaustion (the exact condition that used to silently drop every checkpoint write). The write is a delta — one row per drained file — instead of rewriting the whole completed-set each flush, so banking stays cheap even at hundreds of thousands of files. The bookmark still only advances on true completion, so a killed run resumes from the checkpoint rather than re-walking from zero. And the per-source lock now heartbeats through the direct pool and refuses to steal a holder that's alive and actively refreshing — so a long sync that overruns into the next scheduled run is skipped, not break-locked into a thrashing race.
+
+### Fixed
+- **Resumable sync survives pool exhaustion (gbrain#1794).** Checkpoint reads/writes route through the direct session pool with bounded retry; `EMAXCONNSESSION` / `too_many_connections` are now classified retryable. A killed run banks its progress and the next run skips already-drained files.
+- **Guaranteed final flush on every exit path.** A cooperative timeout, an external SIGTERM (one-shot no-retry flush via the cleanup registry, ordered before lock release), and a clean finish all bank the in-flight delta. The bookmark is never advanced on a partial.
+- **Fail-loud instead of burning CPU.** If checkpoint persistence fails repeatedly (pool genuinely dead), the run aborts with a `checkpoint_unavailable` partial rather than importing work it can never bank. Every partial/blocked exit now logs how many files were banked, so a killed run is never misread as total loss.
+- **Lock thrash eliminated.** The import loop yields the event loop so the lock-refresh heartbeat fires mid-import; takeover refuses to steal a recently-refreshed (alive-but-starved) holder; a bare `gbrain sync` (no `--source`) now uses the refreshing lock too; and a cron sync that collides with a running one is reported as a skip, not a phase failure.
+
+### Added
+- **Append-only checkpoint storage** (`op_checkpoint_paths`, migration v115): one row per drained path; O(delta) writes instead of O(N²) full-set rewrites over a large sync.
+
+### To take advantage of v0.42.36.0
+- Nothing to do. `gbrain sync` is resumable by default — a killed sync now banks its progress and the next run converges. Five env knobs tune cadence, fail-loud threshold, event-loop yield, and lock-steal grace if you need them at incident time; see the "Sync resumability + lock tuning" section in CLAUDE.md.
+
+## [0.42.35.0] - 2026-06-07
+
+**A bookmark left pointing at a rewritten-away commit no longer freezes your brain in an endless full re-walk.** When a source's history is rewritten — a force-push, a `master`→`main` consolidation, a squash — the commit gbrain recorded as "last synced" can fall outside the branch's current history. The old guard treated that the same as a missing commit and fell back to re-importing the entire repository on every run. On a large brain with a cross-region database that full walk never finishes inside the sync timeout, so the bookmark never advanced and the source went quietly stale with no error surfaced.
+
+The fix is a smaller, exact diff. `git diff A..B` compares two trees and does not require A to be an ancestor of B, so when the recorded commit's object is still on disk (the common case right after a rewrite) gbrain now diffs directly against it and imports only the real delta — the changed files, not the whole tree. A clear `[sync] last_commit … history rewritten` line marks the recovery. Only when the commit object is genuinely gone does sync fall back to a full reconcile, and that reconcile now also purges pages whose source files were removed — so a full sync is finally authoritative for deletes, not just imports (manually authored `put_page` pages and metafiles are never swept). Sibling of the v0.42.32.0 silent-staleness fix (gbrain#1939); closes gbrain#1970.
+
+### Fixed
+- **Sync recovers from an unreachable `last_commit` instead of full-walking forever (gbrain#1970).** A bookmark orphaned by a history rewrite is now diffed tree-to-tree directly when its object is still present, importing only the changed files; an oversized or failed diff degrades to a full reconcile instead of throwing. Only a truly-absent (gc'd) object forces a full reconcile.
+- **A full sync now purges deleted files.** `performFullSync` reconciles deletions — pages whose backing file is gone are removed (gated to file-backed pages via `source_path`; manual `put_page` pages and metafiles are spared). This makes both the object-absent recovery path and every `--full` sync authoritative for deletes, not just imports.
+- **Rename to an unsyncable path deletes the stale page.** A syncable file renamed to a non-syncable destination (which git reports as a rename, not a delete) now removes the old page instead of leaving it orphaned.
+
+### To take advantage of v0.42.35.0
+- Nothing to do. The next `gbrain sync` after upgrading self-heals a stuck bookmark automatically; watch for the one-line `[sync] last_commit … history rewritten` recovery message. If a source has been stale since a force-push or branch consolidation, this is the release that unsticks it.
+## [0.42.34.0] - 2026-06-07
+
+**Relationship questions now get relationship answers.** Ask "who invested in widget-co", "who introduced me to alice-example", or "what connects fund-a and fund-b" and gbrain resolves the named entity and walks its typed-edge graph (`invested_in`, `works_at`, `founded`, `attended`, `advises`, …) to surface the answer — even when no single page mentions both sides. Until now the graph only re-ranked results that keyword/vector search had already found; a relationship that lived purely in the edges (an investor whose page never names the company) was invisible. It now enters retrieval as a first-class candidate.
+
+This is on by default in the `balanced` and `tokenmax` search modes, a pure no-op for non-relational questions and for brains with no typed edges, and off in `conservative`. On a benchmark of relationship queries whose answers are unreachable by content similarity, recall@10 goes from near-zero to over 75%. The traversal is deterministic (same query + brain → same answer), stays within a single source (it never crosses a mounted-brain boundary), excludes noisy body-text "mentions" edges by default, and is depth- and fan-out-bounded so a popular hub entity can't blow up a query.
+
+### Added
+- **Typed-edge relational retrieval** (`search.relational_retrieval`, on for balanced/tokenmax). Relational questions resolve their seed entity and traverse the typed-edge graph, injecting edge-derived answers as a fourth fusion arm alongside keyword + vector. Relation vocabulary is schema-pack-extensible: a pack that defines its own link types can declare the query phrases that retrieve them. The `query` operation gains a `relational` flag (omit for the smart default; pass `false` to force lexical/vector-only). Results carry `--explain` attribution ("surfaced via invested_in from widget-co") and, for "what connects A and B", the connecting path.
+- **`relationalFanout` engine method** (PGLite + Postgres, in lockstep). Seed-array typed-edge fan-out aggregating to ranked nodes (shortest hop, edge richness, connecting path, canonical chunk), source-scoped and deterministic.
+- **`gbrain eval retrieval-quality --ab-relational`**: A/Bs the arm off vs on over a question set and reports the recall@10 lift + latency. The retrieval-quality harness gains recall@k / recall@10 metrics.
+
+### Fixed
+- **Cross-source result collapse.** The search fusion/dedup key now carries `source_id`, so two pages that share a slug across mounted brains no longer merge into one result. The semantic query cache is likewise scoped per source-set, so a federated search can't be served a single-source cached result.
+
+### To take advantage of v0.42.34.0
+- Just ask relationship questions in natural language — the arm is on by default in balanced/tokenmax. To turn it off: `gbrain config set search.relational_retrieval false`.
+- One-time cache note: this release advances the search-cache key version (a relational-on result must not be served to a relational-off lookup), so the first query after upgrade re-runs instead of hitting a stale cache row. No action needed; it self-heals on first use.
+## [0.42.33.0] - 2026-06-07
+
+**`gbrain sync` will never delete a repo it didn't create.** If a source was registered with a `remote_url` but its `local_path` pointed at a working tree you manage yourself (not a gbrain-managed clone), a failed or degraded code sync could remove that directory and re-clone over it. Sync now re-clones **only** clones gbrain actually created — identified by an ownership marker, or by gbrain's own clone location for clones made before this release. Anything else, including your live working tree, is treated as read-only: indexed, never deleted. On an unowned path, sync aborts loudly **before touching the filesystem** and tells you how to fix the source registration. Thanks to @zaqwery for the report.
+
+The re-clone path is also crash-safer now: it clones into a sibling temp on the same filesystem and swaps atomically (old aside → new in → drop old), so a cross-device rename can't leave a source deleted-but-not-restored. If the swap ever fails, the error names exactly where your original clone is preserved.
+
+### Fixed
+- **`gbrain sync` never deletes an unowned working tree (gbrain#1881).** Re-clone is confined to clones gbrain created (`config.managed_clone` marker, or the default clone location for pre-marker clones). A `remote_url` source whose `local_path` is your own working tree is synced read-only and refused — loudly, before any filesystem op — never removed. `gbrain sources restore` on such a source warns and keeps the tree instead of deleting it. Reported by @zaqwery.
+- **Safer re-clone swap.** Re-clone uses a same-filesystem sibling temp plus an atomic swap (no cross-device "deleted but not re-cloned" window); a symlinked clone path is refused; a failed swap reports where the original is preserved.
+
+### To take advantage of v0.42.33.0
+
+Upgrade. Nothing to configure. New `--url` sources are marked gbrain-owned automatically, and existing managed clones at the default location keep auto-recovering. If you registered a source whose `local_path` is a working tree you maintain yourself, `gbrain sync` now syncs it read-only and prints how to re-register it if you want gbrain to manage the clone.
+## [0.42.32.0] - 2026-06-07
+
+**A single un-parseable note can no longer silently stop your brain from indexing anything new.** A page whose YAML frontmatter `title:` was a bare date (`title: 2024-06-01`) or number (`title: 1458`) parsed as a Date/number, not text — and the importer threw when it tried to lowercase it. That throw blocked the sync bookmark from advancing, so every later `gbrain sync` re-walked the whole repo, never reached HEAD, and quietly stopped indexing new commits. The page was committed and on GitHub, but `gbrain get` returned `page_not_found` with no surfaced error.
+
+Two fixes. First, a non-string title/slug/type now coerces deterministically at parse time — a YAML date becomes its UTC ISO string (`2024-06-01`), so the same page reads the same on every machine and the import never throws. Second, the importer gained a **bounded auto-skip safety valve**: a file that fails to import N consecutive syncs (default 3, `GBRAIN_SYNC_AUTOSKIP_AFTER`) is recorded and skipped so it can't wedge all indexing forever — while a *fresh* failure still fails closed (the bookmark holds and you're told what broke), and a repository history rewrite still hard-blocks even with `--skip-failed`. Skipped pages stay visible: `gbrain doctor` keeps warning until you fix them, and escalates to a hard failure when a real failure has blocked the bookmark past the staleness window.
+
+`gbrain doctor` now decides sync-failure severity through one shared rule on both the local and remote surfaces, so a stuck bookmark surfaces identically whether you run doctor on your own machine or against a remote brain.
+
+### Added
+- **Bounded auto-skip sync ledger.** A file that fails N consecutive syncs (`GBRAIN_SYNC_AUTOSKIP_AFTER`, default 3; set `0` to disable) is auto-skipped so one poison file can't freeze indexing for the whole brain. Skips are per-source, survive crashes (the bookmark advances before anything is marked skipped), and self-heal — fix or delete the file and the next sync clears it. `gbrain doctor` lists what was skipped and why.
+
+### Fixed
+- **Non-string frontmatter titles no longer wedge indexing (#1939).** `title: 2024-06-01` / `title: 1458` (and date/number `slug`/`type`) coerce to deterministic strings at parse time instead of throwing, so a handful of date-named notes can't silently stop your brain from indexing new commits.
+- **`gbrain doctor` sync-failure severity is now consistent across surfaces (#1939).** Local and remote doctor share one decision: a stuck bookmark escalates to FAIL once it has blocked past the staleness window (or many files are blocking), while already-skipped pages stay a visible warning.
+
+### To take advantage of v0.42.32.0
+Upgrade and run `gbrain sync` once. Any pages that previously wedged the importer (bare date/number titles) now import on their own. If a file still genuinely can't parse, sync tells you which one; fix it, or let the auto-skip valve move past it after a few runs and watch for it in `gbrain doctor`. Tune the threshold with `GBRAIN_SYNC_AUTOSKIP_AFTER` (set `0` to keep the strict fail-closed behavior).
+
+## [0.42.31.0] - 2026-06-07
+
+**You can now write typed graph edges with your own provenance straight from the CLI — `gbrain link-add a b --link-type relies-on --link-source citation-graph` — and an external edge-writer (a citation-graph ingester, an importer, a classifier) no longer needs a gbrain schema migration to register a new provenance.** Two ergonomics gaps for tools that compute edges out-of-band, filed by a downstream agent building a citation-graph ingester (#1941).
+
+Before this, `link_source` was a closed allowlist: anything outside `markdown`/`frontmatter`/`manual`/`mentions`/`wikilink-resolved` was rejected by a CHECK constraint, so a deriver had to either patch gbrain's schema or stamp its machine-derived edges `manual` — which made them indistinguishable from hand-entered ones. `link_source` is now an open, format-validated provenance: any lowercase kebab-case tag up to 64 chars (`citation-graph`, `relies-on-graph`, your-tag) is valid, no migration needed. The format gate still rejects garbage (uppercase, spaces, underscores, leading/trailing/double dashes).
+
+The CLI gap is closed too. `gbrain link` / `gbrain unlink` now take `--link-source` and `--link-type`, with `link-add` / `link-rm` aliases for discoverability. A new `gbrain link-sources` lists the distinct provenances a brain carries (with counts) — the read-side replacement for the discoverability the old allowlist gave you for free. CLI-created edges now record `manual` provenance by default instead of masquerading as parsed-from-`markdown`, and the reconciliation-managed provenances stay reserved for the writers that own their semantics.
+
+### Added
+- **`gbrain link-add` / `link-rm` / `link-sources`** plus `--link-source` and `--link-type` on the link ops. Write typed, provenance-tagged, source-scoped edges from the CLI and list which provenances a brain holds. Provenance is any kebab-case tag; removals can filter by provenance so machine-derived edges delete cleanly without touching hand-entered ones. (#1941)
+
+### Changed
+- **`link_source` is an open kebab-case provenance, not a closed allowlist (migration v114).** External edge-writers register a new provenance with no gbrain migration. Existing provenances are unaffected; the migration is lock-friendly on Postgres (validates without blocking writes) and applies automatically on upgrade. CLI-created links now default to `manual` provenance.
+
+### Fixed
+- **Supervisor queue-singleton hardening (follow-up to #1849).** Two supervisors pointed at the same database via different-but-equivalent connection strings could each acquire the "one per queue" lock; the lock is now keyed on the queue alone (its row already lives in the target database), so same-database + same-queue collides correctly. A supervisor that loses the lock race on startup also no longer leaves its pidfile behind to block the next start.
+
+### To take advantage of v0.42.31.0
+
+`gbrain upgrade`. The constraint migration runs automatically. To write edges from a tool or the CLI: `gbrain link-add <from> <to> --link-type <verb> --link-source <your-tag>`; `gbrain link-sources` shows what's in the graph; `gbrain link-rm <from> <to> --link-source <your-tag>` removes only that provenance's edges.
+
+## [0.42.29.0] - 2026-06-07
+
+**The background-job queue stops thrashing on long jobs, the cycle stops wedging itself, and you can no longer run two supervisors against one queue by accident.** Three fixes plus a voice-agent feature.
+
+The biggest one: a `gbrain dream` / autopilot cycle whose embed phase ran long (a big stale-page backlog) would hit the job's wall-clock timeout, get dead-lettered, **and keep running anyway** — its embed loop never checked for cancellation, so the cycle's cleanup never ran and the `gbrain_cycle_locks` row stayed held. Every later cycle then skipped with "cycle already running" until the zombie finished 10-15 minutes later. The embed phase now honors the cancellation signal on both the `--stale` and `--all` paths and bails within a batch, so the lock is released right away.
+
+Long-running jobs also accounted for their attempts honestly now. A job killed by the wall-clock timeout (or repeatedly reclaimed after lease loss) used to show `Attempts: 0/2 (started: 3)` — started three times, zero attempts recorded — which read like broken math. `gbrain jobs get` now increments the attempt on those terminal paths and surfaces the stall counter, so you see `started 3 / stalled 2 / attempts 1 / killed: wall-clock` and it actually adds up. Long handlers (`subagent`, `embed-backfill`, `autopilot-cycle`) also get a sane default wall-clock budget when one isn't set explicitly, so they aren't killed mid-progress by the short default.
+
+The supervisor singleton was only enforced per pidfile path, so two supervisors launched with different `HOME` or `--pid-file` could both run against the same queue with conflicting `--max-rss` caps — and the lower cap silently killed healthy work. The real authority is now a queue-scoped DB lock keyed on the database identity: a second supervisor on the same `(database, queue)` exits immediately, regardless of pidfile path. If the lock can't be refreshed, the supervisor exits cleanly rather than risk a split. `gbrain doctor` now reports the effective `--max-rss` and flags a mismatch between the pidfile owner and the lock holder.
+
+For the voice agent recipe, you can now summon a persona into a specific topic so it boots already knowing the recent conversation, instead of starting cold.
+
+### Added
+- **Topic-aware voice personas** (`recipes/agent-voice/`): a call link can carry a `topicId` (e.g. `/call?persona=mars&topicId=q3-planning`) and the persona boots with that topic's recent conversation already in context. Only the `topicId` crosses the wire — the server resolves the conversation from the brain, so topic content never lands in a URL — and the id is a strict slug with a path-traversal guard. No `topicId` falls back to the generic per-persona context.
+
+### Fixed
+- **Long minion jobs no longer thrash or wedge the cycle (#1737).** The embed phase honors cancellation on both embed paths so a timed-out cycle releases its lock immediately; wall-clock and stall dead-letters record the attempt and surface the stall counter; long handlers get a default wall-clock budget.
+- **One supervisor per queue, enforced at the database (#1849).** A queue-scoped DB lock replaces the pidfile-only guard, so two supervisors can't fight over one queue with conflicting memory caps; `gbrain doctor` surfaces the effective cap and any owner mismatch.
+
+### To take advantage of v0.42.29.0
+
+Upgrade and restart your worker/supervisor. Nothing to configure. If `gbrain doctor` flags a supervisor singleton mismatch, stop the extra supervisor (`gbrain jobs supervisor stop`) and keep one per queue.
+## [0.42.28.0] - 2026-06-06
+
+**`gbrain extract links --stale` no longer dies partway through on calendar and meeting pages.** A full re-extraction sweep (the kind a `LINK_EXTRACTOR_VERSION_TS` bump triggers) used to crash with a Postgres "malformed array literal" error the moment a calendar event's raw text (Zoom links, commas, quotes, braces, em-dashes) landed in a batch. One bad batch aborted the entire run, so the graph never finished reconciling and stale edges couldn't be dropped. The three bulk writers (links, timeline, takes) now pass each batch as a single JSONB document instead of a hand-built `text[]` literal, which encodes arbitrary free text safely. The sweep runs to completion on the messiest brains.
+
+The same pass makes `addTakesBatch` survive a connection blip mid-run (it retries like the other bulk writers instead of silently dropping the batch) and tightens how stray NUL bytes are handled: junk NULs in free-text bodies (a claim, a meeting summary, a link's context) are stripped so one byte can't abort a batch, while identity fields (slugs, holders, source ids, dates) still reject them.
+
+Nothing to configure. `gbrain upgrade`, then re-run any extraction that was wedged.
+
+### Fixed
+- `extract links --stale` (and any links/timeline/takes bulk write) no longer crashes with "malformed array literal" when a row carries calendar/meeting free text. Batches bind as one JSONB document via `jsonb_to_recordset` instead of a `text[]` array literal, which also removes the 65535-parameter ceiling on batch size.
+- `addTakesBatch` retries on transient connection errors like the other bulk writers, instead of losing the batch on a pooler blip.
+
+### Changed
+- Stray NUL bytes in free-text fields (claim, summary, detail, link context) are stripped before write so a single junk byte can't abort a batch; identity/security fields (slugs, source ids, holders, dates) are left to reject NUL as before.
+
+### To take advantage of v0.42.28.0
+
+Nothing to run. If a `gbrain extract links --stale` sweep previously died on a calendar or meeting page, re-run it:
+
+```bash
+gbrain extract links --source <your-source> --stale
+```
+
 ## [0.42.26.0] - 2026-06-04
 
 **The Supabase setup docs now match the current dashboard and call out the one thing that actually breaks on IPv4 hosts.** The connection-string instructions were written for the old Supabase UI (two options under Project Settings) and used inconsistent pooler names: some docs said "Connection pooler," others mislabeled port 6543 as the "Session pooler," and a few carried a stale warning to avoid the transaction pooler entirely. The current Supabase UI puts the string under **Connect** in the top navigation with three options (Direct, Transaction pooler, Session pooler). gbrain is tuned for the **Transaction pooler** (port 6543): it disables prepared statements there and routes migrations, DDL, and worker locks to a separate direct connection. This release makes every setup surface say that, consistently.
@@ -16167,8 +16595,7 @@ The OAuth provider in `src/core/oauth-provider.ts` got a parallel hardening pass
 Smaller hardening: admin cookies set `Secure` when behind HTTPS or a public-URL proxy (F9), magic-link nonces are bounded by an LRU cap (F10), `/mcp` wraps `transport.handleRequest` in try/catch so SDK throws hit a JSON-RPC 500 instead of express's default HTML error page (F14), and OperationError + unexpected exceptions both route through the unified `buildError`/`serializeError` envelope (F15). DCR disable became a constructor option on the provider rather than a serve-http monkey-patch (F12 — cleanup, not security).
 
 To take advantage of v0.26.9
-============================
-
+=====================
 `gbrain upgrade` is a one-step upgrade. There is no migration; all changes are application-layer.
 
 1. **Upgrade.** `gbrain upgrade`. Confirm `gbrain --version` shows `0.26.9`.
@@ -16302,8 +16729,7 @@ Both run at `--max-concurrency=1` after the parallel pass, same as the existing 
 Wallclock observed: 74s on a Mac dev box (running `bun run test` with the new quarantines). Already at the v0.26.9 informational target. The full intra-file marker flip (with codemod + per-file `test.concurrent()`) lands in v0.26.9 and aims for the same ≤60s with pinned config.
 
 To take advantage of v0.26.7
-============================
-
+=====================
 `gbrain upgrade` does nothing functional in this release — it ships test infrastructure, not user-facing code. But if you contribute tests:
 
 1. **Run `bun run verify` before pushing.** The new `check-test-isolation.sh` runs alongside the privacy + jsonb + progress checks. Catches new env-mutation, mock.module, and PGLite-pattern violations before CI does.

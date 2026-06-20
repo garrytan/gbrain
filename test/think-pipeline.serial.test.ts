@@ -5,6 +5,7 @@ import { runThink, persistSynthesis, type ThinkLLMClient } from '../src/core/thi
 import { sanitizeTakeForPrompt, renderTakesBlock } from '../src/core/think/sanitize.ts';
 import { resolveCitations, parseInlineCitations, normalizeStructuredCitations } from '../src/core/think/cite-render.ts';
 import { runGather } from '../src/core/think/gather.ts';
+import { withoutAnthropicKey } from './helpers/no-anthropic-key.ts';
 
 let engine: PGLiteEngine;
 let alicePageId: number;
@@ -207,16 +208,13 @@ describe('runThink (with stub client)', () => {
   });
 
   test('degrades gracefully without ANTHROPIC_API_KEY', async () => {
-    const origKey = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
-    try {
-      const result = await runThink(engine, { question: 'no key test' });
-      expect(result.warnings).toContain('NO_ANTHROPIC_API_KEY');
-      expect(result.answer).toContain('no LLM available');
-      expect(result.rounds).toBe(0);
-    } finally {
-      if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
-    }
+    // Hermetic: neutralize BOTH the env var AND ~/.gbrain config key, else a
+    // developer/CI machine with a configured key fires a real LLM call and this
+    // assertion flips to LLM_OUTPUT_NOT_JSON.
+    const result = await withoutAnthropicKey(() => runThink(engine, { question: 'no key test' }));
+    expect(result.warnings).toContain('NO_ANTHROPIC_API_KEY');
+    expect(result.answer).toContain('no LLM available');
+    expect(result.rounds).toBe(0);
   });
 
   test('persistSynthesis writes synthesis page + evidence rows', async () => {
@@ -285,16 +283,11 @@ describe('runThink — #1698 explicit-model hard error', () => {
   });
 
   test('NON-explicit bad model does NOT throw — graceful degrade (no modelExplicit)', async () => {
-    const origKey = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
-    try {
-      // model present but modelExplicit unset → early gate skipped; builder returns null.
-      const result = await runThink(engine, { question: 'nonexplicit bad', model: 'bogusprovider:foo' });
-      expect(result.warnings).toContain('NO_ANTHROPIC_API_KEY');
-      expect(result.synthesisOk).toBe(false);
-    } finally {
-      if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
-    }
+    // model present but modelExplicit unset → early gate skipped; builder returns null.
+    // Hermetic no-key so the assertion can't be perturbed by a configured key.
+    const result = await withoutAnthropicKey(() => runThink(engine, { question: 'nonexplicit bad', model: 'bogusprovider:foo' }));
+    expect(result.warnings).toContain('NO_ANTHROPIC_API_KEY');
+    expect(result.synthesisOk).toBe(false);
   });
 });
 
@@ -373,15 +366,11 @@ describe('think MCP op — #1698 C3 + #10', () => {
 
   test('#10: local save with no synthesis → saved_slug is null, not "" + warning surfaced', async () => {
     const op = operationsByName['think'];
-    const origKey = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
-    try {
-      // Local (remote:false), save:true, no key → graceful stub → persist-skip.
-      const res: any = await op.handler(baseCtx(false) as any, { question: 'op empty save test', save: true });
-      expect(res.saved_slug).toBeNull();
-      expect(res.warnings).toContain('SYNTHESIS_EMPTY_NOT_PERSISTED');
-    } finally {
-      if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
-    }
+    // Hermetic no-key: synthesisOk=false → persistSynthesis returns
+    // SYNTHESIS_EMPTY_NOT_PERSISTED deterministically (was previously at the
+    // mercy of whatever a live LLM returned for this prompt).
+    const res: any = await withoutAnthropicKey(() => op.handler(baseCtx(false) as any, { question: 'op empty save test', save: true }));
+    expect(res.saved_slug).toBeNull();
+    expect(res.warnings).toContain('SYNTHESIS_EMPTY_NOT_PERSISTED');
   });
 });

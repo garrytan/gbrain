@@ -89,7 +89,7 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 9 (8→9 archive-demote invalidates archive-excluded cache rows, #1777)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(9);
+  it('is 11 (10→11 asymmetric input_type fix invalidates document-side query-vector rows, #1400)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(11);
   });
 });

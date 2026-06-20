@@ -553,4 +553,105 @@ describeE2E('E2E: sync --skip-failed structured summary loop (v0.22.12, issue #5
     const finalSummary = summarizeFailuresByCode(failures);
     expect(finalSummary).toEqual([{ code: 'SLUG_MISMATCH', count: 2 }]);
   });
+
+  // issue #1939 CRITICAL REGRESSION: a page whose YAML title parses to a Date
+  // (or number) must import cleanly — pre-fix it threw in assessContentSanity
+  // and wedged the bookmark. This mirrors the apple-notes repro
+  // (sources/apple-notes/.../2024-06-01 8189165238.md).
+  test('date/number-titled page imports cleanly; bookmark advances; get returns it', async () => {
+    const { performSync } = await import('../../src/commands/sync.ts');
+    const { loadSyncFailures } = await import('../../src/core/sync.ts');
+    const engine = getEngine();
+
+    const beforeCommit = await engine.getConfig('sync.last_commit');
+    // Bare-date title (→ Date) and bare-number title (→ number).
+    writeFileSync(join(repoPath, 'people/datey.md'), [
+      '---', 'type: note', 'title: 2024-06-01', '---', '', 'Apple note body.',
+    ].join('\n'));
+    writeFileSync(join(repoPath, 'people/numbery.md'), [
+      '---', 'type: note', 'title: 1458', '---', '', 'Another note.',
+    ].join('\n'));
+    execSync('git add -A && git commit -m "add date/number titled notes"', { cwd: repoPath, stdio: 'pipe' });
+
+    const result = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    expect(result.status).not.toBe('blocked_by_failures');
+
+    // Neither file landed as a failure.
+    const fails = loadSyncFailures().filter(f => f.path.includes('datey') || f.path.includes('numbery'));
+    expect(fails.length).toBe(0);
+
+    // Bookmark advanced past the broken-but-now-fixed commit.
+    const afterCommit = await engine.getConfig('sync.last_commit');
+    expect(afterCommit).not.toBe(beforeCommit);
+
+    // The pages are retrievable, with deterministic coerced titles.
+    const datey = await engine.getPage('people/datey');
+    expect(datey).not.toBeNull();
+    expect(datey!.title).toBe('2024-06-01');
+    const numbery = await engine.getPage('people/numbery');
+    expect(numbery).not.toBeNull();
+    expect(numbery!.title).toBe('1458');
+  });
+
+  // issue #1939 valve: a genuinely un-importable file blocks for (threshold-1)
+  // syncs, then auto-skips on the Nth so it can't wedge indexing forever.
+  test('bounded auto-skip: poison file blocks then auto-skips, advancing the bookmark', async () => {
+    const { performSync } = await import('../../src/commands/sync.ts');
+    const { loadSyncFailures } = await import('../../src/core/sync.ts');
+    const engine = getEngine();
+    const prevThreshold = process.env.GBRAIN_SYNC_AUTOSKIP_AFTER;
+    process.env.GBRAIN_SYNC_AUTOSKIP_AFTER = '2';
+    try {
+      const beforeCommit = await engine.getConfig('sync.last_commit');
+      // slug-mismatch = a reliable per-file import failure.
+      writeFileSync(join(repoPath, 'people/poison.md'), [
+        '---', 'type: person', 'title: Poison', 'slug: not-the-path-slug', '---', '', 'Body.',
+      ].join('\n'));
+      execSync('git add -A && git commit -m "add poison file"', { cwd: repoPath, stdio: 'pipe' });
+
+      // Attempt 1: blocks (attempts=1 < 2).
+      let result = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+      expect(result.status).toBe('blocked_by_failures');
+      expect(await engine.getConfig('sync.last_commit')).toBe(beforeCommit);
+      let poison = loadSyncFailures().find(f => f.path.includes('poison'))!;
+      expect(poison.state).toBe('open');
+      expect(poison.attempts).toBe(1);
+
+      // Attempt 2: attempts hits threshold, fresh==0 → auto-skip + advance.
+      result = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+      expect(result.status).toBe('synced');
+      expect(await engine.getConfig('sync.last_commit')).not.toBe(beforeCommit);
+      poison = loadSyncFailures().find(f => f.path.includes('poison'))!;
+      expect(poison.state).toBe('auto_skipped');
+    } finally {
+      if (prevThreshold === undefined) delete process.env.GBRAIN_SYNC_AUTOSKIP_AFTER;
+      else process.env.GBRAIN_SYNC_AUTOSKIP_AFTER = prevThreshold;
+    }
+  });
+
+  // issue #1939 adversarial finding #1: a parse-failed file that is later DELETED
+  // from the repo must not leave a permanent open ledger row (which would age
+  // doctor to FAIL forever). The incremental gate treats removed paths as resolved.
+  test('deleting a failed file clears its ledger row (self-heal, no stuck FAIL)', async () => {
+    const { performSync } = await import('../../src/commands/sync.ts');
+    const { loadSyncFailures } = await import('../../src/core/sync.ts');
+    const engine = getEngine();
+
+    writeFileSync(join(repoPath, 'people/gonepoison.md'), [
+      '---', 'type: person', 'title: Gone', 'slug: wrong-derived-slug', '---', '', 'Body.',
+    ].join('\n'));
+    execSync('git add -A && git commit -m "add a file that fails to parse"', { cwd: repoPath, stdio: 'pipe' });
+
+    // Sync blocks; an open ledger row exists for the bad file.
+    let result = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    expect(result.status).toBe('blocked_by_failures');
+    expect(loadSyncFailures().some(f => f.path.includes('gonepoison'))).toBe(true);
+
+    // Delete the file and sync. The removed path is treated as resolved, so the
+    // ledger row is cleared and the bookmark advances.
+    execSync('git rm people/gonepoison.md && git commit -m "delete the bad file"', { cwd: repoPath, stdio: 'pipe' });
+    result = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    expect(result.status).not.toBe('blocked_by_failures');
+    expect(loadSyncFailures().some(f => f.path.includes('gonepoison'))).toBe(false);
+  });
 });

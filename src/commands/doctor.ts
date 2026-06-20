@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
@@ -24,7 +25,10 @@ import { categorizeCheck, type CheckCategory } from '../core/doctor-categories.t
 import { rankIssues, type RankedIssue } from '../core/doctor-cause-rank.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
-import { gbrainPath } from '../core/config.ts';
+import { gbrainPath, loadConfig } from '../core/config.ts';
+import { reflexEnabled } from '../core/context/reflex.ts';
+import { resolveSocketPath } from '../core/context/resolve-ipc.ts';
+import { homedir } from 'os';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
@@ -507,6 +511,33 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     checks.push({ name: 'schema_version', status: 'warn', message: 'Could not check schema version' });
   }
 
+  // 2b. #2038: idx_timeline_dedup shape. A renumbered-during-merge migration
+  // (v102) can be recorded-as-applied without its DDL running, leaving the
+  // 3-column index in place — every timeline write then fails the 4-column
+  // ON CONFLICT. The version counter can't see this, so check the index SHAPE.
+  try {
+    const { checkTimelineDedupIndex } = await import('../core/timeline-dedup-repair.ts');
+    const idx = await checkTimelineDedupIndex(engine);
+    if (!idx.tablePresent || !idx.needsRepair) {
+      checks.push({
+        name: 'timeline_dedup_index',
+        status: 'ok',
+        message: idx.tablePresent ? 'idx_timeline_dedup has the 4-column shape' : 'no timeline_entries table yet',
+      });
+    } else {
+      checks.push({
+        name: 'timeline_dedup_index',
+        status: 'fail',
+        message:
+          `idx_timeline_dedup is ${idx.indexPresent ? `(${idx.columns.join(', ')})` : 'absent'}, ` +
+          `expected (page_id, date, summary, source) — timeline writes are failing (#2038). ` +
+          `Run \`gbrain apply-migrations --force-schema\` to heal it.`,
+      });
+    }
+  } catch {
+    checks.push({ name: 'timeline_dedup_index', status: 'warn', message: 'Could not check idx_timeline_dedup shape' });
+  }
+
   // 3. Brain score
   try {
     const health = await engine.getHealth();
@@ -569,29 +600,24 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     // remote doctor.
   }
 
-  // 4. Sync failures (file-plane state, not in-DB; see src/core/sync.ts).
-  // Read the JSONL file directly at the canonical path; cheap and engine-agnostic.
+  // 4. Sync failures (file-plane ledger; see src/core/sync-failure-ledger.ts).
+  // issue #1939: read via the shared loader + severity decision so this remote
+  // surface agrees with the local buildChecks emitter by construction. Stays
+  // subprocess-free (file read + Date.parse only, no git), preserving the remote
+  // trust boundary. Escalates to FAIL when a stuck bookmark has blocked past the
+  // sync-freshness fail cadence or unresolved count is large.
   try {
-    const { readFileSync, existsSync } = await import('fs');
-    const { gbrainPath } = await import('../core/config.ts');
-    const path = gbrainPath('sync-failures.jsonl');
-    let unacked = 0;
-    if (existsSync(path)) {
-      const lines = readFileSync(path, 'utf-8').split('\n').filter(l => l.trim());
-      for (const line of lines) {
-        try {
-          const entry = JSON.parse(line) as { acknowledged_at?: string | null };
-          if (!entry.acknowledged_at) unacked++;
-        } catch { /* skip malformed line */ }
-      }
-    }
-    checks.push({
-      name: 'sync_failures',
-      status: unacked === 0 ? 'ok' : 'warn',
-      message: unacked === 0
-        ? 'No unacked failures'
-        : `${unacked} unacked failure(s) — run \`gbrain sync --skip-failed\` on the host to acknowledge`,
-    });
+    const { loadSyncFailures, decideSyncFailureSeverity } = await import('../core/sync.ts');
+    const entries = loadSyncFailures();
+    const failHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', 72);
+    const sev = decideSyncFailureSeverity({ entries, nowMs: Date.now(), failHours });
+    const msg =
+      sev.unresolved === 0
+        ? 'No unresolved sync failures'
+        : `${sev.unresolved} unresolved sync failure(s)` +
+          (sev.auto_skipped > 0 ? ` (${sev.auto_skipped} auto-skipped — pages NOT indexed)` : '') +
+          ` — run \`gbrain sync --skip-failed\` on the host to acknowledge`;
+    checks.push({ name: 'sync_failures', status: sev.status, message: msg });
   } catch {
     checks.push({ name: 'sync_failures', status: 'ok', message: 'No failures recorded' });
   }
@@ -2351,25 +2377,62 @@ export function checkAutopilotLockScope(): Check {
  * but the main work is blocked. Requires explicit heartbeat probe;
  * speculation until production data shows the case.
  */
-export async function checkStaleLocks(engine: BrainEngine): Promise<Check> {
+export async function checkStaleLocks(
+  engine: BrainEngine,
+  opts: { fix?: boolean; dryRun?: boolean } = {},
+): Promise<Check> {
   try {
-    const { listStaleLocks } = await import('../core/db-lock.ts');
+    const { listStaleLocks, reapDeadHolderLocks } = await import('../core/db-lock.ts');
+
+    // #1972: under `gbrain doctor --fix`, reap dead-holder sync/cycle locks
+    // using the SAME namespace-scoped, host-scoped, snapshot-matched reaper the
+    // cycle runs at start. This is the self-heal path for no-autopilot brains: a
+    // brain that never runs `gbrain dream` never hits the cycle-start sweep, so
+    // doctor --fix is how its crashed-sync locks get cleared. DB-only, so it's
+    // orthogonal to (and unaffected by) the skills-dir --fix safety gate above.
+    // Best-effort: a reap failure falls through to the warn path below.
+    let reapedIds: string[] = [];
+    if (opts.fix && !opts.dryRun) {
+      try {
+        reapedIds = (await reapDeadHolderLocks(engine)).reapedIds;
+      } catch { /* fall through; listStaleLocks still surfaces remaining locks */ }
+    }
+    const reapedNote = reapedIds.length > 0
+      ? `Reaped ${reapedIds.length} dead-holder lock(s): ${reapedIds.join(', ')}.`
+      : null;
+
     const stale = await listStaleLocks(engine);
     if (stale.length === 0) {
-      return { name: 'stale_locks', status: 'ok', message: 'No stale locks (no rows with ttl_expires_at < NOW())' };
+      return {
+        name: 'stale_locks',
+        status: 'ok',
+        message: reapedNote
+          ? `${reapedNote} No stale locks remain.`
+          : 'No stale locks (no rows with ttl_expires_at < NOW())',
+      };
     }
     const lines = stale.slice(0, 10).map(s => {
       const ageH = Math.floor(s.age_ms / 3600_000);
-      const source = s.id.startsWith('gbrain-sync:') ? s.id.slice('gbrain-sync:'.length) : null;
-      const breakHint = source ? `gbrain sync --break-lock --source ${source}` : `gbrain sync --break-lock`;
+      let breakHint = 'gbrain doctor';
+      if (s.id.startsWith('gbrain-sync:')) {
+        breakHint = `gbrain sync --break-lock --source ${s.id.slice('gbrain-sync:'.length)}`;
+      } else if (s.id.startsWith('gbrain-cycle:')) {
+        breakHint = `gbrain dream --break-lock --source ${s.id.slice('gbrain-cycle:'.length)}`;
+      } else if (s.id === 'gbrain-cycle') {
+        breakHint = 'gbrain dream --break-lock';
+      }
       return `  ${s.id} (pid ${s.holder_pid} on ${s.holder_host}, age ${ageH}h) → ${breakHint}`;
     });
     const tail = stale.length > 10 ? `  ... and ${stale.length - 10} more.` : null;
+    const header = opts.fix
+      ? `${stale.length} stale lock(s) remain that could not be auto-reaped (live holder, cross-host, or within the PID-reuse grace):`
+      : `${stale.length} stale lock(s) detected (ttl_expires_at < NOW()):`;
     return {
       name: 'stale_locks',
       status: 'warn',
       message: [
-        `${stale.length} stale lock(s) detected (ttl_expires_at < NOW()):`,
+        reapedNote,
+        header,
         ...lines,
         tail,
       ].filter(Boolean).join('\n'),
@@ -2585,7 +2648,7 @@ async function checkEmbeddingEnvOverride(engine: BrainEngine): Promise<Check> {
   };
 }
 
-async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
+export async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
   try {
     const { classifyCapabilities } = await import('../core/ai/capabilities.ts');
     const tierSubagent = await engine.getConfig('models.tier.subagent');
@@ -2646,8 +2709,11 @@ async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
       const { loadConfig } = await import('../core/config.ts');
       const cfg = loadConfig();
       const chatModel = cfg?.chat_model;
+      const gatewayLoopRaw = await engine.getConfig('agent.use_gateway_loop').catch(() => null);
+      const gatewayLoopEnabled = typeof gatewayLoopRaw === 'string'
+        && ['true', '1', 'yes', 'on'].includes(gatewayLoopRaw.trim().toLowerCase());
       const { isAnthropicProvider } = await import('../core/model-config.ts');
-      if (chatModel && !isAnthropicProvider(chatModel) && !process.env.ANTHROPIC_API_KEY) {
+      if (chatModel && !isAnthropicProvider(chatModel) && !process.env.ANTHROPIC_API_KEY && !gatewayLoopEnabled) {
         return {
           name: 'subagent_capability',
           status: 'warn',
@@ -3328,12 +3394,55 @@ export async function checkSyncFreshness(
     let hasWarnings = false;
     let hasFailures = false;
 
+    // BUG 4 (v0.42.x): a source with a LIVE, non-expired per-source sync lock is
+    // actively syncing RIGHT NOW — it must not read as stale or never-synced.
+    // The live lock is the only honest "in progress" signal. Checkpoint banking
+    // is NOT usable: a blocked sync banks the good files then writes no anchor
+    // (test/sync-resumable-import.serial.test.ts), so banking can't tell
+    // in-progress from wedged. A blocked/failed sync's process has exited (no
+    // lock row) and a wedged holder stops refreshing (TTL lapses), so either
+    // correctly falls through to the stale path and is NEVER masked. Same
+    // dynamic import as the stale_locks check; any throw (stub engine in unit
+    // tests, pre-lock-table brain) is swallowed to false, so this can only ADD
+    // an in-progress verdict, never suppress a real stale one.
+    // Notes for sources caught actively syncing (surfaced in the result
+    // message so the operator sees "in progress", not just a silent healthy
+    // bucket). Empty when nothing is syncing — keeps the steady-state messages
+    // byte-for-byte unchanged.
+    const inProgress: string[] = [];
+    let liveSyncSnap: (sourceId: string) => Promise<{ holder_pid: number; holder_host: string } | null> =
+      async () => null;
+    try {
+      const { inspectLock, syncLockId } = await import('../core/db-lock.ts');
+      liveSyncSnap = async (sourceId: string) => {
+        try {
+          const snap = await inspectLock(engine, syncLockId(sourceId));
+          return snap && !snap.ttl_expired
+            ? { holder_pid: snap.holder_pid, holder_host: snap.holder_host }
+            : null;
+        } catch {
+          return null;
+        }
+      };
+    } catch {
+      /* db-lock unavailable — skip in-progress detection, staleness stands. */
+    }
+
     for (const source of sources) {
       // Embed source.id in user-visible messages so `gbrain sync --source <id>`
       // matches what the user copy-pastes. Show display name in parens when set.
       const display = source.name && source.name !== source.id
         ? `'${source.id}' (${source.name})`
         : `'${source.id}'`;
+
+      // BUG 4: actively syncing (live lock) → healthy, count as synced_recently
+      // and skip the staleness checks. Keeps the 3-bucket invariant intact.
+      const liveSnap = await liveSyncSnap(source.id);
+      if (liveSnap) {
+        inProgress.push(`${display} sync in progress (pid ${liveSnap.holder_pid} on ${liveSnap.holder_host})`);
+        synced_recently_count++;
+        continue;
+      }
 
       if (!source.last_sync_at) {
         issues.push(`Source ${display} has never been synced`);
@@ -3420,12 +3529,15 @@ export async function checkSyncFreshness(
 
     // D6 invariant: every source incremented exactly one bucket.
     const details = { unchanged_count, synced_recently_count, stale_count };
+    // BUG 4: append in-progress context when any source is actively syncing.
+    // Empty otherwise, so steady-state messages are byte-for-byte unchanged.
+    const inProgressNote = inProgress.length ? `. ${inProgress.join('; ')}` : '';
 
     if (hasFailures) {
       return {
         name: 'sync_freshness',
         status: 'fail',
-        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` for each stale source`,
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` for each stale source${inProgressNote}`,
         details,
       };
     }
@@ -3433,7 +3545,7 @@ export async function checkSyncFreshness(
       return {
         name: 'sync_freshness',
         status: 'warn',
-        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` to refresh`,
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` to refresh${inProgressNote}`,
         details,
       };
     }
@@ -3444,7 +3556,7 @@ export async function checkSyncFreshness(
       return {
         name: 'sync_freshness',
         status: 'ok',
-        message: `All ${sources.length} federated source(s) up to date (no new commits since last sync)`,
+        message: `All ${sources.length} federated source(s) up to date (no new commits since last sync)${inProgressNote}`,
         details,
       };
     }
@@ -3452,14 +3564,14 @@ export async function checkSyncFreshness(
       return {
         name: 'sync_freshness',
         status: 'ok',
-        message: `${sources.length} federated source(s): ${synced_recently_count} synced recently, ${unchanged_count} unchanged since last sync`,
+        message: `${sources.length} federated source(s): ${synced_recently_count} synced recently, ${unchanged_count} unchanged since last sync${inProgressNote}`,
         details,
       };
     }
     return {
       name: 'sync_freshness',
       status: 'ok',
-      message: `All ${sources.length} federated source(s) synced recently`,
+      message: `All ${sources.length} federated source(s) synced recently${inProgressNote}`,
       details,
     };
   } catch (e) {
@@ -3886,6 +3998,93 @@ export async function computePoolReapHealthCheck(
   return null;
 }
 
+/**
+ * Retrieval Reflex health (#1981). Read-only, fail-open. The deterministic
+ * pointer layer is on by default; this reports the TRUTH, not an aspiration:
+ *   - config/env disabled            → warn (pointer layer off)
+ *   - heartbeat fired recently       → ok, "active" (it's demonstrably working,
+ *                                       whatever path — Postgres/IPC/host)
+ *   - enabled, no recent heartbeat   → ok if a viable path looks present
+ *                                       (postgres, or pglite serve socket),
+ *                                       else warn (likely inactive — policy
+ *                                       skill carries). Never claims a host
+ *                                       capability it can't observe.
+ * Policy-skill install state is reported in details (it ships into the HOST
+ * repo, so absence in gbrain's own skills dir is expected, not a failure).
+ */
+export function buildRetrievalReflexCheck(skillsDir: string | null): Check {
+  const name = 'retrieval_reflex_health';
+  try {
+    const cfg = loadConfig();
+    const enabled = reflexEnabled(cfg);
+    const engineKind = cfg?.engine ?? 'unknown';
+    const skillInstalled = !!skillsDir && existsSync(join(skillsDir, 'retrieval-reflex', 'SKILL.md'));
+
+    if (!enabled) {
+      return {
+        name,
+        status: 'warn',
+        message: 'retrieval reflex disabled (config/env) — entity pointer layer off',
+        details: { enabled: false, engine: engineKind, policy_skill_installed: skillInstalled },
+      };
+    }
+
+    // Heartbeat is the authority for "is it firing".
+    const hbPath = join(homedir(), '.gbrain', 'integrations', 'retrieval-reflex', 'heartbeat.jsonl');
+    let lastFired: string | null = null;
+    try {
+      if (existsSync(hbPath)) {
+        const lines = readFileSync(hbPath, 'utf8').trim().split('\n').filter(Boolean);
+        const last = lines.length ? JSON.parse(lines[lines.length - 1]) : null;
+        if (last && typeof last.ts === 'string') lastFired = last.ts;
+      }
+    } catch { /* heartbeat unreadable — treat as never fired */ }
+    const firedRecently =
+      !!lastFired && Date.now() - new Date(lastFired).getTime() < 7 * 24 * 60 * 60 * 1000;
+
+    // Detect a viable resolve path the doctor CAN see (host ctx.brainQuery is invisible).
+    let pathDesc: string;
+    let viablePathVisible: boolean;
+    if (engineKind === 'postgres') {
+      pathDesc = 'postgres direct';
+      viablePathVisible = true;
+    } else if (engineKind === 'pglite' && cfg?.database_path) {
+      const socket = resolveSocketPath(cfg.database_path);
+      viablePathVisible = existsSync(socket);
+      pathDesc = viablePathVisible ? 'pglite via serve IPC' : 'pglite — serve IPC socket not present';
+    } else {
+      pathDesc = `engine ${engineKind}`;
+      viablePathVisible = false;
+    }
+
+    const runtimeMsg = firedRecently
+      ? `active (last fired ${lastFired})`
+      : viablePathVisible
+        ? 'enabled; not observed firing yet'
+        : 'enabled but no observed activity and no visible resolve path (host capability may still supply it; policy skill carries otherwise)';
+
+    const status: Check['status'] = firedRecently || viablePathVisible ? 'ok' : 'warn';
+    const skillHint = skillInstalled
+      ? ''
+      : ' — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`';
+    return {
+      name,
+      status,
+      message: `${pathDesc}; ${runtimeMsg}${skillHint}`,
+      details: {
+        enabled: true,
+        engine: engineKind,
+        path: pathDesc,
+        fired_recently: firedRecently,
+        last_fired: lastFired,
+        policy_skill_installed: skillInstalled,
+      },
+    };
+  } catch (e) {
+    return { name, status: 'warn', message: `could not check: ${(e as Error).message}` };
+  }
+}
+
 export async function buildChecks(
   engine: BrainEngine | null,
   args: string[],
@@ -3996,6 +4195,15 @@ export async function buildChecks(
     }
   } else if (scope === 'all') {
     checks.push({ name: 'resolver_health', status: 'warn', message: 'Could not find skills directory' });
+  }
+
+  // 1b. Retrieval Reflex health (#1981, SKILL group — gated). Truthful runtime
+  // status: the deterministic pointer layer is on by default; the heartbeat file
+  // (written by the context engine when it actually injects) is the authority for
+  // "is it firing". The doctor cannot see the OpenClaw host capability directly,
+  // so it never claims "enabled via host"; it reports observed activity instead.
+  if (scope === 'all') {
+    checks.push(buildRetrievalReflexCheck(skillsDir));
   }
 
   // 2. Skill conformance (SKILL group — gated)
@@ -4196,6 +4404,76 @@ export async function buildChecks(
     // Audit read / import failure is best-effort; skip silently.
   }
 
+  // 3b-bis-2. Supervisor SINGLETON + effective max-rss (#1849). Separate check
+  // from `supervisor` above (same Codex #11 precedent as the niceness split) so
+  // a singleton-divergence warn can't clobber the crash/liveness precedence.
+  //
+  // The #1849 fix makes a queue-scoped DB lock the real singleton authority. A
+  // second supervisor on the same (db, queue) now fails fast at start — but if
+  // a rogue one slipped in BEFORE upgrade (or someone ran one with an explicit
+  // --pid-file on a pre-fix binary), the lock holder's (host, pid) won't match
+  // the local pidfile. Surface that mismatch + the effective --max-rss (the cap
+  // a rogue supervisor would have fought over). Bare pid is meaningless across
+  // hosts/containers, so we compare host+pid (Codex #25).
+  try {
+    const { DEFAULT_PID_FILE, supervisorLockId, classifySupervisorSingleton } = await import('../core/minions/supervisor.ts');
+    const { readSupervisorEvents } = await import('../core/minions/handlers/supervisor-audit.ts');
+    const { readSupervisorPid } = await import('../core/minions/supervisor-pid.ts');
+    const { hostname } = await import('os');
+
+    const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
+    const lastStarted = events.filter(e => e.event === 'started').pop() as
+      | (Record<string, unknown> & { ts?: string })
+      | undefined;
+
+    // Only run when a supervisor was actually observed (no noise on installs
+    // that never used it) and we have a live engine to read the lock row.
+    if (lastStarted && engine) {
+      const queue = typeof lastStarted.queue === 'string' ? lastStarted.queue : 'default';
+      const effectiveMaxRss = typeof lastStarted.max_rss_mb === 'number' ? lastStarted.max_rss_mb : null;
+      const localPid = readSupervisorPid(DEFAULT_PID_FILE).pid;
+      const localHost = hostname();
+
+      // Read the DB singleton lock holder for this queue.
+      const lockRows = await engine.executeRaw<{ holder_pid: number; holder_host: string; live: boolean }>(
+        `SELECT holder_pid, holder_host, ttl_expires_at > now() AS live
+           FROM gbrain_cycle_locks WHERE id = $1`,
+        [supervisorLockId(queue)],
+      );
+      const lock = lockRows[0] ?? null;
+      const rssStr = effectiveMaxRss !== null ? `${effectiveMaxRss}MB` : 'unknown';
+
+      const verdict = classifySupervisorSingleton({
+        lockLive: !!lock?.live,
+        lockHolderHost: lock?.holder_host ?? null,
+        lockHolderPid: lock?.holder_pid ?? null,
+        localHost,
+        localPid,
+      });
+      if (verdict === 'mismatch') {
+        checks.push({
+          name: 'supervisor_singleton',
+          status: 'warn',
+          message:
+            `Queue '${queue}' singleton lock is held by ${lock!.holder_host}:${lock!.holder_pid}, ` +
+            `but the local pidfile points to ${localHost}:${localPid ?? 'none'}. A second supervisor may be ` +
+            `running with a different --max-rss (effective cap here: ${rssStr}). Stop the extra one ` +
+            `and keep a single supervisor per queue: gbrain jobs supervisor stop.`,
+          details: { queue, lock_holder: `${lock!.holder_host}:${lock!.holder_pid}`, local: `${localHost}:${localPid ?? 'none'}`, effective_max_rss_mb: effectiveMaxRss },
+        });
+      } else if (verdict === 'single') {
+        checks.push({
+          name: 'supervisor_singleton',
+          status: 'ok',
+          message: `Single supervisor on queue '${queue}' (holder=${lock!.holder_host}:${lock!.holder_pid}, max_rss=${rssStr}).`,
+          details: { queue, effective_max_rss_mb: effectiveMaxRss },
+        });
+      }
+    }
+  } catch {
+    // Best-effort (lock table may not exist on a very old brain); skip silently.
+  }
+
   // 3b-sexies. Supervisor/worker scheduling priority (niceness, issue #1815).
   // SEPARATE check from `supervisor` above so a niceness divergence warn can
   // never clobber the supervisor check's max_crashes_exceeded fail/warn
@@ -4326,19 +4604,25 @@ export async function buildChecks(
   // Without this doctor check, users see "sync blocked" and have no
   // surface showing which files to fix.
   try {
-    const { unacknowledgedSyncFailures, loadSyncFailures, summarizeFailuresByCode } = await import('../core/sync.ts');
-    const unacked = unacknowledgedSyncFailures();
+    const { unacknowledgedSyncFailures, loadSyncFailures, summarizeFailuresByCode, decideSyncFailureSeverity } = await import('../core/sync.ts');
     const all = loadSyncFailures();
-    if (unacked.length > 0) {
-      const codeSummary = summarizeFailuresByCode(unacked);
+    // issue #1939: "unresolved" = open + auto_skipped. Severity (ok/warn/fail)
+    // comes from the SAME shared decision the remote surface uses, so a stuck
+    // bookmark blocked past the fail cadence (or a large unresolved count)
+    // escalates to FAIL instead of staying a quiet WARN forever.
+    const unresolved = unacknowledgedSyncFailures();
+    if (unresolved.length > 0) {
+      const failHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', 72);
+      const sev = decideSyncFailureSeverity({ entries: all, nowMs: Date.now(), failHours });
+      const codeSummary = summarizeFailuresByCode(unresolved);
       const codeBreakdown = codeSummary.map(s => `${s.code}=${s.count}`).join(', ');
-      const preview = unacked.slice(0, 3).map(f => `${f.path} (${f.error.slice(0, 60)})`).join('; ');
+      const preview = unresolved.slice(0, 3).map(f => `${f.path} (${f.error.slice(0, 60)})`).join('; ');
       // v0.40.3.0 T8b (D8 + D12 Bug 3): emit a single sync-retry-failed
       // step. sync-skip-failed is DELIBERATELY NOT emitted as a remediation
       // — auto-skipping failed syncs hides data loss. Operators can still
       // run `gbrain sync --skip-failed` manually.
       const { makeRemediationStep } = await import('../core/remediation-step.ts');
-      const oldestTs = unacked.reduce(
+      const oldestTs = unresolved.reduce(
         (acc, f) => (acc === '' || f.ts < acc ? f.ts : acc),
         '',
       );
@@ -4347,18 +4631,20 @@ export async function buildChecks(
         job: 'sync-retry-failed',
         // Content-stable per codex D12 Bug 2: count + oldest_ts captures
         // the relevant state without using a real timestamp.
-        params: { failure_count: unacked.length, oldest_failure: oldestTs },
-        severity: unacked.length >= 10 ? 'high' : 'medium',
+        params: { failure_count: unresolved.length, oldest_failure: oldestTs },
+        severity: sev.status === 'fail' ? 'high' : 'medium',
         est_seconds: 30,
         est_usd_cost: 0,
-        rationale: `Retry ${unacked.length} unacked sync failure(s) (codes: ${codeBreakdown})`,
+        rationale: `Retry ${unresolved.length} unresolved sync failure(s) (codes: ${codeBreakdown})`,
       });
       checks.push({
         name: 'sync_failures',
-        status: 'warn',
+        status: sev.status,
         message:
-          `${unacked.length} unacknowledged sync failure(s) [${codeBreakdown}]. ${preview}` +
-          `${unacked.length > 3 ? `, and ${unacked.length - 3} more` : ''}. ` +
+          `${unresolved.length} unresolved sync failure(s) [${codeBreakdown}]` +
+          (sev.auto_skipped > 0 ? ` — ${sev.auto_skipped} auto-skipped (pages NOT indexed)` : '') +
+          `. ${preview}` +
+          `${unresolved.length > 3 ? `, and ${unresolved.length - 3} more` : ''}. ` +
           `Fix the file(s) and re-run 'gbrain sync', or use 'gbrain sync --skip-failed' to acknowledge.`,
         remediation: [retryStep],
         remediation_status: 'remediable',
@@ -5407,8 +5693,29 @@ export async function buildChecks(
       "SELECT COUNT(*)::int AS count FROM pages WHERE type IN ('entity', 'person', 'company', 'organization')",
     ))[0]?.count ?? 0;
 
-    const linkPct = ((health.link_coverage ?? 0) * 100).toFixed(0);
-    const timelinePct = ((health.timeline_coverage ?? 0) * 100).toFixed(0);
+    // Compute coverage against eligible entities only — exclude test fixtures
+    // (`tools/gbrain/test/*`) and template stubs (`templates/new-person`) so
+    // that brains seeded only with code sources don't get spurious warnings
+    // about missing link/timeline coverage on pages that are test fixtures, not
+    // real knowledge entities.
+    const eligibleStats = (await engine.executeRaw<{ entities: number; linked_from: number; timeline: number }>(
+      `WITH eligible AS (
+        SELECT id FROM pages
+        WHERE type IN ('entity','person','company','organization')
+          AND slug NOT LIKE 'tools/gbrain/test/%'
+          AND slug <> 'templates/new-person'
+      )
+      SELECT
+        (SELECT count(*)::int FROM eligible) AS entities,
+        (SELECT count(DISTINCT from_page_id)::int FROM links WHERE from_page_id IN (SELECT id FROM eligible)) AS linked_from,
+        (SELECT count(DISTINCT page_id)::int FROM timeline_entries WHERE page_id IN (SELECT id FROM eligible)) AS timeline`,
+    ))[0] ?? { entities: entityCount, linked_from: 0, timeline: 0 };
+
+    const eligibleEntityCount = Number(eligibleStats.entities ?? entityCount);
+    const linkCoverage = eligibleEntityCount > 0 ? Number(eligibleStats.linked_from ?? 0) / eligibleEntityCount : 0;
+    const timelineCoverage = eligibleEntityCount > 0 ? Number(eligibleStats.timeline ?? 0) / eligibleEntityCount : 0;
+    const linkPct = (linkCoverage * 100).toFixed(0);
+    const timelinePct = (timelineCoverage * 100).toFixed(0);
     if (entityCount === 0) {
       // Markdown-only / journal / wiki brain — no entity pages to compute
       // coverage against. Coverage formula is structurally inapplicable.
@@ -5417,13 +5724,19 @@ export async function buildChecks(
         status: 'ok',
         message: 'No entity pages — graph_coverage not applicable (markdown-only brain)',
       });
-    } else if ((health.link_coverage ?? 0) >= 0.5 && (health.timeline_coverage ?? 0) >= 0.5) {
+    } else if (eligibleEntityCount === 0) {
+      checks.push({
+        name: 'graph_coverage',
+        status: 'ok',
+        message: `Only code/test fixture entity pages found (${entityCount}); graph_coverage not applicable`,
+      });
+    } else if (linkCoverage >= 0.5 && timelineCoverage >= 0.5) {
       checks.push({ name: 'graph_coverage', status: 'ok', message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%` });
     } else {
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}% (${entityCount} entity pages). Run: gbrain extract all`,
+        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}% (${eligibleEntityCount} entity pages). Run: gbrain extract all`,
       });
     }
 
@@ -5959,12 +6272,29 @@ export async function buildChecks(
         .slice(0, 3)
         .map(([s, n]) => `${s}=${n}`)
         .join(', ');
+      // Audit events are evidence, not automatically breakage. A large code
+      // source can legitimately emit many WARN events (oversize/markup-heavy)
+      // while remaining searchable and intentionally flagged. Fail on hard
+      // dispositions (content actually blocked or hidden); warn on soft
+      // dispositions or volume. This keeps doctor from treating expected
+      // code-corpus telemetry as an unhealthy brain.
+      //
+      // v0.42 renamed the hard path: a rejected page emits `reject` and a
+      // quarantined (hidden) junk page emits `quarantine`; `hard_block` is now
+      // only the pre-v0.42 legacy alias. Counting `hard_block` alone let fresh
+      // junk-ingest evidence (`reject`/`quarantine`) clear as `ok` whenever
+      // fewer than 10 events landed. `flag` is a warn disposition (still
+      // searchable, agent warned on retrieval), so it joins `soft_block`.
+      const hardBlocked =
+        summary.by_type.hard_block + summary.by_type.reject + summary.by_type.quarantine;
+      const softBlocked = summary.by_type.soft_block + summary.by_type.flag;
       const status: 'ok' | 'warn' | 'fail' =
-        events.length >= 100 ? 'fail' : events.length >= 10 ? 'warn' : 'ok';
+        hardBlocked > 0 ? 'fail' :
+          (softBlocked > 0 || events.length >= 10) ? 'warn' : 'ok';
       checks.push({
         name: 'content_sanity_audit_recent',
         status,
-        message: `${events.length} events (hard=${summary.by_type.hard_block} soft=${summary.by_type.soft_block} warn=${summary.by_type.warn})${topPatterns ? ', patterns: ' + topPatterns : ''}${topSources ? ', sources: ' + topSources : ''}. (Local audit only — multi-host operators set GBRAIN_AUDIT_DIR.)`,
+        message: `${events.length} events (hard=${hardBlocked} [hard_block=${summary.by_type.hard_block} reject=${summary.by_type.reject} quarantine=${summary.by_type.quarantine}] soft=${softBlocked} [soft_block=${summary.by_type.soft_block} flag=${summary.by_type.flag}] warn=${summary.by_type.warn})${topPatterns ? ', patterns: ' + topPatterns : ''}${topSources ? ', sources: ' + topSources : ''}. (Local audit only — multi-host operators set GBRAIN_AUDIT_DIR.)`,
       });
     }
   } catch (err) {
@@ -6878,7 +7208,7 @@ export async function buildChecks(
     checks.push(checkAutopilotLockScope());
     // v0.41.6.0 D3 — stale_locks (gbrain_cycle_locks rows with ttl_expires_at < NOW())
     progress.heartbeat('stale_locks');
-    checks.push(await checkStaleLocks(engine));
+    checks.push(await checkStaleLocks(engine, { fix: doFix, dryRun }));
     // v0.38 — cycle_phase_scope (informational; no DB cost)
     progress.heartbeat('cycle_phase_scope');
     checks.push(checkCyclePhaseScope());
@@ -6942,7 +7272,10 @@ export async function runDoctor(
     } catch { /* best-effort */ }
   }
 
-  process.exit(hasFail ? 1 : 0);
+  // Use process.exitCode instead of process.exit() so cleanup handlers
+  // (e.g. Bun unload events, open database connections) still run before
+  // the process terminates. process.exit() is a hard kill that bypasses them.
+  setCliExitVerdict(hasFail ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------

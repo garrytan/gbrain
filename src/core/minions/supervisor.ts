@@ -43,6 +43,8 @@ import {
 } from 'fs';
 import { dirname } from 'path';
 import type { BrainEngine } from '../engine.ts';
+import { tryAcquireDbLock, type DbLockHandle } from '../db-lock.ts';
+import { currentBrainId } from './worker-registry.ts';
 
 export type SupervisorEvent =
   | 'started'
@@ -130,7 +132,15 @@ export const DEFAULT_PID_FILE: string = (() => {
   const envOverride = process.env.GBRAIN_SUPERVISOR_PID_FILE;
   if (envOverride && envOverride.length > 0) return envOverride;
   const home = process.env.HOME ?? '/tmp';
-  return `${home}/.gbrain/supervisor.pid`;
+  // #1849: key the default pidfile on the brain id so two DIFFERENT brains
+  // under one HOME don't share `supervisor.pid` and falsely block each other's
+  // pidfile guard. Derived from config (no DB connect), so it's safe to
+  // resolve at module load — `status`/`stop` need a cheap path before the
+  // engine connects. The queue-scoped DB lock (supervisorLockId) is the real
+  // singleton authority; this just removes the common-case footgun.
+  let brainId = 'default';
+  try { brainId = currentBrainId(); } catch { /* fallback 'default' */ }
+  return `${home}/.gbrain/supervisor-${brainId}.pid`;
 })();
 
 const DEFAULTS: Omit<SupervisorOpts, 'cliPath'> = {
@@ -267,7 +277,67 @@ export const ExitCodes = {
   MAX_CRASHES: 1,
   LOCK_HELD: 2,
   PID_UNWRITABLE: 3,
+  // #1849: the queue-scoped DB lock was lost mid-run (refresh failed past the
+  // threshold). Exit non-zero so the process manager restarts us cleanly
+  // rather than risk two live supervisors on one queue.
+  LOCK_LOST: 4,
 } as const;
+
+/**
+ * #1849: queue-scoped supervisor singleton DB lock.
+ *
+ * The pidfile guard is mutually exclusive only per pidfile PATH — two
+ * supervisors with different $HOME / --pid-file both acquire and run on the
+ * same (db, queue) with conflicting --max-rss. The DB lock makes the mutex
+ * domain match the protected resource (the database + queue), regardless of
+ * pidfile path. TTL > refresh-interval × max-failures so we always exit
+ * before our lock could lapse and let a second supervisor take over.
+ */
+const SUPERVISOR_LOCK_TTL_MIN = 5;
+const SUPERVISOR_LOCK_REFRESH_MS = 60_000;
+const SUPERVISOR_LOCK_REFRESH_MAX_FAILURES = 3; // 3 × 60s = 180s < 5min TTL
+
+/**
+ * #1849: the queue-scoped supervisor singleton lock id. Keyed ONLY on the
+ * queue, because the lock ROW lives inside the target database — the (database)
+ * half of the mutex domain is physical, not part of the key. Keying on a
+ * config-derived DB identity (the prior `currentDbIdentity()`) was a bug: two
+ * supervisors pointed at the SAME physical database via different-but-equivalent
+ * URLs/config paths (pooler vs direct port, host alias, trailing params) hashed
+ * to different ids and BOTH acquired the "singleton" lock in the one shared
+ * locks table. Queue-only keying makes same-DB + same-queue collide correctly,
+ * while different physical databases never collide (separate locks tables).
+ * Exported so `gbrain doctor` queries the same row to surface the holder +
+ * effective --max-rss.
+ */
+export function supervisorLockId(queue: string): string {
+  return `gbrain-supervisor:${queue}`;
+}
+
+/**
+ * #1849 (doctor): pure classification of the supervisor singleton state from
+ * the DB lock holder vs the local pidfile holder. Compares host+pid (bare pid
+ * is meaningless across hosts/containers — Codex #25).
+ *
+ *   - `no_lock`  — no live lock holder (nothing to assert).
+ *   - `single`   — the live lock holder IS the local pidfile holder. Healthy.
+ *   - `mismatch` — a live lock holder differs from the local pidfile holder:
+ *                  a second supervisor likely ran with a different --max-rss.
+ */
+export function classifySupervisorSingleton(args: {
+  lockLive: boolean;
+  lockHolderHost: string | null;
+  lockHolderPid: number | null;
+  localHost: string;
+  localPid: number | null;
+}): 'no_lock' | 'single' | 'mismatch' {
+  if (!args.lockLive || args.lockHolderHost === null || args.lockHolderPid === null) {
+    return 'no_lock';
+  }
+  if (args.localPid === null) return 'mismatch';
+  const matches = args.lockHolderHost === args.localHost && args.lockHolderPid === args.localPid;
+  return matches ? 'single' : 'mismatch';
+}
 
 export class MinionSupervisor {
   private opts: SupervisorOpts;
@@ -288,6 +358,11 @@ export class MinionSupervisor {
   private sigintListener: (() => void) | null = null;
   private lockAcquired = false;
   private consecutiveHealthFailures = 0;
+  // #1849: queue-scoped DB singleton lock (the real authority) + its refresh
+  // timer and consecutive-failure counter (fail-safe exit before TTL lapse).
+  private dbLock: DbLockHandle | null = null;
+  private lockRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  private lockRefreshFailures = 0;
   // issue #1801 progress-watchdog state.
   /** Job names the spawned worker can actually claim. Derived once at start()
    *  from registerBuiltinHandlers so the wedge scopes to real claimable work
@@ -427,6 +502,12 @@ export class MinionSupervisor {
     }
 
     // 2. Cleanup on process exit (covers any exit path including process.exit).
+    //    Installed BEFORE the DB-lock acquisition below: acquirePidLock just
+    //    wrote OUR pid into the pidfile, so any early `process.exit` after this
+    //    point (notably the LOCK_HELD path in 1b) MUST clean it up or it leaves
+    //    a stale pidfile that blocks the next start on this path. The listener
+    //    only unlinks when the file still holds our pid, so it's a no-op on the
+    //    'held'/'unwritable' paths above (those never created our pidfile).
     this.exitListener = () => {
       try {
         if (existsSync(this.opts.pidFile)) {
@@ -438,6 +519,24 @@ export class MinionSupervisor {
       } catch { /* best effort */ }
     };
     process.on('exit', this.exitListener);
+
+    // 1b. #1849: queue-scoped DB singleton lock — the REAL authority. A second
+    // supervisor with a different $HOME / --pid-file passes the pidfile check
+    // above but loses here, so it can't run a conflicting --max-rss worker on
+    // the same (db, queue). Keyed on the queue alone; the database half of the
+    // mutex is physical (the lock row lives in this DB).
+    this.dbLock = await tryAcquireDbLock(this.engine, this.supervisorLockId(), SUPERVISOR_LOCK_TTL_MIN);
+    if (!this.dbLock) {
+      console.error(
+        `Supervisor already running for queue '${this.opts.queue}' on this database ` +
+        `(another supervisor holds the queue lock, regardless of pidfile path). Exiting.`,
+      );
+      // The exit listener installed above removes the pidfile we just created.
+      process.exit(ExitCodes.LOCK_HELD);
+    }
+    // Refresh the lock on its own timer (independent of healthInterval, which
+    // can be 0/disabled) so the TTL never lapses while we're alive.
+    this.lockRefreshTimer = setInterval(() => { void this.refreshDbLock(); }, SUPERVISOR_LOCK_REFRESH_MS);
 
     // 3. Signal handlers (tracked refs; removed on shutdown for test lifecycle hygiene).
     this.sigtermListener = () => { void this.shutdown('SIGTERM', ExitCodes.CLEAN); };
@@ -459,6 +558,9 @@ export class MinionSupervisor {
       concurrency: this.opts.concurrency,
       queue: this.opts.queue,
       max_crashes: this.opts.maxCrashes,
+      // #1849: record the EFFECTIVE --max-rss so `gbrain doctor` can surface
+      // the cap a rogue second supervisor would have fought over.
+      max_rss_mb: this.opts.maxRssMb,
       // Niceness (issue #1815): record requested + effective so doctor/status can
       // surface a failed renice even for a detached supervisor whose stderr is gone.
       ...(this.opts.nice_requested !== undefined ? { nice_requested: this.opts.nice_requested } : {}),
@@ -521,6 +623,19 @@ export class MinionSupervisor {
       this.healthTimer = null;
     }
 
+    // #1849: stop refreshing + release the DB singleton lock so a clean
+    // restart (or a different host) can re-acquire immediately instead of
+    // waiting out the TTL. release() is best-effort; the TTL covers a crash.
+    if (this.lockRefreshTimer) {
+      clearInterval(this.lockRefreshTimer);
+      this.lockRefreshTimer = null;
+    }
+    if (this.dbLock) {
+      const lock = this.dbLock;
+      this.dbLock = null;
+      try { await lock.release(); } catch { /* best-effort; TTL fallback covers it */ }
+    }
+
     if (this.childSupervisor) {
       this.childSupervisor.killChild('SIGTERM');
       await this.childSupervisor.awaitChildExit(35_000);
@@ -544,6 +659,51 @@ export class MinionSupervisor {
 
     this.emit('stopped', { reason, exit_code: exitCode });
     process.exit(exitCode);
+  }
+
+  /** #1849: the queue-scoped DB lock id for this supervisor's queue. */
+  private supervisorLockId(): string {
+    return supervisorLockId(this.opts.queue);
+  }
+
+  /** @internal Test seam: inject a fake DB lock to drive refresh-failure paths. */
+  _setDbLockForTests(lock: DbLockHandle | null): void {
+    this.dbLock = lock;
+  }
+  /** @internal Test seam: run one refresh tick synchronously. */
+  async _refreshDbLockForTests(): Promise<void> {
+    await this.refreshDbLock();
+  }
+
+  /**
+   * #1849 (F1A): refresh the DB lock; FAIL SAFE on loss. If refresh keeps
+   * throwing, our TTL will eventually lapse and a second supervisor could take
+   * over the queue — the exact bug. So past the failure threshold (still well
+   * inside the TTL window) we stop claiming and exit non-zero; the process
+   * manager restarts a single clean supervisor. A single transient blip is
+   * tolerated (counter resets on the next success).
+   */
+  private async refreshDbLock(): Promise<void> {
+    if (!this.dbLock || this.stopping) return;
+    try {
+      await this.dbLock.refresh();
+      this.lockRefreshFailures = 0;
+    } catch (e) {
+      this.lockRefreshFailures++;
+      this.emit('health_warn', {
+        reason: 'supervisor_lock_refresh_failed',
+        consecutive_failures: this.lockRefreshFailures,
+        error: e instanceof Error ? e.message : String(e),
+        queue: this.opts.queue,
+      });
+      if (this.lockRefreshFailures >= SUPERVISOR_LOCK_REFRESH_MAX_FAILURES) {
+        this.emit('health_error', {
+          reason: 'supervisor_lock_lost',
+          queue: this.opts.queue,
+        });
+        await this.shutdown('supervisor_lock_lost', ExitCodes.LOCK_LOST);
+      }
+    }
   }
 
   /**
@@ -863,16 +1023,17 @@ export class MinionSupervisor {
           error: errMsg,
           queue: this.opts.queue,
         });
-        // Attempt to reconnect the engine if it supports it
+        // Attempt to reconnect the engine. #2034: reconnect() is now a
+        // first-class BrainEngine method on both engines (it restores the
+        // config captured at connect()), so call it directly — the old
+        // feature-detection cast is no longer needed.
         try {
-          if ('reconnect' in this.engine && typeof (this.engine as Record<string, unknown>).reconnect === 'function') {
-            await (this.engine as unknown as { reconnect(): Promise<void> }).reconnect();
-            this.consecutiveHealthFailures = 0;
-            this.emit('health_warn', {
-              reason: 'db_reconnected',
-              queue: this.opts.queue,
-            });
-          }
+          await this.engine.reconnect({ error: errMsg });
+          this.consecutiveHealthFailures = 0;
+          this.emit('health_warn', {
+            reason: 'db_reconnected',
+            queue: this.opts.queue,
+          });
         } catch (reconnErr) {
           this.emit('health_error', {
             error: `reconnect failed: ${reconnErr instanceof Error ? reconnErr.message : String(reconnErr)}`,
