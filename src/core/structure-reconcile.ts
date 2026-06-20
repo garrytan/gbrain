@@ -302,6 +302,10 @@ export async function reconcileStructure(
           timeline_required: false,
         },
       }, { sourceId: page.sourceId });
+      await tx.executeRaw(
+        `UPDATE pages SET links_extracted_at = updated_at WHERE source_id = $1 AND slug = $2`,
+        [page.sourceId, page.slug],
+      );
       written++;
     }
 

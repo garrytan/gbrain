@@ -110,6 +110,13 @@ describe('deterministic structural reconciliation', () => {
       [`${STRUCTURE_PREFIX}/structure`],
     );
     expect(Number(globalPages[0].count)).toBe(0);
+    const staleGenerated = await engine.executeRaw<{ count: number }>(
+      `SELECT count(*)::int AS count FROM pages
+        WHERE frontmatter->>'generated_by'=$1
+          AND (links_extracted_at IS NULL OR links_extracted_at < updated_at)`,
+      [DERIVED_PATH_SOURCE],
+    );
+    expect(Number(staleGenerated[0].count)).toBe(0);
   });
   test('a scoped run preserves another source hierarchy', async () => {
     for (const sourceId of ['source-a', 'source-b']) {
