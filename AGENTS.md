@@ -54,6 +54,17 @@ set by `src/cli.ts`) from **untrusted agent-facing callers** (`remote = true`, s
 confinement when `remote = true` and default to strict behavior when unset. If you are
 writing or reviewing an operation, consult `src/core/operations.ts` for the contract.
 
+## Memory and promotion boundary
+
+Treat GBrain retrieval and Dream synthesis as guidance until verified. They can
+point an agent toward the right source, but they are not source truth by
+themselves.
+
+Before promoting an output into durable docs, config, runtime state, or public
+claims, verify it against the owning repository, runtime receipt, or current
+official source. Promote only the smallest checked artifact; otherwise keep the
+output as a review artifact.
+
 ## Common tasks
 
 - **Configure:** [`docs/ENGINES.md`](./docs/ENGINES.md),
