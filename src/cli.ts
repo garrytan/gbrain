@@ -44,7 +44,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch']);
+const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'reconcile-structure', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -957,7 +957,7 @@ export function formatResult(opName: string, result: unknown): string {
  */
 const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   'sync', 'embed', 'extract', 'extract-conversation-facts', 'enrich', 'migrate', 'apply-migrations',
-  'repair-jsonb', 'orphans', 'integrity', 'serve',
+  'repair-jsonb', 'orphans', 'reconcile-structure', 'integrity', 'serve',
   // v0.43 (#2095): watch streams against a LOCAL engine; thin clients get
   // the volunteer_context MCP op instead.
   'watch',
@@ -1692,6 +1692,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runReconcileLinksCli(engine, args);
         break;
       }
+      case 'reconcile-structure': {
+        const { runReconcileStructureCli } = await import('./commands/reconcile-structure.ts');
+        await runReconcileStructureCli(engine, args);
+        break;
+      }
       case 'orphans': {
         const { runOrphans } = await import('./commands/orphans.ts');
         await runOrphans(engine, args);
@@ -2299,6 +2304,7 @@ CODE INDEXING (v0.19.0 / v0.20.0 Cathedral II)
   query <q> --lang <l>               Filter hybrid search to one language (v0.20.0)
   query <q> --symbol-kind <k>        Filter to symbol type (function|class|method|...) (v0.20.0)
   reconcile-links [--dry-run]        Batch-recompute doc↔impl edges (v0.20.0)
+  reconcile-structure [--dry-run]    Build deterministic source-path containment edges
   reindex-code [--source id] [--yes] Explicit code-page reindex (v0.20.0)
   sync --strategy code               Sync code files into the brain
 

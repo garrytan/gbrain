@@ -107,8 +107,9 @@ export function deriveDomain(frontmatterDomain: string | null | undefined, slug:
  */
 export async function queryOrphanPages(
   engine: BrainEngine,
+  mode: 'islanded' | 'no-inbound' = 'no-inbound',
 ): Promise<{ slug: string; title: string; domain: string | null }[]> {
-  return engine.findOrphanPages();
+  return engine.findOrphanPages({ mode });
 }
 
 /**
@@ -127,7 +128,7 @@ export async function queryOrphanPages(
  */
 export async function findOrphans(
   engine: BrainEngine,
-  opts: { includePseudo?: boolean; sourceId?: string; sourceIds?: string[] } = {},
+  opts: { includePseudo?: boolean; sourceId?: string; sourceIds?: string[]; mode?: 'islanded' | 'no-inbound' } = {},
 ): Promise<OrphanResult> {
   const includePseudo = !!opts.includePseudo;
   // v0.41.29.0: `sourceId` (scalar, from `--source` + single-source MCP
@@ -150,7 +151,9 @@ export async function findOrphans(
   let excludedAll: number;
   try {
     allOrphans = await engine.findOrphanPages(
-      sourceIds ? { sourceIds } : sourceId ? { sourceId } : undefined,
+      sourceIds ? { sourceIds, mode: opts.mode ?? 'no-inbound' }
+        : sourceId ? { sourceId, mode: opts.mode ?? 'no-inbound' }
+          : { mode: opts.mode ?? 'no-inbound' },
     );
     // v0.41.29.0 (Codex F6): correct the `total_linkable` denominator.
     // Enumerate ALL live pages (scoped) and count excluded-by-slug across
@@ -258,6 +261,11 @@ export async function runOrphans(engine: BrainEngine, args: string[]) {
   const json = args.includes('--json');
   const count = args.includes('--count');
   const includePseudo = args.includes('--include-pseudo');
+  const modeIndex = args.indexOf('--mode');
+  const modeArg = modeIndex >= 0 ? args[modeIndex + 1] : 'no-inbound';
+  if (modeArg !== 'islanded' && modeArg !== 'no-inbound') {
+    throw new Error('--mode must be islanded or no-inbound');
+  }
   // v0.41.29.0: explicit `--source <id>` scopes the orphan scan to one
   // source. Omitted → brain-wide (unchanged). Raw explicit-flag parse on
   // purpose — NOT resolveSourceWithTier, which would pick a default source
@@ -279,6 +287,7 @@ Options:
   --count           Output just the number of orphans
   --include-pseudo  Include auto-generated and pseudo pages in results
   --source <id>     Scope the scan to one brain source (default: brain-wide)
+  --mode <mode>     no-inbound (default) or islanded
   --help, -h        Show this help
 
 Output (default): grouped by domain, sorted alphabetically within each group
@@ -287,7 +296,7 @@ Summary line: N orphans out of M linkable pages (K total; K-M excluded)
     return;
   }
 
-  const result = await findOrphans(engine, { includePseudo, sourceId });
+  const result = await findOrphans(engine, { includePseudo, sourceId, mode: modeArg });
 
   if (count) {
     console.log(String(result.total_orphans));
