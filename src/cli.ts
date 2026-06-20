@@ -235,6 +235,17 @@ async function main() {
     command = 'query';
   }
 
+  // `gbrain tags list|audit|merge` is whole-brain tag-vocabulary hygiene,
+  // distinct from the `tags <slug>` op (get_tags — list tags for ONE page).
+  // Only these three subcommands route here; a bare `gbrain tags <slug>`
+  // falls through to get_tags below. (A page literally slugged list/audit/
+  // merge would be shadowed — acceptable; none exist in practice.)
+  if (command === 'tags' && ['list', 'audit', 'merge'].includes(subArgs[0] ?? '')) {
+    const { runTags } = await import('./commands/tags.ts');
+    await runTags(subArgs);
+    return;
+  }
+
   // T5 — `gbrain search modes|stats|tune` is the read-only config dashboard,
   // NOT a free-text search for the literal word "modes". Free-text
   // `gbrain search "<query>"` falls through to the cheap-hybrid `search` op
@@ -2251,6 +2262,7 @@ TAGS
   tags <slug>                        List tags
   tag <slug> <tag>                   Add tag
   untag <slug> <tag>                 Remove tag
+  tags <list|audit|merge>            Tag-vocabulary hygiene (dedupe/merge)
 
 TIMELINE
   timeline [<slug>]                  View timeline
