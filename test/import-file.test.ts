@@ -29,12 +29,24 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
   return engine;
 }
 
+let priorAuditDir: string | undefined;
+
 beforeAll(() => {
   mkdirSync(TMP, { recursive: true });
+  // Isolate audit writes to the temp dir. The oversized-content fixtures below
+  // (e.g. the 4.9MB `borderline-slug` import) trip the content-sanity
+  // soft_block path, which resolveAuditDir() would otherwise write into the
+  // real ~/.gbrain/audit logs — polluting production audit and surfacing as a
+  // phantom `content_sanity_audit_recent` WARN in `gbrain doctor`.
+  priorAuditDir = process.env.GBRAIN_AUDIT_DIR;
+  process.env.GBRAIN_AUDIT_DIR = join(TMP, 'audit');
+  mkdirSync(process.env.GBRAIN_AUDIT_DIR, { recursive: true });
 });
 
 afterAll(() => {
   rmSync(TMP, { recursive: true, force: true });
+  if (priorAuditDir === undefined) delete process.env.GBRAIN_AUDIT_DIR;
+  else process.env.GBRAIN_AUDIT_DIR = priorAuditDir;
 });
 
 describe('importFile', () => {
