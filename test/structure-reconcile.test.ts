@@ -35,6 +35,13 @@ describe('deterministic structural reconciliation', () => {
     expect(Number(rows[0].count)).toBe(0);
   });
 
+  test('connects a top-level README to its source root', async () => {
+    await engine.putPage('readme', {
+      type: 'note', title: 'Root README', compiled_truth: 'root', frontmatter: {},
+    });
+    await reconcileStructure(engine);
+    expect((await engine.getHealth()).orphan_pages).toBe(0);
+  });
   test('connects every page, remains acyclic, and is state-idempotent', async () => {
     for (const slug of ['docs/readme', 'docs/guide', 'docs/deep/topic', 'notes/one']) {
       await engine.putPage(slug, {

@@ -173,7 +173,17 @@ function buildPlan(rows: PageRow[], includeGlobal = true): {
     for (const row of sourceRows) {
       const directory = slugDirectory(row.slug);
       const indexForDirectory = existingIndexes.get(directory);
-      if (indexForDirectory === row.slug) continue;
+      if (indexForDirectory === row.slug) {
+        if (!directory) {
+          rawEdges.push({
+            fromSource: sourceId,
+            fromSlug: sourceRoot.slug,
+            toSource: sourceId,
+            toSlug: row.slug,
+          });
+        }
+        continue;
+      }
       rawEdges.push({
         fromSource: sourceId,
         fromSlug: directory ? directoryNode.get(directory)! : sourceRoot.slug,
