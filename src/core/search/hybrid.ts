@@ -647,6 +647,7 @@ export async function applyAliasHop(
     injectScore += 1e-6;
     out.push({
       slug: page.slug,
+      page_id: page.id,
       title: page.title,
       type: page.type,
       source_id: page.source_id ?? ref.source_id,

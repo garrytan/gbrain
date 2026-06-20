@@ -230,10 +230,15 @@ export class SemanticQueryCache {
       // so ON CONFLICT (id) DO UPDATE just refreshes the same-mode row.
       //
       // v0.40.3.0: page_generations JSONB + max_generation_at_store BIGINT
-      // stamped per D11 (cache invalidation gate). page_generations is
-      // sent as a JSON.stringify and cast to JSONB inside the SQL; pre-v91
-      // brains store an empty `{}` + zero bookmark (legacy compat per
-      // the v0.40.3.0 IRON-RULE).
+      // stamped per D11 (cache invalidation gate); pre-v91 brains store an
+      // empty `{}` + zero bookmark (legacy compat per the v0.40.3.0 IRON-RULE).
+      //
+      // JSONB binds (results/meta/page_generations) pass the RAW object, never
+      // JSON.stringify(...). postgres.js double-encodes a stringified value into
+      // a jsonb *string* scalar (PGLite hid this), which breaks server-side
+      // jsonb ops (e.g. jsonb_each(page_generations) in the cache-invalidation
+      // gate, jsonb_array_elements(results)). Raw objects serialize to proper
+      // jsonb arrays/objects on BOTH engines. See CLAUDE.md JSONB invariant.
       await this.engine.executeRaw(
         `INSERT INTO query_cache (id, query_text, source_id, knobs_hash, embedding, results, meta, ttl_seconds, page_generations, max_generation_at_store, created_at)
          VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb, $7::jsonb, $8, $9::jsonb, $10, now())
@@ -253,10 +258,10 @@ export class SemanticQueryCache {
           sourceId,
           knobsHash,
           vec,
-          JSON.stringify(results),
-          JSON.stringify(meta),
+          results,
+          meta,
           ttl,
-          JSON.stringify(snapshot.page_generations),
+          snapshot.page_generations,
           snapshot.max_generation_at_store,
         ],
       );

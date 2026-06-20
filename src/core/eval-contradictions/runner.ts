@@ -171,8 +171,16 @@ async function generateIntraPagePairs(
   results: SearchResult[],
 ): Promise<ContradictionPair[]> {
   if (results.length === 0) return [];
-  // Unique page_ids only.
-  const pageIds = Array.from(new Set(results.map((r) => r.page_id)));
+  // Unique page_ids only. Filter out null/undefined: some retrieval lanes
+  // (e.g. alias-hop injection) can surface a result without a page_id, and
+  // postgres.js refuses to serialize an `undefined` element into the
+  // `ANY($1::int[])` bind below (UNDEFINED_VALUE). A page_id-less result
+  // simply can't contribute intra-page take pairs, so dropping it is correct.
+  // Mirrors the finite-number guard in src/core/search/query-cache.ts.
+  const pageIds = Array.from(
+    new Set(results.map((r) => r.page_id).filter((id): id is number => typeof id === 'number' && Number.isFinite(id))),
+  );
+  if (pageIds.length === 0) return [];
   const takesByPage = await engine.listActiveTakesForPages(pageIds);
   const out: ContradictionPair[] = [];
   for (const r of results) {
