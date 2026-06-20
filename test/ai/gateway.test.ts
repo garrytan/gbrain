@@ -8,6 +8,7 @@ import {
   getEmbeddingDimensions,
   getExpansionModel,
   VoyageResponseTooLargeError,
+  diagnoseEmbedding,
 } from '../../src/core/ai/gateway.ts';
 
 // v0.39.x ship-wave fix: gateway module is process-scoped. Without an
@@ -90,6 +91,21 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
       embedding_model: 'ollama:nomic-embed-text',
       embedding_dimensions: 768,
       env: {},
+    });
+    expect(isAvailable('embedding')).toBe(true);
+  });
+
+  test('embedding AVAILABLE for user-provided llama-server model from config string', () => {
+    configureGateway({
+      embedding_model: 'llama-server:text-embedding-qwen3-embedding-0.6b',
+      embedding_dimensions: 1024,
+      env: {},
+    });
+    expect(diagnoseEmbedding()).toEqual({
+      ok: true,
+      model: 'llama-server:text-embedding-qwen3-embedding-0.6b',
+      provider: 'llama-server',
+      recipeId: 'llama-server',
     });
     expect(isAvailable('embedding')).toBe(true);
   });
