@@ -668,6 +668,11 @@ describe('parseTimelineEntries', () => {
     expect(entries[0]).toEqual({ date: '2026-01-15', summary: 'Met with Alice', detail: '' });
   });
 
+  test('parses a source label before a spaced dash for stable dedup identity', () => {
+    const entries = parseTimelineEntries('- **2026-01-15** | Registry - Project record created');
+    expect(entries[0]).toEqual({ date: '2026-01-15', source: 'Registry', summary: 'Project record created', detail: '' });
+  });
+
   test('parses dash variant: - **YYYY-MM-DD** -- summary', () => {
     const entries = parseTimelineEntries('- **2026-01-15** -- Met with Bob');
     expect(entries.length).toBe(1);

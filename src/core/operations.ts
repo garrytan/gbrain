@@ -972,6 +972,7 @@ const put_page: Operation = {
             const batch = entries.map(e => ({
               slug,
               date: e.date,
+              source: e.source || '',
               summary: e.summary,
               detail: e.detail || '',
             }));
