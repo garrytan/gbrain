@@ -1326,6 +1326,14 @@ async function handleCliOnly(command: string, args: string[]) {
     // and assuming the cycle actually ran. Pre-fix, foxhoundinc reported
     // the cycle exiting 0 on PostgreSQL with every DB phase silently no-op.
     const { runDream } = await import('./commands/dream.ts');
+    // Claim the maintenance window BEFORE connecting (which acquires the PGLite
+    // lock). A concurrent `gbrain serve` holding the single-connection lock would
+    // otherwise starve this cycle ("Timed out waiting for PGLite lock" → degrades
+    // to filesystem-only). Setting the flag first makes a running serve step aside
+    // (its watchdog self-exits) so connectEngine's retry acquires the freed lock;
+    // newly-spawned serves defer at startup. Cleared in finally (TTL is a backstop).
+    const { setMaintenance, clearMaintenance } = await import('./core/maintenance-flag.ts');
+    setMaintenance();
     let eng: BrainEngine | null = null;
     try {
       eng = await connectEngine();
@@ -1350,6 +1358,7 @@ async function handleCliOnly(command: string, args: string[]) {
       // overnight cron, where a lingering-socket hang is a silent zombie
       // (closes the TODOS.md drain-before-owner-disconnect item).
       if (eng) await finishCliTeardown({ engine: eng });
+      clearMaintenance();
     }
     return;
   }
