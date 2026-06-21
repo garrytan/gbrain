@@ -81,6 +81,118 @@ describe('maintenance runtime service', () => {
     );
   });
 
+  test('renewing an active lease extends reclaim time and replaces progress', async () => {
+    const harness = createHarness();
+    const submitted = await harness.service.enqueueJob({
+      name: 'embed_backfill',
+      queue: 'maintenance',
+      payload_json: { mode: 'stale' },
+      progress_json: { page_offset: 0, chunks_embedded: 0 },
+      idempotency_key: 'embed-backfill:stale:default',
+      max_attempts: 2,
+    });
+    const claimed = await harness.service.claimNextJob({
+      queue: 'maintenance',
+      worker_id: 'worker:embed',
+      lease_ms: 10_000,
+    });
+
+    harness.advance(2_000);
+    const renewedWithoutProgress = await harness.service.renewJobLease({
+      job_id: submitted.job.id,
+      lock_token: claimed?.lock_token ?? '',
+      lease_ms: 20_000,
+    });
+    expect(renewedWithoutProgress).toMatchObject({
+      lock_expires_at: '2026-05-20T12:00:22.000Z',
+      progress_json: { page_offset: 0, chunks_embedded: 0 },
+    });
+
+    harness.advance(3_000);
+    const renewed = await harness.service.renewJobLease({
+      job_id: submitted.job.id,
+      lock_token: claimed?.lock_token ?? '',
+      lease_ms: 30_000,
+      progress_json: { page_offset: 500, chunks_embedded: 42 },
+    });
+
+    expect(renewed).toMatchObject({
+      id: submitted.job.id,
+      status: 'active',
+      lock_owner: 'worker:embed',
+      lock_expires_at: '2026-05-20T12:00:35.000Z',
+      updated_at: '2026-05-20T12:00:05.000Z',
+      progress_json: { page_offset: 500, chunks_embedded: 42 },
+    });
+    expect(await harness.service.listJobEvents(submitted.job.id)).toContainEqual(
+      expect.objectContaining({
+        event_type: 'job_lease_renewed',
+        metadata_json: {
+          lease_ms: 30_000,
+          progress_updated: true,
+        },
+      }),
+    );
+
+    harness.advance(5_001);
+    expect(await harness.service.claimNextJob({
+      queue: 'maintenance',
+      worker_id: 'worker:other',
+      lease_ms: 10_000,
+    })).toBeNull();
+
+    harness.advance(25_000);
+    const reclaimed = await harness.service.claimNextJob({
+      queue: 'maintenance',
+      worker_id: 'worker:other',
+      lease_ms: 10_000,
+    });
+    expect(reclaimed).toMatchObject({
+      id: submitted.job.id,
+      status: 'active',
+      attempts_started: 2,
+      lock_owner: 'worker:other',
+    });
+  });
+
+  test('renewing a lease rejects wrong token or non-active jobs without changing progress', async () => {
+    const harness = createHarness();
+    const submitted = await harness.service.enqueueJob({
+      name: 'embed_backfill',
+      queue: 'maintenance',
+      progress_json: { page_offset: 0 },
+      max_attempts: 1,
+    });
+    const claimed = await harness.service.claimNextJob({
+      queue: 'maintenance',
+      worker_id: 'worker:embed',
+      lease_ms: 10_000,
+    });
+
+    await expect(harness.service.renewJobLease({
+      job_id: submitted.job.id,
+      lock_token: 'lock-token:wrong',
+      lease_ms: 30_000,
+      progress_json: { page_offset: 500 },
+    })).rejects.toThrow(/lock token mismatch/i);
+    expect(await harness.service.getJob(submitted.job.id)).toMatchObject({
+      progress_json: { page_offset: 0 },
+    });
+
+    await harness.service.completeJob({
+      job_id: submitted.job.id,
+      lock_token: claimed?.lock_token ?? '',
+      result_json: { embedded: 0 },
+    });
+    await expect(harness.service.renewJobLease({
+      job_id: submitted.job.id,
+      lock_token: claimed?.lock_token ?? '',
+      lease_ms: 30_000,
+    })).rejects.toThrow(/not active/i);
+    expect((await harness.service.listJobEvents(submitted.job.id))
+      .filter((event) => event.event_type === 'job_lease_renewed')).toHaveLength(0);
+  });
+
   test('idempotency key dedupes repeated submissions', async () => {
     const harness = createHarness();
 

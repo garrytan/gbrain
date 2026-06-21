@@ -245,6 +245,137 @@ describe('SQL maintenance runtime adapter', () => {
     await engine.disconnect();
   });
 
+  test('sqlite and pglite adapters renew active leases and durable progress', async () => {
+    for (const kind of ['sqlite', 'pglite'] as const) {
+      const dir = mkdtempSync(join(tmpdir(), `mbrain-maintenance-runtime-renew-${kind}-`));
+      tempPaths.push(dir);
+      const engine = kind === 'sqlite' ? new SQLiteEngine() : new PGLiteEngine();
+      const databasePath = kind === 'sqlite' ? join(dir, 'brain.db') : dir;
+      await engine.connect({ engine: kind, database_path: databasePath });
+      await engine.initSchema();
+      let currentNow = '2026-05-20T12:00:00.000Z';
+      const adapter = createSqlMaintenanceRuntimeAdapter(engine, { now: () => currentNow });
+
+      await adapter.enqueueJob({
+        name: 'embed_backfill',
+        queue: 'maintenance',
+        payload_json: { mode: 'stale' },
+        progress_json: { page_offset: 0, chunks_embedded: 0 },
+        idempotency_key: 'embed-backfill:stale:default',
+        max_attempts: 2,
+      });
+      const claimed = await adapter.claimNextJob({
+        queue: 'maintenance',
+        worker_id: 'worker:embed',
+        lease_ms: 10_000,
+      });
+
+      currentNow = '2026-05-20T12:00:02.000Z';
+      const renewedWithoutProgress = await adapter.renewJobLease({
+        job_id: String(claimed?.id),
+        lock_token: String(claimed?.lock_token),
+        lease_ms: 20_000,
+      });
+      expect(renewedWithoutProgress).toMatchObject({
+        lock_expires_at: '2026-05-20T12:00:22.000Z',
+        progress_json: { page_offset: 0, chunks_embedded: 0 },
+      });
+
+      currentNow = '2026-05-20T12:00:05.000Z';
+      const renewed = await adapter.renewJobLease({
+        job_id: String(claimed?.id),
+        lock_token: String(claimed?.lock_token),
+        lease_ms: 30_000,
+        progress_json: { page_offset: 500, chunks_embedded: 42 },
+      });
+
+      expect(renewed).toMatchObject({
+        status: 'active',
+        lock_owner: 'worker:embed',
+        lock_expires_at: '2026-05-20T12:00:35.000Z',
+        updated_at: '2026-05-20T12:00:05.000Z',
+        progress_json: { page_offset: 500, chunks_embedded: 42 },
+      });
+      expect(await adapter.listJobEvents(String(claimed?.id))).toContainEqual(
+        expect.objectContaining({
+          event_type: 'job_lease_renewed',
+          metadata_json: {
+            lease_ms: 30_000,
+            progress_updated: true,
+          },
+        }),
+      );
+
+      currentNow = '2026-05-20T12:00:10.001Z';
+      expect(await adapter.claimNextJob({
+        queue: 'maintenance',
+        worker_id: 'worker:other',
+        lease_ms: 10_000,
+      })).toBeNull();
+
+      await expect(adapter.renewJobLease({
+        job_id: String(claimed?.id),
+        lock_token: 'lock-token:wrong',
+        lease_ms: 30_000,
+        progress_json: { page_offset: 999 },
+      })).rejects.toThrow(/lock token mismatch/i);
+      expect(await adapter.getJob(String(claimed?.id))).toMatchObject({
+        progress_json: { page_offset: 500, chunks_embedded: 42 },
+      });
+
+      currentNow = '2026-05-20T12:00:35.001Z';
+      const reclaimed = await adapter.claimNextJob({
+        queue: 'maintenance',
+        worker_id: 'worker:other',
+        lease_ms: 10_000,
+      });
+      expect(reclaimed).toMatchObject({
+        id: claimed?.id,
+        status: 'active',
+        attempts_started: 2,
+        lock_owner: 'worker:other',
+      });
+
+      await engine.disconnect();
+    }
+  });
+
+  test('sql adapter pauses claims under foreground pressure', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-maintenance-runtime-pressure-pglite-'));
+    tempPaths.push(dir);
+
+    const engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite', database_path: dir });
+    await engine.initSchema();
+    const adapter = createSqlMaintenanceRuntimeAdapter(engine, {
+      now: () => '2026-05-20T12:00:00.000Z',
+      foregroundPressure: () => ({ active: true, reason: 'active_mcp_write' }),
+    });
+
+    await adapter.enqueueJob({
+      name: 'embed_backfill',
+      queue: 'maintenance',
+      max_attempts: 1,
+    });
+
+    expect(await adapter.claimNextJob({
+      queue: 'maintenance',
+      worker_id: 'worker:paused',
+      lease_ms: 10_000,
+    })).toBeNull();
+    expect(await adapter.listRuntimeEvents()).toContainEqual(
+      expect.objectContaining({
+        event_type: 'claim_paused_for_foreground_pressure',
+        metadata_json: { reason: 'active_mcp_write' },
+      }),
+    );
+    expect(await adapter.listJobs({ name: 'embed_backfill' })).toEqual([
+      expect.objectContaining({ status: 'waiting', attempts_started: 0 }),
+    ]);
+
+    await engine.disconnect();
+  });
+
   test('pglite adapter persists cycle locks heartbeats and runtime status', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-maintenance-runtime-status-pglite-'));
     tempPaths.push(dir);
