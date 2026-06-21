@@ -12748,6 +12748,14 @@
           "nullable": false,
           "description": "Include derived orientation when useful"
         },
+        "include_push_context": {
+          "type": [
+            "boolean"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Include a bounded selector-first push_context envelope; it contains no raw memory text and requires read_context before factual use."
+        },
         "known_subjects": {
           "type": [
             "array",
@@ -12873,8 +12881,8 @@
         "open_world": false,
         "required_params": []
       },
-      "compact_schema_hash": "bf3493129a490d20c15d6146ab1762838a2770b23ce0b54079ce8752d0791f19",
-      "full_schema_hash": "2e24e29e961e5f5aea6e21916c7d266bc046865f5ba720334298780a901b97eb",
+      "compact_schema_hash": "5c3e563e5a247f1f004785ac42dc81ca13d33892f7db2069f216e0366be237be",
+      "full_schema_hash": "c57ad833a0b3fbb7625e2f86ca3c85ed7c64305491470e664b5f8cd6b86b849b",
       "memory_verb_families": [
         "discover_search"
       ],
