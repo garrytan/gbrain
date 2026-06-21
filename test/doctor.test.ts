@@ -1008,8 +1008,8 @@ describe('doctor command', () => {
     expect([...byCheck.keys()]).toEqual([
       'schema_version',
       'embeddings',
-      'sync_recency',
       'sync_watch',
+      'sync_recency',
       'memory_inbox_backlog',
     ]);
 
@@ -1039,6 +1039,7 @@ describe('doctor command', () => {
       'mbrain sync --watch',
       'mbrain sync --clear-failure',
     ]);
+    expect(byCheck.get('sync_recency')!.downstream_of).toBeUndefined();
     expect(byCheck.get('memory_inbox_backlog')!.commands[0].command).toBe('mbrain memory-report');
   });
 
@@ -1172,6 +1173,105 @@ describe('doctor command', () => {
 
     expect(mappedChecks).toEqual(nonOkChecks);
     expect(JSON.stringify(report.remediation_plan)).not.toContain('topsecret');
+  });
+
+  test('doctor remediation actions stay report-only and never suggest canonical-write shortcuts', () => {
+    const report = buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 3,
+        chunk_count: 6,
+        embedded_count: 2,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: {
+        engine: 'postgres',
+        database_url: 'postgresql://user:topsecret@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+        autopilot: { enabled: true },
+      } as any,
+      profile: resolveOfflineProfile({
+        engine: 'postgres',
+        database_url: 'postgresql://user:topsecret@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      }),
+      rawPostgresChecksSupported: true,
+      pgvector: { status: 'warn', message: 'pgvector is unavailable' },
+      rls: { status: 'warn', message: 'RLS is disabled' },
+      schemaVersion: '3',
+      latestVersion: 4,
+      health: {
+        page_count: 3,
+        embed_coverage: 0.5,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 3,
+      },
+      syncRecency: { configured: true, last_run: '2026-05-01T00:00:00.000Z', days_since: 41 },
+      syncWatchFailure: {
+        stopped_at: '2026-06-11T01:00:00.000Z',
+        reason: 'connection refused',
+        consecutive_failures: 5,
+      },
+      memoryInboxBacklog: { staged_for_review: 65, capped: false, threshold: 50 },
+      systemOfRecord: { pending_reconcile: 2, failed: 1, conflict: 1 },
+      memoryRuntime: {
+        queue_depth: 4,
+        failed_jobs: 1,
+        dead_jobs: 1,
+        stuck_locks: 1,
+        unavailable_runners: 1,
+        unhealthy_connectors: 1,
+        credential_warnings: 1,
+        prompt_injection_safety_count: 1,
+        purge_candidates: 1,
+        autopilot_stuck_jobs: 1,
+        autopilot_last_cycle: {
+          id: 'job:autopilot-dead',
+          status: 'dead',
+          failure_class: 'timeout',
+          last_error: 'worker timeout',
+          updated_at: '2030-01-01T00:00:00.000Z',
+          finished_at: null,
+        },
+      },
+      serveProcesses: [
+        { pid: 99690, elapsed_seconds: 7 * 86400, command: 'bun src/cli.ts serve' },
+      ],
+      installedAgent: {
+        status: 'fail',
+        checks: [
+          { name: 'mcp_required_tools', status: 'fail', message: 'Missing required MCP tools: read_context' },
+          { name: 'codex_prompt_rules', status: 'warn', message: 'Codex prompt rules are stale' },
+        ],
+      },
+    });
+
+    const plan = report.remediation_plan as DoctorRemediationPlan;
+    expect(plan.mode).toBe('report_only');
+    expect(plan.summary.auto_apply_supported).toBe(false);
+
+    const deniedCommandPattern =
+      /\b(put_page|route_memory_writeback|auto-promote\s+--apply|dream\b.*--allow-canonical-page-writes)\b/;
+
+    for (const action of plan.actions) {
+      expect(action.safety.auto_apply_allowed).toBe(false);
+      expect(action.safety.canonical_write).toBe(false);
+      for (const entry of action.commands) {
+        if (entry.mutating) {
+          expect(entry.requires_user_confirmation).toBe(true);
+        }
+        expect(entry.command).not.toMatch(deniedCommandPattern);
+      }
+    }
   });
 
   test('doctor remediation marks target runtime migration as filesystem and external mutation', () => {
