@@ -2369,6 +2369,69 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
   });
 }
 
+/**
+ * AI SDK v6 invariant repair. `generateText` rejects any history where an
+ * assistant tool-call is not resolved by a tool-result in the IMMEDIATELY
+ * following message — it throws `AI_MissingToolResultsError`
+ * ("Tool results are missing for tool calls: ..."). gbrain's `toolLoop` pairs
+ * calls with results 1:1 in the happy path, but a history can arrive UNBALANCED
+ * in three real situations, each of which otherwise hard-kills the whole
+ * subagent job — and every retry too, because the persisted history is replayed
+ * verbatim and re-throws the same error (the "retrying… permanently failed"
+ * cascade seen in dream synthesis on local models):
+ *   1. Crash / force-evict mid-turn — the assistant turn (N tool-calls) is
+ *      persisted but its tool-result message is never written, so replay loads
+ *      an assistant turn with no following results.
+ *   2. Truncation (finishReason 'length') emitting a partial parallel batch.
+ *   3. Provider-duplicated or dropped tool-call IDs — observed with vLLM
+ *      parallel tool-use on local models (e.g. Qwen-NVFP4).
+ *
+ * This pass injects a synthetic error tool-result for every unresolved call so
+ * the model recovers gracefully on the next turn instead of the job dying. It
+ * is a no-op on already-balanced histories (the overwhelmingly common case).
+ */
+export function repairToolPairing(messages: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    out.push(m);
+    if (typeof m.content === 'string' || m.role !== 'assistant') continue;
+
+    const calls = m.content.filter(
+      (b): b is Extract<ChatBlock, { type: 'tool-call' }> => b.type === 'tool-call',
+    );
+    if (calls.length === 0) continue;
+
+    // v6 only accepts results in the immediately-following message.
+    const next = messages[i + 1];
+    const nextBlocks = next && typeof next.content !== 'string' ? next.content : [];
+    const resolved = new Set(
+      nextBlocks.filter((b) => b.type === 'tool-result').map((b) => (b as Extract<ChatBlock, { type: 'tool-result' }>).toolCallId),
+    );
+
+    const missing = calls.filter((c) => !resolved.has(c.toolCallId));
+    if (missing.length === 0) continue;
+
+    const stubs: ChatBlock[] = missing.map((c) => ({
+      type: 'tool-result',
+      toolCallId: c.toolCallId,
+      toolName: c.toolName,
+      output: 'tool result unavailable (recovered after interrupted run)',
+      isError: true,
+    }));
+
+    if (resolved.size > 0) {
+      // A tool-result message follows but is incomplete — merge the stubs in.
+      out.push({ role: next.role, content: [...(nextBlocks as ChatBlock[]), ...stubs] });
+      i++; // the merged message replaces the original; don't emit it twice.
+    } else {
+      // No following tool-result message at all — synthesize one.
+      out.push({ role: 'user', content: stubs });
+    }
+  }
+  return out;
+}
+
 export interface ChatResult {
   /** Final text content concatenated from text blocks. */
   text: string;
@@ -2755,7 +2818,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     const result = await generateText({
       model,
       system: opts.system,
-      messages: toModelMessages(opts.messages) as any,
+      messages: toModelMessages(repairToolPairing(opts.messages)) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
       maxOutputTokens: opts.maxTokens ?? 4096,
       // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
