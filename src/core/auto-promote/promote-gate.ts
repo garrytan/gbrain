@@ -1,12 +1,39 @@
 import type { BrainEngine } from '../engine.ts';
 import type { MemoryCandidateEntry, Page, PageType } from '../types.ts';
-import type { PromotionVerdict } from './verdict.ts';
+import type { PromotionDecision, PromotionVerdict } from './verdict.ts';
 import type { AutoPromoteConfig } from './config.ts';
 import { advanceMemoryCandidateStatus } from '../services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../services/memory-inbox-promotion-service.ts';
 import { recordCanonicalHandoff } from '../services/canonical-handoff-service.ts';
 import { operationsByName, type OperationContext } from '../operations.ts';
 import type { MBrainConfig } from '../config.ts';
+
+export type AutoPromoteAuditLane = 'low_risk' | 'risky' | 'excluded';
+export type AutoPromoteCanonicalWriteResult = 'applied' | 'handoff_only' | 'skipped' | 'not_attempted';
+
+export interface AutoPromoteAuditEntry {
+  candidate_id: string;
+  lane: AutoPromoteAuditLane;
+  lane_reason: string;
+  runner_kind: string | null;
+  prompt_version: string | null;
+  prompt_input_hash: string | null;
+  confidence_threshold: number;
+  policy_version: 'auto-promote-policy-v1';
+  verification: { status: string | null; method: string | null };
+  target_snapshot_hash: string | null;
+  verdict: { decision: PromotionDecision | null; confidence: number | null; judged_at: string | null };
+  gate_skip_reason: string | null;
+  preflight_result: null;
+  patch_candidate_id: string | null;
+  canonical_page_writes_enabled: boolean;
+  canonical_write_result: AutoPromoteCanonicalWriteResult;
+}
+
+export type AutoPromoteAuditMetadata = Partial<Pick<
+  AutoPromoteAuditEntry,
+  'lane' | 'lane_reason' | 'confidence_threshold' | 'verification' | 'target_snapshot_hash'
+>>;
 
 export interface PromoteGateInput {
   engine: BrainEngine;
@@ -18,6 +45,7 @@ export interface PromoteGateInput {
   target_snapshot_hashes?: Map<string, string | null>;
   allow_canonical_page_writes?: boolean;
   canonical_write_candidate_ids: ReadonlySet<string>;
+  audit_metadata?: ReadonlyMap<string, AutoPromoteAuditMetadata>;
 }
 export interface PromoteGateResult {
   promoted: string[];
@@ -26,6 +54,7 @@ export interface PromoteGateResult {
   canonical_handoffs: string[];
   canonical_writes: string[];
   skipped: { id: string; reason: string }[];
+  audit: AutoPromoteAuditEntry[];
 }
 
 export async function runPromoteGate(input: PromoteGateInput): Promise<PromoteGateResult> {
@@ -37,19 +66,53 @@ export async function runPromoteGate(input: PromoteGateInput): Promise<PromoteGa
     canonical_handoffs: [],
     canonical_writes: [],
     skipped: [],
+    audit: [],
   };
   for (const v of input.verdicts) {
-    if (v.decision !== 'promote') { result.skipped.push({ id: v.candidate_id, reason: `decision_${v.decision}` }); continue; }
-    if (v.confidence < input.config.confidence_threshold) { result.skipped.push({ id: v.candidate_id, reason: 'below_threshold' }); continue; }
+    if (v.decision !== 'promote') {
+      const reason = `decision_${v.decision}`;
+      result.skipped.push({ id: v.candidate_id, reason });
+      result.audit.push(buildAuditEntry(input, v, byId.get(v.candidate_id), {
+        gate_skip_reason: reason,
+        canonical_write_result: 'skipped',
+      }));
+      continue;
+    }
+    if (v.confidence < input.config.confidence_threshold) {
+      result.skipped.push({ id: v.candidate_id, reason: 'below_threshold' });
+      result.audit.push(buildAuditEntry(input, v, byId.get(v.candidate_id), {
+        gate_skip_reason: 'below_threshold',
+        canonical_write_result: 'skipped',
+      }));
+      continue;
+    }
     const candidate = byId.get(v.candidate_id);
-    if (!candidate) { result.skipped.push({ id: v.candidate_id, reason: 'candidate_missing' }); continue; }
-    if (v.proposed_patch) { result.skipped.push({ id: v.candidate_id, reason: 'patch_apply_not_yet_supported' }); continue; }
+    if (!candidate) {
+      result.skipped.push({ id: v.candidate_id, reason: 'candidate_missing' });
+      result.audit.push(buildAuditEntry(input, v, undefined, {
+        gate_skip_reason: 'candidate_missing',
+        canonical_write_result: 'skipped',
+      }));
+      continue;
+    }
+    if (v.proposed_patch) {
+      result.skipped.push({ id: v.candidate_id, reason: 'patch_apply_not_yet_supported' });
+      result.audit.push(buildAuditEntry(input, v, candidate, {
+        gate_skip_reason: 'patch_apply_not_yet_supported',
+        canonical_write_result: 'skipped',
+      }));
+      continue;
+    }
 
     if (input.config.dry_run) {
       result.would_promote.push(v.candidate_id);
       if (isPageBackedCandidate(candidate) && isCanonicalWriteEligible(input, candidate)) {
         result.would_canonicalize.push(v.candidate_id);
       }
+      result.audit.push(buildAuditEntry(input, v, candidate, {
+        gate_skip_reason: null,
+        canonical_write_result: 'not_attempted',
+      }));
       continue;
     }
 
@@ -65,8 +128,18 @@ export async function runPromoteGate(input: PromoteGateInput): Promise<PromoteGa
       if (canonicalized.handoff) result.canonical_handoffs.push(candidate.id);
       if (canonicalized.write_slug) result.canonical_writes.push(canonicalized.write_slug);
       if (canonicalized.skipped_reason) result.skipped.push({ id: candidate.id, reason: canonicalized.skipped_reason });
+      result.audit.push(buildAuditEntry(input, v, candidate, {
+        gate_skip_reason: canonicalized.skipped_reason ?? null,
+        patch_candidate_id: canonicalized.patch_candidate_id ?? null,
+        canonical_write_result: canonicalWriteResultFor(canonicalized),
+      }));
     } catch (error) {
-      result.skipped.push({ id: candidate.id, reason: error instanceof Error ? error.message : String(error) });
+      const reason = error instanceof Error ? error.message : String(error);
+      result.skipped.push({ id: candidate.id, reason });
+      result.audit.push(buildAuditEntry(input, v, candidate, {
+        gate_skip_reason: reason,
+        canonical_write_result: 'skipped',
+      }));
     }
   }
   return result;
@@ -94,7 +167,7 @@ async function advanceToStaged(engine: BrainEngine, candidate: MemoryCandidateEn
 async function canonicalizePromotedCandidate(
   input: PromoteGateInput,
   candidate: MemoryCandidateEntry,
-): Promise<{ handoff: boolean; write_slug?: string; skipped_reason?: string }> {
+): Promise<{ handoff: boolean; write_slug?: string; skipped_reason?: string; patch_candidate_id?: string }> {
   if (!isPageBackedCandidate(candidate)) {
     return { handoff: false, skipped_reason: 'canonical_target_not_page_backed' };
   }
@@ -112,6 +185,7 @@ async function canonicalizePromotedCandidate(
   }
   const targetSlug = handoff.handoff.target_object_id;
   const expectedContentHash = input.target_snapshot_hashes?.get(candidate.id);
+  let createdPatchCandidateId: string | undefined;
   try {
     const currentPage = await input.engine.getPage(targetSlug);
     const baseTargetSnapshotHash = expectedContentHash === undefined ? currentPage?.content_hash ?? null : expectedContentHash;
@@ -148,6 +222,7 @@ async function canonicalizePromotedCandidate(
       sensitivity: candidate.sensitivity,
       provenance_summary: `Auto-promote canonical handoff ${handoff.handoff.id} for Memory Inbox candidate ${candidate.id}.`,
     }) as { id: string };
+    createdPatchCandidateId = createPatchResult.id;
     await operationsByName.review_memory_patch_candidate.handler(ctx, {
       candidate_id: createPatchResult.id,
       session_id: patchContext.sessionId,
@@ -167,10 +242,88 @@ async function canonicalizePromotedCandidate(
       review_reason: `auto_promote applied approved canonical patch (${input.actor})`,
       source_refs: sourceRefs,
     });
-    return { handoff: true, write_slug: targetSlug };
+    return { handoff: true, write_slug: targetSlug, patch_candidate_id: createPatchResult.id };
   } catch (error) {
-    return { handoff: true, skipped_reason: error instanceof Error ? error.message : String(error) };
+    return {
+      handoff: true,
+      skipped_reason: error instanceof Error ? error.message : String(error),
+      ...(createdPatchCandidateId ? { patch_candidate_id: createdPatchCandidateId } : {}),
+    };
   }
+}
+
+function buildAuditEntry(
+  input: PromoteGateInput,
+  verdict: PromotionVerdict,
+  candidate: MemoryCandidateEntry | undefined,
+  outcome: {
+    gate_skip_reason: string | null;
+    canonical_write_result: AutoPromoteCanonicalWriteResult;
+    patch_candidate_id?: string | null;
+  },
+): AutoPromoteAuditEntry {
+  const metadata = input.audit_metadata?.get(verdict.candidate_id);
+  const auditedVerdict = verdict as PromotionVerdict & {
+    prompt_input_hash?: string;
+  };
+  return {
+    candidate_id: verdict.candidate_id,
+    lane: metadata?.lane ?? defaultLaneFor(input, verdict.candidate_id, candidate),
+    lane_reason: metadata?.lane_reason ?? defaultLaneReasonFor(input, verdict.candidate_id, candidate),
+    runner_kind: verdict.runner_kind ?? null,
+    prompt_version: verdict.prompt_version ?? null,
+    prompt_input_hash: auditedVerdict.prompt_input_hash ?? null,
+    confidence_threshold: metadata?.confidence_threshold ?? input.config.confidence_threshold,
+    policy_version: 'auto-promote-policy-v1',
+    verification: metadata?.verification ?? verificationFor(candidate),
+    target_snapshot_hash: metadata?.target_snapshot_hash ?? input.target_snapshot_hashes?.get(verdict.candidate_id) ?? null,
+    verdict: {
+      decision: verdict.decision,
+      confidence: verdict.confidence,
+      judged_at: verdict.judged_at ?? null,
+    },
+    gate_skip_reason: outcome.gate_skip_reason,
+    preflight_result: null,
+    patch_candidate_id: outcome.patch_candidate_id ?? null,
+    canonical_page_writes_enabled: input.allow_canonical_page_writes === true,
+    canonical_write_result: outcome.canonical_write_result,
+  };
+}
+
+function defaultLaneFor(
+  input: PromoteGateInput,
+  candidateId: string,
+  candidate: MemoryCandidateEntry | undefined,
+): AutoPromoteAuditLane {
+  if (!candidate) return 'excluded';
+  return input.canonical_write_candidate_ids.has(candidateId) ? 'low_risk' : 'risky';
+}
+
+function defaultLaneReasonFor(
+  input: PromoteGateInput,
+  candidateId: string,
+  candidate: MemoryCandidateEntry | undefined,
+): string {
+  if (!candidate) return 'candidate_missing';
+  return input.canonical_write_candidate_ids.has(candidateId) ? 'canonical_eligible' : 'unknown';
+}
+
+function verificationFor(candidate: MemoryCandidateEntry | undefined): { status: string | null; method: string | null } {
+  return {
+    status: candidate?.verification_status ?? null,
+    method: candidate?.verification_method ?? null,
+  };
+}
+
+function canonicalWriteResultFor(input: {
+  handoff: boolean;
+  write_slug?: string;
+  skipped_reason?: string;
+}): AutoPromoteCanonicalWriteResult {
+  if (input.write_slug) return 'applied';
+  if (input.skipped_reason === 'canonical_policy_not_allowed' || input.skipped_reason === 'canonical_page_writes_not_allowed') return 'handoff_only';
+  if (input.skipped_reason) return 'skipped';
+  return input.handoff ? 'not_attempted' : 'skipped';
 }
 
 function isPageBackedCandidate(candidate: MemoryCandidateEntry): boolean {

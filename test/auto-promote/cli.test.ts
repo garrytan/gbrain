@@ -39,6 +39,26 @@ const DIGEST_RESULT: RunAutoPromoteResult = {
     { id: 'c', reason: 'missing_provenance' },
     { id: 'd', reason: 'low_confidence' },
   ],
+  audit: [
+    {
+      candidate_id: 'a',
+      lane: 'excluded',
+      lane_reason: 'open_contradiction',
+      runner_kind: null,
+      prompt_version: null,
+      prompt_input_hash: null,
+      confidence_threshold: 0.85,
+      policy_version: 'auto-promote-policy-v1',
+      verification: { status: 'unverified', method: null },
+      target_snapshot_hash: null,
+      verdict: { decision: null, confidence: null, judged_at: null },
+      gate_skip_reason: 'open_contradiction',
+      preflight_result: null,
+      patch_candidate_id: null,
+      canonical_page_writes_enabled: false,
+      canonical_write_result: 'not_attempted',
+    },
+  ],
 } as RunAutoPromoteResult;
 
 describe('auto-promote digest', () => {
@@ -61,6 +81,7 @@ describe('auto-promote digest', () => {
     expect(digest).toContain('Mode: dry-run (no mutations applied)');
     expect(digest).toContain('- Promotable (auto-promoted): 2');
     expect(digest).toContain('- Escalated for review: 1');
+    expect(digest).toContain('- Audit entries: 1');
     expect(digest).toContain('- open_contradiction: 2');
     expect(digest).toContain('- missing_provenance: 1');
     expect(digest).toContain('mbrain auto-promote --apply');
@@ -76,7 +97,7 @@ describe('auto-promote digest', () => {
     expect(applyDigest).not.toContain('## Next step');
 
     const emptyDigest = buildAutoPromoteDigest({
-      result: { counts: { ...DIGEST_RESULT.counts, auto_promoted: 0 }, promoted: [], excluded: [] } as RunAutoPromoteResult,
+      result: { counts: { ...DIGEST_RESULT.counts, auto_promoted: 0 }, promoted: [], excluded: [], audit: [] } as RunAutoPromoteResult,
       dry_run: true,
       scope_id: 'workspace:default',
       now: '2026-06-12T03:00:00.000Z',
