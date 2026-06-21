@@ -155,6 +155,25 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
 
   console.log(`Migrating ${pagesToMigrate.length} pages (${allPages.length} total, ${completedSet.size} already done)...`);
 
+  // Copy source rows BEFORE pages. `pages.source_id` has an FK to `sources.id`;
+  // the target's initSchema seeds only the 'default' source, so any non-default
+  // source (multi-source brains) must be inserted into the target first or the
+  // page copy aborts with `pages_source_id_fkey`. Pre-fix, migrate silently
+  // dropped non-default sources and crashed on the first non-default page.
+  const srcSources = await sourceEngine.listAllSources();
+  let copiedSources = 0;
+  for (const s of srcSources) {
+    if (s.id === 'default') continue; // seeded by initSchema on the target
+    await targetEngine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, last_sync_at, config)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (id) DO NOTHING`,
+      [s.id, s.name ?? s.id, s.local_path, s.last_sync_at, s.config],
+    );
+    copiedSources += 1;
+  }
+  if (copiedSources > 0) console.log(`Copied ${copiedSources} non-default source(s) into target.`);
+
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('migrate.copy_pages', pagesToMigrate.length);
 
