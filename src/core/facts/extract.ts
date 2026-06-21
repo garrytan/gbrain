@@ -67,6 +67,11 @@ export async function getFactsExtractionModel(engine?: BrainEngine): Promise<str
   return normalizeModelId(resolved);
 }
 
+export async function getFactsDefaultVisibility(engine: BrainEngine): Promise<'private' | 'world'> {
+  const v = (await engine.getConfig('facts.default_visibility'))?.trim().toLowerCase();
+  return v === 'world' ? 'world' : 'private'; // safe code-side default: private
+}
+
 export const ALL_EXTRACT_KINDS: readonly FactKind[] = [
   'event', 'preference', 'commitment', 'belief', 'fact',
 ] as const;

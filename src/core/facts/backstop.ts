@@ -303,7 +303,8 @@ async function runPipelineWithBody(
   });
 
   const filter = ctx.notabilityFilter ?? 'all';
-  const visibility = ctx.visibility ?? 'private';
+  const { getFactsDefaultVisibility } = await import('./extract.ts');
+  const visibility = ctx.visibility ?? await getFactsDefaultVisibility(ctx.engine);
 
   let inserted = 0;
   let duplicate = 0;

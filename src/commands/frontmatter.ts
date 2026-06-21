@@ -15,9 +15,10 @@
  * validate. Pass an explicit path to validate a non-source-registered tree.
  */
 
-import { readFileSync, writeFileSync, existsSync, lstatSync, readdirSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { readFileSync, writeFileSync, existsSync, statSync, lstatSync, readdirSync, realpathSync } from 'fs';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
-import { join, relative, resolve } from 'path';
+import { dirname, join, relative, resolve } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
@@ -179,10 +180,11 @@ async function runValidate(rest: string[]): Promise<void> {
   const files = collectFiles(resolved);
   const results: FileValidation[] = [];
   const backupRunId = makeFrontmatterBackupRunId();
+  const brainRoot = findBrainRoot(resolved);
 
   for (const file of files) {
     const content = readFileSync(file, 'utf8');
-    const expectedSlug = slugifyPath(relative(resolve(target), file) || file);
+    const expectedSlug = slugifyPath(relative(brainRoot, file));
     const parsed = parseMarkdown(content, file, { validate: true, expectedSlug });
     const errs = parsed.errors ?? [];
     const result: FileValidation = {
@@ -307,6 +309,65 @@ export function collectFiles(
     }
   }
   return out;
+}
+
+/**
+ * Find the brain root for slug derivation by walking up from a path for a
+ * `.git` marker (handles a file or a directory; falls back to the path's own
+ * directory if no repo is found). The path-derived slug must be brain-root-
+ * relative — matching import/sync and the `infer` command — so validating a
+ * single file (the pre-commit hook's mode) or a subdirectory doesn't derive the
+ * slug from the absolute path and spuriously fail SLUG_MISMATCH.
+ */
+export function findBrainRoot(startPath: string): string {
+  let candidate: string;
+  try {
+    candidate = statSync(startPath).isDirectory() ? startPath : dirname(startPath);
+  } catch {
+    candidate = dirname(startPath);
+  }
+  const base = candidate;
+  const dir = candidate;
+
+  // Primary: ask git — correctly handles worktrees (.git file), submodules, symlinks.
+  try {
+    const top = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+    }).trim();
+    if (top) {
+      // git resolves symlinks (e.g. /var → /private/var on macOS). Walk up from
+      // `dir` by the same number of components that separate it from `top` so we
+      // return a path that matches the caller's unresolved input rather than the
+      // real-path variant.
+      try {
+        const realTop = realpathSync(top);
+        const realDir = realpathSync(dir);
+        // Count extra components in realDir beyond realTop
+        const topParts = realTop.replace(/\/$/, '').split('/');
+        const dirParts = realDir.replace(/\/$/, '').split('/');
+        const extra = dirParts.length - topParts.length;
+        let unresolved = dir;
+        for (let i = 0; i < extra; i++) {
+          unresolved = resolve(unresolved, '..');
+        }
+        return unresolved;
+      } catch {
+        return top;
+      }
+    }
+  } catch {
+    // git unavailable or not a repo — fall through to manual walk-up
+  }
+
+  // Fallback: manual walk-up checking for .git marker (20 levels).
+  for (let i = 0; i < 20; i++) {
+    if (existsSync(join(candidate, '.git'))) return candidate;
+    const parent = resolve(candidate, '..');
+    if (parent === candidate) break;
+    candidate = parent;
+  }
+  return base; // no repo root found — fall back to the start dir
 }
 
 // ---------------------------------------------------------------------------

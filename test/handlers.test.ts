@@ -64,7 +64,7 @@ describe('autopilot-cycle handler — partial failure does NOT throw', () => {
 
     const result = await handler({
       data: { repoPath: '/definitely-does-not-exist-for-autopilot-test' },
-      signal: { aborted: false } as any,
+      signal: new AbortController().signal,
       job: { id: 1, name: 'autopilot-cycle' } as any,
     });
 
@@ -106,7 +106,7 @@ describe('autopilot-cycle handler — partial failure does NOT throw', () => {
       const handler = (worker as any).handlers.get('autopilot-cycle');
       const result = await handler({
         data: { repoPath: dir },
-        signal: { aborted: false } as any,
+        signal: new AbortController().signal,
         job: { id: 2, name: 'autopilot-cycle' } as any,
       });
       // The handler MUST return a result object, never throw, regardless
@@ -138,7 +138,7 @@ describe('autopilot-cycle handler — phase passthrough', () => {
       // Request only lint and sync — embed should NOT appear
       const result = await handler({
         data: { repoPath: dir, phases: ['lint', 'sync'] },
-        signal: { aborted: false } as any,
+        signal: new AbortController().signal,
         job: { id: 10, name: 'autopilot-cycle' } as any,
       });
 
@@ -174,7 +174,7 @@ describe('autopilot-cycle handler — phase passthrough', () => {
       // Mix valid and bogus names — only 'lint' should survive filtering
       const result = await handler({
         data: { repoPath: dir, phases: ['lint', 'BOGUS', 'rm -rf /'] },
-        signal: { aborted: false } as any,
+        signal: new AbortController().signal,
         job: { id: 11, name: 'autopilot-cycle' } as any,
       });
 
@@ -193,7 +193,7 @@ describe('autopilot-cycle handler — phase passthrough', () => {
     // Empty array should fall through to ALL_PHASES (same as omitting phases)
     const result = await handler({
       data: { repoPath: '/definitely-does-not-exist-for-phase-test', phases: [] },
-      signal: { aborted: false } as any,
+      signal: new AbortController().signal,
       job: { id: 12, name: 'autopilot-cycle' } as any,
     });
 
@@ -210,7 +210,7 @@ describe('autopilot-cycle handler — phase passthrough', () => {
     // String instead of array — should be ignored
     const result = await handler({
       data: { repoPath: '/definitely-does-not-exist-for-phase-test', phases: 'lint' },
-      signal: { aborted: false } as any,
+      signal: new AbortController().signal,
       job: { id: 13, name: 'autopilot-cycle' } as any,
     });
 

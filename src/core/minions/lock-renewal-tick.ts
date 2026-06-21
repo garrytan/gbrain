@@ -117,7 +117,7 @@ export function resolveLockRenewalKnobs(
   };
 }
 
-function parsePositiveInt(raw: string | undefined, fallback: number, name: string): number {
+export function parsePositiveInt(raw: string | undefined, fallback: number, name: string): number {
   if (raw === undefined || raw === '') return fallback;
   // Reject obvious non-integers (`abc`, `1.5`, `1e9`) by requiring the
   // string to be all digits. `Number.parseInt` is too lenient — it

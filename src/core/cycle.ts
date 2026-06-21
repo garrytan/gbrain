@@ -51,6 +51,7 @@ import { createProgress, type ProgressReporter } from './progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
 import { tryAcquireDbLock, reapDeadHolderLocks, type DbLockHandle } from './db-lock.ts';
 import { assertValidSourceId } from './source-id.ts';
+import { runPhaseCommit } from './cycle/commit.ts';
 
 // ─── Types ─────────────────────────────────────────────────────────
 
@@ -66,7 +67,7 @@ export type CyclePhase =
   //  - calibration_profile: aggregates the resolved subset into 2-4
   //    narrative pattern statements + active bias tags. Voice-gated.
   | 'propose_takes' | 'grade_takes' | 'calibration_profile'
-  | 'embed' | 'orphans' | 'purge'
+  | 'embed' | 'orphans' | 'purge' | 'commit'
   // v0.39 T12: schema-suggest passive trigger (D3 + D4 plan-eng-review).
   // Wraps runSuggest() — same library the CLI verb + EIIRP call.
   | 'schema-suggest'
@@ -183,6 +184,7 @@ export const ALL_PHASES: CyclePhase[] = [
   // the 72h recovery window. Runs last so the rest of the cycle sees the
   // recoverable set; the purge then drops what's expired.
   'purge',
+  'commit',
 ];
 
 /**
@@ -224,6 +226,7 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   embed: 'global',
   orphans: 'global',
   purge: 'global',
+  commit: 'global', // git add -A is repo-wide — run once per cycle, not per-source (no concurrent index.lock races on multi-source brains)
   'schema-suggest': 'source',
   // v0.41 T9 — extract_atoms is naturally per-source (each source's
   // transcript dir gets walked independently). synthesize_concepts is
@@ -269,7 +272,7 @@ export const LAST_GLOBAL_AT_KEY = 'autopilot.last_global_at';
  * across pages and sources). v0.31 adds consolidate (writes takes rows
  * + facts UPDATEs).
  */
-const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
+export const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'lint',
   'backlinks',
   'sync',
@@ -305,6 +308,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'skillopt',
   'embed',
   'purge',
+  'commit',
 ]);
 
 export type PhaseStatus = 'ok' | 'warn' | 'fail' | 'skipped';
@@ -479,6 +483,16 @@ export interface CycleOpts {
    * Validated via `assertValidSourceId` in `cycleLockIdFor` (defense-in-depth).
    */
   sourceId?: string;
+  /**
+   * v0.42.x: per-phase soft timeout (seconds) for the abort-aware heavy phases
+   * (resolve_symbol_edges, embed). When set, a phase that exceeds the deadline
+   * is aborted at a batch boundary and recorded status:'skipped',
+   * reason:'phase_timeout'; the cycle CONTINUES instead of dying at the job
+   * wall-clock. Safe because both phases batch with watermarks and resume next
+   * cycle. Resolved from GBRAIN_PHASE_TIMEOUT_SECONDS when unset. 0/undefined =
+   * disabled (legacy behavior).
+   */
+  phaseTimeoutSeconds?: number;
 }
 
 // ─── Lock primitives ───────────────────────────────────────────────
@@ -726,6 +740,83 @@ function checkAborted(signal?: AbortSignal): void {
       ? signal.reason.message
       : String(signal.reason || 'aborted');
     throw new Error(`[cycle] aborted between phases: ${reason}`);
+  }
+}
+
+/**
+ * GBRAIN_PHASE_TIMEOUT_SECONDS — per-phase soft deadline (seconds) for the
+ * abort-aware heavy phases. opts wins, then env, then 0 (disabled). Mirrors
+ * resolvePoolSize in db.ts.
+ */
+export function resolvePhaseTimeoutMs(explicit?: number): number {
+  if (typeof explicit === 'number' && explicit > 0) return Math.floor(explicit * 1000);
+  const raw = process.env.GBRAIN_PHASE_TIMEOUT_SECONDS;
+  if (raw) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return Math.floor(n * 1000);
+  }
+  return 0;
+}
+
+/**
+ * Run an abort-aware phase under an optional per-phase deadline.
+ *
+ * Layers a per-phase AbortController on top of the cycle-level signal. When the
+ * deadline fires, the phase aborts at its next batch boundary (embed via the
+ * #1737 sliding pool; resolve_symbol_edges via its watermark loop), self-
+ * truncates, and the cycle CONTINUES to the remaining phases instead of dying
+ * at the job wall-clock. The truncated phase is relabeled
+ * status:'skipped', reason:'phase_timeout' for observability; its partial work
+ * is durable (watermarks) and resumes next cycle. A genuine CYCLE abort
+ * (parentSignal) is NOT swallowed — it propagates. phaseTimeoutMs<=0 => no
+ * deadline (runs with the parent signal unchanged).
+ */
+export async function runPhaseWithTimeout(
+  phase: CyclePhase,
+  parentSignal: AbortSignal | undefined,
+  phaseTimeoutMs: number,
+  run: (signal: AbortSignal | undefined) => Promise<PhaseResult>,
+): Promise<PhaseResult> {
+  if (phaseTimeoutMs <= 0) return run(parentSignal);
+
+  const ac = new AbortController();
+  const onParentAbort = () => ac.abort((parentSignal as AbortSignal).reason);
+  if (parentSignal) {
+    if (parentSignal.aborted) ac.abort(parentSignal.reason);
+    else parentSignal.addEventListener('abort', onParentAbort, { once: true });
+  }
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    ac.abort(new Error(`phase_timeout after ${phaseTimeoutMs}ms`));
+  }, phaseTimeoutMs);
+
+  const deadlineHit = (): boolean => timedOut && !parentSignal?.aborted;
+  // Relabel a deadline-truncated phase as skipped:phase_timeout, but PRESERVE
+  // the partial counts the phase produced before the abort so the cycle totals
+  // still reflect work that landed.
+  const asPhaseTimeout = (partial?: PhaseResult): PhaseResult => ({
+    phase,
+    status: 'skipped',
+    duration_ms: 0,
+    summary: `phase hit ${Math.round(phaseTimeoutMs / 1000)}s deadline; truncated at a batch boundary and deferred to next cycle`,
+    details: { ...(partial?.details ?? {}), reason: 'phase_timeout', timeout_ms: phaseTimeoutMs },
+  });
+  // Only an abort caused by OUR deadline (not a genuine phase error) may be
+  // relabeled a timeout — never swallow a real error as phase_timeout.
+  const looksAborted = (e: unknown): boolean =>
+    e instanceof Error && (e.name === 'AbortError' || e === ac.signal.reason || /abort/i.test(e.message));
+
+  try {
+    const result = await run(ac.signal);
+    if (deadlineHit()) return asPhaseTimeout(result);
+    return result;
+  } catch (e) {
+    if (deadlineHit() && looksAborted(e)) return asPhaseTimeout();
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    if (parentSignal) parentSignal.removeEventListener('abort', onParentAbort);
   }
 }
 
@@ -1116,6 +1207,7 @@ async function runPhaseExtractFacts(
 async function runPhaseResolveSymbolEdges(
   engine: BrainEngine,
   dryRun: boolean,
+  signal?: AbortSignal,
 ): Promise<PhaseResult> {
   if (dryRun) {
     return {
@@ -1135,7 +1227,8 @@ async function runPhaseResolveSymbolEdges(
     let totalAmbiguous = 0;
     let totalUnmatched = 0;
     for (const s of sources) {
-      const stats = await resolveSymbolEdgesIncremental(engine, { sourceId: s.id });
+      if (signal?.aborted) break;
+      const stats = await resolveSymbolEdgesIncremental(engine, { sourceId: s.id, signal });
       totalChunks += stats.chunks_walked;
       totalResolved += stats.edges_resolved;
       totalAmbiguous += stats.edges_ambiguous;
@@ -1411,6 +1504,7 @@ export async function runCycle(
   const phases = opts.phases ?? ALL_PHASES;
   const dryRun = !!opts.dryRun;
   const pull = !!opts.pull;
+  const phaseTimeoutMs = resolvePhaseTimeoutMs(opts.phaseTimeoutSeconds);
   const timestamp = new Date().toISOString();
   const phaseResults: PhaseResult[] = [];
 
@@ -1847,7 +1941,7 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.resolve_symbol_edges');
-        const { result, duration_ms } = await timePhase(() => runPhaseResolveSymbolEdges(engine, dryRun));
+        const { result, duration_ms } = await timePhase(() => runPhaseWithTimeout('resolve_symbol_edges', opts.signal, phaseTimeoutMs, (sig) => runPhaseResolveSymbolEdges(engine, dryRun, sig)));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -2175,7 +2269,7 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.embed');
-        const { result, duration_ms } = await timePhase(() => runPhaseEmbed(engine, dryRun, opts.signal));
+        const { result, duration_ms } = await timePhase(() => runPhaseWithTimeout('embed', opts.signal, phaseTimeoutMs, (sig) => runPhaseEmbed(engine, dryRun, sig)));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -2267,6 +2361,20 @@ export async function runCycle(
       } else {
         progress.start('cycle.purge');
         const { result, duration_ms } = await timePhase(() => runPhasePurge(engine, dryRun));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    if (phases.includes('commit')) {
+      checkAborted(opts.signal);
+      if (brainDir === null) {
+        phaseResults.push(skipNoBrainDir('commit'));
+      } else {
+        progress.start('cycle.commit');
+        const { result, duration_ms } = await timePhase(() => runPhaseCommit(brainDir, dryRun, opts.signal));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
