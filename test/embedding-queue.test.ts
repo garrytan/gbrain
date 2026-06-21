@@ -177,6 +177,62 @@ describe('embedding queue', () => {
     await expect(goodAfter).resolves.toMatchObject({ deferred: false });
   });
 
+  test('falls back to submission-sized retries when a mixed provider batch fails', async () => {
+    const fake = createFakeProvider({
+      failForTexts: (texts) => texts.includes('bad'),
+    });
+    const queue = createEmbeddingQueue({
+      provider: fake.provider,
+      autoFlush: false,
+      batchSize: 3,
+      concurrency: 1,
+    });
+
+    const goodBefore = queue.submit([chunkInput(0, 'good-before')]);
+    const bad = queue.submit([chunkInput(0, 'bad')]);
+    const goodAfter = queue.submit([chunkInput(0, 'good-after')]);
+
+    await queue.flush();
+
+    await expect(goodBefore).resolves.toMatchObject({ deferred: false });
+    await expect(bad).rejects.toThrow('provider exploded for bad');
+    await expect(goodAfter).resolves.toMatchObject({ deferred: false });
+    expect(fake.batches).toEqual([
+      ['good-before', 'bad', 'good-after'],
+      ['good-before'],
+      ['bad'],
+      ['good-after'],
+    ]);
+  });
+
+  test('does not retry every submission when a large mixed provider batch fails systemically', async () => {
+    const fake = createFakeProvider({
+      failForTexts: () => true,
+    });
+    const queue = createEmbeddingQueue({
+      provider: fake.provider,
+      autoFlush: false,
+      batchSize: 9,
+      concurrency: 1,
+    });
+
+    const submitted = Array.from(
+      { length: 9 },
+      (_, index) => queue.submit([chunkInput(0, `chunk-${index}`)]),
+    );
+
+    await queue.flush();
+
+    const results = await Promise.all(
+      submitted.map(promise => promise.then(
+        () => null,
+        error => error,
+      )),
+    );
+    expect(results.every(error => error instanceof Error)).toBe(true);
+    expect(fake.batches).toHaveLength(1);
+  });
+
   test('propagates provider result count mismatches', async () => {
     const fake = createFakeProvider({ dropLastResult: true });
     const queue = createEmbeddingQueue({ provider: fake.provider, autoFlush: false });
@@ -264,6 +320,80 @@ describe('embedding queue', () => {
 });
 
 describe('runEmbed queue integration', () => {
+  test('embed --all processes pages in bounded windows and persists each window before reading the next', async () => {
+    const fake = createFakeProvider();
+    setEmbeddingProviderForTests(fake.provider);
+    const filters: Array<{ limit?: number; offset?: number }> = [];
+    const engine = createMemoryEngine(
+      Array.from(
+        { length: 501 },
+        (_, index) => page(`concepts/window-${index}`, `Window ${index}`, `window body ${index}`),
+      ),
+      {
+        onListPages: (filter, state) => {
+          filters.push({ limit: filter?.limit, offset: filter?.offset });
+          if ((filter?.offset ?? 0) >= 500) {
+            expect(state.embeddedWriteCount).toBeGreaterThanOrEqual(500);
+          }
+        },
+      },
+    );
+    const originalLog = console.log;
+    const originalStdoutWrite = process.stdout.write;
+    console.log = () => {};
+    process.stdout.write = (() => true) as typeof process.stdout.write;
+
+    try {
+      await runEmbed(engine, ['--all']);
+    } finally {
+      console.log = originalLog;
+      process.stdout.write = originalStdoutWrite;
+      resetEmbeddingProviderForTests();
+    }
+
+    expect(filters).toEqual([
+      { limit: 500, offset: 0 },
+      { limit: 500, offset: 500 },
+    ]);
+    expect((await engine.getChunks('concepts/window-0'))[0]?.embedding?.[0]).toBe(13);
+    expect((await engine.getChunks('concepts/window-500'))[0]?.embedding?.[0]).toBe(15);
+  });
+
+  test('embed --all flushes and writes before queued chunks exceed the chunk window', async () => {
+    const fake = createFakeProvider();
+    setEmbeddingProviderForTests(fake.provider);
+    const providerBatchCountByWrite = new Map<string, number>();
+    const engine = createMemoryEngine(
+      Array.from(
+        { length: 101 },
+        (_, index) => page(`concepts/chunk-window-${index}`, `Chunk Window ${index}`, `chunk window body ${index}`),
+      ),
+      {
+        onUpsertChunks: (slug, chunks) => {
+          if (chunks.some(chunk => chunk.embedding)) {
+            providerBatchCountByWrite.set(slug, fake.batches.length);
+          }
+        },
+      },
+    );
+    const originalLog = console.log;
+    const originalStdoutWrite = process.stdout.write;
+    console.log = () => {};
+    process.stdout.write = (() => true) as typeof process.stdout.write;
+
+    try {
+      await runEmbed(engine, ['--all']);
+    } finally {
+      console.log = originalLog;
+      process.stdout.write = originalStdoutWrite;
+      resetEmbeddingProviderForTests();
+    }
+
+    expect(providerBatchCountByWrite.get('concepts/chunk-window-0')).toBe(1);
+    expect(providerBatchCountByWrite.get('concepts/chunk-window-99')).toBe(1);
+    expect(providerBatchCountByWrite.get('concepts/chunk-window-100')).toBe(2);
+  });
+
   test('embed --all shares one queue across page submissions', async () => {
     const fake = createFakeProvider();
     setEmbeddingProviderForTests(fake.provider);
@@ -302,7 +432,29 @@ describe('runEmbed queue integration', () => {
     expect((await engine.getChunks('concepts/beta'))[0]?.embedding).toEqual(new Float32Array([9, 0, 1]));
   });
 
-  test('embed --all warns when queued chunks grow large before flushing', async () => {
+  test('embed --all keeps writing later pages when one provider submission fails', async () => {
+    const fake = createFakeProvider({
+      failForTexts: (texts) => texts.includes('bad body'),
+    });
+    setEmbeddingProviderForTests(fake.provider);
+    const engine = createMemoryEngine([
+      page('concepts/alpha', 'Alpha', 'alpha body'),
+      page('concepts/bad', 'Bad', 'bad body'),
+      page('concepts/beta', 'Beta', 'beta body'),
+    ]);
+
+    try {
+      await runEmbed(engine, ['--all']);
+    } finally {
+      resetEmbeddingProviderForTests();
+    }
+
+    expect((await engine.getChunks('concepts/alpha'))[0]?.embedding?.[0]).toBe(10);
+    expect((await engine.getChunks('concepts/bad'))[0]?.embedding).toBeNull();
+    expect((await engine.getChunks('concepts/beta'))[0]?.embedding?.[0]).toBe(9);
+  });
+
+  test('embed --all avoids a large pre-flush queue warning by flushing bounded windows', async () => {
     const fake = createFakeProvider();
     setEmbeddingProviderForTests(fake.provider);
     const engine = createMemoryEngine(
@@ -328,7 +480,7 @@ describe('runEmbed queue integration', () => {
       resetEmbeddingProviderForTests();
     }
 
-    expect(warnings.join('\n')).toContain('Warning: queued 10001 chunks before flushing');
+    expect(warnings.join('\n')).not.toContain('Warning: queued');
   });
 });
 
@@ -391,14 +543,29 @@ function createFakeProvider(options: FakeProviderOptions = {}) {
 
 function createMemoryEngine(
   pages: Page[],
-  options: { failWriteOnCall?: Map<string, number> } = {},
+  options: {
+    failWriteOnCall?: Map<string, number>;
+    onListPages?: (
+      filters: { limit?: number; offset?: number } | undefined,
+      state: { embeddedWriteCount: number },
+    ) => void;
+    onUpsertChunks?: (slug: string, chunks: ChunkInput[]) => void;
+  } = {},
 ): BrainEngine {
   const chunksBySlug = new Map<string, Chunk[]>();
   const pageBySlug = new Map(pages.map(page => [page.slug, page]));
   const writeCallsBySlug = new Map<string, number>();
+  let embeddedWriteCount = 0;
 
   return {
-    listPages: async () => pages,
+    listPages: async (filters?: { limit?: number; offset?: number }) => {
+      options.onListPages?.(filters, { embeddedWriteCount });
+      if (typeof filters?.limit === 'number') {
+        const offset = filters.offset ?? 0;
+        return pages.slice(offset, offset + filters.limit);
+      }
+      return pages;
+    },
     getPage: async (slug: string) => pageBySlug.get(slug) ?? null,
     getChunks: async (slug: string) => chunksBySlug.get(slug) ?? [],
     getChunksWithEmbeddings: async (slug: string) => chunksBySlug.get(slug) ?? [],
@@ -411,6 +578,10 @@ function createMemoryEngine(
       if (options.failWriteOnCall?.get(slug) === writeCall) {
         throw new Error(`write failed for ${slug}`);
       }
+      if (chunks.some(chunk => chunk.embedding)) {
+        embeddedWriteCount += 1;
+      }
+      options.onUpsertChunks?.(slug, chunks);
       chunksBySlug.set(slug, chunks.map((chunk, index) => materializeChunk(slug, chunk, index)));
     },
   } as unknown as BrainEngine;

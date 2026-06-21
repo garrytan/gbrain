@@ -10,6 +10,7 @@ import type { ChunkInput } from './types.ts';
 const DEFAULT_BATCH_SIZE = 100;
 const DEFAULT_CONCURRENCY = 2;
 const MAX_CHARS = 8000;
+const MAX_MIXED_BATCH_FALLBACK_SUBMISSIONS = 8;
 
 export interface EmbeddingQueueOptions {
   provider: ResolvedEmbeddingProvider;
@@ -184,16 +185,41 @@ export function createEmbeddingQueue(options: EmbeddingQueueOptions): EmbeddingQ
         }
       }
     } catch (error) {
-      for (const submission of new Set(batch.map(entry => entry.submission))) {
-        if (!submission.rejected) {
-          submission.rejected = true;
-          submission.reject(error);
+      const submissionBatches = groupBatchBySubmission(batch);
+      if (
+        submissionBatches.length > 1
+        && submissionBatches.length <= MAX_MIXED_BATCH_FALLBACK_SUBMISSIONS
+      ) {
+        for (const submissionBatch of submissionBatches) {
+          await runBatch(submissionBatch);
         }
+        return;
+      }
+
+      for (const submission of new Set(batch.map(entry => entry.submission))) {
+        if (submission.rejected) continue;
+        submission.rejected = true;
+        submission.reject(error);
       }
     }
   }
 
   return queue;
+}
+
+function groupBatchBySubmission(batch: QueuedChunk[]): QueuedChunk[][] {
+  const grouped: QueuedChunk[][] = [];
+  const bySubmission = new Map<QueuedSubmission, QueuedChunk[]>();
+  for (const entry of batch) {
+    let entries = bySubmission.get(entry.submission);
+    if (!entries) {
+      entries = [];
+      bySubmission.set(entry.submission, entries);
+      grouped.push(entries);
+    }
+    entries.push(entry);
+  }
+  return grouped;
 }
 
 function withTokenCount(chunk: ChunkInput): ChunkInput {

@@ -9,6 +9,8 @@ import { resolvePageChunkOptions } from '../core/page-chunk-options.ts';
 import { ensurePageChunks } from '../core/page-chunks.ts';
 import type { Chunk, ChunkInput, Page } from '../core/types.ts';
 
+const EMBED_ALL_PAGE_WINDOW_SIZE = 500;
+const EMBED_ALL_CHUNK_WINDOW_SIZE = 100;
 const EMBED_ALL_QUEUE_WARNING_CHUNKS = 10_000;
 
 const EMBED_COMMAND: Operation = {
@@ -86,87 +88,148 @@ async function embedAll(
   provider: ReturnType<typeof getEmbeddingProvider>,
   staleOnly: boolean,
 ) {
-  const pages = await engine.listPages({ limit: 100000 });
   // Chunk options are static for the lifetime of the command; resolving them
   // per page costs two config queries each.
   const chunkOptions = await resolvePageChunkOptions(engine);
   let embedded = 0;
   let touchedPages = 0;
-  let wroteBatchProgress = false;
+  let scannedPages = 0;
   let queuedChunks = 0;
-  let warnedLargeQueue = false;
-  const queue = createEmbeddingQueue({
-    provider,
-    onBatchStart: (progress) => {
-      wroteBatchProgress = true;
-      process.stdout.write(`\r  batch ${progress.batchIndex}/${progress.batchCount}, ${progress.completed}/${progress.total} chunks`);
-    },
-    onBatchComplete: (progress) => {
-      wroteBatchProgress = true;
-      process.stdout.write(`\r  batch ${progress.batchIndex}/${progress.batchCount}, ${progress.completed}/${progress.total} chunks`);
-    },
-    autoFlush: false,
-  });
-  const plans: Array<{
-    pageIndex: number;
-    slug: string;
-    chunks: Chunk[];
-    result: Promise<
-      | { ok: true; updates: EmbeddedChunkBatch }
-      | { ok: false; error: unknown }
-    >;
-  }> = [];
+  let skippedDerivedRefreshPages = 0;
+  let providerFailures = 0;
+  let writeFailures = 0;
+  let windowCount = 0;
 
-  for (let index = 0; index < pages.length; index++) {
-    const page = pages[index];
-    if (!await refreshPageDerivedStorageBeforeEmbedding(engine, page)) continue;
-    const chunks = await ensurePageChunks(engine, page, chunkOptions);
-    const targetChunks = selectChunksToEmbed(chunks, staleOnly, provider.capability.model);
-    if (targetChunks.length === 0) {
-      continue;
-    }
-
-    console.log(`Embedding ${index + 1}/${pages.length} ${page.slug}: ${targetChunks.length} chunks`);
-    queuedChunks += targetChunks.length;
-    if (!warnedLargeQueue && queuedChunks > EMBED_ALL_QUEUE_WARNING_CHUNKS) {
-      warnedLargeQueue = true;
-      console.error(
-        `Warning: queued ${queuedChunks} chunks before flushing; split large backfills by slug if memory pressure is high.`,
-      );
-    }
-    const result = queue.submit(toChunkInputs(targetChunks))
-      .then(updates => ({ ok: true as const, updates }))
-      .catch(error => ({ ok: false as const, error }));
-    plans.push({
-      pageIndex: index,
-      slug: page.slug,
-      chunks,
-      result,
+  // Offset pagination is acceptable here because embedding writes chunks, not
+  // pages; concurrent page updates may reorder later windows, but stale snapshot
+  // checks skip unsafe derived refreshes and a later --stale run can finish any
+  // page missed by concurrent mutation.
+  for (let offset = 0; ; offset += EMBED_ALL_PAGE_WINDOW_SIZE) {
+    const pages = await engine.listPages({
+      limit: EMBED_ALL_PAGE_WINDOW_SIZE,
+      offset,
     });
-  }
-
-  await queue.flush();
-  if (wroteBatchProgress) process.stdout.write('\n');
-
-  for (const plan of plans) {
-    const result = await plan.result;
-    if (result.ok) {
-      const merged = mergeChunkUpdates(plan.chunks, result.updates.chunks);
-      try {
-        await engine.upsertChunks(plan.slug, merged);
-        embedded += result.updates.chunks.length;
-        touchedPages += 1;
-      } catch (error: unknown) {
-        console.error(`\n  Error writing embeddings for ${plan.slug}: ${error instanceof Error ? error.message : error}`);
-      }
-    } else {
-      console.error(`\n  Error embedding ${plan.slug}: ${result.error instanceof Error ? result.error.message : result.error}`);
+    if (pages.length === 0) {
+      break;
     }
 
-    console.log(`  ${plan.pageIndex + 1}/${pages.length} pages, ${embedded} chunks embedded`);
+    windowCount += 1;
+    scannedPages += pages.length;
+    const pageTotalLabel = pages.length < EMBED_ALL_PAGE_WINDOW_SIZE
+      ? String(offset + pages.length)
+      : `${offset + pages.length}+`;
+    let wroteBatchProgress = false;
+    let queuedWindowChunks = 0;
+    let warnedLargeWindowQueue = false;
+    const createWindowQueue = () => createEmbeddingQueue({
+      provider,
+      onBatchStart: (progress) => {
+        wroteBatchProgress = true;
+        process.stdout.write(`\r  batch ${progress.batchIndex}/${progress.batchCount}, ${progress.completed}/${progress.total} chunks`);
+      },
+      onBatchComplete: (progress) => {
+        wroteBatchProgress = true;
+        process.stdout.write(`\r  batch ${progress.batchIndex}/${progress.batchCount}, ${progress.completed}/${progress.total} chunks`);
+      },
+      autoFlush: false,
+    });
+    let queue = createWindowQueue();
+    let plans: Array<{
+      pageIndex: number;
+      slug: string;
+      chunks: Chunk[];
+      result: Promise<
+        | { ok: true; updates: EmbeddedChunkBatch }
+        | { ok: false; error: unknown }
+      >;
+    }> = [];
+
+    for (let index = 0; index < pages.length; index++) {
+      const page = pages[index];
+      if (!await refreshPageDerivedStorageBeforeEmbedding(engine, page)) {
+        skippedDerivedRefreshPages += 1;
+        continue;
+      }
+      const chunks = await ensurePageChunks(engine, page, chunkOptions);
+      const targetChunks = selectChunksToEmbed(chunks, staleOnly, provider.capability.model);
+      if (targetChunks.length === 0) {
+        continue;
+      }
+
+      if (
+        plans.length > 0
+        && queuedWindowChunks + targetChunks.length > EMBED_ALL_CHUNK_WINDOW_SIZE
+      ) {
+        await flushEmbedPlans();
+      }
+
+      const pageIndex = offset + index;
+      console.log(`Embedding ${pageIndex + 1}/${pageTotalLabel} ${page.slug}: ${targetChunks.length} chunks`);
+      queuedWindowChunks += targetChunks.length;
+      queuedChunks += targetChunks.length;
+      if (!warnedLargeWindowQueue && queuedWindowChunks > EMBED_ALL_QUEUE_WARNING_CHUNKS) {
+        warnedLargeWindowQueue = true;
+        console.error(
+          `Warning: queued ${queuedWindowChunks} chunks in the current window before flushing; split very large pages by slug if memory pressure is high.`,
+        );
+      }
+      const result = queue.submit(toChunkInputs(targetChunks))
+        .then(updates => ({ ok: true as const, updates }))
+        .catch(error => ({ ok: false as const, error }));
+      plans.push({
+        pageIndex,
+        slug: page.slug,
+        chunks,
+        result,
+      });
+    }
+
+    await flushEmbedPlans();
+
+    if (pages.length < EMBED_ALL_PAGE_WINDOW_SIZE) {
+      break;
+    }
+
+    async function flushEmbedPlans(): Promise<void> {
+      if (plans.length === 0) return;
+
+      await queue.flush();
+      if (wroteBatchProgress) process.stdout.write('\n');
+
+      for (const plan of plans) {
+        const result = await plan.result;
+        if (result.ok) {
+          const merged = mergeChunkUpdates(plan.chunks, result.updates.chunks);
+          try {
+            await engine.upsertChunks(plan.slug, merged);
+            embedded += result.updates.chunks.length;
+            touchedPages += 1;
+          } catch (error: unknown) {
+            writeFailures += 1;
+            console.error(`\n  Error writing embeddings for ${plan.slug}: ${error instanceof Error ? error.message : error}`);
+          }
+        } else {
+          providerFailures += 1;
+          console.error(`\n  Error embedding ${plan.slug}: ${result.error instanceof Error ? result.error.message : result.error}`);
+        }
+
+        console.log(`  ${plan.pageIndex + 1}/${pageTotalLabel} pages, ${embedded} chunks embedded`);
+      }
+
+      queue = createWindowQueue();
+      plans = [];
+      queuedWindowChunks = 0;
+      warnedLargeWindowQueue = false;
+      wroteBatchProgress = false;
+    }
   }
 
-  console.log(`\nEmbedded ${embedded} chunks across ${touchedPages} pages`);
+  console.log(
+    `\nEmbedded ${embedded} chunks across ${touchedPages} pages ` +
+    `(${scannedPages} pages scanned, ${queuedChunks} chunks queued, ${windowCount} windows, ` +
+    `${skippedDerivedRefreshPages} skipped derived refresh, ` +
+    `${providerFailures} provider failures, ${writeFailures} write failures)`,
+  );
 }
 
 async function refreshPageDerivedStorageBeforeEmbedding(engine: BrainEngine, page: Page): Promise<boolean> {
