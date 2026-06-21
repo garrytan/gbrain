@@ -7,6 +7,7 @@ import {
   inferLinkType,
   makeResolver,
   parseTimelineEntries,
+  deriveTimelineAnchor,
   isAutoLinkEnabled,
   FRONTMATTER_LINK_MAP,
   type SlugResolver,
@@ -719,6 +720,55 @@ More prose here.
 - **2026-02-20** | Another event`;
     const entries = parseTimelineEntries(content);
     expect(entries.length).toBe(2);
+  });
+});
+
+// ─── deriveTimelineAnchor ──────────────────────────────────────
+
+describe('deriveTimelineAnchor', () => {
+  test('anchors at a frontmatter effective_date with the page title as summary', () => {
+    const a = deriveTimelineAnchor({
+      slug: 'meetings/2026-04-24-handover',
+      title: 'Ops handover',
+      effectiveDate: new Date('2026-04-24T09:00:00Z'),
+      effectiveDateSource: 'event_date',
+    });
+    expect(a).toEqual({ date: '2026-04-24', summary: 'Ops handover', detail: '' });
+  });
+
+  test('accepts a filename-sourced date and an ISO-string effectiveDate', () => {
+    const a = deriveTimelineAnchor({
+      slug: 'daily/2022-04-20-standup',
+      title: '',
+      effectiveDate: '2022-04-20',
+      effectiveDateSource: 'filename',
+    });
+    expect(a).toEqual({ date: '2022-04-20', summary: '2022-04-20-standup', detail: '' });
+  });
+
+  test('returns null for the fallback (updated_at) source — not a real content date', () => {
+    expect(deriveTimelineAnchor({
+      slug: 'notes/x', title: 'X',
+      effectiveDate: new Date('2026-01-01T00:00:00Z'),
+      effectiveDateSource: 'fallback',
+    })).toBeNull();
+  });
+
+  test('returns null when no date or no source', () => {
+    expect(deriveTimelineAnchor({ slug: 'a', effectiveDate: null, effectiveDateSource: 'date' })).toBeNull();
+    expect(deriveTimelineAnchor({ slug: 'a', effectiveDate: new Date('2026-01-01Z'), effectiveDateSource: null })).toBeNull();
+  });
+
+  test('returns null on an unparseable date string', () => {
+    expect(deriveTimelineAnchor({ slug: 'a', title: 'A', effectiveDate: 'not-a-date', effectiveDateSource: 'date' })).toBeNull();
+  });
+
+  test('falls back to the slug basename when title is empty', () => {
+    const a = deriveTimelineAnchor({
+      slug: 'people/jane-example-com', title: '   ',
+      effectiveDate: '2025-12-31', effectiveDateSource: 'published',
+    });
+    expect(a?.summary).toBe('jane-example-com');
   });
 });
 

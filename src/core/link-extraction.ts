@@ -12,7 +12,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
-import type { PageType } from './types.ts';
+import type { PageType, EffectiveDateSource } from './types.ts';
 import { ensureWellFormed } from './text-safe.ts';
 
 /**
@@ -1168,6 +1168,44 @@ function isValidDate(s: string): boolean {
   // Use Date object as final check (catches 2026-02-30 etc.)
   const dt = new Date(Date.UTC(y, mo - 1, d));
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
+/** Input for {@link deriveTimelineAnchor}: a page's identity + its computed content date. */
+export interface TimelineAnchorInput {
+  slug: string;
+  title?: string | null;
+  effectiveDate?: Date | string | null;
+  effectiveDateSource?: EffectiveDateSource | null;
+}
+
+/**
+ * Anchor a single timeline entry from a page's computed content date, for pages
+ * whose body carries no parseable timeline line.
+ *
+ * Comms- and calendar-dominated brains keep the date in frontmatter or the
+ * filename (slug `2026-04-24-...`), not in the prose, so `parseTimelineEntries`
+ * returns nothing and `find_trajectory` stays blind even though the page is
+ * firmly dated. This recovers that signal from the already-computed
+ * `effective_date` (no re-parsing).
+ *
+ * Fires ONLY for a trustworthy content date — frontmatter (`event_date` / `date`
+ * / `published`) or the `filename` date — never the `fallback` source, which is
+ * `updated_at` (link-churn noise, not when the thing happened). Returns null
+ * when no trustworthy date is available. Callers MUST apply this only when body
+ * parsing yields zero entries, so it can never shadow a real in-body timeline.
+ */
+export function deriveTimelineAnchor(input: TimelineAnchorInput): TimelineCandidate | null {
+  const { slug, title, effectiveDate, effectiveDateSource } = input;
+  if (!effectiveDate) return null;
+  // 'fallback' === updated_at; the rest ('event_date'|'date'|'published'|'filename')
+  // are real content dates. null/undefined source is not trustworthy either.
+  if (effectiveDateSource == null || effectiveDateSource === 'fallback') return null;
+  const dt = typeof effectiveDate === 'string' ? new Date(effectiveDate) : effectiveDate;
+  if (!(dt instanceof Date) || Number.isNaN(dt.getTime())) return null;
+  const iso = dt.toISOString().slice(0, 10);
+  if (!isValidDate(iso)) return null;
+  const summary = (title ?? '').trim() || slug.split('/').pop() || slug;
+  return { date: iso, summary, detail: '' };
 }
 
 // ─── Auto-link config ───────────────────────────────────────────
