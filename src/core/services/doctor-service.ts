@@ -14,6 +14,10 @@ import type { InstalledAgentReadinessReport } from './installed-agent-readiness-
 import { readSyncWatchFailure, type SyncWatchFailure } from '../health-beacon.ts';
 import { loadSubbrainRegistry } from '../subbrains.ts';
 import { MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD } from './memory-review-report-service.ts';
+import {
+  buildDoctorRemediationPlan,
+  type DoctorRemediationPlan,
+} from './doctor-remediation-service.ts';
 import * as db from '../db.ts';
 import { spawnSync } from 'child_process';
 
@@ -40,6 +44,7 @@ export interface DoctorCheck {
 export interface DoctorReport {
   status: 'healthy' | 'unhealthy';
   checks: DoctorCheck[];
+  remediation_plan?: DoctorRemediationPlan;
   agent_explain?: AgentTrustExplainReport;
 }
 
@@ -525,6 +530,7 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
     return {
       status: 'unhealthy',
       checks,
+      remediation_plan: buildDoctorRemediationPlan(input, checks),
       ...doctorAgentExplainField(input.agentExplain),
     };
   }
@@ -776,6 +782,7 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
   return {
     status: checks.some((check) => check.status === 'fail') ? 'unhealthy' : 'healthy',
     checks,
+    remediation_plan: buildDoctorRemediationPlan(input, checks),
     ...doctorAgentExplainField(input.agentExplain),
   };
 }
