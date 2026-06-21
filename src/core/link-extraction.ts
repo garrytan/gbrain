@@ -1184,9 +1184,11 @@ export interface TimelineAnchorInput {
  *
  * Comms- and calendar-dominated brains keep the date in frontmatter or the
  * filename (slug `2026-04-24-...`), not in the prose, so `parseTimelineEntries`
- * returns nothing and `find_trajectory` stays blind even though the page is
- * firmly dated. This recovers that signal from the already-computed
- * `effective_date` (no re-parsing).
+ * returns nothing and the page-level `timeline` table stays empty even though
+ * the page is firmly dated — leaving `get_timeline` and the brain-score
+ * `timeline_coverage` component blind to it. This recovers that signal from the
+ * already-computed `effective_date` (no re-parsing). (It does NOT feed the
+ * facts-based `find_trajectory`, which reads the `facts` table by entity_slug.)
  *
  * Fires ONLY for a trustworthy content date — frontmatter (`event_date` / `date`
  * / `published`) or the `filename` date — never the `fallback` source, which is
