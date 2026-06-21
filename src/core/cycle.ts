@@ -2338,17 +2338,21 @@ export async function runCycle(
   ) {
     try {
       const nowIso = new Date().toISOString();
-      // #2194 fix #3 (the cycle split): `last_source_cycle_at` is the NEW gate
-      // for per-source dispatch (source-scoped phases done). We ALSO keep
-      // `last_full_cycle_at` current so doctor's cycle-freshness check and any
-      // legacy reader stay valid — it's no longer a *gate* for the brain-wide
-      // phases (those gate on autopilot.last_global_at), so writing it on a
-      // source-only cycle does not re-introduce the freshness poisoning codex
-      // flagged in the rejected skip-based design.
-      await engine.updateSourceConfig(opts.sourceId, {
-        last_source_cycle_at: nowIso,
-        last_full_cycle_at: nowIso,
-      });
+      const phaseSet = new Set(phases);
+      const isSplitAutopilotSourceCycle =
+        phases.length === NON_GLOBAL_PHASES.length
+        && NON_GLOBAL_PHASES.every((phase) => phaseSet.has(phase));
+      // #2194 fix #3 (the cycle split): `last_source_cycle_at` is the per-source
+      // gate for source-scoped phases. Only the split autopilot job with exactly
+      // NON_GLOBAL_PHASES skips `last_full_cycle_at`; manual source cycles keep
+      // the legacy freshness contract that doctor/dream callers already read.
+      if (!(isSplitAutopilotSourceCycle && status === 'partial')) {
+        const update: Record<string, string> = { last_source_cycle_at: nowIso };
+        if (!isSplitAutopilotSourceCycle) {
+          update.last_full_cycle_at = nowIso;
+        }
+        await engine.updateSourceConfig(opts.sourceId, update);
+      }
     } catch (e) {
       // Best-effort; cycle already succeeded by the time we get here.
       console.warn(`[cycle] failed to write last_source_cycle_at for source ${opts.sourceId}: ${e instanceof Error ? e.message : String(e)}`);

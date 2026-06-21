@@ -2328,22 +2328,23 @@ export interface ChatToolDef {
   inputSchema: Record<string, unknown>;
 }
 
-function toJsonCompatibleValue(value: unknown, seen = new WeakSet<object>()): unknown {
+function toJsonSafeToolValue(value: unknown, seen = new WeakSet<object>()): unknown {
   if (typeof value === 'bigint') return value.toString();
   if (typeof value === 'function' || typeof value === 'symbol' || typeof value === 'undefined') return null;
   if (value === null || typeof value !== 'object') return value;
+  if (value instanceof Date) return value.toISOString();
   if (seen.has(value)) return '[Circular]';
   seen.add(value);
-  if (Array.isArray(value)) return value.map((item) => toJsonCompatibleValue(item, seen));
+  if (Array.isArray(value)) return value.map((item) => toJsonSafeToolValue(item, seen));
   return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([key, nested]) => [key, toJsonCompatibleValue(nested, seen)]),
+    Object.entries(value as Record<string, unknown>).map(([key, nested]) => [key, toJsonSafeToolValue(nested, seen)]),
   );
 }
 
 function stringifyToolError(value: unknown): string {
   if (typeof value === 'string') return value;
   try {
-    return JSON.stringify(toJsonCompatibleValue(value));
+    return JSON.stringify(toJsonSafeToolValue(value));
   } catch {
     return String(value);
   }
@@ -2380,7 +2381,7 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
               ? { type: 'error-text' as const, value: stringifyToolError(b.output) }
               : (typeof b.output === 'string'
                 ? { type: 'text' as const, value: b.output }
-                : { type: 'json' as const, value: toJsonCompatibleValue(b.output) as never }),
+                : { type: 'json' as const, value: toJsonSafeToolValue(b.output ?? null) as never }),
           })),
       };
     }
@@ -2393,7 +2394,7 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
             type: 'tool-call' as const,
             toolCallId: b.toolCallId,
             toolName: b.toolName,
-            input: toJsonCompatibleValue(b.input ?? {}) as never,
+            input: toJsonSafeToolValue(b.input ?? {}) as never,
           };
         }
         return b;

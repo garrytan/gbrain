@@ -3786,21 +3786,21 @@ export async function checkCycleFreshness(
       const display = source.name && source.name !== source.id
         ? `'${source.id}' (${source.name})`
         : `'${source.id}'`;
-      const raw = source.config?.last_full_cycle_at;
+      const raw = source.config?.last_source_cycle_at ?? source.config?.last_full_cycle_at;
       if (typeof raw !== 'string') {
-        issues.push(`Source ${display} has never completed a full cycle`);
+        issues.push(`Source ${display} has never completed a source cycle`);
         hasFailures = true;
         continue;
       }
       const last = new Date(raw).getTime();
       if (!Number.isFinite(last)) {
-        issues.push(`Source ${display} has unparseable last_full_cycle_at: ${raw}`);
+        issues.push(`Source ${display} has unparseable cycle timestamp: ${raw}`);
         hasWarnings = true;
         continue;
       }
       const ageMs = now - last;
       if (ageMs < 0) {
-        issues.push(`Source ${display} has future last_full_cycle_at — clock skew`);
+        issues.push(`Source ${display} has future cycle timestamp — clock skew`);
         hasWarnings = true;
         continue;
       }

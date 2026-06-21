@@ -327,7 +327,9 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const startingCostUsd = spendTracker?.snapshot().cumulativeCostUsd ?? 0;
     const phaseBudgetUsd = resolvePhaseBudgetUsd(ctx, opts);
     const scopedSourceId = scope.sourceId ?? (
-      scope.sourceIds?.length === 1 ? scope.sourceIds[0] : undefined
+      scope.sourceIds?.length === 1
+        ? scope.sourceIds[0]
+        : (scope.sourceIds?.length ? undefined : 'default')
     );
 
     if (!scopedSourceId) {

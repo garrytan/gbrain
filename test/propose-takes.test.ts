@@ -714,4 +714,22 @@ New prose appended here.`;
     expect(putPages).toHaveLength(0);
     expect(captured.find(c => c.sql.includes('INSERT INTO extract_rollup_7d'))).toBeUndefined();
   });
+
+  test('unscoped local scope defaults receipts to default source', async () => {
+    const { engine, putPages } = buildMockEngine({
+      pages: [buildPage({ slug: 'wiki/unscoped-default', body: 'Unscoped local cycle should still propose.' })],
+    });
+    const ctx = {
+      ...buildCtx(engine),
+      sourceId: undefined,
+    } as unknown as OperationContext;
+    const extractor: ProposeTakesExtractor = async () => [
+      { claim_text: 'Unscoped local cycle should still propose', kind: 'take', holder: 'brain', weight: 0.5 },
+    ];
+
+    const result = await runPhaseProposeTakes(ctx, { extractor });
+    expect(result.status).toBe('ok');
+    expect(putPages).toHaveLength(1);
+    expect(putPages[0]!.opts?.sourceId).toBe('default');
+  });
 });

@@ -14,6 +14,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
+import { MinionQueue } from '../src/core/minions/queue.ts';
 import {
   ALL_PHASES,
   GLOBAL_PHASES,
@@ -28,6 +29,7 @@ import {
   dispatchPerSource,
 } from '../src/commands/autopilot-fanout.ts';
 import { decideAutopilotDispatch } from '../src/commands/autopilot.ts';
+import { PROTECTED_JOB_NAMES } from '../src/core/minions/protected-names.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 describe('cycle phase partition (#2194 fix #3)', () => {
@@ -110,11 +112,16 @@ describe('autopilot global-maintenance throttle split', () => {
 });
 
 describe('dispatchGlobalMaintenance — single-flight gate', () => {
+  test('global maintenance job name is protected from remote submitters', () => {
+    expect(PROTECTED_JOB_NAMES.has('autopilot-global-maintenance')).toBe(true);
+  });
+
   function stubs(lastGlobalAt: string | null) {
     const added: Array<{ name: string; data: any; opts: any }> = [];
     const engine = {
       kind: 'postgres' as const,
       getConfig: async (k: string) => (k === LAST_GLOBAL_AT_KEY ? lastGlobalAt : null),
+      executeRaw: async () => [],
     } as unknown as BrainEngine;
     const queue = {
       add: async (name: string, data: unknown, opts: Record<string, unknown>) => {
@@ -144,7 +151,7 @@ describe('dispatchGlobalMaintenance — single-flight gate', () => {
 });
 
 describe('dispatchPerSource — per-source jobs carry NON_GLOBAL phases (no embed)', () => {
-  test('each per-source job sets phases = NON_GLOBAL_PHASES', async () => {
+  test('stale global maintenance defers while source jobs are dispatched', async () => {
     const sources = [{ id: 'repo-a', name: 'a', config: {} }, { id: 'repo-b', name: 'b', config: {} }];
     const added: any[] = [];
     const engine = {
@@ -154,12 +161,33 @@ describe('dispatchPerSource — per-source jobs carry NON_GLOBAL phases (no embe
       executeRaw: async () => [],
     } as unknown as BrainEngine;
     const queue = { add: async (name: string, data: unknown, opts: unknown) => { added.push({ name, data, opts }); return { id: added.length }; } } as any;
-    await dispatchPerSource(engine, queue, { repoPath: '/tmp', slot: 's', timeoutMs: 1, fanoutMax: 4, jsonMode: true, emit: () => {}, log: () => {} });
+    const result = await dispatchPerSource(engine, queue, { repoPath: '/tmp', slot: 's', timeoutMs: 1, fanoutMax: 4, jsonMode: true, emit: () => {}, log: () => {} });
+    expect(result.global_maintenance).toEqual({ dispatched: false, reason: 'deferred' });
     expect(added.length).toBe(2);
-    for (const j of added) {
+    const sourceJobs = added.filter((j) => j.name === 'autopilot-cycle');
+    expect(sourceJobs.length).toBe(2);
+    for (const j of sourceJobs) {
       expect(j.data.phases).toEqual(NON_GLOBAL_PHASES);
       expect(j.data.phases).not.toContain('embed');
+      expect(j.opts.parent_job_id).toBeUndefined();
     }
+  });
+
+  test('fanout cap defers global maintenance until all stale sources can run', async () => {
+    const sources = [{ id: 'repo-a', name: 'a', config: {} }, { id: 'repo-b', name: 'b', config: {} }];
+    const added: any[] = [];
+    const engine = {
+      kind: 'postgres' as const,
+      listAllSources: async () => sources,
+      getConfig: async () => null,
+      executeRaw: async () => [],
+    } as unknown as BrainEngine;
+    const queue = { add: async (name: string, data: unknown, opts: unknown) => { added.push({ name, data, opts }); return { id: added.length }; } } as any;
+    const result = await dispatchPerSource(engine, queue, { repoPath: '/tmp', slot: 's', timeoutMs: 1, fanoutMax: 1, jsonMode: true, emit: () => {}, log: () => {} });
+    expect(result.dispatched.length).toBe(1);
+    expect(result.skipped_cap.length).toBe(1);
+    expect(result.global_maintenance).toEqual({ dispatched: false, reason: 'deferred' });
+    expect(added.map((j) => j.name)).toEqual(['autopilot-cycle']);
   });
 });
 
@@ -168,6 +196,160 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
   beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 30000);
   afterAll(async () => { await engine.disconnect(); });
   beforeEach(async () => { await resetPgliteState(engine); });
+
+  test('real queue dispatches source cycles first and defers global maintenance', async () => {
+    await engine.setConfig('version', '119');
+    await engine.setConfig(LAST_GLOBAL_AT_KEY, 'not-a-date');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ('repo-a', 'repo-a', '/tmp/repo-a', '{}'::jsonb)`,
+    );
+    const queue = new MinionQueue(engine);
+    const result = await dispatchPerSource(engine, queue, {
+      repoPath: '/tmp',
+      slot: 's',
+      timeoutMs: 1,
+      fanoutMax: 4,
+      jsonMode: true,
+      emit: () => {},
+      log: () => {},
+    });
+    expect(result.global_maintenance).toEqual({ dispatched: false, reason: 'deferred' });
+
+    const rows = await engine.executeRaw<{ name: string; status: string; parent_job_id: number | null }>(
+      `SELECT name, status, parent_job_id FROM minion_jobs ORDER BY id`,
+    );
+    expect(rows).toEqual([
+      { name: 'autopilot-cycle', status: 'waiting', parent_job_id: null },
+    ]);
+  });
+
+  test('dispatch reuses a live global maintenance job instead of queuing a duplicate', async () => {
+    await engine.setConfig('version', '119');
+    await engine.setConfig(LAST_GLOBAL_AT_KEY, 'not-a-date');
+    await engine.executeRaw(
+      `INSERT INTO minion_jobs (name, queue, status, data)
+       VALUES ('autopilot-global-maintenance', 'default', 'active', '{}'::jsonb)`,
+    );
+    const existing = await engine.executeRaw<{ id: number }>(
+      `SELECT id FROM minion_jobs WHERE name = 'autopilot-global-maintenance'`,
+    );
+    const queue = new MinionQueue(engine);
+    const result = await dispatchGlobalMaintenance(engine, queue, {
+      repoPath: '/tmp',
+      slot: 'next-slot',
+      timeoutMs: 1,
+      jsonMode: true,
+      emit: () => {},
+    });
+    const rows = await engine.executeRaw<{ id: number }>(
+      `SELECT id FROM minion_jobs WHERE name = 'autopilot-global-maintenance' ORDER BY id`,
+    );
+    expect(result.dispatched).toBe(true);
+    expect(result.job_id).toBe(existing[0]!.id);
+    expect(rows.map((r) => r.id)).toEqual([existing[0]!.id]);
+  });
+
+  test('per-source jobs defer while global maintenance is already active', async () => {
+    await engine.setConfig('version', '119');
+    await engine.setConfig(LAST_GLOBAL_AT_KEY, 'not-a-date');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ('repo-a', 'repo-a', '/tmp/repo-a', '{}'::jsonb)`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO minion_jobs (name, queue, status, data)
+       VALUES ('autopilot-global-maintenance', 'default', 'active', '{}'::jsonb)`,
+    );
+
+    const queue = new MinionQueue(engine);
+    const result = await dispatchPerSource(engine, queue, {
+      repoPath: '/tmp',
+      slot: 's',
+      timeoutMs: 1,
+      fanoutMax: 4,
+      jsonMode: true,
+      emit: () => {},
+      log: () => {},
+    });
+    expect(result.dispatched).toEqual([]);
+    expect(result.skipped_active).toEqual(['repo-a']);
+
+    const rows = await engine.executeRaw<{ name: string; status: string; parent_job_id: number | null }>(
+      `SELECT name, status, parent_job_id FROM minion_jobs ORDER BY id`,
+    );
+    expect(rows).toEqual([
+      { name: 'autopilot-global-maintenance', status: 'active', parent_job_id: null },
+    ]);
+  });
+
+  test('source fanout defers while global maintenance is already waiting', async () => {
+    await engine.setConfig('version', '119');
+    await engine.setConfig(LAST_GLOBAL_AT_KEY, 'not-a-date');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ('repo-a', 'repo-a', '/tmp/repo-a', '{}'::jsonb)`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO minion_jobs (name, queue, status, data)
+       VALUES ('autopilot-global-maintenance', 'default', 'waiting', '{}'::jsonb)`,
+    );
+
+    const queue = new MinionQueue(engine);
+    const result = await dispatchPerSource(engine, queue, {
+      repoPath: '/tmp',
+      slot: 's',
+      timeoutMs: 1,
+      fanoutMax: 4,
+      jsonMode: true,
+      emit: () => {},
+      log: () => {},
+    });
+
+    expect(result.global_maintenance.dispatched).toBe(true);
+    expect(result.dispatched).toEqual([]);
+    expect(result.skipped_active).toEqual(['repo-a']);
+    const rows = await engine.executeRaw<{ name: string; status: string; parent_job_id: number | null }>(
+      `SELECT name, status, parent_job_id FROM minion_jobs ORDER BY id`,
+    );
+    expect(rows).toEqual([
+      { name: 'autopilot-global-maintenance', status: 'waiting', parent_job_id: null },
+    ]);
+  });
+
+  test('source fanout defers while orphaned paused global maintenance exists', async () => {
+    await engine.setConfig('version', '119');
+    await engine.setConfig(LAST_GLOBAL_AT_KEY, 'not-a-date');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ('repo-a', 'repo-a', '/tmp/repo-a', '{}'::jsonb)`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO minion_jobs (name, queue, status, data)
+       VALUES ('autopilot-global-maintenance', 'default', 'paused', '{}'::jsonb)`,
+    );
+
+    const queue = new MinionQueue(engine);
+    const result = await dispatchPerSource(engine, queue, {
+      repoPath: '/tmp',
+      slot: 's',
+      timeoutMs: 1,
+      fanoutMax: 4,
+      jsonMode: true,
+      emit: () => {},
+      log: () => {},
+    });
+
+    expect(result.global_maintenance.dispatched).toBe(true);
+    expect(result.dispatched).toEqual([]);
+    expect(result.skipped_active).toEqual(['repo-a']);
+    const rows = await engine.executeRaw<{ name: string; status: string; parent_job_id: number | null }>(
+      `SELECT name, status, parent_job_id FROM minion_jobs ORDER BY id`,
+    );
+    expect(rows).toEqual([
+      { name: 'autopilot-global-maintenance', status: 'waiting', parent_job_id: null },
+    ]);
+  });
 
   async function captureHandlers() {
     const handlers = new Map<string, (job: any) => Promise<any>>();
@@ -182,13 +364,27 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     const handler = handlers.get('autopilot-global-maintenance');
     expect(handler).toBeTruthy();
 
-    const result = await handler!({ data: { phases: ['orphans', 'embed'] }, signal: undefined });
+    const result = await handler!({ data: { phases: ['orphans'] }, signal: undefined });
     // The cycle ran the requested global phases (DB-only on an empty brain).
     expect(result.report.phases.some((p: any) => p.phase === 'orphans')).toBe(true);
-    expect(['ok', 'clean', 'partial']).toContain(result.report.status);
+    expect(['ok', 'clean']).toContain(result.report.status);
     // Freshness stamped so the dispatch gate backs off.
     const stamped = await engine.getConfig(LAST_GLOBAL_AT_KEY);
     expect(stamped).not.toBeNull();
     expect(Number.isFinite(new Date(stamped!).getTime())).toBe(true);
+  });
+
+  test('partial global maintenance does not stamp autopilot.last_global_at', async () => {
+    await engine.unsetConfig(LAST_GLOBAL_AT_KEY);
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-global-maintenance');
+    expect(handler).toBeTruthy();
+
+    const result = await handler!({
+      data: { repoPath: '/definitely-does-not-exist-for-global-maintenance-test', phases: ['lint'] },
+      signal: { aborted: false },
+    });
+    expect(['partial', 'failed']).toContain(result.report.status);
+    expect(await engine.getConfig(LAST_GLOBAL_AT_KEY)).toBeNull();
   });
 });

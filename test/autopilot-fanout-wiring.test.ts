@@ -48,9 +48,15 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(Math.abs(dispatchIdx - fullCycleIdx)).toBeLessThan(3000);
   });
 
-  test('updates lastFullCycleAt on dispatch (so the 60-min floor is honored)', () => {
-    // After the dispatchPerSource call, the lastFullCycleAt module var
-    // must update so the next tick doesn't immediately re-fan-out.
+  test('updates lastFullCycleAt only after a fresh no-op fanout window', () => {
+    // Queued source/global jobs can still fail after dispatch. The daemon's
+    // sleep floor should refresh only after readback proves there is no capped,
+    // active, cooldown-paused, newly-dispatched, or stale global work left to retry.
+    expect(AUTOPILOT_SRC).toMatch(/result\.skipped_cap\.length === 0/);
+    expect(AUTOPILOT_SRC).toMatch(/result\.skipped_active\.length === 0/);
+    expect(AUTOPILOT_SRC).toMatch(/result\.skipped_cooldown\.length === 0/);
+    expect(AUTOPILOT_SRC).toMatch(/result\.dispatched\.length === 0/);
+    expect(AUTOPILOT_SRC).toMatch(/result\.global_maintenance\.reason === 'fresh'/);
     expect(AUTOPILOT_SRC).toMatch(/lastFullCycleAt\s*=\s*Date\.now\(\)/);
   });
 

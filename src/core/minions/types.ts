@@ -130,6 +130,8 @@ export interface MinionJobInput {
   idempotency_key?: string;
   /** Submission backpressure: cap waiting jobs with this name before inserting a new row. */
   maxWaiting?: number;
+  /** Insert as paused so callers can attach children before the parent is claimable. */
+  hold_until_children?: boolean;
 
   // v12: scheduler polish
   /**

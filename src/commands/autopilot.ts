@@ -929,15 +929,17 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             fanoutMax,
             jsonMode,
           });
-          // #2194 fix #3 / #2227 bug #3: dispatch the single brain-wide
-          // maintenance job (embed/orphans/purge/…) once per window — the per-
-          // source cycles above no longer run global phases, so this is where
-          // the brain-wide work happens (single-flight, no RSS blowout). Only on
-          // the per-source path (legacy single-source still runs everything).
-          if (!result.legacy_fallback) {
-            await dispatchGlobalMaintenanceSafely();
-          }
-          if (result.dispatched.length > 0 || result.legacy_fallback) {
+          if (
+            result.legacy_fallback ||
+            (
+              result.skipped_cap.length === 0 &&
+              result.skipped_active.length === 0 &&
+              result.skipped_cooldown.length === 0 &&
+              result.dispatched.length === 0 &&
+              !result.global_maintenance.dispatched &&
+              result.global_maintenance.reason === 'fresh'
+            )
+          ) {
             lastFullCycleAt = Date.now();
           }
           if (jsonMode) {
@@ -947,7 +949,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               skipped_fresh: result.skipped_fresh,
               skipped_cap: result.skipped_cap,
               skipped_cooldown: result.skipped_cooldown,
+              skipped_active: result.skipped_active,
               legacy_fallback: result.legacy_fallback,
+              global_maintenance: result.global_maintenance,
               fanout_max: fanoutMax,
               score,
             }) + '\n');
@@ -955,7 +959,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             console.log(
               `[dispatch] fanout: ${result.dispatched.length} dispatched, ` +
               `${result.skipped_fresh.length} fresh, ${result.skipped_cap.length} capped, ` +
-              `${result.skipped_cooldown.length} cooldown ` +
+              `${result.skipped_cooldown.length} cooldown, ${result.skipped_active.length} active ` +
               `(score=${score}, max=${fanoutMax})`,
             );
           }

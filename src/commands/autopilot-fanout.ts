@@ -77,9 +77,13 @@ export interface FanoutResult {
   skipped_cap: string[];
   /** Source ids skipped because they're in failure cooldown (#2194 fix #2). */
   skipped_cooldown: string[];
+  /** Source ids skipped because a non-terminal autopilot-cycle already exists. */
+  skipped_active: string[];
   /** True when this tick fell back to the legacy single-job path
    *  (no sources rows / engine empty). */
   legacy_fallback: boolean;
+  /** Brain-wide maintenance dispatch result for this tick. */
+  global_maintenance: { dispatched: boolean; reason: 'stale' | 'fresh' | 'deferred'; job_id?: number };
 }
 
 /**
@@ -103,11 +107,11 @@ export async function resolveFanoutMax(engine: BrainEngine): Promise<number> {
 }
 
 /**
- * Read the worker concurrency the supervisor most recently STARTED with, from
- * its `started` audit event (the lowest-coupling source — no extra lock-row
- * column). Filesystem read; returns null when no supervisor has ever started
- * (or the event lacks concurrency). Filtered by queue so a `shell`-queue
- * supervisor's concurrency doesn't leak into the `default`-queue decision.
+ * Read the worker concurrency the supervisor most recently STARTED with in the
+ * current audit file (the lowest-coupling source — no extra lock-row column).
+ * Filesystem read; returns null when no supervisor has ever started (or the
+ * event lacks concurrency). Filtered by queue so a `shell`-queue supervisor's
+ * concurrency doesn't leak into the `default`-queue decision.
  *
  * ADVISORY use only (doctor warning). Behavior-changing callers (the fanout
  * clamp) must additionally gate on a LIVE supervisor — see
@@ -117,7 +121,7 @@ export async function resolveFanoutMax(engine: BrainEngine): Promise<number> {
 export async function readSupervisorConcurrency(queue = 'default'): Promise<number | null> {
   try {
     const { readSupervisorEvents } = await import('../core/minions/handlers/supervisor-audit.ts');
-    const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
+    const events = readSupervisorEvents();
     const started = events
       .filter((e) => e.event === 'started' && (e.queue === undefined || e.queue === queue))
       .pop();
@@ -172,15 +176,17 @@ export function readLastFullCycleAt(src: SourceRow): Date | null {
 
 /**
  * A source needs work when either:
- *   1. It has never had a full cycle complete (`last_full_cycle_at` null), OR
- *   2. The last full cycle is older than the freshness floor.
+ *   1. It has never had a successful source cycle, OR
+ *   2. The last successful source cycle is older than the freshness floor.
  *
  * `last_sync_at` is NOT consulted here — sync is one phase of a cycle, and
  * a brain may have fresh sync but stale extract/embed. The 60-min floor on
- * full-cycle is the canonical freshness signal for autopilot dispatch.
+ * source-cycle success is the canonical freshness signal for autopilot
+ * dispatch; the brain-wide global phases gate separately on
+ * `autopilot.last_global_at`.
  */
 export function isSourceStale(src: SourceRow, now = Date.now(), floorMin = FULL_CYCLE_FLOOR_MIN): boolean {
-  const last = readLastFullCycleAt(src);
+  const last = readLastSuccessAt(src);
   if (last === null) return true;
   const ageMin = (now - last.getTime()) / 60_000;
   return ageMin >= floorMin;
@@ -249,12 +255,14 @@ export async function resolveFailureCooldownOpts(engine: BrainEngine): Promise<C
 }
 
 /**
- * Read recent dead/failed autopilot-cycle jobs grouped by source. Read-at-
- * dispatch (NOT a write hook) because timeouts/RSS-kills/stalls dead-letter via
- * SQL in queue.ts and never run handler code — a write-only cooldown would miss
- * the exact failures that drive the storm. Engine-parity-safe via executeRaw
- * (one query, both engines); cutoff is precomputed in JS to avoid INTERVAL
- * portability concerns. codex #6: rows with a null source_id are excluded.
+ * Read recent dead/failed autopilot-cycle jobs grouped by source. Completed
+ * rows whose structured cycle report says failed/partial count too: handlers
+ * intentionally return those reports instead of throwing, so job status alone
+ * misses the normal phase-failure path. Read-at-dispatch (NOT a write hook)
+ * because timeouts/RSS-kills/stalls dead-letter via SQL in queue.ts and never
+ * run handler code. Engine-parity-safe via executeRaw (one query, both
+ * engines); cutoff is precomputed in JS to avoid INTERVAL portability concerns.
+ * codex #6: rows with a null source_id are excluded.
  */
 export async function readRecentSourceFailures(
   engine: BrainEngine,
@@ -271,7 +279,16 @@ export async function readRecentSourceFailures(
               max(finished_at) AS last_failed_at
          FROM minion_jobs
         WHERE name = 'autopilot-cycle'
-          AND status IN ('dead','failed')
+          AND (
+            status IN ('dead','failed')
+            OR (
+              status = 'completed'
+              AND (
+                result->>'status' IN ('failed','partial')
+                OR result->'report'->>'status' IN ('failed','partial')
+              )
+            )
+          )
           AND data->>'source_id' IS NOT NULL
           AND finished_at IS NOT NULL
           AND finished_at > $1`;
@@ -311,6 +328,27 @@ export async function isSourceInCooldown(engine: BrainEngine, sourceId: string, 
     if (rows[0]) lastSuccessAt = readLastSuccessAt({ config: rows[0].config ?? {} } as SourceRow);
   } catch { /* treat as no success */ }
   return isInFailureCooldown(failure, lastSuccessAt, now, opts);
+}
+
+/**
+ * Read source ids that already have a live per-source autopilot-cycle job. This
+ * prevents capped fanout from re-enqueuing the same oldest sources with a fresh
+ * slot key while the previous batch is still waiting or active.
+ */
+export async function readLiveAutopilotCycleSourceIds(engine: BrainEngine): Promise<Set<string>> {
+  try {
+    const rows = await engine.executeRaw<{ source_id: string | null }>(
+      `SELECT DISTINCT data->>'source_id' AS source_id
+         FROM minion_jobs
+        WHERE name = 'autopilot-cycle'
+          AND status IN ('waiting', 'active', 'delayed', 'waiting-children', 'paused')
+          AND data ? 'source_id'
+          AND data->>'source_id' IS NOT NULL`,
+    );
+    return new Set(rows.map((r) => r.source_id).filter((id): id is string => typeof id === 'string' && id.length > 0));
+  } catch {
+    return new Set();
+  }
 }
 
 /**
@@ -405,7 +443,15 @@ export async function dispatchPerSource(
     } else {
       log(`[dispatch] job #${job.id} autopilot-cycle (legacy single-source)`);
     }
-    return { dispatched: [], skipped_fresh: [], skipped_cap: [], skipped_cooldown: [], legacy_fallback: true };
+    return {
+      dispatched: [],
+      skipped_fresh: [],
+      skipped_cap: [],
+      skipped_cooldown: [],
+      skipped_active: [],
+      legacy_fallback: true,
+      global_maintenance: { dispatched: false, reason: 'deferred' },
+    };
   }
 
   // #2194 fix #2: load recent per-source failures + cooldown knobs so a
@@ -424,11 +470,69 @@ export async function dispatchPerSource(
     cooldownOpts = { baseMin: 0, capMin: FAILURE_COOLDOWN_CAP_MIN };
   }
 
+  const liveCycleSourceIds = await readLiveAutopilotCycleSourceIds(engine);
+  const skippedActive = sources.filter((s) => liveCycleSourceIds.has(s.id));
+  const eligibleSources = liveCycleSourceIds.size > 0
+    ? sources.filter((s) => !liveCycleSourceIds.has(s.id))
+    : sources;
   const { dispatch, skippedFresh, skippedCap, skippedCooldown } =
-    selectSourcesForDispatch(sources, opts.fanoutMax, Date.now(), FULL_CYCLE_FLOOR_MIN, recentFailures, cooldownOpts);
+    selectSourcesForDispatch(eligibleSources, opts.fanoutMax, Date.now(), FULL_CYCLE_FLOOR_MIN, recentFailures, cooldownOpts);
+  let sourceDispatch = dispatch;
+
+  let globalMaintenance: FanoutResult['global_maintenance'] = { dispatched: false, reason: 'deferred' };
+  if (dispatch.length > 0) {
+    const liveGlobal = await engine.executeRaw<{ id: number; status: string }>(
+      `SELECT id, status
+         FROM minion_jobs
+        WHERE name = 'autopilot-global-maintenance'
+          AND queue = 'default'
+          AND status IN ('waiting','active','delayed','waiting-children','paused')
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1`,
+    );
+    if (liveGlobal.length > 0) {
+      const live = liveGlobal[0]!;
+      if (live.status === 'paused') {
+        const childRows = await engine.executeRaw<{ count: string }>(
+          `SELECT count(*)::text AS count
+             FROM minion_jobs
+            WHERE parent_job_id = $1
+              AND status NOT IN ('completed','failed','dead','cancelled')`,
+          [live.id],
+        );
+        const liveChildren = parseInt(childRows[0]?.count ?? '0', 10);
+        await engine.executeRaw(
+          `UPDATE minion_jobs
+              SET status = $2, updated_at = now()
+            WHERE id = $1
+              AND status = 'paused'`,
+          [live.id, liveChildren > 0 ? 'waiting-children' : 'waiting'],
+        );
+      }
+      skippedActive.push(...dispatch);
+      sourceDispatch = [];
+      globalMaintenance = { dispatched: true, reason: 'stale', job_id: Number(live.id) };
+    }
+  } else if (skippedCap.length === 0 && skippedActive.length === 0) {
+    try {
+      const global = await dispatchGlobalMaintenance(engine, queue, {
+        repoPath: opts.repoPath,
+        slot: opts.slot,
+        timeoutMs: opts.timeoutMs,
+        jsonMode: opts.jsonMode,
+        emit,
+        log,
+      });
+      globalMaintenance = global;
+    } catch (e) {
+      if (opts.jsonMode) {
+        emit(JSON.stringify({ event: 'global_maintenance_dispatch_failed', error: e instanceof Error ? e.message : String(e) }));
+      }
+    }
+  }
 
   const dispatched: string[] = [];
-  for (const src of dispatch) {
+  for (const src of sourceDispatch) {
     try {
       const remoteUrl = typeof src.config?.remote_url === 'string' ? src.config.remote_url : null;
       const job = await queue.add(
@@ -502,12 +606,21 @@ export async function dispatchPerSource(
     }));
   }
 
+  if (skippedActive.length > 0 && opts.jsonMode) {
+    emit(JSON.stringify({
+      event: 'fanout_active_skipped',
+      sources: skippedActive.map(s => s.id),
+    }));
+  }
+
   return {
     dispatched,
     skipped_fresh: skippedFresh.map(s => s.id),
     skipped_cap: skippedCap.map(s => s.id),
     skipped_cooldown: skippedCooldown.map(s => s.id),
+    skipped_active: skippedActive.map(s => s.id),
     legacy_fallback: false,
+    global_maintenance: globalMaintenance,
   };
 }
 
@@ -542,19 +655,64 @@ export async function isGlobalMaintenanceDue(engine: BrainEngine, now = Date.now
  * window, instead of N per-source cycles each running them concurrently (the
  * RSS blowout). Single-flight is structural: one `idempotency_key` +
  * `maxWaiting:1`, so a slow run never stacks. Gated on `autopilot.last_global_at`
- * (stamped by the handler on success). Postgres-only fan-out concern; on PGLite
- * the file lock already serializes, but the job is still correct there.
+ * (stamped by the handler on success). Per-source work is dispatched first;
+ * the global job waits for a later no-op/fresh source tick instead of using
+ * queue parent/child attachment.
  */
 export async function dispatchGlobalMaintenance(
   engine: BrainEngine,
   queue: MinionQueue,
-  opts: { repoPath: string; slot: string; timeoutMs: number; jsonMode: boolean; emit?: (l: string) => void; log?: (l: string) => void },
-): Promise<{ dispatched: boolean; reason: 'stale' | 'fresh' }> {
+  opts: {
+    repoPath: string;
+    slot: string;
+    timeoutMs: number;
+    jsonMode: boolean;
+    emit?: (l: string) => void;
+    log?: (l: string) => void;
+  },
+): Promise<{ dispatched: boolean; reason: 'stale' | 'fresh'; job_id?: number }> {
   const emit = opts.emit ?? ((line) => process.stderr.write(line + '\n'));
   const log = opts.log ?? ((line) => console.log(line));
 
   if (!await isGlobalMaintenanceDue(engine)) {
     return { dispatched: false, reason: 'fresh' };
+  }
+
+  const liveRows = await engine.executeRaw<{ id: number; status: string }>(
+    `SELECT id, status
+       FROM minion_jobs
+      WHERE name = 'autopilot-global-maintenance'
+        AND queue = 'default'
+        AND status IN ('waiting','active','delayed','waiting-children','paused')
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1`,
+  );
+  if (liveRows.length > 0) {
+    const id = Number(liveRows[0]!.id);
+    const liveStatus = liveRows[0]!.status;
+    if (liveStatus === 'paused') {
+      const childRows = await engine.executeRaw<{ count: string }>(
+        `SELECT count(*)::text AS count
+           FROM minion_jobs
+          WHERE parent_job_id = $1
+            AND status NOT IN ('completed','failed','dead','cancelled')`,
+        [id],
+      );
+      const liveChildren = parseInt(childRows[0]?.count ?? '0', 10);
+      await engine.executeRaw(
+        `UPDATE minion_jobs
+            SET status = $2, updated_at = now()
+          WHERE id = $1
+            AND status = 'paused'`,
+        [id, liveChildren > 0 ? 'waiting-children' : 'waiting'],
+      );
+    }
+    if (opts.jsonMode) {
+      emit(JSON.stringify({ event: 'global_maintenance_already_live', job_id: id, slot: opts.slot }));
+    } else {
+      log(`[dispatch] autopilot-global-maintenance already live as job #${id}`);
+    }
+    return { dispatched: true, reason: 'stale', job_id: id };
   }
 
   const job = await queue.add(
@@ -569,11 +727,12 @@ export async function dispatchGlobalMaintenance(
       timeout_ms: opts.timeoutMs,
       maxWaiting: 1,
     },
+    { allowProtectedSubmit: true },
   );
   if (opts.jsonMode) {
     emit(JSON.stringify({ event: 'dispatched', job_id: job.id, mode: 'global_maintenance', slot: opts.slot }));
   } else {
     log(`[dispatch] job #${job.id} autopilot-global-maintenance (brain-wide phases)`);
   }
-  return { dispatched: true, reason: 'stale' };
+  return { dispatched: true, reason: 'stale', job_id: job.id };
 }
