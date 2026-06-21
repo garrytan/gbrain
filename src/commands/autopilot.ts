@@ -871,8 +871,12 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // codex P1-3). Fresh-install brains with no sources rows fall
           // back to the legacy single autopilot-cycle so existing
           // behavior is preserved.
-          const { dispatchPerSource, resolveFanoutMax } = await import('./autopilot-fanout.ts');
-          const fanoutMax = await resolveFanoutMax(engine);
+          const { dispatchPerSource, dispatchGlobalMaintenance, resolveEffectiveFanoutMax } = await import('./autopilot-fanout.ts');
+          // #2194 fix #1: clamp fan-out to the worker's effective concurrency
+          // (reserve ≥1 slot), gated on a LIVE supervisor so a stale audit row
+          // can't shrink throughput (codex #9/D5). autopilot-cycle jobs run on
+          // the 'default' queue, so that's the concurrency we compare against.
+          const fanoutMax = await resolveEffectiveFanoutMax(engine, 'default');
           const result = await dispatchPerSource(engine, queue, {
             repoPath,
             slot,
@@ -880,6 +884,18 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             fanoutMax,
             jsonMode,
           });
+          // #2194 fix #3 / #2227 bug #3: dispatch the single brain-wide
+          // maintenance job (embed/orphans/purge/…) once per window — the per-
+          // source cycles above no longer run global phases, so this is where
+          // the brain-wide work happens (single-flight, no RSS blowout). Only on
+          // the per-source path (legacy single-source still runs everything).
+          if (!result.legacy_fallback) {
+            try {
+              await dispatchGlobalMaintenance(engine, queue, { repoPath, slot, timeoutMs, jsonMode });
+            } catch (e) {
+              if (jsonMode) process.stderr.write(JSON.stringify({ event: 'global_maintenance_dispatch_failed', error: e instanceof Error ? e.message : String(e) }) + '\n');
+            }
+          }
           if (result.dispatched.length > 0 || result.legacy_fallback) {
             lastFullCycleAt = Date.now();
           }
@@ -889,6 +905,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               dispatched: result.dispatched,
               skipped_fresh: result.skipped_fresh,
               skipped_cap: result.skipped_cap,
+              skipped_cooldown: result.skipped_cooldown,
               legacy_fallback: result.legacy_fallback,
               fanout_max: fanoutMax,
               score,
@@ -896,7 +913,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           } else if (!result.legacy_fallback) {
             console.log(
               `[dispatch] fanout: ${result.dispatched.length} dispatched, ` +
-              `${result.skipped_fresh.length} fresh, ${result.skipped_cap.length} capped ` +
+              `${result.skipped_fresh.length} fresh, ${result.skipped_cap.length} capped, ` +
+              `${result.skipped_cooldown.length} cooldown ` +
               `(score=${score}, max=${fanoutMax})`,
             );
           }

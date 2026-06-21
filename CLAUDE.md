@@ -390,7 +390,7 @@ Progress banks into the append-only `op_checkpoint_paths` table (one row per dra
 path, written via the direct session pool so it survives `EMAXCONNSESSION`); a killed
 run resumes from the checkpoint and `last_commit` only advances on true completion. The
 per-source lock heartbeats through the direct pool and refuses to steal a live,
-recently-refreshed holder. Five env knobs tune it (all env-only, incident-time escape
+recently-refreshed holder. Six env knobs tune it (all env-only, incident-time escape
 hatches — no config-dashboard surface by design):
 
 | Env var | Default | What it does |
@@ -400,6 +400,7 @@ hatches — no config-dashboard surface by design):
 | `GBRAIN_SYNC_MAX_CHECKPOINT_FAILURES` | 3 | Consecutive failed flushes (each already retried ~12s) before the run aborts with `reason: 'checkpoint_unavailable'` instead of importing work it can never bank. |
 | `GBRAIN_SYNC_YIELD_EVERY` | 64 | Yield the event loop (`setTimeout(0)`, NOT `setImmediate` — Bun starves the timers phase under a tight setImmediate loop) every N files so the lock-refresh `setInterval` heartbeat fires mid-import. |
 | `GBRAIN_LOCK_STEAL_GRACE_SECONDS` | derived (~600 at 30min TTL) | A holder that refreshed within this window is NOT stolen even if its TTL lapsed (starved-but-alive). Dead holders stop refreshing, age past the grace, and become stealable; TTL stays the backstop. |
+| `GBRAIN_SYNC_STALL_ABORT_SECONDS` | 900 | Progress-aware stall watchdog (#1950): if the import drain makes no forward progress (keyed on file-import progress, NOT the lock heartbeat) for N seconds, abort the run and release the per-source lock so the next `gbrain sync` resumes from the checkpoint. Reports `reason: 'stall_timeout'`. Observed BETWEEN files; a hang inside one file's import isn't interrupted until it returns (the wall-clock hard deadline is that backstop). 0 disables. |
 
 ## Pace Mode (DB-contention-aware backfill pacing)
 

@@ -30,6 +30,7 @@ import { detectTini } from './spawn-helpers.ts';
 import { resolveDefaultMaxRssMb } from './rss-default.ts';
 import {
   ChildWorkerSupervisor,
+  HARD_STOP_CRASH_MULTIPLIER,
   type ChildSupervisorEvent,
 } from './child-worker-supervisor.ts';
 import {
@@ -191,6 +192,21 @@ export function buildWorkerArgs(
  *  shutdown() drain window (issue #1801, D3). */
 const WEDGE_RESTART_GRACE_MS = 35_000;
 
+/**
+ * issue #1994: resolve the hard permanent-give-up ceiling. Default
+ * maxCrashes × HARD_STOP_CRASH_MULTIPLIER; operators override (or disable with
+ * 0 = never auto-stop) via GBRAIN_SUPERVISOR_HARD_STOP_CRASHES. A negative or
+ * non-integer override is ignored (falls back to the default).
+ */
+export function resolveHardStopMaxCrashes(maxCrashes: number): number {
+  const raw = process.env.GBRAIN_SUPERVISOR_HARD_STOP_CRASHES;
+  if (raw !== undefined && raw !== '') {
+    const n = Number(raw);
+    if (Number.isInteger(n) && n >= 0) return n;
+  }
+  return maxCrashes * HARD_STOP_CRASH_MULTIPLIER;
+}
+
 /** Calculate backoff: 1s, 2s, 4s, 8s, 16s, 32s, 60s cap. */
 export function calculateBackoffMs(crashCount: number): number {
   const base = Math.min(1000 * Math.pow(2, Math.max(crashCount, 0)), 60_000);
@@ -293,7 +309,11 @@ export const ExitCodes = {
  * pidfile path. TTL > refresh-interval × max-failures so we always exit
  * before our lock could lapse and let a second supervisor take over.
  */
-const SUPERVISOR_LOCK_TTL_MIN = 5;
+// Exported (issue #2227) so observability surfaces (`gbrain jobs supervisor
+// status`, `gbrain doctor`) compute the lock-freshness steal grace with the
+// SAME TTL the supervisor refreshes against, when detecting a live supervisor
+// via the DB lock instead of the (possibly split-$HOME) pidfile.
+export const SUPERVISOR_LOCK_TTL_MIN = 5;
 const SUPERVISOR_LOCK_REFRESH_MS = 60_000;
 const SUPERVISOR_LOCK_REFRESH_MAX_FAILURES = 3; // 3 × 60s = 180s < 5min TTL
 
@@ -825,6 +845,10 @@ export class MinionSupervisor {
       args: workerArgs,
       env,
       maxCrashes: this.opts.maxCrashes,
+      // issue #1994: hard permanent-give-up ceiling (the runaway backstop).
+      // Operators can raise/lower or disable (0 = never auto-stop) via
+      // GBRAIN_SUPERVISOR_HARD_STOP_CRASHES; default is maxCrashes × 10.
+      hardStopMaxCrashes: resolveHardStopMaxCrashes(this.opts.maxCrashes),
       _backoffFloorMs: this.opts._backoffFloorMs,
       isStopping: () => this.stopping,
       onMaxCrashesExceeded: (count, max) => {
@@ -907,6 +931,9 @@ export class MinionSupervisor {
           // ("raise --max-rss") is one glance away. Peak RSS stays in the
           // worker's own stderr line (the supervisor never sees it).
           ...(event.reason === 'rss_watchdog_loop' ? { max_rss_mb: this.opts.maxRssMb } : {}),
+          // issue #1994: degraded mode crossed the soft crash budget — surface
+          // it so doctor/status show "retrying with backoff" instead of silence.
+          ...(event.max !== undefined ? { max_crashes: event.max } : {}),
         });
         return;
     }

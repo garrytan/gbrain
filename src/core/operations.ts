@@ -2417,7 +2417,10 @@ const get_status_snapshot: Operation = {
     }
     const sync = await buildSyncStatusReport(ctx.engine, sources);
     const cycle = await buildCycleSnapshot(ctx.engine);
-    return { schema_version: 1 as const, sync, cycle };
+    // #1984: report the brain server's version so a thin-client `gbrain status`
+    // can surface remote_version alongside its own local CLI version.
+    const { VERSION } = await import('../version.ts');
+    return { schema_version: 1 as const, version: VERSION, sync, cycle };
   },
   scope: 'admin',
   localOnly: false,

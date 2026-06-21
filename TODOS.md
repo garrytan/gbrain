@@ -1,5 +1,26 @@
 # TODOS
 
+## reliability fix-wave follow-ups (filed v0.42.52.0)
+
+Deferred from the autopilot/supervisor + sync/status/minion reliability wave
+(plan-eng-review + codex + adversarial diff review CLEARED). Both surfaced by the
+ship-stage pre-landing review; neither blocks the wave.
+
+- [ ] **P2 — Thread a cancellation signal through `importFile` (#1950).** The sync
+  stall watchdog aborts `opts.signal`, but the per-iteration abort checks observe
+  it BETWEEN files — a hang inside one `importFile` call (e.g. a stuck embed
+  network request) isn't interrupted until that call returns. Thread an
+  `AbortSignal` into `importFromContent`/`importFromFile` and check it at the async
+  phase boundaries (post-parse, pre-embed, pre-DB-write) so an in-flight wedge is
+  reaped too. Core hot path (engine-parity + downstream-client surface) — scope it
+  on its own. Where: `src/core/import-file.ts`, `src/commands/sync.ts`.
+- [ ] **P3 — Centralize live-sync liveness onto `liveSyncStatus` (#1950).**
+  `gbrain sources status` now uses the shared `liveSyncStatus(engine, sourceId)`
+  helper; retrofit `gbrain doctor` (its own inline lock probe) and `gbrain status`
+  onto the same helper so there's one source of truth for "is this source
+  syncing." Where: `src/core/db-lock.ts`, `src/commands/doctor.ts`,
+  `src/commands/status.ts`.
+
 ## Pace Mode follow-ups (filed v0.42.49.0)
 
 Deferred from the paced-backfill wave (CEO + eng review CLEARED). Core shipped:

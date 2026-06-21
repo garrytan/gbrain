@@ -243,6 +243,25 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
 };
 
 /**
+ * #2194 fix #3 / #2227 bug #3 — the cycle split.
+ *
+ * Per-source autopilot cycles run ONLY the source-scoped (and mixed) phases;
+ * the brain-wide `global` phases (embed, orphans, purge, resolve_symbol_edges,
+ * grade_takes, calibration_profile, synthesize_concepts, skillopt) run ONCE in
+ * a separate `autopilot-global-maintenance` job instead of N times concurrently
+ * across per-source cycles (the 4→10GB RSS blowout). Single-flight is
+ * structural: one global job, not a skip-and-pretend-fresh hack (codex #1/#2).
+ *
+ * GLOBAL_PHASES ∪ NON_GLOBAL_PHASES == ALL_PHASES, with no overlap — pinned by
+ * test/autopilot-global-maintenance.test.ts.
+ */
+export const GLOBAL_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => PHASE_SCOPE[p] === 'global');
+export const NON_GLOBAL_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => PHASE_SCOPE[p] !== 'global');
+
+/** Config key holding the ISO timestamp of the last successful global-maintenance run. */
+export const LAST_GLOBAL_AT_KEY = 'autopilot.last_global_at';
+
+/**
  * Phases that mutate state (filesystem or DB) and therefore should
  * coordinate via the cycle lock. Only orphans is truly read-only
  * and skips the lock. patterns mutates DB (writes pattern pages) so
@@ -2305,12 +2324,21 @@ export async function runCycle(
   // the cost of missing a successful write (next cycle will redo work).
   if (opts.sourceId && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || status === 'partial')) {
     try {
+      const nowIso = new Date().toISOString();
+      // #2194 fix #3 (the cycle split): `last_source_cycle_at` is the NEW gate
+      // for per-source dispatch (source-scoped phases done). We ALSO keep
+      // `last_full_cycle_at` current so doctor's cycle-freshness check and any
+      // legacy reader stay valid — it's no longer a *gate* for the brain-wide
+      // phases (those gate on autopilot.last_global_at), so writing it on a
+      // source-only cycle does not re-introduce the freshness poisoning codex
+      // flagged in the rejected skip-based design.
       await engine.updateSourceConfig(opts.sourceId, {
-        last_full_cycle_at: new Date().toISOString(),
+        last_source_cycle_at: nowIso,
+        last_full_cycle_at: nowIso,
       });
     } catch (e) {
       // Best-effort; cycle already succeeded by the time we get here.
-      console.warn(`[cycle] failed to write last_full_cycle_at for source ${opts.sourceId}: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[cycle] failed to write last_source_cycle_at for source ${opts.sourceId}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

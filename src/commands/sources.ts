@@ -747,8 +747,26 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   // caught-up source reports lag 0 instead of growing wall-clock (v0.41.32.0).
   const metrics = await computeAllSourceMetrics(engine, sources, { probeContent: true });
 
+  // #1950: a source holding a live (non-TTL-expired) per-source sync lock is
+  // actively syncing RIGHT NOW. Without this it printed "idle" while a sync
+  // proc was live (the bug reported). Read the SAME live-lock signal `gbrain
+  // doctor` uses, via the shared helper, so the two surfaces never disagree.
+  const { liveSyncStatus } = await import('../core/db-lock.ts');
+  const syncRunning = new Map<string, { holder_pid: number; holder_host: string }>();
+  await Promise.all(
+    metrics.map(async (m) => {
+      const live = await liveSyncStatus(engine, m.source_id);
+      if (live) syncRunning.set(m.source_id, live);
+    }),
+  );
+
   if (json) {
-    console.log(JSON.stringify({ schema_version: 1, sources: metrics }, null, 2));
+    const enriched = metrics.map((m) => ({
+      ...m,
+      sync_running: syncRunning.has(m.source_id),
+      sync_holder: syncRunning.get(m.source_id) ?? null,
+    }));
+    console.log(JSON.stringify({ schema_version: 1, sources: enriched }, null, 2));
     return;
   }
 
@@ -765,11 +783,15 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
     const embed = `${m.embed_coverage_pct.toFixed(0)}%`;
     // v0.41.31: embed-backfill state (active beats queued beats idle) so a
     // cron operator sees deferred embedding work after `sync --all`.
-    const backfill = m.backfill_active > 0
-      ? `active(${m.backfill_active})`
-      : m.backfill_queued > 0
-        ? `queued(${m.backfill_queued})`
-        : 'idle';
+    // #1950: a live sync lock wins the column — surfacing "actively syncing"
+    // matters more than deferred embed-backfill state.
+    const backfill = syncRunning.has(m.source_id)
+      ? 'running'
+      : m.backfill_active > 0
+        ? `active(${m.backfill_active})`
+        : m.backfill_queued > 0
+          ? `queued(${m.backfill_queued})`
+          : 'idle';
     const fails = String(m.failed_jobs_24h);
     const queue = String(m.queue_depth);
     const pages = m.total_pages.toLocaleString();
@@ -780,7 +802,10 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   for (const m of metrics) {
     const warns: string[] = [];
     if (!m.local_path) warns.push('no local_path');
-    if (m.lag_seconds === null) warns.push(`never synced — run \`gbrain sync --source ${m.source_id}\``);
+    // #1950: don't cry "never synced" while a sync lock is live — it's syncing now.
+    if (m.lag_seconds === null && !syncRunning.has(m.source_id)) {
+      warns.push(`never synced — run \`gbrain sync --source ${m.source_id}\``);
+    }
     if (m.embed_coverage_pct < 95 && m.total_chunks > 100) {
       warns.push(`${(100 - m.embed_coverage_pct).toFixed(1)}% un-embedded — run \`gbrain embed --stale --source ${m.source_id}\``);
     }
