@@ -14,6 +14,10 @@ import {
   classifyCandidateResolutionState,
   type CandidateResolutionProposal,
 } from './candidate-resolution-state-service.ts';
+import {
+  buildCandidateGovernanceMetadata,
+  candidateWhyNotAnswerGround,
+} from './candidate-signal-service.ts';
 
 export function buildInboxLeads(input: InboxLeadInput): InboxLeadResult {
   const handoffIds = new Set(input.canonical_handoff_candidate_ids ?? []);
@@ -77,6 +81,7 @@ export function computeCandidateDebtMetrics(input: CandidateDebtInput): Candidat
 }
 
 export function readCandidateContext(input: ReadCandidateContextInput): ReadCandidateContextResult {
+  const denialReasons = candidateContextDenialReasons(input);
   const base = {
     candidate_id: input.candidate.id,
     activation: 'candidate_only' as const,
@@ -84,8 +89,17 @@ export function readCandidateContext(input: ReadCandidateContextInput): ReadCand
     authority: 'unreviewed_candidate' as const,
     source_refs: input.candidate.source_refs,
     warnings: ['Candidate context is non-canonical; do not use as answer evidence.'],
+    candidate_governance_metadata: denialReasons.length > 0
+      ? redactedCandidateGovernanceMetadata(input.candidate)
+      : buildCandidateGovernanceMetadata({
+        candidate: input.candidate,
+        why_not_answer_ground: candidateWhyNotAnswerGround(
+          input.candidate,
+          'candidate_context_is_non_canonical',
+          ['candidate_context_requires_promotion_or_canonical_handoff'],
+        ),
+      }),
   };
-  const denialReasons = candidateContextDenialReasons(input);
   if (denialReasons.length > 0) {
     return {
       ...base,
@@ -103,6 +117,34 @@ export function readCandidateContext(input: ReadCandidateContextInput): ReadCand
   };
 }
 
+function redactedCandidateGovernanceMetadata(
+  candidate: MemoryCandidateEntry,
+): NonNullable<ReadCandidateContextResult['candidate_governance_metadata']> {
+  return {
+    answer_ground: false,
+    why_not_answer_ground: candidateWhyNotAnswerGround(
+      candidate,
+      'candidate_context_is_non_canonical',
+      ['candidate_context_denied'],
+    ),
+    verification: {
+      status: 'unverified',
+      method: null,
+      source_refs_count: 0,
+      verified_at_present: false,
+    },
+    target_binding: {
+      state: 'redacted',
+      handoff_present: false,
+    },
+    pressure: {
+      score: 0,
+      reasons: [],
+      review_priority_hint: 'no_priority',
+    },
+  };
+}
+
 function buildInboxLead(
   candidate: MemoryCandidateEntry,
   handoffIds: Set<string>,
@@ -116,6 +158,11 @@ function buildInboxLead(
     ...(!isTerminal(candidate) && !handoffIds.has(candidate.id) ? ['unresolved_exposed_candidate' as const] : []),
     ...(candidate.recurrence_score > 0 ? ['high_recurrence' as const] : []),
   ];
+  const reviewPriorityHint = promotedNeedsHandoff
+    ? 'record_canonical_handoff'
+    : missingProvenance
+      ? 'reject_missing_provenance'
+      : 'advance_to_review';
 
   return {
     candidate_id: candidate.id,
@@ -132,11 +179,7 @@ function buildInboxLead(
         : 'advance_to_review',
     disposition_hint: terminalAudit ? 'hide_from_default_retrieval' : 'keep_candidate',
     pressure_reasons: pressureReasons,
-    review_priority_hint: promotedNeedsHandoff
-      ? 'record_canonical_handoff'
-      : missingProvenance
-        ? 'reject_missing_provenance'
-        : 'advance_to_review',
+    review_priority_hint: reviewPriorityHint,
     source_refs_count: candidate.source_refs.filter((sourceRef) => sourceRef.trim().length > 0).length,
     content_visibility: 'gated',
     reason_codes: [
@@ -146,6 +189,14 @@ function buildInboxLead(
     ],
     created_at: candidate.created_at.toISOString(),
     updated_at: candidate.updated_at.toISOString(),
+    candidate_governance_metadata: buildCandidateGovernanceMetadata({
+      candidate,
+      why_not_answer_ground: candidateWhyNotAnswerGround(candidate, 'memory_inbox_candidate_is_non_canonical'),
+      has_canonical_handoff: handoffIds.has(candidate.id),
+      pressure_score: roundScore(Math.min(1, pressureReasons.length * 0.25)),
+      pressure_reasons: pressureReasons,
+      review_priority_hint: reviewPriorityHint,
+    }),
   };
 }
 
@@ -225,6 +276,10 @@ function median(values: number[]): number | null {
   const middle = Math.floor(values.length / 2);
   if (values.length % 2 === 1) return values[middle]!;
   return Math.round((values[middle - 1]! + values[middle]!) / 2);
+}
+
+function roundScore(value: number): number {
+  return Number(value.toFixed(6));
 }
 
 function dedupeStrings(values: string[]): string[] {

@@ -279,6 +279,9 @@ describe('memory writeback router operation', () => {
 
       expect(result.decision).toBe('create_candidate');
       expect(result.applied).toBe(true);
+      expect(result.writeback_governance_metadata).toMatchObject({
+        apply_mode: 'candidate_created',
+      });
       expect(result.created_candidate).toMatchObject({
         candidate_type: 'fact',
         source_refs: sourceRefs,
@@ -331,6 +334,9 @@ describe('memory writeback router operation', () => {
       expect(result.decision).toBe('defer');
       expect(result.applied).toBe(true);
       expect(result.missing_requirements).toEqual(['source_refs']);
+      expect(result.writeback_governance_metadata).toMatchObject({
+        apply_mode: 'deferred_candidate_created',
+      });
       expect(result.created_candidate).toMatchObject({
         candidate_type: 'open_question',
         proposed_content: 'This inferred claim has no source.',

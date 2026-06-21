@@ -386,6 +386,14 @@ describe('candidate signal service ranking and hints', () => {
       review_priority_hint: 'needs_canonical_target_proposal',
       activation: 'candidate_only',
       authority: 'unreviewed_candidate',
+      candidate_governance_metadata: {
+        answer_ground: false,
+        why_not_answer_ground: expect.arrayContaining(['candidate_signal_is_non_canonical']),
+        target_binding: {
+          state: 'targetless',
+          handoff_present: false,
+        },
+      },
     });
     expect(signals['missing-target-without-proposal']!.promotion_hint).not.toBe('needs_target');
 
@@ -394,6 +402,15 @@ describe('candidate signal service ranking and hints', () => {
       review_priority_hint: 'approve_or_reject_canonical_target_proposal',
       activation: 'candidate_only',
       authority: 'unreviewed_candidate',
+      candidate_governance_metadata: {
+        answer_ground: false,
+        target_binding: {
+          state: 'proposal_pending',
+          proposal_status: 'proposed',
+          proposal_status_reason: null,
+          handoff_present: false,
+        },
+      },
     });
     expect(signals['missing-target-with-proposal']!.promotion_hint).not.toBe('consider_preflight');
     expect(signals['missing-target-with-proposal']!.review_priority_hint).not.toBe('advance_to_review');
@@ -417,6 +434,15 @@ describe('candidate signal service ranking and hints', () => {
       review_priority_hint: 'no_priority',
       activation: 'candidate_only',
       authority: 'unreviewed_candidate',
+      candidate_governance_metadata: {
+        answer_ground: false,
+        target_binding: {
+          state: 'hard_blocked_by_proposal',
+          proposal_status: 'blocked',
+          proposal_status_reason: 'unstable_subject_identity',
+          handoff_present: false,
+        },
+      },
     });
     expect(signals['missing-target-with-blocked-proposal']!.summary).toContain('blocked canonical target proposal');
     expect(signals['missing-target-with-blocked-proposal']!.summary).toContain('proposal:blocked-target');
@@ -456,6 +482,48 @@ describe('candidate signal service ranking and hints', () => {
     });
     expect(result.candidate_signals[0]!.pressure_reasons).toContain('unresolved_exposed_candidate');
     expect(result.candidate_signals[0]!.summary).toContain('inspect proposal status before promotion');
+  });
+
+  test('bound proposals do not change existing signal hints while governance metadata reports proposal binding', async () => {
+    const result = await buildCandidateSignals(fakeEngine([
+      makeCandidate('missing-target-with-bound-proposal', {
+        target_object_type: null,
+        target_object_id: null,
+        proposed_content: 'MBrain retrieval direction has a bound canonical proposal record.',
+      }),
+    ], [], [
+      makeProposal('missing-target-with-bound-proposal', {
+        id: 'proposal:bound-target',
+        status: 'bound',
+        proposed_slug: 'systems/mbrain-bound-target',
+      }),
+    ]), {
+      query: 'mbrain retrieval direction',
+      scenario: 'knowledge_qa',
+      requested_scope: 'work',
+      required_reads: [requiredRead],
+      canonical_candidates: [],
+      known_subjects: [],
+      limit: 10,
+    });
+
+    expect(result.candidate_signals).toHaveLength(1);
+    expect(result.candidate_signals[0]).toMatchObject({
+      candidate_id: 'missing-target-with-bound-proposal',
+      promotion_hint: 'needs_canonical_target_proposal',
+      review_priority_hint: 'needs_canonical_target_proposal',
+      pressure_reasons: expect.arrayContaining(['missing_target', 'unresolved_exposed_candidate']),
+      candidate_governance_metadata: {
+        answer_ground: false,
+        target_binding: {
+          state: 'proposal_bound',
+          proposal_status: 'bound',
+          proposal_status_reason: null,
+          handoff_present: false,
+        },
+      },
+    });
+    expect(result.candidate_signals[0]!.summary).not.toContain('proposal:bound-target');
   });
 
   test('personal, secret, and unknown-sensitivity candidates are suppressed in work retrieval', async () => {
@@ -525,11 +593,66 @@ describe('candidate signal service ranking and hints', () => {
 
     const signals = Object.fromEntries(result.candidate_signals.map((signal) => [signal.candidate_id, signal]));
     expect(signals['promoted-no-handoff']!.activation).toBe('candidate_only');
+    expect(signals['promoted-no-handoff']!.candidate_governance_metadata).toMatchObject({
+      answer_ground: false,
+      why_not_answer_ground: expect.arrayContaining(['candidate_signal_is_non_canonical']),
+      target_binding: {
+        state: 'promoted_without_handoff',
+        handoff_present: false,
+      },
+      verification: {
+        status: 'unverified',
+        method: null,
+        source_refs_count: 0,
+        verified_at_present: false,
+      },
+    });
     expect(signals['promoted-no-handoff']!.pressure_reasons).toContain('stale_promoted_without_handoff');
     expect(signals['promoted-no-handoff']!.pressure_reasons).toContain('high_recurrence');
     expect(signals['promoted-no-handoff']!.review_priority_hint).toBe('record_canonical_handoff');
     expect(signals['missing-provenance-pressure']!.pressure_reasons).toContain('missing_provenance');
+    expect(signals['missing-provenance-pressure']!.candidate_governance_metadata?.pressure.reasons).toContain('missing_provenance');
     expect(signals['missing-provenance-pressure']!.review_priority_hint).toBe('reject_missing_provenance');
     expect(signals['below-recurrence-threshold']!.pressure_reasons).not.toContain('high_recurrence');
+  });
+
+  test('verified candidate metadata stays non-authoritative answer guidance', async () => {
+    const result = await buildCandidateSignals(fakeEngine([
+      makeCandidate('verified-staged', {
+        status: 'staged_for_review',
+        verification_status: 'verified',
+        verification_method: 'source_recheck',
+        verification_source_refs: ['Source: verification fixture'],
+        verified_at: new Date('2026-05-16T04:00:00.000Z'),
+      }),
+    ]), {
+      query: 'retrieval direction',
+      scenario: 'knowledge_qa',
+      requested_scope: 'work',
+      required_reads: [requiredRead],
+      canonical_candidates: [],
+      known_subjects: [],
+      limit: 10,
+    });
+
+    expect(result.candidate_signals).toHaveLength(1);
+    expect(result.candidate_signals[0]).toMatchObject({
+      candidate_id: 'verified-staged',
+      activation: 'candidate_only',
+      authority: 'unreviewed_candidate',
+      candidate_governance_metadata: {
+        answer_ground: false,
+        why_not_answer_ground: expect.arrayContaining([
+          'candidate_signal_is_non_canonical',
+          'verified_candidate_still_requires_canonical_read_or_handoff',
+        ]),
+        verification: {
+          status: 'verified',
+          method: 'source_recheck',
+          source_refs_count: 1,
+          verified_at_present: true,
+        },
+      },
+    });
   });
 });

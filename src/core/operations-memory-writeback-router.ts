@@ -340,7 +340,7 @@ export function createMemoryWritebackRouterOperations(
         const created = await createMemoryCandidateEntryWithStatusEvent(ctx.engine, candidateInput);
 
         return {
-          ...routed,
+          ...withWritebackApplyMode(routed, 'deferred_candidate_created'),
           applied: true,
           candidate_input: candidateInput,
           created_candidate: created,
@@ -372,7 +372,7 @@ export function createMemoryWritebackRouterOperations(
       const created = await createMemoryCandidateEntryWithStatusEvent(ctx.engine, candidateInput);
 
       return {
-        ...routed,
+        ...withWritebackApplyMode(routed, 'candidate_created'),
         applied: true,
         candidate_input: candidateInput,
         created_candidate: created,
@@ -412,6 +412,20 @@ function deferredRouteCandidateInput(
     target_object_id: signal.target_object_id,
     review_reason: deferredRouteReviewReason(routed),
     interaction_id: input.interaction_id ?? null,
+  };
+}
+
+function withWritebackApplyMode(
+  routed: RouteMemoryWritebackResult,
+  applyMode: NonNullable<RouteMemoryWritebackResult['writeback_governance_metadata']>['apply_mode'],
+): RouteMemoryWritebackResult {
+  if (!routed.writeback_governance_metadata) return routed;
+  return {
+    ...routed,
+    writeback_governance_metadata: {
+      ...routed.writeback_governance_metadata,
+      apply_mode: applyMode,
+    },
   };
 }
 

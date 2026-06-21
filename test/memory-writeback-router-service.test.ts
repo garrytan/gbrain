@@ -16,6 +16,22 @@ describe('memory writeback router service', () => {
     expect(result.intended_operation).toBe('none');
     expect(result.applied).toBe(false);
     expect(result.reasons).toContain('task_mechanics_not_durable');
+    expect(result.writeback_governance_metadata).toMatchObject({
+      route_decision: 'no_write',
+      intended_operation: 'none',
+      apply_mode: 'no_write',
+      route_reasons: ['task_mechanics_not_durable'],
+      blockers: ['task_mechanics_not_durable'],
+      provenance: {
+        source_refs_count: 1,
+        answer_grounding_source_refs_count: 1,
+        corpus_lane_refs_count: 0,
+      },
+      target_snapshot: {
+        input_state: 'omitted',
+        expected_content_hash: undefined,
+      },
+    });
     expect(result.candidate_input).toBeUndefined();
   });
 
@@ -32,6 +48,15 @@ describe('memory writeback router service', () => {
     expect(result.decision).toBe('create_candidate');
     expect(result.intended_operation).toBe('create_memory_candidate_entry');
     expect(result.reasons).toContain('inferred_signal_requires_review');
+    expect(result.writeback_governance_metadata).toMatchObject({
+      route_decision: 'create_candidate',
+      intended_operation: 'create_memory_candidate_entry',
+      apply_mode: 'plan_only',
+      route_reasons: ['inferred_signal_requires_review'],
+      missing_requirements: [],
+      blockers: [],
+      candidate_only_reason: 'inferred_signal_requires_review',
+    });
     expect(result.candidate_input).toMatchObject({
       scope_id: 'workspace:default',
       candidate_type: 'fact',
@@ -118,6 +143,11 @@ describe('memory writeback router service', () => {
 
     expect(result.decision).toBe('create_candidate');
     expect(result.reasons).toContain('code_claim_requires_revalidation');
+    expect(result.writeback_governance_metadata).toMatchObject({
+      apply_mode: 'plan_only',
+      candidate_only_reason: 'code_claim_requires_revalidation',
+      blockers: [],
+    });
     expect(result.candidate_input?.status).toBe('captured');
   });
 
@@ -131,6 +161,17 @@ describe('memory writeback router service', () => {
     expect(result.intended_operation).toBe('none');
     expect(result.reasons).toContain('candidate_missing_provenance');
     expect(result.missing_requirements).toEqual(['source_refs']);
+    expect(result.writeback_governance_metadata).toMatchObject({
+      route_decision: 'defer',
+      apply_mode: 'plan_only',
+      missing_requirements: ['source_refs'],
+      blockers: ['candidate_missing_provenance'],
+      provenance: {
+        source_refs_count: 0,
+        answer_grounding_source_refs_count: 0,
+        corpus_lane_refs_count: 0,
+      },
+    });
     expect(result.candidate_input).toBeUndefined();
   });
 
@@ -183,6 +224,18 @@ describe('memory writeback router service', () => {
 
     expect(result.decision).toBe('canonical_write_allowed');
     expect(result.intended_operation).toBe('put_page');
+    expect(result.writeback_governance_metadata).toMatchObject({
+      route_decision: 'canonical_write_allowed',
+      intended_operation: 'put_page',
+      apply_mode: 'canonical_requirements_returned',
+      missing_requirements: [],
+      blockers: [],
+      target_snapshot: {
+        input_state: 'hash',
+        expected_content_hash: currentHash,
+      },
+      control_plane_apply_reason: 'canonical_write_requires_put_page_with_expected_content_hash',
+    });
     expect(result.canonical_write_requirements).toEqual({
       source_refs: sourceRefs,
       target_object_type: 'curated_note',
@@ -207,6 +260,13 @@ describe('memory writeback router service', () => {
 
     expect(result.decision).toBe('canonical_write_allowed');
     expect(result.intended_operation).toBe('put_page');
+    expect(result.writeback_governance_metadata).toMatchObject({
+      apply_mode: 'canonical_requirements_returned',
+      target_snapshot: {
+        input_state: 'null_absent_assertion',
+        expected_content_hash: null,
+      },
+    });
     expect(result.canonical_write_requirements).toEqual({
       source_refs: sourceRefs,
       target_object_type: 'curated_note',

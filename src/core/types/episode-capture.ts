@@ -3,6 +3,7 @@ import type { AgentSessionEventInput, AgentSessionSourceKind } from './agent-ses
 import type { CanonicalTargetProposalEntry, MemoryCandidateEntry } from './memory-governance.ts';
 import type {
   CandidateSignalDispositionHint,
+  CandidateGovernanceMetadata,
   CandidateSignalPressureReason,
   CandidateSignalPromotionHint,
   CandidateSignalReviewPriorityHint,
@@ -94,6 +95,7 @@ export interface InboxLead {
   reason_codes: string[];
   created_at: string;
   updated_at: string;
+  candidate_governance_metadata?: CandidateGovernanceMetadata;
 }
 
 export interface InboxLeadInput {
@@ -149,4 +151,5 @@ export interface ReadCandidateContextResult {
   source_refs: string[];
   warnings: string[];
   reason_codes: string[];
+  candidate_governance_metadata?: CandidateGovernanceMetadata;
 }

@@ -5,6 +5,7 @@ import type {
   ContextConflict,
   ContextEvidenceClaim,
   DerivedJobStatus,
+  EvidenceSourceRefKind,
   MemoryArtifactAuthority,
   PageTextWindow,
   ReadContextInput,
@@ -128,6 +129,7 @@ export async function readContext(
       continue;
     }
 
+    read = withEvidenceMetadata(read);
     reads.push(read);
     remainingBudget -= read.token_estimate;
     if (read.continuation_selector) continuations.push(read.continuation_selector);
@@ -819,6 +821,49 @@ function buildWindowRead(input: {
     has_more: hasMore,
     continuation_selector: continuation,
   };
+}
+
+function withEvidenceMetadata(read: CanonicalContextRead): CanonicalContextRead {
+  const window = readWindow(read.selector);
+  return {
+    ...read,
+    evidence_metadata: {
+      evidence_role: 'answer_ground',
+      authority: read.authority,
+      selector_id: retrievalSelectorId(read.selector),
+      ...(read.selector.content_hash ? { content_hash: read.selector.content_hash } : {}),
+      source_ref_count: read.source_refs.length,
+      source_ref_kinds: sourceRefKinds(read.source_refs),
+      freshness: read.selector.freshness === 'stale' ? 'stale' : 'current',
+      token_estimate: read.token_estimate,
+      ...(read.corpus_lane ? { corpus_lane: read.corpus_lane } : {}),
+      ...(window ? { window } : {}),
+      continuation_status: read.has_more ? 'continued' : 'complete',
+    },
+  };
+}
+
+function readWindow(selector: RetrievalSelector): NonNullable<CanonicalContextRead['evidence_metadata']>['window'] | undefined {
+  const window = {
+    ...(selector.line_start !== undefined ? { line_start: selector.line_start } : {}),
+    ...(selector.line_end !== undefined ? { line_end: selector.line_end } : {}),
+    ...(selector.char_start !== undefined ? { char_start: selector.char_start } : {}),
+    ...(selector.char_end !== undefined ? { char_end: selector.char_end } : {}),
+  };
+  return Object.keys(window).length > 0 ? window : undefined;
+}
+
+function sourceRefKinds(sourceRefs: string[]): EvidenceSourceRefKind[] {
+  const kinds = sourceRefs.map((sourceRef): EvidenceSourceRefKind => {
+    const lower = sourceRef.toLowerCase();
+    if (lower.startsWith('source: user') || lower.includes('user,')) return 'user';
+    if (lower.startsWith('task:') || lower.startsWith('task_decision:')) return 'task';
+    if (lower.startsWith('corpus_lane:')) return 'corpus_lane';
+    if (lower.startsWith('source_record:')) return 'source_record';
+    if (lower.startsWith('import_origin:')) return 'import_origin';
+    return 'other';
+  });
+  return [...new Set(kinds)];
 }
 
 function applyCharRange(text: string, selector: RetrievalSelector): string | null {

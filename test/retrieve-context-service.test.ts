@@ -75,6 +75,11 @@ describe('retrieve context service', () => {
       expect(result.candidates).toHaveLength(1);
       expect(result.candidates[0]!.read_selector.selector_id).toBe(result.required_reads[0]!.selector_id);
       expect(result.candidates[0]!.activation).toBe('candidate_only');
+      expect(result.create_safety).toMatchObject({
+        status: 'unknown',
+        write_permission_granted: false,
+      });
+      expect(result.create_safety?.reasons).toContain('selector_existence_not_verified');
       expect(result.candidate_signals.map((signal) => signal.candidate_id)).toContain('candidate-exact-selector');
     });
   });
@@ -140,6 +145,12 @@ describe('retrieve context service', () => {
         'task_working_set:workspace:default:task-agentic-retrieval',
       );
       expect(result.candidates[0]!.read_selector.selector_id).toBe(result.required_reads[0]!.selector_id);
+      expect(result.create_safety).toMatchObject({
+        status: 'unknown',
+        matched_candidate_ids: [result.candidates[0]!.candidate_id],
+        write_permission_granted: false,
+      });
+      expect(result.create_safety?.reasons).toContain('selector_existence_not_verified');
       expect(result.warnings).toContain(
         'Task continuation must read task state before raw files or graph orientation.',
       );
@@ -198,9 +209,24 @@ describe('retrieve context service', () => {
       expect(result.candidates).toHaveLength(1);
       expect(result.candidates[0]!.matched_chunks).toHaveLength(2);
       expect((result.candidates[0]!.matched_chunks[0] as any).chunk_text).toBeUndefined();
+      expect(result.candidates[0]!.evidence_metadata).toMatchObject({
+        evidence_role: 'probe_candidate_pointer',
+        authority: 'not_answer_evidence',
+        activation: 'candidate_only',
+        freshness: 'current',
+        content_hash: result.candidates[0]!.read_selector.content_hash,
+        source_ref_count: result.candidates[0]!.read_selector.source_refs?.length,
+        source_ref_kinds: ['user'],
+        rank_reason: ['matched 2 search chunks'],
+      });
       expect(result.required_reads).toHaveLength(1);
       expect(result.required_reads[0]!.kind).toBe('section');
       expect(result.required_reads[0]!.slug).toBe('concepts/retrieval');
+      expect(result.create_safety).toMatchObject({
+        status: 'exists',
+        matched_candidate_ids: ['candidate:concepts/retrieval'],
+        matched_selector_ids: [result.required_reads[0]!.selector_id],
+      });
       expect(result.warnings).toContain(
         'Search/query chunks are candidate pointers; call read_context before answering factual questions.',
       );
@@ -851,6 +877,12 @@ describe('retrieve context service', () => {
 
       expect(result.required_reads).toHaveLength(1);
       expect(result.read_plan.gap_reasons).toContain('retrieval_backend_partial_failure');
+      expect(result.read_plan.backend_gap).toMatchObject({
+        status: 'partial_failure',
+        reason_code: 'retrieval_backend_partial_failure',
+        failed_query_count: 1,
+        successful_query_count: expect.any(Number),
+      });
       expect(result.warnings.some((warning) =>
         warning.includes('Candidate search failed for 1 of')
         && warning.includes('keyword backend unavailable')
@@ -874,6 +906,12 @@ describe('retrieve context service', () => {
       expect(result.answerability.reason_codes).toContain('retrieval_backend_failed');
       expect(result.answerability.reason_codes).not.toContain('no_candidate');
       expect(result.read_plan.gap_reasons).toContain('retrieval_backend_failed');
+      expect(result.read_plan.backend_gap).toMatchObject({
+        status: 'failed',
+        reason_code: 'retrieval_backend_failed',
+        failed_query_count: expect.any(Number),
+        successful_query_count: 0,
+      });
       expect(result.warnings.some((warning) =>
         warning.includes('Candidate search failed for')
         && warning.includes('search backend down')
@@ -1716,6 +1754,10 @@ describe('retrieve context service', () => {
       const signal = result.candidate_signals.find((entry) => entry.candidate_id === 'candidate-mbrain-direction');
       expect(signal?.activation).toBe('candidate_only');
       expect(signal?.authority).toBe('unreviewed_candidate');
+      expect(signal?.candidate_governance_metadata).toMatchObject({
+        answer_ground: false,
+        why_not_answer_ground: expect.arrayContaining(['candidate_signal_is_non_canonical']),
+      });
     });
   });
 
