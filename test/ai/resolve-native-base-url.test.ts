@@ -7,7 +7,7 @@
  * makes the SDK POST <base>/messages → 404. resolveNativeBaseUrl normalizes a configured
  * base URL to carry /v1, and returns undefined when unset so the SDK default is preserved.
  *
- * Pure function over cfg.env — no process.env mutation, so no withEnv() needed.
+ * Pure function over cfg (env + base_urls), no process.env mutation, so no withEnv() needed.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -59,5 +59,52 @@ describe('resolveNativeBaseUrl (#1250)', () => {
   test('each provider only reads its own env var', () => {
     expect(resolveNativeBaseUrl('openai', cfgWith({ ANTHROPIC_BASE_URL: 'https://x' }))).toBeUndefined();
     expect(resolveNativeBaseUrl('anthropic', cfgWith({ OPENAI_BASE_URL: 'https://x' }))).toBeUndefined();
+  });
+
+  // Config-plane fallback: provider_base_urls is routed into cfg.base_urls by
+  // buildGatewayConfig, keyed by provider name. When the env var is absent (or
+  // empty), resolve from there instead, so config.json alone works in env-less
+  // (daemon/launchd/MCP) contexts.
+  function cfgWithBase(
+    env: Record<string, string | undefined>,
+    base_urls: Record<string, string>,
+  ): AIGatewayConfig {
+    return { env, base_urls } as unknown as AIGatewayConfig;
+  }
+
+  test('anthropic: falls back to cfg.base_urls when the env var is unset', () => {
+    expect(
+      resolveNativeBaseUrl('anthropic', cfgWithBase({}, { anthropic: 'https://compat.example/v1' })),
+    ).toBe('https://compat.example/v1');
+  });
+
+  test('anthropic: config-plane fallback still gets /v1 normalization', () => {
+    expect(
+      resolveNativeBaseUrl('anthropic', cfgWithBase({}, { anthropic: 'https://compat.example' })),
+    ).toBe('https://compat.example/v1');
+  });
+
+  test('anthropic: a real env value wins over the config-plane fallback', () => {
+    expect(
+      resolveNativeBaseUrl(
+        'anthropic',
+        cfgWithBase({ ANTHROPIC_BASE_URL: 'https://env.example' }, { anthropic: 'https://config.example' }),
+      ),
+    ).toBe('https://env.example/v1');
+  });
+
+  test('anthropic: an empty env var falls through to the config plane', () => {
+    expect(
+      resolveNativeBaseUrl(
+        'anthropic',
+        cfgWithBase({ ANTHROPIC_BASE_URL: '' }, { anthropic: 'https://config.example' }),
+      ),
+    ).toBe('https://config.example/v1');
+  });
+
+  test('openai: falls back to cfg.base_urls[openai] when the env var is unset', () => {
+    expect(
+      resolveNativeBaseUrl('openai', cfgWithBase({}, { openai: 'https://oai-compat.example/v1' })),
+    ).toBe('https://oai-compat.example/v1');
   });
 });
