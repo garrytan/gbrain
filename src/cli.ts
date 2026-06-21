@@ -43,6 +43,8 @@ const EMBED_CLI_SPEC: Operation = {
     slug: { type: 'string', description: 'Page slug to embed' },
     all: { type: 'boolean', description: 'Embed every page' },
     stale: { type: 'boolean', description: 'Only embed missing or stale chunks' },
+    enqueue: { type: 'boolean', description: 'Submit a durable embed_backfill maintenance job instead of embedding inline' },
+    run_job: { type: 'string', description: 'Claim and run a specific embed_backfill maintenance job id' },
   },
   handler: noopHandler,
   cliHints: { name: 'embed', positional: ['slug'] },
@@ -733,7 +735,7 @@ FILES
   files verify                       Verify all uploads
 
 EMBEDDINGS
-  embed [<slug>|--all|--stale]       Generate/refresh embeddings
+  embed [<slug>|--all|--stale]       Generate/refresh embeddings; add --enqueue for durable backfill
 
 LINKS
   link <from> <to> [--type T]        Create typed link

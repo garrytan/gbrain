@@ -4,6 +4,9 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { resetEmbeddingProviderForTests, setEmbeddingProviderForTests } from '../src/core/embedding.ts';
 import { createEmbeddingQueue } from '../src/core/embedding-queue.ts';
 import type { ResolvedEmbeddingProvider } from '../src/core/embedding/provider.ts';
+import { runEmbeddingBackfill } from '../src/core/services/embedding-backfill-service.ts';
+import { runEmbedBackfillJob, submitEmbedBackfillJob } from '../src/core/services/embed-backfill-job-service.ts';
+import { createMaintenanceRuntimeService } from '../src/core/services/maintenance-runtime-service.ts';
 import type { Chunk, ChunkInput, Page } from '../src/core/types.ts';
 
 describe('embedding queue', () => {
@@ -409,7 +412,7 @@ describe('runEmbed queue integration', () => {
     }
 
     expect(fake.batches).toEqual([['alpha body', 'beta body']]);
-    expect((await engine.getChunks('concepts/alpha'))[0]?.embedding).toEqual(new Float32Array([10, 0, 0]));
+    expect((await engine.getChunks('concepts/alpha'))[0]?.embedding?.[0]).toBe(10);
     expect((await engine.getChunks('concepts/beta'))[0]?.embedding).toEqual(new Float32Array([9, 0, 1]));
   });
 
@@ -484,6 +487,476 @@ describe('runEmbed queue integration', () => {
   });
 });
 
+describe('durable embed backfill job integration', () => {
+  test('submitEmbedBackfillJob dedupes stale backfill requests', async () => {
+    const runtime = createMaintenanceRuntimeService();
+
+    const first = await submitEmbedBackfillJob(runtime, { mode: 'stale' });
+    const second = await submitEmbedBackfillJob(runtime, { mode: 'stale' });
+
+    expect(first).toMatchObject({
+      status: 'enqueued',
+      job: {
+        name: 'embed_backfill',
+        queue: 'maintenance',
+        payload_json: { mode: 'stale' },
+        progress_json: { page_offset: 0, pages_scanned: 0, chunks_embedded: 0 },
+        idempotency_key: 'embed-backfill:stale:default',
+      },
+    });
+    expect(second.status).toBe('deduped');
+    expect(second.job.id).toBe(first.job.id);
+  });
+
+  test('runEmbedBackfillJob renews progress and completes the durable job', async () => {
+    const fake = createFakeProvider();
+    const engine = createMemoryEngine([
+      page('concepts/alpha', 'Alpha', 'alpha body'),
+      page('concepts/beta', 'Beta', 'beta body'),
+    ]);
+    let currentNow = '2026-05-20T12:00:00.000Z';
+    const runtime = createMaintenanceRuntimeService({ now: () => currentNow });
+    const submitted = await submitEmbedBackfillJob(runtime, {
+      mode: 'stale',
+      timeout_ms: 60_000,
+    });
+
+    currentNow = '2026-05-20T12:00:01.000Z';
+    const result = await runEmbedBackfillJob({
+      engine,
+      runtime,
+      job_id: submitted.job.id,
+      worker_id: 'worker:embed',
+      lease_ms: 10_000,
+      provider: fake.provider,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.result).toMatchObject({
+      pages_scanned: 2,
+      pages_touched: 2,
+      chunks_queued: 2,
+      chunks_embedded: 2,
+      provider_failures: 0,
+      write_failures: 0,
+    });
+    expect(await runtime.getJob(submitted.job.id)).toMatchObject({
+      status: 'completed',
+      progress_json: expect.objectContaining({
+        page_offset: 2,
+        pages_scanned: 2,
+        chunks_embedded: 2,
+      }),
+      result_json: expect.objectContaining({
+        chunks_embedded: 2,
+      }),
+    });
+    expect(await runtime.listJobEvents(submitted.job.id)).toContainEqual(
+      expect.objectContaining({
+        event_type: 'job_lease_renewed',
+        metadata_json: expect.objectContaining({ progress_updated: true }),
+      }),
+    );
+    expect((await engine.getChunks('concepts/alpha'))[0]?.embedding?.[0]).toBe(10);
+    expect((await engine.getChunks('concepts/beta'))[0]?.embedding).toEqual(new Float32Array([9, 0, 1]));
+  });
+
+  test('runEmbedBackfillJob retries from zero and skips already fresh chunks', async () => {
+    const fake = createFakeProvider();
+    const filters: Array<{ limit?: number; offset?: number }> = [];
+    const engine = createMemoryEngine([
+      page('concepts/alpha', 'Alpha', 'alpha body'),
+      page('concepts/beta', 'Beta', 'beta body'),
+    ], {
+      onListPages: (filter) => {
+        filters.push({ limit: filter?.limit, offset: filter?.offset });
+      },
+    });
+    await engine.upsertChunks('concepts/alpha', [{
+      chunk_index: 0,
+      chunk_text: 'alpha body',
+      chunk_source: 'compiled_truth',
+      embedding: new Float32Array([10, 0, 0]),
+      model: 'test-local-v1',
+    }]);
+    const runtime = createMaintenanceRuntimeService();
+    const submitted = await runtime.enqueueJob({
+      name: 'embed_backfill',
+      queue: 'maintenance',
+      payload_json: { mode: 'stale' },
+      progress_json: { page_offset: 1, pages_scanned: 1, chunks_embedded: 1 },
+      idempotency_key: 'embed-backfill:stale:default',
+      max_attempts: 1,
+    });
+
+    await runEmbedBackfillJob({
+      engine,
+      runtime,
+      job_id: submitted.job.id,
+      worker_id: 'worker:embed',
+      lease_ms: 10_000,
+      provider: fake.provider,
+    });
+
+    expect(filters[0]).toEqual({ limit: 500, offset: 0 });
+    expect(fake.batches).toEqual([['beta body']]);
+    expect((await engine.getChunks('concepts/alpha'))[0]?.embedding).toEqual(new Float32Array([10, 0, 0]));
+    expect((await engine.getChunks('concepts/beta'))[0]?.embedding).toEqual(new Float32Array([9, 0, 0]));
+    expect(await runtime.getJob(submitted.job.id)).toMatchObject({
+      status: 'completed',
+      progress_json: expect.objectContaining({ page_offset: 2 }),
+    });
+  });
+
+  test('runEmbedBackfillJob fails the durable job when the provider is unavailable', async () => {
+    const engine = createMemoryEngine([
+      page('concepts/alpha', 'Alpha', 'alpha body'),
+    ]);
+    const runtime = createMaintenanceRuntimeService();
+    const submitted = await submitEmbedBackfillJob(runtime, { mode: 'stale' });
+
+    await expect(runEmbedBackfillJob({
+      engine,
+      runtime,
+      job_id: submitted.job.id,
+      worker_id: 'worker:embed',
+      lease_ms: 10_000,
+      provider: {
+        capability: {
+          available: false,
+          mode: 'none',
+          implementation: 'none',
+          model: null,
+          dimensions: 3,
+          reason: 'embedding provider unavailable',
+        },
+        embedBatch: async () => {
+          throw new Error('should not call unavailable provider');
+        },
+      },
+    })).rejects.toThrow(/embedding provider unavailable/i);
+
+    expect(await runtime.getJob(submitted.job.id)).toMatchObject({
+      status: 'failed',
+      failure_class: 'runner_unavailable',
+      last_error: 'embedding provider unavailable',
+    });
+  });
+
+  test('runEmbedBackfillJob rejects unrelated maintenance job ids without claiming them', async () => {
+    const fake = createFakeProvider();
+    const engine = createMemoryEngine([
+      page('concepts/alpha', 'Alpha', 'alpha body'),
+    ]);
+    const runtime = createMaintenanceRuntimeService();
+    const unrelated = await runtime.enqueueJob({
+      name: 'projection_refresh',
+      queue: 'maintenance',
+      max_attempts: 1,
+    });
+
+    await expect(runEmbedBackfillJob({
+      engine,
+      runtime,
+      job_id: unrelated.job.id,
+      worker_id: 'worker:embed',
+      lease_ms: 10_000,
+      provider: fake.provider,
+    })).rejects.toThrow(/embed_backfill job is not claimable/i);
+
+    expect(await runtime.getJob(unrelated.job.id)).toMatchObject({
+      status: 'waiting',
+      attempts_started: 0,
+      result_json: null,
+    });
+    expect(fake.batches).toEqual([]);
+  });
+
+  test('runEmbedBackfillJob keeps renewing the lease while provider work is in flight', async () => {
+    const fake = createFakeProvider({
+      delayForTexts: async () => {
+        await sleep(50);
+      },
+    });
+    const engine = createMemoryEngine([
+      page('concepts/alpha', 'Alpha', 'alpha body'),
+    ]);
+    const runtime = createMaintenanceRuntimeService();
+    const submitted = await submitEmbedBackfillJob(runtime, { mode: 'stale' });
+    let renewCount = 0;
+    const runtimeWithRenewSpy = {
+      ...runtime,
+      renewJobLease: async (input: Parameters<typeof runtime.renewJobLease>[0]) => {
+        renewCount++;
+        return runtime.renewJobLease(input);
+      },
+    };
+
+    await runEmbedBackfillJob({
+      engine,
+      runtime: runtimeWithRenewSpy,
+      job_id: submitted.job.id,
+      worker_id: 'worker:embed',
+      lease_ms: 20,
+      provider: fake.provider,
+    });
+
+    expect(renewCount).toBeGreaterThan(1);
+    expect(await runtime.getJob(submitted.job.id)).toMatchObject({
+      status: 'completed',
+    });
+  });
+
+  test('runEmbedBackfillJob fails the durable job when page-level embedding failures remain', async () => {
+    const fake = createFakeProvider({
+      failForTexts: (texts) => texts.includes('bad body'),
+    });
+    const engine = createMemoryEngine([
+      page('concepts/alpha', 'Alpha', 'alpha body'),
+      page('concepts/bad', 'Bad', 'bad body'),
+    ]);
+    const runtime = createMaintenanceRuntimeService();
+    const submitted = await submitEmbedBackfillJob(runtime, { mode: 'stale' });
+
+    await expect(runEmbedBackfillJob({
+      engine,
+      runtime,
+      job_id: submitted.job.id,
+      worker_id: 'worker:embed',
+      lease_ms: 10_000,
+      provider: fake.provider,
+    })).rejects.toThrow(/embed_backfill completed with failures/i);
+
+    expect((await engine.getChunks('concepts/alpha'))[0]?.embedding?.[0]).toBe(10);
+    expect(await runtime.getJob(submitted.job.id)).toMatchObject({
+      status: 'failed',
+      failure_class: 'internal',
+      last_error: expect.stringContaining('provider_failures=1'),
+    });
+  });
+
+  test('runEmbeddingBackfill can report progress without console output', async () => {
+    const fake = createFakeProvider();
+    const engine = createMemoryEngine([
+      page('concepts/alpha', 'Alpha', 'alpha body'),
+      page('concepts/beta', 'Beta', 'beta body'),
+    ]);
+    const progress: Array<{ page_offset: number; chunks_embedded: number }> = [];
+
+    const result = await runEmbeddingBackfill(engine, {
+      staleOnly: true,
+      provider: fake.provider,
+      onProgress: snapshot => {
+        progress.push({
+          page_offset: snapshot.page_offset,
+          chunks_embedded: snapshot.chunks_embedded,
+        });
+      },
+    });
+
+    expect(result).toMatchObject({
+      pages_scanned: 2,
+      pages_touched: 2,
+      chunks_embedded: 2,
+    });
+    expect(progress.at(-1)).toEqual({ page_offset: 2, chunks_embedded: 2 });
+    expect(fake.batches).toEqual([['alpha body', 'beta body']]);
+  });
+
+  test('runEmbed --stale --enqueue submits a durable embed_backfill job without embedding inline', async () => {
+    const fake = createFakeProvider();
+    setEmbeddingProviderForTests(fake.provider);
+    const engine = createMemoryEngine([
+      page('concepts/alpha', 'Alpha', 'alpha body'),
+    ]);
+    const runtime = createMaintenanceRuntimeService();
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+
+    try {
+      await runEmbed(engine, ['--stale', '--enqueue'], { runtime });
+    } finally {
+      console.log = originalLog;
+      resetEmbeddingProviderForTests();
+    }
+
+    expect(fake.batches).toEqual([]);
+    expect(await runtime.listJobs({ name: 'embed_backfill' })).toEqual([
+      expect.objectContaining({
+        status: 'waiting',
+        payload_json: { mode: 'stale' },
+        idempotency_key: 'embed-backfill:stale:default',
+      }),
+    ]);
+    expect(logs.join('\n')).toContain('enqueued embed_backfill');
+  });
+
+  test('runEmbed --all --enqueue submits an all-mode durable job without provider availability', async () => {
+    const engine = createMemoryEngine([
+      page('concepts/alpha', 'Alpha', 'alpha body'),
+    ]);
+    const runtime = createMaintenanceRuntimeService();
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+
+    try {
+      await runEmbed(engine, ['--all', '--enqueue'], { runtime });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(await runtime.listJobs({ name: 'embed_backfill' })).toEqual([
+      expect.objectContaining({
+        status: 'waiting',
+        payload_json: { mode: 'all' },
+        idempotency_key: 'embed-backfill:all:default',
+      }),
+    ]);
+    expect(logs.join('\n')).toContain('enqueued embed_backfill');
+  });
+
+  test('runEmbed rejects slug enqueue without submitting a job', async () => {
+    const engine = createMemoryEngine([
+      page('concepts/alpha', 'Alpha', 'alpha body'),
+    ]);
+    const runtime = createMaintenanceRuntimeService();
+    const errors: string[] = [];
+    const originalError = console.error;
+    const originalExit = process.exit;
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as typeof process.exit;
+
+    try {
+      await expect(runEmbed(engine, ['concepts/alpha', '--enqueue'], { runtime })).rejects.toThrow('process.exit(1)');
+    } finally {
+      console.error = originalError;
+      process.exit = originalExit;
+    }
+
+    expect(errors.join('\n')).toContain('Usage: mbrain embed [--all|--stale] --enqueue');
+    expect(await runtime.listJobs({ name: 'embed_backfill' })).toEqual([]);
+  });
+
+  test('runEmbed rejects enqueue and run-job mode conflicts', async () => {
+    const engine = createMemoryEngine([
+      page('concepts/alpha', 'Alpha', 'alpha body'),
+    ]);
+    const runtime = createMaintenanceRuntimeService();
+    const errors: string[] = [];
+    const originalError = console.error;
+    const originalExit = process.exit;
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as typeof process.exit;
+
+    try {
+      await expect(runEmbed(engine, ['--enqueue', '--run-job', 'job:existing'], { runtime })).rejects.toThrow('process.exit(1)');
+    } finally {
+      console.error = originalError;
+      process.exit = originalExit;
+    }
+
+    expect(errors.join('\n')).toContain('Usage: mbrain embed --run-job <id>');
+    expect(await runtime.listJobs({ name: 'embed_backfill' })).toEqual([]);
+  });
+
+  test('runEmbed rejects slug and run-job mode conflicts without claiming the job', async () => {
+    const fake = createFakeProvider();
+    const engine = createMemoryEngine([
+      page('concepts/alpha', 'Alpha', 'alpha body'),
+    ]);
+    const runtime = createMaintenanceRuntimeService();
+    const submitted = await submitEmbedBackfillJob(runtime, { mode: 'stale' });
+    const errors: string[] = [];
+    const originalError = console.error;
+    const originalExit = process.exit;
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as typeof process.exit;
+
+    try {
+      await expect(runEmbed(engine, ['concepts/alpha', '--run-job', submitted.job.id], {
+        runtime,
+        provider: fake.provider,
+      })).rejects.toThrow('process.exit(1)');
+    } finally {
+      console.error = originalError;
+      process.exit = originalExit;
+    }
+
+    expect(errors.join('\n')).toContain('Usage: mbrain embed --run-job <id>');
+    expect(await runtime.getJob(submitted.job.id)).toMatchObject({
+      status: 'waiting',
+      attempts_started: 0,
+    });
+    expect(fake.batches).toEqual([]);
+  });
+
+  test('runEmbed --run-job completes a specific durable embed_backfill job', async () => {
+    const fake = createFakeProvider();
+    const engine = createMemoryEngine([
+      page('concepts/alpha', 'Alpha', 'alpha body'),
+    ]);
+    const runtime = createMaintenanceRuntimeService();
+    const submitted = await submitEmbedBackfillJob(runtime, { mode: 'stale' });
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+
+    try {
+      await runEmbed(engine, ['--run-job', submitted.job.id], {
+        runtime,
+        provider: fake.provider,
+      });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(await runtime.getJob(submitted.job.id)).toMatchObject({
+      status: 'completed',
+      result_json: expect.objectContaining({ chunks_embedded: 1 }),
+    });
+    expect((await engine.getChunks('concepts/alpha'))[0]?.embedding).toEqual(new Float32Array([10, 0, 0]));
+    expect(logs.join('\n')).toContain(`completed embed_backfill ${submitted.job.id}: 1 chunks embedded`);
+  });
+
+  test('runEmbed slug reports skipped derived refresh warnings', async () => {
+    const fake = createFakeProvider();
+    setEmbeddingProviderForTests(fake.provider);
+    const stalePage = {
+      ...page('concepts/concurrent-refresh', 'Concurrent Refresh', 'old body'),
+      content_hash: 'old-hash',
+    };
+    const currentPage = {
+      ...stalePage,
+      compiled_truth: 'new body',
+      content_hash: 'new-hash',
+    };
+    const engine = createMemoryEngine([stalePage], {
+      pageForDerivedRefresh: new Map([[stalePage.slug, currentPage]]),
+    });
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+
+    try {
+      await runEmbed(engine, [stalePage.slug]);
+    } finally {
+      console.error = originalError;
+      resetEmbeddingProviderForTests();
+    }
+
+    expect(errors.join('\n')).toContain(`Warning: skipped derived refresh for ${stalePage.slug}`);
+    expect(fake.batches).toEqual([]);
+  });
+});
+
 function chunkInput(
   chunkIndex: number,
   chunkText: string,
@@ -550,6 +1023,7 @@ function createMemoryEngine(
       state: { embeddedWriteCount: number },
     ) => void;
     onUpsertChunks?: (slug: string, chunks: ChunkInput[]) => void;
+    pageForDerivedRefresh?: Map<string, Page>;
   } = {},
 ): BrainEngine {
   const chunksBySlug = new Map<string, Chunk[]>();
@@ -584,6 +1058,12 @@ function createMemoryEngine(
       options.onUpsertChunks?.(slug, chunks);
       chunksBySlug.set(slug, chunks.map((chunk, index) => materializeChunk(slug, chunk, index)));
     },
+    getNoteManifestEntry: async () => null,
+    listDerivedJobs: async () => [],
+    listDerivedIndexStates: async () => [],
+    transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback({
+      getPageForUpdate: async (slug: string) => options.pageForDerivedRefresh?.get(slug) ?? pageBySlug.get(slug) ?? null,
+    }),
   } as unknown as BrainEngine;
 }
 

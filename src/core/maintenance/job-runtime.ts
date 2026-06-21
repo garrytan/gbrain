@@ -134,6 +134,11 @@ export interface ClaimMaintenanceJobInput {
   lease_ms: number;
 }
 
+export interface ClaimMaintenanceJobByIdInput extends ClaimMaintenanceJobInput {
+  job_id: string;
+  name?: string;
+}
+
 export interface RenewMaintenanceJobLeaseInput {
   job_id: string;
   lock_token: string;

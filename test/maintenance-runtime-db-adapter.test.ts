@@ -150,6 +150,57 @@ describe('SQL maintenance runtime adapter', () => {
     await engine.disconnect();
   });
 
+  test('pglite adapter claims a specific named job without activating unrelated entries', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-maintenance-runtime-claim-specific-pglite-'));
+    tempPaths.push(dir);
+
+    const engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite', database_path: dir });
+    await engine.initSchema();
+    const adapter = createSqlMaintenanceRuntimeAdapter(engine, { now: () => '2026-05-20T12:07:30.000Z' });
+    const unrelated = await adapter.enqueueJob({
+      name: 'projection_refresh',
+      queue: 'maintenance',
+      priority: 10,
+      max_attempts: 1,
+    });
+    const target = await adapter.enqueueJob({
+      name: 'embed_backfill',
+      queue: 'maintenance',
+      priority: 0,
+      max_attempts: 1,
+    });
+
+    expect(await adapter.claimJob({
+      job_id: String(unrelated.job.id),
+      name: 'embed_backfill',
+      queue: 'maintenance',
+      worker_id: 'worker:embed',
+      lease_ms: 30_000,
+    })).toBeNull();
+
+    const claimed = await adapter.claimJob({
+      job_id: String(target.job.id),
+      name: 'embed_backfill',
+      queue: 'maintenance',
+      worker_id: 'worker:embed',
+      lease_ms: 30_000,
+    });
+
+    expect(claimed).toMatchObject({
+      id: target.job.id,
+      name: 'embed_backfill',
+      status: 'active',
+      lock_owner: 'worker:embed',
+    });
+    expect(await adapter.getJob(String(unrelated.job.id))).toMatchObject({
+      status: 'waiting',
+      attempts_started: 0,
+    });
+
+    await engine.disconnect();
+  });
+
   test('pglite adapter completes fails retries and sweeps jobs durably', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-maintenance-runtime-lifecycle-pglite-'));
     tempPaths.push(dir);
