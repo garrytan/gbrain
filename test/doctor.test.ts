@@ -5,10 +5,15 @@ import { tmpdir } from 'os';
 import {
   buildDoctorReport,
   collectDoctorInputs,
+  doctorExitCode,
   parseEtimeSeconds,
   parseServeProcessTable,
 } from '../src/core/services/doctor-service.ts';
 import { resolveOfflineProfile } from '../src/core/offline-profile.ts';
+import type {
+  DoctorRemediationAction,
+  DoctorRemediationPlan,
+} from '../src/core/services/doctor-remediation-service.ts';
 import {
   EMBEDDED_AGENT_RULES_VERSION,
   getAgentRulesCandidatePaths,
@@ -953,6 +958,288 @@ describe('doctor command', () => {
     expect(partialEmbeddings?.message).not.toContain('embed refresh');
     expect(noEmbeddings?.message).toContain('mbrain embed --stale');
     expect(noEmbeddings?.message).not.toContain('embed refresh');
+  });
+
+  test('buildDoctorReport emits report-only remediation actions for warnings', () => {
+    const report = buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 3,
+        chunk_count: 6,
+        embedded_count: 2,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: null,
+      profile: null,
+      rawPostgresChecksSupported: false,
+      schemaVersion: '3',
+      latestVersion: 4,
+      health: {
+        page_count: 3,
+        embed_coverage: 0.5,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 3,
+      },
+      syncRecency: { configured: true, last_run: '2026-05-01T00:00:00.000Z', days_since: 41 },
+      syncWatchFailure: {
+        stopped_at: '2026-06-11T01:00:00.000Z',
+        reason: 'connection refused',
+        consecutive_failures: 5,
+      },
+      memoryInboxBacklog: { staged_for_review: 65, capped: false, threshold: 50 },
+    });
+
+    expect(report.status).toBe('healthy');
+    const plan = report.remediation_plan as DoctorRemediationPlan;
+    expect(plan.schema_version).toBe(1);
+    expect(plan.mode).toBe('report_only');
+    expect(plan.summary.auto_apply_supported).toBe(false);
+    expect(plan.summary.highest_priority).toBe('p1');
+    expect(plan.summary.action_count).toBe(plan.actions.length);
+
+    const byCheck = new Map<string, DoctorRemediationAction>(
+      plan.actions.map((action) => [action.check_name, action]),
+    );
+    expect([...byCheck.keys()]).toEqual([
+      'schema_version',
+      'embeddings',
+      'sync_recency',
+      'sync_watch',
+      'memory_inbox_backlog',
+    ]);
+
+    const embeddings = byCheck.get('embeddings')!;
+    expect(embeddings.category).toBe('embedding');
+    expect(embeddings.check_status).toBe('warn');
+    expect(embeddings.commands).toContainEqual(expect.objectContaining({
+      kind: 'apply',
+      command: 'mbrain embed --stale',
+      mutating: true,
+      requires_user_confirmation: true,
+    }));
+    expect(embeddings.safety).toMatchObject({
+      auto_apply_allowed: false,
+      canonical_write: false,
+      external_mutation: false,
+      filesystem_write: false,
+    });
+
+    expect(byCheck.get('schema_version')!.commands[0]).toMatchObject({
+      kind: 'manual',
+      mutating: true,
+      requires_user_confirmation: true,
+    });
+    expect(byCheck.get('sync_recency')!.commands[0].command).toBe('mbrain sync');
+    expect(byCheck.get('sync_watch')!.commands.map((entry) => entry.command)).toEqual([
+      'mbrain sync --watch',
+      'mbrain sync --clear-failure',
+    ]);
+    expect(byCheck.get('memory_inbox_backlog')!.commands[0].command).toBe('mbrain memory-report');
+  });
+
+  test('doctor remediation ranks root causes before downstream symptoms and redacts details', () => {
+    const report = buildDoctorReport({
+      connectionOk: false,
+      connectionError: 'connection refused for postgresql://user:topsecret@localhost/mbrain',
+      config: null,
+      profile: null,
+      rawPostgresChecksSupported: false,
+      latestVersion: 4,
+      serveProcesses: [
+        { pid: 99690, elapsed_seconds: 7 * 86400, command: 'bun src/cli.ts serve' },
+      ],
+      installedAgent: {
+        status: 'fail',
+        checks: [{
+          name: 'mcp_required_tools',
+          status: 'fail',
+          message: 'Missing required MCP tools: read_context',
+        }],
+      },
+    });
+
+    expect(report.status).toBe('unhealthy');
+    expect(doctorExitCode(report)).toBe(1);
+    const plan = report.remediation_plan as DoctorRemediationPlan;
+    expect(plan.summary.highest_priority).toBe('p0');
+    expect(plan.actions.map((action) => action.check_name)).toEqual([
+      'connection',
+      'agent:mcp_required_tools',
+      'serve_processes',
+    ]);
+    expect(plan.actions[0]).toMatchObject({
+      check_name: 'connection',
+      priority: 'p0',
+      cause_rank: 10,
+    });
+    expect(plan.actions[1].cause_rank).toBeLessThan(plan.actions[2].cause_rank);
+    expect(JSON.stringify(plan)).not.toContain('topsecret');
+    expect(JSON.stringify(plan)).not.toContain('postgresql://user');
+  });
+
+  test('doctor remediation known mappings cover every emitted non-ok check', () => {
+    const report = buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 3,
+        chunk_count: 6,
+        embedded_count: 2,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: {
+        engine: 'postgres',
+        database_url: 'postgresql://user:topsecret@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+        autopilot: { enabled: true },
+      } as any,
+      profile: resolveOfflineProfile({
+        engine: 'postgres',
+        database_url: 'postgresql://user:topsecret@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      }),
+      rawPostgresChecksSupported: true,
+      pgvector: { status: 'warn', message: 'pgvector is unavailable' },
+      rls: { status: 'warn', message: 'RLS is disabled' },
+      schemaVersion: '3',
+      latestVersion: 4,
+      health: {
+        page_count: 3,
+        embed_coverage: 0.5,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 3,
+      },
+      syncRecency: { configured: true, last_run: '2026-05-01T00:00:00.000Z', days_since: 41 },
+      syncWatchFailure: {
+        stopped_at: '2026-06-11T01:00:00.000Z',
+        reason: 'connection refused',
+        consecutive_failures: 5,
+      },
+      memoryInboxBacklog: { staged_for_review: 65, capped: false, threshold: 50 },
+      systemOfRecord: { pending_reconcile: 2, failed: 1, conflict: 1 },
+      memoryRuntime: {
+        queue_depth: 4,
+        failed_jobs: 1,
+        dead_jobs: 1,
+        stuck_locks: 1,
+        unavailable_runners: 1,
+        unhealthy_connectors: 1,
+        credential_warnings: 1,
+        prompt_injection_safety_count: 1,
+        purge_candidates: 1,
+        autopilot_stuck_jobs: 1,
+        autopilot_last_cycle: {
+          id: 'job:autopilot-dead',
+          status: 'dead',
+          failure_class: 'timeout',
+          last_error: 'worker timeout',
+          updated_at: '2030-01-01T00:00:00.000Z',
+          finished_at: null,
+        },
+      },
+      serveProcesses: [
+        { pid: 99690, elapsed_seconds: 7 * 86400, command: 'bun src/cli.ts serve' },
+      ],
+      installedAgent: {
+        status: 'fail',
+        checks: [
+          { name: 'mcp_required_tools', status: 'fail', message: 'Missing required MCP tools: read_context' },
+          { name: 'codex_prompt_rules', status: 'warn', message: 'Codex prompt rules are stale' },
+        ],
+      },
+    });
+
+    const nonOkChecks = report.checks
+      .filter((check) => check.status !== 'ok')
+      .map((check) => check.name)
+      .sort();
+    const mappedChecks = (report.remediation_plan as DoctorRemediationPlan).actions
+      .map((action) => action.check_name)
+      .sort();
+
+    expect(mappedChecks).toEqual(nonOkChecks);
+    expect(JSON.stringify(report.remediation_plan)).not.toContain('topsecret');
+  });
+
+  test('doctor remediation marks target runtime migration as filesystem and external mutation', () => {
+    const report = buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 1,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: {
+        engine: 'sqlite',
+        database_path: '/tmp/brain.db',
+        offline: true,
+        embedding_provider: 'local',
+        query_rewrite_provider: 'heuristic',
+      },
+      profile: {
+        status: 'local_offline',
+        offline: true,
+        engine: { type: 'sqlite' },
+        embedding: {
+          mode: 'local',
+          available: true,
+          implementation: 'local-http',
+          model: 'qwen3-embedding:0.6b',
+          dimensions: 1024,
+        },
+        rewrite: {
+          mode: 'heuristic',
+          available: true,
+          implementation: 'heuristic',
+          model: null,
+        },
+        capabilities: {
+          check_update: { supported: false, reason: 'disabled locally' },
+          files: { supported: false, reason: 'no raw postgres access' },
+        },
+      },
+      rawPostgresChecksSupported: false,
+      schemaVersion: '4',
+      latestVersion: 4,
+      health: {
+        page_count: 1,
+        embed_coverage: 1,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+      },
+    });
+
+    const plan = report.remediation_plan as DoctorRemediationPlan;
+    const targetRuntime = plan.actions.find((action) => action.check_name === 'target_runtime');
+    const commands = targetRuntime?.commands.map((entry) => entry.command) ?? [];
+    expect(commands).toEqual(['mbrain config show', 'mbrain init --profile homebrew-postgres']);
+    expect(commands).not.toContain('mbrain config show --json');
+    expect(commands).not.toContain('mbrain autopilot status --json');
+    expect(targetRuntime?.safety).toMatchObject({
+      auto_apply_allowed: false,
+      canonical_write: false,
+      external_mutation: true,
+      filesystem_write: true,
+    });
   });
 
   test('doctor module exports runDoctor', async () => {

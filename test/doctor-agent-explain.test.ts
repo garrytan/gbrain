@@ -183,6 +183,8 @@ describe('doctor agent explain', () => {
     const payload = JSON.parse(logs[0] || '{}');
     expect(payload.status).toBeDefined();
     expect(Array.isArray(payload.checks)).toBe(true);
+    expect(payload.remediation_plan.mode).toBe('report_only');
+    expect(payload.remediation_plan.summary.auto_apply_supported).toBe(false);
     expect(payload.agent_explain.installed_surface.command).toBe('bun run src/cli.ts');
     expect(payload.agent_explain.memory_behavior.read_context_evidence_boundary).toBe(true);
     expect(payload.agent_explain.memory_behavior.graph_frontier_default).toBe('off');
@@ -216,6 +218,7 @@ describe('doctor agent explain', () => {
 
     const payload = JSON.parse(logs[0] || '{}');
     expect(payload).not.toHaveProperty('agent_explain');
+    expect(payload.remediation_plan.mode).toBe('report_only');
   });
 });
 
