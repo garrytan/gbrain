@@ -3,6 +3,7 @@ import type { ChunkSource, PageType } from './page.ts';
 import type { BroadSynthesisRoute, MixedScopeBridgeRoute, PrecisionLookupRoute } from './context-map-atlas.ts';
 import type { PersonalEpisodeLookupRoute, PersonalEpisodeSourceKind, PersonalProfileLookupRoute, ProfileMemoryType } from './profile-episode.ts';
 import type { RetrievalTrace } from './retrieval-trace.ts';
+import type { DerivedJobStatus } from './derived-jobs.ts';
 
 export type RetrievalRouteIntent =
   | 'task_resume'
@@ -463,6 +464,9 @@ export interface RetrieveContextCandidateEvidenceMetadata {
   corpus_lane?: CorpusLaneMetadata;
   scope_gate?: ScopeGateDecisionResult;
   rank_reason: string[];
+  create_safety?: Pick<RetrieveContextCreateSafety, 'status' | 'reasons' | 'write_permission_granted'>;
+  backend_gap?: Pick<RetrieveContextBackendGap, 'status' | 'reason_code'>;
+  graph_frontier_authority?: 'selector_planning_only';
 }
 
 export interface RetrieveContextCandidate {
@@ -673,7 +677,7 @@ export interface RetrieveContextResult {
 }
 
 export interface RetrieveContextCreateSafety {
-  status: 'exists' | 'unknown' | 'no_canonical_candidate';
+  status: 'exists' | 'unknown' | 'no_canonical_candidate' | 'probable_duplicate' | 'safe_to_propose';
   matched_candidate_ids: string[];
   matched_selector_ids: string[];
   reasons: string[];
@@ -717,6 +721,9 @@ export interface CanonicalContextReadEvidenceMetadata {
     char_end?: number;
   };
   continuation_status: 'complete' | 'continued';
+  stale_selector_result?: RetrievalFreshness;
+  derived_index_status?: 'current' | DerivedJobStatus;
+  readiness_contribution?: 'supports_answer_ready' | 'conflict';
 }
 
 export interface WritebackGovernanceMetadata {

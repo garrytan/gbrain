@@ -218,6 +218,10 @@ describe('retrieve context service', () => {
         source_ref_count: result.candidates[0]!.read_selector.source_refs?.length,
         source_ref_kinds: ['user'],
         rank_reason: ['matched 2 search chunks'],
+        create_safety: {
+          status: 'exists',
+          write_permission_granted: false,
+        },
       });
       expect(result.required_reads).toHaveLength(1);
       expect(result.required_reads[0]!.kind).toBe('section');
@@ -230,6 +234,87 @@ describe('retrieve context service', () => {
       expect(result.warnings).toContain(
         'Search/query chunks are candidate pointers; call read_context before answering factual questions.',
       );
+    });
+  });
+
+  test('reports safe-to-propose create safety only after a complete empty canonical and inbox probe', async () => {
+    await withEngine('safe-to-propose-create-safety', async (engine) => {
+      const result = await retrieveContext(engine, {
+        query: 'brand new durable idea without overlap',
+        include_orientation: false,
+        limit: 3,
+      }, {
+        candidateSearch: async () => [],
+      });
+
+      expect(result.required_reads).toEqual([]);
+      expect(result.candidate_signals).toEqual([]);
+      expect(result.create_safety).toMatchObject({
+        status: 'safe_to_propose',
+        matched_candidate_ids: [],
+        matched_selector_ids: [],
+        write_permission_granted: false,
+      });
+      expect(result.create_safety?.reasons).toContain('no_canonical_or_candidate_overlap_in_probe');
+    });
+  });
+
+  test('reports probable duplicate create safety when inbox signals exist without canonical evidence', async () => {
+    await withEngine('probable-duplicate-create-safety', async (engine) => {
+      await engine.createMemoryCandidateEntry(makeMemoryCandidate('candidate-probable-duplicate', {
+        proposed_content: 'Brand new durable idea without overlap may already exist as a Memory Inbox signal.',
+        target_object_type: 'curated_note',
+        target_object_id: 'ideas/brand-new-durable-idea',
+      }));
+
+      const result = await retrieveContext(engine, {
+        query: 'brand new durable idea without overlap',
+        include_orientation: false,
+        limit: 3,
+      }, {
+        candidateSearch: async () => [],
+      });
+
+      expect(result.required_reads).toEqual([]);
+      expect(result.candidate_signals.map((signal) => signal.candidate_id)).toContain(
+        'candidate-probable-duplicate',
+      );
+      expect(result.create_safety).toMatchObject({
+        status: 'probable_duplicate',
+        matched_candidate_ids: ['candidate-probable-duplicate'],
+        matched_selector_ids: [],
+        write_permission_granted: false,
+      });
+      expect(result.create_safety?.reasons).toContain('memory_inbox_candidate_overlap_requires_review');
+    });
+  });
+
+  test('does not report safe-to-propose when inbox matches are suppressed by strict policy', async () => {
+    await withEngine('suppressed-duplicate-create-safety', async (engine) => {
+      await engine.createMemoryCandidateEntry(makeMemoryCandidate('candidate-strict-suppressed', {
+        proposed_content: 'Candidate strict signal mentions canonical only retrieval.',
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/strict-retrieval',
+      }));
+
+      const result = await retrieveContext(engine, {
+        query: 'canonical only retrieval',
+        include_orientation: false,
+        limit: 5,
+      }, {
+        candidateSearch: async () => [],
+      });
+
+      expect(result.candidate_signal_policy.mode).toBe('strict');
+      expect(result.candidate_signal_policy.suppressed_count).toBe(1);
+      expect(result.candidate_signals).toEqual([]);
+      expect(result.create_safety).toMatchObject({
+        status: 'probable_duplicate',
+        matched_candidate_ids: [],
+        matched_selector_ids: [],
+        write_permission_granted: false,
+      });
+      expect(result.create_safety?.reasons).toContain('suppressed_memory_inbox_overlap_requires_review');
     });
   });
 
@@ -255,6 +340,42 @@ describe('retrieve context service', () => {
       expect(result.orientation.derived_consulted).not.toContain('graph_frontier');
       expect(disabledResult.required_reads).toEqual([]);
       expect(disabledResult.orientation.derived_consulted).not.toContain('graph_frontier');
+    });
+  });
+
+  test('does not report safe-to-propose when graph frontier selected canonical reads', async () => {
+    await withEngine('graph-frontier-create-safety-read-first', async (engine) => {
+      const result = await retrieveContext(engine, {
+        query: 'graph only frontier evidence',
+        include_orientation: false,
+        limit: 3,
+        graph_frontier: {
+          enabled: true,
+          max_depth: 1,
+          fanout_cap: 5,
+        },
+      }, {
+        candidateSearch: async () => [],
+        graphFrontierInputBuilder: () => ({
+          scope_id: 'workspace:default',
+          policy_version: 'policy:v1',
+          seed_node_ids: ['assertion:seed'],
+          nodes: graphFrontierFixtureNodes(),
+          edges: graphFrontierFixtureEdges(),
+        }),
+        graphFrontierPlanner: (input) => planAssertionGraphFrontier(input),
+      });
+
+      expect(result.candidates).toEqual([]);
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('concepts/graph-target');
+      expect(result.orientation.derived_consulted).toContain('graph_frontier');
+      expect(result.create_safety).toMatchObject({
+        status: 'unknown',
+        matched_candidate_ids: [],
+        matched_selector_ids: ['page:workspace:default:concepts/graph-target'],
+        write_permission_granted: false,
+      });
+      expect(result.create_safety?.reasons).toContain('canonical_read_selected_requires_read_context');
     });
   });
 
@@ -316,6 +437,9 @@ describe('retrieve context service', () => {
 
       expect(result.required_reads.map((selector) => selector.slug)).toContain('systems/seed');
       expect(result.required_reads.map((selector) => selector.slug)).toContain('concepts/graph-target');
+      expect(result.candidates[0]!.evidence_metadata).toMatchObject({
+        graph_frontier_authority: 'selector_planning_only',
+      });
       expect(result.orientation.derived_consulted).toContain('graph_frontier');
       expect(result.orientation.graph_paths_considered).toContain(
         'graph_frontier_path:1 activation=canonical_read authority=selector_planning_only',
@@ -882,6 +1006,16 @@ describe('retrieve context service', () => {
         reason_code: 'retrieval_backend_partial_failure',
         failed_query_count: 1,
         successful_query_count: expect.any(Number),
+      });
+      expect(result.candidates[0]!.evidence_metadata).toMatchObject({
+        backend_gap: {
+          status: 'partial_failure',
+          reason_code: 'retrieval_backend_partial_failure',
+        },
+        create_safety: {
+          status: 'exists',
+          write_permission_granted: false,
+        },
       });
       expect(result.warnings.some((warning) =>
         warning.includes('Candidate search failed for 1 of')
