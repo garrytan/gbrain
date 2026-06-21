@@ -428,7 +428,7 @@ function templateForCheck(checkName: string): ActionTemplate | null {
         id: 'doctor.sync_recency.run_sync',
         category: 'sync',
         priority: 'p2',
-        causeRank: 70,
+        causeRank: 71,
         title: 'Run a foreground sync',
         rationale: 'A recent explicit sync refreshes durable source state before further diagnosis.',
         commands: [
@@ -448,7 +448,7 @@ function templateForCheck(checkName: string): ActionTemplate | null {
         id: 'doctor.sync_watch.restart_or_clear',
         category: 'sync',
         priority: 'p1',
-        causeRank: 71,
+        causeRank: 70,
         title: 'Restart or clear the live sync watcher failure',
         rationale: 'The live watcher stopped after repeated failures; restart only after checking the failure reason.',
         commands: [
