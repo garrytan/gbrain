@@ -54,6 +54,9 @@ export function buildAutoPromoteDigest(input: {
     `- Deferred: ${c.deferred}`,
     `- Excluded: ${c.excluded}`,
   ];
+  if (input.result.audit) {
+    lines.push(`- Audit entries: ${input.result.audit.length}`);
+  }
   if (exclusionsByReason.size > 0) {
     lines.push('', '## Exclusions by reason');
     for (const [reason, count] of [...exclusionsByReason.entries()].sort((a, b) => b[1] - a[1])) {

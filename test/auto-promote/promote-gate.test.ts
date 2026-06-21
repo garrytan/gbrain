@@ -65,7 +65,43 @@ describe('runPromoteGate', () => {
       });
       expect(res.promoted).toEqual([]);
       expect(res.would_promote).toContain(candidate.id);
+      expect(res.audit.find((entry) => entry.candidate_id === candidate.id)).toMatchObject({
+        gate_skip_reason: null,
+        patch_candidate_id: null,
+        canonical_write_result: 'not_attempted',
+      });
       expect((await engine.getMemoryCandidateEntry(candidate.id))?.status).not.toBe('promoted');
+    });
+  });
+  it('does not let caller-provided audit metadata override actual verdict facts', async () => {
+    await withEngine(async (engine) => {
+      const cfg = { ...defaultAutoPromoteConfig(), dry_run: true };
+      const candidate = await seedEligibleCandidate(engine);
+      const res = await runPromoteGate({
+        engine,
+        verdicts: [{ candidate_id: candidate.id, decision: 'promote' as const, confidence: 0.95, reasoning: 'ok', source_refs: [], runner_kind: 'claude_code', prompt_version: 'prompt-v-real', judged_at: '2026-06-01T00:00:00Z' }],
+        candidates: [candidate],
+        config: cfg,
+        now: '2026-06-01T00:00:00Z',
+        actor: 'mbrain:auto_promote',
+        canonical_write_candidate_ids: new Set([candidate.id]),
+        audit_metadata: new Map([[candidate.id, {
+          runner_kind: 'metadata-runner',
+          prompt_version: 'metadata-prompt',
+          prompt_input_hash: 'metadata-hash',
+          verdict: { decision: 'reject', confidence: 0, judged_at: '1999-01-01T00:00:00Z' },
+        } as any]]),
+      });
+
+      expect(res.audit.find((entry) => entry.candidate_id === candidate.id)).toMatchObject({
+        runner_kind: 'claude_code',
+        prompt_version: 'prompt-v-real',
+        verdict: {
+          decision: 'promote',
+          confidence: 0.95,
+          judged_at: '2026-06-01T00:00:00Z',
+        },
+      });
     });
   });
   it('promotes a confident verdict', async () => {
@@ -140,6 +176,16 @@ describe('runPromoteGate', () => {
 
       expect(res.promoted).toContain(candidate.id);
       expect(res.canonical_writes).toContain('concepts/acme');
+      expect(res.audit).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          candidate_id: candidate.id,
+          gate_skip_reason: null,
+          target_snapshot_hash: target.content_hash,
+          patch_candidate_id: `auto-promote-patch:${candidate.id}`,
+          canonical_page_writes_enabled: true,
+          canonical_write_result: 'applied',
+        }),
+      ]));
 
       const directPageWrites = await engine.listMemoryMutationEvents({
         operation: 'put_page',
@@ -238,6 +284,13 @@ describe('runPromoteGate', () => {
       expect(res.canonical_handoffs).toContain(candidate.id);
       expect(res.canonical_writes).toEqual([]);
       expect(res.skipped.find((s) => s.id === candidate.id)?.reason).toBe('canonical_page_writes_not_allowed');
+      expect(res.audit.find((entry) => entry.candidate_id === candidate.id)).toMatchObject({
+        gate_skip_reason: 'canonical_page_writes_not_allowed',
+        target_snapshot_hash: target.content_hash,
+        patch_candidate_id: null,
+        canonical_page_writes_enabled: false,
+        canonical_write_result: 'handoff_only',
+      });
       expect((await engine.getMemoryCandidateEntry(candidate.id))?.status).toBe('promoted');
       expect((await engine.getPage('concepts/acme'))?.compiled_truth).not.toContain('Acme raised a seed round.');
     });
@@ -262,6 +315,15 @@ describe('runPromoteGate', () => {
       expect(res.canonical_handoffs).toContain(candidate.id);
       expect(res.canonical_writes).toEqual([]);
       expect(res.skipped.find((s) => s.id === candidate.id)?.reason).toBe('canonical_policy_not_allowed');
+      expect(res.audit.find((entry) => entry.candidate_id === candidate.id)).toMatchObject({
+        lane: 'risky',
+        lane_reason: 'unknown',
+        gate_skip_reason: 'canonical_policy_not_allowed',
+        target_snapshot_hash: target.content_hash,
+        patch_candidate_id: null,
+        canonical_page_writes_enabled: true,
+        canonical_write_result: 'handoff_only',
+      });
       expect((await engine.getPage('concepts/acme'))?.compiled_truth).not.toContain('Acme raised a seed round.');
     });
   });
@@ -291,6 +353,12 @@ describe('runPromoteGate', () => {
       expect(res.canonical_handoffs).toContain(candidate.id);
       expect(res.canonical_writes).toEqual([]);
       expect(res.skipped.find((s) => s.id === candidate.id)?.reason).toContain('base_target_snapshot_hash does not match the current target snapshot hash');
+      expect(res.audit.find((entry) => entry.candidate_id === candidate.id)).toMatchObject({
+        gate_skip_reason: expect.stringContaining('base_target_snapshot_hash does not match the current target snapshot hash'),
+        target_snapshot_hash: target.content_hash,
+        patch_candidate_id: null,
+        canonical_write_result: 'skipped',
+      });
       expect((await engine.getPage('concepts/acme'))?.compiled_truth).not.toContain('Acme raised a seed round.');
       expect(await engine.listMemorySessions({ actor_ref: 'mbrain:auto_promote' })).toHaveLength(0);
       expect(await engine.listMemoryMutationEvents({ operation: 'create_memory_patch_candidate' })).toHaveLength(0);
@@ -311,6 +379,12 @@ describe('runPromoteGate', () => {
       });
       expect(res.promoted).toEqual([]);
       expect(res.skipped.find((s) => s.id === candidate.id)?.reason).toContain('below_threshold');
+      expect(res.audit.find((entry) => entry.candidate_id === candidate.id)).toMatchObject({
+        gate_skip_reason: 'below_threshold',
+        patch_candidate_id: null,
+        canonical_page_writes_enabled: false,
+        canonical_write_result: 'skipped',
+      });
     });
   });
   it('skips verdicts carrying a proposed_patch (not yet supported)', async () => {
@@ -326,6 +400,11 @@ describe('runPromoteGate', () => {
         canonical_write_candidate_ids: new Set([candidate.id]),
       });
       expect(res.skipped.find((s) => s.id === candidate.id)?.reason).toBe('patch_apply_not_yet_supported');
+      expect(res.audit.find((entry) => entry.candidate_id === candidate.id)).toMatchObject({
+        gate_skip_reason: 'patch_apply_not_yet_supported',
+        patch_candidate_id: null,
+        canonical_write_result: 'skipped',
+      });
     });
   });
 });
