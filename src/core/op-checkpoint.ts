@@ -180,18 +180,22 @@ export async function recordCompleted(
   // extract-conversation-facts serialize a MUTABLE map through here and rely on
   // stale keys being REMOVED; an append would make them unremovable. The full
   // set lands in the parent `completed_keys` JSONB column via a single UPSERT —
-  // exactly as before. JSON.stringify into `$3::jsonb` is correct (the text→jsonb
-  // cast yields a proper array; NOT the double-encode trap, which is the template
-  // form). Sync uses `appendCompleted` (below) instead, never this.
+  // exactly as before. completed_keys is built with `to_jsonb($3::text[])`: the
+  // keys bind as a Postgres text[] and to_jsonb yields a real jsonb ARRAY. The
+  // older `$3::jsonb` form with JSON.stringify(keys) double-encodes on the native
+  // postgres.js direct pool — the JS string gets JSON-serialized AGAIN, landing a
+  // jsonb *string* that fails CHECK (jsonb_typeof = 'array') and aborts every
+  // incremental sync as PARTIAL (PGLite tolerated it; native Postgres does not).
+  // Sync uses `appendCompleted` (below) instead, never this.
   const sorted = [...keys].sort();
   return durableWrite(engine, key, 'write', () =>
     engine.executeRawDirect(
       `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-       VALUES ($1, $2, $3::jsonb, now())
+       VALUES ($1, $2, to_jsonb($3::text[]), now())
        ON CONFLICT (op, fingerprint) DO UPDATE
          SET completed_keys = EXCLUDED.completed_keys,
              updated_at     = now()`,
-      [key.op, key.fingerprint, JSON.stringify(sorted)],
+      [key.op, key.fingerprint, sorted],
     ));
 }
 
