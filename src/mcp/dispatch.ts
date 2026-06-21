@@ -70,6 +70,14 @@ export interface DispatchOpts {
    * was replaced by dispatchToolCall.
    */
   auth?: AuthInfo;
+  /**
+   * Which MCP transport is dispatching. `'stdio'` from src/mcp/server.ts,
+   * `'http'` from the HTTP MCP transports. Threaded into OperationContext so
+   * `whoami` can return a defined `transport: 'stdio'` shape for the auth-less
+   * local pipe instead of throwing unknown_transport. NOT a trust signal —
+   * `remote` remains the access gate. Local CLI dispatch leaves it unset.
+   */
+  transport?: 'stdio' | 'http';
 }
 
 /**
@@ -210,6 +218,7 @@ export function buildOperationContext(
     // this fallback covers code paths that historically passed undefined.
     sourceId: opts.sourceId ?? 'default',
     auth: opts.auth,
+    transport: opts.transport,
   };
 }
 
