@@ -18,17 +18,18 @@ import { readRecentSourceFailures } from '../../src/commands/autopilot-fanout.ts
 const SKIP_PG = !hasDatabase();
 
 async function seed(engine: BrainEngine): Promise<void> {
-  const rows: Array<[string, Record<string, unknown>, number]> = [
-    ['dead', { source_id: 'repo-a' }, 5],
-    ['failed', { source_id: 'repo-a' }, 2],
-    ['dead', { source_id: 'repo-b' }, 10],
-    ['completed', { source_id: 'repo-a' }, 1], // excluded (not a failure)
-    ['dead', {}, 3],                            // excluded (null source_id, codex #6)
+  const rows: Array<[string, Record<string, unknown>, number, Record<string, unknown> | null]> = [
+    ['dead', { source_id: 'repo-a' }, 5, null],
+    ['failed', { source_id: 'repo-a' }, 2, null],
+    ['completed', { source_id: 'repo-a' }, 1, { status: 'partial', report: { status: 'partial' } }],
+    ['dead', { source_id: 'repo-b' }, 10, null],
+    ['completed', { source_id: 'repo-b' }, 1, { status: 'ok', report: { status: 'ok' } }], // excluded
+    ['dead', {}, 3, null], // excluded (null source_id, codex #6)
   ];
-  for (const [status, data, minAgo] of rows) {
+  for (const [status, data, minAgo, result] of rows) {
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, status, data, finished_at) VALUES ('autopilot-cycle', $1, $2, $3)`,
-      [status, data, new Date(Date.now() - minAgo * 60_000).toISOString()],
+      `INSERT INTO minion_jobs (name, status, data, finished_at, result) VALUES ('autopilot-cycle', $1, $2, $3, $4)`,
+      [status, data, new Date(Date.now() - minAgo * 60_000).toISOString(), result],
     );
   }
 }
@@ -46,7 +47,7 @@ describe('failure-cooldown query — PGLite', () => {
 
   test('groups failures by source, excludes completed + null-source', async () => {
     const map = await readRecentSourceFailures(engine, { sinceMin: 120 });
-    expect(summarize(map)).toEqual({ 'repo-a': 2, 'repo-b': 1 });
+    expect(summarize(map)).toEqual({ 'repo-a': 3, 'repo-b': 1 });
   });
 });
 
@@ -57,6 +58,6 @@ describe('failure-cooldown query — PGLite', () => {
 
   test('Postgres returns the SAME groupings as PGLite', async () => {
     const map = await readRecentSourceFailures(engine, { sinceMin: 120 });
-    expect(summarize(map)).toEqual({ 'repo-a': 2, 'repo-b': 1 });
+    expect(summarize(map)).toEqual({ 'repo-a': 3, 'repo-b': 1 });
   });
 });

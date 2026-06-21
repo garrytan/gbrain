@@ -63,6 +63,10 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   // auto-drain branch, an explicit `gbrain jobs submit extract-atoms-drain
   // --allow-protected`) can insert it.
   'extract-atoms-drain',
+  // v0.42.x (#2194/#2227) — wrapper for brain-wide global maintenance
+  // phases. It can run cost-bearing/protected cycle phases, so only trusted
+  // local callers such as autopilot may submit it.
+  'autopilot-global-maintenance',
 ]);
 
 /** Check a job name against the protected set. Normalizes whitespace first. */

@@ -135,7 +135,11 @@ describe('gateway tool schema + message shape (real AI SDK v6)', () => {
             type: 'tool-result',
             toolCallId: 'toolu_01JdRsDHvFNCBsTeMqT8UiJ6',
             toolName: 'brain_get_page',
-            output: { id: 17773n, slug: 'wiki/personal/reflections/2026-05-26-codex-systematic-debugging-bigquery-receipt-timestamp-fea68e' },
+            output: {
+              id: 17773n,
+              slug: 'wiki/personal/reflections/2026-05-26-codex-systematic-debugging-bigquery-receipt-timestamp-fea68e',
+              updated_at: new Date('2026-06-21T12:34:56.000Z'),
+            },
           },
         ],
       },
@@ -151,6 +155,7 @@ describe('gateway tool schema + message shape (real AI SDK v6)', () => {
     const prompt = model.doGenerateCalls[0]!.prompt as any[];
     expect(prompt.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant', 'tool']);
     expect(prompt.at(-1).content[1].output.value.id).toBe('17773');
+    expect(prompt.at(-1).content[1].output.value.updated_at).toBe('2026-06-21T12:34:56.000Z');
   });
 
   it('REGRESSION: raw tool-result in a role:user message (pre-fix shape) is rejected by v6', async () => {

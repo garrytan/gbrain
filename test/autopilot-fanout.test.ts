@@ -17,7 +17,9 @@ import {
   selectSourcesForDispatch,
   resolveFanoutMax,
   dispatchPerSource,
+  readLiveAutopilotCycleSourceIds,
 } from '../src/commands/autopilot-fanout.ts';
+import { LAST_GLOBAL_AT_KEY } from '../src/core/cycle.ts';
 import type { SourceRow, BrainEngine } from '../src/core/engine.ts';
 
 function src(id: string, last_full_cycle_at?: string | null, extra: Record<string, unknown> = {}): SourceRow {
@@ -58,6 +60,10 @@ describe('isSourceStale', () => {
   test('source cycled 30min ago is fresh', () => {
     const past = new Date(NOW - 30 * 60_000).toISOString();
     expect(isSourceStale(src('a', past), NOW)).toBe(false);
+  });
+  test('source-scoped cycle timestamp is fresh even without legacy full-cycle timestamp', () => {
+    const past = new Date(NOW - 30 * 60_000).toISOString();
+    expect(isSourceStale(src('a', null, { last_source_cycle_at: past }), NOW)).toBe(false);
   });
   test('source cycled exactly at floor (60min) is stale (>=)', () => {
     const past = new Date(NOW - 60 * 60_000).toISOString();
@@ -158,7 +164,7 @@ describe('resolveFanoutMax', () => {
 describe('dispatchPerSource — integration with stubbed engine + queue', () => {
   type AddedJob = { name: string; data: unknown; opts: Record<string, unknown> };
 
-  function makeStubs(sources: SourceRow[], opts?: { listThrows?: boolean }) {
+  function makeStubs(sources: SourceRow[], opts?: { listThrows?: boolean; liveSourceIds?: string[] }) {
     const added: AddedJob[] = [];
     let nextId = 100;
     const engine = {
@@ -166,6 +172,13 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
       listAllSources: async () => {
         if (opts?.listThrows) throw new Error('sources table missing');
         return sources;
+      },
+      getConfig: async (key: string) => key === LAST_GLOBAL_AT_KEY ? new Date().toISOString() : null,
+      executeRaw: async (sql: string) => {
+        if (String(sql).includes(`data->>'source_id'`)) {
+          return (opts?.liveSourceIds ?? []).map((source_id) => ({ source_id }));
+        }
+        return [];
       },
     } as unknown as BrainEngine;
     const queue = {
@@ -243,6 +256,82 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     expect(added.length).toBe(1);
   });
 
+  test('live source-cycle jobs are skipped before applying fanout cap', async () => {
+    const { engine, queue, added, fanoutOpts } = makeStubs([src('a'), src('b'), src('c')], { liveSourceIds: ['a'] });
+    fanoutOpts.fanoutMax = 1;
+    const result = await dispatchPerSource(engine, queue, fanoutOpts);
+
+    expect(result.dispatched).toEqual(['b']);
+    expect(result.skipped_active).toEqual(['a']);
+    expect(result.skipped_cap).toEqual(['c']);
+    expect(added.length).toBe(1);
+    expect((added[0].data as Record<string, unknown>).source_id).toBe('b');
+  });
+
+  test('live source-cycle jobs defer global maintenance', async () => {
+    const added: AddedJob[] = [];
+    const engine = {
+      kind: 'postgres' as const,
+      listAllSources: async () => [src('a')],
+      getConfig: async () => null,
+      executeRaw: async (sql: string) => {
+        if (String(sql).includes(`data->>'source_id'`)) return [{ source_id: 'a' }];
+        return [];
+      },
+    } as unknown as BrainEngine;
+    const queue = {
+      add: async (name: string, data: unknown, opts: Record<string, unknown>) => {
+        added.push({ name, data, opts });
+        return { id: added.length, parent_job_id: opts.parent_job_id ?? null };
+      },
+    } as unknown as Parameters<typeof dispatchPerSource>[1];
+    const result = await dispatchPerSource(engine, queue, {
+      repoPath: '/tmp',
+      slot: 's',
+      timeoutMs: 1,
+      fanoutMax: 4,
+      jsonMode: true,
+      emit: () => {},
+      log: () => {},
+    });
+
+    expect(result.skipped_active).toEqual(['a']);
+    expect(result.global_maintenance).toEqual({ dispatched: false, reason: 'deferred' });
+    expect(added.length).toBe(0);
+  });
+
+  test('held global parent is released when selected source submits are idempotency hits', async () => {
+    const updates: Array<{ sql: string; params?: unknown[] }> = [];
+    const engine = {
+      kind: 'postgres' as const,
+      listAllSources: async () => [src('a')],
+      getConfig: async () => null,
+      executeRaw: async (sql: string, params?: unknown[]) => {
+        updates.push({ sql: String(sql), params });
+        return [];
+      },
+    } as unknown as BrainEngine;
+    const queue = {
+      add: async (name: string, _data: unknown, opts: Record<string, unknown>) => {
+        if (name === 'autopilot-global-maintenance') return { id: 1, parent_job_id: null };
+        return { id: 99, parent_job_id: null, idempotency_key: opts.idempotency_key };
+      },
+    } as unknown as Parameters<typeof dispatchPerSource>[1];
+    const result = await dispatchPerSource(engine, queue, {
+      repoPath: '/tmp',
+      slot: 's',
+      timeoutMs: 1,
+      fanoutMax: 4,
+      jsonMode: true,
+      emit: () => {},
+      log: () => {},
+    });
+
+    expect(result.dispatched).toEqual([]);
+    expect(result.skipped_active).toEqual(['a']);
+    expect(updates.some((u) => u.sql.includes(`SET status = 'waiting'`) && u.params?.[0] === 1)).toBe(true);
+  });
+
   test('per-submit error does NOT abort the tick', async () => {
     const sources = [src('alpha'), src('boom'), src('charlie')];
     const added: AddedJob[] = [];
@@ -251,6 +340,8 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     const engine = {
       kind: 'postgres' as const,
       listAllSources: async () => sources,
+      getConfig: async (key: string) => key === LAST_GLOBAL_AT_KEY ? new Date().toISOString() : null,
+      executeRaw: async () => [],
     } as unknown as BrainEngine;
     const queue = {
       add: async (name: string, data: unknown, opts: Record<string, unknown>) => {
@@ -306,5 +397,25 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     expect(result.dispatched.length).toBe(0);
     expect(result.skipped_fresh.length).toBe(2);
     expect(added.length).toBe(0);
+  });
+});
+
+describe('readLiveAutopilotCycleSourceIds', () => {
+  test('returns non-empty source ids from non-terminal autopilot-cycle jobs', async () => {
+    const engine = {
+      executeRaw: async () => [
+        { source_id: 'alpha' },
+        { source_id: null },
+        { source_id: 'beta' },
+      ],
+    } as unknown as BrainEngine;
+    expect(await readLiveAutopilotCycleSourceIds(engine)).toEqual(new Set(['alpha', 'beta']));
+  });
+
+  test('fails open to an empty set when job readback is unavailable', async () => {
+    const engine = {
+      executeRaw: async () => { throw new Error('old schema'); },
+    } as unknown as BrainEngine;
+    expect(await readLiveAutopilotCycleSourceIds(engine)).toEqual(new Set());
   });
 });

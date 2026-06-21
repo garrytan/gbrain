@@ -2327,6 +2327,7 @@ function toJsonSafeToolValue(value: unknown, seen = new WeakSet<object>()): unkn
   if (typeof value === 'bigint') return value.toString();
   if (typeof value === 'function' || typeof value === 'symbol' || typeof value === 'undefined') return null;
   if (value === null || typeof value !== 'object') return value;
+  if (value instanceof Date) return value.toISOString();
   if (seen.has(value)) return '[Circular]';
   seen.add(value);
   if (Array.isArray(value)) return value.map((item) => toJsonSafeToolValue(item, seen));

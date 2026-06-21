@@ -29,9 +29,10 @@ beforeEach(async () => {
 const NOW = Date.parse('2026-05-22T12:00:00.000Z');
 const agoH = (h: number) => new Date(NOW - h * 3600_000).toISOString();
 
-async function seed(id: string, lastFullCycleAt?: string, opts: { local_path?: string | null } = {}): Promise<void> {
-  const config = lastFullCycleAt
-    ? JSON.stringify({ last_full_cycle_at: lastFullCycleAt })
+async function seed(id: string, lastCycleAt?: string, opts: { local_path?: string | null; field?: 'last_full_cycle_at' | 'last_source_cycle_at' } = {}): Promise<void> {
+  const field = opts.field ?? 'last_full_cycle_at';
+  const config = lastCycleAt
+    ? JSON.stringify({ [field]: lastCycleAt })
     : '{}';
   const localPath = opts.local_path === undefined ? `/tmp/${id}` : opts.local_path;
   await engine.executeRaw(
@@ -79,12 +80,19 @@ describe('doctor checkCycleFreshness', () => {
     expect(result.message).toMatch(/gbrain dream --source/);
   });
 
-  test('source with NO last_full_cycle_at (never cycled) returns fail', async () => {
+  test('source with NO cycle timestamp (never cycled) returns fail', async () => {
     await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
     await seed('virgin');
     const result = await checkCycleFreshness(engine, { nowMs: NOW });
     expect(result.status).toBe('fail');
-    expect(result.message).toMatch(/never completed a full cycle/);
+    expect(result.message).toMatch(/never completed a source cycle/);
+  });
+
+  test('source with last_source_cycle_at 2h ago returns ok without legacy full-cycle stamp', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('split-fresh', agoH(2), { field: 'last_source_cycle_at' });
+    const result = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(result.status).toBe('ok');
   });
 
   test('mixed sources: highest severity wins (fail > warn > ok)', async () => {
@@ -102,7 +110,7 @@ describe('doctor checkCycleFreshness', () => {
     await seed('clock-skewed', future);
     const result = await checkCycleFreshness(engine, { nowMs: NOW });
     expect(result.status).toBe('warn');
-    expect(result.message).toMatch(/future last_full_cycle_at/);
+    expect(result.message).toMatch(/future cycle timestamp/);
   });
 
   test('unparseable last_full_cycle_at returns warn', async () => {

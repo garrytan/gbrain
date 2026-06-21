@@ -1,7 +1,7 @@
 /**
- * v0.38 — runCycle exit hook writes last_full_cycle_at on per-source
- * cycles. Closes codex round-1 P0-5 (write site for last_full_cycle_at
- * was unspecified pre-PR).
+ * v0.38 — runCycle exit hook writes last_source_cycle_at on per-source
+ * cycles. Per-source split cycles must not stamp last_full_cycle_at because
+ * global maintenance runs separately.
  *
  * Conditions for write:
  *   - opts.sourceId is set (legacy callers without sourceId skip the write)
@@ -15,7 +15,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { runCycle } from '../src/core/cycle.ts';
+import { NON_GLOBAL_PHASES, runCycle } from '../src/core/cycle.ts';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -27,7 +27,7 @@ let brainDir: string;
 // GBRAIN_HOME per test, parallel gbrain processes on the same machine
 // (including sibling Conductor worktrees running their own tests)
 // contend for the same lock file — runCycle returns 'skipped' and the
-// last_full_cycle_at exit hook silently no-ops. Each test wraps its
+// last_source_cycle_at exit hook silently no-ops. Each test wraps its
 // body in `withEnv({GBRAIN_HOME: <unique tmp>})` so the file lock path
 // becomes per-test.
 let gbrainHome: string;
@@ -57,6 +57,14 @@ async function seedSource(id: string): Promise<void> {
   );
 }
 
+async function readLastSourceCycleAt(sourceId: string): Promise<string | null> {
+  const sources = await engine.listAllSources();
+  const s = sources.find(x => x.id === sourceId);
+  if (!s) return null;
+  const raw = s.config?.last_source_cycle_at;
+  return typeof raw === 'string' ? raw : null;
+}
+
 async function readLastFullCycleAt(sourceId: string): Promise<string | null> {
   const sources = await engine.listAllSources();
   const s = sources.find(x => x.id === sourceId);
@@ -65,11 +73,11 @@ async function readLastFullCycleAt(sourceId: string): Promise<string | null> {
   return typeof raw === 'string' ? raw : null;
 }
 
-describe('runCycle last_full_cycle_at exit hook', () => {
-  test('per-source cycle with status=ok writes timestamp', async () => {
+describe('runCycle last_source_cycle_at exit hook', () => {
+  test('manual per-source cycle with status=ok writes source and legacy full-cycle timestamps', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       await seedSource('alpha');
-      const before = await readLastFullCycleAt('alpha');
+      const before = await readLastSourceCycleAt('alpha');
       expect(before).toBeNull();
 
       // Run a minimal cycle: just lint (filesystem, no DB writes, always returns 'ok')
@@ -82,11 +90,44 @@ describe('runCycle last_full_cycle_at exit hook', () => {
       // lint on an empty dir returns ok+clean+0 fixes
       expect(['ok', 'clean']).toContain(report.status);
 
-      const after = await readLastFullCycleAt('alpha');
+      const after = await readLastSourceCycleAt('alpha');
       expect(after).not.toBeNull();
+      expect(await readLastFullCycleAt('alpha')).not.toBeNull();
       const writtenMs = new Date(after!).getTime();
       expect(writtenMs).toBeGreaterThanOrEqual(t0);
       expect(writtenMs).toBeLessThanOrEqual(Date.now() + 1000);
+    });
+  });
+
+  test('partial split autopilot per-source cycle does not mark source fresh', async () => {
+    await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
+      await seedSource('split-alpha');
+
+      const report = await runCycle(engine, {
+        brainDir,
+        sourceId: 'split-alpha',
+        phases: NON_GLOBAL_PHASES,
+      });
+      expect(report.status).toBe('partial');
+
+      expect(await readLastSourceCycleAt('split-alpha')).toBeNull();
+      expect(await readLastFullCycleAt('split-alpha')).toBeNull();
+    });
+  });
+
+  test('clean split autopilot per-source cycle writes source timestamp without legacy full-cycle stamp', async () => {
+    await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
+      await seedSource('split-clean');
+
+      const report = await runCycle(engine, {
+        brainDir: null,
+        sourceId: 'split-clean',
+        phases: NON_GLOBAL_PHASES,
+      });
+      expect(report.status).toBe('clean');
+
+      expect(await readLastSourceCycleAt('split-clean')).not.toBeNull();
+      expect(await readLastFullCycleAt('split-clean')).toBeNull();
     });
   });
 
@@ -99,7 +140,7 @@ describe('runCycle last_full_cycle_at exit hook', () => {
         phases: ['lint'],
       });
       // No per-source write happens; default source's config stays empty.
-      const after = await readLastFullCycleAt('default-like');
+      const after = await readLastSourceCycleAt('default-like');
       expect(after).toBeNull();
     });
   });
@@ -113,7 +154,7 @@ describe('runCycle last_full_cycle_at exit hook', () => {
         phases: ['lint'],
         dryRun: true,
       });
-      const after = await readLastFullCycleAt('beta');
+      const after = await readLastSourceCycleAt('beta');
       expect(after).toBeNull();
     });
   });
@@ -137,7 +178,7 @@ describe('runCycle last_full_cycle_at exit hook', () => {
       });
       expect(report.status).toBe('skipped');
       expect(report.reason).toBe('cycle_already_running');
-      const after = await readLastFullCycleAt('gamma');
+      const after = await readLastSourceCycleAt('gamma');
       expect(after).toBeNull();
     });
   });
@@ -146,12 +187,12 @@ describe('runCycle last_full_cycle_at exit hook', () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       await seedSource('delta');
       await runCycle(engine, { brainDir, sourceId: 'delta', phases: ['lint'] });
-      const first = await readLastFullCycleAt('delta');
+      const first = await readLastSourceCycleAt('delta');
       expect(first).not.toBeNull();
       // Wait 10ms so the timestamp can advance
       await new Promise(r => setTimeout(r, 10));
       await runCycle(engine, { brainDir, sourceId: 'delta', phases: ['lint'] });
-      const second = await readLastFullCycleAt('delta');
+      const second = await readLastSourceCycleAt('delta');
       expect(second).not.toBeNull();
       expect(new Date(second!).getTime()).toBeGreaterThan(new Date(first!).getTime());
     });

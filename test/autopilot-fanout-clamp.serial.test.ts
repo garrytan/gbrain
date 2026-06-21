@@ -47,13 +47,13 @@ afterEach(() => {
   try { rmSync(auditDir, { recursive: true, force: true }); } catch { /* noop */ }
 });
 
-function writeStarted(concurrency: number): void {
-  const file = join(auditDir, computeSupervisorAuditFilename());
-  writeFileSync(file, JSON.stringify({
-    event: 'started', ts: new Date().toISOString(), supervisor_pid: 4242,
-    queue: 'default', concurrency,
-  }) + '\n', 'utf8');
-}
+  function writeStarted(concurrency: number, ts = new Date().toISOString()): void {
+    const file = join(auditDir, computeSupervisorAuditFilename());
+    writeFileSync(file, JSON.stringify({
+      event: 'started', ts, supervisor_pid: 4242,
+      queue: 'default', concurrency,
+    }) + '\n', 'utf8');
+  }
 
 describe('resolveEffectiveFanoutMax — clamp gated on live supervisor (#2194/codex #9)', () => {
   test('NO live holder → no clamp (stale audit row cannot shrink throughput)', async () => {
@@ -64,6 +64,18 @@ describe('resolveEffectiveFanoutMax — clamp gated on live supervisor (#2194/co
 
   test('live holder + concurrency 3 → clamp to max(1, 3-1) = 2', async () => {
     writeStarted(3);
+    const holder = await tryAcquireDbLock(engine, supervisorLockId('default'), SUPERVISOR_LOCK_TTL_MIN);
+    expect(holder).not.toBeNull();
+    try {
+      const n = await resolveEffectiveFanoutMax(engine, 'default');
+      expect(n).toBe(2);
+    } finally {
+      await holder!.release();
+    }
+  });
+
+  test('live holder + older started event still clamps after 24h supervisor uptime', async () => {
+    writeStarted(3, new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString());
     const holder = await tryAcquireDbLock(engine, supervisorLockId('default'), SUPERVISOR_LOCK_TTL_MIN);
     expect(holder).not.toBeNull();
     try {

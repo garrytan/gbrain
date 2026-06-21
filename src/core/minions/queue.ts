@@ -125,7 +125,7 @@ export class MinionQueue {
     }
     await this.ensureSchema();
 
-    const childStatus: MinionJobStatus = opts?.delay ? 'delayed' : 'waiting';
+    const childStatus: MinionJobStatus = opts?.hold_until_children ? 'paused' : (opts?.delay ? 'delayed' : 'waiting');
     const delayUntil = opts?.delay ? new Date(Date.now() + opts.delay) : null;
     const maxSpawnDepth = opts?.max_spawn_depth ?? this.maxSpawnDepth;
 
@@ -313,7 +313,7 @@ export class MinionQueue {
       if (opts?.parent_job_id) {
         await tx.executeRaw(
           `UPDATE minion_jobs SET status = 'waiting-children', updated_at = now()
-           WHERE id = $1 AND status IN ('waiting','active','delayed')`,
+           WHERE id = $1 AND status IN ('waiting','active','delayed','paused')`,
           [opts.parent_job_id]
         );
       }

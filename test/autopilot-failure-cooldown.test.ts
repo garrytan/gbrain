@@ -91,27 +91,28 @@ describe('readRecentSourceFailures + isSourceInCooldown (PGLite)', () => {
   afterAll(async () => { await engine.disconnect(); });
   beforeEach(async () => { await resetPgliteState(engine); });
 
-  async function addJob(status: string, sourceId: string | null, finishedMinAgo: number): Promise<void> {
+  async function addJob(status: string, sourceId: string | null, finishedMinAgo: number, result?: Record<string, unknown>): Promise<void> {
     const finished = new Date(Date.now() - finishedMinAgo * 60_000).toISOString();
     const data = sourceId === null ? {} : { source_id: sourceId };
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, status, data, finished_at) VALUES ('autopilot-cycle', $1, $2, $3)`,
-      [status, data, finished],
+      `INSERT INTO minion_jobs (name, status, data, finished_at, result) VALUES ('autopilot-cycle', $1, $2, $3, $4)`,
+      [status, data, finished, result ?? null],
     );
   }
 
-  test('groups dead/failed jobs by source with count + max(finished_at)', async () => {
+  test('groups dead/failed jobs and completed failed reports by source', async () => {
     await addJob('dead', 'repo-a', 5);
     await addJob('failed', 'repo-a', 2);
+    await addJob('completed', 'repo-a', 1, { status: 'partial', report: { status: 'partial' } });
     await addJob('dead', 'repo-b', 10);
-    await addJob('completed', 'repo-a', 1); // not counted
+    await addJob('completed', 'repo-b', 1, { status: 'ok', report: { status: 'ok' } }); // not counted
     const map = await readRecentSourceFailures(engine, { sinceMin: 120 });
-    expect(map.get('repo-a')?.count).toBe(2);
+    expect(map.get('repo-a')?.count).toBe(3);
     expect(map.get('repo-b')?.count).toBe(1);
     expect(map.has('repo-a')).toBe(true);
-    // last failed is the most recent of the two (2 min ago).
+    // last failed is the completed partial report (1 min ago).
     const lastA = map.get('repo-a')!.lastFailedAt.getTime();
-    expect(Date.now() - lastA).toBeLessThan(4 * 60_000);
+    expect(Date.now() - lastA).toBeLessThan(3 * 60_000);
   });
 
   test('null source_id rows are excluded (codex #6)', async () => {

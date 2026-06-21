@@ -1765,9 +1765,10 @@ export async function registerBuiltinHandlers(
       yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
     });
 
-    // Stamp last_global_at only on a non-failed run so a failed pass stays stale
-    // and re-dispatches next tick (self-healing retry).
-    if (report.status === 'ok' || report.status === 'clean' || report.status === 'partial') {
+    // Stamp last_global_at only on a fully clean run. `partial` means at least
+    // one global phase failed or warned; keeping it stale lets the next tick
+    // retry instead of marking the whole brain-wide pass fresh.
+    if (report.status === 'ok' || report.status === 'clean') {
       try {
         await engine.setConfig(LAST_GLOBAL_AT_KEY, new Date().toISOString());
       } catch (e) {
