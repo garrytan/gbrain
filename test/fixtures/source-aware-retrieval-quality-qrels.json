@@ -1,0 +1,59 @@
+{
+  "fixture_id": "source-aware-retrieval-quality-qrels",
+  "thresholds": {
+    "top1_match_rate": 0.66,
+    "recall_at_10": 1
+  },
+  "pages": [
+    {
+      "slug": "systems/runtime-platform",
+      "type": "system",
+      "title": "Runtime Platform",
+      "content": "---\ntype: system\ntitle: Runtime Platform\n---\n# Runtime Platform\nRuntime platform coordinates queue routing, worker lanes, and operational dispatch.\n[Source: User, direct message, 2026-06-01 09:00 KST]\n\n## Queue Routing\nQueue routing assigns ingestion work to worker lanes with bounded retries.\n"
+    },
+    {
+      "slug": "concepts/queue-routing",
+      "type": "concept",
+      "title": "Queue Routing",
+      "content": "---\ntype: concept\ntitle: Queue Routing\n---\n# Queue Routing\nQueue routing chooses a worker lane for each durable ingestion task.\n[Source: User, direct message, 2026-06-01 09:05 KST]\n\n## Retry Discipline\nRetry discipline keeps failed queue jobs bounded and observable.\n"
+    },
+    {
+      "slug": "systems/source-aware-retrieval",
+      "type": "system",
+      "title": "Source Aware Retrieval",
+      "content": "---\ntype: system\ntitle: Source Aware Retrieval\n---\n# Source Aware Retrieval\nSource aware retrieval ranks canonical slugs, then requires read_context before factual claims.\n[Source: User, direct message, 2026-06-01 09:10 KST]\n\n## Qrels Gate\nThe qrels gate evaluates candidates by canonical slug instead of raw snippets.\n"
+    }
+  ],
+  "cases": [
+    {
+      "id": "source-aware-top-hit",
+      "query": "source aware retrieval qrels gate",
+      "gold_slugs": ["systems/source-aware-retrieval"],
+      "candidate_slugs": [
+        "systems/source-aware-retrieval",
+        "concepts/queue-routing",
+        "systems/runtime-platform"
+      ]
+    },
+    {
+      "id": "queue-routing-top-hit",
+      "query": "queue routing worker lane retries",
+      "gold_slugs": ["concepts/queue-routing"],
+      "candidate_slugs": [
+        "concepts/queue-routing",
+        "systems/runtime-platform",
+        "systems/source-aware-retrieval"
+      ]
+    },
+    {
+      "id": "queue-routing-recall-only",
+      "query": "operational dispatch platform",
+      "gold_slugs": ["concepts/queue-routing"],
+      "candidate_slugs": [
+        "concepts/queue-routing",
+        "systems/runtime-platform",
+        "systems/source-aware-retrieval"
+      ]
+    }
+  ]
+}

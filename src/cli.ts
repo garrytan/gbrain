@@ -310,6 +310,94 @@ const CLI_ENGINE_COMMANDS: Record<string, CliEngineLoader> = {
   },
 };
 
+export type CliCommandExposureMode =
+  | 'cli_shared'
+  | 'cli_direct_engine'
+  | 'cli_direct_no_engine'
+  | 'cli_only';
+
+export type CliCommandCatalogEntry = {
+  command: string;
+  mode: CliCommandExposureMode;
+  operation_name?: string;
+  operation_spec_name?: string;
+  reason?: string;
+};
+
+export type CliCommandCatalog = {
+  schema_version: 1;
+  commands: Record<string, CliCommandCatalogEntry>;
+};
+
+export function getCliCommandCatalog(sourceOperations: Operation[] = operations): CliCommandCatalog {
+  const commands: Record<string, CliCommandCatalogEntry> = {};
+
+  const setCommand = (entry: CliCommandCatalogEntry) => {
+    commands[entry.command] = entry;
+  };
+
+  for (const op of sourceOperations) {
+    const command = op.cliHints?.name;
+    if (!command || op.cliHints?.hidden) continue;
+    setCommand({
+      command,
+      mode: 'cli_shared',
+      operation_name: op.name,
+    });
+  }
+
+  for (const command of Object.keys(DIRECT_ENGINE_COMMANDS).sort()) {
+    setCommand({
+      command,
+      mode: 'cli_direct_engine',
+      operation_name: commands[command]?.operation_name,
+      operation_spec_name: CLI_ONLY_SPECS[command]?.name,
+      reason: 'direct_engine_command',
+    });
+  }
+
+  for (const command of Object.keys(DIRECT_NO_ENGINE_COMMANDS).sort()) {
+    setCommand({
+      command,
+      mode: 'cli_direct_no_engine',
+      operation_name: commands[command]?.operation_name,
+      operation_spec_name: CLI_ONLY_SPECS[command]?.name,
+      reason: 'direct_no_engine_command',
+    });
+  }
+
+  for (const command of Object.keys(CLI_NO_ENGINE_COMMANDS).sort()) {
+    setCommand({
+      command,
+      mode: 'cli_direct_no_engine',
+      operation_name: commands[command]?.operation_name,
+      operation_spec_name: CLI_ONLY_SPECS[command]?.name,
+      reason: 'cli_no_engine_command',
+    });
+  }
+
+  for (const command of [...CLI_ONLY].sort()) {
+    setCommand({
+      command,
+      mode: 'cli_only',
+      operation_name: commands[command]?.operation_name,
+      operation_spec_name: CLI_ONLY_SPECS[command]?.name,
+      reason: 'process_or_shell_bound',
+    });
+  }
+
+  return {
+    schema_version: 1,
+    commands: Object.fromEntries(Object.entries(commands).sort(([a], [b]) => compareAscii(a, b))),
+  };
+}
+
+function compareAscii(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 async function main() {
   registerSyncBrainHandler(performSyncCommand);
 
