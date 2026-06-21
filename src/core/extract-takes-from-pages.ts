@@ -133,6 +133,11 @@ export async function extractTakesFromPages(
   const dryRun = opts.dryRun ?? false;
   const maxPages = opts.maxPages ?? 50;
   const holder = opts.holder ?? 'system';
+  // S302 (Pingu, local-only fix): default takes to the configured local
+  // chat_model instead of hardcoded cloud Haiku — this brain is OAuth/local
+  // (no ANTHROPIC_API_KEY). Routes through the gateway to local qwen.
+  const takesModel =
+    opts.model ?? (await engine.getConfig('chat_model')) ?? 'anthropic:claude-haiku-4-5';
   const sourceFilter = opts.sourceIdFilter ? `AND source_id = $1` : '';
   const params = opts.sourceIdFilter ? [opts.sourceIdFilter] : [];
 
@@ -190,7 +195,7 @@ export async function extractTakesFromPages(
     let response: { text: string };
     try {
       response = await chat({
-        model: opts.model ?? 'anthropic:claude-haiku-4-5',
+        model: takesModel,
         system: CLASSIFIER_SYSTEM,
         messages: [
           {
