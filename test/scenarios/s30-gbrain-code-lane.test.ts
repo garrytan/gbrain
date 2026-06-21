@@ -32,6 +32,13 @@ type CodeLaneCase = {
 type CodeLaneSnapshot = {
   authority?: string;
   lane_grants_authority?: boolean;
+  governance_metadata?: {
+    evidence_role?: string;
+    authority?: string;
+    graph_frontier_authority?: string;
+    readiness_contribution?: string;
+    verification_mode?: string;
+  };
   graph_walk?: {
     enabled_by_default?: boolean;
     depth_limit?: number;
@@ -285,6 +292,13 @@ describe('S30 - gbrain code lane', () => {
 
       expect(snapshot.authority).toBe('derived_orientation');
       expect(snapshot.lane_grants_authority ?? snapshot.authority !== 'derived_orientation').toBe(false);
+      expect(snapshot.governance_metadata).toMatchObject({
+        evidence_role: 'derived_orientation_pointer',
+        authority: 'not_answer_evidence',
+        graph_frontier_authority: 'orientation_only',
+        readiness_contribution: 'requires_live_workspace_verification',
+        verification_mode: 'live_workspace_check',
+      });
       expect(snapshot.graph_walk).toEqual(expect.objectContaining({
         enabled_by_default: false,
         depth_limit: 1,
@@ -310,6 +324,11 @@ describe('S30 - gbrain code lane', () => {
         { requested: true, direction: 'out', depth_limit: 1, fanout_cap: 3 },
       );
       const expandedEdges = Array.isArray(expanded.edges) ? expanded.edges : [];
+      expect(expanded.governance_metadata).toMatchObject({
+        evidence_role: 'derived_orientation_pointer',
+        authority: 'not_answer_evidence',
+        graph_frontier_authority: 'orientation_only',
+      });
       expect(expandedEdges.length).toBeGreaterThan(0);
       expect(expandedEdges.length).toBeLessThanOrEqual(3);
 

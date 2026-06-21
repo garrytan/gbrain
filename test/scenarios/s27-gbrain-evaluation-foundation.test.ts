@@ -148,6 +148,18 @@ describe('S27 - gbrain evaluation foundation', () => {
       expect(retrieve.answerability.reason_codes).toContain('probe_candidates_are_not_answer_ground');
       expect(retrieve.required_reads[0]?.selector_id).toBe(replay.expected_canonical_refs[0]);
       expect(retrieve.candidates[0]?.activation).toBe(expectedActivation(replay.candidate_authority));
+      expect(retrieve.create_safety).toMatchObject({
+        status: 'exists',
+        write_permission_granted: false,
+      });
+      expect(retrieve.candidates[0]?.evidence_metadata).toMatchObject({
+        evidence_role: 'probe_candidate_pointer',
+        authority: 'not_answer_evidence',
+        create_safety: {
+          status: 'exists',
+          write_permission_granted: false,
+        },
+      });
 
       const read = await operationsByName.read_context.handler(opContext(handle.engine), {
         selectors: retrieve.required_reads,
@@ -156,6 +168,12 @@ describe('S27 - gbrain evaluation foundation', () => {
 
       expect(read.answer_ready.ready).toBe(true);
       expect(read.canonical_reads[0]?.text).toContain('GA P2 retrieval canonical needle');
+      expect(read.canonical_reads[0]?.evidence_metadata).toMatchObject({
+        evidence_role: 'answer_ground',
+        stale_selector_result: 'current',
+        derived_index_status: 'current',
+        readiness_contribution: 'supports_answer_ready',
+      });
     } finally {
       await handle.teardown();
     }

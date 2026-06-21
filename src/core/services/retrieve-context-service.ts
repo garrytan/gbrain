@@ -191,6 +191,8 @@ export async function retrieveContext(
       candidates,
       limit,
     );
+    const createSafety = buildCreateSafety(candidates, requiredReads, { selector_existence_verified: false });
+    const decoratedCandidates = withCandidateResultMetadata(candidates, createSafety);
 
     return maybePersistRetrieveTrace(engine, {
       request_id: requestId,
@@ -203,11 +205,11 @@ export async function retrieveContext(
         must_read_context: true,
         reason_codes: ['exact_selectors_require_canonical_read'],
       },
-      candidates,
+      candidates: decoratedCandidates,
       required_reads: requiredReads,
-      create_safety: buildCreateSafety(candidates, requiredReads, { selector_existence_verified: false }),
+      create_safety: createSafety,
       read_plan: buildReadPlan({
-        candidates,
+        candidates: decoratedCandidates,
         required_reads: requiredReads,
         orientation,
         candidate_signals: candidateSignals,
@@ -238,6 +240,8 @@ export async function retrieveContext(
       candidates,
       limit,
     );
+    const createSafety = buildCreateSafety(candidates, requiredReads, { selector_existence_verified: false });
+    const decoratedCandidates = withCandidateResultMetadata(candidates, createSafety);
 
     return maybePersistRetrieveTrace(engine, {
       request_id: requestId,
@@ -250,11 +254,11 @@ export async function retrieveContext(
         must_read_context: true,
         reason_codes: ['task_continuation_requires_task_state'],
       },
-      candidates,
+      candidates: decoratedCandidates,
       required_reads: requiredReads,
-      create_safety: buildCreateSafety(candidates, requiredReads, { selector_existence_verified: false }),
+      create_safety: createSafety,
       read_plan: buildReadPlan({
-        candidates,
+        candidates: decoratedCandidates,
         required_reads: requiredReads,
         orientation,
         candidate_signals: candidateSignals,
@@ -305,7 +309,18 @@ export async function retrieveContext(
     limit,
   );
 
+  const backendGapReason = candidateSearchBackendGap(candidatePool);
   const backendGap = buildBackendGap(candidatePool);
+  const createSafety = buildCreateSafety(candidates, requiredReads, {
+    candidate_signals: candidateSignals.candidate_signals,
+    candidate_signal_policy: candidateSignals.candidate_signal_policy,
+    canonical_probe_completed: query.length > 0 && !backendGapReason,
+  });
+  const graphFrontierUsed = graphAugmentation.orientation.derived_consulted.includes('graph_frontier');
+  const decoratedCandidates = withCandidateResultMetadata(candidates, createSafety, {
+    backend_gap: backendGap,
+    graph_frontier_authority: graphFrontierUsed ? 'selector_planning_only' : undefined,
+  });
   return maybePersistRetrieveTrace(engine, {
     request_id: requestId,
     scenario: classification.scenario,
@@ -315,18 +330,18 @@ export async function retrieveContext(
       answerable_from_probe: false,
       allowed_probe_answer_kind: 'none',
       must_read_context: requiredReads.length > 0,
-      reason_codes: broadRetrievalReasonCodes(requiredReads, candidateSignals, candidateSearchBackendGap(candidatePool)),
+      reason_codes: broadRetrievalReasonCodes(requiredReads, candidateSignals, backendGapReason),
     },
-    candidates,
+    candidates: decoratedCandidates,
     required_reads: requiredReads,
-    create_safety: buildCreateSafety(candidates, requiredReads),
+    create_safety: createSafety,
     read_plan: buildReadPlan({
-      candidates,
+      candidates: decoratedCandidates,
       required_reads: requiredReads,
       orientation: graphAugmentation.orientation,
       candidate_signals: candidateSignals,
       required_read_limit: requiredReadLimit,
-      backend_gap_reason: candidateSearchBackendGap(candidatePool),
+      backend_gap_reason: backendGapReason,
       backend_gap: backendGap,
     }),
     orientation: graphAugmentation.orientation,
@@ -1551,11 +1566,57 @@ function buildCandidateEvidenceMetadata(
   };
 }
 
+function withCandidateResultMetadata(
+  candidates: RetrieveContextCandidate[],
+  createSafety: NonNullable<RetrieveContextResult['create_safety']>,
+  options: {
+    backend_gap?: RetrieveContextBackendGap;
+    graph_frontier_authority?: NonNullable<RetrieveContextCandidate['evidence_metadata']>['graph_frontier_authority'];
+  } = {},
+): RetrieveContextCandidate[] {
+  const createSafetySummary = compactCreateSafety(createSafety);
+  const backendGapSummary = options.backend_gap
+    ? {
+        status: options.backend_gap.status,
+        reason_code: options.backend_gap.reason_code,
+      }
+    : undefined;
+  return candidates.map((candidate) => {
+    const evidenceMetadata = candidate.evidence_metadata ?? buildCandidateEvidenceMetadata(candidate);
+    return {
+      ...candidate,
+      evidence_metadata: {
+        ...evidenceMetadata,
+        create_safety: createSafetySummary,
+        ...(backendGapSummary ? { backend_gap: backendGapSummary } : {}),
+        ...(options.graph_frontier_authority
+          ? { graph_frontier_authority: options.graph_frontier_authority }
+          : {}),
+      },
+    };
+  });
+}
+
+function compactCreateSafety(
+  createSafety: NonNullable<RetrieveContextResult['create_safety']>,
+): NonNullable<NonNullable<RetrieveContextCandidate['evidence_metadata']>['create_safety']> {
+  return {
+    status: createSafety.status,
+    reasons: createSafety.reasons,
+    write_permission_granted: createSafety.write_permission_granted,
+  };
+}
+
 function buildCreateSafety(
   candidates: RetrieveContextCandidate[],
   requiredReads: RetrievalSelector[],
-  options: { selector_existence_verified?: boolean } = {},
-): RetrieveContextResult['create_safety'] {
+  options: {
+    selector_existence_verified?: boolean;
+    candidate_signals?: RetrieveContextResult['candidate_signals'];
+    candidate_signal_policy?: RetrieveContextResult['candidate_signal_policy'];
+    canonical_probe_completed?: boolean;
+  } = {},
+): NonNullable<RetrieveContextResult['create_safety']> {
   const matchedCandidateIds = candidates
     .filter((candidate) => requiredReads.some((selector) =>
       selectorEvidencePlanKey(selector) === selectorEvidencePlanKey(candidate.read_selector)
@@ -1563,20 +1624,42 @@ function buildCreateSafety(
     .map((candidate) => candidate.candidate_id);
   const matchedSelectorIds = requiredReads.map(retrievalSelectorId);
   const existenceVerified = options.selector_existence_verified !== false;
-  const status = matchedCandidateIds.length === 0
-    ? 'no_canonical_candidate'
-    : existenceVerified
+  const candidateSignalIds = options.candidate_signals?.map((signal) => signal.candidate_id) ?? [];
+  const suppressedCandidateCount = options.candidate_signal_policy?.suppressed_count ?? 0;
+  const status = matchedCandidateIds.length > 0
+    ? existenceVerified
       ? 'exists'
-      : 'unknown';
+      : 'unknown'
+    : candidateSignalIds.length > 0
+      ? 'probable_duplicate'
+      : suppressedCandidateCount > 0
+        ? 'probable_duplicate'
+        : matchedSelectorIds.length > 0
+          ? 'unknown'
+          : options.canonical_probe_completed === true
+            ? 'safe_to_propose'
+            : 'no_canonical_candidate';
+  const candidateIds = status === 'probable_duplicate'
+    ? candidateSignalIds
+    : matchedCandidateIds;
+  const probableDuplicateReasons = candidateSignalIds.length > 0
+    ? ['memory_inbox_candidate_overlap_requires_review', 'route_memory_writeback_required_before_write']
+    : ['suppressed_memory_inbox_overlap_requires_review', 'route_memory_writeback_required_before_write'];
   return {
     status,
-    matched_candidate_ids: matchedCandidateIds,
+    matched_candidate_ids: candidateIds,
     matched_selector_ids: matchedSelectorIds,
     reasons: status === 'exists'
       ? ['canonical_candidate_exists', 'route_memory_writeback_still_required_for_writes']
       : status === 'unknown'
-        ? ['selector_existence_not_verified', 'route_memory_writeback_required_before_write']
-        : ['no_existing_canonical_candidate_in_probe', 'route_memory_writeback_required_before_write'],
+        ? matchedSelectorIds.length > 0 && matchedCandidateIds.length === 0
+          ? ['canonical_read_selected_requires_read_context', 'route_memory_writeback_required_before_write']
+          : ['selector_existence_not_verified', 'route_memory_writeback_required_before_write']
+        : status === 'probable_duplicate'
+          ? probableDuplicateReasons
+          : status === 'safe_to_propose'
+            ? ['no_canonical_or_candidate_overlap_in_probe', 'route_memory_writeback_required_before_write']
+            : ['no_existing_canonical_candidate_in_probe', 'route_memory_writeback_required_before_write'],
     write_permission_granted: false,
   };
 }

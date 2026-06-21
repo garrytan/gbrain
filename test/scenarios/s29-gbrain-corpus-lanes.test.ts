@@ -165,6 +165,14 @@ describe('S29 - gbrain corpus lanes', () => {
         expect(retrieve.required_reads[0]?.corpus_lane?.lane_id).toBe(lane.lane_id);
         expect(retrieve.candidates[0]?.canonical_target.corpus_lane?.lane_id).toBe(lane.lane_id);
         expect(retrieve.candidates[0]?.matched_chunks[0]?.corpus_lane?.lane_id).toBe(lane.lane_id);
+        expect(retrieve.candidates[0]?.evidence_metadata).toMatchObject({
+          evidence_role: 'probe_candidate_pointer',
+          corpus_lane: expect.objectContaining({ lane_id: lane.lane_id }),
+          create_safety: {
+            status: 'exists',
+            write_permission_granted: false,
+          },
+        });
         expect(retrieve.trace?.source_refs).toEqual(expect.arrayContaining([
           lane.canonical_selector,
           `corpus_lane:${lane.lane_id}`,
@@ -182,6 +190,11 @@ describe('S29 - gbrain corpus lanes', () => {
         expect(read.answer_ready.ready).toBe(true);
         expect(read.canonical_reads[0]?.authority).toBe('canonical_compiled_truth');
         expect(read.canonical_reads[0]?.corpus_lane?.lane_id).toBe(lane.lane_id);
+        expect(read.canonical_reads[0]?.evidence_metadata).toMatchObject({
+          evidence_role: 'answer_ground',
+          corpus_lane: expect.objectContaining({ lane_id: lane.lane_id }),
+          readiness_contribution: 'supports_answer_ready',
+        });
         expect(read.canonical_reads[0]?.source_refs).toEqual(expect.arrayContaining([
           `corpus_lane:${lane.lane_id}`,
           `source_record:${lane.source_record}`,
@@ -208,6 +221,11 @@ describe('S29 - gbrain corpus lanes', () => {
           intended_operation: string;
           candidate_input?: { source_refs: string[] };
           canonical_write_requirements?: unknown;
+          writeback_governance_metadata?: {
+            route_decision: string;
+            provenance: { corpus_lane_refs_count: number };
+            apply_mode: string;
+          };
         };
 
         expect(laneWriteback.decision).toBe('create_candidate');
@@ -218,6 +236,14 @@ describe('S29 - gbrain corpus lanes', () => {
           `import_origin:${lane.import_origin}`,
         ]));
         expect(laneWriteback.canonical_write_requirements).toBeUndefined();
+        const laneCorpusRefCount = laneWriteback.writeback_governance_metadata?.provenance.corpus_lane_refs_count;
+        expect(laneWriteback.writeback_governance_metadata).toMatchObject({
+          route_decision: 'create_candidate',
+          apply_mode: 'plan_only',
+          provenance: { corpus_lane_refs_count: expect.any(Number) },
+        });
+        expect(typeof laneCorpusRefCount).toBe('number');
+        expect(laneCorpusRefCount).toBeGreaterThan(0);
       }
 
       const ambiguous = await operationsByName.route_memory_writeback.handler(ctx, {
@@ -225,12 +251,25 @@ describe('S29 - gbrain corpus lanes', () => {
         source_kind: 'import',
         evidence_kind: 'source_extracted',
         source_refs: ['Source: imported transcript, 2026-05-19'],
-      }) as { decision: string; intended_operation: string; reasons: string[]; missing_requirements: string[] };
+      }) as {
+        decision: string;
+        intended_operation: string;
+        reasons: string[];
+        missing_requirements: string[];
+        writeback_governance_metadata?: {
+          route_decision: string;
+          missing_requirements: string[];
+        };
+      };
 
       expect(ambiguous.decision).toBe('defer');
       expect(ambiguous.intended_operation).toBe('none');
       expect(ambiguous.reasons).toContain('import_lane_required');
       expect(ambiguous.missing_requirements).toContain('corpus_lane');
+      expect(ambiguous.writeback_governance_metadata).toMatchObject({
+        route_decision: 'defer',
+        missing_requirements: expect.arrayContaining(['corpus_lane']),
+      });
     } finally {
       await handle.teardown();
     }

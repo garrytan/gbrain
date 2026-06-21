@@ -121,6 +121,12 @@ describe('S31 - gbrain personal maintenance cycle', () => {
       expect(result.suggestions.every((entry) => entry.policy_checks.source_refs_present === true)).toBe(true);
       expect(result.suggestions.every((entry) => entry.policy_checks.scope_present === true)).toBe(true);
       expect(result.suggestions.every((entry) => entry.redaction_checks.fail_closed === true)).toBe(true);
+      expect(result.suggestions.every((entry) =>
+        entry.governance_metadata?.authority === 'report_or_candidate_only'
+        && entry.governance_metadata?.canonical_write_allowed === false
+        && entry.governance_metadata?.apply_requires_control_plane === true
+        && entry.governance_metadata?.target_snapshot_required_for_apply === true
+      )).toBe(true);
       expect(result.derived_freshness_report).toMatchObject({
         enabled: true,
         artifact_count: 1,
@@ -269,6 +275,12 @@ describe('S31 - gbrain personal maintenance cycle', () => {
         requires_target_snapshot: true,
         dry_run_apply_validation_parity: true,
         redaction_fail_closed: true,
+      });
+      expect(maintenance.apply_control_plane.governance_metadata).toMatchObject({
+        authority: 'control_plane_required',
+        allowed_without_control_plane: false,
+        requires_target_snapshot: true,
+        dry_run_apply_validation_parity: true,
       });
       expect(maintenance.apply_control_plane.supported_operations).not.toContain('apply_memory_redaction_plan');
       expect(maintenance.apply_control_plane.supported_operations).not.toContain('record_memory_mutation_event');

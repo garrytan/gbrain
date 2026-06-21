@@ -67,8 +67,16 @@ export interface DreamCycleMaintenanceSuggestion {
     fail_closed: true;
     status: 'not_applicable';
   };
+  governance_metadata: DreamCycleSuggestionGovernanceMetadata;
   status: DreamCycleSuggestionStatus;
   summary_lines: string[];
+}
+
+export interface DreamCycleSuggestionGovernanceMetadata {
+  authority: 'report_or_candidate_only';
+  canonical_write_allowed: false;
+  apply_requires_control_plane: true;
+  target_snapshot_required_for_apply: true;
 }
 
 export interface DreamCycleMaintenancePhase {
@@ -101,8 +109,16 @@ export interface DreamCycleApplyControlPlane {
   requires_target_snapshot: true;
   dry_run_apply_validation_parity: true;
   redaction_fail_closed: true;
+  governance_metadata: DreamCycleApplyControlPlaneGovernanceMetadata;
   supported_operations: string[];
   summary_lines: string[];
+}
+
+export interface DreamCycleApplyControlPlaneGovernanceMetadata {
+  authority: 'control_plane_required';
+  allowed_without_control_plane: false;
+  requires_target_snapshot: true;
+  dry_run_apply_validation_parity: true;
 }
 
 export interface DreamCycleMaintenanceResult {
@@ -321,6 +337,7 @@ async function toSuggestion(
       fail_closed: true,
       status: 'not_applicable',
     },
+    governance_metadata: suggestionGovernanceMetadata(),
     status,
     summary_lines: draft.summary_lines,
   };
@@ -592,6 +609,12 @@ function buildApplyControlPlane(): DreamCycleApplyControlPlane {
     requires_target_snapshot: true,
     dry_run_apply_validation_parity: true,
     redaction_fail_closed: true,
+    governance_metadata: {
+      authority: 'control_plane_required',
+      allowed_without_control_plane: false,
+      requires_target_snapshot: true,
+      dry_run_apply_validation_parity: true,
+    },
     supported_operations: [
       'dry_run_memory_mutation',
       'apply_memory_patch_candidate',
@@ -600,6 +623,15 @@ function buildApplyControlPlane(): DreamCycleApplyControlPlane {
       'Maintenance apply is disabled unless routed through the existing control plane.',
       'Apply-capable maintenance requires active realm/session, mutation ledger, target snapshot, dry-run/apply parity, and redaction fail-closed behavior.',
     ],
+  };
+}
+
+function suggestionGovernanceMetadata(): DreamCycleSuggestionGovernanceMetadata {
+  return {
+    authority: 'report_or_candidate_only',
+    canonical_write_allowed: false,
+    apply_requires_control_plane: true,
+    target_snapshot_required_for_apply: true,
   };
 }
 

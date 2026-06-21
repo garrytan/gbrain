@@ -58,6 +58,7 @@ export interface CodeLaneGraphSnapshot {
   kind: typeof CODE_LANE_CONTEXT_MAP_KIND;
   authority: CodeLaneAuthority;
   lane_grants_authority: false;
+  governance_metadata: CodeLaneGovernanceMetadata;
   graph_walk: typeof DEFAULT_CODE_LANE_GRAPH_WALK_CONTROLS;
   nodes: CodeLaneNode[];
   edges: CodeLaneEdge[];
@@ -74,6 +75,15 @@ export interface CodeLaneGraphExpansion {
   edges: CodeLaneEdge[];
   truncated: boolean;
   truncation_reason: 'fanout_cap' | 'depth_limit' | 'max_nodes' | null;
+  governance_metadata: CodeLaneGovernanceMetadata;
+}
+
+export interface CodeLaneGovernanceMetadata {
+  evidence_role: 'derived_orientation_pointer';
+  authority: 'not_answer_evidence';
+  graph_frontier_authority: 'orientation_only';
+  readiness_contribution: 'requires_live_workspace_verification';
+  verification_mode: 'live_workspace_check';
 }
 
 interface CodemapEntry {
@@ -132,6 +142,7 @@ export function buildCodeLaneGraphSnapshotFromManifests(
     kind: CODE_LANE_CONTEXT_MAP_KIND,
     authority: 'derived_orientation',
     lane_grants_authority: false,
+    governance_metadata: codeLaneGovernanceMetadata(),
     graph_walk: DEFAULT_CODE_LANE_GRAPH_WALK_CONTROLS,
     nodes,
     edges,
@@ -168,6 +179,7 @@ export function expandCodeLaneGraph(
       edges: [],
       truncated: false,
       truncation_reason: null,
+      governance_metadata: codeLaneGovernanceMetadata(),
     };
   }
 
@@ -231,6 +243,17 @@ export function expandCodeLaneGraph(
     edges: selectedEdges,
     truncated,
     truncation_reason: truncationReason,
+    governance_metadata: codeLaneGovernanceMetadata(),
+  };
+}
+
+function codeLaneGovernanceMetadata(): CodeLaneGovernanceMetadata {
+  return {
+    evidence_role: 'derived_orientation_pointer',
+    authority: 'not_answer_evidence',
+    graph_frontier_authority: 'orientation_only',
+    readiness_contribution: 'requires_live_workspace_verification',
+    verification_mode: 'live_workspace_check',
   };
 }
 

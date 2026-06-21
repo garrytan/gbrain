@@ -68,6 +68,9 @@ describe('read context service', () => {
         source_ref_count: 1,
         source_ref_kinds: ['user'],
         freshness: 'current',
+        stale_selector_result: 'current',
+        derived_index_status: 'current',
+        readiness_contribution: 'supports_answer_ready',
         continuation_status: 'complete',
       });
       expect(result.unread_required).toEqual([]);
@@ -107,6 +110,9 @@ describe('read context service', () => {
       expect(result.conflicts[0]!.summary).toContain('qrm');
       expect(result.answer_ready.ready).toBe(false);
       expect(result.answer_ready.unsupported_reasons).toContain('conflicting_canonical_evidence');
+      expect(result.canonical_reads.every((read) =>
+        read.evidence_metadata?.readiness_contribution === 'conflict'
+      )).toBe(true);
     });
   });
 

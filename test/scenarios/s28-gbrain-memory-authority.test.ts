@@ -204,6 +204,11 @@ describe('S28 - gbrain memory authority', () => {
         canonical_reads: Array<{
           selector: { kind: string; object_id?: string };
           authority: MemoryArtifactAuthority;
+          evidence_metadata?: {
+            evidence_role: string;
+            authority: MemoryArtifactAuthority;
+            readiness_contribution: string;
+          };
         }>;
       };
 
@@ -215,6 +220,10 @@ describe('S28 - gbrain memory authority', () => {
         selector: expect.objectContaining({ kind: 'personal_episode' }),
         authority: 'personal_episode',
       }));
+      expect(result.canonical_reads.every((read) =>
+        read.evidence_metadata?.evidence_role === 'answer_ground'
+        && read.evidence_metadata?.readiness_contribution === 'supports_answer_ready'
+      )).toBe(true);
     } finally {
       await handle.teardown();
     }
@@ -235,11 +244,28 @@ describe('S28 - gbrain memory authority', () => {
         target_object_type: 'curated_note',
         target_object_id: 'systems/mbrain',
         sensitivity: 'work',
-      }) as { decision: string; intended_operation: string; reasons: string[] };
+      }) as {
+        decision: string;
+        intended_operation: string;
+        reasons: string[];
+        writeback_governance_metadata?: {
+          route_decision: string;
+          apply_mode: string;
+          target_snapshot: { input_state: string };
+        };
+      };
       const expectedSnapshot = writebackCase('canonical_snapshot_guard');
       expect(snapshotGuard.decision).toBe(expectedSnapshot.expected_decision);
       expect(snapshotGuard.intended_operation).toBe(expectedSnapshot.expected_intended_operation);
       expect(snapshotGuard.reasons).toContain(expectedSnapshot.expected_reason);
+      expect(snapshotGuard.writeback_governance_metadata).toMatchObject({
+        route_decision: expectedSnapshot.expected_decision,
+        apply_mode: 'plan_only',
+        target_snapshot: {
+          input_state: 'hash',
+          expected_content_hash: null,
+        },
+      });
 
       const personalGuard = await operationsByName.route_memory_writeback.handler(ctx, {
         content: 'The user prefers private planning notes.',
@@ -247,12 +273,24 @@ describe('S28 - gbrain memory authority', () => {
         source_refs: sourceRefs,
         target_object_type: 'profile_memory',
         target_object_id: 'profile:user-preferences',
-      }) as { decision: string; intended_operation: string; reasons: string[] };
+      }) as {
+        decision: string;
+        intended_operation: string;
+        reasons: string[];
+        writeback_governance_metadata?: {
+          route_decision: string;
+          missing_requirements: string[];
+        };
+      };
       const expectedPersonal = writebackCase('personal_target_scope_sensitivity_guard');
       expect(personalGuard.decision).toBe(expectedPersonal.expected_decision);
       expect(personalGuard.intended_operation).toBe(expectedPersonal.expected_intended_operation);
       expect(personalGuard.reasons).toContain(expectedPersonal.expected_reason);
       expect(personalGuard.reasons).toContain('personal_target_sensitivity_required');
+      expect(personalGuard.writeback_governance_metadata).toMatchObject({
+        route_decision: expectedPersonal.expected_decision,
+        missing_requirements: expect.arrayContaining(['sensitivity']),
+      });
 
       const contradiction = await operationsByName.route_memory_writeback.handler(ctx, {
         content: 'The user corrected an earlier GA-P4 authority claim.',
@@ -265,6 +303,11 @@ describe('S28 - gbrain memory authority', () => {
         intended_operation: string;
         reasons: string[];
         candidate_input?: { candidate_type: string; status: string };
+        writeback_governance_metadata?: {
+          route_decision: string;
+          apply_mode: string;
+          candidate_only_reason?: string;
+        };
       };
       const expectedContradiction = writebackCase('contradiction_candidate');
       expect(contradiction.decision).toBe(expectedContradiction.expected_decision);
@@ -274,17 +317,35 @@ describe('S28 - gbrain memory authority', () => {
         candidate_type: 'note_update',
         status: 'captured',
       });
+      expect(contradiction.writeback_governance_metadata).toMatchObject({
+        route_decision: expectedContradiction.expected_decision,
+        apply_mode: 'plan_only',
+        candidate_only_reason: expect.any(String),
+      });
 
       const taskMechanics = await operationsByName.route_memory_writeback.handler(ctx, {
         content: 'Ran the focused GA-P4 test command.',
         evidence_kind: 'task_mechanics',
         source_refs: sourceRefs,
-      }) as { decision: string; intended_operation: string; reasons: string[]; candidate_input?: unknown };
+      }) as {
+        decision: string;
+        intended_operation: string;
+        reasons: string[];
+        candidate_input?: unknown;
+        writeback_governance_metadata?: {
+          route_decision: string;
+          apply_mode: string;
+        };
+      };
       const expectedTaskMechanics = writebackCase('task_mechanics_no_write');
       expect(taskMechanics.decision).toBe(expectedTaskMechanics.expected_decision);
       expect(taskMechanics.intended_operation).toBe(expectedTaskMechanics.expected_intended_operation);
       expect(taskMechanics.reasons).toContain(expectedTaskMechanics.expected_reason);
       expect(taskMechanics.candidate_input).toBeUndefined();
+      expect(taskMechanics.writeback_governance_metadata).toMatchObject({
+        route_decision: expectedTaskMechanics.expected_decision,
+        apply_mode: 'no_write',
+      });
     } finally {
       await handle.teardown();
     }

@@ -136,11 +136,16 @@ export async function readContext(
   }
 
   const conflicts = buildContextConflicts(reads);
+  const canonicalReads = reads.map((read) =>
+    withReadinessContribution(
+      read,
+      conflicts.length > 0 ? 'conflict' : 'supports_answer_ready',
+    ));
 
   return maybePersistReadTrace(engine, {
-    answer_ready: buildAnswerReady(reads, unreadRequired, selectorWarnings, conflicts),
-    canonical_reads: reads,
-    evidence_claims: reads.map(buildEvidenceClaim),
+    answer_ready: buildAnswerReady(canonicalReads, unreadRequired, selectorWarnings, conflicts),
+    canonical_reads: canonicalReads,
+    evidence_claims: canonicalReads.map(buildEvidenceClaim),
     conflicts,
     warnings,
     ...(selectorWarnings.length > 0 ? { selector_warnings: selectorWarnings } : {}),
@@ -839,6 +844,22 @@ function withEvidenceMetadata(read: CanonicalContextRead): CanonicalContextRead 
       ...(read.corpus_lane ? { corpus_lane: read.corpus_lane } : {}),
       ...(window ? { window } : {}),
       continuation_status: read.has_more ? 'continued' : 'complete',
+      stale_selector_result: read.selector.freshness === 'stale' ? 'stale' : 'current',
+      derived_index_status: 'current',
+    },
+  };
+}
+
+function withReadinessContribution(
+  read: CanonicalContextRead,
+  readinessContribution: NonNullable<CanonicalContextRead['evidence_metadata']>['readiness_contribution'],
+): CanonicalContextRead {
+  const evidenceMetadata = read.evidence_metadata ?? withEvidenceMetadata(read).evidence_metadata!;
+  return {
+    ...read,
+    evidence_metadata: {
+      ...evidenceMetadata,
+      readiness_contribution: readinessContribution,
     },
   };
 }
