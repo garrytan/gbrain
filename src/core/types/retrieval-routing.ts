@@ -650,11 +650,57 @@ export interface RetrieveContextGraphFrontierOptions {
   fanout_cap?: number;
 }
 
+export interface SelectorFirstPushContextAnswerReadiness {
+  ready: false;
+  must_read_context: true;
+  reason_codes: string[];
+}
+
+export interface SelectorFirstPushContextSelectorSnapshot {
+  selector_id: string;
+  kind: RetrievalSelector['kind'];
+  scope_id?: string;
+  slug?: string;
+  path?: string;
+  section_id?: string;
+  source_ref?: string;
+  line_start?: number;
+  line_end?: number;
+  char_start?: number;
+  char_end?: number;
+  object_id?: string;
+  content_hash?: string;
+  freshness?: RetrievalFreshness;
+}
+
+export interface SelectorFirstPushContextEnvelope {
+  schema_version: 1;
+  envelope_kind: 'selector_first_push_context';
+  request_id: string;
+  created_at: string;
+  expires_at: string;
+  ttl_ms: number;
+  trace_ids: string[];
+  selector_ids: string[];
+  selector_snapshots: SelectorFirstPushContextSelectorSnapshot[];
+  content_hashes: string[];
+  source_ref_count: number;
+  confidence: number;
+  not_answer_ground_until_read_context: true;
+  required_next_tool: 'read_context';
+  answer_readiness: SelectorFirstPushContextAnswerReadiness;
+  read_context_arguments: {
+    selectors: SelectorFirstPushContextSelectorSnapshot[];
+  };
+  scope_gate?: ScopeGateDecisionResult;
+}
+
 export interface RetrieveContextInput extends MemoryScenarioClassifierInput {
   selectors?: RetrievalSelector[];
   limit?: number;
   token_budget?: number;
   include_orientation?: boolean;
+  include_push_context?: boolean;
   graph_frontier?: RetrieveContextGraphFrontierOptions;
   persist_trace?: boolean;
 }
@@ -672,6 +718,7 @@ export interface RetrieveContextResult {
   candidate_signal_policy: CandidateSignalPolicy;
   candidate_signals: CandidateSignal[];
   create_safety?: RetrieveContextCreateSafety;
+  push_context?: SelectorFirstPushContextEnvelope;
   warnings: string[];
   trace?: RetrievalTrace | null;
 }

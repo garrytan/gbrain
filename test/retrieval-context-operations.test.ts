@@ -25,6 +25,7 @@ describe('agentic retrieval context operations', () => {
     expect(retrieve?.cliHints?.name).toBe('retrieve-context');
     expect(retrieve?.cliHints?.positional).toEqual(['query']);
     expect(retrieve?.params.graph_frontier).toBeDefined();
+    expect(retrieve?.params.include_push_context).toBeDefined();
 
     expect(read).toBeDefined();
     expect(read?.mutating).toBe(false);
@@ -128,6 +129,93 @@ describe('agentic retrieval context operations', () => {
     expect(output).toContain('disposition=keep_candidate');
     expect(output).toContain('Candidate signals are non-canonical; do not use them as answer evidence.');
     expect(output).not.toContain('Candidate signal for retrieval operation output should stay non-canonical.');
+  });
+
+  test('retrieve_context emits selector-first push context only as bounded read_context pointers', async () => {
+    const op = operationsByName.retrieve_context;
+    if (!op) throw new Error('retrieve_context operation is missing');
+
+    const searchResults: SearchResult[] = [{
+      slug: 'concepts/push-context',
+      page_id: 1,
+      title: 'Push Context',
+      type: 'concept',
+      chunk_text: 'Push context chunks must not be copied into the envelope.',
+      chunk_source: 'compiled_truth',
+      score: 7.5,
+      stale: false,
+    }];
+    const engine = {
+      searchKeyword: async () => searchResults,
+      getPageProjection: async () => ({
+        content_hash: 'page-hash-push-context',
+      }),
+      listNoteSectionEntries: async () => [{
+        scope_id: 'workspace:default',
+        page_slug: 'concepts/push-context',
+        page_path: 'concepts/push-context.md',
+        heading_path: ['Compiled Truth'],
+        heading_text: 'Compiled Truth',
+        section_id: 'concepts/push-context#compiled-truth',
+        line_start: 1,
+        line_end: 4,
+        source_refs: ['Source: User, direct message, 2026-06-21 23:30 KST'],
+        content_hash: 'section-hash-push-context',
+        section_text: 'Push context chunks must not be copied into the envelope.',
+      }],
+      listMemoryCandidateEntries: async () => [{
+        id: 'candidate:push-context',
+        scope_id: 'workspace:default',
+        candidate_type: 'fact',
+        proposed_content: 'Candidate content must not be copied into the envelope.',
+        source_refs: ['Source: User, direct message, 2026-06-21 23:31 KST'],
+        generated_by: 'manual',
+        extraction_kind: 'manual',
+        confidence_score: 0.8,
+        importance_score: 0.6,
+        recurrence_score: 0.1,
+        sensitivity: 'work',
+        status: 'candidate',
+        target_object_type: 'curated_note',
+        target_object_id: 'concepts/push-context',
+        reviewed_at: null,
+        review_reason: null,
+        verification_status: 'unverified',
+        verification_method: null,
+        verification_evidence: null,
+        verification_source_refs: [],
+        verified_at: null,
+        created_at: new Date('2026-06-21T14:31:00.000Z'),
+        updated_at: new Date('2026-06-21T14:31:00.000Z'),
+      } satisfies MemoryCandidateEntry],
+      listCanonicalHandoffEntries: async () => [],
+    };
+
+    const result = await op.handler(opContext(engine), {
+      query: 'push context',
+      include_orientation: false,
+      include_push_context: true,
+    }) as any;
+
+    expect(result.push_context).toMatchObject({
+      schema_version: 1,
+      envelope_kind: 'selector_first_push_context',
+      not_answer_ground_until_read_context: true,
+      required_next_tool: 'read_context',
+      read_context_arguments: {
+        selectors: [expect.objectContaining({
+          selector_id: 'section:workspace:default:concepts/push-context#compiled-truth',
+          content_hash: 'page-hash-push-context',
+        })],
+      },
+    });
+    expect(result.push_context.selector_ids).toEqual([
+      'section:workspace:default:concepts/push-context#compiled-truth',
+    ]);
+    expect(result.push_context.source_ref_count).toBe(1);
+    expect(JSON.stringify(result.push_context)).not.toContain('Push context chunks');
+    expect(JSON.stringify(result.push_context)).not.toContain('Candidate content');
+    expect(JSON.stringify(result.push_context)).not.toContain('Source: User');
   });
 
   test('read_context parses JSON selectors and preserves char offsets for bounded reads', async () => {

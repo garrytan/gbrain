@@ -481,7 +481,11 @@ function buildOperationManifestEntry(operation: Operation, cliCatalog: CliComman
   const cliExposure = operation.cliHints?.hidden
     ? { mode: 'not_cli' as const, reason: 'cli hint is hidden' }
     : commandEntry
-      ? { mode: commandEntry.mode, command, reason: commandEntry.reason }
+      ? {
+        mode: commandEntry.mode,
+        command,
+        ...(commandEntry.reason ? { reason: commandEntry.reason } : {}),
+      }
       : command
         ? { mode: 'cli_shared' as const, command }
         : { mode: 'mcp' as const, reason: 'mcp operation without CLI command' };

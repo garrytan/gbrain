@@ -44,6 +44,7 @@ import {
   selectorFromSearchResult,
 } from './retrieval-selector-service.ts';
 import { evaluateScopeGate } from './scope-gate-service.ts';
+import { buildSelectorFirstPushContextEnvelope } from './selector-first-push-context-service.ts';
 
 export type RetrieveContextCandidateSearch = (
   query: string,
@@ -1883,10 +1884,32 @@ async function maybePersistRetrieveTrace(
   result: RetrieveContextResult,
   input: RetrieveContextInput,
 ): Promise<RetrieveContextResult> {
-  if (!input.persist_trace) return result;
-  return {
+  if (!input.persist_trace) return attachPushContextEnvelope(result, input);
+  const resultWithTrace = {
     ...result,
     trace: await persistRetrieveTrace(engine, result, input),
+  };
+  return attachPushContextEnvelope(resultWithTrace, input);
+}
+
+function attachPushContextEnvelope(
+  result: RetrieveContextResult,
+  input: RetrieveContextInput,
+): RetrieveContextResult {
+  if (input.include_push_context !== true || result.required_reads.length === 0) return result;
+  const selectors = result.read_plan.selected_selector_snapshots?.length
+    ? result.read_plan.selected_selector_snapshots
+    : result.required_reads;
+  return {
+    ...result,
+    push_context: buildSelectorFirstPushContextEnvelope({
+      request_id: result.request_id,
+      trace_ids: result.trace?.id ? [result.trace.id] : [],
+      selectors,
+      scope_gate: result.scope_gate,
+      answerability: result.answerability,
+      source_ref_count: countSourceRefs(selectors),
+    }),
   };
 }
 
@@ -1933,6 +1956,10 @@ function traceSourceRefs(selectors: RetrievalSelector[]): string[] {
     selectors.map(retrievalSelectorId),
     selectors.flatMap((selector) => selector.source_refs ?? []),
   );
+}
+
+function countSourceRefs(selectors: RetrievalSelector[]): number {
+  return mergeSourceRefs(selectors.flatMap((selector) => selector.source_refs ?? [])).length;
 }
 
 function corpusLaneVerification(selectors: RetrievalSelector[]): string[] {

@@ -5588,6 +5588,10 @@ const retrieve_context: Operation = {
     limit: { type: 'number', description: 'Candidate and required-read limit' },
     token_budget: { type: 'number', description: 'Approximate probe output token budget' },
     include_orientation: { type: 'boolean', description: 'Include derived orientation when useful' },
+    include_push_context: {
+      type: 'boolean',
+      description: 'Include a bounded selector-first push_context envelope; it contains no raw memory text and requires read_context before factual use.',
+    },
     graph_frontier: {
       type: ['object', 'string', 'boolean'],
       description: 'Explicit graph frontier selector planning flag. Default is off; graph paths are explanation-only.',
@@ -5606,6 +5610,7 @@ const retrieve_context: Operation = {
     limit: parsePositiveIntegerParam(p.limit, 'limit'),
     token_budget: parsePositiveIntegerParam(p.token_budget, 'token_budget'),
     include_orientation: typeof p.include_orientation === 'boolean' ? p.include_orientation : undefined,
+    include_push_context: p.include_push_context === true,
     graph_frontier: parseRetrieveContextGraphFrontierParam(p.graph_frontier, 'graph_frontier'),
     persist_trace: p.persist_trace === true,
   })),
