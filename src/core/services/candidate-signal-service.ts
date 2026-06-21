@@ -1,5 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import type {
+  CandidateGovernanceMetadata,
   CandidateSignal,
   CandidateSignalPolicy,
   CandidateSignalPolicyMode,
@@ -124,12 +125,14 @@ export async function buildCandidateSignals(
 
   const cap = Math.min(input.limit, capForPolicy(policy.mode));
   const proposalsByCandidateId = await findActiveCanonicalTargetProposals(engine, visibleMatched, scopeId);
+  const governanceProposalsByCandidateId = await findGovernanceCanonicalTargetProposals(engine, visibleMatched, scopeId);
   const ranked = visibleMatched
     .map(candidate => buildSignal(
       candidate,
       input,
       candidatesWithHandoff.has(candidate.id),
       proposalsByCandidateId.get(candidate.id) ?? null,
+      governanceProposalsByCandidateId.get(candidate.id) ?? proposalsByCandidateId.get(candidate.id) ?? null,
     ))
     .sort((left, right) => {
       if (right.score !== left.score) return right.score - left.score;
@@ -210,6 +213,7 @@ function buildSignal(
   input: BuildCandidateSignalsInput,
   hasCanonicalHandoff: boolean,
   canonicalTargetProposal: CanonicalTargetProposalEntry | null,
+  governanceCanonicalTargetProposal: CanonicalTargetProposalEntry | null,
 ): CandidateSignal {
   const sameTarget = Boolean(candidate.target_object_id && input.required_reads.some(read =>
     read.slug === candidate.target_object_id || read.object_id === candidate.target_object_id,
@@ -251,7 +255,101 @@ function buildSignal(
     pressure_reasons: pressure.pressure_reasons,
     review_priority_hint: pressure.review_priority_hint,
     summary: signalSummary(candidate, canonicalTargetProposal),
+    candidate_governance_metadata: buildCandidateGovernanceMetadata({
+      candidate,
+      why_not_answer_ground: candidateWhyNotAnswerGround(candidate, 'candidate_signal_is_non_canonical'),
+      has_canonical_handoff: hasCanonicalHandoff,
+      canonical_target_proposal: governanceCanonicalTargetProposal,
+      pressure_score: pressure.pressure_score,
+      pressure_reasons: pressure.pressure_reasons,
+      review_priority_hint: pressure.review_priority_hint,
+    }),
   };
+}
+
+export function buildCandidateGovernanceMetadata(input: {
+  candidate: MemoryCandidateEntry;
+  why_not_answer_ground: string[];
+  has_canonical_handoff?: boolean;
+  canonical_target_proposal?: CanonicalTargetProposalEntry | null;
+  pressure_score?: number;
+  pressure_reasons?: CandidateSignal['pressure_reasons'];
+  review_priority_hint?: CandidateSignal['review_priority_hint'];
+}): CandidateGovernanceMetadata {
+  const hasCanonicalHandoff = input.has_canonical_handoff ?? false;
+  const canonicalTargetProposal = input.canonical_target_proposal ?? null;
+  const resolution = classifyCandidateResolutionState({
+    candidate: input.candidate,
+    has_canonical_handoff: hasCanonicalHandoff,
+    canonical_target_proposal: canonicalTargetProposal,
+  });
+  return {
+    answer_ground: false,
+    why_not_answer_ground: dedupeStrings(input.why_not_answer_ground),
+    verification: {
+      status: input.candidate.verification_status,
+      method: input.candidate.verification_method,
+      source_refs_count: input.candidate.verification_source_refs.filter((ref) => ref.trim().length > 0).length,
+      verified_at_present: input.candidate.verified_at !== null,
+    },
+    target_binding: {
+      state: targetBindingState(input.candidate, resolution.state),
+      handoff_present: hasCanonicalHandoff,
+      target_object_type: input.candidate.target_object_type,
+      target_object_id: input.candidate.target_object_id,
+      ...(canonicalTargetProposal
+        ? {
+          proposal_status: canonicalTargetProposal.status,
+          proposal_status_reason: canonicalTargetProposal.status_reason,
+        }
+        : {}),
+    },
+    pressure: {
+      score: input.pressure_score ?? 0,
+      reasons: input.pressure_reasons ?? [],
+      review_priority_hint: input.review_priority_hint ?? 'no_priority',
+    },
+  };
+}
+
+export function candidateWhyNotAnswerGround(
+  candidate: MemoryCandidateEntry,
+  baseReason: string,
+  extraReasons: string[] = [],
+): string[] {
+  return dedupeStrings([
+    baseReason,
+    ...(candidate.verification_status === 'verified'
+      ? ['verified_candidate_still_requires_canonical_read_or_handoff']
+      : []),
+    ...extraReasons,
+  ]);
+}
+
+function targetBindingState(
+  candidate: MemoryCandidateEntry,
+  resolutionState: ReturnType<typeof classifyCandidateResolutionState>['state'],
+): CandidateGovernanceMetadata['target_binding']['state'] {
+  switch (resolutionState) {
+    case 'terminal':
+      return 'terminal';
+    case 'promoted_with_handoff':
+      return 'promoted_with_handoff';
+    case 'promoted_without_handoff':
+      return 'promoted_without_handoff';
+    case 'proposal_pending':
+      return 'proposal_pending';
+    case 'binding_pending':
+      return 'binding_pending';
+    case 'proposal_bound':
+      return 'proposal_bound';
+    case 'hard_blocked_by_proposal':
+      return 'hard_blocked_by_proposal';
+    case 'actionable_unresolved':
+      return candidate.target_object_type && candidate.target_object_id?.trim()
+        ? 'bound'
+        : 'targetless';
+  }
 }
 
 function signalSummary(
@@ -418,6 +516,36 @@ async function findActiveCanonicalTargetProposals(
   return output;
 }
 
+async function findGovernanceCanonicalTargetProposals(
+  engine: CandidateSignalEngine,
+  candidates: MemoryCandidateEntry[],
+  scopeId: string,
+): Promise<Map<string, CanonicalTargetProposalEntry>> {
+  const output = new Map<string, CanonicalTargetProposalEntry>();
+  if (typeof engine.listCanonicalTargetProposalEntries !== 'function') {
+    return output;
+  }
+  await Promise.all(candidates
+    .filter(candidate => !candidate.target_object_id)
+    .map(async (candidate) => {
+      const proposals = await engine.listCanonicalTargetProposalEntries!({
+        scope_id: scopeId,
+        source_candidate_id: candidate.id,
+        limit: 5,
+        offset: 0,
+      });
+      const governanceProposal = proposals.find(proposal =>
+        proposal.status === 'proposed'
+        || proposal.status === 'approved'
+        || proposal.status === 'patch_staged'
+        || proposal.status === 'bound'
+        || proposal.status === 'blocked'
+      );
+      if (governanceProposal) output.set(candidate.id, governanceProposal);
+    }));
+  return output;
+}
+
 function normalizeKnownSubjects(subjects: BuildCandidateSignalsInput['known_subjects']): string[] {
   return (subjects ?? []).map(subject => typeof subject === 'string' ? subject : subject.ref);
 }
@@ -506,4 +634,8 @@ function priorityScore(candidate: MemoryCandidateEntry): number {
 
 function roundScore(value: number): number {
   return Number(value.toFixed(6));
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }

@@ -279,6 +279,16 @@ function baseResult(
     target_object_id: string | null;
   },
 ): RouteMemoryWritebackResult {
+  const explicitSourceRefs = normalizeSourceRefs(input.source_refs);
+  const laneSourceRefs = corpusLaneSourceRefs(input.corpus_lane);
+  const sourceRefs = mergeSourceRefs(explicitSourceRefs, laneSourceRefs);
+  const provenanceRefs = mergeSourceRefs(
+    explicitSourceRefs.filter(isAnswerGroundingProvenanceRef),
+    corpusLaneProvenanceSourceRefs(input.corpus_lane),
+  );
+  const blockers = fields.decision === 'defer' || fields.decision === 'no_write'
+    ? fields.reasons
+    : [];
   return {
     decision: fields.decision,
     intended_operation: fields.intended_operation,
@@ -295,7 +305,57 @@ function baseResult(
       target_object_type: fields.target_object_type,
       target_object_id: fields.target_object_id,
     },
+    writeback_governance_metadata: {
+      route_decision: fields.decision,
+      intended_operation: fields.intended_operation,
+      apply_mode: applyMode(fields.decision),
+      route_reasons: fields.reasons,
+      missing_requirements: fields.missing_requirements ?? [],
+      blockers,
+      provenance: {
+        source_refs_count: sourceRefs.length,
+        answer_grounding_source_refs_count: provenanceRefs.length,
+        corpus_lane_refs_count: laneSourceRefs.length,
+      },
+      target_snapshot: {
+        input_state: targetSnapshotInputState(input),
+        expected_content_hash: targetSnapshotExpectedHash(input),
+      },
+      sensitivity: fields.sensitivity,
+      ...(fields.decision === 'create_candidate' && fields.reasons[0]
+        ? { candidate_only_reason: fields.reasons[0] }
+        : {}),
+      ...(fields.decision === 'canonical_write_allowed'
+        ? { control_plane_apply_reason: 'canonical_write_requires_put_page_with_expected_content_hash' }
+        : {}),
+    },
   };
+}
+
+function applyMode(
+  decision: RouteMemoryWritebackResult['decision'],
+): NonNullable<RouteMemoryWritebackResult['writeback_governance_metadata']>['apply_mode'] {
+  switch (decision) {
+    case 'no_write':
+      return 'no_write';
+    case 'defer':
+    case 'create_candidate':
+      return 'plan_only';
+    case 'canonical_write_allowed':
+      return 'canonical_requirements_returned';
+  }
+}
+
+function targetSnapshotInputState(
+  input: RouteMemoryWritebackInput,
+): NonNullable<RouteMemoryWritebackResult['writeback_governance_metadata']>['target_snapshot']['input_state'] {
+  if (!Object.prototype.hasOwnProperty.call(input, 'target_snapshot_hash')) return 'omitted';
+  return input.target_snapshot_hash === null ? 'null_absent_assertion' : 'hash';
+}
+
+function targetSnapshotExpectedHash(input: RouteMemoryWritebackInput): string | null | undefined {
+  if (!Object.prototype.hasOwnProperty.call(input, 'target_snapshot_hash')) return undefined;
+  return input.target_snapshot_hash ?? null;
 }
 
 function normalizeSourceRefs(value: string[] | undefined): string[] {

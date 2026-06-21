@@ -60,6 +60,16 @@ describe('read context service', () => {
       expect(result.canonical_reads[0]!.authority).toBe('canonical_compiled_truth');
       expect(result.canonical_reads[0]!.text).toContain('candidate pointers');
       expect(result.canonical_reads[0]!.source_refs).toContain('User, direct message, 2026-05-07 09:00 KST');
+      expect(result.canonical_reads[0]!.evidence_metadata).toMatchObject({
+        evidence_role: 'answer_ground',
+        authority: 'canonical_compiled_truth',
+        selector_id: result.canonical_reads[0]!.selector.selector_id,
+        content_hash: result.canonical_reads[0]!.selector.content_hash,
+        source_ref_count: 1,
+        source_ref_kinds: ['user'],
+        freshness: 'current',
+        continuation_status: 'complete',
+      });
       expect(result.unread_required).toEqual([]);
     });
   });
@@ -1594,6 +1604,8 @@ describe('read context service', () => {
       expect(result.canonical_reads).toHaveLength(1);
       expect(result.canonical_reads[0]!.text).toContain('[Source: Hidden]');
       expect(result.canonical_reads[0]!.source_refs).toEqual([]);
+      expect(result.canonical_reads[0]!.evidence_metadata?.source_ref_count).toBe(0);
+      expect(result.canonical_reads[0]!.evidence_metadata?.source_ref_kinds).toEqual([]);
     });
   });
 

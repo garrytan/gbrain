@@ -291,6 +291,7 @@ export interface RouteMemoryWritebackResult {
     expected_content_hash: string | null;
     sensitivity: MemoryCandidateSensitivity;
   };
+  writeback_governance_metadata?: WritebackGovernanceMetadata;
 }
 
 export interface MemoryActivationArtifact {
@@ -443,6 +444,27 @@ export interface RetrievalMatchedChunk {
   corpus_lane?: CorpusLaneMetadata;
 }
 
+export type EvidenceSourceRefKind =
+  | 'user'
+  | 'task'
+  | 'corpus_lane'
+  | 'source_record'
+  | 'import_origin'
+  | 'other';
+
+export interface RetrieveContextCandidateEvidenceMetadata {
+  evidence_role: 'probe_candidate_pointer';
+  authority: 'not_answer_evidence' | 'selector_planning_only';
+  activation: MemoryActivationDecision;
+  freshness: RetrievalFreshness;
+  content_hash?: string;
+  source_ref_count: number;
+  source_ref_kinds: EvidenceSourceRefKind[];
+  corpus_lane?: CorpusLaneMetadata;
+  scope_gate?: ScopeGateDecisionResult;
+  rank_reason: string[];
+}
+
 export interface RetrieveContextCandidate {
   candidate_id: string;
   canonical_target: RetrievalCanonicalTarget;
@@ -451,6 +473,7 @@ export interface RetrieveContextCandidate {
   activation: MemoryActivationDecision;
   read_priority: number;
   read_selector: RetrievalSelector;
+  evidence_metadata?: RetrieveContextCandidateEvidenceMetadata;
 }
 
 export type CandidateSignalPolicyMode = 'normal' | 'expanded' | 'strict' | 'audit';
@@ -517,6 +540,42 @@ export interface CandidateSignalPolicy {
   suppressed_count: number;
 }
 
+export type CandidateTargetBindingState =
+  | 'bound'
+  | 'targetless'
+  | 'proposal_pending'
+  | 'binding_pending'
+  | 'proposal_bound'
+  | 'hard_blocked_by_proposal'
+  | 'promoted_without_handoff'
+  | 'promoted_with_handoff'
+  | 'terminal'
+  | 'redacted';
+
+export interface CandidateGovernanceMetadata {
+  answer_ground: false;
+  why_not_answer_ground: string[];
+  verification: {
+    status: MemoryCandidateEntry['verification_status'];
+    method: MemoryCandidateEntry['verification_method'] | string | null;
+    source_refs_count: number;
+    verified_at_present: boolean;
+  };
+  target_binding: {
+    state: CandidateTargetBindingState;
+    handoff_present: boolean;
+    target_object_type?: MemoryCandidateTargetObjectType | null;
+    target_object_id?: string | null;
+    proposal_status?: string | null;
+    proposal_status_reason?: string | null;
+  };
+  pressure: {
+    score: number;
+    reasons: CandidateSignalPressureReason[];
+    review_priority_hint: CandidateSignalReviewPriorityHint;
+  };
+}
+
 export interface CandidateSignal {
   candidate_id: string;
   status: MemoryCandidateStatus;
@@ -533,6 +592,7 @@ export interface CandidateSignal {
   pressure_reasons: CandidateSignalPressureReason[];
   review_priority_hint: CandidateSignalReviewPriorityHint;
   summary: string;
+  candidate_governance_metadata?: CandidateGovernanceMetadata;
 }
 
 export interface RetrieveContextAnswerability {
@@ -568,6 +628,16 @@ export interface RetrieveContextReadPlan {
   deferred_candidate_ids: string[];
   gap_reasons: RetrieveContextReadPlanGapReason[];
   next_actions: string[];
+  backend_gap?: RetrieveContextBackendGap;
+}
+
+export interface RetrieveContextBackendGap {
+  status: 'partial_failure' | 'failed';
+  reason_code: Extract<RetrieveContextReadPlanGapReason, 'retrieval_backend_partial_failure' | 'retrieval_backend_failed'>;
+  failed_query_count: number;
+  successful_query_count: number;
+  total_query_count: number;
+  failure_messages?: string[];
 }
 
 export interface RetrieveContextGraphFrontierOptions {
@@ -597,8 +667,17 @@ export interface RetrieveContextResult {
   orientation: RetrieveContextOrientation;
   candidate_signal_policy: CandidateSignalPolicy;
   candidate_signals: CandidateSignal[];
+  create_safety?: RetrieveContextCreateSafety;
   warnings: string[];
   trace?: RetrievalTrace | null;
+}
+
+export interface RetrieveContextCreateSafety {
+  status: 'exists' | 'unknown' | 'no_canonical_candidate';
+  matched_candidate_ids: string[];
+  matched_selector_ids: string[];
+  reasons: string[];
+  write_permission_granted: false;
 }
 
 export interface ContextAnswerReady {
@@ -618,6 +697,47 @@ export interface CanonicalContextRead {
   token_estimate: number;
   has_more: boolean;
   continuation_selector?: RetrievalSelector;
+  evidence_metadata?: CanonicalContextReadEvidenceMetadata;
+}
+
+export interface CanonicalContextReadEvidenceMetadata {
+  evidence_role: 'answer_ground';
+  authority: MemoryArtifactAuthority;
+  selector_id: string;
+  content_hash?: string;
+  source_ref_count: number;
+  source_ref_kinds: EvidenceSourceRefKind[];
+  freshness: RetrievalFreshness;
+  token_estimate: number;
+  corpus_lane?: CorpusLaneMetadata;
+  window?: {
+    line_start?: number;
+    line_end?: number;
+    char_start?: number;
+    char_end?: number;
+  };
+  continuation_status: 'complete' | 'continued';
+}
+
+export interface WritebackGovernanceMetadata {
+  route_decision: MemoryWritebackDecision;
+  intended_operation: MemoryWritebackIntendedOperation;
+  apply_mode: 'no_write' | 'plan_only' | 'candidate_created' | 'deferred_candidate_created' | 'canonical_requirements_returned';
+  route_reasons: string[];
+  missing_requirements: string[];
+  blockers: string[];
+  provenance: {
+    source_refs_count: number;
+    answer_grounding_source_refs_count: number;
+    corpus_lane_refs_count: number;
+  };
+  target_snapshot: {
+    input_state: 'omitted' | 'hash' | 'null_absent_assertion';
+    expected_content_hash?: string | null;
+  };
+  sensitivity: MemoryCandidateSensitivity;
+  candidate_only_reason?: string;
+  control_plane_apply_reason?: string;
 }
 
 export interface ContextEvidenceClaim {

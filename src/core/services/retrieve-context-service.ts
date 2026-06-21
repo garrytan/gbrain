@@ -11,7 +11,9 @@ import type {
   MemoryScenario,
   NoteManifestEntry,
   NoteSectionEntry,
+  EvidenceSourceRefKind,
   RetrieveContextCandidate,
+  RetrieveContextBackendGap,
   RetrieveContextGraphFrontierOptions,
   RetrieveContextInput,
   RetrieveContextOrientation,
@@ -203,6 +205,7 @@ export async function retrieveContext(
       },
       candidates,
       required_reads: requiredReads,
+      create_safety: buildCreateSafety(candidates, requiredReads, { selector_existence_verified: false }),
       read_plan: buildReadPlan({
         candidates,
         required_reads: requiredReads,
@@ -249,6 +252,7 @@ export async function retrieveContext(
       },
       candidates,
       required_reads: requiredReads,
+      create_safety: buildCreateSafety(candidates, requiredReads, { selector_existence_verified: false }),
       read_plan: buildReadPlan({
         candidates,
         required_reads: requiredReads,
@@ -301,6 +305,7 @@ export async function retrieveContext(
     limit,
   );
 
+  const backendGap = buildBackendGap(candidatePool);
   return maybePersistRetrieveTrace(engine, {
     request_id: requestId,
     scenario: classification.scenario,
@@ -314,6 +319,7 @@ export async function retrieveContext(
     },
     candidates,
     required_reads: requiredReads,
+    create_safety: buildCreateSafety(candidates, requiredReads),
     read_plan: buildReadPlan({
       candidates,
       required_reads: requiredReads,
@@ -321,6 +327,7 @@ export async function retrieveContext(
       candidate_signals: candidateSignals,
       required_read_limit: requiredReadLimit,
       backend_gap_reason: candidateSearchBackendGap(candidatePool),
+      backend_gap: backendGap,
     }),
     orientation: graphAugmentation.orientation,
     ...candidateSignals,
@@ -524,6 +531,7 @@ function blockedByScopeGate(
     },
     candidates: [],
     required_reads: [],
+    create_safety: buildCreateSafety([], []),
     read_plan: emptyReadPlan(['Resolve the scope gate before planning canonical reads.']),
     orientation: emptyOrientation(),
     ...emptyCandidateSignalResult('strict', ['scope_gate_blocked']),
@@ -625,6 +633,19 @@ function candidateSearchBackendGap(pool: CandidateSearchPoolResult): CandidateSe
   return pool.successful_queries === 0
     ? 'retrieval_backend_failed'
     : 'retrieval_backend_partial_failure';
+}
+
+function buildBackendGap(pool: CandidateSearchPoolResult): RetrieveContextBackendGap | undefined {
+  const reasonCode = candidateSearchBackendGap(pool);
+  if (!reasonCode) return undefined;
+  return {
+    status: reasonCode === 'retrieval_backend_failed' ? 'failed' : 'partial_failure',
+    reason_code: reasonCode,
+    failed_query_count: pool.failures.length,
+    successful_query_count: pool.successful_queries,
+    total_query_count: pool.total_queries,
+    failure_messages: [...new Set(pool.failures.map((failure) => failure.message))].slice(0, 3),
+  };
 }
 
 function candidateSearchWarnings(pool: CandidateSearchPoolResult): string[] {
@@ -786,9 +807,14 @@ async function groupCandidatesByCanonicalPage(
     const evidenceKey = canonicalEvidenceKey(candidate.read_selector);
     if (evidenceKey && seenCanonicalEvidence.has(evidenceKey)) continue;
     if (evidenceKey) seenCanonicalEvidence.add(evidenceKey);
+    const readPriority = candidates.length + 1;
     candidates.push({
       ...candidate,
-      read_priority: candidates.length + 1,
+      read_priority: readPriority,
+      evidence_metadata: buildCandidateEvidenceMetadata({
+        ...candidate,
+        read_priority: readPriority,
+      }, scopeGate),
     });
     if (candidates.length >= limit) break;
   }
@@ -1479,7 +1505,7 @@ async function buildOrientation(
 
 function candidateFromSelector(selector: RetrievalSelector, priority: number): RetrieveContextCandidate {
   const corpusLane = selector.corpus_lane ?? corpusLaneFromSourceRefs(selector.source_refs ?? []);
-  return {
+  const candidate: RetrieveContextCandidate = {
     candidate_id: `candidate:${retrievalSelectorId(selector)}`,
     canonical_target: {
       kind: selector.kind,
@@ -1497,6 +1523,75 @@ function candidateFromSelector(selector: RetrievalSelector, priority: number): R
       ? normalizeRetrievalSelector({ ...selector, corpus_lane: corpusLane })
       : selector,
   };
+  return {
+    ...candidate,
+    evidence_metadata: buildCandidateEvidenceMetadata(candidate),
+  };
+}
+
+function buildCandidateEvidenceMetadata(
+  candidate: RetrieveContextCandidate,
+  scopeGate?: ScopeGateDecisionResult,
+): NonNullable<RetrieveContextCandidate['evidence_metadata']> {
+  const selectorRefs = candidate.read_selector.source_refs ?? [];
+  return {
+    evidence_role: 'probe_candidate_pointer',
+    authority: 'not_answer_evidence',
+    activation: candidate.activation,
+    freshness: candidate.read_selector.freshness
+      ?? (candidate.matched_chunks.some((chunk) => chunk.stale) ? 'stale' : 'current'),
+    ...(candidate.read_selector.content_hash ? { content_hash: candidate.read_selector.content_hash } : {}),
+    source_ref_count: selectorRefs.length,
+    source_ref_kinds: sourceRefKinds(selectorRefs),
+    ...(candidate.read_selector.corpus_lane ?? candidate.canonical_target.corpus_lane
+      ? { corpus_lane: (candidate.read_selector.corpus_lane ?? candidate.canonical_target.corpus_lane)! }
+      : {}),
+    ...(scopeGate ? { scope_gate: scopeGate } : {}),
+    rank_reason: candidate.why_matched,
+  };
+}
+
+function buildCreateSafety(
+  candidates: RetrieveContextCandidate[],
+  requiredReads: RetrievalSelector[],
+  options: { selector_existence_verified?: boolean } = {},
+): RetrieveContextResult['create_safety'] {
+  const matchedCandidateIds = candidates
+    .filter((candidate) => requiredReads.some((selector) =>
+      selectorEvidencePlanKey(selector) === selectorEvidencePlanKey(candidate.read_selector)
+    ))
+    .map((candidate) => candidate.candidate_id);
+  const matchedSelectorIds = requiredReads.map(retrievalSelectorId);
+  const existenceVerified = options.selector_existence_verified !== false;
+  const status = matchedCandidateIds.length === 0
+    ? 'no_canonical_candidate'
+    : existenceVerified
+      ? 'exists'
+      : 'unknown';
+  return {
+    status,
+    matched_candidate_ids: matchedCandidateIds,
+    matched_selector_ids: matchedSelectorIds,
+    reasons: status === 'exists'
+      ? ['canonical_candidate_exists', 'route_memory_writeback_still_required_for_writes']
+      : status === 'unknown'
+        ? ['selector_existence_not_verified', 'route_memory_writeback_required_before_write']
+        : ['no_existing_canonical_candidate_in_probe', 'route_memory_writeback_required_before_write'],
+    write_permission_granted: false,
+  };
+}
+
+function sourceRefKinds(sourceRefs: string[]): EvidenceSourceRefKind[] {
+  const kinds = sourceRefs.map((sourceRef): EvidenceSourceRefKind => {
+    const lower = sourceRef.toLowerCase();
+    if (lower.startsWith('source: user') || lower.includes('user,')) return 'user';
+    if (lower.startsWith('task:') || lower.startsWith('task_decision:')) return 'task';
+    if (lower.startsWith('corpus_lane:')) return 'corpus_lane';
+    if (lower.startsWith('source_record:')) return 'source_record';
+    if (lower.startsWith('import_origin:')) return 'import_origin';
+    return 'other';
+  });
+  return [...new Set(kinds)];
 }
 
 function emptyOrientation(): RetrieveContextOrientation {
@@ -1527,6 +1622,7 @@ function buildReadPlan(input: {
   candidate_signals: CandidateSignalResult;
   required_read_limit: number;
   backend_gap_reason?: CandidateSearchBackendGap;
+  backend_gap?: RetrieveContextBackendGap;
 }): RetrieveContextReadPlan {
   const selectedSelectorSnapshots = input.required_reads.map((selector) => normalizeRetrievalSelector(selector));
   const selectedSelectors = selectedSelectorSnapshots.map(retrievalSelectorId);
@@ -1569,6 +1665,7 @@ function buildReadPlan(input: {
       input.candidate_signals,
       input.backend_gap_reason,
     ),
+    ...(input.backend_gap ? { backend_gap: input.backend_gap } : {}),
   };
 }
 

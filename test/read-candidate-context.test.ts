@@ -34,6 +34,15 @@ describe('read candidate context', () => {
     expect(result.access).toBe('denied');
     expect(result.content).toBeNull();
     expect(result.reason_codes).toContain('secret_candidate_denied');
+    expect(result.candidate_governance_metadata).toMatchObject({
+      answer_ground: false,
+      target_binding: {
+        state: 'redacted',
+        handoff_present: false,
+      },
+    });
+    expect(JSON.stringify(result.candidate_governance_metadata)).not.toContain('systems/mbrain');
+    expect(JSON.stringify(result.candidate_governance_metadata)).not.toContain('curated_note');
   });
 
   test('requires personal or mixed scope plus audit reason for personal candidates', () => {
