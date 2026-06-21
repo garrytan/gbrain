@@ -124,8 +124,9 @@ gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated]
                                Register a source. id: [a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?
 gbrain sources list [--json]   List all sources with page counts + federation state.
 gbrain sources status [--json] Read-only per-source health: last sync,
-                               staleness, page count, embedding coverage,
-                               failures, and queue/backfill state.
+                               staleness, active sync holder, page count,
+                               embedding coverage, failures, and
+                               queue/backfill state.
 gbrain sources current [--source <id>] [--json]
                                Show which source the resolver would target
                                and which tier won.

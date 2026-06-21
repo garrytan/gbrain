@@ -4,9 +4,9 @@ Status: frozen baseline inventory for upstream PR preparation
 
 Baseline reviewed: `docs/docs-consolidation/00-upstream-base.md`
 
-Pinned upstream commit: `9bf96db807c2f050449142f2f0b05726f58e5054`
+Pinned upstream commit: `bb2e88c42a4969e16df7a43a9eb118aa031e89a4`
 
-Current upstream version reviewed: `0.42.51.0`
+Current upstream version reviewed: `0.42.52.0`
 
 ## Scope
 
@@ -167,6 +167,11 @@ Execution artifact:
 
 The latest release window changes the docs problem in concrete ways:
 
+- `0.42.52.0` makes autopilot/supervisor/sync/status reliability current docs
+  territory: autopilot has one brain-wide maintenance pass, supervisor recovery
+  is self-healing, `sources status` reports active syncs, `status --fast` and
+  `--deadline-ms` provide budgeted snapshots, and the sync stall watchdog has a
+  tunable no-progress abort.
 - `0.42.51.0` makes sync reliability and performance current docs territory:
   active sync locks are not stale sync, checkpoint corruption is
   repaired/constrained, and force-break-lock must report no-lock cases
@@ -370,15 +375,15 @@ The smallest coherent PR should avoid rewriting the docs system. It should:
 | `00-upstream-base.md` was reviewed | code_proven | Direct file read |
 | Inventory covers documentation-like files in the baseline checkout | code_proven | `01-documentation-manifest.tsv` has 350 rows generated from the refreshed `understand-anything` scan metadata; it is a frozen pre-consolidation snapshot |
 | Test fixture docs are separated from public docs | code_proven | Manifest role column marks test and fixture support paths |
-| Installed Understand refresh completed | code_proven | `.understand-anything/knowledge-graph.json` has 12,602 nodes, 20,398 edges, 9 layers, and 6 tour steps after the v0.42.51.0 rebase refresh |
-| Understand graph reference validation has no broken refs | code_proven | Fresh validation found 0 broken edge, layer, or tour references; `.understand-anything/fingerprints.json` covers 2,593 files |
+| Installed Understand refresh completed | code_proven | `.understand-anything/knowledge-graph.json` has 14,004 nodes, 19,949 edges, 9 layers, and 6 tour steps after the v0.42.52.0 rebase refresh |
+| Understand graph reference validation has no broken refs | code_proven | Fresh validation found 0 broken edge, layer, or tour references; `.understand-anything/fingerprints.json` covers 2,599 files |
 | Search-time fallback is `balanced` | code_proven | CodeGraph trace to `DEFAULT_SEARCH_MODE` and `resolveSearchMode()` in `src/core/search/mode.ts` |
 | Fresh init persists a recommended search mode | code_proven | CodeGraph trace to `runModePicker()` in `src/commands/init-mode-picker.ts` and both init paths in `src/commands/init.ts` |
 | Skillpack manifest currently has 38 scaffolded skills | code_proven | `openclaw.plugin.json#skills` count; `loadBundleManifest()` and `bundledSkillSlugs()` use that manifest |
 | Skill resolver manifest currently has 52 entries | code_proven | `skills/manifest.json#skills` count |
 | Current checkout has 53 `skills/**/SKILL.md` files | code_proven | `rg --files skills -g 'SKILL.md'` count |
 | Current checkout has 149 E2E test files | code_proven | Fresh count from `rg --files test/e2e -g '*.test.ts'`; `scripts/run-e2e.sh` and `scripts/ci-local.sh` use dynamic globs |
-| Current release baseline is v0.42.51.0 | code_proven | `VERSION` and top of `CHANGELOG.md` |
+| Current release baseline is v0.42.52.0 | code_proven | `VERSION` and top of `CHANGELOG.md` |
 | Changelog-to-current-capabilities ledger exists | implemented | `docs/docs-consolidation/05-current-capabilities-ledger.md` |
 | Documentation status taxonomy exists | implemented | `docs/docs-consolidation/06-documentation-status-taxonomy.md` |
 | Current HTTP OAuth path is engine-aware | code_proven | CodeGraph trace to `src/commands/serve-http.ts`, `GBrainOAuthProvider`, and PGLite OAuth bootstrap logic |

@@ -22,9 +22,9 @@ The branch already has:
 
 - PRD/source plan: `docs/docs-consolidation/03-issue-breakdown.md`
 - Draft AFK slices: S-01 through S-13
-- Current upstream baseline: `9bf96db807c2f050449142f2f0b05726f58e5054`
+- Current upstream baseline: `bb2e88c42a4969e16df7a43a9eb118aa031e89a4`
 - Current branch commit at goal authoring time: `2889685a`
-- Current upstream version after refresh: `0.42.51.0`
+- Current upstream version after refresh: `0.42.52.0`
 - Documentation consolidation artifacts under `docs/docs-consolidation/`
 - CodeGraph indexed for this repo
 - `understand-anything` refreshed for the branch state noted in

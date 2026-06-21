@@ -5,7 +5,7 @@ operator approval.
 
 ## Proposed Title
 
-v0.42.51.0 docs: consolidate GBrain operational documentation (#2211)
+v0.42.52.0 docs: consolidate GBrain operational documentation (#2211)
 
 ## Proposed Body
 
@@ -80,9 +80,10 @@ The branch:
   were patched in README, `docs/INSTALL.md`, topology docs, agent docs, and
   consolidation artifacts, including follow-up OAuth issuer/public URL fixes
   and remote-MCP versus trusted-host shell-job corrections.
-- The existing `understand-anything` graph was refreshed during the v0.42.51.0
+- The existing `understand-anything` graph was refreshed during the v0.42.52.0
   rebase pass and validated with 0 broken edge, layer, or tour references.
-  Current CLI/auth claims were verified with CodeGraph against on-disk source.
+  CodeGraph was also synced after the rebase. Current CLI/auth and operational
+  reliability claims were verified against on-disk source/docs.
 
 ### Proof Limits
 

@@ -471,7 +471,12 @@ Three commands do most of the operational work.
 
 ### Background daemon: `gbrain autopilot`
 
-The personal-brain install already turned this on. For a company brain, the same autopilot covers all your sources because they live in one database. It runs every five minutes; on a healthy brain (health score 95+) it sleeps; on a brain that's drifting it submits targeted maintenance jobs.
+The personal-brain install already turned this on. For a company brain, the
+same autopilot covers all your sources because they live in one database. It
+runs every five minutes; on a healthy brain (health score 95+) it sleeps; on a
+brain that's drifting it submits targeted maintenance jobs. Current releases
+run brain-wide maintenance once per window rather than once per source, so a
+multi-source brain does not multiply global maintenance work by source count.
 
 ### Self-healing: `gbrain doctor --remediate`
 
@@ -487,7 +492,9 @@ Computes a dependency-ordered plan of maintenance jobs that would raise the brai
 gbrain sources status
 ```
 
-Returns a per-source dashboard: when each source last synced, how many pages, how many embedded, how many unacked sync failures. The at-a-glance health check.
+Returns a per-source dashboard: when each source last synced, whether it is
+actively syncing now, how many pages, how many embedded, and how many unacked
+sync failures. The at-a-glance health check.
 
 The admin dashboard at `https://brain.acme-co.com/admin` shows live request volume, registered OAuth clients, recent activity, and brain stats. Use the admin bootstrap token from Part 4 to log in the first time, then register additional admin users from inside the dashboard.
 
@@ -517,7 +524,12 @@ Check `gbrain auth list` on the host and confirm their client has `--source` set
 
 ### "Sync is slow and feels stuck"
 
-The first sync embeds every page, which takes time. Check `gbrain sources status` for the live page count. If it's climbing you're not stuck, you're just embedding. If you've got a 10K-page corpus and ZeroEntropy is being throttled, the per-source parallel sync looks like progress on three sources at once rather than one source moving fast.
+The first sync embeds every page, which takes time. Check `gbrain sources
+status` for the live page count and active-sync state. If it's climbing or the
+source is marked running, you're not stuck, you're just embedding or importing.
+If you've got a 10K-page corpus and ZeroEntropy is being throttled, the
+per-source parallel sync looks like progress on three sources at once rather
+than one source moving fast.
 
 ### "I see a page I shouldn't see"
 

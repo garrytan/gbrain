@@ -11,6 +11,10 @@ On v0.42.51.0 and newer, `gbrain doctor` also tells an actively running sync
 apart from a stale one. A live sync lock is progress to observe; a dead or
 expired holder is the case to investigate before breaking locks.
 
+On v0.42.52.0 and newer, pair that with `gbrain sources status --json` for
+per-source active-sync visibility and `gbrain status --fast` for a budgeted
+health snapshot that can return partial sections instead of hanging a poller.
+
 ---
 
 ## 1. Schema Verification

@@ -5,9 +5,9 @@ Status: upstream documentation consolidation baseline
 ## Git
 
 - Current branch: docs/consolidate-entrypoints-and-install-modes
-- Pinned upstream commit: 9bf96db807c2f050449142f2f0b05726f58e5054
+- Pinned upstream commit: bb2e88c42a4969e16df7a43a9eb118aa031e89a4
 - Current branch state: rebased onto upstream/master at the pinned commit
-- Current upstream version: 0.42.51.0
+- Current upstream version: 0.42.52.0
 
 ## Current release baseline
 
@@ -18,6 +18,13 @@ rewrites are proposed.
 
 Latest release entries reviewed:
 
+- `0.42.52.0` - operational reliability hardening: autopilot now runs one
+  brain-wide maintenance pass instead of per-source global work, the supervisor
+  self-heals through transient database blips, `sources status` reports active
+  syncs honestly, failed sources back off, `status --fast` / `--deadline-ms`
+  provides budgeted snapshots, the sync stall watchdog aborts no-progress
+  imports, minion timeout accounting is honest, and `agent run` parses trailing
+  flags correctly.
 - `0.42.51.0` - sync reliability/performance hardening: page-generation clock
   moved to a contention-free sequence, malformed checkpoints are
   repaired/constrained, `doctor` distinguishes active sync locks from stale

@@ -8,9 +8,9 @@ migration, import, sync, or Docker lifecycle command was run.
 
 Baseline:
 
-- Current upstream commit: `9bf96db807c2f050449142f2f0b05726f58e5054`
-- Current upstream version: `0.42.51.0`
-- Primary release window: `0.42.51.0` through `0.42.41.0`
+- Current upstream commit: `bb2e88c42a4969e16df7a43a9eb118aa031e89a4`
+- Current upstream version: `0.42.52.0`
+- Primary release window: `0.42.52.0` through `0.42.41.0`
 - Supporting release window for drift classification: `0.42.40.0` through
   `0.42.20.0`
 
@@ -37,6 +37,7 @@ input. Do not count this ledger as proof that the public docs are fixed.
 
 | Release | Current capability or design semantic | Documentation obligation | Current docs status | Follow-up |
 |---|---|---|---|---|
+| `0.42.52.0` | Autopilot/supervisor/sync/status reliability is current: autopilot now runs one brain-wide maintenance pass instead of per-source global work, the supervisor recovers through transient database blips, `sources status` reports active syncs, failed sources back off, `status --fast` / `--deadline-ms` gives budgeted snapshots, the sync stall watchdog aborts no-progress imports, minion timeout attempts are counted honestly, and `agent run` handles trailing flags correctly. | Production, multi-source, and maintenance docs should describe active sync/status semantics, budgeted status polling, supervisor/autopilot self-healing, and the sync stall watchdog without implying old per-source global-maintenance storms or permanent supervisor wedges. | `incomplete-current`: this refresh updates the central install/production path and consolidation ledger; deeper queue/autopilot architecture can remain in dedicated runbooks and release notes. | #9, #10, #14 |
 | `0.42.51.0` | Sync reliability and performance are current: page-generation clock is contention-free, malformed checkpoint rows are repaired and constrained, `doctor` treats live sync locks as actively syncing rather than stale, and `sync --force-break-lock` reports no-lock cases honestly. | Production/sync docs should describe current active-vs-stale sync diagnosis and checkpoint recovery, and avoid implying parallel sync always bottlenecks on a single generation row. | `incomplete-current`: `docs/INSTALL.md` now routes upgrade/production checks to doctor/live-sync proof; deeper sync architecture remains in existing guides and release notes. | #10, #14 |
 | `0.42.50.0` | CI reliability hardening is current: superseded PR runs cancel, workflow jobs have explicit timeouts, E2E scrubs operator/agent environment variables, and workflow YAML gets actionlint coverage. | Contributor and release docs should describe current CI behavior without relying on stale job-count claims or machine-local environment assumptions. | `current`: `AGENTS.md`, `docs/TESTING.md`, `CLAUDE.md`, and release notes cover the supported gates. `incomplete-current`: consolidation docs needed this baseline refresh. | #13, #14 |
 | `0.42.49.0` | Large embed and sync work can opt into shared pacing: `gbrain embed --stale --pace`, `pace.mode`, `GBRAIN_PACE_*`, sync shared permits, and pacing telemetry. | Install, mode-selection, and production docs should teach pacing as the supported operator path for shared DB pressure, not external wrapper scripts. | `incomplete-current`: `CLAUDE.md` documents the release contract; `docs/INSTALL.md` and `docs/guides/mode-selection.md` now route operators to per-run/env pacing and note the strict `config set` allowlist caveat for persistent `pace.mode`. | #9, #10 |
@@ -156,7 +157,7 @@ input. Do not count this ledger as proof that the public docs are fixed.
 
 | Claim | Proof level | Evidence |
 |---|---|---|
-| Current version is `0.42.51.0` | `code_proven` | `VERSION`, top of `CHANGELOG.md`, `docs/docs-consolidation/00-upstream-base.md` |
+| Current version is `0.42.52.0` | `code_proven` | `VERSION`, top of `CHANGELOG.md`, `docs/docs-consolidation/00-upstream-base.md` |
 | Push-context docs exist and are current for v0.42.43.0 surfaces | `code_proven` | `CHANGELOG.md`, `docs/guides/push-context.md`, `CLAUDE.md`, `docs/TESTING.md`, `docs/architecture/KEY_FILES.md` |
 | Teardown/exit-verdict behavior is documented in maintainer proof surfaces | `code_proven` | `CHANGELOG.md`, `docs/TESTING.md`, `docs/architecture/KEY_FILES.md` |
 | Relational retrieval is current in architecture docs but missing from the old search-mode skill guide | `code_proven` | `CHANGELOG.md`, `README.md`, `docs/architecture/RETRIEVAL.md`, `docs/guides/search-modes.md` |
@@ -169,7 +170,7 @@ input. Do not count this ledger as proof that the public docs are fixed.
 The first docs consolidation move should not delete large blocks of older docs.
 The safer current baseline is a mixed strategy:
 
-- Update docs that are accurate but incomplete for v0.42.51.0.
+- Update docs that are accurate but incomplete for v0.42.52.0.
 - Mark historical/design docs when their trust level is ambiguous.
 - Route users through one human path and one agent path.
 - Fix direct contradictions where current docs conflict with current source or

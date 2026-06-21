@@ -5,7 +5,7 @@ workflow, refreshed after the upstream rebase
 
 Baseline reviewed: `docs/docs-consolidation/00-upstream-base.md`
 
-Pinned upstream commit: `9bf96db807c2f050449142f2f0b05726f58e5054`
+Pinned upstream commit: `bb2e88c42a4969e16df7a43a9eb118aa031e89a4`
 
 Current branch state: rebased onto upstream/master at the pinned commit
 
@@ -57,12 +57,14 @@ Execution notes:
   validated with the inline validator.
 - After upstream advanced to `0.42.51.0`, the current branch was rebased onto
   `upstream/master`, CodeGraph was synced, and `understand-anything` was
-  refreshed incrementally. The refresh re-ran deterministic scan, import-map
-  extraction, changed-batch computation, structural extraction, graph update,
-  validation-reference checks, fingerprint generation, and metadata update.
-  Because the plugin subagent definitions are not available in this Codex
-  environment, the refresh does not claim a new LLM semantic review for the
-  changed batches.
+  refreshed incrementally. After the later `0.42.52.0` upstream advance, this
+  branch was rebased again, the changelog-derived docs artifacts were
+  refreshed, CodeGraph was synced, and `understand-anything` was refreshed
+  incrementally against the rebased checkout. The v0.42.52.0 refresh re-ran
+  deterministic scan, import-map extraction, changed-batch computation,
+  structural extraction, graph update, reference checks, fingerprint generation,
+  and metadata update; it does not claim a new LLM semantic review for every
+  changed batch.
 
 ## Generated Artifacts
 
@@ -79,20 +81,20 @@ Execution notes:
 
 | Metric | Value |
 |---|---:|
-| files scanned | 2,593 |
+| files scanned | 2,599 |
 | files filtered by `.understandignore` | 3 |
-| import-map files with imports | 1,721 |
-| import-map resolved edges | 4,708 |
-| latest incremental batches refreshed | 2 |
-| files structurally refreshed in latest merge batches | 28 |
+| import-map files with imports | 1,727 |
+| import-map resolved edges | 4,734 |
+| v0.42.52.0 rebase batches refreshed | 27 |
+| files structurally refreshed in v0.42.52.0 rebase batches | 703 |
 | files skipped | 0 |
-| graph nodes | 12,602 |
-| graph edges | 20,398 |
+| graph nodes | 14,004 |
+| graph edges | 19,949 |
 | layers | 9 |
 | guided tour steps | 6 |
 | validation issues | 0 |
 | broken edge/layer/tour references | 0 |
-| fingerprint baseline | 2,593 files |
+| fingerprint baseline | 2,599 files |
 
 Node types:
 
@@ -235,10 +237,13 @@ and `llms-full.txt` still use upstream `garrytan/gbrain/master` raw URLs, while
 ### 0. Changelog-To-Current-Capabilities Baseline
 
 The docs cleanup should begin by converting the latest changelog window into a
-current-capability ledger. The minimum release window is `0.42.51.0` through
-`0.42.41.0`, with special attention to `0.42.51.0` through `0.42.45.0`,
+current-capability ledger. The minimum release window is `0.42.52.0` through
+`0.42.41.0`, with special attention to `0.42.52.0` through `0.42.45.0`,
 `0.42.43.0`, and `0.42.42.0`:
 
+- autopilot/supervisor/sync/status reliability hardening: one brain-wide
+  autopilot maintenance pass, supervisor self-healing, active-sync status,
+  budgeted `status`, sync stall watchdog, and honest minion timeout accounting
 - sync reliability/performance hardening: contention-free page-generation
   clock, structurally constrained/repaired checkpoints, active-vs-stale
   `doctor` freshness, and honest `sync --force-break-lock` no-lock reporting

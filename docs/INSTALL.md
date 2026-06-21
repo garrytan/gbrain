@@ -590,6 +590,17 @@ backup that has not been restored is only an archive.
 - On v0.42.51.0 and newer, `doctor` distinguishes an actively running sync
   from a truly stale one. Treat a live sync lock as progress to observe, not as
   a reason to break the lock.
+- On v0.42.52.0 and newer, `gbrain sources status` shows actively syncing
+  sources in the per-source table, and `gbrain status --fast` or
+  `gbrain status --deadline-ms=<n>` returns a budgeted partial snapshot for
+  pollers instead of hanging on slow sections.
+- The v0.42.52.0 sync stall watchdog aborts an import drain that makes no file
+  progress for `GBRAIN_SYNC_STALL_ABORT_SECONDS` seconds (default 900), releases
+  the per-source lock, and lets the next sync resume from checkpoint.
+- Autopilot maintenance is brain-wide where it should be: v0.42.52.0 runs one
+  global maintenance pass per window rather than multiplying global work by
+  source count, and failed sources back off instead of re-dispatching every
+  tick.
 - Malformed sync checkpoints are repaired and structurally constrained by
   upgrade migrations. If sync still appears wedged after upgrade, use `doctor`
   and the live-sync runbook before reaching for `--force-break-lock`.
@@ -606,6 +617,7 @@ gbrain doctor --json
 gbrain models
 gbrain models doctor
 gbrain stats
+gbrain status --fast
 gbrain search modes
 ```
 
@@ -641,7 +653,10 @@ runbook.
 | Embeddings are missing | Provider key/dimensions mismatch or `gbrain embed --stale` is not running after sync. |
 | Search costs are higher than expected | Search mode is too broad for the downstream model or push context is overused. Review [`guides/mode-selection.md`](guides/mode-selection.md). |
 | Embed backfill starves other jobs | Enable pacing with `gbrain embed --stale --pace` or `GBRAIN_PACE_MODE`; for persistent `pace.mode`, use `gbrain config set pace.mode balanced --force` until the allowlist catches up. |
-| Sync looks stale during a long import | Run `gbrain doctor --json`; v0.42.51.0 reports live sync locks as active instead of stale. Break locks only when the holder is dead. |
+| Status polling hangs or is too slow | Use `gbrain status --fast` or `gbrain status --deadline-ms=<n>` and treat partial sections as an observability budget, not data loss. |
+| Sync looks stale during a long import | Run `gbrain doctor --json` and `gbrain sources status --json`; v0.42.51.0+ reports live sync locks as active instead of stale, and v0.42.52.0+ surfaces active sources in `sources status`. Break locks only when the holder is dead. |
+| Sync aborts with `stall_timeout` | The v0.42.52.0 stall watchdog saw no file-import progress for `GBRAIN_SYNC_STALL_ABORT_SECONDS`; inspect the last file/provider path, then rerun sync to resume from checkpoint. |
+| Autopilot submits repeated dead jobs | Upgrade to v0.42.52.0+ before tuning; autopilot global maintenance is now one brain-wide job per window, failed sources back off, and the supervisor retries transient DB blips with capped backoff. |
 | Brain repo writes stay local-only | Harden repo-backed sources with `gbrain sources harden <source-id>` or `gbrain sources harden --all`, then use the committed `scripts/brain-commit-push.sh` helper. |
 | Admin dashboard or logs show unexpected clients | Revoke the client, rotate affected secrets, and review DCR, CORS, and proxy exposure. |
 
@@ -672,6 +687,9 @@ After an upgrade, re-check:
   backfills or syncs
 - sync freshness and checkpoint health with `gbrain doctor --json` after
   v0.42.51.0+ upgrades
+- budgeted status polling and active per-source sync state with
+  `gbrain status --fast` and `gbrain sources status --json` after v0.42.52.0+
+  upgrades
 - live sync if this install owns a brain repo
 - brain repo durability hardening if this install owns source Git repos
 - MCP connectivity if this install serves agents
