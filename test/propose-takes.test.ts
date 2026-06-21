@@ -646,7 +646,7 @@ New prose appended here.`;
         scopes: ['read'],
         allowedSources: ['source-a', 'source-b'],
       },
-    } as OperationContext;
+    } as unknown as OperationContext;
     let extractorCalls = 0;
     const extractor: ProposeTakesExtractor = async () => {
       extractorCalls++;

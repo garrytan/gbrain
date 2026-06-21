@@ -2323,6 +2323,18 @@ export interface ChatToolDef {
   inputSchema: Record<string, unknown>;
 }
 
+function toJsonSafeToolValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (typeof value === 'bigint') return value.toString();
+  if (typeof value === 'function' || typeof value === 'symbol' || typeof value === 'undefined') return null;
+  if (value === null || typeof value !== 'object') return value;
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
+  if (Array.isArray(value)) return value.map((item) => toJsonSafeToolValue(item, seen));
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, nested]) => [key, toJsonSafeToolValue(nested, seen)]),
+  );
+}
+
 /**
  * Convert gbrain's provider-neutral ChatMessage[] into AI SDK v6 ModelMessage[].
  *
@@ -2351,10 +2363,10 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
             toolCallId: b.toolCallId,
             toolName: b.toolName,
             output: b.isError
-              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(b.output) }
+              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(toJsonSafeToolValue(b.output)) }
               : (typeof b.output === 'string'
                 ? { type: 'text' as const, value: b.output }
-                : { type: 'json' as const, value: (b.output ?? null) as never }),
+                : { type: 'json' as const, value: toJsonSafeToolValue(b.output ?? null) as never }),
           })),
       };
     }

@@ -75,6 +75,84 @@ describe('gateway tool schema + message shape (real AI SDK v6)', () => {
     ).rejects.toThrow();
   });
 
+  it('REGRESSION: live synth replay with DB BigInt tool output passes ModelMessage schema', async () => {
+    const model = mockModel();
+    const tools = {
+      brain_query: {
+        description: 'query the brain',
+        inputSchema: jsonSchema({ type: 'object', properties: { query: { type: 'string' }, adaptive_return: { type: 'boolean' } } } as any),
+      },
+      brain_get_page: {
+        description: 'get a page',
+        inputSchema: jsonSchema({ type: 'object', properties: { slug: { type: 'string' } } } as any),
+      },
+    };
+    const replayMessages: ChatMessage[] = [
+      { role: 'user', content: [{ type: 'text', text: 'synthesize this transcript' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'I will search first.' },
+          { type: 'tool-call', toolCallId: 'toolu_01Cuq8THTQ8PubikSgFwhw8i', toolName: 'brain_query', input: { query: 'systematic debugging skill SkillOpt Codex', adaptive_return: true } },
+          { type: 'tool-call', toolCallId: 'toolu_01NqeZySmCtpWEmxRVPa1bQu', toolName: 'brain_query', input: { query: 'Sawyer debugging methodology mental models', adaptive_return: true } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'toolu_01Cuq8THTQ8PubikSgFwhw8i',
+            toolName: 'brain_query',
+            output: [{ page_id: 17775n, chunk_id: 183106n, slug: 'wiki/personal/reflections/2026-05-26-codex-systematic-debugging-oauth-session-cookie-secure-580411' }],
+          },
+          {
+            type: 'tool-result',
+            toolCallId: 'toolu_01NqeZySmCtpWEmxRVPa1bQu',
+            toolName: 'brain_query',
+            output: [{ page_id: 17760n, chunk_id: 183056n, slug: 'wiki/personal/reflections/2026-05-26-codex-systematic-debugging-cart-discount-rounding-d2aca5' }],
+          },
+        ],
+      },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Now let me search for one more page.' },
+          { type: 'tool-call', toolCallId: 'toolu_01XqcAd7vWeWhU9CHKCTQFH1', toolName: 'brain_query', input: { query: 'SkillOpt path mismatch', adaptive_return: true } },
+          { type: 'tool-call', toolCallId: 'toolu_01JdRsDHvFNCBsTeMqT8UiJ6', toolName: 'brain_get_page', input: { slug: 'wiki/personal/reflections/2026-05-26-codex-systematic-debugging-bigquery-receipt-timestamp-fea68e' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'toolu_01XqcAd7vWeWhU9CHKCTQFH1',
+            toolName: 'brain_query',
+            output: [{ page_id: 17773n, chunk_id: 183098n, slug: 'wiki/originals/ideas/2026-05-26-timeout-as-masking-error-timestamp-semantics-drift-fea68e' }],
+          },
+          {
+            type: 'tool-result',
+            toolCallId: 'toolu_01JdRsDHvFNCBsTeMqT8UiJ6',
+            toolName: 'brain_get_page',
+            output: { id: 17773n, slug: 'wiki/personal/reflections/2026-05-26-codex-systematic-debugging-bigquery-receipt-timestamp-fea68e' },
+          },
+        ],
+      },
+    ];
+
+    const result = await generateText({
+      model: model as any,
+      tools: tools as any,
+      messages: toModelMessages(replayMessages) as any,
+    });
+
+    expect(result.text).toBe('ok');
+    const prompt = model.doGenerateCalls[0]!.prompt as any[];
+    expect(prompt.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant', 'tool']);
+    expect(prompt.at(-1).content[1].output.value.id).toBe('17773');
+  });
+
   it('REGRESSION: raw tool-result in a role:user message (pre-fix shape) is rejected by v6', async () => {
     const model = mockModel();
     const tools = {
