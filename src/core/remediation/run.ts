@@ -25,6 +25,29 @@ import type {
   StepResult,
 } from './types.ts';
 
+const RUN_SCOPED_IDEMPOTENCY_DELIMITER = ':run:';
+
+async function scopeTerminalRemediationIdempotencyKey(
+  engine: BrainEngine,
+  baseIdempotencyKey: string,
+  doctorRunId: string,
+  runStartedAt: Date,
+): Promise<void> {
+  await engine.executeRaw(
+    `UPDATE minion_jobs
+       SET idempotency_key = idempotency_key || $2 || $3 || ':job:' || id::text
+       WHERE idempotency_key = $1
+         AND status IN ('completed', 'failed', 'dead', 'cancelled')
+         AND created_at < $4`,
+    [
+      baseIdempotencyKey,
+      RUN_SCOPED_IDEMPOTENCY_DELIMITER,
+      doctorRunId,
+      runStartedAt.toISOString(),
+    ],
+  );
+}
+
 /**
  * Submit ordered Remediation jobs sequentially per D3, with D5 cascade
  * on failure and D7 scoped recheck between steps.
@@ -183,6 +206,7 @@ export async function runRemediation(
   const submitted: StepResult[] = [];
   const abortedIds = new Set<string>();
   const doctorRunId = crypto.randomUUID();
+  const runStartedAt = new Date();
 
   const { MinionQueue } = await import('../minions/queue.ts');
   const { waitForCompletion } = await import('../minions/wait-for-completion.ts');
@@ -222,6 +246,7 @@ export async function runRemediation(
   const runLoop = async (): Promise<void> => {
     let stepCount = 0;
     const totalSteps = recs.length;
+    const attemptedIds = new Set<string>(completedFromCheckpoint);
     while (recs.length > 0 && stepCount < maxJobs) {
       const step = recs[0];
       if (!step) break;
@@ -238,6 +263,7 @@ export async function runRemediation(
 
       // D5: if depends_on intersects aborted, skip + cascade
       if (step.depends_on && step.depends_on.some((d: string) => abortedIds.has(d))) {
+        attemptedIds.add(step.id);
         const result: StepResult = { step: stepCount, id: step.id, job_id: null, status: 'skipped_dep_aborted' };
         submitted.push(result);
         abortedIds.add(step.id);
@@ -247,8 +273,15 @@ export async function runRemediation(
       }
 
       hooks.onStepStart?.(stepCount, totalSteps, step);
+      attemptedIds.add(step.id);
       try {
         const isProtected = !!step.protected;
+        await scopeTerminalRemediationIdempotencyKey(
+          engine,
+          step.idempotency_key,
+          doctorRunId,
+          runStartedAt,
+        );
         const job = await queue.add(
           step.job,
           { ...step.params, doctor_run_id: doctorRunId },
@@ -305,7 +338,8 @@ export async function runRemediation(
       // steps with bumped retry suffix (D1).
       if (recs.length === 0 || stepCount >= maxJobs) break;
       const freshHealth = await engine.getHealth();
-      recs = computeRecommendations(freshHealth, ctx).filter((r) => r.status === 'remediable');
+      recs = computeRecommendations(freshHealth, ctx)
+        .filter((r) => r.status === 'remediable' && !attemptedIds.has(r.id));
     }
   };
 

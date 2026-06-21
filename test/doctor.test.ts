@@ -93,6 +93,30 @@ describe('doctor command', () => {
     expect(source).toContain('gbrain repair-jsonb');
   });
 
+  test('doctor remediate does not re-run an attempted recommendation in the same pass', async () => {
+    const source = await Bun.file(new URL('../src/core/remediation/run.ts', import.meta.url)).text();
+    expect(source).toContain('const attemptedIds = new Set<string>(completedFromCheckpoint);');
+    expect(source).toContain('attemptedIds.add(step.id);');
+    expect(source).toContain("r.status === 'remediable' && !attemptedIds.has(r.id)");
+  });
+
+  test('doctor remediate scopes minion idempotency keys to the current run', async () => {
+    const source = await Bun.file(new URL('../src/core/remediation/run.ts', import.meta.url)).text();
+    expect(source).toContain('RUN_SCOPED_IDEMPOTENCY_DELIMITER');
+    expect(source).toContain("SET idempotency_key = idempotency_key || $2 || $3 || ':job:' || id::text");
+    expect(source).toContain('idempotency_key: step.idempotency_key');
+  });
+
+  test('doctor remediate frees old terminal history without breaking active single-flight', async () => {
+    const source = await Bun.file(new URL('../src/core/remediation/run.ts', import.meta.url)).text();
+    expect(source).toContain('async function scopeTerminalRemediationIdempotencyKey(');
+    expect(source).toContain("status IN ('completed', 'failed', 'dead', 'cancelled')");
+    expect(source).toContain('AND created_at < $4');
+    expect(source).toContain('await scopeTerminalRemediationIdempotencyKey(');
+    expect(source).toContain('const runStartedAt = new Date();');
+    expect(source).toContain('idempotency_key: step.idempotency_key');
+  });
+
   test('jsonb_integrity check covers the four JSONB sites fixed in v0.12.1', async () => {
     const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
     expect(source).toMatch(/table:\s*'pages'.*col:\s*'frontmatter'/);
