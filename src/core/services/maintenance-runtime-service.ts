@@ -18,6 +18,7 @@ import {
   type MaintenanceJobFilters,
   type MaintenanceJobStatus,
   type MaintenanceWorkerHeartbeat,
+  type RenewMaintenanceJobLeaseInput,
   type ReleaseMaintenanceCycleLockInput,
 } from '../maintenance/job-runtime.ts';
 
@@ -52,6 +53,7 @@ export interface MaintenanceRuntimeStatus {
 export interface MaintenanceRuntimeService {
   enqueueJob(input: EnqueueMaintenanceJobInput): Promise<EnqueueMaintenanceJobResult>;
   claimNextJob(input: ClaimMaintenanceJobInput): Promise<MaintenanceJob | null>;
+  renewJobLease(input: RenewMaintenanceJobLeaseInput): Promise<MaintenanceJob>;
   completeJob(input: CompleteMaintenanceJobInput): Promise<MaintenanceJob>;
   failJob(input: FailMaintenanceJobInput): Promise<MaintenanceJob>;
   sweepTimedOutJobs(): Promise<MaintenanceJob[]>;
@@ -194,6 +196,22 @@ export function createMaintenanceRuntimeService(
       job.started_at = job.started_at ?? now;
       job.updated_at = now;
       appendEvent(job.id, 'job_claimed', { lease_ms: input.lease_ms }, input.worker_id);
+      return cloneJob(job);
+    },
+
+    async renewJobLease(input) {
+      const job = requireActiveLockedJob(state.jobs, input.job_id, input.lock_token);
+      const now = clock();
+      const progressUpdated = input.progress_json !== undefined;
+      job.lock_expires_at = addMilliseconds(now, Math.max(1, input.lease_ms));
+      if (progressUpdated) {
+        job.progress_json = cloneJson(input.progress_json ?? {});
+      }
+      job.updated_at = now;
+      appendEvent(job.id, 'job_lease_renewed', {
+        lease_ms: input.lease_ms,
+        progress_updated: progressUpdated,
+      }, job.lock_owner);
       return cloneJob(job);
     },
 

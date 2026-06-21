@@ -6,9 +6,11 @@ import {
   type ClaimMaintenanceJobInput,
   type CompleteMaintenanceJobInput,
   type FailMaintenanceJobInput,
+  type ForegroundPressureState,
   type MaintenanceCycleLock,
   type MaintenanceFailureClass,
   type MaintenanceJobFilters,
+  type RenewMaintenanceJobLeaseInput,
   type ReleaseMaintenanceCycleLockInput,
 } from '../maintenance/job-runtime.ts';
 import type {
@@ -18,12 +20,14 @@ import type {
 
 export interface SqlMaintenanceRuntimeAdapterOptions {
   now?: () => string;
+  foregroundPressure?: () => ForegroundPressureState;
 }
 
 export interface SqlMaintenanceRuntimeAdapter {
   enqueueJob(input: Record<string, unknown>): Promise<{ status: 'enqueued' | 'deduped' | 'coalesced'; job: Record<string, unknown> }>;
   claimJob(input: { job_id: string; queue: string; worker_id: string; lease_ms: number }): Promise<Record<string, unknown> | null>;
   claimNextJob(input: ClaimMaintenanceJobInput): Promise<Record<string, unknown> | null>;
+  renewJobLease(input: RenewMaintenanceJobLeaseInput): Promise<Record<string, unknown>>;
   completeJob(input: CompleteMaintenanceJobInput): Promise<Record<string, unknown>>;
   failJob(input: FailMaintenanceJobInput): Promise<Record<string, unknown>>;
   sweepTimedOutJobs(): Promise<Array<Record<string, unknown>>>;
@@ -216,6 +220,18 @@ export function createSqlMaintenanceRuntimeAdapter(
     async claimJob(input) {
       return withRuntimeTransaction(engine, async (tx) => {
         const currentNow = now();
+        const pressure = options.foregroundPressure?.();
+        if (pressure?.active) {
+          await insertEvent(tx, {
+            id: `job-event:${crypto.randomUUID()}`,
+            job_id: null,
+            event_type: 'claim_paused_for_foreground_pressure',
+            metadata_json: { reason: pressure.reason ?? 'foreground_pressure' },
+            created_at: currentNow,
+            worker_id: input.worker_id,
+          });
+          return null;
+        }
         const job = await selectJobForUpdate(tx, input.job_id);
         if (!job || job.queue !== input.queue || !jobCanBeClaimed(job, currentNow)) return null;
 
@@ -260,6 +276,18 @@ export function createSqlMaintenanceRuntimeAdapter(
     async claimNextJob(input) {
       return withRuntimeTransaction(engine, async (tx) => {
         const currentNow = now();
+        const pressure = options.foregroundPressure?.();
+        if (pressure?.active) {
+          await insertEvent(tx, {
+            id: `job-event:${crypto.randomUUID()}`,
+            job_id: null,
+            event_type: 'claim_paused_for_foreground_pressure',
+            metadata_json: { reason: pressure.reason ?? 'foreground_pressure' },
+            created_at: currentNow,
+            worker_id: input.worker_id,
+          });
+          return null;
+        }
         const lockToken = `lock-token:${crypto.randomUUID()}`;
         const lockExpiresAt = addMilliseconds(currentNow, Math.max(1, input.lease_ms));
         let claimed: Record<string, unknown> | null;
@@ -351,6 +379,43 @@ export function createSqlMaintenanceRuntimeAdapter(
           worker_id: input.worker_id,
         });
         return normalizeRecord(claimed);
+      });
+    },
+
+    async renewJobLease(input) {
+      return withRuntimeTransaction(engine, async (tx) => {
+        const currentNow = now();
+        const job = requireActiveLockedJob(await selectJobForUpdate(tx, input.job_id), input.job_id, input.lock_token);
+        const lockExpiresAt = addMilliseconds(currentNow, Math.max(1, input.lease_ms));
+        const progressUpdated = input.progress_json !== undefined;
+        if (progressUpdated) {
+          await execSql(tx, `
+            UPDATE memory_jobs
+            SET lock_expires_at = ${placeholder(tx, 1)},
+                progress_json = ${jsonExpr(tx, 2)},
+                updated_at = ${placeholder(tx, 3)}
+            WHERE id = ${placeholder(tx, 4)}
+          `, [lockExpiresAt, input.progress_json ?? {}, currentNow, input.job_id]);
+        } else {
+          await execSql(tx, `
+            UPDATE memory_jobs
+            SET lock_expires_at = ${placeholder(tx, 1)},
+                updated_at = ${placeholder(tx, 2)}
+            WHERE id = ${placeholder(tx, 3)}
+          `, [lockExpiresAt, currentNow, input.job_id]);
+        }
+        await insertEvent(tx, {
+          id: `job-event:${crypto.randomUUID()}`,
+          job_id: input.job_id,
+          event_type: 'job_lease_renewed',
+          metadata_json: {
+            lease_ms: input.lease_ms,
+            progress_updated: progressUpdated,
+          },
+          created_at: currentNow,
+          worker_id: optionalString(job.lock_owner) ?? undefined,
+        });
+        return normalizeRecord(requireJob(await selectJob(tx, input.job_id), input.job_id));
       });
     },
 

@@ -134,6 +134,13 @@ export interface ClaimMaintenanceJobInput {
   lease_ms: number;
 }
 
+export interface RenewMaintenanceJobLeaseInput {
+  job_id: string;
+  lock_token: string;
+  lease_ms: number;
+  progress_json?: Record<string, unknown>;
+}
+
 export interface FailMaintenanceJobInput {
   job_id: string;
   lock_token: string;
