@@ -49,6 +49,16 @@ import type { SchemaPackManifest, PackPrimitive } from '../core/schema-pack/mani
 import { PACK_PRIMITIVES } from '../core/schema-pack/manifest-v1.ts';
 import { gbrainPath, loadConfig, configPath } from '../core/config.ts';
 
+const BUNDLED_PACKS = [
+  'gbrain-base',
+  'gbrain-recommended',
+  'gbrain-creator',
+  'gbrain-investor',
+  'gbrain-engineer',
+  'gbrain-everything',
+  'gbrain-base-v2',
+] as const;
+
 export async function runSchema(args: string[]): Promise<void> {
   const sub = args[0];
   switch (sub) {
@@ -179,7 +189,6 @@ async function runActive(_args: string[]): Promise<void> {
 }
 
 function runList(_args: string[]): void {
-  const bundled = ['gbrain-base', 'gbrain-recommended'];
   const installedDir = gbrainPath('schema-packs');
   const installed: string[] = [];
   if (existsSync(installedDir)) {
@@ -194,7 +203,7 @@ function runList(_args: string[]): void {
     }
   }
   console.log('Bundled packs:');
-  for (const name of bundled) console.log(`  ${name}`);
+  for (const name of BUNDLED_PACKS) console.log(`  ${name}`);
   if (installed.length > 0) {
     console.log('\nInstalled packs (~/.gbrain/schema-packs/):');
     for (const name of installed) console.log(`  ${name}`);
@@ -366,12 +375,12 @@ function runUse(args: string[]): void {
 }
 
 function packPathByName(name: string): string | null {
-  if (name === 'gbrain-base') {
+  if ((BUNDLED_PACKS as readonly string[]).includes(name)) {
     // Resolve bundled YAML — try a few locations.
     const here = dirname(new URL(import.meta.url).pathname);
     const candidates = [
-      join(here, '..', 'core', 'schema-pack', 'base', 'gbrain-base.yaml'),
-      join(here, '..', '..', 'src', 'core', 'schema-pack', 'base', 'gbrain-base.yaml'),
+      join(here, '..', 'core', 'schema-pack', 'base', `${name}.yaml`),
+      join(here, '..', '..', 'src', 'core', 'schema-pack', 'base', `${name}.yaml`),
     ];
     for (const c of candidates) {
       if (existsSync(c)) return c;
