@@ -42,6 +42,37 @@ describe('maintenance runtime service', () => {
     });
   });
 
+  test('worker claims a specific job without activating unrelated queue entries', async () => {
+    const harness = createHarness();
+    const unrelated = await harness.service.enqueueJob({
+      name: 'projection-refresh',
+      queue: 'maintenance',
+      priority: 10,
+    });
+    const target = await harness.service.enqueueJob({
+      name: 'embed_backfill',
+      queue: 'maintenance',
+      priority: 0,
+    });
+
+    const claimed = await harness.service.claimJob({
+      job_id: target.job.id,
+      queue: 'maintenance',
+      worker_id: 'worker:embed',
+      lease_ms: 30_000,
+    });
+
+    expect(claimed).toMatchObject({
+      id: target.job.id,
+      status: 'active',
+      lock_owner: 'worker:embed',
+    });
+    expect(await harness.service.getJob(unrelated.job.id)).toMatchObject({
+      status: 'waiting',
+      attempts_started: 0,
+    });
+  });
+
   test('stale lock can be reclaimed', async () => {
     const harness = createHarness();
     const submitted = await harness.service.enqueueJob({

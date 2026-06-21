@@ -6,6 +6,7 @@ import {
   isIsoAtOrBefore,
   isTerminalMaintenanceJobStatus,
   type AcquireMaintenanceCycleLockInput,
+  type ClaimMaintenanceJobByIdInput,
   type ClaimMaintenanceJobInput,
   type CompleteMaintenanceJobInput,
   type EnqueueMaintenanceJobInput,
@@ -52,6 +53,7 @@ export interface MaintenanceRuntimeStatus {
 
 export interface MaintenanceRuntimeService {
   enqueueJob(input: EnqueueMaintenanceJobInput): Promise<EnqueueMaintenanceJobResult>;
+  claimJob(input: ClaimMaintenanceJobByIdInput): Promise<MaintenanceJob | null>;
   claimNextJob(input: ClaimMaintenanceJobInput): Promise<MaintenanceJob | null>;
   renewJobLease(input: RenewMaintenanceJobLeaseInput): Promise<MaintenanceJob>;
   completeJob(input: CompleteMaintenanceJobInput): Promise<MaintenanceJob>;
@@ -95,6 +97,37 @@ export function createMaintenanceRuntimeService(
     };
     state.events.push(event);
     return event;
+  };
+
+  const isClaimableJob = (job: MaintenanceJob, now: string): boolean => (
+    job.status === 'waiting'
+    || (job.status === 'delayed' && isIsoAtOrBefore(job.next_run_at, now))
+    || (job.status === 'active' && isIsoAtOrBefore(job.lock_expires_at, now))
+  );
+
+  const claimJobWithLock = (
+    job: MaintenanceJob,
+    workerId: string,
+    leaseMs: number,
+    now: string,
+  ): MaintenanceJob => {
+    if (job.status === 'active') {
+      appendEvent(job.id, 'stale_lock_reclaimed', {
+        previous_lock_owner: job.lock_owner,
+        previous_lock_token: job.lock_token,
+      }, workerId);
+    }
+
+    job.status = 'active';
+    job.attempts_started += 1;
+    job.lock_token = nextId('lock-token');
+    job.lock_owner = workerId;
+    job.lock_expires_at = addMilliseconds(now, Math.max(1, leaseMs));
+    job.timeout_at = job.timeout_ms === null ? null : addMilliseconds(now, job.timeout_ms);
+    job.started_at = job.started_at ?? now;
+    job.updated_at = now;
+    appendEvent(job.id, 'job_claimed', { lease_ms: leaseMs }, workerId);
+    return cloneJob(job);
   };
 
   const service: MaintenanceRuntimeService = {
@@ -163,40 +196,40 @@ export function createMaintenanceRuntimeService(
       return { status: 'enqueued', job: cloneJob(job) };
     },
 
+    async claimJob(input) {
+      const pressure = options.foregroundPressure?.();
+      if (pressure?.active) {
+        appendEvent(null, 'claim_paused_for_foreground_pressure', { reason: pressure.reason ?? 'foreground_pressure' }, input.worker_id);
+        return null;
+      }
+
+      const now = clock();
+      const job = state.jobs.find((entry) => entry.id === input.job_id);
+      if (
+        !job
+        || job.queue !== input.queue
+        || (input.name !== undefined && job.name !== input.name)
+        || !isClaimableJob(job, now)
+      ) return null;
+      return claimJobWithLock(job, input.worker_id, input.lease_ms, now);
+    },
+
     async claimNextJob(input) {
       const pressure = options.foregroundPressure?.();
       if (pressure?.active) {
-        appendEvent(null, 'claim_paused_for_foreground_pressure', { reason: pressure.reason ?? 'foreground_pressure' });
+        appendEvent(null, 'claim_paused_for_foreground_pressure', { reason: pressure.reason ?? 'foreground_pressure' }, input.worker_id);
         return null;
       }
 
       const now = clock();
       const candidates = state.jobs
         .filter((job) => job.queue === input.queue)
-        .filter((job) => job.status === 'waiting'
-          || (job.status === 'delayed' && isIsoAtOrBefore(job.next_run_at, now))
-          || (job.status === 'active' && isIsoAtOrBefore(job.lock_expires_at, now)))
+        .filter((job) => isClaimableJob(job, now))
         .sort(jobOrder);
       const job = candidates[0];
       if (!job) return null;
 
-      if (job.status === 'active') {
-        appendEvent(job.id, 'stale_lock_reclaimed', {
-          previous_lock_owner: job.lock_owner,
-          previous_lock_token: job.lock_token,
-        }, input.worker_id);
-      }
-
-      job.status = 'active';
-      job.attempts_started += 1;
-      job.lock_token = nextId('lock-token');
-      job.lock_owner = input.worker_id;
-      job.lock_expires_at = addMilliseconds(now, Math.max(1, input.lease_ms));
-      job.timeout_at = job.timeout_ms === null ? null : addMilliseconds(now, job.timeout_ms);
-      job.started_at = job.started_at ?? now;
-      job.updated_at = now;
-      appendEvent(job.id, 'job_claimed', { lease_ms: input.lease_ms }, input.worker_id);
-      return cloneJob(job);
+      return claimJobWithLock(job, input.worker_id, input.lease_ms, now);
     },
 
     async renewJobLease(input) {
@@ -234,50 +267,58 @@ export function createMaintenanceRuntimeService(
     async failJob(input) {
       const job = requireActiveLockedJob(state.jobs, input.job_id, input.lock_token);
       const now = clock();
-      job.attempts_finished += 1;
+      const attemptsFinished = job.attempts_finished + 1;
+      job.attempts_finished = attemptsFinished;
+      const retry = shouldRetryFailure(job, input);
+      job.status = retry ? 'delayed' : (input.retryable === false ? 'failed' : 'dead');
       job.failure_class = input.failure_class;
       job.last_error = input.message;
       job.lock_token = null;
       job.lock_owner = null;
       job.lock_expires_at = null;
       job.timeout_at = null;
+      job.next_run_at = retry ? addMilliseconds(now, computeBackoffDelay(job)) : job.next_run_at;
+      job.finished_at = retry ? job.finished_at : now;
       job.updated_at = now;
-
-      const shouldRetry = shouldRetryFailure(job, input);
-      if (shouldRetry) {
-        job.status = 'delayed';
-        job.next_run_at = addMilliseconds(now, computeBackoffDelay(job));
-        appendEvent(job.id, 'job_retry_scheduled', { message: input.message }, null, input.failure_class);
-      } else {
-        job.status = input.retryable === false ? 'failed' : 'dead';
-        job.finished_at = now;
-        appendEvent(job.id, job.status === 'dead' ? 'job_dead' : 'job_failed', { message: input.message }, null, input.failure_class);
-      }
+      appendEvent(
+        job.id,
+        retry ? 'job_retry_scheduled' : (job.status === 'dead' ? 'job_dead' : 'job_failed'),
+        { message: input.message },
+        null,
+        input.failure_class,
+      );
       return cloneJob(job);
     },
 
     async sweepTimedOutJobs() {
       const now = clock();
-      const timedOut = state.jobs.filter((job) => job.status === 'active' && isIsoAtOrBefore(job.timeout_at, now));
+      const timedOut = state.jobs.filter((job) => (
+        job.status === 'active'
+        && job.timeout_at !== null
+        && isIsoAtOrBefore(job.timeout_at, now)
+      ));
       const updated: MaintenanceJob[] = [];
       for (const job of timedOut) {
-        job.attempts_finished += 1;
+        const attemptsFinished = job.attempts_finished + 1;
+        const retry = attemptsFinished < job.max_attempts;
+        job.attempts_finished = attemptsFinished;
+        job.status = retry ? 'delayed' : 'dead';
         job.failure_class = 'timeout';
         job.last_error = 'maintenance job timed out';
         job.lock_token = null;
         job.lock_owner = null;
         job.lock_expires_at = null;
         job.timeout_at = null;
+        job.next_run_at = retry ? addMilliseconds(now, computeBackoffDelay(job)) : job.next_run_at;
+        job.finished_at = retry ? job.finished_at : now;
         job.updated_at = now;
-        if (job.attempts_finished < job.max_attempts) {
-          job.status = 'delayed';
-          job.next_run_at = addMilliseconds(now, computeBackoffDelay(job));
-          appendEvent(job.id, 'job_timeout_retry_scheduled', {}, null, 'timeout');
-        } else {
-          job.status = 'dead';
-          job.finished_at = now;
-          appendEvent(job.id, 'job_dead', { reason: 'timeout' }, null, 'timeout');
-        }
+        appendEvent(
+          job.id,
+          retry ? 'job_timeout_retry_scheduled' : 'job_dead',
+          retry ? {} : { reason: 'timeout' },
+          null,
+          'timeout',
+        );
         updated.push(cloneJob(job));
       }
       return updated;

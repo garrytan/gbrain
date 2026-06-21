@@ -3,6 +3,7 @@ import {
   addMilliseconds,
   cloneJson,
   type AcquireMaintenanceCycleLockInput,
+  type ClaimMaintenanceJobByIdInput,
   type ClaimMaintenanceJobInput,
   type CompleteMaintenanceJobInput,
   type FailMaintenanceJobInput,
@@ -25,7 +26,7 @@ export interface SqlMaintenanceRuntimeAdapterOptions {
 
 export interface SqlMaintenanceRuntimeAdapter {
   enqueueJob(input: Record<string, unknown>): Promise<{ status: 'enqueued' | 'deduped' | 'coalesced'; job: Record<string, unknown> }>;
-  claimJob(input: { job_id: string; queue: string; worker_id: string; lease_ms: number }): Promise<Record<string, unknown> | null>;
+  claimJob(input: ClaimMaintenanceJobByIdInput): Promise<Record<string, unknown> | null>;
   claimNextJob(input: ClaimMaintenanceJobInput): Promise<Record<string, unknown> | null>;
   renewJobLease(input: RenewMaintenanceJobLeaseInput): Promise<Record<string, unknown>>;
   completeJob(input: CompleteMaintenanceJobInput): Promise<Record<string, unknown>>;
@@ -233,7 +234,12 @@ export function createSqlMaintenanceRuntimeAdapter(
           return null;
         }
         const job = await selectJobForUpdate(tx, input.job_id);
-        if (!job || job.queue !== input.queue || !jobCanBeClaimed(job, currentNow)) return null;
+        if (
+          !job
+          || job.queue !== input.queue
+          || (input.name !== undefined && job.name !== input.name)
+          || !jobCanBeClaimed(job, currentNow)
+        ) return null;
 
         const lockToken = `lock-token:${crypto.randomUUID()}`;
         const lockExpiresAt = addMilliseconds(currentNow, Math.max(1, input.lease_ms));
