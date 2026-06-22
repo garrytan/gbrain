@@ -388,6 +388,36 @@ describe('gbrain eval replay — privacy-safe drill', () => {
     expect(serialized).not.toContain('private/current');
     expect(serialized).not.toContain('private/same');
   });
+
+  test('redacts raw error messages from errored drill rows', () => {
+    const results: ReplayRowResult[] = [
+      {
+        id: 1,
+        tool_name: 'query',
+        query_hash: 'hash-error',
+        query: 'private failing query',
+        jaccard: 0,
+        top1Match: false,
+        captured_slugs: ['private/captured'],
+        current_slugs: [],
+        current_latency_ms: 25,
+        latency_delta_ms: 10,
+        errored: true,
+        error_message: 'failed for private failing query at /Users/sawbeck/private/baseline.ndjson',
+      },
+    ];
+
+    const drill = buildPrivacySafeReplayDrill(results, { limit: 1 });
+
+    expect(drill.errored).toHaveLength(1);
+    expect(drill.errored[0]!.reason).toBe('replay_error');
+    const serialized = JSON.stringify(drill);
+    expect(serialized).toContain('hash-error');
+    expect(serialized).toContain('replay_error');
+    expect(serialized).not.toContain('private failing query');
+    expect(serialized).not.toContain('/Users/sawbeck/private/baseline.ndjson');
+    expect(serialized).not.toContain('private/captured');
+  });
 });
 
 describe('gbrain eval replay — failure modes', () => {

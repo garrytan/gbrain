@@ -480,6 +480,7 @@ export async function replayCore(
 
 function toPrivacySafeDrillRow(row: ReplayRowResult): PrivacySafeReplayDrillRow {
   const capturedLatency = row.current_latency_ms - row.latency_delta_ms;
+  const reason = row.skip_reason ?? (row.errored ? 'replay_error' : undefined);
   return {
     id: row.id,
     tool_name: row.tool_name,
@@ -493,7 +494,7 @@ function toPrivacySafeDrillRow(row: ReplayRowResult): PrivacySafeReplayDrillRow 
     latency_delta_ms: row.latency_delta_ms,
     ...(row.skipped ? { skipped: true } : {}),
     ...(row.errored ? { errored: true } : {}),
-    ...(row.skip_reason || row.error_message ? { reason: row.skip_reason ?? row.error_message } : {}),
+    ...(reason ? { reason } : {}),
   };
 }
 
