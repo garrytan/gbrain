@@ -38,7 +38,7 @@ import {
   buildBasenameIndex,
   queryBasenameIndex,
 } from '../core/link-extraction.ts';
-import { isSourceUnchangedSinceSync } from '../core/git-head.ts';
+import { isSourceUnchangedSinceSync, headCommitTimeMs } from '../core/git-head.ts';
 // v0.41.32.0: remote staleness reads the stored newest_content_at column via
 // this pure comparator (no git subprocess on the HTTP MCP doctor path).
 import { lagFromContentMs } from '../core/source-health.ts';
@@ -3359,6 +3359,9 @@ export async function checkSyncFreshness(
     const failHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', 72);
     const warnMs = warnHours * 60 * 60 * 1000;
     const failMs = failHours * 60 * 60 * 1000;
+    // Commit-staleness threshold: a dirty tree whose HEAD commit is older than
+    // this means the auto-commit job has stopped (not a fresh edit). 7 days.
+    const COMMIT_STALE_DAYS = 7;
 
     // `opts.nowMs` is a test-only injection seam for the boundary tests.
     // Without it, the two `Date.now()` calls (one in the test's `agoMs`
@@ -3498,7 +3501,19 @@ export async function checkSyncFreshness(
         // failing/warning exactly as before — detection is not weakened.
         const headMatches = isSourceUnchangedSinceSync(source.local_path, source.last_commit);
         if (headMatches && chunkerMatch) {
-          issues.push(`Source ${display} has uncommitted tracked changes (committed HEAD already synced) — commit + sync to version them`);
+          // Commit-staleness escalation: an old HEAD commit + a dirty tree means
+          // the auto-commit mechanism (snapshot cron / autopilot daemon) has
+          // stopped — not just a fresh edit. Flag that explicitly so a brain
+          // silently going uncommitted for weeks is caught, regardless of WHICH
+          // commit mechanism is used. Stays `warn`: search isn't stale (HEAD is
+          // synced), but the version-control/audit trail is at risk.
+          const commitMs = headCommitTimeMs(source.local_path);
+          const commitAgeDays = commitMs !== null ? Math.floor((now - commitMs) / 86_400_000) : null;
+          if (commitAgeDays !== null && commitAgeDays >= COMMIT_STALE_DAYS) {
+            issues.push(`Source ${display} has uncommitted changes and its last commit is ${commitAgeDays}d old — auto-commit appears stopped (check the snapshot/commit job)`);
+          } else {
+            issues.push(`Source ${display} has uncommitted tracked changes (committed HEAD already synced) — commit + sync to version them`);
+          }
           hasWarnings = true;
           stale_count++;
           continue;

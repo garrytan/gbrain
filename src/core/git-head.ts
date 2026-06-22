@@ -122,3 +122,35 @@ export function isSourceUnchangedSinceSync(
   }
   return true;
 }
+
+// Commit-time probe (commit-staleness signal). Returns HEAD's committer time in
+// epoch-ms, or null on any error (fail-open, same contract as the head/clean
+// probes). Lets doctor distinguish "just edited a file" from "the auto-commit
+// job (cron/daemon) has been down for days" without inspecting the scheduler.
+export type GitCommitTimeProbe = (localPath: string) => number | null;
+
+const DEFAULT_COMMIT_TIME_PROBE: GitCommitTimeProbe = (localPath) => {
+  try {
+    const out = execFileSync('git', ['-C', localPath, 'log', '-1', '--format=%ct'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const secs = Number.parseInt(out.trim(), 10);
+    return Number.isFinite(secs) ? secs * 1000 : null;
+  } catch {
+    return null;
+  }
+};
+
+let _commitTimeProbe: GitCommitTimeProbe = DEFAULT_COMMIT_TIME_PROBE;
+
+export function _setGitCommitTimeProbeForTests(fn: GitCommitTimeProbe | null): void {
+  _commitTimeProbe = fn ?? DEFAULT_COMMIT_TIME_PROBE;
+}
+
+/** HEAD commit time (epoch-ms) for a local git repo, or null on any error. */
+export function headCommitTimeMs(localPath: string | null | undefined): number | null {
+  if (!localPath) return null;
+  return _commitTimeProbe(localPath);
+}
