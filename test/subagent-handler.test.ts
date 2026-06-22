@@ -298,6 +298,127 @@ describe('subagent handler happy path', () => {
     expect(out).toEqual({ echoed: { value: 'v1' } });
   });
 
+  test('required_tools forces a corrective turn before accepting success', async () => {
+    const tool = makeEchoTool();
+    const client = new FakeMessagesClient([
+      {
+        content: [{ type: 'text', text: 'I did it without using the tool' }] as any,
+        stop_reason: 'end_turn',
+      },
+      {
+        content: [
+          { type: 'tool_use', id: 'tu_required', name: 'echo', input: { value: 'v2' } } as any,
+        ],
+        stop_reason: 'tool_use' as any,
+      },
+      {
+        content: [{ type: 'text', text: 'done after tool' }] as any,
+        stop_reason: 'end_turn',
+      },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [tool] });
+    const ctx = await makeCtx({ prompt: 'go', required_tools: ['echo'], max_turns: 4 });
+
+    const result = await handler(ctx);
+
+    expect(result.stop_reason).toBe('end_turn');
+    expect(result.result).toBe('done after tool');
+    expect(client.calls.length).toBe(3);
+    expect(JSON.stringify(client.calls[1]!.messages)).toContain('Required tool call missing: echo');
+
+    const rows = await engine.executeRaw<{ status: string; tool_name: string; output: unknown }>(
+      `SELECT status, tool_name, output FROM subagent_tool_executions WHERE job_id = $1`,
+      [ctx.id],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.tool_name).toBe('echo');
+    expect(rows[0]!.status).toBe('complete');
+    const out = typeof rows[0]!.output === 'string' ? JSON.parse(rows[0]!.output as string) : rows[0]!.output;
+    expect(out).toEqual({ echoed: { value: 'v2' } });
+  });
+
+  test('source_id is passed through to required brain tools', async () => {
+    let seenSourceId: string | undefined;
+    const tool: ToolDef = {
+      name: 'brain_put_page',
+      description: 'fake put page',
+      input_schema: { type: 'object', properties: {}, required: [] },
+      idempotent: true,
+      async execute(_input, toolCtx) {
+        seenSourceId = (toolCtx as unknown as { sourceId?: string }).sourceId;
+        return { ok: true };
+      },
+    };
+    const client = new FakeMessagesClient([
+      {
+        content: [
+          { type: 'tool_use', id: 'tu_source', name: 'brain_put_page', input: {} } as any,
+        ],
+        stop_reason: 'tool_use' as any,
+      },
+      {
+        content: [{ type: 'text', text: 'done' }] as any,
+        stop_reason: 'end_turn',
+      },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [tool] });
+    const ctx = await makeCtx({
+      prompt: 'go',
+      source_id: 'gbrain',
+      required_tools: ['put_page'],
+      max_turns: 4,
+    });
+
+    await handler(ctx);
+
+    expect(seenSourceId).toBe('gbrain');
+  });
+
+  test('required_tools fails loudly when max_turns expires before tool completion', async () => {
+    const tool = makeEchoTool();
+    const client = new FakeMessagesClient([
+      {
+        content: [{ type: 'text', text: 'still no tool' }] as any,
+        stop_reason: 'end_turn',
+      },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [tool] });
+    const ctx = await makeCtx({ prompt: 'go', required_tools: ['echo'], max_turns: 1 });
+
+    await expect(handler(ctx)).rejects.toThrow('required_tools_missing: echo');
+  });
+
+  test('required_tools fails when max_turns is spent on non-required tools', async () => {
+    const requiredTool = makeEchoTool();
+    const otherTool: ToolDef = {
+      name: 'other',
+      description: 'other tool',
+      input_schema: { type: 'object', properties: {}, required: [] },
+      idempotent: true,
+      async execute() {
+        return { ok: true };
+      },
+    };
+    const client = new FakeMessagesClient([
+      {
+        content: [
+          { type: 'tool_use', id: 'tu_other', name: 'other', input: {} } as any,
+        ],
+        stop_reason: 'tool_use' as any,
+      },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [requiredTool, otherTool] });
+    const ctx = await makeCtx({ prompt: 'go', required_tools: ['echo'], max_turns: 1 });
+
+    await expect(handler(ctx)).rejects.toThrow('required_tools_missing: echo');
+
+    const rows = await engine.executeRaw<{ status: string; tool_name: string }>(
+      `SELECT status, tool_name FROM subagent_tool_executions WHERE job_id = $1`,
+      [ctx.id],
+    );
+    expect(rows).toEqual([{ status: 'complete', tool_name: 'other' }]);
+  });
+
   test('tool throws: row goes failed, model sees error, loop continues', async () => {
     const tool = makeThrowingTool();
     const client = new FakeMessagesClient([
@@ -505,6 +626,57 @@ describe('subagent handler replay (crash recovery)', () => {
     // Token totals from the persisted assistant message rolled up.
     expect(result.tokens.in).toBe(100);
     expect(result.tokens.out).toBe(50);
+  });
+
+  test('text-only assistant tail on resume still enforces required_tools', async () => {
+    const tool = makeEchoTool();
+    const ctx = await makeCtx({ prompt: 'start', required_tools: ['echo'], max_turns: 4 });
+    await engine.executeRaw(
+      `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+       VALUES ($1, 0, 'user', $2::jsonb)`,
+      [ctx.id, JSON.stringify([{ type: 'text', text: 'start' }])],
+    );
+    await engine.executeRaw(
+      `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks, model)
+       VALUES ($1, 1, 'assistant', $2::jsonb, 'claude-sonnet-4-6')`,
+      [
+        ctx.id,
+        JSON.stringify([
+          { type: 'text', text: 'done without the required tool' },
+        ]),
+      ],
+    );
+
+    const client = new FakeMessagesClient([
+      {
+        content: [
+          { type: 'tool_use', id: 'tu_resume_required', name: 'echo', input: { value: 'resume' } } as any,
+        ],
+        stop_reason: 'tool_use' as any,
+      },
+      {
+        content: [{ type: 'text', text: 'done after replay correction' }] as any,
+        stop_reason: 'end_turn',
+      },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [tool] });
+
+    const result = await handler(ctx);
+
+    expect(result.stop_reason).toBe('end_turn');
+    expect(result.result).toBe('done after replay correction');
+    expect(client.calls.length).toBe(2);
+    expect(JSON.stringify(client.calls[0]!.messages)).toContain('Required tool call missing: echo');
+
+    const rows = await engine.executeRaw<{ status: string; tool_name: string; output: unknown }>(
+      `SELECT status, tool_name, output FROM subagent_tool_executions WHERE job_id = $1`,
+      [ctx.id],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.tool_name).toBe('echo');
+    expect(rows[0]!.status).toBe('complete');
+    const out = typeof rows[0]!.output === 'string' ? JSON.parse(rows[0]!.output as string) : rows[0]!.output;
+    expect(out).toEqual({ echoed: { value: 'resume' } });
   });
 
   // Companion: the existing tool-use replay path is unchanged.

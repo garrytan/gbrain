@@ -747,6 +747,7 @@ async function _runBrainstormInner(
     });
     const chatOpts: ChatOpts = {
       model: opts.modelOverride,
+      budgetLabel: 'brainstorm.cross_model',
       system,
       messages: [{ role: 'user', content: user }],
       maxTokens: 1500,

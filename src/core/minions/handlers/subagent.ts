@@ -271,11 +271,13 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       engine,
       config,
       brainId: data.brain_id,
+      sourceId: data.source_id,
       allowedSlugPrefixes: data.allowed_slug_prefixes,
     });
     const toolDefs = data.allowed_tools && data.allowed_tools.length > 0
       ? filterAllowedTools(registry, data.allowed_tools)
       : registry;
+    const requiredTools = normalizeRequiredTools(data.required_tools, toolDefs);
 
     // v0.41 Approach C: render the final system prompt now that toolDefs
     // is known. Splices a deterministic tool-usage preamble listing each
@@ -364,18 +366,36 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           b.type === 'tool_use',
       );
       if (pendingToolUses.length === 0) {
-        const finalText = last.content_blocks
-          .filter((b): b is { type: 'text'; text: string } & Record<string, unknown> =>
-            b.type === 'text' && typeof (b as { text?: unknown }).text === 'string',
-          )
-          .map(b => b.text)
-          .join('\n');
-        return {
-          result: finalText,
-          turns_count: assistantTurns,
-          stop_reason: 'end_turn',
-          tokens: tokenTotals,
-        };
+        const missingRequiredTools = await missingRequiredCompletedTools(engine, ctx.id, requiredTools);
+        if (missingRequiredTools.length === 0) {
+          const finalText = last.content_blocks
+            .filter((b): b is { type: 'text'; text: string } & Record<string, unknown> =>
+              b.type === 'text' && typeof (b as { text?: unknown }).text === 'string',
+            )
+            .map(b => b.text)
+            .join('\n');
+          return {
+            result: finalText,
+            turns_count: assistantTurns,
+            stop_reason: 'end_turn',
+            tokens: tokenTotals,
+          };
+        }
+        if (assistantTurns >= maxTurns) {
+          throw new UnrecoverableError(`required_tools_missing: ${missingRequiredTools.join(', ')}`);
+        }
+        const correctiveBlocks = [{ type: 'text', text: requiredToolCorrectiveText(missingRequiredTools) }] as ContentBlock[];
+        await persistMessage(engine, ctx.id, {
+          message_idx: nextMessageIdx++,
+          role: 'user',
+          content_blocks: correctiveBlocks,
+          tokens_in: null,
+          tokens_out: null,
+          tokens_cache_read: null,
+          tokens_cache_create: null,
+          model: null,
+        });
+        anthroMessages.push({ role: 'user', content: correctiveBlocks as any });
       }
       if (pendingToolUses.length > 0) {
         const synthesizedResults: ContentBlock[] = [];
@@ -417,7 +437,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           await persistToolExecPending(engine, ctx.id, last.message_idx, use.id, use.name, use.input);
           try {
             const output = await toolDef.execute(use.input, {
-              engine, jobId: ctx.id, remote: true, signal: ctx.signal,
+              engine, sourceId: data.source_id, jobId: ctx.id, remote: true, signal: ctx.signal,
             });
             await persistToolExecComplete(engine, ctx.id, use.id, output);
             synthesizedResults.push({
@@ -645,6 +665,27 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           b.type === 'tool_use',
       );
       if (toolUses.length === 0) {
+        const missingRequiredTools = await missingRequiredCompletedTools(engine, ctx.id, requiredTools);
+        if (missingRequiredTools.length > 0) {
+          const correctiveText = requiredToolCorrectiveText(missingRequiredTools);
+          if (assistantTurns >= maxTurns) {
+            throw new UnrecoverableError(`required_tools_missing: ${missingRequiredTools.join(', ')}`);
+          }
+          const userIdx = nextMessageIdx++;
+          const correctiveBlocks = [{ type: 'text', text: correctiveText }] as ContentBlock[];
+          await persistMessage(engine, ctx.id, {
+            message_idx: userIdx,
+            role: 'user',
+            content_blocks: correctiveBlocks,
+            tokens_in: null,
+            tokens_out: null,
+            tokens_cache_read: null,
+            tokens_cache_create: null,
+            model: null,
+          });
+          anthroMessages.push({ role: 'user', content: correctiveBlocks as any });
+          continue;
+        }
         stopReason = 'end_turn';
         // Concatenate text blocks as the final answer.
         finalText = blocks
@@ -719,6 +760,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         try {
           const output = await toolDef.execute(use.input, {
             engine,
+            sourceId: data.source_id,
             jobId: ctx.id,
             remote: true,
             signal: ctx.signal,
@@ -772,6 +814,11 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         model: null,
       });
       anthroMessages.push({ role: 'user', content: toolResults as any });
+    }
+
+    const missingRequiredTools = await missingRequiredCompletedTools(engine, ctx.id, requiredTools);
+    if (missingRequiredTools.length > 0) {
+      throw new UnrecoverableError(`required_tools_missing: ${missingRequiredTools.join(', ')}`);
     }
 
     return {
@@ -829,6 +876,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       async execute(input: unknown, signal: AbortSignal): Promise<unknown> {
         return await t.execute(input, {
           engine,
+          sourceId: data.source_id,
           jobId: ctx.id,
           remote: true,
           signal,
@@ -836,6 +884,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       },
     });
   }
+  const requiredTools = normalizeRequiredTools(data.required_tools, toolDefs);
 
   // Load prior state (replay support via D5 shim for legacy v1 rows).
   const priorMessages = await loadPriorMessages(engine, ctx.id);
@@ -891,6 +940,34 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     });
     nextMessageIdx = 1;
   }
+  const replayTail = priorChatMessages[priorChatMessages.length - 1];
+  const replayTailBlocks = Array.isArray(replayTail?.content) ? replayTail.content : [];
+  const replayTailHasToolCall = replayTailBlocks.some((b): b is Extract<ChatBlock, { type: 'tool-call' }> =>
+    b.type === 'tool-call',
+  );
+  if (replayTail?.role === 'assistant' && !replayTailHasToolCall) {
+    const missingRequiredTools = await missingRequiredCompletedTools(engine, ctx.id, requiredTools);
+    if (missingRequiredTools.length > 0) {
+      const assistantTurns = priorChatMessages.filter(m => m.role === 'assistant').length;
+      if (assistantTurns >= maxTurns) {
+        throw new UnrecoverableError(`required_tools_missing: ${missingRequiredTools.join(', ')}`);
+      }
+      const correctiveBlocks = [
+        { type: 'text', text: requiredToolCorrectiveText(missingRequiredTools) },
+      ] as ChatBlock[];
+      await persistMessage(engine, ctx.id, {
+        message_idx: nextMessageIdx++,
+        role: 'user',
+        content_blocks: correctiveBlocks as unknown as ContentBlock[],
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cache_read: null,
+        tokens_cache_create: null,
+        model: null,
+      });
+      priorChatMessages.push({ role: 'user', content: correctiveBlocks });
+    }
+  }
 
   // Capability detection drives cache_control injection.
   const verdict = classifyCapabilities(model);
@@ -913,6 +990,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     tools: chatTools,
     toolHandlers,
     maxTurns,
+    budgetLabel: 'subagent.gateway',
     abortSignal: ctx.signal,
     cacheSystem,
     // ALWAYS pass replayState (even on fresh runs) so the gateway loop's
@@ -1006,8 +1084,34 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
         model: null,
       });
     },
+    onNoToolCalls: async (turnIdx, messageIdx) => {
+      const missingRequiredTools = await missingRequiredCompletedTools(engine, ctx.id, requiredTools);
+      if (missingRequiredTools.length === 0) return null;
+      if (turnIdx + 1 >= maxTurns) {
+        throw new UnrecoverableError(`required_tools_missing: ${missingRequiredTools.join(', ')}`);
+      }
+      const correctiveBlocks = [
+        { type: 'text', text: requiredToolCorrectiveText(missingRequiredTools) },
+      ] as ChatBlock[];
+      await persistMessage(engine, ctx.id, {
+        message_idx: messageIdx,
+        role: 'user',
+        content_blocks: correctiveBlocks as unknown as ContentBlock[],
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cache_read: null,
+        tokens_cache_create: null,
+        model: null,
+      });
+      return correctiveBlocks;
+    },
     onHeartbeat: heartbeat,
   });
+
+  const missingRequiredTools = await missingRequiredCompletedTools(engine, ctx.id, requiredTools);
+  if (missingRequiredTools.length > 0) {
+    throw new UnrecoverableError(`required_tools_missing: ${missingRequiredTools.join(', ')}`);
+  }
 
   // Map gateway stop reason to SubagentStopReason. SubagentStopReason has
   // {end_turn, max_turns, refusal, error}; aborted maps to error.
@@ -1034,6 +1138,53 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       cache_create: result.totalUsage.cache_creation_tokens,
     },
   };
+}
+
+function requiredToolCorrectiveText(missingRequiredTools: string[]): string {
+  return [
+    `Required tool call missing: ${missingRequiredTools.join(', ')}.`,
+    `You must call each required tool before claiming the task is complete.`,
+    `A text-only claim is not accepted for this job.`,
+  ].join(' ');
+}
+
+function normalizeRequiredTools(required: string[] | undefined, toolDefs: ToolDef[]): string[] {
+  if (!Array.isArray(required) || required.length === 0) return [];
+  const allowed = new Set(toolDefs.map(t => t.name));
+  const normalized: string[] = [];
+  for (const name of required) {
+    if (typeof name !== 'string') continue;
+    const trimmed = name.trim();
+    if (!trimmed) continue;
+    const resolved = allowed.has(trimmed)
+      ? trimmed
+      : allowed.has(`brain_${trimmed}`)
+        ? `brain_${trimmed}`
+        : null;
+    if (!resolved) {
+      throw new Error(`subagent required_tools references unavailable tool "${trimmed}"`);
+    }
+    if (!normalized.includes(resolved)) normalized.push(resolved);
+  }
+  return normalized;
+}
+
+async function missingRequiredCompletedTools(
+  engine: BrainEngine,
+  jobId: number,
+  requiredTools: string[],
+): Promise<string[]> {
+  if (requiredTools.length === 0) return [];
+  const rows = await engine.executeRaw<{ tool_name: string }>(
+    `SELECT DISTINCT tool_name
+       FROM subagent_tool_executions
+      WHERE job_id = $1
+        AND status = 'complete'
+        AND tool_name = ANY($2)`,
+    [jobId, requiredTools],
+  );
+  const completed = new Set(rows.map(row => row.tool_name));
+  return requiredTools.filter(name => !completed.has(name));
 }
 
 function recipeIdFromModel(modelString: string): string {

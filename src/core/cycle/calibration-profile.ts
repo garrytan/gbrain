@@ -141,6 +141,7 @@ export async function defaultPatternsGenerator(input: {
   const result = await gatewayChat({
     messages: [{ role: 'user', content: prompt + feedbackSuffix }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
+    budgetLabel: 'cycle.calibration_profile.patterns',
     maxTokens: 500,
   });
   return parsePatternStatementsOutput(result.text);
@@ -155,6 +156,7 @@ export async function defaultBiasTagsGenerator(patterns: string[]): Promise<stri
   );
   const result = await gatewayChat({
     messages: [{ role: 'user', content: prompt }],
+    budgetLabel: 'cycle.calibration_profile.bias_tags',
     maxTokens: 200,
   });
   return parseBiasTagsOutput(result.text);

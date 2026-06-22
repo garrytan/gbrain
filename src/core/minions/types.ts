@@ -419,6 +419,14 @@ export interface SubagentHandlerData {
    * time, not silently ignored. Empty array = no tools.
    */
   allowed_tools?: string[];
+  /**
+   * Tool names that must complete before the handler may return success.
+   *
+   * This is stricter than `allowed_tools`: it is an execution contract for
+   * canaries and synthesis jobs that must not accept a text-only "done" claim
+   * when the model failed to call the required write/read tool.
+   */
+  required_tools?: string[];
   /** System prompt override. When omitted, the handler builds one. */
   system?: string;
   /** Template variables for subagent_def. Arbitrary JSON-serializable. */
@@ -438,6 +446,14 @@ export interface SubagentHandlerData {
    * engine via BrainRegistry.getBrain() at buildOpContext time.
    */
   brain_id?: string;
+  /**
+   * Source id for brain tool writes/reads inside the parent engine.
+   *
+   * Defaults to `default` for backwards compatibility. Trusted local callers
+   * can set this when a canary/readback must target the same source selected
+   * by the CLI from the current repo.
+   */
+  source_id?: string;
   /**
    * Trusted-workspace allow-list for put_page (v0.23 dream cycle).
    *
@@ -508,6 +524,8 @@ export interface AggregatorHandlerData {
 export interface ToolCtx {
   /** Engine for DB-backed tools (brain_query, put_page, etc.). */
   engine: import('../engine.ts').BrainEngine;
+  /** Source id for operations that read/write within a multi-source brain. */
+  sourceId?: string;
   /** The subagent job id (used for audit + put_page namespace enforcement). */
   jobId: number;
   /** Always true for LLM-invoked tools — matches MCP trust boundary. */

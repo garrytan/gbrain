@@ -513,6 +513,7 @@ async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion'): P
     try {
       await chat({
         model: modelStr,
+        budgetLabel: `models.probe.${touchpoint}`,
         messages: [{ role: 'user', content: '.' }],
         maxTokens: 1,
         abortSignal: controller.signal,

@@ -189,6 +189,7 @@ function completedKey(sourceId: string, slug: string): string {
 const defaultSynthesize: SynthesizeFn = async ({ system, user, model, abortSignal }) => {
   const res = await chat({
     model,
+    budgetLabel: 'enrich.default_synthesize',
     system,
     messages: [{ role: 'user', content: user }],
     maxTokens: 2048,

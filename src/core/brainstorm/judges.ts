@@ -523,6 +523,7 @@ async function runJudgeChunk(
 
   const result = await chat({
     model: options.modelOverride,
+    budgetLabel: 'brainstorm.judge',
     system,
     messages: [{ role: 'user', content: prompt }],
     // Judge runs cold (T=0.1) for consistency; the gateway's temperature

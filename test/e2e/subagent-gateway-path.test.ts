@@ -70,15 +70,24 @@ interface FakeJobOpts {
   prompt: string;
   model?: string;
   allowed_tools?: string[];
+  required_tools?: string[];
+  max_turns?: number;
 }
 
 async function makeFakeJob(opts: FakeJobOpts): Promise<{ jobId: number; ctx: MinionJobContext; tokenSink: any[] }> {
   // Insert a minion_jobs row so foreign keys validate (subagent_tool_executions.job_id FK).
+  const data = {
+    prompt: opts.prompt,
+    model: opts.model,
+    allowed_tools: opts.allowed_tools,
+    required_tools: opts.required_tools,
+    max_turns: opts.max_turns,
+  };
   const rows = await engine.executeRaw<{ id: number }>(
     `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
      VALUES ('subagent', 'active', $1::jsonb, 'default', 0, now())
      RETURNING id`,
-    [JSON.stringify({ prompt: opts.prompt, model: opts.model, allowed_tools: opts.allowed_tools })],
+    [JSON.stringify(data)],
   );
   const jobId = rows[0].id;
 
@@ -89,7 +98,7 @@ async function makeFakeJob(opts: FakeJobOpts): Promise<{ jobId: number; ctx: Min
   const ctx: MinionJobContext = {
     id: jobId,
     name: 'subagent',
-    data: { prompt: opts.prompt, model: opts.model, allowed_tools: opts.allowed_tools },
+    data,
     attempts_made: 0,
     signal: abortCtrl.signal,
     shutdownSignal: shutdownCtrl.signal,
@@ -274,6 +283,152 @@ describe('runSubagentViaGateway (v0.38 Slice 1 — full handler path through gat
     // Token accumulation across both turns.
     expect(result.tokens.in).toBe(45); // 20 + 25
     expect(result.tokens.out).toBe(12); // 8 + 4
+  });
+
+  it('required_tools adds corrective turn on text-only gateway response before accepting success', async () => {
+    let turn = 0;
+    const seenMessages: unknown[] = [];
+    __setChatTransportForTests(async (opts) => {
+      turn++;
+      seenMessages.push(opts.messages);
+      if (turn === 1) {
+        return {
+          text: 'done without using the required tool',
+          blocks: [{ type: 'text', text: 'done without using the required tool' }] as ChatBlock[],
+          stopReason: 'end',
+          usage: { input_tokens: 11, output_tokens: 4, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'anthropic:claude-sonnet-4-6',
+          providerId: 'anthropic',
+        } satisfies ChatResult;
+      }
+      if (turn === 2) {
+        return {
+          text: '',
+          blocks: [
+            { type: 'tool-call', toolCallId: 'tc-required', toolName: 'search', input: { q: 'required' } },
+          ] as ChatBlock[],
+          stopReason: 'tool_calls',
+          usage: { input_tokens: 20, output_tokens: 8, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'anthropic:claude-sonnet-4-6',
+          providerId: 'anthropic',
+        } satisfies ChatResult;
+      }
+      return {
+        text: 'done after required tool',
+        blocks: [{ type: 'text', text: 'done after required tool' }] as ChatBlock[],
+        stopReason: 'end',
+        usage: { input_tokens: 25, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-sonnet-4-6',
+        providerId: 'anthropic',
+      } satisfies ChatResult;
+    });
+
+    const executions: Array<{ name: string; input: unknown; ts: number }> = [];
+    const tools = makeStubTools(executions);
+    const handler = buildHandler(tools);
+    const { jobId, ctx } = await makeFakeJob({
+      prompt: 'find required',
+      model: 'anthropic:claude-sonnet-4-6',
+      allowed_tools: ['search'],
+      required_tools: ['search'],
+      max_turns: 4,
+    });
+
+    const result = await handler(ctx);
+
+    expect(result.result).toBe('done after required tool');
+    expect(result.stop_reason).toBe('end_turn');
+    expect(turn).toBe(3);
+    expect(JSON.stringify(seenMessages[1])).toContain('Required tool call missing: search');
+    expect(executions).toHaveLength(1);
+    expect(executions[0].name).toBe('search');
+
+    const messages = await engine.executeRaw<Record<string, unknown>>(
+      `SELECT message_idx, role, content_blocks
+         FROM subagent_messages
+        WHERE job_id = $1
+        ORDER BY message_idx`,
+      [jobId],
+    );
+    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user', 'assistant']);
+    expect(JSON.stringify(messages[2].content_blocks)).toContain('Required tool call missing: search');
+
+    const toolRows = await engine.executeRaw<Record<string, unknown>>(
+      `SELECT tool_name, status
+         FROM subagent_tool_executions
+        WHERE job_id = $1`,
+      [jobId],
+    );
+    expect(toolRows).toEqual([{ tool_name: 'search', status: 'complete' }]);
+  });
+
+  it('required_tools adds corrective turn before gateway resume from text-only assistant tail', async () => {
+    let turn = 0;
+    const seenMessages: unknown[] = [];
+    __setChatTransportForTests(async (opts) => {
+      turn++;
+      seenMessages.push(opts.messages);
+      if (turn === 1) {
+        return {
+          text: '',
+          blocks: [
+            { type: 'tool-call', toolCallId: 'tc-resume-required', toolName: 'search', input: { q: 'resume' } },
+          ] as ChatBlock[],
+          stopReason: 'tool_calls',
+          usage: { input_tokens: 20, output_tokens: 8, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'anthropic:claude-sonnet-4-6',
+          providerId: 'anthropic',
+        } satisfies ChatResult;
+      }
+      return {
+        text: 'done after resume required tool',
+        blocks: [{ type: 'text', text: 'done after resume required tool' }] as ChatBlock[],
+        stopReason: 'end',
+        usage: { input_tokens: 25, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-sonnet-4-6',
+        providerId: 'anthropic',
+      } satisfies ChatResult;
+    });
+
+    const executions: Array<{ name: string; input: unknown; ts: number }> = [];
+    const tools = makeStubTools(executions);
+    const handler = buildHandler(tools);
+    const { jobId, ctx } = await makeFakeJob({
+      prompt: 'resume required',
+      model: 'anthropic:claude-sonnet-4-6',
+      allowed_tools: ['search'],
+      required_tools: ['search'],
+      max_turns: 4,
+    });
+    await engine.executeRaw(
+      `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+       VALUES ($1, 0, 'user', $2::jsonb)`,
+      [jobId, JSON.stringify([{ type: 'text', text: 'resume required' }])],
+    );
+    await engine.executeRaw(
+      `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks, model)
+       VALUES ($1, 1, 'assistant', $2::jsonb, 'anthropic:claude-sonnet-4-6')`,
+      [jobId, JSON.stringify([{ type: 'text', text: 'done without required tool' }])],
+    );
+
+    const result = await handler(ctx);
+
+    expect(result.result).toBe('done after resume required tool');
+    expect(result.stop_reason).toBe('end_turn');
+    expect(turn).toBe(2);
+    expect(JSON.stringify(seenMessages[0])).toContain('Required tool call missing: search');
+    expect(executions).toHaveLength(1);
+    expect(executions[0].input).toEqual({ q: 'resume' });
+
+    const messages = await engine.executeRaw<Record<string, unknown>>(
+      `SELECT message_idx, role, content_blocks
+         FROM subagent_messages
+        WHERE job_id = $1
+        ORDER BY message_idx`,
+      [jobId],
+    );
+    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user', 'assistant']);
+    expect(JSON.stringify(messages[2].content_blocks)).toContain('Required tool call missing: search');
   });
 
   it('tool error path: handler persists status=failed, loop continues with error feedback', async () => {

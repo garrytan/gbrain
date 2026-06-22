@@ -247,6 +247,7 @@ async function summarizeCluster<T>(
   const prompt = `Summarize the following items in ~3 sentences capturing the load-bearing themes. Do not paraphrase verbatim.\n\n${lines}`;
   const res = await chat({
     model: opts.summarizeModel,
+    budgetLabel: 'diarize.payload_fitter.summarize_cluster',
     messages: [{ role: 'user', content: prompt }],
     maxTokens: 400,
   });

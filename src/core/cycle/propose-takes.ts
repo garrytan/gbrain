@@ -235,6 +235,7 @@ export async function defaultExtractor(
   const result = await gatewayChat({
     messages: [{ role: 'user', content: prompt }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
+    budgetLabel: 'cycle.propose_takes.extractor',
     maxTokens: PROPOSE_TAKES_MAX_OUTPUT_TOKENS,
   });
 

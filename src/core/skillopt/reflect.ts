@@ -177,6 +177,7 @@ export async function runOneShotRewrite(opts: ReflectOpts): Promise<OneShotRewri
   try {
     const result = await chat({
       model: opts.optimizerModel,
+      budgetLabel: 'skillopt.reflect.one_shot',
       system: ONE_SHOT_REWRITE_SYSTEM,
       messages: [{ role: 'user', content: userMsg }],
       maxTokens: 4096,
@@ -213,6 +214,7 @@ async function callReflect(
   try {
     const result = await chat({
       model: opts.optimizerModel,
+      budgetLabel: `skillopt.reflect.${mode}`,
       system,
       messages: [{ role: 'user', content: userMsg }],
       maxTokens: 2048,

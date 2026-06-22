@@ -257,6 +257,7 @@ async function classifyBatch(paragraphs: string[]): Promise<Array<'high' | 'medi
   try {
     const result = await chat({
       model: 'anthropic:claude-haiku-4-5-20251001',
+      budgetLabel: 'notability_eval.tier_paragraphs',
       system,
       messages: [{ role: 'user', content: userMsg }],
       maxTokens: 200,

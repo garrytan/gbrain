@@ -114,6 +114,7 @@ async function callOneModel(
   try {
     const result = await chat({
       model: modelId,
+      budgetLabel: 'takes_quality_eval.judge',
       system: 'You are an evaluation judge. Return strict JSON in the requested shape. Do not include markdown fences in your final response.',
       messages: [{ role: 'user', content: systemPrompt }],
       maxTokens: 2000,

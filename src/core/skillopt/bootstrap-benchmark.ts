@@ -118,6 +118,7 @@ export async function runBootstrap(opts: BootstrapOpts): Promise<BootstrapResult
     try {
       const result = await chat({
         model: optimizerModel,
+        budgetLabel: 'skillopt.bootstrap.generate_checks',
         system: BOOTSTRAP_SYSTEM,
         messages: [{ role: 'user', content: userMsg }],
         maxTokens: 500,
@@ -230,6 +231,7 @@ export async function runBootstrapFromSkill(opts: BootstrapFromSkillOpts): Promi
   // NOTE: no try/catch here — a provider/transport throw propagates to the CLI.
   const result = await chat({
     model: optimizerModel,
+    budgetLabel: 'skillopt.bootstrap.generate_tasks',
     system: BOOTSTRAP_FROM_SKILL_SYSTEM,
     messages: [{ role: 'user', content: userMsg }],
     maxTokens: Math.min(8000, Math.max(4000, taskCount * 220)),

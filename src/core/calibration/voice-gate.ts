@@ -160,6 +160,7 @@ export async function defaultJudge(input: {
   const result = await gatewayChat({
     messages: [{ role: 'user', content: prompt }],
     model: 'claude-haiku-4-5',
+    budgetLabel: 'calibration.voice_gate',
     maxTokens: 100,
   });
   return parseJudgeOutput(result.text);

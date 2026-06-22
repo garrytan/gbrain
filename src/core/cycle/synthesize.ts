@@ -775,6 +775,7 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
 
       const result: ChatResult = await gatewayChat({
         model: modelStr,
+        budgetLabel: 'cycle.synthesize.significance',
         system,
         messages,
         maxTokens: params.max_tokens,

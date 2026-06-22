@@ -186,6 +186,8 @@ export interface BuildBrainToolsOpts {
    * brainId as metadata only.
    */
   brainId?: string;
+  /** Source id used by brain tools inside the parent engine. Defaults to default. */
+  sourceId?: string;
   /**
    * Trusted-workspace allow-list (v0.23). When set, put_page is bounded
    * to slugs matching these prefix globs instead of the legacy
@@ -203,6 +205,7 @@ interface OpContextDeps {
   jobId: number;
   signal?: AbortSignal;
   brainId?: string;
+  sourceId?: string;
   allowedSlugPrefixes?: readonly string[];
 }
 
@@ -217,7 +220,7 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
     },
     dryRun: false,
     remote: true,                // match MCP trust boundary for auto-link skip
-    sourceId: 'default',         // v0.34 D4: required; subagent tools default to host source
+    sourceId: deps.sourceId ?? 'default', // v0.34 D4: required; subagent tools default to host source
     jobId: deps.jobId,
     subagentId: deps.subagentId,
     viaSubagent: true,           // FAIL-CLOSED: put_page etc. enforce namespace
@@ -269,6 +272,7 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           jobId: ctx.jobId,
           signal: ctx.signal,
           brainId: opts.brainId,
+          sourceId: opts.sourceId,
           allowedSlugPrefixes: opts.allowedSlugPrefixes,
         });
         const params = (input && typeof input === 'object') ? input as Record<string, unknown> : {};

@@ -2995,6 +2995,8 @@ export interface ToolLoopOpts {
   maxTurns?: number;
   /** Per-turn max output tokens. Default 4096. */
   maxTokens?: number;
+  /** Budget/audit owner label for the gateway chat calls made by this loop. */
+  budgetLabel?: string;
   abortSignal?: AbortSignal;
   /** Apply Anthropic cache_control to system + last tool. Silently ignored elsewhere. */
   cacheSystem?: boolean;
@@ -3030,6 +3032,16 @@ export interface ToolLoopOpts {
   onToolCallFailed?: (gbrainToolUseId: string, error: string) => Promise<void>;
   /** Persist the tool-result feedback message before the next model call. */
   onToolResults?: (turnIdx: number, messageIdx: number, blocks: ChatBlock[]) => Promise<void>;
+  /**
+   * Optional caller-controlled recovery when a model returns text without tool
+   * calls. Returning user blocks appends a corrective user turn and continues.
+   */
+  onNoToolCalls?: (
+    turnIdx: number,
+    messageIdx: number,
+    text: string,
+    blocks: ChatBlock[],
+  ) => Promise<ChatBlock[] | null | undefined>;
 
   /** Optional per-call heartbeat for observability. */
   onHeartbeat?: (event: string, data: Record<string, unknown>) => void;
@@ -3097,6 +3109,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
     try {
       chatResult = await chat({
         model: opts.model,
+        budgetLabel: opts.budgetLabel ?? 'gateway.tool_loop',
         system: opts.system,
         messages,
         tools: opts.tools,
@@ -3140,6 +3153,18 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
     );
 
     if (toolCalls.length === 0) {
+      const correctiveBlocks = await opts.onNoToolCalls?.(
+        turnIdx,
+        messageIdx,
+        chatResult.text,
+        chatResult.blocks,
+      );
+      if (correctiveBlocks && correctiveBlocks.length > 0) {
+        messages.push({ role: 'user', content: correctiveBlocks });
+        messageIdx++;
+        turnIdx++;
+        continue;
+      }
       stopReason = 'end';
       finalText = chatResult.text;
       break;

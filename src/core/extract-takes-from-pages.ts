@@ -175,6 +175,7 @@ export async function extractTakesFromPages(
     try {
       response = await chat({
         model: opts.model ?? 'anthropic:claude-haiku-4-5',
+        budgetLabel: 'extract_takes.pages',
         system: CLASSIFIER_SYSTEM,
         messages: [
           {

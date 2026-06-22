@@ -209,8 +209,9 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
     }
     return null;
   }
-  // chat: use the canonical multi-provider pricing table first so DeepSeek,
-  // OpenAI, Google, and Anthropic all enforce `--max-cost` and monthly caps.
+  // Native paid chat providers price through the canonical multi-provider
+  // table. Wrapped ids such as openrouter:anthropic/... intentionally miss
+  // there, preserving TX2 fail-closed behavior until proxy pricing is modeled.
   if (kind === 'chat') {
     const canonical = canonicalLookup(modelId);
     if (canonical) return canonical;

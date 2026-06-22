@@ -165,6 +165,46 @@ describe('BudgetTracker.reserve', () => {
     expect(audit[0].projected_cost_usd).toBeCloseTo(0.001305, 8);
   });
 
+  test('native non-Anthropic chat models use canonical pricing under --max-cost', () => {
+    for (const [modelId, expectedCost] of [
+      ['openai:gpt-5.4-mini', 0.00525],
+      ['google:gemini-2.0-flash', 0.0005],
+    ] as const) {
+      const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+      expect(() =>
+        t.reserve({
+          modelId,
+          estimatedInputTokens: 1000,
+          maxOutputTokens: 1000,
+          kind: 'chat',
+        }),
+      ).not.toThrow();
+      const audit = readAudit();
+      expect(audit.at(-1)?.event).toBe('reserve');
+      expect(audit.at(-1)?.projected_cost_usd).toBeCloseTo(expectedCost, 8);
+    }
+  });
+
+  test('OpenRouter nested chat ids fail closed under --max-cost', () => {
+    const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+    let caught: unknown = null;
+    try {
+      t.reserve({
+        modelId: 'openrouter:openai/gpt-5.4-mini',
+        estimatedInputTokens: 1000,
+        maxOutputTokens: 1000,
+        kind: 'chat',
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(BudgetExhausted);
+    expect((caught as BudgetExhausted).reason).toBe('no_pricing');
+    expect((caught as BudgetExhausted).modelId).toBe('openrouter:openai/gpt-5.4-mini');
+    const audit = readAudit();
+    expect(audit.some((e) => e.event === 'reserve')).toBe(false);
+  });
+
   test('monthly Claude+DeepSeek budget blocks projected overage before reserve', () => {
     writeAuditRows([
       {
