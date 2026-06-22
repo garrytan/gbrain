@@ -2,13 +2,13 @@
   "schema_version": 1,
   "generated_from": "live_operation_registry",
   "summary": {
-    "operation_count": 182,
-    "mcp_operation_count": 182,
-    "cli_shared_count": 171,
+    "operation_count": 183,
+    "mcp_operation_count": 183,
+    "cli_shared_count": 172,
     "cli_direct_count": 23,
     "cli_only_count": 5,
     "not_cli_count": 1,
-    "mutating_count": 74,
+    "mutating_count": 75,
     "read_only_count": 108
   },
   "cli_commands": [
@@ -684,6 +684,11 @@
       "command": "raw-access-evaluate",
       "mode": "cli_shared",
       "operation_name": "evaluate_raw_access"
+    },
+    {
+      "command": "raw-access-request-chunks",
+      "mode": "cli_shared",
+      "operation_name": "request_raw_source_chunks"
     },
     {
       "command": "raw-canonical-preview",
@@ -12329,6 +12334,141 @@
       },
       "compact_schema_hash": "e2c031e0ea6f73c4d11a61a75460228646d14c06f2191001b6ea124e0c8d46a3",
       "full_schema_hash": "e2c031e0ea6f73c4d11a61a75460228646d14c06f2191001b6ea124e0c8d46a3",
+      "memory_verb_families": [],
+      "mutation_aliases": []
+    },
+    {
+      "name": "request_raw_source_chunks",
+      "description": "Authorized, audited retrieval of redacted source chunk text. Runs the same scope/policy resolution and raw_access_ledger write as evaluate_raw_access and returns redacted_text only on a non-deny decision — never raw chunk_text. The unaudited list_source_items inspection path returns metadata only.",
+      "mutating": true,
+      "capability_required": [],
+      "capability_visibility": {
+        "requirements": []
+      },
+      "params": {
+        "actor_id": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Stable actor id."
+        },
+        "actor_type": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Actor type, for example runner, daemon, mcp, cli, or llm."
+        },
+        "chunk_ids": {
+          "type": [
+            "array"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Explicit source chunk ids requested.",
+          "items": {
+            "type": [
+              "string"
+            ],
+            "required": false,
+            "nullable": false
+          }
+        },
+        "input": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional input text to hash in the ledger."
+        },
+        "job_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": true,
+          "description": "Optional job id."
+        },
+        "policy": {
+          "type": [
+            "object"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Deprecated dry-run-only raw access policy override. Non-dry-run evaluation resolves policy from the registered source."
+        },
+        "prompt": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional prompt text to hash in the ledger."
+        },
+        "reason": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Why redacted chunk text is needed."
+        },
+        "requested_at": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional ISO request timestamp."
+        },
+        "session_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": true,
+          "description": "Optional session id."
+        },
+        "source_id": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Source id."
+        },
+        "source_item_id": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Source item id."
+        }
+      },
+      "cli_exposure": {
+        "mode": "cli_shared",
+        "command": "raw-access-request-chunks"
+      },
+      "mcp": {
+        "read_only": false,
+        "destructive": false,
+        "open_world": false,
+        "required_params": [
+          "actor_id",
+          "actor_type",
+          "chunk_ids",
+          "reason",
+          "source_id",
+          "source_item_id"
+        ]
+      },
+      "compact_schema_hash": "bfb5d1460cfdc2b5838038d7f70a8e562a624c24e82f239236e9dc30dfa489e9",
+      "full_schema_hash": "64cc288dc98487eafcfd91750519d316c880c70b107b9d03de8ff9d4659feb2b",
       "memory_verb_families": [],
       "mutation_aliases": []
     },
