@@ -59,11 +59,9 @@ meeting/import-derived, or not ready for compiled truth.
 Call `put_page` only after the router returns `canonical_write_allowed`. Canonical
 write routing requires `target_snapshot_hash`: pass the current page
 `content_hash`, or pass `null` only after confirming the target page is absent.
-The MCP `put_page` surface now **requires** the `expected_content_hash` field to be
-present — omitting it is rejected with a `route_first` error. Pass `null` to assert
-the page is absent (a fresh create), or the current `content_hash` to update; route
-a genuinely new page through `route_memory_writeback` first. Offline/CLI repair and
-bulk import use `admin_put_page`, which is not gated by this precondition.
+The MCP `put_page` surface requires the `expected_content_hash` field present —
+omitting it is rejected (`route_first`). Pass `null` to assert absence or a
+`content_hash` to update; `admin_put_page` is the CLI/offline repair escape.
 When calling `put_page`, pass the router's
 `canonical_write_requirements.expected_content_hash` as `expected_content_hash`,
 then write attributed compiled truth plus timeline evidence. If the router
@@ -76,12 +74,9 @@ binding. Review the proposed home; approve or reject the proposal. approval must
 not call put_page. If the page is missing, use patch candidate review/apply, then
 complete binding; promotion or handoff happens later.
 
-Promotion alone does not produce retrievable markdown. `promote_memory_candidate_entry`
-only flips the candidate's status and returns `canonical_write_pending: true`; the
-candidate is not retrievable via `retrieve_context`/`read_context` until you write the
-canonical page (create → review → apply a memory patch candidate, or `put_page` through
-the router). The daily memory report lists promoted-without-handoff candidates so this
-debt stays visible.
+Promotion alone produces no retrievable markdown: `promote_memory_candidate_entry`
+flips status and returns `canonical_write_pending`. Write the page (patch candidate
+apply, or `put_page`) to make it retrievable; the daily report lists the debt.
 
 Never write transient task mechanics, private chain-of-thought, or generic facts
 that do not belong in the user's knowledge graph.

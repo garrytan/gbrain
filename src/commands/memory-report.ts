@@ -292,10 +292,22 @@ function memoryMutationToCanonicalMemory(event: MemoryMutationEvent): ReportCano
       target_slug: event.target_kind === 'page' ? event.target_id : undefined,
       claim_type: event.target_kind,
       change_type: isCreateOperation(event.operation) ? 'created' : 'updated',
-      summary: `${event.operation} ${event.target_kind}/${event.target_id}`,
+      // Human-readable "learned this period" delta, not the raw operation/target string.
+      summary: `${isCreateOperation(event.operation) ? 'Learned' : 'Updated'} ${humanCanonicalKind(event.target_kind)}: ${event.target_id}`,
       source_refs: event.source_refs,
     },
   ];
+}
+
+function humanCanonicalKind(targetKind: string): string {
+  switch (targetKind) {
+    case 'page': return 'page';
+    case 'profile_memory': return 'profile memory';
+    case 'personal_episode': return 'personal episode';
+    case 'memory_candidate': return 'candidate';
+    case 'memory_patch_candidate': return 'patch candidate';
+    default: return targetKind.replace(/_/g, ' ');
+  }
 }
 
 function memoryCandidateToReviewItem(candidate: MemoryCandidateEntry): ReportReviewItem[] {

@@ -74,6 +74,14 @@ mbrain_prompt_is_relevant() {
 
   _mbrain_gate_common
 }
+
+mbrain_sessionstart_is_relevant() {
+  if [ "\${MBRAIN_SESSIONSTART_HOOK:-1}" = "0" ]; then
+    return 1
+  fi
+
+  _mbrain_gate_common
+}
 `;
 
 export const CLAUDE_MBRAIN_STOP_HOOK = `#!/bin/bash
@@ -212,5 +220,74 @@ fi
 log_line "inject" "$SESSION_ID" "context-injected"
 
 printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"MBrain is connected. If the request involves a named person, company, project, meeting, technical concept, internal system, or a prior decision, check MBrain before answering from general knowledge: call retrieve_context first, then read_context for the returned required_reads. If read_context is not callable on a lazy-loaded tool surface such as Codex, use tool_search for mbrain read_context, then call it with the returned required_reads. If MBrain has nothing relevant, say so rather than guessing. Route durable new knowledge surfaced this turn through route_memory_writeback before finishing; ambiguous signals become Memory Inbox candidates."}}'
+exit 0
+`;
+
+export const CLAUDE_MBRAIN_SESSIONSTART_HOOK = `#!/bin/bash
+set -u
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOG_FILE="\${MBRAIN_SESSIONSTART_HOOK_LOG:-$HOME/.claude/logs/mbrain-sessionstart-hook.log}"
+# shellcheck source=lib/mbrain-relevance.sh
+source "$HOOK_DIR/lib/mbrain-relevance.sh"
+
+log_line() {
+  local decision="$1"
+  local reason="\${2:-}"
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+  printf '%s %s %s\n' "$ts" "$decision" "$reason" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+# SessionStart treats stdout as model context; print either the structured JSON card below
+# or nothing at all. Never echo RAW_INPUT. Always exit 0 (non-blocking).
+RAW_INPUT="$(cat)"
+
+if ! mbrain_sessionstart_is_relevant; then
+  log_line "skip" "relevance-gate"
+  exit 0
+fi
+if ! command -v jq >/dev/null 2>&1; then
+  log_line "skip" "no-jq"
+  exit 0
+fi
+
+# Use the working directory as a weak activation query; the planner returns task/working-set
+# and top profile/episode signals for the active scope. Empty/blank stays silent.
+QUERY="resume work in \$(basename "$(pwd)")"
+PLAN="$(mbrain agent-session-activate "$QUERY" --scope mixed 2>/dev/null)"
+if [ -z "$PLAN" ]; then
+  log_line "skip" "no-plan"
+  exit 0
+fi
+
+# Build a bounded, scope-gated recall card: scenario + counts by artifact kind. Points to
+# retrieve_context/read_context for the canonical evidence rather than echoing memory text.
+CARD="$(printf '%s' "$PLAN" | jq -c '
+  (.artifacts // []) as $a
+  | if ($a | length) > 0 then
+      { hookSpecificOutput: {
+          hookEventName: "SessionStart",
+          additionalContext: (
+            "MBrain recall for this session (scenario: " + (.scenario // "mixed") + "): "
+            + (($a | length) | tostring) + " relevant memory signal(s) ["
+            + (($a | group_by(.artifact_kind)
+                 | map((.[0].artifact_kind // "memory") + " x" + (length | tostring))
+                 | join(", ")))
+            + "]. Call retrieve_context, then read_context on the required_reads, to load the "
+            + "canonical evidence before answering."
+          )
+        } }
+    else empty end
+' 2>/dev/null)"
+
+if [ -z "$CARD" ]; then
+  log_line "skip" "empty-card"
+  exit 0
+fi
+
+log_line "inject" "activation-card"
+printf '%s\n' "$CARD"
 exit 0
 `;

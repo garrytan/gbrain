@@ -476,9 +476,10 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
     }
 
     if (report.sections.canonical_memories.length > 0) {
-      lines.push('', 'Canonical Memories');
+      lines.push('', 'Canonical Memories (learned this period)');
+      lines.push(`- ${report.summary.new_canonical_memories} new, ${report.summary.updated_canonical_memories} updated`);
       for (const memory of report.sections.canonical_memories) {
-        lines.push(`- ${memory.id}: ${redactSecrets(memory.summary)}`);
+        lines.push(`- ${redactSecrets(memory.summary)}`);
       }
     }
 

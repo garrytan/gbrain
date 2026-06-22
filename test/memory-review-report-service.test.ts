@@ -473,7 +473,8 @@ describe('memory review report service', () => {
       }),
     }));
     const formatted = formatMemoryReviewReport(report);
-    expect(formatted).toContain('Canonical Memories');
+    expect(formatted).toContain('Canonical Memories (learned this period)');
+    expect(formatted).toContain('0 new, 1 updated');
     expect(formatted).not.toContain('No reportable memory exceptions.');
   });
 
