@@ -26,6 +26,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import {
   hasDatabase, setupDB, teardownDB, getEngine, getConn,
 } from './helpers.ts';
+import { recordCompleted, loadOpCheckpoint } from '../../src/core/op-checkpoint.ts';
 
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
@@ -170,5 +171,43 @@ describeE2E('Postgres JSONB round-trip — frontmatter / data / pages_updated / 
     expect(rows.length).toBeGreaterThan(0);
     expect(rows[0].jt).toBe('object');
     expect(rows[0].mood).toBe('happy');
+  });
+
+  test('op_checkpoints.completed_keys — recordCompleted stores an array, not a string literal', async () => {
+    // Same double-encode trap as the frontmatter bug, in a different write
+    // site: recordCompleted binds the completed-keys set to a `$3::jsonb`
+    // param. Passing JSON.stringify(set) makes postgres.js pre-encode the
+    // string, so the server stored a jsonb SCALAR STRING ("[\"k\"]") —
+    // jsonb_typeof = 'string'. Migration v119's CHECK
+    // (op_checkpoints_completed_keys_array) then REJECTS the write, so the
+    // first checkpoint of every resumable sync / embed / extract pin aborted.
+    // PGLite never double-encoded, so the unit suite passed straight through.
+    // Binding the raw string[] makes postgres.js cast it to a real jsonb array.
+    const engine = getEngine();
+    const conn = getConn();
+    const key = { op: 'embed', fingerprint: 'jsonb-roundtrip' };
+
+    await conn.unsafe(`DELETE FROM op_checkpoints WHERE op = $1 AND fingerprint = $2`, [key.op, key.fingerprint]);
+
+    // Old code: this write violates the array CHECK → durableWrite returns false.
+    const ok = await recordCompleted(engine, key, ['chunk-2', 'chunk-1']);
+    expect(ok).toBe(true);
+
+    const rows = await conn.unsafe(`
+      SELECT
+        jsonb_typeof(completed_keys)       AS jt,
+        completed_keys->>0                 AS first,
+        jsonb_array_length(completed_keys) AS len
+      FROM op_checkpoints
+      WHERE op = 'embed' AND fingerprint = 'jsonb-roundtrip'
+    `);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].jt).toBe('array');
+    expect(rows[0].len).toBe(2);
+    expect(rows[0].first).toBe('chunk-1'); // recordCompleted sorts before write
+
+    // And the values survive the read path.
+    expect((await loadOpCheckpoint(engine, key)).sort()).toEqual(['chunk-1', 'chunk-2']);
   });
 });

@@ -179,10 +179,15 @@ export async function recordCompleted(
   // REPLACE semantics (kept deliberately — #1794 V3). Callers like
   // extract-conversation-facts serialize a MUTABLE map through here and rely on
   // stale keys being REMOVED; an append would make them unremovable. The full
-  // set lands in the parent `completed_keys` JSONB column via a single UPSERT —
-  // exactly as before. JSON.stringify into `$3::jsonb` is correct (the text→jsonb
-  // cast yields a proper array; NOT the double-encode trap, which is the template
-  // form). Sync uses `appendCompleted` (below) instead, never this.
+  // set lands in the parent `completed_keys` JSONB column via a single UPSERT.
+  //
+  // Bind the RAW `string[]`, NOT `JSON.stringify(sorted)`. postgres.js (1.3.x)
+  // pre-encodes a JS string bound to a `$3::jsonb` param as JSON, so the server
+  // stores a jsonb SCALAR STRING ("[\"x\"]") — jsonb_typeof = 'string', which
+  // violates the `op_checkpoints_completed_keys_array` CHECK and aborts every
+  // sync/embed/extract pin write. Passing the array lets postgres.js cast it to a
+  // proper jsonb array (jsonb_typeof = 'array'). Sync uses `appendCompleted`
+  // (below) instead, never this.
   const sorted = [...keys].sort();
   return durableWrite(engine, key, 'write', () =>
     engine.executeRawDirect(
@@ -191,7 +196,7 @@ export async function recordCompleted(
        ON CONFLICT (op, fingerprint) DO UPDATE
          SET completed_keys = EXCLUDED.completed_keys,
              updated_at     = now()`,
-      [key.op, key.fingerprint, JSON.stringify(sorted)],
+      [key.op, key.fingerprint, sorted],
     ));
 }
 
