@@ -1,6 +1,9 @@
 /**
- * Shared symbol-match SQL for the call-graph edge lookups
- * (`getCallersOf` / `getCalleesOf`) across BOTH engines.
+ * Shared symbol-match logic for the call-graph edge lookups
+ * (`getCallersOf` / `getCalleesOf`). pglite uses `symbolMatchSql` directly;
+ * postgres inlines the equivalent SQL from the SAME `LAST_SEGMENT_REGEX` +
+ * `isQualifiedSymbol` guard (behaviorally equivalent across engines, not one
+ * shared call site).
  *
  * The `code_callers` / `code_callees` ops document their `symbol` param as
  * "bare or qualified name" — both forms must resolve:
@@ -33,8 +36,10 @@
 
 /**
  * POSIX pattern that greedily strips everything through the LAST namespace
- * separator, leaving the bare final segment. Shared by both engines so the
- * pglite and postgres last-segment match stay byte-identical (engine parity).
+ * separator, leaving the bare final segment. Imported by BOTH engines (with
+ * `isQualifiedSymbol`) so the last-segment extraction is identical regardless
+ * of engine -- pglite via `symbolMatchSql`, postgres inlined from this same
+ * regex + guard.
  */
 export const LAST_SEGMENT_REGEX = '^.*[.:#]';
 

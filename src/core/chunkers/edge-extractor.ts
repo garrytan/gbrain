@@ -293,6 +293,10 @@ function countCppClassMethodsInFile(root: any, className: string, methodName: st
  * `CWorker m_worker;`), return that type name. Returns null for primitive
  * types (`int m_count;` → type is `primitive_type`, not a class) or a name
  * mismatch — so a method call on a primitive never falsely qualifies.
+ *
+ * Known limitation: a REFERENCE-declared receiver (`CWorker& m_worker;`) is not
+ * yet matched here and stays bare (no false edge — just no resolution). MQL has
+ * no reference member fields, so this only narrows the general-purpose C++ reach.
  */
 function cppDeclaredClassType(declNode: any, recvName: string): string | null {
   if (cppMethodName(declNode) !== recvName) return null;

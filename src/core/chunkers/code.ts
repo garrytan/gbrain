@@ -405,6 +405,9 @@ const NESTED_EMIT_CONFIG: Partial<Record<SupportedCodeLanguage, NestedEmitConfig
   },
   // C++ inline methods live in the class/struct body as function_definition
   // nodes (general-purpose; the MQL tag reuses the same tree-sitter-cpp shape).
+  // Known limitation: a class wrapped in a `namespace` is not yet nested-emitted
+  // (only top-level class/struct bodies are); namespaced C++ methods fall back to
+  // the namespace/bare callee. MQL has no namespaces, so this only narrows C++.
   cpp: {
     parentTypes: new Set(['class_specifier', 'struct_specifier']),
     childTypes: new Set(['function_definition']),
