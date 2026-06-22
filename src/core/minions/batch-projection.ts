@@ -20,7 +20,7 @@
  * an unavailable cost estimate; same precedent as cross-modal-eval.
  */
 
-import { ANTHROPIC_PRICING } from '../anthropic-pricing.ts';
+import { canonicalLookup } from '../model-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
 
 export interface RecentJobStats {
@@ -62,14 +62,13 @@ export interface BatchProjection {
  * Conservative: uses output-side pricing as a tight upper bound when
  * we don't have per-call usage stats yet.
  *
- * v0.41.21.0: routes through splitProviderModelId so slash-prefixed ids
- * (`anthropic/claude-sonnet-4-6`) strip to the bare model name. Pre-fix
- * the inline `bareModel(model)` helper only handled `:`-form.
+ * v0.41.x: routes through canonicalLookup so non-Anthropic chat models
+ * (OpenAI / Google / DeepSeek / Together) use the canonical pricing table
+ * instead of falling through to the legacy Anthropic-only view. Slash forms
+ * still normalize through the shared model-id splitter.
  */
 function modelDefaultMeanCostUsd(model: string): number | null {
-  // Match the alias map's behavior loosely: bare names + the few we know.
-  const bare = splitProviderModelId(model).model;
-  const p = ANTHROPIC_PRICING[bare];
+  const p = canonicalLookup(model);
   if (!p) return null;
   // Assume a typical subagent turn: ~2k input + ~1k output tokens.
   // Heavy bound; real avgs will be smaller for simple jobs, larger for
@@ -102,7 +101,7 @@ export function projectBatch(input: ProjectBatchInput): BatchProjection {
   // Mean cost: historical → use it. Cold → model-default guess. Unknown
   // model → return the tagged variant.
   let meanCostUsd: number | null = stats.mean_cost_usd ?? modelDefaultMeanCostUsd(model);
-  if (meanCostUsd === null && !(bare in ANTHROPIC_PRICING)) {
+  if (meanCostUsd === null && !canonicalLookup(model)) {
     // Unknown model — projection lacks a cost surface.
     const concurrency = Math.max(1, Math.min(stats.effective_concurrency, current_lease_cap));
     return {

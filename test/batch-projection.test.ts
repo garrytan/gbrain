@@ -53,6 +53,31 @@ describe('projectBatch', () => {
     expect(p.effective_concurrency).toBe(8);
   });
 
+  test('cold start: non-Anthropic canonical model uses canonical chat pricing', () => {
+    const p = projectBatch({
+      job_count: 100,
+      model: 'openai:gpt-4o-mini',
+      stats: coldStats(),
+      current_lease_cap: 32,
+    });
+    expect(p.unknown_model).toBeUndefined();
+    // 100 jobs × ((2k × $0.15 + 1k × $0.60) / 1M) = $0.09.
+    expect(p.total_cost_usd).toBeCloseTo(0.09, 6);
+    expect(p.cost_band_usd).toBeCloseTo(0.027, 6);
+  });
+
+  test('cold start: slash-form non-Anthropic model uses canonical chat pricing', () => {
+    const p = projectBatch({
+      job_count: 100,
+      model: 'deepseek/deepseek-v4-flash',
+      stats: coldStats(),
+      current_lease_cap: 32,
+    });
+    expect(p.unknown_model).toBeUndefined();
+    // 100 jobs × ((2k × $0.14 + 1k × $0.28) / 1M) = $0.056.
+    expect(p.total_cost_usd).toBeCloseTo(0.056, 6);
+  });
+
   test('unknown model → unknown_model tagged variant, total_cost_usd=null', () => {
     const p = projectBatch({
       job_count: 100,
@@ -150,10 +175,10 @@ describe('projectBatch', () => {
       expect(p.total_cost_usd).toBeGreaterThan(0);
     });
 
-    test('double-separator openrouter:anthropic/X → unknown_model branch fires', () => {
-      // Per D2: colon wins; tail is `anthropic/claude-sonnet-4-6` which
-      // doesn't match ANTHROPIC_PRICING keys. Confirms the deliberate
-      // OpenRouter-out-of-scope posture is observable downstream.
+    test('double-separator openrouter:anthropic/X → unknown_model branch fires until explicitly canonical-priced', () => {
+      // OpenRouter is a transport with its own markup. Do not silently reprice
+      // nested provider ids as the native vendor unless model-pricing.ts adds
+      // an explicit openrouter:* canonical key.
       const p = projectBatch({
         job_count: 100,
         model: 'openrouter:anthropic/claude-sonnet-4-6',
