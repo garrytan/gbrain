@@ -106,6 +106,27 @@ describe('loadOpCheckpoint / recordCompleted / clearOpCheckpoint', () => {
     expect(result.sort()).toEqual(['chunk-1', 'chunk-2', 'chunk-3']);
   });
 
+  test('recordCompleted passes a native text[] param, not a JSON string scalar', async () => {
+    let seenSql = '';
+    let seenParams: unknown[] | undefined;
+    const fakeEngine = {
+      executeRawDirect: async (sql: string, params?: unknown[]) => {
+        seenSql = sql;
+        seenParams = params;
+        return [];
+      },
+    };
+
+    const ok = await recordCompleted(fakeEngine as any, { op: 'sync-target', fingerprint: 'fp-param' }, ['b', 'a']);
+
+    expect(ok).toBe(true);
+    expect(seenSql).toContain('to_jsonb($3::text[])');
+    expect(seenParams?.[0]).toBe('sync-target');
+    expect(seenParams?.[1]).toBe('fp-param');
+    expect(seenParams?.[2]).toEqual(['a', 'b']);
+    expect(typeof seenParams?.[2]).not.toBe('string');
+  });
+
   test('write overwrites prior state', async () => {
     const key = { op: 'embed', fingerprint: 'abc12345' };
     await recordCompleted(engine, key, ['chunk-1']);
