@@ -264,6 +264,25 @@ export function mcpResultTextBudgetForFinalFrame(
   return Math.max(MIN_MCP_MAX_RESULT_TEXT_BYTES, Math.floor(availableForText / 2));
 }
 
+/**
+ * The MCP put_page surface requires the caller to observe the target before writing: the
+ * expected_content_hash field must be present (pass null to assert the page is absent, or a
+ * content hash for an optimistic update). Omitting it is rejected with a route_first error so
+ * brand-new canonical pages cannot be created blind. Offline/CLI repair uses admin_put_page,
+ * which is not gated here.
+ */
+export function assertMcpPutPagePrecondition(toolName: string, rawParams: unknown): void {
+  if (toolName !== 'put_page') return;
+  const params = rawParams && typeof rawParams === 'object' ? (rawParams as Record<string, unknown>) : {};
+  if (!Object.prototype.hasOwnProperty.call(params, 'expected_content_hash')) {
+    throw new OperationError(
+      'invalid_params',
+      'route_first: put_page requires expected_content_hash to observe the target before writing — pass null to assert the page is absent, a content hash to update, or route a new page through route_memory_writeback first.',
+      'Call route_memory_writeback (or get_page) to obtain the target snapshot, then retry put_page with expected_content_hash. Offline repair can use admin_put_page.',
+    );
+  }
+}
+
 export function prepareMcpToolParams(
   toolName: string,
   params: Record<string, unknown> | undefined,
@@ -852,6 +871,7 @@ export function createMcpServer(
     }
 
     try {
+      assertMcpPutPagePrecondition(name, params);
       const result = await toolExecutionLimiter.run(op, async () => {
         const resolvedEngine = await enginePromise;
         const ctx: OperationContext = {

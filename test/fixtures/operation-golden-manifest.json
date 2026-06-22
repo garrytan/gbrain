@@ -2,13 +2,13 @@
   "schema_version": 1,
   "generated_from": "live_operation_registry",
   "summary": {
-    "operation_count": 179,
-    "mcp_operation_count": 179,
+    "operation_count": 180,
+    "mcp_operation_count": 180,
     "cli_shared_count": 168,
     "cli_direct_count": 23,
     "cli_only_count": 5,
-    "not_cli_count": 1,
-    "mutating_count": 75,
+    "not_cli_count": 2,
+    "mutating_count": 76,
     "read_only_count": 104
   },
   "cli_commands": [
@@ -1165,6 +1165,138 @@
       },
       "compact_schema_hash": "acd1d516712675fec157d7ecf83d851f7b61709efcc4afbe43ae2ac666d55908",
       "full_schema_hash": "acd1d516712675fec157d7ecf83d851f7b61709efcc4afbe43ae2ac666d55908",
+      "memory_verb_families": [],
+      "mutation_aliases": []
+    },
+    {
+      "name": "admin_put_page",
+      "description": "CLI/admin repair-and-import variant of put_page that may omit the optimistic write precondition. Not subject to the route_first precondition enforced on the MCP put_page surface. Use only for offline repair and bulk import.",
+      "mutating": true,
+      "capability_required": [],
+      "capability_visibility": {
+        "requirements": []
+      },
+      "params": {
+        "actor": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional audit actor. Defaults to mbrain:put_page."
+        },
+        "content": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Full markdown content with YAML frontmatter"
+        },
+        "defer_derived": {
+          "type": [
+            "boolean"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Commit the canonical page immediately and refresh chunks, manifest, and section indexes after the MCP response."
+        },
+        "expected_content_hash": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": true,
+          "description": "Optional optimistic write precondition. Existing page content_hash must match before writing; null requires that the page is absent."
+        },
+        "memory_session_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional memory session id used for write authorization. Requires realm_id."
+        },
+        "metadata": {
+          "type": [
+            "object"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional audit metadata object."
+        },
+        "realm_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional audit realm id. Defaults to work."
+        },
+        "repo": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional markdown repo root for markdown-first local/offline writes. Defaults to configured markdown.repo_path or sync.repo_path."
+        },
+        "scope_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional audit scope id. Defaults to workspace:default."
+        },
+        "session_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional audit session id. Defaults to put_page:direct."
+        },
+        "slug": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Page slug"
+        },
+        "source_refs": {
+          "type": [
+            "array",
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional non-empty audit provenance references.",
+          "items": {
+            "type": [
+              "string"
+            ],
+            "required": false,
+            "nullable": false
+          }
+        }
+      },
+      "cli_exposure": {
+        "mode": "not_cli",
+        "reason": "cli hint is hidden"
+      },
+      "mcp": {
+        "read_only": false,
+        "destructive": false,
+        "open_world": false,
+        "required_params": [
+          "content",
+          "slug"
+        ]
+      },
+      "compact_schema_hash": "0687fea202b1fce1f6c042ba14de752c8e8fb9d37fce2d7ca8c1e7b2c53d622e",
+      "full_schema_hash": "1bae9c09e1e5bb6162f74eed0966324e89b3f0d23aa51fb284568700c3c67c18",
       "memory_verb_families": [],
       "mutation_aliases": []
     },

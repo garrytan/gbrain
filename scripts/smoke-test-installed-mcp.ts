@@ -168,7 +168,9 @@ export async function main(): Promise<void> {
 
     parseMcpText(await client.callTool({
       name: 'put_page',
-      arguments: { slug, content },
+      // The MCP put_page surface requires expected_content_hash to be present; null asserts
+      // the page is absent (a fresh create), which is what this smoke does.
+      arguments: { slug, content, expected_content_hash: null },
     }));
 
     const page = parseMcpText<any>(await client.callTool({

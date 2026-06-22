@@ -59,6 +59,11 @@ meeting/import-derived, or not ready for compiled truth.
 Call `put_page` only after the router returns `canonical_write_allowed`. Canonical
 write routing requires `target_snapshot_hash`: pass the current page
 `content_hash`, or pass `null` only after confirming the target page is absent.
+The MCP `put_page` surface now **requires** the `expected_content_hash` field to be
+present — omitting it is rejected with a `route_first` error. Pass `null` to assert
+the page is absent (a fresh create), or the current `content_hash` to update; route
+a genuinely new page through `route_memory_writeback` first. Offline/CLI repair and
+bulk import use `admin_put_page`, which is not gated by this precondition.
 When calling `put_page`, pass the router's
 `canonical_write_requirements.expected_content_hash` as `expected_content_hash`,
 then write attributed compiled truth plus timeline evidence. If the router

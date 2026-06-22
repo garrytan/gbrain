@@ -2963,14 +2963,14 @@ function assertJsonSerializable(value: unknown, path: string, seen: WeakSet<obje
   }
 }
 
-function putPageAuditContext(p: Record<string, unknown>) {
+function putPageAuditContext(p: Record<string, unknown>, preconditionSupplied: boolean) {
   return {
     session_id: optionalPutPageString('session_id', p.session_id) ?? `put_page:direct:${randomUUID()}`,
     realm_id: optionalPutPageString('realm_id', p.realm_id) ?? 'work',
     actor: optionalPutPageString('actor', p.actor) ?? 'mbrain:put_page',
     scope_id: optionalPutPageString('scope_id', p.scope_id) ?? 'workspace:default',
     source_refs: putPageSourceRefs(p.source_refs),
-    metadata: putPageMetadata(p.metadata),
+    metadata: { ...putPageMetadata(p.metadata), precondition_supplied: preconditionSupplied },
     redaction_visibility: 'visible' as const,
   };
 }
@@ -3075,6 +3075,10 @@ const put_page: Operation = {
     const slug = putPageSlug(p.slug);
     const content = putPageContent(p.content);
     const deferDerived = p.defer_derived === true;
+    // Whether the caller observed the target before writing. The MCP put_page surface
+    // requires this field present (see assertMcpPutPagePrecondition); the CLI/admin path may
+    // omit it. Recorded in the mutation ledger either way.
+    const preconditionSupplied = Object.prototype.hasOwnProperty.call(p, 'expected_content_hash');
     assertWritableSlugQuality(slug);
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug };
     const markdownTarget = await resolvePutPageMarkdownTarget(ctx.engine, slug, p.repo);
@@ -3093,7 +3097,7 @@ const put_page: Operation = {
       : (() => {
         assertPutPageSourceAttribution(slug, content);
         return {
-          audit: putPageAuditContext(p),
+          audit: putPageAuditContext(p, preconditionSupplied),
           expectedContentHash: putPageExpectedContentHash(p.expected_content_hash ?? null),
         };
       })();
@@ -3108,7 +3112,7 @@ const put_page: Operation = {
           });
           assertPutPageSourceAttribution(slug, content);
         }
-        const audit = prevalidatedPutPage ? prevalidatedPutPage.audit : putPageAuditContext(p);
+        const audit = prevalidatedPutPage ? prevalidatedPutPage.audit : putPageAuditContext(p, preconditionSupplied);
         const expectedContentHash = prevalidatedPutPage
           ? prevalidatedPutPage.expectedContentHash
           : putPageExpectedContentHash(p.expected_content_hash ?? null);
@@ -3295,6 +3299,20 @@ const put_page: Operation = {
     return putPageOperationResult(outcome.result);
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
+};
+
+// CLI/admin repair-and-import variant of put_page. Identical write behavior, but it is NOT
+// gated by the route_first precondition the MCP put_page surface enforces, so offline repair
+// and bulk import can write without first observing every target. Tier admin (hidden from the
+// default MCP catalog); use deliberately.
+const admin_put_page: Operation = {
+  name: 'admin_put_page',
+  description: 'CLI/admin repair-and-import variant of put_page that may omit the optimistic write precondition. Not subject to the route_first precondition enforced on the MCP put_page surface. Use only for offline repair and bulk import.',
+  params: { ...put_page.params },
+  mutating: true,
+  tier: 'admin',
+  handler: put_page.handler,
+  cliHints: { name: 'admin-put', positional: ['slug'], stdin: 'content', hidden: true },
 };
 
 function assertWritableSlugQuality(slug: string): void {
@@ -6495,7 +6513,7 @@ function parseSkillpackSectionHeader(line: string): { num: number; title: string
 
 export const operations: Operation[] = [
   // Page CRUD
-  get_page, put_page, delete_page, list_pages,
+  get_page, put_page, admin_put_page, delete_page, list_pages,
   // Search
   search, query,
   // Tags
