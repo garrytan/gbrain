@@ -37,6 +37,7 @@ export interface AutopilotRuntimeAdapter {
   claimJob?(input: { job_id: string; queue: string; worker_id: string; lease_ms: number }): Promise<Record<string, unknown> | null>;
   completeJob?(input: { job_id: string; lock_token: string; result_json?: Record<string, unknown> }): Promise<Record<string, unknown>>;
   failJob?(input: { job_id: string; lock_token: string; failure_class: string; message: string; retryable?: boolean }): Promise<Record<string, unknown>>;
+  sweepTimedOutJobs?(): Promise<Array<Record<string, unknown>>>;
   listJobs?(): Promise<Array<Record<string, unknown>>>;
   listWorkerHeartbeats?(): Promise<Array<Record<string, unknown>>>;
   getActiveCycleLock?(): Promise<Record<string, unknown> | null>;
@@ -111,6 +112,17 @@ export function createAutopilotService(options: AutopilotServiceOptions = {}): A
     const config = await readConfig();
     if (!config.enabled) {
       return { status: 'disabled' };
+    }
+
+    // Dead-letter jobs whose lease expired (a crashed worker leaks an `active` row that
+    // can stall a slot via dedup) before submitting the next cycle, so the loop self-heals
+    // instead of blocking on an orphaned job.
+    if (runtime.sweepTimedOutJobs) {
+      try {
+        await runtime.sweepTimedOutJobs();
+      } catch {
+        // Sweep is best-effort; never block a cycle on cleanup.
+      }
     }
 
     const runAt = now();
@@ -510,6 +522,9 @@ export function createInProcessRuntimeAdapter(
         message: input.message,
         retryable: input.retryable,
       }) as unknown as Record<string, unknown>;
+    },
+    async sweepTimedOutJobs() {
+      return service.sweepTimedOutJobs() as unknown as Array<Record<string, unknown>>;
     },
     async listJobs() {
       return service.listJobs() as unknown as Array<Record<string, unknown>>;

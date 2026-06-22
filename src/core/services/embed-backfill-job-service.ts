@@ -69,7 +69,11 @@ export async function submitEmbedBackfillJob(
     payload_json: { mode },
     progress_json: initialEmbedBackfillProgress(),
     idempotency_key: `embed-backfill:${mode}:${scope}`,
-    max_attempts: 1,
+    // The backfill is idempotent (only re-embeds unembedded chunks), so a transient
+    // provider/write blip should retry with backoff instead of dead-lettering the run.
+    max_attempts: 3,
+    backoff_type: 'exponential',
+    backoff_delay_ms: 5000,
     timeout_ms: input.timeout_ms,
   });
 }
@@ -161,8 +165,10 @@ export async function runEmbedBackfillJob(input: RunEmbedBackfillJobInput): Prom
       job_id: input.job_id,
       lock_token: lockToken,
       failure_class: 'internal',
+      // Partial failures are typically transient provider/write blips; retry with backoff.
+      // Idempotent backfill only re-embeds the chunks that still lack an embedding.
+      retryable: true,
       message,
-      retryable: false,
     });
     throw new Error(message);
   }

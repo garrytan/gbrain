@@ -434,11 +434,20 @@ async function readImplementedPhaseCounts(
       return {
         stale_or_failed_derived_artifacts: await count('derived_index_state', "WHERE status IN ('pending', 'failed')"),
       };
-    case 'daily_report':
+    case 'daily_report': {
+      // context.input.now is a controlled ISO string; inline it (the count helper takes no
+      // params). ISO text compares lexicographically on SQLite and casts to timestamptz on
+      // Postgres, so this stuck-active count is cross-engine safe.
+      const nowIso = context.input.now;
       return {
         failed_jobs: await count('memory_jobs', "WHERE status IN ('failed', 'dead')"),
         failed_runner_jobs: await count('runner_jobs', "WHERE status IN ('failed', 'degraded')"),
+        stuck_active_jobs: await count(
+          'memory_jobs',
+          `WHERE status = 'active' AND lock_expires_at IS NOT NULL AND lock_expires_at <= '${nowIso}'`,
+        ),
       };
+    }
     case 'consolidation':
     case 'forgetting_review':
     case 'auto_promote':
@@ -478,7 +487,9 @@ function hasActionablePhaseWork(
     case 'context_refresh':
       return (counts.stale_or_failed_derived_artifacts ?? 0) > 0;
     case 'daily_report':
-      return (counts.failed_jobs ?? 0) > 0 || (counts.failed_runner_jobs ?? 0) > 0;
+      return (counts.failed_jobs ?? 0) > 0
+        || (counts.failed_runner_jobs ?? 0) > 0
+        || (counts.stuck_active_jobs ?? 0) > 0;
     case 'consolidation':
     case 'forgetting_review':
     case 'auto_promote':
@@ -507,11 +518,11 @@ function nextActionForImplementedPhase(family: DreamCyclePhaseFamily): string {
     case 'projection_reconcile':
       return 'Run system-of-record reconciliation.';
     case 'embedding_refresh':
-      return 'Refresh missing embeddings.';
+      return 'Run `mbrain embed --stale` to refresh missing embeddings.';
     case 'context_refresh':
       return 'Refresh pending or failed derived context artifacts.';
     case 'daily_report':
-      return 'Open daily memory report and repair failed jobs.';
+      return 'Open daily memory report; repair failed jobs and dead-letter stuck active jobs.';
     case 'consolidation':
     case 'forgetting_review':
       return 'Review dream cycle phase output.';

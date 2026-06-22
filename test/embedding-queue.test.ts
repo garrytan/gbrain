@@ -506,6 +506,13 @@ describe('durable embed backfill job integration', () => {
     });
     expect(second.status).toBe('deduped');
     expect(second.job.id).toBe(first.job.id);
+    // Idempotent backfill retries transient blips with exponential backoff instead of
+    // dead-lettering the whole run on the first failure.
+    expect(first.job).toMatchObject({
+      max_attempts: 3,
+      backoff_type: 'exponential',
+      backoff_delay_ms: 5000,
+    });
   });
 
   test('runEmbedBackfillJob renews progress and completes the durable job', async () => {
@@ -707,7 +714,7 @@ describe('durable embed backfill job integration', () => {
     });
   });
 
-  test('runEmbedBackfillJob fails the durable job when page-level embedding failures remain', async () => {
+  test('runEmbedBackfillJob retries (does not dead-letter) on transient page-level failures', async () => {
     const fake = createFakeProvider({
       failForTexts: (texts) => texts.includes('bad body'),
     });
@@ -728,8 +735,10 @@ describe('durable embed backfill job integration', () => {
     })).rejects.toThrow(/embed_backfill completed with failures/i);
 
     expect((await engine.getChunks('concepts/alpha'))[0]?.embedding?.[0]).toBe(10);
+    // Partial failure is retryable now (max_attempts 3 + backoff); the idempotent backfill
+    // is rescheduled instead of dead-lettering the whole run on a transient blip.
     expect(await runtime.getJob(submitted.job.id)).toMatchObject({
-      status: 'failed',
+      status: 'delayed',
       failure_class: 'internal',
       last_error: expect.stringContaining('provider_failures=1'),
     });

@@ -345,6 +345,33 @@ describe('autopilot service', () => {
     await expect(runtime.getJob(older.job.id)).resolves.toMatchObject({ status: 'waiting' });
     await expect(runtime.getJob(target.job.id)).resolves.toMatchObject({ status: 'waiting' });
   });
+
+  test('submitCycle sweeps timed-out jobs before enqueueing the next cycle', async () => {
+    const { createAutopilotService } = await import('../src/core/services/autopilot-service.ts');
+    const calls: string[] = [];
+    const service = createAutopilotService({
+      now: () => '2026-05-20T12:07:30.000Z',
+      slotFor: () => '2026-05-20T12:00Z',
+      getConfig: async () => ({ enabled: true, mode: 'cron' }),
+      setConfig: async () => {},
+      runtime: {
+        sweepTimedOutJobs: async () => {
+          calls.push('sweep');
+          return [];
+        },
+        enqueueJob: async (job: Record<string, unknown>) => {
+          calls.push('enqueue');
+          return { status: 'submitted', job: { id: 'job:autopilot-cycle', ...job } };
+        },
+      },
+    });
+
+    await service.runOnce({ requested_by: 'cli' });
+
+    // Sweep runs first so an orphaned active job past its lease is dead-lettered and stops
+    // blocking the slot via dedup before the next cycle is submitted.
+    expect(calls).toEqual(['sweep', 'enqueue']);
+  });
 });
 
 interface AutopilotHarnessOverrides {

@@ -47,7 +47,7 @@ describe('dream cycle phase runner', () => {
     expect(result.phases.find((phase) => phase.family === 'daily_report')).toMatchObject({
       status: 'warn',
       owner_phase: 'Phase 12',
-      counts: { failed_jobs: 0, failed_runner_jobs: 0, count_errors: 2 },
+      counts: { failed_jobs: 0, failed_runner_jobs: 0, stuck_active_jobs: 0, count_errors: 3 },
       next_recommended_action: 'Inspect dream-cycle read model errors before claiming phase coverage.',
     });
     expect(result.phases.find((phase) => phase.family === 'forgetting_review')).toMatchObject({
