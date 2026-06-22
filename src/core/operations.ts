@@ -29,6 +29,7 @@ import { createMemoryMutationLedgerOperations } from './operations-memory-mutati
 import { createMemoryWritebackRouterOperations } from './operations-memory-writeback-router.ts';
 import { createSourceRegistryOperations } from './operations-source-registry.ts';
 import { expandQuery } from './search/expansion.ts';
+import { governedProbeHybridEnabled, hybridProbeSearch } from './search/governed-probe.ts';
 import { hybridSearchWithMeta } from './search/hybrid.ts';
 import { rankSearchResults, sourceRankCandidateLimit } from './search/source-ranking.ts';
 import { getAtlasOrientationBundle } from './services/atlas-orientation-bundle-service.ts';
@@ -79,7 +80,7 @@ import { runProofAgentMemory } from './services/proof-agent-service.ts';
 import { readContext } from './services/read-context-service.ts';
 import { planRetrievalRequest } from './services/retrieval-request-planner-service.ts';
 import { selectRetrievalRoute } from './services/retrieval-route-selector-service.ts';
-import { retrieveContext } from './services/retrieve-context-service.ts';
+import { retrieveContext, type RetrieveContextDependencies } from './services/retrieve-context-service.ts';
 import { planScenarioMemoryRequest } from './services/scenario-memory-request-planner-service.ts';
 import { evaluateScopeGate } from './services/scope-gate-service.ts';
 import { buildTaskResumeCard } from './services/task-memory-service.ts';
@@ -5126,7 +5127,12 @@ const get_broad_synthesis_route: Operation = {
       kind: p.kind as string | undefined,
       query: String(p.query),
       limit: typeof p.limit === 'number' ? p.limit : undefined,
-    });
+    }, governedProbeHybridEnabled(ctx.config)
+      ? {
+        candidateSearch: (query, options) =>
+          hybridProbeSearch(ctx.engine, ctx.config, query, { type: options.type, limit: options.limit }),
+      }
+      : {});
   },
   cliHints: { name: 'broad-synthesis-route', aliases: { n: 'limit' } },
 };
@@ -5562,6 +5568,17 @@ const plan_retrieval_request: Operation = {
   cliHints: { name: 'plan-retrieval-request' },
 };
 
+// Inject the full hybrid candidate search (vector + keyword + RRF + expansion) into the
+// governed probe so retrieve_context / read_context auto-reads match the lower-authority
+// `query` op's recall. Returns no override (keyword-only default) when disabled or absent.
+function governedProbeRetrieveDependencies(ctx: OperationContext): RetrieveContextDependencies {
+  if (!governedProbeHybridEnabled(ctx.config)) return {};
+  return {
+    candidateSearch: (query, options) =>
+      hybridProbeSearch(ctx.engine, ctx.config, query, { limit: options.limit }),
+  };
+}
+
 const retrieve_context: Operation = {
   name: 'retrieve_context',
   description: 'Agentic MBrain retrieval probe. Returns a bounded read_plan, required canonical reads, and non-canonical candidate_signals from Memory Inbox; chunks and candidate signals are not answer evidence. Call read_context on read_plan.selected_selector_snapshots before answering factual questions; use read_plan.selected_selectors only as a legacy selector-id fallback.',
@@ -5613,7 +5630,7 @@ const retrieve_context: Operation = {
     include_push_context: p.include_push_context === true,
     graph_frontier: parseRetrieveContextGraphFrontierParam(p.graph_frontier, 'graph_frontier'),
     persist_trace: p.persist_trace === true,
-  })),
+  }, governedProbeRetrieveDependencies(ctx))),
   cliHints: { name: 'retrieve-context', positional: ['query'], aliases: { n: 'limit', scope: 'requested_scope' } },
 };
 
@@ -5652,7 +5669,7 @@ const read_context: Operation = {
     persist_trace: p.persist_trace === true,
     task_id: parseOptionalStringParam(p.task_id, 'task_id') ?? null,
     requested_scope: parseRequestedScopeParam(p.requested_scope),
-  })),
+  }, governedProbeRetrieveDependencies(ctx))),
   cliHints: { name: 'read-context', aliases: { n: 'max_selectors' } },
 };
 

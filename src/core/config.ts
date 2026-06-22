@@ -27,6 +27,7 @@ export interface MBrainConfig {
   storage?: StorageConfig;
   autopilot?: Record<string, unknown>;
   auto_promote?: Record<string, unknown>;
+  retrieval_governed_probe_hybrid?: boolean;
 }
 
 export interface MBrainConfigInput {
@@ -43,6 +44,7 @@ export interface MBrainConfigInput {
   storage?: StorageConfig;
   autopilot?: Record<string, unknown>;
   auto_promote?: Record<string, unknown>;
+  retrieval_governed_probe_hybrid?: boolean;
 }
 
 const VALID_ENGINES = new Set<EngineType>(['postgres', 'sqlite', 'pglite']);
@@ -121,6 +123,12 @@ export function resolveConfig(input: MBrainConfigInput): MBrainConfig {
     anthropic_api_key: input.anthropic_api_key,
     autopilot: input.autopilot,
     auto_promote: input.auto_promote,
+    // When enabled, the governed retrieval probe (retrieve_context / read_context
+    // auto-reads / broad-synthesis) runs the full hybrid candidate search by parity
+    // with the lower-authority `query` op. Default off: the keyword-only probe is the
+    // documented baseline, so offline / no-provider installs stay byte-for-byte
+    // unchanged (Invariant 8). Flip on once the recall eval gate is green in the field.
+    retrieval_governed_probe_hybrid: input.retrieval_governed_probe_hybrid ?? false,
   };
 
   validateResolvedConfig(resolved);

@@ -27,7 +27,7 @@ import {
 } from './corpus-lane-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
 import { normalizeRetrievalSelector, retrievalSelectorId } from './retrieval-selector-service.ts';
-import { retrieveContext } from './retrieve-context-service.ts';
+import { retrieveContext, type RetrieveContextDependencies } from './retrieve-context-service.ts';
 import { evaluateScopeGate } from './scope-gate-service.ts';
 import { buildFrontmatterSearchText } from '../markdown.ts';
 import { pathToSlug } from '../sync.ts';
@@ -60,13 +60,14 @@ class StaleSelectorReadError extends Error {
 export async function readContext(
   engine: BrainEngine,
   input: ReadContextInput,
+  dependencies: RetrieveContextDependencies = {},
 ): Promise<ReadContextResult> {
   const maxSelectors = input.max_selectors ?? DEFAULT_MAX_SELECTORS;
   assertPositiveInteger(maxSelectors, 'max_selectors');
   if (input.token_budget !== undefined) assertPositiveInteger(input.token_budget, 'token_budget');
 
   const warnings: string[] = [];
-  const autoResolved = await resolveReadSelectors(engine, input, maxSelectors, warnings);
+  const autoResolved = await resolveReadSelectors(engine, input, maxSelectors, warnings, dependencies);
   if (autoResolved.blocked) {
     return maybePersistReadTrace(engine, autoResolved.blocked, input);
   }
@@ -1353,6 +1354,7 @@ async function resolveReadSelectors(
   input: ReadContextInput,
   maxSelectors: number,
   warnings: string[],
+  dependencies: RetrieveContextDependencies = {},
 ): Promise<{
   selectors: RetrievalSelector[];
   scope_gate?: ScopeGateDecisionResult;
@@ -1372,7 +1374,7 @@ async function resolveReadSelectors(
     limit: maxSelectors,
     include_orientation: true,
     persist_trace: false,
-  });
+  }, dependencies);
 
   warnings.push('Auto reads selected from retrieve_context required_reads.');
   warnings.push(...probe.warnings);
