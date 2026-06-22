@@ -1104,10 +1104,58 @@ export interface TimelineCandidate {
 // or `- **YYYY-MM-DD** - summary` or just `**YYYY-MM-DD** | summary`.
 const TIMELINE_LINE_RE = /^\s*-?\s*\*\*(\d{4}-\d{2}-\d{2})\*\*\s*[|\-–—]+\s*(.+?)\s*$/;
 
+// Plain interaction-log bullet (date + colon, no bold) —
+//   `- YYYY-MM-DD: summary`, optional ` to YYYY-MM-DD` range, or `YYYY-MM` month.
+const TIMELINE_BULLET_DATE_RE = /^\s*-\s+(\d{4}-\d{2}(?:-\d{2})?)(?:\s+to\s+\d{4}-\d{2}(?:-\d{2})?)?\s*:\s*(.+?)\s*$/;
+
+// Date-only session-log header: `### YYYY-MM-DD` (date-only or range), with
+// prose below acting as the entry body.
+const TIMELINE_H3_DATE_RE = /^\s*###\s+(\d{4}-\d{2}-\d{2})(?:\s+to\s+\d{4}-\d{2}-\d{2})?\s*$/;
+
+/**
+ * Normalize a vault date token to ISO `YYYY-MM-DD`. Accepts month-only
+ * `YYYY-MM` (-> `-01`); returns null for non-calendar dates.
+ */
+function normalizeVaultDate(raw: string): string | null {
+  const t = raw.trim();
+  if (isValidDate(t)) return t;
+  if (/^\d{4}-\d{2}$/.test(t)) {
+    const iso = `${t}-01`;
+    return isValidDate(iso) ? iso : null;
+  }
+  return null;
+}
+
+/**
+ * Identify a timeline "head" line and return its date + inline summary.
+ * Recognizes the bold format plus the plain-bullet interaction-log format and
+ * the date-only session-log H3 header. Header heads carry an empty summary
+ * (filled from the prose body by the caller). Returns null for non-head lines.
+ */
+function matchTimelineHead(line: string): { date: string; summary: string } | null {
+  let m = TIMELINE_LINE_RE.exec(line);
+  if (m && isValidDate(m[1]) && m[2].trim().length > 0) {
+    return { date: m[1], summary: m[2].trim() };
+  }
+  m = TIMELINE_BULLET_DATE_RE.exec(line);
+  if (m) {
+    const date = normalizeVaultDate(m[1]);
+    if (date && m[2].trim().length > 0) return { date, summary: m[2].trim() };
+  }
+  m = TIMELINE_H3_DATE_RE.exec(line);
+  if (m) {
+    const date = normalizeVaultDate(m[1]);
+    if (date) return { date, summary: '' };
+  }
+  return null;
+}
+
 /**
  * Parse timeline entries from content. Looks at:
  *   - The full content (most pages have a top-level "## Timeline" heading).
  *   - Free-form `- **DATE** | text` lines anywhere.
+ *   - Plain interaction-log bullets `- DATE: text` (people-page convention).
+ *   - Date-only session-log headers `### DATE` with prose below.
  *
  * Skips dates that don't represent valid calendar dates (e.g. 2026-13-45).
  * Multi-line entries: a date line followed by indented or blank-then-text
@@ -1119,24 +1167,20 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
 
   let i = 0;
   while (i < lines.length) {
-    const m = TIMELINE_LINE_RE.exec(lines[i]);
-    if (!m) {
+    const head = matchTimelineHead(lines[i]);
+    if (!head) {
       i++;
       continue;
     }
-    const date = m[1];
-    const summary = m[2].trim();
-    if (!isValidDate(date) || summary.length === 0) {
-      i++;
-      continue;
-    }
+    const date = head.date;
+    let summary = head.summary;
 
     // Collect optional detail lines (indented, until next date or heading).
     const detailLines: string[] = [];
     let j = i + 1;
     while (j < lines.length) {
       const next = lines[j];
-      if (TIMELINE_LINE_RE.test(next)) break;
+      if (matchTimelineHead(next)) break;
       if (/^#{1,6}\s/.test(next)) break;
       if (next.trim().length === 0 && detailLines.length === 0) {
         // skip leading blank line; if we hit a blank after detail content
@@ -1153,7 +1197,17 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
       }
       break;
     }
-    result.push({ date, summary, detail: detailLines.join(' ').trim() });
+    const detail = detailLines.join(' ').trim();
+    // Date-only session-log headers carry their summary in the prose body.
+    if (summary.length === 0) {
+      const firstLine = detailLines.find(s => s.length > 0) ?? '';
+      if (firstLine.length === 0) {
+        i = j;
+        continue;
+      }
+      summary = firstLine.length > 200 ? `${firstLine.slice(0, 197)}…` : firstLine;
+    }
+    result.push({ date, summary, detail });
     i = j;
   }
   return result;

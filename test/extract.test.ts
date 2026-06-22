@@ -135,6 +135,51 @@ describe('extractTimelineFromContent', () => {
     const entries = extractTimelineFromContent(content, 'test');
     expect(entries).toHaveLength(1);
   });
+
+  it('extracts plain interaction-log bullets (- DATE: summary)', () => {
+    const content = `## Interaction Log\n\n- 2026-05-05: Synced on the telemetry roadmap`;
+    const entries = extractTimelineFromContent(content, 'people/test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-05-05');
+    expect(entries[0].summary).toBe('Synced on the telemetry roadmap');
+  });
+
+  it('splits a trailing markdown link off the interaction-log summary', () => {
+    const content = `- 2026-05-05: Reviewed the PR together — [slack](https://example.com/p123)`;
+    const entries = extractTimelineFromContent(content, 'people/test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].summary).toBe('Reviewed the PR together');
+    expect(entries[0].source).toBe('[slack](https://example.com/p123)');
+  });
+
+  it('normalizes a date range to its start date', () => {
+    const content = `- 2025-10-15 to 2025-10-18: Built the hackathon poster`;
+    const entries = extractTimelineFromContent(content, 'people/test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2025-10-15');
+  });
+
+  it('normalizes a month-only date to the first of the month', () => {
+    const content = `- 2026-01: Joined the telemetry onboarding path`;
+    const entries = extractTimelineFromContent(content, 'people/test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-01-01');
+  });
+
+  it('extracts date-only session-log headers (### DATE with prose below)', () => {
+    const content = `## Session Log\n\n### 2026-04-08\nConnected Snowflake. Still blocked on prod access.`;
+    const entries = extractTimelineFromContent(content, 'work/test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-04-08');
+    expect(entries[0].summary).toBe('Connected Snowflake. Still blocked on prod access.');
+  });
+
+  it('does not double-count a titled header as a date-only header', () => {
+    const content = `### 2025-03-28 — Round Closed\n\nAll docs signed.`;
+    const entries = extractTimelineFromContent(content, 'deals/seed');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].summary).toBe('Round Closed');
+  });
 });
 
 describe('walkMarkdownFiles', () => {
