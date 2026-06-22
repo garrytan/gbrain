@@ -3478,14 +3478,29 @@ export async function checkSyncFreshness(
       // The chunker version match is computed here (not in the helper)
       // because it depends on engine state, not git state.
       if (localOnly) {
+        const chunkerMatch = source.chunker_version === currentChunkerVersion;
         const gitUnchanged = isSourceUnchangedSinceSync(
           source.local_path,
           source.last_commit,
           { requireCleanWorkingTree: 'ignore-untracked' },
         );
-        const chunkerMatch = source.chunker_version === currentChunkerVersion;
         if (gitUnchanged && chunkerMatch) {
           unchanged_count++;
+          continue;
+        }
+        // Distinguish "uncommitted local edits" from "behind on synced commits".
+        // When HEAD still equals last_commit (no new commits to ingest) and the
+        // chunker matches, the ONLY reason gitUnchanged is false is tracked
+        // working-tree edits. The last sync already captured the committed HEAD,
+        // so brain search is NOT stale — this is a commit-hygiene nudge (warn),
+        // not a failure. A genuinely-behind source (HEAD != last_commit) skips
+        // this branch and falls through to the time-based stale check below,
+        // failing/warning exactly as before — detection is not weakened.
+        const headMatches = isSourceUnchangedSinceSync(source.local_path, source.last_commit);
+        if (headMatches && chunkerMatch) {
+          issues.push(`Source ${display} has uncommitted tracked changes (committed HEAD already synced) — commit + sync to version them`);
+          hasWarnings = true;
+          stale_count++;
           continue;
         }
       }
