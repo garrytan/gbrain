@@ -22,7 +22,9 @@ const CONTENT = [
 ].join('\n');
 
 describe('put_page MCP precondition surface (D1)', () => {
-  test('assertMcpPutPagePrecondition rejects put_page when expected_content_hash is omitted', () => {
+  test('assertMcpPutPagePrecondition rejects a blind put_page (precondition field absent, no session)', () => {
+    // The MCP SDK client drops a null-valued field, so a fresh create over the SDK arrives with
+    // the field absent and no session — exactly the blind-create case that must route first.
     let thrown: unknown;
     try {
       assertMcpPutPagePrecondition('put_page', { slug: SLUG, content: CONTENT });
@@ -34,9 +36,13 @@ describe('put_page MCP precondition surface (D1)', () => {
     expect((thrown as OperationError).message).toContain('route_memory_writeback');
   });
 
-  test('assertMcpPutPagePrecondition accepts a present field (null or hash) and ignores other tools', () => {
-    expect(() => assertMcpPutPagePrecondition('put_page', { slug: SLUG, expected_content_hash: null })).not.toThrow();
+  test('assertMcpPutPagePrecondition allows an observed write (explicit null/hash) or a routed write, and ignores other tools', () => {
+    // Explicit null (raw JSON-RPC callers keep it) asserts the page is absent — allowed.
+    expect(() => assertMcpPutPagePrecondition('put_page', { slug: SLUG, content: CONTENT, expected_content_hash: null })).not.toThrow();
+    // A real content hash (optimistic update) is allowed.
     expect(() => assertMcpPutPagePrecondition('put_page', { slug: SLUG, expected_content_hash: 'a'.repeat(64) })).not.toThrow();
+    // A routed write (memory_session_id present) is allowed.
+    expect(() => assertMcpPutPagePrecondition('put_page', { slug: SLUG, content: CONTENT, memory_session_id: 'session:1' })).not.toThrow();
     // admin_put_page and every other tool are not gated by this check.
     expect(() => assertMcpPutPagePrecondition('admin_put_page', { slug: SLUG })).not.toThrow();
     expect(() => assertMcpPutPagePrecondition('get_page', { slug: SLUG })).not.toThrow();

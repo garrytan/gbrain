@@ -265,20 +265,29 @@ export function mcpResultTextBudgetForFinalFrame(
 }
 
 /**
- * The MCP put_page surface requires the caller to observe the target before writing: the
- * expected_content_hash field must be present (pass null to assert the page is absent, or a
- * content hash for an optimistic update). Omitting it is rejected with a route_first error so
- * brand-new canonical pages cannot be created blind. Offline/CLI repair uses admin_put_page,
+ * The MCP put_page surface must not create or overwrite a canonical page blind. A write is
+ * allowed only when the caller has observed the target — the expected_content_hash field is
+ * present (null asserts the page is absent, a content hash drives an optimistic update) — or
+ * has routed (supplied a memory_session_id, which the route_memory_writeback path provides).
+ * A put_page that supplies neither is rejected with a route_first error.
+ *
+ * Note: the MCP SDK client drops a null-valued argument, so over the SDK a put_page that meant
+ * to pass `expected_content_hash: null` arrives with the field absent — and is therefore
+ * rejected, pushing the agent to route a genuinely new page first. Raw JSON-RPC callers that
+ * keep an explicit null are honored. Offline/CLI repair and bulk import use admin_put_page,
  * which is not gated here.
  */
 export function assertMcpPutPagePrecondition(toolName: string, rawParams: unknown): void {
   if (toolName !== 'put_page') return;
   const params = rawParams && typeof rawParams === 'object' ? (rawParams as Record<string, unknown>) : {};
-  if (!Object.prototype.hasOwnProperty.call(params, 'expected_content_hash')) {
+  const memorySessionId = params.memory_session_id;
+  const hasSession = typeof memorySessionId === 'string' && memorySessionId.trim().length > 0;
+  const hasPrecondition = Object.prototype.hasOwnProperty.call(params, 'expected_content_hash');
+  if (!hasPrecondition && !hasSession) {
     throw new OperationError(
       'invalid_params',
-      'route_first: put_page requires expected_content_hash to observe the target before writing — pass null to assert the page is absent, a content hash to update, or route a new page through route_memory_writeback first.',
-      'Call route_memory_writeback (or get_page) to obtain the target snapshot, then retry put_page with expected_content_hash. Offline repair can use admin_put_page.',
+      'route_first: put_page must observe the target before writing — supply expected_content_hash (null asserts the page is absent, a content hash drives an update), or route a new page through route_memory_writeback to obtain a write session first.',
+      'Call route_memory_writeback to obtain a write session (and snapshot), or get_page for the current content_hash, then retry put_page. Offline repair can use admin_put_page.',
     );
   }
 }

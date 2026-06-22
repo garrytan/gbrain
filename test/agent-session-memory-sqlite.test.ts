@@ -97,11 +97,13 @@ describe('agent session memory SQLite operation pipeline', () => {
       expect(sourceItems.items[0]).toMatchObject({
         external_id: 'codex_session:session-sqlite-memory',
         origin_event: 'session_capture',
+        // Inspection chunks carry metadata only — no chunk_text/redacted_text (B1). The
+        // captured preference is verified via the candidate proposed_content above.
         chunks: [expect.objectContaining({
           id: result.capture.ingest_plan.chunks[0].id,
-          redacted_text: expect.stringContaining(preference),
         })],
       });
+      expect(sourceItems.items[0].chunks[0]).not.toHaveProperty('redacted_text');
 
       const entries = await engine.listProfileMemoryEntries({
         scope_id: 'personal:default',
