@@ -3779,6 +3779,31 @@ function requirePersonalSourceRef(value: unknown): string {
   return value.trim();
 }
 
+// Personal memory writes must stay inside personal scope (Invariant 6 — work/personal
+// isolation). Reject any work:* (or otherwise non-personal) scope on the personal write path.
+function assertPersonalScopeId(scopeId: string): void {
+  if (!scopeId.startsWith('personal:')) {
+    throw new OperationError(
+      'invalid_params',
+      `personal memory writes require a personal: scope, got "${scopeId}"`,
+    );
+  }
+}
+
+function personalMemoryDeleteAudit(
+  operation: 'delete_profile_memory_entry' | 'delete_personal_episode_entry',
+  scopeId: string,
+  sourceRefs: string[],
+) {
+  return {
+    session_id: `${operation}:direct:${crypto.randomUUID()}`,
+    realm_id: 'personal',
+    actor: `mbrain:${operation}`,
+    scope_id: scopeId,
+    source_refs: sourceRefs,
+  };
+}
+
 const upsert_profile_memory_entry: Operation = {
   name: 'upsert_profile_memory_entry',
   description: 'Create or update one canonical personal profile-memory entry.',
@@ -3801,9 +3826,18 @@ const upsert_profile_memory_entry: Operation = {
   },
   mutating: true,
   handler: async (ctx, p) => {
-    const id = typeof p.id === 'string' ? p.id : crypto.randomUUID();
-    const scopeId = String(p.scope_id ?? DEFAULT_PROFILE_MEMORY_SCOPE_ID);
     const sourceRef = requirePersonalSourceRef(p.source_ref);
+    const preflight = await selectPersonalWriteTarget(ctx.engine, {
+      target_kind: 'profile_memory',
+      requested_scope: 'personal',
+      subject: typeof p.subject === 'string' ? p.subject : undefined,
+    });
+    if (!preflight.route) {
+      throw new OperationError('invalid_params', `profile_memory write blocked: ${preflight.selection_reason}`);
+    }
+    const id = typeof p.id === 'string' ? p.id : crypto.randomUUID();
+    const scopeId = String(p.scope_id ?? preflight.route.scope_id);
+    assertPersonalScopeId(scopeId);
     if (ctx.dryRun) {
       return {
         dry_run: true,
@@ -3843,7 +3877,20 @@ const delete_profile_memory_entry: Operation = {
     if (id.length === 0) {
       throw new OperationError('invalid_params', 'id must be a non-empty string');
     }
-    if (ctx.dryRun) return { dry_run: true, action: 'delete_profile_memory_entry', id };
+    const entry = await ctx.engine.getProfileMemoryEntry(id);
+    if (!entry) {
+      throw new OperationError('invalid_params', `profile-memory entry not found: ${id}`);
+    }
+    assertPersonalScopeId(entry.scope_id);
+    if (ctx.dryRun) return { dry_run: true, action: 'delete_profile_memory_entry', id, scope_id: entry.scope_id };
+    await recordMemoryMutationEvent(ctx.engine, {
+      ...personalMemoryDeleteAudit('delete_profile_memory_entry', entry.scope_id, entry.source_refs ?? []),
+      operation: 'delete_profile_memory_entry',
+      target_kind: 'profile_memory',
+      target_id: id,
+      result: 'applied',
+      dry_run: false,
+    });
     await ctx.engine.deleteProfileMemoryEntry(id);
     return { status: 'deleted', id };
   },
@@ -3909,9 +3956,18 @@ const record_personal_episode: Operation = {
   },
   mutating: true,
   handler: async (ctx, p) => {
-    const id = typeof p.id === 'string' ? p.id : crypto.randomUUID();
-    const scopeId = String(p.scope_id ?? DEFAULT_PROFILE_MEMORY_SCOPE_ID);
     const sourceRef = requirePersonalSourceRef(p.source_ref);
+    const preflight = await selectPersonalWriteTarget(ctx.engine, {
+      target_kind: 'personal_episode',
+      requested_scope: 'personal',
+      title: typeof p.title === 'string' ? p.title : undefined,
+    });
+    if (!preflight.route) {
+      throw new OperationError('invalid_params', `personal_episode write blocked: ${preflight.selection_reason}`);
+    }
+    const id = typeof p.id === 'string' ? p.id : crypto.randomUUID();
+    const scopeId = String(p.scope_id ?? preflight.route.scope_id);
+    assertPersonalScopeId(scopeId);
     if (ctx.dryRun) {
       return {
         dry_run: true,
@@ -3950,7 +4006,20 @@ const delete_personal_episode_entry: Operation = {
     if (id.length === 0) {
       throw new OperationError('invalid_params', 'id must be a non-empty string');
     }
-    if (ctx.dryRun) return { dry_run: true, action: 'delete_personal_episode_entry', id };
+    const entry = await ctx.engine.getPersonalEpisodeEntry(id);
+    if (!entry) {
+      throw new OperationError('invalid_params', `personal-episode entry not found: ${id}`);
+    }
+    assertPersonalScopeId(entry.scope_id);
+    if (ctx.dryRun) return { dry_run: true, action: 'delete_personal_episode_entry', id, scope_id: entry.scope_id };
+    await recordMemoryMutationEvent(ctx.engine, {
+      ...personalMemoryDeleteAudit('delete_personal_episode_entry', entry.scope_id, entry.source_refs ?? []),
+      operation: 'delete_personal_episode_entry',
+      target_kind: 'personal_episode',
+      target_id: id,
+      result: 'applied',
+      dry_run: false,
+    });
     await ctx.engine.deletePersonalEpisodeEntry(id);
     return { status: 'deleted', id };
   },
