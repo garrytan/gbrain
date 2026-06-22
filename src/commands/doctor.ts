@@ -5888,13 +5888,19 @@ export async function buildChecks(
     integrityHb();
   }
 
-  // 10. JSONB integrity (v0.12.3 reliability wave).
-  // v0.12.0's JSON.stringify()::jsonb pattern stored JSONB string literals
-  // instead of objects on real Postgres. PGLite masked this; Supabase did not.
-  // Scan 5 known write sites for rows whose top-level jsonb_typeof is
-  // 'string'. `page_versions.frontmatter` added in v0.15.2 so doctor's
-  // surface matches `repair-jsonb` (the previous 4-target scan missed a
-  // repair target, per #254/Codex review).
+  // 10. JSONB integrity (v0.12.3 reliability wave; made shape-aware later).
+  // JSON.stringify into a $N::jsonb bind on Postgres corrupts a column in TWO
+  // ways (PGLite masks both):
+  //   (a) double-encode  -> the value lands as a jsonb *string* scalar.
+  //   (b) scalar || obj  -> `config = config || jsonb_build_object(...)` over an
+  //       already-scalar value yields a jsonb *array* that grows each write
+  //       (this is what broke sources.config and made the cycle writer fail with
+  //       "cannot call jsonb_each on a non-object").
+  // So we don't just look for 'string' — we enforce each column's declared
+  // top-level shape via the `expected` field (previously declared but unused).
+  // `sources.config` is included for failure-mode (b). If a brain legitimately
+  // stores a different shape for one of these columns, fix that column's
+  // `expected` here rather than loosening the check.
   progress.heartbeat('jsonb_integrity');
   try {
     const sql = db.getConnection();
@@ -5904,24 +5910,25 @@ export async function buildChecks(
       { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
       { table: 'files',         col: 'metadata',       expected: 'object' },
       { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
+      { table: 'sources',       col: 'config',         expected: 'object' },
     ];
     let totalBad = 0;
     const breakdown: string[] = [];
-    for (const { table, col } of targets) {
+    for (const { table, col, expected } of targets) {
       progress.heartbeat(`jsonb_integrity.${table}.${col}`);
       const rows = await sql.unsafe(
-        `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
+        `SELECT count(*)::int AS n FROM ${table} WHERE ${col} IS NOT NULL AND jsonb_typeof(${col}) IS DISTINCT FROM '${expected}'`,
       );
       const n = Number((rows as any)[0]?.n ?? 0);
-      if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
+      if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n} (want ${expected})`); }
     }
     if (totalBad === 0) {
-      checks.push({ name: 'jsonb_integrity', status: 'ok', message: 'All JSONB columns store objects/arrays' });
+      checks.push({ name: 'jsonb_integrity', status: 'ok', message: 'All JSONB columns hold their expected object/array shape' });
     } else {
       checks.push({
         name: 'jsonb_integrity',
         status: 'warn',
-        message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
+        message: `${totalBad} row(s) with wrong JSONB shape (${breakdown.join(', ')}). Double-encoded strings: gbrain repair-jsonb. Array-where-object (scalar||object append) needs manual reconstruction.`,
       });
     }
   } catch {
