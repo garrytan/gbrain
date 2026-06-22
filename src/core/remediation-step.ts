@@ -39,9 +39,14 @@ export type RemediationStatus = 'remediable' | 'human_only' | 'blocked';
  *                     References other steps via depends_on.
  *   job             — Minion handler name. Must match a registered handler.
  *   params          — passed verbatim to the handler.
- *   idempotency_key — content-hash dedup key. Same (job, params) →
- *                     same key. Across retries (--remediate re-runs)
- *                     pre-existing failed jobs append `:r<N>` suffix.
+ *   idempotency_key — content-hash dedup key. Same (job, params) → same
+ *                     key (exactly-once: the queue's unique partial index
+ *                     means a re-submit returns the existing row, terminal
+ *                     or not). The --remediate loop therefore attempts a
+ *                     step at most once per run and excludes terminally-
+ *                     failed ids from later rechecks (see selectActiveRecs);
+ *                     it does NOT mutate this key. The next scheduled run
+ *                     retries with a fresh abort set.
  *   severity        — drives ordering.
  *   est_seconds     — upper-bound runtime estimate for budgeting.
  *   est_usd_cost    — USD cost estimate when applicable.
@@ -149,4 +154,31 @@ export function makeRemediationStep(opts: {
     protected: opts.protected,
     status: opts.status ?? 'remediable',
   };
+}
+
+/**
+ * Select the steps that are still actionable on the current --remediate
+ * pass. The loop recomputes recommendations from fresh health after every
+ * step (D7); this filters that recomputed set to:
+ *   - status === 'remediable' (the only kind that executes), and
+ *   - ids NOT already in `abortedIds`.
+ *
+ * The second clause is the loop-termination guarantee. A step that reached a
+ * terminal NON-completed state this run (failed / dead / cancelled) is in
+ * `abortedIds`. Because idempotency keys are content-stable and queue.add
+ * already exhausted `max_attempts`, re-dispatching such a step returns the
+ * SAME terminal row forever — so if its underlying metric never improves the
+ * recommendation re-fires every recheck and the loop spins (the failure a
+ * cancelled job triggers under `onboard --auto`). Excluding aborted ids makes
+ * progress monotonic: each step is attempted at most once per run, then
+ * abandoned until the next scheduled run (which starts with an empty set).
+ *
+ * Pure + side-effect-free so the loop-progress invariant is unit-testable
+ * without the (deferred) Minion-worker stub harness.
+ */
+export function selectActiveRecs(
+  recs: RemediationStep[],
+  abortedIds: ReadonlySet<string>,
+): RemediationStep[] {
+  return recs.filter((r) => r.status === 'remediable' && !abortedIds.has(r.id));
 }
