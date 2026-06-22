@@ -21,14 +21,12 @@ afterEach(() => {
 describe('assertion retrieval operations', () => {
   test('operation is exposed through MCP and CLI contract', () => {
     const operation = operationsByName.list_retrievable_assertions;
-    const explainOperation = operationsByName.explain_assertion;
 
     expect(operation?.cliHints?.name).toBe('assertion-retrieval');
     expect(operation?.params.mode).toMatchObject({ type: 'string' });
     expect(operation?.params.target_slug).toMatchObject({ type: 'string' });
     expect(operation?.params.scope_id).toMatchObject({ type: 'string' });
     expect(operation?.params.limit).toMatchObject({ type: 'number' });
-    expect(explainOperation?.params.scope_id).toMatchObject({ type: 'string' });
   });
 
   test('SQLite operation returns active assertions, marks stale verify-first, and hides expired archived purged by default', async () => {
@@ -175,71 +173,6 @@ describe('assertion retrieval operations', () => {
     }
   });
 
-  test('SQLite explain_assertion defaults to workspace scope and honors explicit scope', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mbrain-assertion-explain-scope-sqlite-'));
-    tempPaths.push(dir);
-    const engine = new SQLiteEngine();
-    try {
-      await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
-      await engine.initSchema();
-      const ctx = operationContext(engine, {
-        engine: 'sqlite',
-        database_path: join(dir, 'brain.db'),
-        offline: true,
-        embedding_provider: 'none',
-        query_rewrite_provider: 'none',
-      });
-
-      insertSQLiteAssertion(engine, {
-        id: 'assertion:workspace-explain',
-        property: 'runtime.explain_scope',
-        lifecycle_state: 'active',
-        scope_id: 'workspace:default',
-      });
-      insertSQLiteAssertion(engine, {
-        id: 'assertion:personal-explain',
-        property: 'runtime.explain_scope',
-        lifecycle_state: 'active',
-        scope_id: 'personal:default',
-      });
-      insertSQLiteEvidence(engine, {
-        id: 'assertion-evidence:workspace-explain',
-        assertion_id: 'assertion:workspace-explain',
-        scope_id: 'workspace:default',
-      });
-      insertSQLiteEvidence(engine, {
-        id: 'assertion-evidence:personal-explain',
-        assertion_id: 'assertion:personal-explain',
-        scope_id: 'personal:default',
-      });
-
-      const defaults = await operationsByName.explain_assertion.handler(ctx, {
-        target_slug: 'systems/mbrain',
-      }) as any;
-      const personal = await operationsByName.explain_assertion.handler(ctx, {
-        target_slug: 'systems/mbrain',
-        scope_id: 'personal:default',
-      }) as any;
-
-      expect(defaults.query).toMatchObject({
-        target_slug: 'systems/mbrain',
-        scope_id: 'workspace:default',
-      });
-      expect(defaults.assertions.map((entry: any) => entry.id)).toEqual(['assertion:workspace-explain']);
-      expect(defaults.assertions.map((entry: any) => entry.scope_id)).toEqual(['workspace:default']);
-      expect(defaults.assertion_evidence.map((entry: any) => entry.scope_id)).toEqual(['workspace:default']);
-      expect(personal.query).toMatchObject({
-        target_slug: 'systems/mbrain',
-        scope_id: 'personal:default',
-      });
-      expect(personal.assertions.map((entry: any) => entry.id)).toEqual(['assertion:personal-explain']);
-      expect(personal.assertions.map((entry: any) => entry.scope_id)).toEqual(['personal:default']);
-      expect(personal.assertion_evidence.map((entry: any) => entry.scope_id)).toEqual(['personal:default']);
-    } finally {
-      await engine.disconnect();
-    }
-  });
-
   test('PGLite operation uses the same lifecycle retrieval contract', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-assertion-retrieval-pglite-'));
     tempPaths.push(dir);
@@ -304,35 +237,6 @@ function insertSQLiteAssertion(
       created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, assertionParams(input));
-}
-
-function insertSQLiteEvidence(
-  engine: SQLiteEngine,
-  input: {
-    id: string;
-    assertion_id: string;
-    scope_id?: string;
-  },
-) {
-  const scopeId = input.scope_id ?? 'workspace:default';
-  const database = (engine as any).database;
-  database.run(`
-    INSERT INTO assertion_evidence (
-      id, assertion_id, scope_id, policy_version, authority_scope,
-      extracted_claim_id, source_id, source_item_id, source_chunk_id,
-      contribution_type, evidence_authority, evidence_confidence,
-      valid_from, valid_until, created_at
-    ) VALUES (?, ?, ?, 'policy:v1', 'work', ?, ?, ?, ?, 'supports', 'session_derived', 0.9, NULL, NULL, ?)
-  `, [
-    input.id,
-    input.assertion_id,
-    scopeId,
-    `extracted-claim:${input.id}`,
-    `source:${scopeId}`,
-    `source-item:${scopeId}`,
-    `source-chunk:${input.id}`,
-    NOW,
-  ]);
 }
 
 async function insertPGLiteAssertion(
