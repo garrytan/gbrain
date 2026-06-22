@@ -8,6 +8,7 @@ import {
   mcpResultTextBudgetForFinalFrame,
   prepareMcpToolParams,
 } from '../src/mcp/server.ts';
+import { resolveAllowedTiers } from '../src/mcp/tool-tiers.ts';
 
 function byteLength(text: string): number {
   return Buffer.byteLength(text, 'utf-8');
@@ -29,15 +30,22 @@ afterEach(() => {
 });
 
 describe('MCP response guard', () => {
-  test('compact MCP tool catalog stays below the stdio pipe pressure budget', () => {
-    const catalog = createMcpToolCatalogProvider();
-    const tools = catalog.getTools({ compact: true });
+  test('compact stdio tool catalog (default tier) stays below the stdio pipe pressure budget', () => {
+    // The stdio surface ships the default tier (core+extended); admin tools are hidden there
+    // and only reach remote/HTTP or an explicit MBRAIN_MCP_TOOL_TIER=all.
+    const stdio = createMcpToolCatalogProvider(operations, { allowedTiers: resolveAllowedTiers() });
+    const tools = stdio.getTools({ compact: true });
     const bytes = byteLength(JSON.stringify({ tools }));
 
-    expect(tools.length).toBe(operations.length);
+    expect(tools.length).toBeLessThan(operations.length); // admin tools hidden by default
+    expect(tools.some(tool => tool.name === 'retrieve_context')).toBe(true);
+    expect(tools.some(tool => tool.name === 'apply_memory_redaction_plan')).toBe(false);
     expect(bytes).toBeLessThan(58_000);
 
-    const dryRunMutation = tools.find(tool => tool.name === 'dry_run_memory_mutation');
+    // dry_run_memory_mutation is admin-tier; its put_page enum still survives compact on the
+    // full (=all) catalog used by remote/HTTP surfaces.
+    const full = createMcpToolCatalogProvider(operations, { allowedTiers: resolveAllowedTiers('all') });
+    const dryRunMutation = full.getTools({ compact: true }).find(tool => tool.name === 'dry_run_memory_mutation');
     expect((dryRunMutation?.inputSchema.properties as any).operation.enum).toContain('put_page');
   });
 

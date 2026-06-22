@@ -317,6 +317,10 @@ export interface Operation {
   handler: (ctx: OperationContext, params: Record<string, unknown>) => Promise<unknown>;
   mutating?: boolean;
   capabilityRequired?: OperationCapability;
+  // Tool-catalog tier (see src/mcp/tool-tiers.ts). Explicit override of the name-based
+  // classification; usually omitted. 'admin' ops are hidden from the default stdio catalog
+  // but remain dispatchable by name and discoverable via tool_search.
+  tier?: 'core' | 'extended' | 'admin';
   cliHints?: {
     name?: string;
     positional?: string[];

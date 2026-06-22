@@ -136,6 +136,9 @@ export function createMcpHttpHandler(
       operations: options.operations,
       config: options.config,
       compactToolSchemas: false,
+      // Remote/HTTP clients get the full surface (no stdio tier hiding) to avoid breaking
+      // flows that depend on control-plane tools; the stdio default stays core+extended.
+      toolTier: 'all',
       toolExecutionLimiter,
       logger: {
         info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),

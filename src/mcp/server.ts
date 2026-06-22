@@ -13,6 +13,7 @@ import {
 } from '../core/text-offsets.ts';
 import { VERSION } from '../version.ts';
 import { operationToMcpTool } from './tool-schema.ts';
+import { isToolVisibleAtTier, resolveAllowedTiers, type ToolTier } from './tool-tiers.ts';
 import {
   BudgetedStdioServerTransport,
   DEFAULT_MCP_MAX_STDIO_FRAME_BYTES,
@@ -35,6 +36,7 @@ export type McpToolCatalogOptions = {
 
 export type McpToolCatalogProviderOptions = {
   config?: OperationContext['config'] | null;
+  allowedTiers?: ReadonlySet<ToolTier>;
 };
 
 export type McpToolCatalogProvider = {
@@ -58,6 +60,9 @@ export type CreateMcpServerOptions = {
   logger?: OperationContext['logger'];
   maxResultTextBytes?: number;
   toolExecutionLimiter?: McpToolExecutionLimiter;
+  // Tool-catalog tier selection ('all' | 'core+extended' | 'core' | comma list). Defaults to
+  // MBRAIN_MCP_TOOL_TIER, then to core+extended. Remote/HTTP surfaces pass 'all'.
+  toolTier?: string;
 };
 
 export type CreatedMcpServer = {
@@ -118,9 +123,14 @@ export function createMcpToolCatalogProvider(
   operations: Operation[] = defaultOperations,
   options: McpToolCatalogProviderOptions = {},
 ): McpToolCatalogProvider {
-  const catalogOperations = options.config
+  const capabilityFiltered = options.config
     ? operations.filter(operation => isOperationSupportedByConfig(operation, options.config!))
     : operations;
+  // Tier filter narrows the listed catalog (default core+extended); dispatch-by-name stays
+  // unfiltered (see createMcpServer) and tool_search can still surface hidden tools.
+  const catalogOperations = options.allowedTiers
+    ? capabilityFiltered.filter(operation => isToolVisibleAtTier(operation, options.allowedTiers!))
+    : capabilityFiltered;
   let compactTools: ReturnType<typeof operationToMcpTool>[] | undefined;
   let fullTools: ReturnType<typeof operationToMcpTool>[] | undefined;
 
@@ -812,7 +822,8 @@ export function createMcpServer(
   // Config, logger, and result budget are immutable for the lifetime of the
   // server process; resolve them once instead of per tool call.
   const resolvedConfig = options.config ?? loadConfig() ?? DEFAULT_RUNTIME_CONFIG;
-  const toolCatalog = createMcpToolCatalogProvider(operations, { config: resolvedConfig });
+  const allowedTiers = resolveAllowedTiers(options.toolTier ?? process.env.MBRAIN_MCP_TOOL_TIER);
+  const toolCatalog = createMcpToolCatalogProvider(operations, { config: resolvedConfig, allowedTiers });
   const toolExecutionLimiter = options.toolExecutionLimiter ?? createMcpToolExecutionLimiter();
   const resolvedLogger = options.logger ?? {
     info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
