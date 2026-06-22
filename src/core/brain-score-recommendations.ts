@@ -146,6 +146,16 @@ export interface RecommendationContext {
   chatModel?: string;
   /** Whether the chat provider has a usable API key. */
   hasChatApiKey?: boolean;
+  /**
+   * Count of pages needing link/timeline extraction — the SAME staleness the
+   * `gbrain extract --stale` walk and doctor's `links_extraction_lag` check use
+   * (`engine.countStalePagesForExtraction`). Gates the sync→extract pipeline
+   * (sync.repo / extract.all). Replaces the old `health.stale_pages` gate, which
+   * counted "pages whose updated_at predates their newest timeline entry" — a
+   * proxy that broke when the updated_at-on-timeline-insert trigger was dropped
+   * (migration v10) and never reflected real extraction work.
+   */
+  extractionLagPages?: number;
 }
 
 /** Triage result for one check. */
@@ -192,20 +202,28 @@ export function computeRecommendations(
   const source = ctx.sourceId ?? 'default';
 
   // ---------------------------------------------------------------------
-  // sync.repo — fires when sync hasn't run recently OR pages are stale
+  // sync.repo + extract.all — the materialization pipeline, gated on the REAL
+  // extraction lag (pages whose link/timeline edges are stale), NOT on the
+  // legacy `health.stale_pages` proxy. `extractionLagPages` comes from the same
+  // counter the `extract --stale` walk + doctor's `links_extraction_lag` use, so
+  // the recommendation can only fire when running extract will actually reduce
+  // it (and clear the rec). See RecommendationContext.extractionLagPages.
+  // sync.repo is the prerequisite: re-sync so pages are current before extract
+  // materializes their edges.
   // ---------------------------------------------------------------------
-  if (ctx.repoPath && health.stale_pages > 0) {
+  const extractionLag = ctx.extractionLagPages ?? 0;
+  if (ctx.repoPath && extractionLag > 0) {
     const params = { repoPath: ctx.repoPath, sourceId: ctx.sourceId, noEmbed: true };
     out.push({
       id: 'sync.repo',
       job: 'sync',
       params,
       idempotency_key: idemKey(source, 'sync', params),
-      severity: health.stale_pages > 50 ? 'high' : 'medium',
-      est_seconds: Math.min(600, 30 + health.stale_pages * 0.5),
+      severity: extractionLag > 50 ? 'high' : 'medium',
+      est_seconds: Math.min(600, 30 + extractionLag * 0.5),
       est_usd_cost: 0,  // sync is fs+DB only
       depends_on: [],
-      rationale: `${health.stale_pages} stale page${health.stale_pages === 1 ? '' : 's'} on disk`,
+      rationale: `Sync before extracting ${extractionLag} page${extractionLag === 1 ? '' : 's'} with stale link/timeline edges`,
       status: 'remediable',
     });
   }
@@ -237,7 +255,7 @@ export function computeRecommendations(
       est_seconds: Math.min(3600, 5 + health.missing_embeddings * 0.05),
       est_usd_cost,
       // sync should run first so embed sees fresh pages.
-      depends_on: ctx.repoPath && health.stale_pages > 0 ? ['sync.repo'] : [],
+      depends_on: ctx.repoPath && extractionLag > 0 ? ['sync.repo'] : [],
       rationale: `${health.missing_embeddings} chunk${health.missing_embeddings === 1 ? '' : 's'} invisible to vector search`,
       status: 'remediable',
     });
@@ -267,7 +285,7 @@ export function computeRecommendations(
   // Triggered when sync.repo fires (because sync was set to noEmbed:true,
   // and noExtract:true after T5 lands → extract job is the materializer).
   // ---------------------------------------------------------------------
-  if (ctx.repoPath && health.stale_pages > 0) {
+  if (ctx.repoPath && extractionLag > 0) {
     const params = { mode: 'all', dir: ctx.repoPath };
     out.push({
       id: 'extract.all',
@@ -278,7 +296,7 @@ export function computeRecommendations(
       est_seconds: Math.min(600, 30 + health.page_count * 0.01),
       est_usd_cost: 0,
       depends_on: ['sync.repo'],
-      rationale: 'Materialize link + timeline edges from fresh pages',
+      rationale: `Materialize link + timeline edges for ${extractionLag} page${extractionLag === 1 ? '' : 's'} with stale extraction`,
       status: 'remediable',
     });
   }
