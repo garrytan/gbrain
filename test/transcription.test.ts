@@ -1,7 +1,8 @@
 import { describe, test, expect } from 'bun:test';
-import { writeFileSync, unlinkSync } from 'fs';
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { withEnv, emptyHome } from './helpers/with-env.ts';
 
 const TMP_TXT = join(tmpdir(), 'gbrain-test-audio.txt');
 const TMP_MP3 = join(tmpdir(), 'gbrain-test-audio.mp3');
@@ -66,5 +67,41 @@ describe('transcription', () => {
     // The unsupported format test above verifies .txt is rejected
     // This test documents the expected formats
     expect(expected.length).toBeGreaterThan(5);
+  });
+
+  test('audits reserve and rollback rows when provider request fails', async () => {
+    const { transcribe } = await import('../src/core/transcription.ts');
+    const auditDir = mkdtempSync(join(tmpdir(), 'gbrain-transcription-audit-'));
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async () => {
+      throw new TypeError('network down');
+    }) as unknown as typeof fetch;
+
+    try {
+      await withEnv({
+        GBRAIN_HOME: emptyHome(),
+        GBRAIN_AUDIT_DIR: auditDir,
+        GROQ_API_KEY: 'sk-test',
+        OPENAI_API_KEY: undefined,
+      }, async () => {
+        await expect(transcribe(TMP_MP3, { provider: 'groq' })).rejects.toThrow('network down');
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    const auditFile = readdirSync(auditDir).find((name) => name.startsWith('budget-'));
+    expect(auditFile).toBeDefined();
+    const rows = readFileSync(join(auditDir, auditFile!), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+
+    expect(rows.map((row) => row.ledger_event)).toEqual(['reserve', 'rollback']);
+    expect(rows.map((row) => row.outcome)).toEqual(['reserved', 'failure']);
+    expect(rows[0].request_id).toBe(rows[1].request_id);
+    expect(rows.every((row) => row.audio_file === 'gbrain-test-audio.mp3')).toBe(true);
+    expect(rows[1].error_type).toBe('TypeError');
   });
 });

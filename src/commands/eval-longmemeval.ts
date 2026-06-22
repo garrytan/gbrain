@@ -23,6 +23,7 @@ import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { PGLiteEngine } from '../core/pglite-engine.ts';
 import type { SearchResult } from '../core/types.ts';
+import { BudgetTracker, extractUsageFromError } from '../core/budget/budget-tracker.ts';
 // v0.40.2.0 — trajectory routing imports.
 import { classifyIntent, type Intent } from '../eval/longmemeval/intent.ts';
 import {
@@ -48,6 +49,80 @@ import { formatTrajectoryBlock } from '../core/trajectory-format.ts';
 const TRAJECTORY_METHODOLOGY_NOTE = 'extractor=haiku-preprocess-full-haystack-v1';
 
 const HUGGINGFACE_URL = 'https://huggingface.co/datasets/xiaowu0162/longmemeval';
+
+function estimateAnthropicMessageTokens(params: Anthropic.MessageCreateParamsNonStreaming): number {
+  let chars = 0;
+  const system = params.system;
+  if (typeof system === 'string') chars += system.length;
+  else if (Array.isArray(system)) {
+    for (const block of system) {
+      const text = (block as { text?: unknown }).text;
+      if (typeof text === 'string') chars += text.length;
+      else chars += JSON.stringify(block).length;
+    }
+  }
+  for (const message of params.messages) {
+    const content = message.content;
+    if (typeof content === 'string') {
+      chars += content.length;
+      continue;
+    }
+    for (const block of content ?? []) {
+      if (block.type === 'text') chars += block.text.length;
+      else chars += JSON.stringify(block).length;
+    }
+  }
+  return Math.ceil(chars / 4);
+}
+
+function budgetedThinkClient(label: string, create: ThinkLLMClient['create']): ThinkLLMClient {
+  const tracker = new BudgetTracker({ label });
+  return {
+    async create(params, callOpts) {
+      const estimatedInputTokens = estimateAnthropicMessageTokens(params);
+      const maxOutputTokens = params.max_tokens ?? 4096;
+      tracker.reserve({
+        modelId: params.model,
+        estimatedInputTokens,
+        maxOutputTokens,
+        kind: 'chat',
+        label: `${label}.messages`,
+      });
+      try {
+        const result = await create(params, callOpts);
+        tracker.record({
+          modelId: params.model,
+          inputTokens: result.usage?.input_tokens ?? 0,
+          outputTokens: result.usage?.output_tokens ?? 0,
+          cacheReadTokens: (result.usage as any)?.cache_read_input_tokens ?? 0,
+          cacheCreationTokens: (result.usage as any)?.cache_creation_input_tokens ?? 0,
+          kind: 'chat',
+          label: `${label}.messages`,
+        });
+        return result;
+      } catch (err) {
+        const fallback = extractUsageFromError(err, {
+          inputTokens: estimatedInputTokens,
+          outputTokens: maxOutputTokens,
+        });
+        try {
+          tracker.record({
+            modelId: params.model,
+            inputTokens: fallback.inputTokens,
+            outputTokens: fallback.outputTokens,
+            cacheReadTokens: fallback.cacheReadTokens,
+            cacheCreationTokens: fallback.cacheCreationTokens,
+            kind: 'chat',
+            label: `${label}.messages.failed`,
+          });
+        } catch {
+          // Preserve provider failure; future reserve calls surface budget state.
+        }
+        throw err;
+      }
+    },
+  };
+}
 
 interface ParsedArgs {
   help: boolean;
@@ -471,13 +546,15 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   // Wrap Anthropic SDK so its `.messages.create` shape matches ThinkLLMClient.
   // Same pattern as src/core/think/index.ts:247-249.
   const realClient = new Anthropic();
-  const client: ThinkLLMClient = runOpts.client ?? {
-    create: (params, callOpts) => realClient.messages.create(params, callOpts),
-  };
+  const client: ThinkLLMClient = runOpts.client ?? budgetedThinkClient(
+    'eval.longmemeval.answer',
+    (params, callOpts) => realClient.messages.create(params, callOpts),
+  );
   // v0.40.2.0 — separate extractor client (defaults to same SDK).
-  const extractorClient: ThinkLLMClient = runOpts.extractorClient ?? {
-    create: (params, callOpts) => realClient.messages.create(params, callOpts),
-  };
+  const extractorClient: ThinkLLMClient = runOpts.extractorClient ?? budgetedThinkClient(
+    'eval.longmemeval.extractor',
+    (params, callOpts) => realClient.messages.create(params, callOpts),
+  );
   const trajectoryEnabled = !opts.noTrajectory;
   const extractorModel = trajectoryEnabled
     ? await resolveModel(null, {

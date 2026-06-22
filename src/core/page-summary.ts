@@ -121,6 +121,7 @@ export async function generatePerChunkSynopsis(
 
   const chatOpts: ChatOpts = {
     model: args.model ?? DEFAULT_SYNOPSIS_MODEL,
+    budgetLabel: 'contextual_retrieval.synopsis',
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userPrompt }],
     maxTokens: HAIKU_MAX_TOKENS,

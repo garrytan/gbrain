@@ -14,20 +14,42 @@
  *  - parseExtractorOutput unit tests for the raw JSON parser
  */
 
-import { describe, test, expect } from 'bun:test';
+import { afterAll, beforeAll, describe, test, expect } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
-  runPhaseProposeTakes,
+  runPhaseProposeTakes as runPhaseProposeTakesBase,
   parseExtractorOutput,
   contentHash,
   hasCompleteFence,
   extractExistingTakesForDedup,
   PROPOSE_TAKES_PROMPT_VERSION,
   type ProposeTakesExtractor,
-  type ProposedTake,
 } from '../src/core/cycle/propose-takes.ts';
+import { getCurrentBudgetTracker, withBudgetTracker } from '../src/core/ai/gateway.ts';
+import { BudgetExhausted, BudgetTracker } from '../src/core/budget/budget-tracker.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { Page } from '../src/core/types.ts';
+import { withEnv } from './helpers/with-env.ts';
+
+let auditDir: string;
+
+beforeAll(() => {
+  auditDir = mkdtempSync(join(tmpdir(), 'gbrain-propose-takes-audit-'));
+});
+
+afterAll(() => {
+  rmSync(auditDir, { recursive: true, force: true });
+});
+
+async function runPhaseProposeTakes(
+  ctx: OperationContext,
+  opts?: Parameters<typeof runPhaseProposeTakesBase>[1],
+) {
+  return withEnv({ GBRAIN_AUDIT_DIR: auditDir }, () => runPhaseProposeTakesBase(ctx, opts));
+}
 
 // ─── Mock engine ────────────────────────────────────────────────────
 
@@ -36,11 +58,18 @@ interface CapturedSql {
   params: unknown[];
 }
 
+interface CapturedPutPage {
+  slug: string;
+  page: Record<string, unknown>;
+  opts?: { sourceId?: string };
+}
+
 function buildMockEngine(opts: {
   pages: Page[];
   existingProposals?: Set<string>; // composite-key strings already in take_proposals
-}): { engine: BrainEngine; captured: CapturedSql[] } {
+}): { engine: BrainEngine; captured: CapturedSql[]; putPages: CapturedPutPage[] } {
   const captured: CapturedSql[] = [];
+  const putPages: CapturedPutPage[] = [];
   const existing = opts.existingProposals ?? new Set<string>();
 
   const engine = {
@@ -60,9 +89,24 @@ function buildMockEngine(opts: {
       // INSERT — return nothing
       return [];
     },
+    async putPage(slug: string, page: Record<string, unknown>, putOpts?: { sourceId?: string }) {
+      putPages.push({ slug, page, opts: putOpts });
+      return {
+        id: putPages.length,
+        slug,
+        type: page.type ?? 'extract_receipt',
+        title: page.title ?? slug,
+        compiled_truth: page.compiled_truth ?? '',
+        timeline: '',
+        frontmatter: page.frontmatter ?? {},
+        source_id: putOpts?.sourceId ?? 'default',
+        created_at: new Date(),
+        updated_at: new Date(),
+      } as Page;
+    },
   } as unknown as BrainEngine;
 
-  return { engine, captured };
+  return { engine, captured, putPages };
 }
 
 function buildPage(opts: { slug: string; body: string; sourceId?: string }): Page {
@@ -348,6 +392,31 @@ New prose appended here.`;
     expect(extractorCalls).toBe(1);
   });
 
+  test('oversize prompts are skipped before the extractor can spend', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/huge', body: 'oversized body '.repeat(1_000) }),
+    ];
+    const { engine, captured } = buildMockEngine({ pages });
+    const ctx = buildCtx(engine);
+    ctx.config = { 'cycle.propose_takes.max_prompt_tokens': 100 } as never;
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      return [{ claim_text: 'should not run', kind: 'take', holder: 'brain', weight: 0.5 }];
+    };
+
+    const result = await runPhaseProposeTakes(ctx, { extractor });
+    const details = result.details as Record<string, unknown>;
+
+    expect(extractorCalls).toBe(0);
+    expect(result.status).toBe('ok');
+    expect(details.cache_misses).toBe(1);
+    expect(details.oversize_pages_skipped).toBe(1);
+    expect(details.proposals_inserted).toBe(0);
+    expect((details.warnings as string[])[0]).toContain('prompt estimate');
+    expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
+  });
+
   test('skipPagesWithFence:true bypasses pages that already have a complete fence', async () => {
     const pages = [
       buildPage({
@@ -383,5 +452,266 @@ New prose appended here.`;
     expect(runIdA).toBe(runIdB);
     expect(typeof runIdA).toBe('string');
     expect((runIdA as string).startsWith('propose-')).toBe(true);
+  });
+
+  test('receipt and rollup record active BudgetTracker spend', async () => {
+    const pages = [buildPage({ slug: 'wiki/costed', body: 'This market will expand faster than consensus expects.' })];
+    const { engine, captured, putPages } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => {
+      const tracker = getCurrentBudgetTracker();
+      expect(tracker).not.toBeNull();
+      tracker!.record({
+        modelId: 'anthropic:claude-sonnet-4-6',
+        inputTokens: 1_000,
+        outputTokens: 500,
+        label: 'gateway.chat',
+      });
+      return [
+        {
+          claim_text: 'The market will expand faster than consensus expects',
+          kind: 'take',
+          holder: 'brain',
+          weight: 0.6,
+        },
+      ];
+    };
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      model: 'anthropic:claude-sonnet-4-6',
+    });
+
+    const costUsd = (result.details as Record<string, unknown>).cost_usd as number;
+    expect(costUsd).toBeGreaterThan(0);
+    expect(putPages).toHaveLength(1);
+    expect((putPages[0]!.page.frontmatter as Record<string, unknown>).cost_usd).toBe(costUsd);
+    expect(putPages[0]!.page.compiled_truth as string).toContain('Cost: $');
+
+    const rollup = captured.find(c => c.sql.includes('INSERT INTO extract_rollup_7d'));
+    expect(rollup).toBeDefined();
+    expect(rollup!.params[3]).toBe(costUsd);
+  });
+
+  test('receipt omits model_id when the model came from gateway configuration', async () => {
+    const pages = [buildPage({ slug: 'wiki/no-explicit-model', body: 'Configured model is not known to the receipt layer.' })];
+    const { engine, putPages } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => [
+      { claim_text: 'Configured model is not known to the receipt layer', kind: 'take', holder: 'brain', weight: 0.5 },
+    ];
+
+    await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect((putPages[0]!.page.frontmatter as Record<string, unknown>).model_id).toBeUndefined();
+  });
+
+  test('receipt cost is the phase delta when an outer BudgetTracker already has spend', async () => {
+    const pages = [buildPage({ slug: 'wiki/outer-tracker', body: 'One more prediction worth proposing.' })];
+    const { engine, putPages } = buildMockEngine({ pages });
+    const outerTracker = new BudgetTracker({
+      label: 'outer-test',
+      maxCostUsd: 1,
+      auditPath: join(auditDir, 'outer-test-budget.jsonl'),
+    });
+    outerTracker.record({
+      modelId: 'anthropic:claude-sonnet-4-6',
+      inputTokens: 10_000,
+      outputTokens: 1_000,
+      label: 'prior.phase',
+    });
+    const priorCost = outerTracker.snapshot().cumulativeCostUsd;
+    const extractor: ProposeTakesExtractor = async () => {
+      getCurrentBudgetTracker()!.record({
+        modelId: 'anthropic:claude-sonnet-4-6',
+        inputTokens: 1_000,
+        outputTokens: 500,
+        label: 'gateway.chat',
+      });
+      return [{ claim_text: 'One more prediction will matter', kind: 'take', holder: 'brain', weight: 0.55 }];
+    };
+
+    const result = await withBudgetTracker(outerTracker, () =>
+      runPhaseProposeTakes(buildCtx(engine), { extractor, model: 'anthropic:claude-sonnet-4-6' }),
+    );
+
+    const costUsd = (result.details as Record<string, unknown>).cost_usd as number;
+    expect(costUsd).toBeGreaterThan(0);
+    expect(outerTracker.snapshot().cumulativeCostUsd).toBeGreaterThan(priorCost + costUsd - 0.0000001);
+    expect(costUsd).toBeLessThan(priorCost);
+    expect((putPages[0]!.page.frontmatter as Record<string, unknown>).cost_usd).toBe(costUsd);
+  });
+
+  test('BudgetExhausted from the gateway tracker stops the phase as warn', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/a', body: 'page a' }),
+      buildPage({ slug: 'wiki/b', body: 'page b' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    let calls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      calls++;
+      throw new BudgetExhausted('cycle.propose_takes: cap reached', {
+        reason: 'cost',
+        spent: 0.01,
+        cap: 0.01,
+        modelId: 'anthropic:claude-sonnet-4-6',
+      });
+    };
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    const details = result.details as Record<string, unknown>;
+    expect(result.status).toBe('warn');
+    expect(details.budget_exhausted).toBe(true);
+    expect((details.warnings as string[])[0]).toContain('budget exhausted');
+    expect(calls).toBe(1);
+  });
+
+  test('default wrapper does not hard-fail unpriced chat models without an explicit cap', async () => {
+    const pages = [buildPage({ slug: 'wiki/unpriced', body: 'Unpriced local model should still propose.' })];
+    const { engine } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => {
+      getCurrentBudgetTracker()!.reserve({
+        modelId: 'local-chat:unpriced-test-model',
+        estimatedInputTokens: 100,
+        maxOutputTokens: 50,
+        kind: 'chat',
+        label: 'gateway.chat',
+      });
+      return [{ claim_text: 'Unpriced local model should still propose', kind: 'take', holder: 'brain', weight: 0.5 }];
+    };
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      model: 'local-chat:unpriced-test-model',
+    });
+    const details = result.details as Record<string, unknown>;
+    expect(result.status).toBe('ok');
+    expect(details.budget_exhausted).toBe(false);
+    expect(details.proposals_inserted).toBe(1);
+  });
+
+  test('final-call BudgetTracker overage marks the phase halted', async () => {
+    const pages = [buildPage({ slug: 'wiki/final-overage', body: 'Final call can exceed cap after usage records.' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    const tracker = new BudgetTracker({
+      label: 'outer-tight',
+      maxCostUsd: 0.000001,
+      auditPath: join(auditDir, 'outer-tight-budget.jsonl'),
+    });
+    const extractor: ProposeTakesExtractor = async () => {
+      try {
+        getCurrentBudgetTracker()!.record({
+          modelId: 'anthropic:claude-sonnet-4-6',
+          inputTokens: 1_000,
+          outputTokens: 500,
+          label: 'gateway.chat',
+        });
+      } catch (err) {
+        expect(err).toBeInstanceOf(BudgetExhausted);
+      }
+      return [{ claim_text: 'Final call can exceed cap', kind: 'take', holder: 'brain', weight: 0.6 }];
+    };
+
+    const result = await withBudgetTracker(tracker, () =>
+      runPhaseProposeTakes(buildCtx(engine), { extractor, model: 'anthropic:claude-sonnet-4-6' }),
+    );
+    const details = result.details as Record<string, unknown>;
+    expect(result.status).toBe('warn');
+    expect(details.budget_exhausted).toBe(true);
+    expect((details.warnings as string[]).at(-1)).toContain('budget exhausted');
+    const rollup = captured.find(c => c.sql.includes('INSERT INTO extract_rollup_7d'));
+    expect(rollup!.params[4]).toBe(1); // halt_delta
+    expect(rollup!.params[7]).toBe(0); // round_completed_delta
+  });
+
+  test('default phase cap still halts final actual spend overage', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/default-cap-overage', body: 'A very expensive final call should halt.' }),
+      buildPage({ slug: 'wiki/should-not-run', body: 'This page should not be submitted after the overage.' }),
+    ];
+    const { engine, captured } = buildMockEngine({ pages });
+    let calls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      calls++;
+      getCurrentBudgetTracker()!.record({
+        modelId: 'anthropic:claude-sonnet-4-6',
+        inputTokens: 2_000_000,
+        outputTokens: 0,
+        label: 'gateway.chat',
+      });
+      return [{ claim_text: 'A very expensive final call should halt', kind: 'take', holder: 'brain', weight: 0.6 }];
+    };
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      model: 'anthropic:claude-sonnet-4-6',
+    });
+    const details = result.details as Record<string, unknown>;
+    expect(result.status).toBe('warn');
+    expect(details.budget_exhausted).toBe(true);
+    expect((details.cost_usd as number)).toBeGreaterThan(5);
+    expect(calls).toBe(1);
+    const rollup = captured.find(c => c.sql.includes('INSERT INTO extract_rollup_7d'));
+    expect(rollup!.params[4]).toBe(1);
+    expect(rollup!.params[7]).toBe(0);
+  });
+
+  test('failed extractor calls check actual spend before continuing', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/failed-expensive', body: 'The failed call is expensive.' }),
+      buildPage({ slug: 'wiki/should-not-run-after-failure-overage', body: 'This should not run.' }),
+    ];
+    const { engine, captured } = buildMockEngine({ pages });
+    let calls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      calls++;
+      getCurrentBudgetTracker()!.record({
+        modelId: 'anthropic:claude-sonnet-4-6',
+        inputTokens: 2_000_000,
+        outputTokens: 0,
+        label: 'gateway.chat.failed',
+      });
+      throw new Error('provider returned malformed JSON after usage');
+    };
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      model: 'anthropic:claude-sonnet-4-6',
+    });
+    const details = result.details as Record<string, unknown>;
+    expect(result.status).toBe('warn');
+    expect(details.budget_exhausted).toBe(true);
+    expect(calls).toBe(1);
+    expect(details.proposals_inserted).toBe(0);
+    const rollup = captured.find(c => c.sql.includes('INSERT INTO extract_rollup_7d'));
+    expect(rollup!.params[4]).toBe(1);
+    expect(rollup!.params[7]).toBe(0);
+  });
+
+  test('multi-source federated scope skips instead of writing default-source spend', async () => {
+    const { engine, captured, putPages } = buildMockEngine({
+      pages: [buildPage({ slug: 'wiki/a', body: 'federated page', sourceId: 'source-a' })],
+    });
+    const ctx = {
+      ...buildCtx(engine),
+      sourceId: undefined,
+      auth: {
+        token: 'test',
+        clientId: 'client',
+        scopes: ['read'],
+        allowedSources: ['source-a', 'source-b'],
+      },
+    } as unknown as OperationContext;
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      return [{ claim_text: 'x', kind: 'take', holder: 'brain', weight: 0.5 }];
+    };
+
+    const result = await runPhaseProposeTakes(ctx, { extractor });
+    expect(result.status).toBe('warn');
+    expect((result.details as Record<string, unknown>).reason).toBe('federated_source_scope');
+    expect(extractorCalls).toBe(0);
+    expect(putPages).toHaveLength(0);
+    expect(captured.find(c => c.sql.includes('INSERT INTO extract_rollup_7d'))).toBeUndefined();
   });
 });

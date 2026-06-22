@@ -39,7 +39,8 @@
 
 import { randomUUID, createHash } from 'node:crypto';
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
-import { chat as gatewayChat } from '../ai/gateway.ts';
+import { chat as gatewayChat, getCurrentBudgetTracker, withBudgetTracker } from '../ai/gateway.ts';
+import { BudgetExhausted, BudgetTracker } from '../budget/budget-tracker.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { GBrainError } from '../types.ts';
@@ -54,6 +55,11 @@ import type { PhaseStatus, CyclePhase } from '../cycle.ts';
  * valid as audit history; new runs re-spend LLM tokens on every page.
  */
 export const PROPOSE_TAKES_PROMPT_VERSION = 'v0.36.1.0-tuned-cat15';
+const PROPOSE_TAKES_BUDGET_USD_KEY = 'cycle.propose_takes.budget_usd';
+const PROPOSE_TAKES_BUDGET_USD_DEFAULT = 5.0;
+const PROPOSE_TAKES_MAX_PROMPT_TOKENS_KEY = 'cycle.propose_takes.max_prompt_tokens';
+const PROPOSE_TAKES_MAX_PROMPT_TOKENS_DEFAULT = 20_000;
+const PROPOSE_TAKES_MAX_OUTPUT_TOKENS = 2048;
 
 /**
  * Tuned extractor prompt, validated against the hand-labeled synthetic
@@ -151,6 +157,7 @@ export interface ProposeTakesResult {
   pages_scanned: number;
   cache_hits: number;
   cache_misses: number;
+  oversize_pages_skipped: number;
   proposals_inserted: number;
   budget_exhausted: boolean;
   warnings: string[];
@@ -223,14 +230,12 @@ export function extractExistingTakesForDedup(pageBody: string): Array<{
 export async function defaultExtractor(
   input: Parameters<ProposeTakesExtractor>[0],
 ): Promise<ProposedTake[]> {
-  const prompt = EXTRACT_TAKES_PROMPT
-    .replace('{EXISTING_TAKES_JSON}', JSON.stringify(input.existingTakes, null, 2))
-    .replace('{PAGE_BODY}', input.pageBody);
+  const prompt = buildExtractorPrompt(input);
 
   const result = await gatewayChat({
     messages: [{ role: 'user', content: prompt }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
-    maxTokens: 2048,
+    maxTokens: PROPOSE_TAKES_MAX_OUTPUT_TOKENS,
   });
 
   // ChatResult.text is already the concatenated text content.
@@ -279,14 +284,24 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
   return out;
 }
 
+function buildExtractorPrompt(input: Parameters<ProposeTakesExtractor>[0]): string {
+  return EXTRACT_TAKES_PROMPT
+    .replace('{EXISTING_TAKES_JSON}', JSON.stringify(input.existingTakes, null, 2))
+    .replace('{PAGE_BODY}', input.pageBody);
+}
+
+function estimateExtractorPromptTokens(input: Parameters<ProposeTakesExtractor>[0]): number {
+  return Math.ceil(buildExtractorPrompt(input).length / 4);
+}
+
 /**
  * BaseCyclePhase subclass. Walks pages, checks idempotency cache, calls
  * extractor, writes proposals.
  */
 class ProposeTakesPhase extends BaseCyclePhase {
   readonly name = 'propose_takes' as CyclePhase;
-  protected readonly budgetUsdKey = 'cycle.propose_takes.budget_usd';
-  protected readonly budgetUsdDefault = 5.0;
+  protected readonly budgetUsdKey = PROPOSE_TAKES_BUDGET_USD_KEY;
+  protected readonly budgetUsdDefault = PROPOSE_TAKES_BUDGET_USD_DEFAULT;
 
   protected override mapErrorCode(err: unknown): string {
     if (err instanceof GBrainError) return err.problem;
@@ -300,7 +315,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
   protected async process(
     engine: BrainEngine,
     scope: ScopedReadOpts,
-    _ctx: OperationContext,
+    ctx: OperationContext,
     opts: ProposeTakesOpts,
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
     const extractor = opts.extractor ?? defaultExtractor;
@@ -308,11 +323,29 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
+    const spendTracker = getCurrentBudgetTracker();
+    const startingCostUsd = spendTracker?.snapshot().cumulativeCostUsd ?? 0;
+    const phaseBudgetUsd = resolvePhaseBudgetUsd(ctx, opts);
+    const scopedSourceId = scope.sourceId ?? (
+      scope.sourceIds?.length === 1 ? scope.sourceIds[0] : undefined
+    );
+
+    if (!scopedSourceId) {
+      return {
+        summary: 'propose_takes skipped: federated source scope needs per-source spend attribution',
+        details: {
+          reason: 'federated_source_scope',
+          source_ids: scope.sourceIds ?? [],
+        },
+        status: 'warn',
+      };
+    }
 
     const result: ProposeTakesResult = {
       pages_scanned: 0,
       cache_hits: 0,
       cache_misses: 0,
+      oversize_pages_skipped: 0,
       proposals_inserted: 0,
       budget_exhausted: false,
       warnings: [],
@@ -357,11 +390,26 @@ class ProposeTakesPhase extends BaseCyclePhase {
       }
       result.cache_misses += 1;
 
-      // Budget pre-check before the LLM call. Estimate: ~1500 input tokens + 500 output.
+      const estimatedInputTokens = estimateExtractorPromptTokens({
+        pagePath: page.slug,
+        pageBody: body,
+        existingTakes,
+        modelHint: opts.model,
+      });
+      const maxPromptTokens = resolveMaxPromptTokens(ctx);
+      if (estimatedInputTokens > maxPromptTokens) {
+        result.oversize_pages_skipped += 1;
+        result.warnings.push(
+          `skipped ${page.slug}: prompt estimate ${estimatedInputTokens.toLocaleString()} tokens exceeds cap ${maxPromptTokens.toLocaleString()}`,
+        );
+        continue;
+      }
+
+      // Budget pre-check before the LLM call. Use the real extractor prompt size.
       const budget = this.checkBudget({
         modelId: opts.model ?? 'claude-sonnet-4-6',
-        estimatedInputTokens: 1500,
-        maxOutputTokens: 500,
+        estimatedInputTokens,
+        maxOutputTokens: PROPOSE_TAKES_MAX_OUTPUT_TOKENS,
       });
       if (!budget.allowed) {
         result.budget_exhausted = true;
@@ -381,8 +429,21 @@ class ProposeTakesPhase extends BaseCyclePhase {
           modelHint: opts.model,
         });
       } catch (err) {
+        if (err instanceof BudgetExhausted) {
+          result.budget_exhausted = true;
+          result.warnings.push(
+            `budget exhausted at page ${result.pages_scanned}/${pages.length} (${err.message})`,
+          );
+          break;
+        }
         const msg = err instanceof Error ? err.message : String(err);
         result.warnings.push(`extractor failed on ${page.slug}: ${msg}`);
+        const overage = detectSpendOverage(spendTracker, startingCostUsd, phaseBudgetUsd);
+        if (overage) {
+          result.budget_exhausted = true;
+          result.warnings.push(`budget exhausted after failed page ${result.pages_scanned}/${pages.length} (${overage})`);
+          break;
+        }
         continue;
       }
 
@@ -413,13 +474,29 @@ class ProposeTakesPhase extends BaseCyclePhase {
         );
         result.proposals_inserted += 1;
       }
+      const overage = detectSpendOverage(spendTracker, startingCostUsd, phaseBudgetUsd);
+      if (overage) {
+        result.budget_exhausted = true;
+        result.warnings.push(`budget exhausted after page ${result.pages_scanned}/${pages.length} (${overage})`);
+        break;
+      }
     }
 
     if (opts.reporter) opts.reporter.finish();
 
     // v0.42 Wave B3: receipt + rollup for propose_takes. Source-scoped
     // via the read scope. Receipt only when proposals actually written.
-    const sourceIdForReceipt = scope.sourceId ?? 'default';
+    const sourceIdForReceipt = scopedSourceId;
+    const trackerSnapshot = spendTracker?.snapshot();
+    const finalCostUsd = trackerSnapshot?.cumulativeCostUsd ?? startingCostUsd;
+    const costUsd = Math.max(0, finalCostUsd - startingCostUsd);
+    const finalOverage = detectSpendOverage(spendTracker, startingCostUsd, phaseBudgetUsd);
+    if (finalOverage && !result.budget_exhausted) {
+      result.budget_exhausted = true;
+      result.warnings.push(
+        `budget exhausted after final page (${finalOverage})`,
+      );
+    }
     if (result.proposals_inserted > 0) {
       try {
         await writeReceipt(engine, {
@@ -429,7 +506,8 @@ class ProposeTakesPhase extends BaseCyclePhase {
           round: 'single',
           extracted_at: new Date().toISOString(),
           total_rows: result.proposals_inserted,
-          cost_usd: 0, // tracker isn't exposed at this layer; cost tracked centrally
+          cost_usd: costUsd,
+          ...(opts.model ? { model_id: opts.model } : {}),
           summary:
             `Proposed ${result.proposals_inserted} new takes from ${result.pages_scanned} pages ` +
             `(${result.cache_hits} cached).`,
@@ -441,16 +519,82 @@ class ProposeTakesPhase extends BaseCyclePhase {
     await upsertExtractRollup(engine, {
       kind: 'takes.proposed',
       source_id: sourceIdForReceipt,
+      cost_delta: costUsd,
       round_completed_delta: result.budget_exhausted ? 0 : 1,
       halt_delta: result.budget_exhausted ? 1 : 0,
     });
 
     return {
       summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals (run ${proposalRunId})`,
-      details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion },
+      details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion, cost_usd: costUsd },
       status: result.budget_exhausted ? 'warn' : 'ok',
     };
   }
+}
+
+function resolveTrackerBudgetUsd(ctx: OperationContext, opts: ProposeTakesOpts): number | undefined {
+  if (typeof opts.budgetUsd === 'number') {
+    return opts.budgetUsd > 0 ? opts.budgetUsd : undefined;
+  }
+  const raw = (ctx.config as unknown as Record<string, unknown>)[PROPOSE_TAKES_BUDGET_USD_KEY];
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+    return raw;
+  }
+  if (typeof raw === 'string') {
+    const parsed = Number.parseFloat(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function resolveMaxPromptTokens(ctx: OperationContext): number {
+  const raw = (ctx.config as unknown as Record<string, unknown>)[PROPOSE_TAKES_MAX_PROMPT_TOKENS_KEY];
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+    return Math.floor(raw);
+  }
+  if (typeof raw === 'string') {
+    const parsed = Number.parseFloat(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  }
+  return PROPOSE_TAKES_MAX_PROMPT_TOKENS_DEFAULT;
+}
+
+function detectSpendOverage(
+  tracker: BudgetTracker | null,
+  startingCostUsd: number,
+  phaseBudgetUsd: number | undefined,
+): string | null {
+  const snapshot = tracker?.snapshot();
+  if (!snapshot) return null;
+  const phaseCostUsd = Math.max(0, snapshot.cumulativeCostUsd - startingCostUsd);
+  if (phaseBudgetUsd !== undefined && phaseCostUsd > phaseBudgetUsd) {
+    return `phase spend $${phaseCostUsd.toFixed(4)} exceeded cap $${phaseBudgetUsd.toFixed(2)}`;
+  }
+  if (
+    snapshot.maxCostUsd !== undefined &&
+    snapshot.cumulativeCostUsd > snapshot.maxCostUsd &&
+    snapshot.cumulativeCostUsd > startingCostUsd
+  ) {
+    return `cumulative spend $${snapshot.cumulativeCostUsd.toFixed(4)} exceeded tracker cap $${snapshot.maxCostUsd.toFixed(2)}`;
+  }
+  return null;
+}
+
+function resolvePhaseBudgetUsd(ctx: OperationContext, opts: ProposeTakesOpts): number | undefined {
+  if (typeof opts.budgetUsd === 'number') {
+    return opts.budgetUsd > 0 ? opts.budgetUsd : undefined;
+  }
+  const raw = (ctx.config as unknown as Record<string, unknown>)[PROPOSE_TAKES_BUDGET_USD_KEY];
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) {
+    return raw > 0 ? raw : undefined;
+  }
+  if (typeof raw === 'string') {
+    const parsed = Number.parseFloat(raw);
+    return Number.isFinite(parsed) && parsed >= 0
+      ? (parsed > 0 ? parsed : undefined)
+      : PROPOSE_TAKES_BUDGET_USD_DEFAULT;
+  }
+  return PROPOSE_TAKES_BUDGET_USD_DEFAULT;
 }
 
 /**
@@ -461,7 +605,15 @@ export async function runPhaseProposeTakes(
   ctx: OperationContext,
   opts: ProposeTakesOpts = {},
 ) {
-  return new ProposeTakesPhase().run(ctx, opts);
+  const phase = new ProposeTakesPhase();
+  if (getCurrentBudgetTracker()) {
+    return phase.run(ctx, opts);
+  }
+  const tracker = new BudgetTracker({
+    label: 'cycle.propose_takes',
+    maxCostUsd: resolveTrackerBudgetUsd(ctx, opts),
+  });
+  return withBudgetTracker(tracker, () => phase.run(ctx, opts));
 }
 
 /** Test-only access to the class for subclassing in tests. */

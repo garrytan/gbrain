@@ -6,8 +6,10 @@
  * For files >25MB: ffmpeg segmentation into <25MB chunks, transcribe each, concatenate.
  */
 
-import { statSync, readFileSync } from 'fs';
-import { basename, extname } from 'path';
+import { appendFileSync, mkdirSync, statSync, readFileSync } from 'fs';
+import { basename, extname, join } from 'path';
+import { randomUUID } from 'crypto';
+import { isoWeekFilename, resolveAuditDir } from './audit-week-file.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -42,6 +44,48 @@ const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 const AUDIO_EXTENSIONS = new Set([
   '.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm', '.ogg', '.flac',
 ]);
+
+function appendTranscriptionSpendAudit(entry: {
+  requestId: string;
+  ledgerEvent: 'reserve' | 'commit' | 'rollback';
+  outcome: 'reserved' | 'success' | 'failure';
+  provider: string;
+  model: string;
+  audioPath: string;
+  bytes: number;
+  durationSeconds: number | null;
+  error?: unknown;
+}): void {
+  try {
+    const dir = resolveAuditDir();
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, isoWeekFilename('budget')), JSON.stringify({
+      schema_version: 1,
+      ts: new Date().toISOString(),
+      event: 'audio_transcription',
+      label: 'transcription',
+      kind: 'audio_transcription',
+      request_id: entry.requestId,
+      ledger_event: entry.ledgerEvent,
+      outcome: entry.outcome,
+      provider: entry.provider,
+      model: `${entry.provider}:${entry.model}`,
+      audio_file: basename(entry.audioPath),
+      audio_bytes: entry.bytes,
+      duration_seconds: entry.durationSeconds,
+      actual_cost_usd: null,
+      cost_basis: 'provider_audio_pricing_not_in_budget_tracker',
+      error_type: entry.error ? errorType(entry.error) : undefined,
+    }) + '\n');
+  } catch {
+    // Spend telemetry should never make transcription fail.
+  }
+}
+
+function errorType(error: unknown): string {
+  if (error instanceof Error && error.name) return error.name;
+  return typeof error;
+}
 
 // ---------------------------------------------------------------------------
 // Main function
@@ -124,30 +168,70 @@ async function transcribeFile(
   formData.append('response_format', 'verbose_json');
   if (config.language) formData.append('language', config.language);
 
-  const response = await fetch(`${baseUrl}/audio/transcriptions`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${apiKey}` },
-    body: formData,
+  const requestId = randomUUID();
+  appendTranscriptionSpendAudit({
+    requestId,
+    ledgerEvent: 'reserve',
+    outcome: 'reserved',
+    provider,
+    model,
+    audioPath,
+    bytes: fileData.byteLength,
+    durationSeconds: null,
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Transcription failed (${provider} ${response.status}): ${errorText}`);
+  try {
+    const response = await fetch(`${baseUrl}/audio/transcriptions`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Transcription failed (${provider} ${response.status}): ${errorText}`);
+    }
+
+    const data = await response.json() as any;
+    const duration = data.duration || 0;
+    const result = {
+      text: data.text || '',
+      segments: (data.segments || []).map((s: any) => ({
+        start: s.start || 0,
+        end: s.end || 0,
+        text: s.text || '',
+      })),
+      language: data.language || config.language || 'unknown',
+      duration,
+      provider,
+    };
+
+    appendTranscriptionSpendAudit({
+      requestId,
+      ledgerEvent: 'commit',
+      outcome: 'success',
+      provider,
+      model,
+      audioPath,
+      bytes: fileData.byteLength,
+      durationSeconds: duration,
+    });
+
+    return result;
+  } catch (error) {
+    appendTranscriptionSpendAudit({
+      requestId,
+      ledgerEvent: 'rollback',
+      outcome: 'failure',
+      provider,
+      model,
+      audioPath,
+      bytes: fileData.byteLength,
+      durationSeconds: null,
+      error,
+    });
+    throw error;
   }
-
-  const data = await response.json() as any;
-
-  return {
-    text: data.text || '',
-    segments: (data.segments || []).map((s: any) => ({
-      start: s.start || 0,
-      end: s.end || 0,
-      text: s.text || '',
-    })),
-    language: data.language || config.language || 'unknown',
-    duration: data.duration || 0,
-    provider,
-  };
 }
 
 // ---------------------------------------------------------------------------

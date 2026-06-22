@@ -8,6 +8,18 @@ The orienting idea: **GBrain itself is rounding error; the spend that matters is
 downstream provider calls.** These gates exist so a routine sync, enrich, or chat
 workflow can't run up an unexpected bill, while never wedging an unattended cron.
 
+## Receipt baseline
+
+Every call that goes through the AI gateway (`gateway.chat`, `gateway.embed`, or
+`gateway.rerank`) writes to the budget audit ledger, even when the caller did
+not install an explicit `withBudgetTracker(...)` cap. Explicit trackers still
+own command-level caps and labels. Unwrapped calls use the `gateway.unscoped`
+label so they remain visible in cost receipts instead of disappearing.
+
+Direct provider paths that bypass the gateway must use their own ledger before
+the API call and commit or roll back after it. New paid provider code should
+prefer the gateway unless there is a strong reason not to.
+
 ## `spend.posture` — one switch for "cost is not my constraint"
 
 ```bash

@@ -43,6 +43,23 @@ describe('toModelMessages — v6 ModelMessage shape', () => {
     ]);
   });
 
+  test('BigInt values in tool-result output are JSON-sanitized for the AI SDK schema', () => {
+    const msgs: ChatMessage[] = [
+      {
+        role: 'user',
+        content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'search', output: { page_id: 17775n } }],
+      },
+    ];
+    expect(toModelMessages(msgs)).toEqual([
+      {
+        role: 'tool',
+        content: [
+          { type: 'tool-result', toolCallId: 'c1', toolName: 'search', output: { type: 'json', value: { page_id: '17775' } } },
+        ],
+      },
+    ]);
+  });
+
   test('tool-result on a user-role message becomes role:tool with json output', () => {
     const msgs: ChatMessage[] = [
       {

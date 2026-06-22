@@ -106,6 +106,7 @@ export async function classifyAgainstCandidates(
   try {
     classifierResult = await chat({
       model: opts.model ?? 'anthropic:claude-haiku-4-5-20251001',
+      budgetLabel: 'facts.classify_duplicate',
       system: CLASSIFIER_SYSTEM,
       messages: [
         {

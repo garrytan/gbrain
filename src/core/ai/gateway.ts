@@ -32,7 +32,7 @@ import { z } from 'zod';
 
 import {
   BudgetTracker,
-  extractUsageFromError as _extractUsageFromError,
+  extractUsageFromErrorWithSource as _extractUsageFromErrorWithSource,
   type BudgetKind,
 } from '../budget/budget-tracker.ts';
 
@@ -1362,7 +1362,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   // global default. resolveEmbeddingProvider validates the override at the
   // recipe layer — bad model strings throw AIConfigError with a clear hint.
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
-  const tracker = __budgetStore.getStore() ?? null;
+  const tracker = trackerForGatewayCall();
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
   const truncated = texts.map(t => (t ?? '').slice(0, MAX_CHARS));
 
@@ -2262,9 +2262,10 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
 // rerank call inside the scope auto-composes — no per-call injection seam
 // needed, no flag plumbing through command bodies.
 //
-// Outside the scope, the gateway functions are budget no-ops (current
-// behavior preserved). Nested scopes replace the active tracker for the
-// inner closure and restore the outer tracker on exit.
+// Outside the scope, the gateway functions install a per-call ledger-only
+// tracker so paid provider calls still appear in the cost receipt. Nested
+// scopes replace the active tracker for the inner closure and restore the
+// outer tracker on exit.
 //
 // IMPORTANT (A1): for the subagent path, reserve() runs implicitly via the
 // gateway BEFORE acquireLease() in src/core/minions/handlers/subagent.ts —
@@ -2278,6 +2279,10 @@ export function withBudgetTracker<T>(tracker: BudgetTracker, fn: () => Promise<T
 
 export function getCurrentBudgetTracker(): BudgetTracker | null {
   return __budgetStore.getStore() ?? null;
+}
+
+function trackerForGatewayCall(): BudgetTracker {
+  return __budgetStore.getStore() ?? new BudgetTracker({ label: 'gateway.unscoped' });
 }
 
 /** Internal helper: estimate input tokens from messages + system. Heuristic only
@@ -2323,6 +2328,27 @@ export interface ChatToolDef {
   inputSchema: Record<string, unknown>;
 }
 
+function toJsonCompatibleValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (typeof value === 'bigint') return value.toString();
+  if (typeof value === 'function' || typeof value === 'symbol' || typeof value === 'undefined') return null;
+  if (value === null || typeof value !== 'object') return value;
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
+  if (Array.isArray(value)) return value.map((item) => toJsonCompatibleValue(item, seen));
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, nested]) => [key, toJsonCompatibleValue(nested, seen)]),
+  );
+}
+
+function stringifyToolError(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(toJsonCompatibleValue(value));
+  } catch {
+    return String(value);
+  }
+}
+
 /**
  * Convert gbrain's provider-neutral ChatMessage[] into AI SDK v6 ModelMessage[].
  *
@@ -2351,10 +2377,10 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
             toolCallId: b.toolCallId,
             toolName: b.toolName,
             output: b.isError
-              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(b.output) }
+              ? { type: 'error-text' as const, value: stringifyToolError(b.output) }
               : (typeof b.output === 'string'
                 ? { type: 'text' as const, value: b.output }
-                : { type: 'json' as const, value: (b.output ?? null) as never }),
+                : { type: 'json' as const, value: toJsonCompatibleValue(b.output) as never }),
           })),
       };
     }
@@ -2362,7 +2388,14 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
       role: m.role,
       content: blocks.map((b) => {
         if (b.type === 'text') return { type: 'text' as const, text: b.text };
-        if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, input: b.input };
+        if (b.type === 'tool-call') {
+          return {
+            type: 'tool-call' as const,
+            toolCallId: b.toolCallId,
+            toolName: b.toolName,
+            input: toJsonCompatibleValue(b.input ?? {}) as never,
+          };
+        }
         return b;
       }),
     };
@@ -2394,6 +2427,13 @@ export interface ChatResult {
 export interface ChatOpts {
   /** "provider:modelId" — defaults to config.chat_model. */
   model?: string;
+  /**
+   * Optional attribution label for this chat call. Without an active
+   * BudgetTracker scope, the gateway uses this instead of the generic
+   * `gateway.unscoped` ledger label. Inside a scope, it rides as the
+   * sub-label so leaf callers stay visible under the parent phase/command.
+   */
+  budgetLabel?: string;
   /** System prompt. */
   system?: string;
   messages: ChatMessage[];
@@ -2405,6 +2445,53 @@ export interface ChatOpts {
    * ignored on providers without `supports_prompt_cache`.
    */
   cacheSystem?: boolean;
+}
+
+function numericUsageToken(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeChatUsageForBudget(
+  usage: Record<string, any>,
+  providerMetadata: Record<string, any> | undefined,
+): {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+} {
+  const details = usage.inputTokenDetails ?? {};
+  const anthropic = providerMetadata?.anthropic ?? {};
+  const anthropicUsage = anthropic.usage ?? {};
+
+  const cacheReadTokens =
+    numericUsageToken(details.cacheReadTokens) ??
+    numericUsageToken(anthropicUsage.cache_read_input_tokens) ??
+    numericUsageToken(anthropic.cacheReadInputTokens) ??
+    numericUsageToken(anthropic.cache_read_input_tokens) ??
+    0;
+  const cacheCreationTokens =
+    numericUsageToken(details.cacheWriteTokens) ??
+    numericUsageToken(anthropicUsage.cache_creation_input_tokens) ??
+    numericUsageToken(anthropic.cacheCreationInputTokens) ??
+    numericUsageToken(anthropic.cache_creation_input_tokens) ??
+    0;
+  const totalInputTokens =
+    numericUsageToken(usage.inputTokens) ??
+    numericUsageToken(usage.promptTokens) ??
+    numericUsageToken(anthropicUsage.input_tokens) ??
+    0;
+  const inputTokens =
+    numericUsageToken(details.noCacheTokens) ??
+    numericUsageToken(anthropicUsage.input_tokens) ??
+    Math.max(0, totalInputTokens - cacheReadTokens - cacheCreationTokens);
+  const outputTokens =
+    numericUsageToken(usage.outputTokens) ??
+    numericUsageToken(usage.completionTokens) ??
+    numericUsageToken(anthropicUsage.output_tokens) ??
+    0;
+
+  return { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens };
 }
 
 /**
@@ -2628,7 +2715,11 @@ async function classifyGatewayGuardrail(input: {
 }
 
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
-  const tracker = __budgetStore.getStore() ?? null;
+  const activeTracker = getCurrentBudgetTracker();
+  const budgetLabelBase = opts.budgetLabel?.trim() || 'gateway.chat';
+  const tracker = activeTracker ?? new BudgetTracker({
+    label: opts.budgetLabel?.trim() || 'gateway.unscoped',
+  });
   const modelStrEarly = opts.model ?? getChatModel();
 
   // Guardrail seam: classify ONLY the latest user message before provider
@@ -2660,7 +2751,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       estimatedInputTokens,
       maxOutputTokens,
       kind: 'chat' as BudgetKind,
-      label: 'gateway.chat',
+      label: budgetLabelBase,
     });
   }
 
@@ -2684,10 +2775,12 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
               modelId: res.model ?? modelStrEarly,
               inputTokens: res.usage.input_tokens,
               outputTokens: res.usage.output_tokens,
-              label: 'gateway.chat',
+              cacheReadTokens: res.usage.cache_read_tokens,
+              cacheCreationTokens: res.usage.cache_creation_tokens,
+              label: budgetLabelBase,
             });
           } else {
-            const usage = _extractUsageFromError(threw, {
+            const usage = _extractUsageFromErrorWithSource(threw, {
               inputTokens: estimatedInputTokens,
               outputTokens: maxOutputTokens,
             });
@@ -2695,7 +2788,11 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
               modelId: modelStrEarly,
               inputTokens: usage.inputTokens,
               outputTokens: usage.outputTokens,
-              label: 'gateway.chat',
+              cacheReadTokens: usage.cacheReadTokens,
+              cacheCreationTokens: usage.cacheCreationTokens,
+              label: usage.source === 'provider_error_usage'
+                ? `${budgetLabelBase}.failed.provider_usage`
+                : `${budgetLabelBase}.failed.fallback`,
             });
           }
         } catch {
@@ -2736,7 +2833,14 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   }
 
   let _budgetRecorded = false;
-  const _recordBudget = (modelLabel: string, inputTokens: number, outputTokens: number): void => {
+  const _recordBudget = (
+    modelLabel: string,
+    inputTokens: number,
+    outputTokens: number,
+    cacheReadTokens = 0,
+    cacheCreationTokens = 0,
+    budgetLabel = budgetLabelBase,
+  ): void => {
     if (!tracker || _budgetRecorded) return;
     _budgetRecorded = true;
     try {
@@ -2744,7 +2848,9 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
         modelId: modelLabel,
         inputTokens,
         outputTokens,
-        label: 'gateway.chat',
+        cacheReadTokens,
+        cacheCreationTokens,
+        label: budgetLabel,
       });
     } catch {
       // BudgetExhausted (TX1) raised here; surface via next reserve()
@@ -2797,21 +2903,25 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
 
     const usage = (result as any).usage ?? {};
     const providerMetadata = (result as any).providerMetadata as Record<string, any> | undefined;
-    const anthropicCache = providerMetadata?.anthropic ?? {};
+    const budgetUsage = normalizeChatUsageForBudget(usage, providerMetadata);
 
-    const inTok = Number(usage.inputTokens ?? usage.promptTokens ?? 0);
-    const outTok = Number(usage.outputTokens ?? usage.completionTokens ?? 0);
-    _recordBudget(`${recipe.id}:${modelId}`, inTok, outTok);
+    _recordBudget(
+      `${recipe.id}:${modelId}`,
+      budgetUsage.inputTokens,
+      budgetUsage.outputTokens,
+      budgetUsage.cacheReadTokens,
+      budgetUsage.cacheCreationTokens,
+    );
 
     return {
       text: blocks.filter(b => b.type === 'text').map(b => (b as { type: 'text'; text: string }).text).join(''),
       blocks,
       stopReason: mapStopReason((result as any).finishReason, providerMetadata),
       usage: {
-        input_tokens: inTok,
-        output_tokens: outTok,
-        cache_read_tokens: Number(anthropicCache.cacheReadInputTokens ?? anthropicCache.cache_read_input_tokens ?? 0),
-        cache_creation_tokens: Number(anthropicCache.cacheCreationInputTokens ?? anthropicCache.cache_creation_input_tokens ?? 0),
+        input_tokens: budgetUsage.inputTokens,
+        output_tokens: budgetUsage.outputTokens,
+        cache_read_tokens: budgetUsage.cacheReadTokens,
+        cache_creation_tokens: budgetUsage.cacheCreationTokens,
       },
       model: `${recipe.id}:${modelId}`,
       providerId: recipe.id,
@@ -2820,11 +2930,20 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   } catch (err) {
     // Pessimistic fallback (A3 amended): when err.usage isn't there, charge
     // the worst-case ceiling — better to overcount on failure than under.
-    const fallback = _extractUsageFromError(err, {
+    const fallback = _extractUsageFromErrorWithSource(err, {
       inputTokens: estimatedInputTokens,
       outputTokens: maxOutputTokens,
     });
-    _recordBudget(`${recipe.id}:${modelId}`, fallback.inputTokens, fallback.outputTokens);
+    _recordBudget(
+      `${recipe.id}:${modelId}`,
+      fallback.inputTokens,
+      fallback.outputTokens,
+      fallback.cacheReadTokens ?? 0,
+      fallback.cacheCreationTokens ?? 0,
+      fallback.source === 'provider_error_usage'
+        ? `${budgetLabelBase}.failed.provider_usage`
+        : `${budgetLabelBase}.failed.fallback`,
+    );
     throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`);
   }
 }
@@ -3228,7 +3347,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
     getRerankerModel() ??
     DEFAULT_RERANKER_MODEL;
 
-  const tracker = __budgetStore.getStore() ?? null;
+  const tracker = trackerForGatewayCall();
   if (tracker) {
     // Reranker pricing isn't in the canonical pricing map today — when no
     // cap is set this fires the warn-once path; when a cap IS set TX2 hard-
@@ -3392,3 +3511,7 @@ export async function chunk(): Promise<never> { throw new NotMigratedYet('chunki
 export async function transcribe(): Promise<never> { throw new NotMigratedYet('transcription'); }
 export async function enrich(): Promise<never> { throw new NotMigratedYet('enrichment'); }
 export async function improve(): Promise<never> { throw new NotMigratedYet('improve'); }
+
+export const __testing = {
+  normalizeChatUsageForBudget,
+};

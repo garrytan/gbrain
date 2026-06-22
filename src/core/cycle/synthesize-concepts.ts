@@ -178,6 +178,7 @@ export async function runPhaseSynthesizeConcepts(
       } else {
         try {
           const result = await chat({
+            budgetLabel: 'cycle.synthesize_concepts',
             system: SYNTH_PROMPT,
             messages: [
               {

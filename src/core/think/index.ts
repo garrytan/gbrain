@@ -668,6 +668,7 @@ async function tryBuildGatewayClient(
       try {
         result = await gatewayChat({
           model: modelStr,
+          budgetLabel: 'think.answer',
           system,
           messages,
           maxTokens: params.max_tokens,

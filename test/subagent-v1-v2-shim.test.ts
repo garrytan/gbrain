@@ -125,6 +125,64 @@ describe('adaptContentBlocksToChatBlocks (D5 — v1 Anthropic → v2 ChatBlock s
     expect(adaptContentBlocksToChatBlocks(blocks)).toEqual(blocks);
   });
 
+  it('repairs v2 tool-result blocks missing replay ids from the previous assistant tool calls', () => {
+    const blocks = [{
+      type: 'tool-result',
+      output: { ok: true },
+    }];
+    expect(adaptContentBlocksToChatBlocks(blocks, [{
+      toolCallId: 'call_1',
+      toolName: 'put_page',
+    }])).toEqual([{
+      type: 'tool-result',
+      toolCallId: 'call_1',
+      toolName: 'put_page',
+      output: { ok: true },
+      isError: false,
+    }]);
+  });
+
+  it('consumes replay hints for legacy tool_result before repairing later v2 tool-result blocks', () => {
+    const blocks = [
+      {
+        type: 'tool_result',
+        tool_use_id: 'toolu_legacy',
+        content: 'legacy result',
+      },
+      {
+        type: 'tool-result',
+        output: { ok: true },
+      },
+    ];
+    const out = adaptContentBlocksToChatBlocks(blocks, [
+      { toolCallId: 'toolu_legacy', toolName: 'search' },
+      { toolCallId: 'gbrain-next', toolName: 'put_page' },
+    ]) as any[];
+
+    expect(out[0]).toEqual({
+      type: 'tool-result',
+      toolCallId: 'toolu_legacy',
+      toolName: 'search',
+      output: 'legacy result',
+      isError: false,
+    });
+    expect(out[1]).toEqual({
+      type: 'tool-result',
+      toolCallId: 'gbrain-next',
+      toolName: 'put_page',
+      output: { ok: true },
+      isError: false,
+    });
+  });
+
+  it('skips v2 tool-result blocks missing replay ids when no assistant hint exists', () => {
+    const blocks = [{
+      type: 'tool-result',
+      output: { ok: true },
+    }];
+    expect(adaptContentBlocksToChatBlocks(blocks)).toEqual([]);
+  });
+
   it('handles a mixed-shape array (v1 + v2 blocks in same message — mid-upgrade scenario)', () => {
     const blocks = [
       { type: 'text', text: 'thinking...' },

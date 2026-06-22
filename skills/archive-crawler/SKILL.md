@@ -303,7 +303,6 @@ scan_paths: ["paths from gbrain.yml"]
   the same primary-subject filing rule
 - `skills/conventions/quality.md` — citations, back-links, voice
 
-
 ## Contract
 
 This skill guarantees:

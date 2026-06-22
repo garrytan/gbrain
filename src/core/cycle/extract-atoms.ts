@@ -490,6 +490,7 @@ export async function runPhaseExtractAtoms(
     const originLabel = item.kind === 'transcript' ? item.filePath : item.slug;
     try {
       const result = await chat({
+        budgetLabel: 'cycle.extract_atoms',
         system: EXTRACT_PROMPT,
         messages: [
           {

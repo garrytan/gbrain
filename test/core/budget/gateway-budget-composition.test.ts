@@ -7,15 +7,15 @@
  *     composes the tracker without explicit per-call injection.
  *   - Nested scopes replace the active tracker for the inner closure and
  *     restore the outer tracker on exit.
- *   - Calls OUTSIDE any withBudgetTracker scope are budget-no-op (the
- *     existing pre-v0.37 contract is preserved).
+ *   - Calls OUTSIDE any withBudgetTracker scope are ledgered by a per-call
+ *     tracker, so paid provider calls cannot disappear from receipts.
  *
  * Hermetic: routes through __setChatTransportForTests so no network /
  * provider / env variable is touched.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -23,6 +23,7 @@ import {
   withBudgetTracker,
   getCurrentBudgetTracker,
   __setChatTransportForTests,
+  __testing as gatewayTesting,
   type ChatOpts,
   type ChatResult,
 } from '../../../src/core/ai/gateway.ts';
@@ -31,6 +32,8 @@ import {
   BudgetExhausted,
   _resetBudgetTrackerWarningsForTest,
 } from '../../../src/core/budget/budget-tracker.ts';
+import { isoWeekFilename } from '../../../src/core/audit-week-file.ts';
+import { withEnv } from '../../helpers/with-env.ts';
 
 let tmp: string;
 let auditPath: string;
@@ -45,6 +48,10 @@ afterEach(() => {
   __setChatTransportForTests(null);
   rmSync(tmp, { recursive: true, force: true });
 });
+
+async function withAuditDir<T>(fn: () => T | Promise<T>): Promise<T> {
+  return withEnv({ GBRAIN_AUDIT_DIR: tmp }, fn);
+}
 
 function fakeChatTransport(usage = { input_tokens: 100, output_tokens: 50 }) {
   let calls = 0;
@@ -66,6 +73,46 @@ function fakeChatTransport(usage = { input_tokens: 100, output_tokens: 50 }) {
   };
   return Object.assign(fn, { get calls() { return calls; } });
 }
+
+describe('gateway chat usage normalization', () => {
+  test('uses AI SDK inputTokenDetails so cached tokens are not double-counted', () => {
+    expect(gatewayTesting.normalizeChatUsageForBudget({
+      inputTokens: 118,
+      outputTokens: 50,
+      inputTokenDetails: {
+        noCacheTokens: 100,
+        cacheReadTokens: 7,
+        cacheWriteTokens: 11,
+      },
+    }, undefined)).toEqual({
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 7,
+      cacheCreationTokens: 11,
+    });
+  });
+
+  test('falls back to Anthropic raw usage metadata when SDK details are absent', () => {
+    expect(gatewayTesting.normalizeChatUsageForBudget({
+      inputTokens: 118,
+      outputTokens: 50,
+    }, {
+      anthropic: {
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+          cache_read_input_tokens: 7,
+          cache_creation_input_tokens: 11,
+        },
+      },
+    })).toEqual({
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 7,
+      cacheCreationTokens: 11,
+    });
+  });
+});
 
 describe('withBudgetTracker — scope semantics', () => {
   test('chat() inside scope auto-composes the tracker', async () => {
@@ -90,16 +137,120 @@ describe('withBudgetTracker — scope semantics', () => {
     expect(tracker.snapshot().callsRecorded).toBe(1);
   });
 
-  test('chat() OUTSIDE any scope is a budget no-op (back-compat)', async () => {
+  test('chat() OUTSIDE any scope writes a ledger-only receipt', async () => {
     const transport = fakeChatTransport();
     __setChatTransportForTests(transport);
-    // No withBudgetTracker wrapper — current behavior preserved.
-    await chat({
-      model: 'claude-haiku-4-5-20251001',
-      messages: [{ role: 'user', content: 'hi' }],
+    // No withBudgetTracker wrapper: the gateway still emits reserve + record
+    // rows under a per-call ledger-only tracker.
+    await withAuditDir(async () => {
+      await chat({
+        model: 'claude-haiku-4-5-20251001',
+        messages: [{ role: 'user', content: 'hi' }],
+      });
     });
-    // No tracker; nothing to assert other than "no throw".
     expect(getCurrentBudgetTracker()).toBeNull();
+
+    const receiptPath = join(tmp, isoWeekFilename('budget'));
+    expect(existsSync(receiptPath)).toBe(true);
+    const rows = readFileSync(receiptPath, 'utf8')
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    expect(rows.map(r => r.event)).toEqual(['reserve', 'record']);
+    expect(rows.every(r => r.label === 'gateway.unscoped')).toBe(true);
+    expect(rows[1].actual_cost_usd).toBeGreaterThan(0);
+  });
+
+  test('chat() OUTSIDE any scope uses an explicit budget label for attribution', async () => {
+    const transport = fakeChatTransport();
+    __setChatTransportForTests(transport);
+
+    await withAuditDir(async () => {
+      await chat({
+        model: 'claude-haiku-4-5-20251001',
+        budgetLabel: 'contextual_retrieval.synopsis',
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+    });
+
+    const receiptPath = join(tmp, isoWeekFilename('budget'));
+    const rows = readFileSync(receiptPath, 'utf8')
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    expect(rows.map(r => r.event)).toEqual(['reserve', 'record']);
+    expect(rows.every(r => r.label === 'contextual_retrieval.synopsis')).toBe(true);
+    expect(rows.every(r => r.sub_label === 'contextual_retrieval.synopsis')).toBe(true);
+  });
+
+  test('chat() INSIDE a scope keeps the outer label and uses the explicit budget label as sub-label', async () => {
+    const transport = fakeChatTransport();
+    __setChatTransportForTests(transport);
+    const tracker = new BudgetTracker({ maxCostUsd: 1.0, label: 'outer-scope', auditPath });
+
+    await withBudgetTracker(tracker, async () => {
+      await chat({
+        model: 'claude-haiku-4-5-20251001',
+        budgetLabel: 'think.answer',
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+    });
+
+    const rows = readFileSync(auditPath, 'utf8')
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    expect(rows.map(r => r.event)).toEqual(['reserve', 'record']);
+    expect(rows.every(r => r.label === 'outer-scope')).toBe(true);
+    expect(rows.every(r => r.sub_label === 'think.answer')).toBe(true);
+  });
+
+  test('failed chat calls with provider usage keep provider-usage accounting labels', async () => {
+    const transport = async (): Promise<ChatResult> => {
+      const err = new Error('provider exploded') as Error & { usage?: Record<string, number> };
+      err.usage = { input_tokens: 100, output_tokens: 50 };
+      throw err;
+    };
+    __setChatTransportForTests(transport);
+
+    await withAuditDir(async () => {
+      await expect(chat({
+        model: 'claude-haiku-4-5-20251001',
+        messages: [{ role: 'user', content: 'hi' }],
+      })).rejects.toThrow('provider exploded');
+    });
+
+    const receiptPath = join(tmp, isoWeekFilename('budget'));
+    const rows = readFileSync(receiptPath, 'utf8')
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    expect(rows.map(r => r.event)).toEqual(['reserve', 'record']);
+    expect(rows[1].sub_label).toBe('gateway.chat.failed.provider_usage');
+    expect(rows[1].actual_cost_usd).toBeGreaterThan(0);
+  });
+
+  test('failed chat calls without provider usage mark fallback accounting rows', async () => {
+    const transport = async (): Promise<ChatResult> => {
+      throw new Error('provider exploded before usage');
+    };
+    __setChatTransportForTests(transport);
+
+    await withAuditDir(async () => {
+      await expect(chat({
+        model: 'claude-haiku-4-5-20251001',
+        messages: [{ role: 'user', content: 'hi' }],
+      })).rejects.toThrow('provider exploded before usage');
+    });
+
+    const receiptPath = join(tmp, isoWeekFilename('budget'));
+    const rows = readFileSync(receiptPath, 'utf8')
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    expect(rows.map(r => r.event)).toEqual(['reserve', 'record']);
+    expect(rows[1].sub_label).toBe('gateway.chat.failed.fallback');
+    expect(rows[1].actual_cost_usd).toBeGreaterThan(0);
   });
 
   test('nested scopes restore outer tracker on exit', async () => {

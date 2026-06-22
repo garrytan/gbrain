@@ -60,6 +60,10 @@ export interface BudgetActualUsage {
   modelId: string;
   inputTokens: number;
   outputTokens?: number;
+  /** Anthropic prompt-cache read tokens, priced at the documented cache-read multiplier. */
+  cacheReadTokens?: number;
+  /** Anthropic 5-minute prompt-cache write tokens, priced at the documented cache-write multiplier. */
+  cacheCreationTokens?: number;
   /** For embeddings: dimension count, surfaces in audit only. */
   embeddingDims?: number;
   /** Optional label echo for the audit row. */
@@ -234,10 +238,28 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   return null;
 }
 
-function costForUsage(modelId: string, inputTokens: number, outputTokens: number, kind: BudgetKind): number | null {
+const ANTHROPIC_CACHE_READ_INPUT_MULTIPLIER = 0.1;
+const ANTHROPIC_CACHE_CREATION_5M_INPUT_MULTIPLIER = 1.25;
+
+function costForUsage(
+  modelId: string,
+  inputTokens: number,
+  outputTokens: number,
+  kind: BudgetKind,
+  cacheReadTokens = 0,
+  cacheCreationTokens = 0,
+): number | null {
   const p = lookupPricing(modelId, kind);
   if (!p) return null;
-  return (inputTokens / 1_000_000) * p.input + (outputTokens / 1_000_000) * p.output;
+  const inputCost = (inputTokens / 1_000_000) * p.input;
+  const outputCost = (outputTokens / 1_000_000) * p.output;
+  const cacheCost = kind === 'chat'
+    ? (
+        (cacheReadTokens / 1_000_000) * p.input * ANTHROPIC_CACHE_READ_INPUT_MULTIPLIER +
+        (cacheCreationTokens / 1_000_000) * p.input * ANTHROPIC_CACHE_CREATION_5M_INPUT_MULTIPLIER
+      )
+    : 0;
+  return inputCost + outputCost + cacheCost;
 }
 
 export class BudgetTracker {
@@ -399,7 +421,16 @@ export class BudgetTracker {
   record(actual: BudgetActualUsage & { kind?: BudgetKind }): void {
     this.callsRecorded++;
     const kind: BudgetKind = actual.kind ?? 'chat';
-    const cost = costForUsage(actual.modelId, actual.inputTokens, actual.outputTokens ?? 0, kind);
+    const cacheReadTokens = actual.cacheReadTokens ?? 0;
+    const cacheCreationTokens = actual.cacheCreationTokens ?? 0;
+    const cost = costForUsage(
+      actual.modelId,
+      actual.inputTokens,
+      actual.outputTokens ?? 0,
+      kind,
+      cacheReadTokens,
+      cacheCreationTokens,
+    );
 
     if (cost === null) {
       // Unpriced model: record audit but skip cumulative math. Cap (if set)
@@ -415,6 +446,8 @@ export class BudgetTracker {
         sub_label: actual.label,
         input_tokens: actual.inputTokens,
         output_tokens: actual.outputTokens ?? 0,
+        cache_read_tokens: cacheReadTokens,
+        cache_creation_tokens: cacheCreationTokens,
         embedding_dims: actual.embeddingDims ?? null,
       });
       return;
@@ -431,6 +464,10 @@ export class BudgetTracker {
       sub_label: actual.label,
       input_tokens: actual.inputTokens,
       output_tokens: actual.outputTokens ?? 0,
+      cache_read_tokens: cacheReadTokens,
+      cache_creation_tokens: cacheCreationTokens,
+      cache_read_input_multiplier: kind === 'chat' ? ANTHROPIC_CACHE_READ_INPUT_MULTIPLIER : null,
+      cache_creation_input_multiplier: kind === 'chat' ? ANTHROPIC_CACHE_CREATION_5M_INPUT_MULTIPLIER : null,
       embedding_dims: actual.embeddingDims ?? null,
       actual_cost_usd: cost,
       cumulative_cost_usd: this.cumulativeUsd,
@@ -555,25 +592,67 @@ export class BudgetTracker {
 export function extractUsageFromError(
   err: unknown,
   fallback: { inputTokens: number; outputTokens: number },
-): { inputTokens: number; outputTokens: number } {
+): { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number } {
+  const { source: _source, ...usage } = extractUsageFromErrorWithSource(err, fallback);
+  return usage;
+}
+
+export function extractUsageFromErrorWithSource(
+  err: unknown,
+  fallback: { inputTokens: number; outputTokens: number },
+): {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  source: 'provider_error_usage' | 'fallback';
+} {
   if (err && typeof err === 'object') {
     const top = (err as { usage?: unknown }).usage;
     const nested = (err as { response?: { usage?: unknown } }).response?.usage;
     const candidate = (top && typeof top === 'object' ? top : nested && typeof nested === 'object' ? nested : null) as
-      | { input_tokens?: number; output_tokens?: number; inputTokens?: number; outputTokens?: number }
+      | {
+          input_tokens?: number;
+          output_tokens?: number;
+          inputTokens?: number;
+          outputTokens?: number;
+          cache_read_input_tokens?: number;
+          cache_creation_input_tokens?: number;
+          cacheReadInputTokens?: number;
+          cacheCreationInputTokens?: number;
+          cache_read_tokens?: number;
+          cache_creation_tokens?: number;
+          cacheReadTokens?: number;
+          cacheCreationTokens?: number;
+        }
       | null;
     if (candidate) {
       const inputTokens = numericOrNull(candidate.input_tokens ?? candidate.inputTokens);
       const outputTokens = numericOrNull(candidate.output_tokens ?? candidate.outputTokens);
-      if (inputTokens !== null || outputTokens !== null) {
-        return {
+      const cacheReadTokens = numericOrNull(
+        candidate.cache_read_input_tokens ??
+        candidate.cacheReadInputTokens ??
+        candidate.cache_read_tokens ??
+        candidate.cacheReadTokens,
+      ) ?? 0;
+      const cacheCreationTokens = numericOrNull(
+        candidate.cache_creation_input_tokens ??
+        candidate.cacheCreationInputTokens ??
+        candidate.cache_creation_tokens ??
+        candidate.cacheCreationTokens,
+      ) ?? 0;
+      if (inputTokens !== null || outputTokens !== null || cacheReadTokens > 0 || cacheCreationTokens > 0) {
+        const usage = {
           inputTokens: inputTokens ?? fallback.inputTokens,
           outputTokens: outputTokens ?? fallback.outputTokens,
         };
+        if (cacheReadTokens > 0) Object.assign(usage, { cacheReadTokens });
+        if (cacheCreationTokens > 0) Object.assign(usage, { cacheCreationTokens });
+        return { ...usage, source: 'provider_error_usage' };
       }
     }
   }
-  return { inputTokens: fallback.inputTokens, outputTokens: fallback.outputTokens };
+  return { inputTokens: fallback.inputTokens, outputTokens: fallback.outputTokens, source: 'fallback' };
 }
 
 function numericOrNull(v: unknown): number | null {

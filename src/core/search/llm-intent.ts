@@ -53,6 +53,7 @@ export async function classifyModalityWithLLM(
   const timer = setTimeout(() => controller.abort(), TIE_BREAK_TIMEOUT_MS);
   try {
     const result = await chat({
+      budgetLabel: 'search.modality_tiebreak',
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: query.slice(0, 500) }],
       maxTokens: 16,

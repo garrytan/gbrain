@@ -13,6 +13,9 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import {
@@ -21,8 +24,12 @@ import {
   stripProviderPrefix,
   type MessagesClient,
 } from '../src/core/minions/handlers/subagent.ts';
-import type { ToolDef, MinionJobContext } from '../src/core/minions/types.ts';
+import { UnrecoverableError, type ToolDef, type MinionJobContext } from '../src/core/minions/types.ts';
 import type Anthropic from '@anthropic-ai/sdk';
+import { isoWeekFilename } from '../src/core/audit-week-file.ts';
+import { withBudgetTracker } from '../src/core/ai/gateway.ts';
+import { BudgetTracker } from '../src/core/budget/budget-tracker.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
@@ -144,6 +151,118 @@ describe('subagent handler happy path', () => {
       [ctx.id],
     );
     expect(parseInt(msgs[0]!.count, 10)).toBe(2); // user seed + assistant
+  });
+
+  test('legacy Anthropic path writes budget reserve and record receipts', async () => {
+    const auditDir = mkdtempSync(join(tmpdir(), 'gbrain-subagent-budget-'));
+    try {
+      await withEnv({ GBRAIN_AUDIT_DIR: auditDir }, async () => {
+        const client = new FakeMessagesClient([
+          {
+            content: [{ type: 'text', text: 'tracked' }] as any,
+            stop_reason: 'end_turn',
+            usage: {
+              input_tokens: 10,
+              output_tokens: 5,
+              cache_read_input_tokens: 7,
+              cache_creation_input_tokens: 11,
+            } as any,
+          },
+        ]);
+        const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+        const ctx = await makeCtx({ prompt: 'hi' });
+
+        await handler(ctx);
+
+        const receiptPath = join(auditDir, isoWeekFilename('budget'));
+        expect(existsSync(receiptPath)).toBe(true);
+        const rows = readFileSync(receiptPath, 'utf8')
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as {
+            event: string;
+            label: string;
+            sub_label?: string;
+            input_tokens?: number;
+            cache_read_tokens?: number;
+            cache_creation_tokens?: number;
+            actual_cost_usd?: number;
+          });
+
+        expect(rows.some((row) =>
+          row.event === 'reserve' &&
+          row.label === 'subagent.legacy' &&
+          row.sub_label === 'subagent.legacy.messages',
+        )).toBe(true);
+        expect(rows.some((row) =>
+          row.event === 'record' &&
+          row.label === 'subagent.legacy' &&
+          row.sub_label === 'subagent.legacy.messages' &&
+          row.input_tokens === 10 &&
+          row.cache_read_tokens === 7 &&
+          row.cache_creation_tokens === 11 &&
+          typeof row.actual_cost_usd === 'number' &&
+          row.actual_cost_usd > 0,
+        )).toBe(true);
+      });
+    } finally {
+      rmSync(auditDir, { recursive: true, force: true });
+    }
+  });
+
+  test('legacy Anthropic final turn persists response before terminal scoped-cap overage', async () => {
+    const auditDir = mkdtempSync(join(tmpdir(), 'gbrain-subagent-budget-cap-'));
+    try {
+      const client = new FakeMessagesClient([
+        {
+          content: [{ type: 'text', text: 'tracked' }] as any,
+          stop_reason: 'end_turn',
+          usage: {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          } as any,
+        },
+      ]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+      const ctx = await makeCtx({
+        prompt: 'hi',
+        model: 'anthropic:claude-sonnet-4-6',
+      });
+      const tracker = new BudgetTracker({
+        maxCostUsd: 0.1,
+        label: 'subagent.test',
+        auditPath: join(auditDir, 'budget.jsonl'),
+      });
+
+      let caught: unknown = null;
+      await withBudgetTracker(tracker, async () => {
+        try {
+          await handler(ctx);
+        } catch (err) {
+          caught = err;
+        }
+      });
+
+      expect(client.calls.length).toBe(1);
+      expect(tracker.totalSpent).toBeGreaterThan(0.1);
+      expect(caught).toBeInstanceOf(UnrecoverableError);
+      expect((caught as Error).message).toContain('budget_exhausted_after_response');
+
+      const rows = await engine.executeRaw<{ role: string; text: string }>(
+        `SELECT role, content_blocks::text AS text
+           FROM subagent_messages
+          WHERE job_id = $1
+          ORDER BY message_idx`,
+        [ctx.id],
+      );
+      expect(rows.map((row) => row.role)).toEqual(['user', 'assistant']);
+      expect(rows[1]!.text).toContain('tracked');
+    } finally {
+      rmSync(auditDir, { recursive: true, force: true });
+    }
   });
 
   test('single tool_use turn: tool executes, two-phase row goes complete', async () => {

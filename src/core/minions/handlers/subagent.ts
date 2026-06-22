@@ -50,9 +50,10 @@ import {
 } from './subagent-audit.ts';
 import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
 import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts';
-import { toolLoop as gatewayToolLoop } from '../../ai/gateway.ts';
+import { getCurrentBudgetTracker, toolLoop as gatewayToolLoop } from '../../ai/gateway.ts';
 import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
 import { classifyCapabilities } from '../../ai/capabilities.ts';
+import { BudgetTracker, extractUsageFromError } from '../../budget/budget-tracker.ts';
 import { randomUUIDv7 } from 'bun';
 
 // ── Defaults ────────────────────────────────────────────────
@@ -60,6 +61,30 @@ import { randomUUIDv7 } from 'bun';
 const DEFAULT_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_MAX_TURNS = 20;
 const DEFAULT_RATE_KEY = 'anthropic:messages';
+const LEGACY_MAX_OUTPUT_TOKENS = 4096;
+
+function estimateLegacyAnthropicInputTokens(
+  systemPrompt: string,
+  messages: Anthropic.MessageCreateParamsNonStreaming['messages'],
+  toolDefs: ToolDef[],
+): number {
+  let chars = systemPrompt.length;
+  for (const message of messages) {
+    const content = message.content;
+    if (typeof content === 'string') {
+      chars += content.length;
+      continue;
+    }
+    for (const block of content ?? []) {
+      if (block.type === 'text') chars += block.text.length;
+      else chars += JSON.stringify(block).length;
+    }
+  }
+  for (const tool of toolDefs) {
+    chars += tool.name.length + tool.description.length + JSON.stringify(tool.input_schema).length;
+  }
+  return Math.ceil(chars / 4);
+}
 
 /**
  * Resolve the rate-lease cap from the env var.
@@ -434,17 +459,27 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         throw new Error('subagent aborted before turn');
       }
 
+      const budgetTracker = getCurrentBudgetTracker() ?? new BudgetTracker({ label: 'subagent.legacy' });
+      const estimatedInputTokens = estimateLegacyAnthropicInputTokens(systemPrompt, anthroMessages, toolDefs);
+      budgetTracker.reserve({
+        modelId: model,
+        estimatedInputTokens,
+        maxOutputTokens: LEGACY_MAX_OUTPUT_TOKENS,
+        kind: 'chat',
+        label: 'subagent.legacy.messages',
+      });
+
       // 1. Acquire rate lease for the outbound call.
       //
       // A1 ORDERING (v0.37.x budget cathedral):
       //
       //   +----------------------------------+
-      //   | gateway.chat() inside subagent   |
+      //   | legacy Anthropic subagent call   |
       //   +-----+----------------------------+
       //         |
-      //   1. getCurrentBudgetTracker()?.reserve(...)
-      //         |  (runs via the gateway's AsyncLocalStorage scope,
-      //         |   set by the upstream caller of the subagent.
+      //   1. budgetTracker.reserve(...)
+      //         |  (uses an explicit caller scope when present, otherwise
+      //         |   writes a per-call subagent.legacy receipt.
       //         |   On BudgetExhausted: throw BEFORE we touch the lease.)
       //         v
       //   2. acquireLease(...)  <-- the line below
@@ -455,11 +490,10 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       //         v
       //   4. tracker.record(actual usage)
       //
-      // The handler body intentionally does NOT thread `BudgetTracker`
-      // explicitly. Gateway-layer composition (TX5) handles it. The
-      // ordering is load-bearing: a budget throw must NOT consume a
-      // lease slot, because the lease is the rate-limit pacer for the
-      // entire fleet.
+      // This legacy path bypasses gateway.chat(), so it must account for
+      // spend directly. The ordering is load-bearing: a budget throw must
+      // NOT consume a lease slot, because the lease is the rate-limit pacer
+      // for the entire fleet.
       const lease = await acquireLease(engine, rateLeaseKey, ctx.id, maxConcurrent, { ttlMs: leaseTtlMs });
       if (!lease.acquired) {
         // No slots — treat as a renewable error so the worker re-claims
@@ -481,7 +515,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           // `model` stays qualified everywhere else (persistence, recipe
           // lookup at recipeIdFromModel(), capability gate).
           model: stripProviderPrefix(model),
-          max_tokens: 4096,
+          max_tokens: LEGACY_MAX_OUTPUT_TOKENS,
           system: [
             { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
           ] as any,
@@ -506,6 +540,23 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         const combinedSignal = mergeSignals(ctx.signal, ctx.shutdownSignal);
         assistantMsg = await client.create(params, { signal: combinedSignal });
       } catch (err) {
+        const fallback = extractUsageFromError(err, {
+          inputTokens: estimatedInputTokens,
+          outputTokens: LEGACY_MAX_OUTPUT_TOKENS,
+        });
+        try {
+          budgetTracker.record({
+            modelId: model,
+            inputTokens: fallback.inputTokens,
+            outputTokens: fallback.outputTokens,
+            cacheReadTokens: fallback.cacheReadTokens,
+            cacheCreationTokens: fallback.cacheCreationTokens,
+            kind: 'chat',
+            label: 'subagent.legacy.messages.failed',
+          });
+        } catch {
+          // Preserve the provider failure; the next reserve surfaces budget state.
+        }
         // Release lease eagerly on error so we don't starve capacity.
         await releaseLease(engine, lease.leaseId!).catch(() => {});
         // Terminal classification: a 400 "prompt is too long" from Anthropic
@@ -529,6 +580,21 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       const outTokens = assistantMsg.usage?.output_tokens ?? 0;
       const cacheRead = (assistantMsg.usage as any)?.cache_read_input_tokens ?? 0;
       const cacheCreate = (assistantMsg.usage as any)?.cache_creation_input_tokens ?? 0;
+
+      let budgetRecordError: unknown = null;
+      try {
+        budgetTracker.record({
+          modelId: model,
+          inputTokens: inTokens,
+          outputTokens: outTokens,
+          cacheReadTokens: cacheRead,
+          cacheCreationTokens: cacheCreate,
+          kind: 'chat',
+          label: 'subagent.legacy.messages',
+        });
+      } catch (err) {
+        budgetRecordError = err;
+      }
 
       tokenTotals.in += inTokens;
       tokenTotals.out += outTokens;
@@ -567,6 +633,11 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       });
       anthroMessages.push({ role: 'assistant', content: blocks as any });
       assistantTurns++;
+
+      if (budgetRecordError) {
+        const detail = budgetRecordError instanceof Error ? budgetRecordError.message : String(budgetRecordError);
+        throw new UnrecoverableError(`budget_exhausted_after_response: ${detail}`);
+      }
 
       // 4. Collect tool_use blocks. If none, we're done.
       const toolUses = blocks.filter(
@@ -781,10 +852,24 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
   // Convert prior Anthropic-shape messages → ChatMessage with ChatBlock content.
   // v1 rows store Anthropic content blocks ({type:'tool_use'|'tool_result'|...});
   // we adapt them to ChatBlock shape (type: 'tool-call' | 'tool-result' | 'text').
-  const priorChatMessages: ChatMessage[] = priorMessages.map(m => ({
-    role: m.role as 'user' | 'assistant',
-    content: adaptContentBlocksToChatBlocks(m.content_blocks),
-  }));
+  const priorChatMessages: ChatMessage[] = [];
+  let pendingToolResultHints: ToolResultHint[] = [];
+  for (const m of priorMessages) {
+    const role = m.role as 'user' | 'assistant';
+    const content = adaptContentBlocksToChatBlocks(
+      m.content_blocks,
+      role === 'user' ? pendingToolResultHints : undefined,
+    );
+    priorChatMessages.push({ role, content });
+
+    if (role === 'assistant' && Array.isArray(content)) {
+      pendingToolResultHints = content
+        .filter((b): b is Extract<ChatBlock, { type: 'tool-call' }> => b.type === 'tool-call')
+        .map((b) => ({ toolCallId: b.toolCallId, toolName: b.toolName }));
+    } else if (role === 'user' && Array.isArray(content) && content.some((b) => b.type === 'tool-result')) {
+      pendingToolResultHints = [];
+    }
+  }
 
   // Initial seed message if no prior state.
   const initialMessages: ChatMessage[] = priorChatMessages.length === 0
@@ -983,10 +1068,16 @@ export function stripProviderPrefix(modelString: string): string {
  * Symmetric in the other direction is handled by persisting ChatBlock[] as-is
  * (the JSONB column accepts both shapes; v2 writes carry the new vocabulary).
  */
-function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
+interface ToolResultHint {
+  toolCallId: string;
+  toolName: string;
+}
+
+function adaptContentBlocksToChatBlocks(blocks: unknown, toolResultHints: ToolResultHint[] = []): ChatBlock[] | string {
   if (typeof blocks === 'string') return blocks;
   if (!Array.isArray(blocks)) return [];
   const out: ChatBlock[] = [];
+  let toolResultIdx = 0;
   for (const b of blocks) {
     if (!b || typeof b !== 'object') continue;
     const block = b as Record<string, unknown>;
@@ -1009,20 +1100,30 @@ function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
         toolName: block.toolName,
         input: block.input ?? {},
       });
-    } else if (t === 'tool_result' && typeof block.tool_use_id === 'string') {
+    } else if (t === 'tool_result') {
+      const hint = toolResultHints[toolResultIdx++];
+      const toolCallId = typeof block.tool_use_id === 'string'
+        ? block.tool_use_id
+        : hint?.toolCallId;
+      if (typeof toolCallId !== 'string') continue;
       // v1 Anthropic shape — tool result block (no toolName in v1; synthesize)
       out.push({
         type: 'tool-result',
-        toolCallId: block.tool_use_id,
-        toolName: '__legacy__',
+        toolCallId,
+        toolName: hint?.toolName ?? '__legacy__',
         output: block.content ?? null,
         isError: block.is_error === true,
       });
-    } else if (t === 'tool-result' && typeof block.toolCallId === 'string') {
+    } else if (t === 'tool-result') {
+      const hint = toolResultHints[toolResultIdx++];
+      const toolCallId = typeof block.toolCallId === 'string'
+        ? block.toolCallId
+        : hint?.toolCallId;
+      if (typeof toolCallId !== 'string') continue;
       out.push({
         type: 'tool-result',
-        toolCallId: block.toolCallId,
-        toolName: typeof block.toolName === 'string' ? block.toolName : '__legacy__',
+        toolCallId,
+        toolName: typeof block.toolName === 'string' ? block.toolName : hint?.toolName ?? '__legacy__',
         output: block.output ?? null,
         isError: block.isError === true,
       });

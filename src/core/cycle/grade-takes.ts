@@ -321,6 +321,7 @@ export async function defaultJudge(input: {
     .replace('{EVIDENCE_BLOCK}', input.evidence);
 
   const result = await gatewayChat({
+    budgetLabel: 'cycle.grade_takes',
     messages: [{ role: 'user', content: prompt }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
     maxTokens: 600,

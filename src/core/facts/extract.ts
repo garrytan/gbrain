@@ -168,6 +168,7 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
   try {
     result = await chat({
       model: input.model ?? defaultModel,
+      budgetLabel: 'facts.extract_turn',
       system: EXTRACTOR_SYSTEM,
       messages: [
         {
