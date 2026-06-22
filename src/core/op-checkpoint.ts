@@ -180,14 +180,17 @@ export async function recordCompleted(
   // extract-conversation-facts serialize a MUTABLE map through here and rely on
   // stale keys being REMOVED; an append would make them unremovable. The full
   // set lands in the parent `completed_keys` JSONB column via a single UPSERT —
-  // exactly as before. JSON.stringify into `$3::jsonb` is correct (the text→jsonb
-  // cast yields a proper array; NOT the double-encode trap, which is the template
-  // form). Sync uses `appendCompleted` (below) instead, never this.
+  // exactly as before. JSON.stringify the array, then cast `$3::text::jsonb`:
+  // postgres.js (current pin) serializes a bare string param destined for jsonb
+  // AS a jsonb string scalar (double-encode), so `$3::jsonb` yielded
+  // jsonb_typeof='string' and tripped migration v119's array CHECK — hard-failing
+  // every sync-target write. Forcing `::text::jsonb` makes Postgres parse the
+  // JSON text into a real array. Verified: $3::jsonb→'string', $3::text::jsonb→'array'.
   const sorted = [...keys].sort();
   return durableWrite(engine, key, 'write', () =>
     engine.executeRawDirect(
       `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-       VALUES ($1, $2, $3::jsonb, now())
+       VALUES ($1, $2, $3::text::jsonb, now())
        ON CONFLICT (op, fingerprint) DO UPDATE
          SET completed_keys = EXCLUDED.completed_keys,
              updated_at     = now()`,
