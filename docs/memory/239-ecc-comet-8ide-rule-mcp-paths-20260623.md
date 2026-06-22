@@ -1,7 +1,11 @@
-# 239-codex-new 8 IDE effective rule/MCP/skills paths
+# 239-ecc-comet 8 IDE effective rule/MCP/skills paths
 
-Recorded: 2026-06-23 01:38:45 +0800 China time
-Owner/prefix: `239-codex-new-`
+Recorded: 2026-06-23 01:49 +0800 China time
+Owner/prefix: `239-ecc-comet-`
+
+## Prefix correction
+
+The earlier file `239-codex-new-8ide-rule-mcp-paths-20260623.md` used the wrong prefix for this lane. The correct prefix is `239-ecc-comet-`. Prefer this file when resolving ownership for the 8-IDE comet-ecc configuration matrix.
 
 ## Scope
 
