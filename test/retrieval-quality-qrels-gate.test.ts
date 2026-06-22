@@ -74,7 +74,10 @@ function candidateSearchForCase(testCase: QrelsFixture['cases'][number]) {
   };
 }
 
-describe('source-aware retrieval quality qrels gate', () => {
+// Note: this gate injects pre-ranked candidate lists to exercise selection/ranking math
+// over the read path; it does NOT measure recall over a real index. Production-path recall
+// (including the hybrid vector leg) is guarded by test/retrieval-recall-harness.test.ts.
+describe('source-aware retrieval quality selection gate (pre-ranked candidates; not a recall measure)', () => {
   test('evaluates candidate slugs and reads the selected gold selector snapshot', async () => {
     await withEngine(async (engine) => {
       for (const page of fixture.pages) {
