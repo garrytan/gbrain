@@ -76,6 +76,13 @@ binding. Review the proposed home; approve or reject the proposal. approval must
 not call put_page. If the page is missing, use patch candidate review/apply, then
 complete binding; promotion or handoff happens later.
 
+Promotion alone does not produce retrievable markdown. `promote_memory_candidate_entry`
+only flips the candidate's status and returns `canonical_write_pending: true`; the
+candidate is not retrievable via `retrieve_context`/`read_context` until you write the
+canonical page (create → review → apply a memory patch candidate, or `put_page` through
+the router). The daily memory report lists promoted-without-handoff candidates so this
+debt stays visible.
+
 Never write transient task mechanics, private chain-of-thought, or generic facts
 that do not belong in the user's knowledge graph.
 

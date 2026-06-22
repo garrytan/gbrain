@@ -2364,6 +2364,10 @@ test('memory inbox promotion operation promotes staged candidates and rejects bl
 
     expect((promoted as any).status).toBe('promoted');
     expect((promoted as any).review_reason).toBe('Promoted after passing preflight.');
+    // Promotion only flips status; it does not write retrievable markdown. The hint keeps
+    // that explicit so a governed candidate lifecycle is not mistaken for "done" (D2).
+    expect((promoted as any).canonical_write_pending).toBe(true);
+    expect((promoted as any).canonical_write_hint).toContain('not yet retrievable');
 
     const promotedEvents = await listStatusEvents.handler({
       engine,
