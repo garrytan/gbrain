@@ -41,6 +41,7 @@ import { realpathSync } from 'fs';
 import { join, dirname, basename, resolve as resolvePath } from 'path';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
+import { PostgresEngine } from './postgres-engine.ts';
 import {
   parseRemoteUrl,
   cloneRepo,
@@ -170,6 +171,26 @@ function validateSourceId(id: string): void {
       `Invalid source id "${id}". Must be 1-32 lowercase alnum chars with optional interior hyphens.`,
     );
   }
+}
+
+async function insertSourceRow(
+  engine: BrainEngine,
+  row: { id: string; name: string; localPath: string | null; config: Record<string, unknown> },
+): Promise<void> {
+  if (engine instanceof PostgresEngine) {
+    const sql = engine.sql as typeof engine.sql & { json: (value: unknown) => unknown };
+    await sql`
+      INSERT INTO sources (id, name, local_path, config)
+      VALUES (${row.id}, ${row.name}, ${row.localPath}, ${sql.json(row.config)})
+    `;
+    return;
+  }
+
+  await engine.executeRaw(
+    `INSERT INTO sources (id, name, local_path, config)
+         VALUES ($1, $2, $3, $4::jsonb)`,
+    [row.id, row.name, row.localPath, JSON.stringify(row.config)],
+  );
 }
 
 function parseConfig(config: unknown): Record<string, unknown> {
@@ -406,11 +427,12 @@ export async function addSource(
     const displayName = opts.name ?? opts.id;
 
     try {
-      await engine.executeRaw(
-        `INSERT INTO sources (id, name, local_path, config)
-             VALUES ($1, $2, $3, $4::jsonb)`,
-        [opts.id, displayName, finalPath, JSON.stringify(config)],
-      );
+      await insertSourceRow(engine, {
+        id: opts.id,
+        name: displayName,
+        localPath: finalPath,
+        config,
+      });
     } catch (e) {
       rmSync(tempDir, { recursive: true, force: true });
       throw new SourceOpError(
@@ -452,11 +474,12 @@ export async function addSource(
       config.federated = opts.federated;
     }
     const displayName = opts.name ?? opts.id;
-    await engine.executeRaw(
-      `INSERT INTO sources (id, name, local_path, config)
-           VALUES ($1, $2, $3, $4::jsonb)`,
-      [opts.id, displayName, finalPath, JSON.stringify(config)],
-    );
+    await insertSourceRow(engine, {
+      id: opts.id,
+      name: displayName,
+      localPath: finalPath,
+      config,
+    });
   }
 
   const created = await fetchSourceRow(engine, opts.id);

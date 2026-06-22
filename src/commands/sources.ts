@@ -27,6 +27,7 @@ import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
+import { PostgresEngine } from '../core/postgres-engine.ts';
 import {
   assessDestructiveImpact,
   checkDestructiveConfirmation,
@@ -691,10 +692,7 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
   }
   const config = parseConfig(src.config);
   config.federated = value;
-  await engine.executeRaw(
-    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
-    [JSON.stringify(config), id],
-  );
+  await writeSourceConfig(engine, id, config);
   console.log(`Source "${id}" is now ${value ? 'federated (appears in cross-source default search)' : 'isolated (only searched when explicitly named)'}.`);
 
   // v0.40 D19: auto-submit embed-backfill when coverage < 100%. Federation
@@ -825,6 +823,27 @@ function formatLag(seconds: number): string {
   return `${Math.floor(seconds / 86400)}d`;
 }
 
+async function writeSourceConfig(
+  engine: BrainEngine,
+  id: string,
+  config: Record<string, unknown>,
+): Promise<void> {
+  if (engine instanceof PostgresEngine) {
+    const sql = engine.sql as typeof engine.sql & { json: (value: unknown) => unknown };
+    await sql`
+      UPDATE sources
+         SET config = ${sql.json(config)}
+       WHERE id = ${id}
+    `;
+    return;
+  }
+
+  await engine.executeRaw(
+    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+    [JSON.stringify(config), id],
+  );
+}
+
 // ── v0.40 sources webhook (D8) ──────────────────────────────
 async function runWebhook(engine: BrainEngine, args: string[]): Promise<void> {
   const sub = args[0];
@@ -878,10 +897,7 @@ async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void>
   const cfg = parseConfig(src.config);
   cfg.webhook_secret = secret;
   cfg.github_repo = githubRepo;
-  await engine.executeRaw(
-    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
-    [JSON.stringify(cfg), id],
-  );
+  await writeSourceConfig(engine, id, cfg);
 
   console.log(`Webhook configured for source "${id}":`);
   console.log(`  github_repo:    ${githubRepo}`);
@@ -934,10 +950,7 @@ async function runWebhookRotate(engine: BrainEngine, args: string[]): Promise<vo
   const secret = randomBytes(32).toString('hex');
   const cfg = parseConfig(src.config);
   cfg.webhook_secret = secret;
-  await engine.executeRaw(
-    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
-    [JSON.stringify(cfg), id],
-  );
+  await writeSourceConfig(engine, id, cfg);
   console.log(`New webhook secret for source "${id}":`);
   console.log(`  ${secret}`);
   console.log('');
@@ -958,10 +971,7 @@ async function runWebhookClear(engine: BrainEngine, args: string[]): Promise<voi
   const cfg = parseConfig(src.config);
   delete cfg.webhook_secret;
   delete cfg.github_repo;
-  await engine.executeRaw(
-    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
-    [JSON.stringify(cfg), id],
-  );
+  await writeSourceConfig(engine, id, cfg);
   console.log(`Webhook configuration cleared for source "${id}".`);
 }
 
@@ -983,10 +993,7 @@ async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<vo
 
   if (setArg) {
     cfg.tracked_branch = setArg;
-    await engine.executeRaw(
-      `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
-      [JSON.stringify(cfg), id],
-    );
+    await writeSourceConfig(engine, id, cfg);
     console.log(`Tracked branch for source "${id}" set to "${setArg}".`);
     return;
   }
@@ -999,10 +1006,7 @@ async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<vo
       const { execFileSync } = await import('node:child_process');
       const branch = execFileSync('git', ['-C', src.local_path, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
       cfg.tracked_branch = branch;
-      await engine.executeRaw(
-        `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
-        [JSON.stringify(cfg), id],
-      );
+      await writeSourceConfig(engine, id, cfg);
       console.log(`Detected branch "${branch}" for source "${id}"; persisted to config.tracked_branch.`);
     } catch (e) {
       console.error(`git rev-parse failed: ${e instanceof Error ? e.message : String(e)}`);
