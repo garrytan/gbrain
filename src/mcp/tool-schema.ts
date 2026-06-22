@@ -76,9 +76,24 @@ export function operationToMcpTool(op: Operation, options: McpToolSchemaOptions 
   };
 }
 
-function compactOperationMetadata(op: Operation): { description?: string } {
-  if (!op.discovery?.compactDescription) return {};
-  return { description: op.discovery.description ?? op.description };
+function compactOperationMetadata(op: Operation): {
+  title: string;
+  description?: string;
+  annotations: { readOnlyHint: boolean; destructiveHint: boolean; openWorldHint: boolean };
+} {
+  const isMutating = op.mutating === true;
+  // Title and read-only / destructive safety hints are always emitted, even in compact
+  // mode (a few tokens per tool, safety-critical). Description stays opt-in: only ops with
+  // discovery.compactDescription carry one in compact mode.
+  return {
+    title: operationTitle(op.name),
+    ...(op.discovery?.compactDescription ? { description: op.discovery.description ?? op.description } : {}),
+    annotations: {
+      readOnlyHint: !isMutating,
+      destructiveHint: isMutating && isDestructiveOperation(op.name),
+      openWorldHint: false,
+    },
+  };
 }
 
 function operationTitle(name: string): string {

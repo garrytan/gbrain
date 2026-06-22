@@ -3717,7 +3717,15 @@
           ],
           "required": true,
           "nullable": false,
-          "description": "One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup"
+          "description": "One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup",
+          "enum": [
+            "task_resume",
+            "broad_synthesis",
+            "precision_lookup",
+            "mixed_scope_bridge",
+            "personal_profile_lookup",
+            "personal_episode_lookup"
+          ]
         },
         "query": {
           "type": [
@@ -3779,8 +3787,8 @@
           "intent"
         ]
       },
-      "compact_schema_hash": "c143e4fa51eb5909d128d26c5b3033030ce8d0c772ef8fdfe27e532ef5e12fc0",
-      "full_schema_hash": "23e4d40fbd260d72bea1b21caee3d5c8c4b0e8e6c1c9568151195eff51653885",
+      "compact_schema_hash": "b61a05ff72670ab816fa4bf3b2e1f726178bab6e839275e8dfc93498ca64344f",
+      "full_schema_hash": "9c3c1ae50738b44b23c1bf4d432e996d8112343a8444103e6548985920ad629f",
       "memory_verb_families": [],
       "mutation_aliases": []
     },
@@ -6016,6 +6024,10 @@
     {
       "name": "get_skillpack",
       "description": "Read the MBrain SKILLPACK reference architecture. Returns the full document or a specific section by number/name. Use this to learn detailed patterns for enrichment, meeting ingestion, cron schedules, and more.",
+      "discovery": {
+        "compact_description": true,
+        "description": "Runtime self-orientation: call get_skillpack (no args) for the compact agent rules, or with a section for detailed retrieval/ingest/governance patterns. Start here when unsure how to use MBrain."
+      },
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -14162,7 +14174,15 @@
           ],
           "required": true,
           "nullable": false,
-          "description": "One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup"
+          "description": "One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup",
+          "enum": [
+            "task_resume",
+            "broad_synthesis",
+            "precision_lookup",
+            "mixed_scope_bridge",
+            "personal_profile_lookup",
+            "personal_episode_lookup"
+          ]
         },
         "kind": {
           "type": [
@@ -14316,8 +14336,8 @@
           "intent"
         ]
       },
-      "compact_schema_hash": "7ca60d515408dc4293baa9fc8ca921ede819b235994dc1550c981afb116292ba",
-      "full_schema_hash": "1d63ff158aa344ef8231c8457a1db743958f5d608cce43d64b182773a41da7c1",
+      "compact_schema_hash": "fe1edb3ecba5d32a2c6794e9faebb5a8f52400573f4e7722cade8c271f9fd114",
+      "full_schema_hash": "9762322c9167d48bfb3ccd33592bb697a58369c7a16f01e7f3d4e0cc86104e53",
       "memory_verb_families": [
         "discover_search"
       ],

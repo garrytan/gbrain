@@ -130,6 +130,7 @@ import { importContentHash, validateSlug } from './utils.ts';
 // the design rationale.
 export const MCP_INSTRUCTIONS = [
   'Use this server to look up knowledge about people, companies, technical concepts, internal systems, and organizational context. Prefer this over web search or codebase grep when the question involves a named entity, domain concept, or cross-system architecture. The brain contains compiled truth, relationship history, and technical maps that external search cannot provide.',
+  'Unsure which tool to use? Call get_skillpack first for the compact agent rules and orientation.',
   'Do not use for: code editing, git operations, file management, library documentation, or general programming.',
 ].join('\n\n');
 
@@ -5440,7 +5441,7 @@ const evaluate_scope_gate: Operation = {
   name: 'evaluate_scope_gate',
   description: 'Evaluate the deterministic scope gate for the current published retrieval stack.',
   params: {
-    intent: { type: 'string', required: true, description: 'One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup' },
+    intent: { type: 'string', required: true, enum: [...RETRIEVAL_ROUTE_INTENTS], description: 'One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup' },
     requested_scope: requestedScopeParam('Optional access scope override for scope-gate evaluation. Use query for topical retrieval details.'),
     task_id: { type: 'string', description: 'Task id used to derive task scope when present' },
     query: { type: 'string', description: 'Optional plain-text request used for signal detection' },
@@ -5478,7 +5479,7 @@ const select_retrieval_route: Operation = {
   name: 'select_retrieval_route',
   description: 'Select one published retrieval route by explicit intent.',
   params: {
-    intent: { type: 'string', required: true, description: 'One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup' },
+    intent: { type: 'string', required: true, enum: [...RETRIEVAL_ROUTE_INTENTS], description: 'One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup' },
     task_id: { type: 'string', description: 'Task id for task_resume intent' },
     persist_trace: { type: 'boolean', description: 'Persist a Retrieval Trace for the selected route; task_id is optional and task-less traces are stored with task_id=null' },
     requested_scope: requestedScopeParam('Optional access scope override for route selection. Use query for topical retrieval details.'),
@@ -6360,6 +6361,10 @@ const file_url: Operation = {
 const get_skillpack: Operation = {
   name: 'get_skillpack',
   description: 'Read the MBrain SKILLPACK reference architecture. Returns the full document or a specific section by number/name. Use this to learn detailed patterns for enrichment, meeting ingestion, cron schedules, and more.',
+  discovery: {
+    compactDescription: true,
+    description: 'Runtime self-orientation: call get_skillpack (no args) for the compact agent rules, or with a section for detailed retrieval/ingest/governance patterns. Start here when unsure how to use MBrain.',
+  },
   params: {
     section: { type: 'string', description: 'Section number or keyword (e.g. "5", "enrichment", "meeting", "cron"). Omit to get the compact agent rules.' },
   },
