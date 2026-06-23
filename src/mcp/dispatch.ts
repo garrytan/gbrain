@@ -30,6 +30,13 @@ export interface ToolResult {
 export interface DispatchOpts {
   /** Defaults to true (remote/untrusted). Local CLI callers (`gbrain call`) pass false. */
   remote?: boolean;
+  /**
+   * Which MCP transport delivered this call. `'stdio'` set by the stdio
+   * server (local pipe, no per-token auth), `'http'` by the HTTP transport.
+   * Threaded into OperationContext.transport so whoami can distinguish a
+   * legitimately auth-less stdio pipe from an HTTP transport that dropped auth.
+   */
+  transport?: 'stdio' | 'http';
   /** Override the default stderr logger (e.g. CLI uses console.* directly). */
   logger?: OperationContext['logger'];
   /**
@@ -210,6 +217,7 @@ export function buildOperationContext(
     // this fallback covers code paths that historically passed undefined.
     sourceId: opts.sourceId ?? 'default',
     auth: opts.auth,
+    transport: opts.transport,
   };
 }
 

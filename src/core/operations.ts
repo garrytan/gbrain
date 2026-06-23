@@ -300,6 +300,19 @@ export interface OperationContext {
    */
   remote: boolean;
   /**
+   * Which MCP transport delivered this call, when it came over MCP.
+   * `'stdio'` is the local pipe (`gbrain serve`) — remote/untrusted by the
+   * trust boundary, but auth-less BY DESIGN (no per-token auth on a local
+   * pipe; see src/mcp/server.ts). `'http'` is the OAuth/bearer HTTP transport,
+   * which threads `auth`. Unset for the trusted local CLI path.
+   *
+   * whoami uses this to distinguish "stdio pipe, legitimately auth-less"
+   * (report transport: 'local') from "HTTP transport that dropped auth"
+   * (a real bug → fail-closed unknown_transport). Do NOT use this to grant
+   * trust — `remote` remains the trust discriminator.
+   */
+  transport?: 'stdio' | 'http';
+  /**
    * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
    * agent policy (e.g. put_page namespace rule).
@@ -3650,6 +3663,15 @@ const whoami: Operation = {
     // of `ctx.remote === false`. Empty scopes array forces clients to
     // special-case `transport: 'local'` explicitly.
     if (ctx.remote === false) {
+      return { transport: 'local', scopes: [] };
+    }
+    // The stdio MCP pipe (`gbrain serve`) is remote/untrusted by the trust
+    // boundary but carries no per-token auth by design (local pipe — see
+    // src/mcp/server.ts). That is NOT the "transport dropped auth" bug; it is
+    // the expected shape for stdio. Report it as a local, unprivileged
+    // identity (empty scopes grant nothing — no trust escalation). Only an
+    // auth-less HTTP transport is a genuine bug, so it stays fail-closed.
+    if (ctx.transport === 'stdio') {
       return { transport: 'local', scopes: [] };
     }
     if (!ctx.auth) {
