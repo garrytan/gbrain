@@ -1762,6 +1762,7 @@ export async function registerBuiltinHandlers(
       pull: false, // brain-wide DB/maintenance work never git-pulls
       signal: job.signal,
       phases,
+      forceGlobalOrphans: true,
       yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
     });
 

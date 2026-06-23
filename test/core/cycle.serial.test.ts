@@ -21,6 +21,7 @@ let syncCalls: Array<{ dryRun: boolean | undefined; noPull: boolean | undefined;
 let extractCalls: Array<{ mode: string; dir: string; slugs: string[] | undefined }> = [];
 let embedCalls: Array<{ stale: boolean | undefined; dryRun: boolean | undefined }> = [];
 let orphansCalls: number = 0;
+let orphansOpts: Array<{ sourceId?: string } | undefined> = [];
 
 // Mock lint
 mock.module('../../src/commands/lint.ts', () => ({
@@ -98,8 +99,9 @@ mock.module('../../src/commands/embed.ts', () => ({
 
 // Mock orphans
 mock.module('../../src/commands/orphans.ts', () => ({
-  findOrphans: async () => {
+  findOrphans: async (_engine: any, opts?: { sourceId?: string }) => {
     orphansCalls++;
+    orphansOpts.push(opts);
     return {
       orphans: [],
       total_orphans: 1,
@@ -148,6 +150,7 @@ beforeEach(() => {
   extractCalls = [];
   embedCalls = [];
   orphansCalls = 0;
+  orphansOpts = [];
 });
 
 // ─── dryRun propagation (regression guards) ────────────────────────
@@ -214,6 +217,11 @@ describe('runCycle — phase selection', () => {
     await runCycle(sharedEngine,{ brainDir: '/tmp/brain', phases: ['orphans'] });
     expect(orphansCalls).toBe(1);
     expect(syncCalls.length).toBe(0);
+  });
+
+  test('--phase orphans preserves explicit source scope', async () => {
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: ['orphans'], sourceId: 'source-a' });
+    expect(orphansOpts.at(-1)).toEqual({ sourceId: 'source-a' });
   });
 });
 
@@ -497,6 +505,28 @@ describe('runCycle — sourceId resolution (regression #475)', () => {
     );
     await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-a' });
     expect(syncCalls.at(-1)?.sourceId).toBe('default');
+  });
+
+  test('seeded sources row → orphans phase receives matching sourceId', async () => {
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
+      ['alpha', 'alpha', '/tmp/brain-2349-alpha'],
+    );
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-2349-alpha', phases: ['orphans'] });
+    expect(orphansOpts.at(-1)).toEqual({ sourceId: 'alpha' });
+  });
+
+  test('forceGlobalOrphans keeps orphans brain-wide even when brainDir maps to a source', async () => {
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
+      ['global-source', 'global-source', '/tmp/brain-2349-global'],
+    );
+    await runCycle(sharedEngine, {
+      brainDir: '/tmp/brain-2349-global',
+      phases: ['embed', 'orphans', 'purge'],
+      forceGlobalOrphans: true,
+    });
+    expect(orphansOpts.at(-1)).toEqual({});
   });
 
   test('no matching sources row → performSync receives sourceId=undefined', async () => {
