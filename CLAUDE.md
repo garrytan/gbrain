@@ -38,16 +38,33 @@ mount, CEO-class with multiple team brains) and
 
 ## Architecture
 
-Contract-first: `src/core/operations.ts` defines ~90 shared operations (v0.29 adds `get_recent_salience`, `find_anomalies`, `get_recent_transcripts`; v0.42.43.0 adds `volunteer_context` — push-based context, see `docs/guides/push-context.md`). CLI and MCP
+Contract-first: `src/core/operations.ts` defines ~92 shared operations (notable:
+`get_recent_salience`, `find_anomalies`, `get_recent_transcripts`, `find_trajectory`,
+`volunteer_context` — push-based context, see `docs/guides/push-context.md`). CLI and MCP
 server are both generated from this single source. Engine factory (`src/core/engine-factory.ts`)
 dynamically imports the configured engine (`'pglite'` or `'postgres'`). Skills are fat
 markdown files (tool-agnostic, work with both CLI and plugin contexts).
+
+Some agent-facing surfaces are CLI-only (not ops): `gbrain autopilot` (self-maintaining
+brain daemon — sync → extract → embed on an interval, durable via the minion queue), the
+durability/push path (`gbrain sources harden`), and the deterministic ingestion collectors
+(`gbrain drive ingest`, `gbrain outlook scan` — code collects + classifies, LLM judges).
 
 **Trust boundary:** `OperationContext.remote` distinguishes trusted local CLI callers
 (`remote: false` set by `src/cli.ts`) from untrusted agent-facing callers
 (`remote: true` set by `src/mcp/server.ts`). Security-sensitive operations like
 `file_upload` tighten filesystem confinement when `remote=true` and default to
 strict behavior when unset.
+
+**Brain-repo push + credentials (secure by default).** `gbrain sources harden` /
+`--pat-file` on `sources add` is gbrain's first push path and first credential storage.
+The GitHub token is wired per-repo (least-privilege; reuses an existing credential helper
+when present) and NEVER enters the repo, the tracked remote URL, logs, or any run report.
+Push automation is installed locally per-machine, not committed. Hardening proves push
+works with a `pushProbe` dry-run before declaring done, so a read-only token or protected
+branch surfaces immediately instead of silently dropping writes. `git-remote.ts` keeps the
+SSRF-hardened flags on every git invocation. See the `git-remote.ts` / `sources-harden.ts`
+entries in `KEY_FILES.md`.
 
 **Cross-cutting invariants (must-never-violate, regardless of which file you touch).**
 These used to be buried across the per-file index; they live here so they always load.
@@ -99,6 +116,10 @@ detail on demand.)
 | search modes / cost knobs | `docs/guides/search-modes.md` |
 | embedding spend gates / cost gate / `spend.posture` / off switches | `docs/operations/spend-controls.md` |
 | push-based context (volunteer/watch/reflex window) | `docs/guides/push-context.md` |
+| deterministic ingestion collectors (Drive, Outlook, code-collects-LLM-judges) | `docs/guides/deterministic-collectors.md` + the `drive.ts`/`outlook.ts` entries in `KEY_FILES.md` |
+| brain-repo durability / push / credential storage | the `git-remote.ts`/`sources-harden.ts` entries in `KEY_FILES.md` |
+| self-maintaining brain daemon | the `autopilot.ts` entries in `KEY_FILES.md` |
+| DB-contention-aware backfill pacing | the Pace Mode section below + `src/core/pace-mode.ts`, `db-pacer.ts` |
 | schema packs / page types / extraction | `docs/architecture/schema-packs.md`, `type-taxonomy.md`, `lens-packs.md` |
 | thin-client / remote MCP / cross-modal | `docs/architecture/thin-client.md` |
 | the CLI surface (commands + flags) | `gbrain --help` / `gbrain --tools-json`, plus the relevant `KEY_FILES.md` entry |
