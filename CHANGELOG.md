@@ -2,6 +2,39 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.45.0.0] - 2026-06-23
+
+**GBrain can now preview Google Drive and Outlook ingestion before anything is written, and autopilot stops wasting work on local sources it cannot sync.** The new collectors are deliberately narrow: they classify what would be kept or skipped, print counts first, and require an explicit write flag before adding pages to the brain. That gives agents a safe first move for business mail and high-signal Drive folders without treating the whole account as memory.
+
+Autopilot also gets quieter and more honest. Dead local-only source paths are skipped instead of spawning doomed sync jobs, while gbrain-owned remote clones can still be queued so sync can repair them by recloning.
+
+### To take advantage of v0.45.0.0
+`gbrain upgrade`. For Google Drive, set `GBRAIN_GOOGLE_DRIVE_ACCESS_TOKEN`, then run:
+
+```bash
+gbrain drive ingest --folder <folder-url-or-id> --dry-run
+```
+
+For Outlook, configure the Microsoft app values in local config or environment, run the login flow, then scan in dry-run mode before writing:
+
+```bash
+gbrain outlook login
+gbrain outlook scan --dry-run
+```
+
+### Itemized changes
+
+### Added
+- **Google Drive dry-run collector.** `gbrain drive ingest --folder <url-or-id>` scans a scoped folder, keeps document-like owner, contract, meeting, receipt, and operations material, and skips photos, archives, shortcuts, and generic low-signal files unless `--write` is explicitly passed.
+- **Outlook dry-run collector.** `gbrain outlook login` and `gbrain outlook scan` support a zero-write mail review loop that classifies recent mail before any GBrain page write.
+
+### Changed
+- **Autopilot skips unsyncable sources.** Local-only sources with missing or non-git paths are reported as `skipped_unsyncable` instead of dispatching sync jobs that cannot succeed.
+- **Owned remote clones remain repairable.** Missing gbrain-owned clones with a configured remote URL are still eligible for sync so the normal clone-repair path can bring them back.
+
+### Tests
+- Added focused coverage for Drive filtering and dry-run behavior, Outlook config and dry-run scanning, and autopilot unsyncable-source skips.
+
 ## [0.44.1.0] - 2026-06-19
 
 **`gbrain doctor --remediate` now talks while it works, keeps JSON output machine-readable, and survives old mixed source-config rows.** The doctor remediation loop could look frozen in an agent terminal because it submitted work without printing step progress until the whole run returned. The dry-run JSON path had a second papercut: `--dry-run --json` could print the human "would submit" summary instead of a JSON object, which made automation treat a safe preview as broken output.

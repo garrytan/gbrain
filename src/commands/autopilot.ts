@@ -677,11 +677,24 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
           if (await isFederatedV2Enabled(engine)) {
             const { loadAllSources } = await import('../core/sources-load.ts');
+            const { isAutopilotSyncableSource } = await import('./autopilot-fanout.ts');
             const sources = await loadAllSources(engine);
             const intervalMs = baseInterval * 1000;
             const now = Date.now();
             for (const src of sources) {
               if (!src.local_path) continue;
+              if (!isAutopilotSyncableSource(src)) {
+                if (jsonMode) {
+                  process.stderr.write(JSON.stringify({
+                    event: 'freshness_unsyncable_skipped',
+                    source_id: src.id,
+                    local_path: src.local_path,
+                  }) + '\n');
+                } else {
+                  console.log(`[dispatch] skip sync source=${src.id} (unsyncable local_path)`);
+                }
+                continue;
+              }
               const lastSyncMs = src.last_sync_at ? new Date(src.last_sync_at).getTime() : 0;
               const ageMs = now - lastSyncMs;
               if (ageMs < intervalMs) continue; // fresh enough
@@ -950,6 +963,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               skipped_cap: result.skipped_cap,
               skipped_cooldown: result.skipped_cooldown,
               skipped_active: result.skipped_active,
+              skipped_unsyncable: result.skipped_unsyncable,
               legacy_fallback: result.legacy_fallback,
               global_maintenance: result.global_maintenance,
               fanout_max: fanoutMax,
@@ -959,7 +973,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             console.log(
               `[dispatch] fanout: ${result.dispatched.length} dispatched, ` +
               `${result.skipped_fresh.length} fresh, ${result.skipped_cap.length} capped, ` +
-              `${result.skipped_cooldown.length} cooldown, ${result.skipped_active.length} active ` +
+              `${result.skipped_cooldown.length} cooldown, ${result.skipped_active.length} active, ` +
+              `${result.skipped_unsyncable.length} unsyncable ` +
               `(score=${score}, max=${fanoutMax})`,
             );
           }

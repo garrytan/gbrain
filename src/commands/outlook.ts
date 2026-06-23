@@ -1,7 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
 import {
-  DEFAULT_OUTLOOK_CLIENT_ID,
-  DEFAULT_OUTLOOK_TENANT_ID,
   fetchOutlookScanInput,
   loadOutlookToken,
   outlookTokenPath,
@@ -13,8 +11,8 @@ import {
 
 interface OutlookArgs {
   subcmd: 'login' | 'scan' | 'help';
-  clientId: string;
-  tenantId: string;
+  clientId?: string;
+  tenantId?: string;
   dryRun: boolean;
   write: boolean;
   json: boolean;
@@ -23,6 +21,16 @@ interface OutlookArgs {
   knownDomains: string[];
   selfDomains: string[];
   source?: string;
+}
+
+interface OutlookDeps {
+  login?: typeof runDeviceCodeLogin;
+  loadToken?: typeof loadOutlookToken;
+  fetchInput?: typeof fetchOutlookScanInput;
+  scan?: typeof scanOutlook;
+  writeScan?: typeof writeOutlookScan;
+  printSummary?: typeof printScanSummary;
+  tokenPath?: typeof outlookTokenPath;
 }
 
 const HELP = `Usage: gbrain outlook <login|scan> [options]
@@ -51,17 +59,28 @@ Dry-run prints:
   skipped spam/newsletters: N
   people detected: N
   threads worth saving: N
+
+Client and tenant ids can also come from GBRAIN_OUTLOOK_CLIENT_ID /
+GBRAIN_OUTLOOK_TENANT_ID or ~/.gbrain/config.json outlook.client_id /
+outlook.tenant_id.
 `;
 
-export async function runOutlook(engine: BrainEngine | null, args: string[]): Promise<void> {
+export async function runOutlook(engine: BrainEngine | null, args: string[], deps: OutlookDeps = {}): Promise<void> {
   const parsed = parseArgs(args);
+  const login = deps.login ?? runDeviceCodeLogin;
+  const loadToken = deps.loadToken ?? loadOutlookToken;
+  const fetchInput = deps.fetchInput ?? fetchOutlookScanInput;
+  const scan = deps.scan ?? scanOutlook;
+  const writeScan = deps.writeScan ?? writeOutlookScan;
+  const printSummary = deps.printSummary ?? printScanSummary;
+  const tokenPath = deps.tokenPath ?? outlookTokenPath;
   if (parsed.subcmd === 'help') {
     console.log(HELP);
     return;
   }
 
   if (parsed.subcmd === 'login') {
-    const token = await runDeviceCodeLogin({
+    const token = await login({
       clientId: parsed.clientId,
       tenantId: parsed.tenantId,
       out: parsed.json
@@ -70,42 +89,42 @@ export async function runOutlook(engine: BrainEngine | null, args: string[]): Pr
     });
     if (parsed.json) {
       console.log(JSON.stringify({
-        token_path: outlookTokenPath(),
+        token_path: tokenPath(),
         expires_at: new Date(token.expires_at).toISOString(),
         scopes: token.scope,
       }, null, 2));
     } else {
-      console.log(`Outlook login saved: ${outlookTokenPath()}`);
+      console.log(`Outlook login saved: ${tokenPath()}`);
       console.log(`Token expires: ${new Date(token.expires_at).toISOString()}`);
     }
     return;
   }
 
-  const token = await loadOutlookToken({
+  const token = await loadToken({
     clientId: parsed.clientId,
     tenantId: parsed.tenantId,
   });
-  const input = await fetchOutlookScanInput(token.access_token, {
+  const input = await fetchInput(token.access_token, {
     days: parsed.days,
     limit: parsed.limit,
   });
-  const summary = scanOutlook({
+  const summary = scan({
     ...input,
     knownDomains: parsed.knownDomains,
     selfDomains: parsed.selfDomains.length > 0 ? parsed.selfDomains : input.selfDomains,
   });
 
   if (!parsed.write || parsed.dryRun) {
-    printScanSummary(summary, parsed.json);
+    printSummary(summary, parsed.json);
     return;
   }
   if (!engine) throw new Error('gbrain outlook scan --write requires a local engine');
-  const result = await writeOutlookScan(engine, summary, { sourceId: parsed.source });
+  const result = await writeScan(engine, summary, { sourceId: parsed.source });
   if (parsed.json) {
     console.log(JSON.stringify({ ...summary, write: result }, null, 2));
     return;
   }
-  printScanSummary(summary, false);
+  printSummary(summary, false);
   console.log(`written: ${result.written}`);
   for (const slug of result.slugs) console.log(`  ${slug}`);
 }
@@ -113,8 +132,6 @@ export async function runOutlook(engine: BrainEngine | null, args: string[]): Pr
 function parseArgs(args: string[]): OutlookArgs {
   const out: OutlookArgs = {
     subcmd: (args[0] as OutlookArgs['subcmd']) ?? 'help',
-    clientId: DEFAULT_OUTLOOK_CLIENT_ID,
-    tenantId: DEFAULT_OUTLOOK_TENANT_ID,
     dryRun: true,
     write: false,
     json: false,

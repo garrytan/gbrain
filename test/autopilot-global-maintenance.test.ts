@@ -161,7 +161,7 @@ describe('dispatchPerSource — per-source jobs carry NON_GLOBAL phases (no embe
       executeRaw: async () => [],
     } as unknown as BrainEngine;
     const queue = { add: async (name: string, data: unknown, opts: unknown) => { added.push({ name, data, opts }); return { id: added.length }; } } as any;
-    const result = await dispatchPerSource(engine, queue, { repoPath: '/tmp', slot: 's', timeoutMs: 1, fanoutMax: 4, jsonMode: true, emit: () => {}, log: () => {} });
+    const result = await dispatchPerSource(engine, queue, { repoPath: '/tmp', slot: 's', timeoutMs: 1, fanoutMax: 4, jsonMode: true, emit: () => {}, log: () => {}, isSourceSyncable: () => true });
     expect(result.global_maintenance).toEqual({ dispatched: false, reason: 'deferred' });
     expect(added.length).toBe(2);
     const sourceJobs = added.filter((j) => j.name === 'autopilot-cycle');
@@ -183,7 +183,7 @@ describe('dispatchPerSource — per-source jobs carry NON_GLOBAL phases (no embe
       executeRaw: async () => [],
     } as unknown as BrainEngine;
     const queue = { add: async (name: string, data: unknown, opts: unknown) => { added.push({ name, data, opts }); return { id: added.length }; } } as any;
-    const result = await dispatchPerSource(engine, queue, { repoPath: '/tmp', slot: 's', timeoutMs: 1, fanoutMax: 1, jsonMode: true, emit: () => {}, log: () => {} });
+    const result = await dispatchPerSource(engine, queue, { repoPath: '/tmp', slot: 's', timeoutMs: 1, fanoutMax: 1, jsonMode: true, emit: () => {}, log: () => {}, isSourceSyncable: () => true });
     expect(result.dispatched.length).toBe(1);
     expect(result.skipped_cap.length).toBe(1);
     expect(result.global_maintenance).toEqual({ dispatched: false, reason: 'deferred' });
@@ -213,6 +213,7 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
       jsonMode: true,
       emit: () => {},
       log: () => {},
+      isSourceSyncable: () => true,
     });
     expect(result.global_maintenance).toEqual({ dispatched: false, reason: 'deferred' });
 
@@ -271,6 +272,7 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
       jsonMode: true,
       emit: () => {},
       log: () => {},
+      isSourceSyncable: () => true,
     });
     expect(result.dispatched).toEqual([]);
     expect(result.skipped_active).toEqual(['repo-a']);
@@ -304,6 +306,7 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
       jsonMode: true,
       emit: () => {},
       log: () => {},
+      isSourceSyncable: () => true,
     });
 
     expect(result.global_maintenance.dispatched).toBe(true);
@@ -338,6 +341,7 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
       jsonMode: true,
       emit: () => {},
       log: () => {},
+      isSourceSyncable: () => true,
     });
 
     expect(result.global_maintenance.dispatched).toBe(true);

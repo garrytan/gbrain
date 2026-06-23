@@ -30,9 +30,12 @@
  * row layer; cost duplication is the visible tradeoff).
  */
 
+import { existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 import { NON_GLOBAL_PHASES, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
+import { isOwnedClone } from '../core/sources-ops.ts';
 
 const FULL_CYCLE_FLOOR_MIN = 60;
 
@@ -66,6 +69,8 @@ export interface FanoutOpts {
   emit?: (line: string) => void;
   /** Sink for non-JSON human log lines; defaults to console.log. */
   log?: (line: string) => void;
+  /** Test seam for filesystem/git eligibility. Production uses isSyncableSourcePath. */
+  isSourceSyncable?: (source: SourceRow) => boolean;
 }
 
 export interface FanoutResult {
@@ -79,6 +84,8 @@ export interface FanoutResult {
   skipped_cooldown: string[];
   /** Source ids skipped because a non-terminal autopilot-cycle already exists. */
   skipped_active: string[];
+  /** Source ids skipped because local_path is missing on disk or not a git worktree. */
+  skipped_unsyncable: string[];
   /** True when this tick fell back to the legacy single-job path
    *  (no sources rows / engine empty). */
   legacy_fallback: boolean;
@@ -352,6 +359,48 @@ export async function readLiveAutopilotCycleSourceIds(engine: BrainEngine): Prom
 }
 
 /**
+ * A DB source with a stale local_path should not create doomed sync jobs. Keep
+ * the stored pages in the brain, but skip routine autopilot dispatch until the
+ * path exists again and matches sync.ts' accepted repo-root shape.
+ */
+export function isSyncableSourcePath(localPath: string | null | undefined): boolean {
+  if (!localPath) return false;
+  try {
+    if (!existsSync(localPath)) return false;
+    if (!statSync(localPath).isDirectory()) return false;
+    return existsSync(join(localPath, '.git'));
+  } catch {
+    return false;
+  }
+}
+
+type AutopilotSourceLike = {
+  id: string;
+  local_path: string | null;
+  config: unknown;
+};
+
+function sourceRemoteUrl(source: AutopilotSourceLike): string | null {
+  try {
+    const cfg = typeof source.config === 'string'
+      ? JSON.parse(source.config) as Record<string, unknown>
+      : (source.config ?? {}) as Record<string, unknown>;
+    return typeof cfg.remote_url === 'string' && cfg.remote_url.length > 0 ? cfg.remote_url : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Freshness sync should skip dead local-only paths, but it must still queue
+ * gbrain-owned remote clones: sync.ts can repair those by recloning.
+ */
+export function isAutopilotSyncableSource(source: AutopilotSourceLike): boolean {
+  if (isSyncableSourcePath(source.local_path)) return true;
+  return Boolean(sourceRemoteUrl(source) && isOwnedClone(source));
+}
+
+/**
  * Decide which sources to dispatch this tick. Pure function so tests can
  * exercise the freshness gate + cap math without an engine.
  *
@@ -449,6 +498,7 @@ export async function dispatchPerSource(
       skipped_cap: [],
       skipped_cooldown: [],
       skipped_active: [],
+      skipped_unsyncable: [],
       legacy_fallback: true,
       global_maintenance: { dispatched: false, reason: 'deferred' },
     };
@@ -470,11 +520,16 @@ export async function dispatchPerSource(
     cooldownOpts = { baseMin: 0, capMin: FAILURE_COOLDOWN_CAP_MIN };
   }
 
+  const sourceSyncable = opts.isSourceSyncable ?? ((source: SourceRow) => isSyncableSourcePath(source.local_path));
+  const skippedUnsyncable = sources.filter((s) => !sourceSyncable(s));
+  const syncableSources = skippedUnsyncable.length > 0
+    ? sources.filter((s) => sourceSyncable(s))
+    : sources;
   const liveCycleSourceIds = await readLiveAutopilotCycleSourceIds(engine);
   const skippedActive = sources.filter((s) => liveCycleSourceIds.has(s.id));
   const eligibleSources = liveCycleSourceIds.size > 0
-    ? sources.filter((s) => !liveCycleSourceIds.has(s.id))
-    : sources;
+    ? syncableSources.filter((s) => !liveCycleSourceIds.has(s.id))
+    : syncableSources;
   const { dispatch, skippedFresh, skippedCap, skippedCooldown } =
     selectSourcesForDispatch(eligibleSources, opts.fanoutMax, Date.now(), FULL_CYCLE_FLOOR_MIN, recentFailures, cooldownOpts);
   let sourceDispatch = dispatch;
@@ -613,12 +668,20 @@ export async function dispatchPerSource(
     }));
   }
 
+  if (skippedUnsyncable.length > 0 && opts.jsonMode) {
+    emit(JSON.stringify({
+      event: 'fanout_unsyncable_skipped',
+      sources: skippedUnsyncable.map(s => s.id),
+    }));
+  }
+
   return {
     dispatched,
     skipped_fresh: skippedFresh.map(s => s.id),
     skipped_cap: skippedCap.map(s => s.id),
     skipped_cooldown: skippedCooldown.map(s => s.id),
     skipped_active: skippedActive.map(s => s.id),
+    skipped_unsyncable: skippedUnsyncable.map(s => s.id),
     legacy_fallback: false,
     global_maintenance: globalMaintenance,
   };

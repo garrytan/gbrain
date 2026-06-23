@@ -161,4 +161,3 @@ audio_url: "<file:// or signed URL>"
 ## Timeline
 
 - **<date> <time> <tz>** | voice call with <persona>, <duration>s — <topic>
-```

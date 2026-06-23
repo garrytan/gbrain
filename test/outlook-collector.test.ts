@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { scanOutlook } from '../src/core/outlook-collector.ts';
+import { runOutlook } from '../src/commands/outlook.ts';
+import {
+  DEFAULT_OUTLOOK_CLIENT_ID,
+  DEFAULT_OUTLOOK_TENANT_ID,
+  resolveOutlookAppConfig,
+  scanOutlook,
+} from '../src/core/outlook-collector.ts';
 
 describe('outlook collector strict scan', () => {
   test('keeps direct, active, calendar-linked business mail and skips marketing/no-reply', () => {
@@ -140,5 +146,116 @@ describe('outlook collector strict scan', () => {
     expect(summary.people_detected).toBe(1);
     expect(summary.people[0]?.email).toBe('person.two@outlook.com');
     expect(summary.skipped_spam_newsletters).toBe(1);
+  });
+
+  test('keeps a one-off direct email from a human sender', () => {
+    const summary = scanOutlook({
+      selfEmails: ['me@example-user.com'],
+      messages: [
+        {
+          id: 'm1',
+          conversationId: 'human-direct-1',
+          subject: 'Quick intro',
+          receivedDateTime: '2026-06-22T12:00:00Z',
+          from: { emailAddress: { name: 'Jane Smith', address: 'jane@indieco.com' } },
+          toRecipients: [{ emailAddress: { name: 'The User', address: 'me@example-user.com' } }],
+          bodyPreview: 'Wanted to make an introduction.',
+        },
+      ],
+      events: [],
+      contacts: [],
+    });
+
+    expect(summary.people_detected).toBe(1);
+    expect(summary.people[0]?.email).toBe('jane@indieco.com');
+    expect(summary.people[0]?.reasons).toContain('direct human email');
+    expect(summary.skipped_spam_newsletters).toBe(0);
+  });
+
+  test('does not bake user Microsoft app ids into source defaults', () => {
+    expect(DEFAULT_OUTLOOK_CLIENT_ID).toBe('');
+    expect(DEFAULT_OUTLOOK_TENANT_ID).toBe('');
+    expect(resolveOutlookAppConfig({
+      env: {
+        GBRAIN_OUTLOOK_CLIENT_ID: 'client-from-env',
+        GBRAIN_OUTLOOK_TENANT_ID: 'tenant-from-env',
+      },
+    })).toEqual({
+      clientId: 'client-from-env',
+      tenantId: 'tenant-from-env',
+    });
+    expect(resolveOutlookAppConfig({
+      clientId: 'client-from-cli',
+      tenantId: 'tenant-from-cli',
+      env: {
+        GBRAIN_OUTLOOK_CLIENT_ID: 'client-from-env',
+        GBRAIN_OUTLOOK_TENANT_ID: 'tenant-from-env',
+      },
+    })).toEqual({
+      clientId: 'client-from-cli',
+      tenantId: 'tenant-from-cli',
+    });
+  });
+
+  test('skips do-not-reply senders', () => {
+    const summary = scanOutlook({
+      selfEmails: ['me@example-user.com'],
+      messages: [
+        {
+          id: 'm1',
+          conversationId: 'machine-1',
+          subject: 'Security alert',
+          receivedDateTime: '2026-06-22T12:00:00Z',
+          from: { emailAddress: { name: 'System Mail', address: 'do-not-reply@security-example.com' } },
+          toRecipients: [{ emailAddress: { name: 'The User', address: 'me@example-user.com' } }],
+          bodyPreview: 'Automated delivery.',
+        },
+      ],
+      events: [],
+      contacts: [],
+    });
+
+    expect(summary.people_detected).toBe(0);
+    expect(summary.skipped_spam_newsletters).toBe(1);
+  });
+
+  test('scan dry-run never calls the writer', async () => {
+    let printed = false;
+    let wrote = false;
+
+    await runOutlook({} as never, ['scan', '--dry-run'], {
+      loadToken: async () => ({
+        token_type: 'Bearer',
+        access_token: 'token',
+        expires_at: Date.now() + 60_000,
+      }),
+      fetchInput: async () => ({
+        messages: [],
+        events: [],
+        contacts: [],
+        selfEmails: [],
+        selfDomains: [],
+      }),
+      scan: () => ({
+        kept: 0,
+        skipped_spam_newsletters: 0,
+        people_detected: 0,
+        threads_worth_saving: 0,
+        people: [],
+        companies: [],
+        threads: [],
+        meetings: [],
+      }),
+      writeScan: async () => {
+        wrote = true;
+        return { written: 1, slugs: ['should-not-write'] };
+      },
+      printSummary: () => {
+        printed = true;
+      },
+    });
+
+    expect(printed).toBe(true);
+    expect(wrote).toBe(false);
   });
 });

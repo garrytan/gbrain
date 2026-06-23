@@ -305,7 +305,8 @@ export function scanOutlook(input: OutlookScanInput): OutlookScanSummary {
       continue;
     }
     const recipients = messageRecipients(msg).map(normalizeAddress).filter(a => a.email);
-    const direct = recipients.some(a => selfEmails.has(a.email) || selfDomains.has(a.domain));
+    const direct = recipients.some(a => selfEmails.has(a.email) || selfDomains.has(a.domain))
+      && isLikelyHumanSender(from, msg);
     const active = Boolean(msg.conversationId && (conversationCounts.get(msg.conversationId) ?? 0) > 1);
     const calendarLinked = calendarEmails.has(from.email);
     const knownBusiness = knownDomains.has(from.domain) || Boolean(contactByEmail.get(from.email)?.companyName);
@@ -519,7 +520,17 @@ function isSpammyMessage(msg: OutlookMessage, fromEmail: string): boolean {
 
 function isMachineAddress(email: string): boolean {
   const local = email.split('@')[0] ?? '';
-  return /^(no-?reply|donotreply|notifications?|mailer|marketing|news|newsletter|bounce|support|hello)$/i.test(local);
+  return /^(no-?reply|do-?not-?reply|donotreply|notifications?|mailer|marketing|news|newsletter|bounce|support|hello)$/i.test(local);
+}
+
+function isLikelyHumanSender(from: { name: string; email: string; domain: string }, msg: OutlookMessage): boolean {
+  if (!from.email || isMachineAddress(from.email)) return false;
+  const subject = `${msg.subject ?? ''} ${msg.bodyPreview ?? ''}`.toLowerCase();
+  if (/\b(security|support|team|alert|notification|billing|sales|success|admin)\b/i.test(from.name)) return false;
+  if (/\b(webinar|newsletter|unsubscribe|promotion|discount|limited time|security alert)\b/i.test(subject)) return false;
+  const words = from.name.trim().split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 4) return false;
+  return words.every(word => /^[a-z][a-z'.-]*$/i.test(word));
 }
 
 function normalizeAddress(addr?: OutlookEmailAddress): { name: string; email: string; domain: string } {

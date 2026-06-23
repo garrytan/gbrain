@@ -1,5 +1,31 @@
 # TODOS
 
+## Seascape GBrain Profile follow-ups (filed 2026-06-22)
+
+### Seascape source-health readback
+
+**What:** Add a `gbrain seascape sources` or equivalent readback that shows Seascape Hub/Ops/Site/Analytics source freshness and indexing status.
+
+**Why:** The V1 profile routes questions to owners and proof gates, but source freshness still requires a separate `gbrain status --json` read.
+
+**Context:** The CEO review deferred this from V1 because `gbrain status --json` already exposes source health. Start by wrapping that existing status data and mapping rows by canonical `sources.local_path`, not generated source ids.
+
+**Effort:** S
+**Priority:** P2
+**Depends on:** Seascape profile command V1
+
+### Full Seascape cockpit
+
+**What:** Explore a later read-only cockpit that combines open loops, proof pointers, source health, and promotion drafts.
+
+**Why:** A cockpit could become the daily Seascape command surface if the narrower routing and continuity loop proves useful.
+
+**Context:** The CEO review kept this out of V1 because it risks blurring GBrain memory with live Seascape truth. Revisit only after the Seascape profile command has repeated usage and the missing next action is clearly a read-only dashboard.
+
+**Effort:** L
+**Priority:** P3
+**Depends on:** Seascape profile command V1 and observed repeated use
+
 ## Pace Mode follow-ups (filed v0.42.49.0)
 
 Deferred from the paced-backfill wave (CEO + eng review CLEARED). Core shipped:

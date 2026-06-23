@@ -35,6 +35,16 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(AUTOPILOT_SRC).toMatch(/resolveEffectiveFanoutMax/);
   });
 
+  test('freshness sync dispatch skips unsyncable source paths before queue submit', () => {
+    expect(AUTOPILOT_SRC).toMatch(/isAutopilotSyncableSource/);
+    expect(AUTOPILOT_SRC).toMatch(/freshness_unsyncable_skipped/);
+    const guardIdx = AUTOPILOT_SRC.indexOf('!isAutopilotSyncableSource(src)');
+    const submitIdx = AUTOPILOT_SRC.indexOf("queue.add(\n                  'sync'");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(submitIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(submitIdx);
+  });
+
   test('calls dispatchPerSource within the shouldFullCycle branch', () => {
     // dispatchPerSource must appear in the same hot path as the
     // pre-fix `queue.add('autopilot-cycle', ...)` did — i.e. when
@@ -48,13 +58,16 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(Math.abs(dispatchIdx - fullCycleIdx)).toBeLessThan(3000);
   });
 
-  test('updates lastFullCycleAt only after a fresh no-op fanout window', () => {
+  test('updates lastFullCycleAt after a fresh no-op fanout window', () => {
     // Queued source/global jobs can still fail after dispatch. The daemon's
     // sleep floor should refresh only after readback proves there is no capped,
     // active, cooldown-paused, newly-dispatched, or stale global work left to retry.
+    // Unsyncable local-only sources are counted as handled for this window so
+    // one dead row does not make every daemon tick noisy.
     expect(AUTOPILOT_SRC).toMatch(/result\.skipped_cap\.length === 0/);
     expect(AUTOPILOT_SRC).toMatch(/result\.skipped_active\.length === 0/);
     expect(AUTOPILOT_SRC).toMatch(/result\.skipped_cooldown\.length === 0/);
+    expect(AUTOPILOT_SRC).not.toMatch(/result\.skipped_unsyncable\.length === 0/);
     expect(AUTOPILOT_SRC).toMatch(/result\.dispatched\.length === 0/);
     expect(AUTOPILOT_SRC).toMatch(/result\.global_maintenance\.reason === 'fresh'/);
     expect(AUTOPILOT_SRC).toMatch(/lastFullCycleAt\s*=\s*Date\.now\(\)/);
