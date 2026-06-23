@@ -1,10 +1,15 @@
 /**
  * Drift guard for src/core/doctor-categories.ts.
  *
- * Reads src/commands/doctor.ts source via a literal-string scan, enumerates
- * every `name: '<...>'` Check name, and asserts each appears in exactly ONE
- * category set. The union of the four sets must equal the discovered names
- * exactly — no orphans, no extras.
+ * Reads src/commands/doctor.ts AND src/core/onboard/checks.ts source via a
+ * literal-string scan, enumerates every `name: '<...>'` Check name, and
+ * asserts each appears in exactly ONE category set. The union of the four
+ * sets must equal the discovered names exactly — no orphans, no extras.
+ *
+ * onboard/checks.ts is in scope because doctor.ts merges its checks into the
+ * report (`runAllOnboardChecks` → `categorizeCheck(c.name)`); those names
+ * never appear as literals in doctor.ts, so scanning only doctor.ts let seven
+ * onboard checks silently degrade to 'meta' at runtime (v0.42.52.0 fix).
  *
  * This is the structural failure the v0.41.19.0 plan-eng-review caught:
  * doctor.ts grows new checks regularly; without this guard, the
@@ -25,20 +30,27 @@ import {
 } from '../src/core/doctor-categories.ts';
 
 const DOCTOR_TS_PATH = join(import.meta.dir, '..', 'src', 'commands', 'doctor.ts');
+// onboard checks are merged into the doctor report and categorized the same
+// way, so their names must be categorized too. See file header.
+const ONBOARD_CHECKS_TS_PATH = join(
+  import.meta.dir, '..', 'src', 'core', 'onboard', 'checks.ts',
+);
 
 function enumerateCheckNames(): Set<string> {
-  const source = readFileSync(DOCTOR_TS_PATH, 'utf-8');
   const names = new Set<string>();
-  // 1) Inline object-literal form: `{ name: 'foo', ... }`.
-  for (const m of source.matchAll(/name:\s*['"]([a-z][a-z0-9_]+)['"]/g)) {
-    names.add(m[1]);
-  }
-  // 2) Helper-function form: `const name = 'foo';` inside a check helper.
-  //    Catches checks like `nightly_quality_probe_health` and
-  //    `conversation_facts_backlog` that build the Check from a captured
-  //    name constant.
-  for (const m of source.matchAll(/const\s+name\s*=\s*['"]([a-z][a-z0-9_]+)['"]/g)) {
-    names.add(m[1]);
+  for (const path of [DOCTOR_TS_PATH, ONBOARD_CHECKS_TS_PATH]) {
+    const source = readFileSync(path, 'utf-8');
+    // 1) Inline object-literal form: `{ name: 'foo', ... }`.
+    for (const m of source.matchAll(/name:\s*['"]([a-z][a-z0-9_]+)['"]/g)) {
+      names.add(m[1]);
+    }
+    // 2) Helper-function form: `const name = 'foo';` inside a check helper.
+    //    Catches checks like `nightly_quality_probe_health` and
+    //    `conversation_facts_backlog` that build the Check from a captured
+    //    name constant.
+    for (const m of source.matchAll(/const\s+name\s*=\s*['"]([a-z][a-z0-9_]+)['"]/g)) {
+      names.add(m[1]);
+    }
   }
   return names;
 }
