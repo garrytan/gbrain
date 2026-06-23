@@ -16,6 +16,30 @@ It reports fork/upstream drift and fails only on remote-shape problems.
 USAGE
 }
 
+redact_remote_url() {
+  local url="$1"
+
+  if [[ "$url" =~ ^([^:/?#]+://)([^/@]+@)(.+)$ ]]; then
+    printf '%sREDACTED@%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}"
+    return
+  fi
+
+  if [[ "$url" =~ ^([^[:space:]@/]+)@([^:]+:.+)$ ]]; then
+    printf 'REDACTED@%s\n' "${BASH_REMATCH[2]}"
+    return
+  fi
+
+  printf '%s\n' "$url"
+}
+
+redact_remote_urls() {
+  local url
+
+  while IFS= read -r url; do
+    redact_remote_url "$url"
+  done <<< "$1"
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --fetch)
@@ -75,9 +99,13 @@ if ! git remote get-url "$UPSTREAM_REMOTE" >/dev/null 2>&1; then
 fi
 
 origin_fetch="$(git remote get-url "$ORIGIN_REMOTE")"
-origin_push="$(git remote get-url --push "$ORIGIN_REMOTE" 2>/dev/null || true)"
+origin_push="$(git remote get-url --push --all "$ORIGIN_REMOTE" 2>/dev/null || true)"
 upstream_fetch="$(git remote get-url "$UPSTREAM_REMOTE")"
-upstream_push="$(git remote get-url --push "$UPSTREAM_REMOTE" 2>/dev/null || true)"
+upstream_push="$(git remote get-url --push --all "$UPSTREAM_REMOTE" 2>/dev/null || true)"
+origin_fetch_redacted="$(redact_remote_url "$origin_fetch")"
+origin_push_redacted="$(redact_remote_urls "$origin_push")"
+upstream_fetch_redacted="$(redact_remote_url "$upstream_fetch")"
+upstream_push_redacted="$(redact_remote_urls "$upstream_push")"
 
 if ! git rev-parse --verify --quiet "$upstream_ref" >/dev/null; then
   echo "ERROR: missing upstream ref '$upstream_ref'. Run with --fetch." >&2
@@ -89,8 +117,14 @@ if ! git rev-parse --verify --quiet "$origin_ref" >/dev/null; then
   exit 1
 fi
 
-if [ "$upstream_push" != "DISABLED" ] && [ "$upstream_push" != "no_push" ]; then
-  echo "ERROR: upstream push URL is enabled: $upstream_push" >&2
+invalid_upstream_push="$(
+  printf '%s\n' "$upstream_push" | awk '$0 != "DISABLED" && $0 != "no_push" { print; exit }'
+)"
+
+if [ -n "$invalid_upstream_push" ]; then
+  invalid_upstream_push_redacted="$(redact_remote_url "$invalid_upstream_push")"
+  echo "ERROR: upstream push URL is enabled: $upstream_push_redacted" >&2
+  echo "       First enabled URL: $invalid_upstream_push_redacted" >&2
   echo "       Set it to DISABLED for downstream fork work." >&2
   exit 1
 fi
@@ -107,10 +141,10 @@ origin_ahead="${origin_counts##*[[:space:]]}"
 echo "Fork/upstream tracking readback"
 echo
 echo "branch: ${branch:-DETACHED}"
-echo "origin fetch: $origin_fetch"
-echo "origin push:  $origin_push"
-echo "upstream fetch: $upstream_fetch"
-echo "upstream push:  $upstream_push"
+echo "origin fetch: $origin_fetch_redacted"
+echo "origin push:  $origin_push_redacted"
+echo "upstream fetch: $upstream_fetch_redacted"
+echo "upstream push:  $upstream_push_redacted"
 echo
 echo "against $upstream_ref: behind $upstream_behind, ahead $upstream_ahead"
 echo "against $origin_ref: behind $origin_behind, ahead $origin_ahead"
