@@ -35,16 +35,18 @@
  *
  * The doctor renders both side by side.
  *
- * Drift contract: every check name that ships in doctor.ts MUST appear in
- * exactly one set below. The drift-guard test in
- * `test/doctor-categories.test.ts` enforces this by reading doctor.ts source
- * via a tagged-string scan and asserting set membership exactly.
+ * Drift contract: every check name that ships in doctor.ts OR is merged into
+ * the doctor report from `src/core/onboard/checks.ts` (via
+ * `runAllOnboardChecks` → `categorizeCheck(c.name)`) MUST appear in exactly
+ * one set below. The drift-guard test in `test/doctor-categories.test.ts`
+ * enforces this by reading BOTH source files via a tagged-string scan and
+ * asserting set membership exactly.
  *
- * If you add a new doctor check, you MUST add its name to the appropriate
- * set here. The categorize step in `src/commands/doctor.ts` falls through
- * to 'meta' for any unknown name AND emits a once-per-process stderr warn
- * so a missing addition surfaces in dev runs even before the test catches
- * it in CI.
+ * If you add a new doctor check — in doctor.ts or in onboard/checks.ts — you
+ * MUST add its name to the appropriate set here. The categorize step in
+ * `src/commands/doctor.ts` falls through to 'meta' for any unknown name AND
+ * emits a once-per-process stderr warn so a missing addition surfaces in dev
+ * runs even before the test catches it in CI.
  */
 
 export type CheckCategory = 'brain' | 'skill' | 'ops' | 'meta';
@@ -67,11 +69,13 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'cross_modal_modality_backfill',
   'cycle_freshness',
   'effective_date_health',
+  'embed_staleness',
   'embedding_column_registry',
   'embedding_env_override',
   'embedding_provider',
   'embedding_width_consistency',
   'embeddings',
+  'entity_link_coverage',
   'eval_drift',
   'extract_atoms_backlog',
   'extract_health',
@@ -101,7 +105,9 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'stub_guard_24h',
   'sync_failures',
   'sync_freshness',
+  'takes_count',
   'takes_weight_grid',
+  'timeline_coverage',
   'unified_multimodal_coverage',
   'voice_gate_health',
 ]);
@@ -166,15 +172,18 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
  */
 export const META_CHECK_NAMES: ReadonlySet<string> = new Set([
   'cycle_phase_scope',
+  'dangling_aliases',
   'eval_capture',
   'minions_migration',
   'multi_source_drift',
+  'pack_upgrade_available',
   'schema_pack_active',
   'schema_pack_consistency',
   'schema_pack_source_drift',
   'schema_version',
   'slug_fallback_audit',
   'timeline_dedup_index',
+  'type_proliferation',
   'upgrade_errors',
 ]);
 

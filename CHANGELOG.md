@@ -2,6 +2,18 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.52.1] - 2026-06-23
+
+**`gbrain doctor` runs clean — no more spurious "unknown check name" warnings.** Seven onboard health checks (embedding staleness, entity-link coverage, timeline coverage, takes count, schema-pack upgrade, type proliferation, dangling aliases) are merged into the doctor report but were missing from its category map. Every `gbrain doctor` run printed a stderr warning for each and filed them under the wrong category. They're now categorized correctly, and the drift-guard test was widened so the gap can't reopen.
+
+To take advantage of v0.42.52.1, just run `gbrain doctor` — the seven `unknown check name … defaulting to 'meta'` lines are gone and the affected checks now score under the right category.
+
+### Fixed
+- **`gbrain doctor` no longer warns on every run.** The seven onboard checks the report categorizes are now registered (four as data-health, three as gbrain-coherence), so doctor stops printing `unknown check name … defaulting to 'meta'` and the affected checks land in the correct category bucket.
+
+### Changed
+- **The doctor category drift-guard now scans `src/core/onboard/checks.ts` too.** It previously read only `src/commands/doctor.ts`, so checks contributed by the onboard subsystem slipped past CI and degraded to `meta` at runtime. The guard now covers both source files, so a new onboard check that isn't categorized fails the build instead of warning silently in production.
+
 ## [0.42.52.0] - 2026-06-18
 
 **Autopilot stops manufacturing dead jobs and wedging its own queue, plus four operational rough edges get fixed: minion attempt-accounting, `agent run` flag parsing, honest `sources status`, and a budgeted `gbrain status`.** On a multi-source Postgres brain, autopilot could fan out a continuous stream of dead `autopilot-cycle` jobs while the supervisor periodically wedged the very queue it exists to keep alive. The root cause was one disease with several interacting parts; this wave addresses all of them, then cleans up four smaller reliability bugs found alongside.
