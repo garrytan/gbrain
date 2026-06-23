@@ -28,10 +28,13 @@ import { join } from 'node:path';
 
 const ROOT = process.cwd();
 const SRC = join(ROOT, 'src');
-// Method-call form only (`.executeRaw(`, `.unsafe(`, `.query(`) — every DB call
-// in this codebase is a method invocation, so requiring the leading `.` avoids
-// matching the bare word "query" in prose/identifiers.
-const CALL_RE = /\.(executeRaw|unsafe|query)\s*(?:<[^>]*>)?\s*\(/g;
+// Method-call form only (`.executeRaw(`, `.executeRawDirect(`, `.unsafe(`,
+// `.query(`) — every DB call in this codebase is a method invocation, so
+// requiring the leading `.` avoids matching the bare word "query" in prose.
+// executeRawDirect shares the same `.unsafe()` body as executeRaw (runUnsafe),
+// so it double-encodes identically — it MUST be covered. Longest-first so
+// `executeRawDirect` isn't shadowed by the `executeRaw` alternative.
+const CALL_RE = /\.(executeRawDirect|executeRaw|unsafe|query)\s*(?:<[^>]*>)?\s*\(/g;
 
 /**
  * Blank out // and /* *\/ comments (replace their chars with spaces, keeping
