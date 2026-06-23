@@ -37,6 +37,7 @@ Repo: https://github.com/garrytan/gbrain
 
 - [docs/GBRAIN_VERIFY.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_VERIFY.md): 7-check post-setup verification. Start here when something feels off.
 - [docs/guides/minions-fix.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/minions-fix.md): Troubleshooting the Minions job queue.
+- [docs/operations/fork-upstream-policy.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/operations/fork-upstream-policy.md): Downstream fork policy: track upstream, pin runtime to the fork only for proved local patches, and run the fork/upstream readback before keep/drop decisions.
 - [docs/integrations/reliability-repair.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/integrations/reliability-repair.md): Data integrity recovery.
 
 ## Migrations

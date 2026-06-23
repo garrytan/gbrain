@@ -11,7 +11,7 @@ import { describe, test, expect } from 'bun:test';
 import { writeFileSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { runEvalReplay } from '../src/commands/eval-replay.ts';
+import { buildPrivacySafeReplayDrill, runEvalReplay, type ReplayRowResult } from '../src/commands/eval-replay.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { SearchResult } from '../src/core/types.ts';
 
@@ -20,7 +20,7 @@ import type { SearchResult } from '../src/core/types.ts';
 function makeStubEngine(returns: Record<string, SearchResult[]>): BrainEngine {
   return {
     kind: 'pglite',
-    searchKeyword: async (q: string) => returns[q] ?? [],
+    searchKeyword: async (q: string, opts?: { limit?: number }) => (returns[q] ?? []).slice(0, opts?.limit),
     searchVector: async () => [],
   } as unknown as BrainEngine;
 }
@@ -245,6 +245,28 @@ describe('gbrain eval replay — happy path', () => {
     });
   });
 
+  test('--compare-limit captured compares current results at each captured row count', async () => {
+    await withTmp(async (dir) => {
+      const ndjson = JSON.stringify(makeCapturedRow({
+        query: 'q',
+        retrieved_slugs: ['a', 'b'],
+      })) + '\n';
+      const file = join(dir, 'baseline.ndjson');
+      writeFileSync(file, ndjson);
+
+      const engine = makeStubEngine({
+        q: [fakeResult('a'), fakeResult('b'), fakeResult('c'), fakeResult('d')],
+      });
+
+      const cap = captureStdoutStderr();
+      await runEvalReplay(engine, ['--against', file, '--json', '--verbose', '--compare-limit', 'captured']);
+      const { stdout } = cap.restore();
+      const out = JSON.parse(stdout);
+      expect(out.summary.mean_jaccard).toBe(1);
+      expect(out.results[0].current_slugs).toEqual(['a', 'b']);
+    });
+  });
+
   test('empty query is skipped, not counted in replayed', async () => {
     await withTmp(async (dir) => {
       const ndjson = JSON.stringify(makeCapturedRow({ query: '', retrieved_slugs: [] })) + '\n';
@@ -318,6 +340,83 @@ describe('gbrain eval replay — happy path', () => {
       expect(stdout).toContain('Top-1 stability:');
       expect(stdout).toContain('regression');
     });
+  });
+});
+
+describe('gbrain eval replay — privacy-safe drill', () => {
+  test('reports query hashes and metrics without query text or slugs', () => {
+    const results: ReplayRowResult[] = [
+      {
+        id: 1,
+        tool_name: 'query',
+        query_hash: 'hash-low',
+        query: 'private query text',
+        jaccard: 0.1,
+        top1Match: false,
+        captured_slugs: ['private/captured'],
+        current_slugs: ['private/current'],
+        current_latency_ms: 250,
+        latency_delta_ms: 150,
+      },
+      {
+        id: 2,
+        tool_name: 'query',
+        query_hash: 'hash-good',
+        query: 'another private query',
+        jaccard: 1,
+        top1Match: true,
+        captured_slugs: ['private/same'],
+        current_slugs: ['private/same'],
+        current_latency_ms: 100,
+        latency_delta_ms: 10,
+      },
+    ];
+
+    const drill = buildPrivacySafeReplayDrill(results, { limit: 1 });
+    expect(drill.rows_considered).toBe(2);
+    expect(drill.top_low_overlap).toHaveLength(1);
+    expect(drill.top_low_overlap[0]!.query_hash).toBe('hash-low');
+    expect(drill.top_low_overlap[0]!.jaccard).toBe(0.1);
+    expect(drill.top_low_overlap[0]!.captured_count).toBe(1);
+    expect(drill.top_low_overlap[0]!.current_count).toBe(1);
+
+    const serialized = JSON.stringify(drill);
+    expect(serialized).toContain('hash-low');
+    expect(serialized).not.toContain('private query text');
+    expect(serialized).not.toContain('another private query');
+    expect(serialized).not.toContain('private/captured');
+    expect(serialized).not.toContain('private/current');
+    expect(serialized).not.toContain('private/same');
+  });
+
+  test('redacts raw error messages from errored drill rows', () => {
+    const results: ReplayRowResult[] = [
+      {
+        id: 1,
+        tool_name: 'query',
+        query_hash: 'hash-error',
+        query: 'private failing query',
+        jaccard: 0,
+        top1Match: false,
+        captured_slugs: ['private/captured'],
+        current_slugs: [],
+        current_latency_ms: 25,
+        latency_delta_ms: 10,
+        errored: true,
+        error_message: 'failed for private failing query at /Users/sawbeck/private/baseline.ndjson',
+      },
+    ];
+
+    const drill = buildPrivacySafeReplayDrill(results, { limit: 1 });
+
+    expect(drill.errored).toHaveLength(1);
+    expect(drill.errored[0]!.reason).toBe('replay_error');
+    const serialized = JSON.stringify(drill);
+    expect(serialized).toContain('hash-error');
+    expect(serialized).toContain('replay_error');
+    expect(serialized).not.toContain('private failing query');
+    expect(serialized).not.toContain('/Users/sawbeck/private/baseline.ndjson');
+    expect(serialized).not.toContain('private/captured');
   });
 });
 

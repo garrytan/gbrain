@@ -127,3 +127,11 @@ use generic placeholders (`alice-example`, `acme-example`, `fund-a`).
 
 If you are a fork, regenerate `llms.txt` + `llms-full.txt` with your own URL base before
 publishing: `LLMS_REPO_BASE=https://raw.githubusercontent.com/your-org/your-fork/main bun run build:llms`.
+
+## Fork Runtime Policy
+
+Runtime may pin to the downstream fork, but GBrain code should keep tracking
+upstream with local patches carried as a small, reviewed queue. Run
+`bun run check:upstream -- --fetch` before deciding whether a local patch is a
+keeper, a backport, or redundant with upstream. See
+[`docs/operations/fork-upstream-policy.md`](./docs/operations/fork-upstream-policy.md).

@@ -74,6 +74,10 @@ export interface GBrainConfig {
    * validates the shape at runtime.
    */
   storage?: unknown;
+  outlook?: {
+    client_id?: string;
+    tenant_id?: string;
+  };
   /**
    * v0.25.0 — session capture settings. Read via file-plane `loadConfig()`
    * at process boot (NOT `gbrain config set` which writes the DB plane —

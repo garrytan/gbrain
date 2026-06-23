@@ -44,7 +44,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'budget', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch']);
+const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'budget', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'outlook', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -67,6 +67,7 @@ const CLI_ONLY_SELF_HELP = new Set([
   // runCapture saw --help. brainstorm + lsd were already in the set;
   // capture was the holdout.
   'capture',
+  'outlook',
   // v0.42 self-upgrade ships its own usage (flags + the agent-skill story).
   'self-upgrade',
   // v0.43 (#2095): watch ships WATCH_HELP (flags + the stdin-turn protocol).
@@ -1178,6 +1179,11 @@ async function handleCliOnly(command: string, args: string[]) {
     await runCache(args);
     return;
   }
+  if (command === 'outlook' && (args[0] === 'login' || !args.includes('--write'))) {
+    const { runOutlook } = await import('./commands/outlook.ts');
+    await runOutlook(null, args);
+    return;
+  }
   if (command === 'routing-eval') {
     const { runRoutingEvalCli } = await import('./commands/routing-eval.ts');
     await runRoutingEvalCli(args);
@@ -1785,6 +1791,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runCapture(engine, args);
         break;
       }
+      case 'outlook': {
+        const { runOutlook } = await import('./commands/outlook.ts');
+        await runOutlook(engine, args);
+        break;
+      }
       case 'conversation-parser': {
         // v0.41.13.0 — debug + introspection CLI for the new parser
         // cathedral. `scan <slug>` requires a connected brain; the
@@ -2161,11 +2172,8 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
       // clear per startup is microseconds, no hot path.
       configureGateway(buildGatewayConfig(merged));
     }
-    const { configureBudgetTrackerDefaults } = await import('./core/budget/budget-tracker.ts');
-    const { resolveMonthlyBudgetCapFromEngine } = await import('./core/budget/monthly-cap.ts');
-    configureBudgetTrackerDefaults({
-      monthlyBudget: await resolveMonthlyBudgetCapFromEngine(engine),
-    });
+    const { configureBudgetTrackerDefaultsFromEngine } = await import('./core/budget/defaults.ts');
+    await configureBudgetTrackerDefaultsFromEngine(engine);
     // v0.31.12: re-resolve gateway defaults through resolveModel so
     // `models.tier.*` and `models.default` overrides apply to expansion +
     // chat. Per Codex F3 — configureGateway is sync; this is the async
@@ -2290,6 +2298,8 @@ BRAIN (capture / ideate / explore — v0.37/v0.38)
   capture [content] [--file PATH]    Single entrypoint for getting content into the brain
         [--stdin] [--slug s] [--type t]   Inline content / file / stdin; writes to inbox/ by default
         [--source ID] [--quiet|--json]    Multi-source brains: route to a non-default source
+  outlook login                      Sign in to Microsoft and store a local Outlook token
+  outlook scan [--dry-run|--write]   Strict Outlook inbox/calendar/contact collector
   brainstorm <question> [--json]     Bisociation idea generator (hybrid search + far-set + judge)
         [--save|--no-save] [--limit N]
   lsd <question> [--json]            Lateral Synaptic Drift: inverted-judge brainstorm

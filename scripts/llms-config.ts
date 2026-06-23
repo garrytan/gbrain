@@ -200,6 +200,12 @@ export const SECTIONS: DocSection[] = [
         path: "docs/guides/minions-fix.md",
       },
       {
+        title: "docs/operations/fork-upstream-policy.md",
+        description:
+          "Downstream fork policy: track upstream, pin runtime to the fork only for proved local patches, and run the fork/upstream readback before keep/drop decisions.",
+        path: "docs/operations/fork-upstream-policy.md",
+      },
+      {
         title: "docs/integrations/reliability-repair.md",
         description: "Data integrity recovery.",
         path: "docs/integrations/reliability-repair.md",

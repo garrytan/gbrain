@@ -30,6 +30,7 @@ import {
 import {
   BudgetTracker,
   BudgetExhausted,
+  configureBudgetTrackerDefaults,
   _resetBudgetTrackerWarningsForTest,
 } from '../../../src/core/budget/budget-tracker.ts';
 import { isoWeekFilename } from '../../../src/core/audit-week-file.ts';
@@ -46,6 +47,7 @@ beforeEach(() => {
 
 afterEach(() => {
   __setChatTransportForTests(null);
+  configureBudgetTrackerDefaults({});
   rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -159,6 +161,33 @@ describe('withBudgetTracker — scope semantics', () => {
     expect(rows.map(r => r.event)).toEqual(['reserve', 'record']);
     expect(rows.every(r => r.label === 'gateway.unscoped')).toBe(true);
     expect(rows[1].actual_cost_usd).toBeGreaterThan(0);
+  });
+
+  test('chat() OUTSIDE any scope applies the configured monthly default before provider spend', async () => {
+    const transport = fakeChatTransport();
+    __setChatTransportForTests(transport);
+    configureBudgetTrackerDefaults({
+      monthlyBudget: { maxCostUsd: 0.0001, mode: 'block' },
+    });
+
+    await withAuditDir(async () => {
+      await expect(chat({
+        model: 'claude-haiku-4-5-20251001',
+        messages: [{ role: 'user', content: 'hi' }],
+        maxTokens: 4096,
+      })).rejects.toThrow(BudgetExhausted);
+    });
+
+    expect(transport.calls).toBe(0);
+
+    const receiptPath = join(tmp, isoWeekFilename('budget'));
+    const rows = readFileSync(receiptPath, 'utf8')
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    expect(rows.map(r => r.event)).toEqual(['monthly_budget_denied']);
+    expect(rows[0].label).toBe('gateway.unscoped');
+    expect(rows[0].sub_label).toBe('gateway.chat');
   });
 
   test('chat() OUTSIDE any scope uses an explicit budget label for attribution', async () => {

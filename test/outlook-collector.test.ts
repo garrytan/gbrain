@@ -1,0 +1,144 @@
+import { describe, expect, test } from 'bun:test';
+import { scanOutlook } from '../src/core/outlook-collector.ts';
+
+describe('outlook collector strict scan', () => {
+  test('keeps direct, active, calendar-linked business mail and skips marketing/no-reply', () => {
+    const summary = scanOutlook({
+      selfDomains: ['example-user.com'],
+      knownDomains: ['partner-example.com'],
+      contacts: [
+        {
+          id: 'c1',
+          displayName: 'Person One',
+          companyName: 'Partner Example',
+          emailAddresses: [{ name: 'Person One', address: 'person.one@partner-example.com' }],
+        },
+      ],
+      events: [
+        {
+          id: 'event-1',
+          subject: 'Follow-up meeting',
+          start: { dateTime: '2026-06-22T15:00:00Z' },
+          attendees: [
+            { emailAddress: { name: 'Person One', address: 'person.one@partner-example.com' } },
+            { emailAddress: { name: 'The User', address: 'me@example-user.com' } },
+          ],
+        },
+      ],
+      messages: [
+        {
+          id: 'm1',
+          conversationId: 'thread-1',
+          subject: 'Re: Proposal timing',
+          receivedDateTime: '2026-06-22T12:00:00Z',
+          from: { emailAddress: { name: 'Person One', address: 'person.one@partner-example.com' } },
+          toRecipients: [{ emailAddress: { name: 'The User', address: 'me@example-user.com' } }],
+          bodyPreview: 'Here is the revised timing.',
+        },
+        {
+          id: 'm2',
+          conversationId: 'thread-1',
+          subject: 'Proposal timing',
+          receivedDateTime: '2026-06-21T12:00:00Z',
+          from: { emailAddress: { name: 'Person One', address: 'person.one@partner-example.com' } },
+          toRecipients: [{ emailAddress: { name: 'The User', address: 'me@example-user.com' } }],
+          bodyPreview: 'Can we discuss timing?',
+        },
+        {
+          id: 'm3',
+          conversationId: 'thread-2',
+          subject: 'June newsletter sale',
+          receivedDateTime: '2026-06-20T12:00:00Z',
+          from: { emailAddress: { name: 'Marketing', address: 'newsletter@vendor-example.com' } },
+          toRecipients: [{ emailAddress: { name: 'The User', address: 'me@example-user.com' } }],
+          bodyPreview: 'Unsubscribe for fewer promotions.',
+        },
+      ],
+    });
+
+    expect(summary.skipped_spam_newsletters).toBe(1);
+    expect(summary.people_detected).toBe(1);
+    expect(summary.threads_worth_saving).toBe(1);
+    expect(summary.people[0]?.email).toBe('person.one@partner-example.com');
+    expect(summary.people[0]?.reasons).toContain('calendar-linked person');
+    expect(summary.threads[0]?.messageCount).toBe(2);
+  });
+
+  test('skips obvious cold spam from unknown domains', () => {
+    const summary = scanOutlook({
+      selfDomains: ['example-user.com'],
+      messages: [
+        {
+          id: 'm1',
+          conversationId: 'cold-1',
+          subject: 'Cold outreach promotion',
+          receivedDateTime: '2026-06-22T12:00:00Z',
+          from: { emailAddress: { name: 'Cold Sender', address: 'sender@unknown-example.com' } },
+          toRecipients: [{ emailAddress: { name: 'The User', address: 'me@example-user.com' } }],
+          bodyPreview: 'Limited time webinar. Unsubscribe here.',
+        },
+      ],
+      events: [],
+      contacts: [],
+    });
+
+    expect(summary.people_detected).toBe(0);
+    expect(summary.threads_worth_saving).toBe(0);
+    expect(summary.skipped_spam_newsletters).toBe(1);
+  });
+
+  test('does not treat every addressed message as direct when self domain is unknown', () => {
+    const summary = scanOutlook({
+      messages: [
+        {
+          id: 'm1',
+          conversationId: 'unknown-direct',
+          subject: 'Quick question',
+          receivedDateTime: '2026-06-22T12:00:00Z',
+          from: { emailAddress: { name: 'Sender Example', address: 'sender@unknown-example.com' } },
+          toRecipients: [{ emailAddress: { name: 'The User', address: 'me@example-user.com' } }],
+          bodyPreview: 'Can we talk next week?',
+        },
+      ],
+      events: [],
+      contacts: [],
+    });
+
+    expect(summary.people_detected).toBe(0);
+    expect(summary.threads_worth_saving).toBe(0);
+    expect(summary.skipped_spam_newsletters).toBe(1);
+  });
+
+  test('uses exact self email rather than hiding everyone on a shared provider', () => {
+    const summary = scanOutlook({
+      selfEmails: ['me@outlook.com'],
+      selfDomains: [],
+      messages: [
+        {
+          id: 'm1',
+          conversationId: 'shared-provider',
+          subject: 'Re: Intro',
+          receivedDateTime: '2026-06-22T12:00:00Z',
+          from: { emailAddress: { name: 'Person Two', address: 'person.two@outlook.com' } },
+          toRecipients: [{ emailAddress: { name: 'The User', address: 'me@outlook.com' } }],
+          bodyPreview: 'Thanks for the intro.',
+        },
+        {
+          id: 'm2',
+          conversationId: 'self-sent',
+          subject: 'Note to self',
+          receivedDateTime: '2026-06-22T13:00:00Z',
+          from: { emailAddress: { name: 'The User', address: 'me@outlook.com' } },
+          toRecipients: [{ emailAddress: { name: 'Person Two', address: 'person.two@outlook.com' } }],
+          bodyPreview: 'This should not become a person page.',
+        },
+      ],
+      events: [],
+      contacts: [],
+    });
+
+    expect(summary.people_detected).toBe(1);
+    expect(summary.people[0]?.email).toBe('person.two@outlook.com');
+    expect(summary.skipped_spam_newsletters).toBe(1);
+  });
+});

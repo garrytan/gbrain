@@ -157,6 +157,24 @@ describe('put_page provenance — trusted local caller (ctx.remote === false)', 
     expect(prov.ingested_via).toBeNull();
     expect(prov.ingested_at).toBeInstanceOf(Date);
   });
+
+  test('untrusted local payload preserves provenance but skips graph/timeline hooks', async () => {
+    const ctx = makeCtx({ remote: false });
+    const result = await putPageOp.handler(ctx, {
+      slug: 'wiki/p3a-untrusted-local',
+      content: '---\ntype: note\ntitle: Untrusted Local\n---\n\nexternal sender text mentioning people/example',
+      source_kind: 'outlook-collector',
+      source_uri: 'outlook://threads/1',
+      ingested_via: 'outlook-collector',
+      untrusted_payload: true,
+    }) as { auto_links?: { skipped?: string }; auto_timeline?: { skipped?: string } };
+    const prov = await readProvenance('wiki/p3a-untrusted-local');
+    expect(prov.source_kind).toBe('outlook-collector');
+    expect(prov.source_uri).toBe('outlook://threads/1');
+    expect(prov.ingested_via).toBe('outlook-collector');
+    expect(result.auto_links?.skipped).toBe('remote');
+    expect(result.auto_timeline?.skipped).toBe('remote');
+  });
 });
 
 describe('put_page provenance — CV6 spoofing guard (ctx.remote !== false)', () => {
