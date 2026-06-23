@@ -124,6 +124,23 @@ describe('put_page write-through — happy path', () => {
     // is `ingested_via: 'mcp:put_page'`. Match the value substring.
     expect(onDisk).toMatch(/ingested_via:\s*['"]?mcp:put_page['"]?/);
   });
+
+  test('local untrusted payload writes collector provenance to disk', async () => {
+    const ctx = makeCtx({ remote: false });
+    const result = (await putPage.handler(ctx, {
+      slug: 'inbox/outlook-prov',
+      content: '---\ntitle: Outlook Provenance\n---\n\nexternal sender text',
+      source_kind: 'outlook-collector',
+      source_uri: 'outlook://threads/1',
+      ingested_via: 'outlook-collector',
+      untrusted_payload: true,
+    })) as { write_through?: { written: boolean; path?: string } };
+    expect(result.write_through?.written).toBe(true);
+    const onDisk = fs.readFileSync(result.write_through!.path!, 'utf8');
+    expect(onDisk).toMatch(/ingested_via:\s*outlook-collector/);
+    expect(onDisk).toMatch(/source_kind:\s*outlook-collector/);
+    expect(onDisk).toMatch(/source_uri:\s*['"]?outlook:\/\/threads\/1['"]?/);
+  });
 });
 
 describe('put_page write-through — trust gating', () => {

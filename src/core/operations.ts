@@ -905,17 +905,22 @@ const put_page: Operation = {
       && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
     if (!ctx.dryRun && result.status !== 'error' && !isSandboxSubagent) {
       const sourceId = ctx.sourceId ?? 'default';
-      const provenanceVia = ctx.remote === false ? 'put_page' : 'mcp:put_page';
+      const writeThroughVia = provenanceVia ?? (ctx.remote === false ? 'put_page' : 'mcp:put_page');
+      const writeThroughKind = provenanceKind ?? writeThroughVia;
+      const frontmatterOverrides: Record<string, unknown> = {
+        ingested_via: writeThroughVia,
+        ingested_at: new Date().toISOString(),
+        source_kind: writeThroughKind,
+      };
+      if (provenanceUri) {
+        frontmatterOverrides.source_uri = provenanceUri;
+      }
       // Shared canonical write-through (also used by `gbrain brainstorm/lsd
       // --save`). Renders the file from the saved DB row and writes it
       // atomically; never throws (failures land in skipped/error).
       writeThrough = await writePageThrough(ctx.engine, result.slug, {
         sourceId,
-        frontmatterOverrides: {
-          ingested_via: provenanceVia,
-          ingested_at: new Date().toISOString(),
-          source_kind: provenanceVia,
-        },
+        frontmatterOverrides,
         logger: ctx.logger,
       });
     } else if (isSandboxSubagent) {
