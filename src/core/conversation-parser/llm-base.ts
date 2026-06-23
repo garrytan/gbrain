@@ -290,41 +290,7 @@ function splitCacheKey(key: string): [string?, string?, string?] {
   return [shape, model, sha];
 }
 
-/**
- * 4-strategy JSON repair (lifted from `eval/longmemeval/extract.ts:50`
- * for object-shaped output; the original was array-shaped). Caller's
- * `parse` function uses this for tolerant LLM-output decoding.
- *
- * Strategies:
- *   1. Strip ```json...``` fences if present, then JSON.parse.
- *   2. Direct JSON.parse.
- *   3. Find first {...} substring (or [...] if array=true) and parse.
- *   4. Return null.
- *
- * Adversarial input throws caught by caller's try/catch (parse returns
- * null upstream).
- */
-export function parseLlmJson<T>(raw: string, opts: { array?: boolean } = {}): T | null {
-  if (typeof raw !== 'string' || !raw.trim()) return null;
-  const fenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)```/i);
-  const cleaned = (fenceMatch ? fenceMatch[1] : raw).trim();
-  try {
-    const direct = JSON.parse(cleaned);
-    if (opts.array && Array.isArray(direct)) return direct as T;
-    if (!opts.array && direct !== null && typeof direct === 'object') return direct as T;
-  } catch {
-    // fall through
-  }
-  const pattern = opts.array ? /\[[\s\S]*\]/ : /\{[\s\S]*\}/;
-  const match = cleaned.match(pattern);
-  if (match) {
-    try {
-      const second = JSON.parse(match[0]);
-      if (opts.array && Array.isArray(second)) return second as T;
-      if (!opts.array && second !== null && typeof second === 'object') return second as T;
-    } catch {
-      // fall through
-    }
-  }
-  return null;
-}
+// Tolerant LLM-output JSON decoder. Re-exported from the leaf util so existing
+// importers (llm-fallback, llm-polish) keep their import path while the gateway
+// can reuse it without a dependency cycle.
+export { parseLlmJson } from '../llm-json.ts';
