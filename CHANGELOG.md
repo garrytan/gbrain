@@ -2,6 +2,21 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.49.0] - 2026-06-22
+
+**`timeline_coverage` finally tells the truth, and you can actually move it.** A well-maintained brain could show 92% timeline coverage and still score 1 out of 15 on the brain-score timeline component. The score was computed from a different ratio than the metric it displayed: the displayed coverage is entity-scoped (fraction of person/company pages that have a timeline), but the score divided "pages with any timeline" by "every page in the brain" — so the thousands of leaf docs that never get a timeline by design dragged the score toward zero, and dragged it lower the more the brain grew. More coverage, lower score. The score now derives from the entity-scoped coverage it shows, in both engines.
+
+The second half closes the gap that made the metric feel stuck. The contradiction-probe timeline writer only emits entries for pages with a detectable temporal contradiction, which is a minority, so coverage plateaued with no way up. `apply_timeline_baseline` is an opt-in, idempotent pass that gives every entity page without a timeline one creation-date "Page created" entry, dated at the page's earliest known instant and sourced `baseline` so synthetic rows stay distinguishable from substantive ones. Run it after a sync or on a schedule and coverage reflects reality.
+
+### Fixed
+- `getHealth().timeline_coverage_score` now derives from the entity-scoped `timeline_coverage` it displays instead of a whole-brain `pages_with_timeline / page_count` density (pglite + postgres engines, kept in lockstep). Drops the now-unused `pages_with_timeline` query column. Regression test seeds full entity coverage amid many timeline-less leaf docs and asserts the score follows the entity fraction.
+
+### Added
+- `apply_timeline_baseline` op (scope `write`, local-only) + `Engine.applyTimelineBaseline(opts?)` in both engines: backfills a creation-date baseline timeline entry for every entity page (person/company) with no timeline, idempotent via the `(page_id, date, summary, source)` dedup index plus a `NOT EXISTS` guard, source-scoped when a `sourceId` is given.
+
+### To take advantage of v0.42.49.0
+`gbrain upgrade`. Brain scores recompute on the next `get_health` / `gbrain doctor` with no action needed — a brain whose entity pages already carry timelines will see its timeline component jump from near-zero to its true value. To lift coverage further, run `gbrain timeline-baseline` (or the `apply_timeline_baseline` op) after a sync; it is idempotent and safe to schedule.
+
 ## [0.42.48.0] - 2026-06-16
 
 **Brain repos harden themselves for durability the moment gbrain is given a PAT and a GitHub URL.** Fresh agents kept drifting out of sync with their knowledge-wiki git repos: writes sat local-only and never pushed, long-lived sessions edited a stale tree, and scratch output landed outside the repo and vanished. Now `gbrain sources add --url <repo> --pat-file <p>` auto-hardens the managed clone, and `gbrain sources harden <id>` runs the same audit idempotently against any source. Hardening is six always-on guarantees: it pulls current state (divergence-safe rebase that skips a dirty tree and never leaves a half-rebase), installs a local auto-push safety net, ships a committed `scripts/brain-commit-push.sh` that refuses to report success without a confirmed push, writes always-on durability rules into the agent's context file (deterministic filing from the canonical taxonomy, commit-and-push-never-deferred, pull-before-each-write-batch), registers a 30-minute background pull so an idle session can't go stale, and verifies push access up front.
