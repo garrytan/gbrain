@@ -57,7 +57,7 @@ Both run Bun natively. No bundling, no Deno, no cold start, no timeout limits.
 | Works when laptop is off | No | No | Yes |
 | Cold start | None | None | None |
 | Timeout limits | None | None | None |
-| All 30 operations | Yes | Yes | Yes |
+| Shared operation registry | Yes | Yes | Yes |
 | Setup time | 5 min | 10 min | 15 min |
 
 See [DEPLOY.md](DEPLOY.md) for token setup and client-specific connection

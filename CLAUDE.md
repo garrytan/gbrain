@@ -4,8 +4,8 @@ MBrain is a personal knowledge brain. It now ships in two truthful runtime profi
 
 ## Architecture
 
-Contract-first: `src/core/operations.ts` defines ~30 shared operations. CLI and MCP
-server are both generated from this single source. Skills are fat markdown files
+Contract-first: `src/core/operations.ts` defines the shared operation registry.
+CLI and MCP server are both generated from this single source. Skills are fat markdown files
 (tool-agnostic, work with both CLI and plugin contexts). The engine is selected at
 runtime (`postgres` or `sqlite`), while offline profile policy controls what stays
 available in local mode versus what must fail with honest guidance.

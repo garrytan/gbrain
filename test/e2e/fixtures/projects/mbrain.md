@@ -14,7 +14,7 @@ using a hybrid RAG architecture.
 
 ## Architecture
 
-- **Contract-first design** — `src/core/operations.ts` defines ~30 shared operations.
+- **Contract-first design** — `src/core/operations.ts` defines the shared operation registry.
   Both the CLI and the MCP server are generated from this single source of truth.
   Adding a new operation means defining it once and getting both interfaces for free.
 - **Postgres-native** — All data lives in Postgres. Embeddings are stored using

@@ -70,7 +70,7 @@ TOP N RESULTS (default 20)
 | `src/core/search/dedup.ts` | 4-layer result deduplication |
 | `src/core/search/expansion.ts` | Multi-query expansion via Claude Haiku |
 | `src/core/storage.ts` | Pluggable storage (S3, Supabase, local) |
-| `src/core/operations.ts` | Contract-first operation definitions (31 ops) |
+| `src/core/operations.ts` | Contract-first shared operation registry |
 | `src/schema.sql` | Full DDL (10 tables, RLS, tsvector, HNSW) |
 
 ## Schema Overview

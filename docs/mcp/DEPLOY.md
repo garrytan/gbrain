@@ -160,8 +160,8 @@ check and client-side live validation as separate gates.
 
 ## Operations
 
-All 30 MBrain operations are available remotely, including `sync_brain` and
-`file_upload` (no timeout limits with self-hosted server).
+The shared MBrain operation registry is available remotely, including
+`sync_brain` and `file_upload` (no timeout limits with self-hosted server).
 
 ## Deployment Options
 
