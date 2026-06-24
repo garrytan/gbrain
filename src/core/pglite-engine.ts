@@ -5328,6 +5328,11 @@ export class PGLiteEngine implements BrainEngine {
       params.push(escaped);
       prefixCondition = `AND p.slug LIKE $${params.length} ESCAPE '\\'`;
     }
+    // Exclude briefing pages from their own Brain Pulse — see the matching
+    // block in postgres-engine.ts getRecentSalience() for the rationale.
+    const excludeBriefings = !(slugPrefix && slugPrefix.startsWith('briefings'))
+      ? `AND p.slug NOT LIKE 'briefings/%'`
+      : '';
     params.push(limit);
     const limitParam = `$${params.length}`;
 
@@ -5363,6 +5368,7 @@ export class PGLiteEngine implements BrainEngine {
          LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
         WHERE GREATEST(p.updated_at, COALESCE(p.salience_touched_at, p.updated_at)) >= $1::timestamptz
           ${prefixCondition}
+          ${excludeBriefings}
         GROUP BY p.id
         ORDER BY score DESC
         LIMIT ${limitParam}`,
