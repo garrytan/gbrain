@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'fs';
 import { operations } from '../src/core/operations.ts';
 import { createMcpToolCatalogProvider } from '../src/mcp/server.ts';
 import {
@@ -10,7 +11,7 @@ import {
 
 // Workstream C1 part 2: tiered tool catalog. Pins the tier classification + the default
 // stdio filter so the daily-driver tools stay visible and control-plane tools stay hidden
-// by default while remaining dispatchable by name and via tool_search.
+// by default; named MCP dispatch must honor the same tier gate.
 
 describe('tiered tool catalog (C1 part 2)', () => {
   test('every operation resolves to a valid tier', () => {
@@ -78,5 +79,11 @@ describe('tiered tool catalog (C1 part 2)', () => {
       expect(isToolVisibleAtTier(admin, resolveAllowedTiers())).toBe(false);
       expect(isToolVisibleAtTier(admin, resolveAllowedTiers('all'))).toBe(true);
     }
+  });
+
+  test('MCP named dispatch uses the same tier gate as the catalog', () => {
+    const source = readFileSync(new URL('../src/mcp/server.ts', import.meta.url), 'utf-8');
+
+    expect(source).toContain('!isToolVisibleAtTier(op, allowedTiers)');
   });
 });

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { operations } from '../src/core/operations.ts';
+import { operations, parseOpArgs } from '../src/core/operations.ts';
 
 const repoRoot = new URL('..', import.meta.url).pathname;
 const repoRootUrl = new URL('..', import.meta.url).href;
@@ -542,8 +542,54 @@ describe('CLI dispatch integration', () => {
     expect(stdout).toContain('route-memory-writeback');
     expect(stdout).toContain('direct canonical write path');
     expect(stdout).toContain('with a real content hash when updating a page');
-    expect(stdout).toContain('Omit the flag for create-only');
-    expect(stdout).toContain('not a literal CLI flag value');
+    expect(stdout).toContain('or the literal value null');
+    expect(stdout).toContain('memory_session_id alone is not a write grant');
+  });
+
+  test('put CLI parses literal null as an absent-page expected content hash', () => {
+    const put = operations.find(operation => operation.name === 'put_page');
+    if (!put) throw new Error('put_page operation is missing');
+
+    const params = parseOpArgs(put, [
+      'concepts/new-cli-page',
+      '--expected-content-hash',
+      'null',
+    ], {
+      stdin: {
+        isTTY: true,
+        read: () => '',
+      },
+      warn: () => {},
+    });
+
+    expect(params).toMatchObject({
+      slug: 'concepts/new-cli-page',
+      expected_content_hash: null,
+    });
+  });
+
+  test('CLI literal null coercion is limited to hash and snapshot preconditions', () => {
+    const registerSource = operations.find(operation => operation.name === 'register_source');
+    if (!registerSource) throw new Error('register_source operation is missing');
+
+    const params = parseOpArgs(registerSource, [
+      '--source-kind',
+      'connector',
+      '--display-name',
+      'Literal Null Source',
+      '--consent-state',
+      'granted',
+      '--connector-id',
+      'null',
+    ], {
+      stdin: {
+        isTTY: true,
+        read: () => '',
+      },
+      warn: () => {},
+    });
+
+    expect(params.connector_id).toBe('null');
   });
 
   test('connectors --help prints usage without DB connection', async () => {

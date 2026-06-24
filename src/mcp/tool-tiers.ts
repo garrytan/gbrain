@@ -49,8 +49,8 @@ const ADMIN_TOOL_NAMES = new Set<string>([
 /**
  * Control-plane / governance / source-registry / maintenance families. These are hidden from
  * the default stdio catalog (they bury the daily-driver tools and are higher-risk to call
- * freely) but remain dispatchable by name and discoverable via tool_search. Matched by
- * substring so the classification stays robust as ops are added.
+ * freely) and are blocked by named MCP dispatch unless their tier is explicitly enabled. Matched
+ * by substring so the classification stays robust as ops are added.
  */
 const ADMIN_NAME_FRAGMENTS = [
   'redaction',

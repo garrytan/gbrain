@@ -3,6 +3,7 @@ import { OperationError, operations } from '../src/core/operations.ts';
 import { allocateSqliteBrain } from './scenarios/helpers.ts';
 
 const STALE_HASH = 'a'.repeat(64);
+const ABSENT_PAGE_PRECONDITION = { expected_content_hash: null };
 
 const content = `---
 type: concept
@@ -70,6 +71,7 @@ describe('memory session access policy', () => {
       await expect(put.handler(ctx(handle), {
         slug: 'concepts/readonly-realm-test',
         content,
+        ...ABSENT_PAGE_PRECONDITION,
         memory_session_id: 'session-readonly',
         realm_id: 'project:readonly',
       })).rejects.toThrow(/read-only/i);
@@ -93,6 +95,7 @@ describe('memory session access policy', () => {
         await put.handler(ctx(handle), {
           slug: 'concepts/missing-realm-test',
           content,
+          ...ABSENT_PAGE_PRECONDITION,
           memory_session_id: 'session-missing-realm',
         });
       } catch (caught) {
@@ -134,6 +137,7 @@ describe('memory session access policy', () => {
       const result = await put.handler(ctx(handle), {
         slug: 'concepts/read-write-realm-test',
         content: citedContent,
+        ...ABSENT_PAGE_PRECONDITION,
         memory_session_id: 'session-read-write',
         realm_id: 'project:read-write',
       }) as any;
@@ -142,6 +146,41 @@ describe('memory session access policy', () => {
       expect(await handle.engine.getPage('concepts/read-write-realm-test')).toMatchObject({
         slug: 'concepts/read-write-realm-test',
       });
+    } finally {
+      await handle.teardown();
+    }
+  });
+
+  test('put_page does not treat memory_session_id alone as a route-first write grant', async () => {
+    const handle = await allocateSqliteBrain('session-access-policy-not-route-grant');
+    const upsertRealm = operation('upsert_memory_realm');
+    const createSession = operation('create_memory_session');
+    const attach = operation('attach_memory_realm_to_session');
+    const put = operation('put_page');
+
+    try {
+      await upsertRealm.handler(ctx(handle), {
+        id: 'project:not-route-grant',
+        name: 'Not Route Grant',
+        scope: 'work',
+        default_access: 'read_only',
+      });
+      await createSession.handler(ctx(handle), {
+        id: 'session-not-route-grant',
+      });
+      await attach.handler(ctx(handle), {
+        session_id: 'session-not-route-grant',
+        realm_id: 'project:not-route-grant',
+        access: 'read_write',
+      });
+
+      await expect(put.handler(ctx(handle), {
+        slug: 'concepts/session-is-not-route-grant',
+        content: citedContent,
+        memory_session_id: 'session-not-route-grant',
+        realm_id: 'project:not-route-grant',
+      })).rejects.toThrow(/route_first/);
+      expect(await handle.engine.getPage('concepts/session-is-not-route-grant')).toBeNull();
     } finally {
       await handle.teardown();
     }
@@ -182,6 +221,7 @@ describe('memory session access policy', () => {
         await put.handler(ctx(handle), {
           slug: 'concepts/archived-realm-policy-test',
           content: citedContent,
+          ...ABSENT_PAGE_PRECONDITION,
           memory_session_id: 'session-archived-policy',
           realm_id: 'project:archived-policy',
         });
@@ -226,6 +266,7 @@ describe('memory session access policy', () => {
         await put.handler(ctx(handle), {
           slug: 'concepts/personal-realm-workspace-scope-test',
           content: citedContent,
+          ...ABSENT_PAGE_PRECONDITION,
           memory_session_id: 'session-personal-policy-deny',
           realm_id: 'personal:policy-deny',
         });
@@ -268,6 +309,7 @@ describe('memory session access policy', () => {
       const result = await put.handler(ctx(handle), {
         slug: 'concepts/personal-realm-personal-scope-test',
         content: citedContent,
+        ...ABSENT_PAGE_PRECONDITION,
         memory_session_id: 'session-personal-policy-allow',
         realm_id: 'personal:policy-allow',
         scope_id: 'personal:policy-test',
@@ -314,6 +356,7 @@ describe('memory session access policy', () => {
         await put.handler(ctx(handle), {
           slug: 'concepts/closed-session-policy-test',
           content: citedContent,
+          ...ABSENT_PAGE_PRECONDITION,
           memory_session_id: 'session-closed-policy',
           realm_id: 'project:closed-session',
         });
@@ -364,6 +407,7 @@ describe('memory session access policy', () => {
         await put.handler(ctx(handle), {
           slug: 'concepts/expired-session-policy-test',
           content: citedContent,
+          ...ABSENT_PAGE_PRECONDITION,
           memory_session_id: 'session-expired-policy',
           realm_id: 'project:expired-session',
         });
@@ -393,6 +437,7 @@ describe('memory session access policy', () => {
       await put.handler(ctx(handle), {
         slug,
         content: citedContent,
+        ...ABSENT_PAGE_PRECONDITION,
       });
       await upsertRealm.handler(ctx(handle), {
         id: 'project:denied-before-precondition',
@@ -476,6 +521,7 @@ describe('memory session access policy', () => {
       await expect(put.handler(ctx(handle), {
         slug: 'concepts/transaction-policy-test',
         content: citedContent,
+        ...ABSENT_PAGE_PRECONDITION,
         memory_session_id: 'session-transaction-policy',
         realm_id: 'project:transaction-policy',
       })).resolves.toMatchObject({

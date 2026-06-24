@@ -3,13 +3,13 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { OperationError, operations, operationsByName, type OperationContext } from '../src/core/operations.ts';
-import { assertMcpPutPagePrecondition, prepareMcpToolParams } from '../src/mcp/server.ts';
+import { dispatchOperation, OperationError, operations, operationsByName, type OperationContext } from '../src/core/operations.ts';
+import { assertMcpPutPagePrecondition, handleToolCall, prepareMcpToolParams } from '../src/mcp/server.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
-// Workstream D1: the MCP put_page surface requires observing the target (expected_content_hash
-// field present); admin_put_page is the CLI/admin repair escape; the ledger records whether the
-// precondition was supplied.
+// Workstream A1/D1: public put_page requires observing the target (expected_content_hash field
+// present) at the operation layer; admin_put_page is the CLI/admin repair escape; the ledger
+// records whether the precondition was supplied.
 
 const SLUG = 'concepts/cas-surface-check';
 const CONTENT = [
@@ -33,33 +33,31 @@ describe('put_page MCP precondition surface (D1)', () => {
     }
     expect(thrown).toBeInstanceOf(OperationError);
     expect((thrown as OperationError).message).toContain('route_first');
-    expect((thrown as OperationError).message).toContain('route_memory_writeback');
+    expect((thrown as OperationError).suggestion).toContain('route_memory_writeback');
   });
 
-  test('assertMcpPutPagePrecondition allows an observed write (explicit null/hash) or a routed write, and ignores other tools', () => {
+  test('assertMcpPutPagePrecondition allows observed writes only and ignores other tools', () => {
     // Explicit null (raw JSON-RPC callers keep it) asserts the page is absent — allowed.
     expect(() => assertMcpPutPagePrecondition('put_page', { slug: SLUG, content: CONTENT, expected_content_hash: null })).not.toThrow();
     // A real content hash (optimistic update) is allowed.
     expect(() => assertMcpPutPagePrecondition('put_page', { slug: SLUG, expected_content_hash: 'a'.repeat(64) })).not.toThrow();
-    // A routed write (memory_session_id present) is allowed.
-    expect(() => assertMcpPutPagePrecondition('put_page', { slug: SLUG, content: CONTENT, memory_session_id: 'session:1' })).not.toThrow();
+    // memory_session_id is realm access context, not a route-first write grant.
+    expect(() => assertMcpPutPagePrecondition('put_page', { slug: SLUG, content: CONTENT, memory_session_id: 'session:1' })).toThrow(/route_first/);
     // admin_put_page and every other tool are not gated by this check.
     expect(() => assertMcpPutPagePrecondition('admin_put_page', { slug: SLUG })).not.toThrow();
     expect(() => assertMcpPutPagePrecondition('get_page', { slug: SLUG })).not.toThrow();
   });
 
-  test('admin_put_page is registered as a hidden, admin-tier op sharing the put_page handler', () => {
+  test('admin_put_page is registered as a hidden, admin-tier operation escape', () => {
     const admin = operationsByName.admin_put_page;
     expect(admin).toBeDefined();
     expect(admin?.tier).toBe('admin');
     expect(admin?.cliHints?.hidden).toBe(true);
-    expect(admin?.handler).toBe(operationsByName.put_page?.handler);
+    expect(admin?.handler).not.toBe(operationsByName.put_page?.handler);
   });
 
-  test('MCP parameter preparation does not turn routed writes into null-CAS creates', () => {
-    expect(prepareMcpToolParams('put_page', { slug: SLUG, content: CONTENT })).toMatchObject({
-      expected_content_hash: null,
-    });
+  test('MCP parameter preparation never injects a null-CAS create precondition', () => {
+    expect(prepareMcpToolParams('put_page', { slug: SLUG, content: CONTENT })).not.toHaveProperty('expected_content_hash');
     expect(prepareMcpToolParams('put_page', {
       slug: SLUG,
       content: CONTENT,
@@ -91,6 +89,36 @@ describe('put_page precondition ledger (D1)', () => {
     if (!found) throw new Error(`missing op: ${name}`);
     return found;
   };
+
+  test('public put_page rejects direct operation calls without route-first precondition', async () => {
+    await expect(op('put_page').handler(ctx, { slug: SLUG, content: CONTENT })).rejects.toMatchObject({
+      name: 'OperationError',
+      code: 'invalid_params',
+      message: expect.stringContaining('route_first'),
+    });
+    expect(await engine.getPage(SLUG)).toBeNull();
+  });
+
+  test('public put_page rejects an undefined precondition property as still blind', async () => {
+    await expect(op('put_page').handler(ctx, {
+      slug: SLUG,
+      content: CONTENT,
+      expected_content_hash: undefined,
+    })).rejects.toThrow(/route_first/);
+    expect(await engine.getPage(SLUG)).toBeNull();
+  });
+
+  test('dispatch and legacy tool-call paths inherit the operation-layer guard', async () => {
+    await expect(dispatchOperation(ctx, op('put_page'), { slug: SLUG, content: CONTENT }))
+      .rejects.toThrow(/route_first/);
+    await expect(handleToolCall(engine as unknown as BrainEngine, 'put_page', { slug: SLUG, content: CONTENT }))
+      .rejects.toThrow(/route_first/);
+  });
+
+  test('public put_page dry-run still requires route-first precondition', async () => {
+    await expect(op('put_page').handler({ ...ctx, dryRun: true }, { slug: SLUG, content: CONTENT }))
+      .rejects.toThrow(/route_first/);
+  });
 
   test('put_page with null on an absent slug succeeds and records precondition_supplied=true', async () => {
     await op('put_page').handler(ctx, { slug: SLUG, content: CONTENT, expected_content_hash: null });

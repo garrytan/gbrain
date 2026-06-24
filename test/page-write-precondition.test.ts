@@ -66,6 +66,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           'Original compiled truth.',
           '- 2026-04-25 | Initial evidence.',
         ),
+        expected_content_hash: null,
       });
       const before = await ctx.engine.getPage(slug);
       expect(before?.content_hash).toBeTruthy();
@@ -100,7 +101,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
     });
   });
 
-  test('missing expected_content_hash rejects existing page updates without overwriting', async () => {
+  test('missing expected_content_hash rejects public put_page before existing page updates', async () => {
     await withSqliteEngine(async (ctx) => {
       const put = getOperation('put_page');
       const slug = 'concepts/precondition-required-for-update';
@@ -115,7 +116,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
         '- 2026-04-25 | Updated evidence should not appear.',
       );
 
-      await put.handler(ctx, { slug, content: initial });
+      await put.handler(ctx, { slug, content: initial, expected_content_hash: null });
       const before = await ctx.engine.getPage(slug);
       expect(before?.content_hash).toBeTruthy();
 
@@ -124,7 +125,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
         content: updated,
         session_id: 'put-page-missing-precondition-session',
         source_refs: ['Source: missing expected hash update test'],
-      })).rejects.toMatchObject({ code: 'write_conflict' });
+      })).rejects.toMatchObject({ code: 'invalid_params', message: expect.stringContaining('route_first') });
 
       expect(await ctx.engine.getPage(slug)).toMatchObject({
         content_hash: before?.content_hash,
@@ -149,7 +150,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
         '- 2026-04-25 | Updated evidence should not appear.',
       );
 
-      await put.handler(ctx, { slug, content: initial });
+      await put.handler(ctx, { slug, content: initial, expected_content_hash: null });
       const before = await ctx.engine.getPage(slug);
       expect(before?.content_hash).toBeTruthy();
 
@@ -282,6 +283,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           'Original compiled truth.',
           '- 2026-04-25 | Initial evidence.',
         ),
+        expected_content_hash: null,
       });
       const before = await ctx.engine.getPage(slug);
 
@@ -324,6 +326,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           'Original compiled truth.',
           '- 2026-04-25 | Initial evidence.',
         ),
+        expected_content_hash: null,
       });
       const before = await ctx.engine.getPage(slug);
       expect(before?.content_hash).toBeTruthy();
@@ -379,6 +382,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           'Original compiled truth.',
           '- 2026-04-25 | Initial evidence.',
         ),
+        expected_content_hash: null,
       });
       const before = await ctx.engine.getPage(slug);
       expect(before?.content_hash).toBeTruthy();
@@ -446,6 +450,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           'Original compiled truth.',
           '- 2026-04-25 | Initial evidence.',
         ),
+        expected_content_hash: null,
       });
       const before = await ctx.engine.getPage(slug);
       expect(before?.content_hash).toBeTruthy();
@@ -508,6 +513,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           slug,
           content,
           repo: repoPath,
+          expected_content_hash: null,
           session_id: 'put-page-markdown-first-write-session',
           source_refs: ['Source: markdown-first write test'],
         }) as any;
@@ -553,6 +559,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           slug,
           content: initial,
           repo: repoPath,
+          expected_content_hash: null,
           session_id: 'put-page-markdown-file-conflict-seed',
         });
         const before = await ctx.engine.getPage(slug);
@@ -605,6 +612,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
         await put.handler(ctx, {
           slug,
           content,
+          expected_content_hash: null,
           session_id: 'put-page-configured-markdown-repo-session',
           source_refs: ['Source: configured markdown repo test'],
         });
@@ -637,6 +645,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
         await put.handler(ctx, {
           slug,
           content,
+          expected_content_hash: null,
           session_id: 'put-page-subbrain-write-session',
           source_refs: ['Source: subbrain write-back test'],
         });
@@ -672,6 +681,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
             'This write should be rejected before mutation.',
             '- 2026-05-07 | Prefix-only write attempt.',
           ),
+          expected_content_hash: null,
           session_id: 'put-page-prefix-only-session',
           source_refs: ['Source: prefix-only subbrain write test'],
         })).rejects.toThrow(/missing path after prefix/i);
@@ -702,6 +712,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
             'This write has no registered sub-brain prefix.',
             '- 2026-05-07 | Unknown prefix write attempt.',
           ),
+          expected_content_hash: null,
           session_id: 'put-page-unknown-prefix-session',
           source_refs: ['Source: unknown subbrain prefix test'],
         })).rejects.toThrow(/does not match any registered sub-brain prefix/i);
@@ -730,6 +741,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
             '- 2026-04-25 | Symlink escape attempt.',
           ),
           repo: repoPath,
+          expected_content_hash: null,
           session_id: 'put-page-symlink-escape-session',
           source_refs: ['Source: symlink escape test'],
         })).rejects.toThrow(/escapes repo|symlink/i);
@@ -761,6 +773,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
             '- 2026-05-07 | Final symlink write attempt.',
           ),
           repo: repoPath,
+          expected_content_hash: null,
           session_id: 'put-page-file-symlink-session',
           source_refs: ['Source: final symlink escape test'],
         })).rejects.toThrow(/symlink/i);
@@ -801,6 +814,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
         await put.handler(ctx, {
           slug: 'systems/foo',
           content,
+          expected_content_hash: null,
           session_id: 'put-page-prefix-hash-seed',
           source_refs: ['Source: prefix hash seed test'],
         });
@@ -841,6 +855,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
             '- 2026-05-07 | Explicit repo subbrain write.',
           ),
           repo: repoPath,
+          expected_content_hash: null,
           session_id: 'put-page-explicit-subbrain-repo-session',
           source_refs: ['Source: explicit subbrain repo test'],
         });
@@ -869,6 +884,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           slug,
           content: initial,
           repo: repoPath,
+          expected_content_hash: null,
           session_id: 'put-page-oversized-markdown-first-seed',
         });
         const filePath = join(repoPath, 'concepts', 'oversized-markdown-first.md');
@@ -927,6 +943,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           slug,
           content: initial,
           repo: repoPath,
+          expected_content_hash: null,
           session_id: 'put-page-markdown-ledger-rollback-seed',
         });
         const before = await ctx.engine.getPage(slug);
@@ -977,6 +994,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           slug,
           content,
           repo: repoPath,
+          expected_content_hash: null,
           session_id: 'put-page-unchanged-markdown-first-seed',
         });
 
@@ -1018,7 +1036,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
         '- 2026-04-25 | Initial unchanged evidence.',
       );
 
-      await put.handler(ctx, { slug, content });
+      await put.handler(ctx, { slug, content, expected_content_hash: null });
       const before = await ctx.engine.getPage(slug);
       expect(before?.content_hash).toBeTruthy();
 
@@ -1067,6 +1085,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           'Original compiled truth.',
           '- 2026-04-25 | Initial evidence.',
         ),
+        expected_content_hash: null,
       });
       const before = await ctx.engine.getPage(slug);
       expect(before?.content_hash).toBeTruthy();
@@ -1108,6 +1127,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           'String-list source refs should be accepted.',
           '- 2026-04-25 | String list source refs test.',
         ),
+        expected_content_hash: null,
         session_id: sessionId,
         source_refs: 'Source: string list one\nSource: string list two',
       });
@@ -1134,6 +1154,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           'JSON-array string source refs should be accepted.',
           '- 2026-04-25 | JSON string source refs test.',
         ),
+        expected_content_hash: null,
         session_id: sessionId,
         source_refs: '["Source: JSON string one", " Source: JSON string two "]',
       });
@@ -1161,6 +1182,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           'Bracketed MBrain source citations should be accepted.',
           '- 2026-04-26 | Bracketed source ref test.',
         ),
+        expected_content_hash: null,
         session_id: sessionId,
         source_refs: sourceRef,
       });
@@ -1185,6 +1207,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           'Comma-containing source citations should be accepted.',
           '- 2026-04-26 | Comma-containing source ref test.',
         ),
+        expected_content_hash: null,
         session_id: sessionId,
         source_refs: sourceRef,
       });
@@ -1210,6 +1233,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
             'This page should not be written.',
             '- 2026-04-25 | Non-string array source refs test.',
           ),
+          expected_content_hash: null,
           session_id: sessionId,
           source_refs: [123],
         });
@@ -1240,6 +1264,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
             'This page should not be written.',
             '- 2026-04-25 | Non-string JSON source refs test.',
           ),
+          expected_content_hash: null,
           session_id: sessionId,
           source_refs: '[123]',
         });
@@ -1267,6 +1292,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           'Default audit fields should be used.',
           '- 2026-04-25 | Default audit test.',
         ),
+        expected_content_hash: null,
       }) as any;
       expect(result).toMatchObject({ slug, status: 'created_or_updated' });
 
@@ -1301,6 +1327,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           'First direct write.',
           '- 2026-04-25 | First default session id test.',
         ),
+        expected_content_hash: null,
       });
       await put.handler(ctx, {
         slug: 'concepts/default-session-two',
@@ -1309,6 +1336,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           'Second direct write.',
           '- 2026-04-25 | Second default session id test.',
         ),
+        expected_content_hash: null,
       });
 
       const one = await ctx.engine.listMemoryMutationEvents({ target_id: 'concepts/default-session-one' });
@@ -1333,6 +1361,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           'Explicit audit session ids should be preserved.',
           '- 2026-04-25 | Explicit session id test.',
         ),
+        expected_content_hash: null,
         session_id: 'put-page-explicit-session',
       });
 
@@ -1354,6 +1383,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
           'Original compiled truth.',
           '- 2026-04-25 | Initial evidence.',
         ),
+        expected_content_hash: null,
       });
       const before = await ctx.engine.getPage(slug);
       expect(before?.content_hash).toBeTruthy();
@@ -1396,6 +1426,7 @@ describe('put_page content hash preconditions and mutation ledger', () => {
       const result = await put.handler(ctx, {
         slug,
         content: `${'x'.repeat(5_000_001)} ${DEFAULT_PAGE_SOURCE}`,
+        expected_content_hash: null,
         session_id: sessionId,
         source_refs: ['Source: oversized content test'],
       }) as any;

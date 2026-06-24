@@ -351,6 +351,7 @@ test('put_page defer_derived only enqueues durable derived jobs', async () => {
     }, {
       slug: 'concepts/put-page-deferred-derived',
       content,
+      expected_content_hash: null,
       defer_derived: true,
     }) as Record<string, unknown>;
 
@@ -422,6 +423,7 @@ test('put_page defer_derived without a background scheduler still only enqueues 
     }, {
       slug: 'concepts/put-page-sync-derived',
       content,
+      expected_content_hash: null,
       defer_derived: true,
     }) as Record<string, unknown>;
 

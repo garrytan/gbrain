@@ -202,6 +202,9 @@ export function validateOperationParams(
 ): Record<string, unknown> {
   const missing = getMissingRequiredParams(operation, params);
   if (missing.length > 0) {
+    if (operation.name === 'put_page' && missing.includes('expected_content_hash')) {
+      assertPutPageRouteFirstPrecondition(params);
+    }
     const label = missing.length === 1 ? 'parameter' : 'parameters';
     throw new OperationError('invalid_params', `Missing required ${label}: ${missing.join(', ')}`);
   }
@@ -318,8 +321,8 @@ export interface Operation {
   mutating?: boolean;
   capabilityRequired?: OperationCapability;
   // Tool-catalog tier (see src/mcp/tool-tiers.ts). Explicit override of the name-based
-  // classification; usually omitted. 'admin' ops are hidden from the default stdio catalog
-  // but remain dispatchable by name and discoverable via tool_search.
+  // classification; usually omitted. 'admin' ops are hidden from the default MCP catalog and
+  // blocked by named MCP dispatch unless that tier is explicitly enabled.
   tier?: 'core' | 'extended' | 'admin';
   cliHints?: {
     name?: string;
@@ -598,7 +601,7 @@ export function parseOpArgs(
         }
         value = args[++i];
       }
-      params[key] = paramHasType(paramDef, 'number') ? coerceNumber(key, value) : value;
+      params[key] = coerceCliParamValue(key, value, paramDef);
       continue;
     }
 
@@ -623,14 +626,14 @@ export function parseOpArgs(
         }
         value = args[++i];
       }
-      params[key] = paramHasType(paramDef, 'number') ? coerceNumber(key, value) : value;
+      params[key] = coerceCliParamValue(key, value, paramDef);
       continue;
     }
 
     if (posIdx < positional.length) {
       const key = positional[posIdx++];
       const paramDef = op.params[key];
-      params[key] = paramHasType(paramDef, 'number') ? coerceNumber(key, arg) : arg;
+      params[key] = coerceCliParamValue(key, arg, paramDef);
     }
   }
 
@@ -639,6 +642,15 @@ export function parseOpArgs(
   }
 
   return params;
+}
+
+function coerceCliParamValue(key: string, value: string, paramDef: ParamDef): unknown {
+  if (paramDef.nullable && value === 'null' && isCliNullLiteralParam(key)) return null;
+  return paramHasType(paramDef, 'number') ? coerceNumber(key, value) : value;
+}
+
+function isCliNullLiteralParam(key: string): boolean {
+  return key.endsWith('_content_hash') || key.endsWith('_snapshot_hash');
 }
 
 export function getMissingRequiredParams(
@@ -3053,13 +3065,29 @@ type PutPageTransactionOutcome =
       error: OperationError;
     };
 
+const ADMIN_PUT_PAGE_ROUTE_FIRST_BYPASS = Symbol('admin_put_page_route_first_bypass');
+
+export function hasPutPageRouteFirstPrecondition(params: Record<string, unknown>): boolean {
+  return Object.prototype.hasOwnProperty.call(params, 'expected_content_hash')
+    && params.expected_content_hash !== undefined;
+}
+
+export function assertPutPageRouteFirstPrecondition(params: Record<string, unknown>): void {
+  if (hasPutPageRouteFirstPrecondition(params)) return;
+  throw new OperationError(
+    'invalid_params',
+    'route_first: put_page must observe the target before writing — supply expected_content_hash (null asserts the page is absent, a content hash drives an update). memory_session_id alone is not a route-first write grant.',
+    'Call route_memory_writeback and pass canonical_write_requirements.expected_content_hash, or call get_page for the current content_hash before retrying put_page. Offline repair can use admin_put_page.',
+  );
+}
+
 const put_page: Operation = {
   name: 'put_page',
   description: 'Create or update a knowledge page to record new information about people, companies, concepts, or systems discovered during the conversation. Markdown with YAML frontmatter; content should follow the compiled truth + timeline pattern. Rejects generic, numeric-only, or globally bucketed documentation slugs. Chunks, embeds, and reconciles tags.',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
-    expected_content_hash: { type: 'string', nullable: true, description: 'Optional optimistic write precondition. Existing page content_hash must match before writing; null requires that the page is absent.' },
+    expected_content_hash: { type: 'string', required: true, nullable: true, description: 'Required route-first write precondition. Existing page content_hash must match before writing; null requires that the page is absent.' },
     repo: { type: 'string', description: 'Optional markdown repo root for markdown-first local/offline writes. Defaults to configured markdown.repo_path or sync.repo_path.' },
     memory_session_id: { type: 'string', description: 'Optional memory session id used for write authorization. Requires realm_id.' },
     session_id: { type: 'string', description: 'Optional audit session id. Defaults to put_page:direct.' },
@@ -3075,11 +3103,12 @@ const put_page: Operation = {
     const slug = putPageSlug(p.slug);
     const content = putPageContent(p.content);
     const deferDerived = p.defer_derived === true;
-    // Whether the caller observed the target before writing. The MCP put_page surface
-    // requires this field present (see assertMcpPutPagePrecondition); the CLI/admin path may
-    // omit it. Recorded in the mutation ledger either way.
-    const preconditionSupplied = Object.prototype.hasOwnProperty.call(p, 'expected_content_hash');
+    const adminPutPageBypass = (p as Record<symbol, unknown>)[ADMIN_PUT_PAGE_ROUTE_FIRST_BYPASS] === true;
+    // Whether the caller observed the target before writing. Public put_page requires this field
+    // at the operation layer; admin_put_page is the offline repair/import escape.
+    const preconditionSupplied = hasPutPageRouteFirstPrecondition(p);
     assertWritableSlugQuality(slug);
+    if (!adminPutPageBypass) assertPutPageRouteFirstPrecondition(p);
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug };
     const markdownTarget = await resolvePutPageMarkdownTarget(ctx.engine, slug, p.repo);
     if (markdownTarget) {
@@ -3308,10 +3337,17 @@ const put_page: Operation = {
 const admin_put_page: Operation = {
   name: 'admin_put_page',
   description: 'CLI/admin repair-and-import variant of put_page that may omit the optimistic write precondition. Not subject to the route_first precondition enforced on the MCP put_page surface. Use only for offline repair and bulk import.',
-  params: { ...put_page.params },
+  params: {
+    ...put_page.params,
+    expected_content_hash: {
+      ...put_page.params.expected_content_hash,
+      required: false,
+      description: 'Optional optimistic write precondition for admin repair/import writes. Existing page content_hash must match before writing; null requires that the page is absent.',
+    },
+  },
   mutating: true,
   tier: 'admin',
-  handler: put_page.handler,
+  handler: (ctx, p) => put_page.handler(ctx, { ...p, [ADMIN_PUT_PAGE_ROUTE_FIRST_BYPASS]: true }),
   cliHints: { name: 'admin-put', positional: ['slug'], stdin: 'content', hidden: true },
 };
 

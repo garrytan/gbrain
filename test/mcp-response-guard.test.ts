@@ -223,7 +223,6 @@ describe('MCP response guard', () => {
     delete process.env.MBRAIN_MCP_DEFER_PUT_PAGE_DERIVED;
     expect(prepareMcpToolParams('put_page', { slug: 'concepts/write' })).toEqual({
       slug: 'concepts/write',
-      expected_content_hash: null,
       defer_derived: true,
     });
 
@@ -240,7 +239,6 @@ describe('MCP response guard', () => {
     process.env.MBRAIN_MCP_DEFER_PUT_PAGE_DERIVED = 'false';
     expect(prepareMcpToolParams('put_page', { slug: 'concepts/write' })).toEqual({
       slug: 'concepts/write',
-      expected_content_hash: null,
     });
   });
 

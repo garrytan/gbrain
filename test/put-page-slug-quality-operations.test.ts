@@ -35,7 +35,7 @@ describe('put_page slug quality', () => {
 
     await expect(putPage!.handler(
       { dryRun: true } as any,
-      { slug: 'projects/mbrain/docs/manual/06-sync-pipeline', content },
+      { slug: 'projects/mbrain/docs/manual/06-sync-pipeline', content, expected_content_hash: null },
     )).resolves.toEqual({
       dry_run: true,
       action: 'put_page',

@@ -34,31 +34,20 @@ const remoteOps = operations.filter((op: any) => !REMOTE_EXCLUDED.has(op.name));
 function assertRemotePutPagePrecondition(toolName: string, rawParams: unknown): void {
   if (toolName !== 'put_page') return;
   const params = isRecord(rawParams) ? rawParams : {};
-  const hasSession = hasMemorySessionId(params);
-  const hasPrecondition = Object.prototype.hasOwnProperty.call(params, 'expected_content_hash');
-  if (!hasPrecondition && !hasSession) {
+  const hasPrecondition = Object.prototype.hasOwnProperty.call(params, 'expected_content_hash')
+    && params.expected_content_hash !== undefined;
+  if (!hasPrecondition) {
     throw new OperationError(
       'invalid_params',
-      'route_first: put_page must observe the target before writing - supply expected_content_hash (null asserts the page is absent, a content hash drives an update), or route a new page through route_memory_writeback to obtain a write session first.',
-      'Call route_memory_writeback to obtain a write session (and snapshot), or get_page for the current content_hash, then retry put_page. Offline repair can use local admin_put_page.',
+      'route_first: put_page must observe the target before writing - supply expected_content_hash (null asserts the page is absent, a content hash drives an update). memory_session_id alone is not a route-first write grant.',
+      'Call route_memory_writeback and pass canonical_write_requirements.expected_content_hash, or call get_page for the current content_hash before retrying put_page. Offline repair can use local admin_put_page.',
     );
   }
 }
 
-function prepareRemoteToolParams(toolName: string, rawParams: unknown): Record<string, unknown> {
+function prepareRemoteToolParams(_toolName: string, rawParams: unknown): Record<string, unknown> {
   const params = isRecord(rawParams) ? { ...rawParams } : {};
-  if (
-    toolName === 'put_page'
-    && !Object.prototype.hasOwnProperty.call(params, 'expected_content_hash')
-    && !hasMemorySessionId(params)
-  ) {
-    params.expected_content_hash = null;
-  }
   return params;
-}
-
-function hasMemorySessionId(params: Record<string, unknown>): boolean {
-  return typeof params.memory_session_id === 'string' && params.memory_session_id.trim().length > 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -200,7 +189,8 @@ function createMcpServer(eng: PostgresEngine): Server {
 
   server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     const { name, arguments: params } = request.params;
-    const op = remoteOps.find((o: any) => o.name === name);
+    const allowedTiers = resolveAllowedTiers(getRemoteToolTierSelection());
+    const op = remoteOps.find((o: any) => o.name === name && isToolVisibleAtTier(o, allowedTiers));
     if (!op) {
       return { content: [{ type: 'text', text: `Error: Unknown tool: ${name}` }], isError: true };
     }

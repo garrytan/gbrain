@@ -1207,7 +1207,7 @@
           ],
           "required": false,
           "nullable": true,
-          "description": "Optional optimistic write precondition. Existing page content_hash must match before writing; null requires that the page is absent."
+          "description": "Optional optimistic write precondition for admin repair/import writes. Existing page content_hash must match before writing; null requires that the page is absent."
         },
         "memory_session_id": {
           "type": [
@@ -1296,7 +1296,7 @@
         ]
       },
       "compact_schema_hash": "0687fea202b1fce1f6c042ba14de752c8e8fb9d37fce2d7ca8c1e7b2c53d622e",
-      "full_schema_hash": "1bae9c09e1e5bb6162f74eed0966324e89b3f0d23aa51fb284568700c3c67c18",
+      "full_schema_hash": "67654cc0da74bd41f780c6cbe9afc4de7175bf325664ead02bef6b831d5bd555",
       "memory_verb_families": [],
       "mutation_aliases": []
     },
@@ -9823,9 +9823,9 @@
           "type": [
             "string"
           ],
-          "required": false,
+          "required": true,
           "nullable": true,
-          "description": "Optional optimistic write precondition. Existing page content_hash must match before writing; null requires that the page is absent."
+          "description": "Required route-first write precondition. Existing page content_hash must match before writing; null requires that the page is absent."
         },
         "memory_session_id": {
           "type": [
@@ -9910,11 +9910,12 @@
         "open_world": false,
         "required_params": [
           "content",
+          "expected_content_hash",
           "slug"
         ]
       },
-      "compact_schema_hash": "0687fea202b1fce1f6c042ba14de752c8e8fb9d37fce2d7ca8c1e7b2c53d622e",
-      "full_schema_hash": "1bae9c09e1e5bb6162f74eed0966324e89b3f0d23aa51fb284568700c3c67c18",
+      "compact_schema_hash": "25686bdfc2fdeac0a3653f823e43e6a8617fa64d8012c139982dbe6905bad993",
+      "full_schema_hash": "826c330e604af96e911a474ee74f26596b4b6171be58597156bcac0b0b9553ee",
       "memory_verb_families": [
         "canonical_page_write"
       ],

@@ -48,6 +48,7 @@ describe('operation golden manifest', () => {
     });
     expect(putPage?.params.expected_content_hash).toMatchObject({
       type: ['string'],
+      required: true,
       nullable: true,
     });
     expect(putPage?.full_schema_hash).toMatch(/^[a-f0-9]{64}$/);

@@ -160,8 +160,9 @@ describe('operation parameter validation', () => {
     expect(validateOperationParams(operationByName('put_page'), {
       slug: 'people/alice',
       content: 'Alice profile.',
+      expected_content_hash: null,
       source_refs: 'Source: one\nSource: two',
-    })).toEqual({ slug: 'people/alice', content: 'Alice profile.', source_refs: 'Source: one\nSource: two' });
+    })).toEqual({ slug: 'people/alice', content: 'Alice profile.', expected_content_hash: null, source_refs: 'Source: one\nSource: two' });
     expect(validateOperationParams(operationByName('record_retrieval_trace'), {
       task_id: 'task-1',
       outcome: 'answered',

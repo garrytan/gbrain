@@ -53,6 +53,7 @@ test('put_page rejects durable writes without Source attribution and does not cr
     }, {
       slug: 'concepts/put-page-without-source',
       content: pageMarkdown('A durable fact without provenance.'),
+      expected_content_hash: null,
     })).rejects.toMatchObject({
       name: 'OperationError',
       code: 'invalid_params',
@@ -75,6 +76,7 @@ test('put_page rejects blank [Source:    ] attribution and does not create the p
     }, {
       slug: 'concepts/put-page-blank-source',
       content: pageMarkdown('A durable fact with blank provenance. [Source:    ]'),
+      expected_content_hash: null,
     })).rejects.toMatchObject({
       name: 'OperationError',
       code: 'invalid_params',
@@ -105,6 +107,7 @@ test('put_page ignores Source attribution in frontmatter when page body has no c
         '# Put Page Frontmatter Only Source',
         'A durable fact whose body has no provenance.',
       ].join('\n'),
+      expected_content_hash: null,
     })).rejects.toMatchObject({
       name: 'OperationError',
       code: 'invalid_params',
@@ -125,6 +128,7 @@ test('put_page accepts a page with a non-empty Source citation', async () => {
     }, {
       slug: 'concepts/put-page-with-source',
       content: pageMarkdown('A durable fact with provenance. [Source: User, direct message, 2026-04-26 09:00 AM KST]'),
+      expected_content_hash: null,
     });
 
     expect(result).toMatchObject({
@@ -145,6 +149,7 @@ test('put_page dry-run does not require Source attribution or create the page', 
     }, {
       slug: 'concepts/put-page-dry-run-without-source',
       content: pageMarkdown('A dry-run preview without durable provenance.'),
+      expected_content_hash: null,
     });
 
     expect(result).toEqual({

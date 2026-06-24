@@ -117,6 +117,7 @@ describe('local SQLite CLI end-to-end', () => {
 
     const putResult = harness.call<{ status: string; chunks: number }>('put_page', {
       slug: 'systems/sqlite-cli',
+      expected_content_hash: null,
       content: pageMarkdown({
         type: 'system',
         title: 'SQLite CLI',
