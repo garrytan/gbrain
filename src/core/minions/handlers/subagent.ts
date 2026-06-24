@@ -777,21 +777,25 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     });
   }
 
-  // Convert prior Anthropic-shape messages → ChatMessage with ChatBlock content.
-  // v1 rows store Anthropic content blocks ({type:'tool_use'|'tool_result'|...});
-  // we adapt them to ChatBlock shape (type: 'tool-call' | 'tool-result' | 'text').
-  const priorChatMessages: ChatMessage[] = priorMessages.map(m => ({
-    role: m.role as 'user' | 'assistant',
-    content: adaptContentBlocksToChatBlocks(m.content_blocks),
-  }));
+  // Reconstruct the conversation, re-inserting the tool-result messages that the
+  // gateway loop persists out-of-band (in subagent_tool_executions, NOT as
+  // subagent_messages rows). A naive 1:1 map yields assistant tool-call turns with
+  // no following tool-result message; on replay the loop seeds `messages` from
+  // these (see replayState.priorMessages below) and the next generateText() throws
+  // AI SDK v6 AI_MissingToolResultsError. See reconstructReplayMessages.
+  const priorToolExecs = await loadPriorTools(engine, ctx.id);
+  const priorChatMessages: ChatMessage[] = reconstructReplayMessages(priorMessages, priorToolExecs);
 
   // Initial seed message if no prior state.
-  const initialMessages: ChatMessage[] = priorChatMessages.length === 0
+  const initialMessages: ChatMessage[] = priorMessages.length === 0
     ? [{ role: 'user', content: data.prompt }]
     : [];
 
-  // Persist seed user message at idx 0 if fresh start.
-  let nextMessageIdx = priorChatMessages.length;
+  // Persist seed user message at idx 0 if fresh start. Use the persisted-message
+  // count (priorMessages), NOT priorChatMessages.length — the latter now also
+  // counts the re-inserted tool-result messages, which are not their own
+  // subagent_messages rows, so the loop's messageIdx counter would otherwise skip.
+  let nextMessageIdx = priorMessages.length;
   if (nextMessageIdx === 0) {
     await persistMessage(engine, ctx.id, {
       message_idx: 0,
@@ -840,7 +844,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     replayState: {
       priorMessages: priorChatMessages,
       priorTools: priorToolsByStableKey,
-      nextTurnIdx: priorChatMessages.filter(m => m.role === 'assistant').length,
+      nextTurnIdx: priorMessages.filter(m => m.role === 'assistant').length,
       nextMessageIdx,
     },
     onAssistantTurn: async (turnIdx, messageIdx, blocks, usage, modelStr) => {
@@ -966,6 +970,73 @@ export function stripProviderPrefix(modelString: string): string {
  * Symmetric in the other direction is handled by persisting ChatBlock[] as-is
  * (the JSONB column accepts both shapes; v2 writes carry the new vocabulary).
  */
+/**
+ * Reconstruct the gateway-loop conversation for a subagent replay, re-pairing each
+ * prior assistant tool-call turn with the tool-results it produced.
+ *
+ * The gateway tool-loop persists tool executions to `subagent_tool_executions`
+ * rather than as `subagent_messages` rows, so mapping prior messages 1:1 yields
+ * assistant tool-call turns with no following tool-result message. On replay the
+ * loop seeds its `messages` array from this reconstruction; the next
+ * `generateText()` then throws AI SDK v6's `AI_MissingToolResultsError`
+ * ("Tool results are missing for tool calls …") — every assistant tool-call must
+ * be answered by a tool-result. Provider-neutral, but only reachable on the
+ * non-Anthropic gateway path (`agent.use_gateway_loop`), where the assistant
+ * commonly emits PARALLEL tool calls (a single crashed turn then drops several
+ * tool-results at once). The pre-existing crash-replay e2e stubs the chat
+ * transport, so it never drove `generateText` and never caught this.
+ *
+ * For each prior assistant turn with tool-calls, append one tool-result message
+ * (role `'user'`; `toModelMessages` promotes an all-tool-result message to role
+ * `'tool'`) pairing every call with its persisted outcome, keyed by
+ * `(message_idx, provider tool_use_id)`. A call with no completed execution
+ * (crash before the result was persisted) gets a synthesized error result so the
+ * turn still validates and the model can recover on the next turn.
+ *
+ * Pure (no I/O) so it is unit-testable without a database; the caller loads
+ * `priorMessages` + `priorToolExecs` and threads them in.
+ */
+export function reconstructReplayMessages(
+  priorMessages: Pick<PersistedMessage, 'message_idx' | 'role' | 'content_blocks'>[],
+  priorToolExecs: Pick<PersistedToolExec, 'message_idx' | 'tool_use_id' | 'tool_name' | 'status' | 'output' | 'error'>[],
+): ChatMessage[] {
+  const execByKey = new Map<string, { status: 'pending' | 'complete' | 'failed'; output: unknown; error: string | null }>();
+  for (const e of priorToolExecs) {
+    execByKey.set(`${e.message_idx}:${e.tool_use_id}`, { status: e.status, output: e.output, error: e.error });
+  }
+  const messages: ChatMessage[] = [];
+  for (const m of priorMessages) {
+    const content = adaptContentBlocksToChatBlocks(m.content_blocks);
+    messages.push({ role: m.role, content });
+    if (m.role !== 'assistant' || !Array.isArray(content)) continue;
+    const calls = content.filter(
+      (b): b is Extract<ChatBlock, { type: 'tool-call' }> => b.type === 'tool-call',
+    );
+    if (calls.length === 0) continue;
+    const results: ChatBlock[] = calls.map(c => {
+      const ex = execByKey.get(`${m.message_idx}:${c.toolCallId}`);
+      if (ex && ex.status !== 'pending') {
+        return {
+          type: 'tool-result',
+          toolCallId: c.toolCallId,
+          toolName: c.toolName,
+          output: ex.status === 'failed' ? (ex.error ?? 'tool failed') : ex.output,
+          isError: ex.status === 'failed',
+        };
+      }
+      return {
+        type: 'tool-result',
+        toolCallId: c.toolCallId,
+        toolName: c.toolName,
+        output: 'tool result unavailable on replay',
+        isError: true,
+      };
+    });
+    messages.push({ role: 'user', content: results });
+  }
+  return messages;
+}
+
 function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
   if (typeof blocks === 'string') return blocks;
   if (!Array.isArray(blocks)) return [];
