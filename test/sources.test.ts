@@ -179,6 +179,48 @@ describe('sources list', () => {
   });
 });
 
+describe('sources plan', () => {
+  test('prints source plan JSON with topology, roles, and next actions', async () => {
+    const { engine } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [
+        {
+          id: 'gstack-code-hub-ae4800f6-9c4839',
+          name: 'gstack-code-hub-ae4800f6-9c4839',
+          local_path: '/Users/sawbeck/Projects/seascape-hub',
+          last_commit: null,
+          last_sync_at: new Date('2026-06-24T12:00:00.000Z'),
+          config: '{"federated":true}',
+          created_at: new Date(),
+        },
+        {
+          id: 'sawyer-hub',
+          name: 'sawyer-hub',
+          local_path: '/Users/sawbeck/Projects/sawyer-hub',
+          last_commit: null,
+          last_sync_at: new Date('2026-06-24T12:00:00.000Z'),
+          config: '{"federated":true}',
+          created_at: new Date(),
+        },
+      ],
+      'COUNT(*)::int AS n FROM pages': [{ n: 42 }],
+    });
+    const origLog = console.log;
+    let out = '';
+    console.log = ((msg?: unknown) => { out += String(msg ?? '') + '\n'; }) as never;
+    try {
+      await runSources(engine, ['plan', '--json']);
+    } finally {
+      console.log = origLog;
+    }
+
+    const parsed = JSON.parse(out);
+    expect(parsed.topology.shape).toBe('single_host_multi_source');
+    expect(parsed.sources.map((s: { role: string }) => s.role)).toContain('company_knowledge');
+    expect(parsed.sources.map((s: { role: string }) => s.role)).toContain('daily_front_door');
+    expect(parsed.next_actions.join('\n')).toContain('GBrain as the cross-repo memory/search layer');
+  });
+});
+
 // ── remove ──────────────────────────────────────────────────
 
 describe('sources remove', () => {

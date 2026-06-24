@@ -55,6 +55,7 @@ import {
   isSourceFederated,
   type SourceRow as LoadedSourceRow,
 } from '../core/sources-load.ts';
+import { buildSourcePlanReport, type SourcePlanInput } from '../core/source-plan.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -351,6 +352,51 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
     if (e.local_path) console.log(`  ${' '.repeat(22)}${pathStr}`);
   }
   if (entries.length === 0) console.log('  (no sources registered)');
+}
+
+// ── Subcommand: plan ────────────────────────────────────────
+
+async function runPlan(engine: BrainEngine, args: string[]): Promise<void> {
+  const json = args.includes('--json');
+  const rows: LoadedSourceRow[] = await loadAllSources(engine, { includeArchived: false });
+  const sources: SourcePlanInput[] = [];
+
+  for (const r of rows) {
+    sources.push({
+      ...r,
+      page_count: await countPages(engine, r.id),
+    });
+  }
+
+  const report = buildSourcePlanReport(sources);
+
+  if (json) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+
+  console.log('SOURCE PLAN');
+  console.log('-----------');
+  console.log(report.topology.summary);
+  console.log('');
+  console.log(`Sources: ${report.counts.sources} (${report.counts.federated} federated, ${report.counts.isolated} isolated), ${report.counts.pages} pages`);
+  console.log('');
+  for (const s of report.sources) {
+    const scope = s.federated ? 'federated' : 'isolated';
+    console.log(`${s.label} - ${s.id} (${scope}, ${s.page_count} pages)`);
+    console.log(`  Owns: ${s.responsibility}`);
+    console.log(`  Search: ${s.search_behavior}`);
+    console.log(`  Next: ${s.next_action}`);
+    if (s.local_path) console.log(`  Path: ${s.local_path}`);
+  }
+  if (report.gaps.length > 0) {
+    console.log('');
+    console.log('Gaps');
+    for (const gap of report.gaps) console.log(`  - ${gap}`);
+  }
+  console.log('');
+  console.log('Next actions');
+  for (const action of report.next_actions) console.log(`  - ${action}`);
 }
 
 // ── Subcommand: remove ──────────────────────────────────────
@@ -1323,6 +1369,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
   switch (sub) {
     case 'add':        return runAdd(engine, rest);
     case 'list':       return runList(engine, rest);
+    case 'plan':       return runPlan(engine, rest);
     case 'remove':     return runRemove(engine, rest);
     case 'rename':     return runRename(engine, rest);
     case 'default':    return runDefault(engine, rest);
@@ -1370,6 +1417,9 @@ Subcommands:
   add <id> --path <p> [--name <n>] [--federated|--no-federated]
                                     Register a new source.
   list [--json]                     List registered sources with page counts.
+  plan [--json]                     Explain source roles, topology, gaps, and
+                                    next actions for using GBrain as the
+                                    cross-repo memory/search layer.
   remove <id> [--confirm-destructive] [--dry-run]
                                     Permanently delete a source and all its data.
                                     Shows impact preview. Requires --confirm-destructive
