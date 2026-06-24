@@ -977,13 +977,24 @@ function requireActiveLockedJob(
 function jobCanBeClaimed(job: Record<string, unknown>, currentNow: string): boolean {
   const status = String(job.status ?? '');
   if (status === 'waiting') return true;
-  if (status === 'delayed') return Date.parse(String(job.next_run_at ?? '')) <= Date.parse(currentNow);
-  if (status === 'active') return Date.parse(String(job.lock_expires_at ?? '')) <= Date.parse(currentNow);
+  if (status === 'delayed') return isoAtOrBefore(job.next_run_at, currentNow);
+  if (status === 'active') return isoAtOrBefore(job.lock_expires_at, currentNow);
   return false;
 }
 
 function isoAtOrBefore(value: unknown, currentNow: string): boolean {
-  return typeof value === 'string' && Date.parse(value) <= Date.parse(currentNow);
+  const valueTime = timestampMs(value);
+  const currentTime = timestampMs(currentNow);
+  return valueTime !== null && currentTime !== null && valueTime <= currentTime;
+}
+
+function timestampMs(value: unknown): number | null {
+  const timestamp = value instanceof Date
+    ? value.getTime()
+    : typeof value === 'string'
+      ? Date.parse(value)
+      : Number.NaN;
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function computeBackoffDelay(job: Record<string, unknown>, attemptsFinished: number): number {

@@ -66,6 +66,89 @@ test('mixed-scope disclosure service surfaces exportable profile content under e
   }
 });
 
+test('mixed-scope disclosure service threads broad-synthesis dependencies into recommended reads', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-mixed-scope-disclosure-hybrid-deps-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+
+    await importFromContent(engine, 'systems/mbrain', [
+      '---',
+      'type: system',
+      'title: MBrain',
+      '---',
+      '# Overview',
+      'See [[concepts/note-manifest]].',
+    ].join('\n'), { path: 'systems/mbrain.md' });
+    await importFromContent(engine, 'concepts/note-manifest', [
+      '---',
+      'type: concept',
+      'title: Note Manifest',
+      '---',
+      '# Purpose',
+      'Indexes [[systems/mbrain]].',
+    ].join('\n'), { path: 'concepts/note-manifest.md' });
+    await importFromContent(engine, 'concepts/hybrid-recall', [
+      '---',
+      'type: concept',
+      'title: Hybrid Recall',
+      '---',
+      '# Purpose',
+      'Canonical follow-through for hybrid recall.',
+    ].join('\n'), { path: 'concepts/hybrid-recall.md' });
+    await buildStructuralContextMapEntry(engine);
+
+    await engine.upsertProfileMemoryEntry({
+      id: 'profile-1',
+      scope_id: 'personal:default',
+      profile_type: 'routine',
+      subject: 'daily routine',
+      content: 'Starts with a written morning reset before deep work.',
+      source_refs: ['User, direct message, 2026-04-22 9:03 AM KST'],
+      sensitivity: 'personal',
+      export_status: 'exportable',
+      last_confirmed_at: new Date('2026-04-22T00:03:00.000Z'),
+      superseded_by: null,
+    });
+
+    let candidateSearchCalls = 0;
+    const result = await (getMixedScopeDisclosure as any)(engine, {
+      requested_scope: 'mixed',
+      personal_route_kind: 'profile',
+      query: 'Hybrid Recall',
+      subject: 'daily routine',
+    }, {
+      broadSynthesis: {
+        candidateSearch: async () => {
+          candidateSearchCalls += 1;
+          return [{
+            slug: 'concepts/hybrid-recall',
+            title: 'Hybrid Recall',
+            type: 'concept',
+            score: 1,
+            snippet: 'Hybrid recall candidate',
+          }];
+        },
+      },
+    });
+
+    expect(result.selection_reason).toBe('direct_mixed_scope_bridge');
+    expect(candidateSearchCalls).toBeGreaterThan(0);
+    expect(result.disclosure?.recommended_reads).toContainEqual(
+      expect.objectContaining({
+        page_slug: 'concepts/hybrid-recall',
+        path: 'concepts/hybrid-recall.md',
+      }),
+    );
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('mixed-scope disclosure service withholds private-only profile content while keeping metadata', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-mixed-scope-disclosure-private-'));
   const databasePath = join(dir, 'brain.db');

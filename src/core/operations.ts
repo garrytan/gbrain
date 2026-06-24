@@ -5363,6 +5363,8 @@ const get_mixed_scope_disclosure: Operation = {
       profile_type: typeof p.profile_type === 'string' ? p.profile_type as any : undefined,
       episode_title: typeof p.episode_title === 'string' ? p.episode_title : undefined,
       episode_source_kind: typeof p.episode_source_kind === 'string' ? p.episode_source_kind as any : undefined,
+    }, {
+      broadSynthesis: governedProbeBroadSynthesisDependencies(ctx),
     });
   },
   cliHints: { name: 'mixed-scope-disclosure' },

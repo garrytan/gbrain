@@ -14,7 +14,17 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import postgres from 'postgres';
 import { createHash } from 'crypto';
-import { dispatchOperation, operations, operationToMcpTool, OperationError, PostgresEngine, VERSION, MCP_INSTRUCTIONS } from './mbrain-core.js';
+import {
+  dispatchOperation,
+  operations,
+  operationToMcpTool,
+  OperationError,
+  PostgresEngine,
+  VERSION,
+  MCP_INSTRUCTIONS,
+  isToolVisibleAtTier,
+  resolveAllowedTiers,
+} from './mbrain-core.js';
 import type { OperationContext } from './mbrain-core.js';
 
 // Operations excluded from remote (may exceed 60s Edge Function timeout or bypass local-only repair gates)
@@ -67,6 +77,11 @@ function getDbUrl(): string {
 function getOpenAiKey(): string {
   // @ts-ignore: Deno env
   return Deno.env.get('OPENAI_API_KEY') || '';
+}
+
+function getRemoteToolTierSelection(): string | null {
+  // @ts-ignore: Deno env
+  return Deno.env.get('MBRAIN_MCP_TOOL_TIER') || null;
 }
 
 async function getEngine(): Promise<PostgresEngine> {
@@ -175,9 +190,13 @@ function createMcpServer(eng: PostgresEngine): Server {
     },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: remoteOps.map(operationToMcpTool),
-  }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const allowedTiers = resolveAllowedTiers(getRemoteToolTierSelection());
+    const listedRemoteOps = remoteOps.filter((op: any) => isToolVisibleAtTier(op, allowedTiers));
+    return {
+      tools: listedRemoteOps.map(operationToMcpTool),
+    };
+  });
 
   server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     const { name, arguments: params } = request.params;
