@@ -225,6 +225,7 @@ export class PGLiteEngine implements BrainEngine {
   readonly kind = 'pglite' as const;
   private _db: PGLiteDB | null = null;
   private _lock: LockHandle | null = null;
+  private _inFlight = new Set<Promise<unknown>>();
   // #2034: captured at connect() so reconnect() can restore the same data dir
   // after a drop, matching PostgresEngine's _savedConfig contract.
   private _savedConfig: EngineConfig | null = null;
@@ -271,13 +272,14 @@ export class PGLiteEngine implements BrainEngine {
     // why the CLI's exit paths read gbrain's own verdict
     // (cli-force-exit.ts currentExitCode), never ambient process.exitCode.
     try {
-      this._db = await preservingProcessExitCode(() =>
+      const rawDb = await preservingProcessExitCode(() =>
         PGlite.create({
           dataDir,
           loadDataDir,
           extensions: { vector, pg_trgm },
         }),
       );
+      this._db = this.trackDb(rawDb);
     } catch (err) {
       // v0.13.1: any PGLite.create() failure becomes actionable. v0.41.8.0
       // (#1340): the previous error hint hardcoded the macOS 26.3 link, but
@@ -317,6 +319,7 @@ export class PGLiteEngine implements BrainEngine {
     this._lock = null;
     try {
       if (db) {
+        await this.drainInFlightOperations();
         // Deliberately NOT wrapped in preservingProcessExitCode: close's
         // status write (0) is long-standing baseline behavior that test-runner
         // processes depend on (wrapping it flipped bun test's own exit code —
@@ -329,6 +332,38 @@ export class PGLiteEngine implements BrainEngine {
       if (lock?.acquired) {
         await releaseLock(lock);
       }
+    }
+  }
+
+  private trackInFlight<T>(promise: Promise<T>): Promise<T> {
+    const tracked = promise.finally(() => {
+      this._inFlight.delete(tracked);
+    });
+    this._inFlight.add(tracked);
+    return tracked;
+  }
+
+  private trackDb(db: PGLiteDB): PGLiteDB {
+    return new Proxy(db, {
+      get: (target, prop) => {
+        const value = Reflect.get(target, prop, target);
+        if (typeof value !== 'function') return value;
+        if (prop === 'query' || prop === 'sql' || prop === 'exec' || prop === 'transaction') {
+          return (...args: unknown[]) => {
+            const result = value.apply(target, args);
+            return result && typeof result.then === 'function'
+              ? this.trackInFlight(result)
+              : result;
+          };
+        }
+        return value.bind(target);
+      },
+    }) as PGLiteDB;
+  }
+
+  private async drainInFlightOperations(): Promise<void> {
+    while (this._inFlight.size > 0) {
+      await Promise.allSettled(Array.from(this._inFlight));
     }
   }
 
