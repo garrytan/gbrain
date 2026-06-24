@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync, lstatSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
+import { readFileSync, readdirSync, statSync, lstatSync, existsSync, writeFileSync, unlinkSync, mkdirSync, copyFileSync } from 'fs';
 import { join, relative, extname, basename, dirname } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
@@ -6,6 +6,7 @@ import { sqlQueryForEngine, executeRawJsonb } from '../core/sql-query.ts';
 import { humanSize } from '../core/file-resolver.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { getDefaultSourcePath } from '../core/source-resolver.ts';
 
 /** Size threshold: files >= 100 MB use TUS resumable upload */
 const SIZE_THRESHOLD = 100 * 1024 * 1024;
@@ -195,13 +196,46 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   const mimeType = getMimeType(filePath);
   const isMedia = mimeType?.startsWith('video/') || mimeType?.startsWith('audio/') || mimeType?.startsWith('image/');
   const needsCloud = stat.size >= SIZE_THRESHOLD || isMedia;
+  const localHash = fileHash(filePath);
 
   if (!needsCloud) {
-    // Small text/PDF files stay in git
+    // Small text/PDF files stay in git inside a page sidecar directory.
+    if (!pageSlug) {
+      console.error('Small raw uploads require --page <slug> so the git sidecar path can be resolved.');
+      process.exit(1);
+    }
+
+    const repoPath = await getDefaultSourcePath(engine);
+    if (!repoPath) {
+      console.error('Could not resolve the default brain repo path for git-backed raw upload.');
+      console.error('Pass --repo elsewhere is not supported here yet; configure sync.repo_path or sources.local_path.');
+      process.exit(1);
+    }
+
+    const pagePath = join(repoPath, `${pageSlug}.md`);
+    const sidecarDir = join(dirname(pagePath), `${basename(pagePath, '.md')}.raw`);
+    mkdirSync(sidecarDir, { recursive: true });
+
+    const sidecarPath = join(sidecarDir, filename);
+    copyFileSync(filePath, sidecarPath);
+
+    const storagePath = relative(repoPath, sidecarPath).replace(/\\/g, '/');
+    const sql = sqlQueryForEngine(engine);
+
+    await sql`
+      INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+      VALUES (${pageSlug}, ${filename}, ${storagePath}, ${mimeType}, ${stat.size}, ${localHash}, ${'{}'}::jsonb)
+      ON CONFLICT (storage_path) DO UPDATE SET
+        content_hash = EXCLUDED.content_hash,
+        size_bytes = EXCLUDED.size_bytes,
+        mime_type = EXCLUDED.mime_type
+    `;
+
     console.log(JSON.stringify({
       success: true,
       storage: 'git',
-      path: filePath,
+      path: sidecarPath,
+      storagePath,
       size: stat.size,
       size_human: humanSize(stat.size),
     }));
@@ -220,8 +254,8 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   const { createStorage } = await import('../core/storage.ts');
   const storage = await createStorage(config.storage as any);
   const content = readFileSync(filePath);
-  const hash = createHash('sha256').update(content).digest('hex');
-  const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
+  const cloudHash = createHash('sha256').update(content).digest('hex');
+  const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${cloudHash.slice(0, 8)}-${filename}`;
   const bucket = (config.storage as any).bucket || 'brain-files';
 
   const method = content.length >= SIZE_THRESHOLD ? 'TUS resumable' : 'standard';
@@ -238,7 +272,7 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
       storage_path: storagePath,
       size: stat.size,
       size_human: humanSize(stat.size),
-      hash: `sha256:${hash}`,
+      hash: `sha256:${cloudHash}`,
       mime: mimeType || 'application/octet-stream',
       uploaded: new Date().toISOString(),
       ...(fileType ? { type: fileType } : {}),
@@ -260,7 +294,7 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
        content_hash = EXCLUDED.content_hash,
        size_bytes = EXCLUDED.size_bytes,
        mime_type = EXCLUDED.mime_type`,
-    [pageSlug, filename, storagePath, mimeType, stat.size, 'sha256:' + hash],
+    [pageSlug, filename, storagePath, mimeType, stat.size, 'sha256:' + cloudHash],
     [{ type: fileType, upload_method: method }],
   );
 
@@ -274,7 +308,7 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
     pointerPath,
     size: stat.size,
     size_human: humanSize(stat.size),
-    hash: `sha256:${hash}`,
+    hash: `sha256:${cloudHash}`,
     upload_method: method,
   }));
 }
