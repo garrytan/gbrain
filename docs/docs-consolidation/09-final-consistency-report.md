@@ -41,7 +41,7 @@ found concrete install and auth issues that needed patching before PR handoff:
 | Several live docs still used old release-roadmap wording as current guidance. | Removed stale version promises from plugin-author docs, brain/source architecture, schema-pack boundaries, PDF skill prerequisites, sync troubleshooting, and takes-quality eval guidance. | CodeGraph trace to `src/core/minions/plugin-loader.ts`, `src/core/schema-pack/per-source.ts`, `src/commands/eval-takes-quality.ts`, `src/core/takes-quality-eval/replay.ts`, plus current `CHANGELOG.md` sync entries |
 
 The `understand-anything` graph was used as architecture/onboarding context and
-refreshed during the v0.42.52.0 rebase pass. Fresh validation found 0 broken
+refreshed during the v0.42.53.0 rebase pass. Fresh validation found 0 broken
 edge, layer, or tour references; the refreshed local graph has 14,004 nodes,
 19,949 edges, 9 layers, 6 tour steps, and 2,599 fingerprints. Command-contract
 claims were still checked against current source with CodeGraph instead of

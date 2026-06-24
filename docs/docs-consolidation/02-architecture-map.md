@@ -5,7 +5,7 @@ workflow, refreshed after the upstream rebase
 
 Baseline reviewed: `docs/docs-consolidation/00-upstream-base.md`
 
-Pinned upstream commit: `bb2e88c42a4969e16df7a43a9eb118aa031e89a4`
+Pinned upstream commit: `814258dda67945ffec9457a1e73980e947b7e462`
 
 Current branch state: rebased onto upstream/master at the pinned commit
 
@@ -60,11 +60,9 @@ Execution notes:
   refreshed incrementally. After the later `0.42.52.0` upstream advance, this
   branch was rebased again, the changelog-derived docs artifacts were
   refreshed, CodeGraph was synced, and `understand-anything` was refreshed
-  incrementally against the rebased checkout. The v0.42.52.0 refresh re-ran
-  deterministic scan, import-map extraction, changed-batch computation,
-  structural extraction, graph update, reference checks, fingerprint generation,
-  and metadata update; it does not claim a new LLM semantic review for every
-  changed batch.
+  incrementally against the rebased checkout. After the `0.42.53.0` upstream
+  advance, the branch was rebased again and the docs/graph refresh cycle was
+  repeated to carry the new JSONB/checkpoint and alias-fix release forward.
 
 ## Generated Artifacts
 
@@ -237,7 +235,7 @@ and `llms-full.txt` still use upstream `garrytan/gbrain/master` raw URLs, while
 ### 0. Changelog-To-Current-Capabilities Baseline
 
 The docs cleanup should begin by converting the latest changelog window into a
-current-capability ledger. The minimum release window is `0.42.52.0` through
+current-capability ledger. The minimum release window is `0.42.53.0` through
 `0.42.41.0`, with special attention to `0.42.52.0` through `0.42.45.0`,
 `0.42.43.0`, and `0.42.42.0`:
 

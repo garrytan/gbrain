@@ -5,9 +5,9 @@ Status: upstream documentation consolidation baseline
 ## Git
 
 - Current branch: docs/consolidate-entrypoints-and-install-modes
-- Pinned upstream commit: bb2e88c42a4969e16df7a43a9eb118aa031e89a4
+- Pinned upstream commit: 814258dda67945ffec9457a1e73980e947b7e462
 - Current branch state: rebased onto upstream/master at the pinned commit
-- Current upstream version: 0.42.52.0
+- Current upstream version: 0.42.53.0
 
 ## Current release baseline
 
@@ -18,6 +18,12 @@ rewrites are proposed.
 
 Latest release entries reviewed:
 
+- `0.42.53.0` - managed-Postgres sync no longer aborts at the first
+  checkpoint; the durable-checkpoint pin now binds a real JSONB array instead
+  of a double-encoded string, the same JSONB footgun is swept across the
+  codebase, `gbrain eval suspected-contradictions` now handles an exact-alias
+  result correctly, and a CI guard now catches the positional JSONB pattern
+  that caused the regression.
 - `0.42.52.0` - operational reliability hardening: autopilot now runs one
   brain-wide maintenance pass instead of per-source global work, the supervisor
   self-heals through transient database blips, `sources status` reports active

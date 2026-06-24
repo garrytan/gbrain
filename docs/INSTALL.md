@@ -590,6 +590,9 @@ backup that has not been restored is only an archive.
 - On v0.42.51.0 and newer, `doctor` distinguishes an actively running sync
   from a truly stale one. Treat a live sync lock as progress to observe, not as
   a reason to break the lock.
+- On v0.42.53.0 and newer, managed-Postgres sync should no longer die at the
+  first checkpoint. If it still does, upgrade first and then inspect the JSONB
+  pin-write / checkpoint path.
 - On v0.42.52.0 and newer, `gbrain sources status` shows actively syncing
   sources in the per-source table, and `gbrain status --fast` or
   `gbrain status --deadline-ms=<n>` returns a budgeted partial snapshot for
@@ -651,6 +654,7 @@ runbook.
 | Search returns stale text | Live-sync path failed; edit/search verification is the deciding proof. |
 | Page count is far below file count | Direct/session DB path is unreachable or sync is skipping files. |
 | Embeddings are missing | Provider key/dimensions mismatch or `gbrain embed --stale` is not running after sync. |
+| Sync aborts at the first checkpoint on managed Postgres | Upgrade to v0.42.53.0+ and rerun sync; the durable-checkpoint pin now writes real JSONB instead of a double-encoded string. If the failure persists after upgrade, inspect the checkpoint/JSONB path for a different bug. |
 | Search costs are higher than expected | Search mode is too broad for the downstream model or push context is overused. Review [`guides/mode-selection.md`](guides/mode-selection.md). |
 | Embed backfill starves other jobs | Enable pacing with `gbrain embed --stale --pace` or `GBRAIN_PACE_MODE`; for persistent `pace.mode`, use `gbrain config set pace.mode balanced --force` until the allowlist catches up. |
 | Status polling hangs or is too slow | Use `gbrain status --fast` or `gbrain status --deadline-ms=<n>` and treat partial sections as an observability budget, not data loss. |
