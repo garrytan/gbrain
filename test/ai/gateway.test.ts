@@ -67,6 +67,44 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
     expect(isAvailable('embedding')).toBe(true);
   });
 
+  test('openai embedding honors provider_base_urls.openai over OPENAI_BASE_URL env', async () => {
+    const originalFetch = globalThis.fetch;
+    let capturedUrl = '';
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      capturedUrl = typeof url === 'string' ? url : url.toString();
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            object: 'embedding',
+            index: 0,
+            embedding: new Array(1536).fill(0.01),
+          },
+        ],
+        model: 'text-embedding-3-large',
+        usage: { prompt_tokens: 1, total_tokens: 1 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      configureGateway({
+        embedding_model: 'openai:text-embedding-3-large',
+        embedding_dimensions: 1536,
+        base_urls: { openai: 'http://config.example/v1' },
+        env: { OPENAI_API_KEY: 'sk-fake' },
+      });
+
+      const vectors = await embed(['native openai base url']);
+      expect(vectors[0].length).toBe(1536);
+      expect(capturedUrl).toContain('http://config.example/v1/embeddings');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test('embedding UNAVAILABLE when OPENAI_API_KEY missing even if config names openai', () => {
     configureGateway({
       embedding_model: 'openai:text-embedding-3-large',
