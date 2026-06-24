@@ -12,6 +12,7 @@ import {
   isMarkdownFilePath,
   isImageFilePath as isImageFilePathFromSync,
   pruneDir,
+  SYNC_SKIP_FILES,
   type SyncStrategy,
 } from '../core/sync.ts';
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
@@ -493,12 +494,28 @@ interface CollectOpts {
  * The first-sync walker historically admitted them on markdown too when
  * `GBRAIN_EMBEDDING_MULTIMODAL=true`. Codex (C5) flagged the contradiction
  * — preserve the walker semantic explicitly.
+ *
+ * Closes #345: exclude `SYNC_SKIP_FILES` metafiles
+ * (`README.md` / `index.md` / `log.md` / `schema.md` / `RESOLVER.md`).
+ * Incremental `sync` skips these via `isSyncable`, but the bulk-import
+ * walker only filtered by extension — so a directory import imported every
+ * directory README as a page, titled by its folder ("People", "Companies",
+ * …). Those index-titled pages then trigram-corrupt fuzzy entity resolution
+ * (any `people/X` slug matches the "People" page) and inflate orphan count.
+ * Funnel both admission paths through the same metafile exclusion so import
+ * and sync agree on what is a page.
  */
 function isCollectibleForWalker(
   path: string,
   strategy: SyncStrategy,
   multimodalOn: boolean,
 ): boolean {
+  // Metafiles are directory scaffolding (READMEs / index / log / schema /
+  // resolver), not typed brain pages — same exclusion `sync`'s `isSyncable`
+  // applies. Guards both the FS-walk and the git-fast-path collection routes.
+  const basename = path.split('/').pop() || '';
+  if ((SYNC_SKIP_FILES as readonly string[]).includes(basename)) return false;
+
   switch (strategy) {
     case 'code':
       return isCodeFilePath(path);

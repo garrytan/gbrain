@@ -324,10 +324,18 @@ export type SyncableReason =
  * surface them in user-facing logs / docs without re-declaring the list.
  *
  * These files are append-only domain logs / index pages / boilerplate
- * READMEs — not typed brain pages — by convention. A user who genuinely
- * wants to index one of these basenames as a page should rename it.
+ * READMEs / the master filing decision-tree — not typed brain pages — by
+ * convention. A user who genuinely wants to index one of these basenames as
+ * a page should rename it.
+ *
+ * `RESOLVER.md` is the brain's master routing/decision-tree config file. The
+ * recommended-schema docs group it with `schema.md` / `index.md` / `log.md`
+ * as a structural document ("a document … plus schema.md and RESOLVER.md …
+ * that tells the agent how the brain is structured"), NOT searchable content.
+ * It was the lone structural sibling missing from this list, so it leaked
+ * into the index as a content page (slug `resolver`).
  */
-export const SYNC_SKIP_FILES = ['schema.md', 'index.md', 'log.md', 'README.md'] as const;
+export const SYNC_SKIP_FILES = ['schema.md', 'index.md', 'log.md', 'README.md', 'RESOLVER.md'] as const;
 
 /**
  * Internal classifier. Returns null when the path IS syncable, or a tagged
