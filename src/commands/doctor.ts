@@ -7283,7 +7283,30 @@ export async function buildChecks(
     // for embed_staleness, TABLESAMPLE on PG >50K for the coverage pair).
     progress.heartbeat('onboard_checks');
     const { runAllOnboardChecks } = await import('../core/onboard/checks.ts');
-    const onboardResults = await runAllOnboardChecks(engine);
+    // Defensive cap: runAllOnboardChecks talks to the DB and could in principle
+    // stall on a wedged pooled connection. Never let it hang the entire doctor
+    // run — bound it and fall through with a warn if it blows the budget.
+    const ONBOARD_TIMEOUT_MS = 30_000;
+    let onboardResults: { check: Check }[] = [];
+    try {
+      onboardResults = await Promise.race([
+        runAllOnboardChecks(engine),
+        new Promise<never>((_, reject) => {
+          const t = setTimeout(
+            () => reject(new Error(`onboard checks exceeded ${ONBOARD_TIMEOUT_MS}ms (possible connection-pool exhaustion)`)),
+            ONBOARD_TIMEOUT_MS,
+          );
+          // Don't keep the process alive solely for this timer.
+          (t as { unref?: () => void }).unref?.();
+        }),
+      ]);
+    } catch (e) {
+      checks.push({
+        name: 'onboard_checks',
+        status: 'warn',
+        message: `Onboard checks skipped: ${(e as Error).message}`,
+      });
+    }
     for (const r of onboardResults) checks.push(r.check);
   }
 
