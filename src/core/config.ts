@@ -870,6 +870,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.chat',
   'models.eval.longmemeval',
   'facts.extraction_model',
+  // Agent / subagent loop (v0.38+)
+  'agent.use_gateway_loop',
   // Dream cycle config
   'dream.synthesize.session_corpus_dir',
   'dream.synthesize.meeting_transcripts_dir',
@@ -926,6 +928,15 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'embed.backfill_cooldown_min',
   'embed.backfill_max_usd_per_source_24h',
   'embed.backfill_max_usd',
+  // Orphans (issue #2215): user-extensible deny prefixes for orphan reporting.
+  // Comma-separated slug prefixes additive to the shipped DENY_PREFIXES in
+  // src/commands/orphans.ts. See `gbrain orphans --help`.
+  'orphans.exclude_prefixes',
+  // Orphans (issue #2215): page-type exclusions. Comma-separated
+  // pages.type values; strict equality match at the SQL layer. Catches
+  // code-symbol pages and system-artifact types that the prefix knob
+  // can't reach. See `gbrain orphans --help`.
+  'orphans.exclude_types',
 ];
 
 /**

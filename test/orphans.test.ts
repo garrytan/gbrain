@@ -5,6 +5,7 @@ import {
   formatOrphansText,
   findOrphans,
   queryOrphanPages,
+  parseUserExcludePrefixes,
   type OrphanPage,
   type OrphanResult,
 } from '../src/commands/orphans.ts';
@@ -95,6 +96,118 @@ describe('shouldExclude', () => {
   test('does NOT exclude a page ending with log-like text that is not /log', () => {
     expect(shouldExclude('devlog')).toBe(false);
     expect(shouldExclude('changelog')).toBe(false);
+  });
+});
+
+/**
+ * `orphans.exclude_prefixes` — user-configurable additive deny list.
+ *
+ * The shipped DENY_PREFIXES covers gbrain-internal conventions. A
+ * PARA-organized vault, an Obsidian brain with `clips/`, a code corpus
+ * with `transcripts/`, etc. all leak hundreds-to-thousands of "orphans"
+ * that are reference material by design. These tests pin two contracts:
+ *
+ *   1. The parser tolerates the formats users actually type (whitespace,
+ *      trailing commas, empty entries) and rejects garbage cleanly.
+ *   2. User prefixes EXTEND the shipped defaults, never replace them.
+ *      An empty / unset config preserves today's behavior exactly.
+ */
+describe('parseUserExcludePrefixes — comma-separated config parse', () => {
+  test('happy path: comma-separated prefixes round-trip in order', () => {
+    expect(parseUserExcludePrefixes('resources/,transcripts/,agents/')).toEqual([
+      'resources/',
+      'transcripts/',
+      'agents/',
+    ]);
+  });
+
+  test('whitespace around commas tolerated', () => {
+    expect(parseUserExcludePrefixes('resources/ , transcripts/ ,agents/')).toEqual([
+      'resources/',
+      'transcripts/',
+      'agents/',
+    ]);
+  });
+
+  test('empty entries dropped (trailing commas, doubles, leading)', () => {
+    expect(parseUserExcludePrefixes('resources/,,transcripts/,')).toEqual([
+      'resources/',
+      'transcripts/',
+    ]);
+    expect(parseUserExcludePrefixes(',resources/')).toEqual(['resources/']);
+  });
+
+  test('whitespace-only entries dropped', () => {
+    expect(parseUserExcludePrefixes('resources/,   ,transcripts/')).toEqual([
+      'resources/',
+      'transcripts/',
+    ]);
+  });
+
+  test('single prefix without commas', () => {
+    expect(parseUserExcludePrefixes('resources/')).toEqual(['resources/']);
+  });
+
+  test('non-string input returns empty array (number, object, null, undefined)', () => {
+    expect(parseUserExcludePrefixes(42)).toEqual([]);
+    expect(parseUserExcludePrefixes({ foo: 'bar' })).toEqual([]);
+    expect(parseUserExcludePrefixes(null)).toEqual([]);
+    expect(parseUserExcludePrefixes(undefined)).toEqual([]);
+    expect(parseUserExcludePrefixes(['resources/'])).toEqual([]);
+  });
+
+  test('empty string returns empty array', () => {
+    expect(parseUserExcludePrefixes('')).toEqual([]);
+    expect(parseUserExcludePrefixes('   ')).toEqual([]);
+    expect(parseUserExcludePrefixes(',,')).toEqual([]);
+  });
+});
+
+describe('shouldExclude — additive userPrefixes contract', () => {
+  test('user prefix excludes a slug that the shipped defaults do not', () => {
+    expect(shouldExclude('resources/clips/some-article')).toBe(false);
+    expect(shouldExclude('resources/clips/some-article', ['resources/'])).toBe(true);
+  });
+
+  test('user prefix is additive: shipped defaults still fire', () => {
+    // `output/` is in DENY_PREFIXES; passing a user list does not undo it.
+    expect(shouldExclude('output/2026-q1', ['resources/'])).toBe(true);
+    // Pseudo-pages still excluded regardless of user list.
+    expect(shouldExclude('_atlas', ['resources/'])).toBe(true);
+  });
+
+  test('multiple user prefixes all apply', () => {
+    const prefixes = ['resources/', 'transcripts/', 'agents/'];
+    expect(shouldExclude('resources/clips/foo', prefixes)).toBe(true);
+    expect(shouldExclude('transcripts/claude-code/2026-06-15/abc', prefixes)).toBe(true);
+    expect(shouldExclude('agents/zosia/state', prefixes)).toBe(true);
+    expect(shouldExclude('people/jane-doe', prefixes)).toBe(false);
+  });
+
+  test('empty userPrefixes preserves baseline behavior', () => {
+    // The default parameter case AND the explicit empty case must agree:
+    // any slug that was includable before staying includable.
+    expect(shouldExclude('resources/clips/foo')).toBe(false);
+    expect(shouldExclude('resources/clips/foo', [])).toBe(false);
+    expect(shouldExclude('companies/acme')).toBe(false);
+    expect(shouldExclude('companies/acme', [])).toBe(false);
+  });
+
+  test('user prefix uses startsWith semantics (same as DENY_PREFIXES)', () => {
+    // The match is anchored at the start of the slug, NOT a substring
+    // search. A page named `resources` (singular, no trailing slash on the
+    // prefix because we ended the user prefix with `/`) would not match.
+    expect(shouldExclude('not-resources/blah', ['resources/'])).toBe(false);
+    expect(shouldExclude('resources', ['resources/'])).toBe(false);
+    expect(shouldExclude('resources/anything', ['resources/'])).toBe(true);
+  });
+
+  test('user prefix without trailing slash still matches at slug start', () => {
+    // We do not enforce a trailing slash on user prefixes. A user who sets
+    // `resources` (no slash) gets startsWith semantics, which means
+    // `resources-of-the-realm/...` would also match. Documented behavior.
+    expect(shouldExclude('resources-of-the-realm/foo', ['resources'])).toBe(true);
+    expect(shouldExclude('resources/foo', ['resources'])).toBe(true);
   });
 });
 
