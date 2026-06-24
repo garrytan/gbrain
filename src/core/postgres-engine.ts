@@ -5600,6 +5600,7 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const sigma = opts.sigma ?? 3.0;
     const lookbackDays = Math.max(1, opts.lookback_days ?? 30);
+    const minBaselineDays = Math.max(0, opts.min_baseline_days ?? 7);
     // Boundaries: today's window is [since, since+1day); baseline is [since-lookback, since).
     const sinceIso = (opts.since ?? new Date().toISOString().slice(0, 10)); // YYYY-MM-DD
     const sinceDate = new Date(sinceIso + 'T00:00:00Z');
@@ -5710,7 +5711,7 @@ export class PostgresEngine implements BrainEngine {
       })),
     ];
 
-    return computeAnomaliesFromBuckets(baseline, today, sigma);
+    return computeAnomaliesFromBuckets(baseline, today, sigma, 20, minBaselineDays);
   }
 }
 
