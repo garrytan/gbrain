@@ -7,13 +7,25 @@ The most important check is #4 (live sync). "Sync ran" is not the same as
 "sync worked." A sync that silently skips pages because of a pooler bug is
 worse than no sync at all, because you think it's working.
 
+Every shell block carries a `runbook:<class>` marker so automation and humans
+can tell what kind of evidence it can produce:
+
+- `runbook:executable`: deterministic repo-local command that can be used as
+  direct verification evidence.
+- `runbook:manual`: operator command that needs local runtime state,
+  placeholders, writable brain data, or an installed `mbrain` command.
+- `runbook:external`: command that depends on GitHub, release assets, a public
+  tunnel, network update checks, or another external service.
+- `runbook:obsolete`: historical command retained only as a non-evidence
+  reference.
+
 ---
 
 ## 1. Schema Verification
 
 **Command:**
 
-```bash
+```bash runbook:manual
 mbrain doctor --json
 ```
 
@@ -29,7 +41,7 @@ check. See `skills/setup/SKILL.md` Error Recovery table.
 
 Run:
 
-```bash
+```bash runbook:manual
 mbrain doctor --json | jq '.checks[] | select(.name == "execution_envelope" or .name == "contract_surface")'
 ```
 
@@ -44,7 +56,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/postgres-runtime-foundation.test.ts test/config.test.ts test/doctor.test.ts
 ```
 
@@ -60,7 +72,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:manual
 bun test test/postgres-runtime-migration-cleanup.test.ts
 DATABASE_URL='postgresql://...' bun run smoke:postgres-runtime
 ```
@@ -75,7 +87,7 @@ Expected:
 - DB-only legacy state is called out for manual review instead of silently
   claiming full migration.
 - the real Postgres confidence smoke initializes a disposable target, imports a
-  Markdown fixture, runs `projection-explain` (empty lineage for a fresh `--no-embed` import), runs `bun run test:phase13`, and
+  Markdown fixture, runs `projection-explain` (empty lineage for a fresh `--no-embed` import), runs `bun run test:phase13` <!-- runbook:executable -->, and
   finishes with `mbrain doctor --json` without OpenAI or Anthropic API keys.
 
 ## Postgres runtime confidence smoke
@@ -85,7 +97,7 @@ the source tree. The source-tree gate exercises real Postgres init, Markdown
 import, projection lineage, deterministic Phase 13 replay, and doctor against a
 disposable target:
 
-```bash
+```bash runbook:manual
 DATABASE_URL='postgresql://...' bun run smoke:postgres-runtime
 ```
 
@@ -94,7 +106,7 @@ profile. The installed MCP smoke is a separate binary-compatibility check: it
 starts that command's MCP server in an isolated temporary local profile, so it
 does not prove the configured agent MCP shares the validated Postgres profile.
 
-```bash
+```bash runbook:manual
 mbrain --version
 mbrain init --profile homebrew-postgres --non-interactive
 mbrain import <brain-markdown-export> --no-embed
@@ -105,8 +117,8 @@ MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
 
 Expected:
 
-- `bun run smoke:postgres-runtime` returns `{"ok":true,...}` after `init`,
-  Markdown import, `projection-explain`, `bun run test:phase13`, and
+- `bun run smoke:postgres-runtime` <!-- runbook:manual --> returns `{"ok":true,...}` after `init`,
+  Markdown import, `projection-explain`, `bun run test:phase13` <!-- runbook:executable -->, and
   `doctor --json`.
 - `mbrain --version` reports the release being validated.
 - Postgres doctor checks are healthy for the active profile.
@@ -129,7 +141,7 @@ Use this gate after pushing a release tag. A tag-triggered workflow can fail
 after the tag exists, so do not call the version published until the GitHub
 Release and its assets exist:
 
-```bash
+```bash runbook:external
 gh run watch <release-run-id>
 gh release view vX.Y.Z --json tagName,assets,url
 ```
@@ -150,14 +162,14 @@ Expected:
 Use this gate after changing managed agent setup, installed-agent doctor output,
 proof mode, or authority-first memory boundaries:
 
-```bash
+```bash runbook:executable
 bun run test:agent-trust
 bun run typecheck
 ```
 
 For installed-command confidence on the local machine, also run:
 
-```bash
+```bash runbook:manual
 mbrain doctor --agent --explain --json
 ```
 
@@ -180,7 +192,7 @@ Use this gate after changing report collection, connector registry/sync state,
 Memory Inbox review pressure, canonical target proposal review actions, source
 safety, or saved brain reports:
 
-```bash
+```bash runbook:manual
 bun test test/memory-review-report-service.test.ts test/cli.test.ts
 mbrain memory-report --json
 mbrain memory-report --save --report-dir <brain-dir>
@@ -212,14 +224,14 @@ access token, exercises the refresh-token grant, and checks Postgres
 `access_tokens` plus `mcp_request_log` evidence. It does not require ChatGPT,
 OpenAI, or Anthropic credentials.
 
-```bash
+```bash runbook:manual
 DATABASE_URL='postgresql://...' bun run smoke:http-oauth
 ```
 
 To prove OAuth setup state survives HTTP server restarts, ask the smoke to
 restart after DCR registration and again after authorization-code creation:
 
-```bash
+```bash runbook:manual
 DATABASE_URL='postgresql://...' \
 MBRAIN_SMOKE_RESTART_OAUTH_STATE=1 \
 bun run smoke:http-oauth
@@ -229,7 +241,7 @@ To verify the OAuth metadata and unauthenticated `/mcp` challenge that a public
 HTTPS tunnel or host should advertise, set the public issuer before running the
 same smoke:
 
-```bash
+```bash runbook:external
 DATABASE_URL='postgresql://...' \
 MBRAIN_HTTP_PUBLIC_URL='https://YOUR-DOMAIN.ngrok.app' \
 bun run smoke:http-oauth
@@ -266,21 +278,21 @@ temporary public HTTPS tunnel, Dynamic Client Registration, owner-approved OAuth
 full HTTP `tools/list` descriptors/action discovery, and a `get_stats` tool call
 against real Postgres. Descriptor hardening is covered by
 `bun test test/mcp-tool-schema.test.ts test/mcp-http-transport.test.ts
-test/mcp-stdio-frame-budget.test.ts`: HTTP descriptors include titles,
+test/mcp-stdio-frame-budget.test.ts` <!-- runbook:executable -->: HTTP descriptors include titles,
 descriptions, and read/write/destructive annotations, while compact stdio
 schemas omit that metadata for frame-budget safety. For a new deployment, keep
 the local smoke, public tunnel health check, and client-side ChatGPT connection
 check as separate gates.
 
 Phase 13 evidence is deterministic replay plus live-eval budget gating by
-default. `bun run test:phase13` proves the deterministic fixture, policy,
+default. `bun run test:phase13` <!-- runbook:executable --> proves the deterministic fixture, policy,
 projection, source-safety, and budget guardrails. Do not report live LLM eval evidence unless the budgeted live eval was actually run in an environment with the required provider credentials.
 
 ## Authority-first memory foundation
 
 Run:
 
-```bash
+```bash runbook:executable
 bun run test:authority-foundation
 ```
 
@@ -317,7 +329,7 @@ permission.
 
 Run:
 
-```bash
+```bash runbook:executable
 bun run test:graph-frontier
 bun run typecheck
 ```
@@ -336,7 +348,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun run test:trust-contract
 ```
 
@@ -354,7 +366,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun run test:decision-projections
 bun run typecheck
 ```
@@ -375,7 +387,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun run test:memory-why
 bun run typecheck
 ```
@@ -398,7 +410,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun run test:episode-capture
 bun run typecheck
 ```
@@ -422,7 +434,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun run test:dream-guardrails
 bun run typecheck
 ```
@@ -445,7 +457,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/phase0-contract-parity.test.ts
 ```
 
@@ -459,7 +471,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s26-gbrain-absorption-contracts.test.ts
 ```
 
@@ -473,7 +485,7 @@ Expected:
 
 Then run:
 
-```bash
+```bash runbook:executable
 bun run test:scenarios
 ```
 
@@ -486,7 +498,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s27-gbrain-evaluation-foundation.test.ts
 ```
 
@@ -502,7 +514,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/corpus-lane-service.test.ts test/import-file.test.ts test/read-context-service.test.ts test/retrieval-context-operations.test.ts test/memory-writeback-router-service.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s29-gbrain-corpus-lanes.test.ts
 bun run test:scenarios
 bunx tsc --noEmit --pretty false
@@ -521,7 +533,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/memory-activation-policy-service.test.ts test/memory-writeback-router-service.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s28-gbrain-memory-authority.test.ts
 ```
 
@@ -539,13 +551,13 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s30-gbrain-code-lane.test.ts
 ```
 
 For the full GA-P5 slice, also run:
 
-```bash
+```bash runbook:executable
 bun test test/context-map-code-lane-service.test.ts test/code-claim-verification-service.test.ts test/code-claim-verification-operations.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s30-gbrain-code-lane.test.ts
 bun run test:scenarios
 bunx tsc --noEmit --pretty false
@@ -568,13 +580,13 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/dream-cycle-maintenance-service.test.ts test/dream-cycle-maintenance-operations.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s31-gbrain-personal-maintenance-cycle.test.ts
 ```
 
 For the full GA-P6 contract surface, also run:
 
-```bash
+```bash runbook:executable
 bun run test:phase8
 bun run test:phase9
 bun run test:scenarios
@@ -597,7 +609,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s32-gbrain-upstream-discipline.test.ts
 bun test test/gbrain-reference-baseline-script.test.ts
 bun run test:scenarios
@@ -613,7 +625,7 @@ git diff --name-only "${GA_P7_COMMIT}^..${GA_P7_COMMIT}"
 
 When a local `reference/gbrain` checkout exists, also run:
 
-```bash
+```bash runbook:manual
 GBRAIN_REFERENCE_PATH=reference/gbrain bun run scripts/check-gbrain-reference-baseline.ts
 ```
 
@@ -662,7 +674,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun run test:phase1
 ```
 
@@ -678,7 +690,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun run bench:phase1 --json
 ```
 
@@ -693,7 +705,7 @@ Expected:
 
 To evaluate the full primary-improvement threshold once you have a comparable prior benchmark:
 
-```bash
+```bash runbook:manual
 bun run bench:phase1 --json --baseline path/to/previous-phase1-benchmark.json
 ```
 
@@ -704,7 +716,7 @@ Expected:
 
 To publish a reusable environment-specific baseline artifact:
 
-```bash
+```bash runbook:manual
 bun run bench:phase1 --json --write-baseline docs/benchmarks/phase1/YYYY-MM-DD-<env>.json
 ```
 
@@ -718,7 +730,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/note-manifest-schema.test.ts test/note-manifest-service.test.ts test/note-manifest-engine.test.ts test/note-manifest-operations.test.ts test/phase2-note-manifest.test.ts
 ```
 
@@ -732,7 +744,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun run bench:phase2 --json
 ```
 
@@ -749,7 +761,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/note-section-schema.test.ts test/note-section-service.test.ts test/note-section-engine.test.ts test/note-section-operations.test.ts test/phase2-note-sections.test.ts
 ```
 
@@ -763,7 +775,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun run bench:phase2-sections --json
 ```
 
@@ -780,7 +792,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/note-structural-graph-service.test.ts test/note-structural-graph-operations.test.ts test/phase2-structural-paths.test.ts
 ```
 
@@ -794,7 +806,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun run bench:phase2-structural-paths --json
 ```
 
@@ -810,7 +822,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/context-map-schema.test.ts test/context-map-engine.test.ts test/context-map-service.test.ts test/context-map-operations.test.ts test/phase2-context-map.test.ts
 ```
 
@@ -827,7 +839,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun run bench:phase2-context-map --json
 ```
 
@@ -843,7 +855,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/context-atlas-schema.test.ts test/context-atlas-engine.test.ts test/context-atlas-service.test.ts test/context-atlas-operations.test.ts test/phase2-context-atlas.test.ts
 ```
 
@@ -858,7 +870,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun run bench:phase2-context-atlas --json
 ```
 
@@ -874,7 +886,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/context-atlas-service.test.ts test/context-atlas-operations.test.ts test/phase2-context-atlas-select.test.ts
 bun test test/cli.test.ts -t "atlas-select --help"
 bun run bench:phase2-context-atlas-select --json
@@ -892,7 +904,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/context-atlas-overview-service.test.ts test/context-atlas-overview-operations.test.ts test/phase2-context-atlas-overview.test.ts
 bun test test/cli.test.ts -t "atlas-overview --help"
 bun run bench:phase2-context-atlas-overview --json
@@ -910,7 +922,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/context-atlas-report-service.test.ts test/context-atlas-report-operations.test.ts test/phase2-context-atlas-report.test.ts
 bun test test/cli.test.ts -t "atlas-report --help"
 bun run bench:phase2-context-atlas-report --json
@@ -928,7 +940,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/context-map-report-service.test.ts test/context-map-report-operations.test.ts test/phase2-context-map-report.test.ts
 bun test test/cli.test.ts -t "map-report --help"
 bun run bench:phase2-context-map-report --json
@@ -946,7 +958,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/workspace-system-card-service.test.ts test/workspace-system-card-operations.test.ts test/phase2-workspace-system-card.test.ts
 bun test test/cli.test.ts -t "workspace-system-card --help"
 bun run bench:phase2-workspace-system-card --json
@@ -964,7 +976,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/workspace-project-card-service.test.ts test/workspace-project-card-operations.test.ts test/phase2-workspace-project-card.test.ts
 bun test test/cli.test.ts -t "workspace-project-card --help"
 bun run bench:phase2-workspace-project-card --json
@@ -982,7 +994,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/workspace-orientation-bundle-service.test.ts test/workspace-orientation-bundle-operations.test.ts test/phase2-workspace-orientation-bundle.test.ts
 bun test test/cli.test.ts -t "workspace-orientation --help"
 bun run bench:phase2-workspace-orientation-bundle --json
@@ -1000,7 +1012,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/workspace-corpus-card-service.test.ts test/workspace-corpus-card-operations.test.ts test/phase2-workspace-corpus-card.test.ts
 bun test test/cli.test.ts -t "workspace-corpus-card --help"
 bun run bench:phase2-workspace-corpus-card --json
@@ -1018,7 +1030,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/atlas-orientation-card-service.test.ts test/atlas-orientation-card-operations.test.ts test/phase2-atlas-orientation-card.test.ts
 bun test test/cli.test.ts -t "atlas-orientation-card --help"
 bun run bench:phase2-atlas-orientation-card --json
@@ -1036,7 +1048,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/atlas-orientation-bundle-service.test.ts test/atlas-orientation-bundle-operations.test.ts test/phase2-atlas-orientation-bundle.test.ts
 bun test test/cli.test.ts -t "atlas-orientation-bundle --help"
 bun run bench:phase2-atlas-orientation-bundle --json
@@ -1054,7 +1066,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun run test:phase2
 bun run bench:phase2-acceptance --json
 ```
@@ -1069,7 +1081,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/context-map-explain-service.test.ts test/context-map-explain-operations.test.ts test/phase3-context-map-explain.test.ts
 bun test test/cli.test.ts -t "map-explain --help"
 bun run bench:phase3-context-map-explain --json
@@ -1087,7 +1099,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/context-map-query-service.test.ts test/context-map-query-operations.test.ts test/phase3-context-map-query.test.ts
 bun test test/cli.test.ts -t "map-query --help"
 bun run bench:phase3-context-map-query --json
@@ -1105,7 +1117,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/context-map-path-service.test.ts test/context-map-path-operations.test.ts test/phase3-context-map-path.test.ts
 bun test test/cli.test.ts -t "map-path --help"
 bun run bench:phase3-context-map-path --json
@@ -1123,7 +1135,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/broad-synthesis-route-service.test.ts test/broad-synthesis-route-operations.test.ts test/phase3-broad-synthesis-route.test.ts
 bun test test/cli.test.ts -t "broad-synthesis-route --help"
 bun run bench:phase3-broad-synthesis-route --json
@@ -1141,7 +1153,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/precision-lookup-route-service.test.ts test/precision-lookup-route-operations.test.ts test/phase3-precision-lookup-route.test.ts
 bun test test/cli.test.ts -t "precision-lookup-route --help"
 bun run bench:phase3-precision-lookup-route --json
@@ -1159,7 +1171,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/retrieval-route-selector-service.test.ts test/retrieval-route-selector-operations.test.ts test/phase3-retrieval-route-selector.test.ts
 bun test test/cli.test.ts -t "retrieval-route --help"
 bun run bench:phase3-retrieval-route-selector --json
@@ -1177,7 +1189,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/retrieval-route-trace-service.test.ts test/retrieval-route-trace-operations.test.ts test/phase3-retrieval-route-trace.test.ts
 bun run bench:phase3-retrieval-route-trace --json
 ```
@@ -1194,7 +1206,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/phase3-acceptance-pack.test.ts
 bun run bench:phase3-acceptance --json
 bun run test:phase3
@@ -1212,7 +1224,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/scope-gate-service.test.ts test/scope-gate-operations.test.ts test/phase4-scope-gate.test.ts
 bun run bench:phase4-scope-gate --json
 ```
@@ -1230,7 +1242,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/profile-memory-schema.test.ts test/profile-memory-engine.test.ts test/profile-memory-operations.test.ts test/personal-profile-lookup-route-service.test.ts test/personal-profile-lookup-route-operations.test.ts test/phase4-personal-profile-lookup.test.ts
 bun run bench:phase4-personal-profile-lookup --json
 ```
@@ -1250,7 +1262,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/personal-episode-schema.test.ts test/personal-episode-engine.test.ts test/personal-episode-operations.test.ts
 ```
 
@@ -1266,7 +1278,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/personal-episode-schema.test.ts test/personal-episode-engine.test.ts test/personal-episode-operations.test.ts test/personal-episode-lookup-route-service.test.ts test/personal-episode-lookup-route-operations.test.ts test/phase4-personal-episode-lookup.test.ts
 bun run bench:phase4-personal-episode-lookup --json
 ```
@@ -1286,7 +1298,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/personal-write-target-service.test.ts test/personal-write-target-operations.test.ts test/phase4-personal-write-target.test.ts
 bun run bench:phase4-personal-write-target --json
 ```
@@ -1304,7 +1316,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/personal-write-operations.test.ts
 ```
 
@@ -1319,7 +1331,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/personal-export-visibility-service.test.ts test/personal-export-operations.test.ts test/export-personal-visibility.test.ts test/phase4-export-visibility.test.ts
 bun run bench:phase4-export-visibility --json
 ```
@@ -1339,7 +1351,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/mixed-scope-bridge-service.test.ts test/mixed-scope-bridge-operations.test.ts test/retrieval-route-selector-service.test.ts test/retrieval-route-selector-operations.test.ts test/phase4-mixed-scope-bridge.test.ts
 bun run bench:phase4-mixed-scope-bridge --json
 ```
@@ -1358,7 +1370,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/mixed-scope-disclosure-service.test.ts test/mixed-scope-disclosure-operations.test.ts test/phase4-mixed-scope-disclosure.test.ts
 bun run bench:phase4-mixed-scope-disclosure --json
 ```
@@ -1376,7 +1388,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/phase4-acceptance-pack.test.ts
 bun run bench:phase4-acceptance --json
 ```
@@ -1393,7 +1405,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/memory-inbox-schema.test.ts test/memory-inbox-engine.test.ts test/memory-inbox-service.test.ts test/memory-inbox-operations.test.ts test/phase5-memory-inbox-foundations.test.ts
 bun run bench:phase5-memory-inbox-foundations --json
 ```
@@ -1411,7 +1423,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/memory-inbox-schema.test.ts test/memory-inbox-engine.test.ts test/memory-inbox-service.test.ts test/memory-inbox-operations.test.ts test/phase5-memory-inbox-rejection.test.ts
 bun run bench:phase5-memory-inbox-rejection --json
 ```
@@ -1428,7 +1440,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/memory-inbox-service.test.ts test/memory-inbox-operations.test.ts test/phase5-memory-inbox-promotion-preflight.test.ts
 bun run bench:phase5-memory-inbox-promotion-preflight --json
 ```
@@ -1447,7 +1459,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/memory-inbox-schema.test.ts test/memory-inbox-engine.test.ts test/memory-inbox-service.test.ts test/memory-inbox-operations.test.ts test/phase5-memory-inbox-promotion.test.ts
 bun run bench:phase5-memory-inbox-promotion --json
 ```
@@ -1464,7 +1476,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/memory-inbox-schema.test.ts test/memory-inbox-engine.test.ts test/memory-inbox-service.test.ts test/memory-inbox-operations.test.ts test/phase5-memory-inbox-supersession.test.ts
 bun run bench:phase5-memory-inbox-supersession --json
 ```
@@ -1482,7 +1494,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/memory-inbox-contradiction-service.test.ts test/memory-inbox-contradiction-operations.test.ts test/phase5-memory-inbox-contradiction.test.ts
 bun run bench:phase5-memory-inbox-contradiction --json
 ```
@@ -1499,7 +1511,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/phase5-acceptance-pack.test.ts
 bun run bench:phase5-acceptance --json
 ```
@@ -1516,7 +1528,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/memory-candidate-scoring-service.test.ts test/memory-candidate-scoring-operations.test.ts test/phase6-candidate-scoring.test.ts
 bun run bench:phase6-candidate-scoring --json
 ```
@@ -1532,7 +1544,7 @@ Expect:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/phase6-acceptance-pack.test.ts
 bun run bench:phase6-acceptance --json
 ```
@@ -1548,7 +1560,7 @@ Expect:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/map-derived-candidate-service.test.ts test/map-derived-candidate-operations.test.ts test/phase6-map-derived-candidates.test.ts
 bun run bench:phase6-map-derived-candidates --json
 ```
@@ -1565,7 +1577,7 @@ Expect:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/memory-candidate-dedup-service.test.ts test/memory-candidate-dedup-operations.test.ts test/phase6-candidate-dedup.test.ts
 bun run bench:phase6-candidate-dedup --json
 ```
@@ -1596,7 +1608,7 @@ install paste (read `docs/MBRAIN_SKILLPACK.md`).
 
 **Command:**
 
-```bash
+```bash runbook:external
 mbrain check-update --json
 ```
 
@@ -1618,13 +1630,13 @@ This is the most important check. Three parts.
 
 Compare page count in the DB against syncable file count in the repo:
 
-```bash
+```bash runbook:manual
 mbrain stats
 ```
 
 Then count syncable files:
 
-```bash
+```bash runbook:manual
 find /data/brain -name '*.md' \
   -not -path '*/.*' \
   -not -path '*/.raw/*' \
@@ -1651,7 +1663,7 @@ Check your `DATABASE_URL`:
 
 ### 4b. Embed Check
 
-```bash
+```bash runbook:manual
 mbrain stats
 ```
 
@@ -1659,7 +1671,7 @@ mbrain stats
 
 **If embedded is much lower than total:**
 
-```bash
+```bash runbook:manual
 mbrain embed --stale
 ```
 
@@ -1674,7 +1686,7 @@ chunk migration sets `chunk_size_tokens=768`, `chunk_overlap_tokens=128`, and
 `chunk_strategy=qwen3_token_recursive`. Existing embeddings are marked stale so
 the next backfill rebuilds chunks with the new layout:
 
-```bash
+```bash runbook:manual
 mbrain embed --stale
 ```
 
@@ -1684,7 +1696,7 @@ This is the real test. Edit a brain page, push, wait, search.
 
 1. Edit a page in the brain repo (e.g., correct a fact on a person's page):
 
-```bash
+```bash runbook:external
 # Example: fix a line in Gustaf's page
 cd /data/brain
 # Make a small edit to any .md file
@@ -1695,7 +1707,7 @@ git add -A && git commit -m "test: verify live sync" && git push
 
 3. Search for the corrected text:
 
-```bash
+```bash runbook:manual
 mbrain search "<text from the correction>"
 ```
 
@@ -1714,7 +1726,7 @@ mbrain search "<text from the correction>"
 
 **Command:**
 
-```bash
+```bash runbook:manual
 mbrain stats
 ```
 
@@ -1724,13 +1736,13 @@ mbrain stats
 model may be missing. On macOS, start an MLX embedding server on
 `http://127.0.0.1:8765/v1/embeddings`. On Linux CPU servers, start llama.cpp:
 
-```bash
+```bash runbook:manual
 scripts/run-qwen3-llamacpp-embedding-cpu.sh
 ```
 
 Then rerun:
 
-```bash
+```bash runbook:manual
 mbrain embed --stale
 ```
 
@@ -1751,7 +1763,7 @@ system context. See `skills/setup/SKILL.md` Phase D.
 
 ## Quick Verification (all checks in one pass)
 
-```bash
+```bash runbook:external
 # 1. Schema
 mbrain doctor --json
 
@@ -1778,7 +1790,7 @@ end-to-end sync test (4c), push a real change and verify it appears in search.
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/canonical-handoff-service.test.ts test/canonical-handoff-engine.test.ts test/canonical-handoff-operations.test.ts test/phase7-canonical-handoff.test.ts test/memory-inbox-operations.test.ts
 bun run bench:phase7-canonical-handoff --json
 ```
@@ -1797,7 +1809,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/historical-validity-service.test.ts test/historical-validity-engine.test.ts test/historical-validity-operations.test.ts test/phase7-historical-validity.test.ts test/memory-inbox-operations.test.ts
 bun run bench:phase7-historical-validity --json
 ```
@@ -1817,7 +1829,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/phase7-acceptance-pack.test.ts
 bun run bench:phase7-acceptance --json
 ```
@@ -1834,14 +1846,14 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/phase8-longitudinal-evaluation.test.ts
 bun run bench:phase8-longitudinal --json
 ```
 
 Optional full-comparability run:
 
-```bash
+```bash runbook:manual
 bun run bench:phase8-longitudinal --json --phase1-baseline path/to/phase1-baseline.json
 ```
 
@@ -1861,7 +1873,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/dream-cycle-maintenance-service.test.ts test/dream-cycle-maintenance-operations.test.ts test/phase8-dream-cycle.test.ts
 bun run bench:phase8-dream-cycle --json
 ```
@@ -1882,14 +1894,14 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/phase8-acceptance-pack.test.ts
 bun run bench:phase8-acceptance --json
 ```
 
 Optional full-comparability run:
 
-```bash
+```bash runbook:manual
 bun run bench:phase8-acceptance --json --phase1-baseline path/to/phase1-baseline.json
 ```
 
@@ -1906,7 +1918,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/memory-operations-control-plane-schema.test.ts \
   test/memory-mutation-ledger-engine.test.ts \
   test/memory-mutation-ledger-service.test.ts \
@@ -1945,7 +1957,7 @@ Expected:
 
 Run:
 
-```bash
+```bash runbook:executable
 bun test test/phase9-acceptance-pack.test.ts
 bun run bench:phase9-acceptance --json
 bun run test:phase9
@@ -1970,9 +1982,9 @@ Expected:
 
 Run these gates from a clean branch based on latest `origin/master`:
 
-- Sprint 5 candidate status events: `bun test test/scenarios/s21-candidate-status-events-audit.test.ts`
+- Sprint 5 candidate status events: `bun test test/scenarios/s21-candidate-status-events-audit.test.ts` <!-- runbook:executable -->
 
-```bash
+```bash runbook:executable
 if rg -n "test\\.todo|todo\\(" test/scenarios; then
   echo "Scenario placeholders remain"
   exit 1
@@ -1999,7 +2011,7 @@ Expected:
 
 Verify the audit CLI against an initialized local SQLite brain:
 
-```bash
+```bash runbook:executable
 FINAL_ACCEPTANCE_CLI_HOME=$(mktemp -d /tmp/mbrain-final-acceptance-cli-home.XXXXXX)
 
 env HOME="$FINAL_ACCEPTANCE_CLI_HOME" \
