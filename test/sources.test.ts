@@ -156,6 +156,127 @@ describe('sources add', () => {
     await expect(runSources(engine, ['add', 'plans', '--path', '/tmp/gstack/plans']))
       .rejects.toThrow(/overlaps with existing source "gstack"/);
   });
+
+  // Glob filters — TODO #3 from the brettdavies fork recon. Pre-fix, the
+  // `SyncableOptions` shape in `src/core/sync.ts` had been carrying
+  // `include` / `exclude` since v0.41.13, but commands/sync.ts:1454 never
+  // populated them and `sources add` had no flag to persist them — so users
+  // had no way to tell gbrain to skip `Templates/` in an Obsidian vault.
+  test('--exclude persists glob into sources.config.exclude_globs', async () => {
+    const { engine, calls } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [{
+        id: 'vault',
+        name: 'vault',
+        local_path: '/tmp/vault',
+        last_commit: null,
+        last_sync_at: null,
+        config: '{"exclude_globs":["Templates/**"]}',
+        created_at: new Date(),
+      }],
+    });
+    await runSources(engine, ['add', 'vault', '--path', '/tmp/vault', '--exclude', 'Templates/**']);
+    const insert = calls.find(c => c.sql.includes('INSERT INTO sources'));
+    expect(insert!.params[3]).toBe('{"exclude_globs":["Templates/**"]}');
+  });
+
+  test('--include persists glob into sources.config.include_globs', async () => {
+    const { engine, calls } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [{
+        id: 'wiki',
+        name: 'wiki',
+        local_path: '/tmp/wiki',
+        last_commit: null,
+        last_sync_at: null,
+        config: '{"include_globs":["people/**"]}',
+        created_at: new Date(),
+      }],
+    });
+    await runSources(engine, ['add', 'wiki', '--path', '/tmp/wiki', '--include', 'people/**']);
+    const insert = calls.find(c => c.sql.includes('INSERT INTO sources'));
+    expect(insert!.params[3]).toBe('{"include_globs":["people/**"]}');
+  });
+
+  test('--exclude is repeatable; preserves order', async () => {
+    const { engine, calls } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [{
+        id: 'vault',
+        name: 'vault',
+        local_path: '/tmp/vault',
+        last_commit: null,
+        last_sync_at: null,
+        config: '{}',
+        created_at: new Date(),
+      }],
+    });
+    await runSources(engine, [
+      'add', 'vault', '--path', '/tmp/vault',
+      '--exclude', 'Templates/**',
+      '--exclude', '.smart-env/**',
+      '--exclude', 'Drafts/**',
+    ]);
+    const insert = calls.find(c => c.sql.includes('INSERT INTO sources'));
+    expect(insert!.params[3]).toBe('{"exclude_globs":["Templates/**",".smart-env/**","Drafts/**"]}');
+  });
+
+  test('--include and --exclude compose in one command (federated source with both filter axes)', async () => {
+    const { engine, calls } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [{
+        id: 'vault',
+        name: 'vault',
+        local_path: '/tmp/vault',
+        last_commit: null,
+        last_sync_at: null,
+        config: '{"federated":true,"include_globs":["people/**"],"exclude_globs":["Templates/**"]}',
+        created_at: new Date(),
+      }],
+    });
+    await runSources(engine, [
+      'add', 'vault', '--path', '/tmp/vault', '--federated',
+      '--include', 'people/**',
+      '--exclude', 'Templates/**',
+    ]);
+    const insert = calls.find(c => c.sql.includes('INSERT INTO sources'));
+    expect(insert!.params[3]).toBe(
+      '{"federated":true,"include_globs":["people/**"],"exclude_globs":["Templates/**"]}',
+    );
+  });
+
+  test('omitted glob flags leave config untouched (no [] entries persisted)', async () => {
+    // Regression guard: empty glob arrays must NOT be written. Otherwise a
+    // brain that never opts into filtering grows {"include_globs": [],
+    // "exclude_globs": []} cruft in every source row, and the parseGlobList
+    // path would return undefined anyway (the cruft is purely noise).
+    const { engine, calls } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [{
+        id: 'gstack',
+        name: 'gstack',
+        local_path: '/tmp/gstack',
+        last_commit: null,
+        last_sync_at: null,
+        config: '{}',
+        created_at: new Date(),
+      }],
+    });
+    await runSources(engine, ['add', 'gstack', '--path', '/tmp/gstack']);
+    const insert = calls.find(c => c.sql.includes('INSERT INTO sources'));
+    expect(insert!.params[3]).toBe('{}');
+  });
+
+  test('--exclude requires a glob argument', async () => {
+    const { engine } = makeStub();
+    const code = await withExitCapture(() => runSources(engine, [
+      'add', 'vault', '--path', '/tmp/vault', '--exclude',
+    ]));
+    expect(code).toBe(2);
+  });
+
+  test('--include rejects a flag-like value (--include --path looks like a typo)', async () => {
+    const { engine } = makeStub();
+    const code = await withExitCapture(() => runSources(engine, [
+      'add', 'vault', '--path', '/tmp/vault', '--include', '--federated',
+    ]));
+    expect(code).toBe(2);
+  });
 });
 
 // ── list ────────────────────────────────────────────────────

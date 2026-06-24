@@ -39,6 +39,13 @@ CREATE TABLE IF NOT EXISTS sources (
   -- bypassing the git-HEAD up_to_date early-return so CHUNKER_VERSION bumps
   -- actually trigger re-chunking on upgrade.
   chunker_version TEXT,
+  -- #2157 follow-on: SHA-256 fingerprint of the walk-affecting fields in
+  -- \`config\` (strategy + include_globs + exclude_globs). Mismatch forces a
+  -- full re-walk via the same code path as chunker_version, so a user who
+  -- changes \`sources.config.exclude_globs\` mid-life doesn't get "Already up
+  -- to date" on the next sync. NULL on pre-migration rows is treated as
+  -- "not yet stamped" and skips the gate (preserves first-run semantics).
+  config_fingerprint TEXT,
   -- v0.26.5: soft-delete + recovery window. \`archive\` flips archived=true and
   -- sets archive_expires_at = now() + 72h. The autopilot purge phase
   -- hard-deletes rows where archive_expires_at <= now(). Promoted from a
