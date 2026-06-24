@@ -167,7 +167,10 @@ export async function main(): Promise<void> {
     ].join('\n');
 
     parseMcpText(await client.callTool({
-      name: 'put_page',
+      // The MCP put_page surface rejects a blind create (no session, no content hash); a fresh
+      // smoke write uses admin_put_page, the CLI/admin repair escape. It is dispatchable by name
+      // even though it is hidden from the default tool catalog.
+      name: 'admin_put_page',
       arguments: { slug, content },
     }));
 

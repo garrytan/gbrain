@@ -296,6 +296,46 @@ describe('SQL maintenance runtime adapter', () => {
     await engine.disconnect();
   });
 
+  test('pglite adapter classifies expired active locks before job timeout as lock_timeout', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-maintenance-runtime-lock-timeout-pglite-'));
+    tempPaths.push(dir);
+
+    const engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite', database_path: dir });
+    await engine.initSchema();
+    let currentNow = '2026-05-20T12:00:00.000Z';
+    const adapter = createSqlMaintenanceRuntimeAdapter(engine, { now: () => currentNow });
+
+    await adapter.enqueueJob({
+      name: 'lease_expires_first',
+      queue: 'maintenance',
+      max_attempts: 1,
+      timeout_ms: 60_000,
+    });
+    const claimed = await adapter.claimNextJob({
+      queue: 'maintenance',
+      worker_id: 'worker:lease',
+      lease_ms: 1_000,
+    });
+    expect(claimed).toMatchObject({
+      status: 'active',
+      lock_expires_at: '2026-05-20T12:00:01.000Z',
+      timeout_at: '2026-05-20T12:01:00.000Z',
+    });
+
+    currentNow = '2026-05-20T12:00:01.001Z';
+    const swept = await adapter.sweepTimedOutJobs();
+
+    expect(swept).toHaveLength(1);
+    expect(swept[0]).toMatchObject({
+      status: 'dead',
+      failure_class: 'lock_timeout',
+      last_error: 'maintenance job lock expired',
+    });
+
+    await engine.disconnect();
+  });
+
   test('sqlite and pglite adapters renew active leases and durable progress', async () => {
     for (const kind of ['sqlite', 'pglite'] as const) {
       const dir = mkdtempSync(join(tmpdir(), `mbrain-maintenance-runtime-renew-${kind}-`));

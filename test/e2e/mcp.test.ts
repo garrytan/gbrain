@@ -582,7 +582,9 @@ describe('E2E: MCP Tool Generation', () => {
         command: 'bun',
         args: ['run', 'src/cli.ts', 'serve'],
         cwd: repoRoot,
-        env: { ...h.env, MBRAIN_ENABLE_PRIVILEGED_LEDGER_RECORD: '1' },
+        // This test asserts the full governance/control-plane toolset is listed, which is the
+        // =all tier surface (the default stdio tier hides admin tools).
+        env: { ...h.env, MBRAIN_ENABLE_PRIVILEGED_LEDGER_RECORD: '1', MBRAIN_MCP_TOOL_TIER: 'all' },
         stderr: 'pipe',
       });
       client = new Client(

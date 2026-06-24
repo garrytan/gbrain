@@ -11,6 +11,7 @@ import type {
   ContextMapQueryMatch,
   ContextMapReport,
   Page,
+  SearchResult,
 } from '../types.ts';
 import { getStructuralContextMapExplanation } from './context-map-explain-service.ts';
 import { queryStructuralContextMap } from './context-map-query-service.ts';
@@ -18,10 +19,27 @@ import { getStructuralContextMapReport } from './context-map-report-service.ts';
 
 const MAX_CANONICAL_SEARCH_QUERIES = 6;
 
+/**
+ * Concept candidate search used by the broad-synthesis escalation route. Defaults to
+ * keyword-only; the op layer injects a hybrid (vector + keyword + RRF + expansion) search
+ * when the governed probe is configured for hybrid (see `governedProbeHybridEnabled`).
+ */
+export type BroadSynthesisCandidateSearch = (
+  query: string,
+  options: { type: 'concept'; limit: number },
+) => Promise<SearchResult[]>;
+
+export interface BroadSynthesisRouteDependencies {
+  candidateSearch?: BroadSynthesisCandidateSearch;
+}
+
 export async function getBroadSynthesisRoute(
   engine: BrainEngine,
   input: BroadSynthesisRouteInput,
+  dependencies: BroadSynthesisRouteDependencies = {},
 ): Promise<BroadSynthesisRouteResult> {
+  const candidateSearch: BroadSynthesisCandidateSearch =
+    dependencies.candidateSearch ?? ((query, options) => engine.searchKeyword(query, options));
   const reportResult = await getStructuralContextMapReport(engine, input);
   if (!reportResult.report) {
     return {
@@ -44,7 +62,7 @@ export async function getBroadSynthesisRoute(
       scope_id: reportResult.report.scope_id,
       limit: input.limit,
       matchedNodes,
-    }),
+    }, candidateSearch),
     focalNodeId
       ? getStructuralContextMapExplanation(engine, {
         map_id: reportResult.report.map_id,
@@ -69,9 +87,10 @@ export async function getBroadSynthesisRoute(
 async function loadCanonicalReads(
   engine: BrainEngine,
   input: { query: string; scope_id: string; limit?: number; matchedNodes: ContextMapQueryMatch[] },
+  candidateSearch: BroadSynthesisCandidateSearch,
 ): Promise<BroadSynthesisRouteRead[]> {
   const limit = input.limit ?? 5;
-  const candidates = await searchCanonicalCandidates(engine, input.query, limit);
+  const candidates = await searchCanonicalCandidates(candidateSearch, input.query, limit);
   const reads: BroadSynthesisRouteRead[] = [];
   const seen = new Set<string>();
 
@@ -105,13 +124,13 @@ async function loadCanonicalReads(
 }
 
 async function searchCanonicalCandidates(
-  engine: BrainEngine,
+  candidateSearch: BroadSynthesisCandidateSearch,
   query: string,
   limit: number,
 ): Promise<string[]> {
   const results = await Promise.all(
     canonicalSearchQueries(query).map((searchQuery) =>
-      engine.searchKeyword(searchQuery, {
+      candidateSearch(searchQuery, {
         type: 'concept',
         limit,
       })),

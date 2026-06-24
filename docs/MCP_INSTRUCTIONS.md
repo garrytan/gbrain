@@ -13,6 +13,8 @@ grep when the question involves a named entity, domain concept, or cross-system
 architecture. The brain contains compiled truth, relationship history, and technical
 maps that external search cannot provide.
 
+Unsure which tool to use? Call get_skillpack first for the compact agent rules and orientation.
+
 Do not use for: code editing, git operations, file management, library documentation,
 or general programming.
 ```

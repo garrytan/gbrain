@@ -142,7 +142,9 @@ describe('setup-agent', () => {
     expect(result.stdout).not.toContain('On EVERY inbound message');
 
     const wordCount = result.stdout.trim().split(/\s+/).length;
-    expect(wordCount).toBeLessThan(720);
+    // Budget raised from 720 to accommodate the D1 (put_page CAS) and D2 (promotion ≠
+    // retrievable) governance contract notes; the rules stay deliberately compact.
+    expect(wordCount).toBeLessThan(820);
   });
 
   test('setup-agent --print ignores stale cwd-local rule files', async () => {
@@ -379,6 +381,15 @@ describe('setup-agent', () => {
     expect(settings.hooks.Stop[0].id).toBe('stop:mbrain-check');
     expect(settings.hooks.UserPromptSubmit).toHaveLength(1);
     expect(settings.hooks.UserPromptSubmit[0].id).toBe('prompt:mbrain-context');
+    expect(settings.hooks.SessionStart).toHaveLength(1);
+    expect(settings.hooks.SessionStart[0].id).toBe('sessionstart:mbrain-activation');
+    // The proactive-recall hook script is installed and executable.
+    const sessionStartScript = join(tempHome, '.claude', 'scripts', 'hooks', 'sessionstart-mbrain-activation.sh');
+    expect(existsSync(sessionStartScript)).toBe(true);
+    const sessionStartContent = readFileSync(sessionStartScript, 'utf-8');
+    expect(sessionStartContent).toContain('agent-session-activate');
+    expect(sessionStartContent).toContain('MBRAIN_SESSIONSTART_SCOPE:-work');
+    expect(sessionStartContent).toContain('--scope "$SCOPE"');
   });
 
   test('setup-agent leaves a malformed settings.json untouched and warns instead of overwriting', async () => {

@@ -155,7 +155,10 @@ describe('connectors sync command', () => {
           secret_risk: 'redacted',
         }],
       });
-      expect(items.items[0].chunks[0].redacted_text).toContain('[REDACTED:openai_api_key]');
+      // Inspection chunks expose metadata only (B1): the redaction is verified via the
+      // secret_risk flag above and the secret_detections row below, not the redacted body.
+      expect(items.items[0].chunks[0]).not.toHaveProperty('redacted_text');
+      expect(items.items[0].chunks[0]).not.toHaveProperty('chunk_text');
 
       const db = (harness.engine as any).database;
       expect(db.query('SELECT COUNT(*) AS count FROM pages').get().count).toBe(0);

@@ -13,6 +13,7 @@ import {
 } from '../core/text-offsets.ts';
 import { VERSION } from '../version.ts';
 import { operationToMcpTool } from './tool-schema.ts';
+import { isToolVisibleAtTier, resolveAllowedTiers, type ToolTier } from './tool-tiers.ts';
 import {
   BudgetedStdioServerTransport,
   DEFAULT_MCP_MAX_STDIO_FRAME_BYTES,
@@ -35,6 +36,7 @@ export type McpToolCatalogOptions = {
 
 export type McpToolCatalogProviderOptions = {
   config?: OperationContext['config'] | null;
+  allowedTiers?: ReadonlySet<ToolTier>;
 };
 
 export type McpToolCatalogProvider = {
@@ -58,6 +60,9 @@ export type CreateMcpServerOptions = {
   logger?: OperationContext['logger'];
   maxResultTextBytes?: number;
   toolExecutionLimiter?: McpToolExecutionLimiter;
+  // Tool-catalog tier selection ('all' | 'core+extended' | 'core' | comma list). Defaults to
+  // MBRAIN_MCP_TOOL_TIER, then to core+extended. Remote/HTTP surfaces pass 'all'.
+  toolTier?: string;
 };
 
 export type CreatedMcpServer = {
@@ -118,9 +123,14 @@ export function createMcpToolCatalogProvider(
   operations: Operation[] = defaultOperations,
   options: McpToolCatalogProviderOptions = {},
 ): McpToolCatalogProvider {
-  const catalogOperations = options.config
+  const capabilityFiltered = options.config
     ? operations.filter(operation => isOperationSupportedByConfig(operation, options.config!))
     : operations;
+  // Tier filter narrows the listed catalog (default core+extended); dispatch-by-name stays
+  // unfiltered (see createMcpServer) and tool_search can still surface hidden tools.
+  const catalogOperations = options.allowedTiers
+    ? capabilityFiltered.filter(operation => isToolVisibleAtTier(operation, options.allowedTiers!))
+    : capabilityFiltered;
   let compactTools: ReturnType<typeof operationToMcpTool>[] | undefined;
   let fullTools: ReturnType<typeof operationToMcpTool>[] | undefined;
 
@@ -254,6 +264,34 @@ export function mcpResultTextBudgetForFinalFrame(
   return Math.max(MIN_MCP_MAX_RESULT_TEXT_BYTES, Math.floor(availableForText / 2));
 }
 
+/**
+ * The MCP put_page surface must not create or overwrite a canonical page blind. A write is
+ * allowed only when the caller has observed the target — the expected_content_hash field is
+ * present (null asserts the page is absent, a content hash drives an optimistic update) — or
+ * has routed (supplied a memory_session_id, which the route_memory_writeback path provides).
+ * A put_page that supplies neither is rejected with a route_first error.
+ *
+ * Note: the MCP SDK client drops a null-valued argument, so over the SDK a put_page that meant
+ * to pass `expected_content_hash: null` arrives with the field absent — and is therefore
+ * rejected, pushing the agent to route a genuinely new page first. Raw JSON-RPC callers that
+ * keep an explicit null are honored. Offline/CLI repair and bulk import use admin_put_page,
+ * which is not gated here.
+ */
+export function assertMcpPutPagePrecondition(toolName: string, rawParams: unknown): void {
+  if (toolName !== 'put_page') return;
+  const params = rawParams && typeof rawParams === 'object' ? (rawParams as Record<string, unknown>) : {};
+  const memorySessionId = params.memory_session_id;
+  const hasSession = typeof memorySessionId === 'string' && memorySessionId.trim().length > 0;
+  const hasPrecondition = Object.prototype.hasOwnProperty.call(params, 'expected_content_hash');
+  if (!hasPrecondition && !hasSession) {
+    throw new OperationError(
+      'invalid_params',
+      'route_first: put_page must observe the target before writing — supply expected_content_hash (null asserts the page is absent, a content hash drives an update), or route a new page through route_memory_writeback to obtain a write session first.',
+      'Call route_memory_writeback to obtain a write session (and snapshot), or get_page for the current content_hash, then retry put_page. Offline repair can use admin_put_page.',
+    );
+  }
+}
+
 export function prepareMcpToolParams(
   toolName: string,
   params: Record<string, unknown> | undefined,
@@ -269,6 +307,7 @@ export function prepareMcpToolParams(
   if (
     toolName === 'put_page'
     && prepared.expected_content_hash === undefined
+    && !hasMcpMemorySessionId(prepared)
   ) {
     prepared.expected_content_hash = null;
   }
@@ -280,6 +319,10 @@ export function prepareMcpToolParams(
     prepared.defer_derived = true;
   }
   return prepared;
+}
+
+function hasMcpMemorySessionId(params: Record<string, unknown>): boolean {
+  return typeof params.memory_session_id === 'string' && params.memory_session_id.trim().length > 0;
 }
 
 function parseConfiguredMcpGetPageCharLimit(): number {
@@ -812,7 +855,8 @@ export function createMcpServer(
   // Config, logger, and result budget are immutable for the lifetime of the
   // server process; resolve them once instead of per tool call.
   const resolvedConfig = options.config ?? loadConfig() ?? DEFAULT_RUNTIME_CONFIG;
-  const toolCatalog = createMcpToolCatalogProvider(operations, { config: resolvedConfig });
+  const allowedTiers = resolveAllowedTiers(options.toolTier ?? process.env.MBRAIN_MCP_TOOL_TIER);
+  const toolCatalog = createMcpToolCatalogProvider(operations, { config: resolvedConfig, allowedTiers });
   const toolExecutionLimiter = options.toolExecutionLimiter ?? createMcpToolExecutionLimiter();
   const resolvedLogger = options.logger ?? {
     info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
@@ -841,6 +885,7 @@ export function createMcpServer(
     }
 
     try {
+      assertMcpPutPagePrecondition(name, params);
       const result = await toolExecutionLimiter.run(op, async () => {
         const resolvedEngine = await enginePromise;
         const ctx: OperationContext = {

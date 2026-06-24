@@ -358,8 +358,8 @@ async function readImplementedPhaseSnapshot(context: DreamCyclePhaseContext): Pr
   const recordError = (message: string) => {
     errors.push(message);
   };
-  const count = async (tableName: string, whereClause = ''): Promise<number> => {
-    const result = await countRows(context.engine, tableName, whereClause);
+  const count = async (tableName: string, whereClause = '', params: unknown[] = []): Promise<number> => {
+    const result = await countRows(context.engine, tableName, whereClause, params);
     if (result.error) {
       errors.push(result.error);
     }
@@ -372,7 +372,7 @@ async function readImplementedPhaseSnapshot(context: DreamCyclePhaseContext): Pr
 
 async function readImplementedPhaseCounts(
   context: DreamCyclePhaseContext,
-  count: (tableName: string, whereClause?: string) => Promise<number>,
+  count: (tableName: string, whereClause?: string, params?: unknown[]) => Promise<number>,
   recordError: (message: string) => void,
 ): Promise<Record<string, number>> {
   switch (context.registry.family) {
@@ -434,11 +434,18 @@ async function readImplementedPhaseCounts(
       return {
         stale_or_failed_derived_artifacts: await count('derived_index_state', "WHERE status IN ('pending', 'failed')"),
       };
-    case 'daily_report':
+    case 'daily_report': {
+      const nowIso = context.input.now;
       return {
         failed_jobs: await count('memory_jobs', "WHERE status IN ('failed', 'dead')"),
         failed_runner_jobs: await count('runner_jobs', "WHERE status IN ('failed', 'degraded')"),
+        stuck_active_jobs: await count(
+          'memory_jobs',
+          'WHERE status = \'active\' AND lock_expires_at IS NOT NULL AND lock_expires_at <= $1',
+          [nowIso],
+        ),
       };
+    }
     case 'consolidation':
     case 'forgetting_review':
     case 'auto_promote':
@@ -478,7 +485,9 @@ function hasActionablePhaseWork(
     case 'context_refresh':
       return (counts.stale_or_failed_derived_artifacts ?? 0) > 0;
     case 'daily_report':
-      return (counts.failed_jobs ?? 0) > 0 || (counts.failed_runner_jobs ?? 0) > 0;
+      return (counts.failed_jobs ?? 0) > 0
+        || (counts.failed_runner_jobs ?? 0) > 0
+        || (counts.stuck_active_jobs ?? 0) > 0;
     case 'consolidation':
     case 'forgetting_review':
     case 'auto_promote':
@@ -507,11 +516,11 @@ function nextActionForImplementedPhase(family: DreamCyclePhaseFamily): string {
     case 'projection_reconcile':
       return 'Run system-of-record reconciliation.';
     case 'embedding_refresh':
-      return 'Refresh missing embeddings.';
+      return 'Run `mbrain embed --stale` to refresh missing embeddings.';
     case 'context_refresh':
       return 'Refresh pending or failed derived context artifacts.';
     case 'daily_report':
-      return 'Open daily memory report and repair failed jobs.';
+      return 'Open daily memory report; repair failed jobs and dead-letter stuck active jobs.';
     case 'consolidation':
     case 'forgetting_review':
       return 'Review dream cycle phase output.';
@@ -649,6 +658,7 @@ async function countRows(
   engine: BrainEngine,
   tableName: string,
   whereClause = '',
+  params: unknown[] = [],
 ): Promise<{ count: number; error: string | null }> {
   const query = `SELECT COUNT(*) AS count FROM ${tableName}${whereClause ? ` ${whereClause}` : ''}`;
   const sql = getUnsafeSql(engine);
@@ -657,17 +667,17 @@ async function countRows(
   }
   if (typeof sql?.unsafe === 'function') {
     try {
-      const rows = await sql.unsafe(query);
+      const rows = await sql.unsafe(query, params);
       return { count: numberFromCountRow(rows[0]), error: null };
     } catch (error) {
       return { count: 0, error: countErrorMessage(tableName, error) };
     }
   }
 
-  const database = (engine as unknown as { database?: { query?: (statement: string) => { get: () => Record<string, unknown> | null } } }).database;
+  const database = (engine as unknown as { database?: { query?: (statement: string) => { get: (...params: unknown[]) => Record<string, unknown> | null } } }).database;
   if (typeof database?.query === 'function') {
     try {
-      return { count: numberFromCountRow(database.query(query).get()), error: null };
+      return { count: numberFromCountRow(database.query(query).get(...params)), error: null };
     } catch (error) {
       return { count: 0, error: countErrorMessage(tableName, error) };
     }
@@ -687,6 +697,7 @@ function errorMessage(error: unknown): string {
 const LOCK_RENEWAL_ERROR_MESSAGE_MAX_LENGTH = 512;
 const LOCK_RENEWAL_ERROR_STACK_MAX_LENGTH = 1024;
 const LOCK_RENEWAL_ERROR_TRUNCATION_MARKER = '...[truncated]';
+const STRICT_ISO_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|([+-])(\d{2}):(\d{2}))$/;
 const LOCK_RENEWAL_SECRET_REDACTIONS: Array<{
   pattern: RegExp;
   replacement: string | ((secret: string) => string);
@@ -759,17 +770,17 @@ function redactLockRenewalDiagnosticSecrets(value: string): string {
 
 function getUnsafeSql(
   engine: BrainEngine,
-): { unsafe?: (statement: string) => Promise<Array<Record<string, unknown>>>; error?: unknown } | null {
+): { unsafe?: (statement: string, params?: unknown[]) => Promise<Array<Record<string, unknown>>>; error?: unknown } | null {
   try {
     const sql = (engine as unknown as {
-      sql?: { unsafe?: (statement: string) => Promise<Array<Record<string, unknown>>> };
+      sql?: { unsafe?: (statement: string, params?: unknown[]) => Promise<Array<Record<string, unknown>>> };
     }).sql;
     if (sql) return sql;
   } catch (error) {
     return { error };
   }
   return (engine as unknown as {
-    _sql?: { unsafe?: (statement: string) => Promise<Array<Record<string, unknown>>> };
+    _sql?: { unsafe?: (statement: string, params?: unknown[]) => Promise<Array<Record<string, unknown>>> };
   })._sql ?? null;
 }
 
@@ -781,7 +792,7 @@ function numberFromCountRow(row: Record<string, unknown> | null | undefined): nu
 
 function normalizeRunInput(input: DreamCycleRunInput): DreamCyclePhaseContext['input'] {
   const now = input.now ?? new Date().toISOString();
-  if (typeof now !== 'string' || Number.isNaN(Date.parse(now))) {
+  if (!isStrictIsoDateTime(now)) {
     throw new Error('now must be a valid ISO datetime string');
   }
   const dryRun = input.dry_run !== false;
@@ -800,6 +811,29 @@ function normalizeRunInput(input: DreamCycleRunInput): DreamCyclePhaseContext['i
     allow_local_runner: input.allow_local_runner === true,
     trigger: input.trigger ?? 'manual',
   };
+}
+
+function isStrictIsoDateTime(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const match = STRICT_ISO_DATETIME_PATTERN.exec(value);
+  if (!match) return false;
+  const [, yearRaw, monthRaw, dayRaw, hourRaw, minuteRaw, secondRaw, , offsetHourRaw, offsetMinuteRaw] = match;
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  const second = Number(secondRaw);
+  if (month < 1 || month > 12) return false;
+  const maxDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (day < 1 || day > maxDay) return false;
+  if (hour > 23 || minute > 59 || second > 59) return false;
+  if (offsetHourRaw !== undefined || offsetMinuteRaw !== undefined) {
+    const offsetHour = Number(offsetHourRaw);
+    const offsetMinute = Number(offsetMinuteRaw);
+    if (offsetHour > 23 || offsetMinute > 59) return false;
+  }
+  return !Number.isNaN(Date.parse(value));
 }
 
 function initialGuardrailReport(input: DreamCyclePhaseContext['input']): DreamCycleGuardrailReport {

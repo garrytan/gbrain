@@ -9,6 +9,8 @@ import {
 } from '../core/services/dream-cycle-runner-service.ts';
 import { createAutoPromoteDreamDependency } from './auto-promote.ts';
 
+const STRICT_ISO_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|([+-])(\d{2}):(\d{2}))$/;
+
 export interface RunDreamDeps {
   runner?: (input: DreamCycleRunInput) => Promise<DreamCycleRunResult | Record<string, unknown>>;
 }
@@ -45,9 +47,10 @@ export function parseDreamArgs(
   const maxRunnerCalls = readNumberFlag(args, '--max-runner-calls');
   const timeBudgetMs = readNumberFlag(args, '--time-budget-ms');
   const maxCandidatesPerCycle = readNumberFlag(args, '--max-candidates-per-cycle');
+  const now = readFlag(args, '--now');
   return {
     scope_id: readFlag(args, '--scope-id') ?? readFlag(args, '--scope') ?? 'workspace:default',
-    now: readFlag(args, '--now'),
+    now: now === undefined ? undefined : parseIsoDateTimeFlag(now),
     dry_run: dryRun,
     write_candidates: !dryRun && (apply || hasFlag(args, '--write-candidates')),
     apply_auto_promote: !dryRun && hasFlag(args, '--apply-auto-promote'),
@@ -79,6 +82,35 @@ function readNumberFlag(args: string[], flag: string): number | undefined {
   if (!raw) return undefined;
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseIsoDateTimeFlag(value: string): string {
+  if (!isStrictIsoDateTime(value)) {
+    throw new Error('--now must be a valid ISO datetime string');
+  }
+  return value;
+}
+
+function isStrictIsoDateTime(value: string): boolean {
+  const match = STRICT_ISO_DATETIME_PATTERN.exec(value);
+  if (!match) return false;
+  const [, yearRaw, monthRaw, dayRaw, hourRaw, minuteRaw, secondRaw, , offsetHourRaw, offsetMinuteRaw] = match;
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  const second = Number(secondRaw);
+  if (month < 1 || month > 12) return false;
+  const maxDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (day < 1 || day > maxDay) return false;
+  if (hour > 23 || minute > 59 || second > 59) return false;
+  if (offsetHourRaw !== undefined || offsetMinuteRaw !== undefined) {
+    const offsetHour = Number(offsetHourRaw);
+    const offsetMinute = Number(offsetMinuteRaw);
+    if (offsetHour > 23 || offsetMinute > 59) return false;
+  }
+  return !Number.isNaN(Date.parse(value));
 }
 
 function printDreamHelp(): void {

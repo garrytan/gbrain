@@ -786,7 +786,6 @@ describe('source registry operations', () => {
         chunks: [{
           id: ingested.chunks[0].id,
           chunk_hash: ingested.chunks[0].chunk_hash,
-          redacted_text: 'Remember that connector output must stay in raw ingest.',
           sensitivity_flags: [],
           prompt_injection_risk: 'none',
           secret_risk: 'none',
@@ -794,6 +793,7 @@ describe('source registry operations', () => {
         }],
       });
       expect(listed.items[0].chunks[0]).not.toHaveProperty('chunk_text');
+      expect(listed.items[0].chunks[0]).not.toHaveProperty('redacted_text');
 
       const skipped = await getOperation('ingest_connector_item').handler(harness.ctx(), {
         source_id: registered.source.id,
@@ -937,6 +937,52 @@ describe('source registry operations', () => {
     }
   });
 
+  test('request_raw_source_chunks denies cross-scope chunk ids and returns no body text', async () => {
+    const harness = await createSqliteHarness('raw-access-request-cross-scope');
+    try {
+      const allowedSource = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'gmail',
+        display_name: 'Allowed Gmail',
+        account_locator: 'gmail://allowed@example.com',
+        consent_state: 'granted',
+        now: '2026-05-22T02:22:00.000Z',
+      }) as any;
+      const otherSource = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'gmail',
+        display_name: 'Other Gmail',
+        account_locator: 'gmail://other@example.com',
+        consent_state: 'granted',
+        now: '2026-05-22T02:23:00.000Z',
+      }) as any;
+      const otherItem = await getOperation('ingest_connector_item').handler(harness.ctx(), {
+        source_id: otherSource.source.id,
+        connector_id: 'gmail',
+        external_id: 'message-request-cross-source',
+        body: 'Raw text from a different registered source.',
+        now: '2026-05-22T02:24:00.000Z',
+      }) as any;
+
+      const denied = await getOperation('request_raw_source_chunks').handler(harness.ctx(), {
+        actor_type: 'llm',
+        actor_id: 'agent:reader',
+        source_id: allowedSource.source.id,
+        source_item_id: otherItem.item.id,
+        chunk_ids: [otherItem.chunks[0].id],
+        reason: 'Attempt to read a chunk from another source.',
+        requested_at: '2026-05-22T02:25:00.000Z',
+      }) as any;
+
+      expect(denied.decision.policy_decision).toBe('deny');
+      expect(denied.decision.reason).toBe('raw_scope_mismatch');
+      expect(denied.redacted_chunks).toBeNull();
+      const ledgerRows = await readRawAccessLedgerRows(harness.engine, otherItem.item.id);
+      expect(ledgerRows).toHaveLength(1);
+      expect(ledgerRows[0]).toMatchObject({ policy_decision: 'deny', policy_reason: 'raw_scope_mismatch' });
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   test('list_source_items with chunks omits raw chunk_text and returns redacted metadata by default', async () => {
     const harness = await createSqliteHarness('connector-list-redacted-chunks');
     try {
@@ -970,14 +1016,35 @@ describe('source registry operations', () => {
         source_item_id: ingested.item.id,
         chunk_index: 0,
         chunk_hash: ingested.chunks[0].chunk_hash,
-        redacted_text: ingested.chunks[0].redacted_text,
         sensitivity_flags: ingested.chunks[0].sensitivity_flags,
         prompt_injection_risk: 'none',
         secret_risk: ingested.chunks[0].secret_risk,
         token_count: ingested.chunks[0].token_count,
       });
+      // The unaudited inspection path leaks NO body text — neither raw nor redacted.
       expect(listed.items[0].chunks[0]).not.toHaveProperty('chunk_text');
-      expect(listed.items[0].chunks[0].redacted_text).not.toContain(AWS_ACCESS_KEY_FIXTURE);
+      expect(listed.items[0].chunks[0]).not.toHaveProperty('redacted_text');
+
+      // Redacted body text is reachable only via the authorized, audited op, and never raw.
+      const granted = await getOperation('request_raw_source_chunks').handler(harness.ctx(), {
+        actor_type: 'llm',
+        actor_id: 'agent:reader',
+        source_id: registered.source.id,
+        source_item_id: ingested.item.id,
+        chunk_ids: [ingested.chunks[0].id],
+        reason: 'Need the redacted quote for canonical writeback.',
+        requested_at: '2026-05-22T02:25:00.000Z',
+      }) as any;
+
+      expect(granted.decision.policy_decision).toBe('allow');
+      expect(granted.audited).toBe(true);
+      expect(granted.redacted_chunks).toHaveLength(1);
+      expect(granted.redacted_chunks[0].redacted_text).toBe(ingested.chunks[0].redacted_text);
+      expect(granted.redacted_chunks[0].redacted_text).not.toContain(AWS_ACCESS_KEY_FIXTURE);
+      expect(granted.redacted_chunks[0]).not.toHaveProperty('chunk_text');
+      const ledgerRows = await readRawAccessLedgerRows(harness.engine, ingested.item.id);
+      expect(ledgerRows).toHaveLength(1);
+      expect(ledgerRows[0]).toMatchObject({ policy_decision: 'allow' });
     } finally {
       await harness.cleanup();
     }
@@ -1329,10 +1396,10 @@ describe('source registry operations', () => {
           chunks: [{
             source_item_id: ingested.item.id,
             chunk_hash: ingested.chunks[0].chunk_hash,
-            redacted_text: 'Event body retained for policy review.',
           }],
         });
         expect(listed.items[0].chunks[0]).not.toHaveProperty('chunk_text');
+        expect(listed.items[0].chunks[0]).not.toHaveProperty('redacted_text');
         await expect(countSourceItemEvents(
           harness.engine,
           ingested.item.id,
@@ -1511,10 +1578,10 @@ describe('source registry operations', () => {
         chunks: [{
           source_item_id: ingested.item.id,
           chunk_hash: ingested.chunks[0].chunk_hash,
-          redacted_text: 'Runtime review with connector persistence follow-up.',
         }],
       });
       expect(listed.items[0].chunks[0]).not.toHaveProperty('chunk_text');
+      expect(listed.items[0].chunks[0]).not.toHaveProperty('redacted_text');
     } finally {
       await harness.cleanup();
     }

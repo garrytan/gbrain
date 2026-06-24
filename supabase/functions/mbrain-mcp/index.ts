@@ -14,12 +14,56 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import postgres from 'postgres';
 import { createHash } from 'crypto';
-import { dispatchOperation, operations, operationToMcpTool, OperationError, PostgresEngine, VERSION, MCP_INSTRUCTIONS } from './mbrain-core.js';
+import {
+  dispatchOperation,
+  operations,
+  operationToMcpTool,
+  OperationError,
+  PostgresEngine,
+  VERSION,
+  MCP_INSTRUCTIONS,
+  isToolVisibleAtTier,
+  resolveAllowedTiers,
+} from './mbrain-core.js';
 import type { OperationContext } from './mbrain-core.js';
 
-// Operations excluded from remote (may exceed 60s Edge Function timeout)
-const REMOTE_EXCLUDED = new Set(['sync_brain', 'file_upload', 'get_skillpack']);
+// Operations excluded from remote (may exceed 60s Edge Function timeout or bypass local-only repair gates)
+const REMOTE_EXCLUDED = new Set(['sync_brain', 'file_upload', 'get_skillpack', 'admin_put_page']);
 const remoteOps = operations.filter((op: any) => !REMOTE_EXCLUDED.has(op.name));
+
+function assertRemotePutPagePrecondition(toolName: string, rawParams: unknown): void {
+  if (toolName !== 'put_page') return;
+  const params = isRecord(rawParams) ? rawParams : {};
+  const hasSession = hasMemorySessionId(params);
+  const hasPrecondition = Object.prototype.hasOwnProperty.call(params, 'expected_content_hash');
+  if (!hasPrecondition && !hasSession) {
+    throw new OperationError(
+      'invalid_params',
+      'route_first: put_page must observe the target before writing - supply expected_content_hash (null asserts the page is absent, a content hash drives an update), or route a new page through route_memory_writeback to obtain a write session first.',
+      'Call route_memory_writeback to obtain a write session (and snapshot), or get_page for the current content_hash, then retry put_page. Offline repair can use local admin_put_page.',
+    );
+  }
+}
+
+function prepareRemoteToolParams(toolName: string, rawParams: unknown): Record<string, unknown> {
+  const params = isRecord(rawParams) ? { ...rawParams } : {};
+  if (
+    toolName === 'put_page'
+    && !Object.prototype.hasOwnProperty.call(params, 'expected_content_hash')
+    && !hasMemorySessionId(params)
+  ) {
+    params.expected_content_hash = null;
+  }
+  return params;
+}
+
+function hasMemorySessionId(params: Record<string, unknown>): boolean {
+  return typeof params.memory_session_id === 'string' && params.memory_session_id.trim().length > 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 // Database connection (lazy, one per isolate)
 let engine: PostgresEngine | null = null;
@@ -33,6 +77,11 @@ function getDbUrl(): string {
 function getOpenAiKey(): string {
   // @ts-ignore: Deno env
   return Deno.env.get('OPENAI_API_KEY') || '';
+}
+
+function getRemoteToolTierSelection(): string | null {
+  // @ts-ignore: Deno env
+  return Deno.env.get('MBRAIN_MCP_TOOL_TIER') || null;
 }
 
 async function getEngine(): Promise<PostgresEngine> {
@@ -141,9 +190,13 @@ function createMcpServer(eng: PostgresEngine): Server {
     },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: remoteOps.map(operationToMcpTool),
-  }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const allowedTiers = resolveAllowedTiers(getRemoteToolTierSelection());
+    const listedRemoteOps = remoteOps.filter((op: any) => isToolVisibleAtTier(op, allowedTiers));
+    return {
+      tools: listedRemoteOps.map(operationToMcpTool),
+    };
+  });
 
   server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     const { name, arguments: params } = request.params;
@@ -168,7 +221,8 @@ function createMcpServer(eng: PostgresEngine): Server {
     };
 
     try {
-      const result = await dispatchOperation(ctx, op, params || {});
+      assertRemotePutPagePrecondition(name, params);
+      const result = await dispatchOperation(ctx, op, prepareRemoteToolParams(name, params));
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (e: unknown) {
       if (e instanceof OperationError) {

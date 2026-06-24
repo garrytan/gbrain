@@ -29,11 +29,12 @@ import { createMemoryMutationLedgerOperations } from './operations-memory-mutati
 import { createMemoryWritebackRouterOperations } from './operations-memory-writeback-router.ts';
 import { createSourceRegistryOperations } from './operations-source-registry.ts';
 import { expandQuery } from './search/expansion.ts';
+import { governedProbeHybridEnabled, hybridProbeSearch } from './search/governed-probe.ts';
 import { hybridSearchWithMeta } from './search/hybrid.ts';
 import { rankSearchResults, sourceRankCandidateLimit } from './search/source-ranking.ts';
 import { getAtlasOrientationBundle } from './services/atlas-orientation-bundle-service.ts';
 import { getAtlasOrientationCard } from './services/atlas-orientation-card-service.ts';
-import { getBroadSynthesisRoute } from './services/broad-synthesis-route-service.ts';
+import { getBroadSynthesisRoute, type BroadSynthesisRouteDependencies } from './services/broad-synthesis-route-service.ts';
 import {
   extractCodeClaimsFromTrace,
   parseCodeClaimVerificationEntry,
@@ -78,8 +79,8 @@ import { getPrecisionLookupRoute } from './services/precision-lookup-route-servi
 import { runProofAgentMemory } from './services/proof-agent-service.ts';
 import { readContext } from './services/read-context-service.ts';
 import { planRetrievalRequest } from './services/retrieval-request-planner-service.ts';
-import { selectRetrievalRoute } from './services/retrieval-route-selector-service.ts';
-import { retrieveContext } from './services/retrieve-context-service.ts';
+import { selectRetrievalRoute, type RetrievalRouteSelectorDependencies } from './services/retrieval-route-selector-service.ts';
+import { retrieveContext, type RetrieveContextDependencies } from './services/retrieve-context-service.ts';
 import { planScenarioMemoryRequest } from './services/scenario-memory-request-planner-service.ts';
 import { evaluateScopeGate } from './services/scope-gate-service.ts';
 import { buildTaskResumeCard } from './services/task-memory-service.ts';
@@ -129,6 +130,7 @@ import { importContentHash, validateSlug } from './utils.ts';
 // the design rationale.
 export const MCP_INSTRUCTIONS = [
   'Use this server to look up knowledge about people, companies, technical concepts, internal systems, and organizational context. Prefer this over web search or codebase grep when the question involves a named entity, domain concept, or cross-system architecture. The brain contains compiled truth, relationship history, and technical maps that external search cannot provide.',
+  'Unsure which tool to use? Call get_skillpack first for the compact agent rules and orientation.',
   'Do not use for: code editing, git operations, file management, library documentation, or general programming.',
 ].join('\n\n');
 
@@ -315,6 +317,10 @@ export interface Operation {
   handler: (ctx: OperationContext, params: Record<string, unknown>) => Promise<unknown>;
   mutating?: boolean;
   capabilityRequired?: OperationCapability;
+  // Tool-catalog tier (see src/mcp/tool-tiers.ts). Explicit override of the name-based
+  // classification; usually omitted. 'admin' ops are hidden from the default stdio catalog
+  // but remain dispatchable by name and discoverable via tool_search.
+  tier?: 'core' | 'extended' | 'admin';
   cliHints?: {
     name?: string;
     positional?: string[];
@@ -2957,14 +2963,14 @@ function assertJsonSerializable(value: unknown, path: string, seen: WeakSet<obje
   }
 }
 
-function putPageAuditContext(p: Record<string, unknown>) {
+function putPageAuditContext(p: Record<string, unknown>, preconditionSupplied: boolean) {
   return {
     session_id: optionalPutPageString('session_id', p.session_id) ?? `put_page:direct:${randomUUID()}`,
     realm_id: optionalPutPageString('realm_id', p.realm_id) ?? 'work',
     actor: optionalPutPageString('actor', p.actor) ?? 'mbrain:put_page',
     scope_id: optionalPutPageString('scope_id', p.scope_id) ?? 'workspace:default',
     source_refs: putPageSourceRefs(p.source_refs),
-    metadata: putPageMetadata(p.metadata),
+    metadata: { ...putPageMetadata(p.metadata), precondition_supplied: preconditionSupplied },
     redaction_visibility: 'visible' as const,
   };
 }
@@ -3069,6 +3075,10 @@ const put_page: Operation = {
     const slug = putPageSlug(p.slug);
     const content = putPageContent(p.content);
     const deferDerived = p.defer_derived === true;
+    // Whether the caller observed the target before writing. The MCP put_page surface
+    // requires this field present (see assertMcpPutPagePrecondition); the CLI/admin path may
+    // omit it. Recorded in the mutation ledger either way.
+    const preconditionSupplied = Object.prototype.hasOwnProperty.call(p, 'expected_content_hash');
     assertWritableSlugQuality(slug);
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug };
     const markdownTarget = await resolvePutPageMarkdownTarget(ctx.engine, slug, p.repo);
@@ -3087,7 +3097,7 @@ const put_page: Operation = {
       : (() => {
         assertPutPageSourceAttribution(slug, content);
         return {
-          audit: putPageAuditContext(p),
+          audit: putPageAuditContext(p, preconditionSupplied),
           expectedContentHash: putPageExpectedContentHash(p.expected_content_hash ?? null),
         };
       })();
@@ -3102,7 +3112,7 @@ const put_page: Operation = {
           });
           assertPutPageSourceAttribution(slug, content);
         }
-        const audit = prevalidatedPutPage ? prevalidatedPutPage.audit : putPageAuditContext(p);
+        const audit = prevalidatedPutPage ? prevalidatedPutPage.audit : putPageAuditContext(p, preconditionSupplied);
         const expectedContentHash = prevalidatedPutPage
           ? prevalidatedPutPage.expectedContentHash
           : putPageExpectedContentHash(p.expected_content_hash ?? null);
@@ -3289,6 +3299,20 @@ const put_page: Operation = {
     return putPageOperationResult(outcome.result);
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
+};
+
+// CLI/admin repair-and-import variant of put_page. Identical write behavior, but it is NOT
+// gated by the route_first precondition the MCP put_page surface enforces, so offline repair
+// and bulk import can write without first observing every target. Tier admin (hidden from the
+// default MCP catalog); use deliberately.
+const admin_put_page: Operation = {
+  name: 'admin_put_page',
+  description: 'CLI/admin repair-and-import variant of put_page that may omit the optimistic write precondition. Not subject to the route_first precondition enforced on the MCP put_page surface. Use only for offline repair and bulk import.',
+  params: { ...put_page.params },
+  mutating: true,
+  tier: 'admin',
+  handler: put_page.handler,
+  cliHints: { name: 'admin-put', positional: ['slug'], stdin: 'content', hidden: true },
 };
 
 function assertWritableSlugQuality(slug: string): void {
@@ -3778,6 +3802,31 @@ function requirePersonalSourceRef(value: unknown): string {
   return value.trim();
 }
 
+// Personal memory writes must stay inside personal scope (Invariant 6 — work/personal
+// isolation). Reject any work:* (or otherwise non-personal) scope on the personal write path.
+function assertPersonalScopeId(scopeId: string): void {
+  if (!scopeId.startsWith('personal:')) {
+    throw new OperationError(
+      'invalid_params',
+      `personal memory writes require a personal: scope, got "${scopeId}"`,
+    );
+  }
+}
+
+function personalMemoryDeleteAudit(
+  operation: 'delete_profile_memory_entry' | 'delete_personal_episode_entry',
+  scopeId: string,
+  sourceRefs: string[],
+) {
+  return {
+    session_id: `${operation}:direct:${crypto.randomUUID()}`,
+    realm_id: 'personal',
+    actor: `mbrain:${operation}`,
+    scope_id: scopeId,
+    source_refs: sourceRefs,
+  };
+}
+
 const upsert_profile_memory_entry: Operation = {
   name: 'upsert_profile_memory_entry',
   description: 'Create or update one canonical personal profile-memory entry.',
@@ -3800,9 +3849,18 @@ const upsert_profile_memory_entry: Operation = {
   },
   mutating: true,
   handler: async (ctx, p) => {
-    const id = typeof p.id === 'string' ? p.id : crypto.randomUUID();
-    const scopeId = String(p.scope_id ?? DEFAULT_PROFILE_MEMORY_SCOPE_ID);
     const sourceRef = requirePersonalSourceRef(p.source_ref);
+    const preflight = await selectPersonalWriteTarget(ctx.engine, {
+      target_kind: 'profile_memory',
+      requested_scope: 'personal',
+      subject: typeof p.subject === 'string' ? p.subject : undefined,
+    });
+    if (!preflight.route) {
+      throw new OperationError('invalid_params', `profile_memory write blocked: ${preflight.selection_reason}`);
+    }
+    const id = typeof p.id === 'string' ? p.id : crypto.randomUUID();
+    const scopeId = String(p.scope_id ?? preflight.route.scope_id);
+    assertPersonalScopeId(scopeId);
     if (ctx.dryRun) {
       return {
         dry_run: true,
@@ -3842,8 +3900,28 @@ const delete_profile_memory_entry: Operation = {
     if (id.length === 0) {
       throw new OperationError('invalid_params', 'id must be a non-empty string');
     }
-    if (ctx.dryRun) return { dry_run: true, action: 'delete_profile_memory_entry', id };
-    await ctx.engine.deleteProfileMemoryEntry(id);
+    const entry = await ctx.engine.getProfileMemoryEntry(id);
+    if (!entry) {
+      throw new OperationError('invalid_params', `profile-memory entry not found: ${id}`);
+    }
+    assertPersonalScopeId(entry.scope_id);
+    if (ctx.dryRun) return { dry_run: true, action: 'delete_profile_memory_entry', id, scope_id: entry.scope_id };
+    await ctx.engine.transaction(async (tx) => {
+      const transactionalEntry = await tx.getProfileMemoryEntry(id);
+      if (!transactionalEntry) {
+        throw new OperationError('invalid_params', `profile-memory entry not found: ${id}`);
+      }
+      assertPersonalScopeId(transactionalEntry.scope_id);
+      await tx.deleteProfileMemoryEntry(id);
+      await recordMemoryMutationEvent(tx, {
+        ...personalMemoryDeleteAudit('delete_profile_memory_entry', transactionalEntry.scope_id, transactionalEntry.source_refs ?? []),
+        operation: 'delete_profile_memory_entry',
+        target_kind: 'profile_memory',
+        target_id: id,
+        result: 'applied',
+        dry_run: false,
+      });
+    });
     return { status: 'deleted', id };
   },
   cliHints: { name: 'profile-memory-delete', positional: ['id'] },
@@ -3908,9 +3986,18 @@ const record_personal_episode: Operation = {
   },
   mutating: true,
   handler: async (ctx, p) => {
-    const id = typeof p.id === 'string' ? p.id : crypto.randomUUID();
-    const scopeId = String(p.scope_id ?? DEFAULT_PROFILE_MEMORY_SCOPE_ID);
     const sourceRef = requirePersonalSourceRef(p.source_ref);
+    const preflight = await selectPersonalWriteTarget(ctx.engine, {
+      target_kind: 'personal_episode',
+      requested_scope: 'personal',
+      title: typeof p.title === 'string' ? p.title : undefined,
+    });
+    if (!preflight.route) {
+      throw new OperationError('invalid_params', `personal_episode write blocked: ${preflight.selection_reason}`);
+    }
+    const id = typeof p.id === 'string' ? p.id : crypto.randomUUID();
+    const scopeId = String(p.scope_id ?? preflight.route.scope_id);
+    assertPersonalScopeId(scopeId);
     if (ctx.dryRun) {
       return {
         dry_run: true,
@@ -3949,8 +4036,28 @@ const delete_personal_episode_entry: Operation = {
     if (id.length === 0) {
       throw new OperationError('invalid_params', 'id must be a non-empty string');
     }
-    if (ctx.dryRun) return { dry_run: true, action: 'delete_personal_episode_entry', id };
-    await ctx.engine.deletePersonalEpisodeEntry(id);
+    const entry = await ctx.engine.getPersonalEpisodeEntry(id);
+    if (!entry) {
+      throw new OperationError('invalid_params', `personal-episode entry not found: ${id}`);
+    }
+    assertPersonalScopeId(entry.scope_id);
+    if (ctx.dryRun) return { dry_run: true, action: 'delete_personal_episode_entry', id, scope_id: entry.scope_id };
+    await ctx.engine.transaction(async (tx) => {
+      const transactionalEntry = await tx.getPersonalEpisodeEntry(id);
+      if (!transactionalEntry) {
+        throw new OperationError('invalid_params', `personal-episode entry not found: ${id}`);
+      }
+      assertPersonalScopeId(transactionalEntry.scope_id);
+      await tx.deletePersonalEpisodeEntry(id);
+      await recordMemoryMutationEvent(tx, {
+        ...personalMemoryDeleteAudit('delete_personal_episode_entry', transactionalEntry.scope_id, transactionalEntry.source_refs ?? []),
+        operation: 'delete_personal_episode_entry',
+        target_kind: 'personal_episode',
+        target_id: id,
+        result: 'applied',
+        dry_run: false,
+      });
+    });
     return { status: 'deleted', id };
   },
   cliHints: { name: 'personal-episode-delete', positional: ['id'] },
@@ -5126,7 +5233,7 @@ const get_broad_synthesis_route: Operation = {
       kind: p.kind as string | undefined,
       query: String(p.query),
       limit: typeof p.limit === 'number' ? p.limit : undefined,
-    });
+    }, governedProbeBroadSynthesisDependencies(ctx));
   },
   cliHints: { name: 'broad-synthesis-route', aliases: { n: 'limit' } },
 };
@@ -5201,6 +5308,8 @@ const get_mixed_scope_bridge: Operation = {
       profile_type: typeof p.profile_type === 'string' ? p.profile_type as any : undefined,
       episode_title: typeof p.episode_title === 'string' ? p.episode_title : undefined,
       episode_source_kind: typeof p.episode_source_kind === 'string' ? p.episode_source_kind as any : undefined,
+    }, {
+      broadSynthesis: governedProbeBroadSynthesisDependencies(ctx),
     });
   },
   cliHints: { name: 'mixed-scope-bridge' },
@@ -5254,6 +5363,8 @@ const get_mixed_scope_disclosure: Operation = {
       profile_type: typeof p.profile_type === 'string' ? p.profile_type as any : undefined,
       episode_title: typeof p.episode_title === 'string' ? p.episode_title : undefined,
       episode_source_kind: typeof p.episode_source_kind === 'string' ? p.episode_source_kind as any : undefined,
+    }, {
+      broadSynthesis: governedProbeBroadSynthesisDependencies(ctx),
     });
   },
   cliHints: { name: 'mixed-scope-disclosure' },
@@ -5365,7 +5476,7 @@ const evaluate_scope_gate: Operation = {
   name: 'evaluate_scope_gate',
   description: 'Evaluate the deterministic scope gate for the current published retrieval stack.',
   params: {
-    intent: { type: 'string', required: true, description: 'One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup' },
+    intent: { type: 'string', required: true, enum: [...RETRIEVAL_ROUTE_INTENTS], description: 'One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup' },
     requested_scope: requestedScopeParam('Optional access scope override for scope-gate evaluation. Use query for topical retrieval details.'),
     task_id: { type: 'string', description: 'Task id used to derive task scope when present' },
     query: { type: 'string', description: 'Optional plain-text request used for signal detection' },
@@ -5403,7 +5514,7 @@ const select_retrieval_route: Operation = {
   name: 'select_retrieval_route',
   description: 'Select one published retrieval route by explicit intent.',
   params: {
-    intent: { type: 'string', required: true, description: 'One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup' },
+    intent: { type: 'string', required: true, enum: [...RETRIEVAL_ROUTE_INTENTS], description: 'One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup' },
     task_id: { type: 'string', description: 'Task id for task_resume intent' },
     persist_trace: { type: 'boolean', description: 'Persist a Retrieval Trace for the selected route; task_id is optional and task-less traces are stored with task_id=null' },
     requested_scope: requestedScopeParam('Optional access scope override for route selection. Use query for topical retrieval details.'),
@@ -5496,7 +5607,7 @@ const select_retrieval_route: Operation = {
       profile_type: typeof p.profile_type === 'string' ? p.profile_type as any : undefined,
       episode_title: typeof p.episode_title === 'string' ? p.episode_title : undefined,
       episode_source_kind: typeof p.episode_source_kind === 'string' ? p.episode_source_kind as any : undefined,
-    });
+    }, governedProbeRetrievalRouteDependencies(ctx));
   },
   cliHints: { name: 'retrieval-route' },
 };
@@ -5562,6 +5673,32 @@ const plan_retrieval_request: Operation = {
   cliHints: { name: 'plan-retrieval-request' },
 };
 
+// Inject the full hybrid candidate search (vector + keyword + RRF + expansion) into the
+// governed probe so retrieve_context / read_context auto-reads match the lower-authority
+// `query` op's recall. Returns no override (keyword-only default) when disabled or absent.
+function governedProbeRetrieveDependencies(ctx: OperationContext): RetrieveContextDependencies {
+  if (!governedProbeHybridEnabled(ctx.config)) return {};
+  const broadSynthesis = governedProbeBroadSynthesisDependencies(ctx);
+  return {
+    candidateSearch: (query, options) =>
+      hybridProbeSearch(ctx.engine, ctx.config, query, { limit: options.limit }),
+    broadSynthesisCandidateSearch: broadSynthesis.candidateSearch,
+  };
+}
+
+function governedProbeBroadSynthesisDependencies(ctx: OperationContext): BroadSynthesisRouteDependencies {
+  if (!governedProbeHybridEnabled(ctx.config)) return {};
+  return {
+    candidateSearch: (query, options) =>
+      hybridProbeSearch(ctx.engine, ctx.config, query, { type: options.type, limit: options.limit }),
+  };
+}
+
+function governedProbeRetrievalRouteDependencies(ctx: OperationContext): RetrievalRouteSelectorDependencies {
+  const broadSynthesis = governedProbeBroadSynthesisDependencies(ctx);
+  return Object.keys(broadSynthesis).length > 0 ? { broadSynthesis } : {};
+}
+
 const retrieve_context: Operation = {
   name: 'retrieve_context',
   description: 'Agentic MBrain retrieval probe. Returns a bounded read_plan, required canonical reads, and non-canonical candidate_signals from Memory Inbox; chunks and candidate signals are not answer evidence. Call read_context on read_plan.selected_selector_snapshots before answering factual questions; use read_plan.selected_selectors only as a legacy selector-id fallback.',
@@ -5613,7 +5750,7 @@ const retrieve_context: Operation = {
     include_push_context: p.include_push_context === true,
     graph_frontier: parseRetrieveContextGraphFrontierParam(p.graph_frontier, 'graph_frontier'),
     persist_trace: p.persist_trace === true,
-  })),
+  }, governedProbeRetrieveDependencies(ctx))),
   cliHints: { name: 'retrieve-context', positional: ['query'], aliases: { n: 'limit', scope: 'requested_scope' } },
 };
 
@@ -5652,7 +5789,7 @@ const read_context: Operation = {
     persist_trace: p.persist_trace === true,
     task_id: parseOptionalStringParam(p.task_id, 'task_id') ?? null,
     requested_scope: parseRequestedScopeParam(p.requested_scope),
-  })),
+  }, governedProbeRetrieveDependencies(ctx))),
   cliHints: { name: 'read-context', aliases: { n: 'max_selectors' } },
 };
 
@@ -6274,6 +6411,10 @@ const file_url: Operation = {
 const get_skillpack: Operation = {
   name: 'get_skillpack',
   description: 'Read the MBrain SKILLPACK reference architecture. Returns the full document or a specific section by number/name. Use this to learn detailed patterns for enrichment, meeting ingestion, cron schedules, and more.',
+  discovery: {
+    compactDescription: true,
+    description: 'Runtime self-orientation: call get_skillpack (no args) for the compact agent rules, or with a section for detailed retrieval/ingest/governance patterns. Start here when unsure how to use MBrain.',
+  },
   params: {
     section: { type: 'string', description: 'Section number or keyword (e.g. "5", "enrichment", "meeting", "cron"). Omit to get the compact agent rules.' },
   },
@@ -6400,7 +6541,7 @@ function parseSkillpackSectionHeader(line: string): { num: number; title: string
 
 export const operations: Operation[] = [
   // Page CRUD
-  get_page, put_page, delete_page, list_pages,
+  get_page, put_page, admin_put_page, delete_page, list_pages,
   // Search
   search, query,
   // Tags

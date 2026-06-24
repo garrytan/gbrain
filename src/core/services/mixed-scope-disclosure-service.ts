@@ -7,13 +7,14 @@ import type {
   PersonalEpisodeLookupRoute,
   PersonalProfileLookupRoute,
 } from '../types.ts';
-import { getMixedScopeBridge } from './mixed-scope-bridge-service.ts';
+import { getMixedScopeBridge, type MixedScopeBridgeDependencies } from './mixed-scope-bridge-service.ts';
 
 export async function getMixedScopeDisclosure(
   engine: BrainEngine,
   input: MixedScopeDisclosureInput,
+  dependencies: MixedScopeBridgeDependencies = {},
 ): Promise<MixedScopeDisclosureResult> {
-  const result = await getMixedScopeBridge(engine, input);
+  const result = await getMixedScopeBridge(engine, input, dependencies);
   if (!result.route) {
     return {
       selection_reason: result.selection_reason,

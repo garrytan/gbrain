@@ -27,7 +27,7 @@ import type {
   ScopeGateScope,
   SearchResult,
 } from '../types.ts';
-import { getBroadSynthesisRoute } from './broad-synthesis-route-service.ts';
+import { getBroadSynthesisRoute, type BroadSynthesisCandidateSearch } from './broad-synthesis-route-service.ts';
 import { planAssertionGraphFrontier } from './assertion-frontier-retrieval-service.ts';
 import { classifyMemoryScenario } from './memory-scenario-classifier-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
@@ -102,6 +102,7 @@ export type RetrieveContextGraphFrontierPlanner = (
 
 export interface RetrieveContextDependencies {
   candidateSearch?: RetrieveContextCandidateSearch;
+  broadSynthesisCandidateSearch?: BroadSynthesisCandidateSearch;
   candidateSignalBuilder?: RetrieveContextCandidateSignalBuilder;
   graphFrontierInputBuilder?: RetrieveContextGraphFrontierInputBuilder;
   graphFrontierPlanner?: RetrieveContextGraphFrontierPlanner;
@@ -283,7 +284,7 @@ export async function retrieveContext(
       : Promise.resolve(emptyCandidateSearchPool()),
     input.include_orientation === false || query.length === 0
       ? Promise.resolve(emptyOrientation())
-      : buildOrientation(engine, query, limit),
+      : buildOrientation(engine, query, limit, dependencies.broadSynthesisCandidateSearch),
   ]);
   const searchResults = rankSearchResults(candidatePool.results);
   const candidates = await groupCandidatesByCanonicalPage(engine, searchResults, limit, query, scopeGate);
@@ -1508,8 +1509,13 @@ async function buildOrientation(
   engine: BrainEngine,
   query: string,
   limit: number,
+  candidateSearch?: BroadSynthesisCandidateSearch,
 ): Promise<RetrieveContextOrientation> {
-  const routeResult = await getBroadSynthesisRoute(engine, { query, limit });
+  const routeResult = await getBroadSynthesisRoute(
+    engine,
+    { query, limit },
+    candidateSearch ? { candidateSearch } : {},
+  );
   if (!routeResult.route) return emptyOrientation();
 
   return {

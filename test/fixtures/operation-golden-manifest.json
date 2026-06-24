@@ -2,14 +2,14 @@
   "schema_version": 1,
   "generated_from": "live_operation_registry",
   "summary": {
-    "operation_count": 182,
-    "mcp_operation_count": 182,
-    "cli_shared_count": 171,
+    "operation_count": 180,
+    "mcp_operation_count": 180,
+    "cli_shared_count": 168,
     "cli_direct_count": 23,
     "cli_only_count": 5,
-    "not_cli_count": 1,
-    "mutating_count": 74,
-    "read_only_count": 108
+    "not_cli_count": 2,
+    "mutating_count": 76,
+    "read_only_count": 104
   },
   "cli_commands": [
     {
@@ -47,21 +47,6 @@
       "command": "approve-canonical-target-proposal",
       "mode": "cli_shared",
       "operation_name": "approve_canonical_target_proposal"
-    },
-    {
-      "command": "assertion-claim-extract-preview",
-      "mode": "cli_shared",
-      "operation_name": "preview_assertion_claim_extraction"
-    },
-    {
-      "command": "assertion-explain",
-      "mode": "cli_shared",
-      "operation_name": "explain_assertion"
-    },
-    {
-      "command": "assertion-resolve-preview",
-      "mode": "cli_shared",
-      "operation_name": "preview_assertion_resolution"
     },
     {
       "command": "assertion-retrieval",
@@ -646,11 +631,6 @@
       "operation_name": "write_profile_memory_entry"
     },
     {
-      "command": "projection-explain",
-      "mode": "cli_shared",
-      "operation_name": "explain_projection"
-    },
-    {
       "command": "promote-memory-candidate",
       "mode": "cli_shared",
       "operation_name": "promote_memory_candidate_entry"
@@ -684,6 +664,11 @@
       "command": "raw-access-evaluate",
       "mode": "cli_shared",
       "operation_name": "evaluate_raw_access"
+    },
+    {
+      "command": "raw-access-request-chunks",
+      "mode": "cli_shared",
+      "operation_name": "request_raw_source_chunks"
     },
     {
       "command": "raw-canonical-preview",
@@ -1180,6 +1165,138 @@
       },
       "compact_schema_hash": "acd1d516712675fec157d7ecf83d851f7b61709efcc4afbe43ae2ac666d55908",
       "full_schema_hash": "acd1d516712675fec157d7ecf83d851f7b61709efcc4afbe43ae2ac666d55908",
+      "memory_verb_families": [],
+      "mutation_aliases": []
+    },
+    {
+      "name": "admin_put_page",
+      "description": "CLI/admin repair-and-import variant of put_page that may omit the optimistic write precondition. Not subject to the route_first precondition enforced on the MCP put_page surface. Use only for offline repair and bulk import.",
+      "mutating": true,
+      "capability_required": [],
+      "capability_visibility": {
+        "requirements": []
+      },
+      "params": {
+        "actor": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional audit actor. Defaults to mbrain:put_page."
+        },
+        "content": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Full markdown content with YAML frontmatter"
+        },
+        "defer_derived": {
+          "type": [
+            "boolean"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Commit the canonical page immediately and refresh chunks, manifest, and section indexes after the MCP response."
+        },
+        "expected_content_hash": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": true,
+          "description": "Optional optimistic write precondition. Existing page content_hash must match before writing; null requires that the page is absent."
+        },
+        "memory_session_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional memory session id used for write authorization. Requires realm_id."
+        },
+        "metadata": {
+          "type": [
+            "object"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional audit metadata object."
+        },
+        "realm_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional audit realm id. Defaults to work."
+        },
+        "repo": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional markdown repo root for markdown-first local/offline writes. Defaults to configured markdown.repo_path or sync.repo_path."
+        },
+        "scope_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional audit scope id. Defaults to workspace:default."
+        },
+        "session_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional audit session id. Defaults to put_page:direct."
+        },
+        "slug": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Page slug"
+        },
+        "source_refs": {
+          "type": [
+            "array",
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional non-empty audit provenance references.",
+          "items": {
+            "type": [
+              "string"
+            ],
+            "required": false,
+            "nullable": false
+          }
+        }
+      },
+      "cli_exposure": {
+        "mode": "not_cli",
+        "reason": "cli hint is hidden"
+      },
+      "mcp": {
+        "read_only": false,
+        "destructive": false,
+        "open_world": false,
+        "required_params": [
+          "content",
+          "slug"
+        ]
+      },
+      "compact_schema_hash": "0687fea202b1fce1f6c042ba14de752c8e8fb9d37fce2d7ca8c1e7b2c53d622e",
+      "full_schema_hash": "1bae9c09e1e5bb6162f74eed0966324e89b3f0d23aa51fb284568700c3c67c18",
       "memory_verb_families": [],
       "mutation_aliases": []
     },
@@ -3712,7 +3829,15 @@
           ],
           "required": true,
           "nullable": false,
-          "description": "One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup"
+          "description": "One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup",
+          "enum": [
+            "task_resume",
+            "broad_synthesis",
+            "precision_lookup",
+            "mixed_scope_bridge",
+            "personal_profile_lookup",
+            "personal_episode_lookup"
+          ]
         },
         "query": {
           "type": [
@@ -3774,8 +3899,8 @@
           "intent"
         ]
       },
-      "compact_schema_hash": "c143e4fa51eb5909d128d26c5b3033030ce8d0c772ef8fdfe27e532ef5e12fc0",
-      "full_schema_hash": "23e4d40fbd260d72bea1b21caee3d5c8c4b0e8e6c1c9568151195eff51653885",
+      "compact_schema_hash": "b61a05ff72670ab816fa4bf3b2e1f726178bab6e839275e8dfc93498ca64344f",
+      "full_schema_hash": "9c3c1ae50738b44b23c1bf4d432e996d8112343a8444103e6548985920ad629f",
       "memory_verb_families": [],
       "mutation_aliases": []
     },
@@ -3864,136 +3989,6 @@
       },
       "compact_schema_hash": "74f63bc55c1a75da22cd167a00523985267759c64d93894dcfaaa236d1f46926",
       "full_schema_hash": "b8741025846f910fd9c71638f5e5a027dd8297944c4750964fc088e5c0ecfb3b",
-      "memory_verb_families": [],
-      "mutation_aliases": []
-    },
-    {
-      "name": "explain_assertion",
-      "description": "Explain Phase 12 assertion audit lineage from source chunks to claims, evidence, canonical writes, and projections.",
-      "mutating": false,
-      "capability_required": [],
-      "capability_visibility": {
-        "requirements": []
-      },
-      "params": {
-        "assertion_id": {
-          "type": [
-            "string"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Assertion id to explain."
-        },
-        "include_raw": {
-          "type": [
-            "boolean"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Include raw chunk text only for non-secret, non-injection source chunks."
-        },
-        "limit": {
-          "type": [
-            "number"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Maximum assertions to explain when using target_slug."
-        },
-        "scope_id": {
-          "type": [
-            "string"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Assertion lineage scope id. Defaults to workspace:default."
-        },
-        "target_slug": {
-          "type": [
-            "string"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Target slug whose assertions should be explained when assertion_id is omitted."
-        }
-      },
-      "cli_exposure": {
-        "mode": "cli_shared",
-        "command": "assertion-explain"
-      },
-      "mcp": {
-        "read_only": true,
-        "destructive": false,
-        "open_world": false,
-        "required_params": []
-      },
-      "compact_schema_hash": "8f26546566a2534a6bec8be374e2acc778065eb317cde9875c9b6008c6d5748b",
-      "full_schema_hash": "c007d7f0e682ec6c39a4f1900b1b35fcdaf3cb9dd647bec0ebd2ccf0d40df271",
-      "memory_verb_families": [],
-      "mutation_aliases": []
-    },
-    {
-      "name": "explain_projection",
-      "description": "Explain Phase 12 projection audit lineage from projection target back to assertions, claims, and source chunks.",
-      "mutating": false,
-      "capability_required": [],
-      "capability_visibility": {
-        "requirements": []
-      },
-      "params": {
-        "include_raw": {
-          "type": [
-            "boolean"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Include raw chunk text only for non-secret, non-injection source chunks."
-        },
-        "limit": {
-          "type": [
-            "number"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Maximum projections to explain when using target_type/target_id."
-        },
-        "projection_target_id": {
-          "type": [
-            "string"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Canonical projection target id to explain."
-        },
-        "target_id": {
-          "type": [
-            "string"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Projection target_id when projection_target_id is omitted."
-        },
-        "target_type": {
-          "type": [
-            "string"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Projection target_type when projection_target_id is omitted."
-        }
-      },
-      "cli_exposure": {
-        "mode": "cli_shared",
-        "command": "projection-explain"
-      },
-      "mcp": {
-        "read_only": true,
-        "destructive": false,
-        "open_world": false,
-        "required_params": []
-      },
-      "compact_schema_hash": "91e015a084c14eb4ab61d1043f5f367c628fa41cfaa891012e2720271b1d3618",
-      "full_schema_hash": "d7b1857a43b68bdfb471bfebdcff067a03171159416fb31cd2718d8e14bdad5c",
       "memory_verb_families": [],
       "mutation_aliases": []
     },
@@ -6011,6 +6006,10 @@
     {
       "name": "get_skillpack",
       "description": "Read the MBrain SKILLPACK reference architecture. Returns the full document or a specific section by number/name. Use this to learn detailed patterns for enrichment, meeting ingestion, cron schedules, and more.",
+      "discovery": {
+        "compact_description": true,
+        "description": "Runtime self-orientation: call get_skillpack (no args) for the compact agent rules, or with a section for detailed retrieval/ingest/governance patterns. Start here when unsure how to use MBrain."
+      },
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -9090,193 +9089,6 @@
       "mutation_aliases": []
     },
     {
-      "name": "preview_assertion_claim_extraction",
-      "description": "Preview Phase 03 extraction from one source chunk into extracted claims.",
-      "mutating": false,
-      "capability_required": [],
-      "capability_visibility": {
-        "requirements": []
-      },
-      "params": {
-        "chunk_text": {
-          "type": [
-            "string"
-          ],
-          "required": true,
-          "nullable": false,
-          "description": "Source chunk text."
-        },
-        "extracted_claims": {
-          "type": [
-            "array"
-          ],
-          "required": true,
-          "nullable": false,
-          "description": "Structured extracted claim payloads to normalize.",
-          "items": {
-            "type": [
-              "object"
-            ],
-            "required": false,
-            "nullable": false
-          }
-        },
-        "extractor_kind": {
-          "type": [
-            "string"
-          ],
-          "required": true,
-          "nullable": false,
-          "description": "Extractor kind."
-        },
-        "extractor_version": {
-          "type": [
-            "string"
-          ],
-          "required": true,
-          "nullable": false,
-          "description": "Extractor version."
-        },
-        "now": {
-          "type": [
-            "string"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Optional ISO timestamp for deterministic preview."
-        },
-        "prompt_injection_flag": {
-          "type": [
-            "boolean"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Whether the chunk was prompt-injection flagged."
-        },
-        "runner_job_id": {
-          "type": [
-            "string"
-          ],
-          "required": false,
-          "nullable": true,
-          "description": "Optional runner job id."
-        },
-        "secret_flag": {
-          "type": [
-            "boolean"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Whether the chunk carried a secret flag."
-        },
-        "session_id": {
-          "type": [
-            "string"
-          ],
-          "required": false,
-          "nullable": true,
-          "description": "Optional originating session id."
-        },
-        "source_chunk_id": {
-          "type": [
-            "string"
-          ],
-          "required": true,
-          "nullable": false,
-          "description": "Source chunk id."
-        },
-        "source_id": {
-          "type": [
-            "string"
-          ],
-          "required": true,
-          "nullable": false,
-          "description": "Source id."
-        },
-        "source_item_id": {
-          "type": [
-            "string"
-          ],
-          "required": true,
-          "nullable": false,
-          "description": "Source item id."
-        },
-        "task_event_id": {
-          "type": [
-            "string"
-          ],
-          "required": false,
-          "nullable": true,
-          "description": "Optional originating task event id."
-        }
-      },
-      "cli_exposure": {
-        "mode": "cli_shared",
-        "command": "assertion-claim-extract-preview"
-      },
-      "mcp": {
-        "read_only": true,
-        "destructive": false,
-        "open_world": false,
-        "required_params": [
-          "chunk_text",
-          "extracted_claims",
-          "extractor_kind",
-          "extractor_version",
-          "source_chunk_id",
-          "source_id",
-          "source_item_id"
-        ]
-      },
-      "compact_schema_hash": "ca9f81deb341ac3ffc5a4a93fbf8e295087b5b37b0e93fa0f26026e1a45aba53",
-      "full_schema_hash": "1369925eae3660fc5907e4a71b3f435dfc4554574106a5f2b47aaaac53a85017",
-      "memory_verb_families": [],
-      "mutation_aliases": []
-    },
-    {
-      "name": "preview_assertion_resolution",
-      "description": "Preview resolving one extracted claim into assertion/evidence records.",
-      "mutating": false,
-      "capability_required": [],
-      "capability_visibility": {
-        "requirements": []
-      },
-      "params": {
-        "claim": {
-          "type": [
-            "object"
-          ],
-          "required": true,
-          "nullable": false,
-          "description": "Extracted claim input."
-        },
-        "now": {
-          "type": [
-            "string"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Optional ISO timestamp for deterministic preview."
-        }
-      },
-      "cli_exposure": {
-        "mode": "cli_shared",
-        "command": "assertion-resolve-preview"
-      },
-      "mcp": {
-        "read_only": true,
-        "destructive": false,
-        "open_world": false,
-        "required_params": [
-          "claim"
-        ]
-      },
-      "compact_schema_hash": "37e3acf76d9b3e493f40ad940f3b02047961cfa4c1d91da05e3918530c861245",
-      "full_schema_hash": "29443f96f5e507444052edafb66445c14009ce9f6cb89c4006a22806e092f843",
-      "memory_verb_families": [],
-      "mutation_aliases": []
-    },
-    {
       "name": "preview_personal_export",
       "description": "Preview the personal records that are currently exportable under published visibility rules.",
       "mutating": false,
@@ -12333,6 +12145,141 @@
       "mutation_aliases": []
     },
     {
+      "name": "request_raw_source_chunks",
+      "description": "Authorized, audited retrieval of redacted source chunk text. Runs the same scope/policy resolution and raw_access_ledger write as evaluate_raw_access and returns redacted_text only on a non-deny decision — never raw chunk_text. The unaudited list_source_items inspection path returns metadata only.",
+      "mutating": true,
+      "capability_required": [],
+      "capability_visibility": {
+        "requirements": []
+      },
+      "params": {
+        "actor_id": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Stable actor id."
+        },
+        "actor_type": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Actor type, for example runner, daemon, mcp, cli, or llm."
+        },
+        "chunk_ids": {
+          "type": [
+            "array"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Explicit source chunk ids requested.",
+          "items": {
+            "type": [
+              "string"
+            ],
+            "required": false,
+            "nullable": false
+          }
+        },
+        "input": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional input text to hash in the ledger."
+        },
+        "job_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": true,
+          "description": "Optional job id."
+        },
+        "policy": {
+          "type": [
+            "object"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Deprecated dry-run-only raw access policy override. Non-dry-run evaluation resolves policy from the registered source."
+        },
+        "prompt": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional prompt text to hash in the ledger."
+        },
+        "reason": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Why redacted chunk text is needed."
+        },
+        "requested_at": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional ISO request timestamp."
+        },
+        "session_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": true,
+          "description": "Optional session id."
+        },
+        "source_id": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Source id."
+        },
+        "source_item_id": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Source item id."
+        }
+      },
+      "cli_exposure": {
+        "mode": "cli_shared",
+        "command": "raw-access-request-chunks"
+      },
+      "mcp": {
+        "read_only": false,
+        "destructive": false,
+        "open_world": false,
+        "required_params": [
+          "actor_id",
+          "actor_type",
+          "chunk_ids",
+          "reason",
+          "source_id",
+          "source_item_id"
+        ]
+      },
+      "compact_schema_hash": "bfb5d1460cfdc2b5838038d7f70a8e562a624c24e82f239236e9dc30dfa489e9",
+      "full_schema_hash": "64cc288dc98487eafcfd91750519d316c880c70b107b9d03de8ff9d4659feb2b",
+      "memory_verb_families": [],
+      "mutation_aliases": []
+    },
+    {
       "name": "rerun_memory_job",
       "description": "Reset a failed maintenance or runner job to waiting and record the auditable rerun request.",
       "mutating": true,
@@ -14022,7 +13969,15 @@
           ],
           "required": true,
           "nullable": false,
-          "description": "One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup"
+          "description": "One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup",
+          "enum": [
+            "task_resume",
+            "broad_synthesis",
+            "precision_lookup",
+            "mixed_scope_bridge",
+            "personal_profile_lookup",
+            "personal_episode_lookup"
+          ]
         },
         "kind": {
           "type": [
@@ -14176,8 +14131,8 @@
           "intent"
         ]
       },
-      "compact_schema_hash": "7ca60d515408dc4293baa9fc8ca921ede819b235994dc1550c981afb116292ba",
-      "full_schema_hash": "1d63ff158aa344ef8231c8457a1db743958f5d608cce43d64b182773a41da7c1",
+      "compact_schema_hash": "fe1edb3ecba5d32a2c6794e9faebb5a8f52400573f4e7722cade8c271f9fd114",
+      "full_schema_hash": "9762322c9167d48bfb3ccd33592bb697a58369c7a16f01e7f3d4e0cc86104e53",
       "memory_verb_families": [
         "discover_search"
       ],

@@ -496,12 +496,17 @@ export function createSqlMaintenanceRuntimeAdapter(
           SELECT *
           FROM memory_jobs
           WHERE status = 'active'
-            AND timeout_at <= ${placeholder(tx, 1)}
-          ORDER BY timeout_at ASC, id ASC
+            AND (
+              timeout_at <= ${placeholder(tx, 1)}
+              OR lock_expires_at <= ${placeholder(tx, 2)}
+            )
+          ORDER BY COALESCE(timeout_at, lock_expires_at) ASC, id ASC
           ${tx.kind === 'sqlite' ? '' : 'FOR UPDATE'}
-        `, [currentNow]);
+        `, [currentNow, currentNow]);
         const updated: Array<Record<string, unknown>> = [];
         for (const job of rows) {
+          const staleLock = !isoAtOrBefore(job.timeout_at, currentNow) && isoAtOrBefore(job.lock_expires_at, currentNow);
+          const failureClass: MaintenanceFailureClass = staleLock ? 'lock_timeout' : 'timeout';
           const attemptsFinished = numberValue(job.attempts_finished, 0) + 1;
           const retry = attemptsFinished < numberValue(job.max_attempts, 1);
           const status = retry ? 'delayed' : 'dead';
@@ -511,23 +516,32 @@ export function createSqlMaintenanceRuntimeAdapter(
             UPDATE memory_jobs
             SET status = ${placeholder(tx, 1)},
                 attempts_finished = ${placeholder(tx, 2)},
-                failure_class = 'timeout',
-                last_error = 'maintenance job timed out',
+                failure_class = ${placeholder(tx, 3)},
+                last_error = ${placeholder(tx, 4)},
                 lock_token = NULL,
                 lock_owner = NULL,
                 lock_expires_at = NULL,
                 timeout_at = NULL,
-                next_run_at = ${placeholder(tx, 3)},
-                finished_at = ${placeholder(tx, 4)},
-                updated_at = ${placeholder(tx, 5)}
-            WHERE id = ${placeholder(tx, 6)}
-          `, [status, attemptsFinished, nextRunAt, finishedAt, currentNow, job.id]);
+                next_run_at = ${placeholder(tx, 5)},
+                finished_at = ${placeholder(tx, 6)},
+                updated_at = ${placeholder(tx, 7)}
+            WHERE id = ${placeholder(tx, 8)}
+          `, [
+            status,
+            attemptsFinished,
+            failureClass,
+            staleLock ? 'maintenance job lock expired' : 'maintenance job timed out',
+            nextRunAt,
+            finishedAt,
+            currentNow,
+            job.id,
+          ]);
           await insertEvent(tx, {
             id: `job-event:${crypto.randomUUID()}`,
             job_id: String(job.id),
-            event_type: retry ? 'job_timeout_retry_scheduled' : 'job_dead',
-            metadata_json: retry ? {} : { reason: 'timeout' },
-            failure_class: 'timeout',
+            event_type: retry ? (staleLock ? 'job_stale_lock_retry_scheduled' : 'job_timeout_retry_scheduled') : 'job_dead',
+            metadata_json: retry ? {} : { reason: staleLock ? 'stale_lock' : 'timeout' },
+            failure_class: failureClass,
             created_at: currentNow,
           });
           updated.push(normalizeRecord(requireJob(await selectJob(tx, String(job.id)), String(job.id))));
@@ -963,9 +977,24 @@ function requireActiveLockedJob(
 function jobCanBeClaimed(job: Record<string, unknown>, currentNow: string): boolean {
   const status = String(job.status ?? '');
   if (status === 'waiting') return true;
-  if (status === 'delayed') return Date.parse(String(job.next_run_at ?? '')) <= Date.parse(currentNow);
-  if (status === 'active') return Date.parse(String(job.lock_expires_at ?? '')) <= Date.parse(currentNow);
+  if (status === 'delayed') return isoAtOrBefore(job.next_run_at, currentNow);
+  if (status === 'active') return isoAtOrBefore(job.lock_expires_at, currentNow);
   return false;
+}
+
+function isoAtOrBefore(value: unknown, currentNow: string): boolean {
+  const valueTime = timestampMs(value);
+  const currentTime = timestampMs(currentNow);
+  return valueTime !== null && currentTime !== null && valueTime <= currentTime;
+}
+
+function timestampMs(value: unknown): number | null {
+  const timestamp = value instanceof Date
+    ? value.getTime()
+    : typeof value === 'string'
+      ? Date.parse(value)
+      : Number.NaN;
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function computeBackoffDelay(job: Record<string, unknown>, attemptsFinished: number): number {

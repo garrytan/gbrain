@@ -308,7 +308,7 @@ describe('autopilot service', () => {
   });
 
   test('default install path returns rendered profile instead of claiming scheduler mutation', async () => {
-    const { createAutopilotService } = await import('../src/core/services/autopilot-service.ts');
+    const { createAutopilotService, createInProcessRuntimeAdapter } = await import('../src/core/services/autopilot-service.ts');
     const service = createAutopilotService({
       getConfig: async () => ({ enabled: true, mode: 'cron', schedule: '*/10 * * * *' }),
       setConfig: async () => {},
@@ -344,6 +344,74 @@ describe('autopilot service', () => {
     expect(claimed).toBeNull();
     await expect(runtime.getJob(older.job.id)).resolves.toMatchObject({ status: 'waiting' });
     await expect(runtime.getJob(target.job.id)).resolves.toMatchObject({ status: 'waiting' });
+  });
+
+  test('submitCycle sweeps timed-out jobs before enqueueing the next cycle', async () => {
+    const { createAutopilotService } = await import('../src/core/services/autopilot-service.ts');
+    const calls: string[] = [];
+    const service = createAutopilotService({
+      now: () => '2026-05-20T12:07:30.000Z',
+      slotFor: () => '2026-05-20T12:00Z',
+      getConfig: async () => ({ enabled: true, mode: 'cron' }),
+      setConfig: async () => {},
+      runtime: {
+        sweepTimedOutJobs: async () => {
+          calls.push('sweep');
+          return [];
+        },
+        enqueueJob: async (job: Record<string, unknown>) => {
+          calls.push('enqueue');
+          return { status: 'submitted', job: { id: 'job:autopilot-cycle', ...job } };
+        },
+      },
+    });
+
+    await service.runOnce({ requested_by: 'cli' });
+
+    // Sweep runs first so an orphaned active job past its lease is dead-lettered and stops
+    // blocking the slot via dedup before the next cycle is submitted.
+    expect(calls).toEqual(['sweep', 'enqueue']);
+  });
+
+  test('submitCycle does not dedupe against an expired active lock in the same slot', async () => {
+    const { createAutopilotService, createInProcessRuntimeAdapter } = await import('../src/core/services/autopilot-service.ts');
+    const { createMaintenanceRuntimeService } = await import('../src/core/services/maintenance-runtime-service.ts');
+    let now = '2026-05-20T12:00:00.000Z';
+    let id = 0;
+    const runtime = createMaintenanceRuntimeService({
+      now: () => now,
+      nextId: (prefix: string) => `${prefix}:${++id}`,
+      max_waiting_by_name: { autopilot_cycle: 1 },
+    });
+    const first = await runtime.enqueueJob({
+      name: 'autopilot_cycle',
+      queue: 'maintenance',
+      idempotency_key: 'autopilot-cycle:2026-05-20T12:00Z',
+      max_attempts: 1,
+      timeout_ms: 60_000,
+    });
+    await runtime.claimNextJob({
+      queue: 'maintenance',
+      worker_id: 'worker:crashed',
+      lease_ms: 1_000,
+    });
+    now = '2026-05-20T12:00:01.001Z';
+
+    const service = createAutopilotService({
+      now: () => now,
+      slotFor: () => '2026-05-20T12:00Z',
+      getConfig: async () => ({ enabled: true, mode: 'cron' }),
+      setConfig: async () => {},
+      runtime: createInProcessRuntimeAdapter(runtime, () => now),
+    });
+
+    const result = await service.runOnce({ requested_by: 'cli' });
+
+    expect(result.status).toBe('submitted');
+    await expect(runtime.getJob(first.job.id)).resolves.toMatchObject({
+      status: 'dead',
+      failure_class: 'lock_timeout',
+    });
   });
 });
 

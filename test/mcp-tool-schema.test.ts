@@ -110,15 +110,57 @@ describe('MCP tool schema metadata', () => {
     ]));
   });
 
-  test('compact schemas omit ChatGPT Apps metadata to preserve stdio frame budget', () => {
-    const tool = operationToMcpTool(operation({
+  test('compact schemas always keep title and safety annotations but omit description', () => {
+    const readOnly = operationToMcpTool(operation({
       name: 'get_stats',
       mutating: false,
     }), { compact: true });
 
-    expect(tool.title).toBeUndefined();
-    expect(tool.description).toBeUndefined();
-    expect(tool.annotations).toBeUndefined();
+    expect(readOnly.title).toBe('Get Stats');
+    expect(readOnly.annotations).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+    });
+    expect(readOnly.description).toBeUndefined();
+
+    const destructive = operationToMcpTool(operation({
+      name: 'delete_page',
+      mutating: true,
+    }), { compact: true });
+
+    expect(destructive.title).toBe('Delete Page');
+    expect(destructive.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: false,
+    });
+  });
+
+  test('compact catalog keeps title + annotations on every tool and a discoverable get_skillpack', () => {
+    const catalog = new Map(operations.map(op => [op.name, operationToMcpTool(op, { compact: true })]));
+    for (const tool of catalog.values()) {
+      expect(typeof tool.title).toBe('string');
+      expect(tool.annotations).toBeDefined();
+    }
+    // get_skillpack (the runtime self-orientation entrypoint) carries a compact description.
+    expect(catalog.get('get_skillpack')?.description).toContain('get_skillpack');
+  });
+
+  test('compact schemas keep the retrieval-intent enum on the governed routing ops', () => {
+    const catalog = new Map(operations.map(op => [op.name, operationToMcpTool(op, { compact: true })]));
+    const expectedIntents = [
+      'task_resume',
+      'broad_synthesis',
+      'precision_lookup',
+      'mixed_scope_bridge',
+      'personal_profile_lookup',
+      'personal_episode_lookup',
+    ];
+    for (const name of ['evaluate_scope_gate', 'select_retrieval_route']) {
+      const schema = catalog.get(name)?.inputSchema as any;
+      expect(schema.properties.intent.enum).toEqual(expectedIntents);
+    }
   });
 
   test('compact schemas preserve required params for validation-aware clients', () => {

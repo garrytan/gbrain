@@ -554,12 +554,25 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
       message: `${input.profile.rewrite.mode}${input.profile.rewrite.reason ? ` — ${input.profile.rewrite.reason}` : ''}`,
     });
     const envelope = buildExecutionEnvelope(input.config);
-    const offlineProfileMessage = envelope.mode === 'local_offline'
-      ? 'local/offline profile active (enabled)'
-      : 'cloud-connected profile active';
+    // Both intentional profiles are healthy: cloud-connected (standard) and local/offline.
+    // Reserve a warning for a genuine config-vs-engine mismatch — the offline flag and the
+    // engine disagreeing about intent (offline=true on the cloud Postgres engine, or the
+    // local sqlite engine running with the offline profile disabled).
+    const offlineFlagSet = input.config.offline === true;
+    const offlineProfileMismatch =
+      (offlineFlagSet && input.config.engine === 'postgres') ||
+      (!offlineFlagSet && input.config.engine === 'sqlite');
+    let offlineProfileMessage: string;
+    if (offlineProfileMismatch) {
+      offlineProfileMessage = `config mismatch: engine=${input.config.engine} but offline=${offlineFlagSet}`;
+    } else if (envelope.mode === 'local_offline') {
+      offlineProfileMessage = 'local/offline profile active (enabled)';
+    } else {
+      offlineProfileMessage = 'cloud-connected profile active';
+    }
     checks.push({
       name: 'offline_profile',
-      status: envelope.mode === 'local_offline' ? 'ok' : 'warn',
+      status: offlineProfileMismatch ? 'warn' : 'ok',
       message: offlineProfileMessage,
     });
     checks.push({

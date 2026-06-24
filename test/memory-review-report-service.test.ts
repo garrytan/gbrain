@@ -473,8 +473,42 @@ describe('memory review report service', () => {
       }),
     }));
     const formatted = formatMemoryReviewReport(report);
-    expect(formatted).toContain('Canonical Memories');
+    expect(formatted).toContain('Canonical Memories (learned this period)');
+    expect(formatted).toContain('0 new, 1 updated');
     expect(formatted).not.toContain('No reportable memory exceptions.');
+  });
+
+  test('renders coverage gaps from candidate debt and projection freshness', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+      projection_targets: [{
+        id: 'projection:stale',
+        target_type: 'page',
+        target_id: 'concepts/missing-coverage',
+        locator: 'concepts/missing-coverage.md',
+        status: 'pending_reconcile',
+      }],
+      candidate_debt: {
+        visible_candidate_count: 4,
+        missing_provenance_count: 1,
+        stale_promoted_without_handoff_count: 1,
+        unresolved_exposed_count: 0,
+        hard_blocked_by_proposal_count: 0,
+        median_review_latency_ms: null,
+      },
+    });
+
+    expect(report.summary.coverage_gaps).toBe(3);
+    expect(report.sections.coverage_gaps.map((gap) => gap.id)).toEqual([
+      'candidate_missing_provenance',
+      'promoted_without_handoff',
+      'projection_reconciliation',
+    ]);
+    const formatted = formatMemoryReviewReport(report);
+    expect(formatted).toContain('Coverage Gaps');
+    expect(formatted).toContain('Promoted without canonical page');
+    expect(formatted).toContain('Projection freshness gap');
   });
 
   test('surfaces canonical target proposal review actions by lifecycle status', () => {

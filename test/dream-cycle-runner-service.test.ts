@@ -47,7 +47,7 @@ describe('dream cycle phase runner', () => {
     expect(result.phases.find((phase) => phase.family === 'daily_report')).toMatchObject({
       status: 'warn',
       owner_phase: 'Phase 12',
-      counts: { failed_jobs: 0, failed_runner_jobs: 0, count_errors: 2 },
+      counts: { failed_jobs: 0, failed_runner_jobs: 0, stuck_active_jobs: 0, count_errors: 3 },
       next_recommended_action: 'Inspect dream-cycle read model errors before claiming phase coverage.',
     });
     expect(result.phases.find((phase) => phase.family === 'forgetting_review')).toMatchObject({
@@ -339,6 +339,40 @@ describe('dream cycle phase runner', () => {
       skip_reason: 'runner_unavailable',
       llm_or_runner_used: false,
     });
+  });
+
+  test('rejects non-ISO now input before daily report SQL is built', async () => {
+    await expect(runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: "2026-05-21T10:00:00.000Z'; DROP TABLE memory_jobs; --",
+      dry_run: true,
+    })).rejects.toThrow('now must be a valid ISO datetime string');
+  });
+
+  test('daily report stuck-active count binds now as a SQL parameter', async () => {
+    const calls: Array<{ query: string; params: unknown[] }> = [];
+    const now = '2026-05-21T10:00:00.000Z';
+    await runDreamCycle({
+      listMemoryCandidateEntries: async () => [],
+      sql: {
+        unsafe: async (query: string, params: unknown[] = []) => {
+          calls.push({ query, params });
+          return [{ count: 0 }];
+        },
+      },
+    } as any, {
+      scope_id: 'workspace:default',
+      now,
+      dry_run: true,
+    });
+
+    const stuckActiveCount = calls.find((call) =>
+      call.query.includes('memory_jobs')
+      && call.query.includes('lock_expires_at')
+    );
+    expect(stuckActiveCount).toBeDefined();
+    expect(stuckActiveCount?.query).not.toContain(now);
+    expect(stuckActiveCount?.params).toEqual([now]);
   });
 
   test('auto-promote phase forces dry-run unless write_candidates is enabled', async () => {

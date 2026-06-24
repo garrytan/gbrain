@@ -11,6 +11,7 @@
 export { dispatchOperation, operations, operationsByName, OperationError, MCP_INSTRUCTIONS } from './core/operations.ts';
 export type { Operation, OperationContext, ParamDef } from './core/operations.ts';
 export { operationToMcpTool, paramToMcpSchema } from './mcp/tool-schema.ts';
+export { isToolVisibleAtTier, resolveAllowedTiers } from './mcp/tool-tiers.ts';
 export { PostgresEngine } from './core/postgres-engine.ts';
 export type { BrainEngine } from './core/engine.ts';
 export * from './core/types.ts';

@@ -59,6 +59,9 @@ meeting/import-derived, or not ready for compiled truth.
 Call `put_page` only after the router returns `canonical_write_allowed`. Canonical
 write routing requires `target_snapshot_hash`: pass the current page
 `content_hash`, or pass `null` only after confirming the target page is absent.
+The MCP `put_page` surface rejects a blind write (`route_first`): a new page must be
+routed (`route_memory_writeback` provides the write session) and an update must pass
+the current `content_hash`. `admin_put_page` is the CLI/offline repair escape.
 When calling `put_page`, pass the router's
 `canonical_write_requirements.expected_content_hash` as `expected_content_hash`,
 then write attributed compiled truth plus timeline evidence. If the router
@@ -70,6 +73,10 @@ Targetless Memory Inbox candidates need a canonical target proposal before
 binding. Review the proposed home; approve or reject the proposal. approval must
 not call put_page. If the page is missing, use patch candidate review/apply, then
 complete binding; promotion or handoff happens later.
+
+Promotion alone produces no retrievable markdown: `promote_memory_candidate_entry`
+flips status and returns `canonical_write_pending`. Write the page (patch candidate
+apply, or `put_page`) to make it retrievable; the daily report lists the debt.
 
 Never write transient task mechanics, private chain-of-thought, or generic facts
 that do not belong in the user's knowledge graph.

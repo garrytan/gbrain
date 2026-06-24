@@ -292,19 +292,23 @@ export function createMaintenanceRuntimeService(
 
     async sweepTimedOutJobs() {
       const now = clock();
-      const timedOut = state.jobs.filter((job) => (
+      const expiredActive = state.jobs.filter((job) => (
         job.status === 'active'
-        && job.timeout_at !== null
-        && isIsoAtOrBefore(job.timeout_at, now)
+        && (
+          (job.timeout_at !== null && isIsoAtOrBefore(job.timeout_at, now))
+          || isIsoAtOrBefore(job.lock_expires_at, now)
+        )
       ));
       const updated: MaintenanceJob[] = [];
-      for (const job of timedOut) {
+      for (const job of expiredActive) {
+        const staleLock = !isIsoAtOrBefore(job.timeout_at, now) && isIsoAtOrBefore(job.lock_expires_at, now);
+        const failureClass = staleLock ? 'lock_timeout' : 'timeout';
         const attemptsFinished = job.attempts_finished + 1;
         const retry = attemptsFinished < job.max_attempts;
         job.attempts_finished = attemptsFinished;
         job.status = retry ? 'delayed' : 'dead';
-        job.failure_class = 'timeout';
-        job.last_error = 'maintenance job timed out';
+        job.failure_class = failureClass;
+        job.last_error = staleLock ? 'maintenance job lock expired' : 'maintenance job timed out';
         job.lock_token = null;
         job.lock_owner = null;
         job.lock_expires_at = null;
@@ -314,10 +318,10 @@ export function createMaintenanceRuntimeService(
         job.updated_at = now;
         appendEvent(
           job.id,
-          retry ? 'job_timeout_retry_scheduled' : 'job_dead',
-          retry ? {} : { reason: 'timeout' },
+          retry ? (staleLock ? 'job_stale_lock_retry_scheduled' : 'job_timeout_retry_scheduled') : 'job_dead',
+          retry ? {} : { reason: staleLock ? 'stale_lock' : 'timeout' },
           null,
-          'timeout',
+          failureClass,
         );
         updated.push(cloneJob(job));
       }

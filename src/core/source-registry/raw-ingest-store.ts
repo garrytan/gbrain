@@ -160,10 +160,16 @@ export async function readSourceItemChunksForItems(
   return chunksByItemId;
 }
 
-export type SourceChunkInspectionRecord = Omit<SourceChunkRecord, 'chunk_text'>;
+// Inspection records expose chunk metadata only — never raw or redacted body text.
+// `redactSecrets` returns its input verbatim when no SECRET_PATTERN fires, so
+// redacted_text === chunk_text in the common case; surfacing it via an unaudited
+// inspection path (e.g. list_source_items) would leak full raw private bodies with no
+// evaluate_raw_access / raw_access_ledger gate. Body text is only reachable through the
+// authorized request_raw_source_chunks op, which writes a ledger row.
+export type SourceChunkInspectionRecord = Omit<SourceChunkRecord, 'chunk_text' | 'redacted_text'>;
 
 export function redactSourceChunkForInspection(chunk: SourceChunkRecord): SourceChunkInspectionRecord {
-  const { chunk_text: _chunkText, ...inspectionChunk } = chunk;
+  const { chunk_text: _chunkText, redacted_text: _redactedText, ...inspectionChunk } = chunk;
   return inspectionChunk;
 }
 

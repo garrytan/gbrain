@@ -57,24 +57,24 @@ describe('migrate', () => {
     expect(sqliteMigrationBody).toContain('SQLite migration ${version} is not implemented');
   });
 
-  test('fresh SQLite and PGLite schemas expose matching shared table columns', async () => {
+  // Tables that legitimately exist on BOTH engines but whose column NAMES are allowed to
+  // differ (engine-specific shape). Keep this list short and documented — every entry is a
+  // deliberate divergence, not a parity bug. An empty list means every shared table must
+  // expose identical column names on SQLite and PGLite.
+  const PARITY_COLUMN_ALLOWLIST = new Set<string>([
+    // Postgres/PGLite store a tsvector `search_vector` column on `pages` for full-text
+    // search; SQLite uses a separate FTS5 virtual table (`pages_fts`) instead, so the
+    // `pages` column sets legitimately differ by one column.
+    'pages',
+  ]);
+
+  test('fresh SQLite and PGLite schemas expose matching columns for every shared table', async () => {
     const { SQLiteEngine } = await import('../src/core/sqlite-engine.ts');
     const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
     const sqlite = new SQLiteEngine();
     const pglite = new PGLiteEngine();
     const sqlitePath = join(tempHome, 'schema-parity.sqlite');
     const pglitePath = join(tempHome, 'schema-parity.pglite');
-    const sharedTables = [
-      'content_chunks',
-      'derived_index_state',
-      'derived_jobs',
-      'memory_candidate_entries',
-      'memory_mutation_events',
-      'note_manifest_entries',
-      'note_section_entries',
-      'source_chunks',
-      'source_items',
-    ];
     try {
       await sqlite.connect({ engine: 'sqlite', database_path: sqlitePath });
       await sqlite.initSchema();
@@ -82,18 +82,38 @@ describe('migrate', () => {
       await pglite.initSchema();
       const db = (sqlite as any).database;
 
+      // Programmatic intersection of the two live schemas, so a column added to a SQLite
+      // ensure-helper without the matching PGLite migration (or vice versa) fails parity for
+      // ANY shared table — not just a hardcoded subset.
+      const sqliteTables = (db.query(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
+      ).all() as Array<{ name: string }>).map(row => row.name);
+      const pgTables = (await (pglite as any).db.query(`
+        SELECT table_name FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+        ORDER BY table_name
+      `)).rows.map((row: { table_name: string }) => row.table_name);
+
+      const pgTableSet = new Set<string>(pgTables);
+      const sharedTables = sqliteTables
+        .filter(name => pgTableSet.has(name))
+        .filter(name => !PARITY_COLUMN_ALLOWLIST.has(name));
+
+      // Guard against the intersection silently collapsing to nothing (e.g. an introspection
+      // change), which would make the parity assertion vacuous.
+      expect(sharedTables.length).toBeGreaterThanOrEqual(9);
+
       for (const table of sharedTables) {
         const sqliteColumns = (db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
-          .map(column => column.name);
-        const pgColumns = (await (pglite as any).db.query(`
+          .map(column => column.name).sort();
+        const pgColumns = ((await (pglite as any).db.query(`
           SELECT column_name
           FROM information_schema.columns
           WHERE table_schema = 'public' AND table_name = $1
-          ORDER BY ordinal_position
-        `, [table])).rows.map((row: { column_name: string }) => row.column_name);
+        `, [table])).rows.map((row: { column_name: string }) => row.column_name) as string[]).sort();
 
         expect(pgColumns, `${table} should exist in PGLite`).not.toHaveLength(0);
-        expect(sqliteColumns, `${table} columns`).toEqual(pgColumns);
+        expect(sqliteColumns, `${table} columns diverge between SQLite and PGLite`).toEqual(pgColumns);
       }
     } finally {
       await sqlite.disconnect().catch(() => undefined);

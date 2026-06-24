@@ -12,7 +12,7 @@ import type {
   RetrievalRouteSelectorInput,
   RetrievalRouteSelectorResult,
 } from '../types.ts';
-import { getBroadSynthesisRoute } from './broad-synthesis-route-service.ts';
+import { getBroadSynthesisRoute, type BroadSynthesisRouteDependencies } from './broad-synthesis-route-service.ts';
 import { getMixedScopeBridge } from './mixed-scope-bridge-service.ts';
 import { getPersonalEpisodeLookupRoute } from './personal-episode-lookup-route-service.ts';
 import { getPersonalProfileLookupRoute } from './personal-profile-lookup-route-service.ts';
@@ -20,9 +20,14 @@ import { getPrecisionLookupRoute } from './precision-lookup-route-service.ts';
 import { evaluateScopeGate } from './scope-gate-service.ts';
 import { buildTaskResumeCard, type TaskResumeCard } from './task-memory-service.ts';
 
+export interface RetrievalRouteSelectorDependencies {
+  broadSynthesis?: BroadSynthesisRouteDependencies;
+}
+
 export async function selectRetrievalRoute(
   engine: BrainEngine,
   input: RetrievalRouteSelectorInput,
+  dependencies: RetrievalRouteSelectorDependencies = {},
 ): Promise<RetrievalRouteSelectorResult> {
   const shouldEvaluateScopeGate = input.intent !== 'mixed_scope_bridge' && (
     input.requested_scope !== undefined
@@ -65,11 +70,11 @@ export async function selectRetrievalRoute(
     case 'task_resume':
       return selectTaskResumeRoute(engine, input.task_id);
     case 'broad_synthesis':
-      return selectBroadSynthesisRoute(engine, input);
+      return selectBroadSynthesisRoute(engine, input, dependencies);
     case 'precision_lookup':
       return selectPrecisionLookupRoute(engine, input);
     case 'mixed_scope_bridge':
-      return selectMixedScopeBridgeRoute(engine, input);
+      return selectMixedScopeBridgeRoute(engine, input, dependencies);
     case 'personal_profile_lookup':
       return selectPersonalProfileLookupRoute(engine, input);
     case 'personal_episode_lookup':
@@ -128,6 +133,7 @@ async function selectTaskResumeRoute(
 async function selectBroadSynthesisRoute(
   engine: BrainEngine,
   input: RetrievalRouteSelectorInput,
+  dependencies: RetrievalRouteSelectorDependencies,
 ): Promise<RetrievalRouteSelectorResult> {
   const result = await getBroadSynthesisRoute(engine, {
     map_id: input.map_id,
@@ -135,7 +141,7 @@ async function selectBroadSynthesisRoute(
     kind: input.kind,
     query: input.query ?? '',
     limit: input.limit,
-  });
+  }, dependencies.broadSynthesis);
   return {
     selected_intent: 'broad_synthesis',
     selection_reason: result.selection_reason,
@@ -166,6 +172,7 @@ async function selectPrecisionLookupRoute(
 async function selectMixedScopeBridgeRoute(
   engine: BrainEngine,
   input: RetrievalRouteSelectorInput,
+  dependencies: RetrievalRouteSelectorDependencies,
 ): Promise<RetrievalRouteSelectorResult> {
   const missingPersonalSelector = input.personal_route_kind === 'episode'
     ? !input.episode_title
@@ -192,6 +199,8 @@ async function selectMixedScopeBridgeRoute(
     profile_type: input.profile_type,
     episode_title: input.episode_title,
     episode_source_kind: input.episode_source_kind,
+  }, {
+    broadSynthesis: dependencies.broadSynthesis,
   });
 
   return {

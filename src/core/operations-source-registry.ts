@@ -44,6 +44,7 @@ import {
   mapSourceItem,
   persistRawIngestPlan,
   readSourceItemByExternalId,
+  readSourceItemChunks,
   readSourceItemChunksForItems,
   redactSourceChunkForInspection,
   type SourceChunkInspectionRecord,
@@ -555,6 +556,28 @@ export function createSourceRegistryOperations(
     cliHints: { name: 'raw-access-evaluate' },
   };
 
+  const request_raw_source_chunks: Operation = {
+    name: 'request_raw_source_chunks',
+    description: 'Authorized, audited retrieval of redacted source chunk text. Runs the same scope/policy resolution and raw_access_ledger write as evaluate_raw_access and returns redacted_text only on a non-deny decision — never raw chunk_text. The unaudited list_source_items inspection path returns metadata only.',
+    params: {
+      actor_type: { type: 'string', required: true, description: 'Actor type, for example runner, daemon, mcp, cli, or llm.' },
+      actor_id: { type: 'string', required: true, description: 'Stable actor id.' },
+      session_id: { type: 'string', nullable: true, description: 'Optional session id.' },
+      job_id: { type: 'string', nullable: true, description: 'Optional job id.' },
+      source_id: { type: 'string', required: true, description: 'Source id.' },
+      source_item_id: { type: 'string', required: true, description: 'Source item id.' },
+      chunk_ids: { type: 'array', required: true, items: { type: 'string' }, description: 'Explicit source chunk ids requested.' },
+      reason: { type: 'string', required: true, description: 'Why redacted chunk text is needed.' },
+      input: { type: 'string', description: 'Optional input text to hash in the ledger.' },
+      prompt: { type: 'string', description: 'Optional prompt text to hash in the ledger.' },
+      requested_at: { type: 'string', description: 'Optional ISO request timestamp.' },
+      policy: { type: 'object', description: 'Deprecated dry-run-only raw access policy override. Non-dry-run evaluation resolves policy from the registered source.' },
+    },
+    handler: async (ctx, p) => requestRawSourceChunksOperation(deps, ctx, p),
+    mutating: true,
+    cliHints: { name: 'raw-access-request-chunks' },
+  };
+
   const pause_source_processing: Operation = {
     name: 'pause_source_processing',
     description: 'Plan an auditable source pause transition for report-driven source repair workflows.',
@@ -622,6 +645,7 @@ export function createSourceRegistryOperations(
     record_connector_sync_success,
     record_connector_item_deletion,
     evaluate_raw_access,
+    request_raw_source_chunks,
     pause_source_processing,
     revoke_source_consent,
   ];
@@ -1697,6 +1721,43 @@ async function evaluateRawAccessOperation(
     audited: true,
     policy_source: policySource,
   };
+}
+
+// Authorized, audited redacted-chunk retrieval. Reuses the exact policy + scope + ledger
+// path as evaluate_raw_access, then returns redacted_text for the requested chunks ONLY on a
+// non-deny, non-dry-run decision. Never returns raw chunk_text. The unaudited inspection
+// path (list_source_items) returns metadata only.
+async function requestRawSourceChunksOperation(
+  deps: { OperationError: OperationErrorCtor },
+  ctx: OperationContext,
+  p: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const evaluation = await evaluateRawAccessOperation(deps, ctx, p) as Record<string, unknown> & {
+    decision?: RawAccessDecision;
+  };
+  const allowed = evaluation.decision?.policy_decision === 'allow';
+  if (ctx.dryRun || !allowed) {
+    return { ...evaluation, redacted_chunks: null };
+  }
+
+  const request = rawAccessRequest(deps, p);
+  const requestedIds = new Set(request.chunk_ids);
+  const itemChunks = await readSourceItemChunks(ctx.engine, request.source_item_id);
+  const redacted_chunks = itemChunks
+    .filter((chunk) => requestedIds.has(chunk.id))
+    .map((chunk) => ({
+      id: chunk.id,
+      source_item_id: chunk.source_item_id,
+      chunk_index: chunk.chunk_index,
+      chunk_hash: chunk.chunk_hash,
+      token_count: chunk.token_count,
+      sensitivity_flags: chunk.sensitivity_flags,
+      prompt_injection_risk: chunk.prompt_injection_risk,
+      secret_risk: chunk.secret_risk,
+      redacted_text: chunk.redacted_text,
+    }));
+
+  return { ...evaluation, redacted_chunks };
 }
 
 function denyRawAccessEvaluation(request: RawAccessRequest, reason: string) {

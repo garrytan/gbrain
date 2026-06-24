@@ -718,6 +718,97 @@ describe('doctor command', () => {
     expect(report.checks.some((check) => check.name === 'offline_profile')).toBe(true);
   });
 
+  test('buildDoctorReport reports the standard Postgres profile as healthy, not a warning', () => {
+    const report = buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 10,
+        chunk_count: 20,
+        embedded_count: 20,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: {
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      },
+      profile: resolveOfflineProfile({
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      }),
+      rawPostgresChecksSupported: true,
+      schemaVersion: '4',
+      latestVersion: 4,
+      health: {
+        page_count: 10,
+        embed_coverage: 1,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+      },
+    });
+
+    const offlineProfile = report.checks.find((check) => check.name === 'offline_profile');
+    expect(offlineProfile?.status).toBe('ok');
+    expect(offlineProfile?.message).toContain('cloud-connected');
+    expect(
+      report.remediation_plan?.actions.some((action) => action.id.startsWith('doctor.offline_profile')),
+    ).toBeFalsy();
+  });
+
+  test('buildDoctorReport warns on a genuine offline-flag/engine mismatch', () => {
+    const report = buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 1,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: {
+        engine: 'sqlite',
+        database_path: '/tmp/brain.db',
+        offline: false,
+        embedding_provider: 'local',
+        query_rewrite_provider: 'heuristic',
+      },
+      profile: resolveOfflineProfile({
+        engine: 'sqlite',
+        database_path: '/tmp/brain.db',
+        offline: false,
+        embedding_provider: 'local',
+        query_rewrite_provider: 'heuristic',
+      }),
+      rawPostgresChecksSupported: false,
+      schemaVersion: '4',
+      latestVersion: 4,
+      health: {
+        page_count: 1,
+        embed_coverage: 1,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+      },
+    });
+
+    const offlineProfile = report.checks.find((check) => check.name === 'offline_profile');
+    expect(offlineProfile?.status).toBe('warn');
+    expect(offlineProfile?.message).toContain('mismatch');
+  });
+
   test('buildDoctorReport includes installed-agent readiness checks when provided', () => {
     const report = buildDoctorReport({
       connectionOk: true,

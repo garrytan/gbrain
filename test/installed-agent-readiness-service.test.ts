@@ -50,6 +50,9 @@ describe('installed-agent readiness service', () => {
       codexPrompt: rulesBlock,
       claudePrompt: rulesBlock,
       claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
+      claudePromptHook: 'additionalContext retrieve_context read_context tool_search route_memory_writeback',
+      claudeSessionStartHook: 'agent-session-activate additionalContext MBRAIN_SESSIONSTART_SCOPE --scope "$SCOPE"',
+      claudeSettings: sessionStartSettings(),
       codexMcpRegistration: {
         client: 'codex',
         detected: true,
@@ -71,6 +74,62 @@ describe('installed-agent readiness service', () => {
     expect(report.checks.every((check) => check.status === 'ok')).toBe(true);
     expect(report.checks.find((check) => check.name === 'mcp_required_tools')?.message)
       .toContain('route_memory_writeback');
+  });
+
+  test('checks Claude SessionStart activation hook when provided', () => {
+    const missing = buildInstalledAgentReadinessReport({
+      command: 'mbrain',
+      commandPath: '/opt/homebrew/bin/mbrain',
+      commandVersion: 'mbrain 0.10.3',
+      tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
+      codexPrompt: rulesBlock,
+      claudePrompt: rulesBlock,
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
+      claudePromptHook: 'additionalContext retrieve_context read_context tool_search route_memory_writeback',
+      claudeSessionStartHook: null,
+      claudeSettings: sessionStartSettings(),
+      expectedRulesVersion: '0.5.7',
+      expectedRulesContent: rulesContent,
+    });
+    expect(missing.checks.find((check) => check.name === 'claude_sessionstart_hook')).toMatchObject({
+      status: 'warn',
+    });
+
+    const stale = buildInstalledAgentReadinessReport({
+      command: 'mbrain',
+      commandPath: '/opt/homebrew/bin/mbrain',
+      commandVersion: 'mbrain 0.10.3',
+      tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
+      codexPrompt: rulesBlock,
+      claudePrompt: rulesBlock,
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
+      claudePromptHook: 'additionalContext retrieve_context read_context tool_search route_memory_writeback',
+      claudeSessionStartHook: 'agent-session-activate --scope mixed',
+      claudeSettings: sessionStartSettings(),
+      expectedRulesVersion: '0.5.7',
+      expectedRulesContent: rulesContent,
+    });
+    expect(stale.checks.find((check) => check.name === 'claude_sessionstart_hook')).toMatchObject({
+      status: 'fail',
+    });
+
+    const unregistered = buildInstalledAgentReadinessReport({
+      command: 'mbrain',
+      commandPath: '/opt/homebrew/bin/mbrain',
+      commandVersion: 'mbrain 0.10.3',
+      tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
+      codexPrompt: rulesBlock,
+      claudePrompt: rulesBlock,
+      claudeStopHook: 'route_memory_writeback with sources; MODE capture runs mbrain agent-session capture',
+      claudePromptHook: 'additionalContext retrieve_context read_context tool_search route_memory_writeback',
+      claudeSessionStartHook: 'agent-session-activate additionalContext MBRAIN_SESSIONSTART_SCOPE --scope "$SCOPE"',
+      claudeSettings: JSON.stringify({ hooks: {} }),
+      expectedRulesVersion: '0.5.7',
+      expectedRulesContent: rulesContent,
+    });
+    expect(unregistered.checks.find((check) => check.name === 'claude_sessionstart_hook')).toMatchObject({
+      status: 'fail',
+    });
   });
 
   test('warns when the Claude prompt hook is absent', () => {
@@ -513,3 +572,17 @@ describe('installed-agent readiness service', () => {
     });
   });
 });
+
+function sessionStartSettings(): string {
+  return JSON.stringify({
+    hooks: {
+      SessionStart: [{
+        id: 'sessionstart:mbrain-activation',
+        hooks: [{
+          type: 'command',
+          command: 'bash "$HOME/.claude/scripts/hooks/sessionstart-mbrain-activation.sh"',
+        }],
+      }],
+    },
+  });
+}

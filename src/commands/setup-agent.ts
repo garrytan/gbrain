@@ -10,6 +10,7 @@ import {
 import {
   CLAUDE_MBRAIN_PROMPT_HOOK,
   CLAUDE_MBRAIN_RELEVANCE_LIB,
+  CLAUDE_MBRAIN_SESSIONSTART_HOOK,
   CLAUDE_MBRAIN_SKIP_DIRS,
   CLAUDE_MBRAIN_STOP_HOOK,
 } from './setup-agent-hook-assets.ts';
@@ -39,6 +40,7 @@ type SetupAgentUninstallResult = {
   mcp_scope?: ClaudeMcpScope;
   claude_stop_hook?: string;
   claude_prompt_hook?: string;
+  claude_sessionstart_hook?: string;
   claude_relevance_lib?: string;
   claude_skip_dirs?: string;
   claude_settings_hook?: string;
@@ -128,6 +130,7 @@ export async function runSetupAgent(args: string[]) {
               mcp_scope: claudeMcpScope,
               claude_stop_hook_content: readOptionalFile(join(client.configDir, 'scripts', 'hooks', 'stop-mbrain-check.sh')),
               claude_prompt_hook_content: readOptionalFile(join(client.configDir, 'scripts', 'hooks', 'prompt-mbrain-context.sh')),
+              claude_sessionstart_hook_content: readOptionalFile(join(client.configDir, 'scripts', 'hooks', 'sessionstart-mbrain-activation.sh')),
               claude_relevance_lib_content: readOptionalFile(join(client.configDir, 'scripts', 'hooks', 'lib', 'mbrain-relevance.sh')),
               claude_skip_dirs_content: readOptionalFile(join(client.configDir, 'mbrain-skip-dirs')),
               claude_settings_content: readOptionalFile(join(client.configDir, 'settings.json')),
@@ -137,6 +140,7 @@ export async function runSetupAgent(args: string[]) {
       })),
       expected_claude_stop_hook: CLAUDE_MBRAIN_STOP_HOOK,
       expected_claude_prompt_hook: CLAUDE_MBRAIN_PROMPT_HOOK,
+      expected_claude_sessionstart_hook: CLAUDE_MBRAIN_SESSIONSTART_HOOK,
       expected_claude_relevance_lib: CLAUDE_MBRAIN_RELEVANCE_LIB,
       expected_claude_skip_dirs: CLAUDE_MBRAIN_SKIP_DIRS,
     });
@@ -538,6 +542,10 @@ function installClaudeHooks(claudeDir: string): void {
   atomicWrite(promptHookPath, CLAUDE_MBRAIN_PROMPT_HOOK);
   chmodSync(promptHookPath, 0o755);
 
+  const sessionStartHookPath = join(claudeDir, 'scripts', 'hooks', 'sessionstart-mbrain-activation.sh');
+  atomicWrite(sessionStartHookPath, CLAUDE_MBRAIN_SESSIONSTART_HOOK);
+  chmodSync(sessionStartHookPath, 0o755);
+
   atomicWrite(libPath, CLAUDE_MBRAIN_RELEVANCE_LIB);
 
   // The skip-dirs file is user-editable; never clobber entries on re-run.
@@ -552,6 +560,7 @@ function installClaudeHooks(claudeDir: string): void {
 function uninstallClaudeHooks(claudeDir: string): Omit<SetupAgentUninstallResult, 'client' | 'mcp' | 'rules' | 'mcp_scope'> {
   const stopHookPath = join(claudeDir, 'scripts', 'hooks', 'stop-mbrain-check.sh');
   const promptHookPath = join(claudeDir, 'scripts', 'hooks', 'prompt-mbrain-context.sh');
+  const sessionStartHookPath = join(claudeDir, 'scripts', 'hooks', 'sessionstart-mbrain-activation.sh');
   const libPath = join(claudeDir, 'scripts', 'hooks', 'lib', 'mbrain-relevance.sh');
   const skipDirsPath = join(claudeDir, 'mbrain-skip-dirs');
   const settingsPath = join(claudeDir, 'settings.json');
@@ -560,6 +569,7 @@ function uninstallClaudeHooks(claudeDir: string): Omit<SetupAgentUninstallResult
   return {
     claude_stop_hook: removeManagedFile(stopHookPath, CLAUDE_MBRAIN_STOP_HOOK),
     claude_prompt_hook: removeManagedFile(promptHookPath, CLAUDE_MBRAIN_PROMPT_HOOK),
+    claude_sessionstart_hook: removeManagedFile(sessionStartHookPath, CLAUDE_MBRAIN_SESSIONSTART_HOOK),
     claude_relevance_lib: removeManagedFile(libPath, CLAUDE_MBRAIN_RELEVANCE_LIB),
     claude_skip_dirs: removeManagedFile(skipDirsPath, CLAUDE_MBRAIN_SKIP_DIRS),
     claude_settings_hook: removeClaudeHooksFromSettings(settingsPath),
@@ -600,6 +610,19 @@ const CLAUDE_MANAGED_HOOK_ENTRIES = [
       }],
       description: 'Inject MBrain retrieval/writeback guidance as silent context.',
       id: 'prompt:mbrain-context',
+    },
+  },
+  {
+    event: 'SessionStart',
+    entry: {
+      matcher: '*',
+      hooks: [{
+        type: 'command',
+        command: 'bash "$HOME/.claude/scripts/hooks/sessionstart-mbrain-activation.sh"',
+        timeout: 8,
+      }],
+      description: 'Inject a bounded, scope-gated MBrain activation card (proactive recall) as silent context.',
+      id: 'sessionstart:mbrain-activation',
     },
   },
 ] as const;
