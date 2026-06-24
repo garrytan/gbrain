@@ -4695,7 +4695,11 @@ export class PostgresEngine implements BrainEngine {
     `;
 
     const types = await sql`
-      SELECT type, count(*)::int as count FROM pages GROUP BY type ORDER BY count DESC
+      SELECT type, count(*)::int as count
+      FROM pages
+      WHERE deleted_at IS NULL
+      GROUP BY type
+      ORDER BY count DESC
     `;
     const pages_by_type: Record<string, number> = {};
     for (const t of types) {
@@ -4723,25 +4727,37 @@ export class PostgresEngine implements BrainEngine {
     // is working as intended, not an orphan.
     const [h] = await sql`
       WITH entity_pages AS (
-        SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+        SELECT id, slug
+        FROM pages
+        WHERE type IN ('person', 'company')
+          AND deleted_at IS NULL
       )
       SELECT
-        (SELECT count(*) FROM pages) as page_count,
+        (SELECT count(*) FROM pages WHERE deleted_at IS NULL) as page_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
         (SELECT count(*) FROM pages p
          WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
+           AND p.deleted_at IS NULL
         ) as stale_pages,
         (SELECT count(*) FROM pages p
-         WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+         WHERE p.deleted_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
         ) as orphan_pages,
         (SELECT count(*) FROM links l
-         WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
+         WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id AND p.deleted_at IS NULL)
         ) as dead_links,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
-        (SELECT count(*) FROM links) as link_count,
-        (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline,
+        (SELECT count(*) FROM links l
+         WHERE EXISTS (SELECT 1 FROM pages p WHERE p.id = l.from_page_id AND p.deleted_at IS NULL)
+           AND EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id AND p.deleted_at IS NULL)
+        ) as link_count,
+        (SELECT count(DISTINCT te.page_id)
+         FROM timeline_entries te
+         JOIN pages p ON p.id = te.page_id
+         WHERE p.deleted_at IS NULL
+        ) as pages_with_timeline,
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
@@ -4755,6 +4771,7 @@ export class PostgresEngine implements BrainEngine {
              (SELECT count(*) FROM links l WHERE l.from_page_id = p.id OR l.to_page_id = p.id)::int as link_count
       FROM pages p
       WHERE p.type IN ('person', 'company')
+        AND p.deleted_at IS NULL
       ORDER BY link_count DESC
       LIMIT 5
     `;

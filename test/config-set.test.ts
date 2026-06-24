@@ -24,6 +24,10 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('search.cache.enabled');
   });
 
+  test('contains doctor operator-threshold keys', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('doctor.brain_score_warn_below');
+  });
+
   test('contains the models-tier keys (v0.31.12)', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('models.default');
     expect(KNOWN_CONFIG_KEYS).toContain('models.tier.subagent');
@@ -49,6 +53,7 @@ describe('KNOWN_CONFIG_KEY_PREFIXES', () => {
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('search.');
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('models.');
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('dream.');
+    expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('doctor.');
   });
 
   test('prefixes end in `.` (consistent shape)', () => {
