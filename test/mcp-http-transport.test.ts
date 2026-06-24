@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createHash, createHash as sha256 } from 'crypto';
+import { createHash, createHash as sha256, createHmac } from 'crypto';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -884,6 +884,38 @@ describe('MCP HTTP transport', () => {
     expect(registration.redirect_uris).toEqual(['https://chat.openai.com/aip/callback']);
   });
 
+  test('OAuth routes require a dedicated signing secret even when approval token is present', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+      },
+    });
+
+    const metadata = await handler(new Request('http://localhost/.well-known/oauth-authorization-server'));
+    expect(metadata.status).toBe(503);
+    expect(await metadata.json()).toMatchObject({
+      error: 'oauth_not_configured',
+      message: expect.stringContaining('MBRAIN_OAUTH_SIGNING_SECRET'),
+    });
+
+    const register = await handler(new Request('http://localhost/oauth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_name: 'ChatGPT',
+        redirect_uris: ['https://chat.openai.com/aip/callback'],
+        token_endpoint_auth_method: 'none',
+      }),
+    }));
+    expect(register.status).toBe(503);
+  });
+
   test('OAuth privileged scopes are denied unless the server explicitly allows them', async () => {
     const { dbPath } = createSqliteTokenDb();
     const handler = createMcpHttpHandler({
@@ -1196,6 +1228,34 @@ describe('MCP HTTP transport', () => {
     expect(await refresh.json()).toMatchObject({ error: 'invalid_scope' });
   });
 
+  test('OAuth refresh tokens signed with the approval token are rejected', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+      },
+    });
+    const redirectUri = 'https://chat.openai.com/aip/callback';
+    const client = await registerOAuthClient(handler, redirectUri);
+    const initial = await authorizeOAuthClient(handler, client.client_id, redirectUri);
+    const forgedRefreshToken = resignRefreshTokenForTest(initial.refreshToken, 'owner-secret');
+
+    const forgedRefresh = await postOAuthRefresh(handler, client.client_id, forgedRefreshToken);
+    expect(forgedRefresh.status).toBe(400);
+    expect(await forgedRefresh.json()).toMatchObject({ error: 'invalid_grant' });
+    expect(await postOAuthMcp(handler, initial.accessToken, 1).then(response => response.status)).toBe(200);
+
+    const validRefresh = await refreshOAuthClient(handler, client.client_id, initial.refreshToken);
+    expect(await postOAuthMcp(handler, initial.accessToken, 2).then(response => response.status)).toBe(401);
+    expect(await postOAuthMcp(handler, validRefresh.accessToken, 3).then(response => response.status)).toBe(200);
+  });
+
   test('OAuth rotation does not revoke independent same-name client sessions', async () => {
     const { dbPath } = createSqliteTokenDb();
     const handler = createMcpHttpHandler({
@@ -1225,7 +1285,7 @@ describe('MCP HTTP transport', () => {
     expect(await postOAuthMcp(handler, second.accessToken, 5).then(response => response.status)).toBe(200);
   });
 
-  test('OAuth repeated refreshes do not revoke freshly returned access tokens', async () => {
+  test('OAuth refresh tokens are one-time and replay does not revoke the winning access token', async () => {
     const { dbPath } = createSqliteTokenDb();
     const handler = createMcpHttpHandler({
       engine: createStatsEngine(),
@@ -1242,11 +1302,96 @@ describe('MCP HTTP transport', () => {
     const client = await registerOAuthClient(handler, redirectUri);
     const initial = await authorizeOAuthClient(handler, client.client_id, redirectUri);
     const firstRefresh = await refreshOAuthClient(handler, client.client_id, initial.refreshToken);
-    const secondRefresh = await refreshOAuthClient(handler, client.client_id, initial.refreshToken);
+    const replay = await postOAuthRefresh(handler, client.client_id, initial.refreshToken);
 
+    expect(replay.status).toBe(400);
+    expect(await replay.json()).toMatchObject({ error: 'invalid_grant' });
     expect(await postOAuthMcp(handler, initial.accessToken, 1).then(response => response.status)).toBe(401);
     expect(await postOAuthMcp(handler, firstRefresh.accessToken, 2).then(response => response.status)).toBe(200);
+
+    const inspectDb = new Database(dbPath);
+    const rows = inspectDb
+      .query('SELECT revoked_at FROM access_tokens WHERE name = ? ORDER BY created_at')
+      .all('oauth:ChatGPT') as { revoked_at: string | null }[];
+    inspectDb.close();
+    expect(rows).toHaveLength(2);
+    expect(rows.filter(row => row.revoked_at !== null)).toHaveLength(1);
+    expect(rows.filter(row => row.revoked_at === null)).toHaveLength(1);
+  });
+
+  test('OAuth refresh-token rotation chains through newly returned refresh tokens', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+      },
+    });
+    const redirectUri = 'https://chat.openai.com/aip/callback';
+    const client = await registerOAuthClient(handler, redirectUri);
+    const initial = await authorizeOAuthClient(handler, client.client_id, redirectUri);
+    const firstRefresh = await refreshOAuthClient(handler, client.client_id, initial.refreshToken);
+    const secondRefresh = await refreshOAuthClient(handler, client.client_id, firstRefresh.refreshToken);
+    const replayFirst = await postOAuthRefresh(handler, client.client_id, firstRefresh.refreshToken);
+
+    expect(replayFirst.status).toBe(400);
+    expect(await replayFirst.json()).toMatchObject({ error: 'invalid_grant' });
+    expect(await postOAuthMcp(handler, initial.accessToken, 1).then(response => response.status)).toBe(401);
+    expect(await postOAuthMcp(handler, firstRefresh.accessToken, 2).then(response => response.status)).toBe(401);
     expect(await postOAuthMcp(handler, secondRefresh.accessToken, 3).then(response => response.status)).toBe(200);
+
+    const inspectDb = new Database(dbPath);
+    const rows = inspectDb
+      .query('SELECT revoked_at FROM access_tokens WHERE name = ? ORDER BY created_at')
+      .all('oauth:ChatGPT') as { revoked_at: string | null }[];
+    inspectDb.close();
+    expect(rows).toHaveLength(3);
+    expect(rows.filter(row => row.revoked_at !== null)).toHaveLength(2);
+    expect(rows.filter(row => row.revoked_at === null)).toHaveLength(1);
+  });
+
+  test('OAuth refresh consumes the original token binding after client metadata changes', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const oauthStore = createInMemoryMcpOAuthStore();
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore,
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+      },
+    });
+    const redirectUri = 'https://chat.openai.com/aip/callback';
+    const client = await registerOAuthClient(handler, redirectUri);
+    const initial = await authorizeOAuthClient(handler, client.client_id, redirectUri);
+
+    await oauthStore.saveClient({
+      client_id: client.client_id,
+      client_name: 'Renamed ChatGPT',
+      redirect_uris: [redirectUri],
+      issued_at: Math.floor(Date.now() / 1000),
+    });
+    const refreshed = await refreshOAuthClient(handler, client.client_id, initial.refreshToken);
+
+    expect(await postOAuthMcp(handler, initial.accessToken, 1).then(response => response.status)).toBe(401);
+    expect(await postOAuthMcp(handler, refreshed.accessToken, 2).then(response => response.status)).toBe(200);
+
+    const inspectDb = new Database(dbPath);
+    const rows = inspectDb
+      .query('SELECT name, revoked_at FROM access_tokens ORDER BY created_at')
+      .all() as { name: string; revoked_at: string | null }[];
+    inspectDb.close();
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ name: 'oauth:ChatGPT', revoked_at: expect.any(String) });
+    expect(rows[1]).toMatchObject({ name: 'oauth:Renamed ChatGPT', revoked_at: null });
   });
 
   test('OAuth token endpoint rejects reused codes and bad PKCE verifiers', async () => {
@@ -1378,6 +1523,43 @@ describe('MCP HTTP transport', () => {
     expect(await failed.json()).toMatchObject({ error: 'invalid_grant' });
   });
 
+  test('OAuth refresh tokens are single-use under concurrent refresh attempts', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+      },
+    });
+    const redirectUri = 'https://chat.openai.com/aip/callback';
+    const client = await registerOAuthClient(handler, redirectUri);
+    const initial = await authorizeOAuthClient(handler, client.client_id, redirectUri);
+
+    const refreshes = await Promise.all(Array.from({ length: 4 }, () =>
+      postOAuthRefresh(handler, client.client_id, initial.refreshToken)
+    ));
+
+    expect(refreshes.map(response => response.status).sort()).toEqual([200, 400, 400, 400]);
+    const failed = refreshes.filter(response => response.status === 400);
+    for (const response of failed) {
+      expect(await response.json()).toMatchObject({ error: 'invalid_grant' });
+    }
+
+    const inspectDb = new Database(dbPath);
+    const rows = inspectDb
+      .query('SELECT revoked_at FROM access_tokens WHERE name = ? ORDER BY created_at')
+      .all('oauth:ChatGPT') as { revoked_at: string | null }[];
+    inspectDb.close();
+    expect(rows).toHaveLength(2);
+    expect(rows.filter(row => row.revoked_at !== null)).toHaveLength(1);
+    expect(rows.filter(row => row.revoked_at === null)).toHaveLength(1);
+  });
+
   test('HTTP OAuth requires Postgres setup state unless an explicit test store is injected', () => {
     const { dbPath } = createSqliteTokenDb();
 
@@ -1483,8 +1665,22 @@ async function refreshOAuthClient(
   handler: (request: Request) => Promise<Response>,
   clientId: string,
   refreshToken: string,
-): Promise<{ accessToken: string }> {
-  const refresh = await handler(new Request('http://localhost/oauth/token', {
+): Promise<{ accessToken: string; refreshToken: string }> {
+  const refresh = await postOAuthRefresh(handler, clientId, refreshToken);
+  expect(refresh.status).toBe(200);
+  const payload = await refresh.json() as { access_token: string; refresh_token: string };
+  return {
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token,
+  };
+}
+
+async function postOAuthRefresh(
+  handler: (request: Request) => Promise<Response>,
+  clientId: string,
+  refreshToken: string,
+): Promise<Response> {
+  return handler(new Request('http://localhost/oauth/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -1493,9 +1689,16 @@ async function refreshOAuthClient(
       refresh_token: refreshToken,
     }),
   }));
-  expect(refresh.status).toBe(200);
-  const payload = await refresh.json() as { access_token: string };
-  return { accessToken: payload.access_token };
+}
+
+function resignRefreshTokenForTest(refreshToken: string, secret: string): string {
+  const prefix = 'mbrain_refresh_';
+  expect(refreshToken).toStartWith(prefix);
+  const [encodedPayload] = refreshToken.slice(prefix.length).split('.');
+  const signature = createHmac('sha256', secret)
+    .update(encodedPayload)
+    .digest('base64url');
+  return `${prefix}${encodedPayload}.${signature}`;
 }
 
 async function postOAuthMcp(

@@ -20,7 +20,8 @@ DATABASE_URL='postgresql://...' bun run smoke:http-oauth
 ```
 
 That smoke starts the real HTTP MCP server, simulates DCR + PKCE, calls MCP
-tools with the issued token, refreshes it, and verifies Postgres evidence. Set
+tools with the issued token, refreshes it, rejects refresh-token replay, checks
+the next refresh-token link in the chain, and verifies Postgres evidence. Set
 `MBRAIN_SMOKE_RESTART_OAUTH_STATE=1` to prove DCR/client-code state survives
 server restarts during setup. It does not require OpenAI or Anthropic API keys.
 
@@ -75,7 +76,9 @@ surface. `mbrain serve --http --oauth` prepares the schema before opening the
 HTTP server, so upgraded Postgres installs have the OAuth runtime tables before
 ChatGPT begins setup.
 Refresh grants rotate the client session's access token binding, so older
-access tokens from the same refresh chain are rejected.
+access tokens from the same refresh chain are rejected. Refresh tokens are also
+one-use: replaying an older refresh token returns `invalid_grant`; use the newly
+returned refresh token or reconnect the client.
 
 HTTP MCP clients receive full tool descriptors with titles, descriptions, and
 MCP read/write/destructive annotations so ChatGPT can list MBrain app actions
@@ -87,6 +90,8 @@ budget headroom.
 - Authorization codes are short-lived and one-use, including concurrent exchange
   attempts. If setup takes too long, reconnect from ChatGPT so it can create a
   fresh code.
+- Refresh tokens are one-use. If a client retries with a refresh token that has
+  already rotated, reconnect so the OAuth flow can mint a fresh token chain.
 - If many client registrations are left pending, `/oauth/register` can return
   HTTP 429 until stale setup rows are pruned or an authorization completes.
 - No admin UI is included. The approval token is the owner confirmation step.

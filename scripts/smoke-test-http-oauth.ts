@@ -25,6 +25,9 @@ export interface HttpOAuthSmokeResult {
   logOperations: string[];
   refreshedTokenWorked: boolean;
   initialTokenRejectedAfterRefresh: boolean;
+  refreshReplayRejected: boolean;
+  refreshChainWorked: boolean;
+  firstRefreshedTokenRejectedAfterSecondRefresh: boolean;
   restartResilient: boolean;
 }
 
@@ -148,7 +151,8 @@ export async function runHttpOAuthSmoke(options: HttpOAuthSmokeOptions = {}): Pr
       throw new Error(`get_stats did not return a stats payload: ${JSON.stringify(stats)}`);
     }
 
-    const refreshedAccessToken = await refreshAccessToken(baseUrl, clientId, refreshToken);
+    const refreshed = await refreshAccessToken(baseUrl, clientId, refreshToken);
+    const refreshedAccessToken = refreshed.accessToken;
     const refreshedToolsList = await callMcp(baseUrl, refreshedAccessToken, {
       jsonrpc: '2.0',
       method: 'tools/list',
@@ -170,6 +174,41 @@ export async function runHttpOAuthSmoke(options: HttpOAuthSmokeOptions = {}): Pr
     if (!initialTokenRejectedAfterRefresh || initialTokenRejectionBody?.error !== 'invalid_token') {
       throw new Error(
         `initial access token still worked after refresh: status=${initialTokenAfterRefresh.status} body=${initialTokenAfterRefresh.body}`,
+      );
+    }
+    const replayRefresh = await postFormRaw(`${baseUrl}/oauth/token`, {
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      refresh_token: refreshToken,
+    });
+    const refreshReplayRejected = replayRefresh.status === 400 && replayRefresh.payload.error === 'invalid_grant';
+    if (!refreshReplayRejected) {
+      throw new Error(
+        `replayed refresh token was not rejected: status=${replayRefresh.status} body=${JSON.stringify(replayRefresh.payload)}`,
+      );
+    }
+    const secondRefreshed = await refreshAccessToken(baseUrl, clientId, refreshed.refreshToken);
+    const secondRefreshedToolsList = await callMcp(baseUrl, secondRefreshed.accessToken, {
+      jsonrpc: '2.0',
+      method: 'tools/list',
+      params: {},
+      id: 6,
+    });
+    const refreshChainWorked = secondRefreshedToolsList.result?.tools?.some((tool: { name?: string }) => tool.name === 'get_stats') === true;
+    if (!refreshChainWorked) {
+      throw new Error(`second refreshed access token did not work: ${JSON.stringify(secondRefreshedToolsList)}`);
+    }
+    const firstRefreshedAfterSecondRefresh = await callMcpRaw(baseUrl, refreshedAccessToken, {
+      jsonrpc: '2.0',
+      method: 'tools/list',
+      params: {},
+      id: 7,
+    });
+    const firstRefreshedTokenRejectedAfterSecondRefresh = firstRefreshedAfterSecondRefresh.status === 401;
+    const firstRefreshedRejectionBody = safeJson(firstRefreshedAfterSecondRefresh.body);
+    if (!firstRefreshedTokenRejectedAfterSecondRefresh || firstRefreshedRejectionBody?.error !== 'invalid_token') {
+      throw new Error(
+        `first refreshed access token still worked after second refresh: status=${firstRefreshedAfterSecondRefresh.status} body=${firstRefreshedAfterSecondRefresh.body}`,
       );
     }
 
@@ -195,6 +234,9 @@ export async function runHttpOAuthSmoke(options: HttpOAuthSmokeOptions = {}): Pr
       logOperations: logs.map(row => String(row.operation)),
       refreshedTokenWorked,
       initialTokenRejectedAfterRefresh,
+      refreshReplayRejected,
+      refreshChainWorked,
+      firstRefreshedTokenRejectedAfterSecondRefresh,
       restartResilient: restart,
     };
   } finally {
@@ -316,16 +358,23 @@ async function exchangeAuthorizationCode(
   };
 }
 
-async function refreshAccessToken(baseUrl: string, clientId: string, refreshToken: string): Promise<string> {
+async function refreshAccessToken(
+  baseUrl: string,
+  clientId: string,
+  refreshToken: string,
+): Promise<{ accessToken: string; refreshToken: string }> {
   const token = await postForm(`${baseUrl}/oauth/token`, {
     grant_type: 'refresh_token',
     client_id: clientId,
     refresh_token: refreshToken,
   });
-  if (typeof token.access_token !== 'string') {
-    throw new Error(`Refresh response was missing access_token: ${JSON.stringify(token)}`);
+  if (typeof token.access_token !== 'string' || typeof token.refresh_token !== 'string') {
+    throw new Error(`Refresh response was missing access_token or refresh_token: ${JSON.stringify(token)}`);
   }
-  return token.access_token;
+  return {
+    accessToken: token.access_token,
+    refreshToken: token.refresh_token,
+  };
 }
 
 async function callMcp(baseUrl: string, accessToken: string, body: Record<string, unknown>): Promise<any> {
@@ -385,17 +434,30 @@ async function getJson(url: string): Promise<Record<string, unknown>> {
   return body;
 }
 
-async function postForm(url: string, body: Record<string, string>): Promise<Record<string, string>> {
+async function postForm(url: string, body: Record<string, string>): Promise<Record<string, unknown>> {
+  const { status, payload } = await postFormRaw(url, body);
+  if (status !== 200) {
+    throw new Error(`POST ${url} failed: status=${status} body=${JSON.stringify(payload)}`);
+  }
+  return payload;
+}
+
+async function postFormRaw(
+  url: string,
+  body: Record<string, string>,
+): Promise<{ status: number; payload: Record<string, unknown> }> {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(body),
   });
-  const payload = await response.json() as Record<string, string>;
-  if (response.status !== 200) {
-    throw new Error(`POST ${url} failed: status=${response.status} body=${JSON.stringify(payload)}`);
-  }
-  return payload;
+  const payload = await response.json() as unknown;
+  return {
+    status: response.status,
+    payload: payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : {},
+  };
 }
 
 function assertEqual(actual: unknown, expected: string, label: string): void {

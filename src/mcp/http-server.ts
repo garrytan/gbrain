@@ -15,6 +15,7 @@ import {
   createMcpOAuthState,
   handleMcpOAuthRequest,
   isMcpOAuthPath,
+  OAuthRefreshTokenReplayError,
   OAuthStoreCapacityError,
   oauthResourceMetadataHeader,
   type McpOAuthStore,
@@ -449,6 +450,7 @@ async function issueMcpHttpAccessToken(
   const revokeScope = input.revokeTokenBinding ? oauthBindingScope(input.revokeTokenBinding) : null;
   const scopes = [...new Set([...input.scope, `oauth_exp:${Math.floor(input.expiresAt.getTime() / 1000)}`, bindingScope, clientIdScope])];
   const name = `oauth:${input.clientName}`;
+  const revokeName = `oauth:${input.revokeClientName ?? input.clientName}`;
 
   switch (config.engine) {
     case 'postgres': {
@@ -457,13 +459,18 @@ async function issueMcpHttpAccessToken(
       try {
         await sql.begin(async tx => {
           if (revokeScope) {
-            await tx`
+            const revoked = await tx`
               UPDATE access_tokens
               SET revoked_at = now()
-              WHERE name = ${name}
+              WHERE name = ${revokeName}
                 AND revoked_at IS NULL
                 AND ${revokeScope} = ANY(scopes)
+                AND ${clientIdScope} = ANY(scopes)
+              RETURNING id
             `;
+            if (revoked.length !== 1) {
+              throw new OAuthRefreshTokenReplayError();
+            }
           }
           await tx`
             INSERT INTO access_tokens (name, token_hash, scopes)
@@ -481,13 +488,23 @@ async function issueMcpHttpAccessToken(
       try {
         const issueToken = db.transaction(() => {
           if (revokeScope) {
-            db.query(`
+            const revoked = db.query(`
               UPDATE access_tokens
               SET revoked_at = ?
               WHERE name = ?
                 AND revoked_at IS NULL
-                AND scopes LIKE ?
-            `).run(new Date().toISOString(), name, `%"${revokeScope}"%`);
+                AND EXISTS (
+                  SELECT 1 FROM json_each(access_tokens.scopes)
+                  WHERE value = ?
+                )
+                AND EXISTS (
+                  SELECT 1 FROM json_each(access_tokens.scopes)
+                  WHERE value = ?
+                )
+            `).run(new Date().toISOString(), revokeName, revokeScope, clientIdScope);
+            if (revoked.changes !== 1) {
+              throw new OAuthRefreshTokenReplayError();
+            }
           }
           db.query(`
             INSERT INTO access_tokens (id, name, token_hash, scopes)

@@ -252,10 +252,22 @@ describe('CLI source shape', () => {
     expect(cliSource).toContain('--oauth-allowed-scopes');
   });
 
-  test('serve refuses OAuth startup without both dedicated secrets', () => {
+  test('serve refuses OAuth startup without both dedicated secrets', async () => {
+    const { getHttpOAuthServeStartupErrors } = await import('../src/commands/serve.ts');
+
     expect(serveSource).toContain('OAuth requires both MBRAIN_OAUTH_APPROVAL_TOKEN and MBRAIN_OAUTH_SIGNING_SECRET');
     expect(serveSource).toContain('The previous fallback (signing refresh tokens with the approval token) was removed');
     expect(serveSource).toContain('process.exit(1)');
+    expect(getHttpOAuthServeStartupErrors({
+      oauth: true,
+      publicBaseUrl: 'https://brain.example.com',
+      oauthApprovalToken: 'owner-secret',
+      oauthSigningSecret: undefined,
+    })).toEqual([
+      'OAuth requires both MBRAIN_OAUTH_APPROVAL_TOKEN and MBRAIN_OAUTH_SIGNING_SECRET to be set.',
+      'The previous fallback (signing refresh tokens with the approval token) was removed for security.',
+      'Generate a dedicated secret, e.g.: openssl rand -hex 32',
+    ]);
   });
 
   test('serve refuses OAuth startup without an explicit public URL', async () => {

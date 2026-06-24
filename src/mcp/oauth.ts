@@ -17,6 +17,7 @@ export interface McpOAuthAccessTokenInput {
   expiresAt: Date;
   tokenBinding: string;
   revokeTokenBinding?: string;
+  revokeClientName?: string;
 }
 
 export interface McpOAuthState {
@@ -69,6 +70,13 @@ export class OAuthStoreCapacityError extends Error {
   }
 }
 
+export class OAuthRefreshTokenReplayError extends Error {
+  constructor(message = 'OAuth refresh token has already been consumed') {
+    super(message);
+    this.name = 'OAuthRefreshTokenReplayError';
+  }
+}
+
 const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const DEFAULT_REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 90;
 const AUTHORIZATION_CODE_TTL_SECONDS = 5 * 60;
@@ -101,7 +109,7 @@ export async function handleMcpOAuthRequest({
   if (!oauthConfigured(state.options)) {
     return oauthJson({
       error: 'oauth_not_configured',
-      message: 'OAuth requires MBRAIN_OAUTH_APPROVAL_TOKEN or --oauth with an approval token.',
+      message: 'OAuth requires MBRAIN_OAUTH_APPROVAL_TOKEN and MBRAIN_OAUTH_SIGNING_SECRET.',
     }, 503);
   }
 
@@ -300,7 +308,7 @@ async function handleRefreshToken(
   const clientId = stringValue(params.client_id);
   const payload = refreshToken ? decodeRefreshToken(refreshToken, state.options) : null;
   const now = Math.floor(Date.now() / 1000);
-  if (!payload || payload.expires_at <= now || (clientId && payload.client_id !== clientId)) {
+  if (!payload || !payload.token_binding || payload.expires_at <= now || (clientId && payload.client_id !== clientId)) {
     return oauthJson({ error: 'invalid_grant' }, 400);
   }
   const invalidScopes = payload.scope.filter(value => !allowedOAuthScopes(state.options).includes(value));
@@ -316,7 +324,7 @@ async function handleRefreshToken(
     redirect_uris: [],
     issued_at: now,
   };
-  return issueOAuthAccessToken(state, client, payload.scope, issueAccessToken, payload.token_binding);
+  return issueOAuthAccessToken(state, client, payload.scope, issueAccessToken, payload.token_binding, payload.client_name);
 }
 
 async function issueOAuthAccessToken(
@@ -325,6 +333,7 @@ async function issueOAuthAccessToken(
   scope: string[],
   issueAccessToken: (input: McpOAuthAccessTokenInput) => Promise<string>,
   revokeTokenBinding?: string,
+  revokeClientName?: string,
 ): Promise<Response> {
   const ttl = state.options.accessTokenTtlSeconds ?? DEFAULT_ACCESS_TOKEN_TTL_SECONDS;
   const refreshTtl = state.options.refreshTokenTtlSeconds ?? DEFAULT_REFRESH_TOKEN_TTL_SECONDS;
@@ -339,8 +348,12 @@ async function issueOAuthAccessToken(
       expiresAt: new Date(nowMs + ttl * 1000),
       tokenBinding,
       revokeTokenBinding,
+      revokeClientName,
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof OAuthRefreshTokenReplayError) {
+      return oauthJson({ error: 'invalid_grant' }, 400);
+    }
     return oauthJson({
       error: 'server_error',
       error_description: 'Could not issue an MCP access token for this brain runtime.',

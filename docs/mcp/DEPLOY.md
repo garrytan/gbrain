@@ -64,7 +64,9 @@ restarts, prunes unapproved DCR registrations after one hour, and caps pending
 registrations at 128.
 Use a separate `MBRAIN_OAUTH_SIGNING_SECRET` for refresh-token signing; it is
 required, and `mbrain serve --http --oauth` exits at startup if either secret
-is missing (the old approval-token fallback was removed).
+is missing (the old approval-token fallback was removed). Refresh tokens are
+one-use and rotate the underlying access-token binding; replay returns
+`invalid_grant`.
 
 OAuth credential endpoints (`/oauth/token`, `/oauth/authorize`,
 `/oauth/register`) are rate limited per client TCP address (10 requests per
@@ -148,7 +150,8 @@ DATABASE_URL='postgresql://...' bun run smoke:http-oauth
 
 That smoke starts the real HTTP MCP server locally, completes DCR + PKCE,
 uses the issued token against `/mcp`, refreshes it, confirms the refreshed token
-works while the pre-refresh token is rejected, and checks Postgres token plus
+works while the pre-refresh token is rejected, rejects refresh-token replay,
+checks the next refresh-token link in the chain, and checks Postgres token plus
 request-log evidence.
 
 To prove the OAuth setup state is Postgres-backed and survives server restarts:

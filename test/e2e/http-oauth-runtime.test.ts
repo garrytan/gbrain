@@ -98,6 +98,9 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
         logOperations: string[];
         refreshedTokenWorked: boolean;
         initialTokenRejectedAfterRefresh: boolean;
+        refreshReplayRejected: boolean;
+        refreshChainWorked: boolean;
+        firstRefreshedTokenRejectedAfterSecondRefresh: boolean;
       }>;
     };
 
@@ -129,8 +132,8 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
 
     expect(result.baseUrl).toStartWith('http://127.0.0.1:');
     expect(result.oauthIssuer).toBe(result.baseUrl);
-    expect(result.accessTokenRows).toBeGreaterThanOrEqual(2);
-    expect(result.requestLogRows).toBeGreaterThanOrEqual(4);
+    expect(result.accessTokenRows).toBeGreaterThanOrEqual(3);
+    expect(result.requestLogRows).toBeGreaterThanOrEqual(5);
     expect(result.logOperations).toEqual(expect.arrayContaining([
       'initialize',
       'tools/list',
@@ -138,6 +141,9 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
     ]));
     expect(result.refreshedTokenWorked).toBe(true);
     expect(result.initialTokenRejectedAfterRefresh).toBe(true);
+    expect(result.refreshReplayRejected).toBe(true);
+    expect(result.refreshChainWorked).toBe(true);
+    expect(result.firstRefreshedTokenRejectedAfterSecondRefresh).toBe(true);
     expect(consoleLogs).toEqual([]);
 
     const sql = postgres(process.env.DATABASE_URL!, { max: 1 });
@@ -147,11 +153,11 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
         WHERE name = 'oauth:MBrain OAuth Smoke'
         ORDER BY created_at
       `;
-      expect(accessTokens.length).toBeGreaterThanOrEqual(2);
+      expect(accessTokens.length).toBeGreaterThanOrEqual(3);
       expect(accessTokens.every(row => Array.isArray(row.scopes) && row.scopes.includes('mcp'))).toBe(true);
       expect(accessTokens.every(row => row.last_used_at !== null)).toBe(true);
-      expect(accessTokens.filter(row => row.revoked_at !== null)).toHaveLength(1);
-      expect(accessTokens.filter(row => row.revoked_at === null)).toHaveLength(accessTokens.length - 1);
+      expect(accessTokens.filter(row => row.revoked_at !== null)).toHaveLength(2);
+      expect(accessTokens.filter(row => row.revoked_at === null)).toHaveLength(accessTokens.length - 2);
 
       const logs = await sql`
         SELECT token_name, operation, status FROM mcp_request_log
@@ -199,6 +205,9 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
         logOperations: string[];
         refreshedTokenWorked: boolean;
         initialTokenRejectedAfterRefresh: boolean;
+        refreshReplayRejected: boolean;
+        refreshChainWorked: boolean;
+        firstRefreshedTokenRejectedAfterSecondRefresh: boolean;
       }>;
     };
 
@@ -214,8 +223,8 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
 
     expect(result.baseUrl).toStartWith('http://127.0.0.1:');
     expect(result.oauthIssuer).toBe('https://brain.example.com');
-    expect(result.accessTokenRows).toBeGreaterThanOrEqual(2);
-    expect(result.requestLogRows).toBeGreaterThanOrEqual(4);
+    expect(result.accessTokenRows).toBeGreaterThanOrEqual(3);
+    expect(result.requestLogRows).toBeGreaterThanOrEqual(5);
     expect(result.logOperations).toEqual(expect.arrayContaining([
       'initialize',
       'tools/list',
@@ -223,6 +232,9 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
     ]));
     expect(result.refreshedTokenWorked).toBe(true);
     expect(result.initialTokenRejectedAfterRefresh).toBe(true);
+    expect(result.refreshReplayRejected).toBe(true);
+    expect(result.refreshChainWorked).toBe(true);
+    expect(result.firstRefreshedTokenRejectedAfterSecondRefresh).toBe(true);
 
     const sql = postgres(process.env.DATABASE_URL!, { max: 1 });
     try {
@@ -449,6 +461,126 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
     }
   });
 
+  test('atomically consumes Postgres refresh tokens under concurrent refresh', async () => {
+    const config = resolveConfig({
+      engine: 'postgres',
+      database_url: process.env.DATABASE_URL!,
+      offline: false,
+      embedding_provider: 'none',
+      query_rewrite_provider: 'none',
+    });
+    const engine = new PostgresEngine();
+    await engine.connect({ database_url: process.env.DATABASE_URL! });
+
+    const oauth = {
+      enabled: true,
+      publicBaseUrl: 'https://brain.example.com',
+      approvalToken: 'owner-secret',
+      signingSecret: 'test-signing-secret',
+    };
+    const handler = createMcpHttpHandler({ engine, config, oauth });
+    const redirectUri = 'https://chat.openai.com/aip/callback';
+    const verifier = 'concurrent-refresh-verifier-abcdefghijklmnopqrstuvwxyz0123456789';
+    const challenge = createHash('sha256').update(verifier).digest('base64url');
+
+    try {
+      const register = await handler(new Request('http://localhost/oauth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_name: 'Concurrent Refresh ChatGPT',
+          redirect_uris: [redirectUri],
+          token_endpoint_auth_method: 'none',
+        }),
+      }));
+      expect(register.status).toBe(201);
+      const client = await register.json() as { client_id: string };
+
+      const authorize = await handler(new Request('http://localhost/oauth/authorize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        redirect: 'manual',
+        body: new URLSearchParams({
+          approval_token: 'owner-secret',
+          response_type: 'code',
+          client_id: client.client_id,
+          redirect_uri: redirectUri,
+          state: 'concurrent-refresh-state',
+          scope: 'mcp',
+          code_challenge: challenge,
+          code_challenge_method: 'S256',
+        }),
+      }));
+      expect(authorize.status).toBe(302);
+      const code = new URL(authorize.headers.get('Location')!).searchParams.get('code');
+      expect(code).toEqual(expect.any(String));
+
+      const token = await handler(new Request('http://localhost/oauth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          client_id: client.client_id,
+          redirect_uri: redirectUri,
+          code: code!,
+          code_verifier: verifier,
+        }),
+      }));
+      expect(token.status).toBe(200);
+      const initial = await token.json() as { refresh_token: string };
+
+      const refresh = () => handler(new Request('http://localhost/oauth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: client.client_id,
+          refresh_token: initial.refresh_token,
+        }),
+      }));
+
+      const refreshes = await Promise.all(Array.from({ length: 4 }, () => refresh()));
+      const statuses = refreshes.map(response => response.status);
+      expect(statuses.filter(status => status === 200)).toHaveLength(1);
+      expect(statuses.filter(status => status === 400)).toHaveLength(3);
+      for (const response of refreshes.filter(response => response.status === 400)) {
+        expect(await response.json()).toMatchObject({ error: 'invalid_grant' });
+      }
+
+      const sql = postgres(process.env.DATABASE_URL!, { max: 1 });
+      try {
+        const tokens = await sql`
+          SELECT revoked_at FROM access_tokens
+          WHERE name = 'oauth:Concurrent Refresh ChatGPT'
+        `;
+        expect(tokens).toHaveLength(2);
+        expect(tokens.filter(row => row.revoked_at !== null)).toHaveLength(1);
+        expect(tokens.filter(row => row.revoked_at === null)).toHaveLength(1);
+      } finally {
+        await sql.end();
+      }
+    } finally {
+      const sql = postgres(process.env.DATABASE_URL!, { max: 1 });
+      try {
+        await sql`
+          DELETE FROM mcp_request_log
+          WHERE token_name = 'oauth:Concurrent Refresh ChatGPT'
+        `;
+        await sql`
+          DELETE FROM access_tokens
+          WHERE name = 'oauth:Concurrent Refresh ChatGPT'
+        `;
+        await sql`
+          DELETE FROM oauth_dcr_clients
+          WHERE client_name = 'Concurrent Refresh ChatGPT'
+        `;
+      } finally {
+        await sql.end();
+        await engine.disconnect();
+      }
+    }
+  });
+
   test('HTTP OAuth smoke can exercise persisted OAuth state across server restarts', async () => {
     const smoke = await import('../../scripts/smoke-test-http-oauth.ts') as {
       runHttpOAuthSmoke: (options: {
@@ -467,6 +599,9 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
         logOperations: string[];
         refreshedTokenWorked: boolean;
         initialTokenRejectedAfterRefresh: boolean;
+        refreshReplayRejected: boolean;
+        refreshChainWorked: boolean;
+        firstRefreshedTokenRejectedAfterSecondRefresh: boolean;
         restartResilient: boolean;
       }>;
     };
@@ -484,8 +619,8 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
     expect(result.baseUrl).toStartWith('http://127.0.0.1:');
     expect(result.oauthIssuer).toBe(result.baseUrl);
     expect(result.restartResilient).toBe(true);
-    expect(result.accessTokenRows).toBeGreaterThanOrEqual(2);
-    expect(result.requestLogRows).toBeGreaterThanOrEqual(4);
+    expect(result.accessTokenRows).toBeGreaterThanOrEqual(3);
+    expect(result.requestLogRows).toBeGreaterThanOrEqual(5);
     expect(result.logOperations).toEqual(expect.arrayContaining([
       'initialize',
       'tools/list',
@@ -493,6 +628,9 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
     ]));
     expect(result.refreshedTokenWorked).toBe(true);
     expect(result.initialTokenRejectedAfterRefresh).toBe(true);
+    expect(result.refreshReplayRejected).toBe(true);
+    expect(result.refreshChainWorked).toBe(true);
+    expect(result.firstRefreshedTokenRejectedAfterSecondRefresh).toBe(true);
   });
 
   test('bounds durable public DCR writes by pruning stale setup rows and capping pending clients', async () => {
