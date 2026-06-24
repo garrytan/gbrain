@@ -124,14 +124,18 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       console.error(`[config] Setting it in the DB has no effect on the embed pipeline (silent no-op).`);
       console.error(`[config]`);
       if (isPgliteEngine) {
-        console.error(`[config] To switch embedding models/dimensions on PGLite, wipe and re-init:`);
-        console.error(`[config]   mv ${dbPath} ${dbPath}.bak`);
-        if (key === 'embedding_model') {
-          console.error(`[config]   gbrain init --pglite --embedding-model ${value}`);
-        } else {
-          console.error(`[config]   gbrain init --pglite --embedding-dimensions ${value}`);
-        }
-        console.error(`[config]   gbrain sync   # re-imports your brain repo`);
+        // Point at the canonical one-command recovery (`gbrain reinit-pglite`),
+        // not the stale manual mv+init+sync dance (#2301). reinit-pglite requires
+        // BOTH --embedding-model and --embedding-dimensions (it re-sizes the
+        // pgvector column), so always show the paired flags — the old hint omitted
+        // the dimension, which dead-ended the user.
+        const curModel = loadConfig()?.embedding_model || '<model>';
+        const curDims = loadConfig()?.embedding_dimensions || '<dims>';
+        const model = key === 'embedding_model' ? value : curModel;
+        const dims = key === 'embedding_dimensions' ? value : curDims;
+        console.error(`[config] To switch embedding models/dimensions on PGLite, use the one-command path:`);
+        console.error(`[config]   gbrain reinit-pglite --embedding-model ${model} --embedding-dimensions ${dims}`);
+        console.error(`[config] (wipes + re-inits + re-syncs the brain repo; pass --yes to skip the confirm)`);
       } else {
         console.error(`[config] To switch embedding models/dimensions on Postgres, see:`);
         console.error(`[config]   docs/embedding-migrations.md`);

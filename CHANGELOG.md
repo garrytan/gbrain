@@ -2,6 +2,19 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.54.0] - 2026-06-24
+
+**Four "silent failure" bugs fixed: a command that reported success while saving nothing, a PGLite setup dead-end, dishonest health scores, and a config write that could throw on already-corrupted data. Each one returned a green result while doing the wrong thing.**
+
+### Fixed
+- **`gbrain files upload-raw` now actually persists small text/PDF files.** The small-file path printed `success` and returned without copying the file into the brain repo or recording it — every small raw upload was silently lost. Both the small-file and cloud paths now write into the brain repo, record a `files` row, and report the in-repo destination. Storage paths are namespaced per source so the same page slug in two sources can't overwrite each other's attachment, and a new `--source` flag strictly disambiguates a slug that exists in more than one source.
+- **PGLite embedding setup no longer dead-ends.** `gbrain config set embedding_model` (a file-plane field that sizes the schema) now points at the one-command recovery, `gbrain reinit-pglite --embedding-model X --embedding-dimensions N`, instead of a manual recipe that omitted the required dimension flag and left the user looping.
+- **`gbrain doctor` stops counting un-scanned surfaces as healthy.** A category whose checks could not run (for example, an unreadable skills directory) now surfaces an explicit failing check instead of silently scoring a perfect 100. The health and stats surfaces also agree on page count now: both exclude soft-deleted pages, so timeline and connection coverage are measured against the same denominator.
+- **A corrupted `sources.config` value no longer aborts the config merge.** The single-statement merge that repairs historical bad shapes could throw on a non-object array element and fail the whole UPDATE (blocking a source's config writes); it now skips non-object elements. The embedded engine was brought to parity with the same self-healing merge.
+
+### To take advantage of v0.42.54.0
+`gbrain upgrade`. No migration. `upload-raw` persists going forward, and `gbrain doctor` reports honest scores immediately. If a PGLite brain is stuck on embedding setup, follow the `gbrain reinit-pglite` hint the config command now prints.
+
 ## [0.42.53.0] - 2026-06-23
 
 **`gbrain sync` works again on managed Postgres brains: the durable-checkpoint pin write was encoding its value the wrong way, so every multi-source sync aborted at the very first checkpoint. Fixed, plus a repo-wide sweep of the same JSONB footgun and a new CI guard so it can't come back.** A recent release added a structural check on the sync checkpoint table; the pin write that runs before every drain bound its value as a string rather than a real array, so the check rejected it and the run bailed before importing anything. The bug was invisible on the embedded engine (its driver parses the value either way) and only bit managed Postgres.
@@ -16,6 +29,9 @@ All notable changes to GBrain will be documented in this file.
 
 ### To take advantage of v0.42.53.0
 `gbrain upgrade`. Multi-source Postgres brains that had stopped syncing resume on the next `gbrain sync` — no migration, no manual step. Rows written in the double-encoded form before the fix self-heal as each is rewritten; re-running the affected write (or a sync) repairs them eagerly if you'd rather not wait.
+
+### Contributors
+Many people independently found and reported this JSONB double-encode bug class — thank you to @themichaelhopkins, @jalagrange, @immy2good, @pedrospereira, @ralphvspanje-hub, @tschew72, @dRichPLLLC, @DarkNightForge, and to everyone who sent a fix: @EagleEyez1, @sunkwolf, @alexandreroumieu-codeapprentice, @jerome-marshall, @chriskedz, @lubosxyz.
 
 ## [0.42.52.0] - 2026-06-18
 

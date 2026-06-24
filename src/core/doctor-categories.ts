@@ -119,6 +119,7 @@ export const SKILL_CHECK_NAMES: ReadonlySet<string> = new Set([
   'retrieval_reflex_health',
   'skill_brain_first',
   'skill_conformance',
+  'skill_surface',
   'whoknows_health',
 ]);
 

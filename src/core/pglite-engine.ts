@@ -1290,12 +1290,37 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean> {
-    // v0.38: parity with postgres-engine.updateSourceConfig. JSONB `||`
-    // concat operator (overrides same-key, no deep merge). PGLite passes
-    // `JSON.stringify(patch)` as the param; cast to jsonb on the SQL side.
+    // Parity with postgres-engine.updateSourceConfig (#2251): normalize historical
+    // bad shapes (double-encoded JSONB string, or array-of-patch-objects from the
+    // old `|| string` cascade) back to a flat object before the `||` merge, so a
+    // corrupted source self-heals instead of compounding. PGLite runs Postgres
+    // 17.5, so `IS JSON` (PG16+) is available. The array branch wraps each element
+    // in a CASE so jsonb_each never sees a non-object (which would raise
+    // `cannot call jsonb_each on a non-object` and abort the UPDATE). PGLite's
+    // native `db.query` parses the `$1::jsonb` text param itself (not the postgres.js
+    // double-encode path), so `$1::jsonb` is correct here.
     const result = await this.db.query<{ id: string }>(
       `UPDATE sources
-          SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb
+          SET config =
+            CASE
+              WHEN jsonb_typeof(config) = 'object' THEN config
+              WHEN jsonb_typeof(config) = 'string'
+                THEN CASE
+                  WHEN (config #>> '{}') IS JSON
+                    THEN COALESCE(NULLIF((config #>> '{}'), '')::jsonb, '{}'::jsonb)
+                  ELSE '{}'::jsonb
+                END
+              WHEN jsonb_typeof(config) = 'array'
+                THEN COALESCE(
+                  (SELECT jsonb_object_agg(kv.key, kv.value)
+                     FROM jsonb_array_elements(config) elem,
+                          jsonb_each(CASE WHEN jsonb_typeof(elem) = 'object'
+                                          THEN elem ELSE '{}'::jsonb END) kv),
+                  '{}'::jsonb
+                )
+              ELSE '{}'::jsonb
+            END
+            || $1::jsonb
         WHERE id = $2
         RETURNING id`,
       [JSON.stringify(patch), sourceId],
@@ -4701,21 +4726,25 @@ export class PGLiteEngine implements BrainEngine {
     // pages_with_timeline) and v0.10.3 graph layer (link_coverage, timeline_coverage,
     // most_connected). Both coexist: master's brain_score is the composite
     // dashboard, v0.10.3 metrics give entity-page-level granularity.
+    // #2330: exclude soft-deleted pages from every page-based metric — parity
+    // with postgres-engine.getHealth and getStats.page_count.
     const { rows: [h] } = await this.db.query(`
       WITH entity_pages AS (
-        SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+        SELECT id, slug FROM pages WHERE type IN ('person', 'company') AND deleted_at IS NULL
       )
       SELECT
-        (SELECT count(*) FROM pages) as page_count,
+        (SELECT count(*) FROM pages WHERE deleted_at IS NULL) as page_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
         (SELECT count(*) FROM pages p
-         WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
+         WHERE p.deleted_at IS NULL
+           AND p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
         ) as stale_pages,
         -- Bug 11 — orphan = islanded (no inbound AND no outbound).
         -- See BrainHealth.orphan_pages docstring; docs updated to match this.
         (SELECT count(*) FROM pages p
-         WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+         WHERE p.deleted_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
         ) as orphan_pages,
         (SELECT count(*) FROM links l
@@ -4723,7 +4752,8 @@ export class PGLiteEngine implements BrainEngine {
         ) as dead_links,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
         (SELECT count(*) FROM links) as link_count,
-        (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline,
+        (SELECT count(DISTINCT te.page_id) FROM timeline_entries te
+           JOIN pages p ON p.id = te.page_id WHERE p.deleted_at IS NULL) as pages_with_timeline,
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
@@ -4737,7 +4767,7 @@ export class PGLiteEngine implements BrainEngine {
       SELECT p.slug,
              (SELECT count(*) FROM links l WHERE l.from_page_id = p.id OR l.to_page_id = p.id)::int as link_count
       FROM pages p
-      WHERE p.type IN ('person', 'company')
+      WHERE p.type IN ('person', 'company') AND p.deleted_at IS NULL
       ORDER BY link_count DESC
       LIMIT 5
     `);
