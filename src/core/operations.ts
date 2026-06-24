@@ -10,6 +10,7 @@ import type { MBrainConfig } from './config.ts';
 import * as db from './db.ts';
 import { canonicalDerivedTags, DERIVED_SCHEMA_VERSION } from './derived-jobs.ts';
 import type { BrainEngine } from './engine.ts';
+import type { OperationAuthPrincipal } from './auth-principal.ts';
 import {
   importFromContent,
   importFromFile,
@@ -308,6 +309,7 @@ export interface OperationContext {
   config: MBrainConfig;
   logger: Logger;
   dryRun: boolean;
+  auth_principal?: OperationAuthPrincipal;
 }
 
 export interface Operation {

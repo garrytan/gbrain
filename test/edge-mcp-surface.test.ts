@@ -26,13 +26,16 @@ describe('Supabase Edge MCP surface', () => {
   test('remote auth carries token scopes into dispatch and logs JSON-RPC errors', () => {
     const source = readFileSync(new URL('../supabase/functions/mbrain-mcp/index.ts', import.meta.url), 'utf-8');
 
-    expect(source).toContain('SELECT name, revoked_at, scopes FROM access_tokens');
+    expect(source).toContain('SELECT id, name, revoked_at, scopes FROM access_tokens');
     expect(source).toContain('parseAccessTokenScopes(rows[0].scopes)');
     expect(source).toContain('accessTokenExpired(scopes)');
     expect(source).toContain("error: 'token_expired'");
+    expect(source).toContain('createTokenAuthPrincipal');
+    expect(source).toContain('auth_principal: authPrincipal');
     expect(source).toContain('const operation = await inferMcpOperation(c.req.raw)');
     expect(source).toContain('const responseClassification = await classifyMcpResponse(c.req.raw, response)');
-    expect(source).toContain('error_code, error_reason, surface_profile');
+    expect(source).toContain('error_code, error_reason, surface_profile, auth_principal_json');
+    expect(source).toContain('ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS auth_principal_json TEXT');
     expect(source).toContain("surfaceProfile: 'edge_remote'");
   });
 
@@ -43,6 +46,7 @@ describe('Supabase Edge MCP surface', () => {
     expect(bundle).toContain('admin_put_page');
     expect(bundle).toContain('resolveMcpSurfaceProfile');
     expect(bundle).toContain('surfaceTokenCapabilitiesFromScopes');
+    expect(bundle).toContain('createTokenAuthPrincipal');
     expect(bundle).not.toContain('preview_assertion_claim_extraction');
     expect(bundle).not.toContain('explain_assertion');
   });

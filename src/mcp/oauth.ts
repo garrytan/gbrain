@@ -11,6 +11,7 @@ export interface McpOAuthOptions {
 }
 
 export interface McpOAuthAccessTokenInput {
+  clientId: string;
   clientName: string;
   scope: string[];
   expiresAt: Date;
@@ -332,6 +333,7 @@ async function issueOAuthAccessToken(
   let accessToken: string;
   try {
     accessToken = await issueAccessToken({
+      clientId: client.client_id,
       clientName: client.client_name,
       scope,
       expiresAt: new Date(nowMs + ttl * 1000),

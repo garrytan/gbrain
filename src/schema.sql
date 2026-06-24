@@ -1882,6 +1882,7 @@ CREATE TABLE IF NOT EXISTS mcp_request_log (
   error_code TEXT,
   error_reason TEXT,
   surface_profile TEXT,
+  auth_principal_json TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

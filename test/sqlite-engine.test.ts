@@ -79,6 +79,7 @@ describe('SQLiteEngine', () => {
       expect(logColumnNames).toContain('error_code');
       expect(logColumnNames).toContain('error_reason');
       expect(logColumnNames).toContain('surface_profile');
+      expect(logColumnNames).toContain('auth_principal_json');
     } finally {
       db.close();
     }
@@ -138,6 +139,7 @@ describe('SQLiteEngine', () => {
       expect(logColumnNames).toContain('error_code');
       expect(logColumnNames).toContain('error_reason');
       expect(logColumnNames).toContain('surface_profile');
+      expect(logColumnNames).toContain('auth_principal_json');
       const nameIndex = db.query(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_access_tokens_name'`).get() as { sql: string } | null;
       expect(nameIndex?.sql).toContain('idx_access_tokens_name');
       expect(nameIndex?.sql).toContain('access_tokens');

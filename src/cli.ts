@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { loadConfig } from './core/config.ts';
+import { createLocalAuthPrincipal } from './core/auth-principal.ts';
 import { createConnectedEngine, DEFAULT_RUNTIME_CONFIG } from './core/engine-factory.ts';
 import type { BrainEngine } from './core/engine.ts';
 import {
@@ -521,6 +522,13 @@ function makeContext(engine: BrainEngine, params: Record<string, unknown>): Oper
     config: loadConfig() || DEFAULT_RUNTIME_CONFIG,
     logger: { info: console.log, warn: console.warn, error: console.error },
     dryRun: (params.dry_run as boolean) || false,
+    auth_principal: createLocalAuthPrincipal('cli', {
+      principalType: 'local_cli',
+      principalId: `mbrain-cli:${process.pid}`,
+      principalName: 'mbrain CLI',
+      actorType: 'cli',
+      actorId: `mbrain-cli:${process.pid}`,
+    }),
   };
 }
 

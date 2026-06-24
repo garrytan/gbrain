@@ -46,7 +46,7 @@ export type OperationSurfaceProfileExposure = {
 
 export const MCP_SURFACE_PROFILE_NAMES = ['stdio', 'http_local', 'http_remote', 'edge_remote'] as const satisfies readonly McpSurfaceProfileName[];
 
-const REMOTE_FORBIDDEN_OPERATION_NAMES = ['admin_put_page', 'file_upload'] as const;
+const REMOTE_FORBIDDEN_OPERATION_NAMES = ['admin_put_page', 'file_upload', 'get_raw_data'] as const;
 
 const EDGE_FORBIDDEN_OPERATION_NAMES = [...REMOTE_FORBIDDEN_OPERATION_NAMES, 'sync_brain', 'get_skillpack'] as const;
 

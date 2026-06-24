@@ -26,8 +26,10 @@ import {
   isToolVisibleInSurfaceProfile,
   resolveMcpSurfaceProfile,
   surfaceTokenCapabilitiesFromScopes,
+  createTokenAuthPrincipal,
+  serializeAuthPrincipal,
 } from './mbrain-core.js';
-import type { OperationContext } from './mbrain-core.js';
+import type { OperationAuthPrincipal, OperationContext } from './mbrain-core.js';
 
 function assertRemotePutPagePrecondition(toolName: string, rawParams: unknown): void {
   if (toolName !== 'put_page') return;
@@ -91,7 +93,7 @@ function getDirectSql(): ReturnType<typeof postgres> {
 }
 
 // Auth: check bearer token against access_tokens table
-async function authenticateToken(authHeader: string | null): Promise<{ valid: boolean; name?: string; scopes?: string[]; error?: string; status?: number }> {
+async function authenticateToken(authHeader: string | null): Promise<{ valid: boolean; id?: string; name?: string; scopes?: string[]; error?: string; status?: number }> {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return {
       valid: false,
@@ -110,7 +112,7 @@ async function authenticateToken(authHeader: string | null): Promise<{ valid: bo
   try {
     const conn = getDirectSql();
     const rows = await conn`
-      SELECT name, revoked_at, scopes FROM access_tokens
+      SELECT id, name, revoked_at, scopes FROM access_tokens
       WHERE token_hash = ${hash}
     `;
 
@@ -158,6 +160,7 @@ async function authenticateToken(authHeader: string | null): Promise<{ valid: bo
 
     return {
       valid: true,
+      id: rows[0].id ? String(rows[0].id) : undefined,
       name: rows[0].name as string,
       scopes,
     };
@@ -202,18 +205,72 @@ async function logRequest(
   operation: string,
   latencyMs: number,
   status: string,
-  details: { errorCode?: string; errorReason?: string; surfaceProfile?: string } = {},
+  details: { errorCode?: string; errorReason?: string; surfaceProfile?: string; authPrincipal?: OperationAuthPrincipal } = {},
 ) {
   try {
     const conn = getDirectSql();
-    await conn`
-      INSERT INTO mcp_request_log (token_name, operation, latency_ms, status, error_code, error_reason, surface_profile)
-      VALUES (${tokenName}, ${operation}, ${latencyMs}, ${status}, ${details.errorCode ?? null}, ${details.errorReason ?? null}, ${details.surfaceProfile ?? null})
-    `;
+    const authPrincipalJson = serializeAuthPrincipal(details.authPrincipal);
+    await insertMcpRequestLog(conn, {
+      tokenName,
+      operation,
+      latencyMs,
+      status,
+      errorCode: details.errorCode,
+      errorReason: details.errorReason,
+      surfaceProfile: details.surfaceProfile,
+      authPrincipalJson,
+    });
   } catch {
     // Best effort, don't crash on log failure
     console.error('[mbrain-mcp] Failed to log request');
   }
+}
+
+async function insertMcpRequestLog(
+  conn: ReturnType<typeof postgres>,
+  entry: {
+    tokenName: string;
+    operation: string;
+    latencyMs: number;
+    status: string;
+    errorCode?: string;
+    errorReason?: string;
+    surfaceProfile?: string;
+    authPrincipalJson: string | null;
+  },
+): Promise<void> {
+  try {
+    await insertMcpRequestLogRow(conn, entry);
+  } catch (error) {
+    if (!isMissingAuthPrincipalLogColumn(error)) throw error;
+    await conn`ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS auth_principal_json TEXT`;
+    await insertMcpRequestLogRow(conn, entry);
+  }
+}
+
+async function insertMcpRequestLogRow(
+  conn: ReturnType<typeof postgres>,
+  entry: {
+    tokenName: string;
+    operation: string;
+    latencyMs: number;
+    status: string;
+    errorCode?: string;
+    errorReason?: string;
+    surfaceProfile?: string;
+    authPrincipalJson: string | null;
+  },
+): Promise<void> {
+  await conn`
+    INSERT INTO mcp_request_log (token_name, operation, latency_ms, status, error_code, error_reason, surface_profile, auth_principal_json)
+    VALUES (${entry.tokenName}, ${entry.operation}, ${entry.latencyMs}, ${entry.status}, ${entry.errorCode ?? null}, ${entry.errorReason ?? null}, ${entry.surfaceProfile ?? null}, ${entry.authPrincipalJson})
+  `;
+}
+
+function isMissingAuthPrincipalLogColumn(error: unknown): boolean {
+  const maybe = error as { code?: unknown; message?: unknown };
+  return maybe.code === '42703'
+    || String(maybe.message ?? error).includes('auth_principal_json');
 }
 
 async function inferMcpOperation(request: Request): Promise<string> {
@@ -303,7 +360,7 @@ function extractMcpResponseObjectErrorDetails(payload: unknown): { errorCode?: s
 }
 
 // Create MCP Server with tool handlers
-function createMcpServer(eng: PostgresEngine, tokenScopes: string[] = []): Server {
+function createMcpServer(eng: PostgresEngine, tokenScopes: string[] = [], authPrincipal?: OperationAuthPrincipal): Server {
   const server = new Server(
     { name: 'mbrain', version: VERSION },
     {
@@ -341,6 +398,7 @@ function createMcpServer(eng: PostgresEngine, tokenScopes: string[] = []): Serve
         error: (msg: string) => console.error(`[error] ${msg}`),
       },
       dryRun: !!(params?.dry_run),
+      ...(authPrincipal ? { auth_principal: authPrincipal } : {}),
     };
 
     try {
@@ -427,7 +485,14 @@ app.all('/mcp', async (c) => {
 
   const startTime = Date.now();
   const eng = await getEngine();
-  const server = createMcpServer(eng, auth.scopes ?? []);
+  const authPrincipal = createTokenAuthPrincipal({
+    tokenId: auth.id,
+    tokenName: auth.name || 'unknown',
+    scopes: auth.scopes,
+    surfaceProfile: 'edge_remote',
+    edge: true,
+  });
+  const server = createMcpServer(eng, auth.scopes ?? [], authPrincipal);
   const operation = await inferMcpOperation(c.req.raw);
 
   const transport = new WebStandardStreamableHTTPServerTransport({
@@ -444,6 +509,7 @@ app.all('/mcp', async (c) => {
     const responseClassification = await classifyMcpResponse(c.req.raw, response);
     await logRequest(auth.name || 'unknown', operation, latency, responseClassification.status, {
       surfaceProfile: 'edge_remote',
+      authPrincipal,
       ...(responseClassification.errorCode ? { errorCode: responseClassification.errorCode } : {}),
       ...(responseClassification.errorReason ? { errorReason: responseClassification.errorReason } : {}),
     });
@@ -455,6 +521,7 @@ app.all('/mcp', async (c) => {
       errorCode: 'transport_exception',
       errorReason: e instanceof Error ? e.message : String(e),
       surfaceProfile: 'edge_remote',
+      authPrincipal,
     });
     throw e;
   }

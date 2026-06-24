@@ -1,6 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { ListResourcesRequestSchema, ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
+import { createLocalAuthPrincipal, type OperationAuthPrincipal } from '../core/auth-principal.ts';
 import { startDerivedWorker, type DerivedWorkerController } from '../core/derived-worker.ts';
 import { assertPutPageRouteFirstPrecondition, dispatchOperation, operations as defaultOperations, OperationError, MCP_INSTRUCTIONS, isOperationSupportedByConfig } from '../core/operations.ts';
 import type { Operation, OperationContext } from '../core/operations.ts';
@@ -73,6 +74,7 @@ export type CreateMcpServerOptions = {
   toolTier?: string;
   surfaceProfile?: McpSurfaceProfileName;
   tokenCapabilities?: ReadonlySet<McpSurfaceCapability>;
+  authPrincipal?: OperationAuthPrincipal;
 };
 
 export type CreatedMcpServer = {
@@ -849,6 +851,15 @@ export function createMcpServer(
   const surfaceProfile = resolveMcpSurfaceProfile(options.surfaceProfile ?? 'stdio', {
     toolTierSelection: options.toolTier ?? process.env.MBRAIN_MCP_TOOL_TIER,
   });
+  const authPrincipal = options.authPrincipal ?? (surfaceProfile.name === 'stdio'
+    ? createLocalAuthPrincipal('stdio', {
+      principalType: 'local_mcp',
+      principalId: `mcp-stdio:${process.pid}`,
+      principalName: 'mbrain stdio MCP',
+      actorType: 'mcp',
+      actorId: `mcp-stdio:${process.pid}`,
+    })
+    : undefined);
   const toolCatalog = createMcpToolCatalogProvider(operations, { config: resolvedConfig, surfaceProfile });
   const toolExecutionLimiter = options.toolExecutionLimiter ?? createMcpToolExecutionLimiter();
   const resolvedLogger = options.logger ?? {
@@ -895,6 +906,7 @@ export function createMcpServer(
           config: resolvedConfig,
           logger: resolvedLogger,
           dryRun: !!(params?.dry_run),
+          ...(authPrincipal ? { auth_principal: authPrincipal } : {}),
         };
         const preparedParams = prepareMcpToolParams(name, params);
         return dispatchOperation(ctx, op, preparedParams);
@@ -941,6 +953,13 @@ export async function handleToolCall(
     config: loadConfig() || DEFAULT_RUNTIME_CONFIG,
     logger: { info: console.log, warn: console.warn, error: console.error },
     dryRun: !!(params?.dry_run),
+    auth_principal: createLocalAuthPrincipal('cli', {
+      principalType: 'local_cli',
+      principalId: `mbrain-call:${process.pid}`,
+      principalName: 'mbrain call',
+      actorType: 'cli',
+      actorId: `mbrain-call:${process.pid}`,
+    }),
   };
 
   return dispatchOperation(ctx, op, params);

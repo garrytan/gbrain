@@ -152,6 +152,7 @@ export class PostgresEngine extends PgEngineBase implements BrainEngine {
           ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS error_code TEXT;
           ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS error_reason TEXT;
           ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS surface_profile TEXT;
+          ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS auth_principal_json TEXT;
         END IF;
       END $$;
     `;

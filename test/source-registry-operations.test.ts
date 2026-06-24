@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { createLocalAuthPrincipal, createTokenAuthPrincipal } from '../src/core/auth-principal.ts';
 import { createCredentialReference } from '../src/core/connectors/credential-refs.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { type Operation, type OperationContext, operations } from '../src/core/operations.ts';
@@ -161,7 +162,7 @@ async function readRawAccessLedgerRows(
   const candidate = engine as any;
   if (candidate.database) {
     return candidate.database.query(`
-      SELECT source_id, source_item_id, chunk_ids, policy_decision, policy_reason, metadata_json
+      SELECT actor_type, actor_id, source_id, source_item_id, chunk_ids, policy_decision, policy_reason, metadata_json
       FROM raw_access_ledger
       WHERE source_item_id = ?
       ORDER BY created_at DESC
@@ -169,14 +170,14 @@ async function readRawAccessLedgerRows(
   }
   const rows = candidate.sql?.unsafe
     ? await candidate.sql.unsafe(`
-      SELECT source_id, source_item_id, chunk_ids, policy_decision, policy_reason, metadata_json
+      SELECT actor_type, actor_id, source_id, source_item_id, chunk_ids, policy_decision, policy_reason, metadata_json
       FROM raw_access_ledger
       WHERE source_item_id = $1
       ORDER BY created_at DESC
     `, [sourceItemId])
     : candidate.db
       ? (await candidate.db.query(`
-        SELECT source_id, source_item_id, chunk_ids, policy_decision, policy_reason, metadata_json
+        SELECT actor_type, actor_id, source_id, source_item_id, chunk_ids, policy_decision, policy_reason, metadata_json
         FROM raw_access_ledger
         WHERE source_item_id = $1
         ORDER BY created_at DESC
@@ -873,6 +874,358 @@ describe('source registry operations', () => {
       expect(JSON.parse(String(ledgerRows[0].metadata_json))).toMatchObject({
         policy_source: 'registered_source',
         redaction_required: true,
+      });
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('evaluate_raw_access defaults remote raw-source actor to auth_principal', async () => {
+    const harness = await createSqliteHarness('raw-access-remote-principal');
+    try {
+      const registered = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'gmail',
+        display_name: 'Primary Gmail',
+        account_locator: 'gmail://me@example.com',
+        consent_state: 'granted',
+        now: '2026-05-22T02:22:00.000Z',
+      }) as any;
+      const ingested = await getOperation('ingest_connector_item').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        connector_id: 'gmail',
+        external_id: 'message-remote-principal',
+        body: 'Remote callers should audit as the authenticated token.',
+        now: '2026-05-22T02:23:00.000Z',
+      }) as any;
+      const principal = createTokenAuthPrincipal({
+        tokenId: 'token-remote-1',
+        tokenName: 'oauth:Review Client',
+        scopes: ['mcp', 'raw_source', 'oauth_binding:client-1'],
+        surfaceProfile: 'http_remote',
+      });
+
+      const evaluation = await getOperation('evaluate_raw_access').handler({
+        ...harness.ctx(),
+        auth_principal: principal,
+      }, {
+        source_id: registered.source.id,
+        source_item_id: ingested.item.id,
+        chunk_ids: [ingested.chunks[0].id],
+        reason: 'Need the redacted quote for canonical writeback.',
+        requested_at: '2026-05-22T02:25:00.000Z',
+      }) as any;
+
+      expect(evaluation.decision.policy_decision).toBe('allow');
+      const ledgerRows = await readRawAccessLedgerRows(harness.engine, ingested.item.id);
+      expect(ledgerRows).toHaveLength(1);
+      expect(ledgerRows[0]).toMatchObject({
+        actor_type: 'mcp',
+        actor_id: principal.actor_id,
+        policy_decision: 'allow',
+      });
+      expect(JSON.parse(String(ledgerRows[0].metadata_json))).toMatchObject({
+        actor_source: 'remote_auth_principal',
+        surface_locality: 'remote',
+        surface_profile: 'http_remote',
+        auth_principal: {
+          principal_type: 'oauth_client',
+          principal_id: principal.principal_id,
+          actor_id: principal.actor_id,
+          oauth_client_name: 'Review Client',
+        },
+      });
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('request_raw_source_chunks accepts omitted remote actor fields and records auth_principal', async () => {
+    const harness = await createSqliteHarness('raw-access-request-remote-principal');
+    try {
+      const registered = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'gmail',
+        display_name: 'Primary Gmail',
+        account_locator: 'gmail://me@example.com',
+        consent_state: 'granted',
+        now: '2026-05-22T02:22:00.000Z',
+      }) as any;
+      const ingested = await getOperation('ingest_connector_item').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        connector_id: 'gmail',
+        external_id: 'message-remote-request',
+        body: 'Remote chunk request returns only redacted text.',
+        now: '2026-05-22T02:23:00.000Z',
+      }) as any;
+      const principal = createTokenAuthPrincipal({
+        tokenId: 'token-remote-2',
+        tokenName: 'remote-client',
+        scopes: ['mcp', 'raw_source'],
+        surfaceProfile: 'http_remote',
+      });
+
+      const granted = await getOperation('request_raw_source_chunks').handler({
+        ...harness.ctx(),
+        auth_principal: principal,
+      }, {
+        source_id: registered.source.id,
+        source_item_id: ingested.item.id,
+        chunk_ids: [ingested.chunks[0].id],
+        reason: 'Need the redacted quote for canonical writeback.',
+        requested_at: '2026-05-22T02:25:00.000Z',
+      }) as any;
+
+      expect(granted.decision.policy_decision).toBe('allow');
+      expect(granted.redacted_chunks).toHaveLength(1);
+      expect(granted.redacted_chunks[0].redacted_text).toBe(ingested.chunks[0].redacted_text);
+      const ledgerRows = await readRawAccessLedgerRows(harness.engine, ingested.item.id);
+      expect(ledgerRows[0]).toMatchObject({
+        actor_type: 'mcp',
+        actor_id: principal.actor_id,
+        policy_decision: 'allow',
+      });
+      expect(JSON.parse(String(ledgerRows[0].metadata_json))).toMatchObject({
+        actor_source: 'remote_auth_principal',
+        auth_principal: { principal_id: principal.principal_id },
+      });
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('remote raw-source actor mismatch denies chunks and audits claimed actor only as metadata', async () => {
+    const harness = await createSqliteHarness('raw-access-remote-actor-mismatch');
+    try {
+      const registered = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'gmail',
+        display_name: 'Primary Gmail',
+        account_locator: 'gmail://me@example.com',
+        consent_state: 'granted',
+        now: '2026-05-22T02:22:00.000Z',
+      }) as any;
+      const ingested = await getOperation('ingest_connector_item').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        connector_id: 'gmail',
+        external_id: 'message-remote-mismatch',
+        body: 'Remote mismatch should never return chunk text.',
+        now: '2026-05-22T02:23:00.000Z',
+      }) as any;
+      const principal = createTokenAuthPrincipal({
+        tokenId: 'token-remote-3',
+        tokenName: 'oauth:Actual Client',
+        scopes: ['mcp', 'raw_source', 'oauth_binding:actual-client'],
+        surfaceProfile: 'http_remote',
+      });
+
+      await expect(getOperation('request_raw_source_chunks').handler({
+        ...harness.ctx(),
+        auth_principal: principal,
+      }, {
+        actor_type: 'mcp',
+        actor_id: 'owner',
+        source_id: registered.source.id,
+        source_item_id: ingested.item.id,
+        chunk_ids: [ingested.chunks[0].id],
+        reason: 'Attempt to claim a different actor.',
+        requested_at: '2026-05-22T02:25:00.000Z',
+      })).rejects.toMatchObject({
+        code: 'permission_denied',
+      });
+
+      const ledgerRows = await readRawAccessLedgerRows(harness.engine, ingested.item.id);
+      expect(ledgerRows).toHaveLength(1);
+      expect(ledgerRows[0]).toMatchObject({
+        actor_type: 'mcp',
+        actor_id: principal.actor_id,
+        policy_decision: 'deny',
+        policy_reason: 'auth_principal_actor_mismatch',
+      });
+      expect(JSON.parse(String(ledgerRows[0].metadata_json))).toMatchObject({
+        actor_source: 'remote_claim_mismatch',
+        auth_principal: { principal_id: principal.principal_id },
+        claimed_actor: {
+          actor_type: 'mcp',
+          actor_id: 'owner',
+        },
+      });
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('remote raw-source actor mismatch is audited even when dry_run is requested', async () => {
+    const harness = await createSqliteHarness('raw-access-remote-dry-run-mismatch');
+    try {
+      const registered = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'gmail',
+        display_name: 'Primary Gmail',
+        account_locator: 'gmail://me@example.com',
+        consent_state: 'granted',
+        now: '2026-05-22T02:22:00.000Z',
+      }) as any;
+      const ingested = await getOperation('ingest_connector_item').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        connector_id: 'gmail',
+        external_id: 'message-remote-dry-run-mismatch',
+        body: 'Dry-run mismatch should still be audited.',
+        now: '2026-05-22T02:23:00.000Z',
+      }) as any;
+      const principal = createTokenAuthPrincipal({
+        tokenId: 'token-remote-dry-mismatch',
+        tokenName: 'remote-client',
+        scopes: ['mcp', 'raw_source'],
+        surfaceProfile: 'http_remote',
+      });
+
+      await expect(getOperation('request_raw_source_chunks').handler({
+        ...harness.ctx(true),
+        auth_principal: principal,
+      }, {
+        actor_type: 'mcp',
+        actor_id: 'owner',
+        source_id: registered.source.id,
+        source_item_id: ingested.item.id,
+        chunk_ids: [ingested.chunks[0].id],
+        reason: 'Attempt to claim a different actor in dry-run.',
+        requested_at: '2026-05-22T02:25:00.000Z',
+      })).rejects.toMatchObject({
+        code: 'permission_denied',
+      });
+
+      const ledgerRows = await readRawAccessLedgerRows(harness.engine, ingested.item.id);
+      expect(ledgerRows).toHaveLength(1);
+      expect(ledgerRows[0]).toMatchObject({
+        actor_type: 'mcp',
+        actor_id: principal.actor_id,
+        policy_decision: 'deny',
+        policy_reason: 'auth_principal_actor_mismatch',
+      });
+      expect(JSON.parse(String(ledgerRows[0].metadata_json))).toMatchObject({
+        dry_run: true,
+        actor_source: 'remote_claim_mismatch',
+        claimed_actor: { actor_id: 'owner' },
+      });
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('remote raw-source dry_run records ledger and ignores caller policy overrides', async () => {
+    const harness = await createSqliteHarness('raw-access-remote-dry-run-audit');
+    try {
+      const registered = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'gmail',
+        display_name: 'Primary Gmail',
+        account_locator: 'gmail://me@example.com',
+        consent_state: 'granted',
+        now: '2026-05-22T02:22:00.000Z',
+      }) as any;
+      const ingested = await getOperation('ingest_connector_item').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        connector_id: 'gmail',
+        external_id: 'message-remote-dry-run-audit',
+        body: 'Remote dry-run should not be an unaudited policy probe.',
+        now: '2026-05-22T02:23:00.000Z',
+      }) as any;
+      const principal = createTokenAuthPrincipal({
+        tokenId: 'token-remote-dry-audit',
+        tokenName: 'remote-client',
+        scopes: ['mcp', 'raw_source'],
+        surfaceProfile: 'http_remote',
+      });
+
+      const result = await getOperation('request_raw_source_chunks').handler({
+        ...harness.ctx(true),
+        auth_principal: principal,
+      }, {
+        source_id: registered.source.id,
+        source_item_id: ingested.item.id,
+        chunk_ids: [ingested.chunks[0].id],
+        reason: 'Remote dry-run access should still be audited.',
+        requested_at: '2026-05-22T02:25:00.000Z',
+        policy: {
+          consent_state: 'revoked',
+          enabled: false,
+          runner_access: 'none',
+          llm_access: 'none',
+        },
+      }) as any;
+
+      expect(result).toMatchObject({
+        audited: true,
+        policy_source: 'registered_source',
+        redacted_chunks: null,
+        decision: { policy_decision: 'allow' },
+      });
+      const ledgerRows = await readRawAccessLedgerRows(harness.engine, ingested.item.id);
+      expect(ledgerRows).toHaveLength(1);
+      expect(ledgerRows[0]).toMatchObject({
+        actor_type: 'mcp',
+        actor_id: principal.actor_id,
+        policy_decision: 'allow',
+      });
+      expect(JSON.parse(String(ledgerRows[0].metadata_json))).toMatchObject({
+        dry_run: true,
+        policy_source: 'registered_source',
+        actor_source: 'remote_auth_principal',
+      });
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('local raw-source explicit actor remains allowed and marks local surface metadata', async () => {
+    const harness = await createSqliteHarness('raw-access-local-explicit-actor');
+    try {
+      const registered = await getOperation('register_connector_source').handler(harness.ctx(), {
+        connector_id: 'gmail',
+        display_name: 'Primary Gmail',
+        account_locator: 'gmail://me@example.com',
+        consent_state: 'granted',
+        now: '2026-05-22T02:22:00.000Z',
+      }) as any;
+      const ingested = await getOperation('ingest_connector_item').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        connector_id: 'gmail',
+        external_id: 'message-local-explicit',
+        body: 'Local explicit actor remains supported.',
+        now: '2026-05-22T02:23:00.000Z',
+      }) as any;
+      const localPrincipal = createLocalAuthPrincipal('cli', {
+        principalType: 'local_cli',
+        principalId: 'mbrain-cli:test',
+        principalName: 'mbrain CLI test',
+        actorType: 'cli',
+        actorId: 'mbrain-cli:test',
+      });
+
+      const evaluation = await getOperation('evaluate_raw_access').handler({
+        ...harness.ctx(),
+        auth_principal: localPrincipal,
+      }, {
+        actor_type: 'llm',
+        actor_id: 'agent:reader',
+        source_id: registered.source.id,
+        source_item_id: ingested.item.id,
+        chunk_ids: [ingested.chunks[0].id],
+        reason: 'Local caller can still supply a delegated actor explicitly.',
+        requested_at: '2026-05-22T02:25:00.000Z',
+      }) as any;
+
+      expect(evaluation.decision.policy_decision).toBe('allow');
+      const ledgerRows = await readRawAccessLedgerRows(harness.engine, ingested.item.id);
+      expect(ledgerRows[0]).toMatchObject({
+        actor_type: 'llm',
+        actor_id: 'agent:reader',
+      });
+      expect(JSON.parse(String(ledgerRows[0].metadata_json))).toMatchObject({
+        actor_source: 'local_explicit',
+        surface_locality: 'local',
+        surface_profile: 'cli',
+        auth_principal: { principal_type: 'local_cli' },
+        claimed_actor: {
+          actor_type: 'llm',
+          actor_id: 'agent:reader',
+        },
       });
     } finally {
       await harness.cleanup();

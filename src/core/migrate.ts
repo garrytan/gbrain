@@ -3370,6 +3370,19 @@ const MIGRATIONS: Migration[] = [
       $$;
     `,
   },
+  {
+    version: 57,
+    name: 'mcp_request_log_auth_principal',
+    sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('mcp_request_log') IS NOT NULL THEN
+          ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS auth_principal_json TEXT;
+        END IF;
+      END
+      $$;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

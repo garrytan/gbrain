@@ -5,7 +5,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { Database } from 'bun:sqlite';
 import { resolveConfig } from '../src/core/config.ts';
-import { createFixedWindowRateLimiter, createMcpHttpHandler } from '../src/mcp/http-server.ts';
+import { createFixedWindowRateLimiter, createMcpHttpHandler, type McpHttpRequestLogEntry } from '../src/mcp/http-server.ts';
 import { resolveAllowedOrigins } from '../src/commands/serve.ts';
 import { createInMemoryMcpOAuthStore } from '../src/mcp/oauth.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -195,10 +195,11 @@ describe('MCP HTTP transport', () => {
     expect(response.status).toBe(200);
     const inspectDb = new Database(dbPath);
     const row = inspectDb.query('SELECT last_used_at FROM access_tokens WHERE token_hash = ?').get(tokenHash) as { last_used_at: string | null };
-    const log = inspectDb.query('SELECT token_name, operation, status FROM mcp_request_log').get() as {
+    const log = inspectDb.query('SELECT token_name, operation, status, auth_principal_json FROM mcp_request_log').get() as {
       token_name: string;
       operation: string;
       status: string;
+      auth_principal_json: string;
     };
     inspectDb.close();
     expect(row.last_used_at).toEqual(expect.any(String));
@@ -206,6 +207,17 @@ describe('MCP HTTP transport', () => {
       token_name: 'sqlite-client',
       operation: 'tools/list',
       status: 'success',
+      auth_principal_json: expect.any(String),
+    });
+    expect(JSON.parse(log.auth_principal_json)).toMatchObject({
+      principal_type: 'mcp_token',
+      principal_id: 'mcp_token:token-1',
+      token_id: 'token-1',
+      token_name: 'sqlite-client',
+      surface_profile: 'http_remote',
+      surface_locality: 'remote',
+      actor_type: 'mcp',
+      actor_id: 'mcp_token:token-1',
     });
   });
 
@@ -232,6 +244,79 @@ describe('MCP HTTP transport', () => {
     }));
 
     expect(response.status).toBe(200);
+  });
+
+  test('manual tokens named with oauth prefix are not classified as OAuth clients without OAuth scopes', async () => {
+    const { db, dbPath } = createSqliteTokenDb();
+    const token = 'mbrain_manual_oauth_prefix_token';
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    db.query('INSERT INTO access_tokens (id, name, token_hash) VALUES (?, ?, ?)').run('token-oauth-prefix', 'oauth:Manual Client', tokenHash);
+    db.close();
+
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+    });
+
+    const response = await handler(new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', params: {}, id: 1 }),
+    }));
+
+    expect(response.status).toBe(200);
+    const inspectDb = new Database(dbPath);
+    const log = inspectDb.query('SELECT auth_principal_json FROM mcp_request_log').get() as { auth_principal_json: string };
+    inspectDb.close();
+    expect(JSON.parse(log.auth_principal_json)).toMatchObject({
+      principal_type: 'mcp_token',
+      principal_id: 'mcp_token:token-oauth-prefix',
+      principal_name: 'oauth:Manual Client',
+      token_name: 'oauth:Manual Client',
+    });
+  });
+
+  test('default request logging repairs stale SQLite log schema before recording auth_principal', async () => {
+    const { db, dbPath } = createSqliteTokenDb({ includeAuthPrincipalLogColumn: false });
+    const token = 'mbrain_stale_log_schema_token';
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    db.query('INSERT INTO access_tokens (id, name, token_hash) VALUES (?, ?, ?)').run('token-stale-log', 'sqlite-client', tokenHash);
+    db.close();
+
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+    });
+
+    const response = await handler(new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', params: {}, id: 1 }),
+    }));
+
+    expect(response.status).toBe(200);
+    const inspectDb = new Database(dbPath);
+    const columnNames = (inspectDb.query('PRAGMA table_info(mcp_request_log)').all() as Array<{ name: string }>)
+      .map(column => column.name);
+    const log = inspectDb.query('SELECT token_name, auth_principal_json FROM mcp_request_log').get() as {
+      token_name: string;
+      auth_principal_json: string;
+    };
+    inspectDb.close();
+    expect(columnNames).toContain('auth_principal_json');
+    expect(log.token_name).toBe('sqlite-client');
+    expect(JSON.parse(log.auth_principal_json)).toMatchObject({
+      principal_id: 'mcp_token:token-stale-log',
+      token_id: 'token-stale-log',
+    });
   });
 
   test('rejects oversized MCP request bodies before authentication', async () => {
@@ -490,7 +575,7 @@ describe('MCP HTTP transport', () => {
 
   test('HTTP surface hides and denies exact-name admin tools instead of dispatching them', async () => {
     let handlerCalled = false;
-    const logs: Array<{ tokenName: string; operation: string; latencyMs: number; status: string; errorCode?: string; errorReason?: string; surfaceProfile?: string }> = [];
+    const logs: McpHttpRequestLogEntry[] = [];
     const adminPutPageOp: Operation = {
       name: 'admin_put_page',
       description: 'Test-only admin repair operation.',
@@ -533,8 +618,18 @@ describe('MCP HTTP transport', () => {
     expect(error.message).toContain('forbidden_operation');
     expect(handlerCalled).toBe(false);
     expect(logs).toEqual([
-      { tokenName: 'test-client', operation: 'tools/list', latencyMs: expect.any(Number), status: 'success', surfaceProfile: 'http_remote' },
-      {
+      expect.objectContaining({
+        tokenName: 'test-client',
+        operation: 'tools/list',
+        latencyMs: expect.any(Number),
+        status: 'success',
+        surfaceProfile: 'http_remote',
+        authPrincipal: expect.objectContaining({
+          principal_type: 'mcp_token',
+          actor_id: 'mcp_token:name:test-client',
+        }),
+      }),
+      expect.objectContaining({
         tokenName: 'test-client',
         operation: 'admin_put_page',
         latencyMs: expect.any(Number),
@@ -542,7 +637,11 @@ describe('MCP HTTP transport', () => {
         errorCode: 'permission_denied',
         errorReason: expect.stringContaining('forbidden_operation'),
         surfaceProfile: 'http_remote',
-      },
+        authPrincipal: expect.objectContaining({
+          principal_type: 'mcp_token',
+          actor_id: 'mcp_token:name:test-client',
+        }),
+      }),
     ]);
   });
 
@@ -881,7 +980,9 @@ describe('MCP HTTP transport', () => {
     const inspectDb = new Database(dbPath);
     const row = inspectDb.query('SELECT scopes FROM access_tokens WHERE token_hash = ?').get(tokenHash) as { scopes: string };
     inspectDb.close();
-    expect(JSON.parse(row.scopes)).toContain('canonical_write');
+    const scopes = JSON.parse(row.scopes);
+    expect(scopes).toContain('canonical_write');
+    expect(scopes).toContain(`oauth_client_id:${client.client_id}`);
   });
 
   test('OAuth authorization code exchange mints an MCP bearer token with PKCE', async () => {
@@ -961,7 +1062,9 @@ describe('MCP HTTP transport', () => {
       .get(tokenHash) as { name: string; scopes: string; last_used_at: string | null };
     inspectDb.close();
     expect(row.name).toBe('oauth:ChatGPT');
-    expect(JSON.parse(row.scopes)).toContain('mcp');
+    const scopes = JSON.parse(row.scopes);
+    expect(scopes).toContain('mcp');
+    expect(scopes).toContain(`oauth_client_id:${client.client_id}`);
     expect(row.last_used_at).toEqual(expect.any(String));
   });
 
@@ -1435,7 +1538,7 @@ function createStatsEngine(): BrainEngine {
   } as unknown as BrainEngine;
 }
 
-function createSqliteTokenDb(): { db: Database; dbPath: string } {
+function createSqliteTokenDb(options: { includeAuthPrincipalLogColumn?: boolean } = {}): { db: Database; dbPath: string } {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-http-auth-'));
   const dbPath = join(dir, 'brain.db');
   const db = new Database(dbPath);
@@ -1460,6 +1563,7 @@ function createSqliteTokenDb(): { db: Database; dbPath: string } {
       error_code TEXT,
       error_reason TEXT,
       surface_profile TEXT,
+      ${options.includeAuthPrincipalLogColumn === false ? '' : 'auth_principal_json TEXT,'}
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     )
   `);

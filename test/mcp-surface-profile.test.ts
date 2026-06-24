@@ -100,6 +100,20 @@ describe('MCP surface profiles', () => {
     ).not.toThrow();
   });
 
+  test('legacy raw data reads stay local-only because they bypass raw access ledgers', () => {
+    const httpRemote = resolveMcpSurfaceProfile('http_remote', {
+      toolTierSelection: 'all',
+    });
+    const getRawData = operation('get_raw_data');
+
+    expect(isToolVisibleInSurfaceProfile(getRawData, httpRemote)).toBe(false);
+    expect(() =>
+      assertToolCallableInSurfaceProfile(getRawData, httpRemote, {
+        tokenCapabilities: surfaceTokenCapabilitiesFromScopes(['mcp', 'raw_source']),
+      }),
+    ).toThrow(/forbidden_operation/);
+  });
+
   test('edge remote keeps extra local-only tools off the listed and callable surface', () => {
     const profile = resolveMcpSurfaceProfile('edge_remote', {
       toolTierSelection: 'all',

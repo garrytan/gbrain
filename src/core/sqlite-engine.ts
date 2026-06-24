@@ -747,6 +747,7 @@ CREATE TABLE IF NOT EXISTS mcp_request_log (
   error_code TEXT,
   error_reason TEXT,
   surface_profile TEXT,
+  auth_principal_json TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -5184,6 +5185,7 @@ export class SQLiteEngine implements BrainEngine {
               error_code TEXT,
               error_reason TEXT,
               surface_profile TEXT,
+              auth_principal_json TEXT,
               created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
           `);
@@ -5792,6 +5794,9 @@ export class SQLiteEngine implements BrainEngine {
           break;
         case 56:
           this.ensureMcpSurfaceRequestLogContextSchema();
+          break;
+        case 57:
+          this.ensureMcpRequestLogAuthPrincipalSchema();
           break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
@@ -8338,12 +8343,21 @@ export class SQLiteEngine implements BrainEngine {
         ['error_code', `ALTER TABLE mcp_request_log ADD COLUMN error_code TEXT`],
         ['error_reason', `ALTER TABLE mcp_request_log ADD COLUMN error_reason TEXT`],
         ['surface_profile', `ALTER TABLE mcp_request_log ADD COLUMN surface_profile TEXT`],
+        ['auth_principal_json', `ALTER TABLE mcp_request_log ADD COLUMN auth_principal_json TEXT`],
       ] as const;
       for (const [column, sql] of additions) {
         if (!names.has(column)) {
           this.database.exec(`${sql};`);
         }
       }
+    }
+  }
+
+  private ensureMcpRequestLogAuthPrincipalSchema(): void {
+    if (!this.sqliteTableExists('mcp_request_log')) return;
+    const columns = this.database.query(`PRAGMA table_info(mcp_request_log)`).all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'auth_principal_json')) {
+      this.database.exec(`ALTER TABLE mcp_request_log ADD COLUMN auth_principal_json TEXT;`);
     }
   }
 

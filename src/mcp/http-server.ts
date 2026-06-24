@@ -5,6 +5,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import type { BrainEngine } from '../core/engine.ts';
 import type { MBrainConfig } from '../core/config.ts';
 import type { Operation } from '../core/operations.ts';
+import { createTokenAuthPrincipal, serializeAuthPrincipal, type OperationAuthPrincipal } from '../core/auth-principal.ts';
 import { createMcpServer, createMcpToolExecutionLimiter } from './server.ts';
 import {
   surfaceTokenCapabilitiesFromScopes,
@@ -30,6 +31,7 @@ const OAUTH_AUTHORIZATION_CODE_RETENTION_SECONDS = 60 * 60;
 
 export interface McpHttpAuthSuccess {
   ok: true;
+  tokenId?: string;
   tokenName: string;
   scopes?: string[];
 }
@@ -68,6 +70,7 @@ export interface McpHttpRequestLogEntry {
   errorCode?: string;
   errorReason?: string;
   surfaceProfile?: string;
+  authPrincipal?: OperationAuthPrincipal;
 }
 
 export interface StartMcpHttpServerOptions extends McpHttpHandlerOptions {
@@ -141,14 +144,22 @@ export function createMcpHttpHandler(
 
     const operation = await inferMcpHttpOperation(request);
     const startTime = Date.now();
+    const surfaceProfile = options.surfaceProfile ?? 'http_remote';
+    const authPrincipal = createTokenAuthPrincipal({
+      tokenId: auth.tokenId,
+      tokenName: auth.tokenName,
+      scopes: auth.scopes,
+      surfaceProfile,
+    });
     const transport = new WebStandardStreamableHTTPServerTransport();
     const { server } = createMcpServer(enginePromise, {
       operations: options.operations,
       config: options.config,
       compactToolSchemas: false,
-      surfaceProfile: options.surfaceProfile ?? 'http_remote',
+      surfaceProfile,
       toolTier: options.toolTier,
       tokenCapabilities: surfaceTokenCapabilitiesFromScopes(auth.scopes),
+      authPrincipal,
       toolExecutionLimiter,
       logger: {
         info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
@@ -166,7 +177,8 @@ export function createMcpHttpHandler(
         operation,
         latencyMs: Date.now() - startTime,
         status: responseClassification.status,
-        surfaceProfile: options.surfaceProfile ?? 'http_remote',
+        surfaceProfile,
+        authPrincipal,
         ...(responseClassification.errorCode ? { errorCode: responseClassification.errorCode } : {}),
         ...(responseClassification.errorReason ? { errorReason: responseClassification.errorReason } : {}),
       });
@@ -179,7 +191,8 @@ export function createMcpHttpHandler(
         status: 'error',
         errorCode: 'transport_exception',
         errorReason: error instanceof Error ? error.message : String(error),
-        surfaceProfile: options.surfaceProfile ?? 'http_remote',
+        surfaceProfile,
+        authPrincipal,
       });
       throw error;
     }
@@ -365,7 +378,7 @@ async function authenticateMcpHttpRequest(
       ? row.name
       : 'unknown';
     await markAccessTokenUsed(config, tokenHash);
-    return { ok: true, tokenName, scopes: row.scopes };
+    return { ok: true, tokenId: row.id, tokenName, scopes: row.scopes };
   } catch {
     return {
       ok: false,
@@ -382,18 +395,19 @@ async function authenticateMcpHttpRequest(
 async function findAccessToken(
   config: MBrainConfig,
   tokenHash: string,
-): Promise<{ name: string; revoked_at: unknown; scopes: string[] } | null> {
+): Promise<{ id?: string; name: string; revoked_at: unknown; scopes: string[] } | null> {
   switch (config.engine) {
     case 'postgres': {
       if (!config.database_url) throw new Error('Missing database_url');
       const sql = postgres(config.database_url, { max: 1 });
       try {
         const rows = await sql`
-          SELECT name, revoked_at, scopes FROM access_tokens
+          SELECT id, name, revoked_at, scopes FROM access_tokens
           WHERE token_hash = ${tokenHash}
         `;
         const row = rows[0];
         return row ? {
+          id: row.id ? String(row.id) : undefined,
           name: String(row.name ?? ''),
           revoked_at: row.revoked_at,
           scopes: parseAccessTokenScopes(row.scopes),
@@ -407,9 +421,10 @@ async function findAccessToken(
       const db = new Database(config.database_path);
       try {
         const row = db
-          .query('SELECT name, revoked_at, scopes FROM access_tokens WHERE token_hash = ?')
-          .get(tokenHash) as { name?: unknown; revoked_at?: unknown; scopes?: unknown } | null;
+          .query('SELECT id, name, revoked_at, scopes FROM access_tokens WHERE token_hash = ?')
+          .get(tokenHash) as { id?: unknown; name?: unknown; revoked_at?: unknown; scopes?: unknown } | null;
         return row ? {
+          id: row.id ? String(row.id) : undefined,
           name: String(row.name ?? ''),
           revoked_at: row.revoked_at,
           scopes: parseAccessTokenScopes(row.scopes),
@@ -430,8 +445,9 @@ async function issueMcpHttpAccessToken(
   const token = `mbrain_${randomBytes(32).toString('hex')}`;
   const tokenHash = createHash('sha256').update(token).digest('hex');
   const bindingScope = oauthBindingScope(input.tokenBinding);
+  const clientIdScope = `oauth_client_id:${input.clientId}`;
   const revokeScope = input.revokeTokenBinding ? oauthBindingScope(input.revokeTokenBinding) : null;
-  const scopes = [...new Set([...input.scope, `oauth_exp:${Math.floor(input.expiresAt.getTime() / 1000)}`, bindingScope])];
+  const scopes = [...new Set([...input.scope, `oauth_exp:${Math.floor(input.expiresAt.getTime() / 1000)}`, bindingScope, clientIdScope])];
   const name = `oauth:${input.clientName}`;
 
   switch (config.engine) {
@@ -614,15 +630,13 @@ async function logRequest(options: McpHttpHandlerOptions, entry: McpHttpRequestL
 }
 
 async function logMcpHttpRequest(config: MBrainConfig, entry: McpHttpRequestLogEntry): Promise<void> {
+  const authPrincipalJson = serializeAuthPrincipal(entry.authPrincipal);
   switch (config.engine) {
     case 'postgres': {
       if (!config.database_url) throw new Error('Missing database_url');
       const sql = postgres(config.database_url, { max: 1 });
       try {
-        await sql`
-          INSERT INTO mcp_request_log (token_name, operation, latency_ms, status, error_code, error_reason, surface_profile)
-          VALUES (${entry.tokenName}, ${entry.operation}, ${entry.latencyMs}, ${entry.status}, ${entry.errorCode ?? null}, ${entry.errorReason ?? null}, ${entry.surfaceProfile ?? null})
-        `;
+        await insertMcpHttpRequestLogPostgres(sql, entry, authPrincipalJson);
       } finally {
         await sql.end();
       }
@@ -632,10 +646,7 @@ async function logMcpHttpRequest(config: MBrainConfig, entry: McpHttpRequestLogE
       if (!config.database_path) throw new Error('Missing database_path');
       const db = new Database(config.database_path);
       try {
-        db.query(`
-          INSERT INTO mcp_request_log (token_name, operation, latency_ms, status, error_code, error_reason, surface_profile)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(entry.tokenName, entry.operation, entry.latencyMs, entry.status, entry.errorCode ?? null, entry.errorReason ?? null, entry.surfaceProfile ?? null);
+        insertMcpHttpRequestLogSqlite(db, entry, authPrincipalJson);
       } finally {
         db.close();
       }
@@ -644,6 +655,62 @@ async function logMcpHttpRequest(config: MBrainConfig, entry: McpHttpRequestLogE
     case 'pglite':
       throw new Error('HTTP request logging is not supported for pglite');
   }
+}
+
+async function insertMcpHttpRequestLogPostgres(
+  sql: ReturnType<typeof postgres>,
+  entry: McpHttpRequestLogEntry,
+  authPrincipalJson: string | null,
+): Promise<void> {
+  try {
+    await insertMcpHttpRequestLogPostgresRow(sql, entry, authPrincipalJson);
+  } catch (error) {
+    if (!isMissingAuthPrincipalLogColumn(error)) throw error;
+    await sql`ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS auth_principal_json TEXT`;
+    await insertMcpHttpRequestLogPostgresRow(sql, entry, authPrincipalJson);
+  }
+}
+
+async function insertMcpHttpRequestLogPostgresRow(
+  sql: ReturnType<typeof postgres>,
+  entry: McpHttpRequestLogEntry,
+  authPrincipalJson: string | null,
+): Promise<void> {
+  await sql`
+    INSERT INTO mcp_request_log (token_name, operation, latency_ms, status, error_code, error_reason, surface_profile, auth_principal_json)
+    VALUES (${entry.tokenName}, ${entry.operation}, ${entry.latencyMs}, ${entry.status}, ${entry.errorCode ?? null}, ${entry.errorReason ?? null}, ${entry.surfaceProfile ?? null}, ${authPrincipalJson})
+  `;
+}
+
+function insertMcpHttpRequestLogSqlite(
+  db: Database,
+  entry: McpHttpRequestLogEntry,
+  authPrincipalJson: string | null,
+): void {
+  try {
+    insertMcpHttpRequestLogSqliteRow(db, entry, authPrincipalJson);
+  } catch (error) {
+    if (!isMissingAuthPrincipalLogColumn(error)) throw error;
+    db.exec(`ALTER TABLE mcp_request_log ADD COLUMN auth_principal_json TEXT;`);
+    insertMcpHttpRequestLogSqliteRow(db, entry, authPrincipalJson);
+  }
+}
+
+function insertMcpHttpRequestLogSqliteRow(
+  db: Database,
+  entry: McpHttpRequestLogEntry,
+  authPrincipalJson: string | null,
+): void {
+  db.query(`
+    INSERT INTO mcp_request_log (token_name, operation, latency_ms, status, error_code, error_reason, surface_profile, auth_principal_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(entry.tokenName, entry.operation, entry.latencyMs, entry.status, entry.errorCode ?? null, entry.errorReason ?? null, entry.surfaceProfile ?? null, authPrincipalJson);
+}
+
+function isMissingAuthPrincipalLogColumn(error: unknown): boolean {
+  const maybe = error as { code?: unknown; message?: unknown };
+  return maybe.code === '42703'
+    || String(maybe.message ?? error).includes('auth_principal_json');
 }
 
 function jsonResponse(body: Record<string, unknown>, status: number, extraHeaders: Record<string, string | undefined> = {}): Response {

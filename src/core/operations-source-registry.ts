@@ -10,6 +10,7 @@ import {
 } from './connectors/credential-refs.ts';
 import type { BrainEngine } from './engine.ts';
 import type { Operation, OperationContext } from './operations.ts';
+import type { OperationAuthPrincipal } from './auth-principal.ts';
 import { recordMemoryMutationEvent } from './services/memory-mutation-ledger-service.ts';
 import {
   buildSourceStatusEvent,
@@ -538,8 +539,8 @@ export function createSourceRegistryOperations(
     name: 'evaluate_raw_access',
     description: 'Evaluate and audit a scoped raw source chunk access request.',
     params: {
-      actor_type: { type: 'string', required: true, description: 'Actor type, for example runner, daemon, mcp, cli, or llm.' },
-      actor_id: { type: 'string', required: true, description: 'Stable actor id.' },
+      actor_type: { type: 'string', description: 'Optional local actor type. Remote calls default to the authenticated principal and may only supply a matching actor.' },
+      actor_id: { type: 'string', description: 'Optional local actor id. Remote calls default to the authenticated principal and may only supply a matching actor.' },
       session_id: { type: 'string', nullable: true, description: 'Optional session id.' },
       job_id: { type: 'string', nullable: true, description: 'Optional job id.' },
       source_id: { type: 'string', required: true, description: 'Source id.' },
@@ -560,8 +561,8 @@ export function createSourceRegistryOperations(
     name: 'request_raw_source_chunks',
     description: 'Authorized, audited retrieval of redacted source chunk text. Runs the same scope/policy resolution and raw_access_ledger write as evaluate_raw_access and returns redacted_text only on a non-deny decision — never raw chunk_text. The unaudited list_source_items inspection path returns metadata only.',
     params: {
-      actor_type: { type: 'string', required: true, description: 'Actor type, for example runner, daemon, mcp, cli, or llm.' },
-      actor_id: { type: 'string', required: true, description: 'Stable actor id.' },
+      actor_type: { type: 'string', description: 'Optional local actor type. Remote calls default to the authenticated principal and may only supply a matching actor.' },
+      actor_id: { type: 'string', description: 'Optional local actor id. Remote calls default to the authenticated principal and may only supply a matching actor.' },
       session_id: { type: 'string', nullable: true, description: 'Optional session id.' },
       job_id: { type: 'string', nullable: true, description: 'Optional job id.' },
       source_id: { type: 'string', required: true, description: 'Source id.' },
@@ -1691,8 +1692,18 @@ async function evaluateRawAccessOperation(
   ctx: OperationContext,
   p: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const request = rawAccessRequest(deps, p);
-  const policySource = ctx.dryRun && p.policy !== undefined
+  const resolvedRequest = resolveRawAccessRequest(deps, ctx, p);
+  const request = resolvedRequest.request;
+  if (resolvedRequest.actor_mismatch) {
+    if (shouldAuditRawAccess(ctx)) {
+      await auditRawAccessActorMismatch(ctx, resolvedRequest);
+    }
+    throw permissionDenied(
+      deps,
+      'Authenticated remote raw-source callers may only use their own auth_principal actor.',
+    );
+  }
+  const policySource = ctx.dryRun && !isRemoteRawAccess(ctx) && p.policy !== undefined
     ? 'dry_run_override'
     : 'registered_source';
   const policy = policySource === 'dry_run_override'
@@ -1703,7 +1714,7 @@ async function evaluateRawAccessOperation(
     ? evaluateRawSourceAccess(request, policy)
     : denyRawAccessEvaluation(request, 'raw_scope_mismatch');
 
-  if (ctx.dryRun) {
+  if (ctx.dryRun && !shouldAuditRawAccess(ctx)) {
     return {
       ...evaluation,
       audited: false,
@@ -1712,8 +1723,10 @@ async function evaluateRawAccessOperation(
   }
 
   await insertRawAccessLedgerEntry(ctx.engine, evaluation.ledger_entry, {
+    ...resolvedRequest.metadata,
     policy_source: policySource,
     redaction_required: evaluation.decision.redaction_required,
+    ...(ctx.dryRun ? { dry_run: true } : {}),
   });
 
   return {
@@ -1740,7 +1753,7 @@ async function requestRawSourceChunksOperation(
     return { ...evaluation, redacted_chunks: null };
   }
 
-  const request = rawAccessRequest(deps, p);
+  const request = rawAccessRequest(deps, ctx, p);
   const requestedIds = new Set(request.chunk_ids);
   const itemChunks = await readSourceItemChunks(ctx.engine, request.source_item_id);
   const redacted_chunks = itemChunks
@@ -1770,6 +1783,31 @@ function denyRawAccessEvaluation(request: RawAccessRequest, reason: string) {
     decision,
     ledger_entry: buildRawAccessLedgerEntry(request, decision),
   };
+}
+
+async function auditRawAccessActorMismatch(
+  ctx: OperationContext,
+  resolvedRequest: ResolvedRawAccessRequest,
+): Promise<void> {
+  const decision: RawAccessDecision = {
+    policy_decision: 'deny',
+    reason: 'auth_principal_actor_mismatch',
+    redaction_required: true,
+  };
+  await insertRawAccessLedgerEntry(ctx.engine, buildRawAccessLedgerEntry(resolvedRequest.request, decision), {
+    ...resolvedRequest.metadata,
+    policy_source: 'auth_principal',
+    redaction_required: true,
+    ...(ctx.dryRun ? { dry_run: true } : {}),
+  });
+}
+
+function shouldAuditRawAccess(ctx: OperationContext): boolean {
+  return !ctx.dryRun || isRemoteRawAccess(ctx);
+}
+
+function isRemoteRawAccess(ctx: OperationContext): boolean {
+  return ctx.auth_principal?.surface_locality === 'remote';
 }
 
 async function rawAccessScopeMatches(engine: BrainEngine, request: RawAccessRequest): Promise<boolean> {
@@ -3496,23 +3534,130 @@ function rawIngestPolicy(
   };
 }
 
+type ResolvedRawAccessRequest = {
+  request: RawAccessRequest;
+  metadata: Record<string, unknown>;
+  actor_mismatch: boolean;
+};
+
 function rawAccessRequest(
   deps: { OperationError: OperationErrorCtor },
+  ctx: OperationContext,
   p: Record<string, unknown>,
 ): RawAccessRequest {
+  return resolveRawAccessRequest(deps, ctx, p).request;
+}
+
+function resolveRawAccessRequest(
+  deps: { OperationError: OperationErrorCtor },
+  ctx: OperationContext,
+  p: Record<string, unknown>,
+): ResolvedRawAccessRequest {
+  const actor = resolveRawAccessActor(deps, ctx, p);
   return {
-    actor_type: requiredString(deps, 'actor_type', p.actor_type),
-    actor_id: requiredString(deps, 'actor_id', p.actor_id),
-    session_id: optionalNullableString(deps, 'session_id', p.session_id),
-    job_id: optionalNullableString(deps, 'job_id', p.job_id),
-    source_id: requiredString(deps, 'source_id', p.source_id),
-    source_item_id: requiredString(deps, 'source_item_id', p.source_item_id),
-    chunk_ids: stringArray(deps, 'chunk_ids', p.chunk_ids),
-    reason: requiredString(deps, 'reason', p.reason),
-    input: optionalString(deps, 'input', p.input),
-    prompt: optionalString(deps, 'prompt', p.prompt),
-    requested_at: optionalString(deps, 'requested_at', p.requested_at),
+    request: {
+      actor_type: actor.actor_type,
+      actor_id: actor.actor_id,
+      session_id: optionalNullableString(deps, 'session_id', p.session_id),
+      job_id: optionalNullableString(deps, 'job_id', p.job_id),
+      source_id: requiredString(deps, 'source_id', p.source_id),
+      source_item_id: requiredString(deps, 'source_item_id', p.source_item_id),
+      chunk_ids: stringArray(deps, 'chunk_ids', p.chunk_ids),
+      reason: requiredString(deps, 'reason', p.reason),
+      input: optionalString(deps, 'input', p.input),
+      prompt: optionalString(deps, 'prompt', p.prompt),
+      requested_at: optionalString(deps, 'requested_at', p.requested_at),
+    },
+    metadata: actor.metadata,
+    actor_mismatch: actor.actor_mismatch,
   };
+}
+
+function resolveRawAccessActor(
+  deps: { OperationError: OperationErrorCtor },
+  ctx: OperationContext,
+  p: Record<string, unknown>,
+): {
+  actor_type: string;
+  actor_id: string;
+  actor_mismatch: boolean;
+  metadata: Record<string, unknown>;
+} {
+  const claimedActorType = optionalString(deps, 'actor_type', p.actor_type);
+  const claimedActorId = optionalString(deps, 'actor_id', p.actor_id);
+  const claimedActor = claimedActorType || claimedActorId
+    ? {
+      actor_type: claimedActorType ?? null,
+      actor_id: claimedActorId ?? null,
+    }
+    : undefined;
+  const principal = ctx.auth_principal;
+
+  if (principal?.surface_locality === 'remote') {
+    const actor_mismatch = Boolean(claimedActor)
+      && (claimedActorType !== principal.actor_type || claimedActorId !== principal.actor_id);
+    return {
+      actor_type: principal.actor_type,
+      actor_id: principal.actor_id,
+      actor_mismatch,
+      metadata: rawAccessActorMetadata(principal, claimedActor, actor_mismatch
+        ? 'remote_claim_mismatch'
+        : claimedActor
+          ? 'remote_claim_verified'
+          : 'remote_auth_principal'),
+    };
+  }
+
+  if (claimedActorType || claimedActorId) {
+    if (!claimedActorType || !claimedActorId) {
+      throw invalidParams(deps, 'actor_type and actor_id must be provided together');
+    }
+    return {
+      actor_type: claimedActorType,
+      actor_id: claimedActorId,
+      actor_mismatch: false,
+      metadata: rawAccessActorMetadata(principal, claimedActor, 'local_explicit'),
+    };
+  }
+
+  if (principal) {
+    return {
+      actor_type: principal.actor_type,
+      actor_id: principal.actor_id,
+      actor_mismatch: false,
+      metadata: rawAccessActorMetadata(principal, undefined, 'local_auth_principal'),
+    };
+  }
+
+  throw invalidParams(deps, 'actor_type and actor_id must be provided for local raw access without auth_principal');
+}
+
+function rawAccessActorMetadata(
+  principal: OperationAuthPrincipal | undefined,
+  claimedActor: { actor_type: string | null; actor_id: string | null } | undefined,
+  actorSource: string,
+): Record<string, unknown> {
+  return {
+    actor_source: actorSource,
+    surface_locality: principal?.surface_locality ?? 'local',
+    ...(principal?.surface_profile ? { surface_profile: principal.surface_profile } : {}),
+    ...(principal ? { auth_principal: principal } : {}),
+    ...(claimedActor ? { claimed_actor: claimedActor } : {}),
+  };
+}
+
+type PermissionAwareOperationErrorCtor = new (
+  code: 'invalid_params' | 'permission_denied',
+  message: string,
+  suggestion?: string,
+  docs?: string,
+) => Error;
+
+function permissionDenied(
+  deps: { OperationError: OperationErrorCtor },
+  message: string,
+): Error {
+  return new (deps.OperationError as PermissionAwareOperationErrorCtor)('permission_denied', message);
 }
 
 function rawAccessPolicy(

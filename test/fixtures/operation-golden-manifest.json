@@ -4953,17 +4953,17 @@
           "type": [
             "string"
           ],
-          "required": true,
+          "required": false,
           "nullable": false,
-          "description": "Stable actor id."
+          "description": "Optional local actor id. Remote calls default to the authenticated principal and may only supply a matching actor."
         },
         "actor_type": {
           "type": [
             "string"
           ],
-          "required": true,
+          "required": false,
           "nullable": false,
-          "description": "Actor type, for example runner, daemon, mcp, cli, or llm."
+          "description": "Optional local actor type. Remote calls default to the authenticated principal and may only supply a matching actor."
         },
         "chunk_ids": {
           "type": [
@@ -5062,8 +5062,6 @@
         "destructive": false,
         "open_world": false,
         "required_params": [
-          "actor_id",
-          "actor_type",
           "chunk_ids",
           "reason",
           "source_id",
@@ -5110,8 +5108,8 @@
           }
         }
       },
-      "compact_schema_hash": "bfb5d1460cfdc2b5838038d7f70a8e562a624c24e82f239236e9dc30dfa489e9",
-      "full_schema_hash": "25aa70f663da4838a30e4781a96b1290586da7b667ee4eed78d4c3e75ab426f6",
+      "compact_schema_hash": "5d158310e503780f62663bd966025537d46895c71a5d892167c941271a5bcfd8",
+      "full_schema_hash": "d19a70bcd7ca124eb3e82a6a9a63617374973fedb39d4ea09315033137f1b1bd",
       "memory_verb_families": [],
       "mutation_aliases": []
     },
@@ -8869,7 +8867,11 @@
         "capability_classification": "explicit",
         "visible_profiles": [],
         "callable_profiles": [],
-        "forbidden_profiles": [],
+        "forbidden_profiles": [
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
         "decisions": {
           "stdio": {
             "visible": false,
@@ -8882,6 +8884,7 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "forbidden_operation",
               "tier_not_callable"
             ]
           },
@@ -8889,6 +8892,7 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "forbidden_operation",
               "tier_not_callable"
             ]
           },
@@ -8896,6 +8900,7 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "forbidden_operation",
               "tier_not_callable"
             ]
           }
@@ -18151,17 +18156,17 @@
           "type": [
             "string"
           ],
-          "required": true,
+          "required": false,
           "nullable": false,
-          "description": "Stable actor id."
+          "description": "Optional local actor id. Remote calls default to the authenticated principal and may only supply a matching actor."
         },
         "actor_type": {
           "type": [
             "string"
           ],
-          "required": true,
+          "required": false,
           "nullable": false,
-          "description": "Actor type, for example runner, daemon, mcp, cli, or llm."
+          "description": "Optional local actor type. Remote calls default to the authenticated principal and may only supply a matching actor."
         },
         "chunk_ids": {
           "type": [
@@ -18260,8 +18265,6 @@
         "destructive": false,
         "open_world": false,
         "required_params": [
-          "actor_id",
-          "actor_type",
           "chunk_ids",
           "reason",
           "source_id",
@@ -18308,8 +18311,8 @@
           }
         }
       },
-      "compact_schema_hash": "bfb5d1460cfdc2b5838038d7f70a8e562a624c24e82f239236e9dc30dfa489e9",
-      "full_schema_hash": "64cc288dc98487eafcfd91750519d316c880c70b107b9d03de8ff9d4659feb2b",
+      "compact_schema_hash": "5d158310e503780f62663bd966025537d46895c71a5d892167c941271a5bcfd8",
+      "full_schema_hash": "d3ed3cc95a00495019c0c85fbd64a2ad68feec07e1c39ec9f7cc7fbfb981bf37",
       "memory_verb_families": [],
       "mutation_aliases": []
     },
