@@ -705,19 +705,27 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
   }
 
   // Openai-compat recipes with empty models list require a user-provided model.
+  // configureGateway() registers the configured model into the extended-models
+  // set (the same set the real embed/chat call paths consult via
+  // getExtendedModelsForProvider); honor it here so a configured user-provided
+  // model (e.g. litellm:embed) passes the preflight instead of false-failing as
+  // "unset".
   const isUserProvided = (tp as any).user_provided_models === true;
   if (
     Array.isArray(tp.models) &&
     tp.models.length === 0 &&
     (recipe.id === 'litellm' || isUserProvided)
   ) {
-    return {
-      ok: false,
-      reason: 'user_provided_model_unset',
-      model: modelStr,
-      provider: parsed.providerId,
-      recipeId: recipe.id,
-    };
+    const extended = getExtendedModelsForProvider(parsed.providerId);
+    if (!extended || !extended.has(parsed.modelId)) {
+      return {
+        ok: false,
+        reason: 'user_provided_model_unset',
+        model: modelStr,
+        provider: parsed.providerId,
+        recipeId: recipe.id,
+      };
+    }
   }
 
   const required = recipe.auth_env?.required ?? [];
