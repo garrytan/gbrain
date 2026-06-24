@@ -50,29 +50,39 @@ export function meanStddev(samples: number[]): { mean: number; stddev: number } 
  *
  * For each cohort:
  *   1. Compute (mean, stddev) over the baseline daily counts.
- *   2. If stddev > 0:    anomalous when `today.count > mean + sigma*stddev`.
+ *   2. If the cohort has fewer than `minBaselineDays` distinct days with
+ *      activity in the baseline window, **suppress it**. A
+ *      brand-new cohort or one with one day of import noise would otherwise
+ *      produce a 481σ "everything is anomalous" report.
+ *   3. If stddev > 0:    anomalous when `today.count > mean + sigma*stddev`.
  *      sigma_observed   = (today.count - mean) / stddev.
- *   3. If stddev == 0:   small-sample fallback — anomalous when
+ *   4. If stddev == 0:   small-sample fallback — anomalous when
  *      `today.count > mean + 1`. sigma_observed treated as a finite proxy
  *      `today.count - mean` so callers still get a usable sort key.
  *
  * Cohorts with no baseline rows AND no today rows are skipped. Cohorts
- * appearing only in `today` (a brand-new cohort) get a baseline_mean of 0
- * — they're surfaced as anomalies whenever today.count >= 2 (mean+1 fallback).
+ * appearing only in `today` (a brand-new cohort) have 0 active baseline
+ * days and are suppressed whenever `minBaselineDays > 0`.
  *
  * Returns top `limit` rows sorted by `sigma_observed` descending. Each row
  * caps `page_slugs` at 50 entries.
  *
- * @param baseline densified rows over the lookback window, grouped by cohort × day.
- * @param today    rows for the target day, grouped by cohort.
- * @param sigma    threshold multiplier (default 3.0).
- * @param limit    max anomalies to return (default 20).
+ * @param baseline         densified rows over the lookback window, grouped by cohort × day.
+ * @param today            rows for the target day, grouped by cohort.
+ * @param sigma            threshold multiplier (default 3.0).
+ * @param limit            max anomalies to return (default 20).
+ * @param minBaselineDays  minimum distinct active days a cohort needs in the
+ *                         baseline window before it can be flagged. Default 0
+ *                         at this pure-function layer (algorithm-only); the
+ *                         engine layer applies its own default (7) so the
+ *                         briefing/CLI surface gets the suppression.
  */
 export function computeAnomaliesFromBuckets(
   baseline: CohortDayRow[],
   today: CohortTodayRow[],
   sigma: number,
   limit: number = 20,
+  minBaselineDays: number = 0,
 ): AnomalyResult[] {
   // Group baseline samples by (cohort_kind, cohort_value).
   const baselineByCohort = new Map<string, number[]>();
@@ -90,6 +100,13 @@ export function computeAnomaliesFromBuckets(
   for (const t of today) {
     const key = cohortKey(t.cohort_kind, t.cohort_value);
     const samples = baselineByCohort.get(key) ?? [];
+    // Suppress cohorts whose baseline window doesn't have enough
+    // distinct active days. Zero-fill days don't count — we need real history.
+    if (minBaselineDays > 0) {
+      let activeDays = 0;
+      for (const c of samples) if (c > 0) activeDays++;
+      if (activeDays < minBaselineDays) continue;
+    }
     const { mean, stddev } = meanStddev(samples);
 
     let isAnomaly: boolean;

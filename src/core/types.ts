@@ -514,6 +514,12 @@ export interface AnomaliesOpts {
   lookback_days?: number;
   /** Sigma threshold. Default 3.0. */
   sigma?: number;
+  /**
+   * Minimum distinct active days a cohort needs in the baseline window before
+   * it can be flagged. Default 7 (prevents Day-1-of-import "every
+   * cohort is anomalous at 481σ" noise). Pass 0 to disable.
+   */
+  min_baseline_days?: number;
 }
 
 export interface AnomalyResult {
