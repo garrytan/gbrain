@@ -15,6 +15,7 @@
  *    (codex C8).
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { execFileSync } from 'child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -159,6 +160,35 @@ describe('collectSyncableFiles symlink + cycle hardening', () => {
       expect(first.map(f => f.replace(tmp, ''))).toEqual([
         '/a.md', '/b.md', '/sub/c.md',
       ]);
+    });
+  });
+
+  test('8. explicit collector opt-out can include gitignored markdown files', async () => {
+    await withEnv({
+      GBRAIN_EMBEDDING_MULTIMODAL: undefined,
+      GBRAIN_IMPORT_IGNORE_GITIGNORE: undefined,
+    }, async () => {
+      execFileSync('git', ['init'], { cwd: tmp, stdio: 'ignore' });
+      writeFileSync(join(tmp, '.gitignore'), 'ignored/\n');
+      writeFileSync(join(tmp, 'visible.md'), 'visible\n');
+      mkdirSync(join(tmp, 'ignored'));
+      writeFileSync(join(tmp, 'ignored/hidden.md'), 'hidden\n');
+
+      const defaultFiles = collectSyncableFiles(tmp, { strategy: 'markdown' })
+        .map(f => f.replace(tmp, ''));
+      expect(defaultFiles).toEqual(['/visible.md']);
+
+      await withEnv({ GBRAIN_IMPORT_IGNORE_GITIGNORE: '1' }, () => {
+        const envOnlyFiles = collectSyncableFiles(tmp, { strategy: 'markdown' })
+          .map(f => f.replace(tmp, ''));
+        expect(envOnlyFiles).toEqual(['/visible.md']);
+      });
+
+      const optionFiles = collectSyncableFiles(tmp, {
+        strategy: 'markdown',
+        ignoreGitignore: true,
+      }).map(f => f.replace(tmp, ''));
+      expect(optionFiles).toEqual(['/ignored/hidden.md', '/visible.md']);
     });
   });
 });

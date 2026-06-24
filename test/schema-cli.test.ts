@@ -63,6 +63,7 @@ describe('gbrain schema CLI (Phase C)', () => {
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('Bundled packs:');
     expect(r.stdout).toContain('gbrain-base');
+    expect(r.stdout).toContain('gbrain-creator');
   });
 
   test('schema show gbrain-base prints manifest details', () => {
@@ -85,6 +86,13 @@ describe('gbrain schema CLI (Phase C)', () => {
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('✓');
     expect(r.stdout).toContain('valid manifest');
+  });
+
+  test('schema show bundled creator pack prints manifest details', () => {
+    const r = gbrain(['schema', 'show', 'gbrain-creator']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('gbrain-creator v1.0.0');
+    expect(r.stdout).toContain('atom :: concept');
   });
 
   test('schema active reports default resolution', () => {
@@ -134,6 +142,15 @@ describe('gbrain schema use (Phase C, gap-fill T3)', () => {
     expect(existsSync(cfgPath)).toBe(true);
     const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
     expect(cfg.schema_pack).toBe('gbrain-base');
+  });
+
+  test('writes bundled creator pack to ~/.gbrain/config.json', () => {
+    const r = gbrain(['schema', 'use', 'gbrain-creator'], { GBRAIN_HOME: home });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('Active schema pack set to: gbrain-creator');
+    const cfgPath = join(home, '.gbrain', 'config.json');
+    const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
+    expect(cfg.schema_pack).toBe('gbrain-creator');
   });
 
   test('preserves pre-existing config fields when writing schema_pack', () => {
