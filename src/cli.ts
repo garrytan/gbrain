@@ -2155,7 +2155,8 @@ SEARCH
   ask <question> [--no-expand]       Alias for query
 
 IMPORT/EXPORT
-  import <dir> [--no-embed]          Import markdown directory
+  import <dir> [--no-embed] [--all-files]
+                                      Import markdown directory
   sync [--repo <path>] [flags]       Git-to-brain incremental sync
   sync --watch [--interval N]        Continuous sync (loops until stopped)
   sync --install-cron                Install persistent sync daemon

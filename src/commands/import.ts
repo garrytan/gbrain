@@ -45,11 +45,21 @@ export interface RunImportResult {
 export async function runImport(
   engine: BrainEngine,
   args: string[],
-  opts: { commit?: string; strategy?: SyncStrategy; sourceId?: string; managedBookmark?: boolean } = {},
+  opts: {
+    commit?: string;
+    strategy?: SyncStrategy;
+    sourceId?: string;
+    managedBookmark?: boolean;
+    ignoreGitignore?: boolean;
+  } = {},
 ): Promise<RunImportResult> {
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
+  const ignoreGitignore = opts.ignoreGitignore === true
+    || args.includes('--all-files')
+    || args.includes('--ignore-gitignore')
+    || importIgnoreGitignoreEnvEnabled();
 
   // T7 (D9): refuse cleanly when init persisted the deferred-setup sentinel,
   // unless the user is explicitly skipping embedding via `--no-embed` (in
@@ -164,7 +174,7 @@ export async function runImport(
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--json]');
+    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--all-files] [--json]');
     process.exit(1);
   }
   const dir: string = dirArg;  // narrowed; survives closure capture
@@ -176,7 +186,7 @@ export async function runImport(
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
   const _walkT0 = Date.now();
   console.error(`[gbrain phase] import.collect_files start dir=${dir} strategy=${strategy}`);
-  const allFiles = collectSyncableFiles(dir, { strategy });
+  const allFiles = collectSyncableFiles(dir, { strategy, ignoreGitignore });
   console.error(
     `[gbrain phase] import.collect_files done ${Date.now() - _walkT0}ms files=${allFiles.length}`,
   );
@@ -485,6 +495,12 @@ function resolveMaxWalkDepth(): number {
 
 interface CollectOpts {
   strategy?: SyncStrategy;
+  ignoreGitignore?: boolean;
+}
+
+function importIgnoreGitignoreEnvEnabled(): boolean {
+  const raw = process.env.GBRAIN_IMPORT_IGNORE_GITIGNORE?.trim().toLowerCase();
+  return raw === '1' || raw === 'true';
 }
 
 /**
@@ -578,6 +594,7 @@ function gitListSyncableFiles(
 export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): string[] {
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
   const multimodalOn = process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
+  const ignoreGitignore = opts.ignoreGitignore === true;
 
   // v0.42.x (#1159 --respect-gitignore / #1483 .gbrainignore): when `dir` is a
   // git work tree, enumerate via `git ls-files` so the walk honors
@@ -588,8 +605,17 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
   // vendored data/fixtures). `--cached --others --exclude-standard` = tracked
   // PLUS untracked-not-ignored, so uncommitted source is still indexed. Non-git
   // dirs (or git unavailable) fall through to the FS walk below.
-  const gitFiles = gitListSyncableFiles(dir, strategy, multimodalOn);
-  if (gitFiles) return gitFiles;
+  //
+  // `gbrain import` wires `GBRAIN_IMPORT_IGNORE_GITIGNORE=1` / `--all-files`
+  // into this option as the explicit escape hatch for generated import feeds
+  // that intentionally live under a gitignored directory. In that mode we skip
+  // only this git-aware fast path and use the established hardened FS walker
+  // below. Other callers, especially sync, keep their default gitignore policy
+  // unless they opt in programmatically.
+  if (!ignoreGitignore) {
+    const gitFiles = gitListSyncableFiles(dir, strategy, multimodalOn);
+    if (gitFiles) return gitFiles;
+  }
 
   const maxDepth = resolveMaxWalkDepth();
   const visitedInodes = new Map<string, true>();
