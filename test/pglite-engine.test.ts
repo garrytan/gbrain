@@ -1313,7 +1313,8 @@ describe('PGLiteEngine: v0.13.1 error-wrap on connect() (#223)', () => {
     // create()).
     // #2084 wrapped the create call in preservingProcessExitCode (Emscripten
     // exitCode containment); the try/catch + error wrap around it is unchanged.
-    expect(src).toContain('this._db = await preservingProcessExitCode(() =>');
+    expect(src).toContain('const rawDb = await preservingProcessExitCode(() =>');
+    expect(src).toContain('this._db = this.trackDb(rawDb);');
     expect(src).toContain('PGlite.create({');
     expect(src).toContain('https://github.com/garrytan/gbrain/issues/223');
     expect(src).toContain('gbrain doctor');

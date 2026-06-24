@@ -26,6 +26,16 @@
  *   5. DOUBLE-DISCONNECT THEN CONNECT: after disconnect, a fresh
  *      connect() sees clean state and succeeds.
  *
+ *   6. TRACKED DB PROXY: public PGLite getters still use the native
+ *      PGLite instance as their receiver, so private-field getters like
+ *      `ready` and `closed` keep working after the in-flight wrapper.
+ *
+ *   7. IN-FLIGHT DRAIN: `disconnect()` waits for PGLite query/sql/
+ *      exec/transaction work that is still running underneath an aborted
+ *      caller before invoking `db.close()`. PGLite has no kernel-level
+ *      cancellation; an abort only releases the JS caller, not the WASM
+ *      operation.
+ *
  * Marked .serial because PGLite WASM cold-start dominates wallclock
  * for fresh-engine-per-test cases — running these in the parallel
  * shard pool would starve other PGLite tests of cold-start time.
@@ -39,6 +49,23 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 function newTempDataDir(): string {
   return mkdtempSync(join(tmpdir(), 'gbrain-disconnect-test-'));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type MutablePgliteDbForDisconnectTest = {
+  query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }>;
+  exec: (sql: string) => Promise<unknown[]>;
+  transaction: <T>(fn: (tx: unknown) => Promise<T>) => Promise<T>;
+  close: () => Promise<void>;
+  ready: boolean;
+  closed: boolean;
+};
+
+function internals(engine: PGLiteEngine): { _db: MutablePgliteDbForDisconnectTest | null } {
+  return engine as unknown as { _db: MutablePgliteDbForDisconnectTest | null };
 }
 
 describe('PGLiteEngine.disconnect() — v0.41.8.0 lifecycle invariants', () => {
@@ -214,6 +241,159 @@ describe('PGLiteEngine.disconnect() — v0.41.8.0 lifecycle invariants', () => {
       const result = await engine.executeRaw<{ ok: number }>('SELECT 1 AS ok');
       expect(result[0].ok).toBe(1);
       await engine.disconnect();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test('TRACKED DB PROXY: public PGLite getters keep their native receiver', async () => {
+    const dataDir = newTempDataDir();
+    try {
+      const engine = new PGLiteEngine();
+      await engine.connect({ database_path: dataDir });
+      await engine.initSchema();
+
+      const db = engine.db as unknown as { ready: boolean; closed: boolean };
+      expect(() => db.ready).not.toThrow();
+      expect(db.ready).toBe(true);
+      expect(() => db.closed).not.toThrow();
+      expect(db.closed).toBe(false);
+
+      await engine.disconnect();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test('IN-FLIGHT DRAIN: disconnect waits for aborted executeRaw query before close', async () => {
+    const dataDir = newTempDataDir();
+    try {
+      const engine = new PGLiteEngine();
+      await engine.connect({ database_path: dataDir });
+      await engine.initSchema();
+
+      const eng = internals(engine);
+
+      let resolveQuery!: () => void;
+      let querySettled = false;
+      let closeCalled = false;
+      let closeSawUnsettledQuery = false;
+      const realClose = eng._db!.close.bind(eng._db!);
+
+      eng._db!.query = async () => {
+        await new Promise<void>((resolve) => {
+          resolveQuery = resolve;
+        });
+        querySettled = true;
+        return { rows: [{ ok: 1 }] };
+      };
+      eng._db!.close = async () => {
+        closeCalled = true;
+        closeSawUnsettledQuery = !querySettled;
+        return realClose();
+      };
+
+      const controller = new AbortController();
+      const raw = engine.executeRaw<{ ok: number }>('SELECT 1 AS ok', [], {
+        signal: controller.signal,
+      });
+      controller.abort();
+      await expect(raw).rejects.toThrow('aborted');
+
+      const disconnecting = engine.disconnect();
+      await sleep(20);
+      expect(closeCalled).toBe(false);
+
+      resolveQuery();
+      await disconnecting;
+      expect(closeCalled).toBe(true);
+      expect(closeSawUnsettledQuery).toBe(false);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test('IN-FLIGHT DRAIN: disconnect waits for direct exec before close', async () => {
+    const dataDir = newTempDataDir();
+    try {
+      const engine = new PGLiteEngine();
+      await engine.connect({ database_path: dataDir });
+      await engine.initSchema();
+
+      const eng = internals(engine);
+
+      let resolveExec!: () => void;
+      let execSettled = false;
+      let closeCalled = false;
+      let closeSawUnsettledExec = false;
+      const realClose = eng._db!.close.bind(eng._db!);
+
+      eng._db!.exec = async () => {
+        await new Promise<void>((resolve) => {
+          resolveExec = resolve;
+        });
+        execSettled = true;
+        return [];
+      };
+      eng._db!.close = async () => {
+        closeCalled = true;
+        closeSawUnsettledExec = !execSettled;
+        return realClose();
+      };
+
+      const pendingExec = engine.db.exec('SELECT 1');
+      const disconnecting = engine.disconnect();
+      await sleep(20);
+      expect(closeCalled).toBe(false);
+
+      resolveExec();
+      await expect(pendingExec).resolves.toEqual([]);
+      await disconnecting;
+      expect(closeCalled).toBe(true);
+      expect(closeSawUnsettledExec).toBe(false);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test('IN-FLIGHT DRAIN: disconnect waits for transaction before close', async () => {
+    const dataDir = newTempDataDir();
+    try {
+      const engine = new PGLiteEngine();
+      await engine.connect({ database_path: dataDir });
+      await engine.initSchema();
+
+      const eng = internals(engine);
+
+      let resolveTransaction!: () => void;
+      let transactionSettled = false;
+      let closeCalled = false;
+      let closeSawUnsettledTransaction = false;
+      const realClose = eng._db!.close.bind(eng._db!);
+
+      eng._db!.transaction = async <T>(fn: (tx: unknown) => Promise<T>) => {
+        await new Promise<void>((resolve) => {
+          resolveTransaction = resolve;
+        });
+        transactionSettled = true;
+        return fn({});
+      };
+      eng._db!.close = async () => {
+        closeCalled = true;
+        closeSawUnsettledTransaction = !transactionSettled;
+        return realClose();
+      };
+
+      const pendingTransaction = engine.transaction(async () => 'committed');
+      const disconnecting = engine.disconnect();
+      await sleep(20);
+      expect(closeCalled).toBe(false);
+
+      resolveTransaction();
+      await expect(pendingTransaction).resolves.toBe('committed');
+      await disconnecting;
+      expect(closeCalled).toBe(true);
+      expect(closeSawUnsettledTransaction).toBe(false);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
