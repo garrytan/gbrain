@@ -2029,7 +2029,10 @@ export async function runCycle(
           checkAborted(opts.signal);
           progress.start('cycle.propose_takes');
           const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined }) as Promise<PhaseResult>);
+          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, {
+            repoPath: brainDir ?? undefined,
+            yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
+          }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
@@ -2040,7 +2043,9 @@ export async function runCycle(
           checkAborted(opts.signal);
           progress.start('cycle.grade_takes');
           const { runPhaseGradeTakes } = await import('./cycle/grade-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, {}) as Promise<PhaseResult>);
+          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, {
+            yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
+          }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
@@ -2051,7 +2056,9 @@ export async function runCycle(
           checkAborted(opts.signal);
           progress.start('cycle.calibration_profile');
           const { runPhaseCalibrationProfile } = await import('./cycle/calibration-profile.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseCalibrationProfile(calibrationCtx, {}) as Promise<PhaseResult>);
+          const { result, duration_ms } = await timePhase(() => runPhaseCalibrationProfile(calibrationCtx, {
+            yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
+          }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
@@ -2342,17 +2349,15 @@ export async function runCycle(
       const isSplitAutopilotSourceCycle =
         phases.length === NON_GLOBAL_PHASES.length
         && NON_GLOBAL_PHASES.every((phase) => phaseSet.has(phase));
-      // #2194 fix #3 (the cycle split): `last_source_cycle_at` is the per-source
-      // gate for source-scoped phases. Only the split autopilot job with exactly
-      // NON_GLOBAL_PHASES skips `last_full_cycle_at`; manual source cycles keep
-      // the legacy freshness contract that doctor/dream callers already read.
-      if (!(isSplitAutopilotSourceCycle && status === 'partial')) {
-        const update: Record<string, string> = { last_source_cycle_at: nowIso };
-        if (!isSplitAutopilotSourceCycle) {
-          update.last_full_cycle_at = nowIso;
-        }
-        await engine.updateSourceConfig(opts.sourceId, update);
+      // `last_source_cycle_at` is the freshness gate for source-scoped phases.
+      // Split autopilot jobs intentionally skip the legacy full-cycle stamp, but
+      // they still need to mark the source-scoped timestamp even when the report
+      // status is `partial` because the global phases were omitted by design.
+      const update: Record<string, string> = { last_source_cycle_at: nowIso };
+      if (!isSplitAutopilotSourceCycle) {
+        update.last_full_cycle_at = nowIso;
       }
+      await engine.updateSourceConfig(opts.sourceId, update);
     } catch (e) {
       // Best-effort; cycle already succeeded by the time we get here.
       console.warn(`[cycle] failed to write last_source_cycle_at for source ${opts.sourceId}: ${e instanceof Error ? e.message : String(e)}`);

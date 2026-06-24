@@ -458,6 +458,39 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     expect(await readLastFullCycleAt('beta')).toBeNull();
   }, 60_000);
 
+  test('bare --drain resolves cwd source like sources current (dry-run, no LLM)', async () => {
+    await seedSource('gbrain');
+    await engine.putPage(
+      'meetings/drain-source-proof',
+      {
+        title: 'Drain source proof',
+        type: 'meeting',
+        compiled_truth: 'source-scoped backlog '.repeat(40),
+        frontmatter: { type: 'meeting' },
+        timeline: '',
+      },
+      { sourceId: 'gbrain' },
+    );
+
+    const oldCwd = process.cwd();
+    const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
+    const logSpy = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      process.chdir(repo);
+      await runDream(engine, ['--drain', '--dry-run', '--json']);
+    } catch (e: any) {
+      expect(e.message).toBe('EXIT');
+    } finally {
+      process.chdir(oldCwd);
+    }
+
+    expect(exitSpy).toHaveBeenCalledWith(3);
+    const parsed = JSON.parse(logSpy.mock.calls.flat().join('\n'));
+    expect(parsed.remaining).toBe(1);
+    exitSpy.mockRestore();
+    logSpy.mockRestore();
+  }, 60_000);
+
   // ─── --source-id alias equivalence (D3) ─────────────────────────────
 
   test('--source-id <existing> is equivalent to --source (writes timestamp)', async () => {

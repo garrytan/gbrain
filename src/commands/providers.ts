@@ -9,6 +9,7 @@ import { listRecipes, getRecipe } from '../core/ai/recipes/index.ts';
 import { configureGateway, embedOne, isAvailable as gwIsAvailable, chat as gwChat } from '../core/ai/gateway.ts';
 import { probeOllama, probeLMStudio } from '../core/ai/probes.ts';
 import { loadConfig } from '../core/config.ts';
+import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
 import { AIConfigError, AITransientError } from '../core/ai/errors.ts';
 import type { Recipe } from '../core/ai/types.ts';
 
@@ -32,16 +33,11 @@ interface ProviderOption {
 }
 
 function configureFromEnv(): void {
-  const config = loadConfig();
-  configureGateway({
-    embedding_model: config?.embedding_model,
-    embedding_dimensions: config?.embedding_dimensions,
-    expansion_model: config?.expansion_model,
-    chat_model: config?.chat_model,
-    chat_fallback_chain: config?.chat_fallback_chain,
-    base_urls: config?.provider_base_urls,
-    env: { ...process.env },
-  });
+  configureGateway(loadGatewayConfig());
+}
+
+function loadGatewayConfig() {
+  return buildGatewayConfig(loadConfig() ?? { engine: 'pglite' });
 }
 
 export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): boolean {
@@ -136,10 +132,11 @@ EXAMPLES
 }
 
 function runList(_args: string[]): void {
-  console.log(formatRecipeTable(listRecipes()));
+  console.log(formatRecipeTable(listRecipes(), loadGatewayConfig().env));
 }
 
 async function runTest(args: string[]): Promise<void> {
+  const baseGatewayConfig = loadGatewayConfig();
   const modelIdx = args.indexOf('--model');
   const modelArg = modelIdx >= 0 ? args[modelIdx + 1] : undefined;
 
@@ -183,14 +180,14 @@ async function runTest(args: string[]): Promise<void> {
     if (tpArg === 'embedding') {
       const dims = recipe?.touchpoints.embedding?.default_dims ?? 1536;
       configureGateway({
+        ...baseGatewayConfig,
         embedding_model: modelArg,
         embedding_dimensions: dims,
-        env: { ...process.env },
       });
     } else {
       configureGateway({
+        ...baseGatewayConfig,
         chat_model: modelArg,
-        env: { ...process.env },
       });
     }
     void modelId; // intentionally unused but preserved for readability
@@ -278,6 +275,7 @@ async function runExplain(args: string[]): Promise<void> {
   const asJson = args.includes('--json') || args.includes('-j');
 
   const recipes = listRecipes();
+  const effectiveEnv = loadGatewayConfig().env;
   const env_detected = {
     OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
     GOOGLE_GENERATIVE_AI_API_KEY: !!process.env.GOOGLE_GENERATIVE_AI_API_KEY,
@@ -302,7 +300,7 @@ async function runExplain(args: string[]): Promise<void> {
         dims: m.default_dims,
         cost_per_1m_tokens_usd: m.cost_per_1m_tokens_usd,
         price_last_verified: m.price_last_verified,
-        env_ready: envReady(r) || (r.id === 'ollama' && ollama.models_endpoint_valid === true),
+        env_ready: envReady(r, effectiveEnv) || (r.id === 'ollama' && ollama.models_endpoint_valid === true),
         tier: r.tier,
         pros: prosFor(r, 'embedding'),
         cons: consFor(r),
@@ -316,7 +314,7 @@ async function runExplain(args: string[]): Promise<void> {
         model: m.models[0],
         cost_per_1m_tokens_usd: m.cost_per_1m_tokens_usd,
         price_last_verified: m.price_last_verified,
-        env_ready: envReady(r),
+        env_ready: envReady(r, effectiveEnv),
         tier: r.tier,
         pros: prosFor(r, 'expansion'),
         cons: consFor(r),
@@ -331,7 +329,7 @@ async function runExplain(args: string[]): Promise<void> {
         cost_per_1m_input_usd: m.cost_per_1m_input_usd,
         cost_per_1m_output_usd: m.cost_per_1m_output_usd,
         price_last_verified: m.price_last_verified,
-        env_ready: envReady(r),
+        env_ready: envReady(r, effectiveEnv),
         tier: r.tier,
         pros: prosFor(r, 'chat'),
         cons: consFor(r),

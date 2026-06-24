@@ -45,8 +45,9 @@ describe('runExtractAtomsDrain (issue #1678)', () => {
 
   it('stops at the wallclock window with remaining > 0', async () => {
     // SYNC stepping clock: now() #1 sets deadline (0+100=100); the while-check
-    // then sees 50, 50 (two batches), then 999999 → past deadline → stop.
-    const times = [0, 50, 50, 999_999];
+    // and post-batch checks stay under deadline for two batches, then the next
+    // post-batch check sees 999999 → past deadline → stop.
+    const times = [0, 50, 50, 50, 999_999];
     let ti = 0;
     const now = () => times[Math.min(ti++, times.length - 1)];
     const result = await runExtractAtomsDrain(
@@ -132,5 +133,6 @@ describe('shared wiring helper holds the cycle lock (5A)', () => {
     expect(src).toContain('runExtractAtomsDrainForSource');
     expect(src).toContain('cycleLockIdFor(opts.sourceId)');
     expect(src).toContain('withRefreshingLock(engine, lockId');
+    expect(src).toContain('opts.extractionSourceId ?? opts.sourceId ??');
   });
 });

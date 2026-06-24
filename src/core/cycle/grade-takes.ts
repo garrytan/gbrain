@@ -429,7 +429,7 @@ class GradeTakesPhase extends BaseCyclePhase {
     const now = new Date();
     for (const take of takes) {
       result.takes_scanned += 1;
-      this.tick(opts);
+      await this.tickWithYield(opts);
 
       if (!takeIsOldEnough(take, minAgeMonths, now)) {
         result.too_recent += 1;

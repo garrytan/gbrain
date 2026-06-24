@@ -101,6 +101,15 @@ export interface ExtractAtomsOpts {
    */
   yieldDuringPhase?: () => Promise<void>;
   /**
+   * Optional wallclock deadline for caller-bounded batches. The phase checks
+   * before starting each item and passes the remaining budget as an abort
+   * signal to the LLM call, so a drain window can stop inside a batch instead
+   * of only between batches.
+   */
+  deadlineMs?: number;
+  /** Test seam for deadline checks. Production uses Date.now. */
+  _now?: () => number;
+  /**
    * v0.41.19.0 (T4): progress reporter for in-phase ticks. Cycle.ts
    * passes the SAME reporter (not a child — codex caught the path-
    * collision bug where `progress.child('extract_atoms')` under parent
@@ -455,6 +464,19 @@ export async function runPhaseExtractAtoms(
   const failures: Array<{ source: string; error: string }> = [];
   let estimatedSpendUsd = 0;
   const budgetCap = DEFAULT_BUDGET_USD;
+  let deadlineElapsed = false;
+  const now = opts._now ?? Date.now;
+  const hasDeadline = Number.isFinite(opts.deadlineMs);
+
+  function remainingDeadlineMs(): number | null {
+    if (!hasDeadline || opts.deadlineMs === undefined) return null;
+    return opts.deadlineMs - now();
+  }
+
+  function isPastDeadline(): boolean {
+    const remaining = remainingDeadlineMs();
+    return remaining !== null && remaining <= 0;
+  }
 
   // v0.41.19.0 (T3): throttled yield helper. Fires `opts.yieldDuringPhase`
   // every 30s. Cycle.ts threads `buildYieldDuringPhase(lock, outer)` so
@@ -481,6 +503,10 @@ export async function runPhaseExtractAtoms(
 
   for (const item of work) {
     await maybeYield();
+    if (isPastDeadline()) {
+      deadlineElapsed = true;
+      break;
+    }
     if (estimatedSpendUsd >= budgetCap) {
       if (item.kind === 'transcript') transcriptsSkipped++;
       else pagesSkipped++;
@@ -488,6 +514,10 @@ export async function runPhaseExtractAtoms(
     }
 
     const originLabel = item.kind === 'transcript' ? item.filePath : item.slug;
+    const remainingMs = remainingDeadlineMs();
+    const abortSignal = remainingMs === null
+      ? undefined
+      : AbortSignal.timeout(Math.max(1, remainingMs));
     try {
       const result = await chat({
         budgetLabel: 'cycle.extract_atoms',
@@ -499,11 +529,16 @@ export async function runPhaseExtractAtoms(
           },
         ],
         maxTokens: 2000,
+        abortSignal,
       });
       // Post-await yield: closes the "long LLM call past TTL" hazard
       // codex flagged. The 30s throttle inside maybeYield bounds the
       // actual refresh rate so this is cheap when calls are fast.
       await maybeYield();
+      if (isPastDeadline()) {
+        deadlineElapsed = true;
+        break;
+      }
 
       // Rough cost estimate — Haiku at ~$0.80/M input + $4/M output
       estimatedSpendUsd +=
@@ -559,6 +594,10 @@ export async function runPhaseExtractAtoms(
       // Reporter rate-limits to ~1 line/sec; safe to tick every iter.
       opts.progress?.tick(1, `${totalAtomsExtracted} atoms / ${duplicatesSkipped} skipped`);
     } catch (err) {
+      if (abortSignal?.aborted || isPastDeadline()) {
+        deadlineElapsed = true;
+        break;
+      }
       failures.push({
         source: originLabel,
         error: err instanceof Error ? err.message : String(err),
@@ -624,6 +663,7 @@ export async function runPhaseExtractAtoms(
       budget_usd: budgetCap,
       source_id: sourceId,
       dry_run: opts.dryRun ?? false,
+      deadline_elapsed: deadlineElapsed,
     },
   };
 }

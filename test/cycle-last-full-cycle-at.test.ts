@@ -99,7 +99,7 @@ describe('runCycle last_source_cycle_at exit hook', () => {
     });
   });
 
-  test('partial split autopilot per-source cycle does not mark source fresh', async () => {
+  test('partial split autopilot per-source cycle writes source freshness without legacy full-cycle stamp', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       await seedSource('split-alpha');
 
@@ -110,7 +110,7 @@ describe('runCycle last_source_cycle_at exit hook', () => {
       });
       expect(report.status).toBe('partial');
 
-      expect(await readLastSourceCycleAt('split-alpha')).toBeNull();
+      expect(await readLastSourceCycleAt('split-alpha')).not.toBeNull();
       expect(await readLastFullCycleAt('split-alpha')).toBeNull();
     });
   });

@@ -55,6 +55,11 @@ export interface BasePhaseOpts {
   budgetUsd?: number;
   /** Optional injected BudgetMeter (tests). When set, replaces the default constructed one. */
   meter?: BudgetMeter;
+  /**
+   * Optional keepalive hook from the outer cycle. Long-running phase loops pulse
+   * this so the cycle DB lock stays fresh while they work.
+   */
+  yieldDuringPhase?: () => Promise<void>;
 }
 
 export abstract class BaseCyclePhase {
@@ -107,6 +112,25 @@ export abstract class BaseCyclePhase {
   protected tick(opts: BasePhaseOpts, message?: string, delta = 1): void {
     if (!opts.reporter) return;
     opts.reporter.tick(delta, message);
+  }
+
+  /**
+   * Tick progress and pulse the outer keepalive. Keepalive failures are best-effort:
+   * the phase keeps running so one missed refresh attempt doesn't abort useful work.
+   */
+  protected async tickWithYield(
+    opts: BasePhaseOpts,
+    message?: string,
+    delta = 1,
+  ): Promise<void> {
+    this.tick(opts, message, delta);
+    if (!opts.yieldDuringPhase) return;
+    try {
+      await opts.yieldDuringPhase();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[${this.name}] yieldDuringPhase failed (non-fatal): ${msg}`);
+    }
   }
 
   /**

@@ -456,6 +456,7 @@ async function runDrain(
   const { runExtractAtomsDrainForSource } = await import('../core/cycle/extract-atoms-drain.ts');
 
   const extractionSourceId = resolvedSourceId ?? 'default';
+  const lockSourceId = opts.source === null ? undefined : resolvedSourceId;
 
   // Dry-run: preview the backlog without holding the lock or extracting.
   if (opts.dryRun) {
@@ -477,7 +478,8 @@ async function runDrain(
     // DECISION 5A: the lock/batch/count wiring lives in the shared helper so
     // the CLI path, the Minion handler, and autopilot's auto-drain can't drift.
     result = await runExtractAtomsDrainForSource(engine, {
-      sourceId: resolvedSourceId,
+      sourceId: lockSourceId,
+      extractionSourceId,
       windowSeconds: opts.windowSeconds,
       brainDir: brainDir ?? undefined,
       onBatch: opts.json ? undefined : ({ batch, extracted, remaining }) => {
@@ -527,11 +529,12 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   //      last_full_cycle_at to an archived source would mask data
   //      staleness when the source is later restored)
   let resolvedSourceId: string | undefined;
-  if (opts.source !== null) {
+  if (opts.source !== null || opts.drain) {
     if (engine === null) {
+      const flag = opts.drain ? '--drain' : '--source <id>';
       console.error(
-        'gbrain dream --source <id> requires a connected brain ' +
-        '(no engine available); omit --source or run `gbrain init` first',
+        `gbrain dream ${flag} requires a connected brain ` +
+        '(no engine available); omit the flag or run `gbrain init` first',
       );
       process.exit(1);
     }
@@ -560,7 +563,11 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     }
   }
 
-  const brainDir = await resolveBrainDir(engine, opts.dir, resolvedSourceId);
+  const brainDirSourceId =
+    opts.source !== null || (opts.drain && resolvedSourceId !== undefined && resolvedSourceId !== 'default')
+      ? resolvedSourceId
+      : undefined;
+  const brainDir = await resolveBrainDir(engine, opts.dir, brainDirSourceId);
   // Both-null is the only hard error: no local checkout AND no DB connection
   // means neither filesystem phases nor DB phases can run. With an engine but
   // no checkout, the cycle skips filesystem phases and runs DB-only phases

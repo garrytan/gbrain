@@ -327,4 +327,22 @@ describe('runPhaseGradeTakes — phase integration', () => {
     expect((details.warnings as string[]).length).toBeGreaterThan(0);
     expect((details.warnings as string[])[0]).toContain('judge timeout');
   });
+
+  test('pulses yieldDuringPhase while scanning takes', async () => {
+    const takes = [
+      buildTake({ id: 1, sinceDate: '2023-01-01' }),
+      buildTake({ id: 2, sinceDate: '2023-01-01' }),
+    ];
+    const { engine } = buildMockEngine({ takes });
+    const judge: JudgeFn = async () => ({ verdict: 'correct', confidence: 0.9, reasoning: 'held' });
+    let yieldCalls = 0;
+
+    await runPhaseGradeTakes(buildCtx(engine), {
+      judge,
+      evidenceRetriever: async () => 'evidence',
+      yieldDuringPhase: async () => { yieldCalls += 1; },
+    });
+
+    expect(yieldCalls).toBe(2);
+  });
 });

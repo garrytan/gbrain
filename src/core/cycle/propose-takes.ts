@@ -368,7 +368,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
 
     for (const page of pages) {
       result.pages_scanned += 1;
-      this.tick(opts);
+      await this.tickWithYield(opts);
 
       // Skip pages that have NO prose body (e.g. metadata-only entity stubs).
       const body = page.compiled_truth ?? '';

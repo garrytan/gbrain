@@ -34,7 +34,7 @@ export interface ExtractAtomsDrainDeps {
    */
   withLock: <T>(work: () => Promise<T>) => Promise<T>;
   /** Process one bounded batch (rediscovers eligibility). Returns counts. */
-  runBatch: () => Promise<{ extracted: number; skipped: number }>;
+  runBatch: (info: { deadlineMs: number }) => Promise<{ extracted: number; skipped: number }>;
   /** Count remaining eligible-but-unextracted pages, or null on query error. */
   countRemaining: () => Promise<number | null>;
   /** Injectable clock. Production: Date.now. */
@@ -81,11 +81,13 @@ export async function runExtractAtomsDrain(
       const before = await deps.countRemaining();
       if (before === 0) { stopped = 'drained'; break; }
 
-      const r = await deps.runBatch();
+      const r = await deps.runBatch({ deadlineMs: deadline });
       extracted += r.extracted;
       skipped += r.skipped;
       batches++;
       deps.onBatch?.({ batch: batches, extracted: r.extracted, remaining: before });
+
+      if (deps.now() >= deadline) { stopped = 'window'; break; }
 
       // Stop if a batch made zero forward progress — extraction is failing or
       // everything left is ineligible (e.g. all skipped). Prevents a hot loop
@@ -119,13 +121,19 @@ export async function runExtractAtomsDrain(
 
 export interface DrainForSourceOpts {
   /**
-   * The RESOLVED source id, or `undefined` for the legacy unscoped cycle.
+   * The source id used for cycle-lock identity, or `undefined` for the legacy
+   * unscoped cycle lock.
    * `undefined` → `cycleLockIdFor(undefined)` = the bare `gbrain-cycle` lock the
    * unscoped routine cycle holds; a real id → `gbrain-cycle:<id>`. Either way the
-   * drain and the routine cycle for THIS source genuinely contend (Codex #9).
-   * The extraction/backlog source is `sourceId ?? 'default'`.
+   * drain and the matching routine cycle genuinely contend (Codex #9).
    */
   sourceId: string | undefined;
+  /**
+   * Source to count/extract. Defaults to `sourceId ?? 'default'` for legacy
+   * callers. Bare CLI drains can resolve cwd to a concrete extraction source
+   * while still holding the legacy unscoped cycle lock.
+   */
+  extractionSourceId?: string;
   /** Wallclock budget in seconds. */
   windowSeconds: number;
   /** Brain checkout dir, threaded to `runPhaseExtractAtoms` (optional — DB-only ok). */
@@ -144,17 +152,18 @@ export async function runExtractAtomsDrainForSource(
   const { runPhaseExtractAtoms, countExtractAtomsBacklog } = await import('./extract-atoms.ts');
   const { cycleLockIdFor } = await import('../cycle.ts');
 
-  const extractionSourceId = opts.sourceId ?? 'default';
+  const extractionSourceId = opts.extractionSourceId ?? opts.sourceId ?? 'default';
   const lockId = cycleLockIdFor(opts.sourceId);
 
   return runExtractAtomsDrain(
     {
       withLock: (work) => withRefreshingLock(engine, lockId, work, { ttlMinutes: 5 }),
-      runBatch: async () => {
+      runBatch: async ({ deadlineMs }) => {
         const r = await runPhaseExtractAtoms(engine, {
           sourceId: extractionSourceId,
           dryRun: false,
           brainDir: opts.brainDir,
+          deadlineMs,
         });
         const d = (r.details ?? {}) as Record<string, unknown>;
         return {

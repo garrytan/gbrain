@@ -122,17 +122,25 @@ describe('dream CLI flag wiring', () => {
     test('drain routes through the shared helper with the resolved source (5A)', () => {
       // v0.42.10.0 (#1685 GAP D / 5A): the lock+batch+count wiring moved into
       // runExtractAtomsDrainForSource so the CLI, the Minion handler, and
-      // autopilot share ONE drain path. dream threads resolvedSourceId so the
-      // helper picks cycleLockIdFor(resolvedSourceId) — the same lock the routine
-      // cycle holds for that source. The lock-id contract is now pinned in
+      // autopilot share ONE drain path. dream splits lockSourceId from
+      // extractionSourceId so bare drains can resolve cwd for the backlog while
+      // still contending with the legacy unscoped cycle lock. The lock-id
+      // contract is now pinned in
       // test/extract-atoms-drain.test.ts ("shared wiring helper holds the cycle lock").
       expect(dreamSrc).toContain('runExtractAtomsDrainForSource');
-      expect(dreamSrc).toContain('sourceId: resolvedSourceId');
+      expect(dreamSrc).toContain('sourceId: lockSourceId');
+      expect(dreamSrc).toContain('extractionSourceId');
     });
 
     test('drain reports remaining + exits non-zero when incomplete', () => {
       expect(dreamSrc).toContain('EXIT_DRAIN_INCOMPLETE');
       expect(dreamSrc).toContain('cycle_already_running');
+    });
+
+    test('implicit default drain preserves legacy sync.repo_path brainDir fallback', () => {
+      expect(dreamSrc).toContain('const brainDirSourceId');
+      expect(dreamSrc).toContain("resolvedSourceId !== 'default'");
+      expect(dreamSrc).toContain('resolveBrainDir(engine, opts.dir, brainDirSourceId)');
     });
   });
 });

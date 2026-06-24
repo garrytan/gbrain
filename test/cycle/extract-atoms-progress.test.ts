@@ -126,4 +126,36 @@ describe('extract_atoms progress wiring (T4)', () => {
     });
     expect(result.phase).toBe('extract_atoms');
   });
+
+  test('deadline stops inside a batch before starting the next work item', async () => {
+    let chatCalls = 0;
+    let nowCalls = 0;
+    const times = [0, 0, 0, 200];
+    const result = await runPhaseExtractAtoms(engine, {
+      sourceId: 'default',
+      deadlineMs: 100,
+      _now: () => times[Math.min(nowCalls++, times.length - 1)],
+      _transcripts: [
+        { filePath: '/tmp/t1.txt', content: 'a', contentHash: 'd1'.repeat(8) },
+        { filePath: '/tmp/t2.txt', content: 'b', contentHash: 'd2'.repeat(8) },
+      ],
+      _pages: [],
+      _chat: async () => {
+        chatCalls++;
+        return {
+          text: JSON.stringify([{ title: 'A', atom_type: 'insight', body: 'body a' }]),
+          blocks: [{ type: 'text', text: '[]' }],
+          stopReason: 'end',
+          usage: { input_tokens: 100, output_tokens: 50, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'anthropic:claude-haiku-4-5',
+          providerId: 'anthropic',
+        };
+      },
+    });
+
+    expect(chatCalls).toBe(1);
+    expect((result.details as any).deadline_elapsed).toBe(true);
+    expect((result.details as any).transcripts_processed).toBe(1);
+    expect((result.details as any).transcripts_total).toBe(2);
+  });
 });

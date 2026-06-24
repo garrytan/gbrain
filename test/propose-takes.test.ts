@@ -732,4 +732,21 @@ New prose appended here.`;
     expect(putPages).toHaveLength(1);
     expect(putPages[0]!.opts?.sourceId).toBe('default');
   });
+
+  test('pulses yieldDuringPhase while scanning pages', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/p1', body: 'I think pricing resets in Q4.' }),
+      buildPage({ slug: 'wiki/p2', body: 'I bet the founder hires a COO.' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => [];
+    let yieldCalls = 0;
+
+    await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      yieldDuringPhase: async () => { yieldCalls += 1; },
+    });
+
+    expect(yieldCalls).toBe(2);
+  });
 });

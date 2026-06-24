@@ -8,6 +8,7 @@
 import { describe, test, expect } from 'bun:test';
 import { formatRecipeTable, envReady } from '../src/commands/providers.ts';
 import { listRecipes, getRecipe } from '../src/core/ai/recipes/index.ts';
+import { buildGatewayConfig } from '../src/core/ai/build-gateway-config.ts';
 import type { Recipe } from '../src/core/ai/types.ts';
 
 describe('envReady', () => {
@@ -52,6 +53,14 @@ describe('formatRecipeTable', () => {
     const openaiLine = out.split('\n').find(line => line.startsWith('openai'));
     expect(openaiLine).toBeDefined();
     expect(openaiLine).toContain('✓ ready');
+  });
+
+  test('config-backed provider key also renders as ready when folded into gateway env', () => {
+    const env = buildGatewayConfig({ engine: 'pglite', anthropic_api_key: 'sk-ant' }).env;
+    const out = formatRecipeTable(listRecipes(), env);
+    const anthropicLine = out.split('\n').find(line => line.startsWith('anthropic'));
+    expect(anthropicLine).toBeDefined();
+    expect(anthropicLine).toContain('✓ ready');
   });
 
   test('shows ✗ missing <ENV> for missing provider', () => {
