@@ -2519,12 +2519,12 @@ export class PGLiteEngine implements BrainEngine {
     const rows = buildLinkRows(links);
     const result = await executeRawJsonb(
       this,
-      `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, link_kind, origin_page_id, origin_field)
-       SELECT f.id, t.id, v.link_type, v.context, v.link_source, v.link_kind, o.id, v.origin_field
+      `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, link_kind, origin_page_id, origin_field, resolution_type)
+       SELECT f.id, t.id, v.link_type, v.context, v.link_source, v.link_kind, o.id, v.origin_field, v.resolution_type
        FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(
          from_slug text, to_slug text, link_type text, context text, link_source text,
          origin_slug text, origin_field text, from_source_id text, to_source_id text,
-         origin_source_id text, link_kind text
+         origin_source_id text, link_kind text, resolution_type text
        )
        JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id
        JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id
