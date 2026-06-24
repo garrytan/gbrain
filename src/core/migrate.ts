@@ -3349,6 +3349,27 @@ const MIGRATIONS: Migration[] = [
       $$;
     `,
   },
+  {
+    version: 56,
+    name: 'mcp_surface_request_log_context',
+    sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('access_tokens') IS NOT NULL THEN
+          ALTER TABLE access_tokens
+            ALTER COLUMN scopes SET DEFAULT ARRAY['mcp']::TEXT[];
+          UPDATE access_tokens SET scopes = ARRAY['mcp']::TEXT[] WHERE scopes IS NULL;
+        END IF;
+
+        IF to_regclass('mcp_request_log') IS NOT NULL THEN
+          ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS error_code TEXT;
+          ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS error_reason TEXT;
+          ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS surface_profile TEXT;
+        END IF;
+      END
+      $$;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

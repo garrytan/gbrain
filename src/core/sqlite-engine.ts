@@ -729,7 +729,7 @@ CREATE TABLE IF NOT EXISTS access_tokens (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   token_hash TEXT NOT NULL UNIQUE,
-  scopes TEXT NOT NULL DEFAULT '[]',
+  scopes TEXT NOT NULL DEFAULT '["mcp"]',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   last_used_at TEXT,
   revoked_at TEXT
@@ -744,6 +744,9 @@ CREATE TABLE IF NOT EXISTS mcp_request_log (
   operation TEXT NOT NULL,
   latency_ms INTEGER,
   status TEXT NOT NULL DEFAULT 'success',
+  error_code TEXT,
+  error_reason TEXT,
+  surface_profile TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -827,6 +830,10 @@ export class SQLiteEngine implements BrainEngine {
     if (migrated) {
       db.exec(`INSERT INTO pages_fts(pages_fts) VALUES ('rebuild')`);
     }
+  }
+
+  async prepareMcpHttpSurfaceSchema(): Promise<void> {
+    this.ensureMcpSurfaceRequestLogContextSchema();
   }
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
@@ -5160,7 +5167,7 @@ export class SQLiteEngine implements BrainEngine {
               id TEXT PRIMARY KEY,
               name TEXT NOT NULL,
               token_hash TEXT NOT NULL UNIQUE,
-              scopes TEXT NOT NULL DEFAULT '[]',
+              scopes TEXT NOT NULL DEFAULT '["mcp"]',
               created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
               last_used_at TEXT,
               revoked_at TEXT
@@ -5174,6 +5181,9 @@ export class SQLiteEngine implements BrainEngine {
               operation TEXT NOT NULL,
               latency_ms INTEGER,
               status TEXT NOT NULL DEFAULT 'success',
+              error_code TEXT,
+              error_reason TEXT,
+              surface_profile TEXT,
               created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
           `);
@@ -5779,6 +5789,9 @@ export class SQLiteEngine implements BrainEngine {
           this.repairMemoryMutationEventSessionAttachmentContract();
           this.repairMemoryCandidatePatchTargetKindContract();
           this.ensureCanonicalTargetProposalSchema();
+          break;
+        case 56:
+          this.ensureMcpSurfaceRequestLogContextSchema();
           break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
@@ -8302,6 +8315,78 @@ export class SQLiteEngine implements BrainEngine {
         AND name = ?
     `).get(tableName) as { found: number } | null;
     return Boolean(row);
+  }
+
+  private ensureMcpSurfaceRequestLogContextSchema(): void {
+    if (this.sqliteTableExists('access_tokens')) {
+      const columns = this.database.query(`PRAGMA table_info(access_tokens)`).all() as Array<{
+        name: string;
+        dflt_value: string | null;
+      }>;
+      const names = new Set(columns.map((column) => column.name));
+      if (!names.has('scopes')) {
+        this.database.exec(`ALTER TABLE access_tokens ADD COLUMN scopes TEXT NOT NULL DEFAULT '["mcp"]';`);
+      } else {
+        this.ensureAccessTokenScopesMcpDefault(columns);
+      }
+    }
+
+    if (this.sqliteTableExists('mcp_request_log')) {
+      const columns = this.database.query(`PRAGMA table_info(mcp_request_log)`).all() as Array<{ name: string }>;
+      const names = new Set(columns.map((column) => column.name));
+      const additions = [
+        ['error_code', `ALTER TABLE mcp_request_log ADD COLUMN error_code TEXT`],
+        ['error_reason', `ALTER TABLE mcp_request_log ADD COLUMN error_reason TEXT`],
+        ['surface_profile', `ALTER TABLE mcp_request_log ADD COLUMN surface_profile TEXT`],
+      ] as const;
+      for (const [column, sql] of additions) {
+        if (!names.has(column)) {
+          this.database.exec(`${sql};`);
+        }
+      }
+    }
+  }
+
+  private ensureAccessTokenScopesMcpDefault(columns: Array<{ name: string; dflt_value: string | null }>): void {
+    const scopesColumn = columns.find((column) => column.name === 'scopes');
+    if (scopesColumn?.dflt_value === '\'["mcp"]\'') return;
+    const dependentSql = this.database.query(`
+      SELECT sql
+      FROM sqlite_master
+      WHERE tbl_name = 'access_tokens'
+        AND type IN ('index', 'trigger')
+        AND sql IS NOT NULL
+      ORDER BY type, name
+    `).all() as Array<{ sql: string }>;
+
+    const rebuild = this.database.transaction(() => {
+      this.database.exec(`
+        DROP TABLE IF EXISTS access_tokens__mbrain_old_default;
+        ALTER TABLE access_tokens RENAME TO access_tokens__mbrain_old_default;
+        CREATE TABLE access_tokens (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          token_hash TEXT NOT NULL UNIQUE,
+          scopes TEXT NOT NULL DEFAULT '["mcp"]',
+          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+          last_used_at TEXT,
+          revoked_at TEXT
+        );
+        INSERT INTO access_tokens (id, name, token_hash, scopes, created_at, last_used_at, revoked_at)
+        SELECT id, name, token_hash, COALESCE(scopes, '["mcp"]'), created_at, last_used_at, revoked_at
+        FROM access_tokens__mbrain_old_default;
+        DROP TABLE access_tokens__mbrain_old_default;
+      `);
+      for (const row of dependentSql) {
+        this.database.exec(row.sql);
+      }
+      this.database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_access_tokens_hash
+          ON access_tokens (token_hash)
+          WHERE revoked_at IS NULL;
+      `);
+    });
+    rebuild();
   }
 
   private ensureChunkContentHashSchema(): void {

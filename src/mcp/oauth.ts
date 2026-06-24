@@ -7,6 +7,7 @@ export interface McpOAuthOptions {
   signingSecret?: string;
   accessTokenTtlSeconds?: number;
   refreshTokenTtlSeconds?: number;
+  allowedScopes?: string[];
 }
 
 export interface McpOAuthAccessTokenInput {
@@ -71,6 +72,7 @@ const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const DEFAULT_REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 90;
 const AUTHORIZATION_CODE_TTL_SECONDS = 5 * 60;
 const SAFE_EQUAL_KEY = 'mbrain-oauth-safe-equal-v1';
+const SUPPORTED_OAUTH_SCOPES = ['mcp', 'raw_source', 'canonical_write'] as const;
 
 export function createMcpOAuthState(options: McpOAuthOptions, store: McpOAuthStore = createInMemoryMcpOAuthStore()): McpOAuthState {
   return {
@@ -112,7 +114,7 @@ export async function handleMcpOAuthRequest({
       grant_types_supported: ['authorization_code', 'refresh_token'],
       token_endpoint_auth_methods_supported: ['none'],
       code_challenge_methods_supported: ['S256'],
-      scopes_supported: ['mcp'],
+      scopes_supported: allowedOAuthScopes(state.options),
     }, 200);
   }
 
@@ -300,6 +302,13 @@ async function handleRefreshToken(
   if (!payload || payload.expires_at <= now || (clientId && payload.client_id !== clientId)) {
     return oauthJson({ error: 'invalid_grant' }, 400);
   }
+  const invalidScopes = payload.scope.filter(value => !allowedOAuthScopes(state.options).includes(value));
+  if (invalidScopes.length > 0) {
+    return oauthJson({
+      error: 'invalid_scope',
+      error_description: `Unsupported or disabled OAuth scope(s): ${invalidScopes.join(' ')}`,
+    }, 400);
+  }
   const client = await state.store.getClient(payload.client_id) ?? {
     client_id: payload.client_id,
     client_name: payload.client_name,
@@ -375,16 +384,31 @@ async function validateAuthorizationRequest(
   if (!codeChallenge) {
     return { ok: false, response: oauthJson({ error: 'invalid_request', error_description: 'code_challenge is required.' }, 400) };
   }
+  const scope = parseScope(stringValue(params.scope));
+  const invalidScopes = scope.filter(value => !allowedOAuthScopes(state.options).includes(value));
+  if (invalidScopes.length > 0) {
+    return {
+      ok: false,
+      response: oauthJson({
+        error: 'invalid_scope',
+        error_description: `Unsupported or disabled OAuth scope(s): ${invalidScopes.join(' ')}`,
+      }, 400),
+    };
+  }
   return {
     ok: true,
     client,
     redirectUri,
     codeChallenge,
-    scope: parseScope(stringValue(params.scope)),
+    scope,
   };
 }
 
 function renderApprovalForm(params: Record<string, unknown>): Response {
+  const scopes = parseScope(stringValue(params.scope));
+  const scopeItems = scopes
+    .map(scope => `<li><code>${escapeHtml(scope)}</code>${scope === 'canonical_write' || scope === 'raw_source' ? ' <strong>privileged</strong>' : ''}</li>`)
+    .join('\n');
   const hidden = Object.entries(params)
     .filter(([key]) => key !== 'approval_token')
     .map(([key, value]) => `<input type="hidden" name="${escapeHtml(key)}" value="${escapeHtml(String(value ?? ''))}">`)
@@ -395,6 +419,10 @@ function renderApprovalForm(params: Record<string, unknown>): Response {
   <body>
     <main>
       <h1>Authorize MBrain MCP</h1>
+      <p>Requested scopes:</p>
+      <ul>
+        ${scopeItems}
+      </ul>
       <form method="post" action="/oauth/authorize">
         ${hidden}
         <label>Approval token <input type="password" name="approval_token" autofocus></label>
@@ -447,6 +475,16 @@ function parseScope(raw: string | undefined): string[] {
     .map(value => value.trim())
     .filter(Boolean);
   return values.length > 0 ? values : ['mcp'];
+}
+
+function allowedOAuthScopes(options: McpOAuthOptions): string[] {
+  const allowed = new Set<string>(['mcp']);
+  for (const scope of options.allowedScopes ?? []) {
+    if ((SUPPORTED_OAUTH_SCOPES as readonly string[]).includes(scope)) {
+      allowed.add(scope);
+    }
+  }
+  return [...allowed];
 }
 
 function encodeRefreshToken(

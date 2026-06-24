@@ -22,14 +22,12 @@ import {
   PostgresEngine,
   VERSION,
   MCP_INSTRUCTIONS,
-  isToolVisibleAtTier,
-  resolveAllowedTiers,
+  assertToolCallableInSurfaceProfile,
+  isToolVisibleInSurfaceProfile,
+  resolveMcpSurfaceProfile,
+  surfaceTokenCapabilitiesFromScopes,
 } from './mbrain-core.js';
 import type { OperationContext } from './mbrain-core.js';
-
-// Operations excluded from remote (may exceed 60s Edge Function timeout or bypass local-only repair gates)
-const REMOTE_EXCLUDED = new Set(['sync_brain', 'file_upload', 'get_skillpack', 'admin_put_page']);
-const remoteOps = operations.filter((op: any) => !REMOTE_EXCLUDED.has(op.name));
 
 function assertRemotePutPagePrecondition(toolName: string, rawParams: unknown): void {
   if (toolName !== 'put_page') return;
@@ -73,6 +71,10 @@ function getRemoteToolTierSelection(): string | null {
   return Deno.env.get('MBRAIN_MCP_TOOL_TIER') || null;
 }
 
+function getEdgeSurfaceProfile() {
+  return resolveMcpSurfaceProfile('edge_remote', { toolTierSelection: getRemoteToolTierSelection() });
+}
+
 async function getEngine(): Promise<PostgresEngine> {
   if (!engine) {
     engine = new PostgresEngine();
@@ -89,7 +91,7 @@ function getDirectSql(): ReturnType<typeof postgres> {
 }
 
 // Auth: check bearer token against access_tokens table
-async function authenticateToken(authHeader: string | null): Promise<{ valid: boolean; name?: string; error?: string; status?: number }> {
+async function authenticateToken(authHeader: string | null): Promise<{ valid: boolean; name?: string; scopes?: string[]; error?: string; status?: number }> {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return {
       valid: false,
@@ -108,7 +110,7 @@ async function authenticateToken(authHeader: string | null): Promise<{ valid: bo
   try {
     const conn = getDirectSql();
     const rows = await conn`
-      SELECT name, revoked_at FROM access_tokens
+      SELECT name, revoked_at, scopes FROM access_tokens
       WHERE token_hash = ${hash}
     `;
 
@@ -137,11 +139,28 @@ async function authenticateToken(authHeader: string | null): Promise<{ valid: bo
       };
     }
 
+    const scopes = parseAccessTokenScopes(rows[0].scopes);
+    if (accessTokenExpired(scopes)) {
+      return {
+        valid: false,
+        error: JSON.stringify({
+          error: 'token_expired',
+          message: 'This OAuth access token expired. Use the OAuth refresh token or reconnect.',
+          docs: 'docs/mcp/CHATGPT.md',
+        }),
+        status: 401,
+      };
+    }
+
     // Update last_used_at
     const conn2 = getDirectSql();
     await conn2`UPDATE access_tokens SET last_used_at = now() WHERE token_hash = ${hash}`;
 
-    return { valid: true, name: rows[0].name as string };
+    return {
+      valid: true,
+      name: rows[0].name as string,
+      scopes,
+    };
   } catch {
     return {
       valid: false,
@@ -155,13 +174,41 @@ async function authenticateToken(authHeader: string | null): Promise<{ valid: bo
   }
 }
 
+function parseAccessTokenScopes(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((entry): entry is string => typeof entry === 'string');
+  }
+  if (typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === 'string')
+      : [];
+  } catch {
+    return value.split(',').map(entry => entry.trim()).filter(Boolean);
+  }
+}
+
+function accessTokenExpired(scopes: string[]): boolean {
+  const expiresAt = scopes
+    .map(scope => scope.startsWith('oauth_exp:') ? Number(scope.slice('oauth_exp:'.length)) : null)
+    .find((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  return expiresAt !== undefined && expiresAt <= Math.floor(Date.now() / 1000);
+}
+
 // Log MCP request for auditing
-async function logRequest(tokenName: string, operation: string, latencyMs: number, status: string) {
+async function logRequest(
+  tokenName: string,
+  operation: string,
+  latencyMs: number,
+  status: string,
+  details: { errorCode?: string; errorReason?: string; surfaceProfile?: string } = {},
+) {
   try {
     const conn = getDirectSql();
     await conn`
-      INSERT INTO mcp_request_log (token_name, operation, latency_ms, status)
-      VALUES (${tokenName}, ${operation}, ${latencyMs}, ${status})
+      INSERT INTO mcp_request_log (token_name, operation, latency_ms, status, error_code, error_reason, surface_profile)
+      VALUES (${tokenName}, ${operation}, ${latencyMs}, ${status}, ${details.errorCode ?? null}, ${details.errorReason ?? null}, ${details.surfaceProfile ?? null})
     `;
   } catch {
     // Best effort, don't crash on log failure
@@ -169,8 +216,94 @@ async function logRequest(tokenName: string, operation: string, latencyMs: numbe
   }
 }
 
+async function inferMcpOperation(request: Request): Promise<string> {
+  if (request.method !== 'POST') return request.method.toLowerCase();
+  try {
+    const body = await request.clone().json() as unknown;
+    if (Array.isArray(body)) return 'batch';
+    if (!isRecord(body)) return 'mcp_request';
+    if (body.method === 'tools/call' && isRecord(body.params) && typeof body.params.name === 'string') {
+      return body.params.name;
+    }
+    return typeof body.method === 'string' ? body.method : 'mcp_request';
+  } catch {
+    return 'mcp_request';
+  }
+}
+
+async function classifyMcpResponse(request: Request, response: Response): Promise<{ status: 'success' | 'error'; errorCode?: string; errorReason?: string }> {
+  if (response.status >= 400) return { status: 'error', errorCode: `http_${response.status}` };
+  if (request.method !== 'POST') return { status: 'success' };
+  try {
+    const text = await response.clone().text();
+    const details = extractMcpResponseErrorDetails(text);
+    return details ? { status: 'error', ...details } : { status: 'success' };
+  } catch {
+    return { status: 'success' };
+  }
+}
+
+function extractMcpResponseErrorDetails(text: string): { errorCode?: string; errorReason?: string } | null {
+  const payloadTexts = extractMcpResponsePayloadTexts(text);
+  if (payloadTexts.length === 0) return text.includes('"isError":true') || text.includes('"error":{') ? {} : null;
+  for (const payloadText of payloadTexts) {
+    const details = extractMcpResponsePayloadErrorDetails(payloadText);
+    if (details) return details;
+  }
+  return text.includes('"isError":true') || text.includes('"error":{') ? {} : null;
+}
+
+function extractMcpResponsePayloadTexts(text: string): string[] {
+  const dataLines = text
+    .split('\n')
+    .filter(line => line.startsWith('data:'))
+    .map(line => line.slice('data:'.length).trim())
+    .filter(Boolean);
+  return dataLines.length > 0 ? dataLines : [text].filter(Boolean);
+}
+
+function extractMcpResponsePayloadErrorDetails(payloadText: string): { errorCode?: string; errorReason?: string } | null {
+  try {
+    const payload = JSON.parse(payloadText) as unknown;
+    if (Array.isArray(payload)) {
+      for (const item of payload) {
+        const details = extractMcpResponseObjectErrorDetails(item);
+        if (details) return details;
+      }
+      return null;
+    }
+    return extractMcpResponseObjectErrorDetails(payload);
+  } catch {
+    return payloadText.includes('"isError":true') || payloadText.includes('"error":{') ? {} : null;
+  }
+}
+
+function extractMcpResponseObjectErrorDetails(payload: unknown): { errorCode?: string; errorReason?: string } | null {
+  if (!isRecord(payload)) return null;
+  if (isRecord(payload.error)) {
+    return {
+      errorCode: payload.error.code !== undefined ? String(payload.error.code) : undefined,
+      errorReason: typeof payload.error.message === 'string' ? payload.error.message : undefined,
+    };
+  }
+  if (!isRecord(payload.result) || payload.result.isError !== true) return null;
+  const content = Array.isArray(payload.result.content) ? payload.result.content : [];
+  const textItem = content.find((item): item is { text: string } => isRecord(item) && typeof item.text === 'string');
+  if (!textItem) return {};
+  try {
+    const parsedText = JSON.parse(textItem.text) as unknown;
+    if (!isRecord(parsedText)) return {};
+    return {
+      errorCode: typeof parsedText.error === 'string' ? parsedText.error : undefined,
+      errorReason: typeof parsedText.message === 'string' ? parsedText.message : undefined,
+    };
+  } catch {
+    return { errorReason: textItem.text };
+  }
+}
+
 // Create MCP Server with tool handlers
-function createMcpServer(eng: PostgresEngine): Server {
+function createMcpServer(eng: PostgresEngine, tokenScopes: string[] = []): Server {
   const server = new Server(
     { name: 'mbrain', version: VERSION },
     {
@@ -180,8 +313,8 @@ function createMcpServer(eng: PostgresEngine): Server {
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const allowedTiers = resolveAllowedTiers(getRemoteToolTierSelection());
-    const listedRemoteOps = remoteOps.filter((op: any) => isToolVisibleAtTier(op, allowedTiers));
+    const surfaceProfile = getEdgeSurfaceProfile();
+    const listedRemoteOps = operations.filter((op: any) => isToolVisibleInSurfaceProfile(op, surfaceProfile));
     return {
       tools: listedRemoteOps.map(operationToMcpTool),
     };
@@ -189,8 +322,8 @@ function createMcpServer(eng: PostgresEngine): Server {
 
   server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     const { name, arguments: params } = request.params;
-    const allowedTiers = resolveAllowedTiers(getRemoteToolTierSelection());
-    const op = remoteOps.find((o: any) => o.name === name && isToolVisibleAtTier(o, allowedTiers));
+    const surfaceProfile = getEdgeSurfaceProfile();
+    const op = operations.find((o: any) => o.name === name);
     if (!op) {
       return { content: [{ type: 'text', text: `Error: Unknown tool: ${name}` }], isError: true };
     }
@@ -211,6 +344,9 @@ function createMcpServer(eng: PostgresEngine): Server {
     };
 
     try {
+      assertToolCallableInSurfaceProfile(op, surfaceProfile, {
+        tokenCapabilities: surfaceTokenCapabilitiesFromScopes(tokenScopes),
+      });
       assertRemotePutPagePrecondition(name, params);
       const result = await dispatchOperation(ctx, op, prepareRemoteToolParams(name, params));
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
@@ -291,7 +427,8 @@ app.all('/mcp', async (c) => {
 
   const startTime = Date.now();
   const eng = await getEngine();
-  const server = createMcpServer(eng);
+  const server = createMcpServer(eng, auth.scopes ?? []);
+  const operation = await inferMcpOperation(c.req.raw);
 
   const transport = new WebStandardStreamableHTTPServerTransport({
     // Stateless mode — no sessions needed for single-user personal brain
@@ -304,12 +441,21 @@ app.all('/mcp', async (c) => {
 
     // Log the request (await to ensure it completes before isolate dies)
     const latency = Date.now() - startTime;
-    await logRequest(auth.name || 'unknown', 'mcp_request', latency, 'success');
+    const responseClassification = await classifyMcpResponse(c.req.raw, response);
+    await logRequest(auth.name || 'unknown', operation, latency, responseClassification.status, {
+      surfaceProfile: 'edge_remote',
+      ...(responseClassification.errorCode ? { errorCode: responseClassification.errorCode } : {}),
+      ...(responseClassification.errorReason ? { errorReason: responseClassification.errorReason } : {}),
+    });
 
     return response;
   } catch (e) {
     const latency = Date.now() - startTime;
-    await logRequest(auth.name || 'unknown', 'mcp_request', latency, 'error');
+    await logRequest(auth.name || 'unknown', operation, latency, 'error', {
+      errorCode: 'transport_exception',
+      errorReason: e instanceof Error ? e.message : String(e),
+      surfaceProfile: 'edge_remote',
+    });
     throw e;
   }
 });

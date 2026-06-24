@@ -51,7 +51,32 @@ describe('operation golden manifest', () => {
       required: true,
       nullable: true,
     });
+    expect(putPage?.surface_profile).toMatchObject({
+      effective_tier: 'core',
+      required_capabilities: ['canonical_write'],
+      capability_classification: 'explicit',
+      visible_profiles: ['stdio', 'http_local', 'http_remote', 'edge_remote'],
+      callable_profiles: ['stdio', 'http_local', 'http_remote', 'edge_remote'],
+    });
     expect(putPage?.full_schema_hash).toMatch(/^[a-f0-9]{64}$/);
+
+    const adminPutPage = manifest.operations.find(entry => entry.name === 'admin_put_page');
+    expect(adminPutPage?.surface_profile.forbidden_profiles).toEqual(['http_local', 'http_remote', 'edge_remote']);
+    expect(adminPutPage?.surface_profile.decisions.http_remote.denial_reasons).toContain('forbidden_operation');
+
+    const deletePage = manifest.operations.find(entry => entry.name === 'delete_page');
+    expect(deletePage?.surface_profile.required_capabilities).toEqual(['canonical_write']);
+    expect(deletePage?.surface_profile.capability_classification).toBe('explicit');
+
+    const rawChunks = manifest.operations.find(entry => entry.name === 'request_raw_source_chunks');
+    expect(rawChunks?.surface_profile).toMatchObject({
+      effective_tier: 'admin',
+      required_capabilities: ['raw_source'],
+      capability_classification: 'explicit',
+      visible_profiles: [],
+      callable_profiles: [],
+    });
+    expect(rawChunks?.surface_profile.decisions.http_remote.denial_reasons).toContain('tier_not_callable');
 
     const hidden = manifest.operations.find(entry => entry.name === 'get_skillpack');
     expect(hidden?.cli_exposure.mode).toBe('not_cli');

@@ -176,6 +176,18 @@ describe('migrate', () => {
     expect(schemaSource).toContain("'chunk_strategy', 'qwen3_token_recursive'");
   });
 
+  test('postgres HTTP surface prep matches v56 access token scope default repair', () => {
+    const postgresEngineSource = readFileSync(
+      new URL('../src/core/postgres-engine.ts', import.meta.url),
+      'utf-8',
+    );
+    const prepBody = postgresEngineSource.slice(postgresEngineSource.indexOf('async prepareMcpHttpSurfaceSchema'));
+
+    expect(prepBody).toContain('ADD COLUMN IF NOT EXISTS scopes TEXT[] DEFAULT ARRAY[\'mcp\']::TEXT[]');
+    expect(prepBody).toContain('ALTER COLUMN scopes SET DEFAULT ARRAY[\'mcp\']::TEXT[]');
+    expect(prepBody).toContain('UPDATE access_tokens SET scopes = ARRAY[\'mcp\']::TEXT[] WHERE scopes IS NULL');
+  });
+
   test('v51 assertion scope indexes are applied by migration after adding scope columns', async () => {
     const schemaSource = readFileSync(
       new URL('../src/schema.sql', import.meta.url),

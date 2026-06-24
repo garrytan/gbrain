@@ -64,6 +64,89 @@ afterEach(async () => {
 });
 
 describe('SQLiteEngine', () => {
+  test('initializes MCP access tokens with mcp scope default and request log context columns', () => {
+    const db = new Database(dbPath);
+    try {
+      const tokenColumns = db.query(`PRAGMA table_info(access_tokens)`).all() as Array<{
+        name: string;
+        dflt_value: string | null;
+      }>;
+      const scopesColumn = tokenColumns.find((column) => column.name === 'scopes');
+      expect(scopesColumn?.dflt_value).toBe('\'["mcp"]\'');
+
+      const logColumns = db.query(`PRAGMA table_info(mcp_request_log)`).all() as Array<{ name: string }>;
+      const logColumnNames = logColumns.map((column) => column.name);
+      expect(logColumnNames).toContain('error_code');
+      expect(logColumnNames).toContain('error_reason');
+      expect(logColumnNames).toContain('surface_profile');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('migration 56 corrects legacy SQLite MCP surface schema without full initSchema side effects', async () => {
+    await engine.disconnect();
+    const legacyDb = new Database(dbPath, { create: true });
+    try {
+      legacyDb.exec(`
+        DROP TABLE IF EXISTS access_tokens;
+        DROP TABLE IF EXISTS mcp_request_log;
+        DROP TABLE IF EXISTS config;
+        CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO config (key, value) VALUES ('version', '55');
+        CREATE TABLE access_tokens (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          token_hash TEXT NOT NULL UNIQUE,
+          scopes TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+          last_used_at TEXT,
+          revoked_at TEXT
+        );
+        CREATE INDEX idx_access_tokens_hash
+          ON access_tokens (token_hash)
+          WHERE revoked_at IS NULL;
+        CREATE INDEX idx_access_tokens_name
+          ON access_tokens (name);
+        CREATE TABLE mcp_request_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          token_name TEXT,
+          operation TEXT NOT NULL,
+          latency_ms INTEGER,
+          status TEXT NOT NULL DEFAULT 'success',
+          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+      `);
+    } finally {
+      legacyDb.close();
+    }
+
+    engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: dbPath });
+    await engine.initSchema();
+
+    const db = new Database(dbPath);
+    try {
+      const scopesColumn = (db.query(`PRAGMA table_info(access_tokens)`).all() as Array<{
+        name: string;
+        dflt_value: string | null;
+      }>).find((column) => column.name === 'scopes');
+      expect(scopesColumn?.dflt_value).toBe('\'["mcp"]\'');
+
+      const logColumnNames = (db.query(`PRAGMA table_info(mcp_request_log)`).all() as Array<{ name: string }>)
+        .map((column) => column.name);
+      expect(logColumnNames).toContain('error_code');
+      expect(logColumnNames).toContain('error_reason');
+      expect(logColumnNames).toContain('surface_profile');
+      const nameIndex = db.query(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_access_tokens_name'`).get() as { sql: string } | null;
+      expect(nameIndex?.sql).toContain('idx_access_tokens_name');
+      expect(nameIndex?.sql).toContain('access_tokens');
+      expect(db.query(`SELECT value FROM config WHERE key = 'version'`).get()).toEqual({ value: String(LATEST_VERSION) });
+    } finally {
+      db.close();
+    }
+  });
+
   test('keeps nested transaction savepoint rollback inside the outer transaction', async () => {
     await engine.transaction(async (outer) => {
       await outer.putPage('people/outer-committed.md', {

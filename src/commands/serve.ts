@@ -4,6 +4,10 @@ import { startMcpHttpServer } from '../mcp/http-server.ts';
 import { loadConfig } from '../core/config.ts';
 import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
 
+type McpHttpSurfaceSchemaEngine = BrainEngine & {
+  prepareMcpHttpSurfaceSchema?: () => Promise<void>;
+};
+
 export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args: string[] = []) {
   const http = args.includes('--http');
   const host = parseStringFlag(args, '--host') ?? process.env.MBRAIN_HTTP_HOST ?? '127.0.0.1';
@@ -12,6 +16,7 @@ export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args:
   const publicBaseUrl = parseStringFlag(args, '--public-url') ?? process.env.MBRAIN_HTTP_PUBLIC_URL;
   const oauthApprovalToken = process.env.MBRAIN_OAUTH_APPROVAL_TOKEN ?? process.env.MBRAIN_HTTP_OAUTH_PIN;
   const oauthSigningSecret = process.env.MBRAIN_OAUTH_SIGNING_SECRET;
+  const oauthAllowedScopes = parseCsvFlag(args, '--oauth-allowed-scopes') ?? parseCsv(process.env.MBRAIN_OAUTH_ALLOWED_SCOPES);
 
   if (http) {
     const oauthStartupErrors = getHttpOAuthServeStartupErrors({
@@ -40,6 +45,7 @@ export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args:
         publicBaseUrl,
         approvalToken: oauthApprovalToken,
         signingSecret: oauthSigningSecret,
+        allowedScopes: oauthAllowedScopes,
       } : undefined,
     });
     console.error(`Starting MBrain MCP server (HTTP) on http://${server.hostname}:${server.port}`);
@@ -83,9 +89,11 @@ export async function prepareHttpServeEngine(
   engine: BrainEngine | Promise<BrainEngine>,
   oauthEnabled: boolean,
 ): Promise<BrainEngine> {
-  const resolved = await engine;
+  const resolved = await engine as McpHttpSurfaceSchemaEngine;
   if (oauthEnabled) {
     await resolved.initSchema();
+  } else if (typeof resolved.prepareMcpHttpSurfaceSchema === 'function') {
+    await resolved.prepareMcpHttpSurfaceSchema();
   }
   return resolved;
 }
@@ -132,6 +140,18 @@ function parseNumberFlag(args: string[], flag: string): number | undefined {
   if (!raw) return undefined;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+}
+
+function parseCsvFlag(args: string[], flag: string): string[] | undefined {
+  const raw = parseStringFlag(args, flag);
+  return raw === undefined ? undefined : parseCsv(raw);
+}
+
+function parseCsv(raw: string | undefined): string[] {
+  return (raw ?? '')
+    .split(/[,\s]+/)
+    .map(entry => entry.trim())
+    .filter(Boolean);
 }
 
 function parseEnvPort(): number | undefined {

@@ -1827,7 +1827,7 @@ CREATE TABLE IF NOT EXISTS access_tokens (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name         TEXT NOT NULL,
   token_hash   TEXT NOT NULL UNIQUE,
-  scopes       TEXT[],
+  scopes       TEXT[] DEFAULT ARRAY['mcp']::TEXT[],
   created_at   TIMESTAMPTZ DEFAULT now(),
   last_used_at TIMESTAMPTZ,
   revoked_at   TIMESTAMPTZ
@@ -1879,6 +1879,9 @@ CREATE TABLE IF NOT EXISTS mcp_request_log (
   operation  TEXT NOT NULL,
   latency_ms INTEGER,
   status     TEXT NOT NULL DEFAULT 'success',
+  error_code TEXT,
+  error_reason TEXT,
+  surface_profile TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

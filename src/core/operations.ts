@@ -151,7 +151,8 @@ export type ErrorCode =
   | 'write_conflict'
   | 'bucket_not_found'
   | 'database_error'
-  | 'unsupported_capability';
+  | 'unsupported_capability'
+  | 'permission_denied';
 
 export class OperationError extends Error {
   constructor(

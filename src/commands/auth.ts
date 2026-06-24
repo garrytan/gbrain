@@ -3,7 +3,7 @@
  * MBrain token management — standalone script, no mbrain CLI dependency.
  *
  * Usage:
- *   DATABASE_URL=... bun run src/commands/auth.ts create "claude-desktop"
+ *   DATABASE_URL=... bun run src/commands/auth.ts create "claude-desktop" --scope canonical_write
  *   DATABASE_URL=... bun run src/commands/auth.ts list
  *   DATABASE_URL=... bun run src/commands/auth.ts revoke "claude-desktop"
  *   DATABASE_URL=... bun run src/commands/auth.ts test <url> --token <token>
@@ -11,6 +11,7 @@
 import postgres from 'postgres';
 import { createHash, randomBytes } from 'crypto';
 
+const MANUAL_TOKEN_SCOPES = new Set(['mcp', 'canonical_write', 'raw_source']);
 const DATABASE_URL = process.env.DATABASE_URL || process.env.MBRAIN_DATABASE_URL;
 if (!DATABASE_URL && process.argv[2] !== 'test') {
   console.error('Set DATABASE_URL or MBRAIN_DATABASE_URL environment variable.');
@@ -25,7 +26,7 @@ function generateToken(): string {
   return 'mbrain_' + randomBytes(32).toString('hex');
 }
 
-async function create(name: string) {
+async function create(name: string, scopes: string[] = ['mcp']) {
   if (!name) { console.error('Usage: auth create <name>'); process.exit(1); }
   const sql = postgres(DATABASE_URL!);
   const token = generateToken();
@@ -33,11 +34,12 @@ async function create(name: string) {
 
   try {
     await sql`
-      INSERT INTO access_tokens (name, token_hash)
-      VALUES (${name}, ${hash})
+      INSERT INTO access_tokens (name, token_hash, scopes)
+      VALUES (${name}, ${hash}, ${scopes})
     `;
     console.log(`Token created for "${name}":\n`);
     console.log(`  ${token}\n`);
+    console.log(`Scopes: ${scopes.join(', ')}`);
     console.log('Save this token — it will not be shown again.');
     console.log(`Revoke with: bun run src/commands/auth.ts revoke "${name}"`);
   } catch (e: any) {
@@ -56,7 +58,7 @@ async function list() {
   const sql = postgres(DATABASE_URL!);
   try {
     const rows = await sql`
-      SELECT name, created_at, last_used_at, revoked_at
+      SELECT name, created_at, last_used_at, revoked_at, scopes
       FROM access_tokens
       ORDER BY created_at DESC
     `;
@@ -64,14 +66,15 @@ async function list() {
       console.log('No tokens found. Create one: bun run src/commands/auth.ts create "my-client"');
       return;
     }
-    console.log('Name                  Created              Last Used            Status');
-    console.log('─'.repeat(80));
+    console.log('Name                  Created              Last Used            Status   Scopes');
+    console.log('─'.repeat(100));
     for (const r of rows) {
       const name = (r.name as string).padEnd(20);
       const created = new Date(r.created_at as string).toISOString().slice(0, 19);
       const lastUsed = r.last_used_at ? new Date(r.last_used_at as string).toISOString().slice(0, 19) : 'never'.padEnd(19);
       const status = r.revoked_at ? 'REVOKED' : 'active';
-      console.log(`${name}  ${created}  ${lastUsed}  ${status}`);
+      const scopes = Array.isArray(r.scopes) ? r.scopes.join(',') : 'mcp';
+      console.log(`${name}  ${created}  ${lastUsed}  ${status.padEnd(7)}  ${scopes}`);
     }
   } finally {
     await sql.end();
@@ -217,9 +220,45 @@ async function test(url: string, token: string) {
 }
 
 // CLI dispatch
+function parseCreateArgs(args: string[]): { name: string; scopes: string[] } {
+  const scopes = new Set<string>(['mcp']);
+  const positional: string[] = [];
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === '--scope' || arg === '--scopes') {
+      for (const scope of parseScopeList(args[++index] ?? '')) scopes.add(scope);
+      continue;
+    }
+    if (arg.startsWith('--scope=')) {
+      for (const scope of parseScopeList(arg.slice('--scope='.length))) scopes.add(scope);
+      continue;
+    }
+    if (arg.startsWith('--scopes=')) {
+      for (const scope of parseScopeList(arg.slice('--scopes='.length))) scopes.add(scope);
+      continue;
+    }
+    positional.push(arg);
+  }
+  const invalidScopes = [...scopes].filter(scope => !MANUAL_TOKEN_SCOPES.has(scope));
+  if (invalidScopes.length > 0) {
+    console.error(`Unsupported scope(s): ${invalidScopes.join(', ')}`);
+    console.error(`Allowed scopes: ${[...MANUAL_TOKEN_SCOPES].join(', ')}`);
+    process.exit(1);
+  }
+  return { name: positional[0] ?? '', scopes: [...scopes] };
+}
+
+function parseScopeList(raw: string): string[] {
+  return raw.split(/[,\s]+/).map(entry => entry.trim()).filter(Boolean);
+}
+
 const [cmd, ...args] = process.argv.slice(2);
 switch (cmd) {
-  case 'create': await create(args[0]); break;
+  case 'create': {
+    const parsed = parseCreateArgs(args);
+    await create(parsed.name, parsed.scopes);
+    break;
+  }
   case 'list': await list(); break;
   case 'revoke': await revoke(args[0]); break;
   case 'test': {
@@ -233,7 +272,8 @@ switch (cmd) {
     console.log(`MBrain Token Management
 
 Usage:
-  bun run src/commands/auth.ts create <name>      Create a new access token
+  bun run src/commands/auth.ts create <name> [--scope canonical_write] [--scope raw_source]
+                                                    Create a new access token
   bun run src/commands/auth.ts list               List all tokens
   bun run src/commands/auth.ts revoke <name>       Revoke a token
   bun run src/commands/auth.ts test <url> --token <token>  Smoke test a remote MCP server

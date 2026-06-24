@@ -13,7 +13,14 @@ import {
 } from '../core/text-offsets.ts';
 import { VERSION } from '../version.ts';
 import { operationToMcpTool } from './tool-schema.ts';
-import { isToolVisibleAtTier, resolveAllowedTiers, type ToolTier } from './tool-tiers.ts';
+import { isToolVisibleAtTier, type ToolTier } from './tool-tiers.ts';
+import {
+  assertToolCallableInSurfaceProfile,
+  isToolVisibleInSurfaceProfile,
+  resolveMcpSurfaceProfile,
+  type McpSurfaceCapability,
+  type McpSurfaceProfileName,
+} from './surface-profile.ts';
 import {
   BudgetedStdioServerTransport,
   DEFAULT_MCP_MAX_STDIO_FRAME_BYTES,
@@ -37,6 +44,7 @@ export type McpToolCatalogOptions = {
 export type McpToolCatalogProviderOptions = {
   config?: OperationContext['config'] | null;
   allowedTiers?: ReadonlySet<ToolTier>;
+  surfaceProfile?: ReturnType<typeof resolveMcpSurfaceProfile>;
 };
 
 export type McpToolCatalogProvider = {
@@ -61,8 +69,10 @@ export type CreateMcpServerOptions = {
   maxResultTextBytes?: number;
   toolExecutionLimiter?: McpToolExecutionLimiter;
   // Tool-catalog tier selection ('all' | 'core+extended' | 'core' | comma list). Defaults to
-  // MBRAIN_MCP_TOOL_TIER, then to core+extended. Remote/HTTP surfaces pass 'all'.
+  // MBRAIN_MCP_TOOL_TIER, then to the selected surface profile default.
   toolTier?: string;
+  surfaceProfile?: McpSurfaceProfileName;
+  tokenCapabilities?: ReadonlySet<McpSurfaceCapability>;
 };
 
 export type CreatedMcpServer = {
@@ -126,10 +136,12 @@ export function createMcpToolCatalogProvider(
   const capabilityFiltered = options.config
     ? operations.filter(operation => isOperationSupportedByConfig(operation, options.config!))
     : operations;
-  // Tier filter narrows the listed catalog (default core+extended); createMcpServer applies
-  // the same allowedTiers check to named tool calls.
+  // Surface filtering narrows the listed catalog; createMcpServer applies the same profile
+  // decision to named tool calls.
   const catalogOperations = options.allowedTiers
     ? capabilityFiltered.filter(operation => isToolVisibleAtTier(operation, options.allowedTiers!))
+    : options.surfaceProfile
+      ? capabilityFiltered.filter(operation => isToolVisibleInSurfaceProfile(operation, options.surfaceProfile!))
     : capabilityFiltered;
   let compactTools: ReturnType<typeof operationToMcpTool>[] | undefined;
   let fullTools: ReturnType<typeof operationToMcpTool>[] | undefined;
@@ -834,8 +846,10 @@ export function createMcpServer(
   // Config, logger, and result budget are immutable for the lifetime of the
   // server process; resolve them once instead of per tool call.
   const resolvedConfig = options.config ?? loadConfig() ?? DEFAULT_RUNTIME_CONFIG;
-  const allowedTiers = resolveAllowedTiers(options.toolTier ?? process.env.MBRAIN_MCP_TOOL_TIER);
-  const toolCatalog = createMcpToolCatalogProvider(operations, { config: resolvedConfig, allowedTiers });
+  const surfaceProfile = resolveMcpSurfaceProfile(options.surfaceProfile ?? 'stdio', {
+    toolTierSelection: options.toolTier ?? process.env.MBRAIN_MCP_TOOL_TIER,
+  });
+  const toolCatalog = createMcpToolCatalogProvider(operations, { config: resolvedConfig, surfaceProfile });
   const toolExecutionLimiter = options.toolExecutionLimiter ?? createMcpToolExecutionLimiter();
   const resolvedLogger = options.logger ?? {
     info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
@@ -859,11 +873,20 @@ export function createMcpServer(
   server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     const { name, arguments: params } = request.params;
     const op = operationsByName.get(name);
-    if (!op || !isToolVisibleAtTier(op, allowedTiers)) {
+    if (!op) {
       return { content: [{ type: 'text', text: `Error: Unknown tool: ${name}` }], isError: true };
     }
 
     try {
+      assertToolCallableInSurfaceProfile(op, surfaceProfile, {
+        tokenCapabilities: options.tokenCapabilities,
+      });
+      if (!isOperationSupportedByConfig(op, resolvedConfig)) {
+        throw new OperationError(
+          'unsupported_capability',
+          `Tool ${name} is not supported by the active runtime configuration.`,
+        );
+      }
       assertMcpPutPagePrecondition(name, params);
       const result = await toolExecutionLimiter.run(op, async () => {
         const resolvedEngine = await enginePromise;

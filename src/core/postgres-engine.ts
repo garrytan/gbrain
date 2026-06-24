@@ -136,6 +136,27 @@ export class PostgresEngine extends PgEngineBase implements BrainEngine {
     }
   }
 
+  async prepareMcpHttpSurfaceSchema(): Promise<void> {
+    await this.sql`
+      DO $$
+      BEGIN
+        IF to_regclass('access_tokens') IS NOT NULL THEN
+          ALTER TABLE access_tokens
+            ADD COLUMN IF NOT EXISTS scopes TEXT[] DEFAULT ARRAY['mcp']::TEXT[];
+          ALTER TABLE access_tokens
+            ALTER COLUMN scopes SET DEFAULT ARRAY['mcp']::TEXT[];
+          UPDATE access_tokens SET scopes = ARRAY['mcp']::TEXT[] WHERE scopes IS NULL;
+        END IF;
+
+        IF to_regclass('mcp_request_log') IS NOT NULL THEN
+          ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS error_code TEXT;
+          ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS error_reason TEXT;
+          ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS surface_profile TEXT;
+        END IF;
+      END $$;
+    `;
+  }
+
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
     const conn = this.sql as PostgresNestedConnection;
     const runInConnection = (tx: unknown) => {

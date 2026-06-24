@@ -121,6 +121,55 @@ describe('MCP HTTP transport', () => {
     expect(stats.result.content[0].text).toContain('"pages":3');
   });
 
+  test('logs a mixed JSON-RPC batch as error when any response item fails', async () => {
+    const logEntries: Array<{
+      operation: string;
+      status: string;
+      errorCode?: string;
+      errorReason?: string;
+      surfaceProfile?: string;
+    }> = [];
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      authenticate: async () => ({ ok: true, tokenName: 'batch-client' }),
+      logRequest: async (entry) => {
+        logEntries.push(entry);
+      },
+    });
+
+    const response = await handler(new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-token',
+        Accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify([
+        { jsonrpc: '2.0', method: 'tools/list', params: {}, id: 1 },
+        {
+          jsonrpc: '2.0',
+          method: 'tools/call',
+          params: { name: 'put_page', arguments: { slug: 'people/batch.md', content: 'Batch' } },
+          id: 2,
+        },
+      ]),
+    }));
+
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain('"id":1');
+    expect(text).toContain('"id":2');
+    expect(logEntries).toHaveLength(1);
+    expect(logEntries[0]).toMatchObject({
+      operation: 'batch',
+      status: 'error',
+      errorCode: 'permission_denied',
+      surfaceProfile: 'http_remote',
+    });
+    expect(logEntries[0].errorReason).toContain('not callable on MCP surface http_remote');
+  });
+
   test('default bearer auth validates SQLite access_tokens and records last use', async () => {
     const { db, dbPath } = createSqliteTokenDb();
     const token = 'mbrain_test_token';
@@ -439,6 +488,180 @@ describe('MCP HTTP transport', () => {
     expect(logs).toEqual([{ operation: 'failing_tool', status: 'error' }]);
   });
 
+  test('HTTP surface hides and denies exact-name admin tools instead of dispatching them', async () => {
+    let handlerCalled = false;
+    const logs: Array<{ tokenName: string; operation: string; latencyMs: number; status: string; errorCode?: string; errorReason?: string; surfaceProfile?: string }> = [];
+    const adminPutPageOp: Operation = {
+      name: 'admin_put_page',
+      description: 'Test-only admin repair operation.',
+      tier: 'admin',
+      params: {},
+      mutating: true,
+      handler: async () => {
+        handlerCalled = true;
+        return { ok: true };
+      },
+    };
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      operations: [adminPutPageOp],
+      authenticate: async () => ({ ok: true, tokenName: 'test-client', scopes: ['mcp'] }),
+      logRequest: async (entry) => {
+        logs.push(entry);
+      },
+    });
+
+    const toolsList = await readJsonRpcResponse(await postMcp(handler, {
+      jsonrpc: '2.0',
+      method: 'tools/list',
+      params: {},
+      id: 1,
+    }));
+    expect(toolsList.result.tools.some((tool: { name: string }) => tool.name === 'admin_put_page')).toBe(false);
+
+    const response = await readJsonRpcResponse(await postMcp(handler, {
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: { name: 'admin_put_page', arguments: {} },
+      id: 2,
+    }));
+    const error = JSON.parse(response.result.content[0].text);
+
+    expect(response.result.isError).toBe(true);
+    expect(error).toMatchObject({ error: 'permission_denied' });
+    expect(error.message).toContain('forbidden_operation');
+    expect(handlerCalled).toBe(false);
+    expect(logs).toEqual([
+      { tokenName: 'test-client', operation: 'tools/list', latencyMs: expect.any(Number), status: 'success', surfaceProfile: 'http_remote' },
+      {
+        tokenName: 'test-client',
+        operation: 'admin_put_page',
+        latencyMs: expect.any(Number),
+        status: 'error',
+        errorCode: 'permission_denied',
+        errorReason: expect.stringContaining('forbidden_operation'),
+        surfaceProfile: 'http_remote',
+      },
+    ]);
+  });
+
+  test('HTTP put_page requires canonical_write token capability before route-first dispatch', async () => {
+    let handlerCalled = false;
+    const putPageOp: Operation = {
+      name: 'put_page',
+      description: 'Test-only canonical write operation.',
+      params: {
+        expected_content_hash: { type: 'string', nullable: true },
+      },
+      mutating: true,
+      handler: async () => {
+        handlerCalled = true;
+        return { ok: true };
+      },
+    };
+    const deniedHandler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      operations: [putPageOp],
+      authenticate: async () => ({ ok: true, tokenName: 'test-client', scopes: ['mcp'] }),
+      logRequest: async () => {},
+    });
+
+    const denied = await readJsonRpcResponse(await postMcp(deniedHandler, {
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: { name: 'put_page', arguments: {} },
+      id: 1,
+    }));
+    const deniedError = JSON.parse(denied.result.content[0].text);
+
+    expect(denied.result.isError).toBe(true);
+    expect(deniedError).toMatchObject({ error: 'permission_denied' });
+    expect(deniedError.message).toContain('token_missing_canonical_write');
+    expect(handlerCalled).toBe(false);
+
+    const allowedHandler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      operations: [putPageOp],
+      authenticate: async () => ({ ok: true, tokenName: 'test-client', scopes: ['mcp', 'canonical_write'] }),
+      logRequest: async () => {},
+    });
+    const allowed = await readJsonRpcResponse(await postMcp(allowedHandler, {
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: { name: 'put_page', arguments: { expected_content_hash: null } },
+      id: 2,
+    }));
+
+    expect(allowed.result.content[0].text).toContain('"ok":true');
+    expect(handlerCalled).toBe(true);
+  });
+
+  test('HTTP raw source calls require raw_source token capability even when all tiers are enabled', async () => {
+    let handlerCalls = 0;
+    const rawSourceOp: Operation = {
+      name: 'request_raw_source_chunks',
+      description: 'Test-only raw source operation.',
+      tier: 'admin',
+      params: {},
+      handler: async () => {
+        handlerCalls++;
+        return { chunks: [] };
+      },
+    };
+    const deniedHandler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      operations: [rawSourceOp],
+      surfaceProfile: 'http_local',
+      toolTier: 'all',
+      authenticate: async () => ({ ok: true, tokenName: 'test-client', scopes: ['mcp'] }),
+      logRequest: async () => {},
+    });
+
+    const listed = await readJsonRpcResponse(await postMcp(deniedHandler, {
+      jsonrpc: '2.0',
+      method: 'tools/list',
+      params: {},
+      id: 1,
+    }));
+    expect(listed.result.tools.some((tool: { name: string }) => tool.name === 'request_raw_source_chunks')).toBe(true);
+
+    const denied = await readJsonRpcResponse(await postMcp(deniedHandler, {
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: { name: 'request_raw_source_chunks', arguments: {} },
+      id: 2,
+    }));
+    const deniedError = JSON.parse(denied.result.content[0].text);
+
+    expect(denied.result.isError).toBe(true);
+    expect(deniedError).toMatchObject({ error: 'permission_denied' });
+    expect(deniedError.message).toContain('token_missing_raw_source');
+    expect(handlerCalls).toBe(0);
+
+    const allowedHandler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      operations: [rawSourceOp],
+      surfaceProfile: 'http_local',
+      toolTier: 'all',
+      authenticate: async () => ({ ok: true, tokenName: 'test-client', scopes: ['mcp', 'raw_source'] }),
+      logRequest: async () => {},
+    });
+    const allowed = await readJsonRpcResponse(await postMcp(allowedHandler, {
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: { name: 'request_raw_source_chunks', arguments: {} },
+      id: 3,
+    }));
+
+    expect(allowed.result.content[0].text).toContain('"chunks":[]');
+    expect(handlerCalls).toBe(1);
+  });
+
   test('rejects invalid object params before dispatching MCP tools', async () => {
     let handlerCalled = false;
     const objectParamOp: Operation = {
@@ -537,6 +760,7 @@ describe('MCP HTTP transport', () => {
       token_endpoint: 'https://brain.example.com/oauth/token',
       registration_endpoint: 'https://brain.example.com/oauth/register',
       code_challenge_methods_supported: ['S256'],
+      scopes_supported: ['mcp'],
     });
 
     const protectedResource = await handler(new Request('http://localhost/.well-known/oauth-protected-resource'));
@@ -559,6 +783,105 @@ describe('MCP HTTP transport', () => {
     const registration = await register.json() as { client_id: string; redirect_uris: string[] };
     expect(registration.client_id).toStartWith('mbrain_dcr_');
     expect(registration.redirect_uris).toEqual(['https://chat.openai.com/aip/callback']);
+  });
+
+  test('OAuth privileged scopes are denied unless the server explicitly allows them', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+      },
+    });
+    const redirectUri = 'https://chat.openai.com/aip/callback';
+    const client = await registerOAuthClient(handler, redirectUri);
+    const verifier = 'test-verifier-abcdefghijklmnopqrstuvwxyz0123456789';
+    const challenge = sha256('sha256').update(verifier).digest('base64url');
+
+    const authorize = await handler(new Request('http://localhost/oauth/authorize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        approval_token: 'owner-secret',
+        response_type: 'code',
+        client_id: client.client_id,
+        redirect_uri: redirectUri,
+        scope: 'mcp canonical_write raw_source',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+      }),
+    }));
+
+    expect(authorize.status).toBe(400);
+    expect(await authorize.json()).toMatchObject({ error: 'invalid_scope' });
+  });
+
+  test('OAuth approval page renders explicitly allowed privileged scopes before minting them', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+        allowedScopes: ['mcp', 'canonical_write'],
+      },
+    });
+    const redirectUri = 'https://chat.openai.com/aip/callback';
+    const client = await registerOAuthClient(handler, redirectUri);
+    const verifier = 'test-verifier-abcdefghijklmnopqrstuvwxyz0123456789';
+    const challenge = sha256('sha256').update(verifier).digest('base64url');
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: client.client_id,
+      redirect_uri: redirectUri,
+      scope: 'mcp canonical_write',
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+    });
+
+    const approval = await handler(new Request(`http://localhost/oauth/authorize?${params}`));
+    expect(approval.status).toBe(200);
+    const html = await approval.text();
+    expect(html).toContain('Requested scopes');
+    expect(html).toContain('canonical_write');
+    expect(html).toContain('privileged');
+
+    params.set('approval_token', 'owner-secret');
+    const authorize = await handler(new Request('http://localhost/oauth/authorize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params,
+    }));
+    expect(authorize.status).toBe(302);
+    const code = new URL(authorize.headers.get('Location')!).searchParams.get('code')!;
+
+    const token = await handler(new Request('http://localhost/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: client.client_id,
+        redirect_uri: redirectUri,
+        code,
+        code_verifier: verifier,
+      }),
+    }));
+    expect(token.status).toBe(200);
+    const payload = await token.json() as { access_token: string };
+    const tokenHash = createHash('sha256').update(payload.access_token).digest('hex');
+    const inspectDb = new Database(dbPath);
+    const row = inspectDb.query('SELECT scopes FROM access_tokens WHERE token_hash = ?').get(tokenHash) as { scopes: string };
+    inspectDb.close();
+    expect(JSON.parse(row.scopes)).toContain('canonical_write');
   });
 
   test('OAuth authorization code exchange mints an MCP bearer token with PKCE', async () => {
@@ -734,6 +1057,40 @@ describe('MCP HTTP transport', () => {
     expect(rows).toHaveLength(2);
     expect(rows.filter(row => row.revoked_at !== null)).toHaveLength(1);
     expect(rows.filter(row => row.revoked_at === null)).toHaveLength(1);
+  });
+
+  test('OAuth refresh rechecks the current privileged scope allowlist', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const oauthOptions = {
+      enabled: true,
+      publicBaseUrl: 'https://brain.example.com',
+      approvalToken: 'owner-secret',
+      signingSecret: 'test-signing-secret',
+      allowedScopes: ['canonical_write'],
+    };
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
+      oauth: oauthOptions,
+    });
+    const redirectUri = 'https://chat.openai.com/aip/callback';
+    const client = await registerOAuthClient(handler, redirectUri);
+    const initial = await authorizeOAuthClient(handler, client.client_id, redirectUri, 'mcp canonical_write');
+
+    oauthOptions.allowedScopes = [];
+    const refresh = await handler(new Request('http://localhost/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: client.client_id,
+        refresh_token: initial.refreshToken,
+      }),
+    }));
+
+    expect(refresh.status).toBe(400);
+    expect(await refresh.json()).toMatchObject({ error: 'invalid_scope' });
   });
 
   test('OAuth rotation does not revoke independent same-name client sessions', async () => {
@@ -981,6 +1338,7 @@ async function authorizeOAuthClient(
   handler: (request: Request) => Promise<Response>,
   clientId: string,
   redirectUri: string,
+  scope = 'mcp',
 ): Promise<{ accessToken: string; refreshToken: string }> {
   const verifier = 'test-verifier-abcdefghijklmnopqrstuvwxyz0123456789';
   const challenge = sha256('sha256').update(verifier).digest('base64url');
@@ -992,7 +1350,7 @@ async function authorizeOAuthClient(
       response_type: 'code',
       client_id: clientId,
       redirect_uri: redirectUri,
-      scope: 'mcp',
+      scope,
       code_challenge: challenge,
       code_challenge_method: 'S256',
     }),
@@ -1086,7 +1444,7 @@ function createSqliteTokenDb(): { db: Database; dbPath: string } {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       token_hash TEXT NOT NULL UNIQUE,
-      scopes TEXT NOT NULL DEFAULT '[]',
+      scopes TEXT NOT NULL DEFAULT '["mcp"]',
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
       last_used_at TEXT,
       revoked_at TEXT
@@ -1099,6 +1457,9 @@ function createSqliteTokenDb(): { db: Database; dbPath: string } {
       operation TEXT NOT NULL,
       latency_ms INTEGER,
       status TEXT NOT NULL DEFAULT 'success',
+      error_code TEXT,
+      error_reason TEXT,
+      surface_profile TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     )
   `);

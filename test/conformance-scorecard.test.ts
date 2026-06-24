@@ -40,6 +40,7 @@ describe('conformance scorecard', () => {
       'operation_catalog_integrity',
       'mcp_cli_compatibility',
       'capability_filtering',
+      'surface_profile_classification',
       'retrieval_quality',
       'memory_authority',
       'writeback_governance',
@@ -49,6 +50,7 @@ describe('conformance scorecard', () => {
     expect(scorecard.dimensions.every(dimension => dimension.denominator > 0)).toBe(true);
     expect(JSON.stringify(scorecard)).toContain('"retrieval_quality"');
     expect(scorecard.dimensions.find(dimension => dimension.id === 'capability_filtering')?.notes).toEqual([]);
+    expect(scorecard.dimensions.find(dimension => dimension.id === 'surface_profile_classification')?.notes).toEqual([]);
     expect(scorecard.dimensions.find(dimension => dimension.id === 'replay_evaluation')?.notes).toContain('source-aware retrieval qrels gate executed');
 
     const summary = formatConformanceScorecardSummary(scorecard);

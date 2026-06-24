@@ -96,8 +96,13 @@ ngrok http 8787 --url your-brain.ngrok.app  # Hobby tier for fixed domain
 # Use the same Postgres connection string that `mbrain serve --http` uses.
 export DATABASE_URL='postgresql://...'
 
-# Create a token for each client
+# Create a read/default token for each client
 bun run src/commands/auth.ts create "claude-desktop"
+
+# Add explicit capabilities only for clients that need them
+bun run src/commands/auth.ts create "writer-client" --scope canonical_write
+bun run src/commands/auth.ts create "raw-source-client" --scope raw_source
+bun run src/commands/auth.ts create "trusted-client" --scope canonical_write --scope raw_source
 
 # List all tokens
 bun run src/commands/auth.ts list
@@ -107,7 +112,17 @@ bun run src/commands/auth.ts revoke "claude-desktop"
 ```
 
 Tokens are per-client. Create one for each device/app. Revoke individually
-if compromised. Tokens are stored SHA-256 hashed in your database.
+if compromised. Tokens are stored SHA-256 hashed in your database. Default
+tokens get only the `mcp` scope; remote `put_page` requires `canonical_write`,
+and raw-source access requires `raw_source`.
+
+OAuth grants default to the `mcp` scope as well. To let OAuth clients request
+privileged scopes, start HTTP OAuth with an explicit allowlist:
+
+```bash
+MBRAIN_OAUTH_ALLOWED_SCOPES='mcp,canonical_write,raw_source' \
+mbrain serve --http --oauth --public-url https://YOUR-DOMAIN.ngrok.app
+```
 
 ### 4. Connect your AI client
 

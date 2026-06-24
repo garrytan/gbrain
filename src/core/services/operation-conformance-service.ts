@@ -1,5 +1,9 @@
 import { createHash } from 'crypto';
 import { operationToMcpTool } from '../../mcp/tool-schema.ts';
+import {
+  buildOperationSurfaceProfileExposure,
+  type OperationSurfaceProfileExposure,
+} from '../../mcp/surface-profile.ts';
 import type { CliCommandCatalog, CliCommandExposureMode } from '../../cli.ts';
 import {
   getOperationCapabilityRequirements,
@@ -8,7 +12,7 @@ import {
 } from '../operations.ts';
 import type { RetrievalQualityGateReport } from '../evaluation/retrieval-quality-gate.ts';
 
-export const OPERATION_GOLDEN_MANIFEST_SCHEMA_VERSION = 1;
+export const OPERATION_GOLDEN_MANIFEST_SCHEMA_VERSION = 2;
 
 export type CliExposureMode =
   | 'cli_shared'
@@ -67,6 +71,7 @@ export type OperationGoldenManifestEntry = {
     open_world: boolean;
     required_params: string[];
   };
+  surface_profile: OperationSurfaceProfileExposure;
   compact_schema_hash: string;
   full_schema_hash: string;
   memory_verb_families: string[];
@@ -196,6 +201,7 @@ export type ConformanceScorecard = {
       | 'operation_catalog_integrity'
       | 'mcp_cli_compatibility'
       | 'capability_filtering'
+      | 'surface_profile_classification'
       | 'retrieval_quality'
       | 'memory_authority'
       | 'writeback_governance'
@@ -241,6 +247,7 @@ export function findOperationConformanceHardFailures(manifest: OperationGoldenMa
     ...validateOperationCatalogIntegrity(manifest),
     ...validateMcpCliCompatibility(manifest),
     ...validateCapabilityFilteringDimension(manifest),
+    ...validateSurfaceProfileDimension(manifest),
   ]);
 }
 
@@ -310,6 +317,20 @@ function validateCapabilityFilteringDimension(manifest: OperationGoldenManifest)
       if (!visible.includes(capability)) {
         failures.push(`param_capability_missing_from_visibility:${entry.name}:${capability}`);
       }
+    }
+  }
+  return failures.sort(compareAscii);
+}
+
+function validateSurfaceProfileDimension(manifest: OperationGoldenManifest): string[] {
+  const failures: string[] = [];
+  for (const entry of manifest.operations) {
+    if (entry.mutating && entry.surface_profile.capability_classification === 'unclassified_mutating') {
+      failures.push(`surface_capability_unclassified_mutating:${entry.name}`);
+    }
+    const remoteCallable = entry.surface_profile.callable_profiles.some(profile => profile === 'http_local' || profile === 'http_remote' || profile === 'edge_remote');
+    if (entry.mutating && remoteCallable && entry.surface_profile.required_capabilities.length === 0) {
+      failures.push(`surface_capability_missing_remote_mutation:${entry.name}`);
     }
   }
   return failures.sort(compareAscii);
@@ -387,6 +408,7 @@ export function buildConformanceScorecard(input: {
   const operationFailures = validateOperationCatalogIntegrity(input.manifest);
   const mcpCliFailures = validateMcpCliCompatibility(input.manifest);
   const capabilityFailures = validateCapabilityFilteringDimension(input.manifest);
+  const surfaceProfileFailures = validateSurfaceProfileDimension(input.manifest);
   const memoryVerbFailures = validateMemoryVerbMatrix(input.operationsByName);
   const authorityFailures = validateMemoryAuthorityGates(input.operationsByName);
   const mutationFailures = validateMutationNameAlignment(input.operationsByName);
@@ -400,6 +422,7 @@ export function buildConformanceScorecard(input: {
     ...operationFailures,
     ...mcpCliFailures,
     ...capabilityFailures,
+    ...surfaceProfileFailures,
     ...memoryVerbFailures,
     ...authorityFailures,
     ...mutationFailures,
@@ -411,6 +434,7 @@ export function buildConformanceScorecard(input: {
     dimension('operation_catalog_integrity', manifest.operations.length - operationFailures.length, manifest.operations.length, operationFailures),
     dimension('mcp_cli_compatibility', manifest.operations.length - mcpCliFailures.length, manifest.operations.length, mcpCliFailures),
     dimension('capability_filtering', manifest.operations.length - capabilityFailures.length, manifest.operations.length, capabilityFailures),
+    dimension('surface_profile_classification', manifest.operations.length - surfaceProfileFailures.length, manifest.operations.length, surfaceProfileFailures),
     dimension(
       'retrieval_quality',
       input.retrievalQuality.status === 'pass' ? 2 : 0,
@@ -518,6 +542,7 @@ function buildOperationManifestEntry(operation: Operation, cliCatalog: CliComman
       open_world: fullTool.annotations?.openWorldHint === true,
       required_params: [...(fullTool.inputSchema.required ?? [])].sort(compareAscii),
     },
+    surface_profile: buildOperationSurfaceProfileExposure(operation),
     compact_schema_hash: hashStable(compactTool.inputSchema),
     full_schema_hash: hashStable(fullTool.inputSchema),
     memory_verb_families: memoryVerbFamiliesForOperation(operation.name),

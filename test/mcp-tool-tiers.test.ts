@@ -84,6 +84,7 @@ describe('tiered tool catalog (C1 part 2)', () => {
   test('MCP named dispatch uses the same tier gate as the catalog', () => {
     const source = readFileSync(new URL('../src/mcp/server.ts', import.meta.url), 'utf-8');
 
-    expect(source).toContain('!isToolVisibleAtTier(op, allowedTiers)');
+    expect(source).toContain('assertToolCallableInSurfaceProfile(op, surfaceProfile');
+    expect(source).toContain('isToolVisibleInSurfaceProfile(operation, options.surfaceProfile!)');
   });
 });

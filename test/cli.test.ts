@@ -247,6 +247,11 @@ describe('CLI source shape', () => {
     expect(cliSource).toContain('await runServe(enginePromise, normalizeCliOnlyArgs(command, args));');
   });
 
+  test('serve exposes OAuth scope allowlist through the top-level CLI spec', () => {
+    expect(cliSource).toContain('oauth_allowed_scopes');
+    expect(cliSource).toContain('--oauth-allowed-scopes');
+  });
+
   test('serve refuses OAuth startup without both dedicated secrets', () => {
     expect(serveSource).toContain('OAuth requires both MBRAIN_OAUTH_APPROVAL_TOKEN and MBRAIN_OAUTH_SIGNING_SECRET');
     expect(serveSource).toContain('The previous fallback (signing refresh tokens with the approval token) was removed');
@@ -354,19 +359,22 @@ describe('CLI dispatch integration', () => {
     expect(calls).toEqual(['initSchema']);
   });
 
-  test('HTTP serve without OAuth does not mutate schema on startup', async () => {
+  test('HTTP serve without OAuth prepares only the MCP HTTP surface schema', async () => {
     const { prepareHttpServeEngine } = await import('../src/commands/serve.ts');
     const calls: string[] = [];
     const engine = {
       initSchema: async () => {
         calls.push('initSchema');
       },
+      prepareMcpHttpSurfaceSchema: async () => {
+        calls.push('prepareMcpHttpSurfaceSchema');
+      },
     };
 
     const prepared = await prepareHttpServeEngine(engine as any, false);
 
     expect(prepared).toBe(engine as any);
-    expect(calls).toEqual([]);
+    expect(calls).toEqual(['prepareMcpHttpSurfaceSchema']);
   });
 
   test('runInit postgres bootstrap uses createConnectedEngine so db.getConnection remains available', async () => {
@@ -1536,6 +1544,7 @@ describe('CLI dispatch integration', () => {
     expect(stdout).toContain('put <slug> [< file.md]             Governed/direct canonical write; use expected content hash');
     expect(stdout).toContain('embed [<slug>|--all|--stale]');
     expect(stdout).toContain('serve [--http] [--host H] [--port P] [--oauth]');
+    expect(stdout).toContain('[--oauth-allowed-scopes S]');
     expect(stdout).toContain('import <dir> [--no-embed]');
     expect(stdout).toContain('Health check (engine, schema, embeddings, local/managed capabilities)');
     expect(stdout).toContain('Keyword search (engine-native)');

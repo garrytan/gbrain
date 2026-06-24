@@ -15,10 +15,25 @@ describe('Supabase Edge MCP surface', () => {
   test('remote list and named dispatch both use the same tier catalog filter', () => {
     const source = readFileSync(new URL('../supabase/functions/mbrain-mcp/index.ts', import.meta.url), 'utf-8');
 
-    expect(source).toContain('resolveAllowedTiers(getRemoteToolTierSelection())');
-    expect(source).toContain('isToolVisibleAtTier(op, allowedTiers)');
+    expect(source).toContain("resolveMcpSurfaceProfile('edge_remote'");
+    expect(source).toContain('isToolVisibleInSurfaceProfile(op, surfaceProfile)');
+    expect(source).toContain('assertToolCallableInSurfaceProfile(op, surfaceProfile');
+    expect(source).toContain('surfaceTokenCapabilitiesFromScopes(tokenScopes)');
     expect(source).toContain('tools: listedRemoteOps.map(operationToMcpTool)');
-    expect(source).toContain('const op = remoteOps.find((o: any) => o.name === name && isToolVisibleAtTier(o, allowedTiers))');
+    expect(source).toContain('const op = operations.find((o: any) => o.name === name)');
+  });
+
+  test('remote auth carries token scopes into dispatch and logs JSON-RPC errors', () => {
+    const source = readFileSync(new URL('../supabase/functions/mbrain-mcp/index.ts', import.meta.url), 'utf-8');
+
+    expect(source).toContain('SELECT name, revoked_at, scopes FROM access_tokens');
+    expect(source).toContain('parseAccessTokenScopes(rows[0].scopes)');
+    expect(source).toContain('accessTokenExpired(scopes)');
+    expect(source).toContain("error: 'token_expired'");
+    expect(source).toContain('const operation = await inferMcpOperation(c.req.raw)');
+    expect(source).toContain('const responseClassification = await classifyMcpResponse(c.req.raw, response)');
+    expect(source).toContain('error_code, error_reason, surface_profile');
+    expect(source).toContain("surfaceProfile: 'edge_remote'");
   });
 
   test('committed edge bundle contains the current source-registry/governance surface', () => {
@@ -26,6 +41,8 @@ describe('Supabase Edge MCP surface', () => {
 
     expect(bundle).toContain('request_raw_source_chunks');
     expect(bundle).toContain('admin_put_page');
+    expect(bundle).toContain('resolveMcpSurfaceProfile');
+    expect(bundle).toContain('surfaceTokenCapabilitiesFromScopes');
     expect(bundle).not.toContain('preview_assertion_claim_extraction');
     expect(bundle).not.toContain('explain_assertion');
   });
@@ -37,6 +54,8 @@ describe('Supabase Edge MCP surface', () => {
     const adminPutPage = bundle.operationsByName.admin_put_page;
 
     expect(putPage.handler).not.toBe(adminPutPage.handler);
+    expect(typeof bundle.resolveMcpSurfaceProfile).toBe('function');
+    expect(typeof bundle.assertToolCallableInSurfaceProfile).toBe('function');
     await expect(putPage.handler({ dryRun: false }, {
       slug: 'concepts/edge-bundle-route-first',
       content: [

@@ -7,6 +7,10 @@ import type { MBrainConfig } from '../core/config.ts';
 import type { Operation } from '../core/operations.ts';
 import { createMcpServer, createMcpToolExecutionLimiter } from './server.ts';
 import {
+  surfaceTokenCapabilitiesFromScopes,
+  type McpSurfaceProfileName,
+} from './surface-profile.ts';
+import {
   createMcpOAuthState,
   handleMcpOAuthRequest,
   isMcpOAuthPath,
@@ -27,6 +31,7 @@ const OAUTH_AUTHORIZATION_CODE_RETENTION_SECONDS = 60 * 60;
 export interface McpHttpAuthSuccess {
   ok: true;
   tokenName: string;
+  scopes?: string[];
 }
 
 export interface McpHttpAuthFailure {
@@ -51,6 +56,8 @@ export interface McpHttpHandlerOptions {
    * browsers are denied by default instead of the previous wildcard.
    */
   allowedOrigins?: string[];
+  surfaceProfile?: Extract<McpSurfaceProfileName, 'http_local' | 'http_remote'>;
+  toolTier?: string;
 }
 
 export interface McpHttpRequestLogEntry {
@@ -58,6 +65,9 @@ export interface McpHttpRequestLogEntry {
   operation: string;
   latencyMs: number;
   status: 'success' | 'error';
+  errorCode?: string;
+  errorReason?: string;
+  surfaceProfile?: string;
 }
 
 export interface StartMcpHttpServerOptions extends McpHttpHandlerOptions {
@@ -136,9 +146,9 @@ export function createMcpHttpHandler(
       operations: options.operations,
       config: options.config,
       compactToolSchemas: false,
-      // Remote/HTTP clients get the full surface (no stdio tier hiding) to avoid breaking
-      // flows that depend on control-plane tools; the stdio default stays core+extended.
-      toolTier: 'all',
+      surfaceProfile: options.surfaceProfile ?? 'http_remote',
+      toolTier: options.toolTier,
+      tokenCapabilities: surfaceTokenCapabilitiesFromScopes(auth.scopes),
       toolExecutionLimiter,
       logger: {
         info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
@@ -150,12 +160,15 @@ export function createMcpHttpHandler(
 
     try {
       const response = await transport.handleRequest(request);
-      const status = await classifyMcpHttpResponseStatus(request, response);
+      const responseClassification = await classifyMcpHttpResponse(request, response);
       await logRequest(options, {
         tokenName: auth.tokenName,
         operation,
         latencyMs: Date.now() - startTime,
-        status,
+        status: responseClassification.status,
+        surfaceProfile: options.surfaceProfile ?? 'http_remote',
+        ...(responseClassification.errorCode ? { errorCode: responseClassification.errorCode } : {}),
+        ...(responseClassification.errorReason ? { errorReason: responseClassification.errorReason } : {}),
       });
       return response;
     } catch (error) {
@@ -164,6 +177,9 @@ export function createMcpHttpHandler(
         operation,
         latencyMs: Date.now() - startTime,
         status: 'error',
+        errorCode: 'transport_exception',
+        errorReason: error instanceof Error ? error.message : String(error),
+        surfaceProfile: options.surfaceProfile ?? 'http_remote',
       });
       throw error;
     }
@@ -185,17 +201,81 @@ async function inferMcpHttpOperation(request: Request): Promise<string> {
   }
 }
 
-async function classifyMcpHttpResponseStatus(request: Request, response: Response): Promise<'success' | 'error'> {
-  if (response.status >= 400) return 'error';
-  if (request.method !== 'POST') return 'success';
+type McpHttpResponseClassification = {
+  status: 'success' | 'error';
+  errorCode?: string;
+  errorReason?: string;
+};
+
+async function classifyMcpHttpResponse(request: Request, response: Response): Promise<McpHttpResponseClassification> {
+  if (response.status >= 400) return { status: 'error', errorCode: `http_${response.status}` };
+  if (request.method !== 'POST') return { status: 'success' };
 
   try {
     const text = await response.clone().text();
-    return text.includes('"isError":true') || text.includes('"error":{')
-      ? 'error'
-      : 'success';
+    const details = extractMcpResponseErrorDetails(text);
+    return details ? { status: 'error', ...details } : { status: 'success' };
   } catch {
-    return 'success';
+    return { status: 'success' };
+  }
+}
+
+function extractMcpResponseErrorDetails(text: string): { errorCode?: string; errorReason?: string } | null {
+  const payloadTexts = extractMcpResponsePayloadTexts(text);
+  if (payloadTexts.length === 0) return text.includes('"isError":true') || text.includes('"error":{') ? {} : null;
+  for (const payloadText of payloadTexts) {
+    const details = extractMcpResponsePayloadErrorDetails(payloadText);
+    if (details) return details;
+  }
+  return text.includes('"isError":true') || text.includes('"error":{') ? {} : null;
+}
+
+function extractMcpResponsePayloadTexts(text: string): string[] {
+  const dataLines = text
+    .split('\n')
+    .filter(line => line.startsWith('data:'))
+    .map(line => line.slice('data:'.length).trim())
+    .filter(Boolean);
+  return dataLines.length > 0 ? dataLines : [text].filter(Boolean);
+}
+
+function extractMcpResponsePayloadErrorDetails(payloadText: string): { errorCode?: string; errorReason?: string } | null {
+  try {
+    const payload = JSON.parse(payloadText) as unknown;
+    if (Array.isArray(payload)) {
+      for (const item of payload) {
+        const details = extractMcpResponseObjectErrorDetails(item);
+        if (details) return details;
+      }
+      return null;
+    }
+    return extractMcpResponseObjectErrorDetails(payload);
+  } catch {
+    return payloadText.includes('"isError":true') || payloadText.includes('"error":{') ? {} : null;
+  }
+}
+
+function extractMcpResponseObjectErrorDetails(payload: unknown): { errorCode?: string; errorReason?: string } | null {
+  if (!isRecord(payload)) return null;
+  if (isRecord(payload.error)) {
+    return {
+      errorCode: payload.error.code !== undefined ? String(payload.error.code) : undefined,
+      errorReason: typeof payload.error.message === 'string' ? payload.error.message : undefined,
+    };
+  }
+  if (!isRecord(payload.result) || payload.result.isError !== true) return null;
+  const content = Array.isArray(payload.result.content) ? payload.result.content : [];
+  const textItem = content.find((item): item is { text: string } => isRecord(item) && typeof item.text === 'string');
+  if (!textItem) return {};
+  try {
+    const parsedText = JSON.parse(textItem.text) as unknown;
+    if (!isRecord(parsedText)) return {};
+    return {
+      errorCode: typeof parsedText.error === 'string' ? parsedText.error : undefined,
+      errorReason: typeof parsedText.message === 'string' ? parsedText.message : undefined,
+    };
+  } catch {
+    return { errorReason: textItem.text };
   }
 }
 
@@ -285,7 +365,7 @@ async function authenticateMcpHttpRequest(
       ? row.name
       : 'unknown';
     await markAccessTokenUsed(config, tokenHash);
-    return { ok: true, tokenName };
+    return { ok: true, tokenName, scopes: row.scopes };
   } catch {
     return {
       ok: false,
@@ -540,8 +620,8 @@ async function logMcpHttpRequest(config: MBrainConfig, entry: McpHttpRequestLogE
       const sql = postgres(config.database_url, { max: 1 });
       try {
         await sql`
-          INSERT INTO mcp_request_log (token_name, operation, latency_ms, status)
-          VALUES (${entry.tokenName}, ${entry.operation}, ${entry.latencyMs}, ${entry.status})
+          INSERT INTO mcp_request_log (token_name, operation, latency_ms, status, error_code, error_reason, surface_profile)
+          VALUES (${entry.tokenName}, ${entry.operation}, ${entry.latencyMs}, ${entry.status}, ${entry.errorCode ?? null}, ${entry.errorReason ?? null}, ${entry.surfaceProfile ?? null})
         `;
       } finally {
         await sql.end();
@@ -553,9 +633,9 @@ async function logMcpHttpRequest(config: MBrainConfig, entry: McpHttpRequestLogE
       const db = new Database(config.database_path);
       try {
         db.query(`
-          INSERT INTO mcp_request_log (token_name, operation, latency_ms, status)
-          VALUES (?, ?, ?, ?)
-        `).run(entry.tokenName, entry.operation, entry.latencyMs, entry.status);
+          INSERT INTO mcp_request_log (token_name, operation, latency_ms, status, error_code, error_reason, surface_profile)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(entry.tokenName, entry.operation, entry.latencyMs, entry.status, entry.errorCode ?? null, entry.errorReason ?? null, entry.surfaceProfile ?? null);
       } finally {
         db.close();
       }
