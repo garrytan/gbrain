@@ -413,7 +413,7 @@ export interface SubagentHandlerData {
   prompt: string;
   /** Optional subagent definition path (skills/subagents/*.md or plugin). */
   subagent_def?: string;
-  /** Anthropic model id. Defaults to sonnet at handler resolution time. */
+  /** Tool-capable provider:model id. Defaults via models.tier.subagent. */
   model?: string;
   /** Max assistant turns before the loop fails with stop_reason='max_turns'. */
   max_turns?: number;

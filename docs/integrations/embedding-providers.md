@@ -111,7 +111,7 @@ Single OpenAI-compatible API for fan-out to OpenAI, Anthropic, Google, DeepSeek,
 - `OPENROUTER_BASE_URL` — point at a self-hosted OR-compatible proxy.
 - `OPENROUTER_REFERER` (default `https://gbrain.ai`) and `OPENROUTER_TITLE` (default `gbrain`) — attribution headers for OR's leaderboard. Forks running gbrain inside a different agent stack (OpenClaw deployments etc.) should set these so their traffic gets attributed to them, not gbrain.
 
-**Subagent loops**: gbrain's subagent infrastructure hard-pins to Anthropic-direct (stable `tool_use_id` across crashes/replays). OR-routed Anthropic is rejected at submit time regardless of the recipe flag. If you want the price/availability story OR offers for tool-calling, use it for chat only and keep an Anthropic key for subagent work.
+**Subagent loops**: gbrain's subagent infrastructure is capability-gated. Direct providers with native tool calling can run through the gateway loop when `agent.use_gateway_loop=true`; the legacy Anthropic path remains the cache-friendly default. OpenRouter is model-by-model, so do not assume every OR catalog entry is safe for durable subagent work just because the endpoint supports chat completions.
 
 ### Azure OpenAI
 

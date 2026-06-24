@@ -7,10 +7,12 @@ import { logRerankFailure } from '../src/core/rerank-audit.ts';
 import { checkRerankerHealth } from '../src/commands/doctor.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-function engineWithRerankerSetting(value: string | null): BrainEngine {
+function engineWithRerankerSetting(value: string | null, model: string | null = null): BrainEngine {
   return {
     async getConfig(key: string): Promise<string | null> {
-      return key === 'search.reranker.enabled' ? value : null;
+      if (key === 'search.reranker.enabled') return value;
+      if (key === 'search.reranker.model') return model;
+      return null;
     },
   } as BrainEngine;
 }
@@ -24,9 +26,9 @@ async function withFreshAuditDir(body: () => void | Promise<void>): Promise<void
   }
 }
 
-function writeAuthFailure(): void {
+function writeAuthFailure(model = 'zeroentropyai:zerank-2'): void {
   logRerankFailure({
-    model: 'zeroentropyai:zerank-2',
+    model,
     reason: 'auth',
     query_hash: 'deadbeef',
     doc_count: 10,
@@ -71,6 +73,22 @@ describe('checkRerankerHealth', () => {
         status: 'warn',
       });
       expect(check.message).toContain('reranker auth failure');
+    });
+  });
+
+  test('enabled reranker ignores stale failures from a different configured model', async () => {
+    await withFreshAuditDir(async () => {
+      writeAuthFailure('zeroentropyai:zerank-2');
+
+      const check = await checkRerankerHealth(
+        engineWithRerankerSetting('true', 'llama-server-reranker:bge-reranker-v2-m3'),
+      );
+
+      expect(check).toMatchObject({
+        name: 'reranker_health',
+        status: 'ok',
+      });
+      expect(check.message).toContain('No rerank failures for llama-server-reranker:bge-reranker-v2-m3');
     });
   });
 });

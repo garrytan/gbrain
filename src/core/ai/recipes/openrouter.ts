@@ -31,11 +31,10 @@ import type { Recipe } from '../types.ts';
  * attribution on OR's leaderboard instead of polluting gbrain's.
  *
  * Subagent loops: `supports_subagent_loop: false` is INFORMATIONAL. The real
- * gate is `isAnthropicProvider()` in `src/core/model-config.ts` which
- * hard-pins gbrain's subagent infra to Anthropic-direct (stable tool_use_id
- * across crashes/replays). OR-proxied Anthropic is rejected at submit time
- * regardless of this flag — relaxing the gate is a deeper architectural
- * change tracked in TODOS.md.
+ * gate is capability-based (`classifyCapabilities()` plus the gateway loop),
+ * so direct providers with native tool calling can run durable subagents.
+ * OpenRouter remains model-by-model: the endpoint supports a tool-call
+ * envelope, but not every catalog model should be treated as subagent-safe.
  */
 export const openrouter: Recipe = {
   id: 'openrouter',

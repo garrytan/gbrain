@@ -16,7 +16,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { writeFileSync, mkdtempSync, rmSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { runEvalLongMemEval } from '../src/commands/eval-longmemeval.ts';
 import type { ThinkLLMClient } from '../src/core/think/index.ts';
 import type { LongMemEvalQuestion } from '../src/eval/longmemeval/adapter.ts';
@@ -148,6 +148,8 @@ describe('runEvalLongMemEval — trajectory routing on (default)', () => {
     // Envelope shape.
     const out = readOutput();
     expect(out.length).toBe(2);
+    expect(out[0].answer).toBe('placeholder');
+    expect(out[1].answer).toBe('placeholder');
     expect(out[0].intent).toBe('temporal');
     expect(out[0].trajectory_points).toBeGreaterThan(0);
     expect(out[0].entity_resolved).toBe('marco');
@@ -156,6 +158,20 @@ describe('runEvalLongMemEval — trajectory routing on (default)', () => {
     expect(out[1].intent).toBe('other');
     expect(out[1].trajectory_points).toBe(0);
     expect(out[1].entity_resolved).toBe(null);
+  });
+});
+
+describe('runEvalLongMemEval — gateway env fallback', () => {
+  test('source preserves env-only embedding config when no config file exists', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/commands/eval-longmemeval.ts'), 'utf-8');
+    expect(source).toContain('GBRAIN_EMBEDDING_MODEL');
+    expect(source).toContain('GBRAIN_EMBEDDING_DIMENSIONS');
+  });
+
+  test('source normalizes bare model ids before gateway chat calls', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/commands/eval-longmemeval.ts'), 'utf-8');
+    expect(source).toContain('normalizeModelId');
+    expect(source).toContain('model: normalizeModelId(params.model)');
   });
 });
 

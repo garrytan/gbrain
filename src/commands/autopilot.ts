@@ -171,6 +171,50 @@ function logError(phase: string, e: unknown) {
   } catch { /* best-effort */ }
 }
 
+function parseConfigBool(raw: string | null, fallback = false): boolean {
+  if (raw == null) return fallback;
+  const v = raw.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(v)) return true;
+  if (['0', 'false', 'no', 'off', ''].includes(v)) return false;
+  return fallback;
+}
+
+function parseNonNegativeNumber(raw: string | null, fallback: number): number {
+  if (raw == null) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function parsePositiveInteger(raw: string | null): number | undefined {
+  if (raw == null) return undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+function parsePositiveIntegerOrNullSentinel(raw: string | null): number | null | undefined {
+  if (raw == null) return undefined;
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed === '' || trimmed === 'null' || trimmed === 'none') return null;
+  const n = Number(trimmed);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+function parsePositiveNumberOptional(raw: string | null): number | undefined {
+  if (raw == null) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+async function resolveOptionalModelConfig(
+  engine: BrainEngine,
+  configKey: string,
+  resolveModel: (engine: BrainEngine, opts: { configKey: string; fallback: string }) => Promise<string>,
+): Promise<string | undefined> {
+  const raw = await engine.getConfig(configKey);
+  if (!raw || raw.trim().length === 0) return undefined;
+  return await resolveModel(engine, { configKey, fallback: raw.trim() });
+}
+
 /**
  * Resolve the gbrain CLI entrypoint for spawning the worker child.
  *
@@ -1141,20 +1185,74 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // loop. Probe runs even when cycleOk=false (probe may surface signal
     // explaining why the cycle is failing).
     try {
-      const probeEnabled = cfg?.autopilot?.nightly_quality_probe?.enabled === true;
+      const enabledRaw = await engine.getConfig('autopilot.nightly_quality_probe.enabled');
+      const probeEnabled = parseConfigBool(enabledRaw, cfg?.autopilot?.nightly_quality_probe?.enabled === true);
       if (probeEnabled) {
         const { runNightlyQualityProbe } = await import('../core/cycle/nightly-quality-probe.ts');
         const { runLongMemEvalForProbe, runCrossModalBatchForProbe } = await import('../core/cycle/nightly-probe-adapters.ts');
         const { isAvailable } = await import('../core/ai/gateway.ts');
-        const maxUsd = Number(cfg?.autopilot?.nightly_quality_probe?.max_usd ?? 5);
+        const { resolveModel } = await import('../core/model-config.ts');
+        const maxUsdRaw = await engine.getConfig('autopilot.nightly_quality_probe.max_usd');
+        const maxUsd = parseNonNegativeNumber(maxUsdRaw, Number(cfg?.autopilot?.nightly_quality_probe?.max_usd ?? 5));
+        const minPassRateRaw = await engine.getConfig('autopilot.nightly_quality_probe.min_pass_rate');
+        const minPassRate = parseNonNegativeNumber(
+          minPassRateRaw,
+          Number((cfg?.autopilot?.nightly_quality_probe as any)?.min_pass_rate ?? 0.7),
+        );
+        const [slotAModel, slotBModel, slotCModel] = await Promise.all([
+          resolveOptionalModelConfig(engine, 'models.eval.cross_modal.slot_a', resolveModel),
+          resolveOptionalModelConfig(engine, 'models.eval.cross_modal.slot_b', resolveModel),
+          resolveOptionalModelConfig(engine, 'models.eval.cross_modal.slot_c', resolveModel),
+        ]);
+        const [
+          rerankerEnabledRaw,
+          rerankerModelRaw,
+          rerankerTimeoutRaw,
+          rerankerTopNInRaw,
+          rerankerTopNOutRaw,
+        ] = await Promise.all([
+          engine.getConfig('search.reranker.enabled'),
+          engine.getConfig('search.reranker.model'),
+          engine.getConfig('search.reranker.timeout_ms'),
+          engine.getConfig('search.reranker.top_n_in'),
+          engine.getConfig('search.reranker.top_n_out'),
+        ]);
+        const longMemEvalRerankerEnabled = rerankerEnabledRaw == null
+          ? undefined
+          : parseConfigBool(rerankerEnabledRaw, false);
+        const longMemEvalRerankerModel = rerankerModelRaw?.trim() || undefined;
+        const longMemEvalRerankerTimeoutMs = parsePositiveNumberOptional(rerankerTimeoutRaw);
+        const longMemEvalRerankerTopNIn = parsePositiveInteger(rerankerTopNInRaw);
+        const longMemEvalRerankerTopNOut = parsePositiveIntegerOrNullSentinel(rerankerTopNOutRaw);
+        const longMemEvalModel = await resolveModel(engine, {
+          configKey: 'models.eval.longmemeval',
+          tier: 'reasoning',
+          fallback: 'sonnet',
+        });
+        const longMemEvalExtractorModel = await resolveModel(engine, {
+          configKey: 'facts.extraction_model',
+          tier: 'reasoning',
+          fallback: longMemEvalModel,
+        });
         await runNightlyQualityProbe({
           isEnabled: () => true, // already gated above; phase re-checks for defense-in-depth
           hasEmbeddingProvider: () => isAvailable('embedding'),
           resolveMaxUsd: () => maxUsd,
+          resolveMinPassRate: () => minPassRate,
           resolveRepoRoot: () => repoPath ?? gbrainHomePath('.'),
           runLongMemEval: runLongMemEvalForProbe,
           runCrossModalBatch: runCrossModalBatchForProbe,
           now: () => new Date(),
+          slotAModel: slotAModel ?? undefined,
+          slotBModel: slotBModel ?? undefined,
+          slotCModel: slotCModel ?? undefined,
+          longMemEvalModel,
+          longMemEvalExtractorModel,
+          longMemEvalRerankerModel,
+          longMemEvalRerankerEnabled,
+          longMemEvalRerankerTimeoutMs,
+          longMemEvalRerankerTopNIn,
+          longMemEvalRerankerTopNOut,
         });
       }
     } catch (e) {

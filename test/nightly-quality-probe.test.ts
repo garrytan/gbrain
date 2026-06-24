@@ -165,7 +165,8 @@ describe('runNightlyQualityProbe (DI stub harness)', () => {
         runCrossModalBatch: async () => ({
           exitCode: 1,
           summary: {
-            pass_count: 7, fail_count: 3, inconclusive_count: 0, error_count: 0,
+            total: 10,
+            pass_count: 6, fail_count: 4, inconclusive_count: 0, error_count: 0,
             est_cost_usd: 0.42, verdict: 'fail',
           },
         }),
@@ -174,7 +175,48 @@ describe('runNightlyQualityProbe (DI stub harness)', () => {
       expect(r.exit_code).toBe(1);
       const events = await readEvents();
       expect(events[0].outcome).toBe('fail');
+      expect(events[0].fail_count).toBe(4);
+    });
+  });
+
+  test('FAIL summary above min pass-rate threshold → outcome: pass with detail', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      const r = await runNightlyQualityProbe(makeDeps({
+        resolveMinPassRate: async () => 0.7,
+        runCrossModalBatch: async () => ({
+          exitCode: 1,
+          summary: {
+            total: 10,
+            pass_count: 7, fail_count: 3, inconclusive_count: 0, error_count: 0,
+            est_cost_usd: 0.70, verdict: 'fail',
+          },
+        }),
+      }));
+      expect(r.outcome).toBe('pass');
+      expect(r.exit_code).toBe(0);
+      expect(r.detail).toContain('benchmark pass rate met');
+      const events = await readEvents();
+      expect(events[0].outcome).toBe('pass');
       expect(events[0].fail_count).toBe(3);
+      expect(events[0].detail).toContain('benchmark pass rate met');
+    });
+  });
+
+  test('FAIL summary below min pass-rate threshold → outcome: fail', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      const r = await runNightlyQualityProbe(makeDeps({
+        resolveMinPassRate: async () => 0.8,
+        runCrossModalBatch: async () => ({
+          exitCode: 1,
+          summary: {
+            total: 10,
+            pass_count: 7, fail_count: 3, inconclusive_count: 0, error_count: 0,
+            est_cost_usd: 0.70, verdict: 'fail',
+          },
+        }),
+      }));
+      expect(r.outcome).toBe('fail');
+      expect(r.exit_code).toBe(1);
     });
   });
 
@@ -209,6 +251,50 @@ describe('runNightlyQualityProbe (DI stub harness)', () => {
       expect(r.outcome).toBe('pass');
       const events = await readEvents();
       expect(events[0].fixture_sha8).toMatch(/^[0-9a-f]{8}$/);
+    });
+  });
+
+  test('passes answer-focused LongMemEval dimensions to cross-modal batch', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      let seenDimensions: string[] | undefined;
+      const r = await runNightlyQualityProbe(makeDeps({
+        runCrossModalBatch: async (args) => {
+          seenDimensions = args.dimensions;
+          return {
+            exitCode: 0,
+            summary: {
+              pass_count: 5, fail_count: 0, inconclusive_count: 0, error_count: 0,
+              est_cost_usd: 0.35, verdict: 'pass',
+            },
+          };
+        },
+      }));
+      expect(r.outcome).toBe('pass');
+      expect(seenDimensions).toBeDefined();
+      expect(seenDimensions?.join('\n')).toContain('ANSWER_MATCH');
+      expect(seenDimensions?.join('\n')).not.toContain('SOURCING');
+    });
+  });
+
+  test('passes live reranker config to LongMemEval benchmark brain', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      let seenArgs: Parameters<NightlyProbeDeps['runLongMemEval']>[0] | undefined;
+      const r = await runNightlyQualityProbe(makeDeps({
+        longMemEvalRerankerModel: 'llama-server-reranker:bge-reranker-v2-m3',
+        longMemEvalRerankerEnabled: true,
+        longMemEvalRerankerTimeoutMs: 60000,
+        longMemEvalRerankerTopNIn: 25,
+        longMemEvalRerankerTopNOut: null,
+        runLongMemEval: async (args) => {
+          seenArgs = args;
+        },
+      }));
+      expect(r.outcome).toBe('pass');
+      expect(seenArgs?.rerankerModel).toBe('llama-server-reranker:bge-reranker-v2-m3');
+      expect(seenArgs?.rerankerEnabled).toBe(true);
+      expect(seenArgs?.rerankerTimeoutMs).toBe(60000);
+      expect(seenArgs?.rerankerTopNIn).toBe(25);
+      expect(seenArgs?.rerankerTopNOut).toBe(null);
     });
   });
 });

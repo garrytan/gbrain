@@ -15,7 +15,7 @@ Four tiers:
 | `utility` | fast classification, expansion, verdict, dedup | `claude-haiku-4-5-20251001` | query expansion, facts contradiction classifier, dream synthesize verdict |
 | `reasoning` | default chat, synthesis, generation | `claude-sonnet-4-6` | gateway chat, dream synthesize, patterns, facts extraction |
 | `deep` | slow, expensive reasoning | `claude-opus-4-7` | `gbrain think`, auto-think, cross-modal eval slot B |
-| `subagent` | Anthropic-only multi-turn tool loop | `claude-sonnet-4-6` | `gbrain agent run` |
+| `subagent` | durable multi-turn tool loop | `claude-sonnet-4-6` | `gbrain agent run` |
 
 Override priority (highest first):
 
@@ -50,12 +50,15 @@ gbrain models                    # print current routing table
 gbrain models doctor             # 1-token probe to each configured model
 ```
 
-**Subagent tier exists because the loop is Anthropic-only.** The handler
-uses Messages API + prompt caching on system + tools. Setting
-`models.default = openai:gpt-5.5` silently breaks the loop, so we isolate
-`tier.subagent`. Three enforcement layers: submit-time guard in
-`MinionQueue.add`, tier-resolution fallback in `resolveModel`, doctor
-`subagent_provider` check.
+**Subagent tier exists because long tool loops have different failure and
+cost behavior than chat.** Anthropic models still get prompt-cache discounts
+on the legacy path. Non-Anthropic providers can run when they support native
+tool calling and `agent.use_gateway_loop=true` is enabled. We isolate
+`tier.subagent` so `models.default = openai:gpt-5.5` or another broad chat
+override does not accidentally move every durable tool loop without an
+operator decision. Enforcement is capability-based: submit-time guard in
+`MinionQueue.add`, dispatch-time check in `subagent.ts`, and doctor
+`subagent_capability` readback.
 
 When adding a new LLM call, route through `resolveModel()` with a tier —
 never hardcode a model string. The v0.31.6 chat default

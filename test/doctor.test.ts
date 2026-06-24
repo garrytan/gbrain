@@ -133,6 +133,100 @@ describe('doctor command', () => {
     expect(source).toContain('idempotency_key: step.idempotency_key');
   });
 
+  test('subagent no-cache models are a yellow spend warning, not red runtime failure', async () => {
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const engine = {
+      async getConfig(key: string) {
+        if (key === 'models.tier.subagent') return 'zai:glm-5.2';
+        if (key === 'models.subagent') return null;
+        if (key === 'models.default') return null;
+        if (key === 'agent.use_gateway_loop') return 'true';
+        return null;
+      },
+    };
+
+    const check = await checkSubagentCapability(engine as never);
+    expect(check.status).toBe('warn');
+    expect(check.action_tier).toBe('yellow');
+    expect(check.message).toContain('does not support prompt caching');
+  });
+
+  test('subagent no-cache models are a runtime warning when gateway loop is disabled', async () => {
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const engine = {
+      async getConfig(key: string) {
+        if (key === 'models.tier.subagent') return 'zai:glm-5.2';
+        if (key === 'models.subagent') return null;
+        if (key === 'models.default') return null;
+        if (key === 'agent.use_gateway_loop') return 'false';
+        return null;
+      },
+    };
+
+    const check = await checkSubagentCapability(engine as never);
+    expect(check.status).toBe('warn');
+    expect(check.action_tier).toBeUndefined();
+    expect(check.message).toContain('agent.use_gateway_loop is not enabled');
+    expect(check.message).toContain('jobs will fail at dispatch');
+  });
+
+  test('subagent capability follows runtime precedence: models.default before tier override', async () => {
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const engine = {
+      async getConfig(key: string) {
+        if (key === 'models.subagent') return null;
+        if (key === 'models.default') return 'openai:gpt-5.2';
+        if (key === 'models.tier.subagent') return 'anthropic:claude-sonnet-4-6';
+        if (key === 'agent.use_gateway_loop') return 'false';
+        return null;
+      },
+    };
+
+    const check = await checkSubagentCapability(engine as never);
+    expect(check.status).toBe('warn');
+    expect(check.action_tier).toBeUndefined();
+    expect(check.message).toContain('models.default is "openai:gpt-5.2"');
+    expect(check.message).toContain('jobs will fail at dispatch');
+  });
+
+  test('subagent capability checks models.subagent before default and tier', async () => {
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const engine = {
+      async getConfig(key: string) {
+        if (key === 'models.subagent') return 'openai:gpt-5.2';
+        if (key === 'models.default') return 'anthropic:claude-sonnet-4-6';
+        if (key === 'models.tier.subagent') return 'anthropic:claude-sonnet-4-6';
+        if (key === 'agent.use_gateway_loop') return 'false';
+        return null;
+      },
+    };
+
+    const check = await checkSubagentCapability(engine as never);
+    expect(check.status).toBe('warn');
+    expect(check.action_tier).toBeUndefined();
+    expect(check.message).toContain('models.subagent is "openai:gpt-5.2"');
+    expect(check.message).toContain('jobs will fail at dispatch');
+    expect(check.message).toContain('gbrain config set models.subagent anthropic:claude-sonnet-4-6');
+  });
+
+  test('subagent capability resolves aliases before classification', async () => {
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const engine = {
+      async getConfig(key: string) {
+        if (key === 'models.subagent') return 'sonnet';
+        if (key === 'models.default') return null;
+        if (key === 'models.tier.subagent') return null;
+        if (key === 'agent.use_gateway_loop') return 'true';
+        return null;
+      },
+    };
+
+    const check = await checkSubagentCapability(engine as never);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('models.subagent');
+    expect(check.message).toContain('anthropic:claude-sonnet-4-6');
+  });
+
   test('jsonb_integrity check covers the four JSONB sites fixed in v0.12.1', async () => {
     const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
     expect(source).toMatch(/table:\s*'pages'.*col:\s*'frontmatter'/);

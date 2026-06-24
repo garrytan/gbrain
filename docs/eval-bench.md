@@ -402,6 +402,11 @@ python evaluate_qa.py /tmp/hypothesis.jsonl
 | `--expansion` | **off** | Multi-query expansion. Off by default for determinism (no per-query Haiku call). Pass to opt in. |
 | `--top-k K` | 10 | Retrieval depth |
 | `--model M` | resolved | Default resolves through `resolveModel()` 6-tier chain (`models.eval.longmemeval` config key) |
+| `--reranker-model M` | unset | Seed `search.reranker.model` in the in-memory benchmark brain |
+| `--reranker-enabled BOOL` | unset | Seed `search.reranker.enabled` in the in-memory benchmark brain |
+| `--reranker-timeout-ms N` | unset | Seed `search.reranker.timeout_ms` in the in-memory benchmark brain |
+| `--reranker-top-n-in N` | unset | Seed `search.reranker.top_n_in` in the in-memory benchmark brain |
+| `--reranker-top-n-out N` | unset | Seed `search.reranker.top_n_out`; `null` or `none` means no truncation |
 | `--output FILE` | stdout | Write hypothesis JSONL to file instead of stdout |
 
 ### Numbers
@@ -584,9 +589,13 @@ gbrain config set autopilot.nightly_quality_probe.enabled true
 gbrain config set autopilot.nightly_quality_probe.max_usd 5.00   # optional override
 ```
 
-Note: `--phase nightly_quality_probe` wiring into the autopilot scheduler is
-deferred to a v0.41+ follow-up (see TODOS.md). For now the phase is callable
-in isolation; the test harness exercises it via DI stubs.
+Autopilot now calls this phase directly when
+`autopilot.nightly_quality_probe.enabled=true`. The scheduler trusts the
+phase's own 24-hour rate-limit check instead of duplicating that logic in two
+places. The nightly LongMemEval run also inherits live reranker settings from
+the host brain (`search.reranker.enabled`, `model`, `timeout_ms`, `top_n_in`)
+so the benchmark tracks the production retrieval stack rather than silently
+dropping reranking during the probe.
 
 ```bash
 # Manual smoke (exercises the path via DI stubs, no real API spend).

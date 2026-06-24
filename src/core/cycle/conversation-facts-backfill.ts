@@ -244,6 +244,7 @@ export async function runPhaseConversationFactsBackfill(
             pages_considered: 0,
             pages_processed: 0,
             pages_skipped: 0,
+            pages_skipped_non_candidate: 0,
             pages_skipped_too_large: 0,
             pages_skipped_disappeared: 0,
             // v0.41.15.0 (D6 + D11): new counters from the per-page lock
@@ -282,6 +283,7 @@ export async function runPhaseConversationFactsBackfill(
   const totals = {
     pages_processed: 0,
     pages_skipped: 0,
+    pages_skipped_non_candidate: 0,
     facts_inserted: 0,
     sources_processed: 0,
   };
@@ -289,6 +291,7 @@ export async function runPhaseConversationFactsBackfill(
     if (!r.error) totals.sources_processed++;
     totals.pages_processed += r.pages_processed;
     totals.pages_skipped += r.pages_skipped;
+    totals.pages_skipped_non_candidate += r.pages_skipped_non_candidate;
     totals.facts_inserted += r.facts_inserted;
   }
 
@@ -306,6 +309,7 @@ export async function runPhaseConversationFactsBackfill(
       sources_processed: totals.sources_processed,
       pages_processed: totals.pages_processed,
       pages_skipped: totals.pages_skipped,
+      pages_skipped_non_candidate: totals.pages_skipped_non_candidate,
       facts_inserted: totals.facts_inserted,
       spent_usd: totalSpent,
       skipped_by_brain_wide_cap: skippedByBrainWideCap,

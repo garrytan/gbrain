@@ -344,6 +344,25 @@ describe('runExtractConversationFactsCore', () => {
     expect(result.pages_considered).toBe(0);
   });
 
+  test('batch mode skips email skill documentation pages', async () => {
+    await engine.putPage('skills/email/himalaya/skill', {
+      type: 'email',
+      title: 'Himalaya Email Skill',
+      compiled_truth: '# Email skill\n\nThis page documents an email integration, not an email transcript.',
+      timeline: '',
+      frontmatter: {},
+    });
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      types: ['email'],
+      dryRun: true,
+      sleepMs: 0,
+    });
+    expect(result.pages_considered).toBe(0);
+    expect(result.pages_skipped).toBe(0);
+    expect(result.pages_skipped_non_candidate).toBe(1);
+  });
+
   test('sinceIso filters already-processed history', async () => {
     const result = await runExtractConversationFactsCore(engine, {
       sourceId: 'default',

@@ -47,6 +47,9 @@ const PER_TASK_KEYS: Array<{ key: string; tier: ModelTier; description: string }
   { key: 'models.subagent',                 tier: 'subagent',  description: '`gbrain agent run` subagent loop' },
   { key: 'facts.extraction_model',          tier: 'reasoning', description: 'Real-time facts extraction during sync' },
   { key: 'models.eval.longmemeval',         tier: 'reasoning', description: 'LongMemEval benchmark answer-gen' },
+  { key: 'models.eval.cross_modal.slot_a',  tier: 'reasoning', description: 'Cross-modal nightly/eval judge slot A' },
+  { key: 'models.eval.cross_modal.slot_b',  tier: 'reasoning', description: 'Cross-modal nightly/eval judge slot B' },
+  { key: 'models.eval.cross_modal.slot_c',  tier: 'reasoning', description: 'Cross-modal nightly/eval judge slot C' },
   { key: 'models.eval.contradictions_judge', tier: 'utility',  description: 'Contradiction probe judge (v0.34 temporal-aware)' },
   { key: 'models.expansion',                tier: 'utility',   description: 'Query expansion for hybrid search' },
   { key: 'models.chat',                     tier: 'reasoning', description: 'Default `gateway.chat()` model' },
@@ -568,7 +571,7 @@ Configure routing:
   gbrain config set models.tier.<tier> <model>       # per-tier (utility/reasoning/deep/subagent)
   gbrain config set models.aliases.<name> <model>    # custom alias
 
-Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anthropic-only)
+Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (tool-loop capable)
 `);
     return;
   }

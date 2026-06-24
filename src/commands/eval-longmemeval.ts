@@ -1,7 +1,7 @@
 /**
  * v0.28.1: `gbrain eval longmemeval <dataset.jsonl>` — public LongMemEval
  * benchmark adapter. Spins up an in-memory PGLite, imports each question's
- * haystack, runs hybridSearch, optionally generates an answer via Anthropic,
+ * haystack, runs hybridSearch, optionally generates an answer via the AI gateway,
  * emits hypothesis JSONL on stdout for downstream `evaluate_qa.py`.
  *
  * Hermetic by design: cli.ts skips connectEngine() when this subcommand
@@ -24,6 +24,10 @@ import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts'
 import type { PGLiteEngine } from '../core/pglite-engine.ts';
 import type { SearchResult } from '../core/types.ts';
 import { BudgetTracker, extractUsageFromError } from '../core/budget/budget-tracker.ts';
+import { configureGateway, chat as gatewayChat } from '../core/ai/gateway.ts';
+import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
+import { loadConfig } from '../core/config.ts';
+import { normalizeModelId } from '../core/model-id.ts';
 // v0.40.2.0 — trajectory routing imports.
 import { classifyIntent, type Intent } from '../eval/longmemeval/intent.ts';
 import {
@@ -124,6 +128,60 @@ function budgetedThinkClient(label: string, create: ThinkLLMClient['create']): T
   };
 }
 
+function anthropicContentToText(content: Anthropic.MessageParam['content']): string {
+  if (typeof content === 'string') return content;
+  return (content ?? []).map((block) => {
+    if (block.type === 'text') return block.text;
+    return JSON.stringify(block);
+  }).join('\n');
+}
+
+function ensureGatewayConfiguredForEval(): void {
+  const cfg = loadConfig();
+  if (cfg) {
+    configureGateway(buildGatewayConfig(cfg));
+    return;
+  }
+  const envEmbeddingDimensions = process.env.GBRAIN_EMBEDDING_DIMENSIONS
+    ? Number.parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10)
+    : undefined;
+  configureGateway({
+    embedding_model: process.env.GBRAIN_EMBEDDING_MODEL,
+    embedding_dimensions: Number.isFinite(envEmbeddingDimensions) ? envEmbeddingDimensions : undefined,
+    expansion_model: undefined,
+    chat_model: undefined,
+    chat_fallback_chain: undefined,
+    base_urls: undefined,
+    env: { ...process.env },
+  });
+}
+
+function gatewayThinkClient(label: string): ThinkLLMClient {
+  ensureGatewayConfiguredForEval();
+  return {
+    async create(params, callOpts) {
+      const result = await gatewayChat({
+        model: normalizeModelId(params.model),
+        system: typeof params.system === 'string' ? params.system : undefined,
+        messages: params.messages.map((m) => ({
+          role: m.role,
+          content: anthropicContentToText(m.content),
+        })),
+        maxTokens: params.max_tokens,
+        abortSignal: callOpts?.signal,
+        budgetLabel: `${label}.messages`,
+      });
+      return {
+        content: [{ type: 'text', text: result.text }],
+        usage: {
+          input_tokens: result.usage.input_tokens,
+          output_tokens: result.usage.output_tokens,
+        },
+      } as Anthropic.Message;
+    },
+  };
+}
+
 interface ParsedArgs {
   help: boolean;
   datasetPath?: string;
@@ -136,6 +194,12 @@ interface ParsedArgs {
   outputPath?: string;
   /** v0.32.3 — search-lite mode to evaluate under. Resolves through resolveSearchMode. */
   mode?: 'conservative' | 'balanced' | 'tokenmax';
+  /** Explicit reranker settings to seed into the in-memory benchmark brain. */
+  rerankerModel?: string;
+  rerankerEnabled?: boolean;
+  rerankerTimeoutMs?: number;
+  rerankerTopNIn?: number;
+  rerankerTopNOut?: number | null;
   /**
    * v0.35.1.0 — path to a previous run's hypothesis JSONL. Question IDs
    * already present in the file are skipped on this run; the run resumes
@@ -206,6 +270,48 @@ function parseArgs(args: string[]): ParsedArgs {
       }
       continue;
     }
+    if (a === '--reranker-model') { out.rerankerModel = args[++i]; continue; }
+    if (a === '--reranker-enabled') {
+      const v = args[++i]?.toLowerCase();
+      if (v === 'true' || v === '1' || v === 'yes' || v === 'on') {
+        out.rerankerEnabled = true;
+      } else if (v === 'false' || v === '0' || v === 'no' || v === 'off') {
+        out.rerankerEnabled = false;
+      } else {
+        throw new Error(`--reranker-enabled must be true|false (got: ${args[i]})`);
+      }
+      continue;
+    }
+    if (a === '--reranker-timeout-ms') {
+      const v = Number(args[++i]);
+      if (!Number.isFinite(v) || v <= 0) {
+        throw new Error(`--reranker-timeout-ms must be > 0 (got: ${args[i]})`);
+      }
+      out.rerankerTimeoutMs = v;
+      continue;
+    }
+    if (a === '--reranker-top-n-in') {
+      const v = Number(args[++i]);
+      if (!Number.isFinite(v) || v <= 0 || !Number.isInteger(v)) {
+        throw new Error(`--reranker-top-n-in must be a positive integer (got: ${args[i]})`);
+      }
+      out.rerankerTopNIn = v;
+      continue;
+    }
+    if (a === '--reranker-top-n-out') {
+      const raw = args[++i];
+      const trimmed = raw?.trim().toLowerCase();
+      if (trimmed === '' || trimmed === 'null' || trimmed === 'none') {
+        out.rerankerTopNOut = null;
+      } else {
+        const v = Number(raw);
+        if (!Number.isFinite(v) || v <= 0 || !Number.isInteger(v)) {
+          throw new Error(`--reranker-top-n-out must be a positive integer or null|none (got: ${args[i]})`);
+        }
+        out.rerankerTopNOut = v;
+      }
+      continue;
+    }
     if (!a.startsWith('-') && !out.datasetPath) { out.datasetPath = a; continue; }
   }
   return out;
@@ -231,6 +337,11 @@ function printHelp(): void {
     `                            Mode resolves through src/core/search/mode.ts so the search\n` +
     `                            behavior matches what production gets under that mode.\n` +
     `                            --mode tokenmax implies --expansion unless overridden.\n` +
+    `  --reranker-model M        Seed search.reranker.model in the benchmark brain.\n` +
+    `  --reranker-enabled BOOL   Seed search.reranker.enabled in the benchmark brain.\n` +
+    `  --reranker-timeout-ms N   Seed search.reranker.timeout_ms in the benchmark brain.\n` +
+    `  --reranker-top-n-in N     Seed search.reranker.top_n_in in the benchmark brain.\n` +
+    `  --reranker-top-n-out N    Seed search.reranker.top_n_out; null|none means no truncation.\n` +
     `  --output FILE             Write JSONL to FILE instead of stdout.\n` +
     `  --resume-from FILE        Skip question_ids already present in FILE; resume the\n` +
     `                            remaining questions. Typically the same path as --output\n` +
@@ -543,18 +654,11 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     fallback: 'sonnet',
   });
 
-  // Wrap Anthropic SDK so its `.messages.create` shape matches ThinkLLMClient.
-  // Same pattern as src/core/think/index.ts:247-249.
-  const realClient = new Anthropic();
-  const client: ThinkLLMClient = runOpts.client ?? budgetedThinkClient(
-    'eval.longmemeval.answer',
-    (params, callOpts) => realClient.messages.create(params, callOpts),
-  );
-  // v0.40.2.0 — separate extractor client (defaults to same SDK).
-  const extractorClient: ThinkLLMClient = runOpts.extractorClient ?? budgetedThinkClient(
-    'eval.longmemeval.extractor',
-    (params, callOpts) => realClient.messages.create(params, callOpts),
-  );
+  const client: ThinkLLMClient = runOpts.client ?? gatewayThinkClient('eval.longmemeval.answer');
+  // v0.40.2.0 — separate extractor client. Production routes through the
+  // provider-neutral gateway so non-Anthropic eval models are real, not just
+  // strings passed to the Anthropic SDK.
+  const extractorClient: ThinkLLMClient = runOpts.extractorClient ?? gatewayThinkClient('eval.longmemeval.extractor');
   const trajectoryEnabled = !opts.noTrajectory;
   const extractorModel = trajectoryEnabled
     ? await resolveModel(null, {
@@ -600,6 +704,21 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     if (opts.mode) {
       await engine.setConfig('search.mode', opts.mode);
     }
+    if (opts.rerankerModel) {
+      await engine.setConfig('search.reranker.model', opts.rerankerModel);
+    }
+    if (opts.rerankerEnabled !== undefined) {
+      await engine.setConfig('search.reranker.enabled', opts.rerankerEnabled ? 'true' : 'false');
+    }
+    if (opts.rerankerTimeoutMs !== undefined) {
+      await engine.setConfig('search.reranker.timeout_ms', String(opts.rerankerTimeoutMs));
+    }
+    if (opts.rerankerTopNIn !== undefined) {
+      await engine.setConfig('search.reranker.top_n_in', String(opts.rerankerTopNIn));
+    }
+    if (opts.rerankerTopNOut !== undefined) {
+      await engine.setConfig('search.reranker.top_n_out', opts.rerankerTopNOut === null ? 'null' : String(opts.rerankerTopNOut));
+    }
     for (const q of questions) {
       const qStart = Date.now();
       try {
@@ -620,6 +739,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
           question_id: q.question_id,
           question: q.question,
           question_type: q.question_type,
+          answer: q.answer,
           hypothesis: '',
           error: String(err?.message ?? err),
         });
@@ -825,6 +945,10 @@ async function runOneQuestion(
     // cross-modal --batch consumer has the `task` it needs without joining
     // back against the source dataset.
     question: q.question,
+    // v0.40.1.0 Track D follow-up: carry the expected answer so
+    // `eval cross-modal --batch` can score answer correctness without
+    // re-joining the original fixture.
+    answer: q.answer,
     // v0.40.1.0 (Track D / T2) — copy question_type into the row so the
     // by_type_summary can be rebuilt from the file on resume runs.
     question_type: q.question_type,

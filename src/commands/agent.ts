@@ -67,7 +67,7 @@ USAGE
 SUBMITTING
   gbrain agent run <prompt>
     --subagent-def <name>        Named plugin subagent (from GBRAIN_PLUGIN_PATH)
-    --model <id>                 Anthropic model id (defaults to sonnet)
+    --model <provider:model>     Tool-capable model id (defaults via models.subagent → models.default → models.tier.subagent)
     --max-turns <n>              Max assistant turns (default 20)
     --tools a,b,c                Subset of registered tool names (comma list)
     --timeout-ms <n>             Per-job wall-clock timeout
@@ -89,8 +89,8 @@ VIEWING
 
 NOTES
   Submitting subagent jobs is trusted-only; MCP submitters receive
-  permission_denied. The worker needs ANTHROPIC_API_KEY set, or the
-  first LLM turn of a claimed job fails.
+  permission_denied. The worker needs the configured provider key set, or
+  the first LLM turn of a claimed job fails.
 `);
 }
 

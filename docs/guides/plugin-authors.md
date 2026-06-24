@@ -99,7 +99,7 @@ Recognized frontmatter fields:
 | field           | type     | required | notes                                                                                   |
 |-----------------|----------|----------|-----------------------------------------------------------------------------------------|
 | `name`          | string   | no       | Subagent identifier used as `--subagent-def`. Defaults to the file basename.            |
-| `model`         | string   | no       | Anthropic model id. Defaults to the handler default (sonnet).                           |
+| `model`         | string   | no       | Tool-capable `provider:model` id. Defaults to `models.tier.subagent`.                   |
 | `max_turns`     | number   | no       | Cap on assistant turns. Defaults to 20.                                                 |
 | `allowed_tools` | string[] | no       | Whitelist of tool names. Must subset the derived brain registry. Rejected on mismatch.  |
 

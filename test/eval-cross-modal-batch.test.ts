@@ -220,6 +220,38 @@ describe('runEvalCrossModal --batch end-to-end (v0.40.1.0 Track D / T3, per D5+D
     }
   });
 
+  test('LongMemEval answer field is included in per-question eval task', async () => {
+    const fixturePath = writeBatchFixture([
+      {
+        question_id: 'q1',
+        question: 'What language is elliot-example most fluent in?',
+        answer: 'TypeScript',
+        hypothesis: 'TypeScript',
+      },
+    ]);
+    const summaryPath = join(mkdtempSync(join(tmpdir(), 'cm-summary-')), 'summary.json');
+    const seenTasks: string[] = [];
+    try {
+      const exit = await runEvalCrossModal(
+        ['--batch', fixturePath, '--output', summaryPath, '--limit', '1',
+         '--cycles', '1', '--concurrent', '1', '--max-usd', '1000'],
+        {
+          runEval: async (opts: any) => {
+            seenTasks.push(opts.task);
+            return makeStubRunEval(['pass'])(opts);
+          },
+        },
+      );
+      expect(exit).toBe(0);
+      expect(seenTasks[0]).toContain('What language is elliot-example most fluent in?');
+      expect(seenTasks[0]).toContain('Expected answer:');
+      expect(seenTasks[0]).toContain('TypeScript');
+    } finally {
+      rmSync(fixturePath, { recursive: true, force: true });
+      rmSync(summaryPath, { force: true });
+    }
+  });
+
   test('any per-question ERROR → exit 2 (precedence: ERROR > FAIL > INCONCLUSIVE > PASS)', async () => {
     const fixturePath = writeBatchFixture([
       { question_id: 'q1', question: 'a', hypothesis: 'a-ans' },

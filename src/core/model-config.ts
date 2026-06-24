@@ -39,9 +39,8 @@ export interface ResolveModelOpts {
    * before the env var. Routing groups: `utility` (haiku-class, classification
    * + expansion + verdict), `reasoning` (sonnet-class, default chat +
    * synthesis + fact extraction), `deep` (opus-class, expensive reasoning),
-   * `subagent` (Anthropic-only multi-turn tool loop — never inherits a
-   * non-Anthropic `models.default`; falls back to TIER_DEFAULTS.subagent
-   * with a one-shot stderr warn instead).
+   * `subagent` (durable multi-turn tool loop; requires native tool calling
+   * and `agent.use_gateway_loop=true` for non-Anthropic providers).
    */
   tier?: ModelTier;
   /** Hardcoded last-resort fallback. */
@@ -64,8 +63,8 @@ export const DEFAULT_ALIASES: Record<string, string> = {
 
 /**
  * Default model for each tier. Used as the hardcoded fallback when no
- * `models.tier.<tier>` config + no `models.default` is set. Subagent gets
- * Sonnet (Anthropic Messages API tool-loop shape required); reasoning gets
+ * `models.tier.<tier>` config + no `models.default` is set. Subagent still
+ * defaults to Sonnet for the cache-friendly legacy lane; reasoning gets
  * Sonnet (default workhorse); deep gets Opus 4.7 (expensive reasoning);
  * utility gets Haiku (fast classification).
  *
@@ -79,14 +78,14 @@ export const TIER_DEFAULTS: Record<ModelTier, string> = {
 };
 
 /**
- * v0.31.12 subagent runtime enforcement (layer 2).
+ * v0.31.12 legacy Anthropic classifier.
  *
  * Returns true if a resolved `provider:model` (or bare model id) points at
- * an Anthropic-shape API. The subagent loop in
- * `src/core/minions/handlers/subagent.ts` makes Anthropic Messages API calls
- * with prompt caching on system + tools; routing it elsewhere silently
- * breaks. When `tier === 'subagent'` resolves to a non-Anthropic provider,
- * we log a stderr warn AND fall back to `TIER_DEFAULTS.subagent`.
+ * an Anthropic-shape API. The legacy subagent path in
+ * `src/core/minions/handlers/subagent.ts` still makes Anthropic Messages API
+ * calls with prompt caching on system + tools. The gateway subagent path is
+ * provider-capability gated instead; keep this helper for the legacy path and
+ * for compatibility with older callers.
  */
 export function isAnthropicProvider(modelString: string): boolean {
   if (!modelString) return false;
@@ -272,7 +271,7 @@ function enforceSubagentCapable(resolved: string, tier: ModelTier | undefined, s
       process.stderr.write(
         `[models] tier.subagent resolved to "${resolved}" via "${source}" — provider does not support prompt caching. ` +
         `The loop will run hot (cost scales linearly with conversation length). ` +
-        `For lower cost on long loops, set models.tier.subagent to an Anthropic model.\n`,
+        `Anthropic models can be cheaper for cache-heavy loops; compare live spend before choosing the default.\n`,
       );
     }
   }

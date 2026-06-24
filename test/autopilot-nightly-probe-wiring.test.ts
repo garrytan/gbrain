@@ -31,10 +31,11 @@ describe('autopilot wiring: nightly quality probe', () => {
     expect(SOURCE).toContain(`runCrossModalBatchForProbe`);
   });
 
-  test('feature flag gate present: cfg.autopilot.nightly_quality_probe.enabled', () => {
+  test('feature flag gate present: DB-backed autopilot.nightly_quality_probe.enabled', () => {
     // Per D10: the scheduler ONLY checks the feature flag. The 24h rate-limit
     // lives inside runNightlyQualityProbe itself (no scheduler-side precheck).
-    expect(SOURCE).toContain(`nightly_quality_probe?.enabled === true`);
+    expect(SOURCE).toContain(`engine.getConfig('autopilot.nightly_quality_probe.enabled')`);
+    expect(SOURCE).toContain(`parseConfigBool`);
   });
 
   test('NO scheduler-side rate-limit check (D10 simplification)', () => {
@@ -70,6 +71,45 @@ describe('autopilot wiring: nightly quality probe', () => {
   });
 
   test('max_usd default = 5 when config unset (matches plan default per D10)', () => {
+    expect(SOURCE).toContain(`engine.getConfig('autopilot.nightly_quality_probe.max_usd')`);
+    expect(SOURCE).toContain(`parseNonNegativeNumber(maxUsdRaw`);
     expect(SOURCE).toMatch(/max_usd\s*\?\?\s*5/);
+  });
+
+  test('min_pass_rate default = 0.7 when config unset', () => {
+    expect(SOURCE).toContain(`engine.getConfig('autopilot.nightly_quality_probe.min_pass_rate')`);
+    expect(SOURCE).toContain(`resolveMinPassRate:`);
+    expect(SOURCE).toMatch(/min_pass_rate[\s\S]*\?\?\s*0\.7/);
+  });
+
+  test('threads configurable cross-modal slot models into nightly probe', () => {
+    expect(SOURCE).toContain(`models.eval.cross_modal.slot_a`);
+    expect(SOURCE).toContain(`models.eval.cross_modal.slot_b`);
+    expect(SOURCE).toContain(`models.eval.cross_modal.slot_c`);
+    expect(SOURCE).toContain(`resolveOptionalModelConfig`);
+    expect(SOURCE).toContain(`slotAModel: slotAModel ?? undefined`);
+    expect(SOURCE).toContain(`slotBModel: slotBModel ?? undefined`);
+    expect(SOURCE).toContain(`slotCModel: slotCModel ?? undefined`);
+    expect(SOURCE).toContain(`longMemEvalModel`);
+    expect(SOURCE).toContain(`longMemEvalExtractorModel`);
+  });
+
+  test('threads live reranker config into the hermetic LongMemEval brain', () => {
+    expect(SOURCE).toContain(`engine.getConfig('search.reranker.enabled')`);
+    expect(SOURCE).toContain(`engine.getConfig('search.reranker.model')`);
+    expect(SOURCE).toContain(`engine.getConfig('search.reranker.timeout_ms')`);
+    expect(SOURCE).toContain(`engine.getConfig('search.reranker.top_n_in')`);
+    expect(SOURCE).toContain(`engine.getConfig('search.reranker.top_n_out')`);
+    expect(SOURCE).toContain(`longMemEvalRerankerModel`);
+    expect(SOURCE).toContain(`longMemEvalRerankerEnabled`);
+    expect(SOURCE).toContain(`longMemEvalRerankerTimeoutMs`);
+    expect(SOURCE).toContain(`longMemEvalRerankerTopNIn`);
+    expect(SOURCE).toContain(`longMemEvalRerankerTopNOut`);
+    expect(SOURCE).toContain(`parsePositiveIntegerOrNullSentinel`);
+  });
+
+  test('doctor reads DB-backed nightly enable config', () => {
+    const doctorSrc = readFileSync(resolve('src/commands/doctor.ts'), 'utf-8');
+    expect(doctorSrc).toContain(`engine.getConfig('autopilot.nightly_quality_probe.enabled')`);
   });
 });

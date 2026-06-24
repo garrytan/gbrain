@@ -466,6 +466,7 @@ interface BatchRow {
   question_id: string;
   question: string;
   hypothesis: string;
+  answer?: string;
 }
 
 /**
@@ -579,6 +580,7 @@ function readBatchRows(path: string): BatchReadResult {
       question_id: typeof obj.question_id === 'string' ? obj.question_id : `line-${lineNo}`,
       question: obj.question,
       hypothesis: obj.hypothesis,
+      ...(typeof obj.answer === 'string' && obj.answer.trim().length > 0 ? { answer: obj.answer } : {}),
     });
   }
   if (summarySkipped > 0) {
@@ -695,7 +697,7 @@ async function runBatchMode(parsed: ParsedArgs, opts: RunCrossModalOpts): Promis
       fn: async (row, idx) => {
         process.stderr.write(`[eval cross-modal batch] ${idx + 1}/${rows.length} ${row.question_id} starting...\n`);
         return await runEvalFn({
-          task: row.question,
+          task: buildBatchTask(row),
           output: row.hypothesis,
           slug: row.question_id,
           dimensions,
@@ -822,6 +824,16 @@ async function runBatchMode(parsed: ParsedArgs, opts: RunCrossModalOpts): Promis
       );
     }
   }
+}
+
+function buildBatchTask(row: BatchRow): string {
+  if (!row.answer) return row.question;
+  return [
+    row.question,
+    '',
+    'Expected answer:',
+    row.answer,
+  ].join('\n');
 }
 
 function batchSha8(summary: BatchSummary): string {

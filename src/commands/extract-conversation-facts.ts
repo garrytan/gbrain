@@ -92,6 +92,7 @@ import { withRefreshingLock, LockUnavailableError } from '../core/db-lock.ts';
 import { assertFactsEmbeddingDimMatchesConfig } from '../core/embedding-dim-check.ts';
 import { writeReceipt, shortRunId } from '../core/extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../core/extract/rollup-writer.ts';
+import { isConversationFactsCandidatePage } from '../core/conversation-parser/candidates.ts';
 
 // ---------------------------------------------------------------------------
 // Tunables (exported for tests).
@@ -244,6 +245,7 @@ export interface ExtractConversationFactsResult {
   pages_considered: number;
   pages_processed: number;
   pages_skipped: number;
+  pages_skipped_non_candidate: number;
   pages_skipped_too_large: number;
   pages_skipped_disappeared: number;
   /**
@@ -873,6 +875,7 @@ export async function runExtractConversationFactsCore(
     pages_considered: 0,
     pages_processed: 0,
     pages_skipped: 0,
+    pages_skipped_non_candidate: 0,
     pages_skipped_too_large: 0,
     pages_skipped_disappeared: 0,
     pages_lock_skipped: 0,
@@ -1025,6 +1028,9 @@ export async function runExtractConversationFactsCore(
             const remaining = opts.limit - processedPagesCount;
             if (remaining < batch.length) claimable = batch.slice(0, remaining);
           }
+          const beforeCandidateFilter = claimable.length;
+          claimable = claimable.filter(isConversationFactsCandidatePage);
+          state.result.pages_skipped_non_candidate += beforeCandidateFilter - claimable.length;
 
           await runSlidingPool({
             items: claimable,
@@ -1370,6 +1376,7 @@ export async function runExtractConversationFacts(
     pages_considered: 0,
     pages_processed: 0,
     pages_skipped: 0,
+    pages_skipped_non_candidate: 0,
     pages_skipped_too_large: 0,
     pages_skipped_disappeared: 0,
     pages_lock_skipped: 0,
@@ -1410,6 +1417,7 @@ export async function runExtractConversationFacts(
       aggregate.pages_considered += perSource.pages_considered;
       aggregate.pages_processed += perSource.pages_processed;
       aggregate.pages_skipped += perSource.pages_skipped;
+      aggregate.pages_skipped_non_candidate += perSource.pages_skipped_non_candidate;
       aggregate.pages_skipped_too_large += perSource.pages_skipped_too_large;
       aggregate.pages_skipped_disappeared += perSource.pages_skipped_disappeared;
       aggregate.pages_lock_skipped += perSource.pages_lock_skipped;
@@ -1436,6 +1444,9 @@ export async function runExtractConversationFacts(
   );
   if (aggregate.pages_skipped > 0) {
     console.log(`  Skipped ${aggregate.pages_skipped} page(s) with no new segments since last checkpoint.`);
+  }
+  if (aggregate.pages_skipped_non_candidate > 0) {
+    console.log(`  Skipped ${aggregate.pages_skipped_non_candidate} page(s) that are typed like conversations but are documentation/skill pages.`);
   }
   if (aggregate.pages_skipped_too_large > 0) {
     console.log(`  Skipped ${aggregate.pages_skipped_too_large} page(s) exceeding ${MAX_PAGE_BODY_BYTES / 1024 / 1024}MB body cap.`);

@@ -734,12 +734,10 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // 716K-chunk damage incident from PR #1421's description.
   checks.push(await checkEmbeddingEnvOverride(engine));
 
-  // v0.31.12 subagent runtime enforcement (Layer 3 of 3 — Codex F13).
-  // The subagent loop is Anthropic-only. If models.tier.subagent or
-  // models.default is explicitly set to a non-Anthropic provider, warn here
-  // so the user sees it at the next `gbrain doctor` run instead of at the
-  // next subagent job submission. (Layers 1+2 also enforce — this is the
-  // surfacing layer.)
+  // v0.31.12/v0.38 subagent runtime surfacing. The loop is now
+  // capability-gated: warn when the configured model cannot run tools, is
+  // unknown, or lacks prompt caching. Non-Anthropic models can run on the
+  // gateway path when `agent.use_gateway_loop=true`.
   checks.push(await checkSubagentCapability(engine));
 
   // 6. Sync freshness check
@@ -1427,6 +1425,9 @@ export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> 
  *      return 'ok: reranker disabled'. Avoids keeping stale audit failures
  *      alive after the operator intentionally turns the reranker off.
  *   2) Walk last 7 days of `~/.gbrain/audit/rerank-failures-*.jsonl`.
+ *      When a concrete `search.reranker.model` is configured, scope audit
+ *      failures to that model so stale failures from a prior provider do not
+ *      keep the current local reranker yellow.
  *   3) Auth failures: ANY single one warns (config-time problem doctor's
  *      own probe should have caught — surface it).
  *   4) Transient (network/timeout/rate_limit): warn at >=5 in window.
@@ -1451,14 +1452,20 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
 
     const { readRecentRerankFailures } = await import('../core/rerank-audit.ts');
     const rerankerEnabled = normalizedCfg === 'true' || normalizedCfg === '1';
+    const currentModel = (await engine.getConfig('search.reranker.model'))?.trim() || null;
 
-    const failures = readRecentRerankFailures(7);
+    const allFailures = readRecentRerankFailures(7);
+    const failures = currentModel
+      ? allFailures.filter((f) => f.model === currentModel)
+      : allFailures;
     if (failures.length === 0) {
       return {
         name: 'reranker_health',
         status: 'ok',
         message: rerankerEnabled
-          ? 'No rerank failures in last 7 days'
+          ? currentModel
+            ? `No rerank failures for ${currentModel} in last 7 days`
+            : 'No rerank failures in last 7 days'
           : 'Reranker disabled — no failures expected',
       };
     }
@@ -2729,8 +2736,16 @@ async function checkEmbeddingEnvOverride(engine: BrainEngine): Promise<Check> {
 export async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
   try {
     const { classifyCapabilities } = await import('../core/ai/capabilities.ts');
+    const { isAnthropicProvider, resolveAlias, TIER_DEFAULTS } = await import('../core/model-config.ts');
+    const modelsSubagent = await engine.getConfig('models.subagent');
     const tierSubagent = await engine.getConfig('models.tier.subagent');
     const modelsDefault = await engine.getConfig('models.default');
+    const gatewayLoopRaw = await engine.getConfig('agent.use_gateway_loop').catch(() => null);
+    const gatewayLoopEnabled = typeof gatewayLoopRaw === 'string'
+      && ['true', '1'].includes(gatewayLoopRaw.trim().toLowerCase());
+    const switchBackFix = (source: string): string => source.startsWith('env:')
+      ? `unset ${source.slice(4)} or override with \`gbrain config set models.subagent anthropic:claude-sonnet-4-6\``
+      : `\`gbrain config set ${source} anthropic:claude-sonnet-4-6\``;
 
     // Helper: explain a verdict in user-facing terms.
     const explain = (resolved: string, source: string): Check | null => {
@@ -2756,25 +2771,48 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
         };
       }
       if (verdict === 'degraded:no_caching') {
+        if (!gatewayLoopEnabled && !isAnthropicProvider(resolved)) {
+          return {
+            name: 'subagent_capability',
+            status: 'warn',
+            message:
+              `${source} is "${resolved}" and agent.use_gateway_loop is not enabled. ` +
+              `This model has tool calling, but the legacy subagent path only runs Anthropic models; ` +
+              `jobs will fail at dispatch. ` +
+              `Enable: \`gbrain config set agent.use_gateway_loop true\` or switch back with ${switchBackFix(source)}.`,
+          };
+        }
         return {
           name: 'subagent_capability',
           status: 'warn',
+          action_tier: 'yellow',
           message:
             `${source} is "${resolved}" — provider does not support prompt caching. ` +
             `The subagent loop runs hot (cost scales linearly with conversation length). ` +
-            `For lower cost on long loops, use an Anthropic model: ` +
-            `\`gbrain config set models.tier.subagent anthropic:claude-sonnet-4-6\`.`,
+            `Anthropic may still win on cache-heavy loops, but cheaper tool-capable models can be better for broad agent fan-out. ` +
+            `Compare live spend with \`gbrain budget reconcile --provider all --days 7 --json\` before changing the default.`,
         };
       }
       return null;
     };
 
-    if (tierSubagent) {
-      const issue = explain(tierSubagent, 'models.tier.subagent');
+    const candidates: Array<{ source: string; raw: string | null | undefined }> = [
+      { source: 'models.subagent', raw: modelsSubagent },
+      { source: 'models.default', raw: modelsDefault },
+      { source: 'models.tier.subagent', raw: tierSubagent },
+      { source: 'env:GBRAIN_MODEL', raw: process.env.GBRAIN_MODEL },
+      { source: 'models.tier.subagent', raw: TIER_DEFAULTS.subagent },
+    ];
+    let resolvedSource = 'models.tier.subagent';
+    let resolvedModel = TIER_DEFAULTS.subagent;
+    for (const candidate of candidates) {
+      if (!candidate.raw?.trim()) continue;
+      const resolved = await resolveAlias(engine, candidate.raw.trim());
+      resolvedSource = candidate.source;
+      resolvedModel = resolved;
+      const issue = explain(resolved, candidate.source);
       if (issue) return issue;
-    } else if (modelsDefault) {
-      const issue = explain(modelsDefault, 'models.default');
-      if (issue) return issue;
+      break;
     }
     // v0.37 (T10 / D7) + v0.38 (D7 capability rename): warn when the configured
     // chat_model is non-Anthropic AND ANTHROPIC_API_KEY isn't set. With
@@ -2787,10 +2825,6 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
       const { loadConfig } = await import('../core/config.ts');
       const cfg = loadConfig();
       const chatModel = cfg?.chat_model;
-      const gatewayLoopRaw = await engine.getConfig('agent.use_gateway_loop').catch(() => null);
-      const gatewayLoopEnabled = typeof gatewayLoopRaw === 'string'
-        && ['true', '1', 'yes', 'on'].includes(gatewayLoopRaw.trim().toLowerCase());
-      const { isAnthropicProvider } = await import('../core/model-config.ts');
       if (chatModel && !isAnthropicProvider(chatModel) && !process.env.ANTHROPIC_API_KEY && !gatewayLoopEnabled) {
         return {
           name: 'subagent_capability',
@@ -2807,9 +2841,7 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
     return {
       name: 'subagent_capability',
       status: 'ok',
-      message: tierSubagent
-        ? `Subagent tier resolves to "${tierSubagent}" with full tool-loop capability`
-        : `Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability`,
+      message: `Subagent model resolves via ${resolvedSource} to "${resolvedModel}" with full tool-loop capability`,
     };
   } catch (e) {
     return {
@@ -4783,11 +4815,17 @@ export async function buildChecks(
   // doctor — doctor just surfaces what the probe wrote.
   try {
     const { readRecentQualityProbeEvents } = await import('../core/audit-quality-probe.ts');
-    const { loadConfig } = await import('../core/config.ts');
     let probeEnabled = false;
     try {
-      const cfg = loadConfig();
-      probeEnabled = Boolean((cfg as any)?.autopilot?.nightly_quality_probe?.enabled);
+      const raw = engine ? await engine.getConfig('autopilot.nightly_quality_probe.enabled') : null;
+      if (raw != null) {
+        const v = raw.trim().toLowerCase();
+        probeEnabled = ['1', 'true', 'yes', 'on'].includes(v);
+      } else {
+        const { loadConfig } = await import('../core/config.ts');
+        const cfg = loadConfig();
+        probeEnabled = Boolean((cfg as any)?.autopilot?.nightly_quality_probe?.enabled);
+      }
     } catch { /* config unavailable → treat as disabled */ }
     const events = readRecentQualityProbeEvents(7);
     const check = computeNightlyQualityProbeHealthCheck(probeEnabled, events);
@@ -4867,13 +4905,14 @@ export async function buildChecks(
   if (engine) {
     try {
       const { parseConversation } = await import('../core/conversation-parser/parse.ts');
+      const { isConversationFactsCandidatePage } = await import('../core/conversation-parser/candidates.ts');
       const allowedTypes = ['conversation', 'meeting', 'slack', 'email'] as const;
       // PageFilters supports singular `type` only; iterate the 4 types
       // and cap at ~50/each to land at ~200 total max.
       const sample: import('../core/types.ts').Page[] = [];
       for (const t of allowedTypes) {
         const slice = await engine.listPages({ limit: 50, type: t as import('../core/types.ts').PageType });
-        sample.push(...slice);
+        sample.push(...slice.filter(isConversationFactsCandidatePage));
       }
       if (sample.length === 0) {
         checks.push({
@@ -7057,11 +7096,10 @@ export async function buildChecks(
     }
   }
 
-  // 11.4 subagent_capability (v0.38 — D7; was subagent_provider in v0.31.12). Surfaces a
-  // warn when models.tier.subagent or models.default points at a non-Anthropic
-  // provider. Layers 1 (queue.ts submit-time) and 2 (handler runtime) also
-  // enforce; this is the surfacing layer so users see the config drift before
-  // a job is submitted.
+  // 11.4 subagent_capability (v0.38 — D7; was subagent_provider in v0.31.12).
+  // Surfaces unusable/unknown/no-cache subagent model posture before a job is
+  // submitted. Layers 1 (queue.ts submit-time) and 2 (handler runtime) also
+  // enforce true failures.
   progress.heartbeat('subagent_capability');
   checks.push(await checkSubagentCapability(engine));
 
