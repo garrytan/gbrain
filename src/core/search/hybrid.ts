@@ -459,12 +459,18 @@ export async function runPostFusionStages(
   if (opts.recency !== 'off') {
     try {
       const dates = await engine.getEffectiveDates(refs);
-      const { DEFAULT_RECENCY_DECAY, DEFAULT_FALLBACK } = await import('./recency-decay.ts');
+      // Resolve the effective decay map (defaults + gbrain.yml `recency:` +
+      // GBRAIN_RECENCY_DECAY env) instead of the baked-in defaults. The
+      // get_recent_salience SQL path already goes through resolveRecencyDecayMap()
+      // (see sql-ranking.ts); using DEFAULT_RECENCY_DECAY directly here meant the
+      // hot hybridSearch path silently ignored operator overrides, leaving
+      // non-default vault layouts on DEFAULT_FALLBACK regardless of tuning.
+      const { resolveRecencyDecayMap, DEFAULT_FALLBACK } = await import('./recency-decay.ts');
       applyRecencyBoost(
         results,
         dates,
         opts.recency,
-        opts.decayMap ?? DEFAULT_RECENCY_DECAY,
+        opts.decayMap ?? resolveRecencyDecayMap(),
         opts.fallback ?? DEFAULT_FALLBACK,
         Date.now(),
         floorThreshold,
