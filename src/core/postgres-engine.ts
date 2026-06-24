@@ -205,7 +205,11 @@ export class PostgresEngine implements BrainEngine {
     } else if (sourceId) {
       scopesValue = sourceId;
     }
-    return await this.sql.begin(async (tx: any) => {
+    // `sql.begin<T>(...)` returns `UnwrapPromiseArray<T>` in postgres.js's typings
+    // — TypeScript strict-generics can't narrow that back to `T` for arbitrary
+    // callback return shapes (TS2322). The unwrap is a no-op when the callback
+    // returns a single value (not an array of promises), so the cast is safe.
+    return (await this.sql.begin(async (tx: any) => {
       if (this.rlsScopeBindingEnabled) {
         // `SET LOCAL` doesn't accept parameters in PostgreSQL — using
         // `tx\`SET LOCAL ... = ${val}\`` binds val as $1 and errors with
@@ -215,7 +219,7 @@ export class PostgresEngine implements BrainEngine {
         await tx`SELECT set_config('app.scopes', ${scopesValue}, true)`;
       }
       return await callback(tx as ReturnType<typeof postgres>);
-    });
+    })) as T;
   }
 
   // Lifecycle
