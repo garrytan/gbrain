@@ -29,6 +29,7 @@ import {
   BUILTIN_PATTERNS,
   cleanSpeaker,
 } from './builtins.ts';
+import { normalizeBlockConversation } from './normalize-block.ts';
 import type {
   DateContext,
   MatchedMessage,
@@ -440,6 +441,12 @@ export function parseConversation(
   if (!body) {
     return { messages: [], phase: 'no_match' };
   }
+
+  // Pre-pass: collapse block-format chat exports (header + indented body, e.g.
+  // the Slack collector's `- **Name** (Mon 11:18)\n  body…`) into the canonical
+  // single-line shape the built-in patterns recognize. Strict no-op when no
+  // block header is present, so already-canonical content is untouched.
+  body = normalizeBlockConversation(body);
 
   const dateCtx = deriveDateContext(opts);
 

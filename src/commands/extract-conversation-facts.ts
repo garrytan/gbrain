@@ -144,6 +144,38 @@ export const ALLOWED_TYPES = ['conversation', 'meeting', 'slack', 'email'] as co
 export type AllowedType = (typeof ALLOWED_TYPES)[number];
 
 /**
+ * Granular collector page-types that alias into each canonical conversation
+ * bucket. The v2 type-consolidation pack retypes these to the canonical names
+ * (`slack-dm-day`/`slack-thread` → `slack`, `email-digest` → `email`), but a
+ * brain that hasn't run that pack still carries the collector's granular types
+ * in `pages.type`. Without this expansion, `listPages({ type: 'slack' })`
+ * matches zero rows on such brains and the whole comms corpus is silently
+ * skipped (facts stay empty → `find_trajectory` returns nothing). The canonical
+ * name is always included first so consolidated brains keep working unchanged.
+ */
+export const ALLOWED_TYPE_ALIASES: Record<AllowedType, readonly string[]> = {
+  conversation: ['conversation'],
+  meeting: ['meeting'],
+  slack: ['slack', 'slack-dm-day', 'slack-thread'],
+  email: ['email', 'email-digest'],
+};
+
+/**
+ * Expand the requested logical types to the concrete `pages.type` values to
+ * enumerate, canonical-first and de-duplicated. Unknown types pass through
+ * unchanged so an explicit override is never dropped.
+ */
+export function pageTypesForAllowed(types: readonly AllowedType[]): string[] {
+  const out: string[] = [];
+  for (const t of types) {
+    for (const concrete of ALLOWED_TYPE_ALIASES[t] ?? [t]) {
+      if (!out.includes(concrete)) out.push(concrete);
+    }
+  }
+  return out;
+}
+
+/**
  * Pagination batch size for listPages enumeration. Per-batch memory
  * worst case = BATCH × MAX_PAGE_BODY_BYTES = 250MB at default 10
  * (Eng-v2 C8 — bounded vs PR's unbounded listPages limit:500 = 12.5GB).
@@ -983,13 +1015,18 @@ export async function runExtractConversationFactsCore(
       }
     };
 
+    // Expand logical types (conversation/meeting/slack/email) to the concrete
+    // `pages.type` values to enumerate, so brains on the granular collector
+    // types are not silently skipped (see ALLOWED_TYPE_ALIASES).
+    const concreteTypes = pageTypesForAllowed(types);
+
     if (opts.slug) {
       const page = await engine.getPage(opts.slug, { sourceId });
       if (!page) {
         result.pages_skipped_disappeared++;
         return;
       }
-      if (!types.includes(page.type as AllowedType)) {
+      if (!concreteTypes.includes(page.type)) {
         result.pages_skipped++;
         return;
       }
@@ -1003,7 +1040,7 @@ export async function runExtractConversationFactsCore(
       // honors AbortSignal at each claim boundary and threads
       // BudgetExhausted abort (D13) automatically.
       let processedPagesCount = 0;
-      pageLoop: for (const type of types) {
+      pageLoop: for (const type of concreteTypes) {
         let offset = 0;
         // eslint-disable-next-line no-constant-condition
         while (true) {
