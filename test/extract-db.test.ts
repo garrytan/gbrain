@@ -249,3 +249,112 @@ describe('gbrain extract all --source db', () => {
     expect(entries.length).toBe(1);
   });
 });
+
+// Restores PR #397's intent on master's multi-source code shape: dry-run
+// should report net-new candidates, not raw candidates. Two cases per
+// extractor — one proves zero-net-new after a real run, one proves a
+// genuinely new candidate still surfaces.
+describe('gbrain extract --dry-run reports net-new rows (PR #397 reconcile)', () => {
+  beforeEach(truncateAll);
+
+  function captureStdoutLines<T>(fn: () => Promise<T>): Promise<{ result: T; lines: string[] }> {
+    const lines: string[] = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+      const str = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8');
+      lines.push(str);
+      return true;
+    }) as any;
+    return fn()
+      .then(result => ({ result, lines }))
+      .finally(() => {
+        process.stdout.write = originalWrite;
+      });
+  }
+
+  test('links: dry-run after a real run reports zero new add_link rows', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.putPage('companies/acme', companyPage(
+      'Acme',
+      '[Alice](people/alice) joined as CEO.',
+    ));
+
+    // Real run populates `links`. ON CONFLICT enforces uniqueness.
+    await runExtract(engine, ['links', '--source', 'db']);
+    const linksAfterReal = await engine.getLinks('companies/acme');
+    expect(linksAfterReal.length).toBeGreaterThan(0);
+
+    // Second dry-run sees the same candidates AND the existing rows.
+    // Pre-#397-reconcile: emits "would add N". Post: 0.
+    const { lines } = await captureStdoutLines(() =>
+      runExtract(engine, ['links', '--source', 'db', '--dry-run', '--json']),
+    );
+    const addLinkLines = lines.filter(l => l.includes('"action":"add_link"'));
+    expect(addLinkLines.length).toBe(0);
+  });
+
+  test('links: dry-run reports a newly-added candidate after the page body changes', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.putPage('people/bob', personPage('Bob'));
+    await engine.putPage('companies/acme', companyPage(
+      'Acme',
+      '[Alice](people/alice) joined as CEO.',
+    ));
+    await runExtract(engine, ['links', '--source', 'db']);
+
+    // Now the page body gains a new candidate (Bob).
+    await engine.putPage('companies/acme', companyPage(
+      'Acme',
+      '[Alice](people/alice) joined as CEO. [Bob](people/bob) joined as CTO.',
+    ));
+
+    const { lines } = await captureStdoutLines(() =>
+      runExtract(engine, ['links', '--source', 'db', '--dry-run', '--json']),
+    );
+    const addLinkLines = lines.filter(l => l.includes('"action":"add_link"'));
+    // Exactly one new edge (companies/acme → people/bob); the alice edge is suppressed.
+    expect(addLinkLines.length).toBe(1);
+    const parsed = JSON.parse(addLinkLines[0].trim());
+    expect(parsed.to).toBe('people/bob');
+  });
+
+  test('timeline: dry-run after a real run reports zero new add_timeline rows', async () => {
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice', compiled_truth: '',
+      timeline: '- **2026-01-15** | Joined as CEO',
+    });
+
+    await runExtract(engine, ['timeline', '--source', 'db']);
+    const entriesAfterReal = await engine.getTimeline('people/alice');
+    expect(entriesAfterReal.length).toBe(1);
+
+    const { lines } = await captureStdoutLines(() =>
+      runExtract(engine, ['timeline', '--source', 'db', '--dry-run', '--json']),
+    );
+    const addLines = lines.filter(l => l.includes('"action":"add_timeline"'));
+    expect(addLines.length).toBe(0);
+  });
+
+  test('timeline: dry-run reports a newly-added entry after timeline section changes', async () => {
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice', compiled_truth: '',
+      timeline: '- **2026-01-15** | Joined as CEO',
+    });
+    await runExtract(engine, ['timeline', '--source', 'db']);
+
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice', compiled_truth: '',
+      timeline: `- **2026-01-15** | Joined as CEO
+- **2026-02-20** | Closed Series A`,
+    });
+
+    const { lines } = await captureStdoutLines(() =>
+      runExtract(engine, ['timeline', '--source', 'db', '--dry-run', '--json']),
+    );
+    const addLines = lines.filter(l => l.includes('"action":"add_timeline"'));
+    expect(addLines.length).toBe(1);
+    const parsed = JSON.parse(addLines[0].trim());
+    expect(parsed.date).toBe('2026-02-20');
+    expect(parsed.summary).toBe('Closed Series A');
+  });
+});
