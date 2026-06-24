@@ -1,5 +1,11 @@
 # Skillpack Publish + Registry + Install Spec (post-v0.36.0.0)
 
+> Status: SUPERSEDED_BY: `docs/guides/skillpacks-as-scaffolding.md`.
+> This strategic spec is preserved for registry/TOFU/rubric context. Current
+> scaffold/reference behavior lives in
+> [`../guides/skillpacks-as-scaffolding.md`](../guides/skillpacks-as-scaffolding.md)
+> and [`../skillpack-anatomy.md`](../skillpack-anatomy.md).
+
 > **⚠️ Needs v0.36 realignment.** This spec was written assuming the pre-v0.36
 > managed-block install model (which v0.36.0.0 retired in favor of
 > scaffold + reference + harvest). The strategic decisions remain sound — third-party

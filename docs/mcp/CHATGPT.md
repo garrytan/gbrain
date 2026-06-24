@@ -7,41 +7,58 @@ this was a P0 TODO — the only major AI client that could not connect.
 ChatGPT does not support bearer-token MCP servers. You must use the OAuth 2.1
 HTTP server.
 
+For HTTP MCP protocol, engine, OAuth, scope, and `localOnly` rules, use
+[`DEPLOY.md`](DEPLOY.md). This page only covers ChatGPT wiring.
+
 ## Setup
 
-### 1. Start the HTTP server
+### 1. Choose the public URL and start the HTTP server
 
 ```bash
-gbrain serve --http --port 3131
+gbrain serve --http --port 3131 \
+  --public-url https://your-brain.ngrok.app
 ```
 
-Save the admin bootstrap token printed on stderr. Open
-`http://localhost:3131/admin` and paste it to access the dashboard.
+Save the admin bootstrap token printed on stderr if you want to use the admin
+dashboard for request logs after setup.
+
+`--public-url` is the OAuth issuer URL ChatGPT will discover. If ngrok assigns a
+different URL, restart `gbrain serve` with that exact URL before connecting
+ChatGPT. Keep the default loopback bind when ngrok runs on the same machine; add
+`--bind 0.0.0.0` only when a tunnel or reverse proxy connects from another host.
 
 ### 2. Register a ChatGPT client
 
 ChatGPT uses the authorization code flow with PKCE (browser-based OAuth).
-Register from the `/admin` dashboard:
+Register it with the CLI so the client is created as a public PKCE client:
 
-1. Click **Register client**.
-2. Name: `chatgpt`.
-3. Grant type: `authorization_code`.
-4. Scopes: `read`, `write` (leave `admin` unchecked for ChatGPT).
-5. Redirect URI: ChatGPT's OAuth redirect (copy it from the ChatGPT
-   connector setup screen — something like
-   `https://chat.openai.com/connector_platform_oauth_redirect`).
-6. Hit **Register**. The credential-reveal modal shows the `client_id` once
-   with Copy and Download JSON buttons. There is no client secret for
-   PKCE-based public clients.
+```bash
+gbrain auth register-client chatgpt \
+  --grant-types authorization_code,refresh_token \
+  --scopes "read write" \
+  --redirect-uri https://chatgpt.com/connector/oauth/<HASH> \
+  --token-endpoint-auth-method none
+```
+
+Copy the exact redirect URI from the ChatGPT connector setup screen; the
+`<HASH>` value is connector-specific. The command prints a `client_id` and no
+client secret.
+
+The admin dashboard's OAuth-client modal currently creates confidential
+`client_credentials` clients for agents. Do not use that modal for ChatGPT
+until it exposes grant type, redirect URI, and public-client controls.
 
 Host-repo wrappers can register programmatically:
 
 ```ts
 await oauthProvider.registerClientManual(
   'chatgpt',
-  ['authorization_code'],
+  ['authorization_code', 'refresh_token'],
   'read write',
-  ['https://chat.openai.com/connector_platform_oauth_redirect'],
+  ['https://chatgpt.com/connector/oauth/<HASH>'],
+  'default',
+  undefined,
+  'none',
 );
 ```
 
@@ -61,7 +78,7 @@ connector auto-discovers the spec-compliant endpoint at
 1. Open ChatGPT > Settings > Connectors.
 2. Click **Add connector**.
 3. MCP server URL: `https://your-brain.ngrok.app/mcp`.
-4. Client ID: the `client_id` you saved in step 2.
+4. Client ID: the `client_id` printed in step 2.
 5. Click **Connect**. ChatGPT opens the OAuth consent page, you approve, and
    the connector is live.
 
@@ -83,9 +100,8 @@ and the admin dashboard.
 
 **"Invalid redirect_uri" during the ChatGPT connector OAuth handshake**
 The registered `redirect-uri` must match ChatGPT's exactly. If ChatGPT
-rejects your server, check the admin dashboard's **Agents** table for the
-client, confirm the redirect URI matches what the error page shows, and
-re-register with the correct URI.
+rejects your server, re-run `gbrain auth register-client chatgpt` with the
+redirect URI shown by ChatGPT's error page.
 
 **ChatGPT shows an MCP connection error after approval**
 Open `/admin`, watch the SSE feed, and try again. If no request arrives, the

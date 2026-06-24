@@ -4,6 +4,9 @@ Perplexity Computer connects as a **remote** MCP client, so GBrain must be serve
 over HTTP and reachable at a public HTTPS URL. Perplexity does not run
 `gbrain serve` (stdio) the way Claude Code does — it needs a reachable endpoint:
 
+For HTTP MCP protocol, engine, OAuth, legacy bearer, scope, and `localOnly`
+rules, use [`DEPLOY.md`](DEPLOY.md). This page only covers Perplexity wiring.
+
 ```
 Perplexity Computer
   → ngrok tunnel (https://YOUR-DOMAIN.ngrok.app/mcp)

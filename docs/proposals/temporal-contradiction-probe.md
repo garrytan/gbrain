@@ -1,5 +1,11 @@
 # Proposal: Temporal Axis for Contradiction Probe
 
+> Status: DESIGN.
+> This proposal is preserved for temporal-contradiction design context. Current
+> trajectory and contradiction behavior should be verified against
+> [`../eval-bench.md`](../eval-bench.md), [`../takes-vs-facts.md`](../takes-vs-facts.md),
+> and the current source.
+
 **Status:** Report / RFC
 **Date:** 2026-05-14
 **Context:** A large production run of `gbrain eval suspected-contradictions` surfaced ~115 HIGH findings. Walking through them by hand exposed a structural limitation in the probe.

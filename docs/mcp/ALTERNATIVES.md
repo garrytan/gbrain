@@ -2,7 +2,8 @@
 
 GBrain's MCP server runs via `gbrain serve` (stdio transport). To make it
 accessible from other devices and AI clients, run `gbrain serve --http`
-(built-in HTTP transport with bearer auth, Postgres-only ... see
+(built-in HTTP transport with OAuth 2.1, scoped operations, and legacy bearer
+compatibility; see
 [DEPLOY.md](DEPLOY.md)) behind a public tunnel. Here are your tunnel options.
 
 ## ngrok (recommended)
@@ -14,13 +15,18 @@ accessible from other devices and AI clients, run `gbrain serve --http`
 # 1. Install ngrok
 brew install ngrok
 
-# 2. Start the built-in HTTP transport
-gbrain serve --http --port 8787
+# 2. Start the built-in HTTP transport with the public issuer URL
+gbrain serve --http --port 8787 \
+  --bind 0.0.0.0 \
+  --public-url https://your-brain.ngrok.app
 # See docs/mcp/DEPLOY.md for token setup
 
 # 3. Expose via ngrok
 ngrok http 8787 --url your-brain.ngrok.app
 ```
+
+If ngrok gives you an ephemeral URL, restart `gbrain serve` with that exact
+`--public-url` before registering OAuth clients or connecting cloud MCP clients.
 
 See the [ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md) for full setup
 including auth token configuration and fixed domain setup.
@@ -58,10 +64,13 @@ Both run Bun natively. No bundling, no Deno, no cold start, no timeout limits.
 | Works when laptop is off | No | No | Yes |
 | Cold start | None | None | None |
 | Timeout limits | None | None | None |
-| All 30 operations | Yes | Yes | Yes |
+| Remote MCP tools | Current non-`localOnly` tools | Current non-`localOnly` tools | Current non-`localOnly` tools |
 | Setup time | 5 min | 10 min | 15 min |
 
-**Note:** `gbrain serve --http` is the built-in HTTP transport (v0.22.7+). Bearer auth
-against the `access_tokens` table, default-deny CORS, two-bucket rate limit, body cap,
-per-request audit log. Postgres-only by design (PGLite is local-only). See
-[DEPLOY.md](DEPLOY.md) and [SECURITY.md](../../SECURITY.md) for env vars and tunables.
+**Note:** `gbrain serve --http` is the built-in HTTP transport. It supports
+OAuth 2.1, legacy bearer tokens, default-deny CORS, two-bucket rate limiting,
+body caps, and per-request audit logs through the active engine. PGLite can run
+the HTTP server for local/default or small self-hosted cases; use Postgres or
+Supabase for shared, large, multi-machine, or always-on production deployments.
+See [DEPLOY.md](DEPLOY.md) and [SECURITY.md](../../SECURITY.md) for env vars and
+tunables.

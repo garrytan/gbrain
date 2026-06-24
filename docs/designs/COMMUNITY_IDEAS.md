@@ -1,5 +1,11 @@
 # Community Ideas Ledger
 
+> Status: HISTORICAL.
+> This ledger preserves useful community ideas and provenance. It is not the
+> current roadmap or operational guide; use [`../../CHANGELOG.md`](../../CHANGELOG.md)
+> for release history and [`../../TODOS.md`](../../TODOS.md) for active follow-up
+> notes.
+
 > A diary of the **valuable ideas** surfaced by the community-PR wave, kept so that
 > good thinking survives even when the PR that carried it is closed. gbrain moves
 > fast and the maintainer's "cathedral" rewrites supersede most individual PRs —

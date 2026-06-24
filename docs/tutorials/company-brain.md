@@ -153,18 +153,26 @@ You should see all three sources with recent sync timestamps and page counts.
 The personal brain talks to you through the AlphaClaw harness over Telegram. For a company brain we need a path that each teammate's AI client can hit independently. The HTTP MCP server is that path.
 
 ```bash
-gbrain serve --http --port 3131 --bind 0.0.0.0
+gbrain serve --http --port 3131 \
+  --bind 0.0.0.0 \
+  --public-url https://your-brain.ngrok.app
 ```
 
-The `--bind 0.0.0.0` is important. By default the server binds to localhost only, which is correct for a personal install but blocks remote teammates. Setting `0.0.0.0` accepts connections from any interface.
+The `--bind 0.0.0.0` is important. By default the server binds to localhost
+only, which is correct for a personal install but blocks remote teammates.
+Setting `0.0.0.0` accepts connections from any interface. `--public-url` must
+match the URL that OAuth clients use for discovery.
 
 The server prints an admin bootstrap token to stderr on first start. Save it. You'll use it once for the admin dashboard.
 
 For development, tunnel the local server out via ngrok:
 
 ```bash
-ngrok http 3131 --domain your-brain.ngrok.app
+ngrok http 3131 --url your-brain.ngrok.app
 ```
+
+If ngrok assigns a different URL, restart `gbrain serve` with that exact
+`--public-url` before registering clients.
 
 For production, put your server behind a real hostname with a real TLS certificate. Let's call your final URL `https://brain.acme-co.com` for the rest of this tutorial.
 
@@ -186,21 +194,21 @@ Each teammate (or each AI agent for a teammate) gets their own OAuth client. The
 # Alice (sales): writes customers/alice-example, reads customers + shared
 gbrain auth register-client alice-example \
   --grant-types client_credentials \
-  --scopes read,write \
+  --scopes "read write" \
   --source customers \
   --federated-read customers,shared
 
 # Bob (ops): writes internal/bob-example, reads internal + shared
 gbrain auth register-client bob-example \
   --grant-types client_credentials \
-  --scopes read,write \
+  --scopes "read write" \
   --source internal \
   --federated-read internal,shared
 
 # Carol (legal): writes shared/legal, reads all three
 gbrain auth register-client carol-example \
   --grant-types client_credentials \
-  --scopes read,write \
+  --scopes "read write" \
   --source shared \
   --federated-read shared,customers,internal
 ```
@@ -209,7 +217,7 @@ Each `register-client` command prints a `client_id` and a `client_secret`. Save 
 
 A note on the flags:
 
-- `--scopes read,write` lets the client query the brain and write new pages. You can omit `write` for read-only clients (executive summaries, dashboards). The `admin` scope is needed for operational commands like `gbrain remote doctor` and is usually reserved for your own admin client.
+- `--scopes "read write"` lets the client query the brain and write new pages. OAuth scopes are space-separated. You can omit `write` for read-only clients (executive summaries, dashboards). The `admin` scope is needed for operational commands like `gbrain remote doctor` and is usually reserved for your own admin client.
 - `--source` controls write authority. A client can only write to one source. Within that source, your folder convention from Part 3 keeps each person's writes in their own subfolder.
 - `--federated-read` controls read scope. A client can read from one or more sources.
 
@@ -397,24 +405,23 @@ gbrain init --mcp-only \
   --oauth-client-secret <their client_secret>
 ```
 
-The thin-client install creates a local config that knows how to talk to your brain but never opens its own database. Most CLI commands route through the remote server transparently.
+The thin-client install creates a local config that knows how to talk to your
+brain but never opens its own database. Most CLI commands route through the
+remote server transparently.
 
-Now they configure their AI client. For Claude Desktop, the teammate adds an MCP server entry in `~/Library/Application Support/Claude/claude_desktop_config.json`:
+For AI clients, do not point a thin-client home at local stdio `gbrain serve`.
+That path is for same-machine brains. Company-brain clients should connect to
+the hosted `/mcp` endpoint with their OAuth or bearer credential:
 
-```jsonc
-{
-  "mcpServers": {
-    "company-brain": {
-      "command": "gbrain",
-      "args": ["serve"]
-    }
-  }
-}
-```
+- Claude Desktop: add `https://brain.acme-co.com/mcp` through Settings >
+  Integrations. Do not use `claude_desktop_config.json` for remote servers.
+- Claude Code, Codex, Cursor, OpenClaw, Hermes, and other clients: use the
+  client-specific HTTP MCP instructions under [`docs/mcp/`](../mcp/), or use
+  `gbrain connect` when that client has a supported installer path.
 
-When Claude Desktop launches, it talks to the local `gbrain serve` stdio bridge, which forwards every request to your remote brain over HTTPS with their OAuth token attached. From Claude Desktop's perspective it's just one MCP server.
-
-For Claude Code, Cursor, OpenClaw, Hermes, and other clients, per-client setup steps live in [`docs/mcp/`](../mcp/). They all follow the same shape: point the agent at the local `gbrain serve` bridge, which knows about the remote.
+The teammate can still run thin-client CLI commands such as `gbrain search` and
+`gbrain think` locally; those route to the hosted brain through the configured
+remote MCP URL.
 
 ---
 
@@ -464,7 +471,12 @@ Three commands do most of the operational work.
 
 ### Background daemon: `gbrain autopilot`
 
-The personal-brain install already turned this on. For a company brain, the same autopilot covers all your sources because they live in one database. It runs every five minutes; on a healthy brain (health score 95+) it sleeps; on a brain that's drifting it submits targeted maintenance jobs.
+The personal-brain install already turned this on. For a company brain, the
+same autopilot covers all your sources because they live in one database. It
+runs every five minutes; on a healthy brain (health score 95+) it sleeps; on a
+brain that's drifting it submits targeted maintenance jobs. Current releases
+run brain-wide maintenance once per window rather than once per source, so a
+multi-source brain does not multiply global maintenance work by source count.
 
 ### Self-healing: `gbrain doctor --remediate`
 
@@ -480,7 +492,9 @@ Computes a dependency-ordered plan of maintenance jobs that would raise the brai
 gbrain sources status
 ```
 
-Returns a per-source dashboard: when each source last synced, how many pages, how many embedded, how many unacked sync failures. The at-a-glance health check.
+Returns a per-source dashboard: when each source last synced, whether it is
+actively syncing now, how many pages, how many embedded, and how many unacked
+sync failures. The at-a-glance health check.
 
 The admin dashboard at `https://brain.acme-co.com/admin` shows live request volume, registered OAuth clients, recent activity, and brain stats. Use the admin bootstrap token from Part 4 to log in the first time, then register additional admin users from inside the dashboard.
 
@@ -510,7 +524,12 @@ Check `gbrain auth list` on the host and confirm their client has `--source` set
 
 ### "Sync is slow and feels stuck"
 
-The first sync embeds every page, which takes time. Check `gbrain sources status` for the live page count. If it's climbing you're not stuck, you're just embedding. If you've got a 10K-page corpus and ZeroEntropy is being throttled, the per-source parallel sync looks like progress on three sources at once rather than one source moving fast.
+The first sync embeds every page, which takes time. Check `gbrain sources
+status` for the live page count and active-sync state. If it's climbing or the
+source is marked running, you're not stuck, you're just embedding or importing.
+If you've got a 10K-page corpus and ZeroEntropy is being throttled, the
+per-source parallel sync looks like progress on three sources at once rather
+than one source moving fast.
 
 ### "I see a page I shouldn't see"
 
@@ -533,7 +552,7 @@ Each parallel sync worker opens its own pool. With three sources and the default
 ```bash
 gbrain auth register-client diana-example \
   --grant-types client_credentials \
-  --scopes read,write \
+  --scopes "read write" \
   --source shared \
   --federated-read shared,customers,internal
 ```

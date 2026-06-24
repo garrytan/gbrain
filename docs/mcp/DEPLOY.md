@@ -5,13 +5,19 @@
 > dashboard at `/admin`, scoped operations, and a live SSE activity feed.
 > Pre-v0.26 legacy bearer tokens still work — `verifyAccessToken` falls back
 > to the `access_tokens` table and grandfathers tokens to `read+write+admin`.
-> Postgres-only for the legacy fallback (the `access_tokens` table is Postgres-only);
-> OAuth tables work on both PGLite and Postgres. See [SECURITY.md](../../SECURITY.md)
-> for env vars and tunable defaults.
+> The HTTP/auth/logging path is engine-aware on current releases: OAuth tables,
+> legacy bearer tokens, and MCP request logs work through the active
+> `BrainEngine` on both PGLite and Postgres. Use Postgres or Supabase for
+> shared, large, multi-machine, or always-on production deployments; keep PGLite
+> for local/default and small self-hosted cases. See
+> [SECURITY.md](../../SECURITY.md) for env vars and tunable defaults.
 
 Access your brain from any device, any AI client. GBrain ships two transports:
 `gbrain serve` (stdio) for local agents, and `gbrain serve --http` (v0.26.0+)
 for remote clients over OAuth 2.1.
+
+This page is the protocol reference for remote MCP. Client-specific pages should
+link here instead of repeating auth, scope, engine, or `localOnly` rules.
 
 ## Three Paths
 
@@ -27,9 +33,11 @@ No server, no tunnel, no token needed. Works on both PGLite and Postgres engines
 ### Remote over OAuth 2.1 (recommended, v0.26.0+)
 
 ```bash
-gbrain serve --http --port 3131
+# Remote-host shape: accept non-loopback traffic and publish the issuer clients use.
+gbrain serve --http --port 3131 \
+  --bind 0.0.0.0 \
+  --public-url https://your-brain.ngrok.app
 ngrok http 3131 --url your-brain.ngrok.app
-gbrain serve --http --port 3131 --public-url https://your-brain.ngrok.app
 ```
 
 Built-in HTTP transport with OAuth 2.1, scoped operations, an admin dashboard
@@ -41,37 +49,43 @@ discovery metadata matches what clients hit (RFC 8414 §3.3).
 
 Supported clients:
 - **ChatGPT** — requires OAuth 2.1 + PKCE. Works natively with `--http`.
-- **Claude Desktop / Cowork** — OAuth 2.1 or legacy bearer tokens.
+- **Claude Desktop** — add the remote connector through Settings >
+  Integrations. The current client guide documents bearer-token setup.
+- **Cowork** — use the remote MCP settings exposed by the client; bearer-token
+  setup is documented in the client guide.
 - **Perplexity** — OAuth 2.1 client credentials grant.
-- **Claude Code, Cursor, Windsurf** — can use OAuth or legacy bearer.
+- **Claude Code, Codex, Cursor, Windsurf, and other coding agents** — use the
+  matching client page. The GBrain server supports OAuth and legacy bearer
+  tokens, but each client has its own supported connector/auth shape.
 
-See the [OAuth 2.1 setup](#oauth-21-setup-v100) section below.
+See the OAuth 2.1 setup section below.
 
-### Remote with legacy bearer tokens (pre-v0.26 deployments) — Postgres only
+### Remote with legacy bearer tokens (compatibility path)
 
 ```
 Your AI client (Claude Desktop, Perplexity, etc.)
   → ngrok tunnel (https://YOUR-DOMAIN.ngrok.app)
   → gbrain serve --http  (built-in transport with bearer auth)
-  → Postgres (pooler connection or self-hosted)
+  → active BrainEngine (PGLite or Postgres)
 ```
 
 This requires:
-1. A Postgres-backed brain (the `access_tokens` table only exists on Postgres;
-   running `gbrain serve --http` against a PGLite install fails fast at startup)
-2. A machine running `gbrain serve --http`
-3. A public tunnel (ngrok, Tailscale, or cloud host)
-4. A bearer token created via `gbrain auth create <name>`
+1. A machine running `gbrain serve --http`.
+2. A public tunnel, private mesh, or cloud host when the client is not local.
+3. A bearer token created via `gbrain auth create <name>`.
 
 Pre-v1.0 tokens are grandfathered as `read+write+admin` scopes when you upgrade
-to the HTTP server, so no migration is required.
+to the HTTP server, so no migration is required. Treat this as a compatibility
+path for existing local or trusted clients. For cloud connectors, team brains,
+and least-privilege deployments, register OAuth clients instead.
 
 ## OAuth 2.1 Setup (v0.26.0+)
 
 ### 1. Start the HTTP server
 
 ```bash
-gbrain serve --http --port 3131
+gbrain serve --http --port 3131 \
+  --public-url https://your-brain.ngrok.app
 ```
 
 On first start, the server prints an **admin bootstrap token** to stderr:
@@ -85,6 +99,11 @@ Save this token. Open `http://localhost:3131/admin` and paste it to access the
 dashboard. The dashboard shows live activity, registered clients, request logs,
 and per-client config export.
 
+For local-only OAuth testing, omit `--public-url` and use
+`http://localhost:3131` as the issuer. For any public tunnel, reverse proxy, or
+cloud MCP client, set `--public-url` to the exact external URL before
+registering clients.
+
 > **v0.26.9+:** `mcp_request_log.params` and the live SSE activity feed default
 > to a redacted summary `{redacted, kind, declared_keys, unknown_key_count, approx_bytes}`.
 > Declared param keys are kept (intersected against the operation's spec); unknown
@@ -96,20 +115,31 @@ and per-client config export.
 
 ### 2. Register OAuth clients
 
-Register clients from the **`/admin` dashboard**:
+For machine-to-machine clients, register from the **`/admin` dashboard**:
 
 1. Click **Register client**.
-2. Enter a name (e.g. `perplexity`, `chatgpt`).
+2. Enter a name, for example `perplexity` or `claude-code-remote`.
 3. Pick scopes: `read`, `write`, `admin` (checkboxes).
-4. Pick grant type: `client_credentials` for machine-to-machine (Perplexity,
-   Claude Desktop bearer mode) or `authorization_code` for browser-based
-   clients with PKCE (ChatGPT).
-5. For `authorization_code` clients, paste the redirect URI.
-6. Hit **Register**. The credential-reveal modal shows the `client_id` (and
-   `client_secret` for confidential clients) once. Copy or Download JSON
-   immediately — secrets are hashed on storage and never shown again.
+4. Hit **Register**. The credential-reveal modal shows the `client_id` and
+   `client_secret` once. Copy or Download JSON immediately — secrets are
+   hashed on storage and never shown again.
 
-Or from the CLI — faster for scripting:
+The dashboard modal currently creates confidential `client_credentials`
+clients. For browser-based PKCE clients such as ChatGPT, use the CLI so you can
+set grant type, redirect URI, and public-client auth method:
+
+```bash
+gbrain auth register-client chatgpt \
+  --grant-types authorization_code,refresh_token \
+  --scopes "read write" \
+  --redirect-uri https://chatgpt.com/connector/oauth/<HASH> \
+  --token-endpoint-auth-method none
+```
+
+Copy the exact redirect URI from the connector setup screen; the `<HASH>` value
+is specific to that connector registration.
+
+The CLI is also the easiest path for scripted machine-to-machine registration:
 
 ```bash
 gbrain auth register-client perplexity \
@@ -152,16 +182,17 @@ start the server with `--enable-dcr`. DCR is off by default.
 ### 3. Expose the server
 
 **v0.34 — bind explicitly.** `gbrain serve --http` defaults to `127.0.0.1`.
-To accept connections from the ngrok tunnel (or any non-loopback source),
-restart with `--bind`:
+To accept connections from a reverse proxy, mesh, LAN, or tunnel process that is
+not on the same host, restart with `--bind`:
 
 ```bash
 gbrain serve --http --port 3131 --bind 0.0.0.0 --public-url https://your-brain.ngrok.app
 ```
 
-When `--public-url` is set without `--bind`, a stderr WARN fires at
-startup so the misconfiguration ("the tunnel is up but my agent gets
-ECONNREFUSED") is loud.
+When `--public-url` is set without `--bind`, a stderr WARN fires at startup
+because public deployments usually need an explicit network boundary. A
+same-machine tunnel can still use loopback; if the tunnel cannot reach the
+server, use the bound form above.
 
 ```bash
 brew install ngrok
@@ -175,16 +206,29 @@ router exposes the spec-compliant discovery endpoint at
 
 ### 4. Scopes and localOnly
 
-Every operation is tagged `read | write | admin`. Four operations are
-`localOnly` and rejected over HTTP regardless of scope: `sync_brain`,
-`file_upload`, `file_list`, `file_url`. Remote agents cannot reach local
-filesystem surface area.
+Every HTTP tool call is checked against two gates before the handler runs:
+
+1. Scope. Operations declare a required OAuth scope. `write` implies `read`;
+   `admin` implies `read`, `write`, `sources_admin`, and `users_admin`.
+   The `agent` scope is separate and is not implied by `admin`.
+2. Local-only filtering. The HTTP server exposes only operations whose
+   `localOnly` flag is false. Local filesystem and host-control surfaces are
+   rejected over HTTP regardless of scope.
+
+Current local-only examples include `sync_brain`, `file_upload`, `file_list`,
+and `file_url`. Remote agents cannot reach those local filesystem or host-sync
+surfaces through MCP.
 
 | Scope | What it allows |
 |-------|---------------|
 | `read` | `search`, `query`, `get_page`, `list_pages`, graph traversal |
 | `write` | `put_page`, `delete_page`, `add_link`, `add_timeline_entry` |
-| `admin` | Client management, token revocation, sweep, local-only ops |
+| `sources_admin` | Source-management operations without broad `admin` |
+| `users_admin` | User-account administration when enabled |
+| `admin` | Client management, token revocation, remote doctor/status, source/user admin, read/write |
+| `agent` | Remote agent job submission; not implied by `admin` |
+
+`admin` is powerful, but it still does not override `localOnly`.
 
 ## Legacy Bearer Token Setup
 
@@ -236,15 +280,26 @@ gbrain auth test \
 
 ## Operations
 
-All 30 GBrain operations are available remotely, including `sync_brain` and
-`file_upload` (no timeout limits with self-hosted server).
+The remote tool list is generated from the current operation registry after
+filtering out `localOnly` operations. Do not rely on a hard-coded operation
+count. In practice, normal read/write brain operations are remote-callable when
+the client has the right scope, while host-local operations such as sync and
+file upload stay local-only.
 
-**Security note on `file_upload`:** remote MCP callers are confined to the working
-directory where `gbrain serve` was launched. Symlinks, `..` traversal, and absolute
-paths outside cwd are rejected. Page slugs and filenames are allowlist-validated
-(alphanumeric + hyphens; no control chars, RTL overrides, or backslashes). Local
-CLI callers (`gbrain file upload ...`) keep unrestricted filesystem access since
-the user owns the machine.
+Useful remote identity and diagnostic operations:
+
+- `get_brain_identity` is `read` scope and returns `{version, engine,
+  page_count, chunk_count, last_sync_iso, update_available, latest_version}` for
+  thin-client banners and smoke tests.
+- `get_health` is `admin` scope and exposes the host health dashboard data.
+- `run_doctor` is `admin` scope and returns the remote/thin-client structured
+  doctor report. Thin-client `gbrain doctor` and `gbrain remote doctor` use
+  this class of checks instead of opening a local empty PGLite brain.
+
+Protected job names and protected onboard handlers have extra gates beyond
+plain `admin`; if MCP returns a protected-job or missing-scope error, do not
+retry through another route unless the operator intentionally switches to a
+trusted local CLI flow.
 
 ## Deployment Options
 
@@ -260,7 +315,9 @@ Include the Authorization header: `Authorization: Bearer YOUR_TOKEN`
 Run `gbrain auth list` to see active tokens.
 
 **"service_unavailable" error**
-Database connection failed. Check your Supabase dashboard for outages.
+Database or engine liveness failed. Check the host's database, pooler, and
+`/health` output. On Supabase/Postgres, also check the dashboard and pooler
+mode.
 
 **Claude Desktop doesn't connect**
 Remote servers must be added via Settings > Integrations, NOT

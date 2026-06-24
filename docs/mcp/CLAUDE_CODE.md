@@ -12,7 +12,10 @@ claude mcp add gbrain -- gbrain serve
 ```
 
 That's it. Claude Code spawns `gbrain serve` as a stdio subprocess. No server, no
-tunnel, no token needed. Works with both PGLite and Supabase engines.
+tunnel, no token needed. Works with PGLite, Postgres, and Supabase engines.
+
+For HTTP MCP protocol, engine, OAuth, legacy bearer, scope, and `localOnly`
+rules, use [`DEPLOY.md`](DEPLOY.md). This page only covers Claude Code wiring.
 
 ## Option 2: Remote, one command (fastest from a bearer token)
 

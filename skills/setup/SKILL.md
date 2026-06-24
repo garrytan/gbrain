@@ -108,11 +108,11 @@ Continue with the existing `gbrain init --supabase` / `--pglite` setup below.
    ```bash
    gbrain auth register-client <name> \
      --grant-types client_credentials \
-     --scopes read,write,admin
+     --scopes "read write admin"
    ```
    The `admin` scope is required because `gbrain remote ping` and
    `gbrain remote doctor` (Tier B convenience commands) call MCP ops with
-   `admin` scope. `read,write` alone breaks ping/doctor.
+   `admin` scope. `read write` alone breaks ping/doctor.
 
 3. **Run thin-client init on this machine:**
    ```bash

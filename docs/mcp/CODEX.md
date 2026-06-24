@@ -9,6 +9,9 @@ Codex CLI (`@openai/codex`, v0.130+) supports remote streamable-HTTP MCP servers
 with a bearer token read from an environment variable. The token lives in your
 shell env, not in Codex's config file.
 
+For HTTP MCP protocol, engine, OAuth, legacy bearer, scope, and `localOnly`
+rules, use [`DEPLOY.md`](DEPLOY.md). This page only covers Codex wiring.
+
 ## Fastest path: `gbrain connect`
 
 Run anywhere `gbrain` is installed (mint a token on the brain host first):

@@ -25,8 +25,10 @@ understand both, or queries misroute silently.
 
 - **Brain** — WHICH DATABASE. Your personal brain is `host`. You can mount
   additional brains (team-published, each with their own DB and access policy)
-  via `gbrain mounts add` (v0.19+). Routing: `--brain`, `GBRAIN_BRAIN_ID`,
-  `.gbrain-mount` dotfile.
+  via `gbrain mounts add` (v0.19+). Resolver inputs include an explicit brain
+  id from command paths that wire the brain resolver, `GBRAIN_BRAIN_ID`, and
+  `.gbrain-mount` dotfiles. Do not assume every generic CLI verb accepts
+  `--brain`; check the command help.
 - **Source** — WHICH REPO INSIDE THE DATABASE. A brain can hold many sources
   (wiki, gstack, openclaw, essays). Slugs scope per source. Routing:
   `--source`, `GBRAIN_SOURCE`, `.gbrain-source` dotfile.
@@ -119,6 +121,20 @@ discipline used to live inline here. They moved to the docs above so this file
 stays small enough to load every session. Nothing was lost — the pre-move content
 is in git, and the docs carry every load-bearing invariant (compressed to
 current-state).
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in GitHub Issues for this repository. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default five-label triage vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repo uses a single-context domain docs layout. See `docs/agents/domain.md`.
 
 ## Maintaining CLAUDE.md and the reference docs
 
@@ -259,21 +275,16 @@ audit trail lives in the source repo's git history.
 
 ## Skills
 
-Read the skill files in `skills/` before doing brain operations. GBrain ships 30 skills
-organized by `skills/RESOLVER.md` (`AGENTS.md` is also accepted as of v0.19):
-
-**Original 8 (conformance-migrated):** ingest (thin router), query, maintain, enrich,
-briefing, migrate, setup, publish.
-
-**Brain skills (ported from an upstream agent fork):** signal-detector, brain-ops, idea-ingest, media-ingest,
-meeting-ingestion, citation-fixer, repo-architecture, skill-creator, daily-task-manager.
-
-**Operational + identity:** daily-task-prep, cross-modal-review, cron-scheduler, reports,
-testing, soul-audit, webhook-transforms, data-research, minion-orchestrator. As of
-v0.20.4, `minion-orchestrator` is the single unified skill for both lanes of background
-work (shell jobs via `gbrain jobs submit shell`, LLM subagents via `gbrain agent run`) ...
-the prior `gbrain-jobs` skill was merged in, Preconditions are shared, and trigger
-routing is narrowed to what the skill actually covers.
+Read `skills/RESOLVER.md`, then read the specific skill files in `skills/`
+before doing brain operations. The resolver is the source of truth for the
+current bundled skill surface (`AGENTS.md` is also accepted as of v0.19).
+Skill families include setup, ingestion, query, enrichment, maintenance,
+publishing, testing, scheduling, identity, media, meeting, research, reporting,
+and minion orchestration. As of v0.20.4, `minion-orchestrator` is the unified
+skill for both lanes of background work (shell jobs via `gbrain jobs submit
+shell`, LLM subagents via `gbrain agent run`); the prior `gbrain-jobs` skill was
+merged in, Preconditions are shared, and trigger routing is narrowed to what the
+skill actually covers.
 
 **Skillify loop (v0.19):** skillify (the markdown orchestration), skillpack-check
 (agent-readable health report).

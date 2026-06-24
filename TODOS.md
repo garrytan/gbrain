@@ -1,5 +1,11 @@
 # TODOS
 
+> Status: HISTORICAL.
+> This file is a maintainer follow-up ledger, not current install or operational
+> guidance. Use [`CHANGELOG.md`](CHANGELOG.md) for release history,
+> [`docs/INSTALL.md`](docs/INSTALL.md) for human operation, and
+> [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md) for agent operation.
+
 ## reliability fix-wave follow-ups (filed v0.42.52.0)
 
 Deferred from the autopilot/supervisor + sync/status/minion reliability wave

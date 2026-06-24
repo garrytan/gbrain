@@ -13,6 +13,7 @@
  * drift via test/build-llms.test.ts.
  *
  * Fork override: set LLMS_REPO_BASE to regenerate with a different URL base.
+ * Do not hand-edit the generated maps for URL changes.
  */
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -81,6 +82,9 @@ function renderLlmsFullTxt(): { content: string; sizes: Array<{ path: string; by
   );
   lines.push(
     `For the link-only index, see \`llms.txt\`. Source of truth: ${PROJECT.repoUrl}.`,
+  );
+  lines.push(
+    `Generated from \`scripts/llms-config.ts\`; forks should set \`LLMS_REPO_BASE\` and rerun \`bun run build:llms\` before publishing.`,
   );
   lines.push("");
 

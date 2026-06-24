@@ -28,7 +28,7 @@ export type DocSection = {
 export const PROJECT = {
   name: "GBrain",
   summary:
-    "GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, 26 fat-markdown skills. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.",
+    "GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, and a resolver-routed skill surface. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.",
   repoUrl: "https://github.com/garrytan/gbrain",
   rawBaseUrl:
     process.env.LLMS_REPO_BASE ??
@@ -70,8 +70,15 @@ export const SECTIONS: DocSection[] = [
       },
       {
         title: "INSTALL_FOR_AGENTS.md",
-        description: "9-step agent installation.",
+        description:
+          "Coding-agent install and operating protocol: branch map, search-mode gate, trust boundary, provider/key handling, MCP/auth guidance, verification, and upgrades.",
         path: "INSTALL_FOR_AGENTS.md",
+      },
+      {
+        title: "docs/INSTALL.md",
+        description:
+          "Human install and operate center: route-based local, multi-source, thin-client, shared/production, and advanced topology setup plus provider, sync, verification, and upgrade guidance.",
+        path: "docs/INSTALL.md",
       },
       {
         title: "skills/RESOLVER.md",
@@ -92,6 +99,12 @@ export const SECTIONS: DocSection[] = [
         title: "docs/ENGINES.md",
         description: "PGLite vs Postgres trade-off and when to migrate.",
         path: "docs/ENGINES.md",
+      },
+      {
+        title: "docs/architecture/brain-repo-layout.md",
+        description:
+          "Central Brain Repo Layout guide: editable Markdown structure, safe human edits, managed/generated surfaces, source-vs-brain backup implications, and schema-pack expectations.",
+        path: "docs/architecture/brain-repo-layout.md",
       },
       {
         title: "docs/GBRAIN_RECOMMENDED_SCHEMA.md",
@@ -148,7 +161,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/guides/scaling-skills.md",
         description:
-          "Three-tier architecture for agents with 300+ skills: always-loaded, resolver-routed, and dormant. Per-turn token math, the v0.41.7.0 compact list-format resolver, and the `gbrain doctor` safety net. 306 skills, ~21K tokens freed per turn, zero capability loss.",
+          "Three-tier architecture for large agent skill surfaces: always-loaded, resolver-routed, and dormant. Includes a 306-skill production case study, per-turn token math, the v0.41.7.0 compact list-format resolver, and the `gbrain doctor` safety net.",
         path: "docs/guides/scaling-skills.md",
       },
       {
@@ -156,6 +169,12 @@ export const SECTIONS: DocSection[] = [
         description:
           "Push-based context: the brain volunteers confidence-gated pages from the rolling conversation window. Three channels (ambient reflex, volunteer_context op, gbrain watch), config knobs, and the volunteered-vs-used feedback loop.",
         path: "docs/guides/push-context.md",
+      },
+      {
+        title: "docs/guides/mode-selection.md",
+        description:
+          "Mode Selection Guide: when to use gbrain search, gbrain think, gbrain dream/autopilot, retrieval reflex, volunteer_context, gbrain volunteer-context, and gbrain watch; includes search-mode cost, quality, and safety implications.",
+        path: "docs/guides/mode-selection.md",
       },
       {
         title: "docs/mcp/DEPLOY.md",

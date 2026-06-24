@@ -17,7 +17,40 @@ It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate t
 
 > **~30 minutes to a fully working brain.** Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
 
-> **LLMs:** fetch [`llms.txt`](llms.txt) for the documentation map, or [`llms-full.txt`](llms-full.txt) for the same map with core docs inlined in one fetch. **Agents:** start with [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md) if you're Claude Code).
+## Start here
+
+- **Current version.** [`VERSION`](VERSION) is the source of truth; the latest
+  release notes are at the top of [`CHANGELOG.md`](CHANGELOG.md). For upgrades,
+  humans start with [`docs/INSTALL.md`](docs/INSTALL.md); coding agents use
+  [`INSTALL_FOR_AGENTS.md#upgrade`](INSTALL_FOR_AGENTS.md#upgrade).
+- **Humans installing or operating GBrain.** Start with
+  [`docs/INSTALL.md`](docs/INSTALL.md). It routes local PGLite, Postgres or
+  Supabase, thin-client setup, MCP, and verification.
+- **Coding agents.** Use [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md) as the
+  operating protocol. Non-Claude agents start with [`AGENTS.md`](AGENTS.md);
+  Claude Code starts with [`CLAUDE.md`](CLAUDE.md).
+- **Production or shared-brain operators.** Start with
+  [`docs/INSTALL.md`](docs/INSTALL.md), then use the
+  [`operating-model`](docs/architecture/topologies.md#operating-model-decision-tree)
+  and
+  [`deployment-topology`](docs/architecture/topologies.md#deployment-topology-decision-tree)
+  decision trees before following
+  [`docs/mcp/DEPLOY.md`](docs/mcp/DEPLOY.md), [`SECURITY.md`](SECURITY.md), and
+  [`docs/GBRAIN_VERIFY.md`](docs/GBRAIN_VERIFY.md). The README stays a router;
+  deployment detail belongs in those guides.
+- **Choosing search, synthesis, maintenance, or push context.** Use the
+  [`Mode Selection Guide`](docs/guides/mode-selection.md) after install. It
+  explains when to use `gbrain search`, `gbrain think`, `gbrain dream` /
+  autopilot, retrieval reflex, `volunteer_context`, `gbrain volunteer-context`,
+  and `gbrain watch`.
+- **For LLMs and coding agents.** Fetch [`llms.txt`](llms.txt) for the curated
+  documentation map, or [`llms-full.txt`](llms-full.txt) for one-shot ingestion
+  with core docs inlined. These files are generated from
+  [`scripts/llms-config.ts`](scripts/llms-config.ts); update the source docs or
+  config, then run `bun run build:llms`. Forks should set `LLMS_REPO_BASE`
+  before regenerating so links point at the fork. GBrain does not currently
+  ship an official installable docs skill; use these files plus the agent
+  entrypoints above.
 
 ## What this looks like
 
@@ -65,90 +98,18 @@ This is the difference between a search engine and a brain. Search finds the pag
 
 ## Install
 
-GBrain is designed to be installed and operated by an AI agent. The fastest path is to have your agent do it for you. The CLI and MCP paths below are for people who want to wire it up themselves.
+The canonical install and operating runbook is [`docs/INSTALL.md`](docs/INSTALL.md).
+Choose one route there and follow it end to end:
 
-### Have your agent install it (recommended)
+- **Local personal brain:** [`Route A`](docs/INSTALL.md#route-a-local-personal-brain-end-to-end)
+- **Personal multi-source brain:** [`Route B`](docs/INSTALL.md#route-b-personal-multi-source-brain-end-to-end)
+- **Thin client for a hosted brain:** [`Route C`](docs/INSTALL.md#route-c-thin-client-end-to-end)
+- **Family, team, company, or production brain:** [`Route D`](docs/INSTALL.md#route-d-shared-group-or-production-brain-end-to-end)
+- **Split-engine, mounted-brain, or security-isolation modifiers:** [`Route E`](docs/INSTALL.md#route-e-advanced-topology-modifiers)
 
-If you don't already have an AI agent platform running, start with one of these. Both are designed to read GBrain's install protocol and execute it:
-
-- **[OpenClaw](https://github.com/openclawagents/openclaw)** — deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/alphaclaw) (one click, 8GB+ RAM)
-- **[Hermes](https://github.com/openclawagents/hermes)** — deploy on [Railway](https://github.com/praveen-ks-2001/hermes-agent-template) (one click)
-
-Then paste this into your agent:
-
-```
-Retrieve and follow the instructions at:
-https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
-```
-
-The agent installs GBrain, creates the brain, asks for your API keys, loads 43 skills, configures the dream cycle, and verifies the install end-to-end. ~30 minutes. You answer questions, it does the work.
-
-> **Never set up an AI agent platform before?** The [personal-brain tutorial](docs/tutorials/personal-brain.md) walks the whole path end-to-end — picking OpenClaw vs Hermes, deploying it, pointing it at INSTALL_FOR_AGENTS.md, getting the API keys, and verifying the first query. Start there if any of the above is new.
-
-### Quick start: Claude Code or Codex
-
-Already running Claude Code or Codex? There are two ways to wire GBrain in, depending on what you want.
-
-**Just want a memory for your coding agent (recommended starting point).** Spin up a local brain and connect it in two commands — zero server, zero token, zero tunnel:
-
-```bash
-gbrain init --pglite                     # 2-second local brain (no Docker)
-claude mcp add gbrain -- gbrain serve    # or: codex mcp add gbrain -- gbrain serve
-```
-
-**Already have a brain on a remote host** (OpenClaw, Hermes, or any `gbrain serve --http`)? Point your laptop agents at it with one command each — `--install` wires it up and smoke-tests the token before handoff:
-
-```bash
-gbrain connect https://your-host/mcp --token gbrain_xxx --install               # Claude Code
-gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex --install # Codex
-```
-
-**[→ Full walkthrough: give your coding agent a memory](docs/tutorials/connect-coding-agent.md)** — both paths end to end, plus the brain-first protocol you paste into `CLAUDE.md` / `AGENTS.md` and the four habits that make it actually change how you work.
-
-### Install the full autonomous setup into your existing agent
-
-Want the whole thing — local brain, 43 skills, the overnight dream cycle that enriches while you sleep? Paste this into Codex, Claude Code, Cursor, or another coding agent:
-
-```
-Retrieve and follow the instructions at:
-https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
-```
-
-This works in any agent that can read files over HTTPS and execute shell commands. Tested with Codex, Claude Code, Claude Cowork, Cursor, and AlphaClaw.
-
-### CLI standalone (no agent)
-
-```bash
-bun install -g github:garrytan/gbrain
-gbrain init --pglite     # 2 seconds; no server, no Docker
-gbrain doctor            # verify health
-gbrain import ~/notes/   # index your markdown
-gbrain query "what themes show up across my notes?"
-```
-
-Postgres-at-scale, Supabase, and thin-client setup paths live in [`docs/INSTALL.md`](docs/INSTALL.md).
-
-### Connect GBrain to your AI client (MCP)
-
-GBrain exposes 30+ tools over MCP (stdio and HTTP). The specific snippet depends on which client you use:
-
-- **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — local: one command, `claude mcp add gbrain -- gbrain serve` (zero server, zero tunnel). Remote with just a bearer token: `gbrain connect https://your-host/mcp --token gbrain_xxx` prints a paste-ready block (or `--install` wires it up and smoke-tests the token).
-- **[Codex](docs/mcp/CODEX.md)** — `gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex` (or `--install`). Codex reads the bearer from `$GBRAIN_REMOTE_TOKEN` at runtime, so the token never lands in Codex config.
-- **[Cursor / Windsurf / any stdio MCP client](docs/mcp/CLAUDE_CODE.md)** — same shape, add `{"command": "gbrain", "args": ["serve"]}` to your MCP config.
-- **[Claude Desktop (Cowork)](docs/mcp/CLAUDE_DESKTOP.md)** — Settings → Integrations → add the URL of your HTTP server. Remote only; the local `claude_desktop_config.json` does not work for remote servers.
-- **[Claude Cowork (team plan)](docs/mcp/CLAUDE_COWORK.md)** — org Owner adds the connector under Organization Settings → Connectors.
-- **[Perplexity Computer](docs/mcp/PERPLEXITY.md)** — `gbrain connect https://your-host/mcp --agent perplexity --oauth --register` mints a least-privilege OAuth client and prints the Issuer/Client ID/Secret to paste into Settings → Connectors (OAuth is the right path for a cloud connector; a bearer token also works for local use). Pro subscription required.
-- **[ChatGPT](docs/mcp/CHATGPT.md)** — uses OAuth 2.1 with PKCE (the hard requirement). Register a `chatgpt` client from the admin dashboard with grant type `authorization_code`.
-
-For the HTTP server itself:
-
-```bash
-gbrain serve              # stdio MCP (local subprocess; for Claude Code, Cursor, Windsurf)
-gbrain serve --http       # HTTP MCP with OAuth 2.1 + admin dashboard at /admin
-                          # (required for Claude Desktop, Cowork, Perplexity, ChatGPT)
-```
-
-The HTTP server includes DCR-style client registration, scope-gated access (`read` / `write` / `admin`), and rate limiting. Deployment guides (ngrok, Railway, Fly.io) live under [`docs/mcp/`](docs/mcp/).
+Coding agents use [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md), which adds
+agent-specific stop-and-ask gates. Client-specific MCP recipes live under
+[`docs/mcp/`](docs/mcp/), but the route choice belongs in the install runbook.
 
 ## Two ways to query your brain
 
@@ -169,6 +130,10 @@ gbrain think "who's working on AI agents at portfolio companies?"
 **Why it compounds.** Pair the brain layer with `find_trajectory` and you get answers like *"how have the company's metrics changed AND what does the team look like right now AND what did they promise / share AND when did we last meet AND what's the value-add I can offer here"*: well-scored, well-cited, in one shot. That's the strategic moat. That's why building a 100K-page brain is worth the effort.
 
 `gbrain agent run "..."` exposes the same surface to a sub-agent through the Minions queue, with crash-safe two-phase persistence. Same answers, durable.
+
+For the full decision tree across retrieval, synthesis, maintenance, and
+push-based context, read
+[`docs/guides/mode-selection.md`](docs/guides/mode-selection.md).
 
 ## How to get data in
 
@@ -258,7 +223,13 @@ The whole loop is described in [`docs/architecture/topologies.md`](docs/architec
 
 **Job queue (Minions).** BullMQ-shaped, Postgres-native job queue. Durable subagents (LLM tool loops that survive crashes via two-phase pending→done persistence), shell jobs with audit, child jobs with cascading timeouts, rate leases for outbound providers, attachments via S3/Supabase storage. Replaces "spawn subagent as fire-and-forget Promise" with something that recovers from anything.
 
-**43 curated skills.** Routing lives in [`skills/RESOLVER.md`](skills/RESOLVER.md). Covers signal capture, ingest (idea / media / meeting), enrichment, querying, brain ops, citation fixing, daily task management, cron scheduling, reports, voice, soul audit, skill creation, eval framework, and migrations. Skills are markdown files (tool-agnostic), packaged as a single skillpack the installer drops into your agent workspace.
+**Bundled skills.** Routing lives in
+[`skills/RESOLVER.md`](skills/RESOLVER.md). Covers signal capture, ingest
+(idea / media / meeting), enrichment, querying, brain ops, citation fixing,
+daily task management, cron scheduling, reports, voice, soul audit, skill
+creation, eval framework, and migrations. Skills are markdown files
+(tool-agnostic), packaged as a single skillpack the installer drops into your
+agent workspace.
 
 **Eval framework.** `gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark against your hybrid retrieval. `gbrain eval export` + `gbrain eval replay` capture real queries and replay them against code changes (set `GBRAIN_CONTRIBUTOR_MODE=1`). `gbrain eval cross-modal` cross-checks an output against the task using three different-provider frontier models. `gbrain eval retrieval-quality` runs NamedThingBench, which hard-gates the named-thing retrieval families (title-substring, alias-synonym, generic-to-named, multi-chunk-dilution) so a regression in "find the page this query names" fails CI loudly. Full methodology in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md).
 
@@ -279,9 +250,9 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 
 ## Architecture
 
-**Two engines, one contract.** PGLite (Postgres 17 via WASM, zero-config, default) for personal brains up to ~50K pages. Postgres + pgvector (Supabase or self-hosted) for shared / large / multi-machine deployments. The contract-first `BrainEngine` interface in [`src/core/engine.ts`](src/core/engine.ts) defines ~47 operations both engines implement; CLI and MCP server are generated from one source.
+**Two engines, one contract.** PGLite (Postgres 17 via WASM, zero-config, default) for personal brains up to ~50K pages. Postgres + pgvector (Supabase or self-hosted) for shared / large / multi-machine deployments. The contract-first `BrainEngine` interface in [`src/core/engine.ts`](src/core/engine.ts) defines the shared operation surface both engines implement; CLI and MCP server are generated from one source.
 
-**Brain repo is the system of record.** Your knowledge lives in a regular git repo (your "brain repo") as markdown files. GBrain syncs the repo into Postgres for retrieval; deletes in git become soft-deletes in DB. You can publish public subsets, share team mounts, run thin-client setups pointing at a colleague's brain server. Topologies in [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
+**Brain repo is the system of record.** Your knowledge lives in a regular git repo (your "brain repo") as markdown files. GBrain syncs the repo into Postgres for retrieval; deletes in git become soft-deletes in DB. You can publish public subsets, share team mounts, run thin-client setups pointing at a colleague's brain server. Layout guidance: [`docs/architecture/brain-repo-layout.md`](docs/architecture/brain-repo-layout.md). Topologies: [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
 
 **Two organizational axes (brain ⊥ source).** A *brain* is a database (your personal brain, a team mount you joined). A *source* is a repo inside that brain (wiki, gstack, an essay, a knowledge base). Routing lives in `.gbrain-source` dotfiles and resolves via a documented 6-tier precedence chain. Full diagrams in [`docs/architecture/brains-and-sources.md`](docs/architecture/brains-and-sources.md).
 
@@ -309,10 +280,10 @@ diff and `content_hash` short-circuits already-imported files. The
 `--max-age 1800` first command self-heals any wedged-but-alive locks
 left by a hung previous run, using the v98 `last_refreshed_at` semantic
 (NOT `acquired_at`) so healthy long-running holders are safe by
-construction. See the v0.41.13.0 entry in [`CHANGELOG.md`](CHANGELOG.md)
-for the honest scope notes (extract + embed phases run to completion;
-30-min rollout window for `--max-age` post-migration v98; full-sync
-triggers deferred to v0.42+).
+construction. See the sync entries in [`CHANGELOG.md`](CHANGELOG.md) for the
+honest scope notes: the original v0.41.13 timeout behavior was followed by
+v0.42 resumability, full-sync delete reconciliation, and additional recovery
+work. Keep cron runbooks pinned to the release behavior you actually run.
 
 **Dream cycle silently losing wiki links on Supabase?** v0.41.19.0 fixes
 the bug class structurally. The engine now self-retries every bulk batch
@@ -412,6 +383,7 @@ completes in ~1-2 seconds. (Closes #1605, #1581.)
 ## Docs
 
 - [`docs/INSTALL.md`](docs/INSTALL.md) — every install path, end to end
+- [`docs/architecture/brain-repo-layout.md`](docs/architecture/brain-repo-layout.md) — editable Markdown layout, managed/generated surfaces, schema-pack expectations, and backup implications
 - [`docs/what-schemas-unlock.md`](docs/what-schemas-unlock.md) — why schemas matter: 7 killer use cases, the structural argument for typed page kinds, the agent-co-curates pattern (v0.40.7.0)
 - [`docs/schema-author-tutorial.md`](docs/schema-author-tutorial.md) — 5-minute walkthrough: fork the bundled pack, add a custom type, backfill existing pages, prove the wiring via `gbrain whoknows`
 - [`docs/architecture/`](docs/architecture/) — system design, topologies, retrieval theory

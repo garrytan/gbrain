@@ -1,6 +1,6 @@
 # GBrain
 
-> GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, 26 fat-markdown skills. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.
+> GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, and a resolver-routed skill surface. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.
 
 Repo: https://github.com/garrytan/gbrain
 
@@ -10,13 +10,15 @@ Repo: https://github.com/garrytan/gbrain
 - [CLAUDE.md](https://raw.githubusercontent.com/garrytan/gbrain/master/CLAUDE.md): Orientation + resolver. North Star, two axes, architecture + cross-cutting invariants, the reference map pointing at on-demand docs, and the inline ship IRON RULES.
 - [docs/architecture/KEY_FILES.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/KEY_FILES.md): Per-file index for the gbrain repo: what each src/ file does + its load-bearing invariants. The on-demand detail CLAUDE.md's reference map routes to.
 - [docs/architecture/thin-client.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/thin-client.md): The thin-client / remote-MCP / cross-modal routing seam: isThinClient detection, callRemoteTool, SSRF-hardened URL validation, per-command routing.
-- [INSTALL_FOR_AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md): 9-step agent installation.
+- [INSTALL_FOR_AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md): Coding-agent install and operating protocol: branch map, search-mode gate, trust boundary, provider/key handling, MCP/auth guidance, verification, and upgrades.
+- [docs/INSTALL.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/INSTALL.md): Human install and operate center: route-based local, multi-source, thin-client, shared/production, and advanced topology setup plus provider, sync, verification, and upgrade guidance.
 - [skills/RESOLVER.md](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/RESOLVER.md): Skill dispatcher. Read first for any task.
 - [README.md](https://raw.githubusercontent.com/garrytan/gbrain/master/README.md): Project overview, benchmarks, 30-minute setup.
 
 ## Configuration
 
 - [docs/ENGINES.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/ENGINES.md): PGLite vs Postgres trade-off and when to migrate.
+- [docs/architecture/brain-repo-layout.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/brain-repo-layout.md): Central Brain Repo Layout guide: editable Markdown structure, safe human edits, managed/generated surfaces, source-vs-brain backup implications, and schema-pack expectations.
 - [docs/GBRAIN_RECOMMENDED_SCHEMA.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md): MECE directory structure (people/, companies/, concepts/).
 - [docs/what-schemas-unlock.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/what-schemas-unlock.md): Why schemas matter: 7 killer use cases (4000 invisible meetings, founder ops brain, research brain, legal brain, team brain, agent-as-co-curator) + the structural argument for typed page kinds. Read this before pitching schema authoring (v0.40.7.0).
 - [docs/schema-author-tutorial.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/schema-author-tutorial.md): 5-minute walkthrough: fork the bundled pack, add a custom `researcher` type, backfill existing pages via `gbrain schema sync --apply`, prove the T1.5 wiring via `gbrain whoknows` (v0.40.7.0).
@@ -24,8 +26,9 @@ Repo: https://github.com/garrytan/gbrain
 - [docs/guides/cron-schedule.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/cron-schedule.md): Recurring job scheduling.
 - [docs/guides/minions-deployment.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/minions-deployment.md): Deploying the gbrain jobs worker: crontab + watchdog, inline --follow, systemd/Procfile/fly.toml, upgrade checklist.
 - [docs/guides/quiet-hours.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/quiet-hours.md): Notification hold + timezone-aware delivery.
-- [docs/guides/scaling-skills.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/scaling-skills.md): Three-tier architecture for agents with 300+ skills: always-loaded, resolver-routed, and dormant. Per-turn token math, the v0.41.7.0 compact list-format resolver, and the `gbrain doctor` safety net. 306 skills, ~21K tokens freed per turn, zero capability loss.
+- [docs/guides/scaling-skills.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/scaling-skills.md): Three-tier architecture for large agent skill surfaces: always-loaded, resolver-routed, and dormant. Includes a 306-skill production case study, per-turn token math, the v0.41.7.0 compact list-format resolver, and the `gbrain doctor` safety net.
 - [docs/guides/push-context.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/push-context.md): Push-based context: the brain volunteers confidence-gated pages from the rolling conversation window. Three channels (ambient reflex, volunteer_context op, gbrain watch), config knobs, and the volunteered-vs-used feedback loop.
+- [docs/guides/mode-selection.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/mode-selection.md): Mode Selection Guide: when to use gbrain search, gbrain think, gbrain dream/autopilot, retrieval reflex, volunteer_context, gbrain volunteer-context, and gbrain watch; includes search-mode cost, quality, and safety implications.
 - [docs/mcp/DEPLOY.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/mcp/DEPLOY.md): MCP server deployment.
 
 ## AI providers

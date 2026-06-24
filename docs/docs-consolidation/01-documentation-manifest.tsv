@@ -1,0 +1,351 @@
+path	area	role	lines	bytes	h1
+.github/ISSUE_TEMPLATE/bug_report.md	github-templates	tracker-template	27	353	-
+.github/ISSUE_TEMPLATE/feature_request.md	github-templates	tracker-template	14	186	-
+.github/PULL_REQUEST_TEMPLATE/tier5-queries.md	github-templates	tracker-template	39	1352	-
+admin/DESIGN.md	admin-docs	public-doc	158	6464	Design System — GBrain Admin Dashboard
+AGENTS.md	root-entrypoints-and-policy	public-doc	129	7700	Agents working on GBrain
+CHANGELOG.md	root-entrypoints-and-policy	migration-history	22065	1960220	Changelog
+CLAUDE.md	root-entrypoints-and-policy	public-doc	779	43079	CLAUDE.md
+CONTEXT.md	root-entrypoints-and-policy	public-doc	187	9075	GBrain Documentation Consolidation
+CONTRIBUTING.md	root-entrypoints-and-policy	public-doc	292	12163	Contributing to GBrain
+DESIGN.md	root-entrypoints-and-policy	public-doc	148	6714	DESIGN.md
+docs/adr/0001-centralize-operational-documentation.md	docs-root-references	public-doc	36	2103	Centralize operational documentation
+docs/agents/domain.md	agent-workflow-docs	public-doc	11	457	Domain Docs
+docs/agents/issue-tracker.md	agent-workflow-docs	public-doc	12	540	Issue tracker: GitHub
+docs/agents/triage-labels.md	agent-workflow-docs	public-doc	9	426	Triage Labels
+docs/ai-providers/llama-server-reranker.md	ai-provider-docs	public-doc	161	6278	llama-server reranker (local) — Qwen3-Reranker, self-hosted ZE, any ZE-wire-shape provider
+docs/ai-providers/zeroentropy.md	ai-provider-docs	public-doc	173	6618	ZeroEntropy — zembed-1 + zerank-2
+docs/architecture/brains-and-sources.md	architecture-references	public-doc	242	11153	Brains and Sources — the mental model
+docs/architecture/calibration-quality-gate-spec.md	architecture-references	public-doc	215	8892	Calibration Quality Gate — Falsifiability Filter + Category Classification
+docs/architecture/frontmatter-scan-incremental.md	architecture-references	public-doc	200	8382	Frontmatter scan: DB-backed incremental state (Phase 2 design sketch)
+docs/architecture/infra-layer.md	architecture-references	public-doc	105	4220	GBrain Infrastructure Layer
+docs/architecture/KEY_FILES.md	architecture-references	public-doc	488	426256	Key files — per-file index (gbrain repo)
+docs/architecture/lens-packs.md	architecture-references	public-doc	143	6800	Lens packs (v0.41.2.0)
+docs/architecture/pack-upgrade-mechanism.md	architecture-references	public-doc	246	12617	Pack-Upgrade Mechanism (v0.41.22)
+docs/architecture/RETRIEVAL_MAXPOOL_INCIDENT.md	architecture-references	public-doc	97	4828	Retrieval Incident: a chosen-name page was missed, and the fix
+docs/architecture/RETRIEVAL.md	architecture-references	public-doc	165	10114	Why the hybrid + graph stack works
+docs/architecture/schema-packs.md	architecture-references	public-doc	230	9191	Schema Packs
+docs/architecture/serve-sync-concurrency.md	architecture-references	public-doc	54	2148	`gbrain serve` ↔ `gbrain sync` concurrency (PGLite)
+docs/architecture/system-of-record.md	architecture-references	public-doc	198	9444	System of record
+docs/architecture/thin-client.md	architecture-references	public-doc	70	10451	Thin-client routing (remote MCP)
+docs/architecture/topologies.md	architecture-references	public-doc	403	16360	GBrain Deployment Topologies
+docs/architecture/type-taxonomy.md	architecture-references	public-doc	177	9460	Type Taxonomy (v0.41.22: gbrain-base-v2)
+docs/contradictions.md	docs-root-references	public-doc	166	8649	gbrain eval suspected-contradictions (v0.32.6)
+docs/designs/2026_05_EVAL_PLAN.md	design-docs	historical-or-design	580	22624	Embedder Shootout — May 2026 Eval Plan
+docs/designs/CODE_CATHEDRAL_II.md	design-docs	historical-or-design	162	14257	Code Cathedral II — v0.20.0 Design
+docs/designs/COMMUNITY_IDEAS.md	design-docs	historical-or-design	367	26473	Community Ideas Ledger
+docs/designs/HOMEBREW_FOR_PERSONAL_AI.md	design-docs	historical-or-design	154	5371	Homebrew for Personal AI Infrastructure
+docs/designs/KNOWLEDGE_RUNTIME.md	design-docs	historical-or-design	717	35575	GBrain Knowledge Runtime — Design Doc
+docs/designs/MINIONS_AGENT_ORCHESTRATION.md	design-docs	historical-or-design	448	19218	CEO Plan: Minions as Universal Agent Orchestration Protocol
+docs/designs/SKILLPACK_REGISTRY_V1_SPEC.md	design-docs	historical-or-design	1534	88229	Skillpack Publish + Registry + Install Spec (post-v0.36.0.0)
+docs/designs/V038_SCHEMA_PACKS.md	design-docs	historical-or-design	221	12389	CEO Plan: v0.38 Schema Packs — Bring Your Own Shape
+docs/embedding-migrations.md	docs-root-references	public-doc	184	7160	Switching embedding models or dimensions on an existing brain
+docs/ENGINES.md	docs-root-references	public-doc	234	11583	Pluggable Engine Architecture
+docs/ethos/MARKDOWN_SKILLS_AS_RECIPES.md	ethos	public-doc	188	11643	Homebrew for Personal AI
+docs/ethos/ORIGIN.md	ethos	public-doc	29	2242	Origin story
+docs/ethos/THIN_HARNESS_FAT_SKILLS.md	ethos	public-doc	209	13604	Thin Harness, Fat Skills
+docs/eval-bench.md	docs-root-references	public-doc	598	23853	Running real-world eval benchmarks against your gbrain changes
+docs/eval-capture.md	docs-root-references	public-doc	160	7350	Eval capture — NDJSON schema reference
+docs/eval-takes-quality.md	docs-root-references	public-doc	159	6962	`gbrain eval takes-quality` — reproducible cross-modal quality eval
+docs/eval/METRIC_GLOSSARY.md	eval-references	public-doc	176	8260	Evaluation Metric Glossary
+docs/eval/SEARCH_MODE_METHODOLOGY.md	eval-references	public-doc	285	17822	Search Mode Evaluation Methodology
+docs/GBRAIN_RECOMMENDED_SCHEMA.md	docs-root-references	public-doc	1013	64204	Brain: The LLM-Maintained Knowledge Base
+docs/GBRAIN_SKILLPACK.md	docs-root-references	public-doc	143	8557	GBrain Skillpack: Reference Architecture for AI Agents
+docs/GBRAIN_V0.md	docs-root-references	public-doc	551	26597	GBrain v0: Postgres-Native Personal Knowledge Brain
+docs/GBRAIN_VERIFY.md	docs-root-references	public-doc	295	8077	GBrain Installation Verification Runbook
+docs/guardrails.md	docs-root-references	public-doc	102	5152	Content Guardrail Seams
+docs/guides/agent-to-gbrain.md	how-to-guides	public-doc	199	8880	How a downstream agent should talk to gbrain
+docs/guides/brain-agent-loop.md	how-to-guides	public-doc	129	4279	The Brain-Agent Loop
+docs/guides/brain-first-lookup.md	how-to-guides	public-doc	85	3259	Brain-First Lookup Protocol
+docs/guides/brain-vs-memory.md	how-to-guides	public-doc	75	4466	Brain vs Memory vs Session
+docs/guides/compiled-truth.md	how-to-guides	public-doc	137	4835	Compiled Truth + Timeline Pattern
+docs/guides/content-media.md	how-to-guides	public-doc	136	6301	Content and Media Ingestion
+docs/guides/cron-schedule.md	how-to-guides	public-doc	193	7324	Reference Cron Schedule
+docs/guides/deterministic-collectors.md	how-to-guides	public-doc	146	6472	Deterministic Collectors: Code for Data, LLMs for Judgment
+docs/guides/diligence-ingestion.md	how-to-guides	public-doc	151	5328	Diligence Ingestion: Data Room to Brain Pages
+docs/guides/enrichment-pipeline.md	how-to-guides	public-doc	103	6152	Enrichment Pipeline
+docs/guides/entity-detection.md	how-to-guides	public-doc	190	6847	Entity Detection: Run It on Every Message
+docs/guides/executive-assistant.md	how-to-guides	public-doc	109	5980	Executive Assistant Pattern
+docs/guides/idea-capture.md	how-to-guides	public-doc	190	7342	Idea Capture: Originals, Depth, and Distribution
+docs/guides/live-sync.md	how-to-guides	public-doc	153	6318	Live Sync: Keep the Index Current
+docs/guides/meeting-ingestion.md	how-to-guides	public-doc	80	4743	Meeting Ingestion
+docs/guides/minions-deployment.md	how-to-guides	public-doc	359	14316	Minions Worker Deployment Guide
+docs/guides/minions-fix.md	how-to-guides	public-doc	159	5640	Minions fix — repairing a half-migrated install
+docs/guides/minions-shell-jobs.md	how-to-guides	public-doc	284	13110	Minions shell jobs — move deterministic crons off the gateway
+docs/guides/multi-source-brains.md	how-to-guides	public-doc	182	6477	Multi-source brains
+docs/guides/operational-disciplines.md	how-to-guides	public-doc	120	6311	Operational Disciplines
+docs/guides/originals-folder.md	how-to-guides	public-doc	87	5236	The Originals Folder
+docs/guides/plugin-authors.md	how-to-guides	public-doc	163	6082	Plugin authors guide (v0.15)
+docs/guides/plugin-handlers.md	how-to-guides	public-doc	137	5455	Plugin handlers — registering host-specific Minion handlers
+docs/guides/push-context.md	how-to-guides	public-doc	79	4000	Push-based context (#2095, v0.42.43.0)
+docs/guides/queue-operations-runbook.md	how-to-guides	public-doc	109	3880	Queue operations runbook
+docs/guides/quiet-hours.md	how-to-guides	public-doc	165	4690	Quiet Hours and Timezone-Aware Delivery
+docs/guides/repo-architecture.md	how-to-guides	public-doc	158	6584	Two-Repo Architecture: Agent Behavior vs World Knowledge
+docs/guides/rls-and-you.md	how-to-guides	public-doc	233	9327	RLS and you
+docs/guides/scaling-skills.md	how-to-guides	public-doc	310	12549	Scaling skills past 300 without drowning the context window
+docs/guides/search-modes.md	how-to-guides	public-doc	78	4748	Search Modes
+docs/guides/skill-development.md	how-to-guides	public-doc	131	5201	Skill Development Cycle
+docs/guides/skillopt.md	how-to-guides	public-doc	147	7169	`gbrain skillopt` — Self-evolving skills
+docs/guides/skillpacks-as-scaffolding.md	how-to-guides	public-doc	208	8212	Skillpacks as scaffolding, not amber
+docs/guides/source-attribution.md	how-to-guides	public-doc	75	4245	Source Attribution
+docs/guides/sub-agent-routing.md	how-to-guides	public-doc	122	5031	Sub-Agent Model Routing
+docs/guides/upgrades-auto-update.md	how-to-guides	public-doc	217	8804	Upgrades and Auto-Update Notifications
+docs/incidents/2026-05-20-lsd-cost-explosion.md	issues-proposals-incidents-plans	historical-or-design	266	13161	Incident Report: LSD Brainstorm 53× Cost Overrun
+docs/INSTALL.md	docs-root-references	public-doc	113	5491	Install
+docs/integrations/credential-gateway.md	integrations	public-doc	52	2611	Credential Gateway (ClawVisor / Hermes)
+docs/integrations/embedding-providers.md	integrations	public-doc	187	16071	Embedding providers
+docs/integrations/meeting-webhooks.md	integrations	public-doc	63	2503	Meeting & Call Webhooks
+docs/integrations/pre-commit.md	integrations	public-doc	106	4232	Pre-commit hook for brain repos (v0.22.4+)
+docs/integrations/README.md	integrations	public-doc	119	5400	Getting Data Into Your Brain
+docs/integrations/reliability-repair.md	integrations	public-doc	66	2099	Reliability repair (v0.12.2)
+docs/issues/cross-modal-search.md	issues-proposals-incidents-plans	historical-or-design	164	8030	Cross-Modal Search: Text↔Image Retrieval
+docs/issues/doctor-auto-heal-and-scoring.md	issues-proposals-incidents-plans	historical-or-design	224	6797	Doctor Auto-Heal and Scoring Improvements
+docs/mcp/ALTERNATIVES.md	mcp-client-and-deploy-docs	public-doc	67	2201	Remote MCP Deployment Options
+docs/mcp/CHATGPT.md	mcp-client-and-deploy-docs	public-doc	103	3652	Connect GBrain to ChatGPT
+docs/mcp/CLAUDE_CODE.md	mcp-client-and-deploy-docs	public-doc	90	3170	Connect GBrain to Claude Code
+docs/mcp/CLAUDE_COWORK.md	mcp-client-and-deploy-docs	public-doc	33	1213	Connect GBrain to Claude Cowork
+docs/mcp/CLAUDE_DESKTOP.md	mcp-client-and-deploy-docs	public-doc	39	1194	Connect GBrain to Claude Desktop
+docs/mcp/CODEX.md	mcp-client-and-deploy-docs	public-doc	71	2507	Connect GBrain to Codex
+docs/mcp/DEPLOY.md	mcp-client-and-deploy-docs	public-doc	284	10303	Deploy GBrain Remote MCP Server
+docs/mcp/PERPLEXITY.md	mcp-client-and-deploy-docs	public-doc	100	3348	Connect GBrain to Perplexity Computer
+docs/migrations/v0.41.2-markdown-greenfield.md	docs-migrations	public-doc	153	5301	Migrating your OpenClaw brain to gbrain v0.41.2.0 (greenfield)
+docs/operations/headless-install.md	docs-root-references	public-doc	87	3669	Headless install: Docker, CI, postinstall
+docs/plans/2026-06-03-001-feat-idea-lineage-skill-plan.md	issues-proposals-incidents-plans	historical-or-design	211	13828	feat: Add idea-lineage thinking skill
+docs/progress-events.md	docs-root-references	public-doc	191	6816	Progress events
+docs/proposals/temporal-contradiction-probe.md	issues-proposals-incidents-plans	historical-or-design	213	9766	Proposal: Temporal Axis for Contradiction Probe
+docs/RELEASING.md	docs-root-references	public-doc	435	23079	Releasing & contributing (gbrain)
+docs/schema-author-tutorial.md	docs-root-references	public-doc	224	10135	Tutorial: Build your first schema pack
+docs/skillpack-anatomy.md	docs-root-references	public-doc	112	5074	Skillpack anatomy
+docs/storage-tiering.md	docs-root-references	public-doc	210	7843	Storage Tiering: db-tracked vs db-only directories
+docs/takes-vs-facts.md	docs-root-references	public-doc	93	4206	Takes vs Facts — Architectural Distinction
+docs/TESTING.md	docs-root-references	public-doc	303	45755	Testing (gbrain repo)
+docs/tutorials/company-brain.md	tutorials	public-doc	557	33155	Tutorial: Extend your personal brain into a company brain
+docs/tutorials/connect-coding-agent.md	tutorials	public-doc	235	9607	Give your coding agent a memory: GBrain + Claude Code / Codex
+docs/tutorials/improving-skills-with-skillopt.md	tutorials	public-doc	297	15637	Auto-improve a skill with `gbrain skillopt`
+docs/tutorials/personal-brain.md	tutorials	public-doc	270	13812	Tutorial: Set up your personal AI agent + brain from zero
+docs/tutorials/README.md	tutorials	public-doc	36	4695	Tutorials
+docs/UPGRADING_DOWNSTREAM_AGENTS.md	docs-root-references	public-doc	612	25794	Upgrading Downstream Agents
+docs/v0.38-smoke-test-report.md	docs-root-references	public-doc	329	11496	v0.38.0.0 Smoke Test Report
+docs/what-schemas-unlock.md	docs-root-references	public-doc	177	15398	What schemas unlock
+evals/functional-area-resolver/README.md	eval-harness-docs	public-doc	189	8527	functional-area-resolver A/B eval
+evals/functional-area-resolver/variants/baseline.md	eval-harness-docs	public-doc	380	26151	AGENTS.md
+evals/functional-area-resolver/variants/functional-areas.md	eval-harness-docs	public-doc	146	13503	AGENTS.md
+evals/functional-area-resolver/variants/resolver-of-resolvers.md	eval-harness-docs	public-doc	146	10600	AGENTS.md
+evals/skillopt-judge/README.md	eval-harness-docs	public-doc	31	945	SkillOpt judge LLM accuracy eval (F9)
+evals/skillopt-reflect/README.md	eval-harness-docs	public-doc	35	1234	SkillOpt reflect-prompt quality eval (F8)
+examples/skillpack-reference/CHANGELOG.md	examples	public-doc	7	116	Changelog
+examples/skillpack-reference/README.md	examples	public-doc	67	2461	reference-pack
+examples/skillpack-reference/runbooks/bootstrap.md	examples	public-doc	7	347	Bootstrap
+examples/skillpack-reference/skills/reference-pack/SKILL.md	examples	skill-procedure	103	3989	reference-pack
+INSTALL_FOR_AGENTS.md	root-entrypoints-and-policy	public-doc	354	15171	GBrain Installation Guide for AI Agents
+llms-full.txt	root-entrypoints-and-policy	generated-map	4299	215078	GBrain — Full Context
+llms.txt	root-entrypoints-and-policy	generated-map	68	7572	GBrain
+README.md	root-entrypoints-and-policy	public-doc	442	37877	GBrain
+recipes/agent-voice.md	recipes	public-doc	161	10135	Voice Personas: Mars + Venus
+recipes/agent-voice/code/lib/personas/context-builder.contract.md	recipes	public-doc	162	6283	Context Builder Contract
+recipes/agent-voice/install/post-install-hint.md	recipes	public-doc	98	3790	Post-install hint
+recipes/agent-voice/install/refresh-algorithm.md	recipes	public-doc	74	4486	Refresh algorithm (diff-and-propose)
+recipes/agent-voice/README.md	recipes	public-doc	72	5366	agent-voice — reference bundle
+recipes/agent-voice/skills/voice-persona-mars/SKILL.md	recipes	skill-procedure	100	5958	voice-persona-mars — Introspective thought partner / demo showman
+recipes/agent-voice/skills/voice-persona-venus/SKILL.md	recipes	skill-procedure	100	5422	voice-persona-venus — Executive assistant voice
+recipes/agent-voice/skills/voice-post-call/SKILL.md	recipes	skill-procedure	164	6610	voice-post-call — Post-session transcript + summary handling
+recipes/agent-voice/tests/e2e/audio-fixtures/README.md	recipes	public-doc	36	1576	Audio fixtures
+recipes/agent-voice/tests/evals/baseline-runs/canonical/README.md	recipes	public-doc	12	1003	Canonical baselines (synthetic exemplars)
+recipes/agent-voice/tests/evals/README.md	recipes	public-doc	61	3229	Persona LLM-judge evals
+recipes/calendar-to-brain.md	recipes	public-doc	404	14568	Calendar-to-Brain: Your Schedule Becomes Searchable Memory
+recipes/credential-gateway.md	recipes	public-doc	188	7242	Credential Gateway: Secure Access to Google Services
+recipes/email-to-brain.md	recipes	public-doc	341	12736	Email-to-Brain: Gmail Messages That Update Your Brain
+recipes/meeting-sync.md	recipes	public-doc	387	12158	Meeting Sync: Transcripts That Become Brain Pages
+recipes/ngrok-tunnel.md	recipes	public-doc	249	8069	Public Tunnel: Fixed URL for Your Brain
+recipes/restart-sweep.md	recipes	public-doc	654	25264	Restart Sweep: Detect Dropped Messages After Gateway Restarts
+recipes/retrieval-reflex.md	recipes	public-doc	54	2515	Retrieval Reflex: teach the agent *when* and *what* to retrieve
+recipes/retrieval-reflex/skills/retrieval-reflex/SKILL.md	recipes	skill-procedure	59	2527	Retrieval Reflex — retrieve on demand, when an entity is salient
+recipes/twilio-voice-brain.md	recipes	public-doc	809	35612	Voice-to-Brain: Phone Calls That Create Brain Pages
+recipes/x-to-brain.md	recipes	public-doc	449	16339	X-to-Brain: Twitter Monitoring That Updates Your Brain
+scripts/upstream-scrub-table.txt	script-references	public-doc	56	3108	Substitution table for scripts/import-from-upstream.sh.
+SECURITY.md	root-entrypoints-and-policy	public-doc	260	10823	Security
+skills/_AGENT_README.md	bundled-skills	public-doc	124	4773	Agent onboarding — what to do with the files in this directory
+skills/_brain-filing-rules.md	bundled-skills	public-doc	192	9255	Brain Filing Rules -- MANDATORY for all skills that write to the brain
+skills/_friction-protocol.md	bundled-skills	public-doc	60	2557	Friction protocol — convention
+skills/_output-rules.md	bundled-skills	public-doc	40	1622	Output Rules
+skills/academic-verify/SKILL.md	bundled-skills	skill-procedure	225	9379	academic-verify — Trace Claims to Source Data
+skills/archive-crawler/SKILL.md	bundled-skills	skill-procedure	320	10660	archive-crawler — The Universal Archivist
+skills/article-enrichment/SKILL.md	bundled-skills	skill-procedure	149	6052	article-enrichment — From Raw Dumps to Useful Brain Pages
+skills/ask-user/SKILL.md	bundled-skills	skill-procedure	253	8476	Ask User — Choice Gate Pattern
+skills/book-mirror/SKILL.md	bundled-skills	skill-procedure	350	13246	book-mirror — Personalized Chapter-by-Chapter Book Analysis
+skills/brain-ops/SKILL.md	bundled-skills	skill-procedure	163	6226	Brain Operations — The Ambient Context Layer
+skills/brain-pdf/SKILL.md	bundled-skills	skill-procedure	186	6674	brain-pdf — Render a Brain Page to Publication-Quality PDF
+skills/brain-taxonomist/SKILL.md	bundled-skills	skill-procedure	195	8285	brain-taxonomist
+skills/briefing/SKILL.md	bundled-skills	skill-procedure	152	6104	Briefing Skill
+skills/capture/SKILL.md	bundled-skills	skill-procedure	105	4398	capture — the single ingestion entrypoint
+skills/citation-fixer/SKILL.md	bundled-skills	skill-procedure	208	5982	Citation Fixer Skill
+skills/cold-start/SKILL.md	bundled-skills	skill-procedure	506	18918	Cold Start — Day-One Brain Bootstrapping
+skills/concept-synthesis/SKILL.md	bundled-skills	skill-procedure	255	8307	concept-synthesis — From Raw Stubs to Intellectual Map
+skills/conventions/brain-first.md	skill-conventions	convention	118	5159	Brain-First Lookup Convention
+skills/conventions/brain-routing.md	skill-conventions	convention	184	8166	Brain Routing Convention
+skills/conventions/calibration.md	skill-conventions	convention	92	5202	Convention: calibration loop (v0.36.1.0)
+skills/conventions/cron-via-minions.md	skill-conventions	convention	93	3723	Cron via Minions Convention
+skills/conventions/model-routing.md	skill-conventions	convention	93	3752	Model Routing Convention
+skills/conventions/quality.md	skill-conventions	convention	40	1423	Quality Convention
+skills/conventions/salience-and-recency.md	skill-conventions	convention	131	4498	Salience + Recency on `gbrain query` (v0.29.1)
+skills/conventions/schema-evolution.md	skill-conventions	convention	146	6139	Convention: schema evolution — when to add a type vs alias vs prefix
+skills/conventions/search-modes.md	skill-conventions	convention	104	4678	Convention: Search Modes (v0.32.3)
+skills/conventions/subagent-routing.md	skill-conventions	convention	97	3539	Subagent Routing Convention
+skills/conventions/test-before-bulk.md	skill-conventions	convention	35	1410	Test Before Bulk Convention
+skills/cron-scheduler/SKILL.md	bundled-skills	skill-procedure	93	4180	Cron Scheduler
+skills/cross-modal-review/SKILL.md	bundled-skills	skill-procedure	197	6849	Cross-Modal Review
+skills/daily-task-manager/SKILL.md	bundled-skills	skill-procedure	70	1789	Daily Task Manager
+skills/daily-task-prep/SKILL.md	bundled-skills	skill-procedure	61	1596	Daily Task Prep
+skills/data-research/SKILL.md	bundled-skills	skill-procedure	138	4845	Data Research
+skills/eiirp/SKILL.md	bundled-skills	skill-procedure	394	14470	EIIRP files across the full canonical set — the actual destination
+skills/enrich/SKILL.md	bundled-skills	skill-procedure	349	11361	Enrich Skill
+skills/frontmatter-guard/SKILL.md	bundled-skills	skill-procedure	232	9666	Frontmatter Guard Skill
+skills/functional-area-resolver/SKILL.md	bundled-skills	skill-procedure	353	16260	This skill names other skills (perplexity-research, brain-publish,
+skills/gbrain-upgrade/SKILL.md	bundled-skills	skill-procedure	126	4450	GBrain Self-Upgrade
+skills/idea-ingest/SKILL.md	bundled-skills	skill-procedure	104	3350	Idea Ingest Skill
+skills/idea-lineage/SKILL.md	bundled-skills	skill-procedure	222	8849	idea-lineage - Single-Idea Evolution Through the Brain
+skills/ingest/SKILL.md	bundled-skills	skill-procedure	311	12678	Ingest Skill
+skills/install/SKILL.md	bundled-skills	skill-procedure	9	314	Install GBrain (Deprecated)
+skills/maintain/SKILL.md	bundled-skills	skill-procedure	430	17679	Maintain Skill
+skills/media-ingest/SKILL.md	bundled-skills	skill-procedure	121	3735	Media Ingest Skill
+skills/meeting-ingestion/SKILL.md	bundled-skills	skill-procedure	124	3556	Meeting Ingestion Skill
+skills/migrate/SKILL.md	bundled-skills	skill-procedure	136	4986	Migrate Skill
+skills/migrations/v0.10.3.md	skill-migration-guides	migration-guide	142	6275	v0.10.3 Migration: Knowledge Graph Layer
+skills/migrations/v0.11.0.md	skill-migration-guides	migration-guide	198	7610	v0.11.0 Migration: Minions — host-agent instruction manual
+skills/migrations/v0.12.0.md	skill-migration-guides	migration-guide	132	4897	v0.12.0 Migration: Knowledge Graph Auto-Wire
+skills/migrations/v0.12.1.md	skill-migration-guides	migration-guide	107	4141	v0.12.1 Migration: Extract Performance + Migration Timeout Fix
+skills/migrations/v0.13.0.md	skill-migration-guides	migration-guide	92	5792	v0.13.0 Migration: Frontmatter Relationship Indexing
+skills/migrations/v0.14.0.md	skill-migration-guides	migration-guide	185	7560	v0.14.0 Migration: Adopt the `shell` job type
+skills/migrations/v0.15.2.md	skill-migration-guides	migration-guide	164	6382	v0.15.2 Migration: Bulk-action progress streaming
+skills/migrations/v0.17.0.md	skill-migration-guides	migration-guide	167	5671	v0.17.0 Migration: `gbrain dream` + unified maintenance cycle
+skills/migrations/v0.18.0.md	skill-migration-guides	migration-guide	161	6410	v0.17.0 Migration: Multi-source brains
+skills/migrations/v0.19.0.md	skill-migration-guides	migration-guide	71	3583	v0.19.0 — Code Indexing
+skills/migrations/v0.21.0.md	skill-migration-guides	migration-guide	64	4582	v0.21.0 — Code Cathedral II
+skills/migrations/v0.22.14.md	skill-migration-guides	migration-guide	210	8232	v0.22.14 — Bare-worker self-health-monitoring
+skills/migrations/v0.22.4.md	skill-migration-guides	migration-guide	113	3417	v0.22.4 — Frontmatter Guard
+skills/migrations/v0.23.0.md	skill-migration-guides	migration-guide	171	6631	v0.23.0 Migration: Dream cycle synthesize + patterns phases
+skills/migrations/v0.25.1.md	skill-migration-guides	migration-guide	194	6879	v0.25.1 — Skills wave migration
+skills/migrations/v0.27.1.md	skill-migration-guides	migration-guide	102	3991	v0.27.1 migration
+skills/migrations/v0.28.0.md	skill-migration-guides	migration-guide	152	5588	v0.28 — Takes, Think, Unified Model Config
+skills/migrations/v0.29.1.md	skill-migration-guides	migration-guide	106	3999	v0.29.1 migration — Salience + Recency as two orthogonal options
+skills/migrations/v0.32.2.md	skill-migration-guides	migration-guide	129	5599	v0.32.2 Migration: facts join the system-of-record
+skills/migrations/v0.32.6.md	skill-migration-guides	migration-guide	78	2813	v0.32.6 Migration: Contradiction Probe
+skills/migrations/v0.33.0.md	skill-migration-guides	migration-guide	133	5743	v0.33.0 migration — code intelligence foundation + MCP-exposed code ops
+skills/migrations/v0.33.3.0.md	skill-migration-guides	migration-guide	133	5749	v0.33.3.0 migration — code intelligence foundation + MCP-exposed code ops
+skills/migrations/v0.34.0.0.md	skill-migration-guides	migration-guide	80	3043	v0.34.0.0 migration — recursive code intelligence
+skills/migrations/v0.35.0.0.md	skill-migration-guides	migration-guide	84	2836	v0.35.0.0 migration notes
+skills/migrations/v0.35.7.0.md	skill-migration-guides	migration-guide	109	4545	v0.35.7.0 — Temporal trajectory + founder scorecard
+skills/migrations/v0.36.2.0.md	skill-migration-guides	migration-guide	86	6630	v0.36.2.0 Migration: ZeroEntropy as default
+skills/migrations/v0.36.5.0.md	skill-migration-guides	migration-guide	115	5450	v0.36.5.0 — Free-form secret inheritance for shell jobs calling `gbrain` CLI
+skills/migrations/v0.40.3.0.md	skill-migration-guides	migration-guide	154	5818	v0.40.3.0 Migration
+skills/migrations/v0.40.5.md	skill-migration-guides	migration-guide	114	5028	v0.40.5.0 — Federated Sync v2
+skills/migrations/v0.41.11.0.md	skill-migration-guides	migration-guide	61	3538	v0.41.11.0 migration — conversation retrieval upgrade
+skills/migrations/v0.5.0.md	skill-migration-guides	migration-guide	50	2254	v0.5.0 Migration: Live Sync + Verification
+skills/migrations/v0.7.0.md	skill-migration-guides	migration-guide	51	2104	v0.7.0 Migration: Integration Recipes
+skills/migrations/v0.8.0.md	skill-migration-guides	migration-guide	141	5004	v0.8.0 Migration: Voice-to-Brain Production Patterns + Remote MCP Simplification
+skills/migrations/v0.8.1.md	skill-migration-guides	migration-guide	103	4072	v0.8.1 Migration: Battle-Tested Skill Patterns
+skills/migrations/v0.9.0.md	skill-migration-guides	migration-guide	231	8300	v0.9.0 Migration: Deterministic Tools + Smart File Storage
+skills/migrations/v0.9.1.md	skill-migration-guides	migration-guide	81	2772	v0.9.1 Migration: Security + Integrity + Performance
+skills/minion-orchestrator/SKILL.md	bundled-skills	skill-procedure	302	10843	Minion Orchestrator
+skills/perplexity-research/SKILL.md	bundled-skills	skill-procedure	199	6889	perplexity-research — Brain-Augmented Web Research
+skills/publish/SKILL.md	bundled-skills	skill-procedure	172	6041	Publish Skill
+skills/query/SKILL.md	bundled-skills	skill-procedure	155	6272	Query Skill
+skills/repo-architecture/SKILL.md	bundled-skills	skill-procedure	53	1628	Repo Architecture — Filing Rules
+skills/reports/SKILL.md	bundled-skills	skill-procedure	59	1562	Reports Skill
+skills/RESOLVER.md	bundled-skills	agent-dispatch	135	10918	GBrain Skill Resolver
+skills/schema-author/SKILL.md	bundled-skills	skill-procedure	305	13234	schema-author — evolve your schema pack
+skills/schema-unify/SKILL.md	bundled-skills	skill-procedure	251	11318	Schema Unification (gbrain-base → gbrain-base-v2)
+skills/setup/SKILL.md	bundled-skills	skill-procedure	579	26399	Setup GBrain
+skills/signal-detector/SKILL.md	bundled-skills	skill-procedure	112	4229	Signal Detector — Ambient Brain Capture
+skills/skill-creator/SKILL.md	bundled-skills	skill-procedure	82	2222	Skill Creator
+skills/skill-optimizer/SKILL.md	bundled-skills	skill-procedure	188	8999	Skill Optimizer
+skills/skillify/SKILL.md	bundled-skills	skill-procedure	310	11537	Skillify — The Meta Skill
+skills/skillpack-check/SKILL.md	bundled-skills	skill-procedure	132	4552	Skillpack Check
+skills/skillpack-harvest/SKILL.md	bundled-skills	skill-procedure	269	10411	skillpack-harvest — Editorial workflow for lifting host skills into gbrain
+skills/smoke-test/SKILL.md	bundled-skills	skill-procedure	160	5277	Smoke Test Skillpack
+skills/soul-audit/SKILL.md	bundled-skills	skill-procedure	85	3576	Soul Audit — Agent Identity Builder
+skills/strategic-reading/SKILL.md	bundled-skills	skill-procedure	188	7002	Brain-first analyzer matches `web_fetch` in a diagram on line 106
+skills/testing/SKILL.md	bundled-skills	skill-procedure	256	7980	Testing Skill — Validation + Daily Health & Regression Intelligence
+skills/voice-note-ingest/SKILL.md	bundled-skills	skill-procedure	200	6708	voice-note-ingest — Exact-Phrasing Voice Capture
+skills/webhook-transforms/SKILL.md	bundled-skills	skill-procedure	83	2464	Webhook Transforms
+test/e2e/fixtures/apple-notes/2017-05-03 ohmygreen.md	test-fixture-docs	fixture-or-eval-support	18	520	-
+test/e2e/fixtures/apple-notes/Notes (March 2024).md	test-fixture-docs	fixture-or-eval-support	12	354	-
+test/e2e/fixtures/companies/novamind.md	test-fixture-docs	fixture-or-eval-support	68	2304	NovaMind
+test/e2e/fixtures/companies/threshold-ventures.md	test-fixture-docs	fixture-or-eval-support	53	1566	Threshold Ventures
+test/e2e/fixtures/concepts/compiled-truth.md	test-fixture-docs	fixture-or-eval-support	71	2959	Compiled Truth
+test/e2e/fixtures/concepts/hybrid-search.md	test-fixture-docs	fixture-or-eval-support	87	3571	Hybrid Search
+test/e2e/fixtures/concepts/retrieval-augmented-generation.md	test-fixture-docs	fixture-or-eval-support	76	3130	Retrieval-Augmented Generation
+test/e2e/fixtures/deals/novamind-seed.md	test-fixture-docs	fixture-or-eval-support	64	1968	NovaMind Seed Round
+test/e2e/fixtures/large/big-file.md	test-fixture-docs	fixture-or-eval-support	20007	2249001	-
+test/e2e/fixtures/meetings/novamind-demo-day.md	test-fixture-docs	fixture-or-eval-support	70	2627	NovaMind — YC W25 Demo Day
+test/e2e/fixtures/meetings/weekly-sync-mar28.md	test-fixture-docs	fixture-or-eval-support	73	2828	Weekly Sync — March 28, 2025
+test/e2e/fixtures/people/marcus-reid.md	test-fixture-docs	fixture-or-eval-support	47	1728	Marcus Reid
+test/e2e/fixtures/people/priya-patel.md	test-fixture-docs	fixture-or-eval-support	47	1885	Priya Patel
+test/e2e/fixtures/people/sarah-chen.md	test-fixture-docs	fixture-or-eval-support	68	2890	Sarah Chen
+test/e2e/fixtures/projects/gbrain.md	test-fixture-docs	fixture-or-eval-support	75	3095	GBrain
+test/e2e/fixtures/sources/crustdata-sarah-chen.md	test-fixture-docs	fixture-or-eval-support	103	2249	Crustdata: Sarah Chen
+test/fixtures/brain-first-skills/compliant-callout/SKILL.md	test-fixture-docs	fixture-or-eval-support	19	513	compliant-callout
+test/fixtures/brain-first-skills/compliant-phase/SKILL.md	test-fixture-docs	fixture-or-eval-support	21	531	compliant-phase
+test/fixtures/brain-first-skills/compliant-position/SKILL.md	test-fixture-docs	fixture-or-eval-support	18	528	compliant-position
+test/fixtures/brain-first-skills/exempt-frontmatter/SKILL.md	test-fixture-docs	fixture-or-eval-support	20	544	exempt-frontmatter
+test/fixtures/brain-first-skills/missing-brain-first/SKILL.md	test-fixture-docs	fixture-or-eval-support	16	372	missing-brain-first
+test/fixtures/brain-first-skills/multi-pattern/SKILL.md	test-fixture-docs	fixture-or-eval-support	17	471	multi-pattern
+test/fixtures/brain-first-skills/negation-prose/SKILL.md	test-fixture-docs	fixture-or-eval-support	19	607	negation-prose
+test/fixtures/brain-first-skills/no-external/SKILL.md	test-fixture-docs	fixture-or-eval-support	17	387	no-external
+test/fixtures/brain-first-skills/typo-frontmatter/SKILL.md	test-fixture-docs	fixture-or-eval-support	18	435	typo-frontmatter
+test/fixtures/calibration/extract-takes-corpus/companies-acme-example.md	test-fixture-docs	fixture-or-eval-support	31	1027	acme-example
+test/fixtures/calibration/extract-takes-corpus/concept-startup-market-dynamics.md	test-fixture-docs	fixture-or-eval-support	61	2501	Startup Market Dynamics
+test/fixtures/calibration/extract-takes-corpus/daily-2026-04-15.md	test-fixture-docs	fixture-or-eval-support	33	1378	Wednesday 2026-04-15
+test/fixtures/calibration/extract-takes-corpus/decision-log-2025-q3.md	test-fixture-docs	fixture-or-eval-support	43	1541	Q3 2025 portfolio decisions
+test/fixtures/calibration/extract-takes-corpus/essay-cities-and-ambition.md	test-fixture-docs	fixture-or-eval-support	31	1314	Cities and ambition
+test/fixtures/calibration/extract-takes-corpus/meeting-2026-04-03.md	test-fixture-docs	fixture-or-eval-support	40	1279	Office hours — alice-example, 2026-04-03
+test/fixtures/calibration/extract-takes-corpus/meeting-2026-04-10-fundraise-fund-a.md	test-fixture-docs	fixture-or-eval-support	48	2094	Fundraise OH — fund-a / alice-example
+test/fixtures/calibration/extract-takes-corpus/people-alice-example.md	test-fixture-docs	fixture-or-eval-support	32	1252	Alice Example
+test/fixtures/calibration/holdout/concept-founder-execution.md	test-fixture-docs	fixture-or-eval-support	41	1400	Founder Execution
+test/fixtures/calibration/holdout/daily-2026-04-18.md	test-fixture-docs	fixture-or-eval-support	31	1113	Saturday 2026-04-18
+test/fixtures/calibration/holdout/essay-on-conviction.md	test-fixture-docs	fixture-or-eval-support	41	1626	On conviction
+test/fixtures/calibration/holdout/meeting-2026-04-17-hiring-charlie-example.md	test-fixture-docs	fixture-or-eval-support	37	1479	Hiring OH — charlie-example for COO at acme-example
+test/fixtures/calibration/holdout/people-bob-example.md	test-fixture-docs	fixture-or-eval-support	39	1438	Bob Example
+test/fixtures/calibration/README.md	test-fixture-docs	fixture-or-eval-support	59	2384	Calibration extract-takes corpus (v0.36.1.0 / D13' / D19)
+test/fixtures/claw-test-scenarios/fresh-install/brain/companies/acme-example.md	test-fixture-docs	fixture-or-eval-support	15	388	Acme Example
+test/fixtures/claw-test-scenarios/fresh-install/brain/concepts/agentic-workflows.md	test-fixture-docs	fixture-or-eval-support	10	339	Agentic Workflows
+test/fixtures/claw-test-scenarios/fresh-install/brain/people/alice-example.md	test-fixture-docs	fixture-or-eval-support	13	377	Alice Example
+test/fixtures/claw-test-scenarios/fresh-install/BRIEF.md	test-fixture-docs	fixture-or-eval-support	32	1512	Claw-test brief — fresh-install
+test/fixtures/claw-test-scenarios/upgrade-from-v0.18/brain/people/alice-example.md	test-fixture-docs	fixture-or-eval-support	8	247	Alice Example
+test/fixtures/claw-test-scenarios/upgrade-from-v0.18/BRIEF.md	test-fixture-docs	fixture-or-eval-support	25	1333	Claw-test brief — upgrade-from-v0.18
+test/fixtures/claw-test-scenarios/upgrade-from-v0.18/seed/README.md	test-fixture-docs	fixture-or-eval-support	24	1513	v0.18 seed
+test/fixtures/claw-test-scenarios/voice-agent-install/BRIEF.md	test-fixture-docs	fixture-or-eval-support	67	2643	Claw-test brief — voice-agent-install
+test/fixtures/openclaw-compact-resolver/skills/brain-search/SKILL.md	test-fixture-docs	fixture-or-eval-support	10	201	brain-search
+test/fixtures/openclaw-compact-resolver/skills/calendar-prep/SKILL.md	test-fixture-docs	fixture-or-eval-support	9	182	calendar-prep
+test/fixtures/openclaw-compact-resolver/skills/content-creation/SKILL.md	test-fixture-docs	fixture-or-eval-support	10	191	content-creation
+test/fixtures/openclaw-compact-resolver/skills/daily-digest/SKILL.md	test-fixture-docs	fixture-or-eval-support	9	171	daily-digest
+test/fixtures/openclaw-compact-resolver/skills/email-triage/SKILL.md	test-fixture-docs	fixture-or-eval-support	10	185	email-triage
+test/fixtures/openclaw-compact-resolver/skills/executive-assistant/SKILL.md	test-fixture-docs	fixture-or-eval-support	10	199	executive-assistant
+test/fixtures/openclaw-compact-resolver/skills/flight-tracker/SKILL.md	test-fixture-docs	fixture-or-eval-support	10	203	flight-tracker
+test/fixtures/openclaw-compact-resolver/skills/gift-advisor/SKILL.md	test-fixture-docs	fixture-or-eval-support	11	207	gift-advisor
+test/fixtures/openclaw-compact-resolver/skills/investor-update-ingest/SKILL.md	test-fixture-docs	fixture-or-eval-support	10	213	investor-update-ingest
+test/fixtures/openclaw-compact-resolver/skills/meeting-prep/SKILL.md	test-fixture-docs	fixture-or-eval-support	10	205	meeting-prep
+test/fixtures/openclaw-compact-resolver/skills/RESOLVER.md	test-fixture-docs	fixture-or-eval-support	32	1435	Compact-format resolver (test fixture)
+test/fixtures/openclaw-mixed-merge/AGENTS.md	test-fixture-docs	fixture-or-eval-support	11	500	Workspace-root AGENTS.md (compact list, parent dir)
+test/fixtures/openclaw-mixed-merge/skills/adversary-tracking/SKILL.md	test-fixture-docs	fixture-or-eval-support	9	175	adversary-tracking
+test/fixtures/openclaw-mixed-merge/skills/book-mirror/SKILL.md	test-fixture-docs	fixture-or-eval-support	9	164	book-mirror
+test/fixtures/openclaw-mixed-merge/skills/briefing/SKILL.md	test-fixture-docs	fixture-or-eval-support	8	133	briefing
+test/fixtures/openclaw-mixed-merge/skills/civic-intelligence/SKILL.md	test-fixture-docs	fixture-or-eval-support	9	168	civic-intelligence
+test/fixtures/openclaw-mixed-merge/skills/enrich/SKILL.md	test-fixture-docs	fixture-or-eval-support	8	132	enrich
+test/fixtures/openclaw-mixed-merge/skills/migrate/SKILL.md	test-fixture-docs	fixture-or-eval-support	8	129	migrate
+test/fixtures/openclaw-mixed-merge/skills/query/SKILL.md	test-fixture-docs	fixture-or-eval-support	8	129	query
+test/fixtures/openclaw-mixed-merge/skills/RESOLVER.md	test-fixture-docs	fixture-or-eval-support	17	590	Skillpack RESOLVER.md (table format, ships in the bundled skills/)
+test/fixtures/openclaw-mixed-merge/skills/setup/SKILL.md	test-fixture-docs	fixture-or-eval-support	8	123	setup
+test/fixtures/openclaw-reference-minimal/AGENTS.md	test-fixture-docs	fixture-or-eval-support	25	735	AGENTS.md
+test/fixtures/openclaw-reference-minimal/skills/brain-ops/SKILL.md	test-fixture-docs	fixture-or-eval-support	14	281	brain-ops
+test/fixtures/openclaw-reference-minimal/skills/context-now/SKILL.md	test-fixture-docs	fixture-or-eval-support	12	261	context-now
+test/fixtures/openclaw-reference-minimal/skills/query/SKILL.md	test-fixture-docs	fixture-or-eval-support	12	230	query
+test/fixtures/openclaw-reference-minimal/skills/signal-detector/SKILL.md	test-fixture-docs	fixture-or-eval-support	10	232	signal-detector
+test/fixtures/skill-catalog/skills/_conventions/rules.md	test-fixture-docs	fixture-or-eval-support	3	120	conventions (must be excluded from the catalog)
+test/fixtures/skill-catalog/skills/brain-ops/SKILL.md	test-fixture-docs	fixture-or-eval-support	25	487	brain-ops
+test/fixtures/skill-catalog/skills/broken/SKILL.md	test-fixture-docs	fixture-or-eval-support	4	150	broken
+test/fixtures/skill-catalog/skills/query-helper/SKILL.md	test-fixture-docs	fixture-or-eval-support	14	248	query-helper
+test/fixtures/skill-catalog/skills/RESOLVER.md	test-fixture-docs	fixture-or-eval-support	5	111	Skill routing
+test/fuzz/regressions/README.md	test-fixture-docs	fixture-or-eval-support	27	983	test/fuzz/regressions/
+tests/heavy/README.md	test-fixture-docs	fixture-or-eval-support	73	2674	tests/heavy/
+TODOS.md	root-entrypoints-and-policy	historical-or-design	4497	342857	TODOS

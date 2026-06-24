@@ -1,4 +1,4 @@
-# Plugin authors guide (v0.15)
+# Plugin authors guide
 
 `gbrain` discovers subagent definitions from outside this repo via
 `GBRAIN_PLUGIN_PATH`. If you maintain a downstream agent (your OpenClaw
@@ -65,7 +65,7 @@ You control where your plugin lives on disk; `gbrain` doesn't guess.
 the one listed FIRST in `GBRAIN_PLUGIN_PATH` wins. The other is dropped
 with a warning naming both sources.
 
-**Trust policy.** Plugins ship subagent definitions ONLY in v0.15:
+**Trust policy.** Plugins currently ship subagent definitions only:
 
 - You **cannot** declare new tools.
 - You **cannot** extend the brain tool allow-list.
@@ -76,8 +76,9 @@ with a warning naming both sources.
   your plugin gives you a loud startup error, not a silent "tool never
   fires" at 3am.
 
-v0.16+ may open up plugin-declared tools with a separate contract. Don't
-expect it.
+Plugin-declared tools are not part of the current contract. If that surface
+opens later, it must ship behind a new `plugin_version` contract before
+downstream agents can depend on it.
 
 ## `gbrain.plugin.json`
 
@@ -85,9 +86,9 @@ expect it.
 |------------------|--------|----------|--------------------------------------------------------------------|
 | `name`           | string | yes      | Human-readable plugin id. Shows up in warnings and collision logs. |
 | `version`        | string | yes      | Your plugin's semver. Informational.                               |
-| `plugin_version` | string | yes      | Contract lock. Must equal `"gbrain-plugin-v1"` for v0.15.          |
+| `plugin_version` | string | yes      | Contract lock. Must equal `"gbrain-plugin-v1"`.                    |
 | `subagents`      | string | no       | Subdir name (default `subagents`). Escape-attempts are rejected.   |
-| `description`    | string | no       | Shown in future `gbrain plugin list`.                              |
+| `description`    | string | no       | Optional metadata retained by loader and diagnostic surfaces.      |
 
 ## Subagent definition files
 
@@ -103,8 +104,7 @@ Recognized frontmatter fields:
 | `max_turns`     | number   | no       | Cap on assistant turns. Defaults to 20.                                                 |
 | `allowed_tools` | string[] | no       | Whitelist of tool names. Must subset the derived brain registry. Rejected on mismatch.  |
 
-Unknown frontmatter fields are preserved but ignored by the handler. v0.16
-may consume more of them.
+Unknown frontmatter fields are preserved but ignored by the current handler.
 
 ## Caveats that will bite you
 
@@ -115,8 +115,8 @@ may consume more of them.
 
 2. **`~/.gbrain/audit/subagent-jobs-*.jsonl` is local only.** If your
    worker runs on a different host than the `gbrain agent logs` caller,
-   the CLI won't see heartbeats from that worker. v0.16 will unify this;
-   for now assume worker + CLI share a filesystem.
+   the CLI won't see heartbeats from that worker. Assume worker + CLI share
+   a filesystem when you need `gbrain agent logs` to show live heartbeats.
 
 3. **Tool calls always run with `ctx.remote = true`.** Even on local CLI
    invocation. Tools that gate on `remote=true` (file_upload's strict
