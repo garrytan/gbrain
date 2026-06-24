@@ -427,7 +427,7 @@ async function main() {
   if (subArgs.includes('--help') || subArgs.includes('-h')) {
     const op = getCliHelpSpec(command);
     if (op) {
-      process.stdout.write(formatOpHelp(op));
+      process.stdout.write(formatCliHelp(command, op));
       return;
     }
   }
@@ -532,6 +532,22 @@ function getCliHelpSpec(command: string): Operation | undefined {
   if (command === 'dream') return DREAM_CLI_SPEC;
   if (command === 'connectors') return CONNECTORS_CLI_SPEC;
   return cliOps.get(command) || CLI_ONLY_SPECS[command];
+}
+
+function formatCliHelp(command: string, op: Operation): string {
+  const help = formatOpHelp(op);
+  if (command !== 'put') return help;
+
+  return `${help}
+Governance:
+  put is the direct canonical write path. Prefer route-memory-writeback for
+  governed writes, and provide --expected-content-hash (expected_content_hash)
+  with a real content hash when updating a page. Omit the flag for create-only
+  CLI writes where the target is expected to be absent; expected_content_hash:
+  null is JSON/MCP/API semantics, not a literal CLI flag value. The route-first
+  contract requires an observed target hash, explicit absence, or a routed write
+  grant before canonical memory is mutated.
+`;
 }
 
 function resolveSyncCliRouting(
@@ -706,13 +722,17 @@ SETUP
                                     Health check (engine, schema, embeddings, local/managed capabilities)
   integrations [subcommand]          Manage integration recipes
   connectors [list|show|sync]        Inspect or sync personal data connector sources
-  memory-report [--json] [--save] [--report-dir <brain>] [--scope-id <scope>] [--limit <n>] [--now <iso>]
-                                    Show or save the memory review report surface
   agent-session preview|capture      Preview or capture a JSON agent-session envelope file
+
+AGENT MEMORY LOOP
+  retrieve-context <query>           Probe for relevant context and required reads
+  read-context --selectors <json>    Read canonical evidence selected by retrieve-context
+  route-memory-writeback             Route durable writes before canonical mutation
+  memory-report [--json] [--save]    Show or save the review surface for memory debt
 
 PAGES
   get <slug>                         Read a page
-  put <slug> [< file.md]             Write/update a page
+  put <slug> [< file.md]             Governed/direct canonical write; use expected content hash
   delete <slug>                      Delete a page
   list [--type T] [--tag T] [-n N]   List pages
 

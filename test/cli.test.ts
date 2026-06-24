@@ -522,6 +522,30 @@ describe('CLI dispatch integration', () => {
     expect(exitCode).toBe(0);
   });
 
+  test('put --help prints governed route-first guidance without DB connection', async () => {
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'put', '--help'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe('');
+    expect(stdout).toContain('Usage: mbrain put <slug>');
+    expect(stdout).toContain('--expected-content-hash');
+    expect(stdout).toContain('expected_content_hash');
+    expect(stdout).toContain('route-first');
+    expect(stdout).toContain('route-memory-writeback');
+    expect(stdout).toContain('direct canonical write path');
+    expect(stdout).toContain('with a real content hash when updating a page');
+    expect(stdout).toContain('Omit the flag for create-only');
+    expect(stdout).toContain('not a literal CLI flag value');
+  });
+
   test('connectors --help prints usage without DB connection', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'connectors', '--help'], {
       cwd: repoRoot,
@@ -1458,6 +1482,12 @@ describe('CLI dispatch integration', () => {
     expect(stdout).toContain('USAGE');
     expect(stdout).toContain('mbrain <command>');
     expect(stdout).toContain('doctor [--json] [--agent] [--explain]');
+    expect(stdout).toContain('AGENT MEMORY LOOP');
+    expect(stdout).toContain('retrieve-context <query>');
+    expect(stdout).toContain('read-context --selectors <json>');
+    expect(stdout).toContain('route-memory-writeback');
+    expect(stdout).toContain('memory-report [--json] [--save]');
+    expect(stdout).toContain('put <slug> [< file.md]             Governed/direct canonical write; use expected content hash');
     expect(stdout).toContain('embed [<slug>|--all|--stale]');
     expect(stdout).toContain('serve [--http] [--host H] [--port P] [--oauth]');
     expect(stdout).toContain('import <dir> [--no-embed]');
