@@ -1786,6 +1786,18 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       detachedWorkingTreeManifest.renamed.length > 0);
 
   if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
+    // v0.42.52.0 (PR #22xx): bump last_sync_at as a heartbeat on every successful
+    // 0-changes sync. D4 invariant ("never advance last_commit on partial") is
+    // preserved: last_sync_at is a monitoring signal (doctor sync_freshness
+    // reads it), separate from the import-converged bookmark. Without this,
+    // a cron-driven `*/15 sync` over a quiet vault leaves last_sync_at pinned
+    // to the last real commit, so doctor falsely flags the source as stale.
+    if (opts.sourceId) {
+      await engine.executeRaw(
+        `UPDATE sources SET last_sync_at = now() WHERE id = $1`,
+        [opts.sourceId],
+      );
+    }
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,
