@@ -11,7 +11,7 @@ secrets:
     where: https://developer.x.com/en/portal/dashboard — create a project + app, copy the Bearer Token from "Keys and tokens"
 health_checks:
   - type: http
-    url: "https://api.x.com/2/users/me"
+    url: "https://api.x.com/2/users/by/username/$X_HANDLE"
     auth: bearer
     auth_token: "$X_BEARER_TOKEN"
     label: "X API"
