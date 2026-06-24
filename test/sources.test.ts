@@ -221,6 +221,14 @@ describe('sources plan', () => {
   });
 });
 
+describe('sources rehome', () => {
+  test('rejects --apply because the lane is preview-only', async () => {
+    const { engine } = makeStub();
+    const code = await withExitCapture(() => runSources(engine, ['rehome', '--apply']));
+    expect(code).toBe(2);
+  });
+});
+
 // ── remove ──────────────────────────────────────────────────
 
 describe('sources remove', () => {

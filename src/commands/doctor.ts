@@ -650,7 +650,8 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
           message:
             `${result.count} page slug(s) appear at 'default' but NOT at the intended source ` +
             `(e.g., ${sampleStr}). Likely pre-v0.30.3 misroutes OR an incomplete initial sync. ` +
-            `Verify on the brain host: \`gbrain sources status\` then \`gbrain sync --source <id> --full\`.`,
+            `Verify on the brain host: \`gbrain sources rehome [<id>] --json\`, then ` +
+            `\`gbrain sources status\` / \`gbrain sync --source <id> --full\`.`,
         });
       } else {
         checks.push({
@@ -5060,9 +5061,9 @@ export async function buildChecks(
             `${result.count} page slug(s) appear at 'default' but NOT at the intended source ` +
             `(e.g., ${sampleStr}). Two possible causes: (1) pre-v0.30.3 putPage misroutes; ` +
             `(2) source X never completed initial sync and the default page is unrelated. ` +
-            `Verify with 'gbrain sources status', then either re-sync with ` +
-            `'gbrain sync --source <id> --full' or 'gbrain delete <slug>' if the default-source ` +
-            `row is the misroute. (A 'gbrain sources rehome' cleanup command is tracked for v0.32.0.)`,
+            `Preview candidates with 'gbrain sources rehome [<id>] --json', then either re-sync with ` +
+            `'gbrain sync --source <id> --full' or delete the default-source row if that row is the misroute. ` +
+            `The rehome lane is preview-only for now; mutation remains intentionally unshipped.`,
         });
       } else {
         checks.push({

@@ -83,7 +83,7 @@ From a probe run on 50 queries with top-k=15:
 
 ### Problem
 
-4,791 pages show "multi-source drift" due to a pre-v0.30.3 `putPage` routing bug. These pages exist at the `default` source but should be at a named source. The `sources rehome` command to fix this hasn't shipped yet.
+4,791 pages show "multi-source drift" due to a pre-v0.30.3 `putPage` routing bug. These pages exist at the `default` source but should be at a named source. The preview lane now ships via `gbrain sources rehome`, but the in-place mutation step is still intentionally unshipped until the multi-table move is verified.
 
 Every doctor run shows WARN for ~4,800 pages nobody can fix.
 

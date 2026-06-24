@@ -53,6 +53,17 @@ function seedFile(root: string, relPath: string, content = 'placeholder\n'): voi
   writeFileSync(full, content);
 }
 
+async function captureLogs<T>(fn: () => Promise<T>): Promise<{ value: T; lines: string[] }> {
+  const origLog = console.log;
+  const lines: string[] = [];
+  console.log = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+  try {
+    return { value: await fn(), lines };
+  } finally {
+    console.log = origLog;
+  }
+}
+
 describe('findMisroutedPages — heuristic correctness', () => {
   test('case 1: no non-default sources → returns empty result (caller skips check)', async () => {
     // Findfn is called by doctor only when at least one non-default source
@@ -103,6 +114,13 @@ describe('findMisroutedPages — heuristic correctness', () => {
     expect(result.sample.length).toBe(2);
     const slugs = result.sample.map(s => s.slug).sort();
     expect(slugs).toEqual(['people/charlie', 'people/dana']);
+    expect(result.sources).toEqual([
+      {
+        source_id: 'src-case3',
+        local_path: root,
+        slugs: ['people/charlie', 'people/dana'],
+      },
+    ]);
     for (const s of result.sample) {
       expect(s.intended_source).toBe('src-case3');
       expect(s.local_path).toBe(root);
@@ -170,5 +188,49 @@ describe('findMisroutedPages — heuristic correctness', () => {
     const result = await findMisroutedPages(engine, [{ id: 'src-case7', local_path: root }]);
     expect(result.count).toBe(1);
     expect(result.sample[0].slug).toBe('topics/mdx-page');
+  });
+
+  test('case 8: `sources rehome --json` previews candidates and does not mutate rows', async () => {
+    const root = makeTmpRoot('case8');
+    seedFile(root, 'people/rehome-eve.md');
+    seedFile(root, 'people/rehome-finn.md');
+
+    await runSources(engine, ['add', 'src-case8', '--no-federated']);
+    await engine.executeRaw(
+      `UPDATE sources SET local_path = $1 WHERE id = $2`,
+      [root, 'src-case8'],
+    );
+    await engine.putPage('people/rehome-eve', { type: 'person', title: 'Rehome Eve', compiled_truth: '.' });
+    await engine.putPage('people/rehome-finn', { type: 'person', title: 'Rehome Finn', compiled_truth: '.' });
+
+    const before = await engine.executeRaw<{ source_id: string; slug: string }>(
+      `SELECT source_id, slug FROM pages WHERE slug IN ($1, $2) ORDER BY source_id, slug`,
+      ['people/rehome-eve', 'people/rehome-finn'],
+    );
+
+    const { lines } = await captureLogs(() =>
+      runSources(engine, ['rehome', 'src-case8', '--json']),
+    );
+    const payload = JSON.parse(lines.join('\n'));
+
+    expect(payload.schema_version).toBe(1);
+    expect(payload.mode).toBe('preview');
+    expect(payload.mutation_supported).toBe(false);
+    expect(payload.walk_truncated).toBe(false);
+    expect(payload.total_candidates).toBe(2);
+    expect(payload.sources).toEqual([
+      {
+        source_id: 'src-case8',
+        local_path: root,
+        count: 2,
+        slugs: ['people/rehome-eve', 'people/rehome-finn'],
+      },
+    ]);
+
+    const after = await engine.executeRaw<{ source_id: string; slug: string }>(
+      `SELECT source_id, slug FROM pages WHERE slug IN ($1, $2) ORDER BY source_id, slug`,
+      ['people/rehome-eve', 'people/rehome-finn'],
+    );
+    expect(after).toEqual(before);
   });
 });

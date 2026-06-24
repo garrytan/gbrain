@@ -126,7 +126,29 @@ gbrain sources attach <id>     Write .gbrain-source in CWD (like kubectl context
 gbrain sources detach          Remove .gbrain-source from CWD.
 gbrain sources federate <id>
 gbrain sources unfederate <id>
+gbrain sources rehome [<id>] [--json]
+                               Preview default-source slugs that appear
+                               misrouted and would need a future rehome.
+                               Read-only: prints candidates only.
 ```
+
+## Preview multi-source drift
+
+If `gbrain doctor` warns about `multi_source_drift`, the fastest readback is:
+
+```bash
+# All non-default sources with local_path
+gbrain sources rehome --json
+
+# Narrow to one source when you already know the suspect repo
+gbrain sources rehome gstack --json
+```
+
+This is a preview lane, not a mutation lane. It groups the exact slugs that
+currently exist at `source_id='default'` but are missing from the intended
+source's namespace, so you can separate "real misroute" from "source never
+finished syncing." In-place rehome is still intentionally unshipped because a
+safe move has to update more than the `pages` row.
 
 ## Citation format for agents
 

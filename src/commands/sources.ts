@@ -16,6 +16,7 @@
  *   gbrain sources detach        — remove .gbrain-source from CWD
  *   gbrain sources federate <id>   — sources.config.federated = true
  *   gbrain sources unfederate <id> — sources.config.federated = false
+ *   gbrain sources rehome [<id>] [--json]  — preview multi-source drift candidates
  *
  * NOT in scope for Step 6 (deferred per plan):
  *   - import-from-github (needs SSRF + clone integration)
@@ -1120,6 +1121,161 @@ async function runCurrent(engine: BrainEngine, args: string[]): Promise<void> {
   console.log(`  tier: ${result.tier}${result.detail ? ` (${result.detail})` : ''}`);
 }
 
+function parsePositiveIntFlag(raw: string | undefined, flag: string): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+    throw new Error(`Invalid ${flag} value "${raw}". Expected a positive integer.`);
+  }
+  return n;
+}
+
+async function runRehome(engine: BrainEngine, args: string[]): Promise<void> {
+  const json = args.includes('--json');
+  const apply = args.includes('--apply');
+  const dryRun = args.includes('--dry-run');
+  void dryRun;
+
+  let sourceId: string | null = null;
+  let limit: number | undefined;
+  let timeoutMs: number | undefined;
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--json' || a === '--dry-run') continue;
+    if (a === '--apply') continue;
+    if (a === '--limit') {
+      try {
+        limit = parsePositiveIntFlag(args[++i], '--limit');
+      } catch (e) {
+        console.error((e as Error).message);
+        process.exit(2);
+      }
+      continue;
+    }
+    if (a === '--timeout-ms') {
+      try {
+        timeoutMs = parsePositiveIntFlag(args[++i], '--timeout-ms');
+      } catch (e) {
+        console.error((e as Error).message);
+        process.exit(2);
+      }
+      continue;
+    }
+    if (a.startsWith('--')) {
+      console.error(`Unknown flag: ${a}`);
+      process.exit(2);
+    }
+    if (sourceId !== null) {
+      console.error('Usage: gbrain sources rehome [<source-id>] [--json] [--limit <n>] [--timeout-ms <ms>]');
+      process.exit(2);
+    }
+    sourceId = a;
+  }
+
+  if (apply) {
+    console.error(
+      'gbrain sources rehome is preview-only right now. Mutation is intentionally unshipped ' +
+      'until the source-aware move is verified across dependent tables (facts, files, aliases, receipts).',
+    );
+    process.exit(2);
+  }
+
+  const rows = await engine.executeRaw<{ id: string; local_path: string | null; archived: boolean | null }>(
+    `SELECT id, local_path, archived FROM sources WHERE archived IS NOT TRUE ORDER BY id`,
+  );
+  const eligible = rows
+    .filter((row) => row.id !== 'default' && row.local_path)
+    .map((row) => ({ id: row.id, local_path: row.local_path as string }));
+
+  let selected = eligible;
+  if (sourceId !== null) {
+    if (sourceId === 'default') {
+      console.error('Source "default" is not eligible for rehome preview (default is the source candidates move FROM).');
+      process.exit(2);
+    }
+    const match = rows.find((row) => row.id === sourceId);
+    if (!match) {
+      console.error(`Source "${sourceId}" not found.`);
+      process.exit(4);
+    }
+    if (!match.local_path) {
+      console.error(`Source "${sourceId}" has no local_path — rehome preview needs an on-disk source root.`);
+      process.exit(4);
+    }
+    if (match.archived) {
+      console.error(`Source "${sourceId}" is archived — restore it before running rehome preview.`);
+      process.exit(4);
+    }
+    selected = [{ id: match.id, local_path: match.local_path as string }];
+  }
+
+  if (selected.length === 0) {
+    if (json) {
+      console.log(JSON.stringify({
+        schema_version: 1,
+        mode: 'preview',
+        mutation_supported: false,
+        walk_truncated: false,
+        scanned_sources: [],
+        total_candidates: 0,
+        sources: [],
+      }, null, 2));
+    } else {
+      console.log('No non-default sources with local_path are registered. Nothing to preview.');
+    }
+    return;
+  }
+
+  const { findMisroutedPages } = await import('../core/multi-source-drift.ts');
+  const result = await findMisroutedPages(
+    engine,
+    selected.map((row) => ({ id: row.id, local_path: row.local_path as string })),
+    { limit, timeoutMs },
+  );
+
+  if (json) {
+    console.log(JSON.stringify({
+      schema_version: 1,
+      mode: 'preview',
+      mutation_supported: false,
+      walk_truncated: result.walk_truncated,
+      scanned_sources: selected.map((row) => row.id),
+      total_candidates: result.count,
+      sources: result.sources.map((row) => ({
+        source_id: row.source_id,
+        local_path: row.local_path,
+        count: row.slugs.length,
+        slugs: row.slugs,
+      })),
+    }, null, 2));
+    return;
+  }
+
+  console.log('SOURCES REHOME — PREVIEW ONLY');
+  console.log('─────────────────────────────');
+  console.log(`Scanned sources: ${selected.length}`);
+  console.log(`Would move: ${result.count} slug(s) from default into their intended source.`);
+  if (result.walk_truncated) {
+    console.log('WARNING: preview is partial because the filesystem walk hit its limit/timeout.');
+  }
+  if (result.sources.length === 0) {
+    console.log('No rehome candidates found.');
+  } else {
+    for (const row of result.sources) {
+      console.log('');
+      console.log(`${row.source_id} (${row.local_path})`);
+      console.log(`  ${row.slugs.length} slug(s) would move from default -> ${row.source_id}`);
+      for (const slug of row.slugs) {
+        console.log(`  - ${slug}`);
+      }
+    }
+  }
+  console.log('');
+  console.log(
+    'No rows changed. Mutation mode is still intentionally unshipped until the multi-table move is verified.',
+  );
+}
+
 /**
  * v0.41 — `gbrain sources audit <id>` dry-run scan.
  *
@@ -1382,6 +1538,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'purge':      return runPurge(engine, rest);
     case 'archived':   return runListArchived(engine, rest);
     case 'current':    return runCurrent(engine, rest);
+    case 'rehome':     return runRehome(engine, rest);
     // v0.40.5.0 Federated Sync v2 (master) + v0.40.6.0 status dashboard
     // The status function lives at the line-582 declaration (master's
     // source-health.ts-backed version). My duplicate runStatus (line ~895
@@ -1445,6 +1602,11 @@ Subcommands:
                                     brain_default/seed_default). Run this
                                     before destructive ops to verify you're
                                     targeting the brain you think you are.
+  rehome [<id>] [--json] [--limit <n>] [--timeout-ms <ms>]
+                                    Preview which slug rows appear misrouted
+                                    at source "default" and would need a
+                                    future rehome into the intended source.
+                                    Read-only: no mutation path ships yet.
   federate <id>                     Make source appear in cross-source default search.
   unfederate <id>                   Isolate source from default search.
   set-cr-mode <id> <none|title|per_chunk_synopsis>

@@ -47,17 +47,33 @@ export interface MisroutedSample {
   local_path: string;
 }
 
+export interface MisroutedSourcePreview {
+  source_id: string;
+  local_path: string;
+  slugs: string[];
+}
+
 export interface MisroutedResult {
   /** True when the FS walk hit the limit/timeout and the result is partial. */
   walk_truncated: boolean;
   /** Per-source breakdown: slugs that appear at (default, slug) but NOT at (X, slug). */
   count: number;
   sample: MisroutedSample[];
+  /** Full preview payload for dry-run readback / CLI grouping. */
+  sources: MisroutedSourcePreview[];
 }
 
 const DEFAULT_FILE_LIMIT = 10_000;
 const DEFAULT_TIMEOUT_MS = 5_000;
 const SAMPLE_LIMIT = 5;
+
+function resolvePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.floor(n);
+}
 
 /**
  * Walk a directory tree for `.md` + `.mdx` files. Skips dotfiles (`.git`),
@@ -177,13 +193,17 @@ export async function findMisroutedPages(
   sources: SourceWithPath[],
   opts: { limit?: number; timeoutMs?: number } = {},
 ): Promise<MisroutedResult> {
-  const limit = opts.limit ?? DEFAULT_FILE_LIMIT;
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const limit =
+    opts.limit ?? resolvePositiveIntEnv('GBRAIN_DRIFT_LIMIT', DEFAULT_FILE_LIMIT);
+  const timeoutMs =
+    opts.timeoutMs ??
+    resolvePositiveIntEnv('GBRAIN_DRIFT_TIMEOUT_MS', DEFAULT_TIMEOUT_MS);
   const deadlineMs = Date.now() + timeoutMs;
 
   let totalCount = 0;
   let walkTruncated = false;
   const sample: MisroutedSample[] = [];
+  const previewSources: MisroutedSourcePreview[] = [];
 
   for (const src of sources) {
     if (src.id === 'default') continue;
@@ -197,8 +217,9 @@ export async function findMisroutedPages(
     if (files.length === 0) continue;
 
     // Convert FS paths to canonical slugs (lowercased, extension stripped).
-    const slugs = Array.from(new Set(files.map(f => pathToSlug(f.relPath))));
+    const slugs = Array.from(new Set(files.map(f => pathToSlug(f.relPath)))).sort();
     const existenceMap = await batchProbeExistence(engine, slugs, src.id);
+    const misroutedSlugs: string[] = [];
 
     for (const slug of slugs) {
       const present = existenceMap.get(slug);
@@ -208,12 +229,26 @@ export async function findMisroutedPages(
       // The misroute heuristic: present at default, missing from intended source.
       if (hasDefault && !hasSource) {
         totalCount++;
+        misroutedSlugs.push(slug);
         if (sample.length < SAMPLE_LIMIT) {
           sample.push({ slug, intended_source: src.id, local_path: src.local_path });
         }
       }
     }
+
+    if (misroutedSlugs.length > 0) {
+      previewSources.push({
+        source_id: src.id,
+        local_path: src.local_path,
+        slugs: misroutedSlugs,
+      });
+    }
   }
 
-  return { walk_truncated: walkTruncated, count: totalCount, sample };
+  return {
+    walk_truncated: walkTruncated,
+    count: totalCount,
+    sample,
+    sources: previewSources,
+  };
 }
