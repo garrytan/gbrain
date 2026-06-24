@@ -14,6 +14,7 @@
 import type { BrainEngine } from './engine.ts';
 import type { PageType } from './types.ts';
 import { ensureWellFormed } from './text-safe.ts';
+import { slugifyPath } from './sync.ts';
 
 /**
  * v0.42.7 — link-extraction version stamp. Bump this ISO timestamp whenever the
@@ -82,8 +83,17 @@ export type LinkResolutionType = 'qualified' | 'unqualified';
  *   - Gbrain canonical: people, companies, meetings, concepts, deal, civic, project, source, media, yc, projects
  *   - Our domain extensions: tech, finance, personal, openclaw (domain-organized wikis)
  *   - Our entity prefix: entities (we kept some legacy entities/projects/ pages)
+ *   - PARA-numbered Obsidian dirs: `\d+_word` (e.g.
+ *     `10_projects`, `20_meetings`, `30_resources`, `40_areas`, `50_pulse`,
+ *     `80_archived`). Without this, vaults that follow the Tiago-Forte PARA
+ *     layout (numeric prefix to force sidebar order) extract 0 wikilinks even
+ *     though the source has hundreds. The PARA alternative uses [A-Za-z] so
+ *     PascalCase `10_Projects/...` matches without forcing an `i` flag on the
+ *     whole regex (which would also relax the kebab-case source-id grammar in
+ *     QUALIFIED_WIKILINK_RE). Extracted slugs are normalized via `slugifyPath`
+ *     so PascalCase / spaced segments match the lowercased DB slug.
  */
-const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
+const DIR_PATTERN = '(?:\\d+_[A-Za-z][A-Za-z0-9_-]*|people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
 
 /**
  * Match `[Name](path)` markdown links pointing to entity directories.
@@ -129,6 +139,225 @@ const QUALIFIED_WIKILINK_RE = new RegExp(
   `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
+
+// ─── Alias / title fallback index ──────
+//
+// Wikilink target → canonical slug fallback resolvers, used when path-equality
+// against the DB slug fails. Obsidian links commonly use:
+//
+//   - short form: `[[_Team-Training]]` (no path; just a filename basename)
+//   - aliased-display: `[[10_Projects/.../_User-Research|User Research]]`
+//     where the path exists but the display name is the human-friendly anchor
+//   - title-only links to renamed/moved pages where the slug has drifted
+//
+// On a typical Obsidian-style vault this lifts the wikilink → edge ratio with
+// no false-positives because every alias map is derived from authored content
+// (frontmatter `aliases:`, the page's H1, the filename basename) rather than
+// guesswork.
+//
+// NOTE: upstream #972 already owns the *basename*
+// fallback via the opt-in `link_resolution.global_basename` flag
+// (resolveBasenameMatches / resolveSlugAll). This index keeps a basename pass
+// for completeness + self-contained tests, but the extract wiring only honors
+// its `alias` / `title` resolutions — basename stays gated behind the upstream
+// flag so the opt-in semantics aren't bypassed.
+//
+// Build the index once per extract run and pass it down to the resolvers.
+// The maps are first-write-wins so vaults that accidentally share an alias
+// across two pages stay deterministic — the first ingested page owns it.
+
+/** Which fallback resolver pinned a wikilink target. Mirrors links.resolution_type. */
+export type WikilinkResolutionType = 'path' | 'alias' | 'title' | 'basename';
+
+/** Result of an alias-index resolution attempt. */
+export interface WikilinkResolution {
+  /** Canonical page slug for the resolved target. */
+  slug: string;
+  /** Which resolver fired. Persisted into links.resolution_type for audit. */
+  resolutionType: WikilinkResolutionType;
+}
+
+/** Per-page authored fields the alias index consumes. */
+export interface PageAliasFields {
+  /** Canonical slug (lowercased, hyphenated, e.g. `10_projects/team/_team`). */
+  slug: string;
+  /** Frontmatter `aliases:` values (any shape — strings, single string, mixed). */
+  aliases?: unknown;
+  /** First H1 heading text (without the leading `#`). */
+  title?: string;
+}
+
+/**
+ * Lowercase + hyphenate an Obsidian-style alias / title / basename so it can
+ * be looked up against the DB slug grammar. Tolerant of unicode —
+ * `'_Team-Assessment'` → `'_team-assessment'`,
+ * `'Rapid Research Framework'` → `'rapid-research-framework'`.
+ */
+function normalizeAliasKey(input: string): string {
+  if (!input) return '';
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/\.mdx?$/i, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+/** Strip a leading `#` heading marker and return the first H1 title text. */
+function extractH1Title(content: string): string | undefined {
+  // First H1 only. Two-state machine: skip the YAML frontmatter block
+  // entirely (delimited by `---` on its own line, top-of-file only), then
+  // return the first H1 heading we see.
+  const lines = content.split('\n');
+  let inFrontmatter = false;
+  let sawFirstLine = false;
+  for (const line of lines) {
+    if (!sawFirstLine && line.trim() === '---') {
+      inFrontmatter = true;
+      sawFirstLine = true;
+      continue;
+    }
+    sawFirstLine = true;
+    if (inFrontmatter) {
+      if (line.trim() === '---') inFrontmatter = false;
+      continue;
+    }
+    const m = line.match(/^#\s+(.+?)\s*$/);
+    if (m) return m[1].replace(/[*_`]/g, '').trim();
+  }
+  return undefined;
+}
+
+/** Public helper: derive a page's H1 title from content. Used by both FS and DB paths. */
+export function deriveTitleFromContent(content: string): string | undefined {
+  return extractH1Title(content);
+}
+
+/**
+ * Coerce frontmatter `aliases:` into a flat string array. YAML lets users
+ * write any of:
+ *   aliases: foo
+ *   aliases: [foo, bar]
+ *   aliases:
+ *     - foo
+ *     - bar
+ * Non-string entries are silently dropped.
+ */
+function collectAliasStrings(value: unknown): string[] {
+  if (value == null) return [];
+  if (typeof value === 'string') return [value];
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const v of value) {
+    if (typeof v === 'string') out.push(v);
+    else if (v && typeof v === 'object' && typeof (v as Record<string, unknown>).name === 'string') {
+      out.push((v as Record<string, string>).name);
+    }
+  }
+  return out;
+}
+
+/**
+ * Wikilink fallback resolver. Given an Obsidian-style wikilink target that
+ * did not exact-match a known slug, try (in order):
+ *   1. Frontmatter `aliases:` declared by any page.
+ *   2. First H1 heading of any page.
+ *   3. Last path segment (filename basename) of any known slug.
+ *
+ * First-write-wins on alias collisions, so a vault that accidentally shares
+ * an alias across two pages stays deterministic.
+ */
+export class WikilinkAliasIndex {
+  /** alias-key → canonical slug. Keys are normalized via `normalizeAliasKey`. */
+  private aliasMap = new Map<string, string>();
+  /** title-key → canonical slug. */
+  private titleMap = new Map<string, string>();
+  /** basename-key → canonical slug. */
+  private basenameMap = new Map<string, string>();
+  /** Number of pages that contributed to the index (debug). */
+  public readonly pageCount: number;
+
+  constructor(entries: PageAliasFields[]) {
+    this.pageCount = entries.length;
+    for (const entry of entries) {
+      const slug = entry.slug;
+      if (!slug) continue;
+
+      // Frontmatter aliases — accept string, string[], or anything coercible.
+      const aliasValues = collectAliasStrings(entry.aliases);
+      for (const a of aliasValues) {
+        const key = normalizeAliasKey(a);
+        if (key && !this.aliasMap.has(key)) this.aliasMap.set(key, slug);
+      }
+
+      // H1 title.
+      if (entry.title) {
+        const key = normalizeAliasKey(entry.title);
+        if (key && !this.titleMap.has(key)) this.titleMap.set(key, slug);
+      }
+
+      // Filename basename — last `/`-segment of the canonical slug.
+      const lastSlash = slug.lastIndexOf('/');
+      const basename = lastSlash >= 0 ? slug.slice(lastSlash + 1) : slug;
+      const baseKey = normalizeAliasKey(basename);
+      if (baseKey && !this.basenameMap.has(baseKey)) this.basenameMap.set(baseKey, slug);
+    }
+  }
+
+  /**
+   * Resolve a wikilink target via fallback resolvers. Returns null when no
+   * fallback fires. The `displayName` (right side of `[[path|Display]]`) is
+   * used as a secondary alias key — Obsidian users frequently use the human
+   * name as an alias for the slug-cased target.
+   */
+  tryResolve(rawTarget: string, displayName?: string): WikilinkResolution | null {
+    const candidates: string[] = [];
+
+    // Last segment of the (possibly path-shaped) wikilink target.
+    const lastSlash = rawTarget.lastIndexOf('/');
+    const lastSeg = lastSlash >= 0 ? rawTarget.slice(lastSlash + 1) : rawTarget;
+
+    candidates.push(lastSeg);
+    if (lastSlash >= 0) candidates.push(rawTarget);
+    if (displayName && displayName !== rawTarget) candidates.push(displayName);
+
+    // Pass 1: aliases (most specific — authored intent).
+    for (const c of candidates) {
+      const key = normalizeAliasKey(c);
+      if (!key) continue;
+      const slug = this.aliasMap.get(key);
+      if (slug) return { slug, resolutionType: 'alias' };
+    }
+
+    // Pass 2: H1 title.
+    for (const c of candidates) {
+      const key = normalizeAliasKey(c);
+      if (!key) continue;
+      const slug = this.titleMap.get(key);
+      if (slug) return { slug, resolutionType: 'title' };
+    }
+
+    // Pass 3: filename basename.
+    for (const c of candidates) {
+      const key = normalizeAliasKey(c);
+      if (!key) continue;
+      const slug = this.basenameMap.get(key);
+      if (slug) return { slug, resolutionType: 'basename' };
+    }
+
+    return null;
+  }
+
+  /** Total alias keys held by the index (debug / smoke). */
+  size(): { aliases: number; titles: number; basenames: number } {
+    return {
+      aliases: this.aliasMap.size,
+      titles: this.titleMap.size,
+      basenames: this.basenameMap.size,
+    };
+  }
+}
 
 /**
  * Issue #972: generic Obsidian-style wikilink — matches `[[anything]]`
@@ -312,8 +541,11 @@ export function extractEntityRefs(content: string): EntityRef[] {
   while ((match = mdPattern.exec(stripped)) !== null) {
     const name = match[1];
     const fullPath = match[2];
-    const slug = fullPath;
-    const dir = fullPath.split('/')[0];
+    // Normalize via slugifyPath so PascalCase / spaced
+    // segments (e.g. `10_Projects/User-Research`) match the lowercased DB slug.
+    // No-op for already-canonical refs like `people/alice-chen`.
+    const slug = slugifyPath(fullPath);
+    const dir = slug.split('/')[0];
     refs.push({ name, slug, dir });
     markdownRanges.push([match.index, match.index + match[0].length]);
   }
@@ -330,6 +562,8 @@ export function extractEntityRefs(content: string): EntityRef[] {
     if (slug.includes('://')) continue;
     if (slug.endsWith('.md')) slug = slug.slice(0, -3);
     const displayName = (match[3] || slug).trim();
+    // Match wikilink path against DB slug grammar.
+    slug = slugifyPath(slug);
     const dir = slug.split('/')[0];
     refs.push({ name: displayName, slug, dir, sourceId });
     qualifiedRanges.push([match.index, match.index + match[0].length]);
@@ -346,6 +580,8 @@ export function extractEntityRefs(content: string): EntityRef[] {
     if (slug.includes('://')) continue;
     if (slug.endsWith('.md')) slug = slug.slice(0, -3);
     const displayName = (match[2] || slug).trim();
+    // Match wikilink path against DB slug grammar.
+    slug = slugifyPath(slug);
     const dir = slug.split('/')[0];
     refs.push({ name: displayName, slug, dir });
     unqualifiedRanges.push([match.index, match.index + match[0].length]);
@@ -431,6 +667,13 @@ export interface LinkCandidate {
   originSlug?: string;
   /** Frontmatter field name (e.g. 'key_people'), for debug + unresolved report. */
   originField?: string;
+  /**
+   * which wikilink-fallback resolver pinned
+   * `targetSlug`, when it was NOT a direct path/slug hit. Set to 'basename',
+   * 'alias', or 'title' by the wikilink fallback chain. Left undefined for
+   * direct refs (the caller stamps 'path' once it confirms `allSlugs.has`).
+   */
+  resolutionType?: string;
 }
 
 /**
@@ -468,7 +711,7 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
-  opts: { globalBasename?: boolean; skipFrontmatter?: boolean } = {},
+  opts: { globalBasename?: boolean; skipFrontmatter?: boolean; aliasIndex?: WikilinkAliasIndex } = {},
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
@@ -490,7 +733,31 @@ export async function extractPageLinks(
       // (ref.name = match[2]). `[[struktura|the project]]` must resolve
       // `struktura`, not "the project". The display text is for context only.
       const matches = await resolver.resolveBasenameMatches(ref.slug);
-      if (matches.length === 0) continue;
+      if (matches.length === 0) {
+        // basename lookup missed. Before giving up,
+        // try the per-run alias/title index — Obsidian authors link by a
+        // page's frontmatter `aliases:` or H1 title (`[[User Research]]`) where
+        // no basename matches. Alias/title carry authored intent so they're
+        // single-target (first-write-wins), unlike the multi-match basename
+        // pass. Only consulted in the globalBasename-on path (we already
+        // `continue`d above when the flag is off), keeping bare-wikilink
+        // resolution opt-in as a whole.
+        if (opts.aliasIndex) {
+          const hit = opts.aliasIndex.tryResolve(ref.slug, ref.name);
+          if (hit && (hit.resolutionType === 'alias' || hit.resolutionType === 'title') && hit.slug !== slug) {
+            const idx = content.indexOf(ref.slug);
+            const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
+            candidates.push({
+              targetSlug: hit.slug,
+              linkType: WIKILINK_BASENAME_LINK_TYPE,
+              context,
+              linkSource: 'wikilink-resolved',
+              resolutionType: hit.resolutionType,
+            });
+          }
+        }
+        continue;
+      }
       const idx = content.indexOf(ref.slug);
       const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
       for (const matched of matches) {
@@ -502,6 +769,7 @@ export async function extractPageLinks(
           linkType: WIKILINK_BASENAME_LINK_TYPE,
           context,
           linkSource: 'wikilink-resolved',
+          resolutionType: 'basename',
         });
       }
       continue;

@@ -281,8 +281,10 @@ CREATE TABLE IF NOT EXISTS links (
   link_kind      TEXT    CHECK (link_kind IS NULL OR link_kind IN ('plain', 'typed_ner')),
   origin_page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
   origin_field   TEXT,
-  -- v0.18.0 Step 4: see src/schema.sql.
-  resolution_type TEXT   CHECK (resolution_type IS NULL OR resolution_type IN ('qualified', 'unqualified')),
+  -- v0.18.0 Step 4 + see src/schema.sql.
+  resolution_type TEXT   CHECK (resolution_type IS NULL OR resolution_type IN (
+                           'qualified', 'unqualified', 'path', 'alias', 'title', 'basename'
+                         )),
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT links_from_to_type_source_origin_unique
     UNIQUE NULLS NOT DISTINCT (from_page_id, to_page_id, link_type, link_source, origin_page_id)

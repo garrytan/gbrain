@@ -39,11 +39,12 @@ import {
   extractFrontmatterLinks, isGlobalBasenameEnabled, LINK_EXTRACTOR_VERSION_TS,
   WIKILINK_BASENAME_LINK_TYPE,
   buildBasenameIndex, queryBasenameIndex, stripCodeBlocks,
-  type UnresolvedFrontmatterRef, type LinkCandidate,
+  WikilinkAliasIndex, deriveTitleFromContent,
+  type UnresolvedFrontmatterRef, type LinkCandidate, type PageAliasFields,
 } from '../core/link-extraction.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
-import { pathToSlug, pruneDir, isSyncable } from '../core/sync.ts';
+import { pathToSlug, pruneDir, isSyncable, slugifyPath } from '../core/sync.ts';
 // v0.41.18.0: withRetry + isRetryableConnError + WithRetryOpts moved to
 // src/core/retry.ts as the canonical primitive. Engine methods
 // (addLinksBatch/addTimelineEntriesBatch/upsertChunks) now self-retry via
@@ -165,6 +166,13 @@ export interface ExtractedLink {
   // the DB / put_page paths do. Undefined for ordinary markdown edges (the
   // engine defaults those to 'markdown').
   link_source?: string;
+  /**
+   * which resolver pinned the target slug at
+   * extraction time — 'path' (exact slug), 'basename' (opt-in global-basename),
+   * 'alias' (frontmatter aliases), 'title' (H1). Undefined when the caller
+   * can't attribute the resolution.
+   */
+  resolution_type?: string;
 }
 
 export interface ExtractedTimelineEntry {
@@ -202,7 +210,14 @@ export function walkMarkdownFiles(dir: string): { path: string; relPath: string 
           // submodule pointers (`.git` as a file inside the candidate).
           if (!pruneDir(entry, d)) continue;
           walk(full);
-        } else if (entry.endsWith('.md') && !entry.startsWith('_')) {
+        } else if (entry.endsWith('.md')) {
+          // dropped the `!entry.startsWith('_')`
+          // guard. The pre-fix filter skipped Obsidian hub pages like
+          // `_Team-Training.md` — but `gbrain sync` (canonical ingestion)
+          // ingests them via `isSyncable`, so they live in the DB and are
+          // legitimate wikilink targets. Walking them here keeps FS-source
+          // extract aligned with the DB and lets the alias index see the
+          // basenames Obsidian users actually link to.
           const rel = relative(dir, full);
           if (!isSyncable(rel, { strategy: 'markdown' })) continue;
           files.push({ path: full, relPath: rel });
@@ -227,15 +242,18 @@ export function walkMarkdownFiles(dir: string): { path: string; relPath: string 
  * (containing ://) are always skipped. For wikilinks, the .md suffix is added
  * if absent and section anchors (#heading) are stripped.
  */
-export function extractMarkdownLinks(content: string): { name: string; relTarget: string }[] {
-  const results: { name: string; relTarget: string }[] = [];
+export function extractMarkdownLinks(content: string): { name: string; relTarget: string; rawTarget: string }[] {
+  const results: { name: string; relTarget: string; rawTarget: string }[] = [];
 
   const mdPattern = /\[([^\]]+)\]\(([^)]+\.md)\)/g;
   let match;
   while ((match = mdPattern.exec(content)) !== null) {
     const target = match[2];
     if (target.includes('://')) continue;
-    results.push({ name: match[1], relTarget: target });
+    // strip the .md extension to give the alias
+    // fallback resolver a clean key.
+    const rawTarget = target.replace(/\.mdx?$/i, '');
+    results.push({ name: match[1], relTarget: target, rawTarget });
   }
 
   const wikiPattern = /\[\[([^|\]]+?)(?:\|[^\]]*?)?\]\]/g;
@@ -248,7 +266,9 @@ export function extractMarkdownLinks(content: string): { name: string; relTarget
     const relTarget = pagePath.endsWith('.md') ? pagePath : pagePath + '.md';
     const pipeIdx = match[0].indexOf('|');
     const displayName = pipeIdx >= 0 ? match[0].slice(pipeIdx + 1, -2).trim() : rawPath;
-    results.push({ name: displayName, relTarget });
+    // rawTarget preserves the wikilink target as authored (no .md, no anchor)
+    // so WikilinkAliasIndex.tryResolve can normalize it as an alias key.
+    results.push({ name: displayName, relTarget, rawTarget: pagePath });
   }
 
   return results;
@@ -269,13 +289,20 @@ export function extractMarkdownLinks(content: string): { name: string; relTarget
 export function resolveSlug(fileDir: string, relTarget: string, allSlugs: Set<string>): string | null {
   const targetNoExt = relTarget.endsWith('.md') ? relTarget.slice(0, -3) : relTarget;
 
-  const s1 = join(fileDir, targetNoExt);
+  // Obsidian vaults frequently mix case
+  // (`10_Projects/...` vs the canonical lowercased `10_projects/...` DB slug),
+  // so the candidate must be slugified before lookup or every PascalCase path
+  // falls through to the alias resolver — which works, but at the cost of a
+  // true 'path' resolution.
+  const norm = (s: string) => slugifyPath(s);
+
+  const s1 = norm(join(fileDir, targetNoExt));
   if (allSlugs.has(s1)) return s1;
 
   const parts = fileDir.split('/').filter(Boolean);
   for (let strip = 1; strip <= parts.length; strip++) {
     const ancestor = parts.slice(0, parts.length - strip).join('/');
-    const candidate = ancestor ? join(ancestor, targetNoExt) : targetNoExt;
+    const candidate = norm(ancestor ? join(ancestor, targetNoExt) : targetNoExt);
     if (allSlugs.has(candidate)) return candidate;
   }
 
@@ -368,6 +395,29 @@ function parseFrontmatterFromContent(content: string, relPath: string): Record<s
 }
 
 /**
+ * build the per-run wikilink alias/title index for
+ * the FS-source path. Reads each walked file's frontmatter `aliases:` + first
+ * H1 once up-front; basename keys come for free from each file's slug.
+ * Unreadable files are skipped. Built before the per-file extraction so a file
+ * early in the walk can resolve a wikilink to a page later in the walk.
+ */
+function buildFsAliasIndex(files: { path: string; relPath: string }[]): WikilinkAliasIndex {
+  const entries: PageAliasFields[] = [];
+  for (const f of files) {
+    try {
+      const content = readFileSync(f.path, 'utf-8');
+      const fm = parseFrontmatterFromContent(content, f.relPath);
+      entries.push({
+        slug: pathToSlug(f.relPath),
+        aliases: fm.aliases,
+        title: deriveTitleFromContent(content),
+      });
+    } catch { /* skip unreadable */ }
+  }
+  return new WikilinkAliasIndex(entries);
+}
+
+/**
  * Full link extraction from a single markdown file (FS-source path).
  *
  * Async (v0.13): uses the canonical `extractFrontmatterLinks` via a
@@ -378,7 +428,7 @@ function parseFrontmatterFromContent(content: string, relPath: string): Record<s
  */
 export async function extractLinksFromFile(
   content: string, relPath: string, allSlugs: Set<string>,
-  opts?: { includeFrontmatter?: boolean; globalBasename?: boolean },
+  opts?: { includeFrontmatter?: boolean; globalBasename?: boolean; aliasIndex?: WikilinkAliasIndex },
 ): Promise<ExtractedLink[]> {
   const links: ExtractedLink[] = [];
   const slug = pathToSlug(relPath);
@@ -394,9 +444,28 @@ export async function extractLinksFromFile(
   // DB path, which goes through extractEntityRefs (which strips internally).
   const scanContent = stripCodeBlocks(content);
 
-  for (const { name, relTarget } of extractMarkdownLinks(scanContent)) {
+  for (const { name, relTarget, rawTarget } of extractMarkdownLinks(scanContent)) {
     const resolvedSlugs = resolveSlugAll(fileDir, relTarget, allSlugs, { globalBasename });
-    if (resolvedSlugs.length === 0) continue;
+    if (resolvedSlugs.length === 0) {
+      // exact path + (opt-in) basename both missed.
+      // Try the always-on alias / H1-title index — authored aliases and titles
+      // have no upstream equivalent. Basename stays gated behind globalBasename
+      // (handled above by resolveSlugAll), so we only honor 'alias' / 'title'
+      // here; that keeps the opt-in basename flag authoritative.
+      if (opts?.aliasIndex) {
+        const hit = opts.aliasIndex.tryResolve(rawTarget, name);
+        if (hit && (hit.resolutionType === 'alias' || hit.resolutionType === 'title') && hit.slug !== slug) {
+          links.push({
+            from_slug: slug,
+            to_slug: hit.slug,
+            link_type: inferTypeByDir(fileDir, dirname(hit.slug), fm),
+            context: `markdown link: [${name}] (${hit.resolutionType})`,
+            resolution_type: hit.resolutionType,
+          });
+        }
+      }
+      continue;
+    }
     // Single hit on the ancestor path → emit one edge with the inferred
     // verb type. Multiple hits (only possible when globalBasename is on
     // AND ancestor walk missed) → emit one edge per match, all tagged
@@ -421,6 +490,8 @@ export async function extractLinksFromFile(
         // Issue #972: tag basename edges so the FS path matches DB/put_page
         // provenance and migration v112's widened CHECK is exercised here too.
         link_source: isBasename ? 'wikilink-resolved' : undefined,
+        // attribute the resolver for the audit trail.
+        resolution_type: isBasename ? 'basename' : 'path',
       });
     }
   }
@@ -970,6 +1041,9 @@ async function extractForSlugs(
 
   // Issue #972: read the basename flag once per extract run.
   const globalBasename = await isGlobalBasenameEnabled(engine);
+  // alias/title index over the whole vault so an
+  // incremental slug's wikilinks resolve against authored aliases + H1 titles.
+  const aliasIndex = buildFsAliasIndex(allFiles);
 
   const linkBatch: LinkBatchInput[] = [];
   const timelineBatch: TimelineBatchInput[] = [];
@@ -1027,7 +1101,7 @@ async function extractForSlugs(
         const content = readFileSync(fullPath, 'utf-8');
 
         if (doLinks) {
-          const links = await extractLinksFromFile(content, relPath, allSlugs, { globalBasename });
+          const links = await extractLinksFromFile(content, relPath, allSlugs, { globalBasename, aliasIndex });
           for (const link of links) {
             if (dryRun) {
               if (!jsonMode) console.log(`  ${link.from_slug} → ${link.to_slug} (${link.link_type})`);
@@ -1084,6 +1158,13 @@ async function extractLinksFromDir(
   // match for bare wikilinks like `[[struktura]]`.
   const globalBasename = await isGlobalBasenameEnabled(engine);
 
+  // build the wikilink alias/title index by parsing
+  // each file's frontmatter + H1 once up-front. Cost: one extra readFileSync
+  // per file in this walk; for a 1K-page Obsidian vault that's ~tens of ms,
+  // worth it to recover the alias/title-resolved edges that have no upstream
+  // equivalent.
+  const aliasIndex = buildFsAliasIndex(files);
+
   // Progress stream on stderr (separate from the action-events --json writes
   // to stdout, which tests grep for). Rate-gated; respects global --quiet /
   // --progress-json flags.
@@ -1122,13 +1203,13 @@ async function extractLinksFromDir(
       if (isAborted(signal)) return;
       try {
         const content = readFileSync(file.path, 'utf-8');
-        const links = await extractLinksFromFile(content, file.relPath, allSlugs, { globalBasename });
+        const links = await extractLinksFromFile(content, file.relPath, allSlugs, { globalBasename, aliasIndex });
         for (const link of links) {
           if (dryRunSeen) {
             const key = `${link.from_slug}::${link.to_slug}::${link.link_type}`;
             if (dryRunSeen.has(key)) continue;
             dryRunSeen.add(key);
-            if (!jsonMode) console.log(`  ${link.from_slug} → ${link.to_slug} (${link.link_type})`);
+            if (!jsonMode) console.log(`  ${link.from_slug} → ${link.to_slug} (${link.link_type})${link.resolution_type ? ` [${link.resolution_type}]` : ''}`);
             created++;
           } else {
             batch.push(link);
@@ -1237,13 +1318,15 @@ export async function extractLinksForSlugs(
     : undefined;
   // Issue #972: same flag as the standalone extract path.
   const globalBasename = await isGlobalBasenameEnabled(engine);
+  // alias/title index over the whole repo.
+  const aliasIndex = buildFsAliasIndex(allFiles);
   let created = 0;
   for (const slug of slugs) {
     const filePath = join(repoPath, slug + '.md');
     if (!existsSync(filePath)) continue;
     try {
       const content = readFileSync(filePath, 'utf-8');
-      for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs, { globalBasename })) {
+      for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs, { globalBasename, aliasIndex })) {
         try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type, link.link_source, undefined, undefined, linkOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback when batch path declines a row
       }
     } catch { /* skip */ }
@@ -1346,6 +1429,28 @@ async function extractLinksFromDB(
     list.push(ref.source_id);
     slugToSources.set(ref.slug, list);
   }
+
+  // wikilink alias/title index, built from each
+  // page's frontmatter `aliases:` + first H1. Used when a markdown candidate's
+  // wikilink target isn't a known slug (renamed/moved page) AND when a bare
+  // `[[Display Name]]` resolves by authored alias/title rather than basename.
+  // One pass over `fullRefsForResolver` here (getPage already loads frontmatter
+  // + title cheaply); the iteration cost is dwarfed by the per-page link-type
+  // inference in the main loop. Basename resolution stays owned by upstream's
+  // opt-in globalBasename path — this index's basename pass is not consulted in
+  // the wiring (alias/title only) so the flag's semantics aren't bypassed.
+  const aliasEntries: PageAliasFields[] = [];
+  for (const { slug: s, source_id } of fullRefsForResolver) {
+    const p = await engine.getPage(s, { sourceId: source_id });
+    if (!p) continue;
+    aliasEntries.push({
+      slug: s,
+      aliases: (p.frontmatter as Record<string, unknown>)?.aliases,
+      title: p.title || deriveTitleFromContent(p.compiled_truth),
+    });
+  }
+  const aliasIndex = new WikilinkAliasIndex(aliasEntries);
+
   let processed = 0, created = 0;
   // v0.42.7 (#1696): pages whose links we extracted this run — stamped after
   // the loop so a manual `gbrain extract links|all --source db` clears the
@@ -1393,11 +1498,34 @@ async function extractLinksFromDB(
     // basename lookup; off by default for back-compat.
     const extracted = await extractPageLinks(
       slug, fullContent, page.frontmatter, page.type, resolver,
-      { skipFrontmatter: !includeFrontmatter, globalBasename },
+      { skipFrontmatter: !includeFrontmatter, globalBasename, aliasIndex },
     );
     unresolved.push(...extracted.unresolved);
 
     for (const c of extracted.candidates) {
+      // attribute which resolver pinned this edge,
+      // and recover markdown candidates whose wikilink target drifted
+      // (renamed/moved page). `c.resolutionType` is already set for the
+      // wikilink-fallback candidates (basename/alias/title) emitted by
+      // extractPageLinks; preserve it. Frontmatter candidates went through
+      // makeResolver's pg_trgm path and keep NULL resolution_type.
+      let resolutionType = c.resolutionType;
+      if (!allSlugs.has(c.targetSlug)) {
+        if (c.linkSource !== 'frontmatter') {
+          const hit = aliasIndex.tryResolve(c.targetSlug);
+          if (hit && (hit.resolutionType === 'alias' || hit.resolutionType === 'title') && allSlugs.has(hit.slug)) {
+            c.targetSlug = hit.slug;
+            resolutionType = hit.resolutionType;
+          }
+          // else: leave c.targetSlug unresolved — resolveCandidateSources
+          // returns null below and the edge is dropped (dangling link).
+        }
+      } else if (c.linkSource !== 'frontmatter' && !resolutionType) {
+        // Exact path-equality win — mirror the FS-source 'path' resolution_type
+        // (only for markdown edges; frontmatter/manual edges keep NULL).
+        resolutionType = 'path';
+      }
+
       // v0.32.8 F10 cross-source link resolution, extracted to the shared pure
       // helper in v0.42.7 (#1696) so extract --stale reuses the exact same
       // endpoint-validation + from/to source-id picking (null = skip: missing
@@ -1415,9 +1543,10 @@ async function extractLinksFromDB(
             action: 'add_link', from: fromSlug, from_source_id: fromSourceId,
             to: c.targetSlug, to_source_id: toSourceId,
             type: c.linkType, context: c.context, link_source: c.linkSource,
+            resolution_type: resolutionType ?? null,
           }) + '\n');
         } else {
-          console.log(`  ${fromSlug} → ${c.targetSlug} (${c.linkType})${c.linkSource === 'frontmatter' ? ' [fm]' : ''}`);
+          console.log(`  ${fromSlug} → ${c.targetSlug} (${c.linkType})${c.linkSource === 'frontmatter' ? ' [fm]' : ''}${resolutionType ? ` [${resolutionType}]` : ''}`);
         }
         created++;
       } else {
@@ -1435,6 +1564,7 @@ async function extractLinksFromDB(
           from_source_id: fromSourceId,
           to_source_id: toSourceId,
           origin_source_id: source_id,
+          resolution_type: resolutionType,
         });
         if (batch.length >= BATCH_SIZE) await flush();
       }
