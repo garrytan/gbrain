@@ -104,6 +104,37 @@ export async function stampExtracted(
 }
 
 /**
+ * v0.42.53.0: load the ACTIVE schema pack's declared link_type names so the
+ * batch DB extract paths can pack-gate body-inferred verbs (founded /
+ * invested_in / advises / works_at). Returns undefined on ANY pack-load
+ * failure — `extractPageLinks` interprets undefined as "no pack, legacy
+ * un-gated behavior", which is the safe back-compat default. The default
+ * `gbrain-base` pack declares all four verbs, so default installs are
+ * unaffected; only a pack that omits a verb suppresses its regex-inferred edges.
+ *
+ * `sourceIdFilter` scopes the pack resolution to the source being extracted so
+ * a per-source pack override is honored (mirrors the put_page resolver).
+ */
+async function loadInferredVerbAllowlist(
+  engine: BrainEngine,
+  sourceIdFilter?: string,
+): Promise<ReadonlySet<string> | undefined> {
+  try {
+    const { loadActivePackBestEffort } = await import('../core/schema-pack/index.ts');
+    // CLI-invoked batch extract is a trusted local caller (remote: false).
+    const pack = await loadActivePackBestEffort({
+      engine,
+      remote: false,
+      ...(sourceIdFilter ? { sourceId: sourceIdFilter } : {}),
+    } as never);
+    if (!pack) return undefined;
+    return new Set(pack.manifest.link_types.map((lt) => lt.name));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * v0.42.7 (#1696): pure cross-source resolution for one extracted link
  * candidate. Validates both endpoints exist (else the batch JOIN drops the row),
  * then picks from_source_id / to_source_id: prefer the origin page's source,
@@ -1313,6 +1344,9 @@ async function extractLinksFromDB(
   // Issue #972: opt-in global-basename wikilink resolution. Read once
   // per extract run; threaded into each extractPageLinks call.
   const globalBasename = await isGlobalBasenameEnabled(engine);
+  // v0.42.53.0: active pack's link_type names, read once per run, threaded
+  // into each extractPageLinks call to pack-gate body-inferred verbs.
+  const inferredVerbAllowlist = await loadInferredVerbAllowlist(engine, sourceIdFilter);
   // v0.32.8: listAllPageRefs enumerates (slug, source_id) so we can thread
   // sourceId to getPage AND build a cross-source resolution map for link
   // disambiguation. Pre-fix used getAllSlugs() which collapsed
@@ -1393,7 +1427,7 @@ async function extractLinksFromDB(
     // basename lookup; off by default for back-compat.
     const extracted = await extractPageLinks(
       slug, fullContent, page.frontmatter, page.type, resolver,
-      { skipFrontmatter: !includeFrontmatter, globalBasename },
+      { skipFrontmatter: !includeFrontmatter, globalBasename, inferredVerbAllowlist },
     );
     unresolved.push(...extracted.unresolved);
 
@@ -1619,6 +1653,9 @@ async function extractStaleFromDB(
   const resolver = makeResolver(engine, { mode: 'batch' });
   const nullResolver = { resolve: async () => null as string | null };
   const activeResolver = includeFrontmatter ? resolver : nullResolver;
+  // v0.42.53.0: active pack's link_type names, read once, to pack-gate
+  // body-inferred verbs on every stale page in this sweep.
+  const inferredVerbAllowlist = await loadInferredVerbAllowlist(engine, sourceIdFilter);
   const allRefs = await engine.listAllPageRefs();
   const allSlugs = new Set<string>();
   const slugToSources = new Map<string, string[]>();
@@ -1651,6 +1688,7 @@ async function extractStaleFromDB(
       const fullContent = page.compiled_truth + '\n' + page.timeline;
       const extracted = await extractPageLinks(
         page.slug, fullContent, page.frontmatter, page.type, activeResolver,
+        { inferredVerbAllowlist },
       );
       for (const c of extracted.candidates) {
         const r = resolveCandidateSources(c, page.slug, page.source_id, allSlugs, slugToSources);

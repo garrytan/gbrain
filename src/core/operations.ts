@@ -819,6 +819,10 @@ const put_page: Operation = {
     // page_types. Best-effort: pack load failure falls back to legacy inferType
     // (parity gate preserved). Federated-read closure correction is T19's scope.
     let activePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined;
+    // v0.42.53.0: link_type names from the active pack, used to pack-gate
+    // body-inferred verbs in the auto-link post-hook (undefined when the pack
+    // didn't load → legacy un-gated behavior).
+    let activeLinkTypeNames: ReadonlySet<string> | undefined;
     try {
       const { loadActivePack } = await import('./schema-pack/load-active.ts');
       const { loadConfig } = await import('./config.ts');
@@ -828,9 +832,11 @@ const put_page: Operation = {
         sourceId: ctx.sourceId,
       });
       activePack = { page_types: resolved.manifest.page_types };
+      activeLinkTypeNames = new Set(resolved.manifest.link_types.map((lt) => lt.name));
     } catch {
       // Pack load failed; fall through to legacy inferType behavior.
       activePack = undefined;
+      activeLinkTypeNames = undefined;
     }
     const result = await importFromContent(ctx.engine, slug, p.content as string, {
       noEmbed,
@@ -954,7 +960,11 @@ const put_page: Operation = {
       try {
         const enabled = await isAutoLinkEnabled(ctx.engine);
         if (enabled) {
-          autoLinks = await runAutoLink(ctx.engine, slug, result.parsedPage, ctx.sourceId ? { sourceId: ctx.sourceId } : undefined);
+          autoLinks = await runAutoLink(ctx.engine, slug, result.parsedPage, {
+            ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}),
+            // v0.42.53.0: pack-gate body-inferred verbs (undefined → legacy).
+            ...(activeLinkTypeNames ? { inferredVerbAllowlist: activeLinkTypeNames } : {}),
+          });
         }
       } catch (e) {
         autoLinks = { error: e instanceof Error ? e.message : String(e) };
@@ -1087,7 +1097,7 @@ async function runAutoLink(
   engine: BrainEngine,
   slug: string,
   parsed: { type: PageType; compiled_truth: string; timeline: string; frontmatter: Record<string, unknown> },
-  opts?: { sourceId?: string },
+  opts?: { sourceId?: string; inferredVerbAllowlist?: ReadonlySet<string> },
 ): Promise<{ created: number; removed: number; errors: number; unresolved: UnresolvedFrontmatterRef[] }> {
   const fullContent = parsed.compiled_truth + '\n' + parsed.timeline;
   // v0.31.8 (codex OV-2): thread sourceId through every read + write inside
@@ -1112,7 +1122,10 @@ async function runAutoLink(
   const globalBasename = await isGlobalBasenameEnabled(engine);
   const { candidates, unresolved } = await extractPageLinks(
     slug, fullContent, parsed.frontmatter, parsed.type, resolver,
-    { globalBasename },
+    // v0.42.53.0: pack-gate body-inferred verbs so a brain whose active pack
+    // omits a verb (e.g. no `invested_in`) doesn't acquire that edge from a
+    // regex misfire. undefined when the pack didn't load → legacy behavior.
+    { globalBasename, inferredVerbAllowlist: opts?.inferredVerbAllowlist },
   );
 
   // Resolve which targets exist (skip refs to non-existent pages to avoid FK

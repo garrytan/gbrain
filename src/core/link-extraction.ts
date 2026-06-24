@@ -468,7 +468,21 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
-  opts: { globalBasename?: boolean; skipFrontmatter?: boolean } = {},
+  opts: {
+    globalBasename?: boolean;
+    skipFrontmatter?: boolean;
+    /**
+     * Names of the link_types the ACTIVE schema pack declares. When supplied,
+     * body-inferred verbs (founded / invested_in / advises / works_at) are
+     * pack-gated via `gateInferredVerb`: a verb the pack omits degrades to
+     * `mentions` instead of being emitted from a regex misfire. Omit (or pass
+     * undefined) to preserve the legacy no-pack behavior — the default
+     * `gbrain-base` pack declares all four, so default installs are unaffected.
+     * Only the body-inference paths consult this; frontmatter edges already
+     * resolve through the pack-authoritative FRONTMATTER_LINK_MAP.
+     */
+    inferredVerbAllowlist?: ReadonlySet<string>;
+  } = {},
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
@@ -514,7 +528,10 @@ export async function extractPageLinks(
     const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
     candidates.push({
       targetSlug: ref.slug,
-      linkType: inferLinkType(pageType, context, content, ref.slug),
+      linkType: gateInferredVerb(
+        inferLinkType(pageType, context, content, ref.slug),
+        opts.inferredVerbAllowlist,
+      ),
       context,
       linkSource: 'markdown',
     });
@@ -536,7 +553,10 @@ export async function extractPageLinks(
     const context = excerpt(strippedContent, m.index, 240);
     candidates.push({
       targetSlug: m[1],
-      linkType: inferLinkType(pageType, context, content, m[1]),
+      linkType: gateInferredVerb(
+        inferLinkType(pageType, context, content, m[1]),
+        opts.inferredVerbAllowlist,
+      ),
       context,
       linkSource: 'markdown',
     });
@@ -721,6 +741,56 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
     if (EMPLOYEE_ROLE_RE.test(globalContext)) return 'works_at';
   }
   return 'mentions';
+}
+
+/**
+ * Body-inferred verbs that the hardcoded per-edge regexes + page-role priors
+ * in `inferLinkType` can emit from prose. These are the ONLY verbs subject to
+ * pack-gating (see `gateInferredVerb`): they're heuristic guesses from
+ * free-text, so a brain whose active pack does NOT declare a verb should not
+ * acquire that edge type when a regex misfires.
+ *
+ * NOT gated: the structural / page-type-deterministic verbs `mentions`
+ * (the universal fallback), `attended` (meeting pages), and `image_of` (image
+ * pages). Those are not prose guesses — they're set by the page's own type and
+ * are always safe. Gating them would mean a pack that merely omits `attended`
+ * silently loses every meeting↔attendee edge, which is a different (and
+ * unwanted) behavior change.
+ */
+const GATEABLE_INFERRED_VERBS: ReadonlySet<string> = new Set([
+  'founded',
+  'invested_in',
+  'advises',
+  'works_at',
+]);
+
+/**
+ * Pack-gate a body-inferred link verb.
+ *
+ * `inferLinkType` emits verbs (founded / invested_in / advises / works_at)
+ * from hardcoded prose regexes WITHOUT consulting the active schema pack. That
+ * means a brain whose active pack omits, say, `invested_in` from its
+ * `link_types` still gets `invested_in` edges whenever the regex misfires on
+ * narrative prose. The pack is authoritative for frontmatter links + page
+ * types; this closes the same gap for body-inferred verbs.
+ *
+ * Contract:
+ *   - `allowlist === undefined` (NO active pack loaded) → return the verb
+ *     unchanged. Preserves the legacy no-pack behavior exactly; the gate is a
+ *     pure no-op without a pack to be authoritative.
+ *   - verb NOT in `GATEABLE_INFERRED_VERBS` (mentions / attended / image_of /
+ *     any future structural verb) → return unchanged. Only prose-guessed
+ *     verbs are gated.
+ *   - verb in `GATEABLE_INFERRED_VERBS` AND the pack's `link_types` declares
+ *     it → keep it (the default `gbrain-base` pack declares all four, so
+ *     default installs are unaffected).
+ *   - verb in `GATEABLE_INFERRED_VERBS` AND the pack does NOT declare it →
+ *     fall back to `mentions` (the pack packed that verb out).
+ */
+export function gateInferredVerb(verb: string, allowlist?: ReadonlySet<string>): string {
+  if (!allowlist) return verb;
+  if (!GATEABLE_INFERRED_VERBS.has(verb)) return verb;
+  return allowlist.has(verb) ? verb : 'mentions';
 }
 
 // ─── Frontmatter link extraction (v0.13) ────────────────────────

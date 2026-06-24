@@ -2,6 +2,16 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.53.0] - 2026-06-24
+
+**Body-inferred link verbs are now pack-gated, so a brain whose active schema pack omits a verb no longer acquires that edge from a regex misfire.** GBrain infers relationship verbs (`founded`, `invested_in`, `advises`, `works_at`) from prose using deterministic regexes. Those regexes ran without consulting the active pack — so a brain on a pack that doesn't declare, say, `invested_in` could still get `invested_in` edges whenever the regex tripped on narrative text. The pack was already authoritative for frontmatter-derived edges and page types; this closes the same gap for body-inferred verbs.
+
+### Fixed
+- **Body-verb inference honors the active pack's `link_types`.** When a pack is loaded, an inferred verb is emitted only if the pack declares it; otherwise the edge degrades to `mentions`. Structural verbs set by a page's own type (`mentions`, `attended`, `image_of`) are never gated — a pack that merely omits `attended` keeps its meeting↔attendee edges. The gate applies in all three body-inference call sites: `put_page` auto-link and the `gbrain extract links` / `gbrain extract --stale` batch paths.
+
+### To take advantage of v0.42.53.0
+`gbrain upgrade`. No migration, no config. The default `gbrain-base` pack declares all four inferred verbs, so default installs see no change. If you run a custom pack that deliberately omits a verb, re-run `gbrain extract --stale` to re-derive body edges under the gate; previously mis-inferred edges collapse to `mentions`. When no pack loads, behavior is unchanged.
+
 ## [0.42.52.0] - 2026-06-18
 
 **Autopilot stops manufacturing dead jobs and wedging its own queue, plus four operational rough edges get fixed: minion attempt-accounting, `agent run` flag parsing, honest `sources status`, and a budgeted `gbrain status`.** On a multi-source Postgres brain, autopilot could fan out a continuous stream of dead `autopilot-cycle` jobs while the supervisor periodically wedged the very queue it exists to keep alive. The root cause was one disease with several interacting parts; this wave addresses all of them, then cleans up four smaller reliability bugs found alongside.
