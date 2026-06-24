@@ -1110,9 +1110,19 @@ async function runAutoLink(
   const resolver = makeResolver(engine, { mode: 'live', sourceId: opts?.sourceId });
   // Issue #972: opt-in bare-wikilink basename resolution. Off by default.
   const globalBasename = await isGlobalBasenameEnabled(engine);
+  // v0.42: thread the active pack's frontmatter_links so pack-declared
+  // relationship fields (e.g. reports_to) become typed edges. File-plane load
+  // is TTL-cached (load-active.ts), so per-put cost is negligible in bulk sync.
+  let packFrontmatterLinks: ReadonlyArray<{ page_type?: string; fields: readonly string[]; link_type: string }> = [];
+  try {
+    const { loadActivePack } = await import('./schema-pack/load-active.ts');
+    const { loadConfig } = await import('./config.ts');
+    const resolvedPack = await loadActivePack({ cfg: loadConfig(), remote: false, sourceId: opts?.sourceId });
+    packFrontmatterLinks = resolvedPack.manifest.frontmatter_links ?? [];
+  } catch { /* pack load failed → hardcoded FRONTMATTER_LINK_MAP only */ }
   const { candidates, unresolved } = await extractPageLinks(
     slug, fullContent, parsed.frontmatter, parsed.type, resolver,
-    { globalBasename },
+    { globalBasename, packFrontmatterLinks },
   );
 
   // Resolve which targets exist (skip refs to non-existent pages to avoid FK

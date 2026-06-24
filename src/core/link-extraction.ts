@@ -468,7 +468,7 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
-  opts: { globalBasename?: boolean; skipFrontmatter?: boolean } = {},
+  opts: { globalBasename?: boolean; skipFrontmatter?: boolean; packFrontmatterLinks?: ReadonlyArray<{ page_type?: string; fields: readonly string[]; link_type: string }> } = {},
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
@@ -552,7 +552,7 @@ export async function extractPageLinks(
   // path needed `resolveBasenameMatches` on the real resolver.
   let fmUnresolved: UnresolvedFrontmatterRef[] = [];
   if (!opts.skipFrontmatter) {
-    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver);
+    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver, opts.packFrontmatterLinks ?? []);
     candidates.push(...fm.candidates);
     fmUnresolved = fm.unresolved;
   }
@@ -1028,11 +1028,30 @@ export async function extractFrontmatterLinks(
   pageType: PageType,
   frontmatter: Record<string, unknown>,
   resolver: SlugResolver,
+  packFrontmatterLinks: ReadonlyArray<{ page_type?: string; fields: readonly string[]; link_type: string }> = [],
 ): Promise<FrontmatterExtractResult> {
   const candidates: LinkCandidate[] = [];
   const unresolved: UnresolvedFrontmatterRef[] = [];
 
-  for (const mapping of FRONTMATTER_LINK_MAP) {
+  // v0.42 pack wiring: merge the active pack's `frontmatter_links` AFTER the
+  // hardcoded FRONTMATTER_LINK_MAP so a forked/active pack can map its own
+  // relationship fields (e.g. `reports_to`) → typed edges. Built-in mappings
+  // win on conflict (back-compat). Pack rules carry no direction/dir-hint, so
+  // direction defaults to 'outgoing' and dirHint to [] — the resolver then
+  // matches by page `title` across all pages, which works for any directory
+  // layout (incl. domain-first OKF bundles), not just people/ + companies/.
+  const packMappings: FrontmatterFieldMapping[] = [];
+  for (const fl of packFrontmatterLinks) {
+    const fields = fl.fields.filter(
+      (f) => !FRONTMATTER_LINK_MAP.some(
+        (m) => (m.pageType ?? undefined) === (fl.page_type ?? undefined) && m.fields.includes(f),
+      ),
+    );
+    if (fields.length === 0) continue;
+    packMappings.push({ fields: [...fields], pageType: fl.page_type, type: fl.link_type, direction: 'outgoing', dirHint: [] });
+  }
+
+  for (const mapping of [...FRONTMATTER_LINK_MAP, ...packMappings]) {
     if (mapping.pageType && mapping.pageType !== pageType) continue;
     for (const field of mapping.fields) {
       const value = frontmatter[field];
