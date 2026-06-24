@@ -1309,6 +1309,15 @@ export interface BrainStats {
 export interface BrainHealth {
   page_count: number;
   embed_coverage: number;
+  /**
+   * LEGACY proxy: count of pages whose `updated_at` predates their newest
+   * timeline entry. This bumped meaningfully only while a trigger updated
+   * `pages.updated_at` on timeline insert; that trigger was dropped in
+   * migration v10, so the metric no longer reflects real "needs work" state.
+   * NO LONGER gates remediations — the sync→extract pipeline now gates on
+   * `RecommendationContext.extractionLagPages` (the real extraction-lag from
+   * `countStalePagesForExtraction`). Retained for the CLI health line + back-compat.
+   */
   stale_pages: number;
   /**
    * Islanded pages — zero inbound AND zero outbound links. A hub page

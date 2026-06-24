@@ -62,11 +62,22 @@ export async function loadRecommendationContext(
     const fromCfg = cfgField ? (fileCfg as Record<string, unknown> | null)?.[cfgField] : undefined;
     return !!(process.env[envVar] || fromCfg);
   });
+  // Real extraction-lag count — the SAME staleness `gbrain extract --stale`
+  // processes (engine.countStalePagesForExtraction). Drives the sync→extract
+  // recommendation pipeline; replaces the legacy `health.stale_pages` proxy
+  // that no longer reflected real extraction work after the v10 trigger drop.
+  let extractionLagPages = 0;
+  try {
+    extractionLagPages = await engine.countStalePagesForExtraction();
+  } catch {
+    /* counter unavailable (very old brain / mid-migration) — leave at 0 */
+  }
   return {
     repoPath: repoPath ?? undefined,
     embeddingModel,
     embeddingDimensions,
     embeddingProviderConfigured: embeddingConfigured,
     hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || fileCfg?.anthropic_api_key),
+    extractionLagPages,
   };
 }
