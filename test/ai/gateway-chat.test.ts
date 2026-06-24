@@ -29,8 +29,8 @@ import { AIConfigError } from '../../src/core/ai/errors.ts';
 import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
 
 describe('chat touchpoint — recipe registry', () => {
-  test('all six chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {
-    const expected = ['anthropic', 'openai', 'google', 'deepseek', 'groq', 'together'];
+  test('core chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {
+    const expected = ['anthropic', 'openai', 'google', 'deepseek', 'groq', 'together', 'zai'];
     for (const id of expected) {
       const r = getRecipe(id);
       expect(r, `recipe missing: ${id}`).toBeDefined();
@@ -60,6 +60,7 @@ describe('chat touchpoint — recipe registry', () => {
     expect(getRecipe('deepseek')!.base_url_default).toBe('https://api.deepseek.com/v1');
     expect(getRecipe('groq')!.base_url_default).toBe('https://api.groq.com/openai/v1');
     expect(getRecipe('together')!.base_url_default).toBe('https://api.together.xyz/v1');
+    expect(getRecipe('zai')!.base_url_default).toBe('https://api.z.ai/api/paas/v4');
   });
 
   test('DeepSeek recipe exposes explicit V4 ids before legacy aliases', () => {
@@ -112,6 +113,7 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
     expect(() => assertTouchpoint(getRecipe('openai')!, 'chat', 'gpt-5.2')).not.toThrow();
     expect(() => assertTouchpoint(getRecipe('google')!, 'chat', 'gemini-2.0-flash')).not.toThrow();
     expect(() => assertTouchpoint(getRecipe('deepseek')!, 'chat', 'deepseek-chat')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('zai')!, 'chat', 'glm-5.2')).not.toThrow();
   });
 
   test('assertTouchpoint rejects chat on embedding-only providers with a fix hint', () => {

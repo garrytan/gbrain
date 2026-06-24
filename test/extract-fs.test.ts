@@ -22,7 +22,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runExtract } from '../src/commands/extract.ts';
+import { runExtract, runExtractCore } from '../src/commands/extract.ts';
 import type { PageInput } from '../src/core/types.ts';
 
 let engine: PGLiteEngine;
@@ -42,6 +42,9 @@ async function truncateAll() {
   for (const t of ['content_chunks', 'links', 'tags', 'raw_data', 'timeline_entries', 'page_versions', 'ingest_log', 'pages']) {
     await (engine as any).db.exec(`DELETE FROM ${t}`);
   }
+  await (engine as any).db.exec(`DELETE FROM sources WHERE id != 'default'`);
+  await (engine as any).db.exec(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+  await (engine as any).db.exec(`DELETE FROM config WHERE key = 'sync.repo_path'`);
 }
 
 const personPage = (title: string, body = ''): PageInput => ({
@@ -157,6 +160,35 @@ title: Alice
     expect(after2.length).toBe(2);
 
     expect(elapsedMs).toBeLessThan(2000);
+  });
+
+  test('non-default fs source writes timeline rows back to that source', async () => {
+    await (engine as any).db.exec(
+      `INSERT INTO sources (id, name, local_path) VALUES ('wiki', 'Wiki', '${brainDir.replace(/'/g, "''")}')`,
+    );
+    await engine.putPage('people/alice', personPage('Alice'), { sourceId: 'wiki' });
+
+    writeFile('people/alice.md', `---
+title: Alice
+---
+
+## Timeline
+
+- **2024-01-15** | source — Founded NovaMind
+`);
+
+    await runExtractCore(engine, { mode: 'timeline', dir: brainDir, sourceId: 'wiki' });
+
+    const rows = await engine.executeRaw<{ source_id: string; count: number }>(
+      `SELECT p.source_id, count(*)::int AS count
+         FROM timeline_entries te
+         JOIN pages p ON p.id = te.page_id
+        WHERE p.slug = $1
+        GROUP BY p.source_id
+        ORDER BY p.source_id`,
+      ['people/alice'],
+    );
+    expect(rows).toEqual([{ source_id: 'wiki', count: 1 }]);
   });
 });
 

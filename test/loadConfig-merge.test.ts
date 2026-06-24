@@ -6,6 +6,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { loadConfigWithEngine, type GBrainConfig } from '../src/core/config.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 interface FakeEngine {
   getConfig(key: string): Promise<string | null | undefined>;
@@ -20,6 +21,16 @@ function makeEngine(map: Record<string, string | null | undefined>): FakeEngine 
 }
 
 describe('loadConfigWithEngine (Phase 4 / F3)', () => {
+  test('loadConfigWithEngine preserves env-only ZAI_API_KEY over DB when base is null', async () => {
+    await withEnv({
+      ZAI_API_KEY: 'sk-zai-env',
+    }, async () => {
+      const cfg = await loadConfigWithEngine(makeEngine({ zai_api_key: 'sk-zai-db' }), null);
+      expect(cfg?.engine).toBe('postgres');
+      expect(cfg?.zai_api_key).toBe('sk-zai-env');
+    });
+  });
+
   test('synthesizes a minimal base when base config is null (v0.36 codex /ship #3)', async () => {
     // Pre-v0.36 this returned null and skipped DB-plane merge entirely.
     // That meant env-only Postgres installs (no file config) couldn't see
@@ -58,6 +69,20 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
     expect(merged?.embedding_multimodal).toBe(true);
     expect(merged?.embedding_image_ocr).toBe(false);
     expect(merged?.embedding_image_ocr_model).toBe('openai:gpt-4o-mini');
+  });
+
+  test('DB-plane zai_api_key fills in for shell-child GLM jobs when file/env did not set it', async () => {
+    const base: GBrainConfig = { engine: 'pglite' };
+    const engine = makeEngine({ zai_api_key: 'sk-zai-db' });
+    const merged = await loadConfigWithEngine(engine, base);
+    expect(merged?.zai_api_key).toBe('sk-zai-db');
+  });
+
+  test('file/env zai_api_key wins over DB-plane value', async () => {
+    const base: GBrainConfig = { engine: 'pglite', zai_api_key: 'sk-zai-file' };
+    const engine = makeEngine({ zai_api_key: 'sk-zai-db' });
+    const merged = await loadConfigWithEngine(engine, base);
+    expect(merged?.zai_api_key).toBe('sk-zai-file');
   });
 
   test('file/env precedence: file value wins over DB value', async () => {

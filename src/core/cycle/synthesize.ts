@@ -32,6 +32,7 @@ import { chat as gatewayChat, validateModelId, type ChatResult } from '../ai/gat
 import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
+import { resolveRecipe } from '../ai/model-resolver.ts';
 import { join, dirname, isAbsolute, resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
@@ -51,18 +52,13 @@ const SUMMARY_SLUG_RE = /^[a-z0-9][a-z0-9\-]*(\/[a-z0-9][a-z0-9\-]*)*$/;
 // ── Model context budget (D1, D5, D7, D9) ─────────────────────────────
 
 /**
- * Anthropic model id → input context window (tokens).
- * Unknown id (non-Anthropic alias, custom string) → safe 200K-token fallback
- * via `computeChunkCharBudget`. Codex finding #4: `resolveModel()` does not
- * canonicalize to Anthropic-only; this map keys on the exact strings the
- * resolver returns for known Anthropic aliases.
+ * Model-specific context-window overrides. Most providers can use the recipe's
+ * chat.touchpoints.max_context_tokens, but some providers expose a per-model
+ * window that is larger than the recipe baseline (e.g. Anthropic Opus).
  */
-const MODEL_CONTEXT_TOKENS: Record<string, number> = {
-  'claude-opus-4-7': 1_000_000,
-  'claude-opus-4-6': 1_000_000,
-  'claude-sonnet-4-6': 200_000,
-  'claude-sonnet-4-5': 200_000,
-  'claude-haiku-4-5-20251001': 200_000,
+const MODEL_CONTEXT_TOKEN_OVERRIDES: Record<string, number> = {
+  'anthropic:claude-opus-4-7': 1_000_000,
+  'anthropic:claude-opus-4-6': 1_000_000,
 };
 
 /** Token-to-char ratio. 3.5 matches PR #748; conservative for English text. */
@@ -81,7 +77,8 @@ const UNKNOWN_MODEL_BUDGET_TOKENS = 180_000;
  *
  * Resolution:
  *   - configMaxPromptTokens (already floored at MIN_PROMPT_TOKENS) wins when set.
- *   - Else the model's MODEL_CONTEXT_TOKENS entry × HEADROOM_RATIO.
+ *   - Else a model-specific override, then the recipe's declared chat
+ *     context window, both × HEADROOM_RATIO.
  *   - Else (non-Anthropic alias / custom id) UNKNOWN_MODEL_BUDGET_TOKENS, with
  *     a once-per-process stderr warning.
  *
@@ -96,12 +93,24 @@ function computeChunkCharBudget(
   if (configMaxPromptTokens !== null) {
     return Math.floor(configMaxPromptTokens * CHARS_PER_TOKEN);
   }
-  const ctx = MODEL_CONTEXT_TOKENS[model];
+  const ctx = lookupModelContextTokens(model);
   if (ctx === undefined) {
     warnUnknownModelOnce(model);
     return Math.floor(UNKNOWN_MODEL_BUDGET_TOKENS * CHARS_PER_TOKEN);
   }
   return Math.floor(ctx * HEADROOM_RATIO * CHARS_PER_TOKEN);
+}
+
+function lookupModelContextTokens(model: string): number | undefined {
+  const normalized = normalizeModelId(model);
+  const override = MODEL_CONTEXT_TOKEN_OVERRIDES[normalized];
+  if (override !== undefined) return override;
+  try {
+    const { recipe } = resolveRecipe(normalized);
+    return recipe.touchpoints.chat?.max_context_tokens;
+  } catch {
+    return undefined;
+  }
 }
 
 const _unknownModelWarned = new Set<string>();

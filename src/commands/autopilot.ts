@@ -108,6 +108,57 @@ function parseArg(args: string[], flag: string): string | undefined {
   return idx >= 0 && idx + 1 < args.length ? args[idx + 1] : undefined;
 }
 
+export interface AutopilotLockState {
+  exists: boolean;
+  pid: number | null;
+  running: boolean;
+  fresh: boolean;
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+export function inspectAutopilotLock(
+  lockPath: string,
+  nowMs: number = Date.now(),
+  isAlive: (pid: number) => boolean = isPidAlive,
+): AutopilotLockState {
+  if (!existsSync(lockPath)) {
+    return { exists: false, pid: null, running: false, fresh: false };
+  }
+
+  let pid: number | null = null;
+  let running = false;
+  let fresh = false;
+
+  try {
+    const stat = require('fs').statSync(lockPath);
+    fresh = ((nowMs - stat.mtimeMs) / 60000) < 10;
+  } catch {
+    fresh = false;
+  }
+
+  try {
+    const raw = readFileSync(lockPath, 'utf8').trim();
+    const parsed = parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      pid = parsed;
+      running = isAlive(parsed);
+    }
+  } catch {
+    pid = null;
+    running = false;
+  }
+
+  return { exists: true, pid, running, fresh };
+}
+
 function logError(phase: string, e: unknown) {
   const msg = e instanceof Error ? e.message : String(e);
   const ts = new Date().toISOString().slice(0, 19);
@@ -379,14 +430,19 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   const lockPath = gbrainHomePath('autopilot.lock');
   try {
     mkdirSync(gbrainHomePath(), { recursive: true });
-    if (existsSync(lockPath)) {
-      const stat = require('fs').statSync(lockPath);
-      const ageMinutes = (Date.now() - stat.mtimeMs) / 60000;
-      if (ageMinutes < 10) {
+    const lock = inspectAutopilotLock(lockPath);
+    if (lock.exists) {
+      if (lock.running && lock.fresh) {
         console.error('Another autopilot instance is running (lock file is fresh). Exiting.');
         process.exit(0);
       }
-      console.log('Stale lock file found (>10 min). Taking over.');
+      if (lock.pid !== null && !lock.running) {
+        console.log(`Stale autopilot lock found for dead PID ${lock.pid}. Taking over.`);
+      } else if (!lock.fresh) {
+        console.log('Stale lock file found (>10 min). Taking over.');
+      } else {
+        console.log('Unreadable autopilot lock found. Taking over.');
+      }
     }
     writeFileSync(lockPath, String(process.pid));
   } catch { /* best-effort */ }

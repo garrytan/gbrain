@@ -9,7 +9,7 @@ import { MinionWorker } from '../core/minions/worker.ts';
 import { WORKER_EXIT_RSS_WATCHDOG } from '../core/minions/worker-exit-codes.ts';
 import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
 import type { PaceKeyOverrides } from '../core/pace-mode.ts';
-import { loadConfig, isThinClient } from '../core/config.ts';
+import { loadConfig, loadConfigWithEngine, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { parseNiceValue, applyNiceness, getEffectiveNiceness, formatNice } from '../core/minions/niceness.ts';
 
@@ -311,7 +311,8 @@ HANDLER TYPES (built in)
       if (name.trim() === 'shell') {
         try {
           const { validateShellJobParams } = await import('../core/minions/handlers/shell-validate.ts');
-          validateShellJobParams(data);
+          const config = await loadConfigWithEngine(engine, loadConfig());
+          validateShellJobParams(data, { config });
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           console.error(`Error: ${msg}`);
@@ -357,12 +358,13 @@ HANDLER TYPES (built in)
       // Starvation warning (DX polish). Fire for every non-`--follow` shell submit
       // regardless of the submitter's own `GBRAIN_ALLOW_SHELL_JOBS` — the submitter
       // env is a weak proxy for the worker env (they may run on different machines),
-      // so the warning remains useful any time the job might sit in 'waiting'.
+      // so the warning stays useful, but the wording must remain conditional:
+      // a live shell-enabled worker may claim the job immediately.
       if (!follow && name.trim() === 'shell') {
         process.stderr.write(
           `\n⚠  Shell jobs require GBRAIN_ALLOW_SHELL_JOBS=1 on the worker process.\n` +
-          `   Your job was queued (id=${job.id}) but will sit in 'waiting' until a\n` +
-          `   worker with the env flag starts. To run now:\n\n` +
+          `   Your job was queued (id=${job.id}). If no worker with the env flag is\n` +
+          `   running, it will sit in 'waiting' until one starts. To run now:\n\n` +
           `     GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit shell \\\n` +
           `       --params '...' --follow\n\n` +
           `   Or start a persistent worker (Postgres only — PGLite uses --follow):\n\n` +
@@ -1581,7 +1583,8 @@ export async function registerBuiltinHandlers(
     const dir = typeof job.data.dir === 'string'
       ? job.data.dir
       : (await engine.getConfig('sync.repo_path')) ?? '.';
-    return await runExtractCore(engine, { mode, dir, dryRun: !!job.data.dryRun });
+    const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
+    return await runExtractCore(engine, { mode, dir, sourceId, dryRun: !!job.data.dryRun });
   });
 
   worker.register('backlinks', async (job) => {

@@ -13,6 +13,8 @@
  *   await worker.start();
  */
 
+import type { GBrainConfig } from '../config.ts';
+
 // --- Status & Type Unions ---
 
 export type MinionJobStatus =
@@ -200,6 +202,8 @@ export interface MinionJobContext {
   name: string;
   data: Record<string, unknown>;
   attempts_made: number;
+  /** Effective config snapshot (env/file + safe DB-plane overlays) for this worker pickup. */
+  config?: GBrainConfig | null;
   /** AbortSignal for cooperative cancellation (fires on timeout, cancel, pause, or lock loss). */
   signal: AbortSignal;
   /** AbortSignal that fires only on worker process SIGTERM/SIGINT. Handlers sensitive

@@ -168,6 +168,13 @@ interface ProbeResult {
   fix?: string;
 }
 
+/**
+ * Remote chat probes can cold-start above 5s even when the live model is fine.
+ * Keep doctor bounded, but give configured chat/expansion models enough room
+ * that the probe doesn't false-fail on normal GLM latency.
+ */
+const MODEL_DOCTOR_CHAT_TIMEOUT_MS = 15_000;
+
 function classifyError(err: unknown): { status: ProbeStatus; message: string } {
   const msg = err instanceof Error ? err.message : String(err);
   const lower = msg.toLowerCase();
@@ -507,9 +514,13 @@ async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion'): P
   const start = Date.now();
   try {
     const { chat } = await import('../core/ai/gateway.ts');
-    // Use AbortController so the 5s timeout doesn't hang on a stuck network.
+    // Use AbortController so the probe stays bounded without turning normal
+    // provider cold-start latency into a false negative.
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(new Error('probe timed out after 5s')), 5000);
+    const timeoutId = setTimeout(
+      () => controller.abort(new Error(`probe timed out after ${MODEL_DOCTOR_CHAT_TIMEOUT_MS}ms`)),
+      MODEL_DOCTOR_CHAT_TIMEOUT_MS,
+    );
     try {
       await chat({
         model: modelStr,
@@ -536,8 +547,9 @@ function shouldSkipProvider(modelStr: string, skip: string[]): boolean {
 }
 
 export async function runModels(engine: BrainEngine, args: string[]): Promise<void> {
-  const json = args.includes('--json');
-  const sub = args[1] === 'doctor' ? 'doctor' : args[1] === 'help' || args.includes('--help') || args.includes('-h') ? 'help' : 'read';
+  const cliArgs = args[0] === 'models' ? args.slice(1) : args;
+  const json = cliArgs.includes('--json');
+  const sub = cliArgs[0] === 'doctor' ? 'doctor' : cliArgs[0] === 'help' || cliArgs.includes('--help') || cliArgs.includes('-h') ? 'help' : 'read';
 
   if (sub === 'help') {
     process.stdout.write(
@@ -572,7 +584,7 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
   }
 
   // doctor mode
-  const skipArgs = args.filter(a => a.startsWith('--skip='));
+  const skipArgs = cliArgs.filter(a => a.startsWith('--skip='));
   const skip = skipArgs.map(a => a.slice('--skip='.length).toLowerCase()).filter(Boolean);
 
   const { getChatModel, getExpansionModel } = await import('../core/ai/gateway.ts');

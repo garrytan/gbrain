@@ -231,6 +231,63 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
     }
   }, 30000);
 
+  test('zai_api_key resolves to ZAI_API_KEY for shell children', async () => {
+    const { writeFileSync, mkdirSync, rmSync, existsSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+
+    const tmpHome = join(tmpdir(), `gbrain-zai-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(join(tmpHome, '.gbrain'), { recursive: true });
+    const fakeKey = 'sk-zai-test-FAKE-KEY-FOR-E2E';
+    writeFileSync(
+      join(tmpHome, '.gbrain', 'config.json'),
+      JSON.stringify({
+        engine: 'postgres',
+        database_url: 'postgresql://x:y@h/d',
+        zai_api_key: fakeKey,
+      }) + '\n',
+    );
+
+    const savedHome = process.env.GBRAIN_HOME;
+    const savedZai = process.env.ZAI_API_KEY;
+    process.env.GBRAIN_HOME = tmpHome;
+    delete process.env.ZAI_API_KEY;
+
+    try {
+      const queue = new MinionQueue(engine);
+      const job = await queue.add(
+        'shell',
+        { cmd: 'printenv ZAI_API_KEY', cwd: '/tmp', inherit: ['zai_api_key'] },
+        {},
+        { allowProtectedSubmit: true },
+      );
+
+      const persisted = await queue.getJob(job.id);
+      expect((persisted!.data as Record<string, unknown>).inherit).toEqual(['zai_api_key']);
+      const rowJson = JSON.stringify(persisted!.data);
+      expect(rowJson).not.toContain(fakeKey);
+
+      const worker = new MinionWorker(engine, { pollInterval: 100, lockDuration: 30000 });
+      await registerBuiltinHandlers(worker, engine);
+      const runPromise = worker.start();
+      try {
+        const status = await waitTerminal(queue, job.id, 20000);
+        expect(status).toBe('completed');
+        const final = await queue.getJob(job.id);
+        expect((final!.result as Record<string, unknown>).stdout_tail).toBe(fakeKey + '\n');
+      } finally {
+        worker.stop();
+        await runPromise;
+      }
+    } finally {
+      if (savedHome === undefined) delete process.env.GBRAIN_HOME;
+      else process.env.GBRAIN_HOME = savedHome;
+      if (savedZai === undefined) delete process.env.ZAI_API_KEY;
+      else process.env.ZAI_API_KEY = savedZai;
+      if (existsSync(tmpHome)) rmSync(tmpHome, { recursive: true, force: true });
+    }
+  }, 30000);
+
   test('v0.36.5.0: redact_secrets:true scrubs inherit values from stdout_tail', async () => {
     // Honest defense for the documented output-side leakage: when the script
     // echoes the inherited value, redact_secrets:true ensures the persisted

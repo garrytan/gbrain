@@ -64,6 +64,10 @@ describe('CANONICAL_PRICING — table integrity', () => {
       CANONICAL_PRICING['deepseek:deepseek-v4-flash'],
     );
   });
+
+  test('Z.AI GLM-5.2 price is pinned from official pricing', () => {
+    expect(CANONICAL_PRICING['zai:glm-5.2']).toEqual({ input: 1.4, output: 4.4 });
+  });
 });
 
 describe('canonicalLookup — id normalization', () => {

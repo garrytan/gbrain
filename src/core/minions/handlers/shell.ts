@@ -34,6 +34,7 @@ import { deriveEnvKey, resolveInheritValue } from './shell-inherit.ts';
 import { validateShellJobParams } from './shell-validate.ts';
 import { redactSecretsInText } from './shell-redact.ts';
 import { loadConfig } from '../../config.ts';
+import type { GBrainConfig } from '../../config.ts';
 
 /** Environment variables passed through to shell children by default. Callers
  *  that need additional keys (e.g. a specific API token for a cron) must name
@@ -109,6 +110,7 @@ export interface ShellJobResult {
 function buildChildEnv(
   override: Record<string, string> | undefined,
   inherit: string[] | undefined,
+  cfg: GBrainConfig | null,
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const key of SHELL_ENV_ALLOWLIST) {
@@ -116,7 +118,6 @@ function buildChildEnv(
     if (typeof v === 'string') env[key] = v;
   }
   if (inherit && inherit.length > 0) {
-    const cfg = loadConfig();
     for (const name of inherit) {
       const value = resolveInheritValue(cfg, name);
       if (value !== undefined) {
@@ -221,8 +222,9 @@ export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResul
   //   (b) any future submit path that forgets to call validateShellJobParams,
   //   (c) drift between INHERITABLE and the worker's actual config (the
   //       fail-fast guard fires here on a worker that lost its DB URL after submit).
-  const params = validateShellJobParams(ctx.data);
-  const env = buildChildEnv(params.env, params.inherit);
+  const cfg = ctx.config ?? loadConfig();
+  const params = validateShellJobParams(ctx.data, { config: cfg });
+  const env = buildChildEnv(params.env, params.inherit, cfg);
 
   // Build the redaction map: inherit-name → resolved value. The handler
   // pays one extra loadConfig() to assemble this in one pass, separate from
@@ -231,7 +233,6 @@ export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResul
   // has at least one entry.
   const redactionMap = new Map<string, string>();
   if (params.redact_secrets && params.inherit && params.inherit.length > 0) {
-    const cfg = loadConfig();
     for (const name of params.inherit) {
       const value = resolveInheritValue(cfg, name);
       if (value !== undefined) redactionMap.set(name, value);

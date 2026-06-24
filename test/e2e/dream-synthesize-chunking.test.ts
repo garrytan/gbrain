@@ -215,6 +215,43 @@ describe('E2E synthesize chunking — D8 legacy single-chunk migration', () => {
 });
 
 describe('E2E synthesize chunking — fan-out shape', () => {
+  test('GLM-5.2 uses the provider-declared 1M context budget for synthesize chunking', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+      await rig.engine.setConfig('models.dream.synthesize', 'zai:glm-5.2');
+
+      const basename = '2026-06-23-glm-roomy-context.txt';
+      const filePath = corpusPath(rig.corpusDir, basename);
+      // ~800K chars: this would split under the old 180K-token fallback
+      // (~630K chars after headroom) but stays single-chunk with GLM's 1M window.
+      const content = 'glm roomy context line\n'.repeat(36_500);
+      writeFileSync(filePath, content);
+      await seedVerdict(rig.engine, filePath, content);
+
+      await withSubagentAutoCancel(rig.engine, async () => {
+        await withoutAnthropicKey(async () => {
+          const result = await runPhaseSynthesize(rig.engine, {
+            brainDir: rig.brainDir,
+            dryRun: false,
+          });
+          expect(result.status).toBe('ok');
+          const details = result.details as {
+            children_submitted: number;
+            transcripts_processed: number;
+            skips: Array<{ reason: string }>;
+          };
+          expect(details.transcripts_processed).toBe(1);
+          expect(details.children_submitted).toBe(1);
+          expect(details.skips).toEqual([]);
+        });
+      });
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
   test('single-chunk transcript uses legacy idempotency key (parity on upgrade)', async () => {
     const rig = await setupRig();
     try {

@@ -117,6 +117,49 @@ const fakeChatFetch: (input: any, init?: any) => Promise<Response> = async (inpu
   });
 };
 
+let lastZaiChatRequest: { url: string; headers: Record<string, string>; body: string | null } | null = null;
+const fakeZaiChatFetch: (input: any, init?: any) => Promise<Response> = async (input, init) => {
+  const url = typeof input === 'string' ? input : input instanceof Request ? input.url : (input as URL).toString();
+  const headers: Record<string, string> = {};
+  const h = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+  h.forEach((v, k) => { headers[k.toLowerCase()] = v; });
+  const body = init?.body
+    ? (typeof init.body === 'string' ? init.body : null)
+    : (input instanceof Request ? await input.text() : null);
+  lastZaiChatRequest = { url, headers, body };
+  // Z.AI GLM-5.2 includes provider-specific reasoning_content next to the
+  // normal OpenAI-compatible answer content. The gateway must return only the
+  // assistant answer as text, while preserving raw metadata for callers that
+  // need provider details.
+  const json = {
+    id: 'fake-zai-chat-1',
+    object: 'chat.completion',
+    created: 0,
+    model: 'glm-5.2',
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: 'glm ready',
+          reasoning_content: 'I should comply with the exact-output probe.',
+        },
+        finish_reason: 'stop',
+      },
+    ],
+    usage: {
+      prompt_tokens: 17,
+      completion_tokens: 29,
+      completion_tokens_details: { reasoning_tokens: 25 },
+      total_tokens: 46,
+    },
+  };
+  return new Response(JSON.stringify(json), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+};
+
 const SYNTHETIC_CHAT_RECIPE: Recipe = {
   id: 'syntethic-chat-headers',
   name: 'Synthetic Chat Headers',
@@ -143,6 +186,32 @@ const SYNTHETIC_CHAT_RECIPE: Recipe = {
     };
   },
 };
+
+const SYNTHETIC_ZAI_CHAT_RECIPE: Recipe = {
+  id: 'zai',
+  name: 'Synthetic Z.AI Chat',
+  tier: 'openai-compat',
+  implementation: 'openai-compatible',
+  base_url_default: 'https://synthetic-zai.test/api/coding/paas/v4',
+  auth_env: { required: ['SYNTHETIC_ZAI_KEY'] },
+  touchpoints: {
+    chat: {
+      models: ['glm-5.2'],
+      supports_tools: true,
+      supports_subagent_loop: true,
+      supports_prompt_cache: false,
+      max_context_tokens: 1_000_000,
+    },
+  },
+  resolveOpenAICompatConfig() {
+    return {
+      baseURL: 'https://synthetic-zai.test/api/coding/paas/v4',
+      fetch: fakeZaiChatFetch as unknown as typeof fetch,
+    };
+  },
+};
+
+let originalZaiRecipe: Recipe | undefined;
 
 // --- Synthetic reranker recipe -----------------------------------------------
 
@@ -171,14 +240,21 @@ beforeAll(() => {
   // Register synthetic recipes for the lifetime of this test file. RECIPES is
   // a Map; .set/.delete is the natural test seam. No production-code changes
   // are required to enable test-only recipe registration.
+  originalZaiRecipe = RECIPES.get(SYNTHETIC_ZAI_CHAT_RECIPE.id);
   RECIPES.set(SYNTHETIC_EMBED_RECIPE.id, SYNTHETIC_EMBED_RECIPE);
   RECIPES.set(SYNTHETIC_CHAT_RECIPE.id, SYNTHETIC_CHAT_RECIPE);
+  RECIPES.set(SYNTHETIC_ZAI_CHAT_RECIPE.id, SYNTHETIC_ZAI_CHAT_RECIPE);
   RECIPES.set(SYNTHETIC_RERANK_RECIPE.id, SYNTHETIC_RERANK_RECIPE);
 });
 
 afterAll(() => {
   RECIPES.delete(SYNTHETIC_EMBED_RECIPE.id);
   RECIPES.delete(SYNTHETIC_CHAT_RECIPE.id);
+  if (originalZaiRecipe) {
+    RECIPES.set(SYNTHETIC_ZAI_CHAT_RECIPE.id, originalZaiRecipe);
+  } else {
+    RECIPES.delete(SYNTHETIC_ZAI_CHAT_RECIPE.id);
+  }
   RECIPES.delete(SYNTHETIC_RERANK_RECIPE.id);
   __setRerankTransportForTests(null);
   resetGateway();
@@ -223,6 +299,27 @@ describe('transport-level header sweep (v0.37.2.0)', () => {
     expect(h['http-referer']).toBe('https://gbrain.ai');
     expect(h['x-openrouter-title']).toBe('gbrain');
     expect(h['x-title']).toBe('gbrain');
+  });
+
+  test('2b. chat — GLM reasoning_content does not replace answer text', async () => {
+    lastZaiChatRequest = null;
+    configureGateway({
+      chat_model: `${SYNTHETIC_ZAI_CHAT_RECIPE.id}:glm-5.2`,
+      env: { SYNTHETIC_ZAI_KEY: 'sk-zai-fake' },
+    });
+
+    const result = await chat({
+      model: `${SYNTHETIC_ZAI_CHAT_RECIPE.id}:glm-5.2`,
+      messages: [{ role: 'user', content: 'Return exactly: glm ready' }],
+      maxTokens: 80,
+    });
+
+    expect(result.text).toBe('glm ready');
+    expect(result.blocks).toEqual([{ type: 'text', text: 'glm ready' }]);
+    expect(result.stopReason).toBe('end');
+    expect(result.usage.output_tokens).toBe(29);
+    expect(lastZaiChatRequest, 'fakeZaiChatFetch should have been invoked').not.toBeNull();
+    expect(JSON.parse(lastZaiChatRequest!.body ?? '{}').max_tokens).toBe(160);
   });
 
   test('3. rerank — manual HTTP path applies Authorization + default_headers', async () => {

@@ -27,6 +27,7 @@
  *   - OpenAI:    https://openai.com/api/pricing
  *   - Google:    https://ai.google.dev/gemini-api/docs/pricing
  *   - DeepSeek:  https://api-docs.deepseek.com/quick_start/pricing
+ *   - Z.AI:      https://docs.z.ai/guides/overview/pricing
  * The dream-budget audit JSONL snapshots the rate per call, so historical
  * estimates stay reproducible even after this table changes.
  *
@@ -91,6 +92,9 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // priced as V4 Flash until removal so old receipts remain costed.
   'deepseek:deepseek-chat':               { input:  0.14,  output:  0.28 },
   'deepseek:deepseek-reasoner':           { input:  0.14,  output:  0.28 },
+
+  // ── Z.AI ──────────────────────────────────────────────────────────────
+  'zai:glm-5.2':                          { input:  1.40, output:  4.40 },
 };
 
 /**

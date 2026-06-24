@@ -2814,7 +2814,9 @@ const submit_job: Operation = {
     // the trust gate above.
     if (name === 'shell' && trusted) {
       const { validateShellJobParams } = await import('./minions/handlers/shell-validate.ts');
-      validateShellJobParams(jobData);
+      const { loadConfig, loadConfigWithEngine } = await import('./config.ts');
+      const config = await loadConfigWithEngine(ctx.engine, loadConfig());
+      validateShellJobParams(jobData, { config });
     }
 
     const job = await queue.add(name, jobData, {

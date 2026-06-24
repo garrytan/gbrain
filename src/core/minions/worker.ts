@@ -29,6 +29,7 @@ import {
 } from './lock-renewal-tick.ts';
 import { lockRenewalAudit } from '../audit/lock-renewal-audit.ts';
 import { isRetryableConnError } from '../retry-matcher.ts';
+import { loadConfig, loadConfigWithEngine } from '../config.ts';
 
 /**
  * Abort reasons that signal infrastructure failure (PgBouncer outage,
@@ -938,11 +939,19 @@ export class MinionWorker extends EventEmitter {
     // `shutdownSignal` is separate: fires only on worker process SIGTERM/SIGINT.
     // Handlers that need to run cleanup before worker exit (shell handler's
     // SIGTERM→5s→SIGKILL on its child) subscribe to shutdownSignal too.
+    let config = null;
+    try {
+      config = await loadConfigWithEngine(this.engine);
+    } catch {
+      config = loadConfig();
+    }
+
     const context: MinionJobContext = {
       id: job.id,
       name: job.name,
       data: job.data,
       attempts_made: job.attempts_made,
+      config,
       signal: abort.signal,
       shutdownSignal: this.shutdownAbort.signal,
       updateProgress: async (progress: unknown) => {

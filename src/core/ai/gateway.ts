@@ -2452,6 +2452,18 @@ function numericUsageToken(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+function normalizeChatMaxOutputTokens(providerId: string, requested: number): number {
+  // Z.AI GLM-5.2 reports reasoning_content alongside answer content and counts
+  // those hidden reasoning tokens against max_tokens. Very small probes can
+  // stop at length before any answer text is emitted, even for trivial prompts.
+  // Keep this provider-scoped so tiny Anthropic/OpenAI probes preserve their
+  // existing behavior.
+  if (providerId === 'zai') {
+    return Math.max(requested, 160);
+  }
+  return requested;
+}
+
 function normalizeChatUsageForBudget(
   usage: Record<string, any>,
   providerMetadata: Record<string, any> | undefined,
@@ -2740,26 +2752,24 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     }
   }
   const estimatedInputTokens = estimateChatInputTokens(opts);
-  const maxOutputTokens = opts.maxTokens ?? 4096;
-
-  // TX5: reserve BEFORE the provider call. Throws BudgetExhausted on cost,
-  // runtime, or no_pricing (when cap is set). Pre-resolution model id is
-  // fine here — resolveChatProvider would map aliases the same way for the
-  // cost lookup. record() below uses the real result.model.
-  if (tracker) {
-    tracker.reserve({
-      modelId: modelStrEarly,
-      estimatedInputTokens,
-      maxOutputTokens,
-      kind: 'chat' as BudgetKind,
-      label: budgetLabelBase,
-    });
-  }
+  const requestedMaxOutputTokens = opts.maxTokens ?? 4096;
 
   // Test seam: when a test transport is installed, route through it without
-  // touching provider resolution, AI SDK, or any network. See
-  // __setChatTransportForTests. Production paths see _chatTransport === null.
+  // touching provider resolution, gateway config, AI SDK, or any network.
+  // This must run BEFORE resolveChatProvider(), else unit tests that install
+  // the seam still trip auth/config checks for the real provider.
   if (_chatTransport) {
+    const maxOutputTokens = requestedMaxOutputTokens;
+    if (tracker) {
+      tracker.reserve({
+        modelId: modelStrEarly,
+        estimatedInputTokens,
+        maxOutputTokens,
+        kind: 'chat' as BudgetKind,
+        label: budgetLabelBase,
+      });
+    }
+
     let res: ChatResult | null = null;
     let threw: unknown = null;
     try {
@@ -2808,6 +2818,20 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
 
   const modelStr = modelStrEarly;
   const { model, recipe, modelId } = await resolveChatProvider(modelStr);
+  const maxOutputTokens = normalizeChatMaxOutputTokens(recipe.id, requestedMaxOutputTokens);
+
+  // TX5: reserve BEFORE the provider call. Throws BudgetExhausted on cost,
+  // runtime, or no_pricing (when cap is set). Resolve locally first so
+  // provider-specific output-token floors are reflected in the reservation.
+  if (tracker) {
+    tracker.reserve({
+      modelId: modelStrEarly,
+      estimatedInputTokens,
+      maxOutputTokens,
+      kind: 'chat' as BudgetKind,
+      label: budgetLabelBase,
+    });
+  }
 
   const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;
   const useCache = !!opts.cacheSystem && supportsCache;
@@ -2864,7 +2888,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       system: opts.system,
       messages: toModelMessages(opts.messages) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
-      maxOutputTokens: opts.maxTokens ?? 4096,
+      maxOutputTokens,
       // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
       // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
       abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),

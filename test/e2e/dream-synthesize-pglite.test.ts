@@ -18,6 +18,9 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { runPhaseSynthesize, renderPageToMarkdown } from '../../src/core/cycle/synthesize.ts';
+import { MinionWorker } from '../../src/core/minions/worker.ts';
+import { registerBuiltinHandlers } from '../../src/commands/jobs.ts';
+import type { ChatOpts, ChatResult } from '../../src/core/ai/gateway.ts';
 
 interface TestRig {
   engine: PGLiteEngine;
@@ -275,6 +278,137 @@ describe('E2E synthesize — cooldown', () => {
         rmSync(adHoc, { force: true });
       }
     } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+});
+
+describe('E2E synthesize — GLM dream replacement proof', () => {
+  test('runPhaseSynthesize fans out through zai:glm-5.2 and writes a reflection page with Haiku still judging', async () => {
+    const { __setChatTransportForTests, resetGateway } = await import('../../src/core/ai/gateway.ts');
+
+    const rig = await setupRig();
+    const worker = new MinionWorker(rig.engine, { pollInterval: 25, lockDuration: 30_000 });
+    await registerBuiltinHandlers(worker, rig.engine);
+    const runPromise = worker.start();
+
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+      await rig.engine.setConfig('models.dream.synthesize', 'zai:glm-5.2');
+      await rig.engine.setConfig('models.dream.synthesize_verdict', 'anthropic:claude-haiku-4-5-20251001');
+      await rig.engine.setConfig('agent.use_gateway_loop', 'true');
+
+      writeFileSync(
+        join(rig.corpusDir, '2026-06-23-glm-dream.txt'),
+        'User: I want to capture a new reflection about decision quality.\n' +
+        'Agent: ' + 'meaningful conversation '.repeat(220),
+      );
+
+      let glmTurn = 0;
+      __setChatTransportForTests(async (opts: ChatOpts): Promise<ChatResult> => {
+        if ((opts.system ?? '').includes('You judge whether a conversation transcript is worth synthesizing')) {
+          return {
+            text: JSON.stringify({
+              worth_processing: true,
+              reasons: ['user reflects on decision quality'],
+            }),
+            blocks: [{
+              type: 'text',
+              text: JSON.stringify({
+                worth_processing: true,
+                reasons: ['user reflects on decision quality'],
+              }),
+            }],
+            stopReason: 'end',
+            usage: { input_tokens: 12, output_tokens: 8, cache_read_tokens: 0, cache_creation_tokens: 0 },
+            model: 'anthropic:claude-haiku-4-5-20251001',
+            providerId: 'anthropic',
+          };
+        }
+
+        if (opts.model === 'zai:glm-5.2') {
+          glmTurn++;
+          if (glmTurn === 1) {
+            return {
+              text: '',
+              blocks: [{
+                type: 'tool-call',
+                toolCallId: 'glm-put-page-1',
+                toolName: 'brain_put_page',
+                input: {
+                  slug: 'wiki/personal/reflections/2026-06-23-glm-replacement-proof',
+                  content: [
+                    '---',
+                    'title: GLM replacement proof',
+                    'type: note',
+                    '---',
+                    '',
+                    '# GLM replacement proof',
+                    '',
+                    'GLM synthesized this reflection through the dream subagent path.',
+                  ].join('\n'),
+                },
+              }],
+              stopReason: 'tool_calls',
+              usage: { input_tokens: 40, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 },
+              model: 'zai:glm-5.2',
+              providerId: 'zai',
+            };
+          }
+
+          return {
+            text: 'reflection written',
+            blocks: [{ type: 'text', text: 'reflection written' }],
+            stopReason: 'end',
+            usage: { input_tokens: 30, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 },
+            model: 'zai:glm-5.2',
+            providerId: 'zai',
+          };
+        }
+
+        throw new Error(`unexpected chat transport model/system: ${opts.model ?? '<default>'}`);
+      });
+
+      const savedKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-glm-judge';
+      try {
+        const result = await runPhaseSynthesize(rig.engine, {
+          brainDir: rig.brainDir,
+          dryRun: false,
+        });
+
+        expect(result.status).toBe('ok');
+        const details = result.details as {
+          pages_written: number;
+          written_slugs: string[];
+          child_outcomes: Array<{ status: string }>;
+          verdicts: Array<{ worth: boolean; reasons: string[] }>;
+        };
+        expect(details.pages_written).toBeGreaterThanOrEqual(1);
+        expect(details.written_slugs).toContain('wiki/personal/reflections/2026-06-23-glm-replacement-proof');
+        expect(details.child_outcomes.some(o => o.status === 'completed')).toBe(true);
+        expect(details.verdicts).toHaveLength(1);
+        expect(details.verdicts[0].worth).toBe(true);
+
+        const page = await rig.engine.getPage('wiki/personal/reflections/2026-06-23-glm-replacement-proof');
+        expect(page).not.toBeNull();
+        expect(page!.compiled_truth).toContain('GLM synthesized this reflection');
+
+        const reversePath = join(
+          rig.brainDir,
+          'wiki/personal/reflections/2026-06-23-glm-replacement-proof.md',
+        );
+        expect(await Bun.file(reversePath).exists()).toBe(true);
+      } finally {
+        if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+        else process.env.ANTHROPIC_API_KEY = savedKey;
+        __setChatTransportForTests(null);
+        resetGateway();
+      }
+    } finally {
+      worker.stop();
+      await runPromise;
       await rig.cleanup();
     }
   }, 30_000);

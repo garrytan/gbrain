@@ -85,3 +85,26 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
     );
   });
 });
+
+describe('buildGatewayConfig provider-key passthrough', () => {
+  test('maps file-plane provider keys into gateway env', async () => {
+    await withEnv({
+      OPENAI_API_KEY: undefined,
+      ANTHROPIC_API_KEY: undefined,
+      ZAI_API_KEY: undefined,
+      ZEROENTROPY_API_KEY: undefined,
+    }, async () => {
+      const cfg = buildGatewayConfig({
+        engine: 'pglite',
+        openai_api_key: 'test-oai',
+        anthropic_api_key: 'test-anth',
+        zai_api_key: 'test-zai',
+        zeroentropy_api_key: 'test-ze',
+      });
+      expect(cfg.env?.OPENAI_API_KEY).toBe('test-oai');
+      expect(cfg.env?.ANTHROPIC_API_KEY).toBe('test-anth');
+      expect(cfg.env?.ZAI_API_KEY).toBe('test-zai');
+      expect(cfg.env?.ZEROENTROPY_API_KEY).toBe('test-ze');
+    });
+  });
+});

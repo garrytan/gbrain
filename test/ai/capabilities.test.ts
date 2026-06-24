@@ -29,6 +29,14 @@ describe('getProviderCapabilities (v0.38 Slice 1 — D6/D7 recipe-driven capabil
     expect(caps.supportsToolCalling).toBe(true);
   });
 
+  it('returns capabilities for Z.AI GLM-5.2 without prompt-cache accounting', () => {
+    const caps = getProviderCapabilities('zai:glm-5.2');
+    expect(caps.supportsToolCalling).toBe(true);
+    expect(caps.supportsPromptCaching).toBe(false);
+    expect(caps.supportsParallelTools).toBe(true);
+    expect(caps.maxContext).toBe(1_000_000);
+  });
+
   it('throws for unknown provider', () => {
     expect(() => getProviderCapabilities('madeup-provider:foo')).toThrow();
   });
@@ -66,5 +74,9 @@ describe('classifyCapabilities (D6 — three-tier capability verdict)', () => {
     // Voyage has no chat touchpoint → throws inside getProviderCapabilities
     // → classifyCapabilities catches → returns 'unknown'.
     expect(classifyCapabilities('voyage:voyage-3-large')).toBe('unknown');
+  });
+
+  it('returns degraded:no_caching for Z.AI GLM-5.2 until cached-token pricing is modeled', () => {
+    expect(classifyCapabilities('zai:glm-5.2')).toBe('degraded:no_caching');
   });
 });

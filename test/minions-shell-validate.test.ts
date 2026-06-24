@@ -27,6 +27,7 @@ const fakeCfg: GBrainConfig = {
   database_url: dbUrl,
   anthropic_api_key: 'sk-ant-test',
   openai_api_key: 'sk-test',
+  zai_api_key: 'sk-zai-test',
 };
 
 describe('validateShellJobParams — existing param shape checks', () => {
@@ -77,10 +78,10 @@ describe('inherit — free-form config-key names (v0.36.5.0)', () => {
   });
   test('inherit multiple keys at once', () => {
     const p = validateShellJobParams(
-      { cmd: 'echo', cwd: '/tmp', inherit: ['database_url', 'anthropic_api_key', 'openai_api_key'] },
+      { cmd: 'echo', cwd: '/tmp', inherit: ['database_url', 'anthropic_api_key', 'openai_api_key', 'zai_api_key'] },
       { config: fakeCfg },
     );
-    expect(p.inherit).toEqual(['database_url', 'anthropic_api_key', 'openai_api_key']);
+    expect(p.inherit).toEqual(['database_url', 'anthropic_api_key', 'openai_api_key', 'zai_api_key']);
   });
   test('inherit must be an array', () => {
     expect(() => validateShellJobParams(
