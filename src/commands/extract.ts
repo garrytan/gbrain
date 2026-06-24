@@ -469,6 +469,39 @@ export async function extractLinksFromFile(
 
 // --- Timeline extraction ---
 
+/**
+ * Normalize a vault date token to a real ISO `YYYY-MM-DD` for the
+ * `timeline_entries.date` SQL DATE column.
+ *   - `YYYY-MM-DD`           -> as-is (validated)
+ *   - `YYYY-MM` (month-only) -> `YYYY-MM-01`
+ * Range tokens (`A to B`) are split by the caller, which passes the start.
+ * Returns null for anything that isn't a real calendar date.
+ */
+function normalizeTimelineDate(raw: string): string | null {
+  const t = raw.trim();
+  let iso: string;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) iso = t;
+  else if (/^\d{4}-\d{2}$/.test(t)) iso = `${t}-01`;
+  else return null;
+  const [y, mo, d] = iso.split('-').map(Number);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  return iso;
+}
+
+/**
+ * Split an optional trailing evidence link off an interaction-log summary.
+ * Vault bullets often end with ` — [slack](url)`; only strip when the trailing
+ * token is a lone markdown link so prose that merely ends with a dash clause is
+ * left intact.
+ */
+function splitTrailingSource(text: string): { summary: string; source: string } {
+  const m = text.match(/^(.*\S)\s+[—–]\s+(\[[^\]]+\]\([^)]+\))\s*$/);
+  if (m) return { summary: m[1].trim(), source: m[2].trim() };
+  return { summary: text.trim(), source: 'interaction-log' };
+}
+
 /** Extract timeline entries from markdown content */
 export function extractTimelineFromContent(content: string, slug: string): ExtractedTimelineEntry[] {
   const entries: ExtractedTimelineEntry[] = [];
@@ -492,6 +525,45 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
     );
     const detail = content.slice(afterIdx, endIdx).trim();
     entries.push({ slug, date: match[1], source: 'markdown', summary: match[2].trim(), detail: detail || undefined });
+  }
+
+  // Format 3: Plain interaction-log bullet (date + colon, no bold) —
+  //   - YYYY-MM-DD: Summary [— [src](url)]
+  //   - YYYY-MM-DD to YYYY-MM-DD: Summary   (range -> start date)
+  //   - YYYY-MM: Summary                    (month-only -> YYYY-MM-01)
+  // Distinct from Format 1: no **bold** date, colon separator (not a pipe).
+  // Matches the common people-page `## Interaction Log` bullet convention.
+  const interactionPattern = /^[ \t]*-\s+(\d{4}-\d{2}(?:-\d{2})?)(?:\s+to\s+\d{4}-\d{2}(?:-\d{2})?)?\s*:\s*(.+)$/gm;
+  while ((match = interactionPattern.exec(content)) !== null) {
+    const date = normalizeTimelineDate(match[1]);
+    if (!date) continue;
+    const { summary, source } = splitTrailingSource(match[2]);
+    if (summary.length === 0) continue;
+    entries.push({ slug, date, source, summary });
+  }
+
+  // Format 4: Date-only / range session-log header —
+  //   ### YYYY-MM-DD                 (prose body below, no ` — title`)
+  //   ### YYYY-MM-DD to YYYY-MM-DD
+  // Mutually exclusive with Format 2, which requires a trailing ` — title`.
+  // Matches the common `## Session Log` H3-per-day convention; the first
+  // non-empty body line becomes the summary, the rest the detail.
+  const sessionHeaderPattern = /^###\s+(\d{4}-\d{2}-\d{2})(?:\s+to\s+(\d{4}-\d{2}-\d{2}))?[ \t]*$/gm;
+  while ((match = sessionHeaderPattern.exec(content)) !== null) {
+    const date = normalizeTimelineDate(match[1]);
+    if (!date) continue;
+    const afterIdx = match.index + match[0].length;
+    const nextHeader = content.indexOf('\n### ', afterIdx);
+    const nextSection = content.indexOf('\n## ', afterIdx);
+    const endIdx = Math.min(
+      nextHeader >= 0 ? nextHeader : content.length,
+      nextSection >= 0 ? nextSection : content.length,
+    );
+    const detail = content.slice(afterIdx, endIdx).trim();
+    if (detail.length === 0) continue;
+    const firstLine = detail.split('\n').map(s => s.trim()).find(s => s.length > 0) ?? '';
+    const summary = firstLine.length > 200 ? `${firstLine.slice(0, 197)}…` : firstLine;
+    entries.push({ slug, date, source: 'session-log', summary: summary || date, detail });
   }
 
   return entries;
