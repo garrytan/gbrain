@@ -203,7 +203,7 @@ describe('CLI source shape', () => {
     expect(agentSessionSource).toContain('const result = await dispatchOperation(ctx, op, input)');
     expect(agentSessionSource).not.toContain('op.handler(ctx, input)');
     expect(edgeIndexSource).toContain('dispatchOperation');
-    expect(edgeIndexSource).toContain('const result = await dispatchOperation(ctx, op, params || {})');
+    expect(edgeIndexSource).toContain('const result = await dispatchOperation(ctx, op, prepareRemoteToolParams(name, params))');
     expect(edgeIndexSource).not.toContain('op.handler(ctx, params || {})');
   });
 
