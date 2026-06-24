@@ -417,6 +417,26 @@ describe('reinit-pglite — backup + reinit', () => {
     expect(exits).toContain(1);
   });
 
+  test('builds init args from existing PGLite config for rebuild callers', async () => {
+    const { buildPgliteReinitArgsFromConfig } = await import('../src/commands/reinit-pglite.ts');
+    const dbPath = join(tmpHome, '.gbrain', 'brain.pglite');
+    expect(buildPgliteReinitArgsFromConfig({
+      engine: 'pglite',
+      database_path: dbPath,
+      embedding_model: 'zeroentropyai:zembed-1',
+      embedding_dimensions: 1280,
+    }, dbPath, { jsonOutput: true })).toEqual([
+      '--pglite',
+      '--path',
+      dbPath,
+      '--embedding-model',
+      'zeroentropyai:zembed-1',
+      '--embedding-dimensions',
+      '1280',
+      '--json',
+    ]);
+  });
+
   test('refuses when missing required --embedding-model / --embedding-dimensions', async () => {
     const { runReinitPglite } = await import('../src/commands/reinit-pglite.ts');
     const origExit = process.exit;

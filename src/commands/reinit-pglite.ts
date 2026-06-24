@@ -19,8 +19,9 @@
  */
 
 import { existsSync, renameSync, statSync } from 'fs';
-import { dirname } from 'path';
-import { loadConfig, loadConfigFileOnly, gbrainPath } from '../core/config.ts';
+import { join } from 'path';
+import { loadConfig, loadConfigFileOnly, gbrainPath, isThinClient, type GBrainConfig } from '../core/config.ts';
+import { acquireLock, acquireMaintenanceLock, releaseLock, type LockHandle } from '../core/pglite-lock.ts';
 
 interface ReinitOpts {
   embeddingModel: string;
@@ -31,6 +32,20 @@ interface ReinitOpts {
   noSync: boolean;
 }
 
+export interface PreservePgliteDirAndReinitOpts {
+  dbPath: string;
+  backupPath: string;
+  initArgs: string[];
+  jsonOutput: boolean;
+  syncAfter: boolean;
+}
+
+export interface PreservePgliteDirAndReinitResult {
+  brainPath: string;
+  backupPath: string;
+  synced: boolean;
+}
+
 export async function runReinitPglite(args: string[]): Promise<void> {
   const opts = parseArgs(args);
 
@@ -38,6 +53,13 @@ export async function runReinitPglite(args: string[]): Promise<void> {
   // works there and migrating data is non-destructive — wipe-and-reinit
   // on Postgres would drop the entire brain.
   const cfg = loadConfig();
+  if (isThinClient(cfg)) {
+    fail(
+      opts.jsonOutput,
+      'thin_client',
+      `gbrain reinit-pglite requires a local PGLite brain. This install is a thin client of ${cfg!.remote_mcp!.mcp_url}. Run it on the remote host.`,
+    );
+  }
   if (cfg?.engine !== 'pglite') {
     fail(
       opts.jsonOutput,
@@ -120,18 +142,6 @@ export async function runReinitPglite(args: string[]): Promise<void> {
   const existingFile = loadConfigFileOnly();
   void existingFile; // referenced for the comment above; init.ts handles the merge
 
-  try {
-    renameSync(dbPath, bakPath);
-  } catch (e: unknown) {
-    fail(
-      opts.jsonOutput,
-      'backup_failed',
-      `Failed to back up brain to ${bakPath}: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
-
-  if (!opts.jsonOutput) console.log(`Backed up brain to ${bakPath}`);
-
   // Step 2: re-init with the new model/dimensions. Delegate to runInit
   // so we go through the full Lane B precedence chain + dim-mismatch
   // detector + saveConfig merge.
@@ -145,54 +155,135 @@ export async function runReinitPglite(args: string[]): Promise<void> {
   }
   if (opts.jsonOutput) initArgs.push('--json');
 
-  const { runInit } = await import('./init.ts');
-  await runInit(initArgs);
-
-  // Step 3: re-sync (unless --no-sync). Best-effort because the user
-  // already has a working brain; sync failure shouldn't roll back.
-  if (!opts.noSync) {
-    if (!opts.jsonOutput) console.log('');
-    if (!opts.jsonOutput) console.log('Re-syncing brain repo...');
-    try {
-      // Need an engine handle to call runSync. Open one against the
-      // freshly-init'd brain.
-      const { createEngine } = await import('../core/engine-factory.ts');
-      const newCfg = loadConfig();
-      if (!newCfg) {
-        if (!opts.jsonOutput) console.error('Warning: no config after reinit; skipping sync. Run `gbrain sync` manually.');
-        return;
-      }
-      const engine = await createEngine({ engine: 'pglite' });
-      await engine.connect({ database_path: newCfg.database_path || dbPath, engine: 'pglite' });
-      try {
-        const { runSync } = await import('./sync.ts');
-        await runSync(engine, []);
-      } finally {
-        try { await engine.disconnect(); } catch { /* best-effort */ }
-      }
-    } catch (e: unknown) {
-      if (!opts.jsonOutput) {
-        console.error('');
-        console.error(`Warning: sync after reinit failed (${e instanceof Error ? e.message : String(e)}).`);
-        console.error('The brain is initialized but empty. Run \`gbrain sync\` to populate it.');
-      }
-    }
+  let result: PreservePgliteDirAndReinitResult;
+  try {
+    result = await preservePgliteDirAndReinit({
+      dbPath,
+      backupPath: bakPath,
+      initArgs,
+      jsonOutput: opts.jsonOutput,
+      syncAfter: !opts.noSync,
+    });
+  } catch (e: unknown) {
+    fail(
+      opts.jsonOutput,
+      'reinit_failed',
+      e instanceof Error ? e.message : String(e),
+    );
   }
+  if (!opts.jsonOutput) console.log(`Backed up brain to ${result.backupPath}`);
 
   if (opts.jsonOutput) {
     console.log(JSON.stringify({
       status: 'success',
-      brain_path: dbPath,
-      backup_path: bakPath,
+      brain_path: result.brainPath,
+      backup_path: result.backupPath,
       embedding_model: opts.embeddingModel,
       embedding_dimensions: opts.embeddingDimensions,
-      synced: !opts.noSync,
+      synced: result.synced,
     }));
   } else {
     console.log('');
     console.log('Reinit complete. To roll back:');
     console.log(`  mv ${bakPath} ${dbPath}`);
   }
+}
+
+export async function preservePgliteDirAndReinit(
+  opts: PreservePgliteDirAndReinitOpts,
+): Promise<PreservePgliteDirAndReinitResult> {
+  let maintenanceLock: LockHandle | null = null;
+  let dataLock: LockHandle | null = null;
+  try {
+    maintenanceLock = await acquireMaintenanceLock(opts.dbPath);
+    dataLock = await acquireLock(opts.dbPath);
+
+    try {
+      renameSync(opts.dbPath, opts.backupPath);
+      if (dataLock.lockDir) {
+        dataLock.lockDir = join(opts.backupPath, '.gbrain-lock');
+        dataLock.lockPath = join(dataLock.lockDir, 'lock');
+      }
+    } catch (e: unknown) {
+      throw new Error(`Failed to back up brain to ${opts.backupPath}: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      if (dataLock?.acquired) {
+        try { await releaseLock(dataLock); } catch { /* best-effort cleanup */ }
+        dataLock = null;
+      }
+    }
+
+    const { runInit } = await import('./init.ts');
+    await withOptionalStdoutSilence(opts.jsonOutput, () => runInit(opts.initArgs));
+
+    let synced = false;
+    if (opts.syncAfter) {
+      if (!opts.jsonOutput) console.log('');
+      if (!opts.jsonOutput) console.log('Re-syncing brain repo...');
+      try {
+        const { createEngine } = await import('../core/engine-factory.ts');
+        const newCfg = loadConfig();
+        if (!newCfg) {
+          if (!opts.jsonOutput) console.error('Warning: no config after reinit; skipping sync. Run `gbrain sync` manually.');
+          return { brainPath: opts.dbPath, backupPath: opts.backupPath, synced: false };
+        }
+        const engine = await createEngine({ engine: 'pglite' });
+        await engine.connect({ database_path: newCfg.database_path || opts.dbPath, engine: 'pglite' });
+        try {
+          const { runSync } = await import('./sync.ts');
+          await withOptionalStdoutSilence(opts.jsonOutput, () => runSync(engine, []));
+          synced = true;
+        } finally {
+          try { await engine.disconnect(); } catch { /* best-effort */ }
+        }
+      } catch (e: unknown) {
+        if (!opts.jsonOutput) {
+          console.error('');
+          console.error(`Warning: sync after reinit failed (${e instanceof Error ? e.message : String(e)}).`);
+          console.error('The brain is initialized but empty. Run `gbrain sync` to populate it.');
+        }
+      }
+    }
+
+    return { brainPath: opts.dbPath, backupPath: opts.backupPath, synced };
+  } finally {
+    if (dataLock?.acquired) {
+      try { await releaseLock(dataLock); } catch { /* best-effort cleanup */ }
+    }
+    if (maintenanceLock?.acquired) {
+      try { await releaseLock(maintenanceLock); } catch { /* best-effort cleanup */ }
+    }
+  }
+}
+
+async function withOptionalStdoutSilence<T>(
+  silence: boolean,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (!silence) return fn();
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    return await fn();
+  } finally {
+    console.log = originalLog;
+  }
+}
+
+export function buildPgliteReinitArgsFromConfig(
+  cfg: GBrainConfig,
+  dbPath: string,
+  opts?: { jsonOutput?: boolean },
+): string[] {
+  const initArgs = ['--pglite', '--path', dbPath];
+  if (cfg.embedding_model) {
+    initArgs.push('--embedding-model', cfg.embedding_model);
+  }
+  if (cfg.embedding_dimensions) {
+    initArgs.push('--embedding-dimensions', String(cfg.embedding_dimensions));
+  }
+  if (opts?.jsonOutput) initArgs.push('--json');
+  return initArgs;
 }
 
 function parseArgs(args: string[]): ReinitOpts {

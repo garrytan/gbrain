@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { acquireLock, releaseLock, type LockHandle } from '../src/core/pglite-lock';
+import { acquireLock, acquireMaintenanceLock, releaseLock, type LockHandle } from '../src/core/pglite-lock';
 import { withEnv } from './helpers/with-env.ts';
 
 const TEST_DIR = join(tmpdir(), 'gbrain-lock-test-' + process.pid);
@@ -84,6 +84,20 @@ describe('pglite-lock', () => {
     expect(lockData.command).toBeDefined();
 
     await releaseLock(lock);
+  });
+
+  test('maintenance lock lets its owner initialize while blocking stale rename races', async () => {
+    const maintenance = await acquireMaintenanceLock(TEST_DIR);
+    expect(maintenance.acquired).toBe(true);
+    expect(existsSync(`${TEST_DIR}.maintenance-lock`)).toBe(true);
+
+    const lock = await acquireLock(TEST_DIR);
+    expect(lock.acquired).toBe(true);
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+
+    await releaseLock(lock);
+    await releaseLock(maintenance);
+    expect(existsSync(`${TEST_DIR}.maintenance-lock`)).toBe(false);
   });
 
   test('releases lock on disconnect even if DB close fails', async () => {

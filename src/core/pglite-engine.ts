@@ -146,6 +146,11 @@ export function computeSnapshotSchemaHash(
  * `macos-26-3` — the pre-existing #223 hint signature (early macOS
  *   26.3 builds shipped a broken WASM runtime).
  *
+ * `pglite-data-dir-recovery-candidate` — persistent dataDir existed
+ *   before PGlite.create() and looked like a PGLite/Postgres data
+ *   directory. This is only a recovery/rebuild hint, not a corruption
+ *   diagnosis.
+ *
  * `unknown` — falls through to a generic hint that still names the
  *   doctor command and the most-common-cause link.
  *
@@ -154,14 +159,95 @@ export function computeSnapshotSchemaHash(
  * errors). Match the literal `$$bunfs` marker OR ENOENT+pglite.data
  * co-occurrence.
  */
-export type PgliteInitFailure = 'bunfs' | 'macos-26-3' | 'unknown';
+export type PgliteInitFailure =
+  | 'bunfs'
+  | 'macos-26-3'
+  | 'pglite-data-dir-recovery-candidate'
+  | 'unknown';
 
-export function classifyPgliteInitError(message: string): PgliteInitFailure {
+export type PgliteDataDirPreflightSnapshot = {
+  persistent: boolean;
+  exists: boolean;
+  isDirectory?: boolean;
+  entries?: string[];
+  hasPgVersion?: boolean;
+  hasBaseDir?: boolean;
+  hasGlobalDir?: boolean;
+  hasPgWalDir?: boolean;
+  readError?: string;
+};
+
+export function isPgliteDataDirRecoveryCandidate(
+  snapshot?: PgliteDataDirPreflightSnapshot,
+): boolean {
+  if (!snapshot?.persistent || !snapshot.exists || snapshot.isDirectory === false) return false;
+  if (snapshot.hasPgVersion) return true;
+  if (snapshot.hasBaseDir && snapshot.hasGlobalDir) return true;
+
+  const entries = new Set((snapshot.entries ?? []).map((entry) => entry.toLowerCase()));
+  return entries.has('pg_version') || (entries.has('base') && entries.has('global'));
+}
+
+export function classifyPgliteInitError(
+  message: string,
+  dataDirPreflight?: PgliteDataDirPreflightSnapshot,
+): PgliteInitFailure {
   if (/\$\$bunfs|ENOENT[\s\S]*pglite\.data/i.test(message)) return 'bunfs';
   if (/abort.*runtime|macos.*26\.3|wasm.*runtime/i.test(message)) {
     return 'macos-26-3';
   }
+  if (isPgliteDataDirRecoveryCandidate(dataDirPreflight)) {
+    return 'pglite-data-dir-recovery-candidate';
+  }
   return 'unknown';
+}
+
+function snapshotPgliteDataDirBeforeCreate(
+  dataDir: string | undefined,
+): PgliteDataDirPreflightSnapshot | undefined {
+  if (!dataDir) return undefined;
+  try {
+    // Lazy require keeps this file testable in non-Node-compatible bundles.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('node:fs') as typeof import('node:fs');
+    if (!fs.existsSync(dataDir)) {
+      return { persistent: true, exists: false };
+    }
+
+    const stat = fs.statSync(dataDir);
+    if (!stat.isDirectory()) {
+      return { persistent: true, exists: true, isDirectory: false };
+    }
+
+    const entries = fs.readdirSync(dataDir);
+    const isChildDir = (name: string): boolean => {
+      try {
+        return fs.statSync(`${dataDir}/${name}`).isDirectory();
+      } catch {
+        return false;
+      }
+    };
+    const hasPgVersion = entries.includes('PG_VERSION');
+    const hasBaseDir = entries.includes('base') && isChildDir('base');
+    const hasGlobalDir = entries.includes('global') && isChildDir('global');
+    const hasPgWalDir = entries.includes('pg_wal') && isChildDir('pg_wal');
+    return {
+      persistent: true,
+      exists: true,
+      isDirectory: true,
+      entries,
+      hasPgVersion,
+      hasBaseDir,
+      hasGlobalDir,
+      hasPgWalDir,
+    };
+  } catch (err) {
+    return {
+      persistent: true,
+      exists: true,
+      readError: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 export function buildPgliteInitErrorMessage(
@@ -183,6 +269,11 @@ export function buildPgliteInitErrorMessage(
       hint =
         '  This is most commonly the macOS 26.3 WASM bug:\n' +
         '  https://github.com/garrytan/gbrain/issues/223';
+      break;
+    case 'pglite-data-dir-recovery-candidate':
+      hint =
+        '  The existing PGLite data directory may need recovery/rebuild.\n' +
+        '  Fix: run `gbrain doctor --rebuild-pglite` and retry.';
       break;
     case 'unknown':
     default:
@@ -270,6 +361,7 @@ export class PGLiteEngine implements BrainEngine {
     // a snapshot/restore around these awaits does NOT contain them. That is
     // why the CLI's exit paths read gbrain's own verdict
     // (cli-force-exit.ts currentExitCode), never ambient process.exitCode.
+    const dataDirPreflight = snapshotPgliteDataDirBeforeCreate(dataDir);
     try {
       this._db = await preservingProcessExitCode(() =>
         PGlite.create({
@@ -286,7 +378,9 @@ export class PGLiteEngine implements BrainEngine {
       // pglite.data WASM payload). Route the hint by failure shape so
       // users get the right next step.
       const original = err instanceof Error ? err.message : String(err);
-      const verdict = classifyPgliteInitError(original);
+      const verdict = dataDirPreflight
+        ? classifyPgliteInitError(original, dataDirPreflight)
+        : classifyPgliteInitError(original);
       const wrapped = new Error(buildPgliteInitErrorMessage(verdict, original));
       // Release the lock so a fresh process can try again; leaking the lock
       // here turns a recoverable init error into a stuck-brain state.

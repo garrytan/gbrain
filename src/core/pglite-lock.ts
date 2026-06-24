@@ -18,6 +18,7 @@ import { mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, statSync } 
 import { join } from 'path';
 
 const LOCK_DIR_NAME = '.gbrain-lock';
+const MAINTENANCE_LOCK_SUFFIX = '.maintenance-lock';
 const LOCK_FILE = 'lock';
 
 // #2058: refresh the lock's `refreshed_at` while held so a long-running but
@@ -97,6 +98,11 @@ function getLockDir(dataDir: string | undefined): string {
   return join(dataDir, LOCK_DIR_NAME);
 }
 
+function getMaintenanceLockDir(dataDir: string | undefined): string {
+  if (!dataDir) return '';
+  return `${dataDir}${MAINTENANCE_LOCK_SUFFIX}`;
+}
+
 function isProcessAlive(pid: number): boolean {
   try {
     // Sending signal 0 checks existence without actually sending a signal
@@ -128,6 +134,30 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeoutMs) {
+    const maintenanceLockDir = getMaintenanceLockDir(dataDir);
+    if (maintenanceLockDir && existsSync(maintenanceLockDir)) {
+      const lockPath = join(maintenanceLockDir, LOCK_FILE);
+      try {
+        const lockData = JSON.parse(readFileSync(lockPath, 'utf-8'));
+        const lockPid = lockData.pid as number;
+        const lockTime = lockData.acquired_at as number;
+        const alive = isProcessAlive(lockPid);
+        const lastRefresh = (lockData.refreshed_at as number | undefined) ?? lockTime;
+        const sinceRefresh = Date.now() - lastRefresh;
+        if (lockPid === process.pid) {
+          // Rebuild/reinit owns the maintenance lock and may open the freshly
+          // initialized data dir while other processes are held off.
+        } else if (!alive || sinceRefresh > stealGraceMs()) {
+          try { rmSync(maintenanceLockDir, { recursive: true, force: true }); } catch { /* race condition */ }
+        } else {
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+      } catch {
+        try { rmSync(maintenanceLockDir, { recursive: true, force: true }); } catch { /* race condition */ }
+      }
+    }
+
     // Check for stale lock first
     if (existsSync(lockDir)) {
       const lockPath = join(lockDir, LOCK_FILE);
@@ -204,6 +234,67 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
 
   // Should not reach here, but just in case
   throw new Error(`GBrain: Timed out waiting for PGLite lock.`);
+}
+
+/**
+ * Acquire a sibling maintenance lock for data-dir replacement operations.
+ *
+ * The normal PGLite lock intentionally lives inside the data directory. During
+ * rebuild/reinit we rename that directory, so the in-dir lock moves with it.
+ * This sibling lock stays at the stable target path and tells new openers to
+ * wait until the replacement data dir has been initialized.
+ */
+export async function acquireMaintenanceLock(
+  dataDir: string | undefined,
+  opts?: { timeoutMs?: number },
+): Promise<LockHandle> {
+  const lockDir = getMaintenanceLockDir(dataDir);
+  if (!lockDir) return { lockDir: '', acquired: true };
+  const timeoutMs = opts?.timeoutMs ?? 30_000;
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    if (existsSync(lockDir)) {
+      const lockPath = join(lockDir, LOCK_FILE);
+      try {
+        const lockData = JSON.parse(readFileSync(lockPath, 'utf-8'));
+        const lockPid = lockData.pid as number;
+        const lockTime = lockData.acquired_at as number;
+        const alive = isProcessAlive(lockPid);
+        const lastRefresh = (lockData.refreshed_at as number | undefined) ?? lockTime;
+        const sinceRefresh = Date.now() - lastRefresh;
+        if (!alive || sinceRefresh > stealGraceMs()) {
+          try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition */ }
+        } else {
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+      } catch {
+        try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition */ }
+      }
+    }
+
+    try {
+      mkdirSync(lockDir, { recursive: false });
+      const lockPath = join(lockDir, LOCK_FILE);
+      const now = Date.now();
+      writeFileSync(lockPath, JSON.stringify({
+        pid: process.pid,
+        acquired_at: now,
+        refreshed_at: now,
+        command: process.argv.slice(1).join(' '),
+      }), { mode: 0o644 });
+      const ownerToken = tokenOf({ pid: process.pid, acquired_at: now });
+      return { lockDir, acquired: true, lockPath, ownerToken, heartbeat: startHeartbeat(lockPath, ownerToken) };
+    } catch {
+      if (Date.now() - startTime >= timeoutMs) {
+        throw new Error(`GBrain: Timed out waiting for PGLite maintenance lock. Remove ${lockDir} and try again.`);
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+
+  throw new Error(`GBrain: Timed out waiting for PGLite maintenance lock.`);
 }
 
 /**

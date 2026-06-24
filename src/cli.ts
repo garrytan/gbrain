@@ -1228,6 +1228,16 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
   if (command === 'doctor') {
+    if (args.includes('--rebuild-pglite')) {
+      const cfgForRebuild = loadConfig();
+      if (isThinClient(cfgForRebuild)) {
+        refuseThinClient('doctor --rebuild-pglite', cfgForRebuild!.remote_mcp!.mcp_url);
+      }
+      const { runDoctorRebuildPglite } = await import('./commands/doctor.ts');
+      await runDoctorRebuildPglite(args);
+      return;
+    }
+
     // Multi-topology v1: thin-client doctor. When `~/.gbrain/config.json`
     // has remote_mcp set, every DB-bound check is irrelevant. Route to the
     // outbound-HTTP probe set in `src/core/doctor-remote.ts` and return
@@ -2203,6 +2213,7 @@ SETUP
   upgrade                            Self-update
   check-update [--json]              Check for new versions
   doctor [--json] [--fast]            Health check (resolver, skills, pgvector, RLS, embeddings)
+  doctor --rebuild-pglite [--yes]     Move aside a broken PGLite data dir and re-init
   integrations [subcommand]          Manage integration recipes (senses + reflexes)
 
 PAGES

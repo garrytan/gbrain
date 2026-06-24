@@ -7342,6 +7342,99 @@ export async function runDoctor(
   setCliExitVerdict(hasFail ? 1 : 0);
 }
 
+export async function runDoctorRebuildPglite(args: string[]): Promise<void> {
+  const jsonOutput = args.includes('--json');
+  const yes = args.includes('--yes') || args.includes('-y');
+  const noSync = args.includes('--no-sync');
+  const cfg = loadConfig();
+
+  if (cfg?.engine !== 'pglite') {
+    const message = `gbrain doctor --rebuild-pglite is for local PGLite brains only (current engine: ${cfg?.engine || 'none'}).`;
+    if (jsonOutput) console.log(JSON.stringify({ status: 'error', reason: 'not_pglite', message }));
+    else console.error(message);
+    process.exit(1);
+  }
+
+  const dbPath = cfg.database_path || gbrainPath('brain.pglite');
+  if (!existsSync(dbPath)) {
+    const message = `No PGLite brain found at ${dbPath}. Run \`gbrain init --pglite\` to create one.`;
+    if (jsonOutput) console.log(JSON.stringify({ status: 'error', reason: 'no_brain', message }));
+    else console.error(message);
+    process.exit(1);
+  }
+
+  const ts = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const backupPath = `${dbPath}.broken-${ts}`;
+  if (existsSync(backupPath)) {
+    const message = `Backup destination already exists at ${backupPath}.`;
+    if (jsonOutput) console.log(JSON.stringify({ status: 'error', reason: 'backup_exists', message }));
+    else console.error(message);
+    process.exit(1);
+  }
+
+  if (!yes) {
+    if (!process.stdin.isTTY) {
+      const message = 'Non-TTY environment requires --yes to rebuild PGLite.';
+      if (jsonOutput) console.log(JSON.stringify({ status: 'error', reason: 'no_tty_no_yes', message }));
+      else console.error(message);
+      process.exit(1);
+    }
+    process.stdout.write(`Move ${dbPath} aside and create a fresh PGLite brain? (y/N): `);
+    const stdin = process.stdin as unknown as {
+      setEncoding?: (encoding: string) => void;
+      on?: (event: 'data', cb: (chunk: string) => void) => void;
+      off?: (event: 'data', cb: (chunk: string) => void) => void;
+    };
+    stdin.setEncoding?.('utf8');
+    const confirmed = await new Promise<boolean>((resolve) => {
+      const onData = (chunk: string) => {
+        stdin.off?.('data', onData);
+        const answer = chunk.trim().toLowerCase();
+        resolve(answer === 'y' || answer === 'yes');
+      };
+      stdin.on?.('data', onData);
+    });
+    if (!confirmed) {
+      if (jsonOutput) console.log(JSON.stringify({ status: 'aborted', reason: 'user_declined' }));
+      else console.log('Aborted. Brain untouched.');
+      process.exit(0);
+    }
+  }
+
+  const { preservePgliteDirAndReinit, buildPgliteReinitArgsFromConfig } =
+    await import('./reinit-pglite.ts');
+  try {
+    const result = await preservePgliteDirAndReinit({
+      dbPath,
+      backupPath,
+      initArgs: buildPgliteReinitArgsFromConfig(cfg, dbPath, { jsonOutput }),
+      jsonOutput,
+      syncAfter: !noSync,
+    });
+    if (jsonOutput) {
+      console.log(JSON.stringify({
+        status: 'success',
+        brain_path: result.brainPath,
+        backup_path: result.backupPath,
+        synced: result.synced,
+      }));
+    } else {
+      console.log('');
+      console.log('PGLite rebuild complete.');
+      console.log(`  Fresh brain: ${result.brainPath}`);
+      console.log(`  Preserved old data dir: ${result.backupPath}`);
+      if (!result.synced) {
+        console.log('  Sync skipped or did not complete. Run `gbrain sync` to repopulate from sources.');
+      }
+    }
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (jsonOutput) console.log(JSON.stringify({ status: 'error', reason: 'rebuild_failed', message }));
+    else console.error(message);
+    process.exit(1);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
