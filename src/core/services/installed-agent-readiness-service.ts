@@ -32,6 +32,8 @@ export interface InstalledAgentReadinessInput {
   claudePrompt: string | null;
   claudeStopHook: string | null;
   claudePromptHook?: string | null;
+  claudeSessionStartHook?: string | null;
+  claudeSettings?: string | null;
   codexMcpRegistration?: InstalledAgentMcpRegistration | null;
   claudeMcpRegistration?: InstalledAgentMcpRegistration | null;
   expectedRulesVersion: string;
@@ -131,6 +133,9 @@ export function buildInstalledAgentReadinessReport(
     ...(input.claudePromptHook === undefined
       ? []
       : [buildClaudePromptHookCheck(input.claudePromptHook)]),
+    ...(input.claudeSessionStartHook === undefined
+      ? []
+      : [buildClaudeSessionStartHookCheck(input.claudeSessionStartHook, input.claudeSettings)]),
   ];
 
   return {
@@ -169,6 +174,8 @@ export async function collectInstalledAgentReadiness({
     claudePrompt: readOptionalFile(join(home, '.claude', 'CLAUDE.md')),
     claudeStopHook: readOptionalFile(join(home, '.claude', 'scripts', 'hooks', 'stop-mbrain-check.sh')),
     claudePromptHook: readOptionalFile(join(home, '.claude', 'scripts', 'hooks', 'prompt-mbrain-context.sh')),
+    claudeSessionStartHook: readOptionalFile(join(home, '.claude', 'scripts', 'hooks', 'sessionstart-mbrain-activation.sh')),
+    claudeSettings: readOptionalFile(join(home, '.claude', 'settings.json')),
     codexMcpRegistration,
     claudeMcpRegistration,
     expectedRulesVersion,
@@ -486,6 +493,91 @@ function buildClaudePromptHookCheck(content: string | null): InstalledAgentCheck
     name: 'claude_prompt_hook',
     status: 'ok',
     message: 'Claude prompt hook injects MBrain retrieval/writeback guidance',
+  };
+}
+
+function buildClaudeSessionStartHookCheck(content: string | null, settingsContent?: string | null): InstalledAgentCheck {
+  if (content === null) {
+    return {
+      name: 'claude_sessionstart_hook',
+      status: 'warn',
+      message: 'Claude SessionStart hook is absent; rerun mbrain setup-agent --apply to install proactive MBrain activation',
+    };
+  }
+
+  const missingTerms = [
+    ...['agent-session-activate', 'additionalContext', 'MBRAIN_SESSIONSTART_SCOPE'].filter((term) => !content.includes(term)),
+    ...(!content.includes('--scope "$SCOPE"') ? ['scope-gated activation'] : []),
+  ];
+
+  if (missingTerms.length > 0) {
+    return {
+      name: 'claude_sessionstart_hook',
+      status: 'fail',
+      message: `Claude SessionStart hook does not inject bounded scope-gated activation: missing ${missingTerms.join(', ')}`,
+    };
+  }
+
+  const settingsCheck = settingsContent === undefined ? null : claudeHookSettingsCheck(
+    settingsContent,
+    'SessionStart',
+    'sessionstart:mbrain-activation',
+    'bash "$HOME/.claude/scripts/hooks/sessionstart-mbrain-activation.sh"',
+  );
+  if (settingsCheck) {
+    return {
+      name: 'claude_sessionstart_hook',
+      status: settingsCheck.status,
+      message: settingsCheck.message,
+    };
+  }
+
+  return {
+    name: 'claude_sessionstart_hook',
+    status: 'ok',
+    message: 'Claude SessionStart hook injects bounded scope-gated activation',
+  };
+}
+
+function claudeHookSettingsCheck(
+  content: string | null,
+  eventName: string,
+  hookId: string,
+  command: string,
+): { status: InstalledAgentCheckStatus; message: string } | null {
+  if (content === null) {
+    return {
+      status: 'warn',
+      message: `Claude settings.json is absent; ${eventName} hook ${hookId} is not registered`,
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return {
+      status: 'fail',
+      message: `Claude settings.json is not valid JSON; cannot verify ${eventName} hook ${hookId}`,
+    };
+  }
+
+  const hooks = isRecord(parsed) && isRecord(parsed.hooks) ? parsed.hooks : null;
+  const entries = hooks && Array.isArray(hooks[eventName]) ? hooks[eventName] : [];
+  const registered = entries.some((entry) =>
+    isRecord(entry)
+    && entry.id === hookId
+    && Array.isArray(entry.hooks)
+    && entry.hooks.some((hook) =>
+      isRecord(hook)
+      && hook.type === 'command'
+      && hook.command === command
+    )
+  );
+  if (registered) return null;
+  return {
+    status: 'fail',
+    message: `Claude settings.json does not register ${eventName} hook ${hookId}`,
   };
 }
 

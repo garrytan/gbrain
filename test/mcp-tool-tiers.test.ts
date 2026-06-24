@@ -31,6 +31,12 @@ describe('tiered tool catalog (C1 part 2)', () => {
       'upsert_memory_realm',
       'run_dream_cycle_maintenance',
       'request_raw_source_chunks',
+      'register_source',
+      'list_sources',
+      'get_source',
+      'list_source_items',
+      'capture_agent_session_memory',
+      'plan_agent_session_activation',
     ]) {
       const op = byName.get(name);
       if (op) expect(effectiveToolTier(op)).toBe('admin');

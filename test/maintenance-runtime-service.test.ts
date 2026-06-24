@@ -489,6 +489,41 @@ describe('maintenance runtime service', () => {
     ]);
   });
 
+  test('expired active lock is swept before the full timeout blocks idempotency', async () => {
+    const harness = createHarness();
+    const submitted = await harness.service.enqueueJob({
+      name: 'autopilot_cycle',
+      queue: 'maintenance',
+      idempotency_key: 'autopilot-cycle:2026-05-20T12:00Z',
+      max_attempts: 1,
+      timeout_ms: 60_000,
+    });
+    await harness.service.claimNextJob({
+      queue: 'maintenance',
+      worker_id: 'worker:crashed',
+      lease_ms: 1_000,
+    });
+
+    harness.advance(1_001);
+    const swept = await harness.service.sweepTimedOutJobs();
+
+    expect(swept).toEqual([
+      expect.objectContaining({
+        id: submitted.job.id,
+        status: 'dead',
+        attempts_finished: 1,
+        failure_class: 'lock_timeout',
+      }),
+    ]);
+    const replacement = await harness.service.enqueueJob({
+      name: 'autopilot_cycle',
+      queue: 'maintenance',
+      idempotency_key: 'autopilot-cycle:2026-05-20T12:00Z',
+      max_attempts: 1,
+    });
+    expect(replacement.status).toBe('enqueued');
+  });
+
   test('foreground pressure pauses job claiming', async () => {
     const harness = createHarness({
       foregroundPressure: () => ({ active: true, reason: 'active_mcp_write' }),

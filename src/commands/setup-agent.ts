@@ -130,6 +130,7 @@ export async function runSetupAgent(args: string[]) {
               mcp_scope: claudeMcpScope,
               claude_stop_hook_content: readOptionalFile(join(client.configDir, 'scripts', 'hooks', 'stop-mbrain-check.sh')),
               claude_prompt_hook_content: readOptionalFile(join(client.configDir, 'scripts', 'hooks', 'prompt-mbrain-context.sh')),
+              claude_sessionstart_hook_content: readOptionalFile(join(client.configDir, 'scripts', 'hooks', 'sessionstart-mbrain-activation.sh')),
               claude_relevance_lib_content: readOptionalFile(join(client.configDir, 'scripts', 'hooks', 'lib', 'mbrain-relevance.sh')),
               claude_skip_dirs_content: readOptionalFile(join(client.configDir, 'mbrain-skip-dirs')),
               claude_settings_content: readOptionalFile(join(client.configDir, 'settings.json')),
@@ -139,6 +140,7 @@ export async function runSetupAgent(args: string[]) {
       })),
       expected_claude_stop_hook: CLAUDE_MBRAIN_STOP_HOOK,
       expected_claude_prompt_hook: CLAUDE_MBRAIN_PROMPT_HOOK,
+      expected_claude_sessionstart_hook: CLAUDE_MBRAIN_SESSIONSTART_HOOK,
       expected_claude_relevance_lib: CLAUDE_MBRAIN_RELEVANCE_LIB,
       expected_claude_skip_dirs: CLAUDE_MBRAIN_SKIP_DIRS,
     });

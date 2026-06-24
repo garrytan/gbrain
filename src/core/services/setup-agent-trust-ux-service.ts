@@ -15,6 +15,7 @@ export const SETUP_AGENT_RULES_MARKER_END = '<!-- MBRAIN:RULES:END -->';
 const MARKER_VERSION_RE = /<!-- mbrain-agent-rules-version: ([\d.]+) -->/;
 const CLAUDE_STOP_HOOK_COMMAND = 'bash "$HOME/.claude/scripts/hooks/stop-mbrain-check.sh"';
 const CLAUDE_PROMPT_HOOK_COMMAND = 'bash "$HOME/.claude/scripts/hooks/prompt-mbrain-context.sh"';
+const CLAUDE_SESSIONSTART_HOOK_COMMAND = 'bash "$HOME/.claude/scripts/hooks/sessionstart-mbrain-activation.sh"';
 
 export interface SetupAgentPlanningClient {
   client: SetupAgentTrustClient;
@@ -25,6 +26,7 @@ export interface SetupAgentPlanningClient {
   mcp_scope?: string;
   claude_stop_hook_content?: string | null;
   claude_prompt_hook_content?: string | null;
+  claude_sessionstart_hook_content?: string | null;
   claude_relevance_lib_content?: string | null;
   claude_skip_dirs_content?: string | null;
   claude_settings_content?: string | null;
@@ -41,6 +43,7 @@ export interface SetupAgentPlanningInput {
   compatibility_alias?: boolean;
   expected_claude_stop_hook: string;
   expected_claude_prompt_hook: string;
+  expected_claude_sessionstart_hook: string;
   expected_claude_relevance_lib: string;
   expected_claude_skip_dirs: string;
 }
@@ -154,6 +157,14 @@ function planClientActions(
         status: claudePromptHookStatus(client, input),
         effects: ['reads_user_config', 'filesystem_write', 'chmod'],
         reason_codes: claudePromptHookReasonCodes(client, input),
+      }),
+      buildAction({
+        client: client.client,
+        target_kind: 'claude_sessionstart_hook',
+        target_path: join(client.config_dir, 'scripts', 'hooks', 'sessionstart-mbrain-activation.sh'),
+        status: claudeSessionStartHookStatus(client, input),
+        effects: ['reads_user_config', 'filesystem_write', 'chmod'],
+        reason_codes: claudeSessionStartHookReasonCodes(client, input),
       }),
       buildAction({
         client: client.client,
@@ -289,6 +300,30 @@ function claudePromptHookReasonCodes(
     ...managedFileReasonCodes(client.claude_prompt_hook_content ?? null, input.expected_claude_prompt_hook, 'prompt_hook'),
     ...managedFileReasonCodes(client.claude_relevance_lib_content ?? null, input.expected_claude_relevance_lib, 'prompt_hook_lib'),
     ...claudeSettingsReasonCodes(client.claude_settings_content ?? null, 'UserPromptSubmit', 'prompt:mbrain-context', CLAUDE_PROMPT_HOOK_COMMAND, 'claude_prompt_hook'),
+  ];
+  return [...new Set(reasons)];
+}
+
+function claudeSessionStartHookStatus(
+  client: SetupAgentPlanningClient,
+  input: SetupAgentPlanningInput,
+): SetupAgentActionStatus {
+  const hook = managedFileStatus(client.claude_sessionstart_hook_content ?? null, input.expected_claude_sessionstart_hook);
+  const lib = managedFileStatus(client.claude_relevance_lib_content ?? null, input.expected_claude_relevance_lib);
+  const settings = claudeSettingsStatus(client.claude_settings_content ?? null, 'SessionStart', 'sessionstart:mbrain-activation', CLAUDE_SESSIONSTART_HOOK_COMMAND);
+  if (hook === 'create' || lib === 'create' || settings === 'create') return 'create';
+  if (hook === 'update' || lib === 'update' || settings === 'update') return 'update';
+  return 'already_current';
+}
+
+function claudeSessionStartHookReasonCodes(
+  client: SetupAgentPlanningClient,
+  input: SetupAgentPlanningInput,
+): string[] {
+  const reasons = [
+    ...managedFileReasonCodes(client.claude_sessionstart_hook_content ?? null, input.expected_claude_sessionstart_hook, 'sessionstart_hook'),
+    ...managedFileReasonCodes(client.claude_relevance_lib_content ?? null, input.expected_claude_relevance_lib, 'sessionstart_hook_lib'),
+    ...claudeSettingsReasonCodes(client.claude_settings_content ?? null, 'SessionStart', 'sessionstart:mbrain-activation', CLAUDE_SESSIONSTART_HOOK_COMMAND, 'claude_sessionstart_hook'),
   ];
   return [...new Set(reasons)];
 }

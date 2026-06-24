@@ -14,6 +14,8 @@ import type { RetrieveContextDependencies } from '../src/core/services/retrieve-
 import { retrieveContext } from '../src/core/services/retrieve-context-service.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import type { MBrainConfig } from '../src/core/config.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import type { SearchOpts, SearchResult } from '../src/core/types.ts';
 
 /**
  * Production-path recall harness (Workstream A2).
@@ -87,6 +89,19 @@ function useUnavailableEmbedder() {
       throw new Error('embedding provider unavailable');
     },
   });
+}
+
+function searchResult(slug: string, score: number): SearchResult {
+  return {
+    slug,
+    page_id: score,
+    title: slug,
+    type: 'concept',
+    chunk_text: slug,
+    chunk_source: 'compiled_truth',
+    score,
+    stale: false,
+  };
 }
 
 interface FixturePage {
@@ -225,6 +240,90 @@ describe('production-path retrieval recall harness', () => {
         expect(hybridNoProvider).toContain(testCase.goldSlug);
       }
     });
+  });
+
+  test('hybridProbeSearch falls back to the exact keyword call when embeddings are unavailable', async () => {
+    useUnavailableEmbedder();
+    const keywordResults = [
+      searchResult('concepts/direct-first', 1),
+      searchResult('concepts/direct-second', 0.5),
+    ];
+    const calls: Array<{ query: string; options?: SearchOpts }> = [];
+    let vectorCalls = 0;
+    const engine = {
+      searchKeyword: async (query: string, options?: SearchOpts) => {
+        calls.push({ query, options });
+        return keywordResults;
+      },
+      searchVector: async () => {
+        vectorCalls += 1;
+        return [];
+      },
+    } as unknown as BrainEngine;
+
+    const results = await hybridProbeSearch(engine, { query_rewrite_provider: 'heuristic' } as MBrainConfig, 'galaxy', { limit: 7 });
+
+    expect(results).toBe(keywordResults);
+    expect(calls).toEqual([{ query: 'galaxy', options: { limit: 7 } }]);
+    expect(vectorCalls).toBe(0);
+  });
+
+  test('retrieveContext threads governed broad-synthesis search into orientation', async () => {
+    const mapEntry = {
+      id: 'context-map:workspace:default',
+      scope_id: 'workspace:default',
+      kind: 'workspace',
+      title: 'Workspace',
+      status: 'ready',
+      generated_at: '2026-06-22T00:00:00.000Z',
+      node_count: 0,
+      edge_count: 0,
+      graph_json: { nodes: [], edges: [] },
+      source_refs: [],
+      metadata: {},
+    };
+    const semanticPage = {
+      slug: 'concepts/semantic-target',
+      title: 'Semantic Target',
+      type: 'concept',
+      compiled_truth: 'Compiled truth exists.',
+      timeline: '',
+      frontmatter: {},
+      content_hash: 'hash',
+      updated_at: '2026-06-22T00:00:00.000Z',
+    };
+    const engine = {
+      listContextMapEntries: async () => [mapEntry],
+      getContextMapEntry: async () => mapEntry,
+      listNoteManifestEntries: async (input: { slug?: string }) => (
+        input.slug === semanticPage.slug
+          ? [{
+            scope_id: 'workspace:default',
+            slug: semanticPage.slug,
+            path: 'concepts/semantic-target.md',
+            title: semanticPage.title,
+          }]
+          : []
+      ),
+      listNoteSectionEntries: async () => [],
+      listMemoryCandidateEntries: async () => [],
+      getPage: async (slug: string) => (slug === semanticPage.slug ? semanticPage : null),
+      searchKeyword: async () => [],
+    } as unknown as BrainEngine;
+
+    const result = await retrieveContext(engine, {
+      query: 'semantic target',
+      include_orientation: true,
+      limit: 5,
+      persist_trace: false,
+    }, {
+      candidateSearch: async () => [],
+      broadSynthesisCandidateSearch: async (_query: string, options: SearchOpts) => (
+        options.type === 'concept' ? [searchResult(semanticPage.slug, 1)] : []
+      ),
+    } as unknown as RetrieveContextDependencies);
+
+    expect(result.orientation.recommended_reads.map((read) => read.slug)).toContain(semanticPage.slug);
   });
 
   test('retrieve_context operation honors the governed_probe_hybrid config flag end-to-end', async () => {

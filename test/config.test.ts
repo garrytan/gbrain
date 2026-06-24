@@ -104,6 +104,19 @@ describe('config loading', () => {
       query_rewrite_provider: 'heuristic',
     });
   });
+
+  test('loads governed probe hybrid flag from the documented nested retrieval config', async () => {
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: '~/.mbrain/brain.db',
+      retrieval: {
+        governed_probe_hybrid: true,
+      },
+    });
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    expect(loadConfig()?.retrieval_governed_probe_hybrid).toBe(true);
+  });
 });
 
 describe('redactUrl', () => {

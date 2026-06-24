@@ -34,7 +34,7 @@ import { hybridSearchWithMeta } from './search/hybrid.ts';
 import { rankSearchResults, sourceRankCandidateLimit } from './search/source-ranking.ts';
 import { getAtlasOrientationBundle } from './services/atlas-orientation-bundle-service.ts';
 import { getAtlasOrientationCard } from './services/atlas-orientation-card-service.ts';
-import { getBroadSynthesisRoute } from './services/broad-synthesis-route-service.ts';
+import { getBroadSynthesisRoute, type BroadSynthesisRouteDependencies } from './services/broad-synthesis-route-service.ts';
 import {
   extractCodeClaimsFromTrace,
   parseCodeClaimVerificationEntry,
@@ -79,7 +79,7 @@ import { getPrecisionLookupRoute } from './services/precision-lookup-route-servi
 import { runProofAgentMemory } from './services/proof-agent-service.ts';
 import { readContext } from './services/read-context-service.ts';
 import { planRetrievalRequest } from './services/retrieval-request-planner-service.ts';
-import { selectRetrievalRoute } from './services/retrieval-route-selector-service.ts';
+import { selectRetrievalRoute, type RetrievalRouteSelectorDependencies } from './services/retrieval-route-selector-service.ts';
 import { retrieveContext, type RetrieveContextDependencies } from './services/retrieve-context-service.ts';
 import { planScenarioMemoryRequest } from './services/scenario-memory-request-planner-service.ts';
 import { evaluateScopeGate } from './services/scope-gate-service.ts';
@@ -3906,15 +3906,22 @@ const delete_profile_memory_entry: Operation = {
     }
     assertPersonalScopeId(entry.scope_id);
     if (ctx.dryRun) return { dry_run: true, action: 'delete_profile_memory_entry', id, scope_id: entry.scope_id };
-    await recordMemoryMutationEvent(ctx.engine, {
-      ...personalMemoryDeleteAudit('delete_profile_memory_entry', entry.scope_id, entry.source_refs ?? []),
-      operation: 'delete_profile_memory_entry',
-      target_kind: 'profile_memory',
-      target_id: id,
-      result: 'applied',
-      dry_run: false,
+    await ctx.engine.transaction(async (tx) => {
+      const transactionalEntry = await tx.getProfileMemoryEntry(id);
+      if (!transactionalEntry) {
+        throw new OperationError('invalid_params', `profile-memory entry not found: ${id}`);
+      }
+      assertPersonalScopeId(transactionalEntry.scope_id);
+      await tx.deleteProfileMemoryEntry(id);
+      await recordMemoryMutationEvent(tx, {
+        ...personalMemoryDeleteAudit('delete_profile_memory_entry', transactionalEntry.scope_id, transactionalEntry.source_refs ?? []),
+        operation: 'delete_profile_memory_entry',
+        target_kind: 'profile_memory',
+        target_id: id,
+        result: 'applied',
+        dry_run: false,
+      });
     });
-    await ctx.engine.deleteProfileMemoryEntry(id);
     return { status: 'deleted', id };
   },
   cliHints: { name: 'profile-memory-delete', positional: ['id'] },
@@ -4035,15 +4042,22 @@ const delete_personal_episode_entry: Operation = {
     }
     assertPersonalScopeId(entry.scope_id);
     if (ctx.dryRun) return { dry_run: true, action: 'delete_personal_episode_entry', id, scope_id: entry.scope_id };
-    await recordMemoryMutationEvent(ctx.engine, {
-      ...personalMemoryDeleteAudit('delete_personal_episode_entry', entry.scope_id, entry.source_refs ?? []),
-      operation: 'delete_personal_episode_entry',
-      target_kind: 'personal_episode',
-      target_id: id,
-      result: 'applied',
-      dry_run: false,
+    await ctx.engine.transaction(async (tx) => {
+      const transactionalEntry = await tx.getPersonalEpisodeEntry(id);
+      if (!transactionalEntry) {
+        throw new OperationError('invalid_params', `personal-episode entry not found: ${id}`);
+      }
+      assertPersonalScopeId(transactionalEntry.scope_id);
+      await tx.deletePersonalEpisodeEntry(id);
+      await recordMemoryMutationEvent(tx, {
+        ...personalMemoryDeleteAudit('delete_personal_episode_entry', transactionalEntry.scope_id, transactionalEntry.source_refs ?? []),
+        operation: 'delete_personal_episode_entry',
+        target_kind: 'personal_episode',
+        target_id: id,
+        result: 'applied',
+        dry_run: false,
+      });
     });
-    await ctx.engine.deletePersonalEpisodeEntry(id);
     return { status: 'deleted', id };
   },
   cliHints: { name: 'personal-episode-delete', positional: ['id'] },
@@ -5219,12 +5233,7 @@ const get_broad_synthesis_route: Operation = {
       kind: p.kind as string | undefined,
       query: String(p.query),
       limit: typeof p.limit === 'number' ? p.limit : undefined,
-    }, governedProbeHybridEnabled(ctx.config)
-      ? {
-        candidateSearch: (query, options) =>
-          hybridProbeSearch(ctx.engine, ctx.config, query, { type: options.type, limit: options.limit }),
-      }
-      : {});
+    }, governedProbeBroadSynthesisDependencies(ctx));
   },
   cliHints: { name: 'broad-synthesis-route', aliases: { n: 'limit' } },
 };
@@ -5299,6 +5308,8 @@ const get_mixed_scope_bridge: Operation = {
       profile_type: typeof p.profile_type === 'string' ? p.profile_type as any : undefined,
       episode_title: typeof p.episode_title === 'string' ? p.episode_title : undefined,
       episode_source_kind: typeof p.episode_source_kind === 'string' ? p.episode_source_kind as any : undefined,
+    }, {
+      broadSynthesis: governedProbeBroadSynthesisDependencies(ctx),
     });
   },
   cliHints: { name: 'mixed-scope-bridge' },
@@ -5594,7 +5605,7 @@ const select_retrieval_route: Operation = {
       profile_type: typeof p.profile_type === 'string' ? p.profile_type as any : undefined,
       episode_title: typeof p.episode_title === 'string' ? p.episode_title : undefined,
       episode_source_kind: typeof p.episode_source_kind === 'string' ? p.episode_source_kind as any : undefined,
-    });
+    }, governedProbeRetrievalRouteDependencies(ctx));
   },
   cliHints: { name: 'retrieval-route' },
 };
@@ -5665,10 +5676,25 @@ const plan_retrieval_request: Operation = {
 // `query` op's recall. Returns no override (keyword-only default) when disabled or absent.
 function governedProbeRetrieveDependencies(ctx: OperationContext): RetrieveContextDependencies {
   if (!governedProbeHybridEnabled(ctx.config)) return {};
+  const broadSynthesis = governedProbeBroadSynthesisDependencies(ctx);
   return {
     candidateSearch: (query, options) =>
       hybridProbeSearch(ctx.engine, ctx.config, query, { limit: options.limit }),
+    broadSynthesisCandidateSearch: broadSynthesis.candidateSearch,
   };
+}
+
+function governedProbeBroadSynthesisDependencies(ctx: OperationContext): BroadSynthesisRouteDependencies {
+  if (!governedProbeHybridEnabled(ctx.config)) return {};
+  return {
+    candidateSearch: (query, options) =>
+      hybridProbeSearch(ctx.engine, ctx.config, query, { type: options.type, limit: options.limit }),
+  };
+}
+
+function governedProbeRetrievalRouteDependencies(ctx: OperationContext): RetrievalRouteSelectorDependencies {
+  const broadSynthesis = governedProbeBroadSynthesisDependencies(ctx);
+  return Object.keys(broadSynthesis).length > 0 ? { broadSynthesis } : {};
 }
 
 const retrieve_context: Operation = {

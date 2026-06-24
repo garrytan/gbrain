@@ -113,4 +113,30 @@ describe('personal memory write/delete governance (B3)', () => {
       result: 'applied',
     });
   });
+
+  test('delete_profile_memory_entry does not record applied ledger when the delete fails', async () => {
+    const events: unknown[] = [];
+    const failingEngine = {
+      transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(failingEngine),
+      getProfileMemoryEntry: async () => ({
+        id: 'personal-profile-fails-delete',
+        scope_id: 'personal:default',
+        source_refs: ['system seed'],
+      }),
+      createMemoryMutationEvent: async (event: unknown) => {
+        events.push(event);
+        return event;
+      },
+      deleteProfileMemoryEntry: async () => {
+        throw new Error('delete failed');
+      },
+    };
+
+    await expect(op('delete_profile_memory_entry').handler(
+      { engine: failingEngine as any, config: {} as any, logger: console, dryRun: false },
+      { id: 'personal-profile-fails-delete' },
+    )).rejects.toThrow('delete failed');
+
+    expect(events).toEqual([]);
+  });
 });

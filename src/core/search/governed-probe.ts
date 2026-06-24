@@ -1,4 +1,5 @@
 import type { MBrainConfig } from '../config.ts';
+import { getEmbeddingProvider } from '../embedding.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { SearchOpts, SearchResult } from '../types.ts';
 import { expandQuery } from './expansion.ts';
@@ -32,6 +33,10 @@ export function hybridProbeSearch(
   query: string,
   opts: SearchOpts,
 ): Promise<SearchResult[]> {
+  if (!getEmbeddingProvider({ config }).capability.available) {
+    return engine.searchKeyword(query, opts);
+  }
+
   return hybridSearch(engine, query, {
     ...opts,
     expansion: true,

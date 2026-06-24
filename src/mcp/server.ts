@@ -307,6 +307,7 @@ export function prepareMcpToolParams(
   if (
     toolName === 'put_page'
     && prepared.expected_content_hash === undefined
+    && !hasMcpMemorySessionId(prepared)
   ) {
     prepared.expected_content_hash = null;
   }
@@ -318,6 +319,10 @@ export function prepareMcpToolParams(
     prepared.defer_derived = true;
   }
   return prepared;
+}
+
+function hasMcpMemorySessionId(params: Record<string, unknown>): boolean {
+  return typeof params.memory_session_id === 'string' && params.memory_session_id.trim().length > 0;
 }
 
 function parseConfiguredMcpGetPageCharLimit(): number {

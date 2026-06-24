@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { OperationError, operations, operationsByName, type OperationContext } from '../src/core/operations.ts';
-import { assertMcpPutPagePrecondition } from '../src/mcp/server.ts';
+import { assertMcpPutPagePrecondition, prepareMcpToolParams } from '../src/mcp/server.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 // Workstream D1: the MCP put_page surface requires observing the target (expected_content_hash
@@ -54,6 +54,17 @@ describe('put_page MCP precondition surface (D1)', () => {
     expect(admin?.tier).toBe('admin');
     expect(admin?.cliHints?.hidden).toBe(true);
     expect(admin?.handler).toBe(operationsByName.put_page?.handler);
+  });
+
+  test('MCP parameter preparation does not turn routed writes into null-CAS creates', () => {
+    expect(prepareMcpToolParams('put_page', { slug: SLUG, content: CONTENT })).toMatchObject({
+      expected_content_hash: null,
+    });
+    expect(prepareMcpToolParams('put_page', {
+      slug: SLUG,
+      content: CONTENT,
+      memory_session_id: 'session:1',
+    })).not.toHaveProperty('expected_content_hash');
   });
 });
 

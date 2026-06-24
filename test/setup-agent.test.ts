@@ -386,7 +386,10 @@ describe('setup-agent', () => {
     // The proactive-recall hook script is installed and executable.
     const sessionStartScript = join(tempHome, '.claude', 'scripts', 'hooks', 'sessionstart-mbrain-activation.sh');
     expect(existsSync(sessionStartScript)).toBe(true);
-    expect(readFileSync(sessionStartScript, 'utf-8')).toContain('agent-session-activate');
+    const sessionStartContent = readFileSync(sessionStartScript, 'utf-8');
+    expect(sessionStartContent).toContain('agent-session-activate');
+    expect(sessionStartContent).toContain('MBRAIN_SESSIONSTART_SCOPE:-work');
+    expect(sessionStartContent).toContain('--scope "$SCOPE"');
   });
 
   test('setup-agent leaves a malformed settings.json untouched and warns instead of overwriting', async () => {

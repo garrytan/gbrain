@@ -23,6 +23,29 @@ export const CORE_TOOLS = new Set<string>([
   'tool_search',
 ]);
 
+const ADMIN_TOOL_NAMES = new Set<string>([
+  'capture_agent_session_memory',
+  'evaluate_raw_access',
+  'get_source',
+  'ingest_connector_item',
+  'list_source_items',
+  'list_sources',
+  'pause_source_processing',
+  'plan_agent_session_activation',
+  'preview_agent_session_memory',
+  'preview_raw_canonical_document',
+  'preview_raw_ingest',
+  'preview_source_registration',
+  'record_connector_failure',
+  'record_connector_item_deletion',
+  'record_connector_sync_success',
+  'register_connector_source',
+  'register_source',
+  'request_raw_source_chunks',
+  'resolve_source_policy',
+  'revoke_source_consent',
+]);
+
 /**
  * Control-plane / governance / source-registry / maintenance families. These are hidden from
  * the default stdio catalog (they bury the daily-driver tools and are higher-risk to call
@@ -67,6 +90,7 @@ function isAdminToolName(name: string): boolean {
 export function effectiveToolTier(op: Operation): ToolTier {
   if (op.tier) return op.tier;
   if (CORE_TOOLS.has(op.name)) return 'core';
+  if (ADMIN_TOOL_NAMES.has(op.name)) return 'admin';
   if (isAdminToolName(op.name)) return 'admin';
   return 'extended';
 }

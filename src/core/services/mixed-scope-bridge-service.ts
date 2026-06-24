@@ -6,14 +6,19 @@ import type {
   PersonalProfileLookupRoute,
   ScopeGateDecisionResult,
 } from '../types.ts';
-import { getBroadSynthesisRoute } from './broad-synthesis-route-service.ts';
+import { getBroadSynthesisRoute, type BroadSynthesisRouteDependencies } from './broad-synthesis-route-service.ts';
 import { getPersonalEpisodeLookupRoute } from './personal-episode-lookup-route-service.ts';
 import { getPersonalProfileLookupRoute } from './personal-profile-lookup-route-service.ts';
 import { evaluateScopeGate } from './scope-gate-service.ts';
 
+export interface MixedScopeBridgeDependencies {
+  broadSynthesis?: BroadSynthesisRouteDependencies;
+}
+
 export async function getMixedScopeBridge(
   engine: BrainEngine,
   input: MixedScopeBridgeInput,
+  dependencies: MixedScopeBridgeDependencies = {},
 ): Promise<MixedScopeBridgeResult> {
   const scopeGate = await evaluateScopeGate(engine, {
     intent: 'mixed_scope_bridge',
@@ -32,7 +37,7 @@ export async function getMixedScopeBridge(
     kind: input.kind,
     query: input.query,
     limit: input.limit,
-  });
+  }, dependencies.broadSynthesis);
   const personalResult = await resolvePersonalRoute(engine, input);
 
   const candidateCount = Number(workResult.route !== null) + Number(personalResult.route !== null);

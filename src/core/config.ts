@@ -44,6 +44,9 @@ export interface MBrainConfigInput {
   storage?: StorageConfig;
   autopilot?: Record<string, unknown>;
   auto_promote?: Record<string, unknown>;
+  retrieval?: {
+    governed_probe_hybrid?: boolean;
+  };
   retrieval_governed_probe_hybrid?: boolean;
 }
 
@@ -128,7 +131,9 @@ export function resolveConfig(input: MBrainConfigInput): MBrainConfig {
     // with the lower-authority `query` op. Default off: the keyword-only probe is the
     // documented baseline, so offline / no-provider installs stay byte-for-byte
     // unchanged (Invariant 8). Flip on once the recall eval gate is green in the field.
-    retrieval_governed_probe_hybrid: input.retrieval_governed_probe_hybrid ?? false,
+    retrieval_governed_probe_hybrid: input.retrieval_governed_probe_hybrid
+      ?? input.retrieval?.governed_probe_hybrid
+      ?? false,
   };
 
   validateResolvedConfig(resolved);

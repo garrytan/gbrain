@@ -15,6 +15,7 @@ export type SetupAgentTargetKind =
   | 'prompt_rules'
   | 'claude_stop_hook'
   | 'claude_prompt_hook'
+  | 'claude_sessionstart_hook'
   | 'skip_dirs'
   | 'legacy_hook_cleanup';
 

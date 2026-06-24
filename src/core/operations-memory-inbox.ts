@@ -2537,13 +2537,12 @@ export function createMemoryInboxOperations(
         });
         // Promotion only flips the candidate's status — it does NOT write retrievable
         // markdown. Surface that explicitly so a governed candidate lifecycle does not
-        // silently end with nothing in the brain (use bind_and_promote, or apply a memory
-        // patch candidate, to produce the canonical page).
+        // silently end with nothing in the brain.
         return {
           ...promoted,
           canonical_write_pending: true,
           canonical_write_hint:
-            'Promotion flips status only; the candidate is not yet retrievable markdown. Use bind_and_promote (page-backed candidates) or create/review/apply a memory patch candidate to write the canonical page.',
+            'Promotion flips status only; the candidate is not yet retrievable markdown. Create, review, and apply a memory patch candidate, or route a put_page write through route_memory_writeback, to write the canonical page.',
         };
       } catch (error) {
         if (error instanceof MemoryInboxServiceError) {

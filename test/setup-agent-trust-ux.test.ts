@@ -135,6 +135,11 @@ describe('setup-agent trust UX preview and diff', () => {
         status: 'create',
         effects: expect.arrayContaining(['filesystem_write', 'chmod']),
       }),
+      expect.objectContaining({
+        target_kind: 'claude_sessionstart_hook',
+        status: 'create',
+        effects: expect.arrayContaining(['filesystem_write', 'chmod']),
+      }),
     ]));
   });
 

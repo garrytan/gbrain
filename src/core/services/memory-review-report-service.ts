@@ -50,6 +50,15 @@ export interface ReportCanonicalMemory {
   source_refs?: string[];
 }
 
+export interface ReportCoverageGap {
+  id: string;
+  title: string;
+  severity: 'low' | 'medium' | 'high';
+  count: number;
+  summary: string;
+  next_action: string;
+}
+
 export interface ReportProjectionTarget {
   id: string;
   target_type: string;
@@ -291,6 +300,7 @@ export interface MemoryReviewReportSummary {
   candidate_promoted_without_handoff: number;
   candidate_unresolved_exposed: number;
   candidate_hard_blocked_by_proposal: number;
+  coverage_gaps: number;
 }
 
 export interface ProjectionFreshnessSummary {
@@ -333,6 +343,7 @@ export interface MemoryReviewReport {
     connector_health: ReportConnectorHealth[];
     safety_states: ReportSafetyState[];
     maintenance_health: MaintenanceHealthSummary;
+    coverage_gaps: ReportCoverageGap[];
   };
   actions: MemoryReportAction[];
   auto_promote_summary?: AutoPromoteReportSummary;
@@ -368,6 +379,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
   const unhealthyConnectors = connectorHealth.filter(connectorRequiresAttention);
   const candidateDebt = input.candidate_debt ?? emptyCandidateDebtMetrics();
   const projectionFreshness = summarizeProjectionFreshness(projectionTargets);
+  const coverageGaps = buildCoverageGaps(candidateDebt, projectionFreshness);
   const safetyStates = buildReportOnlySafetyStates({
     policyDenials,
     unhealthySources,
@@ -405,6 +417,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
     candidate_promoted_without_handoff: candidateDebt.stale_promoted_without_handoff_count,
     candidate_unresolved_exposed: candidateDebt.unresolved_exposed_count,
     candidate_hard_blocked_by_proposal: candidateDebt.hard_blocked_by_proposal_count,
+    coverage_gaps: coverageGaps.length,
   };
 
   return {
@@ -434,6 +447,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
         candidate_debt: candidateDebt,
         projection_freshness: projectionFreshness,
       },
+      coverage_gaps: coverageGaps,
     },
     actions: buildReportActions({
       scopeId: input.scope_id,
@@ -480,6 +494,13 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
       lines.push(`- ${report.summary.new_canonical_memories} new, ${report.summary.updated_canonical_memories} updated`);
       for (const memory of report.sections.canonical_memories) {
         lines.push(`- ${redactSecrets(memory.summary)}`);
+      }
+    }
+
+    if (report.sections.coverage_gaps.length > 0) {
+      lines.push('', 'Coverage Gaps');
+      for (const gap of report.sections.coverage_gaps) {
+        lines.push(`- ${gap.severity}: ${gap.title} (${gap.count}) - ${redactSecrets(gap.summary)} Next: ${redactSecrets(gap.next_action)}`);
       }
     }
 
@@ -650,11 +671,56 @@ function buildReportHealth(summary: MemoryReviewReportSummary): MemoryReviewRepo
   if (summary.candidate_missing_provenance > 0) reasons.push(`${summary.candidate_missing_provenance} candidates missing provenance`);
   if (summary.candidate_promoted_without_handoff > 0) reasons.push(`${summary.candidate_promoted_without_handoff} promoted candidates without handoff`);
   if (summary.candidate_unresolved_exposed > 0) reasons.push(`${summary.candidate_unresolved_exposed} unresolved exposed candidates`);
+  if (summary.coverage_gaps > 0) reasons.push(`${summary.coverage_gaps} coverage gaps`);
 
   return {
     status: reasons.length === 0 ? 'ok' : summary.failed_jobs > 0 || summary.reconciliation_failures > 0 ? 'fail' : 'warn',
     reasons,
   };
+}
+
+function buildCoverageGaps(
+  candidateDebt: CandidateDebtMetrics,
+  projectionFreshness: ProjectionFreshnessSummary,
+): ReportCoverageGap[] {
+  const gaps: ReportCoverageGap[] = [];
+  const addGap = (gap: ReportCoverageGap) => {
+    if (gap.count > 0) gaps.push(gap);
+  };
+
+  addGap({
+    id: 'candidate_missing_provenance',
+    title: 'Candidate provenance gap',
+    severity: 'medium',
+    count: candidateDebt.missing_provenance_count,
+    summary: 'Captured candidates are visible but cannot safely promote until provenance is attached.',
+    next_action: 'Add source refs or reject candidates that cannot be attributed.',
+  });
+  addGap({
+    id: 'promoted_without_handoff',
+    title: 'Promoted without canonical page',
+    severity: 'high',
+    count: candidateDebt.stale_promoted_without_handoff_count,
+    summary: 'Promoted candidates still lack a canonical handoff or materialized page.',
+    next_action: 'Create, review, and apply patch candidates for promoted items.',
+  });
+  addGap({
+    id: 'unresolved_exposed_candidates',
+    title: 'Exposed unresolved candidates',
+    severity: 'medium',
+    count: candidateDebt.unresolved_exposed_count,
+    summary: 'Unresolved candidates remain visible to review surfaces without a final disposition.',
+    next_action: 'Promote, supersede, reject, or bind these candidates to a canonical target.',
+  });
+  addGap({
+    id: 'projection_reconciliation',
+    title: 'Projection freshness gap',
+    severity: projectionFreshness.failed_count + projectionFreshness.conflict_count > 0 ? 'high' : 'medium',
+    count: projectionFreshness.total_exception_count,
+    summary: 'Derived projections do not fully reflect the current canonical state.',
+    next_action: 'Rerun projection reconciliation and resolve conflicts before relying on the projection.',
+  });
+  return gaps;
 }
 
 function enrichConnectorHealth(connector: ReportConnectorHealth, generatedAt: string): ReportConnectorHealth {

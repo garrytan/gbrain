@@ -91,6 +91,15 @@ describe('dream CLI and autopilot integration', () => {
     });
   });
 
+  test('dream parser rejects non-ISO now input', async () => {
+    const { parseDreamArgs } = await importFreshDreamCommand();
+
+    expect(() => parseDreamArgs([
+      '--now',
+      "2026-05-21T10:00:00.000Z'; DROP TABLE memory_jobs; --",
+    ], 'cli')).toThrow('--now must be a valid ISO datetime string');
+  });
+
   test('dream permission flags are split beyond apply', async () => {
     const { parseDreamArgs } = await importFreshDreamCommand();
 

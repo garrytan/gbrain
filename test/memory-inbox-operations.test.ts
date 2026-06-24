@@ -2368,6 +2368,7 @@ test('memory inbox promotion operation promotes staged candidates and rejects bl
     // that explicit so a governed candidate lifecycle is not mistaken for "done" (D2).
     expect((promoted as any).canonical_write_pending).toBe(true);
     expect((promoted as any).canonical_write_hint).toContain('not yet retrievable');
+    expect((promoted as any).canonical_write_hint).not.toContain('bind_and_promote');
 
     const promotedEvents = await listStatusEvents.handler({
       engine,

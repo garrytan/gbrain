@@ -253,10 +253,15 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-# Use the working directory as a weak activation query; the planner returns task/working-set
-# and top profile/episode signals for the active scope. Empty/blank stays silent.
+# Use the working directory as a weak activation query; default to work scope in repos.
+# Personal/mixed activation must be requested explicitly through MBRAIN_SESSIONSTART_SCOPE.
 QUERY="resume work in \$(basename "$(pwd)")"
-PLAN="$(mbrain agent-session-activate "$QUERY" --scope mixed 2>/dev/null)"
+SCOPE="\${MBRAIN_SESSIONSTART_SCOPE:-work}"
+case "$SCOPE" in
+  work|personal|mixed) ;;
+  *) SCOPE="work" ;;
+esac
+PLAN="$(mbrain agent-session-activate "$QUERY" --scope "$SCOPE" 2>/dev/null)"
 if [ -z "$PLAN" ]; then
   log_line "skip" "no-plan"
   exit 0
