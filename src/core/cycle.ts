@@ -2031,6 +2031,7 @@ export async function runCycle(
           const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
           const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, {
             repoPath: brainDir ?? undefined,
+            dryRun,
             yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
           }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;

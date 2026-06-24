@@ -127,7 +127,7 @@ function buildPage(opts: { slug: string; body: string; sourceId?: string }): Pag
 function buildCtx(engine: BrainEngine): OperationContext {
   return {
     engine,
-    config: {} as never,
+    config: { 'takes.bootstrap_enabled': 'true' } as never,
     logger: { info() {}, warn() {}, error() {} } as never,
     dryRun: false,
     remote: false,
@@ -184,6 +184,16 @@ describe('parseExtractorOutput', () => {
       { claim_text: 'valid', kind: 'take', holder: 'brain', weight: 0.5 },
     ]);
     expect(parseExtractorOutput(raw)).toHaveLength(1);
+  });
+
+  test('normalizes tuned extractor kind labels to canonical takes kinds', () => {
+    const raw = JSON.stringify([
+      { claim_text: 'a', kind: 'prediction', holder: 'brain', weight: 0.7 },
+      { claim_text: 'b', kind: 'judgment', holder: 'brain', weight: 0.6 },
+      { claim_text: 'c', kind: 'intuition', holder: 'brain', weight: 0.4 },
+    ]);
+    const out = parseExtractorOutput(raw);
+    expect(out.map(row => row.kind)).toEqual(['bet', 'take', 'hunch']);
   });
 
   test('coerces unknown kind to "take" and clamps weight to [0,1]', () => {
@@ -331,6 +341,49 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
   });
 
+  test('takes.bootstrap_enabled absent/false skips before extractor or writes', async () => {
+    const pages = [buildPage({ slug: 'wiki/no-bootstrap', body: 'I think this should not spend.' })];
+    const { engine, captured, putPages } = buildMockEngine({ pages });
+    let extractorCalled = false;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalled = true;
+      return [{ claim_text: 'should not run', kind: 'take', holder: 'brain', weight: 0.5 }];
+    };
+    const ctx = buildCtx(engine);
+    ctx.config = {} as never;
+
+    const result = await runPhaseProposeTakes(ctx, { extractor });
+
+    expect(result.status).toBe('skipped');
+    expect((result.details as Record<string, unknown>).reason).toBe('takes_bootstrap_disabled');
+    expect(extractorCalled).toBe(false);
+    expect(captured).toHaveLength(0);
+    expect(putPages).toHaveLength(0);
+  });
+
+  test('dry-run previews eligible pages without extractor spend or writes', async () => {
+    const pages = [buildPage({ slug: 'wiki/dry-run', body: 'I bet the model bill drops after GLM routing.' })];
+    const { engine, captured, putPages } = buildMockEngine({ pages });
+    let extractorCalled = false;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalled = true;
+      return [{ claim_text: 'should not be written', kind: 'take', holder: 'brain', weight: 0.5 }];
+    };
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor, dryRun: true });
+    const details = result.details as Record<string, unknown>;
+
+    expect(result.status).toBe('ok');
+    expect(extractorCalled).toBe(false);
+    expect(details.dry_run).toBe(true);
+    expect(details.pages_scanned).toBe(1);
+    expect(details.cache_misses).toBe(1);
+    expect(details.proposals_inserted).toBe(0);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
+    expect(captured.find(c => c.sql.includes('INSERT INTO extract_rollup_7d'))).toBeUndefined();
+    expect(putPages).toHaveLength(0);
+  });
+
   test('passes existing fence rows to extractor as dedup context (F2 fix)', async () => {
     const body = `# Page
 
@@ -398,7 +451,10 @@ New prose appended here.`;
     ];
     const { engine, captured } = buildMockEngine({ pages });
     const ctx = buildCtx(engine);
-    ctx.config = { 'cycle.propose_takes.max_prompt_tokens': 100 } as never;
+    ctx.config = {
+      'takes.bootstrap_enabled': 'true',
+      'cycle.propose_takes.max_prompt_tokens': 100,
+    } as never;
     let extractorCalls = 0;
     const extractor: ProposeTakesExtractor = async () => {
       extractorCalls++;

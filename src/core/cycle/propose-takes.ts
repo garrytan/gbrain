@@ -82,8 +82,8 @@ const PROPOSE_TAKES_MAX_OUTPUT_TOKENS = 2048;
  *     (pure facts, direct quotes, restatements).
  *   - conviction inference rules anchored to specific hedging language
  *     ("I bet"/"strong conviction"=0.7-0.85, "I think"/"moderate"=0.5-0.7).
- *   - kind enum kept narrow ('prediction'|'judgment'|'bet') — the v1
- *     stub's 4-tag enum bled into noise classification.
+ *   - extractor kind labels stay narrow ('prediction'|'judgment'|'bet').
+ *     They normalize into gbrain's canonical takes enum before DB writes.
  *
  * Replaces the v0.36.1.0-stub. If you re-tune, run cat15 against the
  * fixtures before bumping PROPOSE_TAKES_PROMPT_VERSION; the train-holdout
@@ -128,6 +128,22 @@ export interface ProposedTake {
   holder: string;
   weight: number;
   domain?: string;
+}
+
+const EXTRACTOR_KIND_ALIASES: Record<string, ProposedTake['kind']> = {
+  prediction: 'bet',
+  judgment: 'take',
+  opinion: 'take',
+  intuition: 'hunch',
+};
+
+function normalizeProposedTakeKind(kind: unknown): ProposedTake['kind'] {
+  if (typeof kind !== 'string') return 'take';
+  const normalized = kind.trim().toLowerCase();
+  if (normalized === 'fact' || normalized === 'take' || normalized === 'bet' || normalized === 'hunch') {
+    return normalized;
+  }
+  return EXTRACTOR_KIND_ALIASES[normalized] ?? 'take';
 }
 
 /** Extractor function signature — injected for tests; production calls gateway. */
@@ -273,9 +289,7 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
     const r = raw as Record<string, unknown>;
     const claim_text = typeof r.claim_text === 'string' ? r.claim_text.trim() : '';
     if (!claim_text || claim_text.length > 500) continue;
-    const kind = ['fact', 'take', 'bet', 'hunch'].includes(r.kind as string)
-      ? (r.kind as ProposedTake['kind'])
-      : 'take';
+    const kind = normalizeProposedTakeKind(r.kind);
     const holder = typeof r.holder === 'string' && r.holder.length > 0 ? r.holder : 'brain';
     const weightRaw = typeof r.weight === 'number' ? r.weight : 0.5;
     const weight = Math.max(0, Math.min(1, weightRaw));
@@ -344,6 +358,18 @@ class ProposeTakesPhase extends BaseCyclePhase {
       };
     }
 
+    const bootstrapEnabled = await isTakesBootstrapEnabled(engine, ctx);
+    if (!bootstrapEnabled) {
+      return {
+        summary: 'propose_takes skipped: takes.bootstrap_enabled is false',
+        details: {
+          reason: 'takes_bootstrap_disabled',
+          enable_hint: 'gbrain config set takes.bootstrap_enabled true',
+        },
+        status: 'skipped',
+      };
+    }
+
     const result: ProposeTakesResult = {
       pages_scanned: 0,
       cache_hits: 0,
@@ -405,6 +431,14 @@ class ProposeTakesPhase extends BaseCyclePhase {
         result.warnings.push(
           `skipped ${page.slug}: prompt estimate ${estimatedInputTokens.toLocaleString()} tokens exceeds cap ${maxPromptTokens.toLocaleString()}`,
         );
+        continue;
+      }
+
+      // Dry-run previews eligibility without spending or writing. Keep the
+      // cache/oversize accounting above so the operator sees what a real run
+      // would submit, but do not call the LLM extractor or mutate proposal,
+      // receipt, or rollup tables.
+      if (opts.dryRun) {
         continue;
       }
 
@@ -500,6 +534,16 @@ class ProposeTakesPhase extends BaseCyclePhase {
         `budget exhausted after final page (${finalOverage})`,
       );
     }
+    if (opts.dryRun) {
+      return {
+        summary:
+          `propose_takes dry-run: scanned ${result.pages_scanned} pages, ` +
+          `${result.cache_hits} cached, ${result.cache_misses} would be submitted`,
+        details: { ...result, dry_run: true, proposal_run_id: proposalRunId, prompt_version: promptVersion, cost_usd: 0 },
+        status: result.budget_exhausted ? 'warn' : 'ok',
+      };
+    }
+
     if (result.proposals_inserted > 0) {
       try {
         await writeReceipt(engine, {
@@ -532,6 +576,24 @@ class ProposeTakesPhase extends BaseCyclePhase {
       details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion, cost_usd: costUsd },
       status: result.budget_exhausted ? 'warn' : 'ok',
     };
+  }
+}
+
+async function isTakesBootstrapEnabled(engine: BrainEngine, ctx: OperationContext): Promise<boolean> {
+  const fromCtx = (ctx.config as unknown as Record<string, unknown>)['takes.bootstrap_enabled'];
+  if (typeof fromCtx === 'boolean') return fromCtx;
+  if (typeof fromCtx === 'number') return fromCtx === 1;
+  if (typeof fromCtx === 'string') {
+    const v = fromCtx.trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on'].includes(v)) return true;
+    if (['0', 'false', 'no', 'off', ''].includes(v)) return false;
+  }
+  try {
+    const raw = await engine.getConfig('takes.bootstrap_enabled');
+    const v = raw?.trim().toLowerCase();
+    return v === 'true' || v === '1' || v === 'yes' || v === 'on';
+  } catch {
+    return false;
   }
 }
 

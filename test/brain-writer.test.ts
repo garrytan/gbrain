@@ -254,6 +254,23 @@ describe('scanBrainSources (PGLite)', () => {
     expect(beta.errors_by_code.NESTED_QUOTES).toBeGreaterThanOrEqual(1);
   });
 
+  test('ignores fixture slug mismatches in source-wide audits', async () => {
+    const src = join(tmp, 'repo');
+    const fixtureDir = join(src, 'test', 'fixtures', 'calibration');
+    mkdirSync(fixtureDir, { recursive: true });
+    writeFileSync(
+      join(fixtureDir, 'people-alice-example.md'),
+      `${fence}\ntype: people\ntitle: Alice\nslug: people/alice-example\n${fence}\n\nbody`,
+    );
+    await registerSource('repo', src);
+
+    const report = await scanBrainSources(engine);
+    expect(report.ok).toBe(true);
+    expect(report.total).toBe(0);
+    const repo = report.per_source.find(s => s.source_id === 'repo')!;
+    expect(repo.errors_by_code.SLUG_MISMATCH).toBeUndefined();
+  });
+
   test('respects sourceId filter', async () => {
     const srcA = join(tmp, 'a');
     const srcB = join(tmp, 'b');

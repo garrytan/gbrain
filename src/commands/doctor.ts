@@ -1837,7 +1837,7 @@ export async function checkGraphSignalsCoverage(engine: BrainEngine): Promise<Ch
       return {
         name: 'graph_signals_coverage',
         status: 'warn',
-        message: `graph_signals enabled but only ${pctStr}% of pages have inbound links (<10%). Signal will rarely fire. Fix: \`gbrain extract all\` to populate the link graph from frontmatter + markdown.`,
+        message: `graph_signals enabled but only ${pctStr}% of pages have inbound links (<10%). Signal will rarely fire. Run \`gbrain extract all\` after adding wikilinks/frontmatter links; if extraction is already current, this is a corpus-shape issue, not a stale-job issue.`,
       };
     }
 
@@ -5868,7 +5868,7 @@ export async function buildChecks(
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}% (${eligibleEntityCount} entity pages). Run: gbrain extract all`,
+        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}% (${eligibleEntityCount} entity pages). Run \`gbrain extract all\` after adding wikilinks/timeline metadata; if extraction is already current, improve the source pages rather than rerunning extraction.`,
       });
     }
 

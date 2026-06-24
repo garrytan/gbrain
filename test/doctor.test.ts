@@ -342,13 +342,14 @@ describe('doctor command', () => {
   // link-extract` / `gbrain timeline-extract`) that were removed in v0.16
   // when extraction was consolidated into `gbrain extract <links|timeline|all>`.
   // PR #376 (FUSED-ID) flagged the stale hint; PR #536 (mayazbay) replaced it
-  // with the canonical `gbrain extract all`. Pin the user-facing copy so a
-  // future edit can't silently re-regress to a stale verb.
-  test('graph_coverage hint uses canonical `gbrain extract all`, not removed verbs', async () => {
+  // with the canonical `gbrain extract all`. The hint now also says what to
+  // do when extraction is already current, so agents do not loop a no-op.
+  test('graph_coverage hint uses canonical extraction and names corpus-shape residue', async () => {
     const fs = await import('fs');
     const src = fs.readFileSync('src/commands/doctor.ts', 'utf8');
     // Canonical form (post-v0.16 single-verb consolidation).
-    expect(src).toContain('Run: gbrain extract all');
+    expect(src).toContain('gbrain extract all');
+    expect(src).toMatch(/name:\s*'graph_coverage'[\s\S]*?message:\s*`Entity link coverage[\s\S]*?if extraction is already current, improve the source pages rather than rerunning extraction\./);
     // Stale verb names removed in v0.16 must not return.
     expect(src).not.toContain('gbrain link-extract');
     expect(src).not.toContain('gbrain timeline-extract');
@@ -1232,6 +1233,7 @@ describe('v0.40.4 — graph_signals_coverage check', () => {
     expect(check.status).toBe('warn');
     expect(check.message).toContain('0.0%');
     expect(check.message).toContain('gbrain extract all');
+    expect(check.message).toContain('corpus-shape issue');
   });
 
   test('graph_signals enabled + >=30% coverage → ok with metric', async () => {

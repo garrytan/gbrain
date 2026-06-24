@@ -605,6 +605,12 @@ function scanOneSource(
     const expectedSlug = slugifyPath(relPath);
     const parsed = parseMarkdown(content, relPath, { validate: true, expectedSlug });
     const errs = (parsed.errors ?? []).filter((e) => {
+      if (e.code === 'SLUG_MISMATCH' && relPath.startsWith('test/fixtures/')) {
+        // Fixture markdown often models a brain path (`people/alice`) while
+        // living under test/fixtures. Keep direct validation strict, but do not
+        // count synthetic corpus files as source-health debt in audits/doctor.
+        return false;
+      }
       if (e.code !== 'MISSING_OPEN') return true;
       if (opts.strictMissingOpen) return true;
       ignoredMissingOpen++;
