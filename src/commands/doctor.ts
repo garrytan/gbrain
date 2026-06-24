@@ -22,6 +22,12 @@ import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
 import { categorizeCheck, type CheckCategory } from '../core/doctor-categories.ts';
+import {
+  actionTierForCheck,
+  summarizeActionTiers,
+  type DoctorActionTier,
+  type DoctorActionTierSummary,
+} from '../core/doctor-action-tiers.ts';
 import { rankIssues, type RankedIssue } from '../core/doctor-cause-rank.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
@@ -85,6 +91,12 @@ export interface Check {
    * Source of truth: `src/core/doctor-categories.ts`.
    */
   category?: CheckCategory;
+  /**
+   * Operator-facing action tier. This is intentionally separate from
+   * `status`: a warning can mean broken runtime, cleanup backlog, or a quality
+   * opportunity. See `src/core/doctor-action-tiers.ts`.
+   */
+  action_tier?: DoctorActionTier;
 }
 
 /**
@@ -131,6 +143,12 @@ export interface DoctorReport {
     ops: number;
     meta: number;
   };
+  /**
+   * v0.42.x — Sawyer-facing doctor balance. Separates broken runtime (red)
+   * from backlog/cleanup (yellow) and quality opportunities (blue/gray) so
+   * recurring doctor warnings don't collapse into an endless debugging loop.
+   */
+  action_tiers: DoctorActionTierSummary;
   checks: Check[];
   /**
    * v0.42.x (#1685 GAP C) — non-ok checks ranked by cause (root before symptom,
@@ -166,6 +184,8 @@ function _penaltyScore(checks: Check[]): number {
 export function computeDoctorReport(checks: Check[]): DoctorReport {
   const tagged = checks.map((c) =>
     c.category ? c : { ...c, category: categorizeCheck(c.name) },
+  ).map((c) =>
+    c.action_tier ? c : { ...c, action_tier: actionTierForCheck(c) },
   );
 
   const hasFail = tagged.some((c) => c.status === 'fail');
@@ -189,6 +209,7 @@ export function computeDoctorReport(checks: Check[]): DoctorReport {
       ops: _penaltyScore(ops),
       meta: _penaltyScore(meta),
     },
+    action_tiers: summarizeActionTiers(tagged),
     checks: tagged,
     top_issues: rankIssues(tagged),
   };
@@ -7587,6 +7608,13 @@ function outputResults(checks: Check[], json: boolean): boolean {
 
   console.log('\nGBrain Health Check');
   console.log('===================');
+  console.log('');
+  console.log('System status');
+  console.log('-------------');
+  console.log(`  Red runtime issues:       ${report.action_tiers.red}`);
+  console.log(`  Yellow cleanup backlog:   ${report.action_tiers.yellow}`);
+  console.log(`  Blue quality opportunity: ${report.action_tiers.blue}`);
+  console.log(`  Gray clean/informational: ${report.action_tiers.gray}`);
 
   // #1685 GAP C — cause-ranked summary so the operator reads the root cause
   // first instead of scrolling the full list. Caps at 5; clean brains skip it.
@@ -7608,7 +7636,8 @@ function outputResults(checks: Check[], json: boolean): boolean {
 
   for (const c of report.checks) {
     const icon = c.status === 'ok' ? 'OK' : c.status === 'warn' ? 'WARN' : 'FAIL';
-    console.log(`  [${icon}] ${c.name}: ${c.message}`);
+    const tier = c.action_tier ? `${c.action_tier.toUpperCase()} ` : '';
+    console.log(`  [${tier}${icon}] ${c.name}: ${c.message}`);
     if (c.issues) {
       for (const issue of c.issues) {
         console.log(`    → ${issue.type.toUpperCase()}: ${issue.skill}`);

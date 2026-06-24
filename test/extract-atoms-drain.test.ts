@@ -135,4 +135,8 @@ describe('shared wiring helper holds the cycle lock (5A)', () => {
     expect(src).toContain('withRefreshingLock(engine, lockId');
     expect(src).toContain('opts.extractionSourceId ?? opts.sourceId ??');
   });
+
+  it('runExtractAtomsDrainForSource suppresses transcript discovery for page-backlog drains', () => {
+    expect(src).toContain('_transcripts: []');
+  });
 });

@@ -163,6 +163,10 @@ export async function runExtractAtomsDrainForSource(
           sourceId: extractionSourceId,
           dryRun: false,
           brainDir: opts.brainDir,
+          // Drain mode is advertised by doctor as a DB-page backlog fix.
+          // Suppress transcript discovery so the window cannot be spent on
+          // filesystem transcripts while page backlog stays unchanged.
+          _transcripts: [],
           deadlineMs,
         });
         const d = (r.details ?? {}) as Record<string, unknown>;
