@@ -1323,8 +1323,13 @@ export class PostgresEngine implements BrainEngine {
              WHEN jsonb_typeof(config) = 'array'
                THEN COALESCE(
                  (SELECT jsonb_object_agg(kv.key, kv.value)
-                    FROM jsonb_array_elements(config) elem,
-                         jsonb_each(elem) kv),
+                    FROM jsonb_array_elements(config) elem
+                    CROSS JOIN LATERAL jsonb_each(
+                      CASE
+                        WHEN jsonb_typeof(elem) = 'object' THEN elem
+                        ELSE '{}'::jsonb
+                      END
+                    ) kv),
                  '{}'::jsonb
                )
              ELSE '{}'::jsonb

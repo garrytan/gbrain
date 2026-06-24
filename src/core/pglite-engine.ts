@@ -1295,7 +1295,30 @@ export class PGLiteEngine implements BrainEngine {
     // `JSON.stringify(patch)` as the param; cast to jsonb on the SQL side.
     const result = await this.db.query<{ id: string }>(
       `UPDATE sources
-          SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb
+          SET config =
+            CASE
+              WHEN config IS NULL THEN '{}'::jsonb
+              WHEN jsonb_typeof(config) = 'object' THEN config
+              WHEN jsonb_typeof(config) = 'string'
+                THEN CASE
+                  WHEN (config #>> '{}') IS JSON
+                    THEN COALESCE(NULLIF((config #>> '{}'), '')::jsonb, '{}'::jsonb)
+                  ELSE '{}'::jsonb
+                END
+              WHEN jsonb_typeof(config) = 'array'
+                THEN COALESCE(
+                  (SELECT jsonb_object_agg(kv.key, kv.value)
+                     FROM jsonb_array_elements(config) elem
+                     CROSS JOIN LATERAL jsonb_each(
+                       CASE
+                         WHEN jsonb_typeof(elem) = 'object' THEN elem
+                         ELSE '{}'::jsonb
+                       END
+                     ) kv),
+                  '{}'::jsonb
+                )
+              ELSE '{}'::jsonb
+            END || $1::jsonb
         WHERE id = $2
         RETURNING id`,
       [JSON.stringify(patch), sourceId],
