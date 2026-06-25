@@ -1204,17 +1204,20 @@ describe('PR #356 — 57014 catch path emits actionable 4-part diagnostic', () =
   });
 });
 
-describe('PR #356 — apply-migrations pre-flight schema-version warning', () => {
-  test('source contains the pre-flight check branch before plan execution', () => {
+describe('PR #356 / #1530 — apply-migrations schema pre-flight', () => {
+  test('source runs schema migrations when stale instead of only warning', () => {
     // Structural check: the pre-flight block compares the engine's
-    // reported schema version against LATEST_VERSION and warns if
-    // behind. If someone removes this branch, users who run
-    // apply-migrations expecting it to handle schema migrations get
-    // the silent-gaslight experience from the field report.
+    // reported schema version against LATEST_VERSION and, for non-dry-run
+    // Postgres installs, calls runMigrations before reporting the
+    // orchestrator plan. This prevents the field bug where
+    // `apply-migrations --yes` printed both "schema behind" and
+    // "All migrations up to date" without landing core schema migrations.
     const source = readFileSync(resolve('src/commands/apply-migrations.ts'), 'utf-8');
     expect(source).toContain('LATEST_VERSION');
-    expect(source).toContain('Schema version');
-    expect(source).toContain('is behind latest');
+    expect(source).toContain('runMigrations');
+    expect(source).toContain('Running schema migrations now');
+    expect(source).toContain('Schema migrations applied; orchestrator migrations up to date.');
+    expect(source).toContain('Would run schema migrations');
   });
 });
 
