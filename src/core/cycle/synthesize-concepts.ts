@@ -179,6 +179,10 @@ export async function runPhaseSynthesizeConcepts(
         try {
           const result = await chat({
             system: SYNTH_PROMPT,
+            // SYNTH_PROMPT is a constant — identical across every call in a
+            // cycle — so let Anthropic prompt-cache it (ignored by providers
+            // without cache support).
+            cacheSystem: true,
             messages: [
               {
                 role: 'user',

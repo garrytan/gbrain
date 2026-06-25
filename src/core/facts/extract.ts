@@ -169,6 +169,11 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
     result = await chat({
       model: input.model ?? defaultModel,
       system: EXTRACTOR_SYSTEM,
+      // EXTRACTOR_SYSTEM is a constant — identical across every fact-extraction
+      // call — so let Anthropic prompt-cache it. On bulk paths (conversation-facts
+      // backfills, dream-cycle extract_facts) the repeated system prompt is a
+      // meaningful share of input cost. Ignored by providers without cache support.
+      cacheSystem: true,
       messages: [
         {
           role: 'user',
