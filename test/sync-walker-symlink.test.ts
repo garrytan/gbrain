@@ -91,14 +91,15 @@ describe('collectSyncableFiles symlink + cycle hardening', () => {
       writeFileSync(join(tmp, 'README.md'), '# r\n');
       writeFileSync(join(tmp, 'foo.ts'), '// f\n');
       writeFileSync(join(tmp, 'bar.py'), '# b\n');
+      writeFileSync(join(tmp, 'page.astro'), '---\nconst title = "x";\n---\n<h1>{title}</h1>\n');
 
       const code = collectSyncableFiles(tmp, { strategy: 'code' });
       const markdown = collectSyncableFiles(tmp, { strategy: 'markdown' });
       const auto = collectSyncableFiles(tmp, { strategy: 'auto' });
 
-      expect(code.map(f => f.split('/').pop()).sort()).toEqual(['bar.py', 'foo.ts']);
+      expect(code.map(f => f.split('/').pop()).sort()).toEqual(['bar.py', 'foo.ts', 'page.astro']);
       expect(markdown.map(f => f.split('/').pop())).toEqual(['README.md']);
-      expect(auto.map(f => f.split('/').pop()).sort()).toEqual(['README.md', 'bar.py', 'foo.ts']);
+      expect(auto.map(f => f.split('/').pop()).sort()).toEqual(['README.md', 'bar.py', 'foo.ts', 'page.astro']);
     });
   });
 

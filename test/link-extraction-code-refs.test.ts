@@ -43,7 +43,7 @@ describe('extractCodeRefs — basic patterns', () => {
       'cpp', 'cc', 'hpp', 'c', 'h',
       'php', 'swift', 'kt', 'scala', 'lua',
       'ex', 'exs', 'elm', 'ml', 'dart', 'zig', 'sol',
-      'sh', 'bash', 'css', 'html', 'vue',
+      'sh', 'bash', 'css', 'html', 'vue', 'astro',
       'json', 'yaml', 'yml', 'toml',
     ];
     for (const ext of exts) {
