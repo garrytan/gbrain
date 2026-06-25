@@ -5061,20 +5061,42 @@ export class PostgresEngine implements BrainEngine {
       logPoolRecovery(isReap ? 'reap_detected' : 'reconnect_other', ctx?.error);
     } catch { /* audit is best-effort */ }
 
+    // Instance pool: BUILD-THEN-SWAP. Snapshot the live pool, build a fresh one,
+    // and only tear the old one down once the new one is proven live. The naive
+    // disconnect()-then-connect() ordering nulls `_sql` BEFORE the rebuild, so a
+    // connect() failure during a transient blip leaves `_sql === null` for the
+    // rest of the process. A dead `_sql` falls through to the module-singleton
+    // accessor — which the autopilot process never connected — so every
+    // subsequent non-retry-wrapped call (getConfig, per-phase reads) throws
+    // "No database connection: connect() has not been called" and crashes the
+    // worker into a respawn loop (#1593 root-cause). Holding the old pool until
+    // the new one validates keeps the engine usable; postgres.js pools self-heal
+    // on the next query once Postgres is back, and batchRetry's backoff retries.
+    const oldSql = this._sql;
+    const oldManager = this.connectionManager;
     try {
-      // Instance pool: tear down old pool (best-effort — it may already be dead).
-      try { await this.disconnect(); } catch { /* swallow */ }
+      this._sql = null; // force connect() to build a fresh pool, not reuse
+      // connect() validates the new pool via `SELECT 1` before returning.
       await this.connect(this._savedConfig);
+      // New pool is live — discard the old one best-effort.
+      if (oldSql) { try { await oldSql.end({ timeout: 5 }); } catch { /* swallow */ } }
       try {
         const { logPoolRecovery } = await import('./audit/pool-recovery-audit.ts');
         logPoolRecovery('reconnect_succeeded');
       } catch { /* best-effort */ }
     } catch (err) {
+      // Rebuild failed: tear down the half-built pool (if any) and restore the
+      // prior live pool + manager so the engine stays usable.
+      if (this._sql && this._sql !== oldSql) {
+        try { await this._sql.end({ timeout: 5 }); } catch { /* swallow */ }
+      }
+      this._sql = oldSql;
+      this.connectionManager = oldManager;
       try {
         const { logPoolRecovery } = await import('./audit/pool-recovery-audit.ts');
         logPoolRecovery('reconnect_failed', err);
       } catch { /* best-effort */ }
-      throw err;
+      throw err; // let batchRetry's backoff handle the retry
     } finally {
       this._reconnecting = false;
     }
