@@ -142,6 +142,9 @@ export const DEFAULT_MAX_COST_USD = 5.0;
  */
 export const ALLOWED_TYPES = ['conversation', 'meeting', 'slack', 'email'] as const;
 export type AllowedType = (typeof ALLOWED_TYPES)[number];
+// Session transcript captures can arrive as type='note' while still being conversation-fact eligible.
+const CONV_SLUG_PREFIXES = ['gbrain-inbox/transcripts/', 'gbrain-inbox/chat-history/'] as const;
+const CONV_SLUG_RE = /^gbrain-inbox\/(transcripts|chat-history)\//;
 
 /**
  * Pagination batch size for listPages enumeration. Per-batch memory
@@ -989,7 +992,7 @@ export async function runExtractConversationFactsCore(
         result.pages_skipped_disappeared++;
         return;
       }
-      if (!types.includes(page.type as AllowedType)) {
+      if (!types.includes(page.type as AllowedType) && !CONV_SLUG_RE.test(page.slug)) {
         result.pages_skipped++;
         return;
       }
@@ -1040,6 +1043,37 @@ export async function runExtractConversationFactsCore(
 
           // Persist checkpoint between batches so a crash mid-walk
           // doesn't lose all progress.
+          if (!dryRun) {
+            await recordCompleted(engine, checkpointKey(sourceId), cpMapToEntries(state.cpMap));
+          }
+        }
+      }
+
+      // Mine session transcripts captured as type='note' under the known inbox transcript prefixes.
+      // The slugPrefix filter keeps enumeration bounded and covers existing plus future captures without data mutation.
+      for (const slugPrefix of CONV_SLUG_PREFIXES) {
+        let offset = 0;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          if (signal?.aborted) throw new Error('aborted');
+          if (opts.limit && processedPagesCount >= opts.limit) break;
+          const batch = await engine.listPages({ type: 'note', slugPrefix, sourceId, limit: PAGE_LIST_BATCH, offset });
+          if (batch.length === 0) break;
+          let claimable = batch;
+          if (opts.limit) {
+            const remaining = opts.limit - processedPagesCount;
+            if (remaining < batch.length) claimable = batch.slice(0, remaining);
+          }
+          await runSlidingPool({
+            items: claimable,
+            workers,
+            signal,
+            onItem: (page) => processPageWithLock(page),
+            failureLabel: (page) => page.slug,
+          });
+          processedPagesCount += claimable.length;
+          offset += batch.length;
+          if (batch.length < PAGE_LIST_BATCH) break;
           if (!dryRun) {
             await recordCompleted(engine, checkpointKey(sourceId), cpMapToEntries(state.cpMap));
           }
