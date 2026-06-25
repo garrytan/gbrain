@@ -2768,6 +2768,7 @@ const submit_job: Operation = {
     max_attempts: { type: 'number', description: 'Max retry attempts (default: 3)' },
     delay: { type: 'number', description: 'Delay in ms before eligible' },
     timeout_ms: { type: 'number', description: 'Per-job wall-clock timeout in ms; aborted job goes to dead' },
+    idempotency_key: { type: 'string', description: 'Optional dedup key. Same key in queue coalesces to existing row (UNIQUE partial index, see queue.ts:94-103). Useful for at-least-once producers (e.g. sync clients firing per-page submit_job).' },
   },
   mutating: true,
   scope: 'admin',
@@ -2815,6 +2816,7 @@ const submit_job: Operation = {
       max_attempts: (p.max_attempts as number) || 3,
       delay: (p.delay as number) || undefined,
       timeout_ms: (p.timeout_ms as number) || undefined,
+      idempotency_key: (p.idempotency_key as string) || undefined,
     }, trusted);
 
     // v0.35.8.0: submit_job audit-log parity with the CLI path (codex F-CDX-4).
