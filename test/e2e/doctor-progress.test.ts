@@ -20,6 +20,10 @@ import {
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
 
+if (skip) {
+  console.log('Skipping E2E doctor --progress-json tests (DATABASE_URL not set)');
+}
+
 const CLI = join(import.meta.dir, '..', '..', 'src', 'cli.ts');
 
 describeE2E('gbrain doctor --progress-json (E2E)', () => {
