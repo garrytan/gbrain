@@ -2,6 +2,45 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.45.1.0] - 2026-06-25
+
+**Dream runs now do less wasted work, subagents stop safely after a real answer, and collector previews survive ordinary token refreshes.** This release tightens the parts of GBrain that are supposed to run quietly in the background: long Dream synth jobs, small delegated subagent tasks, and read-only inbox or Drive scouting before anything is written.
+
+The biggest practical change is that a Dream cycle can tell the difference between "there is nothing worth saving yet" and "the writer failed." Blank or low-value synth output no longer spins into confusing retries, final subagent answers are kept without a second model call, and write paths have stronger tests around the allowed destination. On the operations side, GBrain can now score Dream output quality, watch upstream fork drift on a schedule, and refresh cached Outlook access from the existing local token metadata when the app and tenant are not repeated in config.
+
+### To take advantage of v0.45.1.0
+`gbrain upgrade`. No migration or config change is required.
+
+For a read-only collector check:
+
+```bash
+gbrain outlook scan --dry-run --days 30 --limit 25
+gbrain drive ingest --folder <folder-url-or-id> --dry-run --max-depth 3 --max-files 25
+```
+
+For a Dream quality readback:
+
+```bash
+gbrain eval dream-quality --json
+```
+
+### Itemized changes
+
+### Added
+- **Dream quality evaluation.** `gbrain eval dream-quality` reports whether recent Dream output looks useful enough to keep, giving agents a cheap proof gate before widening a run.
+- **Scheduled upstream drift watch.** Fork operators can run the new upstream-watch script and workflow to see when local patches need a fresh look.
+- **More subagent and write-path coverage.** New tests pin final-answer handling, gateway-routed subagent calls, write-through behavior, and Dream synth write gating.
+
+### Changed
+- **Dream synth jobs handle empty output more honestly.** Low-value or blank synth output is classified without treating it as a successful page write.
+- **Subagents stop after final answers.** Stored final responses are returned directly instead of being sent back through another model call.
+- **Outlook dry-runs can refresh from cached token metadata.** If a cached Microsoft token includes the app and tenant claims, `gbrain outlook scan --dry-run` can refresh it without repeating those values in local config.
+- **Model and budget accounting covers newer gateway behavior.** Z.AI prompt-cache usage, gateway cost composition, and related model routing tests now match the current provider responses.
+
+### Fixed
+- **Allowed write destinations are enforced in the Dream/subagent path.** The branch adds regression coverage around subagent writes so read-only or narrowly-scoped jobs do not silently promote output outside their approved area.
+- **`ci:local` runs on normal checkouts again.** The local Docker gate no longer passes an empty service name to Compose when no extra worktree mount is needed.
+
 ## [0.45.0.0] - 2026-06-23
 
 **GBrain can now preview Google Drive and Outlook ingestion before anything is written, and autopilot stops wasting work on local sources it cannot sync.** The new collectors are deliberately narrow: they classify what would be kept or skipped, print counts first, and require an explicit write flag before adding pages to the brain. That gives agents a safe first move for business mail and high-signal Drive folders without treating the whole account as memory.

@@ -216,7 +216,12 @@ export async function loadOutlookToken(opts: {
   if (token.expires_at - 60_000 > now()) return token;
   if (!token.refresh_token) throw new Error('Outlook token expired and has no refresh_token. Run: gbrain outlook login');
 
-  const { clientId, tenantId } = resolveOutlookAppConfig(opts);
+  const cachedApp = inferOutlookAppConfigFromAccessToken(token.access_token);
+  const { clientId, tenantId } = resolveOutlookAppConfig({
+    ...opts,
+    clientId: opts.clientId ?? cachedApp?.clientId,
+    tenantId: opts.tenantId ?? cachedApp?.tenantId,
+  });
   const refreshed = await postForm(opts.fetchImpl ?? fetch, `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
     grant_type: 'refresh_token',
     client_id: clientId,
@@ -473,6 +478,19 @@ function tokenToCache(raw: Record<string, unknown>, now: () => number, fallbackR
     refresh_token: typeof raw.refresh_token === 'string' ? raw.refresh_token : fallbackRefresh,
     expires_at: now() + Math.max(60, Number(raw.expires_in ?? 3600)) * 1000,
   };
+}
+
+function inferOutlookAppConfigFromAccessToken(accessToken: string): { clientId: string; tenantId: string } | null {
+  const parts = accessToken.split('.');
+  if (parts.length < 2) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(parts[1] ?? '', 'base64url').toString('utf8')) as Record<string, unknown>;
+    const clientId = typeof claims.appid === 'string' ? claims.appid : typeof claims.azp === 'string' ? claims.azp : '';
+    const tenantId = typeof claims.tid === 'string' ? claims.tid : '';
+    return clientId && tenantId ? { clientId, tenantId } : null;
+  } catch {
+    return null;
+  }
 }
 
 async function postForm(fetchImpl: FetchLike, url: string, form: Record<string, string>, opts: { tolerateOAuthPending?: boolean } = {}): Promise<Record<string, unknown>> {

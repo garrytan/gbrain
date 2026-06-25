@@ -492,6 +492,48 @@ describe('BudgetTracker.record', () => {
     expect(audit[0].actual_cost_usd).toBeCloseTo(0.00485, 6);
   });
 
+  test('prices Z.AI cached input with explicit cached-input rate', () => {
+    const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+    t.record({
+      modelId: 'zai:glm-5.2',
+      inputTokens: 1000,
+      outputTokens: 500,
+      cacheReadTokens: 1000,
+      cacheCreationTokens: 1000,
+      kind: 'chat',
+    } as any);
+
+    // GLM-5.2: input $0.0014 + output $0.0022 + cached input $0.00026
+    // + cache creation/storage currently priced at $0.00 = $0.00386.
+    expect(t.totalSpent).toBeCloseTo(0.00386, 6);
+    const audit = readAudit();
+    expect(audit[0].cache_read_tokens).toBe(1000);
+    expect(audit[0].cache_creation_tokens).toBe(1000);
+    expect(audit[0].cache_read_input_multiplier).toBeNull();
+    expect(audit[0].cache_creation_input_multiplier).toBeNull();
+    expect(audit[0].actual_cost_usd).toBeCloseTo(0.00386, 6);
+  });
+
+  test('non-Anthropic cached tokens fall back to normal input pricing when no cache rate is modeled', () => {
+    const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+    t.record({
+      modelId: 'openai:gpt-4o-mini',
+      inputTokens: 1000,
+      outputTokens: 500,
+      cacheReadTokens: 1000,
+      cacheCreationTokens: 1000,
+      kind: 'chat',
+    } as any);
+
+    // gpt-4o-mini: input $0.00015 + output $0.0003 + cached read fallback
+    // $0.00015 + cached creation fallback $0.00015 = $0.00075.
+    expect(t.totalSpent).toBeCloseTo(0.00075, 6);
+    const audit = readAudit();
+    expect(audit[0].cache_read_input_multiplier).toBeNull();
+    expect(audit[0].cache_creation_input_multiplier).toBeNull();
+    expect(audit[0].actual_cost_usd).toBeCloseTo(0.00075, 6);
+  });
+
   test('unpriced record: no throw, audited as record_unpriced', () => {
     const t = new BudgetTracker({ label: 'test', auditPath });
     expect(() =>

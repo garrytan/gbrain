@@ -27,9 +27,11 @@ export const zai: Recipe = {
       models: ['glm-5.2'],
       supports_tools: true,
       supports_subagent_loop: true,
-      // Keep false until cached-token pricing is represented in the budget
-      // tracker; otherwise GLM cached reads can undercount spend caps.
-      supports_prompt_cache: false,
+      // Z.AI exposes implicit caching plus cached-token usage telemetry.
+      // There is no Anthropic-style request marker; the provider reuses
+      // repeated prefixes automatically.
+      supports_prompt_cache: true,
+      prompt_cache_mode: 'implicit',
       max_context_tokens: 1_000_000,
       cost_per_1m_input_usd: 1.4,
       cost_per_1m_output_usd: 4.4,

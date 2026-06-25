@@ -102,6 +102,10 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     const { runEvalConversationParser } = await import('./eval-conversation-parser.ts');
     process.exit(await runEvalConversationParser(args.slice(1)));
   }
+  if (sub === 'dream-quality') {
+    const { runEvalDreamQuality } = await import('./eval-dream-quality.ts');
+    return runEvalDreamQuality(engine, args.slice(1));
+  }
   // v0.32.3 search-lite — per-mode orchestrator + comparison report.
   if (sub === 'run-all') {
     const { runEvalRunAll } = await import('./eval-run-all.ts');

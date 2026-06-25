@@ -17,6 +17,7 @@ import { resetGateway } from '../src/core/ai/gateway.ts';
 import { writePageThrough } from '../src/core/write-through.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from '../src/core/markdown.ts';
+import type { WriteThroughLogger } from '../src/core/write-through.ts';
 
 let engine: PGLiteEngine;
 let tmpRoot: string;
@@ -66,6 +67,19 @@ function walkFiles(dir: string): string[] {
   return out;
 }
 
+function makeCaptureLogger(): {
+  logger: WriteThroughLogger;
+  messages: string[];
+} {
+  const messages: string[] = [];
+  return {
+    logger: {
+      warn: (msg) => messages.push(msg),
+    },
+    messages,
+  };
+}
+
 describe('writePageThrough', () => {
   test('writes the file rendered from the saved row; no .tmp leftover', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
@@ -100,8 +114,12 @@ describe('writePageThrough', () => {
     await engine.setConfig('sync.repo_path', '');
     const slug = 'wiki/ideas/x-1';
     await seedPage(slug);
-    const res = await writePageThrough(engine, slug);
+    const { logger, messages } = makeCaptureLogger();
+    const res = await writePageThrough(engine, slug, { logger });
     expect(res).toEqual({ written: false, skipped: 'no_repo_configured' });
+    expect(messages).toEqual([
+      `[write-through] skipped ${slug}: no_repo_configured (source=default)`,
+    ]);
   });
 
   test('sync.repo_path is a file, not a directory → skipped repo_not_found', async () => {
@@ -110,14 +128,22 @@ describe('writePageThrough', () => {
     await engine.setConfig('sync.repo_path', fileAsRepo);
     const slug = 'wiki/ideas/x-2';
     await seedPage(slug);
-    const res = await writePageThrough(engine, slug);
+    const { logger, messages } = makeCaptureLogger();
+    const res = await writePageThrough(engine, slug, { logger });
     expect(res).toEqual({ written: false, skipped: 'repo_not_found' });
+    expect(messages).toEqual([
+      `[write-through] skipped ${slug}: repo_not_found (${fileAsRepo})`,
+    ]);
   });
 
   test('row missing → skipped page_not_found_after_write', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
-    const res = await writePageThrough(engine, 'wiki/ideas/does-not-exist');
+    const { logger, messages } = makeCaptureLogger();
+    const res = await writePageThrough(engine, 'wiki/ideas/does-not-exist', { logger });
     expect(res).toEqual({ written: false, skipped: 'page_not_found_after_write' });
+    expect(messages).toEqual([
+      '[write-through] skipped wiki/ideas/does-not-exist: page_not_found_after_write (source=default)',
+    ]);
   });
 
   test('[REGRESSION #2018] default page (null local_path) in a multi-source brain → skipped, no leak into a sibling source repo', async () => {
@@ -136,9 +162,13 @@ describe('writePageThrough', () => {
     const slug = 'internal/cross-cutting-note';
     await seedPage(slug); // sourceId 'default'
 
-    const res = await writePageThrough(engine, slug, { sourceId: 'default' });
+    const { logger, messages } = makeCaptureLogger();
+    const res = await writePageThrough(engine, slug, { sourceId: 'default', logger });
 
     expect(res).toEqual({ written: false, skipped: 'source_repo_belongs_to_other_source' });
+    expect(messages).toEqual([
+      `[write-through] skipped ${slug}: source_repo_belongs_to_other_source (${siblingDir})`,
+    ]);
     // The sibling source's repo stays clean — the whole point of #2018.
     expect(walkFiles(siblingDir).some((f) => f.endsWith('.md'))).toBe(false);
   });
@@ -180,10 +210,13 @@ describe('writePageThrough', () => {
     const slug = 'wiki/ideas/blocked-1';
     await seedPage(slug);
 
-    const res = await writePageThrough(engine, slug, { sourceId: 'default' });
+    const { logger, messages } = makeCaptureLogger();
+    const res = await writePageThrough(engine, slug, { sourceId: 'default', logger });
 
     expect(res.written).toBe(false);
     expect(typeof res.error).toBe('string');
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain(`[write-through] failed for ${slug}:`);
     const files = walkFiles(brainDir);
     expect(files.some((f) => f.endsWith('.md'))).toBe(false);
     expect(files.some((f) => f.includes('.tmp.'))).toBe(false);

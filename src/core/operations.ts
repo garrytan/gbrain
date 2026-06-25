@@ -11,6 +11,7 @@ import type { GBrainConfig } from './config.ts';
 import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
 import { writePageThrough } from './write-through.ts';
+import { parseMarkdown } from './markdown.ts';
 import { hybridSearch, hybridSearchCached, stampContentFlags } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
@@ -176,6 +177,8 @@ export function validatePageSlug(slug: string): void {
  * trailing `/*`) matches that exact slug only. The `*` is intentionally
  * permissive — depth is unbounded, so `wiki/originals/*` matches both
  * `wiki/originals/idea-x` and `wiki/originals/ideas/2026-04-25-idea-y`.
+ * Bare trailing `*` is also supported for tighter date/topic prefixes like
+ * `wiki/personal/reflections/2026-05-26-*`.
  *
  * Used by the v0.23 dream-cycle trusted-workspace path. Order doesn't
  * matter; the first match wins (returns true on any match).
@@ -186,11 +189,57 @@ export function matchesSlugAllowList(slug: string, prefixes: readonly string[]):
       const base = p.slice(0, -2);
       if (slug === base) continue;
       if (slug.startsWith(base + '/')) return true;
+    } else if (p.endsWith('*')) {
+      const base = p.slice(0, -1);
+      if (base.length === 0) continue;
+      if (slug.length === base.length) continue;
+      if (slug.startsWith(base)) return true;
     } else if (p === slug) {
       return true;
     }
   }
   return false;
+}
+
+/**
+ * Dream/patterns trusted-workspace subagents may write through to the owner's
+ * repo, so a malformed frontmatter block should fail loudly instead of being
+ * silently downgraded into a generic inferred page.
+ *
+ * Scope is intentionally narrow:
+ *   - only when the content starts with a YAML fence (`---`) after trimming
+ *   - only the structural frontmatter failures that would corrupt the page
+ *     shape or metadata are rejected
+ *   - body-only writes remain allowed
+ */
+function assertTrustedWorkspaceFrontmatterValid(
+  slug: string,
+  content: string,
+  logger?: { warn(msg: string): void },
+): void {
+  if (!content.trimStart().startsWith('---')) return;
+  const parsed = parseMarkdown(content, `${slug}.md`, {
+    validate: true,
+    expectedSlug: slug,
+  });
+  const blocking = (parsed.errors ?? []).filter((e) => (
+    e.code === 'MISSING_CLOSE' ||
+    e.code === 'YAML_PARSE' ||
+    e.code === 'EMPTY_FRONTMATTER' ||
+    e.code === 'NESTED_QUOTES' ||
+    e.code === 'NON_STRING_FIELD' ||
+    e.code === 'SLUG_MISMATCH'
+  ));
+  if (blocking.length === 0) return;
+  const first = blocking[0];
+  logger?.warn(
+    `[put_page] trusted-workspace malformed frontmatter rejected for ${slug}: ${first.code} (${first.message})`,
+  );
+  throw new OperationError(
+    'invalid_params',
+    `trusted-workspace put_page rejected malformed frontmatter (${first.code}): ${first.message}`,
+    'Send valid YAML frontmatter followed by a blank line and markdown body, or omit frontmatter entirely.',
+  );
 }
 
 /**
@@ -742,6 +791,7 @@ const put_page: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     const slug = p.slug as string;
+    const content = p.content as string;
 
     // v0.39.3.0 CV6 trust gate for provenance write-through (WARN-8).
     // Only trusted LOCAL callers (ctx.remote === false — capture CLI,
@@ -806,6 +856,13 @@ const put_page: Operation = {
       }
     }
 
+    const trustedWorkspace = ctx.viaSubagent === true
+      && Array.isArray(ctx.allowedSlugPrefixes)
+      && ctx.allowedSlugPrefixes.length > 0;
+    if (trustedWorkspace) {
+      assertTrustedWorkspaceFrontmatterValid(slug, content, ctx.logger);
+    }
+
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
     // Skip embedding when the AI gateway has no embedding provider configured.
     // Checks all auth env vars for the resolved provider, not just OPENAI_API_KEY,
@@ -835,7 +892,7 @@ const put_page: Operation = {
       // Pack load failed; fall through to legacy inferType behavior.
       activePack = undefined;
     }
-    const result = await importFromContent(ctx.engine, slug, p.content as string, {
+    const result = await importFromContent(ctx.engine, slug, content, {
       noEmbed,
       // v0.42 (#1699): untrusted callers can't smuggle gate-owned frontmatter
       // markers (quarantine/content_flag/embed_skip). Fail-closed — anything
@@ -952,9 +1009,6 @@ const put_page: Operation = {
     // the cycle's `extract` phase would have to recompute every edge, and
     // patterns (which runs after extract) would still see the right graph
     // but auto_timeline would never fire on synth output.
-    const trustedWorkspace = ctx.viaSubagent === true
-      && Array.isArray(ctx.allowedSlugPrefixes)
-      && ctx.allowedSlugPrefixes.length > 0;
     if (untrustedContent && !trustedWorkspace) {
       autoLinks = { skipped: 'remote' };
       autoTimeline = { skipped: 'remote' };

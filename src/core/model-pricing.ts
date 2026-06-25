@@ -44,6 +44,10 @@ export interface ModelPricing {
   input: number;
   /** USD per 1M output tokens. */
   output: number;
+  /** Optional USD per 1M cached-input read tokens when the provider reports them directly. */
+  cache_read_input?: number;
+  /** Optional USD per 1M cached-input creation/storage tokens when billed separately. */
+  cache_creation_input?: number;
 }
 
 /**
@@ -94,7 +98,7 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'deepseek:deepseek-reasoner':           { input:  0.14,  output:  0.28 },
 
   // ── Z.AI ──────────────────────────────────────────────────────────────
-  'zai:glm-5.2':                          { input:  1.40, output:  4.40 },
+  'zai:glm-5.2':                          { input:  1.40, output:  4.40, cache_read_input: 0.26, cache_creation_input: 0.00 },
 };
 
 /**

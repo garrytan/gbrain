@@ -16,8 +16,10 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { buildBrainTools } from '../../src/core/minions/tools/brain-allowlist.ts';
+import { buildBrainTools, __testing as brainToolTesting } from '../../src/core/minions/tools/brain-allowlist.ts';
 import type { GBrainConfig } from '../../src/core/config.ts';
+
+const { normalizeToolInputParams } = brainToolTesting;
 
 let engine: PGLiteEngine;
 
@@ -98,6 +100,48 @@ describe('E2E allow-list — trusted-workspace path', () => {
     );
     expect(await engine.getPage('wiki/originals/ideas/2026-04-25-thousand-pound-armor')).not.toBeNull();
   });
+
+  test('ALLOW: stringified JSON tool args are parsed before put_page dispatch', async () => {
+    const tools = buildBrainTools({
+      subagentId: 999,
+      engine,
+      config,
+      allowedSlugPrefixes: ['wiki/personal/reflections/2026-05-26-*'],
+    });
+    const tool = findPutPageTool(tools);
+    await tool.execute(
+      JSON.stringify({
+        slug: 'wiki/personal/reflections/2026-05-26-evidence-backed-worker-restart-b300d2',
+        content: SAMPLE_BODY,
+      }),
+      { engine, jobId: 7782, remote: true },
+    );
+    const page = await engine.getPage('wiki/personal/reflections/2026-05-26-evidence-backed-worker-restart-b300d2');
+    expect(page).not.toBeNull();
+  });
+
+  test('REJECT: transcript-scoped trailing-star prefixes block stray test slugs', async () => {
+    const tools = buildBrainTools({
+      subagentId: 999,
+      engine,
+      config,
+      allowedSlugPrefixes: ['wiki/personal/reflections/2026-05-26-*'],
+    });
+    const tool = findPutPageTool(tools);
+    let threw = false;
+    try {
+      await tool.execute(
+        { slug: 'wiki/personal/reflections/test-f279b4', content: SAMPLE_BODY },
+        { engine, jobId: 7783, remote: true },
+      );
+    } catch (e) {
+      threw = true;
+      const msg = e instanceof Error ? e.message : String(e);
+      expect(msg).toMatch(/allow-list/i);
+    }
+    expect(threw).toBe(true);
+    expect(await engine.getPage('wiki/personal/reflections/test-f279b4')).toBeNull();
+  });
 });
 
 describe('E2E allow-list — legacy namespace fallback', () => {
@@ -155,5 +199,16 @@ describe('E2E allow-list — provenance via tool execution rows (Codex #2)', () 
     expect(cols).toContain('tool_name');
     expect(cols).toContain('status');
     expect(cols).toContain('job_id');
+  });
+});
+
+describe('tool-input normalization', () => {
+  test('parses stringified JSON objects and rejects non-object payloads', () => {
+    expect(normalizeToolInputParams('{"slug":"wiki/example","content":"body"}')).toEqual({
+      slug: 'wiki/example',
+      content: 'body',
+    });
+    expect(normalizeToolInputParams('"just text"')).toEqual({});
+    expect(normalizeToolInputParams(['nope'])).toEqual({});
   });
 });

@@ -29,10 +29,10 @@ describe('getProviderCapabilities (v0.38 Slice 1 — D6/D7 recipe-driven capabil
     expect(caps.supportsToolCalling).toBe(true);
   });
 
-  it('returns capabilities for Z.AI GLM-5.2 without prompt-cache accounting', () => {
+  it('returns capabilities for Z.AI GLM-5.2 with implicit prompt-cache support', () => {
     const caps = getProviderCapabilities('zai:glm-5.2');
     expect(caps.supportsToolCalling).toBe(true);
-    expect(caps.supportsPromptCaching).toBe(false);
+    expect(caps.supportsPromptCaching).toBe(true);
     expect(caps.supportsParallelTools).toBe(true);
     expect(caps.maxContext).toBe(1_000_000);
   });
@@ -76,7 +76,7 @@ describe('classifyCapabilities (D6 — three-tier capability verdict)', () => {
     expect(classifyCapabilities('voyage:voyage-3-large')).toBe('unknown');
   });
 
-  it('returns degraded:no_caching for Z.AI GLM-5.2 until cached-token pricing is modeled', () => {
-    expect(classifyCapabilities('zai:glm-5.2')).toBe('degraded:no_caching');
+  it('returns ok for Z.AI GLM-5.2 once cached-token pricing is modeled', () => {
+    expect(classifyCapabilities('zai:glm-5.2')).toBe('ok');
   });
 });

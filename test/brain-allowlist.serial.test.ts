@@ -132,6 +132,17 @@ describe('buildBrainTools', () => {
     expect(res).toBeTruthy();
   });
 
+  test('execute() accepts JSON-stringified tool input params', async () => {
+    const tools = buildBrainTools({ subagentId: 42, engine, config });
+    const putPage = tools.find(t => t.name === 'brain_put_page');
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    const res = await putPage!.execute(
+      JSON.stringify({ slug: 'wiki/agents/42/json-notes', content: '---\ntitle: JSON Notes\n---\nbody' }),
+      ctx,
+    );
+    expect(res).toBeTruthy();
+  });
+
   test('execute() on put_page with out-of-namespace slug throws permission_denied', async () => {
     const tools = buildBrainTools({ subagentId: 42, engine, config });
     const putPage = tools.find(t => t.name === 'brain_put_page');

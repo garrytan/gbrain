@@ -29,7 +29,8 @@ describe('recipe: zai', () => {
     expect(r.touchpoints.chat!.models).toContain('glm-5.2');
     expect(r.touchpoints.chat!.supports_tools).toBe(true);
     expect(r.touchpoints.chat!.supports_subagent_loop).toBe(true);
-    expect(r.touchpoints.chat!.supports_prompt_cache).toBe(false);
+    expect(r.touchpoints.chat!.supports_prompt_cache).toBe(true);
+    expect(r.touchpoints.chat!.prompt_cache_mode).toBe('implicit');
     expect(r.touchpoints.chat!.max_context_tokens).toBe(1_000_000);
     expect(r.touchpoints.chat!.cost_per_1m_input_usd).toBe(1.4);
     expect(r.touchpoints.chat!.cost_per_1m_output_usd).toBe(4.4);

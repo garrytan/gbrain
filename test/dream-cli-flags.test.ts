@@ -55,7 +55,7 @@ describe('dream CLI flag wiring', () => {
   });
 
   test('help text documents dry-run synthesis semantics (Codex finding #8)', () => {
-    expect(dreamSrc).toContain('skips the Sonnet');
+    expect(dreamSrc).toContain('skips the configured synthesis model pass');
     expect(dreamSrc.toLowerCase()).toContain('zero llm calls');
   });
 

@@ -350,7 +350,12 @@ if [ -f .git ]; then
 fi
 
 echo "[ci-local] Running checks inside runner container..."
-docker compose -f "$COMPOSE_FILE" run --rm "${EXTRA_MOUNTS[@]:-}" runner bash -c "$INNER_CMD"
+RUNNER_CMD=(docker compose -f "$COMPOSE_FILE" run --rm)
+if [ "${#EXTRA_MOUNTS[@]}" -gt 0 ]; then
+  RUNNER_CMD+=("${EXTRA_MOUNTS[@]}")
+fi
+RUNNER_CMD+=(runner bash -c "$INNER_CMD")
+"${RUNNER_CMD[@]}"
 
 echo ""
 echo "[ci-local] All checks passed."

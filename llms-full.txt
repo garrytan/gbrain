@@ -4403,10 +4403,23 @@ Prefer upstream when:
 
 ```bash
 bun run check:upstream -- --fetch
+bun run check:upstream-watch -- --fetch
 git log --oneline upstream/master..HEAD
 git log --oneline HEAD..upstream/master
 git diff --stat upstream/master...HEAD
 ```
+
+## Scheduled Readback
+
+The repo's scheduled watch lives in [`.github/workflows/upstream-watch.yml`](../../.github/workflows/upstream-watch.yml).
+It runs twice a week on a fresh `master` checkout, adds `upstream` in
+fetch-only shape, runs the same readback, and keeps one tracking issue open
+while `upstream/master` is ahead of the fork. The automation is intentionally
+read-only: it does not merge, rebase, or change an active developer checkout.
+
+When the watch opens or updates the issue, do the actual adoption manually on a
+clean branch and run the targeted tests for whatever upstream fix you carry
+over.
 
 For release or PR readiness, use the repo's normal review and ship path. This
 policy is a readback and triage surface, not merge permission.

@@ -217,8 +217,17 @@ export interface ChatTouchpoint {
    * Strictly stronger than supports_tools.
    */
   supports_subagent_loop: boolean;
-  /** Anthropic-style ephemeral prompt cache markers honored. */
+  /**
+   * Provider offers useful prompt/context caching semantics for repeated
+   * prefixes. Cost accounting and capability warnings key off this.
+   */
   supports_prompt_cache?: boolean;
+  /**
+   * Providers differ in how caching is activated:
+   *   - explicit-ephemeral: caller must opt in with provider-specific markers
+   *   - implicit: provider auto-detects reusable prefixes, no request knob
+   */
+  prompt_cache_mode?: 'explicit-ephemeral' | 'implicit';
   max_context_tokens?: number;
   cost_per_1m_input_usd?: number;
   cost_per_1m_output_usd?: number;

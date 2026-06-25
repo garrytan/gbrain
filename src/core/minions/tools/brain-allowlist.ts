@@ -112,6 +112,25 @@ function sanitizeToolName(opName: string): string {
   return prefixed.slice(0, 64);
 }
 
+function normalizeToolInputParams(input: unknown): Record<string, unknown> {
+  let candidate = input;
+  for (let depth = 0; depth < 2; depth++) {
+    if (typeof candidate !== 'string') break;
+    const trimmed = candidate.trim();
+    if (trimmed.length === 0) break;
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) break;
+    try {
+      candidate = JSON.parse(trimmed);
+    } catch {
+      break;
+    }
+  }
+  if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+    return candidate as Record<string, unknown>;
+  }
+  return {};
+}
+
 /**
  * Convert an Operation.params (ParamDef) map to an Anthropic-compatible
  * JSONSchema.input_schema. Same shape MCP uses inline — ParamDef.type
@@ -275,7 +294,7 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           sourceId: opts.sourceId,
           allowedSlugPrefixes: opts.allowedSlugPrefixes,
         });
-        const params = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
+        const params = normalizeToolInputParams(input);
         return op.handler(opCtx, params);
       },
     };
@@ -314,6 +333,7 @@ export function filterAllowedTools(registry: ToolDef[], allowedToolNames: string
 /** Exported for unit tests (stable surface). */
 export const __testing = {
   sanitizeToolName,
+  normalizeToolInputParams,
   paramsToInputSchema,
   namespacedPutPageSchema,
   ANTHROPIC_NAME_RE,

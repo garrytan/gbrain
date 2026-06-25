@@ -897,6 +897,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Dream cycle config
   'dream.synthesize.session_corpus_dir',
   'dream.synthesize.meeting_transcripts_dir',
+  'dream.synthesize.queue',
   'dream.synthesize.last_completion_ts',
   'dream.synthesize.verdict_model',
   'dream.synthesize.max_prompt_tokens',

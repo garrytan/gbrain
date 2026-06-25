@@ -2467,6 +2467,7 @@ function normalizeChatMaxOutputTokens(providerId: string, requested: number): nu
 function normalizeChatUsageForBudget(
   usage: Record<string, any>,
   providerMetadata: Record<string, any> | undefined,
+  providerId?: string,
 ): {
   inputTokens: number;
   outputTokens: number;
@@ -2474,14 +2475,22 @@ function normalizeChatUsageForBudget(
   cacheCreationTokens: number;
 } {
   const details = usage.inputTokenDetails ?? {};
+  const promptTokenDetails = usage.promptTokensDetails ?? usage.prompt_tokens_details ?? {};
   const anthropic = providerMetadata?.anthropic ?? {};
   const anthropicUsage = anthropic.usage ?? {};
+  const zaiCachedPromptTokens = providerId === 'zai'
+    ? (
+      numericUsageToken(promptTokenDetails.cachedTokens) ??
+      numericUsageToken(promptTokenDetails.cached_tokens)
+    )
+    : undefined;
 
   const cacheReadTokens =
     numericUsageToken(details.cacheReadTokens) ??
     numericUsageToken(anthropicUsage.cache_read_input_tokens) ??
     numericUsageToken(anthropic.cacheReadInputTokens) ??
     numericUsageToken(anthropic.cache_read_input_tokens) ??
+    zaiCachedPromptTokens ??
     0;
   const cacheCreationTokens =
     numericUsageToken(details.cacheWriteTokens) ??
@@ -2497,7 +2506,9 @@ function normalizeChatUsageForBudget(
   const inputTokens =
     numericUsageToken(details.noCacheTokens) ??
     numericUsageToken(anthropicUsage.input_tokens) ??
-    Math.max(0, totalInputTokens - cacheReadTokens - cacheCreationTokens);
+    (zaiCachedPromptTokens !== undefined
+      ? Math.max(0, totalInputTokens - zaiCachedPromptTokens)
+      : Math.max(0, totalInputTokens - cacheReadTokens - cacheCreationTokens));
   const outputTokens =
     numericUsageToken(usage.outputTokens) ??
     numericUsageToken(usage.completionTokens) ??
@@ -2833,7 +2844,9 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     });
   }
 
-  const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;
+  const chatTouchpoint = recipe.touchpoints.chat;
+  const supportsCache = chatTouchpoint?.supports_prompt_cache === true;
+  const cacheMode = chatTouchpoint?.prompt_cache_mode ?? 'explicit-ephemeral';
   const useCache = !!opts.cacheSystem && supportsCache;
 
   // Build messages. Anthropic prompt-cache markers ride on system + last tool
@@ -2853,7 +2866,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   }, {} as Record<string, any>);
 
   const providerOptions: Record<string, any> = {};
-  if (useCache) {
+  if (useCache && cacheMode === 'explicit-ephemeral') {
     providerOptions.anthropic = { cacheControl: { type: 'ephemeral' } };
   }
 
@@ -2928,7 +2941,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
 
     const usage = (result as any).usage ?? {};
     const providerMetadata = (result as any).providerMetadata as Record<string, any> | undefined;
-    const budgetUsage = normalizeChatUsageForBudget(usage, providerMetadata);
+    const budgetUsage = normalizeChatUsageForBudget(usage, providerMetadata, recipe.id);
 
     _recordBudget(
       `${recipe.id}:${modelId}`,

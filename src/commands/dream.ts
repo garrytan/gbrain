@@ -306,7 +306,7 @@ pattern pages. Designed for cron (exits when done).
 Options:
   --dry-run           Preview all fixes without writing. Note: synthesize
                       runs the cheap Haiku significance filter (caches
-                      verdicts), but skips the Sonnet synthesis pass.
+                      verdicts), but skips the configured synthesis model pass.
                       "--dry-run" does NOT mean "zero LLM calls."
   --json              Emit the CycleReport as JSON (agent-readable)
   --phase <name>      Run a single phase: ${ALL_PHASES.join(' | ')}

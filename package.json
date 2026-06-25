@@ -43,6 +43,7 @@
     "verify": "bash scripts/run-verify-parallel.sh",
     "check:source-config-leak": "scripts/check-source-config-leak.sh",
     "check:upstream": "scripts/check-upstream-tracking.sh",
+    "check:upstream-watch": "scripts/upstream-watch.sh",
     "check:no-pii-agent-voice": "scripts/check-no-pii-in-agent-voice.sh",
     "check:synthetic-corpus-privacy": "scripts/check-synthetic-corpus-privacy.sh",
     "check:system-of-record": "scripts/check-system-of-record.sh",
@@ -144,5 +145,5 @@
     "bun": ">=1.3.10"
   },
   "license": "MIT",
-  "version": "0.45.0.0"
+  "version": "0.45.1.0"
 }

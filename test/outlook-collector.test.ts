@@ -1,11 +1,16 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { runOutlook } from '../src/commands/outlook.ts';
 import {
   DEFAULT_OUTLOOK_CLIENT_ID,
   DEFAULT_OUTLOOK_TENANT_ID,
+  loadOutlookToken,
   resolveOutlookAppConfig,
   scanOutlook,
 } from '../src/core/outlook-collector.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 describe('outlook collector strict scan', () => {
   test('keeps direct, active, calendar-linked business mail and skips marketing/no-reply', () => {
@@ -258,4 +263,59 @@ describe('outlook collector strict scan', () => {
     expect(printed).toBe(true);
     expect(wrote).toBe(false);
   });
+
+  test('refreshes an expired cached token using app and tenant claims when config is absent', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-outlook-token-'));
+    try {
+      const gbrainHome = join(home, '.gbrain');
+      mkdirSync(gbrainHome, { recursive: true });
+      writeFileSync(join(gbrainHome, 'outlook-token.json'), JSON.stringify({
+        token_type: 'Bearer',
+        access_token: fakeJwt({
+          appid: 'client-from-token',
+          tid: 'tenant-from-token',
+        }),
+        refresh_token: 'refresh-from-cache',
+        expires_at: 0,
+      }));
+
+      let requestUrl = '';
+      let requestBody = '';
+      await withEnv({
+        GBRAIN_HOME: home,
+        GBRAIN_OUTLOOK_CLIENT_ID: undefined,
+        GBRAIN_OUTLOOK_TENANT_ID: undefined,
+      }, async () => {
+        const token = await loadOutlookToken({
+          now: () => 1_000_000,
+          fetchImpl: async (url, init) => {
+            requestUrl = String(url);
+            requestBody = String(init?.body ?? '');
+            return new Response(JSON.stringify({
+              token_type: 'Bearer',
+              access_token: 'new-access-token',
+              expires_in: 3600,
+            }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            });
+          },
+        });
+
+        expect(token.access_token).toBe('new-access-token');
+      });
+
+      expect(requestUrl).toContain('/tenant-from-token/oauth2/v2.0/token');
+      const form = new URLSearchParams(requestBody);
+      expect(form.get('client_id')).toBe('client-from-token');
+      expect(form.get('refresh_token')).toBe('refresh-from-cache');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
+
+function fakeJwt(claims: Record<string, unknown>): string {
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  return `${encode({ alg: 'none' })}.${encode(claims)}.`;
+}

@@ -137,7 +137,7 @@ describe('doctor command', () => {
     const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
     const engine = {
       async getConfig(key: string) {
-        if (key === 'models.tier.subagent') return 'zai:glm-5.2';
+        if (key === 'models.tier.subagent') return 'together:meta-llama/Llama-3.3-70B-Instruct-Turbo';
         if (key === 'models.subagent') return null;
         if (key === 'models.default') return null;
         if (key === 'agent.use_gateway_loop') return 'true';
@@ -155,7 +155,7 @@ describe('doctor command', () => {
     const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
     const engine = {
       async getConfig(key: string) {
-        if (key === 'models.tier.subagent') return 'zai:glm-5.2';
+        if (key === 'models.tier.subagent') return 'together:meta-llama/Llama-3.3-70B-Instruct-Turbo';
         if (key === 'models.subagent') return null;
         if (key === 'models.default') return null;
         if (key === 'agent.use_gateway_loop') return 'false';

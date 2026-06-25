@@ -149,6 +149,7 @@ const fakeZaiChatFetch: (input: any, init?: any) => Promise<Response> = async (i
     ],
     usage: {
       prompt_tokens: 17,
+      prompt_tokens_details: { cached_tokens: 5 },
       completion_tokens: 29,
       completion_tokens_details: { reasoning_tokens: 25 },
       total_tokens: 46,
@@ -317,7 +318,9 @@ describe('transport-level header sweep (v0.37.2.0)', () => {
     expect(result.text).toBe('glm ready');
     expect(result.blocks).toEqual([{ type: 'text', text: 'glm ready' }]);
     expect(result.stopReason).toBe('end');
+    expect(result.usage.input_tokens).toBe(12);
     expect(result.usage.output_tokens).toBe(29);
+    expect(result.usage.cache_read_tokens).toBe(5);
     expect(lastZaiChatRequest, 'fakeZaiChatFetch should have been invoked').not.toBeNull();
     expect(JSON.parse(lastZaiChatRequest!.body ?? '{}').max_tokens).toBe(160);
   });

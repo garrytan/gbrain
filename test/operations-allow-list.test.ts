@@ -76,6 +76,22 @@ describe('matchesSlugAllowList — glob semantics', () => {
       ['wiki/originals/*'])).toBe(true);
   });
 
+  test('bare trailing * matches tight date/topic prefixes only', () => {
+    expect(matchesSlugAllowList(
+      'wiki/personal/reflections/2026-05-26-session-notes',
+      ['wiki/personal/reflections/2026-05-26-*'],
+    )).toBe(true);
+    expect(matchesSlugAllowList(
+      'wiki/personal/reflections/2026-05-27-session-notes',
+      ['wiki/personal/reflections/2026-05-26-*'],
+    )).toBe(false);
+    expect(matchesSlugAllowList(
+      'wiki/personal/reflections/2026-05-26-',
+      ['wiki/personal/reflections/2026-05-26-*'],
+    )).toBe(false);
+    expect(matchesSlugAllowList('wiki/personal/reflections/anything', ['*'])).toBe(false);
+  });
+
   test('rejects slugs outside every prefix', () => {
     const list = [
       'wiki/personal/reflections/*',

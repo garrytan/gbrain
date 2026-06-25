@@ -40,10 +40,10 @@ describe('chat touchpoint — recipe registry', () => {
     }
   });
 
-  test('only Anthropic claims supports_prompt_cache=true', () => {
+  test('only providers with modeled cache accounting claim supports_prompt_cache=true', () => {
     for (const r of listRecipes()) {
       if (!r.touchpoints.chat) continue;
-      if (r.id === 'anthropic') {
+      if (r.id === 'anthropic' || r.id === 'zai') {
         expect(r.touchpoints.chat.supports_prompt_cache).toBe(true);
       } else {
         expect(r.touchpoints.chat.supports_prompt_cache ?? false).toBe(false);

@@ -86,7 +86,7 @@ describe('gateway chat usage normalization', () => {
         cacheReadTokens: 7,
         cacheWriteTokens: 11,
       },
-    }, undefined)).toEqual({
+    }, undefined, 'anthropic')).toEqual({
       inputTokens: 100,
       outputTokens: 50,
       cacheReadTokens: 7,
@@ -107,11 +107,41 @@ describe('gateway chat usage normalization', () => {
           cache_creation_input_tokens: 11,
         },
       },
-    })).toEqual({
+    }, 'anthropic')).toEqual({
       inputTokens: 100,
       outputTokens: 50,
       cacheReadTokens: 7,
       cacheCreationTokens: 11,
+    });
+  });
+
+  test('reads Z.AI cached prompt tokens from OpenAI-compatible usage fields', () => {
+    expect(gatewayTesting.normalizeChatUsageForBudget({
+      promptTokens: 118,
+      completionTokens: 50,
+      promptTokensDetails: {
+        cachedTokens: 18,
+      },
+    }, undefined, 'zai')).toEqual({
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 18,
+      cacheCreationTokens: 0,
+    });
+  });
+
+  test('does not reinterpret OpenAI-compatible cached-token fields for other providers', () => {
+    expect(gatewayTesting.normalizeChatUsageForBudget({
+      promptTokens: 118,
+      completionTokens: 50,
+      promptTokensDetails: {
+        cachedTokens: 18,
+      },
+    }, undefined, 'openai')).toEqual({
+      inputTokens: 118,
+      outputTokens: 50,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
     });
   });
 });

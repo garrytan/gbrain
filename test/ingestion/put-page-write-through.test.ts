@@ -82,6 +82,24 @@ function makeCtx(overrides: Partial<OperationContext> = {}): OperationContext {
   };
 }
 
+function makeCtxWithLogs(
+  overrides: Partial<OperationContext> = {},
+): { ctx: OperationContext; messages: Array<{ level: string; msg: string }> } {
+  const { logger, messages } = captureLogger();
+  return {
+    ctx: {
+      engine,
+      config: { engine: 'pglite' as const },
+      logger,
+      dryRun: false,
+      remote: false,
+      sourceId: 'default',
+      ...overrides,
+    },
+    messages,
+  };
+}
+
 const putPage = operations.find((o) => o.name === 'put_page')!;
 
 describe('put_page write-through — happy path', () => {
@@ -173,6 +191,34 @@ describe('put_page write-through — trust gating', () => {
     })) as { write_through?: { written: boolean; path?: string } };
     expect(result.write_through?.written).toBe(true);
     expect(fs.existsSync(result.write_through!.path!)).toBe(true);
+  });
+
+  test('trusted-workspace subagent rejects malformed frontmatter instead of silently inferring a page', async () => {
+    const { ctx, messages } = makeCtxWithLogs({
+      remote: true,
+      viaSubagent: true,
+      subagentId: 7,
+      allowedSlugPrefixes: ['wiki/originals/*'],
+    });
+    await expect(putPage.handler(ctx, {
+      slug: 'wiki/originals/ideas/bad-frontmatter',
+      content: [
+        '---',
+        'title: "The Design-Gate: Pick the Strongest Skill/Tooling/Evaluation Path Before Building"',
+        'date: 2026-05-22',
+        'type: original',
+        'tags: [design-workflow',
+      ].join('\n'),
+    })).rejects.toMatchObject({
+      code: 'invalid_params',
+    });
+    expect(fs.existsSync(path.join(brainDir, 'wiki/originals/ideas/bad-frontmatter.md'))).toBe(false);
+    const page = await engine.getPage('wiki/originals/ideas/bad-frontmatter');
+    expect(page).toBeNull();
+    expect(messages).toContainEqual({
+      level: 'warn',
+      msg: expect.stringContaining('[put_page] trusted-workspace malformed frontmatter rejected for wiki/originals/ideas/bad-frontmatter:'),
+    });
   });
 
   test('dry-run stays DB-only (early-return before importFromContent)', async () => {

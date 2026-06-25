@@ -66,7 +66,12 @@ describe('CANONICAL_PRICING — table integrity', () => {
   });
 
   test('Z.AI GLM-5.2 price is pinned from official pricing', () => {
-    expect(CANONICAL_PRICING['zai:glm-5.2']).toEqual({ input: 1.4, output: 4.4 });
+    expect(CANONICAL_PRICING['zai:glm-5.2']).toEqual({
+      input: 1.4,
+      output: 4.4,
+      cache_read_input: 0.26,
+      cache_creation_input: 0.0,
+    });
   });
 });
 

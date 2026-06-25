@@ -58,6 +58,18 @@ export interface WritePageThroughOpts {
   logger?: WriteThroughLogger;
 }
 
+function warnSkip(
+  logger: WriteThroughLogger | undefined,
+  slug: string,
+  reason: WriteThroughResult['skipped'],
+  detail?: string,
+): void {
+  if (!logger) return;
+  logger.warn(
+    `[write-through] skipped ${slug}: ${reason}${detail ? ` (${detail})` : ''}`,
+  );
+}
+
 /**
  * Render the DB row for `slug` to markdown and atomically write it under
  * `sync.repo_path`. Never throws — failures are reported via the result's
@@ -90,15 +102,18 @@ export async function writePageThrough(
     const sourceLocalPath = srcRows[0]?.local_path ?? null;
     if (sourceLocalPath) {
       if (!existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
+        warnSkip(opts.logger, slug, 'repo_not_found', sourceLocalPath);
         return { written: false, skipped: 'repo_not_found' };
       }
       filePath = join(sourceLocalPath, `${slug}.md`);
     } else {
       const repoPath = await engine.getConfig('sync.repo_path');
       if (!repoPath) {
+        warnSkip(opts.logger, slug, 'no_repo_configured', `source=${sourceId}`);
         return { written: false, skipped: 'no_repo_configured' };
       }
       if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
+        warnSkip(opts.logger, slug, 'repo_not_found', repoPath);
         return { written: false, skipped: 'repo_not_found' };
       }
       // Leak guard: refuse to write into a path that is some OTHER source's
@@ -108,6 +123,7 @@ export async function writePageThrough(
         [sourceId, repoPath],
       );
       if (collide.length > 0) {
+        warnSkip(opts.logger, slug, 'source_repo_belongs_to_other_source', repoPath);
         return { written: false, skipped: 'source_repo_belongs_to_other_source' };
       }
       filePath = resolvePageFilePath(repoPath, slug, sourceId);
@@ -115,6 +131,7 @@ export async function writePageThrough(
 
     const writtenPage = await engine.getPage(slug, { sourceId });
     if (!writtenPage) {
+      warnSkip(opts.logger, slug, 'page_not_found_after_write', `source=${sourceId}`);
       return { written: false, skipped: 'page_not_found_after_write' };
     }
 

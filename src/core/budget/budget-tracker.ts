@@ -242,6 +242,13 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
 const ANTHROPIC_CACHE_READ_INPUT_MULTIPLIER = 0.1;
 const ANTHROPIC_CACHE_CREATION_5M_INPUT_MULTIPLIER = 1.25;
 
+function usesLegacyAnthropicCachePricing(modelId: string): boolean {
+  const { provider, model } = splitProviderModelId(modelId);
+  if (provider === 'anthropic') return true;
+  if (provider === null && model.startsWith('claude-')) return true;
+  return false;
+}
+
 function costForUsage(
   modelId: string,
   inputTokens: number,
@@ -254,10 +261,15 @@ function costForUsage(
   if (!p) return null;
   const inputCost = (inputTokens / 1_000_000) * p.input;
   const outputCost = (outputTokens / 1_000_000) * p.output;
+  const isLegacyAnthropic = usesLegacyAnthropicCachePricing(modelId);
+  const cacheReadRate = p.cache_read_input ??
+    (isLegacyAnthropic ? p.input * ANTHROPIC_CACHE_READ_INPUT_MULTIPLIER : p.input);
+  const cacheCreationRate = p.cache_creation_input ??
+    (isLegacyAnthropic ? p.input * ANTHROPIC_CACHE_CREATION_5M_INPUT_MULTIPLIER : p.input);
   const cacheCost = kind === 'chat'
     ? (
-        (cacheReadTokens / 1_000_000) * p.input * ANTHROPIC_CACHE_READ_INPUT_MULTIPLIER +
-        (cacheCreationTokens / 1_000_000) * p.input * ANTHROPIC_CACHE_CREATION_5M_INPUT_MULTIPLIER
+        (cacheReadTokens / 1_000_000) * cacheReadRate +
+        (cacheCreationTokens / 1_000_000) * cacheCreationRate
       )
     : 0;
   return inputCost + outputCost + cacheCost;
@@ -467,8 +479,12 @@ export class BudgetTracker {
       output_tokens: actual.outputTokens ?? 0,
       cache_read_tokens: cacheReadTokens,
       cache_creation_tokens: cacheCreationTokens,
-      cache_read_input_multiplier: kind === 'chat' ? ANTHROPIC_CACHE_READ_INPUT_MULTIPLIER : null,
-      cache_creation_input_multiplier: kind === 'chat' ? ANTHROPIC_CACHE_CREATION_5M_INPUT_MULTIPLIER : null,
+      cache_read_input_multiplier: kind === 'chat' && usesLegacyAnthropicCachePricing(actual.modelId)
+        ? ANTHROPIC_CACHE_READ_INPUT_MULTIPLIER
+        : null,
+      cache_creation_input_multiplier: kind === 'chat' && usesLegacyAnthropicCachePricing(actual.modelId)
+        ? ANTHROPIC_CACHE_CREATION_5M_INPUT_MULTIPLIER
+        : null,
       embedding_dims: actual.embeddingDims ?? null,
       actual_cost_usd: cost,
       cumulative_cost_usd: this.cumulativeUsd,
