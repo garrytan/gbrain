@@ -2306,11 +2306,24 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       } catch {
         // Slug doesn't exist or collision, treat as add
       }
-      // Reimport at new path (picks up content changes)
+      // Reimport at new path (picks up content changes). Wrapped to match the
+      // deletes/adds loops: a malformed renamed file is recorded to failedFiles
+      // and skipped, NOT thrown uncaught. importFile still throws on content
+      // sanity-block, duplicate-slug, and missing-link endpoints; an uncaught
+      // throw here crashes the whole sync mid-run and freezes the checkpoint,
+      // defeating --skip-failed. A `skipped` result carrying an error is also
+      // captured so the failure is recorded rather than silently dropped.
       const filePath = join(repoPath, to);
       if (existsSync(filePath)) {
-        const result = await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack });
-        if (result.status === 'imported') chunksCreated += result.chunks;
+        try {
+          const result = await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack });
+          if (result.status === 'imported') chunksCreated += result.chunks;
+          else if (result.status === 'skipped' && (result as { error?: string }).error) {
+            failedFiles.push({ path: to, error: String((result as { error?: string }).error) });
+          }
+        } catch (e: unknown) {
+          failedFiles.push({ path: to, error: e instanceof Error ? e.message : String(e) });
+        }
       }
       pagesAffected.push(newSlug);
       await markCompleted(to);
