@@ -135,6 +135,34 @@ queries return rows from any of the listed sources. Omit both flags for the
 v0.33-compatible super-client shape. Pre-v0.34 clients are backfilled to
 `source_id='default'` on `gbrain upgrade`.
 
+**Read-everything with `--federated-read '*'`.** For a read-only client that
+should see *every* source — current and future — pass the `'*'` wildcard
+instead of an explicit list:
+
+```bash
+gbrain auth register-client kb-reader \
+  --grant-types client_credentials \
+  --scopes read \
+  --federated-read '*'
+```
+
+This is the answer to "how do I grant access to sources added later?": an
+explicit source list is **frozen at registration** (there is no command to amend
+it — you'd revoke and re-issue), so a `'*'` grant is the only shape that auto-
+includes repos synced after the client was created. Properties:
+
+- **Read scope only.** `'*'` lives on the read axis; write authority still comes
+  from the scalar `--source` (a `'*'` write source is rejected by the FK), so a
+  wildcard reader can never write across sources.
+- **Deliberate, not a default.** Only an explicit `'*'` widens to all; an
+  empty/garbage grant stays fail-closed to `default` (the v0.42.37 isolation
+  contract is unchanged). Use it when "anyone who can reach this MCP endpoint
+  may read the whole brain" is the intended posture (e.g. a company code KB
+  behind a VPN/internal ALB).
+- **Narrowing still works.** A `'*'` client may pass `source_id: "<one>"` on a
+  call to scope a single query; code-traversal ops (`code_callers` etc.) are
+  single-source and require naming a source explicitly.
+
 Host-repo wrappers can register programmatically:
 
 ```ts
