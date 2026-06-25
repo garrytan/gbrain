@@ -94,10 +94,28 @@ describe('postgres-engine / search path timeout isolation', () => {
   });
 });
 
+describe('postgres-engine / search date filtering', () => {
+  test('search paths filter since/until on effective_date before import-time fallback', () => {
+    const expectedDateExpr = 'COALESCE(p.effective_date, p.updated_at, p.created_at)';
+    const staleDatePredicate = /COALESCE\(p\.updated_at,\s*p\.created_at\)\s*[<>]\s*\$/;
+
+    for (const methodName of ['searchKeyword', 'searchKeywordChunks', 'searchVector']) {
+      const fn = stripComments(extractMethod(SRC, methodName));
+
+      expect(countOccurrences(fn, expectedDateExpr)).toBe(2);
+      expect(fn).not.toMatch(staleDatePredicate);
+    }
+  });
+});
+
 function stripComments(s: string): string {
   return s
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|\s)\/\/[^\n]*/g, '$1');
+}
+
+function countOccurrences(s: string, needle: string): number {
+  return s.split(needle).length - 1;
 }
 
 // extractMethod grabs the body of a class method by brace-matching from
