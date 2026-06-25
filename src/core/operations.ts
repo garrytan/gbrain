@@ -1463,11 +1463,14 @@ const search: Operation = {
     // Cheap-hybrid (D4/D15): full vector+keyword+RRF+pool+title+alias, but
     // expansion OFF (no per-call LLM cost). `query` op is the full-control variant.
     let capturedMeta: HybridSearchMeta | null = null;
+    const recencyDecayConfig = await loadQueryRecencyDecayConfig(ctx, scope);
     const results = await hybridSearchCached(ctx.engine, queryText, {
       limit,
       offset,
       expansion: false,
       ...scope,
+      recencyDecay: recencyDecayConfig.recencyDecay,
+      recencyFallback: recencyDecayConfig.recencyFallback,
       ...(perCallMode ? { mode: perCallMode } : {}),
       onMeta: (m) => { capturedMeta = m; },
     });
