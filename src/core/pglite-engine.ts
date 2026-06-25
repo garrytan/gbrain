@@ -2711,22 +2711,41 @@ export class PGLiteEngine implements BrainEngine {
     name: string,
     dirPrefix?: string,
     minSimilarity: number = 0.55,
+    sourceId?: string,
   ): Promise<{ slug: string; similarity: number } | null> {
     // Inline threshold comparison instead of `SET LOCAL pg_trgm.similarity_threshold`.
     // The GUC only scopes to the current transaction and pglite auto-commits each
     // .query() call, so the SET LOCAL would be a no-op. Using similarity() >= $N
     // directly gives predictable behavior. Tie-breaker: sort by slug so re-runs
     // pick the same winner.
+    //
+    // `sourceId` + `deleted_at IS NULL` mirror the filters `tryFuzzyMatch` in
+    // `src/core/entities/resolve.ts` got via #1436 (v0.41.13.0). Without them,
+    // fuzzy resolution could suggest cross-source slugs that the caller then
+    // silently drops at the FK filter — making it look like the match failed
+    // when in fact it picked the wrong page.
     const prefixPattern = dirPrefix ? `${dirPrefix}/%` : '%';
-    const { rows } = await this.db.query(
-      `SELECT slug, similarity(title, $1) AS sim
-       FROM pages
-       WHERE similarity(title, $1) >= $3
-         AND slug LIKE $2
-       ORDER BY sim DESC, slug ASC
-       LIMIT 1`,
-      [name, prefixPattern, minSimilarity]
-    );
+    const { rows } = sourceId
+      ? await this.db.query(
+          `SELECT slug, similarity(title, $1) AS sim
+           FROM pages
+           WHERE similarity(title, $1) >= $3
+             AND slug LIKE $2
+             AND source_id = $4
+             AND deleted_at IS NULL
+           ORDER BY sim DESC, slug ASC
+           LIMIT 1`,
+          [name, prefixPattern, minSimilarity, sourceId]
+        )
+      : await this.db.query(
+          `SELECT slug, similarity(title, $1) AS sim
+           FROM pages
+           WHERE similarity(title, $1) >= $3
+             AND slug LIKE $2
+           ORDER BY sim DESC, slug ASC
+           LIMIT 1`,
+          [name, prefixPattern, minSimilarity]
+        );
     if (rows.length === 0) return null;
     const row = rows[0] as { slug: string; sim: number };
     return { slug: row.slug, similarity: row.sim };
