@@ -85,18 +85,38 @@ describe('extractLinksFromFile', () => {
     expect(links).toEqual([]);
   });
 
-  it('infers link type from directory structure', async () => {
-    const content = 'See [Brex](../companies/brex.md).';
-    const allSlugs = new Set(['people/pedro', 'companies/brex']);
-    const links = await extractLinksFromFile(content, 'people/pedro.md', allSlugs);
+  it('uses canonical verb inference for filesystem markdown links', async () => {
+    const content = 'Alice works at [Acme](../companies/acme.md).';
+    const allSlugs = new Set(['people/alice', 'companies/acme']);
+    const links = await extractLinksFromFile(content, 'people/alice.md', allSlugs);
     expect(links[0].link_type).toBe('works_at');
   });
 
-  it('infers deal_for type for deals -> companies', async () => {
-    const content = 'See [Brex](../companies/brex.md).';
-    const allSlugs = new Set(['deals/seed', 'companies/brex']);
+  it('does not stamp a relationship type from directory structure alone', async () => {
+    const content = 'See [Acme](../companies/acme.md).';
+    const allSlugs = new Set(['deals/seed', 'companies/acme']);
     const links = await extractLinksFromFile(content, 'deals/seed.md', allSlugs);
-    expect(links[0].link_type).toBe('deal_for');
+    expect(links[0].link_type).toBe('mentions');
+  });
+
+  it('applies subject-scoped page-role inference on the filesystem path', async () => {
+    const filler = 'The team kept shipping updates while customers reviewed the roadmap and the operating notes stayed deliberately boring. '.padEnd(160, '.');
+    const content = `---\ntitle: Alice\ntype: person\n---\n\nBob is an investor in early-stage startups.${filler}See [Acme](../companies/acme.md).`;
+    const allSlugs = new Set(['people/alice', 'companies/acme']);
+    const links = await extractLinksFromFile(content, 'people/alice.md', allSlugs);
+    const acme = links.find(l => l.to_slug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.link_type).toBe('mentions');
+  });
+
+  it('keeps the page subject role prior when the filesystem page title matches', async () => {
+    const filler = 'The team kept shipping updates while customers reviewed the roadmap and the operating notes stayed deliberately boring. '.padEnd(160, '.');
+    const content = `---\ntitle: Alice\ntype: person\n---\n\nAlice is an investor in early-stage startups.${filler}See [Acme](../companies/acme.md).`;
+    const allSlugs = new Set(['people/alice', 'companies/acme']);
+    const links = await extractLinksFromFile(content, 'people/alice.md', allSlugs);
+    const acme = links.find(l => l.to_slug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.link_type).toBe('invested_in');
   });
 });
 
