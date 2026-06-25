@@ -227,6 +227,40 @@ describe('PGLiteEngine: Search', () => {
     expect(results.length).toBeGreaterThan(0);
   });
 
+  test('upsertChunks remains keyword-searchable when the chunk FTS trigger is missing', async () => {
+    // Fresh Agent Box PGLite installs can end up with pages/chunks present but
+    // empty keyword results when the trigger that normally computes
+    // content_chunks.search_vector is absent. upsertChunks is the write path
+    // behind put_page/import, so it must populate the vector directly as a
+    // safety net instead of relying exclusively on schema-trigger state.
+    await truncateAll();
+    await (engine as any).db.exec('DROP TRIGGER IF EXISTS chunk_search_vector_trigger ON content_chunks');
+    await engine.putPage('concepts/mcp-eval-sentinel', {
+      type: 'note',
+      title: 'MCP eval sentinel',
+      compiled_truth: 'MCP eval sentinel Carlos uniqueprobe after fresh Agent Box setup.',
+    });
+    await engine.upsertChunks('concepts/mcp-eval-sentinel', [
+      {
+        chunk_index: 0,
+        chunk_text: 'MCP eval sentinel Carlos uniqueprobe after fresh Agent Box setup.',
+        chunk_source: 'compiled_truth',
+      },
+    ]);
+
+    const { rows } = await (engine as any).db.query(
+      `SELECT cc.search_vector::text AS search_vector
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE p.slug = $1`,
+      ['concepts/mcp-eval-sentinel'],
+    );
+    expect(String(rows[0]?.search_vector ?? '')).toContain('uniqueprob');
+
+    const results = await engine.searchKeyword('uniqueprobe', { limit: 5 });
+    expect(results.map(r => r.slug)).toContain('concepts/mcp-eval-sentinel');
+  });
+
   test('searchVector returns empty when no embeddings', async () => {
     const fakeEmbedding = new Float32Array(CHUNK_EMBED_DIM);
     const results = await engine.searchVector(fakeEmbedding);

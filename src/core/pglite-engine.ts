@@ -2162,6 +2162,22 @@ export class PGLiteEngine implements BrainEngine {
          embedding_image = COALESCE(EXCLUDED.embedding_image, content_chunks.embedding_image)`,
       params
     );
+
+    // Defense in depth for PGLite fresh installs whose chunk FTS trigger is
+    // absent or wedged: keyword search reads content_chunks.search_vector, so
+    // the write path must leave newly upserted chunks searchable even when the
+    // schema trigger fails to do it for us. This mirrors migration v28's
+    // backfill expression and is idempotent with the normal trigger path.
+    await this.db.query(
+      `UPDATE content_chunks
+          SET search_vector =
+            setweight(to_tsvector('english', COALESCE(doc_comment, '')), 'A') ||
+            setweight(to_tsvector('english', COALESCE(symbol_name_qualified, '')), 'A') ||
+            setweight(to_tsvector('english', COALESCE(chunk_text, '')), 'B')
+        WHERE page_id = $1
+          AND chunk_index = ANY($2::int[])`,
+      [pageId, newIndices],
+    );
   }
 
   async getChunks(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]> {
