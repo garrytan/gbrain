@@ -52,8 +52,13 @@ describe('recipe: minimax', () => {
     expect(opts).toEqual({ openaiCompatible: { type: 'db' } });
   });
 
-  test('dimsProviderOptions returns undefined for non-MiniMax openai-compat models', () => {
+  // voyage-3-lite is a fixed-dim symmetric model → still hits the `return
+  // undefined` fall-through. nomic-embed-text was changed by fork b750d3f7
+  // (nomic asymmetric prefixes) to emit `input_type: 'document'` for forward
+  // compat; assert the fork's intended behavior, not upstream's undefined.
+  test('dimsProviderOptions: voyage-3-lite → undefined; nomic-embed-text → asymmetric input_type (fork b750d3f7)', () => {
     expect(dimsProviderOptions('openai-compatible', 'voyage-3-lite', 512)).toBeUndefined();
-    expect(dimsProviderOptions('openai-compatible', 'nomic-embed-text', 768)).toBeUndefined();
+    expect(dimsProviderOptions('openai-compatible', 'nomic-embed-text', 768))
+      .toEqual({ openaiCompatible: { input_type: 'document' } });
   });
 });

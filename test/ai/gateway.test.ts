@@ -168,9 +168,15 @@ describe('dims.dimsProviderOptions', () => {
     expect(opts).toBeUndefined();
   });
 
-  test('openai-compatible returns undefined for providers without a dim param', () => {
+  // Fork b750d3f7 (nomic-embed-text asymmetric prefixes) intentionally changed
+  // nomic-embed-text to emit `input_type` on the openai-compatible adapter for
+  // forward-compat with servers that honor it server-side. Upstream returns
+  // undefined here; this fork asserts the patched behavior. The generic
+  // "no dim param → undefined" fall-through stays covered via voyage-3-lite in
+  // test/ai/recipe-minimax.test.ts.
+  test('openai-compatible nomic-embed-text returns asymmetric input_type (fork b750d3f7)', () => {
     const opts = dimsProviderOptions('openai-compatible', 'nomic-embed-text', 768);
-    expect(opts).toBeUndefined();
+    expect(opts).toEqual({ openaiCompatible: { input_type: 'document' } });
   });
 
   test('Voyage flexible-dim models return dimensions for the SDK shim', () => {

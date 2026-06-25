@@ -2,7 +2,8 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, writeFileSync, symlinkSync, rmSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { collectMarkdownFiles } from '../src/commands/import.ts';
+import { execFileSync } from 'child_process';
+import { collectMarkdownFiles, collectSyncableFiles } from '../src/commands/import.ts';
 
 // These tests exercise the filesystem walker that feeds `gbrain import`.
 // They target L002 (report/findings.md): a malicious symlink inside a shared
@@ -85,5 +86,90 @@ describe('collectMarkdownFiles — symlink containment', () => {
     const files = collectMarkdownFiles(root);
     expect(files).toContain(join(root, 'legit.md'));
     expect(files).not.toContain(join(root, 'dangling.md'));
+  });
+});
+
+// The walker silently skips files gbrain can't ingest directly (PDF/EPUB/DOCX).
+// Pre-fix, a user pointing `gbrain import` at a folder of books saw "Found 0
+// files" and no signal. `collectSyncableFiles` now records those skipped docs
+// into the optional `unsupportedDocsOut` sink so the caller can warn once.
+// These mkdtemp dirs are NOT git repos → exercise the FS-walk branch.
+describe('collectSyncableFiles — unsupported doc detection (FS walk)', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'gbrain-walker-docs-'));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test('records skipped PDF/EPUB into unsupportedDocsOut and excludes them from results', () => {
+    writeFileSync(join(root, 'legit.md'), '# legit\n');
+    writeFileSync(join(root, 'book.pdf'), '%PDF-1.4 fake\n');
+    mkdirSync(join(root, 'sub'));
+    writeFileSync(join(root, 'sub', 'notes.epub'), 'fake-epub\n');
+
+    const docs: string[] = [];
+    const files = collectSyncableFiles(root, { strategy: 'markdown', unsupportedDocsOut: docs });
+
+    // Collectible markdown is returned; the docs never are.
+    expect(files).toContain(join(root, 'legit.md'));
+    expect(files).not.toContain(join(root, 'book.pdf'));
+    expect(files).not.toContain(join(root, 'sub', 'notes.epub'));
+
+    // The skipped docs are recorded as absolute paths.
+    expect(docs).toContain(join(root, 'book.pdf'));
+    expect(docs).toContain(join(root, 'sub', 'notes.epub'));
+    expect(docs.length).toBe(2);
+  });
+
+  test('case-insensitive extension match', () => {
+    writeFileSync(join(root, 'REPORT.PDF'), '%PDF fake\n');
+    const docs: string[] = [];
+    collectSyncableFiles(root, { strategy: 'markdown', unsupportedDocsOut: docs });
+    expect(docs).toContain(join(root, 'REPORT.PDF'));
+  });
+
+  test('back-compat: omitting unsupportedDocsOut returns the same list and does not throw', () => {
+    writeFileSync(join(root, 'legit.md'), '# legit\n');
+    writeFileSync(join(root, 'book.pdf'), '%PDF fake\n');
+
+    const withSink: string[] = [];
+    const a = collectSyncableFiles(root, { strategy: 'markdown', unsupportedDocsOut: withSink });
+    const b = collectSyncableFiles(root, { strategy: 'markdown' });
+    expect(b).toEqual(a);
+    expect(b).toContain(join(root, 'legit.md'));
+    expect(b).not.toContain(join(root, 'book.pdf'));
+  });
+});
+
+// The git ls-files branch is the production DEFAULT for any git-repo corpus, so
+// detection must fire there too. A git repo makes `collectSyncableFiles` route
+// through `gitListSyncableFiles` instead of the FS walk.
+describe('collectSyncableFiles — unsupported doc detection (git ls-files branch)', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'gbrain-walker-gitdocs-'));
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    // Identity so any future `git add`/commit in this branch won't error.
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: root });
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test('untracked PDF (listed via --others) is recorded; markdown is collected', () => {
+    writeFileSync(join(root, 'legit.md'), '# legit\n');
+    writeFileSync(join(root, 'book.pdf'), '%PDF fake\n');
+
+    const docs: string[] = [];
+    const files = collectSyncableFiles(root, { strategy: 'markdown', unsupportedDocsOut: docs });
+
+    expect(files).toContain(join(root, 'legit.md'));
+    expect(files).not.toContain(join(root, 'book.pdf'));
+    expect(docs).toContain(join(root, 'book.pdf'));
   });
 });

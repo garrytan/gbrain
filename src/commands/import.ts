@@ -40,6 +40,11 @@ export interface RunImportResult {
   errors: number;
   chunksCreated: number;
   failures: Array<{ path: string; error: string }>;
+  /** Count of document files (PDF/EPUB/DOCX…) the walker skipped because gbrain
+   *  can't ingest them directly. Additive/optional; lets programmatic callers
+   *  distinguish "0 imported because nothing matched" from "0 imported because
+   *  N docs need pre-conversion". */
+  unsupportedDocsSkipped?: number;
 }
 
 export async function runImport(
@@ -176,13 +181,15 @@ export async function runImport(
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
   const _walkT0 = Date.now();
   console.error(`[gbrain phase] import.collect_files start dir=${dir} strategy=${strategy}`);
-  const allFiles = collectSyncableFiles(dir, { strategy });
+  const unsupportedDocs: string[] = [];
+  const allFiles = collectSyncableFiles(dir, { strategy, unsupportedDocsOut: unsupportedDocs });
   console.error(
     `[gbrain phase] import.collect_files done ${Date.now() - _walkT0}ms files=${allFiles.length}`,
   );
   const fileTypeLabel = strategy === 'code' ? 'code'
     : strategy === 'auto' ? 'syncable' : 'markdown';
   console.log(`Found ${allFiles.length} ${fileTypeLabel} files`);
+  warnUnsupportedDocs(unsupportedDocs, dir);
 
   // Sort newest-first so date-prefixed brain paths get embedded before older ones.
   // See src/core/sort-newest-first.ts for the policy.
@@ -378,6 +385,7 @@ export async function runImport(
       status: 'success', duration_s: parseFloat(totalTime),
       imported, skipped, errors, chunks: chunksCreated,
       total_files: allFiles.length,
+      unsupported_docs: unsupportedDocs.length,
     }));
   } else {
     console.log(`\nImport complete (${totalTime}s):`);
@@ -464,7 +472,7 @@ export async function runImport(
     await engine.setConfig('sync.repo_path', dir);
   }
 
-  return { imported, skipped, errors, chunksCreated, failures };
+  return { imported, skipped, errors, chunksCreated, failures, unsupportedDocsSkipped: unsupportedDocs.length };
 }
 
 /**
@@ -485,6 +493,54 @@ function resolveMaxWalkDepth(): number {
 
 interface CollectOpts {
   strategy?: SyncStrategy;
+  /**
+   * Optional sink for document files the walker skipped because gbrain can't
+   * ingest them directly (PDF/EPUB/DOCX…). Populated in BOTH walker branches
+   * (git ls-files + FS walk) with ABSOLUTE paths. Callers warn the user once
+   * after collection via `warnUnsupportedDocs`; leaving it unset preserves
+   * prior behavior for every other caller.
+   */
+  unsupportedDocsOut?: string[];
+}
+
+/**
+ * Binary document formats gbrain cannot ingest directly — they need an external
+ * pre-conversion step to markdown (docling / pdftotext / the book-mirror skill)
+ * before `import`/`sync` can chunk them. The walker silently skips anything not
+ * collectible for the active strategy (markdown/code/image); without surfacing
+ * these, a user pointing `gbrain import` at a folder of books just sees
+ * "Found 0 files" with no idea why. `.txt` is deliberately EXCLUDED — plain-text
+ * ingest is a separate question, and warning on every stray `.txt` would be noise.
+ * See src/commands/book-mirror.ts for the supported pre-conversion contract.
+ */
+const UNSUPPORTED_DOC_EXTENSIONS = new Set([
+  '.pdf', '.epub', '.docx', '.doc', '.rtf', '.odt', '.pptx', '.mobi', '.azw3',
+]);
+
+function isUnsupportedDocFile(path: string): boolean {
+  const lower = path.toLowerCase();
+  const dot = lower.lastIndexOf('.');
+  return dot !== -1 && UNSUPPORTED_DOC_EXTENSIONS.has(lower.slice(dot));
+}
+
+/**
+ * One-shot warning when the walker skipped document files gbrain can't ingest
+ * directly. Writes to stderr (stdout stays clean for `--json` payloads and
+ * summaries); prints regardless of `--quiet` since it's a correctness warning,
+ * not progress chatter. No-op on an empty list.
+ */
+export function warnUnsupportedDocs(docs: string[], dir: string): void {
+  if (docs.length === 0) return;
+  const shown = docs.slice(0, 5).map((p) => relative(dir, p)).join(', ');
+  const more = docs.length > 5 ? ` (+${docs.length - 5} more)` : '';
+  console.error(
+    `\n⚠ ${docs.length} document file(s) under ${dir} were NOT imported — ` +
+    `gbrain ingests markdown (.md/.mdx) and code only.\n` +
+    `  PDF/EPUB/DOCX must be converted to markdown first ` +
+    `(e.g. \`docling <file> --to md\`, or the book-mirror skill for EPUB/PDF), ` +
+    `then re-run import.\n` +
+    `  Skipped: ${shown}${more}\n`,
+  );
 }
 
 /**
@@ -530,6 +586,7 @@ function gitListSyncableFiles(
   dir: string,
   strategy: SyncStrategy,
   multimodalOn: boolean,
+  unsupportedDocsOut?: string[],
 ): string[] | null {
   let stdout: string;
   try {
@@ -544,7 +601,10 @@ function gitListSyncableFiles(
   const files: string[] = [];
   for (const rel of stdout.split('\0')) {
     if (!rel) continue;
-    if (!isCollectibleForWalker(rel, strategy, multimodalOn)) continue;
+    if (!isCollectibleForWalker(rel, strategy, multimodalOn)) {
+      if (unsupportedDocsOut && isUnsupportedDocFile(rel)) unsupportedDocsOut.push(join(dir, rel));
+      continue;
+    }
     const full = join(dir, rel);
     let st;
     try {
@@ -588,7 +648,7 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
   // vendored data/fixtures). `--cached --others --exclude-standard` = tracked
   // PLUS untracked-not-ignored, so uncommitted source is still indexed. Non-git
   // dirs (or git unavailable) fall through to the FS walk below.
-  const gitFiles = gitListSyncableFiles(dir, strategy, multimodalOn);
+  const gitFiles = gitListSyncableFiles(dir, strategy, multimodalOn, opts.unsupportedDocsOut);
   if (gitFiles) return gitFiles;
 
   const maxDepth = resolveMaxWalkDepth();
@@ -636,7 +696,10 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
         visitedInodes.set(inodeKey, true);
         walk(full, depth + 1);
       } else if (stat.isFile()) {
-        if (!isCollectibleForWalker(entry, strategy, multimodalOn)) continue;
+        if (!isCollectibleForWalker(entry, strategy, multimodalOn)) {
+          if (opts.unsupportedDocsOut && isUnsupportedDocFile(entry)) opts.unsupportedDocsOut.push(full);
+          continue;
+        }
         files.push(full);
       }
     }

@@ -4,7 +4,7 @@ import { join, relative } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { DELETE_BATCH_SIZE } from '../core/engine-constants.ts';
 import { importFile } from '../core/import-file.ts';
-import { collectSyncableFiles } from './import.ts';
+import { collectSyncableFiles, warnUnsupportedDocs } from './import.ts';
 import { createInterface } from 'readline';
 import {
   isSyncable,
@@ -2917,12 +2917,17 @@ async function performFullSync(
   // code --dry-run` always reported zero files even when ~1500 code
   // files were waiting.
   if (opts.dryRun) {
-    const allFiles = collectSyncableFiles(repoPath, { strategy: opts.strategy ?? 'markdown' });
+    const unsupportedDocs: string[] = [];
+    const allFiles = collectSyncableFiles(repoPath, {
+      strategy: opts.strategy ?? 'markdown',
+      unsupportedDocsOut: unsupportedDocs,
+    });
     slog(
       `Full-sync dry run (strategy=${opts.strategy ?? 'markdown'}): ` +
       `${allFiles.length} file(s) would be imported ` +
       `from ${repoPath} @ ${headCommit.slice(0, 8)}.`,
     );
+    warnUnsupportedDocs(unsupportedDocs, repoPath);
     return {
       status: 'dry_run',
       fromCommit: null,
