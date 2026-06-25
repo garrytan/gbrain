@@ -179,19 +179,25 @@ export async function recordCompleted(
   // REPLACE semantics (kept deliberately — #1794 V3). Callers like
   // extract-conversation-facts serialize a MUTABLE map through here and rely on
   // stale keys being REMOVED; an append would make them unremovable. The full
-  // set lands in the parent `completed_keys` JSONB column via a single UPSERT —
-  // exactly as before. JSON.stringify into `$3::jsonb` is correct (the text→jsonb
-  // cast yields a proper array; NOT the double-encode trap, which is the template
-  // form). Sync uses `appendCompleted` (below) instead, never this.
+  // set lands in the parent `completed_keys` JSONB column via a single UPSERT.
+  //
+  // #2328: `JSON.stringify(sorted)` bound to a `$3::jsonb` PARAM is the
+  // double-encode trap (postgres.js stringifies the string again → a jsonb
+  // SCALAR), which the v119 `completed_keys` array CHECK rejects on every write
+  // ("violates op_checkpoints_completed_keys_array"). It silently slipped the
+  // `check-jsonb-pattern` guard because that only matches the `${...}::jsonb`
+  // TEMPLATE form, not a positional param. Fix: pass the JS array as a native
+  // `text[]` param (the same shape `appendCompleted` relies on) and lift it to a
+  // jsonb array with `to_jsonb`. No JSON.stringify, no double-encode.
   const sorted = [...keys].sort();
   return durableWrite(engine, key, 'write', () =>
     engine.executeRawDirect(
       `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-       VALUES ($1, $2, $3::jsonb, now())
+       VALUES ($1, $2, to_jsonb($3::text[]), now())
        ON CONFLICT (op, fingerprint) DO UPDATE
          SET completed_keys = EXCLUDED.completed_keys,
              updated_at     = now()`,
-      [key.op, key.fingerprint, JSON.stringify(sorted)],
+      [key.op, key.fingerprint, sorted],
     ));
 }
 

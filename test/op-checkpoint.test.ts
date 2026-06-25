@@ -106,6 +106,20 @@ describe('loadOpCheckpoint / recordCompleted / clearOpCheckpoint', () => {
     expect(result.sort()).toEqual(['chunk-1', 'chunk-2', 'chunk-3']);
   });
 
+  test('#2328: completed_keys is stored as a jsonb ARRAY, not a scalar', async () => {
+    // The v119 CHECK requires jsonb_typeof = 'array'. recordCompleted must NOT
+    // double-encode (JSON.stringify into a ::jsonb param) or postgres.js writes a
+    // jsonb string scalar that fails the CHECK on every write. PGLite doesn't
+    // reproduce the double-encode, but this still pins the array shape.
+    const key = { op: 'embed', fingerprint: 'arr00001' };
+    await recordCompleted(engine, key, ['k-2', 'k-1']);
+    const rows = await engine.executeRaw<{ t: string }>(
+      `SELECT jsonb_typeof(completed_keys) AS t FROM op_checkpoints WHERE op = $1 AND fingerprint = $2`,
+      [key.op, key.fingerprint],
+    );
+    expect(rows[0]?.t).toBe('array');
+  });
+
   test('write overwrites prior state', async () => {
     const key = { op: 'embed', fingerprint: 'abc12345' };
     await recordCompleted(engine, key, ['chunk-1']);
