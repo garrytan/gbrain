@@ -264,4 +264,62 @@ describe('v0.34.1 source-isolation regression (#861)', () => {
       expect(r.source_id).toBe('default');
     }
   });
+
+  test('query op exposes and threads multi-type filters for evidence-only retrieval', async () => {
+    const { operations } = await import('../../src/core/operations.ts');
+    const queryOp = operations.find(o => o.name === 'query');
+    expect(queryOp).toBeDefined();
+    expect(queryOp!.params.types?.type).toBe('array');
+
+    await engine.putPage('sources/type-filter-evidence', {
+      type: 'source',
+      title: 'Type Filter Evidence',
+      compiled_truth: 'Receiptgrade temporal substrate needle appears in raw evidence.',
+      timeline: '',
+      frontmatter: {},
+    });
+    await engine.upsertChunks('sources/type-filter-evidence', [{
+      chunk_index: 0,
+      chunk_text: 'Receiptgrade temporal substrate needle appears in raw evidence.',
+      chunk_source: 'compiled_truth',
+      token_count: 8,
+    }]);
+
+    await engine.putPage('companies/type-filter-derived', {
+      type: 'company',
+      title: 'Type Filter Derived',
+      compiled_truth: 'Receiptgrade temporal substrate needle appears in a derived page.',
+      timeline: '',
+      frontmatter: {},
+    });
+    await engine.upsertChunks('companies/type-filter-derived', [{
+      chunk_index: 0,
+      chunk_text: 'Receiptgrade temporal substrate needle appears in a derived page.',
+      chunk_source: 'compiled_truth',
+      token_count: 9,
+    }]);
+
+    const ctx = {
+      engine,
+      config: { engine: 'pglite' as const },
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      dryRun: false,
+      remote: true,
+      sourceId: 'default',
+    };
+    const result = await queryOp!.handler(ctx as any, {
+      query: 'Receiptgrade temporal substrate needle',
+      types: ['source', 'conversation'],
+      expand: false,
+      recency: 'off',
+      salience: 'off',
+      limit: 10,
+    });
+    const rows = result as Array<{ slug: string; type: string }>;
+    expect(rows.some(r => r.slug === 'sources/type-filter-evidence')).toBe(true);
+    expect(rows.some(r => r.slug === 'companies/type-filter-derived')).toBe(false);
+    for (const r of rows) {
+      expect(['source', 'conversation']).toContain(r.type);
+    }
+  });
 });
