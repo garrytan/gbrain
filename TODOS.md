@@ -1,5 +1,25 @@
 # TODOS
 
+## test-baseline follow-ups (filed v0.44.1.0)
+
+Pre-existing test failures surfaced by the v0.44.1.0 link-extraction ship's
+full-suite triage. NONE are caused by that fix (the link-extraction change is
+isolated and fully green); filed here so the baseline gets a clean-up pass.
+(`resolveBoostMap` test-env-isolation is being fixed in its own small PR, not deferred.)
+
+- [ ] **P2 — `registerWorker` → `readWorkers` round-trip returns 0 live workers.**
+  `test/worker-registry.serial.test.ts:60` fails on master (clean env, not flaky): a
+  worker registered with a live PID (`process.pid`) reads back as 0 live workers.
+  Pre-existing, unrelated to link-extraction. Root-cause the liveness/niceness filter
+  in `readWorkers`. Where: the worker-registry module behind
+  `test/worker-registry.serial.test.ts`.
+- [ ] **P3 — Parallel test shards wedge/timeout during PGLite migration replay.**
+  In the v0.44.1.0 full-suite run, shard 4 WEDGED at the 1500s cap and shard 1 hit an
+  unnamed setup failure (~6.9s) mid migration-replay — the documented
+  SIGKILL/wedge-under-parallel-load class. Environmental (memory/timing), not a code
+  regression; may already be addressed by `garrytan/pglite-incident-2348` in the queue.
+  Re-check after that lands. Where: `scripts/run-unit-parallel.sh` shard sizing.
+
 ## reliability fix-wave follow-ups (filed v0.42.52.0)
 
 Deferred from the autopilot/supervisor + sync/status/minion reliability wave
