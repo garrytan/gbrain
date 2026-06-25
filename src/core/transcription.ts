@@ -6,7 +6,7 @@
  * For files >25MB: ffmpeg segmentation into <25MB chunks, transcribe each, concatenate.
  */
 
-import { statSync, readFileSync } from 'fs';
+import { statSync, readFileSync, readdirSync, rmSync } from 'fs';
 import { basename, extname } from 'path';
 
 // ---------------------------------------------------------------------------
@@ -170,14 +170,15 @@ async function transcribeLargeFile(
   }
 
   // Segment into ~20MB chunks (with some overlap for better joining)
-  const { execSync } = await import('child_process');
-  const tmpDir = execSync('mktemp -d').toString().trim();
+  const { execFileSync } = await import('child_process');
+  const tmpDir = execFileSync('mktemp', ['-d'], { encoding: 'utf-8' }).trim();
 
   try {
     // Get audio duration
-    const durationStr = execSync(
-      `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`,
-      { encoding: 'utf-8' }
+    const durationStr = execFileSync(
+      'ffprobe',
+      ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', audioPath],
+      { encoding: 'utf-8' },
     ).trim();
     const totalDuration = parseFloat(durationStr) || 0;
 
@@ -188,13 +189,13 @@ async function transcribeLargeFile(
 
     // Split audio
     const ext = extname(audioPath);
-    execSync(
-      `ffmpeg -i "${audioPath}" -f segment -segment_time ${segmentSeconds} -c copy "${tmpDir}/segment_%03d${ext}"`,
-      { stdio: 'pipe' }
+    execFileSync(
+      'ffmpeg',
+      ['-i', audioPath, '-f', 'segment', '-segment_time', String(segmentSeconds), '-c', 'copy', `${tmpDir}/segment_%03d${ext}`],
+      { stdio: 'pipe' },
     );
 
     // Transcribe each segment
-    const { readdirSync } = await import('fs');
     const segments = readdirSync(tmpDir).filter(f => f.startsWith('segment_')).sort();
     const results: TranscriptionResult[] = [];
     let timeOffset = 0;
@@ -222,7 +223,7 @@ async function transcribeLargeFile(
     };
   } finally {
     // Cleanup temp directory
-    try { execSync(`rm -rf "${tmpDir}"`); } catch {}
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
 }
 
