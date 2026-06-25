@@ -2,6 +2,16 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.44.2.0] - 2026-06-25
+
+**Test hygiene: the `resolveBoostMap` "env unset" test no longer fails locally when `GBRAIN_SOURCE_BOOST` is exported in the developer's shell. No runtime change.**
+
+### Fixed
+- **`test/sql-ranking.test.ts` "returns defaults when env is unset" is now env-isolated.** `resolveBoostMap(undefined)` falls through to the `process.env.GBRAIN_SOURCE_BOOST` default parameter, so an ambient `GBRAIN_SOURCE_BOOST` in the shell leaked into the assertion and the test failed locally (it always passed on CI, where the var is unset). The test now saves, clears, and restores the env var so it deterministically exercises the unset case.
+
+### To take advantage of v0.44.2.0
+`gbrain upgrade` (or rebuild). Developers who export `GBRAIN_SOURCE_BOOST` can now run the unit suite green locally; there is no runtime behavior change.
+
 ## [0.42.53.0] - 2026-06-23
 
 **`gbrain sync` works again on managed Postgres brains: the durable-checkpoint pin write was encoding its value the wrong way, so every multi-source sync aborted at the very first checkpoint. Fixed, plus a repo-wide sweep of the same JSONB footgun and a new CI guard so it can't come back.** A recent release added a structural check on the sync checkpoint table; the pin write that runs before every drain bound its value as a string rather than a real array, so the check rejected it and the run bailed before importing anything. The bug was invisible on the embedded engine (its driver parses the value either way) and only bit managed Postgres.
