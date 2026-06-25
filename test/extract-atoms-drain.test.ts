@@ -134,3 +134,42 @@ describe('shared wiring helper holds the cycle lock (5A)', () => {
     expect(src).toContain('withRefreshingLock(engine, lockId');
   });
 });
+
+describe('#2144: zero-yield tombstone progress semantics', () => {
+  it('continues when a zero-atom batch still shrinks the backlog (tombstoned pages)', async () => {
+    let batches = 0;
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        // consumed: before#1=4, after#1=2 (<4 → progress), before#2=2,
+        // after#2=0 (<2 → progress), before#3=0 → drained; final repeats 0.
+        countRemaining: seq([4, 2, 2, 0, 0]),
+        runBatch: async () => { batches++; return { extracted: 0, skipped: 0 }; },
+        now: () => 0,
+      },
+      { windowMs: 1_000_000 },
+    );
+    expect(result.stopped).toBe('drained');
+    expect(result.batches).toBe(2);
+    expect(result.extracted).toBe(0);
+    expect(result.remaining).toBe(0);
+    expect(batches).toBe(2);
+  });
+
+  it('stops no_progress when a zero-atom batch leaves the backlog flat', async () => {
+    let batches = 0;
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: seq([5, 5]),
+        runBatch: async () => { batches++; return { extracted: 0, skipped: 0 }; },
+        now: () => 0,
+      },
+      { windowMs: 1_000_000 },
+    );
+    expect(result.stopped).toBe('no_progress');
+    expect(result.batches).toBe(1);
+    expect(result.remaining).toBe(5);
+    expect(batches).toBe(1);
+  });
+});
