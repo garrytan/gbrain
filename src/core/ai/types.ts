@@ -55,6 +55,16 @@ export interface EmbeddingTouchpoint {
    */
   safety_factor?: number;
   /**
+   * Maximum number of inputs per embedding request. Some endpoints enforce a
+   * hard COUNT cap independent of token budget — notably llama.cpp's
+   * `llama-server`, which rejects requests with more inputs than its launch
+   * batch size (e.g. `batch size 100 > maximum allowed batch size 32`). The
+   * token-budget pre-split cannot bound item count (many tiny chunks fit under
+   * any token budget), so this is enforced as a separate hard re-split after
+   * the token split. When unset, no count cap is applied.
+   */
+  max_batch_items?: number;
+  /**
    * v0.27.1: when true, at least one model in this recipe accepts image
    * inputs via a multimodal embedding endpoint (e.g. Voyage's
    * /v1/multimodalembeddings). Drives gateway.embedMultimodal() routing.
