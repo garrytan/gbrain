@@ -13,7 +13,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { runPhaseExtractAtoms, parseAtomsResponse } from '../../src/core/cycle/extract-atoms.ts';
+import { runPhaseExtractAtoms, parseAtomsResponse, normalizeAtomConceptLabels } from '../../src/core/cycle/extract-atoms.ts';
 import { runPhaseSynthesizeConcepts } from '../../src/core/cycle/synthesize-concepts.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import type { ChatResult, ChatOpts } from '../../src/core/ai/gateway.ts';
@@ -96,10 +96,36 @@ describe('v0.41 T5: parseAtomsResponse', () => {
     }
   });
 
+  test('normalizes concept labels with cap, length, and dedupe rules', () => {
+    const labels = normalizeAtomConceptLabels([
+      'AI Agents',
+      'ai-agents',
+      'Founder_Psychology',
+      'bad/slash',
+      'this-label-is-far-too-long-to-keep',
+      'Hardware',
+      'Design Tools',
+      'Open Source',
+      'Extra Label',
+    ]);
+    expect(labels).toEqual([
+      'ai-agents',
+      'founder-psychology',
+      'hardware',
+      'design-tools',
+      'open-source',
+    ]);
+  });
+
   test('clamps virality_score to [0, 100]', () => {
     expect(parseAtomsResponse(`[{"title":"a","atom_type":"insight","body":"b","virality_score":150}]`)[0].virality_score).toBeUndefined();
     expect(parseAtomsResponse(`[{"title":"a","atom_type":"insight","body":"b","virality_score":-5}]`)[0].virality_score).toBeUndefined();
     expect(parseAtomsResponse(`[{"title":"a","atom_type":"insight","body":"b","virality_score":75}]`)[0].virality_score).toBe(75);
+  });
+
+  test('parses normalized concept labels from atom JSON', () => {
+    const raw = `[{"title":"a","atom_type":"insight","body":"b","concepts":["AI Agents","Founder_Psychology"]}]`;
+    expect(parseAtomsResponse(raw)[0].concepts).toEqual(['ai-agents', 'founder-psychology']);
   });
 });
 
@@ -115,7 +141,7 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
 
   test('extracts atoms from transcript via stub chat', async () => {
     const chat = stubChat(`[
-      {"title":"Renders vs physical proof","atom_type":"insight","body":"Enterprise buyers want tangible prototypes."},
+      {"title":"Renders vs physical proof","atom_type":"insight","body":"Enterprise buyers want tangible prototypes.","concepts":["Enterprise Sales","Physical Proof"]},
       {"title":"Founder lesson","atom_type":"anecdote","body":"Story about a founder."}
     ]`);
     const result = await runPhaseExtractAtoms(engine, {
@@ -128,10 +154,11 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
     expect(result.details?.transcripts_processed).toBe(1);
 
     // Verify pages were written
-    const rows = await engine.executeRaw<{ slug: string; type: string }>(
-      `SELECT slug, type FROM pages WHERE type = 'atom'`,
+    const rows = await engine.executeRaw<{ slug: string; type: string; frontmatter: { concepts?: string[] } }>(
+      `SELECT slug, type, frontmatter FROM pages WHERE type = 'atom' ORDER BY slug`,
     );
     expect(rows.length).toBe(2);
+    expect(rows.some((row) => row.frontmatter.concepts?.includes('enterprise-sales'))).toBe(true);
   });
 
   test('dry-run counts but does NOT write', async () => {
