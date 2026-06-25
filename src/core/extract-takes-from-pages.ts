@@ -16,6 +16,7 @@
 import type { BrainEngine } from './engine.ts';
 import type { TakeBatchInput, TakeKind } from './engine.ts';
 import { chat, isAvailable } from './ai/gateway.ts';
+import { getFactsExtractionModel } from './facts/extract.ts';
 
 export const ALLOWED_PAGE_TYPES = [
   'concept', 'atom', 'lore', 'briefing', 'writing', 'originals',
@@ -129,6 +130,15 @@ export async function extractTakesFromPages(
   const sourceFilter = opts.sourceIdFilter ? `AND source_id = $1` : '';
   const params = opts.sourceIdFilter ? [opts.sourceIdFilter] : [];
 
+  // #1857: resolve the model once via the canonical facts.extraction_model
+  // chain. Pre-fix this was hardcoded to `anthropic:claude-haiku-4-5`, which
+  // silently returned 0 claims on OpenAI-only brains: per-page chat() would
+  // hit Anthropic with no key and the try/catch below would swallow each
+  // failure. The JSDoc on opts.model said "defaults to facts.extraction_model"
+  // but no caller resolved that — both cmdExtract (commands/takes.ts) and the
+  // Minion handler in commands/jobs.ts leave opts.model unset.
+  const resolvedModel = opts.model ?? await getFactsExtractionModel(engine);
+
   // Fetch eligible pages. Order by updated_at DESC so recently-edited
   // pages get bootstrapped first.
   const typesList = ALLOWED_PAGE_TYPES.map((t) => `'${t}'`).join(', ');
@@ -174,7 +184,7 @@ export async function extractTakesFromPages(
     let response: { text: string };
     try {
       response = await chat({
-        model: opts.model ?? 'anthropic:claude-haiku-4-5',
+        model: resolvedModel,
         system: CLASSIFIER_SYSTEM,
         messages: [
           {
