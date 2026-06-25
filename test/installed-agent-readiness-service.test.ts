@@ -17,6 +17,7 @@ const rulesBlock = [
   'Use route_memory_writeback before durable memory writes.',
   'canonical_write_allowed',
   'target_snapshot_hash',
+  'write_session_id',
   'expected_content_hash',
   '<!-- MBRAIN:RULES:END -->',
 ].join('\n');
@@ -25,6 +26,7 @@ const rulesContent = [
   'Use route_memory_writeback before durable memory writes.',
   'canonical_write_allowed',
   'target_snapshot_hash',
+  'write_session_id',
   'expected_content_hash',
 ].join('\n');
 
@@ -528,7 +530,7 @@ describe('installed-agent readiness service', () => {
       '<!-- mbrain-agent-rules-version: 0.5.7 -->',
       'This managed block is missing required router terms.',
       '<!-- MBRAIN:RULES:END -->',
-      'Outside the block: route_memory_writeback canonical_write_allowed target_snapshot_hash expected_content_hash',
+      'Outside the block: route_memory_writeback canonical_write_allowed target_snapshot_hash write_session_id expected_content_hash',
     ].join('\n');
 
     const report = buildInstalledAgentReadinessReport({
@@ -551,7 +553,7 @@ describe('installed-agent readiness service', () => {
     const tokenOnlyRulesBlock = [
       '<!-- MBRAIN:RULES:START -->',
       '<!-- mbrain-agent-rules-version: 0.5.7 -->',
-      'route_memory_writeback canonical_write_allowed target_snapshot_hash expected_content_hash',
+      'route_memory_writeback canonical_write_allowed target_snapshot_hash write_session_id expected_content_hash',
       '<!-- MBRAIN:RULES:END -->',
     ].join('\n');
 

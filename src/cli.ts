@@ -550,11 +550,13 @@ function formatCliHelp(command: string, op: Operation): string {
   return `${help}
 Governance:
   put is the direct canonical write path. Prefer route-memory-writeback for
-  governed writes, and provide --expected-content-hash (expected_content_hash)
-  with a real content hash when updating a page, or the literal value null when
-  the target is expected to be absent. The route-first contract requires an
-  observed target hash or explicit absence before canonical memory is mutated;
-  memory_session_id alone is not a write grant.
+  governed writes, and provide --write-session-id (write_session_id) when the
+  router returns one. Otherwise provide --expected-content-hash
+  (expected_content_hash) with a real content hash when updating a page, or the
+  literal value null when the target is expected to be absent. The route-first
+  contract requires a router-issued write session, an observed target hash, or
+  explicit absence before canonical memory is mutated; memory_session_id alone
+  is not a write grant.
 `;
 }
 

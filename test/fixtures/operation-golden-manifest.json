@@ -1317,7 +1317,7 @@
           ],
           "required": true,
           "nullable": false,
-          "description": "Full markdown content with YAML frontmatter"
+          "description": "Full markdown page content"
         },
         "defer_derived": {
           "type": [
@@ -1406,6 +1406,14 @@
             "required": false,
             "nullable": false
           }
+        },
+        "write_session_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Router-issued write session id; binds target slug, source refs, scope, expected hash, and routed content."
         }
       },
       "cli_exposure": {
@@ -1468,8 +1476,8 @@
           }
         }
       },
-      "compact_schema_hash": "0687fea202b1fce1f6c042ba14de752c8e8fb9d37fce2d7ca8c1e7b2c53d622e",
-      "full_schema_hash": "67654cc0da74bd41f780c6cbe9afc4de7175bf325664ead02bef6b831d5bd555",
+      "compact_schema_hash": "a51ba3f749c5bd5ac7fe532742dd2ca0698121311cab68290ad5ceb8fd1b846a",
+      "full_schema_hash": "e34ddf9bbb15a56e628c8c250e7993ec49629a9298b86803023780bacbe735dd",
       "memory_verb_families": [],
       "mutation_aliases": []
     },
@@ -14724,7 +14732,7 @@
     },
     {
       "name": "put_page",
-      "description": "Create or update a knowledge page to record new information about people, companies, concepts, or systems discovered during the conversation. Markdown with YAML frontmatter; content should follow the compiled truth + timeline pattern. Rejects generic, numeric-only, or globally bucketed documentation slugs. Chunks, embeds, and reconciles tags.",
+      "description": "record new information as compiled truth + timeline in a governed Markdown page. Requires observed target hash or router-issued write_session_id.",
       "mutating": true,
       "capability_required": [],
       "capability_visibility": {
@@ -14745,7 +14753,7 @@
           ],
           "required": true,
           "nullable": false,
-          "description": "Full markdown content with YAML frontmatter"
+          "description": "Full markdown page content"
         },
         "defer_derived": {
           "type": [
@@ -14759,9 +14767,9 @@
           "type": [
             "string"
           ],
-          "required": true,
+          "required": false,
           "nullable": true,
-          "description": "Required route-first write precondition. Existing page content_hash must match before writing; null requires that the page is absent."
+          "description": "Observed-target precondition: existing content_hash, or null for confirmed absence. Omit only with write_session_id."
         },
         "memory_session_id": {
           "type": [
@@ -14834,6 +14842,14 @@
             "required": false,
             "nullable": false
           }
+        },
+        "write_session_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Router-issued write session id; binds target slug, source refs, scope, expected hash, and routed content."
         }
       },
       "cli_exposure": {
@@ -14846,7 +14862,6 @@
         "open_world": false,
         "required_params": [
           "content",
-          "expected_content_hash",
           "slug"
         ]
       },
@@ -14892,8 +14907,8 @@
           }
         }
       },
-      "compact_schema_hash": "25686bdfc2fdeac0a3653f823e43e6a8617fa64d8012c139982dbe6905bad993",
-      "full_schema_hash": "826c330e604af96e911a474ee74f26596b4b6171be58597156bcac0b0b9553ee",
+      "compact_schema_hash": "a51ba3f749c5bd5ac7fe532742dd2ca0698121311cab68290ad5ceb8fd1b846a",
+      "full_schema_hash": "db1c088618d5c558b66953579c87aa5ff33e04b0ba2910b828e8d354368adf3e",
       "memory_verb_families": [
         "canonical_page_write"
       ],

@@ -55,6 +55,30 @@ const MEMORY_SESSION_COLUMNS = [
   'expires_at',
 ];
 
+const MEMORY_WRITE_SESSION_COLUMNS = [
+  'id',
+  'route_decision_id',
+  'scope_id',
+  'actor',
+  'memory_session_id',
+  'target_slug',
+  'target_object_type',
+  'expected_content_hash',
+  'source_refs',
+  'route_decision',
+  'intended_operation',
+  'route_reasons',
+  'missing_requirements',
+  'governance_metadata',
+  'status',
+  'status_reason',
+  'consumed_by_event_id',
+  'created_at',
+  'expires_at',
+  'consumed_at',
+  'updated_at',
+];
+
 const REDACTION_PLAN_COLUMNS = [
   'id',
   'scope_id',
@@ -134,6 +158,58 @@ function governedCanonicalWriteInsertSql(id: string): string {
 
 function sqliteSql(sql: string): string {
   return sql.replaceAll('::jsonb', '').replaceAll('false', '0').replaceAll('true', '1');
+}
+
+function validWriteSessionSql(id: string): string {
+  return `
+    INSERT INTO memory_write_sessions (
+      id,
+      route_decision_id,
+      scope_id,
+      actor,
+      target_slug,
+      target_object_type,
+      expected_content_hash,
+      source_refs,
+      route_decision,
+      intended_operation,
+      route_reasons,
+      missing_requirements,
+      governance_metadata,
+      expires_at
+    ) VALUES (
+      '${id}',
+      '${id}:route',
+      'workspace:default',
+      'agent:test',
+      'concepts/write-session-schema',
+      'curated_note',
+      ${id.includes('null-hash') ? 'NULL' : "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"},
+      '["Source: memory write session schema test"]'::jsonb,
+      'canonical_write_allowed',
+      'put_page',
+      '["canonical_write_allowed"]'::jsonb,
+      '[]'::jsonb,
+      '{"reason":"test"}'::jsonb,
+      '2099-01-01T00:00:00.000Z'
+    )
+  `;
+}
+
+function invalidWriteSessionSql(column: string, value: string): string {
+  return validWriteSessionSql(`invalid-${column}-${value}`)
+    .replace("'canonical_write_allowed'", column === 'route_decision' ? `'${value}'` : "'canonical_write_allowed'")
+    .replace("'put_page'", column === 'intended_operation' ? `'${value}'` : "'put_page'")
+    .replace("'concepts/write-session-schema'", column === 'target_slug' ? `'${value}'` : "'concepts/write-session-schema'")
+    .replace("'open'", column === 'status' ? `'${value}'` : "'open'");
+}
+
+function emptyWriteSessionSourceRefsSql(id: string): string {
+  return validWriteSessionSql(id).replace("'[\"Source: memory write session schema test\"]'::jsonb", "'[]'::jsonb");
+}
+
+function invalidWriteSessionSourceRefsSql(id: string, sourceRefsJson: string): string {
+  return validWriteSessionSql(id).replace("'[\"Source: memory write session schema test\"]'::jsonb", `'${sourceRefsJson}'::jsonb`);
 }
 
 function invalidInsertSql(column: string, value: string): string {
@@ -432,6 +508,108 @@ describe('memory operations control-plane schema', () => {
       INSERT INTO memory_sessions (id, status)
       VALUES ('pglite-revoked-invalid', 'revoked')
     `)).rejects.toThrow();
+
+    await engine.disconnect();
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
+
+  test('sqlite initSchema creates memory write session contract', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-write-session-sqlite-'));
+    tempPaths.push(dir);
+
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+    await engine.initSchema();
+
+    const db = (engine as any).database;
+    const table = db
+      .query(
+        `SELECT name, sql
+         FROM sqlite_master
+         WHERE type = 'table'
+           AND name = 'memory_write_sessions'`,
+      )
+      .get() as { name: string; sql: string } | null;
+
+    expect(table?.name).toBe('memory_write_sessions');
+    expect(table?.sql).toContain("status TEXT NOT NULL DEFAULT 'open' CHECK");
+    expect(table?.sql).toContain("route_decision TEXT NOT NULL CHECK");
+    expect(table?.sql).toContain("intended_operation TEXT NOT NULL CHECK");
+    expect(table?.sql).toContain('expires_at TEXT NOT NULL');
+    expect(table?.sql).toContain('consumed_by_event_id TEXT');
+
+    const columns = db.query(`PRAGMA table_info(memory_write_sessions)`).all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toEqual(MEMORY_WRITE_SESSION_COLUMNS);
+
+    const indexes = db
+      .query(
+        `SELECT name
+         FROM sqlite_master
+         WHERE type = 'index'
+           AND tbl_name = 'memory_write_sessions'`,
+      )
+      .all() as Array<{ name: string }>;
+    const indexNames = indexes.map((row) => row.name);
+    expect(indexNames).toEqual(expect.arrayContaining([
+      'idx_memory_write_sessions_scope_status_created',
+      'idx_memory_write_sessions_status_expires',
+      'idx_memory_write_sessions_scope_target_created',
+      'idx_memory_write_sessions_actor_created',
+      'idx_memory_write_sessions_consumed_event',
+    ]));
+
+    expect(() => db.query(sqliteSql(validWriteSessionSql('sqlite-write-session-valid'))).run()).not.toThrow();
+    expect(() => db.query(sqliteSql(validWriteSessionSql('sqlite-write-session-null-hash-valid'))).run()).not.toThrow();
+    expect(() => db.query(sqliteSql(invalidWriteSessionSql('route_decision', 'create_candidate'))).run()).toThrow();
+    expect(() => db.query(sqliteSql(invalidWriteSessionSql('intended_operation', 'create_memory_candidate_entry'))).run()).toThrow();
+    expect(() => db.query(sqliteSql(invalidWriteSessionSql('target_slug', ''))).run()).toThrow();
+    expect(() => db.query(sqliteSql(emptyWriteSessionSourceRefsSql('sqlite-write-session-empty-source-refs'))).run()).toThrow();
+    expect(() => db.query(sqliteSql(invalidWriteSessionSourceRefsSql('sqlite-write-session-number-source-ref', '[123]'))).run()).toThrow();
+    expect(() => db.query(sqliteSql(invalidWriteSessionSourceRefsSql('sqlite-write-session-blank-source-ref', '["   "]'))).run()).toThrow();
+
+    await engine.disconnect();
+  });
+
+  test('pglite initSchema creates memory write session contract', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-write-session-pglite-'));
+    tempPaths.push(dir);
+
+    const engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite', database_path: dir });
+    await engine.initSchema();
+
+    const db = (engine as any).db;
+    const columns = await db.query(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'memory_write_sessions'
+       ORDER BY ordinal_position`,
+    );
+    expect(columns.rows.map((row: { column_name: string }) => row.column_name)).toEqual(MEMORY_WRITE_SESSION_COLUMNS);
+
+    const indexes = await db.query(
+      `SELECT indexname
+       FROM pg_indexes
+       WHERE schemaname = 'public'
+         AND tablename = 'memory_write_sessions'`,
+    );
+    const indexNames = indexes.rows.map((row: { indexname: string }) => row.indexname);
+    expect(indexNames).toEqual(expect.arrayContaining([
+      'idx_memory_write_sessions_scope_status_created',
+      'idx_memory_write_sessions_status_expires',
+      'idx_memory_write_sessions_scope_target_created',
+      'idx_memory_write_sessions_actor_created',
+      'idx_memory_write_sessions_consumed_event',
+    ]));
+
+    await expect(db.query(validWriteSessionSql('pglite-write-session-valid'))).resolves.toBeDefined();
+    await expect(db.query(validWriteSessionSql('pglite-write-session-null-hash-valid'))).resolves.toBeDefined();
+    await expect(db.query(invalidWriteSessionSql('route_decision', 'create_candidate'))).rejects.toThrow();
+    await expect(db.query(invalidWriteSessionSql('intended_operation', 'create_memory_candidate_entry'))).rejects.toThrow();
+    await expect(db.query(invalidWriteSessionSql('target_slug', ''))).rejects.toThrow();
+    await expect(db.query(emptyWriteSessionSourceRefsSql('pglite-write-session-empty-source-refs'))).rejects.toThrow();
+    await expect(db.query(invalidWriteSessionSourceRefsSql('pglite-write-session-number-source-ref', '[123]'))).rejects.toThrow();
+    await expect(db.query(invalidWriteSessionSourceRefsSql('pglite-write-session-blank-source-ref', '["   "]'))).rejects.toThrow();
 
     await engine.disconnect();
   }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);

@@ -27,6 +27,7 @@ import type {
   CanonicalTargetProposalEntry,
   MemoryCandidateEntry,
   MemoryMutationEvent,
+  MemoryWriteSession,
 } from '../core/types.ts';
 import { createLifecycleForgettingStoreForEngine } from '../core/maintenance/lifecycle-forgetting.ts';
 import { computeCandidateDebtMetrics } from '../core/services/inbox-lead-service.ts';
@@ -115,6 +116,7 @@ export async function collectMemoryReportInput(
     connectorHealth,
     failedTaskAttempts,
     canonicalTargetProposals,
+    writeSessions,
   ] = await Promise.all([
     engine.listMemoryMutationEvents({ scope_id: scopeId, limit, offset: 0 }),
     engine.listMemoryCandidateEntries({ scope_id: scopeId, limit, offset: 0 }),
@@ -133,6 +135,7 @@ export async function collectMemoryReportInput(
     collectConnectorHealth(engine, limit),
     collectFailedTaskAttempts(engine, scopeId, limit),
     collectCanonicalTargetProposals(engine, scopeId, limit),
+    collectMemoryWriteSessions(engine, scopeId, limit),
   ]);
   const [
     canonicalHandoffCandidateIds,
@@ -159,6 +162,7 @@ export async function collectMemoryReportInput(
     canonical_memories: mutationEvents.flatMap(memoryMutationToCanonicalMemory),
     review_items: candidates.flatMap(memoryCandidateToReviewItem),
     canonical_target_proposals: canonicalTargetProposals,
+    write_sessions: writeSessions,
     lifecycle_states: lifecycleStates,
     purge_candidates: purgeCandidates,
     projection_targets: projectionTargets,
@@ -205,6 +209,29 @@ async function collectCanonicalTargetProposals(
   } catch {
     return [];
   }
+}
+
+async function collectMemoryWriteSessions(
+  engine: BrainEngine,
+  scopeId: string,
+  limit: number,
+): Promise<MemoryReviewReportInput['write_sessions']> {
+  if (typeof (engine as Partial<BrainEngine>).listMemoryWriteSessions !== 'function') {
+    return [];
+  }
+  const byId = new Map<string, NonNullable<MemoryReviewReportInput['write_sessions']>[number]>();
+  for (const status of ['open', 'expired'] as const) {
+    const sessions = await engine.listMemoryWriteSessions({
+      scope_id: scopeId,
+      status,
+      limit,
+      offset: 0,
+    });
+    for (const session of sessions) {
+      byId.set(session.id, memoryWriteSessionToReportSession(session));
+    }
+  }
+  return [...byId.values()];
 }
 
 async function collectCandidateDebtCanonicalTargetProposals(
@@ -258,6 +285,28 @@ function canonicalTargetProposalToReportProposal(
     stub_patch_candidate_id: proposal.stub_patch_candidate_id,
     stub_patch_state: proposal.stub_patch_state,
     bound_candidate_ids: proposal.bound_candidate_ids,
+  };
+}
+
+function memoryWriteSessionToReportSession(
+  session: MemoryWriteSession,
+): NonNullable<MemoryReviewReportInput['write_sessions']>[number] {
+  return {
+    id: session.id,
+    route_decision_id: session.route_decision_id,
+    status: session.status,
+    target_slug: session.target_slug,
+    expected_content_hash: session.expected_content_hash,
+    source_refs: session.source_refs,
+    route_decision: session.route_decision,
+    intended_operation: session.intended_operation,
+    actor: session.actor,
+    scope_id: session.scope_id,
+    created_at: session.created_at.toISOString(),
+    expires_at: session.expires_at.toISOString(),
+    consumed_at: session.consumed_at?.toISOString() ?? null,
+    consumed_by_event_id: session.consumed_by_event_id,
+    status_reason: session.status_reason,
   };
 }
 

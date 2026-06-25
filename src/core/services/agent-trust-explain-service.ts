@@ -15,6 +15,7 @@ export interface BuildAgentTrustExplainInput {
 const CANONICAL_WRITE_REQUIREMENTS = [
   'canonical_write_allowed',
   'target_snapshot_hash',
+  'write_session_id',
   'expected_content_hash',
 ] as const;
 

@@ -1,4 +1,4 @@
-import type { MemoryCandidateEntry, MemoryCandidateEntryInput, MemoryCandidateExtractionKind, MemoryCandidateSensitivity, MemoryCandidateStatus, MemoryCandidateTargetObjectType, MemoryCandidateType } from './memory-governance.ts';
+import type { MemoryCandidateEntry, MemoryCandidateEntryInput, MemoryCandidateExtractionKind, MemoryCandidateSensitivity, MemoryCandidateStatus, MemoryCandidateTargetObjectType, MemoryCandidateType, MemoryWriteSession } from './memory-governance.ts';
 import type { ChunkSource, PageType } from './page.ts';
 import type { BroadSynthesisRoute, MixedScopeBridgeRoute, PrecisionLookupRoute } from './context-map-atlas.ts';
 import type { PersonalEpisodeLookupRoute, PersonalEpisodeSourceKind, PersonalProfileLookupRoute, ProfileMemoryType } from './profile-episode.ts';
@@ -285,12 +285,17 @@ export interface RouteMemoryWritebackResult {
   candidate_input?: RouteMemoryWritebackCandidateInput;
   created_candidate?: MemoryCandidateEntry;
   duplicate_review?: unknown;
+  route_decision_id?: string;
+  write_session_id?: string;
+  write_session?: MemoryWriteSession;
   canonical_write_requirements?: {
     source_refs: string[];
     target_object_type: MemoryCandidateTargetObjectType;
     target_object_id: string;
     expected_content_hash: string | null;
     sensitivity: MemoryCandidateSensitivity;
+    route_decision_id?: string;
+    write_session_id?: string;
   };
   writeback_governance_metadata?: WritebackGovernanceMetadata;
 }
@@ -776,7 +781,7 @@ export interface CanonicalContextReadEvidenceMetadata {
 export interface WritebackGovernanceMetadata {
   route_decision: MemoryWritebackDecision;
   intended_operation: MemoryWritebackIntendedOperation;
-  apply_mode: 'no_write' | 'plan_only' | 'candidate_created' | 'deferred_candidate_created' | 'canonical_requirements_returned';
+  apply_mode: 'no_write' | 'plan_only' | 'candidate_created' | 'deferred_candidate_created' | 'canonical_requirements_returned' | 'write_session_created';
   route_reasons: string[];
   missing_requirements: string[];
   blockers: string[];

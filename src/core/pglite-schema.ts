@@ -565,6 +565,83 @@ CREATE INDEX IF NOT EXISTS idx_memory_sessions_status_created
   ON memory_sessions(status, created_at DESC);
 
 -- ============================================================
+-- memory_write_sessions: router-issued one-shot canonical write grants
+-- ============================================================
+CREATE OR REPLACE FUNCTION mbrain_trim_memory_text(input text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+AS \$mbrain\$
+  SELECT btrim(
+    input,
+    chr(9) || chr(10) || chr(11) || chr(12) || chr(13) || chr(32) ||
+    chr(160) || chr(5760) ||
+    chr(8192) || chr(8193) || chr(8194) || chr(8195) || chr(8196) ||
+    chr(8197) || chr(8198) || chr(8199) || chr(8200) || chr(8201) ||
+    chr(8202) || chr(8232) || chr(8233) || chr(8239) || chr(8287) ||
+    chr(12288) || chr(65279)
+  )
+\$mbrain\$;
+
+CREATE OR REPLACE FUNCTION mbrain_jsonb_non_empty_string_array(input jsonb)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+AS \$mbrain\$
+  SELECT CASE
+    WHEN jsonb_typeof(input) IS DISTINCT FROM 'array' THEN false
+    WHEN jsonb_array_length(input) = 0 THEN false
+    ELSE COALESCE((
+      SELECT bool_and(
+        jsonb_typeof(entry.value) = 'string'
+        AND mbrain_trim_memory_text(entry.value #>> '{}') <> ''
+      )
+      FROM jsonb_array_elements(input) AS entry(value)
+    ), false)
+  END
+\$mbrain\$;
+
+CREATE TABLE IF NOT EXISTS memory_write_sessions (
+  id TEXT PRIMARY KEY,
+  route_decision_id TEXT NOT NULL,
+  scope_id TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  memory_session_id TEXT,
+  target_slug TEXT NOT NULL CHECK (btrim(target_slug) <> ''),
+  target_object_type TEXT NOT NULL,
+  expected_content_hash TEXT,
+  source_refs JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (mbrain_jsonb_non_empty_string_array(source_refs)),
+  route_decision TEXT NOT NULL CHECK (route_decision IN ('canonical_write_allowed')),
+  intended_operation TEXT NOT NULL CHECK (intended_operation IN ('put_page')),
+  route_reasons JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(route_reasons) = 'array'),
+  missing_requirements JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(missing_requirements) = 'array'),
+  governance_metadata JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(governance_metadata) = 'object'),
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'applied', 'superseded', 'expired', 'abandoned')),
+  status_reason TEXT,
+  consumed_by_event_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (
+    (status = 'open' AND consumed_at IS NULL)
+    OR (status <> 'open' AND consumed_at IS NOT NULL)
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_scope_status_created
+  ON memory_write_sessions(scope_id, status, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_status_expires
+  ON memory_write_sessions(status, expires_at ASC);
+CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_scope_target_created
+  ON memory_write_sessions(scope_id, target_slug, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_actor_created
+  ON memory_write_sessions(actor, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_consumed_event
+  ON memory_write_sessions(consumed_by_event_id)
+  WHERE consumed_by_event_id IS NOT NULL;
+
+-- ============================================================
 -- memory_session_attachments: realms attached to sessions
 -- ============================================================
 CREATE TABLE IF NOT EXISTS memory_session_attachments (

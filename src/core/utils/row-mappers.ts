@@ -21,6 +21,9 @@ import type {
   MemoryRedactionPlanItem,
   MemorySession,
   MemorySessionAttachment,
+  MemoryWriteSession,
+  MemoryWriteSessionConsumePatch,
+  MemoryWriteSessionInput,
   NoteManifestEntry,
   NoteManifestHeading,
   NoteSectionEntry,
@@ -556,6 +559,117 @@ export function rowToMemorySessionAttachment(row: Record<string, unknown>): Memo
   };
 }
 
+export function rowToMemoryWriteSession(row: Record<string, unknown>): MemoryWriteSession {
+  const status = row.status as MemoryWriteSession['status'];
+  const expiresAt = new Date(row.expires_at as string);
+  const effectiveStatus = status === 'open' && expiresAt.getTime() <= Date.now()
+    ? 'expired'
+    : status;
+  return {
+    id: normalizeRequiredMemoryMutationString('id', row.id),
+    route_decision_id: normalizeRequiredMemoryMutationString('route_decision_id', row.route_decision_id),
+    scope_id: normalizeRequiredMemoryMutationString('scope_id', row.scope_id),
+    actor: normalizeRequiredMemoryMutationString('actor', row.actor),
+    memory_session_id: (row.memory_session_id as string | null) ?? null,
+    target_slug: normalizeRequiredMemoryMutationString('target_slug', row.target_slug),
+    target_object_type: normalizeRequiredMemoryMutationString('target_object_type', row.target_object_type),
+    expected_content_hash: (row.expected_content_hash as string | null) ?? null,
+    source_refs: normalizeMemoryMutationSourceRefs(parseJsonStringArray(row.source_refs)),
+    route_decision: row.route_decision as MemoryWriteSession['route_decision'],
+    intended_operation: row.intended_operation as MemoryWriteSession['intended_operation'],
+    route_reasons: parseJsonStringArray(row.route_reasons),
+    missing_requirements: parseJsonStringArray(row.missing_requirements),
+    governance_metadata: parseJsonObject(row.governance_metadata),
+    status: effectiveStatus,
+    status_reason: (row.status_reason as string | null) ?? null,
+    consumed_by_event_id: (row.consumed_by_event_id as string | null) ?? null,
+    created_at: new Date(row.created_at as string),
+    expires_at: expiresAt,
+    consumed_at: row.consumed_at == null ? null : new Date(row.consumed_at as string),
+    updated_at: new Date(row.updated_at as string),
+  };
+}
+
+export function normalizeMemoryWriteSessionInput(input: MemoryWriteSessionInput): MemoryWriteSessionInput {
+  const id = normalizeRequiredMemoryMutationString('id', input.id);
+  const routeDecisionId = normalizeRequiredMemoryMutationString('route_decision_id', input.route_decision_id);
+  const scopeId = normalizeRequiredMemoryMutationString('scope_id', input.scope_id);
+  const actor = normalizeRequiredMemoryMutationString('actor', input.actor);
+  const targetSlug = normalizeRequiredMemoryMutationString('target_slug', input.target_slug);
+  const targetObjectType = normalizeRequiredMemoryMutationString('target_object_type', input.target_object_type);
+  const sourceRefs = normalizeMemoryMutationSourceRefs(input.source_refs);
+  const routeReasons = input.route_reasons === undefined ? [] : normalizeOptionalStringArray('route_reasons', input.route_reasons);
+  const missingRequirements = input.missing_requirements === undefined
+    ? []
+    : normalizeOptionalStringArray('missing_requirements', input.missing_requirements);
+
+  if (input.route_decision !== 'canonical_write_allowed') {
+    throw new Error('memory write session route_decision must be canonical_write_allowed');
+  }
+  if (input.intended_operation !== 'put_page') {
+    throw new Error('memory write session intended_operation must be put_page');
+  }
+  if (input.memory_session_id != null) {
+    normalizeRequiredMemoryMutationString('memory_session_id', input.memory_session_id);
+  }
+  if (input.expected_content_hash !== undefined && input.expected_content_hash !== null) {
+    normalizeRequiredMemoryMutationString('expected_content_hash', input.expected_content_hash);
+  }
+  if (input.governance_metadata !== undefined && (typeof input.governance_metadata !== 'object' || Array.isArray(input.governance_metadata))) {
+    throw new Error('memory write session governance_metadata must be an object');
+  }
+  const expiresAt = new Date(input.expires_at as string | Date);
+  if (!Number.isFinite(expiresAt.getTime())) {
+    throw new Error('memory write session expires_at must be a valid date');
+  }
+  const createdAt = input.created_at == null ? input.created_at : new Date(input.created_at as string | Date);
+  if (createdAt != null && !Number.isFinite(createdAt.getTime())) {
+    throw new Error('memory write session created_at must be a valid date');
+  }
+
+  return {
+    ...input,
+    id,
+    route_decision_id: routeDecisionId,
+    scope_id: scopeId,
+    actor,
+    memory_session_id: input.memory_session_id == null ? null : String(input.memory_session_id).trim(),
+    target_slug: targetSlug,
+    target_object_type: targetObjectType,
+    expected_content_hash: input.expected_content_hash ?? null,
+    source_refs: sourceRefs,
+    route_decision: 'canonical_write_allowed',
+    intended_operation: 'put_page',
+    route_reasons: routeReasons,
+    missing_requirements: missingRequirements,
+    governance_metadata: input.governance_metadata ?? {},
+    created_at: createdAt == null ? createdAt : createdAt.toISOString(),
+    expires_at: expiresAt.toISOString(),
+  };
+}
+
+export function normalizeMemoryWriteSessionConsumePatch(
+  patch: MemoryWriteSessionConsumePatch,
+): MemoryWriteSessionConsumePatch {
+  if (
+    patch.status !== 'applied'
+    && patch.status !== 'superseded'
+    && patch.status !== 'expired'
+    && patch.status !== 'abandoned'
+  ) {
+    throw new Error('memory write session consume status must be terminal');
+  }
+  return {
+    status: patch.status,
+    consumed_by_event_id: patch.consumed_by_event_id == null
+      ? null
+      : normalizeRequiredMemoryMutationString('consumed_by_event_id', patch.consumed_by_event_id),
+    status_reason: patch.status_reason == null
+      ? null
+      : normalizeRequiredMemoryMutationString('status_reason', patch.status_reason),
+  };
+}
+
 export function rowToMemoryRedactionPlan(row: Record<string, unknown>): MemoryRedactionPlan {
   return {
     id: row.id as string,
@@ -716,6 +830,15 @@ function normalizeMemoryMutationSourceRefs(value: unknown): string[] {
   }
   return value.map((ref, index) =>
     normalizeRequiredMemoryMutationString(`source_refs[${index}]`, ref),
+  );
+}
+
+function normalizeOptionalStringArray(field: string, value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`memory mutation ${field} must be an array of strings`);
+  }
+  return value.map((ref, index) =>
+    normalizeRequiredMemoryMutationString(`${field}[${index}]`, ref),
   );
 }
 

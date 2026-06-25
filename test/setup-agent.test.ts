@@ -133,6 +133,8 @@ describe('setup-agent', () => {
     expect(result.stdout).toContain('daily memory report is the primary review surface');
     expect(result.stdout).toContain('canonical_write_allowed');
     expect(result.stdout).toContain('target_snapshot_hash');
+    expect(result.stdout).toContain('write_session_id');
+    expect(result.stdout).toContain('do not add timeline content');
     expect(result.stdout).toContain('expected_content_hash');
     expect(result.stdout).toContain('Backlinks And Sync');
     expect(result.stdout).toContain('sync_brain');
@@ -160,7 +162,7 @@ describe('setup-agent', () => {
       const result = await runSetupAgent(['--print'], { cwd: staleCwd });
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('mbrain-agent-rules-version: 0.5.11');
+    expect(result.stdout).toContain('mbrain-agent-rules-version: 0.5.12');
       expect(result.stdout).toContain('candidate_signals');
       expect(result.stdout).toContain('tool_search');
       expect(result.stdout).not.toContain('STALE CWD RULES');
@@ -262,9 +264,10 @@ describe('setup-agent', () => {
     expect(result.stdout).toContain('Rules: updated');
 
     const agentsMd = readFileSync(join(tempHome, '.codex', 'AGENTS.md'), 'utf-8');
-    expect(agentsMd).toContain('mbrain-agent-rules-version: 0.5.11');
+    expect(agentsMd).toContain('mbrain-agent-rules-version: 0.5.12');
     expect(agentsMd).toContain('Route Durable Writeback');
     expect(agentsMd).toContain('route_memory_writeback');
+    expect(agentsMd).toContain('write_session_id');
     expect(agentsMd).toContain('expected_content_hash');
     expect(agentsMd).not.toContain('Call put_page directly for durable facts.');
     expect(agentsMd).toContain('Keep this local footer.');

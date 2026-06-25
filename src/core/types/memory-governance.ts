@@ -231,6 +231,77 @@ export interface MemorySessionAttachmentFilters {
   offset?: number;
 }
 
+export type MemoryWriteSessionStatus =
+  | 'open'
+  | 'applied'
+  | 'superseded'
+  | 'expired'
+  | 'abandoned';
+
+export type MemoryWriteSessionRouteDecision = 'canonical_write_allowed';
+
+export type MemoryWriteSessionIntendedOperation = 'put_page';
+
+export interface MemoryWriteSession {
+  id: string;
+  route_decision_id: string;
+  scope_id: string;
+  actor: string;
+  memory_session_id: string | null;
+  target_slug: string;
+  target_object_type: string;
+  expected_content_hash: string | null;
+  source_refs: string[];
+  route_decision: MemoryWriteSessionRouteDecision;
+  intended_operation: MemoryWriteSessionIntendedOperation;
+  route_reasons: string[];
+  missing_requirements: string[];
+  governance_metadata: Record<string, unknown>;
+  status: MemoryWriteSessionStatus;
+  status_reason: string | null;
+  consumed_by_event_id: string | null;
+  created_at: Date;
+  expires_at: Date;
+  consumed_at: Date | null;
+  updated_at: Date;
+}
+
+export interface MemoryWriteSessionInput {
+  id: string;
+  route_decision_id: string;
+  scope_id: string;
+  actor: string;
+  memory_session_id?: string | null;
+  target_slug: string;
+  target_object_type: string;
+  expected_content_hash?: string | null;
+  source_refs: string[];
+  route_decision: MemoryWriteSessionRouteDecision;
+  intended_operation: MemoryWriteSessionIntendedOperation;
+  route_reasons?: string[];
+  missing_requirements?: string[];
+  governance_metadata?: Record<string, unknown>;
+  created_at?: Date | string | null;
+  expires_at: Date | string;
+}
+
+export interface MemoryWriteSessionFilters {
+  status?: MemoryWriteSessionStatus;
+  scope_id?: string;
+  target_slug?: string;
+  actor?: string;
+  created_since?: Date | string;
+  created_until?: Date | string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface MemoryWriteSessionConsumePatch {
+  status: Exclude<MemoryWriteSessionStatus, 'open'>;
+  consumed_by_event_id?: string | null;
+  status_reason?: string | null;
+}
+
 export type MemoryRedactionPlanStatus = 'draft' | 'approved' | 'applied' | 'rejected';
 
 export type MemoryRedactionTargetObjectType =
