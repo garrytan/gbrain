@@ -18,6 +18,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { RemediationStep } from '../remediation-step.ts';
 import { makeRemediationStep } from '../remediation-step.ts';
+import { loadConfig } from '../config.ts';
 
 /** Shared shape returned by all four checks. */
 export interface OnboardCheckResult {
@@ -42,6 +43,23 @@ async function safeCount(engine: BrainEngine, sql: string, params: unknown[] = [
     return Number.isFinite(n) ? n : 0;
   } catch {
     return 0;
+  }
+}
+
+async function activePackSupportsNerInference(engine: BrainEngine): Promise<boolean> {
+  try {
+    const { loadActivePack } = await import('../schema-pack/load-active.ts');
+    let dbConfig: string | undefined;
+    try {
+      dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
+    } catch { /* engine.config may not exist on very old brains */ }
+    const active = await loadActivePack({ cfg: loadConfig(), remote: false, dbConfig })
+      .catch(() => null);
+    return active?.manifest.link_types.some(
+      (lt) => lt.inference && typeof lt.inference === 'object' && typeof lt.inference.regex === 'string',
+    ) ?? false;
+  } catch {
+    return false;
   }
 }
 
@@ -162,6 +180,9 @@ export async function checkEntityLinkCoverage(
   const remediations: RemediationStep[] = [];
   let status: 'ok' | 'warn' | 'fail' = 'ok';
   let message: string;
+  const nerInferenceAvailable = coverage < 0.7
+    ? await activePackSupportsNerInference(engine)
+    : false;
 
   // v0.41.18.0: warn-only, never fail. Empty entity link coverage is "needs
   // work" not "broken" — doctor's exit code should not flip from a fresh
@@ -172,30 +193,38 @@ export async function checkEntityLinkCoverage(
     message = `Coverage ${pct}% ± ${ciPct}%${sampleNote}`;
   } else if (coverage >= 0.4) {
     status = 'warn';
-    message = `Coverage ${pct}% ± ${ciPct}% (target 70%)${sampleNote}`;
-    remediations.push(makeRemediationStep({
-      id: 'onboard.extract_ner_links',
-      job: 'extract-ner',
-      params: {},
-      severity: 'medium',
-      est_seconds: 300,
-      est_usd_cost: 0,
-      rationale: `Entity link coverage at ${pct}%; NER extraction lifts typed-link density`,
-      status: 'remediable',
-    }));
+    message = nerInferenceAvailable
+      ? `Coverage ${pct}% ± ${ciPct}% (target 70%)${sampleNote}`
+      : `Coverage ${pct}% ± ${ciPct}% (target 70%; active pack has no NER regex rules)${sampleNote}`;
+    if (nerInferenceAvailable) {
+      remediations.push(makeRemediationStep({
+        id: 'onboard.extract_ner_links',
+        job: 'extract-ner',
+        params: {},
+        severity: 'medium',
+        est_seconds: 300,
+        est_usd_cost: 0,
+        rationale: `Entity link coverage at ${pct}%; NER extraction lifts typed-link density`,
+        status: 'remediable',
+      }));
+    }
   } else {
     status = 'warn';
-    message = `Coverage ${pct}% ± ${ciPct}% (target 70%)${sampleNote}`;
-    remediations.push(makeRemediationStep({
-      id: 'onboard.extract_ner_links',
-      job: 'extract-ner',
-      params: {},
-      severity: 'high',
-      est_seconds: 600,
-      est_usd_cost: 0,
-      rationale: `Entity link coverage at ${pct}%; NER extraction lifts typed-link density`,
-      status: 'remediable',
-    }));
+    message = nerInferenceAvailable
+      ? `Coverage ${pct}% ± ${ciPct}% (target 70%)${sampleNote}`
+      : `Coverage ${pct}% ± ${ciPct}% (target 70%; active pack has no NER regex rules)${sampleNote}`;
+    if (nerInferenceAvailable) {
+      remediations.push(makeRemediationStep({
+        id: 'onboard.extract_ner_links',
+        job: 'extract-ner',
+        params: {},
+        severity: 'high',
+        est_seconds: 600,
+        est_usd_cost: 0,
+        rationale: `Entity link coverage at ${pct}%; NER extraction lifts typed-link density`,
+        status: 'remediable',
+      }));
+    }
   }
   return {
     check: { name: 'entity_link_coverage', status, message },
