@@ -105,11 +105,13 @@ import type {
   MemoryArtifactKind,
   MemoryCandidateStatus,
   MemoryCandidateTargetObjectType,
+  MemoryMutationEvent,
   MemoryScenario,
   MemoryScenarioKnownSubject,
   MemoryScenarioKnownSubjectKind,
   MemoryScenarioSourceKind,
   PageProjection,
+  PersonalWriteTargetResult,
   PersonalEpisodeSourceKind,
   ProfileMemoryType,
   RetrievalRequestPlannerInput,
@@ -3852,6 +3854,72 @@ function assertPersonalScopeId(scopeId: string): void {
   }
 }
 
+function personalWriteScopeGateFields(preflight: PersonalWriteTargetResult) {
+  return {
+    scope_gate: preflight.scope_gate,
+    scope_gate_policy: preflight.scope_gate.policy,
+    scope_gate_reason: preflight.scope_gate.decision_reason,
+  };
+}
+
+function resolvePersonalWriteScopeId(input: {
+  requestedScopeId: unknown;
+  preflight: PersonalWriteTargetResult;
+}): string {
+  if (!input.preflight.route) {
+    throw new OperationError('invalid_params', `personal write blocked: ${input.preflight.selection_reason}`);
+  }
+  if (input.requestedScopeId !== undefined && typeof input.requestedScopeId !== 'string') {
+    throw new OperationError('invalid_params', 'scope_id must be a string when provided');
+  }
+  const scopeId = input.requestedScopeId ?? input.preflight.route.scope_id;
+  assertPersonalScopeId(scopeId);
+  return scopeId;
+}
+
+function resolvePersonalMemoryWriteId(value: unknown): string {
+  if (typeof value !== 'string') return crypto.randomUUID();
+  const id = value.trim();
+  return id.length > 0 ? id : crypto.randomUUID();
+}
+
+type PersonalMemoryWriteOperation =
+  | 'upsert_profile_memory_entry'
+  | 'write_profile_memory_entry'
+  | 'record_personal_episode'
+  | 'write_personal_episode_entry';
+
+async function recordPersonalMemoryWriteAudit(
+  engine: BrainEngine,
+  input: {
+    operation: PersonalMemoryWriteOperation;
+    targetKind: 'profile_memory' | 'personal_episode';
+    targetId: string;
+    scopeId: string;
+    sourceRefs: string[];
+    preflight: PersonalWriteTargetResult;
+  },
+): Promise<MemoryMutationEvent> {
+  return recordMemoryMutationEvent(engine, {
+    session_id: `${input.operation}:direct:${crypto.randomUUID()}`,
+    realm_id: 'personal',
+    actor: `mbrain:${input.operation}`,
+    operation: input.operation,
+    target_kind: input.targetKind,
+    target_id: input.targetId,
+    scope_id: input.scopeId,
+    source_refs: input.sourceRefs,
+    result: 'applied',
+    dry_run: false,
+    metadata: {
+      scope_gate: input.preflight.scope_gate,
+      scope_gate_policy: input.preflight.scope_gate.policy,
+      scope_gate_reason: input.preflight.scope_gate.decision_reason,
+      personal_write_target_selection_reason: input.preflight.selection_reason,
+    },
+  });
+}
+
 function personalMemoryDeleteAudit(
   operation: 'delete_profile_memory_entry' | 'delete_personal_episode_entry',
   scopeId: string,
@@ -3897,9 +3965,9 @@ const upsert_profile_memory_entry: Operation = {
     if (!preflight.route) {
       throw new OperationError('invalid_params', `profile_memory write blocked: ${preflight.selection_reason}`);
     }
-    const id = typeof p.id === 'string' ? p.id : crypto.randomUUID();
-    const scopeId = String(p.scope_id ?? preflight.route.scope_id);
-    assertPersonalScopeId(scopeId);
+    const id = resolvePersonalMemoryWriteId(p.id);
+    const scopeId = resolvePersonalWriteScopeId({ requestedScopeId: p.scope_id, preflight });
+    const scopeGate = personalWriteScopeGateFields(preflight);
     if (ctx.dryRun) {
       return {
         dry_run: true,
@@ -3908,21 +3976,34 @@ const upsert_profile_memory_entry: Operation = {
         scope_id: scopeId,
         profile_type: p.profile_type,
         subject: p.subject,
+        ...scopeGate,
       };
     }
 
-    return ctx.engine.upsertProfileMemoryEntry({
-      id,
-      scope_id: scopeId,
-      profile_type: String(p.profile_type) as any,
-      subject: String(p.subject),
-      content: String(p.content),
-      source_refs: [sourceRef],
-      sensitivity: String(p.sensitivity ?? 'personal') as any,
-      export_status: String(p.export_status ?? 'private_only') as any,
-      last_confirmed_at: typeof p.last_confirmed_at === 'string' ? p.last_confirmed_at : null,
-      superseded_by: typeof p.superseded_by === 'string' ? p.superseded_by : null,
+    const applied = await ctx.engine.transaction(async (tx) => {
+      const entry = await tx.upsertProfileMemoryEntry({
+        id,
+        scope_id: scopeId,
+        profile_type: String(p.profile_type) as any,
+        subject: String(p.subject),
+        content: String(p.content),
+        source_refs: [sourceRef],
+        sensitivity: String(p.sensitivity ?? 'personal') as any,
+        export_status: String(p.export_status ?? 'private_only') as any,
+        last_confirmed_at: typeof p.last_confirmed_at === 'string' ? p.last_confirmed_at : null,
+        superseded_by: typeof p.superseded_by === 'string' ? p.superseded_by : null,
+      });
+      const mutationEvent = await recordPersonalMemoryWriteAudit(tx, {
+        operation: 'upsert_profile_memory_entry',
+        targetKind: 'profile_memory',
+        targetId: id,
+        scopeId,
+        sourceRefs: [sourceRef],
+        preflight,
+      });
+      return { entry, mutationEvent };
     });
+    return { ...applied.entry, ...scopeGate, mutation_event: applied.mutationEvent };
   },
   cliHints: { name: 'profile-memory-upsert' },
 };
@@ -4034,9 +4115,9 @@ const record_personal_episode: Operation = {
     if (!preflight.route) {
       throw new OperationError('invalid_params', `personal_episode write blocked: ${preflight.selection_reason}`);
     }
-    const id = typeof p.id === 'string' ? p.id : crypto.randomUUID();
-    const scopeId = String(p.scope_id ?? preflight.route.scope_id);
-    assertPersonalScopeId(scopeId);
+    const id = resolvePersonalMemoryWriteId(p.id);
+    const scopeId = resolvePersonalWriteScopeId({ requestedScopeId: p.scope_id, preflight });
+    const scopeGate = personalWriteScopeGateFields(preflight);
     if (ctx.dryRun) {
       return {
         dry_run: true,
@@ -4045,20 +4126,33 @@ const record_personal_episode: Operation = {
         scope_id: scopeId,
         title: p.title,
         source_kind: p.source_kind,
+        ...scopeGate,
       };
     }
 
-    return ctx.engine.createPersonalEpisodeEntry({
-      id,
-      scope_id: scopeId,
-      title: String(p.title),
-      start_time: String(p.start_time),
-      end_time: typeof p.end_time === 'string' ? p.end_time : null,
-      source_kind: String(p.source_kind) as any,
-      summary: String(p.summary),
-      source_refs: [sourceRef],
-      candidate_ids: typeof p.candidate_id === 'string' ? [p.candidate_id] : [],
+    const applied = await ctx.engine.transaction(async (tx) => {
+      const entry = await tx.createPersonalEpisodeEntry({
+        id,
+        scope_id: scopeId,
+        title: String(p.title),
+        start_time: String(p.start_time),
+        end_time: typeof p.end_time === 'string' ? p.end_time : null,
+        source_kind: String(p.source_kind) as any,
+        summary: String(p.summary),
+        source_refs: [sourceRef],
+        candidate_ids: typeof p.candidate_id === 'string' ? [p.candidate_id] : [],
+      });
+      const mutationEvent = await recordPersonalMemoryWriteAudit(tx, {
+        operation: 'record_personal_episode',
+        targetKind: 'personal_episode',
+        targetId: id,
+        scopeId,
+        sourceRefs: [sourceRef],
+        preflight,
+      });
+      return { entry, mutationEvent };
     });
+    return { ...applied.entry, ...scopeGate, mutation_event: applied.mutationEvent };
   },
   cliHints: { name: 'personal-episode-record' },
 };
@@ -4501,8 +4595,9 @@ const write_profile_memory_entry: Operation = {
       throw new OperationError('invalid_params', `profile_memory write blocked: ${preflight.selection_reason}`);
     }
 
-    const id = typeof p.id === 'string' ? p.id : crypto.randomUUID();
-    const scopeId = String(p.scope_id ?? preflight.route.scope_id);
+    const id = resolvePersonalMemoryWriteId(p.id);
+    const scopeId = resolvePersonalWriteScopeId({ requestedScopeId: p.scope_id, preflight });
+    const scopeGate = personalWriteScopeGateFields(preflight);
     if (ctx.dryRun) {
       return {
         dry_run: true,
@@ -4512,21 +4607,34 @@ const write_profile_memory_entry: Operation = {
         profile_type: p.profile_type,
         subject: p.subject,
         preflight: preflight.selection_reason,
+        ...scopeGate,
       };
     }
 
-    return ctx.engine.upsertProfileMemoryEntry({
-      id,
-      scope_id: scopeId,
-      profile_type: String(p.profile_type) as any,
-      subject: String(p.subject),
-      content: String(p.content),
-      source_refs: [sourceRef],
-      sensitivity: String(p.sensitivity ?? 'personal') as any,
-      export_status: String(p.export_status ?? 'private_only') as any,
-      last_confirmed_at: typeof p.last_confirmed_at === 'string' ? p.last_confirmed_at : null,
-      superseded_by: typeof p.superseded_by === 'string' ? p.superseded_by : null,
+    const applied = await ctx.engine.transaction(async (tx) => {
+      const entry = await tx.upsertProfileMemoryEntry({
+        id,
+        scope_id: scopeId,
+        profile_type: String(p.profile_type) as any,
+        subject: String(p.subject),
+        content: String(p.content),
+        source_refs: [sourceRef],
+        sensitivity: String(p.sensitivity ?? 'personal') as any,
+        export_status: String(p.export_status ?? 'private_only') as any,
+        last_confirmed_at: typeof p.last_confirmed_at === 'string' ? p.last_confirmed_at : null,
+        superseded_by: typeof p.superseded_by === 'string' ? p.superseded_by : null,
+      });
+      const mutationEvent = await recordPersonalMemoryWriteAudit(tx, {
+        operation: 'write_profile_memory_entry',
+        targetKind: 'profile_memory',
+        targetId: id,
+        scopeId,
+        sourceRefs: [sourceRef],
+        preflight,
+      });
+      return { entry, mutationEvent };
     });
+    return { ...applied.entry, ...scopeGate, mutation_event: applied.mutationEvent };
   },
   cliHints: { name: 'profile-memory-write' },
 };
@@ -4566,8 +4674,9 @@ const write_personal_episode_entry: Operation = {
       throw new OperationError('invalid_params', `personal_episode write blocked: ${preflight.selection_reason}`);
     }
 
-    const id = typeof p.id === 'string' ? p.id : crypto.randomUUID();
-    const scopeId = String(p.scope_id ?? preflight.route.scope_id);
+    const id = resolvePersonalMemoryWriteId(p.id);
+    const scopeId = resolvePersonalWriteScopeId({ requestedScopeId: p.scope_id, preflight });
+    const scopeGate = personalWriteScopeGateFields(preflight);
     if (ctx.dryRun) {
       return {
         dry_run: true,
@@ -4577,20 +4686,33 @@ const write_personal_episode_entry: Operation = {
         title: p.title,
         source_kind: p.source_kind,
         preflight: preflight.selection_reason,
+        ...scopeGate,
       };
     }
 
-    return ctx.engine.createPersonalEpisodeEntry({
-      id,
-      scope_id: scopeId,
-      title: String(p.title),
-      start_time: String(p.start_time),
-      end_time: typeof p.end_time === 'string' ? p.end_time : null,
-      source_kind: String(p.source_kind) as any,
-      summary: String(p.summary),
-      source_refs: [sourceRef],
-      candidate_ids: typeof p.candidate_id === 'string' ? [p.candidate_id] : [],
+    const applied = await ctx.engine.transaction(async (tx) => {
+      const entry = await tx.createPersonalEpisodeEntry({
+        id,
+        scope_id: scopeId,
+        title: String(p.title),
+        start_time: String(p.start_time),
+        end_time: typeof p.end_time === 'string' ? p.end_time : null,
+        source_kind: String(p.source_kind) as any,
+        summary: String(p.summary),
+        source_refs: [sourceRef],
+        candidate_ids: typeof p.candidate_id === 'string' ? [p.candidate_id] : [],
+      });
+      const mutationEvent = await recordPersonalMemoryWriteAudit(tx, {
+        operation: 'write_personal_episode_entry',
+        targetKind: 'personal_episode',
+        targetId: id,
+        scopeId,
+        sourceRefs: [sourceRef],
+        preflight,
+      });
+      return { entry, mutationEvent };
     });
+    return { ...applied.entry, ...scopeGate, mutation_event: applied.mutationEvent };
   },
   cliHints: { name: 'personal-episode-write' },
 };
