@@ -3345,7 +3345,7 @@ export function assertPutPageRouteFirstPrecondition(params: Record<string, unkno
 const put_page: Operation = {
   name: 'put_page',
   description:
-    'Create or update a governed Markdown knowledge page with compiled truth and evidence. Requires an observed target hash or router-issued write_session_id.',
+    'record new information as compiled truth + timeline in a governed Markdown page. Requires observed target hash or router-issued write_session_id.',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: {

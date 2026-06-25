@@ -14732,7 +14732,7 @@
     },
     {
       "name": "put_page",
-      "description": "Create or update a governed Markdown knowledge page with compiled truth and evidence. Requires an observed target hash or router-issued write_session_id.",
+      "description": "record new information as compiled truth + timeline in a governed Markdown page. Requires observed target hash or router-issued write_session_id.",
       "mutating": true,
       "capability_required": [],
       "capability_visibility": {
