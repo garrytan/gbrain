@@ -575,8 +575,9 @@ After this:
 - Claude Code sessions have full access to your local brain
 - reads are safe to share concurrently
 - committed writes from one session are visible to the other immediately
-- canonical `put_page` writes should carry `expected_content_hash` from
-  `route_memory_writeback`; a stale hash fails with `write_conflict` instead of
+- canonical `put_page` writes should carry `write_session_id` from
+  `route_memory_writeback` when present, otherwise the router's
+  `expected_content_hash`; a stale hash fails with `write_conflict` instead of
   overwriting another session's update
 
 Both clients auto-spawn the server when they need it.

@@ -96,6 +96,10 @@ import type {
   MemorySessionAttachmentFilters,
   MemorySessionAttachmentInput,
   MemorySessionInput,
+  MemoryWriteSession,
+  MemoryWriteSessionConsumePatch,
+  MemoryWriteSessionFilters,
+  MemoryWriteSessionInput,
   MemoryRedactionPlan,
   MemoryRedactionPlanFilters,
   MemoryRedactionPlanInput,
@@ -162,6 +166,8 @@ import {
   normalizeMemoryRedactionPlanStatusPatch,
   normalizeMemorySessionAttachmentInput,
   normalizeMemorySessionInput,
+  normalizeMemoryWriteSessionConsumePatch,
+  normalizeMemoryWriteSessionInput,
   searchResultDerivedFields,
   rowToCanonicalHandoffEntry,
   rowToMemoryCandidateContradictionEntry,
@@ -171,6 +177,7 @@ import {
   rowToMemoryRealm,
   rowToMemorySession,
   rowToMemorySessionAttachment,
+  rowToMemoryWriteSession,
   rowToMemoryCandidateStatusEvent,
   rowToMemoryCandidateSupersessionEntry,
 } from './utils.ts';
@@ -681,6 +688,45 @@ CREATE TABLE IF NOT EXISTS memory_sessions (
 CREATE INDEX IF NOT EXISTS idx_memory_sessions_status_created
   ON memory_sessions(status, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS memory_write_sessions (
+  id TEXT PRIMARY KEY,
+  route_decision_id TEXT NOT NULL,
+  scope_id TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  memory_session_id TEXT,
+  target_slug TEXT NOT NULL CHECK (length(trim(target_slug, char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0),
+  target_object_type TEXT NOT NULL,
+  expected_content_hash TEXT,
+  source_refs TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(source_refs) AND json_type(source_refs) = 'array' AND json_array_length(source_refs) > 0),
+  route_decision TEXT NOT NULL CHECK (route_decision IN ('canonical_write_allowed')),
+  intended_operation TEXT NOT NULL CHECK (intended_operation IN ('put_page')),
+  route_reasons TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(route_reasons) AND json_type(route_reasons) = 'array'),
+  missing_requirements TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(missing_requirements) AND json_type(missing_requirements) = 'array'),
+  governance_metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(governance_metadata) AND json_type(governance_metadata) = 'object'),
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'applied', 'superseded', 'expired', 'abandoned')),
+  status_reason TEXT,
+  consumed_by_event_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  CHECK (
+    (status = 'open' AND consumed_at IS NULL)
+    OR (status <> 'open' AND consumed_at IS NOT NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_scope_status_created
+  ON memory_write_sessions(scope_id, status, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_status_expires
+  ON memory_write_sessions(status, expires_at ASC);
+CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_scope_target_created
+  ON memory_write_sessions(scope_id, target_slug, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_actor_created
+  ON memory_write_sessions(actor, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_consumed_event
+  ON memory_write_sessions(consumed_by_event_id)
+  WHERE consumed_by_event_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS memory_session_attachments (
   session_id TEXT NOT NULL REFERENCES memory_sessions(id) ON DELETE CASCADE,
   realm_id TEXT NOT NULL REFERENCES memory_realms(id) ON DELETE CASCADE,
@@ -822,6 +868,7 @@ export class SQLiteEngine implements BrainEngine {
     }
 
     this.ensureCanonicalTargetProposalSchema();
+    this.ensureMemoryWriteSessionSchema();
     this.backfillMissingPageEmbeddingsFromChunks();
 
     // Rebuild FTS index after schema migration. On a fresh database at baseline
@@ -3229,6 +3276,179 @@ export class SQLiteEngine implements BrainEngine {
       OFFSET ?
     `).all(...sqliteBindings(params)) as Record<string, unknown>[];
     return rows.map(rowToMemorySession);
+  }
+
+  async createMemoryWriteSession(input: MemoryWriteSessionInput): Promise<MemoryWriteSession> {
+    const session = normalizeMemoryWriteSessionInput(input);
+    const createdAt = toNullableIso(session.created_at) ?? nowIso();
+    const expiresAt = toNullableIso(session.expires_at);
+    if (!expiresAt) throw new Error('Memory write session expires_at is required');
+    this.database.run(`
+      INSERT INTO memory_write_sessions (
+        id, route_decision_id, scope_id, actor, memory_session_id, target_slug,
+        target_object_type, expected_content_hash, source_refs, route_decision,
+        intended_operation, route_reasons, missing_requirements, governance_metadata,
+        status, status_reason, consumed_by_event_id, created_at, expires_at,
+        consumed_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', NULL, NULL, ?, ?, NULL, ?)
+    `, sqliteBindings([
+      session.id,
+      session.route_decision_id,
+      session.scope_id,
+      session.actor,
+      session.memory_session_id ?? null,
+      session.target_slug,
+      session.target_object_type,
+      session.expected_content_hash ?? null,
+      JSON.stringify(session.source_refs),
+      session.route_decision,
+      session.intended_operation,
+      JSON.stringify(session.route_reasons ?? []),
+      JSON.stringify(session.missing_requirements ?? []),
+      JSON.stringify(session.governance_metadata ?? {}),
+      createdAt,
+      expiresAt,
+      createdAt,
+    ]));
+    const created = await this.getMemoryWriteSession(session.id);
+    if (!created) throw new Error(`Memory write session not found after create: ${session.id}`);
+    return created;
+  }
+
+  async getMemoryWriteSession(id: string): Promise<MemoryWriteSession | null> {
+    const row = this.database.query(`
+      SELECT id,
+             route_decision_id,
+             scope_id,
+             actor,
+             memory_session_id,
+             target_slug,
+             target_object_type,
+             expected_content_hash,
+             source_refs,
+             route_decision,
+             intended_operation,
+             route_reasons,
+             missing_requirements,
+             governance_metadata,
+             CASE
+               WHEN status = 'open'
+                 AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+               THEN 'expired'
+               ELSE status
+             END AS status,
+             status_reason,
+             consumed_by_event_id,
+             created_at,
+             expires_at,
+             consumed_at,
+             updated_at
+      FROM memory_write_sessions
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    return row ? rowToMemoryWriteSession(row) : null;
+  }
+
+  async listMemoryWriteSessions(filters?: MemoryWriteSessionFilters): Promise<MemoryWriteSession[]> {
+    const { limit, offset } = normalizeMemoryWriteSessionPagination(filters);
+    if (limit === 0) return [];
+    const params: Array<string | number> = [];
+    const clauses: string[] = [];
+    const effectiveStatusSql = `
+      CASE
+        WHEN s.status = 'open'
+          AND s.expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        THEN 'expired'
+        ELSE s.status
+      END
+    `;
+
+    if (filters?.status !== undefined) {
+      clauses.push(`${effectiveStatusSql} = ?`);
+      params.push(filters.status);
+    }
+    if (filters?.scope_id !== undefined) {
+      clauses.push('s.scope_id = ?');
+      params.push(filters.scope_id);
+    }
+    if (filters?.target_slug !== undefined) {
+      clauses.push('s.target_slug = ?');
+      params.push(filters.target_slug);
+    }
+    if (filters?.actor !== undefined) {
+      clauses.push('s.actor = ?');
+      params.push(filters.actor);
+    }
+    if (filters?.created_since !== undefined) {
+      clauses.push('s.created_at >= ?');
+      params.push(toMemoryWriteSessionFilterIso('created_since', filters.created_since));
+    }
+    if (filters?.created_until !== undefined) {
+      clauses.push('s.created_at < ?');
+      params.push(toMemoryWriteSessionFilterIso('created_until', filters.created_until));
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT s.id,
+             s.route_decision_id,
+             s.scope_id,
+             s.actor,
+             s.memory_session_id,
+             s.target_slug,
+             s.target_object_type,
+             s.expected_content_hash,
+             s.source_refs,
+             s.route_decision,
+             s.intended_operation,
+             s.route_reasons,
+             s.missing_requirements,
+             s.governance_metadata,
+             ${effectiveStatusSql} AS status,
+             s.status_reason,
+             s.consumed_by_event_id,
+             s.created_at,
+             s.expires_at,
+             s.consumed_at,
+             s.updated_at
+      FROM memory_write_sessions s
+      ${whereClause}
+      ORDER BY s.created_at DESC, s.id DESC
+      LIMIT ?
+      OFFSET ?
+    `).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    return rows.map(rowToMemoryWriteSession);
+  }
+
+  async consumeMemoryWriteSession(
+    id: string,
+    patch: MemoryWriteSessionConsumePatch,
+  ): Promise<MemoryWriteSession | null> {
+    const normalized = normalizeMemoryWriteSessionConsumePatch(patch);
+    const timestamp = nowIso();
+    const result = this.database.run(`
+      UPDATE memory_write_sessions
+      SET status = ?,
+          status_reason = ?,
+          consumed_by_event_id = ?,
+          consumed_at = ?,
+          updated_at = ?
+      WHERE id = ?
+        AND status = 'open'
+        AND (? = 'expired' OR expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    `, sqliteBindings([
+      normalized.status,
+      normalized.status_reason ?? null,
+      normalized.consumed_by_event_id ?? null,
+      timestamp,
+      timestamp,
+      id,
+      normalized.status,
+    ]));
+    if (result.changes === 0) return null;
+    return this.getMemoryWriteSession(id);
   }
 
   async closeMemorySession(id: string): Promise<MemorySession | null> {
@@ -5798,6 +6018,9 @@ export class SQLiteEngine implements BrainEngine {
         case 57:
           this.ensureMcpRequestLogAuthPrincipalSchema();
           break;
+        case 58:
+          this.ensureMemoryWriteSessionSchema();
+          break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
       }
@@ -6805,6 +7028,79 @@ export class SQLiteEngine implements BrainEngine {
       );
       CREATE INDEX IF NOT EXISTS idx_memory_session_attachments_realm
         ON memory_session_attachments(realm_id, attached_at DESC);
+    `);
+  }
+
+  private ensureMemoryWriteSessionSchema(): void {
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS memory_write_sessions (
+        id TEXT PRIMARY KEY,
+        route_decision_id TEXT NOT NULL,
+        scope_id TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        memory_session_id TEXT,
+        target_slug TEXT NOT NULL CHECK (length(trim(target_slug, char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0),
+        target_object_type TEXT NOT NULL,
+        expected_content_hash TEXT,
+        source_refs TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(source_refs) AND json_type(source_refs) = 'array' AND json_array_length(source_refs) > 0),
+        route_decision TEXT NOT NULL CHECK (route_decision IN ('canonical_write_allowed')),
+        intended_operation TEXT NOT NULL CHECK (intended_operation IN ('put_page')),
+        route_reasons TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(route_reasons) AND json_type(route_reasons) = 'array'),
+        missing_requirements TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(missing_requirements) AND json_type(missing_requirements) = 'array'),
+        governance_metadata TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(governance_metadata) AND json_type(governance_metadata) = 'object'),
+        status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'applied', 'superseded', 'expired', 'abandoned')),
+        status_reason TEXT,
+        consumed_by_event_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT,
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        CHECK (
+          (status = 'open' AND consumed_at IS NULL)
+          OR (status <> 'open' AND consumed_at IS NOT NULL)
+        )
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_scope_status_created
+        ON memory_write_sessions(scope_id, status, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_status_expires
+        ON memory_write_sessions(status, expires_at ASC);
+      CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_scope_target_created
+        ON memory_write_sessions(scope_id, target_slug, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_actor_created
+        ON memory_write_sessions(actor, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_consumed_event
+        ON memory_write_sessions(consumed_by_event_id)
+        WHERE consumed_by_event_id IS NOT NULL;
+    `);
+    this.ensureMemoryWriteSessionSourceRefEntryTriggers();
+  }
+
+  private ensureMemoryWriteSessionSourceRefEntryTriggers(): void {
+    this.database.exec(`
+      DROP TRIGGER IF EXISTS trg_memory_write_sessions_source_refs_insert;
+      DROP TRIGGER IF EXISTS trg_memory_write_sessions_source_refs_update;
+      CREATE TRIGGER trg_memory_write_sessions_source_refs_insert
+      BEFORE INSERT ON memory_write_sessions
+      WHEN EXISTS (
+        SELECT 1
+        FROM json_each(NEW.source_refs)
+        WHERE json_each.type <> 'text'
+           OR length(trim(CAST(json_each.value AS TEXT), char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) = 0
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'memory write session source_refs entries must be non-empty strings');
+      END;
+      CREATE TRIGGER trg_memory_write_sessions_source_refs_update
+      BEFORE UPDATE OF source_refs ON memory_write_sessions
+      WHEN EXISTS (
+        SELECT 1
+        FROM json_each(NEW.source_refs)
+        WHERE json_each.type <> 'text'
+           OR length(trim(CAST(json_each.value AS TEXT), char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) = 0
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'memory write session source_refs entries must be non-empty strings');
+      END;
     `);
   }
 
@@ -8795,6 +9091,14 @@ function toNullableIso(value: Date | string | null | undefined): string | null {
   return value instanceof Date ? value.toISOString() : String(value);
 }
 
+function toMemoryWriteSessionFilterIso(field: string, value: Date | string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw new Error(`memory write session ${field} must be a valid date`);
+  }
+  return date.toISOString();
+}
+
 function normalizePatchLedgerEventIds(
   currentIds: readonly string[],
   nextIds: string[] | undefined,
@@ -9496,6 +9800,20 @@ function normalizeMemorySessionPagination(
   }
   if (!Number.isInteger(offset) || offset < 0) {
     throw new Error('Memory session offset must be a non-negative integer');
+  }
+  return { limit, offset };
+}
+
+function normalizeMemoryWriteSessionPagination(
+  filters?: MemoryWriteSessionFilters,
+): { limit: number; offset: number } {
+  const limit = filters?.limit ?? 100;
+  const offset = filters?.offset ?? 0;
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new Error('Memory write session limit must be a non-negative integer');
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error('Memory write session offset must be a non-negative integer');
   }
   return { limit, offset };
 }

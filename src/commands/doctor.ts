@@ -12,7 +12,7 @@ import { collectInstalledAgentReadiness } from '../core/services/installed-agent
 import { runProofAgentMemory } from '../core/services/proof-agent-service.ts';
 
 const MARKER_VERSION_RE = /<!-- mbrain-agent-rules-version: ([\d.]+) -->/;
-export const EMBEDDED_AGENT_RULES_VERSION = '0.5.11';
+export const EMBEDDED_AGENT_RULES_VERSION = '0.5.12';
 
 export async function runDoctor(engine: BrainEngine, args: string[]) {
   const jsonOutput = args.includes('--json');

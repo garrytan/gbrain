@@ -41,6 +41,8 @@ describe('put_page MCP precondition surface (D1)', () => {
     expect(() => assertMcpPutPagePrecondition('put_page', { slug: SLUG, content: CONTENT, expected_content_hash: null })).not.toThrow();
     // A real content hash (optimistic update) is allowed.
     expect(() => assertMcpPutPagePrecondition('put_page', { slug: SLUG, expected_content_hash: 'a'.repeat(64) })).not.toThrow();
+    // A durable router-issued write session is also a route-first grant.
+    expect(() => assertMcpPutPagePrecondition('put_page', { slug: SLUG, write_session_id: 'memory-write-session:1' })).not.toThrow();
     // memory_session_id is realm access context, not a route-first write grant.
     expect(() => assertMcpPutPagePrecondition('put_page', { slug: SLUG, content: CONTENT, memory_session_id: 'session:1' })).toThrow(/route_first/);
     // admin_put_page and every other tool are not gated by this check.
@@ -54,6 +56,14 @@ describe('put_page MCP precondition surface (D1)', () => {
     expect(admin?.tier).toBe('admin');
     expect(admin?.cliHints?.hidden).toBe(true);
     expect(admin?.handler).not.toBe(operationsByName.put_page?.handler);
+  });
+
+  test('put_page exposes optional write_session_id alongside optional explicit expected hash', () => {
+    const putPage = operationsByName.put_page;
+    expect(putPage.params.expected_content_hash.required).not.toBe(true);
+    expect(putPage.params.write_session_id).toMatchObject({
+      type: 'string',
+    });
   });
 
   test('MCP parameter preparation never injects a null-CAS create precondition', () => {

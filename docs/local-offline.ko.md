@@ -557,9 +557,10 @@ claude mcp add -s user mbrain -- mbrain serve
 - Claude Code 세션에서 로컬 brain의 모든 기능 사용 가능
 - 동시 읽기 안전
 - 한 세션의 커밋된 쓰기가 다른 세션에 즉시 반영
-- canonical `put_page` 쓰기는 `route_memory_writeback`의
-  `expected_content_hash`를 함께 전달해야 합니다. stale hash는 다른
-  세션의 갱신을 덮어쓰지 않고 `write_conflict`로 실패합니다.
+- canonical `put_page` 쓰기는 가능하면 `route_memory_writeback`의
+  `write_session_id`를 전달하고, 없을 때만 router의 `expected_content_hash`를
+  함께 전달해야 합니다. stale hash는 다른 세션의 갱신을 덮어쓰지 않고
+  `write_conflict`로 실패합니다.
 
 두 클라이언트 모두 필요할 때 서버를 자동으로 실행합니다.
 

@@ -57,6 +57,7 @@ describe('doctor agent explain', () => {
     expect(explain.memory_behavior.canonical_write_requirements).toEqual([
       'canonical_write_allowed',
       'target_snapshot_hash',
+      'write_session_id',
       'expected_content_hash',
     ]);
     expect(explain.memory_behavior.hint_only_surfaces).toEqual(expect.arrayContaining([

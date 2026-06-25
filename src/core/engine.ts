@@ -67,6 +67,10 @@ import type {AutoPromoteVerdictKey,
   MemorySessionAttachmentInput,
   MemorySessionFilters,
   MemorySessionInput,
+  MemoryWriteSession,
+  MemoryWriteSessionConsumePatch,
+  MemoryWriteSessionFilters,
+  MemoryWriteSessionInput,
   NoteManifestEntry,
   NoteManifestEntryInput,
   NoteManifestFilters,
@@ -260,6 +264,12 @@ export interface MemoryGovernanceStore {
   closeMemorySession(id: string): Promise<MemorySession | null>;
   attachMemoryRealmToSession(input: MemorySessionAttachmentInput): Promise<MemorySessionAttachment>;
   listMemorySessionAttachments(filters?: MemorySessionAttachmentFilters): Promise<MemorySessionAttachment[]>;
+
+  // Router-issued canonical write sessions
+  createMemoryWriteSession(input: MemoryWriteSessionInput): Promise<MemoryWriteSession>;
+  getMemoryWriteSession(id: string): Promise<MemoryWriteSession | null>;
+  listMemoryWriteSessions(filters?: MemoryWriteSessionFilters): Promise<MemoryWriteSession[]>;
+  consumeMemoryWriteSession(id: string, patch: MemoryWriteSessionConsumePatch): Promise<MemoryWriteSession | null>;
 
   // Memory redaction plans
   createMemoryRedactionPlan(input: MemoryRedactionPlanInput): Promise<MemoryRedactionPlan>;

@@ -556,14 +556,17 @@ describe('CLI dispatch integration', () => {
     expect(exitCode).toBe(0);
     expect(stderr).toBe('');
     expect(stdout).toContain('Usage: mbrain put <slug>');
+    expect(stdout).toContain('--write-session-id');
+    expect(stdout).toContain('write_session_id');
     expect(stdout).toContain('--expected-content-hash');
     expect(stdout).toContain('expected_content_hash');
     expect(stdout).toContain('route-first');
     expect(stdout).toContain('route-memory-writeback');
     expect(stdout).toContain('direct canonical write path');
+    expect(stdout).toContain('router-issued write session');
     expect(stdout).toContain('with a real content hash when updating a page');
-    expect(stdout).toContain('or the literal value null');
-    expect(stdout).toContain('memory_session_id alone is not a write grant');
+    expect(stdout).toContain('literal value null');
+    expect(stdout).toContain('is not a write grant');
   });
 
   test('put CLI parses literal null as an absent-page expected content hash', () => {

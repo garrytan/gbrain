@@ -3,7 +3,7 @@
  * Each operation defines its schema, handler, and optional CLI hints.
  */
 
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { basename, dirname, join, relative, resolve } from 'path';
 import type { MBrainConfig } from './config.ts';
@@ -11,11 +11,7 @@ import * as db from './db.ts';
 import { canonicalDerivedTags, DERIVED_SCHEMA_VERSION } from './derived-jobs.ts';
 import type { BrainEngine } from './engine.ts';
 import type { OperationAuthPrincipal } from './auth-principal.ts';
-import {
-  importFromContent,
-  importFromFile,
-  MAX_MARKDOWN_IMPORT_BYTES,
-} from './import-file.ts';
+import { importFromContent, importFromFile, MAX_MARKDOWN_IMPORT_BYTES } from './import-file.ts';
 import { parseMarkdown, serializeMarkdown } from './markdown.ts';
 import { getUnsupportedCapabilityReason, type OfflineProfile } from './offline-profile.ts';
 import { createAgentSessionActivationOperations } from './operations-agent-session-activation.ts';
@@ -36,11 +32,7 @@ import { rankSearchResults, sourceRankCandidateLimit } from './search/source-ran
 import { getAtlasOrientationBundle } from './services/atlas-orientation-bundle-service.ts';
 import { getAtlasOrientationCard } from './services/atlas-orientation-card-service.ts';
 import { getBroadSynthesisRoute, type BroadSynthesisRouteDependencies } from './services/broad-synthesis-route-service.ts';
-import {
-  extractCodeClaimsFromTrace,
-  parseCodeClaimVerificationEntry,
-  verifyCodeClaims,
-} from './services/code-claim-verification-service.ts';
+import { extractCodeClaimsFromTrace, parseCodeClaimVerificationEntry, verifyCodeClaims } from './services/code-claim-verification-service.ts';
 import { getStructuralContextAtlasOverview } from './services/context-atlas-overview-service.ts';
 import { getStructuralContextAtlasReport } from './services/context-atlas-report-service.ts';
 import {
@@ -53,11 +45,7 @@ import { getStructuralContextMapExplanation } from './services/context-map-expla
 import { findStructuralContextMapPath } from './services/context-map-path-service.ts';
 import { queryStructuralContextMap } from './services/context-map-query-service.ts';
 import { getStructuralContextMapReport } from './services/context-map-report-service.ts';
-import {
-  buildStructuralContextMapEntry,
-  getStructuralContextMapEntry,
-  listStructuralContextMapEntries,
-} from './services/context-map-service.ts';
+import { buildStructuralContextMapEntry, getStructuralContextMapEntry, listStructuralContextMapEntries } from './services/context-map-service.ts';
 import { CORPUS_LANE_ARTIFACT_KINDS } from './services/corpus-lane-service.ts';
 import { assertMemoryWriteAllowed, MemoryAccessPolicyError } from './services/memory-access-policy-service.ts';
 import { selectActivationPolicy } from './services/memory-activation-policy-service.ts';
@@ -65,11 +53,7 @@ import { recordMemoryMutationEvent } from './services/memory-mutation-ledger-ser
 import { classifyMemoryScenario } from './services/memory-scenario-classifier-service.ts';
 import { getMixedScopeBridge } from './services/mixed-scope-bridge-service.ts';
 import { getMixedScopeDisclosure } from './services/mixed-scope-disclosure-service.ts';
-import {
-  DEFAULT_NOTE_MANIFEST_SCOPE_ID,
-  NOTE_MANIFEST_EXTRACTOR_VERSION,
-  rebuildNoteManifestEntries,
-} from './services/note-manifest-service.ts';
+import { DEFAULT_NOTE_MANIFEST_SCOPE_ID, NOTE_MANIFEST_EXTRACTOR_VERSION, rebuildNoteManifestEntries } from './services/note-manifest-service.ts';
 import { rebuildNoteSectionEntries } from './services/note-section-service.ts';
 import { findStructuralPath, getStructuralNeighbors, type StructuralNodeId } from './services/note-structural-graph-service.ts';
 import { DEFAULT_PERSONAL_EPISODE_SCOPE_ID, getPersonalEpisodeLookupRoute } from './services/personal-episode-lookup-route-service.ts';
@@ -90,12 +74,7 @@ import { getWorkspaceOrientationBundle } from './services/workspace-orientation-
 import { getWorkspaceProjectCard } from './services/workspace-project-card-service.ts';
 import { getWorkspaceSystemCard } from './services/workspace-system-card-service.ts';
 import { findSlugQualityIssues } from './slug-quality.ts';
-import {
-  findSubbrainBySlugPrefix,
-  loadSubbrainRegistry,
-  type SubbrainConfig,
-  stripSubbrainPrefix,
-} from './subbrains.ts';
+import { findSubbrainBySlugPrefix, loadSubbrainRegistry, type SubbrainConfig, stripSubbrainPrefix } from './subbrains.ts';
 import { slugifyPath } from './sync.ts';
 import { scalarLength, sliceScalars } from './text-offsets.ts';
 import type {
@@ -106,10 +85,12 @@ import type {
   MemoryCandidateStatus,
   MemoryCandidateTargetObjectType,
   MemoryMutationEvent,
+  MemoryWriteSession,
   MemoryScenario,
   MemoryScenarioKnownSubject,
   MemoryScenarioKnownSubjectKind,
   MemoryScenarioSourceKind,
+  Page,
   PageProjection,
   PersonalWriteTargetResult,
   PersonalEpisodeSourceKind,
@@ -221,11 +202,7 @@ export function validateOperationParams(
   return params;
 }
 
-export async function dispatchOperation(
-  ctx: OperationContext,
-  operation: Operation,
-  params: Record<string, unknown> | null | undefined,
-): Promise<unknown> {
+export async function dispatchOperation(ctx: OperationContext, operation: Operation, params: Record<string, unknown> | null | undefined): Promise<unknown> {
   const preparedParams = params ?? {};
   return operation.handler(ctx, validateOperationParams(operation, preparedParams));
 }
@@ -237,7 +214,7 @@ function validateOperationParamValue(path: string, value: unknown, paramDef: Par
   }
 
   const types = Array.isArray(paramDef.type) ? paramDef.type : [paramDef.type];
-  const matched = types.some(type => valueMatchesParamType(value, type));
+  const matched = types.some((type) => valueMatchesParamType(value, type));
   if (!matched) {
     throw new OperationError('invalid_params', `${path} must be ${formatExpectedParamTypes(paramDef)}.`);
   }
@@ -349,18 +326,11 @@ export function getOperationCapabilityRequirements(operation: Operation): Operat
   return [...requirements];
 }
 
-export function isOperationSupportedByConfig(
-  operation: Operation,
-  config: MBrainConfig,
-): boolean {
-  return getOperationCapabilityRequirements(operation)
-    .every(capability => getUnsupportedCapabilityReason(config, capability) === null);
+export function isOperationSupportedByConfig(operation: Operation, config: MBrainConfig): boolean {
+  return getOperationCapabilityRequirements(operation).every((capability) => getUnsupportedCapabilityReason(config, capability) === null);
 }
 
-function collectParamCapabilityRequirements(
-  param: ParamDef,
-  requirements: Set<OperationCapability>,
-): void {
+function collectParamCapabilityRequirements(param: ParamDef, requirements: Set<OperationCapability>): void {
   if (param.capabilityRequired) {
     requirements.add(param.capabilityRequired);
   }
@@ -387,11 +357,7 @@ const RETRIEVAL_ROUTE_INTENTS = [
   'personal_episode_lookup',
 ] as const satisfies readonly RetrievalRouteIntent[];
 
-const REQUESTED_SCOPES = [
-  'work',
-  'personal',
-  'mixed',
-] as const;
+const REQUESTED_SCOPES = ['work', 'personal', 'mixed'] as const;
 
 const PROFILE_MEMORY_TYPES = [
   'preference',
@@ -402,25 +368,11 @@ const PROFILE_MEMORY_TYPES = [
   'other',
 ] as const satisfies readonly ProfileMemoryType[];
 
-const PERSONAL_EPISODE_SOURCE_KINDS = [
-  'chat',
-  'note',
-  'import',
-  'meeting',
-  'reminder',
-  'other',
-] as const satisfies readonly PersonalEpisodeSourceKind[];
+const PERSONAL_EPISODE_SOURCE_KINDS = ['chat', 'note', 'import', 'meeting', 'reminder', 'other'] as const satisfies readonly PersonalEpisodeSourceKind[];
 
-const PERSONAL_ROUTE_KINDS = [
-  'profile',
-  'episode',
-] as const;
+const PERSONAL_ROUTE_KINDS = ['profile', 'episode'] as const;
 
-const SCOPE_GATE_POLICIES = [
-  'allow',
-  'defer',
-  'deny',
-] as const satisfies readonly ScopeGatePolicy[];
+const SCOPE_GATE_POLICIES = ['allow', 'defer', 'deny'] as const satisfies readonly ScopeGatePolicy[];
 
 const MEMORY_SCENARIOS = [
   'coding_continuation',
@@ -472,16 +424,9 @@ const RETRIEVAL_SELECTOR_KINDS = [
   'personal_episode',
 ] as const satisfies readonly RetrievalSelectorKind[];
 
-const CONTEXT_READ_MODES = [
-  'explicit',
-  'auto',
-] as const;
+const CONTEXT_READ_MODES = ['explicit', 'auto'] as const;
 
-const CONTEXT_TIMELINE_MODES = [
-  'auto',
-  'include',
-  'exclude',
-] as const;
+const CONTEXT_TIMELINE_MODES = ['auto', 'include', 'exclude'] as const;
 
 const REQUESTED_SCOPE_ENUM_ERROR_HINT = 'requested_scope is the access scope; put retrieval details in query.';
 const INCLUDE_TIMELINE_ENUM_ERROR_HINT = 'include_timeline controls returned timeline text; use exclude when timeline text should be omitted.';
@@ -496,7 +441,7 @@ function requestedScopeParam(description: string): ParamDef {
   };
 }
 
-function parseRequestedScopeParam(value: unknown): typeof REQUESTED_SCOPES[number] | undefined {
+function parseRequestedScopeParam(value: unknown): (typeof REQUESTED_SCOPES)[number] | undefined {
   return parseEnumParam(value, 'requested_scope', REQUESTED_SCOPES, REQUESTED_SCOPE_ENUM_ERROR_HINT);
 }
 
@@ -510,7 +455,7 @@ function includeTimelineParam(): ParamDef {
   };
 }
 
-function parseIncludeTimelineParam(value: unknown): typeof CONTEXT_TIMELINE_MODES[number] | undefined {
+function parseIncludeTimelineParam(value: unknown): (typeof CONTEXT_TIMELINE_MODES)[number] | undefined {
   return parseEnumParam(value, 'include_timeline', CONTEXT_TIMELINE_MODES, INCLUDE_TIMELINE_ENUM_ERROR_HINT);
 }
 
@@ -567,11 +512,7 @@ function coerceNumber(key: string, raw: string): number {
   return n;
 }
 
-export function parseOpArgs(
-  op: Pick<Operation, 'params' | 'cliHints'>,
-  args: string[],
-  options: ParseOpArgsOptions = {},
-): Record<string, unknown> {
+export function parseOpArgs(op: Pick<Operation, 'params' | 'cliHints'>, args: string[], options: ParseOpArgsOptions = {}): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
   const aliases = op.cliHints?.aliases || {};
@@ -658,10 +599,7 @@ function isCliNullLiteralParam(key: string): boolean {
   return key.endsWith('_content_hash') || key.endsWith('_snapshot_hash');
 }
 
-export function getMissingRequiredParams(
-  op: Pick<Operation, 'params'>,
-  params: Record<string, unknown>,
-): string[] {
+export function getMissingRequiredParams(op: Pick<Operation, 'params'>, params: Record<string, unknown>): string[] {
   return Object.entries(op.params)
     .filter(([, def]) => def.required)
     .filter(([key]) => params[key] === undefined)
@@ -669,7 +607,7 @@ export function getMissingRequiredParams(
 }
 
 export function formatOpUsage(op: Pick<Operation, 'name' | 'cliHints'>): string {
-  const positional = (op.cliHints?.positional || []).map(p => `<${p}>`).join(' ');
+  const positional = (op.cliHints?.positional || []).map((p) => `<${p}>`).join(' ');
   const name = op.cliHints?.name || op.name;
   return `Usage: mbrain ${name}${positional ? ` ${positional}` : ''}`;
 }
@@ -689,11 +627,7 @@ export function formatOpHelp(op: Pick<Operation, 'name' | 'description' | 'param
   return lines.join('\n') + '\n';
 }
 
-export function formatResult(
-  opName: string,
-  result: unknown,
-  params: Record<string, unknown> = {},
-): string {
+export function formatResult(opName: string, result: unknown, params: Record<string, unknown> = {}): string {
   switch (opName) {
     case 'get_page': {
       const r = result as any;
@@ -701,15 +635,15 @@ export function formatResult(
         return `Ambiguous slug. Did you mean:\n${r.candidates.map((c: string) => `  ${c}`).join('\n')}\n`;
       }
       return serializeMarkdown(r.frontmatter || {}, r.compiled_truth || '', r.timeline || '', {
-        type: r.type, title: r.title, tags: r.tags || [],
+        type: r.type,
+        title: r.title,
+        tags: r.tags || [],
       });
     }
     case 'list_pages': {
       const pages = result as any[];
       if (pages.length === 0) return 'No pages found.\n';
-      const rows = pages.map(p =>
-        `${p.slug}\t${p.type}\t${p.updated_at?.toString().slice(0, 10) || '?'}\t${p.title}`,
-      ).join('\n') + '\n';
+      const rows = pages.map((p) => `${p.slug}\t${p.type}\t${p.updated_at?.toString().slice(0, 10) || '?'}\t${p.title}`).join('\n') + '\n';
       const requestedLimit = (params.limit as number) ?? 50;
       if (pages.length >= requestedLimit) {
         return rows + `\n(result may be truncated at ${requestedLimit}; pass --limit N or -n N to change)\n`;
@@ -719,9 +653,7 @@ export function formatResult(
     case 'list_tasks': {
       const tasks = result as any[];
       if (tasks.length === 0) return 'No tasks.\n';
-      const rows = tasks.map(task =>
-        `${task.id}\t${task.status}\t${task.scope}\t${task.title}`,
-      ).join('\n') + '\n';
+      const rows = tasks.map((task) => `${task.id}\t${task.status}\t${task.scope}\t${task.title}`).join('\n') + '\n';
       const requestedLimit = (params.limit as number) ?? 20;
       if (tasks.length >= requestedLimit) {
         return rows + `\n(result may be truncated at ${requestedLimit}; pass --limit N or -n N to change)\n`;
@@ -731,9 +663,10 @@ export function formatResult(
     case 'list_task_traces': {
       const traces = result as any[];
       if (traces.length === 0) return 'No traces.\n';
-      const rows = traces.map(trace =>
-        `${trace.id}\t${trace.created_at?.toString().slice(0, 19) || '?'}\t${(trace.route || []).join(' -> ')}\t${trace.outcome}`,
-      ).join('\n') + '\n';
+      const rows =
+        traces
+          .map((trace) => `${trace.id}\t${trace.created_at?.toString().slice(0, 19) || '?'}\t${(trace.route || []).join(' -> ')}\t${trace.outcome}`)
+          .join('\n') + '\n';
       const requestedLimit = (params.limit as number) ?? 10;
       if (traces.length >= requestedLimit) {
         return rows + `\n(result may be truncated at ${requestedLimit}; pass --limit N or -n N to change)\n`;
@@ -743,9 +676,9 @@ export function formatResult(
     case 'list_task_attempts': {
       const attempts = result as any[];
       if (attempts.length === 0) return 'No attempts.\n';
-      const rows = attempts.map(attempt =>
-        `${attempt.id}\t${attempt.outcome}\t${attempt.created_at?.toString().slice(0, 19) || '?'}\t${attempt.summary}`,
-      ).join('\n') + '\n';
+      const rows =
+        attempts.map((attempt) => `${attempt.id}\t${attempt.outcome}\t${attempt.created_at?.toString().slice(0, 19) || '?'}\t${attempt.summary}`).join('\n') +
+        '\n';
       const requestedLimit = (params.limit as number) ?? 10;
       if (attempts.length >= requestedLimit) {
         return rows + `\n(result may be truncated at ${requestedLimit}; pass --limit N or -n N to change)\n`;
@@ -755,9 +688,10 @@ export function formatResult(
     case 'list_task_decisions': {
       const decisions = result as any[];
       if (decisions.length === 0) return 'No decisions.\n';
-      const rows = decisions.map(decision =>
-        `${decision.id}\t${decision.created_at?.toString().slice(0, 19) || '?'}\t${decision.summary}\t${decision.rationale}`,
-      ).join('\n') + '\n';
+      const rows =
+        decisions
+          .map((decision) => `${decision.id}\t${decision.created_at?.toString().slice(0, 19) || '?'}\t${decision.summary}\t${decision.rationale}`)
+          .join('\n') + '\n';
       const requestedLimit = (params.limit as number) ?? 10;
       if (decisions.length >= requestedLimit) {
         return rows + `\n(result may be truncated at ${requestedLimit}; pass --limit N or -n N to change)\n`;
@@ -766,27 +700,28 @@ export function formatResult(
     }
     case 'get_note_manifest_entry': {
       const entry = result as any;
-      return [
-        `${entry.title} [${entry.page_type}]`,
-        `Slug: ${entry.slug}`,
-        `Path: ${entry.path}`,
-        `Scope: ${entry.scope_id}`,
-        `Aliases: ${(entry.aliases || []).join(', ') || 'none'}`,
-        `Tags: ${(entry.tags || []).join(', ') || 'none'}`,
-        `Wiki links: ${(entry.outgoing_wikilinks || []).join(', ') || 'none'}`,
-        `URLs: ${(entry.outgoing_urls || []).join(', ') || 'none'}`,
-        `Source refs: ${(entry.source_refs || []).join(', ') || 'none'}`,
-        `Headings: ${(entry.heading_index || []).map((heading: any) => `${'#'.repeat(heading.depth)} ${heading.text}`).join(' | ') || 'none'}`,
-        `Extractor: ${entry.extractor_version}`,
-        `Last indexed: ${new Date(entry.last_indexed_at).toISOString()}`,
-      ].join('\n') + '\n';
+      return (
+        [
+          `${entry.title} [${entry.page_type}]`,
+          `Slug: ${entry.slug}`,
+          `Path: ${entry.path}`,
+          `Scope: ${entry.scope_id}`,
+          `Aliases: ${(entry.aliases || []).join(', ') || 'none'}`,
+          `Tags: ${(entry.tags || []).join(', ') || 'none'}`,
+          `Wiki links: ${(entry.outgoing_wikilinks || []).join(', ') || 'none'}`,
+          `URLs: ${(entry.outgoing_urls || []).join(', ') || 'none'}`,
+          `Source refs: ${(entry.source_refs || []).join(', ') || 'none'}`,
+          `Headings: ${(entry.heading_index || []).map((heading: any) => `${'#'.repeat(heading.depth)} ${heading.text}`).join(' | ') || 'none'}`,
+          `Extractor: ${entry.extractor_version}`,
+          `Last indexed: ${new Date(entry.last_indexed_at).toISOString()}`,
+        ].join('\n') + '\n'
+      );
     }
     case 'list_note_manifest_entries': {
       const entries = result as any[];
       if (entries.length === 0) return 'No note manifest entries.\n';
-      const rows = entries.map((entry) =>
-        `${entry.slug}\t${entry.page_type}\t${entry.last_indexed_at?.toString().slice(0, 19) || '?'}\t${entry.title}`,
-      ).join('\n') + '\n';
+      const rows =
+        entries.map((entry) => `${entry.slug}\t${entry.page_type}\t${entry.last_indexed_at?.toString().slice(0, 19) || '?'}\t${entry.title}`).join('\n') + '\n';
       const requestedLimit = (params.limit as number) ?? 20;
       if (entries.length >= requestedLimit) {
         return rows + `\n(result may be truncated at ${requestedLimit}; pass --limit N or -n N to change)\n`;
@@ -795,35 +730,36 @@ export function formatResult(
     }
     case 'rebuild_note_manifest': {
       const rebuild = result as any;
-      return [
-        `Rebuilt ${rebuild.rebuilt} note manifest entr${rebuild.rebuilt === 1 ? 'y' : 'ies'}.`,
-        `Slugs: ${(rebuild.slugs || []).join(', ') || 'none'}`,
-      ].join('\n') + '\n';
+      return (
+        [`Rebuilt ${rebuild.rebuilt} note manifest entr${rebuild.rebuilt === 1 ? 'y' : 'ies'}.`, `Slugs: ${(rebuild.slugs || []).join(', ') || 'none'}`].join(
+          '\n',
+        ) + '\n'
+      );
     }
     case 'get_note_section_entry': {
       const entry = result as any;
-      return [
-        `${entry.heading_text} [depth ${entry.depth}]`,
-        `Section: ${entry.section_id}`,
-        `Page: ${entry.page_slug}`,
-        `Path: ${entry.page_path}`,
-        `Scope: ${entry.scope_id}`,
-        `Heading path: ${(entry.heading_path || []).join(' / ') || 'none'}`,
-        `Parent: ${entry.parent_section_id || 'none'}`,
-        `Line range: ${entry.line_start}-${entry.line_end}`,
-        `Wiki links: ${(entry.outgoing_wikilinks || []).join(', ') || 'none'}`,
-        `URLs: ${(entry.outgoing_urls || []).join(', ') || 'none'}`,
-        `Source refs: ${(entry.source_refs || []).join(', ') || 'none'}`,
-        `Extractor: ${entry.extractor_version}`,
-        `Last indexed: ${new Date(entry.last_indexed_at).toISOString()}`,
-      ].join('\n') + '\n';
+      return (
+        [
+          `${entry.heading_text} [depth ${entry.depth}]`,
+          `Section: ${entry.section_id}`,
+          `Page: ${entry.page_slug}`,
+          `Path: ${entry.page_path}`,
+          `Scope: ${entry.scope_id}`,
+          `Heading path: ${(entry.heading_path || []).join(' / ') || 'none'}`,
+          `Parent: ${entry.parent_section_id || 'none'}`,
+          `Line range: ${entry.line_start}-${entry.line_end}`,
+          `Wiki links: ${(entry.outgoing_wikilinks || []).join(', ') || 'none'}`,
+          `URLs: ${(entry.outgoing_urls || []).join(', ') || 'none'}`,
+          `Source refs: ${(entry.source_refs || []).join(', ') || 'none'}`,
+          `Extractor: ${entry.extractor_version}`,
+          `Last indexed: ${new Date(entry.last_indexed_at).toISOString()}`,
+        ].join('\n') + '\n'
+      );
     }
     case 'list_note_section_entries': {
       const entries = result as any[];
       if (entries.length === 0) return 'No note section entries.\n';
-      const rows = entries.map((entry) =>
-        `${entry.section_id}\t${entry.line_start}-${entry.line_end}\t${entry.heading_text}`,
-      ).join('\n') + '\n';
+      const rows = entries.map((entry) => `${entry.section_id}\t${entry.line_start}-${entry.line_end}\t${entry.heading_text}`).join('\n') + '\n';
       const requestedLimit = (params.limit as number) ?? 50;
       if (entries.length >= requestedLimit) {
         return rows + `\n(result may be truncated at ${requestedLimit}; pass --limit N or -n N to change)\n`;
@@ -832,17 +768,17 @@ export function formatResult(
     }
     case 'rebuild_note_sections': {
       const rebuild = result as any;
-      return [
-        `Rebuilt ${rebuild.rebuilt} note section entr${rebuild.rebuilt === 1 ? 'y' : 'ies'}.`,
-        `Sections: ${(rebuild.section_ids || []).join(', ') || 'none'}`,
-      ].join('\n') + '\n';
+      return (
+        [
+          `Rebuilt ${rebuild.rebuilt} note section entr${rebuild.rebuilt === 1 ? 'y' : 'ies'}.`,
+          `Sections: ${(rebuild.section_ids || []).join(', ') || 'none'}`,
+        ].join('\n') + '\n'
+      );
     }
     case 'get_note_structural_neighbors': {
       const edges = result as any[];
       if (edges.length === 0) return 'No structural neighbors.\n';
-      const rows = edges.map((edge) =>
-        `${edge.edge_kind}\t${edge.from_node_id}\t${edge.to_node_id}`,
-      ).join('\n') + '\n';
+      const rows = edges.map((edge) => `${edge.edge_kind}\t${edge.from_node_id}\t${edge.to_node_id}`).join('\n') + '\n';
       const requestedLimit = (params.limit as number) ?? 20;
       if (edges.length >= requestedLimit) {
         return rows + `\n(result may be truncated at ${requestedLimit}; pass --limit N or -n N to change)\n`;
@@ -854,43 +790,43 @@ export function formatResult(
       if (!path || !Array.isArray(path.node_ids) || path.node_ids.length === 0) {
         return 'No structural path found.\n';
       }
-      return [
-        `Hop count: ${path.hop_count}`,
-        `Nodes: ${(path.node_ids || []).join(' -> ')}`,
-      ].join('\n') + '\n';
+      return [`Hop count: ${path.hop_count}`, `Nodes: ${(path.node_ids || []).join(' -> ')}`].join('\n') + '\n';
     }
     case 'build_context_map': {
       const map = result as any;
-      return [
-        `Built context map: ${map.id}`,
-        `Scope: ${map.scope_id}`,
-        `Kind: ${map.kind}`,
-        `Nodes: ${map.node_count}`,
-        `Edges: ${map.edge_count}`,
-      ].join('\n') + '\n';
+      return (
+        [`Built context map: ${map.id}`, `Scope: ${map.scope_id}`, `Kind: ${map.kind}`, `Nodes: ${map.node_count}`, `Edges: ${map.edge_count}`].join('\n') +
+        '\n'
+      );
     }
     case 'get_context_map_entry': {
       const map = result as any;
-      return [
-        `${map.title} [${map.kind}]`,
-        `Id: ${map.id}`,
-        `Scope: ${map.scope_id}`,
-        `Mode: ${map.build_mode}`,
-        `Status: ${map.status}`,
-        `Source hash: ${map.source_set_hash}`,
-        `Nodes: ${map.node_count}`,
-        `Edges: ${map.edge_count}`,
-        `Communities: ${map.community_count}`,
-        `Generated: ${new Date(map.generated_at).toISOString()}`,
-        `Stale reason: ${map.stale_reason || 'none'}`,
-      ].join('\n') + '\n';
+      return (
+        [
+          `${map.title} [${map.kind}]`,
+          `Id: ${map.id}`,
+          `Scope: ${map.scope_id}`,
+          `Mode: ${map.build_mode}`,
+          `Status: ${map.status}`,
+          `Source hash: ${map.source_set_hash}`,
+          `Nodes: ${map.node_count}`,
+          `Edges: ${map.edge_count}`,
+          `Communities: ${map.community_count}`,
+          `Generated: ${new Date(map.generated_at).toISOString()}`,
+          `Stale reason: ${map.stale_reason || 'none'}`,
+        ].join('\n') + '\n'
+      );
     }
     case 'list_context_map_entries': {
       const entries = result as any[];
       if (entries.length === 0) return 'No context map entries.\n';
-      const rows = entries.map((entry) =>
-        `${entry.id}\t${entry.kind}\t${entry.status}\t${entry.generated_at?.toString().slice(0, 19) || '?'}\t${entry.node_count}/${entry.edge_count}`,
-      ).join('\n') + '\n';
+      const rows =
+        entries
+          .map(
+            (entry) =>
+              `${entry.id}\t${entry.kind}\t${entry.status}\t${entry.generated_at?.toString().slice(0, 19) || '?'}\t${entry.node_count}/${entry.edge_count}`,
+          )
+          .join('\n') + '\n';
       const requestedLimit = (params.limit as number) ?? 20;
       if (entries.length >= requestedLimit) {
         return rows + `\n(result may be truncated at ${requestedLimit}; pass --limit N or -n N to change)\n`;
@@ -899,33 +835,38 @@ export function formatResult(
     }
     case 'build_context_atlas': {
       const atlas = result as any;
-      return [
-        `Built context atlas: ${atlas.id}`,
-        `Map: ${atlas.map_id}`,
-        `Scope: ${atlas.scope_id}`,
-        `Freshness: ${atlas.freshness}`,
-        `Entrypoints: ${(atlas.entrypoints || []).join(', ') || 'none'}`,
-      ].join('\n') + '\n';
+      return (
+        [
+          `Built context atlas: ${atlas.id}`,
+          `Map: ${atlas.map_id}`,
+          `Scope: ${atlas.scope_id}`,
+          `Freshness: ${atlas.freshness}`,
+          `Entrypoints: ${(atlas.entrypoints || []).join(', ') || 'none'}`,
+        ].join('\n') + '\n'
+      );
     }
     case 'get_context_atlas_entry': {
       const atlas = result as any;
-      return [
-        `${atlas.title} [${atlas.kind}]`,
-        `Id: ${atlas.id}`,
-        `Map: ${atlas.map_id}`,
-        `Scope: ${atlas.scope_id}`,
-        `Freshness: ${atlas.freshness}`,
-        `Entrypoints: ${(atlas.entrypoints || []).join(', ') || 'none'}`,
-        `Budget hint: ${atlas.budget_hint}`,
-        `Generated: ${new Date(atlas.generated_at).toISOString()}`,
-      ].join('\n') + '\n';
+      return (
+        [
+          `${atlas.title} [${atlas.kind}]`,
+          `Id: ${atlas.id}`,
+          `Map: ${atlas.map_id}`,
+          `Scope: ${atlas.scope_id}`,
+          `Freshness: ${atlas.freshness}`,
+          `Entrypoints: ${(atlas.entrypoints || []).join(', ') || 'none'}`,
+          `Budget hint: ${atlas.budget_hint}`,
+          `Generated: ${new Date(atlas.generated_at).toISOString()}`,
+        ].join('\n') + '\n'
+      );
     }
     case 'list_context_atlas_entries': {
       const entries = result as any[];
       if (entries.length === 0) return 'No context atlas entries.\n';
-      const rows = entries.map((entry) =>
-        `${entry.id}\t${entry.kind}\t${entry.freshness}\t${entry.generated_at?.toString().slice(0, 19) || '?'}\t${entry.map_id}`,
-      ).join('\n') + '\n';
+      const rows =
+        entries
+          .map((entry) => `${entry.id}\t${entry.kind}\t${entry.freshness}\t${entry.generated_at?.toString().slice(0, 19) || '?'}\t${entry.map_id}`)
+          .join('\n') + '\n';
       const requestedLimit = (params.limit as number) ?? 20;
       if (entries.length >= requestedLimit) {
         return rows + `\n(result may be truncated at ${requestedLimit}; pass --limit N or -n N to change)\n`;
@@ -935,440 +876,433 @@ export function formatResult(
     case 'select_context_atlas_entry': {
       const selection = result as any;
       if (!selection.entry) {
-        return [
-          'No context atlas entry selected.',
-          `Reason: ${selection.reason}`,
-          `Candidates: ${selection.candidate_count}`,
-        ].join('\n') + '\n';
+        return ['No context atlas entry selected.', `Reason: ${selection.reason}`, `Candidates: ${selection.candidate_count}`].join('\n') + '\n';
       }
       const atlas = selection.entry;
-      return [
-        `Selected context atlas: ${atlas.id}`,
-        `Reason: ${selection.reason}`,
-        `Candidates: ${selection.candidate_count}`,
-        `Map: ${atlas.map_id}`,
-        `Scope: ${atlas.scope_id}`,
-        `Freshness: ${atlas.freshness}`,
-        `Budget hint: ${atlas.budget_hint}`,
-      ].join('\n') + '\n';
+      return (
+        [
+          `Selected context atlas: ${atlas.id}`,
+          `Reason: ${selection.reason}`,
+          `Candidates: ${selection.candidate_count}`,
+          `Map: ${atlas.map_id}`,
+          `Scope: ${atlas.scope_id}`,
+          `Freshness: ${atlas.freshness}`,
+          `Budget hint: ${atlas.budget_hint}`,
+        ].join('\n') + '\n'
+      );
     }
     case 'get_context_atlas_overview': {
       const resultValue = result as any;
       if (!resultValue.overview) {
-        return [
-          'No context atlas overview available.',
-          `Reason: ${resultValue.selection_reason}`,
-          `Candidates: ${resultValue.candidate_count}`,
-        ].join('\n') + '\n';
+        return (
+          ['No context atlas overview available.', `Reason: ${resultValue.selection_reason}`, `Candidates: ${resultValue.candidate_count}`].join('\n') + '\n'
+        );
       }
       const overview = resultValue.overview;
-      const reads = (overview.recommended_reads || [])
-        .map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`)
-        .join('\n');
-      return [
-        `${overview.entry.title} [${overview.entry.kind}]`,
-        `Atlas: ${overview.entry.id}`,
-        `Reason: ${resultValue.selection_reason}`,
-        `Candidates: ${resultValue.candidate_count}`,
-        `Freshness: ${overview.entry.freshness}`,
-        `Overview kind: ${overview.overview_kind}`,
-        `Recommended reads:`,
-        reads || '- none',
-      ].join('\n') + '\n';
+      const reads = (overview.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`).join('\n');
+      return (
+        [
+          `${overview.entry.title} [${overview.entry.kind}]`,
+          `Atlas: ${overview.entry.id}`,
+          `Reason: ${resultValue.selection_reason}`,
+          `Candidates: ${resultValue.candidate_count}`,
+          `Freshness: ${overview.entry.freshness}`,
+          `Overview kind: ${overview.overview_kind}`,
+          `Recommended reads:`,
+          reads || '- none',
+        ].join('\n') + '\n'
+      );
     }
     case 'get_context_atlas_report': {
       const resultValue = result as any;
       if (!resultValue.report) {
-        return [
-          'No context atlas report available.',
-          `Reason: ${resultValue.selection_reason}`,
-          `Candidates: ${resultValue.candidate_count}`,
-        ].join('\n') + '\n';
+        return (
+          ['No context atlas report available.', `Reason: ${resultValue.selection_reason}`, `Candidates: ${resultValue.candidate_count}`].join('\n') + '\n'
+        );
       }
       const report = resultValue.report;
-      return [
-        report.title,
-        `Entry: ${report.entry_id}`,
-        `Reason: ${resultValue.selection_reason}`,
-        `Candidates: ${resultValue.candidate_count}`,
-        ...report.summary_lines,
-        'Recommended reads:',
-        ...report.recommended_reads.map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
-      ].join('\n') + '\n';
+      return (
+        [
+          report.title,
+          `Entry: ${report.entry_id}`,
+          `Reason: ${resultValue.selection_reason}`,
+          `Candidates: ${resultValue.candidate_count}`,
+          ...report.summary_lines,
+          'Recommended reads:',
+          ...report.recommended_reads.map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
+        ].join('\n') + '\n'
+      );
     }
     case 'get_atlas_orientation_card': {
       const resultValue = result as any;
       if (!resultValue.card) {
-        return [
-          'No atlas orientation card available.',
-          `Reason: ${resultValue.selection_reason}`,
-          `Candidates: ${resultValue.candidate_count}`,
-        ].join('\n') + '\n';
+        return (
+          ['No atlas orientation card available.', `Reason: ${resultValue.selection_reason}`, `Candidates: ${resultValue.candidate_count}`].join('\n') + '\n'
+        );
       }
       const card = resultValue.card;
-      return [
-        `${card.title} [atlas_orientation]`,
-        `Atlas entry: ${card.atlas_entry_id}`,
-        `Map: ${card.map_id}`,
-        `Freshness: ${card.freshness}`,
-        `Budget: ${card.budget_hint}`,
-        `Reason: ${resultValue.selection_reason}`,
-        `Candidates: ${resultValue.candidate_count}`,
-        ...(card.summary_lines || []),
-        'Anchor slugs:',
-        ...(card.anchor_slugs || []).map((item: any) => `- ${item}`),
-        'Recommended reads:',
-        ...(card.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
-      ].join('\n') + '\n';
+      return (
+        [
+          `${card.title} [atlas_orientation]`,
+          `Atlas entry: ${card.atlas_entry_id}`,
+          `Map: ${card.map_id}`,
+          `Freshness: ${card.freshness}`,
+          `Budget: ${card.budget_hint}`,
+          `Reason: ${resultValue.selection_reason}`,
+          `Candidates: ${resultValue.candidate_count}`,
+          ...(card.summary_lines || []),
+          'Anchor slugs:',
+          ...(card.anchor_slugs || []).map((item: any) => `- ${item}`),
+          'Recommended reads:',
+          ...(card.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
+        ].join('\n') + '\n'
+      );
     }
     case 'get_atlas_orientation_bundle': {
       const resultValue = result as any;
       if (!resultValue.bundle) {
-        return [
-          'No atlas orientation bundle available.',
-          `Reason: ${resultValue.selection_reason}`,
-          `Candidates: ${resultValue.candidate_count}`,
-        ].join('\n') + '\n';
+        return (
+          ['No atlas orientation bundle available.', `Reason: ${resultValue.selection_reason}`, `Candidates: ${resultValue.candidate_count}`].join('\n') + '\n'
+        );
       }
       const bundle = resultValue.bundle;
-      return [
-        `${bundle.title} [atlas_orientation]`,
-        `Atlas entry: ${bundle.atlas_entry_id}`,
-        `Freshness: ${bundle.freshness}`,
-        `Budget: ${bundle.budget_hint}`,
-        `Reason: ${resultValue.selection_reason}`,
-        `Candidates: ${resultValue.candidate_count}`,
-        ...(bundle.summary_lines || []),
-        `Report entry: ${bundle.report.entry_id}`,
-        `Card entry: ${bundle.card.atlas_entry_id}`,
-      ].join('\n') + '\n';
+      return (
+        [
+          `${bundle.title} [atlas_orientation]`,
+          `Atlas entry: ${bundle.atlas_entry_id}`,
+          `Freshness: ${bundle.freshness}`,
+          `Budget: ${bundle.budget_hint}`,
+          `Reason: ${resultValue.selection_reason}`,
+          `Candidates: ${resultValue.candidate_count}`,
+          ...(bundle.summary_lines || []),
+          `Report entry: ${bundle.report.entry_id}`,
+          `Card entry: ${bundle.card.atlas_entry_id}`,
+        ].join('\n') + '\n'
+      );
     }
     case 'get_context_map_report': {
       const resultValue = result as any;
       if (!resultValue.report) {
-        return [
-          'No context map report available.',
-          `Reason: ${resultValue.selection_reason}`,
-          `Candidates: ${resultValue.candidate_count}`,
-        ].join('\n') + '\n';
+        return ['No context map report available.', `Reason: ${resultValue.selection_reason}`, `Candidates: ${resultValue.candidate_count}`].join('\n') + '\n';
       }
       const report = resultValue.report;
-      return [
-        report.title,
-        `Map: ${report.map_id}`,
-        `Reason: ${resultValue.selection_reason}`,
-        `Candidates: ${resultValue.candidate_count}`,
-        ...report.summary_lines,
-        'Recommended reads:',
-        ...report.recommended_reads.map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
-      ].join('\n') + '\n';
+      return (
+        [
+          report.title,
+          `Map: ${report.map_id}`,
+          `Reason: ${resultValue.selection_reason}`,
+          `Candidates: ${resultValue.candidate_count}`,
+          ...report.summary_lines,
+          'Recommended reads:',
+          ...report.recommended_reads.map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
+        ].join('\n') + '\n'
+      );
     }
     case 'get_context_map_explanation': {
       const resultValue = result as any;
       if (!resultValue.explanation) {
-        return [
-          'No context map explanation available.',
-          `Reason: ${resultValue.selection_reason}`,
-          `Candidates: ${resultValue.candidate_count}`,
-        ].join('\n') + '\n';
+        return (
+          ['No context map explanation available.', `Reason: ${resultValue.selection_reason}`, `Candidates: ${resultValue.candidate_count}`].join('\n') + '\n'
+        );
       }
       const explanation = resultValue.explanation;
-      return [
-        explanation.title,
-        `Map: ${explanation.map_id}`,
-        `Node: ${explanation.node_id}`,
-        `Reason: ${resultValue.selection_reason}`,
-        `Candidates: ${resultValue.candidate_count}`,
-        ...explanation.summary_lines,
-        'Neighbor edges:',
-        ...(explanation.neighbor_edges || []).map((edge: any) => `- ${edge.edge_kind} | ${edge.from_node_id} -> ${edge.to_node_id}`),
-        'Recommended reads:',
-        ...(explanation.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
-      ].join('\n') + '\n';
+      return (
+        [
+          explanation.title,
+          `Map: ${explanation.map_id}`,
+          `Node: ${explanation.node_id}`,
+          `Reason: ${resultValue.selection_reason}`,
+          `Candidates: ${resultValue.candidate_count}`,
+          ...explanation.summary_lines,
+          'Neighbor edges:',
+          ...(explanation.neighbor_edges || []).map((edge: any) => `- ${edge.edge_kind} | ${edge.from_node_id} -> ${edge.to_node_id}`),
+          'Recommended reads:',
+          ...(explanation.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
+        ].join('\n') + '\n'
+      );
     }
     case 'query_context_map': {
       const resultValue = result as any;
       if (!resultValue.result) {
-        return [
-          'No context map query result available.',
-          `Reason: ${resultValue.selection_reason}`,
-          `Candidates: ${resultValue.candidate_count}`,
-        ].join('\n') + '\n';
+        return (
+          ['No context map query result available.', `Reason: ${resultValue.selection_reason}`, `Candidates: ${resultValue.candidate_count}`].join('\n') + '\n'
+        );
       }
       const queryResult = resultValue.result;
-      return [
-        `Context map query: ${queryResult.query}`,
-        `Map: ${queryResult.map_id}`,
-        `Reason: ${resultValue.selection_reason}`,
-        `Candidates: ${resultValue.candidate_count}`,
-        ...queryResult.summary_lines,
-        'Matched nodes:',
-        ...(queryResult.matched_nodes || []).map((node: any) => `- ${node.node_id} | ${node.label} | score=${node.score}`),
-        'Recommended reads:',
-        ...(queryResult.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
-      ].join('\n') + '\n';
+      return (
+        [
+          `Context map query: ${queryResult.query}`,
+          `Map: ${queryResult.map_id}`,
+          `Reason: ${resultValue.selection_reason}`,
+          `Candidates: ${resultValue.candidate_count}`,
+          ...queryResult.summary_lines,
+          'Matched nodes:',
+          ...(queryResult.matched_nodes || []).map((node: any) => `- ${node.node_id} | ${node.label} | score=${node.score}`),
+          'Recommended reads:',
+          ...(queryResult.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
+        ].join('\n') + '\n'
+      );
     }
     case 'find_context_map_path': {
       const resultValue = result as any;
       if (!resultValue.path) {
-        return [
-          'No context map path available.',
-          `Reason: ${resultValue.selection_reason}`,
-          `Candidates: ${resultValue.candidate_count}`,
-        ].join('\n') + '\n';
+        return ['No context map path available.', `Reason: ${resultValue.selection_reason}`, `Candidates: ${resultValue.candidate_count}`].join('\n') + '\n';
       }
       const path = resultValue.path;
-      return [
-        `Context map path: ${path.from_node_id} -> ${path.to_node_id}`,
-        `Map: ${path.map_id}`,
-        `Reason: ${resultValue.selection_reason}`,
-        `Candidates: ${resultValue.candidate_count}`,
-        ...path.summary_lines,
-        `Hop count: ${path.hop_count}`,
-        `Nodes: ${(path.node_ids || []).join(' -> ')}`,
-        'Edges:',
-        ...(path.edges || []).map((edge: any) => `- ${edge.edge_kind} | ${edge.from_node_id} -> ${edge.to_node_id}`),
-        'Recommended reads:',
-        ...(path.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
-      ].join('\n') + '\n';
+      return (
+        [
+          `Context map path: ${path.from_node_id} -> ${path.to_node_id}`,
+          `Map: ${path.map_id}`,
+          `Reason: ${resultValue.selection_reason}`,
+          `Candidates: ${resultValue.candidate_count}`,
+          ...path.summary_lines,
+          `Hop count: ${path.hop_count}`,
+          `Nodes: ${(path.node_ids || []).join(' -> ')}`,
+          'Edges:',
+          ...(path.edges || []).map((edge: any) => `- ${edge.edge_kind} | ${edge.from_node_id} -> ${edge.to_node_id}`),
+          'Recommended reads:',
+          ...(path.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
+        ].join('\n') + '\n'
+      );
     }
     case 'get_broad_synthesis_route': {
       const resultValue = result as any;
       if (!resultValue.route) {
-        return [
-          'No broad synthesis route available.',
-          `Reason: ${resultValue.selection_reason}`,
-          `Candidates: ${resultValue.candidate_count}`,
-        ].join('\n') + '\n';
+        return (
+          ['No broad synthesis route available.', `Reason: ${resultValue.selection_reason}`, `Candidates: ${resultValue.candidate_count}`].join('\n') + '\n'
+        );
       }
       const route = resultValue.route;
-      return [
-        `Broad synthesis route: ${route.query}`,
-        `Map: ${route.map_id}`,
-        `Status: ${route.status}`,
-        `Reason: ${resultValue.selection_reason}`,
-        `Candidates: ${resultValue.candidate_count}`,
-        ...route.summary_lines,
-        `Retrieval route: ${(route.retrieval_route || []).join(' -> ')}`,
-        `Focal node: ${route.focal_node_id || 'none'}`,
-        'Matched nodes:',
-        ...(route.matched_nodes || []).map((node: any) => `- ${node.node_id} | ${node.label} | score=${node.score}`),
-        'Recommended reads:',
-        ...(route.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
-      ].join('\n') + '\n';
+      return (
+        [
+          `Broad synthesis route: ${route.query}`,
+          `Map: ${route.map_id}`,
+          `Status: ${route.status}`,
+          `Reason: ${resultValue.selection_reason}`,
+          `Candidates: ${resultValue.candidate_count}`,
+          ...route.summary_lines,
+          `Retrieval route: ${(route.retrieval_route || []).join(' -> ')}`,
+          `Focal node: ${route.focal_node_id || 'none'}`,
+          'Matched nodes:',
+          ...(route.matched_nodes || []).map((node: any) => `- ${node.node_id} | ${node.label} | score=${node.score}`),
+          'Recommended reads:',
+          ...(route.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
+        ].join('\n') + '\n'
+      );
     }
     case 'get_precision_lookup_route': {
       const resultValue = result as any;
       if (!resultValue.route) {
-        return [
-          'No precision lookup route available.',
-          `Reason: ${resultValue.selection_reason}`,
-          `Candidates: ${resultValue.candidate_count}`,
-        ].join('\n') + '\n';
+        return (
+          ['No precision lookup route available.', `Reason: ${resultValue.selection_reason}`, `Candidates: ${resultValue.candidate_count}`].join('\n') + '\n'
+        );
       }
       const route = resultValue.route;
-      return [
-        `Precision lookup route: ${route.slug}${route.section_id ? `#${route.section_id}` : ''}`,
-        `Path: ${route.path}`,
-        `Target kind: ${route.target_kind}`,
-        `Reason: ${resultValue.selection_reason}`,
-        `Candidates: ${resultValue.candidate_count}`,
-        ...route.summary_lines,
-        `Retrieval route: ${(route.retrieval_route || []).join(' -> ')}`,
-        'Recommended reads:',
-        ...(route.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
-      ].join('\n') + '\n';
+      return (
+        [
+          `Precision lookup route: ${route.slug}${route.section_id ? `#${route.section_id}` : ''}`,
+          `Path: ${route.path}`,
+          `Target kind: ${route.target_kind}`,
+          `Reason: ${resultValue.selection_reason}`,
+          `Candidates: ${resultValue.candidate_count}`,
+          ...route.summary_lines,
+          `Retrieval route: ${(route.retrieval_route || []).join(' -> ')}`,
+          'Recommended reads:',
+          ...(route.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
+        ].join('\n') + '\n'
+      );
     }
     case 'select_retrieval_route': {
       const resultValue = result as any;
       if (!resultValue.route) {
-        return [
-          'No retrieval route selected.',
-          `Intent: ${resultValue.selected_intent}`,
+        return (
+          [
+            'No retrieval route selected.',
+            `Intent: ${resultValue.selected_intent}`,
+            `Reason: ${resultValue.selection_reason}`,
+            `Candidates: ${resultValue.candidate_count}`,
+            `Trace: ${resultValue.trace?.id || 'none'}`,
+          ].join('\n') + '\n'
+        );
+      }
+      const route = resultValue.route;
+      return (
+        [
+          `Retrieval route: ${resultValue.selected_intent}`,
+          `Route kind: ${route.route_kind}`,
           `Reason: ${resultValue.selection_reason}`,
           `Candidates: ${resultValue.candidate_count}`,
           `Trace: ${resultValue.trace?.id || 'none'}`,
-        ].join('\n') + '\n';
-      }
-      const route = resultValue.route;
-      return [
-        `Retrieval route: ${resultValue.selected_intent}`,
-        `Route kind: ${route.route_kind}`,
-        `Reason: ${resultValue.selection_reason}`,
-        `Candidates: ${resultValue.candidate_count}`,
-        `Trace: ${resultValue.trace?.id || 'none'}`,
-        ...route.summary_lines,
-        `Route steps: ${(route.retrieval_route || []).join(' -> ')}`,
-      ].join('\n') + '\n';
+          ...route.summary_lines,
+          `Route steps: ${(route.retrieval_route || []).join(' -> ')}`,
+        ].join('\n') + '\n'
+      );
     }
     case 'retrieve_context': {
       const resultValue = result as any;
       const scopeGate = resultValue.scope_gate;
-      return [
-        `Scenario: ${resultValue.scenario ?? 'unknown'}`,
-        `Answerable from probe: ${resultValue.answerability?.answerable_from_probe ? 'yes' : 'no'}`,
-        `Must read context: ${resultValue.answerability?.must_read_context ? 'yes' : 'no'}`,
-        `Reason codes: ${formatCsv(resultValue.answerability?.reason_codes)}`,
-        ...(scopeGate ? [
-          `Scope gate: ${scopeGate.policy ?? 'unknown'} (${scopeGate.resolved_scope ?? 'unknown'})`,
-        ] : []),
-        'Required reads:',
-        ...formatSelectorLines(resultValue.required_reads),
-        `Read plan: mode=${resultValue.read_plan?.mode ?? 'none'} max_depth=${resultValue.read_plan?.max_depth ?? 'none'} selected=${resultValue.read_plan?.selected_selectors?.length ?? 0} deferred=${resultValue.read_plan?.deferred_candidate_ids?.length ?? 0} gaps=${formatCsv(resultValue.read_plan?.gap_reasons)}`,
-        ...formatReadPlanActions(resultValue.read_plan),
-        'Candidates:',
-        ...formatCandidateLines(resultValue.candidates),
-        `Candidate signal policy: mode=${resultValue.candidate_signal_policy?.mode ?? 'none'} included=${resultValue.candidate_signal_policy?.included_count ?? 0} suppressed=${resultValue.candidate_signal_policy?.suppressed_count ?? 0} reasons=${formatCsv(resultValue.candidate_signal_policy?.reason_codes)}`,
-        'Candidate signals:',
-        ...formatCandidateSignalLines(resultValue.candidate_signals),
-        ...(resultValue.warnings?.length ? [
-          'Warnings:',
-          ...resultValue.warnings.map((warning: string) => `- ${warning}`),
-        ] : []),
-        'Chunks are candidate pointers; call read_context before answering.',
-        'Candidate signals are non-canonical; do not use them as answer evidence.',
-      ].join('\n') + '\n';
+      return (
+        [
+          `Scenario: ${resultValue.scenario ?? 'unknown'}`,
+          `Answerable from probe: ${resultValue.answerability?.answerable_from_probe ? 'yes' : 'no'}`,
+          `Must read context: ${resultValue.answerability?.must_read_context ? 'yes' : 'no'}`,
+          `Reason codes: ${formatCsv(resultValue.answerability?.reason_codes)}`,
+          ...(scopeGate ? [`Scope gate: ${scopeGate.policy ?? 'unknown'} (${scopeGate.resolved_scope ?? 'unknown'})`] : []),
+          'Required reads:',
+          ...formatSelectorLines(resultValue.required_reads),
+          `Read plan: mode=${resultValue.read_plan?.mode ?? 'none'} max_depth=${resultValue.read_plan?.max_depth ?? 'none'} selected=${resultValue.read_plan?.selected_selectors?.length ?? 0} deferred=${resultValue.read_plan?.deferred_candidate_ids?.length ?? 0} gaps=${formatCsv(resultValue.read_plan?.gap_reasons)}`,
+          ...formatReadPlanActions(resultValue.read_plan),
+          'Candidates:',
+          ...formatCandidateLines(resultValue.candidates),
+          `Candidate signal policy: mode=${resultValue.candidate_signal_policy?.mode ?? 'none'} included=${resultValue.candidate_signal_policy?.included_count ?? 0} suppressed=${resultValue.candidate_signal_policy?.suppressed_count ?? 0} reasons=${formatCsv(resultValue.candidate_signal_policy?.reason_codes)}`,
+          'Candidate signals:',
+          ...formatCandidateSignalLines(resultValue.candidate_signals),
+          ...(resultValue.warnings?.length ? ['Warnings:', ...resultValue.warnings.map((warning: string) => `- ${warning}`)] : []),
+          'Chunks are candidate pointers; call read_context before answering.',
+          'Candidate signals are non-canonical; do not use them as answer evidence.',
+        ].join('\n') + '\n'
+      );
     }
     case 'read_context': {
       const resultValue = result as any;
       const scopeGate = resultValue.scope_gate;
-      return [
-        `Answer ready: ${resultValue.answer_ready?.ready ? 'yes' : 'no'}`,
-        `Citation policy: ${resultValue.answer_ready?.citation_policy ?? 'none'}`,
-        `Unsupported reasons: ${formatCsv(resultValue.answer_ready?.unsupported_reasons)}`,
-        ...(scopeGate ? [
-          `Scope gate: ${scopeGate.policy ?? 'unknown'} (${scopeGate.resolved_scope ?? 'unknown'})`,
-        ] : []),
-        'Canonical reads:',
-        ...formatCanonicalReadLines(resultValue.canonical_reads),
-        'Continuations:',
-        ...formatSelectorLines(resultValue.continuations),
-        'Unread selectors:',
-        ...formatSelectorLines(resultValue.unread_required),
-        ...(resultValue.warnings?.length ? [
-          'Warnings:',
-          ...resultValue.warnings.map((warning: string) => `- ${warning}`),
-        ] : []),
-      ].join('\n') + '\n';
+      return (
+        [
+          `Answer ready: ${resultValue.answer_ready?.ready ? 'yes' : 'no'}`,
+          `Citation policy: ${resultValue.answer_ready?.citation_policy ?? 'none'}`,
+          `Unsupported reasons: ${formatCsv(resultValue.answer_ready?.unsupported_reasons)}`,
+          ...(scopeGate ? [`Scope gate: ${scopeGate.policy ?? 'unknown'} (${scopeGate.resolved_scope ?? 'unknown'})`] : []),
+          'Canonical reads:',
+          ...formatCanonicalReadLines(resultValue.canonical_reads),
+          'Continuations:',
+          ...formatSelectorLines(resultValue.continuations),
+          'Unread selectors:',
+          ...formatSelectorLines(resultValue.unread_required),
+          ...(resultValue.warnings?.length ? ['Warnings:', ...resultValue.warnings.map((warning: string) => `- ${warning}`)] : []),
+        ].join('\n') + '\n'
+      );
     }
     case 'proof_agent_memory': {
       const resultValue = result as any;
-      return [
-        `Proof status: ${resultValue.status}`,
-        `Generated: ${resultValue.generated_at}`,
-        'Scenarios:',
-        ...(resultValue.scenarios ?? []).map((scenario: any) =>
-          `${scenario.id}\t${scenario.status}\t${scenario.activation}\t${scenario.authority}`
-        ),
-        'Memory why:',
-        ...(resultValue.memory_why?.concise_lines ?? []),
-        `Authority violations: ${formatCsv(resultValue.authority_violations) || 'none'}`,
-        ...(params.verbose === true && resultValue.memory_why?.verbose ? [
-          'Verbose:',
-          `Selected selectors: ${formatCsv(resultValue.memory_why.verbose.selected_selectors)}`,
-          `Omitted candidates: ${formatCsv(resultValue.memory_why.verbose.omitted_candidate_refs)}`,
-          `Graph paths considered: ${formatCsv(resultValue.memory_why.verbose.graph_paths_considered)}`,
-        ] : []),
-      ].join('\n') + '\n';
+      return (
+        [
+          `Proof status: ${resultValue.status}`,
+          `Generated: ${resultValue.generated_at}`,
+          'Scenarios:',
+          ...(resultValue.scenarios ?? []).map((scenario: any) => `${scenario.id}\t${scenario.status}\t${scenario.activation}\t${scenario.authority}`),
+          'Memory why:',
+          ...(resultValue.memory_why?.concise_lines ?? []),
+          `Authority violations: ${formatCsv(resultValue.authority_violations) || 'none'}`,
+          ...(params.verbose === true && resultValue.memory_why?.verbose
+            ? [
+                'Verbose:',
+                `Selected selectors: ${formatCsv(resultValue.memory_why.verbose.selected_selectors)}`,
+                `Omitted candidates: ${formatCsv(resultValue.memory_why.verbose.omitted_candidate_refs)}`,
+                `Graph paths considered: ${formatCsv(resultValue.memory_why.verbose.graph_paths_considered)}`,
+              ]
+            : []),
+        ].join('\n') + '\n'
+      );
     }
     case 'get_workspace_system_card': {
       const resultValue = result as any;
       if (!resultValue.card) {
-        return [
-          'No workspace system card available.',
-          `Reason: ${resultValue.selection_reason}`,
-          `Candidates: ${resultValue.candidate_count}`,
-        ].join('\n') + '\n';
+        return (
+          ['No workspace system card available.', `Reason: ${resultValue.selection_reason}`, `Candidates: ${resultValue.candidate_count}`].join('\n') + '\n'
+        );
       }
       const card = resultValue.card;
-      return [
-        `${card.title} [workspace_system]`,
-        `System: ${card.system_slug}`,
-        `Reason: ${resultValue.selection_reason}`,
-        `Candidates: ${resultValue.candidate_count}`,
-        ...(card.summary_lines || []),
-        `Build: ${card.build_command || 'unavailable'}`,
-        `Test: ${card.test_command || 'unavailable'}`,
-        'Entry points:',
-        ...(card.entry_points || []).map((item: any) => `- ${item.name} | ${item.path} | ${item.purpose}`),
-      ].join('\n') + '\n';
+      return (
+        [
+          `${card.title} [workspace_system]`,
+          `System: ${card.system_slug}`,
+          `Reason: ${resultValue.selection_reason}`,
+          `Candidates: ${resultValue.candidate_count}`,
+          ...(card.summary_lines || []),
+          `Build: ${card.build_command || 'unavailable'}`,
+          `Test: ${card.test_command || 'unavailable'}`,
+          'Entry points:',
+          ...(card.entry_points || []).map((item: any) => `- ${item.name} | ${item.path} | ${item.purpose}`),
+        ].join('\n') + '\n'
+      );
     }
     case 'get_workspace_project_card': {
       const resultValue = result as any;
       if (!resultValue.card) {
-        return [
-          'No workspace project card available.',
-          `Reason: ${resultValue.selection_reason}`,
-          `Candidates: ${resultValue.candidate_count}`,
-        ].join('\n') + '\n';
+        return (
+          ['No workspace project card available.', `Reason: ${resultValue.selection_reason}`, `Candidates: ${resultValue.candidate_count}`].join('\n') + '\n'
+        );
       }
       const card = resultValue.card;
-      return [
-        `${card.title} [workspace_project]`,
-        `Project: ${card.project_slug}`,
-        `Path: ${card.path}`,
-        `Reason: ${resultValue.selection_reason}`,
-        `Candidates: ${resultValue.candidate_count}`,
-        ...(card.summary_lines || []),
-        `Repo: ${card.repo || 'unavailable'}`,
-        `Status: ${card.status || 'unavailable'}`,
-        'Related systems:',
-        ...(card.related_systems || []).map((item: any) => `- ${item}`),
-      ].join('\n') + '\n';
+      return (
+        [
+          `${card.title} [workspace_project]`,
+          `Project: ${card.project_slug}`,
+          `Path: ${card.path}`,
+          `Reason: ${resultValue.selection_reason}`,
+          `Candidates: ${resultValue.candidate_count}`,
+          ...(card.summary_lines || []),
+          `Repo: ${card.repo || 'unavailable'}`,
+          `Status: ${card.status || 'unavailable'}`,
+          'Related systems:',
+          ...(card.related_systems || []).map((item: any) => `- ${item}`),
+        ].join('\n') + '\n'
+      );
     }
     case 'get_workspace_orientation_bundle': {
       const resultValue = result as any;
       if (!resultValue.bundle) {
-        return [
-          'No workspace orientation bundle available.',
-          `Reason: ${resultValue.selection_reason}`,
-          `Candidates: ${resultValue.candidate_count}`,
-        ].join('\n') + '\n';
+        return (
+          ['No workspace orientation bundle available.', `Reason: ${resultValue.selection_reason}`, `Candidates: ${resultValue.candidate_count}`].join('\n') +
+          '\n'
+        );
       }
       const bundle = resultValue.bundle;
-      return [
-        `${bundle.title} [workspace_orientation]`,
-        `Map: ${bundle.map_id}`,
-        `Status: ${bundle.status}`,
-        `Reason: ${resultValue.selection_reason}`,
-        `Candidates: ${resultValue.candidate_count}`,
-        ...(bundle.summary_lines || []),
-        `System card: ${bundle.system_card?.system_slug || 'none'}`,
-        `Project card: ${bundle.project_card?.project_slug || 'none'}`,
-        'Recommended reads:',
-        ...(bundle.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
-      ].join('\n') + '\n';
+      return (
+        [
+          `${bundle.title} [workspace_orientation]`,
+          `Map: ${bundle.map_id}`,
+          `Status: ${bundle.status}`,
+          `Reason: ${resultValue.selection_reason}`,
+          `Candidates: ${resultValue.candidate_count}`,
+          ...(bundle.summary_lines || []),
+          `System card: ${bundle.system_card?.system_slug || 'none'}`,
+          `Project card: ${bundle.project_card?.project_slug || 'none'}`,
+          'Recommended reads:',
+          ...(bundle.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
+        ].join('\n') + '\n'
+      );
     }
     case 'get_workspace_corpus_card': {
       const resultValue = result as any;
       if (!resultValue.card) {
-        return [
-          'No workspace corpus card available.',
-          `Reason: ${resultValue.selection_reason}`,
-          `Candidates: ${resultValue.candidate_count}`,
-        ].join('\n') + '\n';
+        return (
+          ['No workspace corpus card available.', `Reason: ${resultValue.selection_reason}`, `Candidates: ${resultValue.candidate_count}`].join('\n') + '\n'
+        );
       }
       const card = resultValue.card;
-      return [
-        `${card.title} [workspace_corpus]`,
-        `Map: ${card.map_id}`,
-        `Status: ${card.status}`,
-        `Reason: ${resultValue.selection_reason}`,
-        `Candidates: ${resultValue.candidate_count}`,
-        ...(card.summary_lines || []),
-        'Anchor slugs:',
-        ...(card.anchor_slugs || []).map((item: any) => `- ${item}`),
-        'Recommended reads:',
-        ...(card.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
-      ].join('\n') + '\n';
+      return (
+        [
+          `${card.title} [workspace_corpus]`,
+          `Map: ${card.map_id}`,
+          `Status: ${card.status}`,
+          `Reason: ${resultValue.selection_reason}`,
+          `Candidates: ${resultValue.candidate_count}`,
+          ...(card.summary_lines || []),
+          'Anchor slugs:',
+          ...(card.anchor_slugs || []).map((item: any) => `- ${item}`),
+          'Recommended reads:',
+          ...(card.recommended_reads || []).map((item: any) => `- ${item.node_id} | ${item.label} | ${item.path}`),
+        ].join('\n') + '\n'
+      );
     }
     case 'search':
     case 'query': {
       const results = result as any[];
       if (results.length === 0) return 'No results.\n';
-      return results.map(r =>
-        `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${r.chunk_text?.slice(0, 100) || ''}${r.stale ? ' (stale)' : ''}`,
-      ).join('\n') + '\n';
+      return (
+        results.map((r) => `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${r.chunk_text?.slice(0, 100) || ''}${r.stale ? ' (stale)' : ''}`).join('\n') + '\n'
+      );
     }
     case 'get_tags': {
       const tags = result as string[];
@@ -1394,33 +1328,30 @@ export function formatResult(
     }
     case 'get_health': {
       const h = result as any;
-      const score = Math.max(0, 10
-        - (h.missing_embeddings > 0 ? 2 : 0)
-        - (h.stale_pages > 0 ? 1 : 0)
-        - (h.dead_links > 0 ? 1 : 0)
-        - (h.orphan_pages > 0 ? 1 : 0));
-      return [
-        `Health score: ${score}/10`,
-        `Embed coverage: ${(h.embed_coverage * 100).toFixed(1)}%`,
-        `Missing embeddings: ${h.missing_embeddings}`,
-        `Stale pages: ${h.stale_pages}`,
-        `Orphan pages: ${h.orphan_pages}`,
-        `Dead links: ${h.dead_links}`,
-      ].join('\n') + '\n';
+      const score = Math.max(
+        0,
+        10 - (h.missing_embeddings > 0 ? 2 : 0) - (h.stale_pages > 0 ? 1 : 0) - (h.dead_links > 0 ? 1 : 0) - (h.orphan_pages > 0 ? 1 : 0),
+      );
+      return (
+        [
+          `Health score: ${score}/10`,
+          `Embed coverage: ${(h.embed_coverage * 100).toFixed(1)}%`,
+          `Missing embeddings: ${h.missing_embeddings}`,
+          `Stale pages: ${h.stale_pages}`,
+          `Orphan pages: ${h.orphan_pages}`,
+          `Dead links: ${h.dead_links}`,
+        ].join('\n') + '\n'
+      );
     }
     case 'get_timeline': {
       const entries = result as any[];
       if (entries.length === 0) return 'No timeline entries.\n';
-      return entries.map(e =>
-        `${e.date}  ${e.summary}${e.source ? ` [${e.source}]` : ''}`,
-      ).join('\n') + '\n';
+      return entries.map((e) => `${e.date}  ${e.summary}${e.source ? ` [${e.source}]` : ''}`).join('\n') + '\n';
     }
     case 'get_versions': {
       const versions = result as any[];
       if (versions.length === 0) return 'No versions.\n';
-      return versions.map(v =>
-        `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}  ${v.compiled_truth?.slice(0, 60) || ''}...`,
-      ).join('\n') + '\n';
+      return versions.map((v) => `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}  ${v.compiled_truth?.slice(0, 60) || ''}...`).join('\n') + '\n';
     }
     case 'sync_brain': {
       const sync = result as any;
@@ -1435,7 +1366,7 @@ export function formatResult(
         for (const target of sync.targets) {
           lines.push(
             `  ${target.id}: ${target.status} @ ${String(target.toCommit ?? '').slice(0, 8) || '?'}` +
-            ` (+${target.added} ~${target.modified} -${target.deleted} R${target.renamed}, ${target.chunksCreated} chunks)`,
+              ` (+${target.added} ~${target.modified} -${target.deleted} R${target.renamed}, ${target.chunksCreated} chunks)`,
           );
         }
         lines.push(
@@ -1448,13 +1379,13 @@ export function formatResult(
         case 'up_to_date':
           return 'Already up to date.\n';
         case 'synced':
-          return [
-            sync.fromCommit
-              ? `Synced ${sync.fromCommit.slice(0, 8)}..${sync.toCommit.slice(0, 8)}:`
-              : `Synced to ${sync.toCommit.slice(0, 8)}:`,
-            `  +${sync.added} added, ~${sync.modified} modified, -${sync.deleted} deleted, R${sync.renamed} renamed`,
-            `  ${sync.chunksCreated} chunks created`,
-          ].join('\n') + '\n';
+          return (
+            [
+              sync.fromCommit ? `Synced ${sync.fromCommit.slice(0, 8)}..${sync.toCommit.slice(0, 8)}:` : `Synced to ${sync.toCommit.slice(0, 8)}:`,
+              `  +${sync.added} added, ~${sync.modified} modified, -${sync.deleted} deleted, R${sync.renamed} renamed`,
+              `  ${sync.chunksCreated} chunks created`,
+            ].join('\n') + '\n'
+          );
         case 'first_sync':
           return `First sync complete. Checkpoint: ${sync.toCommit.slice(0, 8)}\n`;
         case 'dry_run':
@@ -1464,43 +1395,47 @@ export function formatResult(
     }
     case 'resume_task': {
       const resume = result as any;
-      return [
-        `${resume.title} [${resume.status}]`,
-        `Goal: ${resume.goal}`,
-        `Summary: ${resume.current_summary}`,
-        `Active paths: ${(resume.active_paths || []).join(', ') || 'none'}`,
-        `Active symbols: ${(resume.active_symbols || []).join(', ') || 'none'}`,
-        `Blockers: ${(resume.blockers || []).join(', ') || 'none'}`,
-        `Open questions: ${(resume.open_questions || []).join(', ') || 'none'}`,
-        `Next steps: ${(resume.next_steps || []).join(', ') || 'none'}`,
-        `Failed attempts: ${(resume.failed_attempts || []).join(', ') || 'none'}`,
-        `Decisions: ${(resume.active_decisions || []).join(', ') || 'none'}`,
-        `Repeated-work warnings: ${(resume.repeated_work_warnings || []).join(', ') || 'none'}`,
-        `Decision reuse: ${(resume.decision_reuse || []).join(', ') || 'none'}`,
-        `Verification warnings: ${(resume.verification_warnings || []).join(', ') || 'none'}`,
-        `Trace template: ${resume.retrieval_trace_template?.selected_intent || 'none'}`,
-        `Latest trace route: ${(resume.latest_trace_route || []).join(' -> ') || 'none'}`,
-        `Code claims: ${formatCodeClaimVerificationSummary(resume.code_claim_verification || [])}`,
-        `State: ${resume.stale ? 'stale' : 'fresh'}`,
-      ].join('\n') + '\n';
+      return (
+        [
+          `${resume.title} [${resume.status}]`,
+          `Goal: ${resume.goal}`,
+          `Summary: ${resume.current_summary}`,
+          `Active paths: ${(resume.active_paths || []).join(', ') || 'none'}`,
+          `Active symbols: ${(resume.active_symbols || []).join(', ') || 'none'}`,
+          `Blockers: ${(resume.blockers || []).join(', ') || 'none'}`,
+          `Open questions: ${(resume.open_questions || []).join(', ') || 'none'}`,
+          `Next steps: ${(resume.next_steps || []).join(', ') || 'none'}`,
+          `Failed attempts: ${(resume.failed_attempts || []).join(', ') || 'none'}`,
+          `Decisions: ${(resume.active_decisions || []).join(', ') || 'none'}`,
+          `Repeated-work warnings: ${(resume.repeated_work_warnings || []).join(', ') || 'none'}`,
+          `Decision reuse: ${(resume.decision_reuse || []).join(', ') || 'none'}`,
+          `Verification warnings: ${(resume.verification_warnings || []).join(', ') || 'none'}`,
+          `Trace template: ${resume.retrieval_trace_template?.selected_intent || 'none'}`,
+          `Latest trace route: ${(resume.latest_trace_route || []).join(' -> ') || 'none'}`,
+          `Code claims: ${formatCodeClaimVerificationSummary(resume.code_claim_verification || [])}`,
+          `State: ${resume.stale ? 'stale' : 'fresh'}`,
+        ].join('\n') + '\n'
+      );
     }
     case 'get_task_working_set': {
       const state = result as any;
       const task = state.thread;
       const workingSet = state.working_set;
-      return [
-        `${task.title} [${task.status}]`,
-        `Scope: ${task.scope}`,
-        `Goal: ${task.goal}`,
-        `Summary: ${task.current_summary}`,
-        `Active paths: ${(workingSet?.active_paths || []).join(', ') || 'none'}`,
-        `Active symbols: ${(workingSet?.active_symbols || []).join(', ') || 'none'}`,
-        `Blockers: ${(workingSet?.blockers || []).join(', ') || 'none'}`,
-        `Open questions: ${(workingSet?.open_questions || []).join(', ') || 'none'}`,
-        `Next steps: ${(workingSet?.next_steps || []).join(', ') || 'none'}`,
-        `Verification notes: ${(workingSet?.verification_notes || []).join(', ') || 'none'}`,
-        `Last verified: ${workingSet?.last_verified_at ? new Date(workingSet.last_verified_at).toISOString() : 'never'}`,
-      ].join('\n') + '\n';
+      return (
+        [
+          `${task.title} [${task.status}]`,
+          `Scope: ${task.scope}`,
+          `Goal: ${task.goal}`,
+          `Summary: ${task.current_summary}`,
+          `Active paths: ${(workingSet?.active_paths || []).join(', ') || 'none'}`,
+          `Active symbols: ${(workingSet?.active_symbols || []).join(', ') || 'none'}`,
+          `Blockers: ${(workingSet?.blockers || []).join(', ') || 'none'}`,
+          `Open questions: ${(workingSet?.open_questions || []).join(', ') || 'none'}`,
+          `Next steps: ${(workingSet?.next_steps || []).join(', ') || 'none'}`,
+          `Verification notes: ${(workingSet?.verification_notes || []).join(', ') || 'none'}`,
+          `Last verified: ${workingSet?.last_verified_at ? new Date(workingSet.last_verified_at).toISOString() : 'never'}`,
+        ].join('\n') + '\n'
+      );
     }
     default:
       return JSON.stringify(result, null, 2) + '\n';
@@ -1523,21 +1458,18 @@ function formatReadPlanActions(readPlan: unknown): string[] {
   const value = readPlan as Record<string, unknown> | undefined;
   const actions = value?.next_actions;
   if (!Array.isArray(actions) || actions.length === 0) return [];
-  return [
-    'Read plan next actions:',
-    ...actions.map((action) => `- ${String(action)}`),
-  ];
+  return ['Read plan next actions:', ...actions.map((action) => `- ${String(action)}`)];
 }
 
 function formatSelectorId(selector: Record<string, unknown>): string {
   if (typeof selector.selector_id === 'string' && selector.selector_id.length > 0) {
     return selector.selector_id;
   }
-  return [
-    selector.kind,
-    selector.scope_id,
-    selector.slug ?? selector.section_id ?? selector.source_ref ?? selector.object_id,
-  ].filter((part) => part !== undefined && part !== null && part !== '').join(':') || 'unknown';
+  return (
+    [selector.kind, selector.scope_id, selector.slug ?? selector.section_id ?? selector.source_ref ?? selector.object_id]
+      .filter((part) => part !== undefined && part !== null && part !== '')
+      .join(':') || 'unknown'
+  );
 }
 
 function formatCandidateLines(candidates: unknown): string[] {
@@ -1629,10 +1561,7 @@ function parsePositiveIntegerParam(value: unknown, key: string): number | undefi
   return value;
 }
 
-function parseRetrieveContextGraphFrontierParam(
-  value: unknown,
-  key: string,
-): RetrieveContextGraphFrontierOptions | undefined {
+function parseRetrieveContextGraphFrontierParam(value: unknown, key: string): RetrieveContextGraphFrontierOptions | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value === 'boolean') return { enabled: value };
 
@@ -1666,15 +1595,20 @@ function parseRetrieveContextGraphFrontierParam(
 
   return {
     enabled: object.enabled,
-    ...(object.max_depth !== undefined ? { max_depth: parseNonNegativeIntegerParam(object.max_depth, `${key}.max_depth`) } : {}),
-    ...(object.fanout_cap !== undefined ? { fanout_cap: parseNonNegativeIntegerParam(object.fanout_cap, `${key}.fanout_cap`) } : {}),
+    ...(object.max_depth !== undefined
+      ? {
+          max_depth: parseNonNegativeIntegerParam(object.max_depth, `${key}.max_depth`),
+        }
+      : {}),
+    ...(object.fanout_cap !== undefined
+      ? {
+          fanout_cap: parseNonNegativeIntegerParam(object.fanout_cap, `${key}.fanout_cap`),
+        }
+      : {}),
   };
 }
 
-function parseKnownSubjectsParam(
-  value: unknown,
-  key: string,
-): Array<string | MemoryScenarioKnownSubject> | undefined {
+function parseKnownSubjectsParam(value: unknown, key: string): Array<string | MemoryScenarioKnownSubject> | undefined {
   if (value === undefined || value === null) return undefined;
 
   let parsed: unknown = value;
@@ -1826,10 +1760,7 @@ function parseRetrievalSelectorId(value: string, key: string): RetrievalSelector
   return selector;
 }
 
-function parseSelectorIdCharRange(
-  selectorId: string,
-  key: string,
-): { base: string; char_start?: number; char_end?: number } {
+function parseSelectorIdCharRange(selectorId: string, key: string): { base: string; char_start?: number; char_end?: number } {
   const charsIndex = selectorId.lastIndexOf('@chars:');
   if (charsIndex < 0) return { base: selectorId };
 
@@ -1862,17 +1793,7 @@ function parseRetrievalSelectorObject(value: unknown, key: string): RetrievalSel
   }
   selector.kind = kind;
 
-  for (const field of [
-    'selector_id',
-    'scope_id',
-    'slug',
-    'path',
-    'section_id',
-    'source_ref',
-    'object_id',
-    'content_hash',
-    'freshness',
-  ]) {
+  for (const field of ['selector_id', 'scope_id', 'slug', 'path', 'section_id', 'source_ref', 'object_id', 'content_hash', 'freshness']) {
     if (selector[field] !== undefined && typeof selector[field] !== 'string') {
       throw new OperationError('invalid_params', `${key}.${field} must be a string.`);
     }
@@ -1912,10 +1833,7 @@ function parseCorpusLaneMetadata(value: unknown, key: string): CorpusLaneMetadat
       throw new OperationError('invalid_params', `${key}.${field} must be a non-empty string.`);
     }
     if (field === 'artifact_kind' && !(CORPUS_LANE_ARTIFACT_KINDS as readonly string[]).includes(trimmed)) {
-      throw new OperationError(
-        'invalid_params',
-        `${key}.artifact_kind must be one of: ${CORPUS_LANE_ARTIFACT_KINDS.join(', ')}.`,
-      );
+      throw new OperationError('invalid_params', `${key}.artifact_kind must be one of: ${CORPUS_LANE_ARTIFACT_KINDS.join(', ')}.`);
     }
     output[field] = trimmed;
   }
@@ -1925,10 +1843,7 @@ function parseCorpusLaneMetadata(value: unknown, key: string): CorpusLaneMetadat
   return output as unknown as CorpusLaneMetadata;
 }
 
-function parseActivationArtifacts(
-  value: unknown,
-  key: string,
-): MemoryActivationArtifact[] {
+function parseActivationArtifacts(value: unknown, key: string): MemoryActivationArtifact[] {
   if (value === undefined || value === null) return [];
 
   let parsed: unknown = value;
@@ -1954,11 +1869,7 @@ function parseActivationArtifacts(
       throw new OperationError('invalid_params', `${key}[${index}].id must be a non-empty string.`);
     }
 
-    const artifactKind = parseEnumParam(
-      artifact.artifact_kind,
-      `${key}[${index}].artifact_kind`,
-      MEMORY_ARTIFACT_KINDS,
-    );
+    const artifactKind = parseEnumParam(artifact.artifact_kind, `${key}[${index}].artifact_kind`, MEMORY_ARTIFACT_KINDS);
     if (!artifactKind) {
       throw new OperationError('invalid_params', `${key}[${index}].artifact_kind must be one of: ${MEMORY_ARTIFACT_KINDS.join(', ')}.`);
     }
@@ -1977,37 +1888,25 @@ function parseActivationArtifacts(
       throw new OperationError('invalid_params', `${key}[${index}].candidate_status must be one of: ${MEMORY_CANDIDATE_STATUS_VALUES.join(', ')}.`);
     }
     if (artifact.target_object_type === null) {
-      throw new OperationError('invalid_params', `${key}[${index}].target_object_type must be one of: ${MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES.join(', ')}.`);
+      throw new OperationError(
+        'invalid_params',
+        `${key}[${index}].target_object_type must be one of: ${MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES.join(', ')}.`,
+      );
     }
     if (artifact.source_refs_count === null) {
       throw new OperationError('invalid_params', `${key}[${index}].source_refs_count must be a non-negative integer`);
     }
 
-    const candidateStatus = parseEnumParam(
-      artifact.candidate_status,
-      `${key}[${index}].candidate_status`,
-      MEMORY_CANDIDATE_STATUS_VALUES,
-    );
-    const targetObjectType = parseEnumParam(
-      artifact.target_object_type,
-      `${key}[${index}].target_object_type`,
-      MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES,
-    );
-    const sourceRefsCount = parseNonNegativeIntegerParam(
-      artifact.source_refs_count,
-      `${key}[${index}].source_refs_count`,
-    );
+    const candidateStatus = parseEnumParam(artifact.candidate_status, `${key}[${index}].candidate_status`, MEMORY_CANDIDATE_STATUS_VALUES);
+    const targetObjectType = parseEnumParam(artifact.target_object_type, `${key}[${index}].target_object_type`, MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES);
+    const sourceRefsCount = parseNonNegativeIntegerParam(artifact.source_refs_count, `${key}[${index}].source_refs_count`);
 
     let scopePolicy: ScopeGatePolicy | undefined;
     if (artifact.scope_policy !== undefined) {
       if (artifact.scope_policy === null) {
         throw new OperationError('invalid_params', `${key}[${index}].scope_policy must be one of: ${SCOPE_GATE_POLICIES.join(', ')}.`);
       }
-      scopePolicy = parseEnumParam(
-        artifact.scope_policy,
-        `${key}[${index}].scope_policy`,
-        SCOPE_GATE_POLICIES,
-      );
+      scopePolicy = parseEnumParam(artifact.scope_policy, `${key}[${index}].scope_policy`, SCOPE_GATE_POLICIES);
     }
 
     return {
@@ -2024,30 +1923,30 @@ function parseActivationArtifacts(
   });
 }
 
-function formatCodeClaimVerificationSummary(results: Array<{
-  claim?: { path?: string; symbol?: string; source_trace_id?: string };
-  status?: string;
-  reason?: string;
-}>): string {
+function formatCodeClaimVerificationSummary(
+  results: Array<{
+    claim?: { path?: string; symbol?: string; source_trace_id?: string };
+    status?: string;
+    reason?: string;
+  }>,
+): string {
   if (results.length === 0) return 'none';
   return results
-    .map((result) => [
-      result.status ?? 'unknown',
-      result.claim?.path
-        ?? (result.claim?.symbol ? `symbol:${result.claim.symbol}` : 'unknown'),
-      result.claim?.path && result.claim?.symbol ? result.claim.symbol : undefined,
-      result.reason ?? 'unknown',
-      result.claim?.source_trace_id,
-    ].filter((part) => part !== undefined && part !== '').join(':'))
+    .map((result) =>
+      [
+        result.status ?? 'unknown',
+        result.claim?.path ?? (result.claim?.symbol ? `symbol:${result.claim.symbol}` : 'unknown'),
+        result.claim?.path && result.claim?.symbol ? result.claim.symbol : undefined,
+        result.reason ?? 'unknown',
+        result.claim?.source_trace_id,
+      ]
+        .filter((part) => part !== undefined && part !== '')
+        .join(':'),
+    )
     .join(', ');
 }
 
-function parseEnumParam<T extends string>(
-  value: unknown,
-  key: string,
-  allowed: readonly T[],
-  hint?: string,
-): T | undefined {
+function parseEnumParam<T extends string>(value: unknown, key: string, allowed: readonly T[], hint?: string): T | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string') {
     throw new OperationError('invalid_params', `${key} must be a string.`);
@@ -2097,8 +1996,7 @@ function parseCodeClaimsParam(value: unknown, key: string): CodeClaim[] | undefi
         throw new OperationError('invalid_params', `${key} must be valid JSON when passed as an array string.`);
       }
     } else {
-      rawClaims = parseStringListParam(value, key)?.map((entry) =>
-        entry.startsWith('code_claim:') ? entry : `code_claim:${entry}`);
+      rawClaims = parseStringListParam(value, key)?.map((entry) => (entry.startsWith('code_claim:') ? entry : `code_claim:${entry}`));
     }
   }
 
@@ -2133,7 +2031,9 @@ function parseCodeClaimParamItem(value: unknown, key: string): CodeClaim {
     ...(hasSymbol ? { symbol: String(claim.symbol) } : {}),
     ...(typeof claim.branch_name === 'string' && claim.branch_name.length > 0 ? { branch_name: claim.branch_name } : {}),
     ...(typeof claim.source_trace_id === 'string' && claim.source_trace_id.length > 0 ? { source_trace_id: claim.source_trace_id } : {}),
-    ...(typeof claim.expected_content_hash === 'string' && claim.expected_content_hash.trim().length > 0 ? { expected_content_hash: claim.expected_content_hash } : {}),
+    ...(typeof claim.expected_content_hash === 'string' && claim.expected_content_hash.trim().length > 0
+      ? { expected_content_hash: claim.expected_content_hash }
+      : {}),
     ...(typeof claim.verification_hint === 'string' && claim.verification_hint.trim().length > 0 ? { verification_hint: claim.verification_hint } : {}),
     ...(typeof claim.verification_mode === 'string' && claim.verification_mode.trim().length > 0 ? { verification_mode: claim.verification_mode } : {}),
     ...(typeof claim.source_ref === 'string' && claim.source_ref.trim().length > 0 ? { source_ref: claim.source_ref } : {}),
@@ -2149,9 +2049,7 @@ async function requireTaskThread(engine: BrainEngine, taskId: string) {
   return thread;
 }
 
-const runtimeImport = new Function('specifier', 'return import(specifier)') as (
-  specifier: string,
-) => Promise<any>;
+const runtimeImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<any>;
 
 export interface SyncBrainHandlerOptions {
   repoPath?: string;
@@ -2163,10 +2061,7 @@ export interface SyncBrainHandlerOptions {
   noEmbed?: boolean;
 }
 
-export type SyncBrainHandler = (
-  engine: BrainEngine,
-  opts: SyncBrainHandlerOptions,
-) => Promise<unknown>;
+export type SyncBrainHandler = (engine: BrainEngine, opts: SyncBrainHandlerOptions) => Promise<unknown>;
 
 let registeredSyncBrainHandler: SyncBrainHandler | null = null;
 
@@ -2186,22 +2081,39 @@ async function loadSyncBrainHandler(): Promise<SyncBrainHandler> {
 
 const get_page: Operation = {
   name: 'get_page',
-  description: 'Read a specific knowledge page by slug. Use after search or query returns a relevant slug. Pages contain compiled truth (current understanding) and timeline (evidence history).',
+  description:
+    'Read a specific knowledge page by slug. Use after search or query returns a relevant slug. Pages contain compiled truth (current understanding) and timeline (evidence history).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
-    fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
-    content_char_limit: { type: 'number', description: 'Optional max characters per content field. Use continuation selectors for the rest.' },
-    compiled_truth_char_start: { type: 'number', description: 'Optional compiled_truth character offset for paged reads.' },
-    timeline_char_start: { type: 'number', description: 'Optional timeline character offset for paged reads.' },
-    content_hash: { type: 'string', description: 'Optional page content hash expected by continuation reads. Stale continuations return a structured stale_continuation result.' },
-    full_content: { type: 'boolean', description: 'When true, ignore MCP/default content windowing and return full page content.' },
+    fuzzy: {
+      type: 'boolean',
+      description: 'Enable fuzzy slug resolution (default: false)',
+    },
+    content_char_limit: {
+      type: 'number',
+      description: 'Optional max characters per content field. Use continuation selectors for the rest.',
+    },
+    compiled_truth_char_start: {
+      type: 'number',
+      description: 'Optional compiled_truth character offset for paged reads.',
+    },
+    timeline_char_start: {
+      type: 'number',
+      description: 'Optional timeline character offset for paged reads.',
+    },
+    content_hash: {
+      type: 'string',
+      description: 'Optional page content hash expected by continuation reads. Stale continuations return a structured stale_continuation result.',
+    },
+    full_content: {
+      type: 'boolean',
+      description: 'When true, ignore MCP/default content windowing and return full page content.',
+    },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
-    const contentCharLimit = p.full_content === true
-      ? undefined
-      : parsePositiveIntegerParam(p.content_char_limit, 'content_char_limit');
+    const contentCharLimit = p.full_content === true ? undefined : parsePositiveIntegerParam(p.content_char_limit, 'content_char_limit');
     const compiledTruthCharStart = parseNonNegativeIntegerParam(p.compiled_truth_char_start, 'compiled_truth_char_start') ?? 0;
     const timelineCharStart = parseNonNegativeIntegerParam(p.timeline_char_start, 'timeline_char_start') ?? 0;
     const expectedContentHash = parseOptionalStringParam(p.content_hash, 'content_hash');
@@ -2212,8 +2124,14 @@ const get_page: Operation = {
     if (contentCharLimit !== undefined) {
       let projection = await ctx.engine.getPageProjection(slug, {
         windows: {
-          compiled_truth: { char_start: compiledTruthCharStart, char_limit: contentCharLimit },
-          timeline: { char_start: timelineCharStart, char_limit: contentCharLimit },
+          compiled_truth: {
+            char_start: compiledTruthCharStart,
+            char_limit: contentCharLimit,
+          },
+          timeline: {
+            char_start: timelineCharStart,
+            char_limit: contentCharLimit,
+          },
         },
       });
       let resolved_slug: string | undefined;
@@ -2223,8 +2141,14 @@ const get_page: Operation = {
         if (candidates.length === 1) {
           projection = await ctx.engine.getPageProjection(candidates[0], {
             windows: {
-              compiled_truth: { char_start: compiledTruthCharStart, char_limit: contentCharLimit },
-              timeline: { char_start: timelineCharStart, char_limit: contentCharLimit },
+              compiled_truth: {
+                char_start: compiledTruthCharStart,
+                char_limit: contentCharLimit,
+              },
+              timeline: {
+                char_start: timelineCharStart,
+                char_limit: contentCharLimit,
+              },
             },
           });
           resolved_slug = candidates[0];
@@ -2326,13 +2250,8 @@ function parseNonNegativeIntegerParam(value: unknown, name: string): number | un
   return value;
 }
 
-function getPageStaleCode(
-  compiledTruthCharStart: number,
-  timelineCharStart: number,
-): 'stale_selector' | 'stale_continuation' {
-  return compiledTruthCharStart > 0 || timelineCharStart > 0
-    ? 'stale_continuation'
-    : 'stale_selector';
+function getPageStaleCode(compiledTruthCharStart: number, timelineCharStart: number): 'stale_selector' | 'stale_continuation' {
+  return compiledTruthCharStart > 0 || timelineCharStart > 0 ? 'stale_continuation' : 'stale_selector';
 }
 
 function staleContinuationResult(input: {
@@ -2400,9 +2319,7 @@ function applyGetPageProjectionWindow(input: {
     tags,
     ...(resolvedSlug ? { resolved_slug: resolvedSlug } : {}),
     content_window: {
-      truncated: compiledTruthWindow.has_more || timelineWindow.has_more
-        || compiledTruthCharStart > 0
-        || timelineCharStart > 0,
+      truncated: compiledTruthWindow.has_more || timelineWindow.has_more || compiledTruthCharStart > 0 || timelineCharStart > 0,
       char_limit: contentCharLimit,
       compiled_truth: compiledTruthWindow,
       timeline: timelineWindow,
@@ -2410,12 +2327,7 @@ function applyGetPageProjectionWindow(input: {
   };
 }
 
-function applyGetPageWindow(input: {
-  page: Record<string, any>;
-  contentCharLimit?: number;
-  compiledTruthCharStart: number;
-  timelineCharStart: number;
-}) {
+function applyGetPageWindow(input: { page: Record<string, any>; contentCharLimit?: number; compiledTruthCharStart: number; timelineCharStart: number }) {
   const { page, contentCharLimit, compiledTruthCharStart, timelineCharStart } = input;
   if (contentCharLimit === undefined) return page;
 
@@ -2443,9 +2355,7 @@ function applyGetPageWindow(input: {
     compiled_truth: compiledTruthWindow.text,
     timeline: timelineWindow.text,
     content_window: {
-      truncated: compiledTruthWindow.has_more || timelineWindow.has_more
-        || compiledTruthCharStart > 0
-        || timelineCharStart > 0,
+      truncated: compiledTruthWindow.has_more || timelineWindow.has_more || compiledTruthCharStart > 0 || timelineCharStart > 0,
       char_limit: contentCharLimit,
       compiled_truth: compiledTruthWindow,
       timeline: timelineWindow,
@@ -2475,13 +2385,13 @@ function contentWindowForProjectionField(input: {
     has_more: window.has_more,
     ...(window.has_more
       ? {
-        continuation_selector: {
-          kind: input.kind,
-          slug: input.slug,
-          char_start: window.next_char_start ?? window.char_start + window.returned_chars,
-          ...(input.contentHash ? { content_hash: input.contentHash } : {}),
-        },
-      }
+          continuation_selector: {
+            kind: input.kind,
+            slug: input.slug,
+            char_start: window.next_char_start ?? window.char_start + window.returned_chars,
+            ...(input.contentHash ? { content_hash: input.contentHash } : {}),
+          },
+        }
       : {}),
   };
 }
@@ -2508,13 +2418,13 @@ function contentWindowForField(input: {
     has_more: hasMore,
     ...(hasMore
       ? {
-        continuation_selector: {
-          kind: input.kind,
-          slug: input.slug,
-          char_start: end,
-          ...(input.contentHash ? { content_hash: input.contentHash } : {}),
-        },
-      }
+          continuation_selector: {
+            kind: input.kind,
+            slug: input.slug,
+            char_start: end,
+            ...(input.contentHash ? { content_hash: input.contentHash } : {}),
+          },
+        }
       : {}),
   };
 }
@@ -2578,11 +2488,7 @@ function putPageExpectedContentHash(value: unknown): string | null | undefined {
   return expected.toLowerCase();
 }
 
-async function resolvePutPageMarkdownTarget(
-  engine: BrainEngine,
-  slug: string,
-  value: unknown,
-): Promise<PutPageMarkdownTarget | null> {
+async function resolvePutPageMarkdownTarget(engine: BrainEngine, slug: string, value: unknown): Promise<PutPageMarkdownTarget | null> {
   const explicit = optionalPutPageString('repo', value);
   if (explicit) {
     const subbrain = await findRegisteredSubbrainForRepo(engine, explicit);
@@ -2614,15 +2520,11 @@ async function resolvePutPageMarkdownTarget(
     return putPageMarkdownTarget(subbrain.path, relativeSlug, subbrain.prefix);
   }
 
-  const repoPath = await engine.getConfig('markdown.repo_path')
-    ?? await engine.getConfig('sync.repo_path');
+  const repoPath = (await engine.getConfig('markdown.repo_path')) ?? (await engine.getConfig('sync.repo_path'));
   return repoPath ? putPageMarkdownTarget(repoPath, slug) : null;
 }
 
-async function findRegisteredSubbrainForRepo(
-  engine: BrainEngine,
-  rawRepoPath: string,
-): Promise<SubbrainConfig | null> {
+async function findRegisteredSubbrainForRepo(engine: BrainEngine, rawRepoPath: string): Promise<SubbrainConfig | null> {
   const explicitRepoPath = maybeRealDirectoryPath(rawRepoPath);
   if (!explicitRepoPath) return null;
 
@@ -2668,10 +2570,7 @@ interface PutPageMarkdownSnapshot {
 function putPageMarkdownTarget(repoPath: string, slug: string, slugPrefix?: string): PutPageMarkdownTarget {
   const requestedRepoRoot = resolve(repoPath);
   if (!existsSync(requestedRepoRoot) || !statSync(requestedRepoRoot).isDirectory()) {
-    throw new OperationError(
-      'invalid_params',
-      `put_page markdown repo does not exist or is not a directory: ${repoPath}`,
-    );
+    throw new OperationError('invalid_params', `put_page markdown repo does not exist or is not a directory: ${repoPath}`);
   }
 
   const repoRoot = realpathSync(requestedRepoRoot);
@@ -2734,16 +2633,10 @@ function assertPutPageMarkdownParentIsSafe(target: PutPageMarkdownTarget): void 
 
     const stat = lstatSync(currentPath);
     if (stat.isSymbolicLink()) {
-      throw new OperationError(
-        'invalid_params',
-        `put_page markdown path escapes repo through a symlink: ${relative(target.repoPath, currentPath)}`,
-      );
+      throw new OperationError('invalid_params', `put_page markdown path escapes repo through a symlink: ${relative(target.repoPath, currentPath)}`);
     }
     if (!stat.isDirectory()) {
-      throw new OperationError(
-        'invalid_params',
-        `put_page markdown parent is not a directory: ${relative(target.repoPath, currentPath)}`,
-      );
+      throw new OperationError('invalid_params', `put_page markdown parent is not a directory: ${relative(target.repoPath, currentPath)}`);
     }
 
     const realParent = realpathSync(currentPath);
@@ -2760,10 +2653,7 @@ function readMarkdownTargetSnapshot(target: PutPageMarkdownTarget): PutPageMarkd
   }
   const stat = lstatSync(target.filePath);
   if (stat.isSymbolicLink()) {
-    throw new OperationError(
-      'invalid_params',
-      `put_page markdown target must not be a symlink: ${target.relativePath}`,
-    );
+    throw new OperationError('invalid_params', `put_page markdown target must not be a symlink: ${target.relativePath}`);
   }
   return {
     existed: true,
@@ -2801,14 +2691,8 @@ function restoreMarkdownTargetSnapshot(target: PutPageMarkdownTarget, snapshot: 
 
 function hashMarkdownTargetSnapshot(target: PutPageMarkdownTarget, snapshot: PutPageMarkdownSnapshot): string | null {
   if (!snapshot.existed || snapshot.content === null) return null;
-  const canonicalRelativePath = target.slugPrefix
-    ? `${target.slugPrefix}/${target.relativePath}`
-    : target.relativePath;
-  return hashMarkdownPageContent(
-    canonicalRelativePath.replace(/\.md$/i, ''),
-    snapshot.content,
-    canonicalRelativePath,
-  );
+  const canonicalRelativePath = target.slugPrefix ? `${target.slugPrefix}/${target.relativePath}` : target.relativePath;
+  return hashMarkdownPageContent(canonicalRelativePath.replace(/\.md$/i, ''), snapshot.content, canonicalRelativePath);
 }
 
 function shouldWriteMarkdownTarget(snapshot: PutPageMarkdownSnapshot, content: string): boolean {
@@ -2980,19 +2864,403 @@ function assertJsonSerializable(value: unknown, path: string, seen: WeakSet<obje
   }
 }
 
-function putPageAuditContext(p: Record<string, unknown>, preconditionSupplied: boolean) {
+function putPageRealmIdForScope(scopeId: string): string {
+  return scopeId.startsWith('personal:') ? 'personal' : 'work';
+}
+
+function putPageAuditContext(
+  p: Record<string, unknown>,
+  preconditionSupplied: boolean,
+  defaults?: {
+    session_id?: string;
+    realm_id?: string;
+    actor?: string;
+    scope_id?: string;
+    source_refs?: string[];
+    metadata?: Record<string, unknown>;
+  },
+) {
+  const defaultMetadata: Record<string, unknown> = {};
+  if (defaults?.session_id) defaultMetadata.session_id = defaults.session_id;
+  if (defaults?.realm_id) defaultMetadata.realm_id = defaults.realm_id;
+  if (defaults?.actor) defaultMetadata.actor = defaults.actor;
+  if (defaults?.scope_id) defaultMetadata.scope_id = defaults.scope_id;
+  if (defaults?.source_refs) defaultMetadata.source_refs = defaults.source_refs;
   return {
-    session_id: optionalPutPageString('session_id', p.session_id) ?? `put_page:direct:${randomUUID()}`,
-    realm_id: optionalPutPageString('realm_id', p.realm_id) ?? 'work',
-    actor: optionalPutPageString('actor', p.actor) ?? 'mbrain:put_page',
-    scope_id: optionalPutPageString('scope_id', p.scope_id) ?? 'workspace:default',
-    source_refs: putPageSourceRefs(p.source_refs),
-    metadata: { ...putPageMetadata(p.metadata), precondition_supplied: preconditionSupplied },
+    session_id: defaults?.session_id ?? optionalPutPageString('session_id', p.session_id) ?? `put_page:direct:${randomUUID()}`,
+    realm_id: defaults?.realm_id ?? optionalPutPageString('realm_id', p.realm_id) ?? 'work',
+    actor: defaults?.actor ?? optionalPutPageString('actor', p.actor) ?? 'mbrain:put_page',
+    scope_id: defaults?.scope_id ?? optionalPutPageString('scope_id', p.scope_id) ?? 'workspace:default',
+    source_refs: defaults?.source_refs ?? (p.source_refs === undefined ? putPageSourceRefs(p.source_refs) : putPageSourceRefs(p.source_refs)),
+    metadata: {
+      ...putPageMetadata(p.metadata),
+      ...(defaults?.metadata ?? {}),
+      ...defaultMetadata,
+      precondition_supplied: preconditionSupplied,
+    },
     redaction_visibility: 'visible' as const,
   };
 }
 
 type PutPageAuditContext = ReturnType<typeof putPageAuditContext>;
+
+interface ResolvedPutPageWriteSession {
+  session: MemoryWriteSession;
+  audit: PutPageAuditContext;
+  expectedContentHash: string | null;
+}
+
+function sameStringArray(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function normalizeRoutedContentForMatch(value: string): string {
+  return value.trim().replace(/\s+/g, ' ');
+}
+
+function normalizeCompiledTruthForRoutedContent(value: string): string {
+  return normalizeRoutedContentForMatch(value.replace(/\s*\[Source:[^\]]+\]\s*/g, ' '));
+}
+
+function normalizeSourceRefForWriteSession(value: string): string {
+  const trimmed = value.trim();
+  const bracketed = /^\[Source:\s*([^\]\n]+)\]$/i.exec(trimmed);
+  const unwrapped = bracketed?.[1] ?? trimmed;
+  return unwrapped
+    .replace(/^Source:\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function sourceAttributionsFromText(value: string): string[] {
+  const refs: string[] = [];
+  SOURCE_ATTRIBUTION_RE.lastIndex = 0;
+  for (const match of value.matchAll(SOURCE_ATTRIBUTION_RE)) {
+    const ref = normalizeSourceRefForWriteSession(match[1] ?? '');
+    if (ref) refs.push(ref);
+  }
+  return [...new Set(refs)];
+}
+
+function writeSessionSourceRefsMatchPage(expectedSourceRefs: string[], pageContent: string): boolean {
+  const expected = new Set(expectedSourceRefs.map((ref) => normalizeSourceRefForWriteSession(ref)).filter(Boolean));
+  const pageRefs = sourceAttributionsFromText(pageContent);
+  return pageRefs.length > 0 && pageRefs.length === expected.size && pageRefs.every((ref) => expected.has(ref));
+}
+
+function sortedUniqueStrings(values: string[]): string[] {
+  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((entry) => stableJsonValue(entry));
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(record)
+        .sort((left, right) => left.localeCompare(right))
+        .map((key) => [key, stableJsonValue(record[key])]),
+    );
+  }
+  return value;
+}
+
+function stableJsonString(value: unknown): string {
+  return JSON.stringify(stableJsonValue(value));
+}
+
+function sameFrontmatter(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  return stableJsonString(left) === stableJsonString(right);
+}
+
+function writeSessionMetadataFailure(reason: string, message: string): PutPageWriteSessionValidationFailure {
+  return {
+    status: 'abandoned',
+    reason,
+    message,
+  };
+}
+
+async function validatePutPageWriteSessionPageMetadata(
+  engine: BrainEngine,
+  input: {
+    slug: string;
+    content: string;
+    existing: Page | null;
+  },
+): Promise<PutPageWriteSessionValidationFailure | null> {
+  const parsedPage = parseMarkdown(input.content, `${input.slug}.md`);
+  if (!input.existing) {
+    const inferredPage = parseMarkdown(parsedPage.compiled_truth, `${input.slug}.md`);
+    if (parsedPage.type !== inferredPage.type || parsedPage.title !== inferredPage.title) {
+      return writeSessionMetadataFailure('page_metadata_mismatch', 'write session does not authorize page metadata type or title changes');
+    }
+    if (Object.keys(parsedPage.frontmatter).length > 0 || parsedPage.tags.length > 0) {
+      return writeSessionMetadataFailure('page_metadata_mismatch', 'write session does not authorize page frontmatter or tags');
+    }
+    return null;
+  }
+
+  if (
+    parsedPage.type !== input.existing.type ||
+    parsedPage.title !== input.existing.title ||
+    !sameFrontmatter(parsedPage.frontmatter, input.existing.frontmatter ?? {})
+  ) {
+    return writeSessionMetadataFailure('page_metadata_mismatch', 'write session does not authorize page metadata changes');
+  }
+  const existingTags = await engine.getTags(input.slug);
+  if (JSON.stringify(sortedUniqueStrings(parsedPage.tags)) !== JSON.stringify(sortedUniqueStrings(existingTags))) {
+    return writeSessionMetadataFailure('page_metadata_mismatch', 'write session does not authorize page tag changes');
+  }
+  return null;
+}
+
+function writeSessionAuthPrincipalMatches(value: unknown, principal: OperationAuthPrincipal | undefined): boolean {
+  if (value == null) return true;
+  if (typeof value !== 'object' || Array.isArray(value)) return false;
+  const expected = value as Record<string, unknown>;
+  if (!principal) return false;
+  return (
+    expected.principal_type === principal.principal_type &&
+    expected.principal_id === principal.principal_id &&
+    expected.actor_type === principal.actor_type &&
+    expected.actor_id === principal.actor_id &&
+    expected.surface_locality === principal.surface_locality &&
+    expected.surface_profile === principal.surface_profile
+  );
+}
+
+function sha256Hex(value: string): string {
+  return createHash('sha256').update(value.trim()).digest('hex');
+}
+
+async function abandonPutPageWriteSession(engine: BrainEngine, sessionId: string, reason: string): Promise<void> {
+  await engine.consumeMemoryWriteSession(sessionId, {
+    status: 'abandoned',
+    status_reason: reason,
+  });
+}
+
+interface PutPageWriteSessionValidationFailure {
+  status?: 'expired' | 'abandoned';
+  reason?: string;
+  message: string;
+}
+
+function validatePutPageWriteSessionForParams(
+  session: MemoryWriteSession,
+  input: {
+    slug: string;
+    content: string;
+    params: Record<string, unknown>;
+    authPrincipal?: OperationAuthPrincipal;
+  },
+): PutPageWriteSessionValidationFailure | null {
+  if (session.status !== 'open') {
+    if (session.status === 'expired') {
+      return {
+        status: 'expired',
+        reason: 'expired_before_put_page',
+        message: `write session expired: ${session.id}`,
+      };
+    }
+    return {
+      message: `write session already consumed (${session.status}): ${session.id}`,
+    };
+  }
+  if (session.target_slug !== input.slug) {
+    return {
+      status: 'abandoned',
+      reason: `target_slug_mismatch:${input.slug}`,
+      message: `write session target mismatch: ${session.target_slug} cannot write ${input.slug}`,
+    };
+  }
+
+  const suppliedScopeId = optionalPutPageString('scope_id', input.params.scope_id);
+  if (suppliedScopeId !== undefined && suppliedScopeId !== session.scope_id) {
+    return {
+      status: 'abandoned',
+      reason: `scope_id_mismatch:${suppliedScopeId}`,
+      message: `write session scope mismatch: ${session.scope_id} cannot write ${suppliedScopeId}`,
+    };
+  }
+  const suppliedActor = optionalPutPageString('actor', input.params.actor);
+  if (suppliedActor !== undefined && suppliedActor !== session.actor) {
+    return {
+      status: 'abandoned',
+      reason: `actor_mismatch:${suppliedActor}`,
+      message: `write session actor mismatch: ${session.actor} cannot be consumed by ${suppliedActor}`,
+    };
+  }
+  if (input.params.source_refs !== undefined) {
+    const suppliedSourceRefs = putPageSourceRefs(input.params.source_refs);
+    if (!sameStringArray(suppliedSourceRefs, session.source_refs)) {
+      return {
+        status: 'abandoned',
+        reason: 'source_refs_mismatch',
+        message: 'write session source_refs mismatch',
+      };
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(input.params, 'expected_content_hash')) {
+    const suppliedExpectedHash = putPageExpectedContentHash(input.params.expected_content_hash ?? null);
+    if (suppliedExpectedHash !== session.expected_content_hash) {
+      return {
+        status: 'abandoned',
+        reason: 'expected_content_hash_mismatch',
+        message: 'write session expected_content_hash mismatch',
+      };
+    }
+  }
+  if (!writeSessionAuthPrincipalMatches(session.governance_metadata.auth_principal, input.authPrincipal)) {
+    return {
+      status: 'abandoned',
+      reason: 'auth_principal_mismatch',
+      message: 'write session auth principal mismatch',
+    };
+  }
+  const routedContent = session.governance_metadata.routed_content;
+  const routedContentHash = session.governance_metadata.routed_content_hash;
+  if (typeof routedContent !== 'string' || typeof routedContentHash !== 'string') {
+    return {
+      status: 'abandoned',
+      reason: 'routed_content_missing',
+      message: 'write session routed content metadata is missing',
+    };
+  }
+  if (sha256Hex(routedContent) !== routedContentHash) {
+    return {
+      status: 'abandoned',
+      reason: 'routed_content_hash_mismatch',
+      message: 'write session routed content hash mismatch',
+    };
+  }
+  const parsedPage = parseMarkdown(input.content, `${input.slug}.md`);
+  if (!writeSessionSourceRefsMatchPage(session.source_refs, `${parsedPage.compiled_truth}\n${parsedPage.timeline}`)) {
+    return {
+      status: 'abandoned',
+      reason: 'source_refs_mismatch',
+      message: 'write session source_refs mismatch',
+    };
+  }
+  if (parsedPage.timeline.trim()) {
+    return {
+      status: 'abandoned',
+      reason: 'routed_timeline_not_authorized',
+      message: 'write session does not authorize timeline content',
+    };
+  }
+  const normalizedPageContent = normalizeCompiledTruthForRoutedContent(parsedPage.compiled_truth);
+  const normalizedRoutedContent = normalizeRoutedContentForMatch(routedContent);
+  if (normalizedPageContent !== normalizedRoutedContent) {
+    return {
+      status: 'abandoned',
+      reason: 'routed_content_mismatch',
+      message: 'write session routed content does not match put_page compiled truth',
+    };
+  }
+
+  return null;
+}
+
+async function consumePutPageWriteSessionValidationFailure(
+  engine: BrainEngine,
+  session: MemoryWriteSession,
+  failure: PutPageWriteSessionValidationFailure,
+): Promise<void> {
+  if (failure.status === 'expired') {
+    await engine.consumeMemoryWriteSession(session.id, {
+      status: 'expired',
+      status_reason: failure.reason ?? 'expired_before_put_page',
+    });
+  } else if (failure.status === 'abandoned') {
+    await abandonPutPageWriteSession(engine, session.id, failure.reason ?? 'validation_failed');
+  }
+}
+
+async function resolvePutPageWriteSession(
+  engine: BrainEngine,
+  input: {
+    writeSessionId: string;
+    slug: string;
+    content: string;
+    params: Record<string, unknown>;
+    authPrincipal?: OperationAuthPrincipal;
+    preconditionSupplied: boolean;
+  },
+): Promise<ResolvedPutPageWriteSession> {
+  const session = await engine.getMemoryWriteSession(input.writeSessionId);
+  if (!session) {
+    throw new OperationError('invalid_params', `write session not found: ${input.writeSessionId}`);
+  }
+  const failure = validatePutPageWriteSessionForParams(session, input);
+  if (failure) {
+    await consumePutPageWriteSessionValidationFailure(engine, session, failure);
+    throw new OperationError('invalid_params', failure.message);
+  }
+  const realmId = putPageRealmIdForScope(session.scope_id);
+
+  return {
+    session,
+    audit: putPageAuditContext(input.params, input.preconditionSupplied, {
+      session_id: session.id,
+      realm_id: realmId,
+      actor: session.actor,
+      scope_id: session.scope_id,
+      source_refs: session.source_refs,
+      metadata: {
+        route_decision_id: session.route_decision_id,
+        write_session_id: session.id,
+      },
+    }),
+    expectedContentHash: session.expected_content_hash,
+  };
+}
+
+async function preflightPutPageWriteSession(
+  engine: BrainEngine,
+  input: {
+    writeSessionId: string;
+    slug: string;
+    content: string;
+    params: Record<string, unknown>;
+    authPrincipal?: OperationAuthPrincipal;
+  },
+): Promise<void> {
+  const session = await engine.getMemoryWriteSession(input.writeSessionId);
+  if (!session) {
+    throw new OperationError('invalid_params', `write session not found: ${input.writeSessionId}`);
+  }
+  const failure = validatePutPageWriteSessionForParams(session, input);
+  if (failure) {
+    await consumePutPageWriteSessionValidationFailure(engine, session, failure);
+    throw new OperationError('invalid_params', failure.message);
+  }
+}
+
+async function recordPutPageConflictEvent(
+  engine: BrainEngine,
+  audit: PutPageAuditContext,
+  input: {
+    slug: string;
+    expectedContentHash: string | null;
+    currentContentHash: string | null;
+    conflictInfo: Record<string, unknown>;
+  },
+): Promise<MemoryMutationEvent> {
+  return recordMemoryMutationEvent(engine, {
+    ...audit,
+    operation: 'put_page',
+    target_kind: 'page',
+    target_id: input.slug,
+    expected_target_snapshot_hash: input.expectedContentHash,
+    current_target_snapshot_hash: input.currentContentHash,
+    result: 'conflict',
+    conflict_info: input.conflictInfo,
+    dry_run: false,
+  });
+}
 
 async function recordPutPageConflict(
   engine: BrainEngine,
@@ -3005,17 +3273,7 @@ async function recordPutPageConflict(
   },
 ): Promise<void> {
   try {
-    await recordMemoryMutationEvent(engine, {
-      ...audit,
-      operation: 'put_page',
-      target_kind: 'page',
-      target_id: input.slug,
-      expected_target_snapshot_hash: input.expectedContentHash,
-      current_target_snapshot_hash: input.currentContentHash,
-      result: 'conflict',
-      conflict_info: input.conflictInfo,
-      dry_run: false,
-    });
+    await recordPutPageConflictEvent(engine, audit, input);
   } catch {
     // Conflict auditing is best effort so write_conflict remains the surfaced failure.
   }
@@ -3039,13 +3297,7 @@ async function assertPutPageMemoryWriteAllowed(
   }
 }
 
-function putPageOperationResult(result: {
-  slug: string;
-  status: string;
-  chunks: number;
-  error?: string;
-  deferred_derived?: boolean;
-}) {
+function putPageOperationResult(result: { slug: string; status: string; chunks: number; error?: string; deferred_derived?: boolean }) {
   return {
     slug: result.slug,
     status: result.status === 'imported' ? 'created_or_updated' : result.status,
@@ -3058,6 +3310,7 @@ function putPageOperationResult(result: {
 type PutPageImportResult = Awaited<ReturnType<typeof importFromContent>>;
 type PutPageTransactionOutcome =
   | { kind: 'result'; result: PutPageImportResult }
+  | { kind: 'invalid'; error: OperationError }
   | {
       kind: 'conflict';
       audit: PutPageAuditContext;
@@ -3067,41 +3320,87 @@ type PutPageTransactionOutcome =
         currentContentHash: string | null;
         conflictInfo: Record<string, unknown>;
       };
+      conflictEventRecorded?: boolean;
       error: OperationError;
     };
 
 const ADMIN_PUT_PAGE_ROUTE_FIRST_BYPASS = Symbol('admin_put_page_route_first_bypass');
 
 export function hasPutPageRouteFirstPrecondition(params: Record<string, unknown>): boolean {
-  return Object.prototype.hasOwnProperty.call(params, 'expected_content_hash')
-    && params.expected_content_hash !== undefined;
+  if (Object.prototype.hasOwnProperty.call(params, 'expected_content_hash') && params.expected_content_hash !== undefined) {
+    return true;
+  }
+  return typeof params.write_session_id === 'string' && params.write_session_id.trim().length > 0;
 }
 
 export function assertPutPageRouteFirstPrecondition(params: Record<string, unknown>): void {
   if (hasPutPageRouteFirstPrecondition(params)) return;
   throw new OperationError(
     'invalid_params',
-    'route_first: put_page must observe the target before writing — supply expected_content_hash (null asserts the page is absent, a content hash drives an update). memory_session_id alone is not a route-first write grant.',
-    'Call route_memory_writeback and pass canonical_write_requirements.expected_content_hash, or call get_page for the current content_hash before retrying put_page. Offline repair can use admin_put_page.',
+    'route_first: put_page must observe the target before writing — supply expected_content_hash (null asserts the page is absent, a content hash drives an update) or a route_memory_writeback write_session_id. memory_session_id alone is not a route-first write grant.',
+    'Call route_memory_writeback and pass canonical_write_requirements.write_session_id, or call get_page for the current content_hash before retrying put_page. Offline repair can use admin_put_page.',
   );
 }
 
 const put_page: Operation = {
   name: 'put_page',
-  description: 'Create or update a knowledge page to record new information about people, companies, concepts, or systems discovered during the conversation. Markdown with YAML frontmatter; content should follow the compiled truth + timeline pattern. Rejects generic, numeric-only, or globally bucketed documentation slugs. Chunks, embeds, and reconciles tags.',
+  description:
+    'Create or update a knowledge page to record new information about people, companies, concepts, or systems discovered during the conversation. Markdown with YAML frontmatter; content should follow the compiled truth + timeline pattern. Rejects generic, numeric-only, or globally bucketed documentation slugs. Chunks, embeds, and reconciles tags.',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
-    content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
-    expected_content_hash: { type: 'string', required: true, nullable: true, description: 'Required route-first write precondition. Existing page content_hash must match before writing; null requires that the page is absent.' },
-    repo: { type: 'string', description: 'Optional markdown repo root for markdown-first local/offline writes. Defaults to configured markdown.repo_path or sync.repo_path.' },
-    memory_session_id: { type: 'string', description: 'Optional memory session id used for write authorization. Requires realm_id.' },
-    session_id: { type: 'string', description: 'Optional audit session id. Defaults to put_page:direct.' },
-    realm_id: { type: 'string', description: 'Optional audit realm id. Defaults to work.' },
-    actor: { type: 'string', description: 'Optional audit actor. Defaults to mbrain:put_page.' },
-    scope_id: { type: 'string', description: 'Optional audit scope id. Defaults to workspace:default.' },
-    source_refs: { type: ['array', 'string'], items: { type: 'string' }, description: 'Optional non-empty audit provenance references.' },
-    metadata: { type: 'object', description: 'Optional audit metadata object.' },
-    defer_derived: { type: 'boolean', description: 'Commit the canonical page immediately and refresh chunks, manifest, and section indexes after the MCP response.' },
+    content: {
+      type: 'string',
+      required: true,
+      description: 'Full markdown content with YAML frontmatter',
+    },
+    expected_content_hash: {
+      type: 'string',
+      nullable: true,
+      description:
+        'Route-first write precondition. Existing page content_hash must match before writing; null requires that the page is absent. Omit only when supplying a router-issued write_session_id.',
+    },
+    write_session_id: {
+      type: 'string',
+      description:
+        'Optional route_memory_writeback write session id. When supplied, put_page consumes its target slug, source refs, scope, and expected hash as the route-first precondition.',
+    },
+    repo: {
+      type: 'string',
+      description: 'Optional markdown repo root for markdown-first local/offline writes. Defaults to configured markdown.repo_path or sync.repo_path.',
+    },
+    memory_session_id: {
+      type: 'string',
+      description: 'Optional memory session id used for write authorization. Requires realm_id.',
+    },
+    session_id: {
+      type: 'string',
+      description: 'Optional audit session id. Defaults to put_page:direct.',
+    },
+    realm_id: {
+      type: 'string',
+      description: 'Optional audit realm id. Defaults to work.',
+    },
+    actor: {
+      type: 'string',
+      description: 'Optional audit actor. Defaults to mbrain:put_page.',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Optional audit scope id. Defaults to workspace:default.',
+    },
+    source_refs: {
+      type: ['array', 'string'],
+      items: { type: 'string' },
+      description: 'Optional non-empty audit provenance references.',
+    },
+    metadata: {
+      type: 'object',
+      description: 'Optional audit metadata object.',
+    },
+    defer_derived: {
+      type: 'boolean',
+      description: 'Commit the canonical page immediately and refresh chunks, manifest, and section indexes after the MCP response.',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -3115,26 +3414,35 @@ const put_page: Operation = {
     assertWritableSlugQuality(slug);
     if (!adminPutPageBypass) assertPutPageRouteFirstPrecondition(p);
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug };
+    const memorySessionId = optionalPutPageString('memory_session_id', p.memory_session_id) ?? null;
+    const writeSessionId = optionalPutPageString('write_session_id', p.write_session_id) ?? null;
+    if (writeSessionId) {
+      await preflightPutPageWriteSession(ctx.engine, {
+        writeSessionId,
+        slug,
+        content,
+        params: p,
+        authPrincipal: ctx.auth_principal,
+      });
+    }
     const markdownTarget = await resolvePutPageMarkdownTarget(ctx.engine, slug, p.repo);
     if (markdownTarget) {
       assertPutPageMarkdownContentMatchesTarget(content, markdownTarget);
     }
     let markdownWriteSnapshot: PutPageMarkdownSnapshot | null = null;
     let markdownFileWritten = false;
-    const memorySessionId = optionalPutPageString('memory_session_id', p.memory_session_id) ?? null;
     const authorizationRealmId = memorySessionId ? (optionalPutPageString('realm_id', p.realm_id) ?? null) : null;
-    const authorizationScopeId = memorySessionId
-      ? (optionalPutPageString('scope_id', p.scope_id) ?? 'workspace:default')
-      : null;
-    const prevalidatedPutPage = memorySessionId
-      ? null
-      : (() => {
-        assertPutPageSourceAttribution(slug, content);
-        return {
-          audit: putPageAuditContext(p, preconditionSupplied),
-          expectedContentHash: putPageExpectedContentHash(p.expected_content_hash ?? null),
-        };
-      })();
+    const authorizationScopeId = memorySessionId ? (optionalPutPageString('scope_id', p.scope_id) ?? 'workspace:default') : null;
+    const prevalidatedPutPage =
+      memorySessionId || writeSessionId
+        ? null
+        : (() => {
+            assertPutPageSourceAttribution(slug, content);
+            return {
+              audit: putPageAuditContext(p, preconditionSupplied),
+              expectedContentHash: putPageExpectedContentHash(p.expected_content_hash ?? null),
+            };
+          })();
     let outcome: PutPageTransactionOutcome;
     try {
       outcome = await ctx.engine.transaction(async (tx) => {
@@ -3146,24 +3454,73 @@ const put_page: Operation = {
           });
           assertPutPageSourceAttribution(slug, content);
         }
-        const audit = prevalidatedPutPage ? prevalidatedPutPage.audit : putPageAuditContext(p, preconditionSupplied);
-        const expectedContentHash = prevalidatedPutPage
-          ? prevalidatedPutPage.expectedContentHash
-          : putPageExpectedContentHash(p.expected_content_hash ?? null);
-        const existing = expectedContentHash !== undefined
-          ? await tx.getPageForUpdate(slug)
-          : await tx.getPage(slug);
+        const resolvedWriteSession = writeSessionId
+          ? await resolvePutPageWriteSession(tx, {
+              writeSessionId,
+              slug,
+              content,
+              params: p,
+              authPrincipal: ctx.auth_principal,
+              preconditionSupplied,
+            })
+          : null;
+        if (writeSessionId && !memorySessionId) {
+          assertPutPageSourceAttribution(slug, content);
+        }
+        const audit = resolvedWriteSession
+          ? resolvedWriteSession.audit
+          : prevalidatedPutPage
+            ? prevalidatedPutPage.audit
+            : putPageAuditContext(p, preconditionSupplied);
+        const expectedContentHash = resolvedWriteSession
+          ? resolvedWriteSession.expectedContentHash
+          : prevalidatedPutPage
+            ? prevalidatedPutPage.expectedContentHash
+            : putPageExpectedContentHash(p.expected_content_hash ?? null);
+        const existing = expectedContentHash !== undefined ? await tx.getPageForUpdate(slug) : await tx.getPage(slug);
         const previousHash = existing?.content_hash ?? null;
         const markdownSnapshot = markdownTarget ? readMarkdownTargetSnapshot(markdownTarget) : null;
-        const markdownContentHash = markdownTarget && markdownSnapshot
-          ? hashMarkdownTargetSnapshot(markdownTarget, markdownSnapshot)
-          : null;
+        const markdownContentHash = markdownTarget && markdownSnapshot ? hashMarkdownTargetSnapshot(markdownTarget, markdownSnapshot) : null;
+        const conflictOutcome = async (
+          statusReason: string,
+          conflict: {
+            slug: string;
+            expectedContentHash: string | null;
+            currentContentHash: string | null;
+            conflictInfo: Record<string, unknown>;
+          },
+          error: OperationError,
+        ): Promise<PutPageTransactionOutcome> => {
+          if (!resolvedWriteSession) {
+            return {
+              kind: 'conflict',
+              audit,
+              conflict,
+              error,
+            };
+          }
+          const event = await recordPutPageConflictEvent(tx, audit, conflict);
+          const consumed = await tx.consumeMemoryWriteSession(resolvedWriteSession.session.id, {
+            status: 'superseded',
+            consumed_by_event_id: event.id,
+            status_reason: statusReason,
+          });
+          if (!consumed) {
+            throw new OperationError('storage_error', `write session could not be consumed after put_page conflict: ${resolvedWriteSession.session.id}`);
+          }
+          return {
+            kind: 'conflict',
+            audit,
+            conflict,
+            conflictEventRecorded: true,
+            error,
+          };
+        };
 
         if (expectedContentHash === null && existing) {
-          return {
-            kind: 'conflict' as const,
-            audit,
-            conflict: {
+          return await conflictOutcome(
+            'page_exists',
+            {
               slug,
               expectedContentHash,
               currentContentHash: previousHash,
@@ -3173,15 +3530,14 @@ const put_page: Operation = {
                 current_content_hash: previousHash,
               },
             },
-            error: new OperationError('write_conflict', `Page already exists for null expected content hash: ${slug}`),
-          };
+            new OperationError('write_conflict', `Page already exists for null expected content hash: ${slug}`),
+          );
         }
 
         if (expectedContentHash !== undefined && expectedContentHash !== null && !existing) {
-          return {
-            kind: 'conflict' as const,
-            audit,
-            conflict: {
+          return await conflictOutcome(
+            'missing_page',
+            {
               slug,
               expectedContentHash,
               currentContentHash: null,
@@ -3190,15 +3546,14 @@ const put_page: Operation = {
                 expected_content_hash: expectedContentHash,
               },
             },
-            error: new OperationError('write_conflict', `Page not found for expected content hash: ${slug}`),
-          };
+            new OperationError('write_conflict', `Page not found for expected content hash: ${slug}`),
+          );
         }
 
         if (expectedContentHash !== undefined && expectedContentHash !== null && previousHash !== expectedContentHash) {
-          return {
-            kind: 'conflict' as const,
-            audit,
-            conflict: {
+          return await conflictOutcome(
+            'content_hash_mismatch',
+            {
               slug,
               expectedContentHash,
               currentContentHash: previousHash,
@@ -3208,8 +3563,8 @@ const put_page: Operation = {
                 current_content_hash: previousHash,
               },
             },
-            error: new OperationError('write_conflict', `content hash mismatch for ${slug}`),
-          };
+            new OperationError('write_conflict', `content hash mismatch for ${slug}`),
+          );
         }
 
         if (markdownTarget) {
@@ -3220,52 +3575,75 @@ const put_page: Operation = {
             markdownContentHash,
           });
           if (markdownConflict) {
-            return {
-              kind: 'conflict' as const,
-              audit,
-              conflict: {
+            const markdownConflictReason = String(markdownConflict.conflictInfo.reason ?? 'markdown_conflict');
+            return await conflictOutcome(
+              markdownConflictReason,
+              {
                 slug,
                 expectedContentHash: markdownConflict.expectedContentHash,
                 currentContentHash: markdownConflict.currentContentHash,
                 conflictInfo: markdownConflict.conflictInfo,
               },
-              error: new OperationError(
+              new OperationError(
                 'write_conflict',
                 markdownConflict.message,
                 'Run mbrain import for the markdown repo or merge the file changes before retrying put_page.',
               ),
-            };
+            );
           }
         }
 
+        if (resolvedWriteSession) {
+          const metadataFailure = await validatePutPageWriteSessionPageMetadata(tx, {
+            slug,
+            content,
+            existing,
+          });
+          if (metadataFailure) {
+            await consumePutPageWriteSessionValidationFailure(tx, resolvedWriteSession.session, metadataFailure);
+            return {
+              kind: 'invalid' as const,
+              error: new OperationError('invalid_params', metadataFailure.message),
+            };
+          }
+        }
+        const importContent =
+          resolvedWriteSession && existing
+            ? serializeMarkdown(existing.frontmatter ?? {}, parseMarkdown(content, `${slug}.md`).compiled_truth, existing.timeline ?? '', {
+                type: existing.type,
+                title: existing.title,
+                tags: await tx.getTags(slug),
+              })
+            : content;
+
         const result = await (markdownTarget
           ? (() => {
-            const preflightError = putPageMarkdownPreflightError(content);
-            if (preflightError) {
-              return {
-                slug,
-                status: 'skipped' as const,
-                chunks: 0,
-                error: preflightError,
-              };
-            }
-            markdownWriteSnapshot = markdownSnapshot ?? readMarkdownTargetSnapshot(markdownTarget);
-            if (shouldWriteMarkdownTarget(markdownWriteSnapshot, content)) {
-              atomicWriteMarkdownTarget(markdownTarget, content);
-              markdownFileWritten = true;
-            }
-            return importFromFile(tx, markdownTarget.filePath, markdownTarget.relativePath, {
-              slugPrefix: markdownTarget.slugPrefix,
-              deferDerived,
-            });
-          })()
-          : importFromContent(tx, slug, content, { deferDerived }));
+              const preflightError = putPageMarkdownPreflightError(importContent);
+              if (preflightError) {
+                return {
+                  slug,
+                  status: 'skipped' as const,
+                  chunks: 0,
+                  error: preflightError,
+                };
+              }
+              markdownWriteSnapshot = markdownSnapshot ?? readMarkdownTargetSnapshot(markdownTarget);
+              if (shouldWriteMarkdownTarget(markdownWriteSnapshot, importContent)) {
+                atomicWriteMarkdownTarget(markdownTarget, importContent);
+                markdownFileWritten = true;
+              }
+              return importFromFile(tx, markdownTarget.filePath, markdownTarget.relativePath, {
+                slugPrefix: markdownTarget.slugPrefix,
+                deferDerived,
+              });
+            })()
+          : importFromContent(tx, slug, importContent, { deferDerived }));
         if (result.status === 'imported') {
           const finalPage = await tx.getPage(slug);
           if (!finalPage?.content_hash) {
             throw new OperationError('storage_error', `put_page import did not produce a final content hash for ${slug}`);
           }
-          await recordMemoryMutationEvent(tx, {
+          const event = await recordMemoryMutationEvent(tx, {
             ...audit,
             operation: 'put_page',
             target_kind: 'page',
@@ -3276,8 +3654,16 @@ const put_page: Operation = {
             conflict_info: null,
             dry_run: false,
           });
+          if (resolvedWriteSession) {
+            const consumed = await tx.consumeMemoryWriteSession(resolvedWriteSession.session.id, {
+              status: 'applied',
+              consumed_by_event_id: event.id,
+              status_reason: 'put_page_applied',
+            });
+            if (!consumed) throw new OperationError('storage_error', `write session could not be consumed after put_page: ${resolvedWriteSession.session.id}`);
+          }
         } else if (result.error) {
-          await recordMemoryMutationEvent(tx, {
+          const event = await recordMemoryMutationEvent(tx, {
             ...audit,
             operation: 'put_page',
             target_kind: 'page',
@@ -3293,13 +3679,22 @@ const put_page: Operation = {
               error: result.error,
             },
           });
+          if (resolvedWriteSession) {
+            const consumed = await tx.consumeMemoryWriteSession(resolvedWriteSession.session.id, {
+              status: 'abandoned',
+              consumed_by_event_id: event.id,
+              status_reason: 'put_page_import_failed',
+            });
+            if (!consumed)
+              throw new OperationError('storage_error', `write session could not be consumed after put_page failure: ${resolvedWriteSession.session.id}`);
+          }
         } else {
           const finalPage = await tx.getPage(slug);
           const currentHash = finalPage?.content_hash ?? previousHash;
           if (!currentHash) {
             throw new OperationError('storage_error', `put_page import skipped without a current content hash for ${slug}`);
           }
-          await recordMemoryMutationEvent(tx, {
+          const event = await recordMemoryMutationEvent(tx, {
             ...audit,
             operation: 'put_page',
             target_kind: 'page',
@@ -3315,6 +3710,14 @@ const put_page: Operation = {
               skipped_reason: 'content_hash_unchanged',
             },
           });
+          if (resolvedWriteSession) {
+            const consumed = await tx.consumeMemoryWriteSession(resolvedWriteSession.session.id, {
+              status: 'applied',
+              consumed_by_event_id: event.id,
+              status_reason: 'put_page_applied',
+            });
+            if (!consumed) throw new OperationError('storage_error', `write session could not be consumed after put_page: ${resolvedWriteSession.session.id}`);
+          }
         }
 
         return { kind: 'result' as const, result };
@@ -3327,7 +3730,12 @@ const put_page: Operation = {
     }
 
     if (outcome.kind === 'conflict') {
-      await recordPutPageConflict(ctx.engine, outcome.audit, outcome.conflict);
+      if (outcome.conflictEventRecorded !== true) {
+        await recordPutPageConflict(ctx.engine, outcome.audit, outcome.conflict);
+      }
+      throw outcome.error;
+    }
+    if (outcome.kind === 'invalid') {
       throw outcome.error;
     }
     return putPageOperationResult(outcome.result);
@@ -3341,28 +3749,33 @@ const put_page: Operation = {
 // default MCP catalog); use deliberately.
 const admin_put_page: Operation = {
   name: 'admin_put_page',
-  description: 'CLI/admin repair-and-import variant of put_page that may omit the optimistic write precondition. Not subject to the route_first precondition enforced on the MCP put_page surface. Use only for offline repair and bulk import.',
+  description:
+    'CLI/admin repair-and-import variant of put_page that may omit the optimistic write precondition. Not subject to the route_first precondition enforced on the MCP put_page surface. Use only for offline repair and bulk import.',
   params: {
     ...put_page.params,
     expected_content_hash: {
       ...put_page.params.expected_content_hash,
       required: false,
-      description: 'Optional optimistic write precondition for admin repair/import writes. Existing page content_hash must match before writing; null requires that the page is absent.',
+      description:
+        'Optional optimistic write precondition for admin repair/import writes. Existing page content_hash must match before writing; null requires that the page is absent.',
     },
   },
   mutating: true,
   tier: 'admin',
   handler: (ctx, p) => put_page.handler(ctx, { ...p, [ADMIN_PUT_PAGE_ROUTE_FIRST_BYPASS]: true }),
-  cliHints: { name: 'admin-put', positional: ['slug'], stdin: 'content', hidden: true },
+  cliHints: {
+    name: 'admin-put',
+    positional: ['slug'],
+    stdin: 'content',
+    hidden: true,
+  },
 };
 
 function assertWritableSlugQuality(slug: string): void {
   const issues = findSlugQualityIssues(slug);
   if (issues.length === 0) return;
 
-  const details = issues
-    .map(issue => `${issue.rule}: ${issue.message} ${issue.suggestion}`)
-    .join(' ');
+  const details = issues.map((issue) => `${issue.rule}: ${issue.message} ${issue.suggestion}`).join(' ');
   throw new OperationError('invalid_params', `put_page slug quality blocked for "${slug}". ${details}`);
 }
 
@@ -3395,7 +3808,7 @@ const list_pages: Operation = {
       tag: p.tag as string,
       limit: (p.limit as number) ?? 50,
     });
-    return pages.map(pg => ({
+    return pages.map((pg) => ({
       slug: pg.slug,
       type: pg.type,
       title: pg.title,
@@ -3409,7 +3822,8 @@ const list_pages: Operation = {
 
 const search: Operation = {
   name: 'search',
-  description: 'Keyword candidate discovery across MBrain. Use for exact names, slugs, dates, and terms; chunks are not answer evidence. For factual answers, call retrieve_context or read_context to load canonical evidence.',
+  description:
+    'Keyword candidate discovery across MBrain. Use for exact names, slugs, dates, and terms; chunks are not answer evidence. For factual answers, call retrieve_context or read_context to load canonical evidence.',
   params: {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
@@ -3417,7 +3831,9 @@ const search: Operation = {
   handler: async (ctx, p) => {
     const limit = (p.limit as number) ?? 20;
     return rankSearchResults(
-      await ctx.engine.searchKeyword(p.query as string, { limit: sourceRankCandidateLimit(limit) }),
+      await ctx.engine.searchKeyword(p.query as string, {
+        limit: sourceRankCandidateLimit(limit),
+      }),
       limit,
     );
   },
@@ -3426,11 +3842,15 @@ const search: Operation = {
 
 const query: Operation = {
   name: 'query',
-  description: 'Semantic candidate discovery across MBrain. Use when the question is conceptual, cross-cutting, or keyword search missed likely pages; chunks are not answer evidence. For factual answers, call retrieve_context or read_context to load canonical evidence.',
+  description:
+    'Semantic candidate discovery across MBrain. Use when the question is conceptual, cross-cutting, or keyword search missed likely pages; chunks are not answer evidence. For factual answers, call retrieve_context or read_context to load canonical evidence.',
   params: {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
-    expand: { type: 'boolean', description: 'Enable multi-query expansion (default: true)' },
+    expand: {
+      type: 'boolean',
+      description: 'Enable multi-query expansion (default: true)',
+    },
   },
   handler: async (ctx, p) => {
     const expand = p.expand !== false;
@@ -3492,12 +3912,7 @@ const add_tag: Operation = {
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'add_tag', slug: p.slug, tag: p.tag };
-    await mutateTagAndEnqueueManifestRefresh(
-      ctx.engine,
-      p.slug as string,
-      p.tag as string,
-      (tx, slug, tag) => tx.addTag(slug, tag),
-    );
+    await mutateTagAndEnqueueManifestRefresh(ctx.engine, p.slug as string, p.tag as string, (tx, slug, tag) => tx.addTag(slug, tag));
     return { status: 'ok', derived_storage: 'scheduled' };
   },
   cliHints: { name: 'tag', positional: ['slug', 'tag'] },
@@ -3513,12 +3928,7 @@ const remove_tag: Operation = {
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'remove_tag', slug: p.slug, tag: p.tag };
-    await mutateTagAndEnqueueManifestRefresh(
-      ctx.engine,
-      p.slug as string,
-      p.tag as string,
-      (tx, slug, tag) => tx.removeTag(slug, tag),
-    );
+    await mutateTagAndEnqueueManifestRefresh(ctx.engine, p.slug as string, p.tag as string, (tx, slug, tag) => tx.removeTag(slug, tag));
     return { status: 'ok', derived_storage: 'scheduled' };
   },
   cliHints: { name: 'untag', positional: ['slug', 'tag'] },
@@ -3540,20 +3950,22 @@ const get_tags: Operation = {
 
 const add_link: Operation = {
   name: 'add_link',
-  description: 'Create a typed link between two pages in the knowledge graph. Use to connect entities and technical concepts: people/companies (invested_in, works_at, founded), or systems/concepts (implements, depends_on, extends, contradicts, layer_of, prerequisite_for). Links are bidirectional in traversal and power cross-system navigation.',
+  description:
+    'Create a typed link between two pages in the knowledge graph. Use to connect entities and technical concepts: people/companies (invested_in, works_at, founded), or systems/concepts (implements, depends_on, extends, contradicts, layer_of, prerequisite_for). Links are bidirectional in traversal and power cross-system navigation.',
   params: {
     from: { type: 'string', required: true },
     to: { type: 'string', required: true },
-    link_type: { type: 'string', description: 'Link type. People/deal: invested_in, works_at, founded, mentioned_in. Technical: implements, depends_on, extends, contradicts, layer_of, prerequisite_for. Free-text; no allowlist enforced.' },
+    link_type: {
+      type: 'string',
+      description:
+        'Link type. People/deal: invested_in, works_at, founded, mentioned_in. Technical: implements, depends_on, extends, contradicts, layer_of, prerequisite_for. Free-text; no allowlist enforced.',
+    },
     context: { type: 'string', description: 'Context for the link' },
   },
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'add_link', from: p.from, to: p.to };
-    await ctx.engine.addLink(
-      p.from as string, p.to as string,
-      (p.context as string) || '', (p.link_type as string) || '',
-    );
+    await ctx.engine.addLink(p.from as string, p.to as string, (p.context as string) || '', (p.link_type as string) || '');
     return { status: 'ok' };
   },
   cliHints: { name: 'link', positional: ['from', 'to'] },
@@ -3629,11 +4041,7 @@ const add_timeline_entry: Operation = {
     const slug = p.slug as string;
     const existing = await ctx.engine.getPage(slug);
     if (!existing) {
-      throw new OperationError(
-        'page_not_found',
-        `Page not found for timeline entry: ${slug}`,
-        'Create the page before appending timeline evidence.',
-      );
+      throw new OperationError('page_not_found', `Page not found for timeline entry: ${slug}`, 'Create the page before appending timeline evidence.');
     }
     await ctx.engine.addTimelineEntry(slug, {
       date: p.date as string,
@@ -3701,7 +4109,13 @@ const revert_version: Operation = {
   },
   mutating: true,
   handler: async (ctx, p) => {
-    if (ctx.dryRun) return { dry_run: true, action: 'revert_version', slug: p.slug, version_id: p.version_id };
+    if (ctx.dryRun)
+      return {
+        dry_run: true,
+        action: 'revert_version',
+        slug: p.slug,
+        version_id: p.version_id,
+      };
     await ctx.engine.createVersion(p.slug as string);
     await ctx.engine.revertToVersion(p.slug as string, p.version_id as number);
     return { status: 'reverted' };
@@ -3715,13 +4129,28 @@ const sync_brain: Operation = {
   name: 'sync_brain',
   description: 'Sync git repo to brain (incremental)',
   params: {
-    repo: { type: 'string', description: 'Path to git repo (optional if configured)' },
-    subbrain: { type: 'string', description: 'Registered sub-brain id to sync' },
-    all_subbrains: { type: 'boolean', description: 'Sync every registered sub-brain' },
-    dry_run: { type: 'boolean', description: 'Preview changes without applying' },
+    repo: {
+      type: 'string',
+      description: 'Path to git repo (optional if configured)',
+    },
+    subbrain: {
+      type: 'string',
+      description: 'Registered sub-brain id to sync',
+    },
+    all_subbrains: {
+      type: 'boolean',
+      description: 'Sync every registered sub-brain',
+    },
+    dry_run: {
+      type: 'boolean',
+      description: 'Preview changes without applying',
+    },
     full: { type: 'boolean', description: 'Full re-sync (ignore checkpoint)' },
     no_pull: { type: 'boolean', description: 'Skip git pull' },
-    no_embed: { type: 'boolean', description: 'Compatibility no-op: sync already defers embeddings' },
+    no_embed: {
+      type: 'boolean',
+      description: 'Compatibility no-op: sync already defers embeddings',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -3746,7 +4175,11 @@ const put_raw_data: Operation = {
   description: 'Store raw API response data for a page',
   params: {
     slug: { type: 'string', required: true },
-    source: { type: 'string', required: true, description: 'Data source (e.g., crustdata, happenstance)' },
+    source: {
+      type: 'string',
+      required: true,
+      description: 'Data source (e.g., crustdata, happenstance)',
+    },
     data: { type: 'object', required: true, description: 'Raw data object' },
   },
   mutating: true,
@@ -3802,7 +4235,11 @@ const get_profile_memory_entry: Operation = {
   name: 'get_profile_memory_entry',
   description: 'Get one canonical profile-memory entry by id.',
   params: {
-    id: { type: 'string', required: true, description: 'Profile-memory entry id' },
+    id: {
+      type: 'string',
+      required: true,
+      description: 'Profile-memory entry id',
+    },
   },
   handler: async (ctx, p) => {
     return ctx.engine.getProfileMemoryEntry(String(p.id));
@@ -3814,21 +4251,30 @@ const list_profile_memory_entries: Operation = {
   name: 'list_profile_memory_entries',
   description: 'List canonical profile-memory entries.',
   params: {
-    scope_id: { type: 'string', description: 'Profile-memory scope id (default: personal:default)' },
-    subject: { type: 'string', description: 'Exact profile-memory subject filter' },
+    scope_id: {
+      type: 'string',
+      description: 'Profile-memory scope id (default: personal:default)',
+    },
+    subject: {
+      type: 'string',
+      description: 'Exact profile-memory subject filter',
+    },
     profile_type: {
       type: 'string',
       description: 'Optional exact profile-memory type filter',
       enum: ['preference', 'routine', 'personal_project', 'stable_fact', 'relationship_boundary', 'other'],
     },
     limit: { type: 'number', description: 'Max results (default 20)' },
-    offset: { type: 'number', description: 'Offset for pagination (default 0)' },
+    offset: {
+      type: 'number',
+      description: 'Offset for pagination (default 0)',
+    },
   },
   handler: async (ctx, p) => {
     return ctx.engine.listProfileMemoryEntries({
       scope_id: String(p.scope_id ?? DEFAULT_PROFILE_MEMORY_SCOPE_ID),
       subject: typeof p.subject === 'string' ? p.subject : undefined,
-      profile_type: typeof p.profile_type === 'string' ? p.profile_type as any : undefined,
+      profile_type: typeof p.profile_type === 'string' ? (p.profile_type as any) : undefined,
       limit: typeof p.limit === 'number' ? p.limit : 20,
       offset: typeof p.offset === 'number' ? p.offset : 0,
     });
@@ -3847,10 +4293,7 @@ function requirePersonalSourceRef(value: unknown): string {
 // isolation). Reject any work:* (or otherwise non-personal) scope on the personal write path.
 function assertPersonalScopeId(scopeId: string): void {
   if (!scopeId.startsWith('personal:')) {
-    throw new OperationError(
-      'invalid_params',
-      `personal memory writes require a personal: scope, got "${scopeId}"`,
-    );
+    throw new OperationError('invalid_params', `personal memory writes require a personal: scope, got "${scopeId}"`);
   }
 }
 
@@ -3862,10 +4305,7 @@ function personalWriteScopeGateFields(preflight: PersonalWriteTargetResult) {
   };
 }
 
-function resolvePersonalWriteScopeId(input: {
-  requestedScopeId: unknown;
-  preflight: PersonalWriteTargetResult;
-}): string {
+function resolvePersonalWriteScopeId(input: { requestedScopeId: unknown; preflight: PersonalWriteTargetResult }): string {
   if (!input.preflight.route) {
     throw new OperationError('invalid_params', `personal write blocked: ${input.preflight.selection_reason}`);
   }
@@ -3883,11 +4323,7 @@ function resolvePersonalMemoryWriteId(value: unknown): string {
   return id.length > 0 ? id : crypto.randomUUID();
 }
 
-type PersonalMemoryWriteOperation =
-  | 'upsert_profile_memory_entry'
-  | 'write_profile_memory_entry'
-  | 'record_personal_episode'
-  | 'write_personal_episode_entry';
+type PersonalMemoryWriteOperation = 'upsert_profile_memory_entry' | 'write_profile_memory_entry' | 'record_personal_episode' | 'write_personal_episode_entry';
 
 async function recordPersonalMemoryWriteAudit(
   engine: BrainEngine,
@@ -3920,11 +4356,7 @@ async function recordPersonalMemoryWriteAudit(
   });
 }
 
-function personalMemoryDeleteAudit(
-  operation: 'delete_profile_memory_entry' | 'delete_personal_episode_entry',
-  scopeId: string,
-  sourceRefs: string[],
-) {
+function personalMemoryDeleteAudit(operation: 'delete_profile_memory_entry' | 'delete_personal_episode_entry', scopeId: string, sourceRefs: string[]) {
   return {
     session_id: `${operation}:direct:${crypto.randomUUID()}`,
     realm_id: 'personal',
@@ -3938,21 +4370,53 @@ const upsert_profile_memory_entry: Operation = {
   name: 'upsert_profile_memory_entry',
   description: 'Create or update one canonical personal profile-memory entry.',
   params: {
-    id: { type: 'string', description: 'Optional profile-memory entry id (generated when omitted)' },
-    scope_id: { type: 'string', description: 'Profile-memory scope id (default: personal:default)' },
+    id: {
+      type: 'string',
+      description: 'Optional profile-memory entry id (generated when omitted)',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Profile-memory scope id (default: personal:default)',
+    },
     profile_type: {
       type: 'string',
       required: true,
       description: 'Canonical profile-memory type',
       enum: ['preference', 'routine', 'personal_project', 'stable_fact', 'relationship_boundary', 'other'],
     },
-    subject: { type: 'string', required: true, description: 'Exact profile-memory subject' },
-    content: { type: 'string', required: true, description: 'Canonical profile-memory content' },
-    source_ref: { type: 'string', required: true, description: 'Required single provenance string' },
-    sensitivity: { type: 'string', description: 'Sensitivity classification', enum: ['public', 'personal', 'secret'] },
-    export_status: { type: 'string', description: 'Export visibility status', enum: ['private_only', 'exportable'] },
-    last_confirmed_at: { type: 'string', description: 'Optional ISO timestamp for last confirmation' },
-    superseded_by: { type: 'string', description: 'Optional id of a newer superseding entry' },
+    subject: {
+      type: 'string',
+      required: true,
+      description: 'Exact profile-memory subject',
+    },
+    content: {
+      type: 'string',
+      required: true,
+      description: 'Canonical profile-memory content',
+    },
+    source_ref: {
+      type: 'string',
+      required: true,
+      description: 'Required single provenance string',
+    },
+    sensitivity: {
+      type: 'string',
+      description: 'Sensitivity classification',
+      enum: ['public', 'personal', 'secret'],
+    },
+    export_status: {
+      type: 'string',
+      description: 'Export visibility status',
+      enum: ['private_only', 'exportable'],
+    },
+    last_confirmed_at: {
+      type: 'string',
+      description: 'Optional ISO timestamp for last confirmation',
+    },
+    superseded_by: {
+      type: 'string',
+      description: 'Optional id of a newer superseding entry',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -3966,7 +4430,10 @@ const upsert_profile_memory_entry: Operation = {
       throw new OperationError('invalid_params', `profile_memory write blocked: ${preflight.selection_reason}`);
     }
     const id = resolvePersonalMemoryWriteId(p.id);
-    const scopeId = resolvePersonalWriteScopeId({ requestedScopeId: p.scope_id, preflight });
+    const scopeId = resolvePersonalWriteScopeId({
+      requestedScopeId: p.scope_id,
+      preflight,
+    });
     const scopeGate = personalWriteScopeGateFields(preflight);
     if (ctx.dryRun) {
       return {
@@ -4003,7 +4470,11 @@ const upsert_profile_memory_entry: Operation = {
       });
       return { entry, mutationEvent };
     });
-    return { ...applied.entry, ...scopeGate, mutation_event: applied.mutationEvent };
+    return {
+      ...applied.entry,
+      ...scopeGate,
+      mutation_event: applied.mutationEvent,
+    };
   },
   cliHints: { name: 'profile-memory-upsert' },
 };
@@ -4012,7 +4483,11 @@ const delete_profile_memory_entry: Operation = {
   name: 'delete_profile_memory_entry',
   description: 'Delete one canonical profile-memory entry by id.',
   params: {
-    id: { type: 'string', required: true, description: 'Profile-memory entry id' },
+    id: {
+      type: 'string',
+      required: true,
+      description: 'Profile-memory entry id',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -4025,7 +4500,13 @@ const delete_profile_memory_entry: Operation = {
       throw new OperationError('invalid_params', `profile-memory entry not found: ${id}`);
     }
     assertPersonalScopeId(entry.scope_id);
-    if (ctx.dryRun) return { dry_run: true, action: 'delete_profile_memory_entry', id, scope_id: entry.scope_id };
+    if (ctx.dryRun)
+      return {
+        dry_run: true,
+        action: 'delete_profile_memory_entry',
+        id,
+        scope_id: entry.scope_id,
+      };
     await ctx.engine.transaction(async (tx) => {
       const transactionalEntry = await tx.getProfileMemoryEntry(id);
       if (!transactionalEntry) {
@@ -4051,7 +4532,11 @@ const get_personal_episode_entry: Operation = {
   name: 'get_personal_episode_entry',
   description: 'Get one canonical personal-episode entry by id.',
   params: {
-    id: { type: 'string', required: true, description: 'Personal-episode entry id' },
+    id: {
+      type: 'string',
+      required: true,
+      description: 'Personal-episode entry id',
+    },
   },
   handler: async (ctx, p) => {
     return ctx.engine.getPersonalEpisodeEntry(String(p.id));
@@ -4063,21 +4548,30 @@ const list_personal_episode_entries: Operation = {
   name: 'list_personal_episode_entries',
   description: 'List canonical personal-episode entries.',
   params: {
-    scope_id: { type: 'string', description: 'Personal-episode scope id (default: personal:default)' },
-    title: { type: 'string', description: 'Exact personal-episode title filter' },
+    scope_id: {
+      type: 'string',
+      description: 'Personal-episode scope id (default: personal:default)',
+    },
+    title: {
+      type: 'string',
+      description: 'Exact personal-episode title filter',
+    },
     source_kind: {
       type: 'string',
       description: 'Optional personal-episode source kind filter',
       enum: ['chat', 'note', 'import', 'meeting', 'reminder', 'other'],
     },
     limit: { type: 'number', description: 'Max results (default 20)' },
-    offset: { type: 'number', description: 'Offset for pagination (default 0)' },
+    offset: {
+      type: 'number',
+      description: 'Offset for pagination (default 0)',
+    },
   },
   handler: async (ctx, p) => {
     return ctx.engine.listPersonalEpisodeEntries({
       scope_id: String(p.scope_id ?? DEFAULT_PROFILE_MEMORY_SCOPE_ID),
       title: typeof p.title === 'string' ? p.title : undefined,
-      source_kind: typeof p.source_kind === 'string' ? p.source_kind as any : undefined,
+      source_kind: typeof p.source_kind === 'string' ? (p.source_kind as any) : undefined,
       limit: typeof p.limit === 'number' ? p.limit : 20,
       offset: typeof p.offset === 'number' ? p.offset : 0,
     });
@@ -4089,11 +4583,28 @@ const record_personal_episode: Operation = {
   name: 'record_personal_episode',
   description: 'Record one append-only canonical personal-episode entry.',
   params: {
-    id: { type: 'string', description: 'Optional personal-episode id (generated when omitted)' },
-    scope_id: { type: 'string', description: 'Personal-episode scope id (default: personal:default)' },
-    title: { type: 'string', required: true, description: 'Compact personal-episode title' },
-    start_time: { type: 'string', required: true, description: 'ISO timestamp for episode start' },
-    end_time: { type: 'string', description: 'Optional ISO timestamp for episode end' },
+    id: {
+      type: 'string',
+      description: 'Optional personal-episode id (generated when omitted)',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Personal-episode scope id (default: personal:default)',
+    },
+    title: {
+      type: 'string',
+      required: true,
+      description: 'Compact personal-episode title',
+    },
+    start_time: {
+      type: 'string',
+      required: true,
+      description: 'ISO timestamp for episode start',
+    },
+    end_time: {
+      type: 'string',
+      description: 'Optional ISO timestamp for episode end',
+    },
     source_kind: {
       type: 'string',
       required: true,
@@ -4101,8 +4612,15 @@ const record_personal_episode: Operation = {
       enum: ['chat', 'note', 'import', 'meeting', 'reminder', 'other'],
     },
     summary: { type: 'string', required: true, description: 'Episode summary' },
-    source_ref: { type: 'string', required: true, description: 'Required single provenance string' },
-    candidate_id: { type: 'string', description: 'Optional linked candidate or profile id' },
+    source_ref: {
+      type: 'string',
+      required: true,
+      description: 'Required single provenance string',
+    },
+    candidate_id: {
+      type: 'string',
+      description: 'Optional linked candidate or profile id',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -4116,7 +4634,10 @@ const record_personal_episode: Operation = {
       throw new OperationError('invalid_params', `personal_episode write blocked: ${preflight.selection_reason}`);
     }
     const id = resolvePersonalMemoryWriteId(p.id);
-    const scopeId = resolvePersonalWriteScopeId({ requestedScopeId: p.scope_id, preflight });
+    const scopeId = resolvePersonalWriteScopeId({
+      requestedScopeId: p.scope_id,
+      preflight,
+    });
     const scopeGate = personalWriteScopeGateFields(preflight);
     if (ctx.dryRun) {
       return {
@@ -4152,7 +4673,11 @@ const record_personal_episode: Operation = {
       });
       return { entry, mutationEvent };
     });
-    return { ...applied.entry, ...scopeGate, mutation_event: applied.mutationEvent };
+    return {
+      ...applied.entry,
+      ...scopeGate,
+      mutation_event: applied.mutationEvent,
+    };
   },
   cliHints: { name: 'personal-episode-record' },
 };
@@ -4161,7 +4686,11 @@ const delete_personal_episode_entry: Operation = {
   name: 'delete_personal_episode_entry',
   description: 'Delete one canonical personal-episode entry by id.',
   params: {
-    id: { type: 'string', required: true, description: 'Personal-episode entry id' },
+    id: {
+      type: 'string',
+      required: true,
+      description: 'Personal-episode entry id',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -4174,7 +4703,13 @@ const delete_personal_episode_entry: Operation = {
       throw new OperationError('invalid_params', `personal-episode entry not found: ${id}`);
     }
     assertPersonalScopeId(entry.scope_id);
-    if (ctx.dryRun) return { dry_run: true, action: 'delete_personal_episode_entry', id, scope_id: entry.scope_id };
+    if (ctx.dryRun)
+      return {
+        dry_run: true,
+        action: 'delete_personal_episode_entry',
+        id,
+        scope_id: entry.scope_id,
+      };
     await ctx.engine.transaction(async (tx) => {
       const transactionalEntry = await tx.getPersonalEpisodeEntry(id);
       if (!transactionalEntry) {
@@ -4260,19 +4795,22 @@ interface MemoryJobRow {
 
 type MaintenanceJobQueryableEngine = BrainEngine & {
   database?: {
-    query<T = Record<string, unknown>>(sql: string): {
+    query<T = Record<string, unknown>>(
+      sql: string,
+    ): {
       get(...params: unknown[]): T | null;
       run(...params: unknown[]): unknown;
     };
   };
-  db?: { query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> };
-  sql?: { unsafe(sql: string, params?: unknown[]): Promise<Record<string, unknown>[]> };
+  db?: {
+    query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
+  };
+  sql?: {
+    unsafe(sql: string, params?: unknown[]): Promise<Record<string, unknown>[]>;
+  };
 };
 
-async function executeRerunMemoryJob(
-  ctx: OperationContext,
-  input: RerunMemoryJobInput,
-): Promise<Record<string, unknown>> {
+async function executeRerunMemoryJob(ctx: OperationContext, input: RerunMemoryJobInput): Promise<Record<string, unknown>> {
   const existing = await readMemoryJob(ctx.engine, input.job_id);
   assertRerunnableMemoryJob(existing, input.job_id);
 
@@ -4366,27 +4904,35 @@ function buildMemoryJobRerunEvent(
 async function readMemoryJob(engine: BrainEngine, jobId: string): Promise<MemoryJobRow | null> {
   const candidate = engine as MaintenanceJobQueryableEngine;
   if (candidate.database) {
-    return candidate.database.query<MemoryJobRow>(`
+    return candidate.database
+      .query<MemoryJobRow>(`
       SELECT id, name, status, failure_class
       FROM memory_jobs
       WHERE id = ?
-    `).get(jobId);
+    `)
+      .get(jobId);
   }
   if (candidate.sql?.unsafe) {
-    const rows = await candidate.sql.unsafe(`
+    const rows = await candidate.sql.unsafe(
+      `
       SELECT id, name, status, failure_class
       FROM memory_jobs
       WHERE id = $1
-    `, [jobId]);
-    return rows[0] as unknown as MemoryJobRow | undefined ?? null;
+    `,
+      [jobId],
+    );
+    return (rows[0] as unknown as MemoryJobRow | undefined) ?? null;
   }
   if (candidate.db) {
-    const result = await candidate.db.query(`
+    const result = await candidate.db.query(
+      `
       SELECT id, name, status, failure_class
       FROM memory_jobs
       WHERE id = $1
-    `, [jobId]);
-    return result.rows[0] as unknown as MemoryJobRow | undefined ?? null;
+    `,
+      [jobId],
+    );
+    return (result.rows[0] as unknown as MemoryJobRow | undefined) ?? null;
   }
   throw new OperationError('invalid_params', 'rerun_memory_job requires a SQL-backed engine');
 }
@@ -4394,7 +4940,8 @@ async function readMemoryJob(engine: BrainEngine, jobId: string): Promise<Memory
 async function resetMemoryJobForRerun(engine: BrainEngine, input: RerunMemoryJobInput): Promise<boolean> {
   const candidate = engine as MaintenanceJobQueryableEngine;
   if (candidate.database) {
-    const result = candidate.database.query(`
+    const result = candidate.database
+      .query(`
       UPDATE memory_jobs
       SET status = 'waiting',
           result_json = NULL,
@@ -4412,11 +4959,13 @@ async function resetMemoryJobForRerun(engine: BrainEngine, input: RerunMemoryJob
           next_run_at = ?,
           updated_at = ?
       WHERE id = ? AND status IN ('failed', 'dead')
-    `).run(input.now, input.now, input.job_id);
+    `)
+      .run(input.now, input.now, input.job_id);
     return changedRows(result) > 0;
   }
   if (candidate.sql?.unsafe) {
-    const rows = await candidate.sql.unsafe(`
+    const rows = await candidate.sql.unsafe(
+      `
       UPDATE memory_jobs
       SET status = 'waiting',
           result_json = NULL,
@@ -4435,11 +4984,14 @@ async function resetMemoryJobForRerun(engine: BrainEngine, input: RerunMemoryJob
           updated_at = $1
       WHERE id = $2 AND status IN ('failed', 'dead')
       RETURNING id
-    `, [input.now, input.job_id]);
+    `,
+      [input.now, input.job_id],
+    );
     return rows.length > 0;
   }
   if (candidate.db) {
-    const result = await candidate.db.query(`
+    const result = await candidate.db.query(
+      `
       UPDATE memory_jobs
       SET status = 'waiting',
           result_json = NULL,
@@ -4458,7 +5010,9 @@ async function resetMemoryJobForRerun(engine: BrainEngine, input: RerunMemoryJob
           updated_at = $1
       WHERE id = $2 AND status IN ('failed', 'dead')
       RETURNING id
-    `, [input.now, input.job_id]);
+    `,
+      [input.now, input.job_id],
+    );
     return result.rows.length > 0;
   }
   throw new OperationError('invalid_params', 'rerun_memory_job requires a SQL-backed engine');
@@ -4486,51 +5040,35 @@ async function insertMemoryJobEvent(
 ): Promise<void> {
   const candidate = engine as MaintenanceJobQueryableEngine;
   if (candidate.database) {
-    candidate.database.query(`
+    candidate.database
+      .query(`
       INSERT INTO memory_job_events (
         id, job_id, event_type, worker_id, failure_class, metadata_json, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      event.id,
-      event.job_id,
-      event.event_type,
-      event.worker_id,
-      event.failure_class,
-      JSON.stringify(event.metadata_json),
-      event.created_at,
-    );
+    `)
+      .run(event.id, event.job_id, event.event_type, event.worker_id, event.failure_class, JSON.stringify(event.metadata_json), event.created_at);
     return;
   }
   if (candidate.sql?.unsafe) {
-    await candidate.sql.unsafe(`
+    await candidate.sql.unsafe(
+      `
       INSERT INTO memory_job_events (
         id, job_id, event_type, worker_id, failure_class, metadata_json, created_at
       ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
-    `, [
-      event.id,
-      event.job_id,
-      event.event_type,
-      event.worker_id,
-      event.failure_class,
-      JSON.stringify(event.metadata_json),
-      event.created_at,
-    ]);
+    `,
+      [event.id, event.job_id, event.event_type, event.worker_id, event.failure_class, JSON.stringify(event.metadata_json), event.created_at],
+    );
     return;
   }
   if (candidate.db) {
-    await candidate.db.query(`
+    await candidate.db.query(
+      `
       INSERT INTO memory_job_events (
         id, job_id, event_type, worker_id, failure_class, metadata_json, created_at
       ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
-    `, [
-      event.id,
-      event.job_id,
-      event.event_type,
-      event.worker_id,
-      event.failure_class,
-      JSON.stringify(event.metadata_json),
-      event.created_at,
-    ]);
+    `,
+      [event.id, event.job_id, event.event_type, event.worker_id, event.failure_class, JSON.stringify(event.metadata_json), event.created_at],
+    );
     return;
   }
   throw new OperationError('invalid_params', 'rerun_memory_job requires a SQL-backed engine');
@@ -4540,21 +5078,32 @@ const rerun_memory_job: Operation = {
   name: 'rerun_memory_job',
   description: 'Reset a failed maintenance or runner job to waiting and record the auditable rerun request.',
   params: {
-    job_id: { type: 'string', required: true, description: 'Failed memory job id to rerun.' },
-    reason: { type: 'string', required: true, description: 'Reason for rerunning the job.' },
-    requested_by: { type: 'string', description: 'Actor requesting the rerun.' },
-    now: { type: 'string', description: 'Optional ISO timestamp for deterministic planning.' },
+    job_id: {
+      type: 'string',
+      required: true,
+      description: 'Failed memory job id to rerun.',
+    },
+    reason: {
+      type: 'string',
+      required: true,
+      description: 'Reason for rerunning the job.',
+    },
+    requested_by: {
+      type: 'string',
+      description: 'Actor requesting the rerun.',
+    },
+    now: {
+      type: 'string',
+      description: 'Optional ISO timestamp for deterministic planning.',
+    },
   },
-  handler: async (ctx, p) => executeRerunMemoryJob(ctx, {
-    job_id: putPageSourceRef(p.job_id, 'job_id'),
-    reason: putPageSourceRef(p.reason, 'reason'),
-    requested_by: typeof p.requested_by === 'string' && p.requested_by.trim().length > 0
-      ? p.requested_by.trim()
-      : 'mbrain:maintenance-runtime',
-    now: typeof p.now === 'string' && p.now.trim().length > 0
-      ? p.now.trim()
-      : new Date().toISOString(),
-  }),
+  handler: async (ctx, p) =>
+    executeRerunMemoryJob(ctx, {
+      job_id: putPageSourceRef(p.job_id, 'job_id'),
+      reason: putPageSourceRef(p.reason, 'reason'),
+      requested_by: typeof p.requested_by === 'string' && p.requested_by.trim().length > 0 ? p.requested_by.trim() : 'mbrain:maintenance-runtime',
+      now: typeof p.now === 'string' && p.now.trim().length > 0 ? p.now.trim() : new Date().toISOString(),
+    }),
   mutating: true,
   cliHints: { name: 'memory-job-rerun' },
 };
@@ -4563,23 +5112,58 @@ const write_profile_memory_entry: Operation = {
   name: 'write_profile_memory_entry',
   description: 'Write one canonical profile-memory entry only after personal write-target preflight allows it.',
   params: {
-    id: { type: 'string', description: 'Optional profile-memory entry id (generated when omitted)' },
-    scope_id: { type: 'string', description: 'Profile-memory scope id (default: personal:default)' },
+    id: {
+      type: 'string',
+      description: 'Optional profile-memory entry id (generated when omitted)',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Profile-memory scope id (default: personal:default)',
+    },
     profile_type: {
       type: 'string',
       required: true,
       description: 'Canonical profile-memory type',
       enum: ['preference', 'routine', 'personal_project', 'stable_fact', 'relationship_boundary', 'other'],
     },
-    subject: { type: 'string', required: true, description: 'Exact profile-memory subject' },
-    content: { type: 'string', required: true, description: 'Canonical profile-memory content' },
-    query: { type: 'string', description: 'Plain-text request used for personal write-target preflight' },
+    subject: {
+      type: 'string',
+      required: true,
+      description: 'Exact profile-memory subject',
+    },
+    content: {
+      type: 'string',
+      required: true,
+      description: 'Canonical profile-memory content',
+    },
+    query: {
+      type: 'string',
+      description: 'Plain-text request used for personal write-target preflight',
+    },
     requested_scope: requestedScopeParam('Optional access scope override for personal write preflight. Use query for topical retrieval details.'),
-    source_ref: { type: 'string', required: true, description: 'Required single provenance string' },
-    sensitivity: { type: 'string', description: 'Sensitivity classification', enum: ['public', 'personal', 'secret'] },
-    export_status: { type: 'string', description: 'Export visibility status', enum: ['private_only', 'exportable'] },
-    last_confirmed_at: { type: 'string', description: 'Optional ISO timestamp for last confirmation' },
-    superseded_by: { type: 'string', description: 'Optional id of a newer superseding entry' },
+    source_ref: {
+      type: 'string',
+      required: true,
+      description: 'Required single provenance string',
+    },
+    sensitivity: {
+      type: 'string',
+      description: 'Sensitivity classification',
+      enum: ['public', 'personal', 'secret'],
+    },
+    export_status: {
+      type: 'string',
+      description: 'Export visibility status',
+      enum: ['private_only', 'exportable'],
+    },
+    last_confirmed_at: {
+      type: 'string',
+      description: 'Optional ISO timestamp for last confirmation',
+    },
+    superseded_by: {
+      type: 'string',
+      description: 'Optional id of a newer superseding entry',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -4596,7 +5180,10 @@ const write_profile_memory_entry: Operation = {
     }
 
     const id = resolvePersonalMemoryWriteId(p.id);
-    const scopeId = resolvePersonalWriteScopeId({ requestedScopeId: p.scope_id, preflight });
+    const scopeId = resolvePersonalWriteScopeId({
+      requestedScopeId: p.scope_id,
+      preflight,
+    });
     const scopeGate = personalWriteScopeGateFields(preflight);
     if (ctx.dryRun) {
       return {
@@ -4634,7 +5221,11 @@ const write_profile_memory_entry: Operation = {
       });
       return { entry, mutationEvent };
     });
-    return { ...applied.entry, ...scopeGate, mutation_event: applied.mutationEvent };
+    return {
+      ...applied.entry,
+      ...scopeGate,
+      mutation_event: applied.mutationEvent,
+    };
   },
   cliHints: { name: 'profile-memory-write' },
 };
@@ -4643,11 +5234,28 @@ const write_personal_episode_entry: Operation = {
   name: 'write_personal_episode_entry',
   description: 'Write one canonical personal-episode entry only after personal write-target preflight allows it.',
   params: {
-    id: { type: 'string', description: 'Optional personal-episode id (generated when omitted)' },
-    scope_id: { type: 'string', description: 'Personal-episode scope id (default: personal:default)' },
-    title: { type: 'string', required: true, description: 'Compact personal-episode title' },
-    start_time: { type: 'string', required: true, description: 'ISO timestamp for episode start' },
-    end_time: { type: 'string', description: 'Optional ISO timestamp for episode end' },
+    id: {
+      type: 'string',
+      description: 'Optional personal-episode id (generated when omitted)',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Personal-episode scope id (default: personal:default)',
+    },
+    title: {
+      type: 'string',
+      required: true,
+      description: 'Compact personal-episode title',
+    },
+    start_time: {
+      type: 'string',
+      required: true,
+      description: 'ISO timestamp for episode start',
+    },
+    end_time: {
+      type: 'string',
+      description: 'Optional ISO timestamp for episode end',
+    },
     source_kind: {
       type: 'string',
       required: true,
@@ -4655,10 +5263,20 @@ const write_personal_episode_entry: Operation = {
       enum: ['chat', 'note', 'import', 'meeting', 'reminder', 'other'],
     },
     summary: { type: 'string', required: true, description: 'Episode summary' },
-    query: { type: 'string', description: 'Plain-text request used for personal write-target preflight' },
+    query: {
+      type: 'string',
+      description: 'Plain-text request used for personal write-target preflight',
+    },
     requested_scope: requestedScopeParam('Optional access scope override for personal write preflight. Use query for topical retrieval details.'),
-    source_ref: { type: 'string', required: true, description: 'Required single provenance string' },
-    candidate_id: { type: 'string', description: 'Optional linked candidate or profile id' },
+    source_ref: {
+      type: 'string',
+      required: true,
+      description: 'Required single provenance string',
+    },
+    candidate_id: {
+      type: 'string',
+      description: 'Optional linked candidate or profile id',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -4675,7 +5293,10 @@ const write_personal_episode_entry: Operation = {
     }
 
     const id = resolvePersonalMemoryWriteId(p.id);
-    const scopeId = resolvePersonalWriteScopeId({ requestedScopeId: p.scope_id, preflight });
+    const scopeId = resolvePersonalWriteScopeId({
+      requestedScopeId: p.scope_id,
+      preflight,
+    });
     const scopeGate = personalWriteScopeGateFields(preflight);
     if (ctx.dryRun) {
       return {
@@ -4712,7 +5333,11 @@ const write_personal_episode_entry: Operation = {
       });
       return { entry, mutationEvent };
     });
-    return { ...applied.entry, ...scopeGate, mutation_event: applied.mutationEvent };
+    return {
+      ...applied.entry,
+      ...scopeGate,
+      mutation_event: applied.mutationEvent,
+    };
   },
   cliHints: { name: 'personal-episode-write' },
 };
@@ -4723,7 +5348,11 @@ const list_tasks: Operation = {
   name: 'list_tasks',
   description: 'List task threads from canonical operational memory.',
   params: {
-    scope: { type: 'string', description: 'Filter by task scope', enum: ['work', 'personal', 'mixed'] },
+    scope: {
+      type: 'string',
+      description: 'Filter by task scope',
+      enum: ['work', 'personal', 'mixed'],
+    },
     status: {
       type: 'string',
       description: 'Filter by task status',
@@ -4747,13 +5376,24 @@ const start_task: Operation = {
   params: {
     title: { type: 'string', required: true, description: 'Task title' },
     goal: { type: 'string', description: 'Task goal' },
-    scope: { type: 'string', description: 'Task scope', default: 'work', enum: ['work', 'personal', 'mixed'] },
+    scope: {
+      type: 'string',
+      description: 'Task scope',
+      default: 'work',
+      enum: ['work', 'personal', 'mixed'],
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
     const id = crypto.randomUUID();
     if (ctx.dryRun) {
-      return { dry_run: true, action: 'start_task', id, title: p.title, scope: p.scope ?? 'work' };
+      return {
+        dry_run: true,
+        action: 'start_task',
+        id,
+        title: p.title,
+        scope: p.scope ?? 'work',
+      };
     }
 
     return ctx.engine.transaction(async (tx) => {
@@ -4858,8 +5498,15 @@ const get_note_manifest_entry: Operation = {
   name: 'get_note_manifest_entry',
   description: 'Read one derived note-manifest entry by slug for structural inspection.',
   params: {
-    slug: { type: 'string', required: true, description: 'Canonical page slug' },
-    scope_id: { type: 'string', description: 'Manifest scope id (default: workspace:default)' },
+    slug: {
+      type: 'string',
+      required: true,
+      description: 'Canonical page slug',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Manifest scope id (default: workspace:default)',
+    },
   },
   handler: async (ctx, p) => {
     const scopeId = String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID);
@@ -4880,7 +5527,10 @@ const list_note_manifest_entries: Operation = {
   name: 'list_note_manifest_entries',
   description: 'List derived note-manifest entries for structural inspection.',
   params: {
-    scope_id: { type: 'string', description: 'Manifest scope id (default: workspace:default)' },
+    scope_id: {
+      type: 'string',
+      description: 'Manifest scope id (default: workspace:default)',
+    },
     slug: { type: 'string', description: 'Filter to a single slug' },
     limit: { type: 'number', description: 'Max results (default 20)' },
   },
@@ -4898,8 +5548,14 @@ const rebuild_note_manifest: Operation = {
   name: 'rebuild_note_manifest',
   description: 'Rebuild derived note-manifest entries from canonical page state.',
   params: {
-    slug: { type: 'string', description: 'Optional slug to rebuild a single entry' },
-    scope_id: { type: 'string', description: 'Manifest scope id (default: workspace:default)' },
+    slug: {
+      type: 'string',
+      description: 'Optional slug to rebuild a single entry',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Manifest scope id (default: workspace:default)',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -4907,7 +5563,12 @@ const rebuild_note_manifest: Operation = {
     const slug = p.slug as string | undefined;
 
     if (ctx.dryRun) {
-      return { dry_run: true, action: 'rebuild_note_manifest', scope_id: scopeId, slug: slug ?? null };
+      return {
+        dry_run: true,
+        action: 'rebuild_note_manifest',
+        scope_id: scopeId,
+        slug: slug ?? null,
+      };
     }
 
     try {
@@ -4922,11 +5583,7 @@ const rebuild_note_manifest: Operation = {
       };
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('Page not found:')) {
-        throw new OperationError(
-          'page_not_found',
-          error.message,
-          'Check the slug or omit it to rebuild all entries.',
-        );
+        throw new OperationError('page_not_found', error.message, 'Check the slug or omit it to rebuild all entries.');
       }
       throw error;
     }
@@ -4938,19 +5595,22 @@ const get_note_section_entry: Operation = {
   name: 'get_note_section_entry',
   description: 'Get one derived note-section entry by scope and section id.',
   params: {
-    section_id: { type: 'string', required: true, description: 'Durable section id.' },
-    scope_id: { type: 'string', description: 'Section scope id (default: workspace:default)' },
+    section_id: {
+      type: 'string',
+      required: true,
+      description: 'Durable section id.',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Section scope id (default: workspace:default)',
+    },
   },
   handler: async (ctx, p) => {
     const scopeId = String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID);
     const sectionId = String(p.section_id);
     const entry = await ctx.engine.getNoteSectionEntry(scopeId, sectionId);
     if (!entry) {
-      throw new OperationError(
-        'page_not_found',
-        `Section not found: ${sectionId}`,
-        'Run section-rebuild for the page, or verify the section id.',
-      );
+      throw new OperationError('page_not_found', `Section not found: ${sectionId}`, 'Run section-rebuild for the page, or verify the section id.');
     }
     return entry;
   },
@@ -4961,8 +5621,15 @@ const list_note_section_entries: Operation = {
   name: 'list_note_section_entries',
   description: 'List derived note-section entries for structural inspection.',
   params: {
-    page_slug: { type: 'string', required: true, description: 'Canonical page slug' },
-    scope_id: { type: 'string', description: 'Section scope id (default: workspace:default)' },
+    page_slug: {
+      type: 'string',
+      required: true,
+      description: 'Canonical page slug',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Section scope id (default: workspace:default)',
+    },
     limit: { type: 'number', description: 'Max results (default 50)' },
   },
   handler: async (ctx, p) => {
@@ -4972,15 +5639,25 @@ const list_note_section_entries: Operation = {
       limit: (p.limit as number) ?? 50,
     });
   },
-  cliHints: { name: 'section-list', positional: ['page_slug'], aliases: { n: 'limit' } },
+  cliHints: {
+    name: 'section-list',
+    positional: ['page_slug'],
+    aliases: { n: 'limit' },
+  },
 };
 
 const rebuild_note_sections: Operation = {
   name: 'rebuild_note_sections',
   description: 'Rebuild derived note-section rows from canonical page state.',
   params: {
-    page_slug: { type: 'string', description: 'Optional slug to rebuild a single page' },
-    scope_id: { type: 'string', description: 'Section scope id (default: workspace:default)' },
+    page_slug: {
+      type: 'string',
+      description: 'Optional slug to rebuild a single page',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Section scope id (default: workspace:default)',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -4988,7 +5665,12 @@ const rebuild_note_sections: Operation = {
     const pageSlug = typeof p.page_slug === 'string' ? p.page_slug : undefined;
 
     if (ctx.dryRun) {
-      return { dry_run: true, action: 'rebuild_note_sections', scope_id: scopeId, page_slug: pageSlug ?? null };
+      return {
+        dry_run: true,
+        action: 'rebuild_note_sections',
+        scope_id: scopeId,
+        page_slug: pageSlug ?? null,
+      };
     }
 
     try {
@@ -5003,11 +5685,7 @@ const rebuild_note_sections: Operation = {
       };
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('Page not found:')) {
-        throw new OperationError(
-          'page_not_found',
-          error.message,
-          'Check the slug or omit it to rebuild all section entries.',
-        );
+        throw new OperationError('page_not_found', error.message, 'Check the slug or omit it to rebuild all section entries.');
       }
       throw error;
     }
@@ -5019,8 +5697,15 @@ const get_note_structural_neighbors: Operation = {
   name: 'get_note_structural_neighbors',
   description: 'List deterministic structural neighbors for a page or section node.',
   params: {
-    node_id: { type: 'string', required: true, description: 'page:<slug> or section:<section_id>' },
-    scope_id: { type: 'string', description: 'Structural scope id (default: workspace:default)' },
+    node_id: {
+      type: 'string',
+      required: true,
+      description: 'page:<slug> or section:<section_id>',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Structural scope id (default: workspace:default)',
+    },
     limit: { type: 'number', description: 'Max results (default 20)' },
   },
   handler: async (ctx, p) => {
@@ -5039,29 +5724,39 @@ const get_note_structural_neighbors: Operation = {
       throw error;
     }
   },
-  cliHints: { name: 'section-neighbors', positional: ['node_id'], aliases: { n: 'limit' } },
+  cliHints: {
+    name: 'section-neighbors',
+    positional: ['node_id'],
+    aliases: { n: 'limit' },
+  },
 };
 
 const find_note_structural_path: Operation = {
   name: 'find_note_structural_path',
   description: 'Find a bounded deterministic structural path between two nodes.',
   params: {
-    from_node_id: { type: 'string', required: true, description: 'Start node id' },
-    to_node_id: { type: 'string', required: true, description: 'Target node id' },
-    scope_id: { type: 'string', description: 'Structural scope id (default: workspace:default)' },
+    from_node_id: {
+      type: 'string',
+      required: true,
+      description: 'Start node id',
+    },
+    to_node_id: {
+      type: 'string',
+      required: true,
+      description: 'Target node id',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Structural scope id (default: workspace:default)',
+    },
     max_depth: { type: 'number', description: 'Maximum hop count (default 6)' },
   },
   handler: async (ctx, p) => {
     try {
-      return await findStructuralPath(
-        ctx.engine,
-        structuralNodeId(String(p.from_node_id)),
-        structuralNodeId(String(p.to_node_id)),
-        {
-          scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
-          max_depth: (p.max_depth as number) ?? 6,
-        },
-      );
+      return await findStructuralPath(ctx.engine, structuralNodeId(String(p.from_node_id)), structuralNodeId(String(p.to_node_id)), {
+        scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
+        max_depth: (p.max_depth as number) ?? 6,
+      });
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('Invalid structural node id:')) {
         throw new OperationError('invalid_params', error.message);
@@ -5072,14 +5767,20 @@ const find_note_structural_path: Operation = {
       throw error;
     }
   },
-  cliHints: { name: 'section-path', positional: ['from_node_id', 'to_node_id'] },
+  cliHints: {
+    name: 'section-path',
+    positional: ['from_node_id', 'to_node_id'],
+  },
 };
 
 const build_context_map: Operation = {
   name: 'build_context_map',
   description: 'Build or rebuild the persisted structural workspace context map.',
   params: {
-    scope_id: { type: 'string', description: 'Context-map scope id (default: workspace:default)' },
+    scope_id: {
+      type: 'string',
+      description: 'Context-map scope id (default: workspace:default)',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -5101,11 +5802,7 @@ const get_context_map_entry: Operation = {
   handler: async (ctx, p) => {
     const entry = await getStructuralContextMapEntry(ctx.engine, String(p.id));
     if (!entry) {
-      throw new OperationError(
-        'page_not_found',
-        `Context map entry not found: ${String(p.id)}`,
-        'Run map-build for the relevant scope first.',
-      );
+      throw new OperationError('page_not_found', `Context map entry not found: ${String(p.id)}`, 'Run map-build for the relevant scope first.');
     }
     return entry;
   },
@@ -5116,7 +5813,10 @@ const list_context_map_entries: Operation = {
   name: 'list_context_map_entries',
   description: 'List persisted structural context map entries.',
   params: {
-    scope_id: { type: 'string', description: 'Context-map scope id (default: workspace:default)' },
+    scope_id: {
+      type: 'string',
+      description: 'Context-map scope id (default: workspace:default)',
+    },
     kind: { type: 'string', description: 'Optional context-map kind filter' },
     limit: { type: 'number', description: 'Max results (default 20)' },
   },
@@ -5134,13 +5834,20 @@ const build_context_atlas: Operation = {
   name: 'build_context_atlas',
   description: 'Build or rebuild the persisted workspace atlas registry entry.',
   params: {
-    scope_id: { type: 'string', description: 'Atlas scope id (default: workspace:default)' },
+    scope_id: {
+      type: 'string',
+      description: 'Atlas scope id (default: workspace:default)',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
     const scopeId = String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID);
     if (ctx.dryRun) {
-      return { dry_run: true, action: 'build_context_atlas', scope_id: scopeId };
+      return {
+        dry_run: true,
+        action: 'build_context_atlas',
+        scope_id: scopeId,
+      };
     }
     return buildStructuralContextAtlasEntry(ctx.engine, scopeId);
   },
@@ -5156,11 +5863,7 @@ const get_context_atlas_entry: Operation = {
   handler: async (ctx, p) => {
     const entry = await getStructuralContextAtlasEntry(ctx.engine, String(p.id));
     if (!entry) {
-      throw new OperationError(
-        'page_not_found',
-        `Context atlas entry not found: ${String(p.id)}`,
-        'Run atlas-build for the relevant scope first.',
-      );
+      throw new OperationError('page_not_found', `Context atlas entry not found: ${String(p.id)}`, 'Run atlas-build for the relevant scope first.');
     }
     return entry;
   },
@@ -5171,7 +5874,10 @@ const list_context_atlas_entries: Operation = {
   name: 'list_context_atlas_entries',
   description: 'List persisted atlas registry entries.',
   params: {
-    scope_id: { type: 'string', description: 'Atlas scope id (default: workspace:default)' },
+    scope_id: {
+      type: 'string',
+      description: 'Atlas scope id (default: workspace:default)',
+    },
     kind: { type: 'string', description: 'Optional atlas kind filter' },
     limit: { type: 'number', description: 'Max results (default 20)' },
   },
@@ -5189,10 +5895,19 @@ const select_context_atlas_entry: Operation = {
   name: 'select_context_atlas_entry',
   description: 'Select the best persisted atlas registry entry for a scope.',
   params: {
-    scope_id: { type: 'string', description: 'Atlas scope id (default: workspace:default)' },
+    scope_id: {
+      type: 'string',
+      description: 'Atlas scope id (default: workspace:default)',
+    },
     kind: { type: 'string', description: 'Optional atlas kind filter' },
-    max_budget_hint: { type: 'number', description: 'Optional maximum allowed budget hint' },
-    allow_stale: { type: 'boolean', description: 'Allow stale atlas entries when no fresh match exists' },
+    max_budget_hint: {
+      type: 'number',
+      description: 'Optional maximum allowed budget hint',
+    },
+    allow_stale: {
+      type: 'boolean',
+      description: 'Allow stale atlas entries when no fresh match exists',
+    },
   },
   handler: async (ctx, p) => {
     return selectStructuralContextAtlasEntry(ctx.engine, {
@@ -5209,11 +5924,26 @@ const get_context_atlas_overview: Operation = {
   name: 'get_context_atlas_overview',
   description: 'Render a compact overview artifact for a persisted atlas entry.',
   params: {
-    atlas_id: { type: 'string', description: 'Optional atlas entry id for a direct read' },
-    scope_id: { type: 'string', description: 'Atlas scope id (default: workspace:default)' },
-    kind: { type: 'string', description: 'Optional atlas kind filter when atlas_id is omitted' },
-    max_budget_hint: { type: 'number', description: 'Optional maximum allowed budget hint for selection' },
-    allow_stale: { type: 'boolean', description: 'Allow stale atlas entries when atlas_id is omitted' },
+    atlas_id: {
+      type: 'string',
+      description: 'Optional atlas entry id for a direct read',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Atlas scope id (default: workspace:default)',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional atlas kind filter when atlas_id is omitted',
+    },
+    max_budget_hint: {
+      type: 'number',
+      description: 'Optional maximum allowed budget hint for selection',
+    },
+    allow_stale: {
+      type: 'boolean',
+      description: 'Allow stale atlas entries when atlas_id is omitted',
+    },
   },
   handler: async (ctx, p) => {
     return getStructuralContextAtlasOverview(ctx.engine, {
@@ -5231,11 +5961,26 @@ const get_context_atlas_report: Operation = {
   name: 'get_context_atlas_report',
   description: 'Render a compact human-readable report for a persisted atlas entry.',
   params: {
-    atlas_id: { type: 'string', description: 'Optional atlas entry id for a direct read' },
-    scope_id: { type: 'string', description: 'Atlas scope id (default: workspace:default)' },
-    kind: { type: 'string', description: 'Optional atlas kind filter when atlas_id is omitted' },
-    max_budget_hint: { type: 'number', description: 'Optional maximum allowed budget hint for selection' },
-    allow_stale: { type: 'boolean', description: 'Allow stale atlas entries when atlas_id is omitted' },
+    atlas_id: {
+      type: 'string',
+      description: 'Optional atlas entry id for a direct read',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Atlas scope id (default: workspace:default)',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional atlas kind filter when atlas_id is omitted',
+    },
+    max_budget_hint: {
+      type: 'number',
+      description: 'Optional maximum allowed budget hint for selection',
+    },
+    allow_stale: {
+      type: 'boolean',
+      description: 'Allow stale atlas entries when atlas_id is omitted',
+    },
   },
   handler: async (ctx, p) => {
     return getStructuralContextAtlasReport(ctx.engine, {
@@ -5253,11 +5998,26 @@ const get_atlas_orientation_card: Operation = {
   name: 'get_atlas_orientation_card',
   description: 'Render a compact orientation card from atlas selection and the workspace corpus card.',
   params: {
-    atlas_id: { type: 'string', description: 'Optional atlas entry id for a direct read' },
-    scope_id: { type: 'string', description: 'Atlas scope id (default: workspace:default)' },
-    kind: { type: 'string', description: 'Optional atlas kind filter when atlas_id is omitted' },
-    max_budget_hint: { type: 'number', description: 'Optional maximum allowed budget hint for selection' },
-    allow_stale: { type: 'boolean', description: 'Allow stale atlas entries when atlas_id is omitted' },
+    atlas_id: {
+      type: 'string',
+      description: 'Optional atlas entry id for a direct read',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Atlas scope id (default: workspace:default)',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional atlas kind filter when atlas_id is omitted',
+    },
+    max_budget_hint: {
+      type: 'number',
+      description: 'Optional maximum allowed budget hint for selection',
+    },
+    allow_stale: {
+      type: 'boolean',
+      description: 'Allow stale atlas entries when atlas_id is omitted',
+    },
   },
   handler: async (ctx, p) => {
     return getAtlasOrientationCard(ctx.engine, {
@@ -5275,11 +6035,26 @@ const get_atlas_orientation_bundle: Operation = {
   name: 'get_atlas_orientation_bundle',
   description: 'Render a compact atlas bundle from atlas report and atlas orientation card.',
   params: {
-    atlas_id: { type: 'string', description: 'Optional atlas entry id for a direct read' },
-    scope_id: { type: 'string', description: 'Atlas scope id (default: workspace:default)' },
-    kind: { type: 'string', description: 'Optional atlas kind filter when atlas_id is omitted' },
-    max_budget_hint: { type: 'number', description: 'Optional maximum allowed budget hint for selection' },
-    allow_stale: { type: 'boolean', description: 'Allow stale atlas entries when atlas_id is omitted' },
+    atlas_id: {
+      type: 'string',
+      description: 'Optional atlas entry id for a direct read',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Atlas scope id (default: workspace:default)',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional atlas kind filter when atlas_id is omitted',
+    },
+    max_budget_hint: {
+      type: 'number',
+      description: 'Optional maximum allowed budget hint for selection',
+    },
+    allow_stale: {
+      type: 'boolean',
+      description: 'Allow stale atlas entries when atlas_id is omitted',
+    },
   },
   handler: async (ctx, p) => {
     return getAtlasOrientationBundle(ctx.engine, {
@@ -5297,9 +6072,18 @@ const get_context_map_report: Operation = {
   name: 'get_context_map_report',
   description: 'Render a compact human-readable report for a persisted context map.',
   params: {
-    map_id: { type: 'string', description: 'Optional context map id for a direct read' },
-    scope_id: { type: 'string', description: 'Map scope id (default: workspace:default)' },
-    kind: { type: 'string', description: 'Optional map kind filter when map_id is omitted' },
+    map_id: {
+      type: 'string',
+      description: 'Optional context map id for a direct read',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Map scope id (default: workspace:default)',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional map kind filter when map_id is omitted',
+    },
   },
   handler: async (ctx, p) => {
     return getStructuralContextMapReport(ctx.engine, {
@@ -5315,10 +6099,23 @@ const get_context_map_explanation: Operation = {
   name: 'get_context_map_explanation',
   description: 'Render a bounded local explanation for one node inside a persisted context map.',
   params: {
-    map_id: { type: 'string', description: 'Optional context map id for a direct read' },
-    scope_id: { type: 'string', description: 'Map scope id (default: workspace:default)' },
-    kind: { type: 'string', description: 'Optional map kind filter when map_id is omitted' },
-    node_id: { type: 'string', required: true, description: 'Exact structural node id to explain' },
+    map_id: {
+      type: 'string',
+      description: 'Optional context map id for a direct read',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Map scope id (default: workspace:default)',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional map kind filter when map_id is omitted',
+    },
+    node_id: {
+      type: 'string',
+      required: true,
+      description: 'Exact structural node id to explain',
+    },
   },
   handler: async (ctx, p) => {
     return getStructuralContextMapExplanation(ctx.engine, {
@@ -5335,11 +6132,27 @@ const query_context_map: Operation = {
   name: 'query_context_map',
   description: 'Run a bounded structural query over one persisted context map.',
   params: {
-    map_id: { type: 'string', description: 'Optional context map id for a direct read' },
-    scope_id: { type: 'string', description: 'Map scope id (default: workspace:default)' },
-    kind: { type: 'string', description: 'Optional map kind filter when map_id is omitted' },
-    query: { type: 'string', required: true, description: 'Plain-text structural query string' },
-    limit: { type: 'number', description: 'Max matched nodes to return (default 5)' },
+    map_id: {
+      type: 'string',
+      description: 'Optional context map id for a direct read',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Map scope id (default: workspace:default)',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional map kind filter when map_id is omitted',
+    },
+    query: {
+      type: 'string',
+      required: true,
+      description: 'Plain-text structural query string',
+    },
+    limit: {
+      type: 'number',
+      description: 'Max matched nodes to return (default 5)',
+    },
   },
   handler: async (ctx, p) => {
     return queryStructuralContextMap(ctx.engine, {
@@ -5357,12 +6170,32 @@ const find_context_map_path: Operation = {
   name: 'find_context_map_path',
   description: 'Find a bounded structural path inside one persisted context map.',
   params: {
-    map_id: { type: 'string', description: 'Optional context map id for a direct read' },
-    scope_id: { type: 'string', description: 'Map scope id (default: workspace:default)' },
-    kind: { type: 'string', description: 'Optional map kind filter when map_id is omitted' },
-    from_node_id: { type: 'string', required: true, description: 'Exact start node id' },
-    to_node_id: { type: 'string', required: true, description: 'Exact target node id' },
-    max_depth: { type: 'number', description: 'Optional maximum search depth (default 6)' },
+    map_id: {
+      type: 'string',
+      description: 'Optional context map id for a direct read',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Map scope id (default: workspace:default)',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional map kind filter when map_id is omitted',
+    },
+    from_node_id: {
+      type: 'string',
+      required: true,
+      description: 'Exact start node id',
+    },
+    to_node_id: {
+      type: 'string',
+      required: true,
+      description: 'Exact target node id',
+    },
+    max_depth: {
+      type: 'number',
+      description: 'Optional maximum search depth (default 6)',
+    },
   },
   handler: async (ctx, p) => {
     return findStructuralContextMapPath(ctx.engine, {
@@ -5381,20 +6214,40 @@ const get_broad_synthesis_route: Operation = {
   name: 'get_broad_synthesis_route',
   description: 'Compose report, structural query, and optional explain into one bounded broad-synthesis route.',
   params: {
-    map_id: { type: 'string', description: 'Optional context map id for a direct read' },
-    scope_id: { type: 'string', description: 'Map scope id (default: workspace:default)' },
-    kind: { type: 'string', description: 'Optional map kind filter when map_id is omitted' },
-    query: { type: 'string', required: true, description: 'Plain-text route query string' },
-    limit: { type: 'number', description: 'Max matched nodes to inspect while composing the route (default 5)' },
+    map_id: {
+      type: 'string',
+      description: 'Optional context map id for a direct read',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Map scope id (default: workspace:default)',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional map kind filter when map_id is omitted',
+    },
+    query: {
+      type: 'string',
+      required: true,
+      description: 'Plain-text route query string',
+    },
+    limit: {
+      type: 'number',
+      description: 'Max matched nodes to inspect while composing the route (default 5)',
+    },
   },
   handler: async (ctx, p) => {
-    return getBroadSynthesisRoute(ctx.engine, {
-      map_id: typeof p.map_id === 'string' ? p.map_id : undefined,
-      scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
-      kind: p.kind as string | undefined,
-      query: String(p.query),
-      limit: typeof p.limit === 'number' ? p.limit : undefined,
-    }, governedProbeBroadSynthesisDependencies(ctx));
+    return getBroadSynthesisRoute(
+      ctx.engine,
+      {
+        map_id: typeof p.map_id === 'string' ? p.map_id : undefined,
+        scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
+        kind: p.kind as string | undefined,
+        query: String(p.query),
+        limit: typeof p.limit === 'number' ? p.limit : undefined,
+      },
+      governedProbeBroadSynthesisDependencies(ctx),
+    );
   },
   cliHints: { name: 'broad-synthesis-route', aliases: { n: 'limit' } },
 };
@@ -5403,11 +6256,20 @@ const get_precision_lookup_route: Operation = {
   name: 'get_precision_lookup_route',
   description: 'Resolve an exact canonical page or section route for precision lookup intent.',
   params: {
-    scope_id: { type: 'string', description: 'Canonical note scope id (default: workspace:default)' },
+    scope_id: {
+      type: 'string',
+      description: 'Canonical note scope id (default: workspace:default)',
+    },
     slug: { type: 'string', description: 'Exact canonical page slug' },
-    path: { type: 'string', description: 'Exact canonical note path, optionally with #section/path fragment' },
+    path: {
+      type: 'string',
+      description: 'Exact canonical note path, optionally with #section/path fragment',
+    },
     section_id: { type: 'string', description: 'Exact canonical section id' },
-    source_ref: { type: 'string', description: 'Exact extracted source reference string' },
+    source_ref: {
+      type: 'string',
+      description: 'Exact extracted source reference string',
+    },
   },
   handler: async (ctx, p) => {
     return getPrecisionLookupRoute(ctx.engine, {
@@ -5426,19 +6288,43 @@ const get_mixed_scope_bridge: Operation = {
   description: 'Resolve the published explicit mixed-scope bridge across one work route and one personal route.',
   params: {
     requested_scope: requestedScopeParam('Access scope override; must be mixed for this route. Use query for topical retrieval details.'),
-    personal_route_kind: { type: 'string', required: true, description: 'Personal-side route kind for the bridge', enum: ['profile', 'episode'] },
-    map_id: { type: 'string', description: 'Optional context map id for the work-side broad synthesis route' },
-    scope_id: { type: 'string', description: 'Work-side scope id for broad synthesis (default: workspace:default)' },
-    kind: { type: 'string', description: 'Optional map kind filter for the work-side route' },
-    query: { type: 'string', required: true, description: 'Work-side broad synthesis query' },
+    personal_route_kind: {
+      type: 'string',
+      required: true,
+      description: 'Personal-side route kind for the bridge',
+      enum: ['profile', 'episode'],
+    },
+    map_id: {
+      type: 'string',
+      description: 'Optional context map id for the work-side broad synthesis route',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Work-side scope id for broad synthesis (default: workspace:default)',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional map kind filter for the work-side route',
+    },
+    query: {
+      type: 'string',
+      required: true,
+      description: 'Work-side broad synthesis query',
+    },
     limit: { type: 'number', description: 'Optional work-side match limit' },
-    subject: { type: 'string', description: 'Exact personal profile subject for the personal-side profile route' },
+    subject: {
+      type: 'string',
+      description: 'Exact personal profile subject for the personal-side profile route',
+    },
     profile_type: {
       type: 'string',
       description: 'Optional exact personal profile-memory type filter',
       enum: ['preference', 'routine', 'personal_project', 'stable_fact', 'relationship_boundary', 'other'],
     },
-    episode_title: { type: 'string', description: 'Exact personal episode title for the personal-side episode route' },
+    episode_title: {
+      type: 'string',
+      description: 'Exact personal episode title for the personal-side episode route',
+    },
     episode_source_kind: {
       type: 'string',
       description: 'Optional exact personal episode source kind filter',
@@ -5457,21 +6343,25 @@ const get_mixed_scope_bridge: Operation = {
       throw new OperationError('invalid_params', 'episode mixed bridge requires episode_title.');
     }
 
-    return getMixedScopeBridge(ctx.engine, {
-      requested_scope: parseRequestedScopeParam(p.requested_scope),
-      personal_route_kind: personalRouteKind as any,
-      map_id: typeof p.map_id === 'string' ? p.map_id : undefined,
-      scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
-      kind: typeof p.kind === 'string' ? p.kind : undefined,
-      query: String(p.query),
-      limit: typeof p.limit === 'number' ? p.limit : undefined,
-      subject: typeof p.subject === 'string' ? p.subject : undefined,
-      profile_type: typeof p.profile_type === 'string' ? p.profile_type as any : undefined,
-      episode_title: typeof p.episode_title === 'string' ? p.episode_title : undefined,
-      episode_source_kind: typeof p.episode_source_kind === 'string' ? p.episode_source_kind as any : undefined,
-    }, {
-      broadSynthesis: governedProbeBroadSynthesisDependencies(ctx),
-    });
+    return getMixedScopeBridge(
+      ctx.engine,
+      {
+        requested_scope: parseRequestedScopeParam(p.requested_scope),
+        personal_route_kind: personalRouteKind as any,
+        map_id: typeof p.map_id === 'string' ? p.map_id : undefined,
+        scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
+        kind: typeof p.kind === 'string' ? p.kind : undefined,
+        query: String(p.query),
+        limit: typeof p.limit === 'number' ? p.limit : undefined,
+        subject: typeof p.subject === 'string' ? p.subject : undefined,
+        profile_type: typeof p.profile_type === 'string' ? (p.profile_type as any) : undefined,
+        episode_title: typeof p.episode_title === 'string' ? p.episode_title : undefined,
+        episode_source_kind: typeof p.episode_source_kind === 'string' ? (p.episode_source_kind as any) : undefined,
+      },
+      {
+        broadSynthesis: governedProbeBroadSynthesisDependencies(ctx),
+      },
+    );
   },
   cliHints: { name: 'mixed-scope-bridge' },
 };
@@ -5481,19 +6371,43 @@ const get_mixed_scope_disclosure: Operation = {
   description: 'Project a resolved mixed-scope bridge into a visibility-safe disclosure artifact.',
   params: {
     requested_scope: requestedScopeParam('Access scope override; must be mixed for this route. Use query for topical retrieval details.'),
-    personal_route_kind: { type: 'string', required: true, description: 'Personal-side route kind for the bridge', enum: ['profile', 'episode'] },
-    map_id: { type: 'string', description: 'Optional context map id for the work-side broad synthesis route' },
-    scope_id: { type: 'string', description: 'Work-side scope id for broad synthesis (default: workspace:default)' },
-    kind: { type: 'string', description: 'Optional map kind filter for the work-side route' },
-    query: { type: 'string', required: true, description: 'Work-side broad synthesis query' },
+    personal_route_kind: {
+      type: 'string',
+      required: true,
+      description: 'Personal-side route kind for the bridge',
+      enum: ['profile', 'episode'],
+    },
+    map_id: {
+      type: 'string',
+      description: 'Optional context map id for the work-side broad synthesis route',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Work-side scope id for broad synthesis (default: workspace:default)',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional map kind filter for the work-side route',
+    },
+    query: {
+      type: 'string',
+      required: true,
+      description: 'Work-side broad synthesis query',
+    },
     limit: { type: 'number', description: 'Optional work-side match limit' },
-    subject: { type: 'string', description: 'Exact personal profile subject for the personal-side profile route' },
+    subject: {
+      type: 'string',
+      description: 'Exact personal profile subject for the personal-side profile route',
+    },
     profile_type: {
       type: 'string',
       description: 'Optional exact personal profile-memory type filter',
       enum: ['preference', 'routine', 'personal_project', 'stable_fact', 'relationship_boundary', 'other'],
     },
-    episode_title: { type: 'string', description: 'Exact personal episode title for the personal-side episode route' },
+    episode_title: {
+      type: 'string',
+      description: 'Exact personal episode title for the personal-side episode route',
+    },
     episode_source_kind: {
       type: 'string',
       description: 'Optional exact personal episode source kind filter',
@@ -5512,21 +6426,25 @@ const get_mixed_scope_disclosure: Operation = {
       throw new OperationError('invalid_params', 'episode mixed disclosure requires episode_title.');
     }
 
-    return getMixedScopeDisclosure(ctx.engine, {
-      requested_scope: parseRequestedScopeParam(p.requested_scope),
-      personal_route_kind: personalRouteKind as any,
-      map_id: typeof p.map_id === 'string' ? p.map_id : undefined,
-      scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
-      kind: typeof p.kind === 'string' ? p.kind : undefined,
-      query: String(p.query),
-      limit: typeof p.limit === 'number' ? p.limit : undefined,
-      subject: typeof p.subject === 'string' ? p.subject : undefined,
-      profile_type: typeof p.profile_type === 'string' ? p.profile_type as any : undefined,
-      episode_title: typeof p.episode_title === 'string' ? p.episode_title : undefined,
-      episode_source_kind: typeof p.episode_source_kind === 'string' ? p.episode_source_kind as any : undefined,
-    }, {
-      broadSynthesis: governedProbeBroadSynthesisDependencies(ctx),
-    });
+    return getMixedScopeDisclosure(
+      ctx.engine,
+      {
+        requested_scope: parseRequestedScopeParam(p.requested_scope),
+        personal_route_kind: personalRouteKind as any,
+        map_id: typeof p.map_id === 'string' ? p.map_id : undefined,
+        scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
+        kind: typeof p.kind === 'string' ? p.kind : undefined,
+        query: String(p.query),
+        limit: typeof p.limit === 'number' ? p.limit : undefined,
+        subject: typeof p.subject === 'string' ? p.subject : undefined,
+        profile_type: typeof p.profile_type === 'string' ? (p.profile_type as any) : undefined,
+        episode_title: typeof p.episode_title === 'string' ? p.episode_title : undefined,
+        episode_source_kind: typeof p.episode_source_kind === 'string' ? (p.episode_source_kind as any) : undefined,
+      },
+      {
+        broadSynthesis: governedProbeBroadSynthesisDependencies(ctx),
+      },
+    );
   },
   cliHints: { name: 'mixed-scope-disclosure' },
 };
@@ -5535,10 +6453,20 @@ const get_personal_profile_lookup_route: Operation = {
   name: 'get_personal_profile_lookup_route',
   description: 'Resolve an exact personal profile-memory route for personal/profile lookup intent.',
   params: {
-    scope_id: { type: 'string', description: 'Personal profile-memory scope id (default: personal:default)' },
+    scope_id: {
+      type: 'string',
+      description: 'Personal profile-memory scope id (default: personal:default)',
+    },
     requested_scope: requestedScopeParam('Optional access scope override for gate enforcement. Use query for topical retrieval details.'),
-    query: { type: 'string', description: 'Optional natural-language query for gate inference' },
-    subject: { type: 'string', required: true, description: 'Exact personal profile subject' },
+    query: {
+      type: 'string',
+      description: 'Optional natural-language query for gate inference',
+    },
+    subject: {
+      type: 'string',
+      required: true,
+      description: 'Exact personal profile subject',
+    },
     profile_type: {
       type: 'string',
       description: 'Optional exact profile-memory type filter',
@@ -5551,7 +6479,7 @@ const get_personal_profile_lookup_route: Operation = {
       requested_scope: parseRequestedScopeParam(p.requested_scope),
       query: typeof p.query === 'string' ? p.query : undefined,
       subject: String(p.subject),
-      profile_type: typeof p.profile_type === 'string' ? p.profile_type as any : undefined,
+      profile_type: typeof p.profile_type === 'string' ? (p.profile_type as any) : undefined,
     });
   },
   cliHints: { name: 'personal-profile-lookup-route' },
@@ -5561,10 +6489,20 @@ const get_personal_episode_lookup_route: Operation = {
   name: 'get_personal_episode_lookup_route',
   description: 'Resolve an exact personal episode route for personal/episode lookup intent.',
   params: {
-    scope_id: { type: 'string', description: 'Personal episode scope id (default: personal:default)' },
+    scope_id: {
+      type: 'string',
+      description: 'Personal episode scope id (default: personal:default)',
+    },
     requested_scope: requestedScopeParam('Optional access scope override for gate enforcement. Use query for topical retrieval details.'),
-    query: { type: 'string', description: 'Optional natural-language query for gate inference' },
-    title: { type: 'string', required: true, description: 'Exact personal episode title' },
+    query: {
+      type: 'string',
+      description: 'Optional natural-language query for gate inference',
+    },
+    title: {
+      type: 'string',
+      required: true,
+      description: 'Exact personal episode title',
+    },
     source_kind: {
       type: 'string',
       description: 'Optional exact personal episode source kind filter',
@@ -5577,7 +6515,7 @@ const get_personal_episode_lookup_route: Operation = {
       requested_scope: parseRequestedScopeParam(p.requested_scope),
       query: typeof p.query === 'string' ? p.query : undefined,
       title: String(p.title),
-      source_kind: typeof p.source_kind === 'string' ? p.source_kind as any : undefined,
+      source_kind: typeof p.source_kind === 'string' ? (p.source_kind as any) : undefined,
     });
   },
   cliHints: { name: 'personal-episode-lookup-route' },
@@ -5594,9 +6532,18 @@ const select_personal_write_target: Operation = {
       enum: ['profile_memory', 'personal_episode'],
     },
     requested_scope: requestedScopeParam('Optional access scope override for personal write-target selection. Use query for topical retrieval details.'),
-    query: { type: 'string', description: 'Optional plain-text request used for scope classification' },
-    subject: { type: 'string', description: 'Optional profile-memory subject when target_kind is profile_memory' },
-    title: { type: 'string', description: 'Optional personal-episode title when target_kind is personal_episode' },
+    query: {
+      type: 'string',
+      description: 'Optional plain-text request used for scope classification',
+    },
+    subject: {
+      type: 'string',
+      description: 'Optional profile-memory subject when target_kind is profile_memory',
+    },
+    title: {
+      type: 'string',
+      description: 'Optional personal-episode title when target_kind is personal_episode',
+    },
   },
   handler: async (ctx, p) => {
     const targetKind = String(p.target_kind);
@@ -5620,8 +6567,14 @@ const preview_personal_export: Operation = {
   description: 'Preview the personal records that are currently exportable under published visibility rules.',
   params: {
     requested_scope: requestedScopeParam('Optional access scope override for personal export preview. Use query for topical retrieval details.'),
-    query: { type: 'string', description: 'Optional plain-text request used for scope classification' },
-    scope_id: { type: 'string', description: 'Optional personal scope id for the export preview (default: personal:default)' },
+    query: {
+      type: 'string',
+      description: 'Optional plain-text request used for scope classification',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Optional personal scope id for the export preview (default: personal:default)',
+    },
   },
   handler: async (ctx, p) => {
     return previewPersonalExport(ctx.engine, {
@@ -5637,25 +6590,48 @@ const evaluate_scope_gate: Operation = {
   name: 'evaluate_scope_gate',
   description: 'Evaluate the deterministic scope gate for the current published retrieval stack.',
   params: {
-    intent: { type: 'string', required: true, enum: [...RETRIEVAL_ROUTE_INTENTS], description: 'One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup' },
+    intent: {
+      type: 'string',
+      required: true,
+      enum: [...RETRIEVAL_ROUTE_INTENTS],
+      description: 'One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup',
+    },
     requested_scope: requestedScopeParam('Optional access scope override for scope-gate evaluation. Use query for topical retrieval details.'),
-    task_id: { type: 'string', description: 'Task id used to derive task scope when present' },
-    query: { type: 'string', description: 'Optional plain-text request used for signal detection' },
-    repo_path: { type: 'string', description: 'Optional repo path or file path used for work-signal detection' },
-    subject: { type: 'string', description: 'Optional personal profile subject used for signal detection' },
-    episode_title: { type: 'string', description: 'Optional personal episode title used for signal detection' },
+    task_id: {
+      type: 'string',
+      description: 'Task id used to derive task scope when present',
+    },
+    query: {
+      type: 'string',
+      description: 'Optional plain-text request used for signal detection',
+    },
+    repo_path: {
+      type: 'string',
+      description: 'Optional repo path or file path used for work-signal detection',
+    },
+    subject: {
+      type: 'string',
+      description: 'Optional personal profile subject used for signal detection',
+    },
+    episode_title: {
+      type: 'string',
+      description: 'Optional personal episode title used for signal detection',
+    },
   },
   handler: async (ctx, p) => {
     const intent = String(p.intent);
     if (
-      intent !== 'task_resume'
-      && intent !== 'broad_synthesis'
-      && intent !== 'precision_lookup'
-      && intent !== 'mixed_scope_bridge'
-      && intent !== 'personal_profile_lookup'
-      && intent !== 'personal_episode_lookup'
+      intent !== 'task_resume' &&
+      intent !== 'broad_synthesis' &&
+      intent !== 'precision_lookup' &&
+      intent !== 'mixed_scope_bridge' &&
+      intent !== 'personal_profile_lookup' &&
+      intent !== 'personal_episode_lookup'
     ) {
-      throw new OperationError('invalid_params', 'intent must be one of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup.');
+      throw new OperationError(
+        'invalid_params',
+        'intent must be one of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup.',
+      );
     }
 
     return evaluateScopeGate(ctx.engine, {
@@ -5675,27 +6651,72 @@ const select_retrieval_route: Operation = {
   name: 'select_retrieval_route',
   description: 'Select one published retrieval route by explicit intent.',
   params: {
-    intent: { type: 'string', required: true, enum: [...RETRIEVAL_ROUTE_INTENTS], description: 'One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup' },
+    intent: {
+      type: 'string',
+      required: true,
+      enum: [...RETRIEVAL_ROUTE_INTENTS],
+      description: 'One of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup',
+    },
     task_id: { type: 'string', description: 'Task id for task_resume intent' },
-    persist_trace: { type: 'boolean', description: 'Persist a Retrieval Trace for the selected route; task_id is optional and task-less traces are stored with task_id=null' },
+    persist_trace: {
+      type: 'boolean',
+      description: 'Persist a Retrieval Trace for the selected route; task_id is optional and task-less traces are stored with task_id=null',
+    },
     requested_scope: requestedScopeParam('Optional access scope override for route selection. Use query for topical retrieval details.'),
-    personal_route_kind: { type: 'string', description: 'Personal-side route kind for mixed_scope_bridge intent', enum: ['profile', 'episode'] },
-    map_id: { type: 'string', description: 'Optional context map id for broad_synthesis intent' },
-    scope_id: { type: 'string', description: 'Scope id for delegated route selection' },
-    kind: { type: 'string', description: 'Optional map kind filter for broad_synthesis intent' },
-    query: { type: 'string', description: 'Query string for broad_synthesis intent' },
-    limit: { type: 'number', description: 'Optional broad_synthesis match limit' },
-    slug: { type: 'string', description: 'Exact slug for precision_lookup intent' },
-    path: { type: 'string', description: 'Exact path for precision_lookup intent, optionally with #section/path fragment' },
-    section_id: { type: 'string', description: 'Exact section id for precision_lookup intent' },
-    source_ref: { type: 'string', description: 'Exact extracted source reference string for precision_lookup intent' },
-    subject: { type: 'string', description: 'Exact profile-memory subject for personal_profile_lookup intent' },
+    personal_route_kind: {
+      type: 'string',
+      description: 'Personal-side route kind for mixed_scope_bridge intent',
+      enum: ['profile', 'episode'],
+    },
+    map_id: {
+      type: 'string',
+      description: 'Optional context map id for broad_synthesis intent',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Scope id for delegated route selection',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional map kind filter for broad_synthesis intent',
+    },
+    query: {
+      type: 'string',
+      description: 'Query string for broad_synthesis intent',
+    },
+    limit: {
+      type: 'number',
+      description: 'Optional broad_synthesis match limit',
+    },
+    slug: {
+      type: 'string',
+      description: 'Exact slug for precision_lookup intent',
+    },
+    path: {
+      type: 'string',
+      description: 'Exact path for precision_lookup intent, optionally with #section/path fragment',
+    },
+    section_id: {
+      type: 'string',
+      description: 'Exact section id for precision_lookup intent',
+    },
+    source_ref: {
+      type: 'string',
+      description: 'Exact extracted source reference string for precision_lookup intent',
+    },
+    subject: {
+      type: 'string',
+      description: 'Exact profile-memory subject for personal_profile_lookup intent',
+    },
     profile_type: {
       type: 'string',
       description: 'Optional exact profile-memory type filter for personal_profile_lookup intent',
       enum: ['preference', 'routine', 'personal_project', 'stable_fact', 'relationship_boundary', 'other'],
     },
-    episode_title: { type: 'string', description: 'Exact personal episode title for personal_episode_lookup intent' },
+    episode_title: {
+      type: 'string',
+      description: 'Exact personal episode title for personal_episode_lookup intent',
+    },
     episode_source_kind: {
       type: 'string',
       description: 'Optional exact personal episode source kind filter for personal_episode_lookup intent',
@@ -5705,14 +6726,17 @@ const select_retrieval_route: Operation = {
   handler: async (ctx, p) => {
     const intent = String(p.intent);
     if (
-      intent !== 'task_resume'
-      && intent !== 'broad_synthesis'
-      && intent !== 'precision_lookup'
-      && intent !== 'mixed_scope_bridge'
-      && intent !== 'personal_profile_lookup'
-      && intent !== 'personal_episode_lookup'
+      intent !== 'task_resume' &&
+      intent !== 'broad_synthesis' &&
+      intent !== 'precision_lookup' &&
+      intent !== 'mixed_scope_bridge' &&
+      intent !== 'personal_profile_lookup' &&
+      intent !== 'personal_episode_lookup'
     ) {
-      throw new OperationError('invalid_params', 'intent must be one of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup.');
+      throw new OperationError(
+        'invalid_params',
+        'intent must be one of task_resume, broad_synthesis, precision_lookup, mixed_scope_bridge, personal_profile_lookup, personal_episode_lookup.',
+      );
     }
     if (intent === 'task_resume' && typeof p.task_id !== 'string') {
       throw new OperationError('invalid_params', 'task_resume intent requires task_id.');
@@ -5743,32 +6767,37 @@ const select_retrieval_route: Operation = {
         throw new OperationError('invalid_params', 'precision_lookup intent requires slug, path, section_id, or source_ref.');
       }
     }
-    return selectRetrievalRoute(ctx.engine, {
-      intent,
-      task_id: typeof p.task_id === 'string' ? p.task_id : undefined,
-      persist_trace: p.persist_trace === true,
-      requested_scope: parseRequestedScopeParam(p.requested_scope),
-      personal_route_kind: typeof p.personal_route_kind === 'string' ? p.personal_route_kind as any : undefined,
-      map_id: typeof p.map_id === 'string' ? p.map_id : undefined,
-      scope_id: String(p.scope_id ?? (
-        intent === 'personal_profile_lookup'
-          ? DEFAULT_PROFILE_MEMORY_SCOPE_ID
-          : intent === 'personal_episode_lookup'
-            ? DEFAULT_PERSONAL_EPISODE_SCOPE_ID
-            : DEFAULT_NOTE_MANIFEST_SCOPE_ID
-      )),
-      kind: p.kind as string | undefined,
-      query: typeof p.query === 'string' ? p.query : undefined,
-      limit: typeof p.limit === 'number' ? p.limit : undefined,
-      slug: typeof p.slug === 'string' ? p.slug : undefined,
-      path: typeof p.path === 'string' ? p.path : undefined,
-      section_id: typeof p.section_id === 'string' ? p.section_id : undefined,
-      source_ref: typeof p.source_ref === 'string' ? p.source_ref : undefined,
-      subject: typeof p.subject === 'string' ? p.subject : undefined,
-      profile_type: typeof p.profile_type === 'string' ? p.profile_type as any : undefined,
-      episode_title: typeof p.episode_title === 'string' ? p.episode_title : undefined,
-      episode_source_kind: typeof p.episode_source_kind === 'string' ? p.episode_source_kind as any : undefined,
-    }, governedProbeRetrievalRouteDependencies(ctx));
+    return selectRetrievalRoute(
+      ctx.engine,
+      {
+        intent,
+        task_id: typeof p.task_id === 'string' ? p.task_id : undefined,
+        persist_trace: p.persist_trace === true,
+        requested_scope: parseRequestedScopeParam(p.requested_scope),
+        personal_route_kind: typeof p.personal_route_kind === 'string' ? (p.personal_route_kind as any) : undefined,
+        map_id: typeof p.map_id === 'string' ? p.map_id : undefined,
+        scope_id: String(
+          p.scope_id ??
+            (intent === 'personal_profile_lookup'
+              ? DEFAULT_PROFILE_MEMORY_SCOPE_ID
+              : intent === 'personal_episode_lookup'
+                ? DEFAULT_PERSONAL_EPISODE_SCOPE_ID
+                : DEFAULT_NOTE_MANIFEST_SCOPE_ID),
+        ),
+        kind: p.kind as string | undefined,
+        query: typeof p.query === 'string' ? p.query : undefined,
+        limit: typeof p.limit === 'number' ? p.limit : undefined,
+        slug: typeof p.slug === 'string' ? p.slug : undefined,
+        path: typeof p.path === 'string' ? p.path : undefined,
+        section_id: typeof p.section_id === 'string' ? p.section_id : undefined,
+        source_ref: typeof p.source_ref === 'string' ? p.source_ref : undefined,
+        subject: typeof p.subject === 'string' ? p.subject : undefined,
+        profile_type: typeof p.profile_type === 'string' ? (p.profile_type as any) : undefined,
+        episode_title: typeof p.episode_title === 'string' ? p.episode_title : undefined,
+        episode_source_kind: typeof p.episode_source_kind === 'string' ? (p.episode_source_kind as any) : undefined,
+      },
+      governedProbeRetrievalRouteDependencies(ctx),
+    );
   },
   cliHints: { name: 'retrieval-route' },
 };
@@ -5777,28 +6806,78 @@ const plan_retrieval_request: Operation = {
   name: 'plan_retrieval_request',
   description: 'Plan one or more retrieval route selections for a high-level request without executing them.',
   params: {
-    intent: { type: 'string', description: 'Optional explicit intent override', enum: [...RETRIEVAL_ROUTE_INTENTS] },
-    allow_decomposition: { type: 'boolean', description: 'Allow deterministic decomposition into multiple route intents' },
-    task_id: { type: 'string', description: 'Task id for task_resume decomposition or inference' },
-    persist_trace: { type: 'boolean', description: 'Forwarded trace preference for planned selector inputs' },
+    intent: {
+      type: 'string',
+      description: 'Optional explicit intent override',
+      enum: [...RETRIEVAL_ROUTE_INTENTS],
+    },
+    allow_decomposition: {
+      type: 'boolean',
+      description: 'Allow deterministic decomposition into multiple route intents',
+    },
+    task_id: {
+      type: 'string',
+      description: 'Task id for task_resume decomposition or inference',
+    },
+    persist_trace: {
+      type: 'boolean',
+      description: 'Forwarded trace preference for planned selector inputs',
+    },
     requested_scope: requestedScopeParam('Optional access scope override for retrieval planning. Use query for topical retrieval details.'),
-    personal_route_kind: { type: 'string', description: 'Personal-side route kind for mixed_scope_bridge planning', enum: [...PERSONAL_ROUTE_KINDS] },
-    map_id: { type: 'string', description: 'Optional context map id for broad_synthesis planning' },
-    scope_id: { type: 'string', description: 'Scope id for planned route selection' },
-    kind: { type: 'string', description: 'Optional map kind filter for broad_synthesis planning' },
-    query: { type: 'string', description: 'Query string for synthesis or signal inference' },
-    limit: { type: 'number', description: 'Optional broad_synthesis match limit' },
-    slug: { type: 'string', description: 'Exact slug for precision_lookup planning' },
-    path: { type: 'string', description: 'Exact path for precision_lookup planning, optionally with #section/path fragment' },
-    section_id: { type: 'string', description: 'Exact section id for precision_lookup planning' },
-    source_ref: { type: 'string', description: 'Exact extracted source reference string for precision_lookup planning' },
-    subject: { type: 'string', description: 'Exact profile-memory subject for personal_profile_lookup or mixed planning' },
+    personal_route_kind: {
+      type: 'string',
+      description: 'Personal-side route kind for mixed_scope_bridge planning',
+      enum: [...PERSONAL_ROUTE_KINDS],
+    },
+    map_id: {
+      type: 'string',
+      description: 'Optional context map id for broad_synthesis planning',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Scope id for planned route selection',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional map kind filter for broad_synthesis planning',
+    },
+    query: {
+      type: 'string',
+      description: 'Query string for synthesis or signal inference',
+    },
+    limit: {
+      type: 'number',
+      description: 'Optional broad_synthesis match limit',
+    },
+    slug: {
+      type: 'string',
+      description: 'Exact slug for precision_lookup planning',
+    },
+    path: {
+      type: 'string',
+      description: 'Exact path for precision_lookup planning, optionally with #section/path fragment',
+    },
+    section_id: {
+      type: 'string',
+      description: 'Exact section id for precision_lookup planning',
+    },
+    source_ref: {
+      type: 'string',
+      description: 'Exact extracted source reference string for precision_lookup planning',
+    },
+    subject: {
+      type: 'string',
+      description: 'Exact profile-memory subject for personal_profile_lookup or mixed planning',
+    },
     profile_type: {
       type: 'string',
       description: 'Optional exact profile-memory type filter for personal_profile_lookup planning',
       enum: [...PROFILE_MEMORY_TYPES],
     },
-    episode_title: { type: 'string', description: 'Exact personal episode title for personal_episode_lookup planning' },
+    episode_title: {
+      type: 'string',
+      description: 'Exact personal episode title for personal_episode_lookup planning',
+    },
     episode_source_kind: {
       type: 'string',
       description: 'Optional exact personal episode source kind filter for personal_episode_lookup planning',
@@ -5842,7 +6921,9 @@ function governedProbeRetrieveDependencies(ctx: OperationContext): RetrieveConte
   const broadSynthesis = governedProbeBroadSynthesisDependencies(ctx);
   return {
     candidateSearch: (query, options) =>
-      hybridProbeSearch(ctx.engine, ctx.config, query, { limit: options.limit }),
+      hybridProbeSearch(ctx.engine, ctx.config, query, {
+        limit: options.limit,
+      }),
     broadSynthesisCandidateSearch: broadSynthesis.candidateSearch,
   };
 }
@@ -5851,7 +6932,10 @@ function governedProbeBroadSynthesisDependencies(ctx: OperationContext): BroadSy
   if (!governedProbeHybridEnabled(ctx.config)) return {};
   return {
     candidateSearch: (query, options) =>
-      hybridProbeSearch(ctx.engine, ctx.config, query, { type: options.type, limit: options.limit }),
+      hybridProbeSearch(ctx.engine, ctx.config, query, {
+        type: options.type,
+        limit: options.limit,
+      }),
   };
 }
 
@@ -5862,10 +6946,12 @@ function governedProbeRetrievalRouteDependencies(ctx: OperationContext): Retriev
 
 const retrieve_context: Operation = {
   name: 'retrieve_context',
-  description: 'Agentic MBrain retrieval probe. Returns a bounded read_plan, required canonical reads, and non-canonical candidate_signals from Memory Inbox; chunks and candidate signals are not answer evidence. Call read_context on read_plan.selected_selector_snapshots before answering factual questions; use read_plan.selected_selectors only as a legacy selector-id fallback.',
+  description:
+    'Agentic MBrain retrieval probe. Returns a bounded read_plan, required canonical reads, and non-canonical candidate_signals from Memory Inbox; chunks and candidate signals are not answer evidence. Call read_context on read_plan.selected_selector_snapshots before answering factual questions; use read_plan.selected_selectors only as a legacy selector-id fallback.',
   discovery: {
     compactDescription: true,
-    description: 'Core knowledge lookup: retrieve_context finds candidate context and required canonical reads. For factual answers, call read_context on read_plan.selected_selector_snapshots; read_plan.selected_selectors is a legacy fallback. If read_context is hidden, use tool_search for mbrain read_context.',
+    description:
+      'Core knowledge lookup: retrieve_context finds candidate context and required canonical reads. For factual answers, call read_context on read_plan.selected_selector_snapshots; read_plan.selected_selectors is a legacy fallback. If read_context is hidden, use tool_search for mbrain read_context.',
   },
   params: {
     query: { type: 'string', description: 'Raw user request or memory query' },
@@ -5875,17 +6961,30 @@ const retrieve_context: Operation = {
       description: 'Optional exact retrieval selector objects, or a JSON array string for CLI usage',
     },
     task_id: { type: 'string', description: 'Optional active task id' },
-    repo_path: { type: 'string', description: 'Optional active repository path' },
+    repo_path: {
+      type: 'string',
+      description: 'Optional active repository path',
+    },
     requested_scope: requestedScopeParam('Optional access scope override for memory retrieval. Use query for topical retrieval details.'),
-    source_kind: { type: 'string', description: 'Optional source kind for classification', enum: [...MEMORY_SCENARIO_SOURCE_KINDS] },
+    source_kind: {
+      type: 'string',
+      description: 'Optional source kind for classification',
+      enum: [...MEMORY_SCENARIO_SOURCE_KINDS],
+    },
     known_subjects: {
       type: ['array', 'string'],
       items: { type: ['string', 'object'] },
       description: 'Optional detected subject refs as strings or objects with ref and kind, or a JSON array string',
     },
     limit: { type: 'number', description: 'Candidate and required-read limit' },
-    token_budget: { type: 'number', description: 'Approximate probe output token budget' },
-    include_orientation: { type: 'boolean', description: 'Include derived orientation when useful' },
+    token_budget: {
+      type: 'number',
+      description: 'Approximate probe output token budget',
+    },
+    include_orientation: {
+      type: 'boolean',
+      description: 'Include derived orientation when useful',
+    },
     include_push_context: {
       type: 'boolean',
       description: 'Include a bounded selector-first push_context envelope; it contains no raw memory text and requires read_context before factual use.',
@@ -5894,25 +6993,39 @@ const retrieve_context: Operation = {
       type: ['object', 'string', 'boolean'],
       description: 'Explicit graph frontier selector planning flag. Default is off; graph paths are explanation-only.',
     },
-    persist_trace: { type: 'boolean', description: 'Persist a retrieval trace for this probe' },
+    persist_trace: {
+      type: 'boolean',
+      description: 'Persist a retrieval trace for this probe',
+    },
   },
   mutating: false,
-  handler: async (ctx, p) => withSelectorParamErrors(() => retrieveContext(ctx.engine, {
-    query: parseOptionalStringParam(p.query, 'query'),
-    selectors: parseRetrievalSelectors(p.selectors, 'selectors'),
-    task_id: parseOptionalStringParam(p.task_id, 'task_id'),
-    repo_path: parseOptionalStringParam(p.repo_path, 'repo_path'),
-    requested_scope: parseRequestedScopeParam(p.requested_scope),
-    source_kind: parseEnumParam(p.source_kind, 'source_kind', MEMORY_SCENARIO_SOURCE_KINDS),
-    known_subjects: parseKnownSubjectsParam(p.known_subjects, 'known_subjects'),
-    limit: parsePositiveIntegerParam(p.limit, 'limit'),
-    token_budget: parsePositiveIntegerParam(p.token_budget, 'token_budget'),
-    include_orientation: typeof p.include_orientation === 'boolean' ? p.include_orientation : undefined,
-    include_push_context: p.include_push_context === true,
-    graph_frontier: parseRetrieveContextGraphFrontierParam(p.graph_frontier, 'graph_frontier'),
-    persist_trace: p.persist_trace === true,
-  }, governedProbeRetrieveDependencies(ctx))),
-  cliHints: { name: 'retrieve-context', positional: ['query'], aliases: { n: 'limit', scope: 'requested_scope' } },
+  handler: async (ctx, p) =>
+    withSelectorParamErrors(() =>
+      retrieveContext(
+        ctx.engine,
+        {
+          query: parseOptionalStringParam(p.query, 'query'),
+          selectors: parseRetrievalSelectors(p.selectors, 'selectors'),
+          task_id: parseOptionalStringParam(p.task_id, 'task_id'),
+          repo_path: parseOptionalStringParam(p.repo_path, 'repo_path'),
+          requested_scope: parseRequestedScopeParam(p.requested_scope),
+          source_kind: parseEnumParam(p.source_kind, 'source_kind', MEMORY_SCENARIO_SOURCE_KINDS),
+          known_subjects: parseKnownSubjectsParam(p.known_subjects, 'known_subjects'),
+          limit: parsePositiveIntegerParam(p.limit, 'limit'),
+          token_budget: parsePositiveIntegerParam(p.token_budget, 'token_budget'),
+          include_orientation: typeof p.include_orientation === 'boolean' ? p.include_orientation : undefined,
+          include_push_context: p.include_push_context === true,
+          graph_frontier: parseRetrieveContextGraphFrontierParam(p.graph_frontier, 'graph_frontier'),
+          persist_trace: p.persist_trace === true,
+        },
+        governedProbeRetrieveDependencies(ctx),
+      ),
+    ),
+  cliHints: {
+    name: 'retrieve-context',
+    positional: ['query'],
+    aliases: { n: 'limit', scope: 'requested_scope' },
+  },
 };
 
 const read_context: Operation = {
@@ -5923,34 +7036,60 @@ const read_context: Operation = {
     description: 'Core knowledge lookup: read_context reads canonical evidence for retrieval selectors and is the evidence boundary before factual answers.',
   },
   params: {
-    query: { type: 'string', description: 'Optional natural-language request for automatic reads' },
+    query: {
+      type: 'string',
+      description: 'Optional natural-language request for automatic reads',
+    },
     selectors: {
       type: ['array', 'string'],
       items: { type: 'object' },
       description: 'Retrieval selector objects, or a JSON array string for CLI usage',
     },
-    reads: { type: 'string', description: 'Read selection mode', enum: [...CONTEXT_READ_MODES] },
-    token_budget: { type: 'number', description: 'Approximate canonical read token budget' },
-    max_selectors: { type: 'number', description: 'Maximum selectors to read before returning unread selectors' },
+    reads: {
+      type: 'string',
+      description: 'Read selection mode',
+      enum: [...CONTEXT_READ_MODES],
+    },
+    token_budget: {
+      type: 'number',
+      description: 'Approximate canonical read token budget',
+    },
+    max_selectors: {
+      type: 'number',
+      description: 'Maximum selectors to read before returning unread selectors',
+    },
     include_timeline: includeTimelineParam(),
-    include_source_refs: { type: 'boolean', description: 'Include extracted source refs when available' },
-    persist_trace: { type: 'boolean', description: 'Persist a retrieval trace for this canonical read' },
+    include_source_refs: {
+      type: 'boolean',
+      description: 'Include extracted source refs when available',
+    },
+    persist_trace: {
+      type: 'boolean',
+      description: 'Persist a retrieval trace for this canonical read',
+    },
     task_id: { type: 'string', description: 'Optional active task id' },
     requested_scope: requestedScopeParam('Optional access scope override for scope-gate enforcement. Use query for topical retrieval details.'),
   },
   mutating: false,
-  handler: async (ctx, p) => withSelectorParamErrors(() => readContext(ctx.engine, {
-    query: parseOptionalStringParam(p.query, 'query'),
-    selectors: parseRetrievalSelectors(p.selectors, 'selectors'),
-    reads: parseEnumParam(p.reads, 'reads', CONTEXT_READ_MODES),
-    token_budget: parsePositiveIntegerParam(p.token_budget, 'token_budget'),
-    max_selectors: parsePositiveIntegerParam(p.max_selectors, 'max_selectors'),
-    include_timeline: parseIncludeTimelineParam(p.include_timeline),
-    include_source_refs: typeof p.include_source_refs === 'boolean' ? p.include_source_refs : undefined,
-    persist_trace: p.persist_trace === true,
-    task_id: parseOptionalStringParam(p.task_id, 'task_id') ?? null,
-    requested_scope: parseRequestedScopeParam(p.requested_scope),
-  }, governedProbeRetrieveDependencies(ctx))),
+  handler: async (ctx, p) =>
+    withSelectorParamErrors(() =>
+      readContext(
+        ctx.engine,
+        {
+          query: parseOptionalStringParam(p.query, 'query'),
+          selectors: parseRetrievalSelectors(p.selectors, 'selectors'),
+          reads: parseEnumParam(p.reads, 'reads', CONTEXT_READ_MODES),
+          token_budget: parsePositiveIntegerParam(p.token_budget, 'token_budget'),
+          max_selectors: parsePositiveIntegerParam(p.max_selectors, 'max_selectors'),
+          include_timeline: parseIncludeTimelineParam(p.include_timeline),
+          include_source_refs: typeof p.include_source_refs === 'boolean' ? p.include_source_refs : undefined,
+          persist_trace: p.persist_trace === true,
+          task_id: parseOptionalStringParam(p.task_id, 'task_id') ?? null,
+          requested_scope: parseRequestedScopeParam(p.requested_scope),
+        },
+        governedProbeRetrieveDependencies(ctx),
+      ),
+    ),
   cliHints: { name: 'read-context', aliases: { n: 'max_selectors' } },
 };
 
@@ -5960,9 +7099,16 @@ const classify_memory_scenario: Operation = {
   params: {
     query: { type: 'string', description: 'Raw user request or system task' },
     task_id: { type: 'string', description: 'Optional active task id' },
-    repo_path: { type: 'string', description: 'Optional active repository path' },
+    repo_path: {
+      type: 'string',
+      description: 'Optional active repository path',
+    },
     requested_scope: requestedScopeParam('Optional access scope override for scenario classification. Use query for topical retrieval details.'),
-    source_kind: { type: 'string', description: 'Optional source kind for classification', enum: [...MEMORY_SCENARIO_SOURCE_KINDS] },
+    source_kind: {
+      type: 'string',
+      description: 'Optional source kind for classification',
+      enum: [...MEMORY_SCENARIO_SOURCE_KINDS],
+    },
     known_subjects: {
       type: ['array', 'string'],
       items: { type: ['string', 'object'] },
@@ -5970,22 +7116,31 @@ const classify_memory_scenario: Operation = {
     },
   },
   mutating: false,
-  handler: async (_ctx, p) => classifyMemoryScenario({
-    query: parseOptionalStringParam(p.query, 'query'),
-    task_id: parseOptionalStringParam(p.task_id, 'task_id'),
-    repo_path: parseOptionalStringParam(p.repo_path, 'repo_path'),
-    requested_scope: parseRequestedScopeParam(p.requested_scope),
-    source_kind: parseEnumParam(p.source_kind, 'source_kind', MEMORY_SCENARIO_SOURCE_KINDS),
-    known_subjects: parseKnownSubjectsParam(p.known_subjects, 'known_subjects'),
-  }),
-  cliHints: { name: 'classify-memory-scenario', aliases: { scope: 'requested_scope' } },
+  handler: async (_ctx, p) =>
+    classifyMemoryScenario({
+      query: parseOptionalStringParam(p.query, 'query'),
+      task_id: parseOptionalStringParam(p.task_id, 'task_id'),
+      repo_path: parseOptionalStringParam(p.repo_path, 'repo_path'),
+      requested_scope: parseRequestedScopeParam(p.requested_scope),
+      source_kind: parseEnumParam(p.source_kind, 'source_kind', MEMORY_SCENARIO_SOURCE_KINDS),
+      known_subjects: parseKnownSubjectsParam(p.known_subjects, 'known_subjects'),
+    }),
+  cliHints: {
+    name: 'classify-memory-scenario',
+    aliases: { scope: 'requested_scope' },
+  },
 };
 
 const select_activation_policy: Operation = {
   name: 'select_activation_policy',
   description: 'Select how retrieved memory artifacts may affect a response.',
   params: {
-    scenario: { type: 'string', required: true, description: 'Memory scenario', enum: [...MEMORY_SCENARIOS] },
+    scenario: {
+      type: 'string',
+      required: true,
+      description: 'Memory scenario',
+      enum: [...MEMORY_SCENARIOS],
+    },
     artifacts: {
       type: ['array', 'string'],
       items: { type: 'object' },
@@ -6011,12 +7166,16 @@ const proof_agent_memory: Operation = {
   name: 'proof_agent_memory',
   description: 'Run deterministic authority-first memory proof scenarios for agent use without mutating memory.',
   params: {
-    verbose: { type: 'boolean', description: 'Include verbose memory-why fields in formatted output' },
+    verbose: {
+      type: 'boolean',
+      description: 'Include verbose memory-why fields in formatted output',
+    },
   },
   mutating: false,
-  handler: async (_ctx, p) => runProofAgentMemory({
-    verbose: p.verbose === true,
-  }),
+  handler: async (_ctx, p) =>
+    runProofAgentMemory({
+      verbose: p.verbose === true,
+    }),
   cliHints: { name: 'proof-agent' },
 };
 
@@ -6026,9 +7185,16 @@ const plan_scenario_memory_request: Operation = {
   params: {
     query: { type: 'string', description: 'Raw user request or system task' },
     task_id: { type: 'string', description: 'Optional active task id' },
-    repo_path: { type: 'string', description: 'Optional active repository path' },
+    repo_path: {
+      type: 'string',
+      description: 'Optional active repository path',
+    },
     requested_scope: requestedScopeParam('Optional access scope override for scenario memory planning. Use query for topical retrieval details.'),
-    source_kind: { type: 'string', description: 'Optional source kind for classification', enum: [...MEMORY_SCENARIO_SOURCE_KINDS] },
+    source_kind: {
+      type: 'string',
+      description: 'Optional source kind for classification',
+      enum: [...MEMORY_SCENARIO_SOURCE_KINDS],
+    },
     known_subjects: {
       type: ['array', 'string'],
       items: { type: ['string', 'object'] },
@@ -6041,26 +7207,45 @@ const plan_scenario_memory_request: Operation = {
     },
   },
   mutating: false,
-  handler: async (_ctx, p) => planScenarioMemoryRequest({
-    query: parseOptionalStringParam(p.query, 'query'),
-    task_id: parseOptionalStringParam(p.task_id, 'task_id'),
-    repo_path: parseOptionalStringParam(p.repo_path, 'repo_path'),
-    requested_scope: parseRequestedScopeParam(p.requested_scope),
-    source_kind: parseEnumParam(p.source_kind, 'source_kind', MEMORY_SCENARIO_SOURCE_KINDS),
-    known_subjects: parseKnownSubjectsParam(p.known_subjects, 'known_subjects'),
-    artifacts: parseActivationArtifacts(p.artifacts, 'artifacts'),
-  }),
-  cliHints: { name: 'plan-scenario-memory-request', aliases: { scope: 'requested_scope' } },
+  handler: async (_ctx, p) =>
+    planScenarioMemoryRequest({
+      query: parseOptionalStringParam(p.query, 'query'),
+      task_id: parseOptionalStringParam(p.task_id, 'task_id'),
+      repo_path: parseOptionalStringParam(p.repo_path, 'repo_path'),
+      requested_scope: parseRequestedScopeParam(p.requested_scope),
+      source_kind: parseEnumParam(p.source_kind, 'source_kind', MEMORY_SCENARIO_SOURCE_KINDS),
+      known_subjects: parseKnownSubjectsParam(p.known_subjects, 'known_subjects'),
+      artifacts: parseActivationArtifacts(p.artifacts, 'artifacts'),
+    }),
+  cliHints: {
+    name: 'plan-scenario-memory-request',
+    aliases: { scope: 'requested_scope' },
+  },
 };
 
 const reverify_code_claims: Operation = {
   name: 'reverify_code_claims',
   description: 'Re-check code path, symbol, and branch claims against the current workspace.',
   params: {
-    repo_path: { type: 'string', required: true, description: 'Repository root used to verify file and symbol claims' },
-    branch_name: { type: 'string', description: 'Current branch name for branch-sensitive claims' },
-    claims: { type: ['array', 'string'], items: { type: ['object', 'string'] }, description: 'Code claims to verify directly, optionally including expected_content_hash, verification_hint, verification_mode, source_ref, and symbol_id' },
-    trace_id: { type: 'string', description: 'Retrieval trace id containing code_claim verification entries' },
+    repo_path: {
+      type: 'string',
+      required: true,
+      description: 'Repository root used to verify file and symbol claims',
+    },
+    branch_name: {
+      type: 'string',
+      description: 'Current branch name for branch-sensitive claims',
+    },
+    claims: {
+      type: ['array', 'string'],
+      items: { type: ['object', 'string'] },
+      description:
+        'Code claims to verify directly, optionally including expected_content_hash, verification_hint, verification_mode, source_ref, and symbol_id',
+    },
+    trace_id: {
+      type: 'string',
+      description: 'Retrieval trace id containing code_claim verification entries',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -6106,8 +7291,7 @@ const reverify_code_claims: Operation = {
         scope: trace.scope,
         route: ['code_claim_reverification'],
         source_refs: [`retrieval_trace:${trace.id}`],
-        verification: results.map((result) =>
-          `code_claim_result:${result.claim.path ?? result.claim.symbol ?? 'unknown'}:${result.status}:${result.reason}`),
+        verification: results.map((result) => `code_claim_result:${result.claim.path ?? result.claim.symbol ?? 'unknown'}:${result.status}:${result.reason}`),
         write_outcome: 'operational_write',
         outcome: `code claim reverify stale=${staleCount} current=${currentCount} unverifiable=${unverifiableCount}`,
       });
@@ -6127,9 +7311,18 @@ const get_workspace_system_card: Operation = {
   name: 'get_workspace_system_card',
   description: 'Render a compact workspace system card from the current context-map report.',
   params: {
-    map_id: { type: 'string', description: 'Optional context map id for a direct read' },
-    scope_id: { type: 'string', description: 'Map scope id (default: workspace:default)' },
-    kind: { type: 'string', description: 'Optional map kind filter when map_id is omitted' },
+    map_id: {
+      type: 'string',
+      description: 'Optional context map id for a direct read',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Map scope id (default: workspace:default)',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional map kind filter when map_id is omitted',
+    },
   },
   handler: async (ctx, p) => {
     return getWorkspaceSystemCard(ctx.engine, {
@@ -6145,9 +7338,18 @@ const get_workspace_project_card: Operation = {
   name: 'get_workspace_project_card',
   description: 'Render a compact workspace project card from the current context-map report.',
   params: {
-    map_id: { type: 'string', description: 'Optional context map id for a direct read' },
-    scope_id: { type: 'string', description: 'Map scope id (default: workspace:default)' },
-    kind: { type: 'string', description: 'Optional map kind filter when map_id is omitted' },
+    map_id: {
+      type: 'string',
+      description: 'Optional context map id for a direct read',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Map scope id (default: workspace:default)',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional map kind filter when map_id is omitted',
+    },
   },
   handler: async (ctx, p) => {
     return getWorkspaceProjectCard(ctx.engine, {
@@ -6163,9 +7365,18 @@ const get_workspace_orientation_bundle: Operation = {
   name: 'get_workspace_orientation_bundle',
   description: 'Render a compact workspace orientation bundle from the current context-map report and cards.',
   params: {
-    map_id: { type: 'string', description: 'Optional context map id for a direct read' },
-    scope_id: { type: 'string', description: 'Map scope id (default: workspace:default)' },
-    kind: { type: 'string', description: 'Optional map kind filter when map_id is omitted' },
+    map_id: {
+      type: 'string',
+      description: 'Optional context map id for a direct read',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Map scope id (default: workspace:default)',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional map kind filter when map_id is omitted',
+    },
   },
   handler: async (ctx, p) => {
     return getWorkspaceOrientationBundle(ctx.engine, {
@@ -6181,9 +7392,18 @@ const get_workspace_corpus_card: Operation = {
   name: 'get_workspace_corpus_card',
   description: 'Render a compact workspace corpus card from the current orientation bundle.',
   params: {
-    map_id: { type: 'string', description: 'Optional context map id for a direct read' },
-    scope_id: { type: 'string', description: 'Map scope id (default: workspace:default)' },
-    kind: { type: 'string', description: 'Optional map kind filter when map_id is omitted' },
+    map_id: {
+      type: 'string',
+      description: 'Optional context map id for a direct read',
+    },
+    scope_id: {
+      type: 'string',
+      description: 'Map scope id (default: workspace:default)',
+    },
+    kind: {
+      type: 'string',
+      description: 'Optional map kind filter when map_id is omitted',
+    },
   },
   handler: async (ctx, p) => {
     return getWorkspaceCorpusCard(ctx.engine, {
@@ -6200,15 +7420,50 @@ const record_retrieval_trace: Operation = {
   description: 'Record a retrieval trace for a task-scoped operational-memory flow.',
   params: {
     task_id: { type: 'string', required: true, description: 'Task thread id' },
-    outcome: { type: 'string', required: true, description: 'Trace outcome summary' },
-    route: { type: ['array', 'string'], items: { type: 'string' }, description: 'Ordered retrieval route' },
-    source_refs: { type: ['array', 'string'], items: { type: 'string' }, description: 'Source references consulted' },
-    derived_consulted: { type: ['array', 'string'], items: { type: 'string' }, description: 'Derived artifacts consulted separately from canonical source refs' },
-    verification: { type: ['array', 'string'], items: { type: 'string' }, description: 'Verification steps performed' },
-    write_outcome: { type: 'string', enum: [...RETRIEVAL_TRACE_WRITE_OUTCOMES], description: 'Structured write outcome for the trace' },
-    selected_intent: { type: 'string', enum: [...RETRIEVAL_ROUTE_INTENTS], description: 'Structured retrieval intent selected for the trace' },
-    scope_gate_policy: { type: 'string', enum: [...SCOPE_GATE_POLICIES], description: 'Structured scope gate policy, when evaluated' },
-    scope_gate_reason: { type: 'string', description: 'Structured scope gate reason, when evaluated' },
+    outcome: {
+      type: 'string',
+      required: true,
+      description: 'Trace outcome summary',
+    },
+    route: {
+      type: ['array', 'string'],
+      items: { type: 'string' },
+      description: 'Ordered retrieval route',
+    },
+    source_refs: {
+      type: ['array', 'string'],
+      items: { type: 'string' },
+      description: 'Source references consulted',
+    },
+    derived_consulted: {
+      type: ['array', 'string'],
+      items: { type: 'string' },
+      description: 'Derived artifacts consulted separately from canonical source refs',
+    },
+    verification: {
+      type: ['array', 'string'],
+      items: { type: 'string' },
+      description: 'Verification steps performed',
+    },
+    write_outcome: {
+      type: 'string',
+      enum: [...RETRIEVAL_TRACE_WRITE_OUTCOMES],
+      description: 'Structured write outcome for the trace',
+    },
+    selected_intent: {
+      type: 'string',
+      enum: [...RETRIEVAL_ROUTE_INTENTS],
+      description: 'Structured retrieval intent selected for the trace',
+    },
+    scope_gate_policy: {
+      type: 'string',
+      enum: [...SCOPE_GATE_POLICIES],
+      description: 'Structured scope gate policy, when evaluated',
+    },
+    scope_gate_reason: {
+      type: 'string',
+      description: 'Structured scope gate reason, when evaluated',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -6272,7 +7527,11 @@ const list_task_traces: Operation = {
       limit: (p.limit as number) ?? 10,
     });
   },
-  cliHints: { name: 'task-traces', positional: ['task_id'], aliases: { n: 'limit' } },
+  cliHints: {
+    name: 'task-traces',
+    positional: ['task_id'],
+    aliases: { n: 'limit' },
+  },
 };
 
 const list_task_attempts: Operation = {
@@ -6289,7 +7548,11 @@ const list_task_attempts: Operation = {
       limit: (p.limit as number) ?? 10,
     });
   },
-  cliHints: { name: 'task-attempts', positional: ['task_id'], aliases: { n: 'limit' } },
+  cliHints: {
+    name: 'task-attempts',
+    positional: ['task_id'],
+    aliases: { n: 'limit' },
+  },
 };
 
 const list_task_decisions: Operation = {
@@ -6306,7 +7569,11 @@ const list_task_decisions: Operation = {
       limit: (p.limit as number) ?? 10,
     });
   },
-  cliHints: { name: 'task-decisions', positional: ['task_id'], aliases: { n: 'limit' } },
+  cliHints: {
+    name: 'task-decisions',
+    positional: ['task_id'],
+    aliases: { n: 'limit' },
+  },
 };
 
 const refresh_task_working_set: Operation = {
@@ -6314,19 +7581,50 @@ const refresh_task_working_set: Operation = {
   description: 'Refresh a task working set snapshot and advance its verification timestamp.',
   params: {
     task_id: { type: 'string', required: true, description: 'Task thread id' },
-    active_paths: { type: ['array', 'string'], items: { type: 'string' }, description: 'Active file paths' },
-    active_symbols: { type: ['array', 'string'], items: { type: 'string' }, description: 'Active symbols' },
-    blockers: { type: ['array', 'string'], items: { type: 'string' }, description: 'Current blockers' },
-    open_questions: { type: ['array', 'string'], items: { type: 'string' }, description: 'Open questions' },
-    next_steps: { type: ['array', 'string'], items: { type: 'string' }, description: 'Next steps' },
-    verification_notes: { type: ['array', 'string'], items: { type: 'string' }, description: 'Verification notes' },
-    last_verified_at: { type: 'string', description: 'Override verification timestamp (ISO datetime)' },
+    active_paths: {
+      type: ['array', 'string'],
+      items: { type: 'string' },
+      description: 'Active file paths',
+    },
+    active_symbols: {
+      type: ['array', 'string'],
+      items: { type: 'string' },
+      description: 'Active symbols',
+    },
+    blockers: {
+      type: ['array', 'string'],
+      items: { type: 'string' },
+      description: 'Current blockers',
+    },
+    open_questions: {
+      type: ['array', 'string'],
+      items: { type: 'string' },
+      description: 'Open questions',
+    },
+    next_steps: {
+      type: ['array', 'string'],
+      items: { type: 'string' },
+      description: 'Next steps',
+    },
+    verification_notes: {
+      type: ['array', 'string'],
+      items: { type: 'string' },
+      description: 'Verification notes',
+    },
+    last_verified_at: {
+      type: 'string',
+      description: 'Override verification timestamp (ISO datetime)',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
     const taskId = String(p.task_id);
     if (ctx.dryRun) {
-      return { dry_run: true, action: 'refresh_task_working_set', task_id: taskId };
+      return {
+        dry_run: true,
+        action: 'refresh_task_working_set',
+        task_id: taskId,
+      };
     }
 
     await requireTaskThread(ctx.engine, taskId);
@@ -6361,7 +7659,12 @@ const record_attempt: Operation = {
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) {
-      return { dry_run: true, action: 'record_attempt', task_id: p.task_id, summary: p.summary };
+      return {
+        dry_run: true,
+        action: 'record_attempt',
+        task_id: p.task_id,
+        summary: p.summary,
+      };
     }
 
     await requireTaskThread(ctx.engine, String(p.task_id));
@@ -6382,13 +7685,26 @@ const record_decision: Operation = {
   description: 'Record a task decision and rationale.',
   params: {
     task_id: { type: 'string', required: true, description: 'Task thread id' },
-    summary: { type: 'string', required: true, description: 'Decision summary' },
-    rationale: { type: 'string', required: true, description: 'Decision rationale' },
+    summary: {
+      type: 'string',
+      required: true,
+      description: 'Decision summary',
+    },
+    rationale: {
+      type: 'string',
+      required: true,
+      description: 'Decision rationale',
+    },
   },
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) {
-      return { dry_run: true, action: 'record_decision', task_id: p.task_id, summary: p.summary };
+      return {
+        dry_run: true,
+        action: 'record_decision',
+        task_id: p.task_id,
+        summary: p.summary,
+      };
     }
 
     await requireTaskThread(ctx.engine, String(p.task_id));
@@ -6523,12 +7839,18 @@ const file_upload: Operation = {
           const { createStorage } = await import('./storage.ts');
           const storage = await createStorage(ctx.config.storage as any);
           await storage.delete(storagePath);
-        } catch { /* best effort cleanup */ }
+        } catch {
+          /* best effort cleanup */
+        }
       }
       throw dbErr;
     }
 
-    return { status: 'uploaded', storage_path: storagePath, size_bytes: stat.size };
+    return {
+      status: 'uploaded',
+      storage_path: storagePath,
+      size_bytes: stat.size,
+    };
   },
 };
 
@@ -6538,7 +7860,10 @@ const file_url: Operation = {
   capabilityRequired: 'files',
   params: {
     storage_path: { type: 'string', required: true },
-    expires_in_seconds: { type: 'number', description: 'Signed URL TTL in seconds when cloud storage is configured.' },
+    expires_in_seconds: {
+      type: 'number',
+      description: 'Signed URL TTL in seconds when cloud storage is configured.',
+    },
   },
   handler: async (ctx, p) => {
     assertCapabilitySupported(ctx.config, 'files');
@@ -6547,23 +7872,26 @@ const file_url: Operation = {
     if (rows.length === 0) {
       throw new OperationError('storage_error', `File not found: ${p.storage_path}`);
     }
-    const expiresInSeconds = typeof p.expires_in_seconds === 'number'
-      ? Math.floor(p.expires_in_seconds)
-      : FILE_URL_TTL_SECONDS;
+    const expiresInSeconds = typeof p.expires_in_seconds === 'number' ? Math.floor(p.expires_in_seconds) : FILE_URL_TTL_SECONDS;
     if (expiresInSeconds <= 0) {
       throw new OperationError('invalid_params', 'expires_in_seconds must be greater than zero');
     }
     if (ctx.config.storage) {
       const { createStorage } = await import('./storage.ts');
       const storage = await createStorage(ctx.config.storage as any);
-      const url = await storage.getUrl(String(rows[0].storage_path), { expiresInSeconds });
+      const url = await storage.getUrl(String(rows[0].storage_path), {
+        expiresInSeconds,
+      });
       return {
         storage_path: rows[0].storage_path,
         url,
         expires_in_seconds: expiresInSeconds,
       };
     }
-    return { storage_path: rows[0].storage_path, url: `mbrain:files/${rows[0].storage_path}` };
+    return {
+      storage_path: rows[0].storage_path,
+      url: `mbrain:files/${rows[0].storage_path}`,
+    };
   },
 };
 
@@ -6571,13 +7899,18 @@ const file_url: Operation = {
 
 const get_skillpack: Operation = {
   name: 'get_skillpack',
-  description: 'Read the MBrain SKILLPACK reference architecture. Returns the full document or a specific section by number/name. Use this to learn detailed patterns for enrichment, meeting ingestion, cron schedules, and more.',
+  description:
+    'Read the MBrain SKILLPACK reference architecture. Returns the full document or a specific section by number/name. Use this to learn detailed patterns for enrichment, meeting ingestion, cron schedules, and more.',
   discovery: {
     compactDescription: true,
-    description: 'Runtime self-orientation: call get_skillpack (no args) for the compact agent rules, or with a section for detailed retrieval/ingest/governance patterns. Start here when unsure how to use MBrain.',
+    description:
+      'Runtime self-orientation: call get_skillpack (no args) for the compact agent rules, or with a section for detailed retrieval/ingest/governance patterns. Start here when unsure how to use MBrain.',
   },
   params: {
-    section: { type: 'string', description: 'Section number or keyword (e.g. "5", "enrichment", "meeting", "cron"). Omit to get the compact agent rules.' },
+    section: {
+      type: 'string',
+      description: 'Section number or keyword (e.g. "5", "enrichment", "meeting", "cron"). Omit to get the compact agent rules.',
+    },
   },
   handler: async (_ctx, p) => {
     const section = p.section as string | undefined;
@@ -6586,15 +7919,24 @@ const get_skillpack: Operation = {
     if (!section) {
       const rulesPath = resolveDocPath('MBRAIN_AGENT_RULES.md');
       if (!rulesPath) {
-        return { error: 'not_found', message: 'MBRAIN_AGENT_RULES.md not found in the mbrain package.' };
+        return {
+          error: 'not_found',
+          message: 'MBRAIN_AGENT_RULES.md not found in the mbrain package.',
+        };
       }
-      return { document: 'MBRAIN_AGENT_RULES.md', content: readDocCached(rulesPath) };
+      return {
+        document: 'MBRAIN_AGENT_RULES.md',
+        content: readDocCached(rulesPath),
+      };
     }
 
     // Load full SKILLPACK and extract section
     const skillpackPath = resolveDocPath('MBRAIN_SKILLPACK.md');
     if (!skillpackPath) {
-      return { error: 'not_found', message: 'MBRAIN_SKILLPACK.md not found in the mbrain package.' };
+      return {
+        error: 'not_found',
+        message: 'MBRAIN_SKILLPACK.md not found in the mbrain package.',
+      };
     }
 
     const fullContent = readDocCached(skillpackPath);
@@ -6604,9 +7946,17 @@ const get_skillpack: Operation = {
     if (!isNaN(sectionNum)) {
       const extracted = extractSection(fullContent, sectionNum);
       if (extracted) {
-        return { document: 'MBRAIN_SKILLPACK.md', section: sectionNum, content: extracted };
+        return {
+          document: 'MBRAIN_SKILLPACK.md',
+          section: sectionNum,
+          content: extracted,
+        };
       }
-      return { error: 'section_not_found', message: `Section ${sectionNum} not found.`, available: listSections(fullContent) };
+      return {
+        error: 'section_not_found',
+        message: `Section ${sectionNum} not found.`,
+        available: listSections(fullContent),
+      };
     }
 
     // Try keyword search in section headers
@@ -6622,14 +7972,26 @@ const get_skillpack: Operation = {
 
     if (matchingSections.length === 1) {
       const extracted = extractSection(fullContent, matchingSections[0].num);
-      return { document: 'MBRAIN_SKILLPACK.md', section: matchingSections[0].num, title: matchingSections[0].title, content: extracted };
+      return {
+        document: 'MBRAIN_SKILLPACK.md',
+        section: matchingSections[0].num,
+        title: matchingSections[0].title,
+        content: extracted,
+      };
     }
 
     if (matchingSections.length > 1) {
-      return { matches: matchingSections, hint: 'Multiple sections match. Specify a section number.' };
+      return {
+        matches: matchingSections,
+        hint: 'Multiple sections match. Specify a section number.',
+      };
     }
 
-    return { error: 'section_not_found', message: `No section matching "${section}".`, available: listSections(fullContent) };
+    return {
+      error: 'section_not_found',
+      message: `No section matching "${section}".`,
+      available: listSections(fullContent),
+    };
   },
   cliHints: { hidden: true },
 };
@@ -6648,11 +8010,7 @@ function readDocCached(path: string): string {
 }
 
 function resolveDocPath(filename: string): string | null {
-  const candidates = [
-    join(process.cwd(), 'docs', filename),
-    join(__dirname, '..', '..', 'docs', filename),
-    join(__dirname, '..', 'docs', filename),
-  ];
+  const candidates = [join(process.cwd(), 'docs', filename), join(__dirname, '..', '..', 'docs', filename), join(__dirname, '..', 'docs', filename)];
   for (const c of candidates) {
     if (existsSync(c)) return c;
   }
@@ -6686,7 +8044,10 @@ function listSections(content: string): Array<{ num: number; title: string }> {
   for (const line of content.split('\n')) {
     const match = parseSkillpackSectionHeader(line);
     if (match) {
-      sections.push({ num: match.num, title: match.title.replace(/\s*--\s*/, ' - ').trim() });
+      sections.push({
+        num: match.num,
+        title: match.title.replace(/\s*--\s*/, ' - ').trim(),
+      });
     }
   }
   return sections;
@@ -6702,21 +8063,37 @@ function parseSkillpackSectionHeader(line: string): { num: number; title: string
 
 export const operations: Operation[] = [
   // Page CRUD
-  get_page, put_page, admin_put_page, delete_page, list_pages,
+  get_page,
+  put_page,
+  admin_put_page,
+  delete_page,
+  list_pages,
   // Search
-  search, query,
+  search,
+  query,
   // Tags
-  add_tag, remove_tag, get_tags,
+  add_tag,
+  remove_tag,
+  get_tags,
   // Links
-  add_link, remove_link, get_links, get_backlinks, traverse_graph,
+  add_link,
+  remove_link,
+  get_links,
+  get_backlinks,
+  traverse_graph,
   // Timeline
-  add_timeline_entry, get_timeline,
+  add_timeline_entry,
+  get_timeline,
   // Admin
-  get_stats, get_health, get_versions, revert_version,
+  get_stats,
+  get_health,
+  get_versions,
+  revert_version,
   // Sync
   sync_brain,
   // Raw data
-  put_raw_data, get_raw_data,
+  put_raw_data,
+  get_raw_data,
   // Source registry and raw ingest provenance
   ...sourceRegistryOperations,
   // Agent session memory capture
@@ -6727,41 +8104,106 @@ export const operations: Operation[] = [
   // Lifecycle forgetting audit, restore, and purge planning
   ...lifecycleForgettingOperations,
   // Resolution & chunks
-  resolve_slugs, get_chunks,
+  resolve_slugs,
+  get_chunks,
   // Profile memory
-  get_profile_memory_entry, list_profile_memory_entries, upsert_profile_memory_entry, delete_profile_memory_entry, ...memoryInboxOperations, ...memoryWritebackRouterOperations, ...canonicalTargetProposalOperations, write_profile_memory_entry,
+  get_profile_memory_entry,
+  list_profile_memory_entries,
+  upsert_profile_memory_entry,
+  delete_profile_memory_entry,
+  ...memoryInboxOperations,
+  ...memoryWritebackRouterOperations,
+  ...canonicalTargetProposalOperations,
+  write_profile_memory_entry,
   // Personal episodes
-  get_personal_episode_entry, list_personal_episode_entries, record_personal_episode, delete_personal_episode_entry, write_personal_episode_entry,
+  get_personal_episode_entry,
+  list_personal_episode_entries,
+  record_personal_episode,
+  delete_personal_episode_entry,
+  write_personal_episode_entry,
   // Note manifest
-  get_note_manifest_entry, list_note_manifest_entries, rebuild_note_manifest,
+  get_note_manifest_entry,
+  list_note_manifest_entries,
+  rebuild_note_manifest,
   // Note sections
-  get_note_section_entry, list_note_section_entries, rebuild_note_sections,
+  get_note_section_entry,
+  list_note_section_entries,
+  rebuild_note_sections,
   // Structural graph
-  get_note_structural_neighbors, find_note_structural_path,
+  get_note_structural_neighbors,
+  find_note_structural_path,
   // Persisted context maps
-  build_context_map, get_context_map_entry, list_context_map_entries, get_context_map_report, get_context_map_explanation, query_context_map, find_context_map_path, get_broad_synthesis_route, get_precision_lookup_route, get_mixed_scope_bridge, get_mixed_scope_disclosure, get_personal_profile_lookup_route, get_personal_episode_lookup_route, select_personal_write_target, preview_personal_export, evaluate_scope_gate, select_retrieval_route, plan_retrieval_request, retrieve_context, read_context, classify_memory_scenario, select_activation_policy, proof_agent_memory, plan_scenario_memory_request, reverify_code_claims, get_workspace_system_card, get_workspace_project_card, get_workspace_orientation_bundle, get_workspace_corpus_card,
+  build_context_map,
+  get_context_map_entry,
+  list_context_map_entries,
+  get_context_map_report,
+  get_context_map_explanation,
+  query_context_map,
+  find_context_map_path,
+  get_broad_synthesis_route,
+  get_precision_lookup_route,
+  get_mixed_scope_bridge,
+  get_mixed_scope_disclosure,
+  get_personal_profile_lookup_route,
+  get_personal_episode_lookup_route,
+  select_personal_write_target,
+  preview_personal_export,
+  evaluate_scope_gate,
+  select_retrieval_route,
+  plan_retrieval_request,
+  retrieve_context,
+  read_context,
+  classify_memory_scenario,
+  select_activation_policy,
+  proof_agent_memory,
+  plan_scenario_memory_request,
+  reverify_code_claims,
+  get_workspace_system_card,
+  get_workspace_project_card,
+  get_workspace_orientation_bundle,
+  get_workspace_corpus_card,
   // Context atlas registry
-  build_context_atlas, get_context_atlas_entry, list_context_atlas_entries, select_context_atlas_entry, get_context_atlas_overview, get_context_atlas_report, get_atlas_orientation_card, get_atlas_orientation_bundle,
+  build_context_atlas,
+  get_context_atlas_entry,
+  list_context_atlas_entries,
+  select_context_atlas_entry,
+  get_context_atlas_overview,
+  get_context_atlas_report,
+  get_atlas_orientation_card,
+  get_atlas_orientation_bundle,
   // Operational memory
-  list_tasks, start_task, update_task, resume_task, get_task_working_set, record_retrieval_trace, list_task_traces, list_task_attempts, list_task_decisions, refresh_task_working_set, record_attempt, record_decision, ...brainLoopAuditOperations, ...memoryMutationLedgerOperations, ...memoryControlPlaneOperations, rerun_memory_job,
+  list_tasks,
+  start_task,
+  update_task,
+  resume_task,
+  get_task_working_set,
+  record_retrieval_trace,
+  list_task_traces,
+  list_task_attempts,
+  list_task_decisions,
+  refresh_task_working_set,
+  record_attempt,
+  record_decision,
+  ...brainLoopAuditOperations,
+  ...memoryMutationLedgerOperations,
+  ...memoryControlPlaneOperations,
+  rerun_memory_job,
   // Ingest log
-  log_ingest, get_ingest_log,
+  log_ingest,
+  get_ingest_log,
   // Files
-  file_list, file_upload, file_url,
+  file_list,
+  file_upload,
+  file_url,
   // Skillpack
   get_skillpack,
 ];
 
-function assertCapabilitySupported(
-  config: MBrainConfig,
-  capability: OperationCapability,
-) {
+function assertCapabilitySupported(config: MBrainConfig, capability: OperationCapability) {
   const reason = getUnsupportedCapabilityReason(config, capability);
   if (reason) {
     throw new OperationError('unsupported_capability', reason);
   }
 }
 
-export const operationsByName = Object.fromEntries(
-  operations.map(op => [op.name, op]),
-) as Record<string, Operation>;
+export const operationsByName = Object.fromEntries(operations.map((op) => [op.name, op])) as Record<string, Operation>;

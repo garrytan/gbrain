@@ -10,11 +10,7 @@ import type {
   RouteMemoryWritebackInput,
   RouteMemoryWritebackResult,
 } from '../types.ts';
-import {
-  corpusLaneProvenanceSourceRefs,
-  corpusLaneSourceRefs,
-  mergeSourceRefs,
-} from './corpus-lane-service.ts';
+import { corpusLaneProvenanceSourceRefs, corpusLaneSourceRefs, mergeSourceRefs } from './corpus-lane-service.ts';
 
 export const MEMORY_WRITEBACK_EVIDENCE_KINDS = [
   'direct_user_statement',
@@ -26,49 +22,20 @@ export const MEMORY_WRITEBACK_EVIDENCE_KINDS = [
   'task_mechanics',
 ] as const satisfies readonly MemoryWritebackEvidenceKind[];
 
-export const MEMORY_WRITEBACK_DECISIONS = [
-  'create_candidate',
-  'canonical_write_allowed',
-  'no_write',
-  'defer',
-] as const;
+export const MEMORY_WRITEBACK_DECISIONS = ['create_candidate', 'canonical_write_allowed', 'no_write', 'defer'] as const;
 
-export const MEMORY_WRITEBACK_INTENDED_OPERATIONS = [
-  'create_memory_candidate_entry',
-  'put_page',
-  'none',
-] as const;
+export const MEMORY_WRITEBACK_INTENDED_OPERATIONS = ['create_memory_candidate_entry', 'put_page', 'none'] as const;
 
 const DEFAULT_SCOPE_ID = 'workspace:default';
-const ACCUMULATION_SOURCE_KINDS = new Set<MemoryScenarioSourceKind>([
-  'import',
-  'meeting',
-  'cron',
-  'session_end',
-  'trace_review',
-]);
-const PAGE_BACKED_CANONICAL_TARGET_TYPES = new Set<MemoryCandidateTargetObjectType>([
-  'curated_note',
-  'procedure',
-]);
-const PERSONAL_ONLY_TARGET_TYPES = new Set<MemoryCandidateTargetObjectType>([
-  'profile_memory',
-  'personal_episode',
-]);
+const ACCUMULATION_SOURCE_KINDS = new Set<MemoryScenarioSourceKind>(['import', 'meeting', 'cron', 'session_end', 'trace_review']);
+const PAGE_BACKED_CANONICAL_TARGET_TYPES = new Set<MemoryCandidateTargetObjectType>(['curated_note', 'procedure']);
+const PERSONAL_ONLY_TARGET_TYPES = new Set<MemoryCandidateTargetObjectType>(['profile_memory', 'personal_episode']);
 
-export function routeMemoryWriteback(
-  input: RouteMemoryWritebackInput,
-): RouteMemoryWritebackResult {
+export function routeMemoryWriteback(input: RouteMemoryWritebackInput): RouteMemoryWritebackResult {
   const content = input.content.trim();
   const explicitSourceRefs = normalizeSourceRefs(input.source_refs);
-  const sourceRefs = mergeSourceRefs(
-    explicitSourceRefs,
-    corpusLaneSourceRefs(input.corpus_lane),
-  );
-  const provenanceRefs = mergeSourceRefs(
-    explicitSourceRefs.filter(isAnswerGroundingProvenanceRef),
-    corpusLaneProvenanceSourceRefs(input.corpus_lane),
-  );
+  const sourceRefs = mergeSourceRefs(explicitSourceRefs, corpusLaneSourceRefs(input.corpus_lane));
+  const provenanceRefs = mergeSourceRefs(explicitSourceRefs.filter(isAnswerGroundingProvenanceRef), corpusLaneProvenanceSourceRefs(input.corpus_lane));
   const scopeId = normalizeOptionalString(input.scope_id) ?? DEFAULT_SCOPE_ID;
   const sourceKind = input.source_kind ?? null;
   const sensitivity = input.sensitivity ?? 'work';
@@ -121,13 +88,7 @@ export function routeMemoryWriteback(
     });
   }
 
-  const canonicalMissing = canonicalMissingRequirements(
-    input,
-    provenanceRefs,
-    targetObjectType,
-    targetObjectId,
-    sensitivity,
-  );
+  const canonicalMissing = canonicalMissingRequirements(input, provenanceRefs, targetObjectType, targetObjectId, sensitivity);
   if (input.allow_canonical_write === true && canonicalMissing.length > 0) {
     return baseResult(input, {
       decision: 'defer',
@@ -144,14 +105,7 @@ export function routeMemoryWriteback(
     });
   }
 
-  const canonicalWriteRequirements = canonicalWriteRequirementsFor(
-    input,
-    sourceRefs,
-    provenanceRefs,
-    targetObjectType,
-    targetObjectId,
-    sensitivity,
-  );
+  const canonicalWriteRequirements = canonicalWriteRequirementsFor(input, sourceRefs, provenanceRefs, targetObjectType, targetObjectId, sensitivity);
   if (canonicalWriteRequirements) {
     return {
       ...baseResult(input, {
@@ -170,11 +124,7 @@ export function routeMemoryWriteback(
     };
   }
 
-  const candidateRoute = candidateRouteReason(
-    input.evidence_kind,
-    sourceKind,
-    input.allow_canonical_write,
-  );
+  const candidateRoute = candidateRouteReason(input.evidence_kind, sourceKind, input.allow_canonical_write);
   if (!candidateRoute) {
     return baseResult(input, {
       decision: 'defer',
@@ -282,13 +232,8 @@ function baseResult(
   const explicitSourceRefs = normalizeSourceRefs(input.source_refs);
   const laneSourceRefs = corpusLaneSourceRefs(input.corpus_lane);
   const sourceRefs = mergeSourceRefs(explicitSourceRefs, laneSourceRefs);
-  const provenanceRefs = mergeSourceRefs(
-    explicitSourceRefs.filter(isAnswerGroundingProvenanceRef),
-    corpusLaneProvenanceSourceRefs(input.corpus_lane),
-  );
-  const blockers = fields.decision === 'defer' || fields.decision === 'no_write'
-    ? fields.reasons
-    : [];
+  const provenanceRefs = mergeSourceRefs(explicitSourceRefs.filter(isAnswerGroundingProvenanceRef), corpusLaneProvenanceSourceRefs(input.corpus_lane));
+  const blockers = fields.decision === 'defer' || fields.decision === 'no_write' ? fields.reasons : [];
   return {
     decision: fields.decision,
     intended_operation: fields.intended_operation,
@@ -322,19 +267,17 @@ function baseResult(
         expected_content_hash: targetSnapshotExpectedHash(input),
       },
       sensitivity: fields.sensitivity,
-      ...(fields.decision === 'create_candidate' && fields.reasons[0]
-        ? { candidate_only_reason: fields.reasons[0] }
-        : {}),
+      ...(fields.decision === 'create_candidate' && fields.reasons[0] ? { candidate_only_reason: fields.reasons[0] } : {}),
       ...(fields.decision === 'canonical_write_allowed'
-        ? { control_plane_apply_reason: 'canonical_write_requires_put_page_with_expected_content_hash' }
+        ? {
+            control_plane_apply_reason: 'canonical_write_requires_put_page_with_expected_content_hash',
+          }
         : {}),
     },
   };
 }
 
-function applyMode(
-  decision: RouteMemoryWritebackResult['decision'],
-): NonNullable<RouteMemoryWritebackResult['writeback_governance_metadata']>['apply_mode'] {
+function applyMode(decision: RouteMemoryWritebackResult['decision']): NonNullable<RouteMemoryWritebackResult['writeback_governance_metadata']>['apply_mode'] {
   switch (decision) {
     case 'no_write':
       return 'no_write';
@@ -366,10 +309,9 @@ function normalizeSourceRefs(value: string[] | undefined): string[] {
 function requiresImportLane(input: RouteMemoryWritebackInput, sourceRefs: string[]): boolean {
   if (input.source_kind !== 'import' || input.evidence_kind !== 'source_extracted') return false;
   if (input.corpus_lane?.lane_id?.trim()) return false;
-  return !sourceRefs.some((ref) =>
-    hasNonEmptyPrefixedValue(ref, 'corpus_lane:')
-    || hasNonEmptyPrefixedValue(ref, 'source_record:')
-    || hasNonEmptyPrefixedValue(ref, 'import_origin:')
+  return !sourceRefs.some(
+    (ref) =>
+      hasNonEmptyPrefixedValue(ref, 'corpus_lane:') || hasNonEmptyPrefixedValue(ref, 'source_record:') || hasNonEmptyPrefixedValue(ref, 'import_origin:'),
   );
 }
 
@@ -408,7 +350,7 @@ function canonicalWriteRequirementsFor(
   if (!targetObjectType || targetObjectType === 'other') return null;
   if (!isPageBackedCanonicalTargetType(targetObjectType)) return null;
   if (!targetObjectId) return null;
-  if (sensitivity === 'unknown') return null;
+  if (sensitivity === 'unknown' || sensitivity === 'secret') return null;
   if (!hasTargetSnapshotHash(input)) return null;
 
   return {
@@ -437,6 +379,7 @@ function canonicalMissingRequirements(
   if (!targetObjectId) missing.push('target_object_id');
   if (!hasTargetSnapshotHash(input)) missing.push('target_snapshot_hash');
   if (sensitivity === 'unknown') missing.push('sensitivity');
+  if (sensitivity === 'secret') missing.push('secret_sensitivity');
   if (input.evidence_kind !== 'direct_user_statement' && input.evidence_kind !== 'source_extracted') {
     missing.push('canonical_evidence_kind');
   }
@@ -452,13 +395,13 @@ function canonicalMissingReasons(missing: string[]): string[] {
   if (missing.includes('canonical_page_target')) reasons.add('canonical_target_not_page_backed');
   if (missing.includes('target_snapshot_hash')) reasons.add('canonical_missing_target_snapshot_hash');
   if (missing.includes('sensitivity')) reasons.add('canonical_sensitivity_required');
+  if (missing.includes('secret_sensitivity')) reasons.add('canonical_secret_not_allowed');
   if (missing.includes('canonical_evidence_kind')) reasons.add('canonical_evidence_kind_not_allowed');
   return [...reasons];
 }
 
 function hasTargetSnapshotHash(input: RouteMemoryWritebackInput): boolean {
-  return Object.prototype.hasOwnProperty.call(input, 'target_snapshot_hash')
-    && input.target_snapshot_hash !== undefined;
+  return Object.prototype.hasOwnProperty.call(input, 'target_snapshot_hash') && input.target_snapshot_hash !== undefined;
 }
 
 function personalTargetMissingRequirements(
@@ -526,11 +469,7 @@ function candidateRouteReason(
   return null;
 }
 
-function candidateReasons(
-  routeReason: string,
-  evidenceKind: MemoryWritebackEvidenceKind,
-  targetObjectType: MemoryCandidateTargetObjectType | null,
-): string[] {
+function candidateReasons(routeReason: string, evidenceKind: MemoryWritebackEvidenceKind, targetObjectType: MemoryCandidateTargetObjectType | null): string[] {
   const reasons = [routeReason];
   if (evidenceKind === 'code_sensitive' && !reasons.includes('code_claim_requires_revalidation')) {
     reasons.push('code_claim_requires_revalidation');
@@ -585,13 +524,13 @@ function candidateStatus(
   targetObjectId: string | null,
 ): 'captured' | 'candidate' {
   if (
-    evidenceKind === 'ambiguous'
-    || evidenceKind === 'contradicts_existing'
-    || evidenceKind === 'code_sensitive'
-    || sensitivity === 'unknown'
-    || targetObjectType === 'other'
-    || !targetObjectType
-    || !targetObjectId
+    evidenceKind === 'ambiguous' ||
+    evidenceKind === 'contradicts_existing' ||
+    evidenceKind === 'code_sensitive' ||
+    sensitivity === 'unknown' ||
+    targetObjectType === 'other' ||
+    !targetObjectType ||
+    !targetObjectId
   ) {
     return 'captured';
   }

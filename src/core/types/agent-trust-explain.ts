@@ -13,6 +13,7 @@ export interface AgentTrustExplainReport {
     canonical_write_requirements: [
       'canonical_write_allowed',
       'target_snapshot_hash',
+      'write_session_id',
       'expected_content_hash',
     ];
     graph_frontier_default: 'off';

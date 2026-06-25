@@ -1406,6 +1406,14 @@
             "required": false,
             "nullable": false
           }
+        },
+        "write_session_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional route_memory_writeback write session id. When supplied, put_page consumes its target slug, source refs, scope, and expected hash as the route-first precondition."
         }
       },
       "cli_exposure": {
@@ -1468,8 +1476,8 @@
           }
         }
       },
-      "compact_schema_hash": "0687fea202b1fce1f6c042ba14de752c8e8fb9d37fce2d7ca8c1e7b2c53d622e",
-      "full_schema_hash": "67654cc0da74bd41f780c6cbe9afc4de7175bf325664ead02bef6b831d5bd555",
+      "compact_schema_hash": "a51ba3f749c5bd5ac7fe532742dd2ca0698121311cab68290ad5ceb8fd1b846a",
+      "full_schema_hash": "5e7433746e675911e28888f1482e91b7e94a1c3cb56814c61d18fa3f904f44bf",
       "memory_verb_families": [],
       "mutation_aliases": []
     },
@@ -14759,9 +14767,9 @@
           "type": [
             "string"
           ],
-          "required": true,
+          "required": false,
           "nullable": true,
-          "description": "Required route-first write precondition. Existing page content_hash must match before writing; null requires that the page is absent."
+          "description": "Route-first write precondition. Existing page content_hash must match before writing; null requires that the page is absent. Omit only when supplying a router-issued write_session_id."
         },
         "memory_session_id": {
           "type": [
@@ -14834,6 +14842,14 @@
             "required": false,
             "nullable": false
           }
+        },
+        "write_session_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional route_memory_writeback write session id. When supplied, put_page consumes its target slug, source refs, scope, and expected hash as the route-first precondition."
         }
       },
       "cli_exposure": {
@@ -14846,7 +14862,6 @@
         "open_world": false,
         "required_params": [
           "content",
-          "expected_content_hash",
           "slug"
         ]
       },
@@ -14892,8 +14907,8 @@
           }
         }
       },
-      "compact_schema_hash": "25686bdfc2fdeac0a3653f823e43e6a8617fa64d8012c139982dbe6905bad993",
-      "full_schema_hash": "826c330e604af96e911a474ee74f26596b4b6171be58597156bcac0b0b9553ee",
+      "compact_schema_hash": "a51ba3f749c5bd5ac7fe532742dd2ca0698121311cab68290ad5ceb8fd1b846a",
+      "full_schema_hash": "16b1860483a64f3aed9c9fd8909dbee241c3360d74887ef2e52087b1a85d08d7",
       "memory_verb_families": [
         "canonical_page_write"
       ],

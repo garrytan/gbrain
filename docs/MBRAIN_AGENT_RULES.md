@@ -1,4 +1,4 @@
-<!-- mbrain-agent-rules-version: 0.5.11 -->
+<!-- mbrain-agent-rules-version: 0.5.12 -->
 <!-- source: https://raw.githubusercontent.com/meghendra6/mbrain/master/docs/MBRAIN_AGENT_RULES.md -->
 # MBrain Agent Rules
 
@@ -59,16 +59,20 @@ meeting/import-derived, or not ready for compiled truth.
 Call `put_page` only after the router returns `canonical_write_allowed`. Canonical
 write routing requires `target_snapshot_hash`: pass the current page
 `content_hash`, or pass `null` only after confirming the target page is absent.
-The `put_page` operation rejects a blind write (`route_first`): a new page must
-pass explicit `expected_content_hash: null` after absence is confirmed, and an
-update must pass the current `content_hash`. `admin_put_page` is the CLI/offline
-repair escape.
-When calling `put_page`, pass the router's
-`canonical_write_requirements.expected_content_hash` as `expected_content_hash`,
-then write attributed compiled truth plus timeline evidence. If the router
-returns `create_candidate`, do not also call `put_page`. If it returns `defer`,
-record missing provenance, scope, target, or snapshot. If it returns `no_write`,
-skip the write.
+The `put_page` operation rejects a blind write (`route_first`): use the router's
+`write_session_id` when present. Without a write session, a new page must pass
+explicit `expected_content_hash: null` after absence is confirmed, and an update
+must pass the current `content_hash`. `admin_put_page` is the CLI/offline repair
+escape.
+When calling `put_page`, prefer the router's
+`canonical_write_requirements.write_session_id` as `write_session_id`; otherwise
+pass `canonical_write_requirements.expected_content_hash` as
+`expected_content_hash`. With `write_session_id`, write only the routed compiled
+truth plus required source citations; do not add timeline content. Without a
+write session, write attributed compiled truth plus timeline evidence. If the
+router returns `create_candidate`, do not also call `put_page`. If it returns
+`defer`, record missing provenance, scope, target, or snapshot. If it returns
+`no_write`, skip the write.
 
 Targetless Memory Inbox candidates need a canonical target proposal before
 binding. Review the proposed home; approve or reject the proposal. approval must

@@ -1,14 +1,8 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
+import type { OperationAuthPrincipal } from './auth-principal.ts';
 import type { Operation } from './operations.ts';
-import {
-  MEMORY_WRITEBACK_EVIDENCE_KINDS,
-  routeMemoryWriteback,
-} from './services/memory-writeback-router-service.ts';
-import {
-  CORPUS_LANE_ARTIFACT_KINDS,
-  corpusLaneProvenanceSourceRefs,
-  mergeSourceRefs,
-} from './services/corpus-lane-service.ts';
+import { MEMORY_WRITEBACK_EVIDENCE_KINDS, routeMemoryWriteback } from './services/memory-writeback-router-service.ts';
+import { CORPUS_LANE_ARTIFACT_KINDS, corpusLaneProvenanceSourceRefs, mergeSourceRefs } from './services/corpus-lane-service.ts';
 import { createMemoryCandidateEntryWithStatusEvent } from './services/memory-inbox-service.ts';
 import { reviewDuplicateMemory } from './services/duplicate-memory-review-service.ts';
 import type {
@@ -22,12 +16,7 @@ import type {
   RouteMemoryWritebackResult,
 } from './types.ts';
 
-type OperationErrorCtor = new (
-  code: any,
-  message: string,
-  suggestion?: string,
-  docs?: string,
-) => Error;
+type OperationErrorCtor = new (code: any, message: string, suggestion?: string, docs?: string) => Error;
 
 const MEMORY_SCENARIO_SOURCE_KIND_VALUES = [
   'chat',
@@ -58,37 +47,38 @@ const MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES = [
   'other',
 ] as const satisfies readonly MemoryCandidateTargetObjectType[];
 
-const MEMORY_CANDIDATE_SENSITIVITY_VALUES = [
-  'public',
-  'work',
-  'personal',
-  'secret',
-  'unknown',
-] as const satisfies readonly MemoryCandidateSensitivity[];
+const MEMORY_CANDIDATE_SENSITIVITY_VALUES = ['public', 'work', 'personal', 'secret', 'unknown'] as const satisfies readonly MemoryCandidateSensitivity[];
 
-function invalidParams(
-  deps: { OperationError: OperationErrorCtor },
-  message: string,
-): Error {
+const DEFAULT_MEMORY_WRITE_SESSION_TTL_MS = 15 * 60 * 1000;
+
+function routedContentHash(content: string): string {
+  return createHash('sha256').update(content.trim()).digest('hex');
+}
+
+function writeSessionAuthPrincipalMetadata(principal: OperationAuthPrincipal | undefined): Record<string, unknown> | null {
+  if (!principal) return null;
+  return {
+    principal_type: principal.principal_type,
+    principal_id: principal.principal_id,
+    actor_type: principal.actor_type,
+    actor_id: principal.actor_id,
+    surface_locality: principal.surface_locality,
+    surface_profile: principal.surface_profile,
+  };
+}
+
+function invalidParams(deps: { OperationError: OperationErrorCtor }, message: string): Error {
   return new deps.OperationError('invalid_params', message);
 }
 
-function requireString(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): string {
+function requireString(deps: { OperationError: OperationErrorCtor }, field: string, value: unknown): string {
   if (typeof value !== 'string') {
     throw invalidParams(deps, `${field} must be a string`);
   }
   return value;
 }
 
-function optionalString(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): string | undefined {
+function optionalString(deps: { OperationError: OperationErrorCtor }, field: string, value: unknown): string | undefined {
   if (value == null) return undefined;
   if (typeof value !== 'string') {
     throw invalidParams(deps, `${field} must be a string`);
@@ -96,11 +86,7 @@ function optionalString(
   return value;
 }
 
-function optionalTargetSnapshotHash(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): string | null | undefined {
+function optionalTargetSnapshotHash(deps: { OperationError: OperationErrorCtor }, field: string, value: unknown): string | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
   if (typeof value !== 'string' || !/^[a-fA-F0-9]{64}$/.test(value)) {
@@ -109,11 +95,7 @@ function optionalTargetSnapshotHash(
   return value.toLowerCase();
 }
 
-function optionalStringArray(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): string[] | undefined {
+function optionalStringArray(deps: { OperationError: OperationErrorCtor }, field: string, value: unknown): string[] | undefined {
   if (value == null) return undefined;
   if (Array.isArray(value)) {
     if (!value.every((entry) => typeof entry === 'string')) {
@@ -146,11 +128,7 @@ function optionalStringArray(
     .filter((entry) => entry.length > 0);
 }
 
-function optionalNumber(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): number | undefined {
+function optionalNumber(deps: { OperationError: OperationErrorCtor }, field: string, value: unknown): number | undefined {
   if (value == null) return undefined;
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw invalidParams(deps, `${field} must be a finite number`);
@@ -158,11 +136,7 @@ function optionalNumber(
   return value;
 }
 
-function optionalBoolean(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): boolean | undefined {
+function optionalBoolean(deps: { OperationError: OperationErrorCtor }, field: string, value: unknown): boolean | undefined {
   if (value == null) return undefined;
   if (typeof value !== 'boolean') {
     throw invalidParams(deps, `${field} must be a boolean`);
@@ -170,11 +144,7 @@ function optionalBoolean(
   return value;
 }
 
-function optionalCorpusLaneMetadata(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-): CorpusLaneMetadata | undefined {
+function optionalCorpusLaneMetadata(deps: { OperationError: OperationErrorCtor }, field: string, value: unknown): CorpusLaneMetadata | undefined {
   if (value == null) return undefined;
   let parsed = value;
   if (typeof value === 'string') {
@@ -199,10 +169,7 @@ function optionalCorpusLaneMetadata(
       throw invalidParams(deps, `${field}.${laneField} must be a non-empty string`);
     }
     if (laneField === 'artifact_kind' && !(CORPUS_LANE_ARTIFACT_KINDS as readonly string[]).includes(trimmed)) {
-      throw invalidParams(
-        deps,
-        `${field}.artifact_kind must be one of: ${CORPUS_LANE_ARTIFACT_KINDS.join(', ')}`,
-      );
+      throw invalidParams(deps, `${field}.artifact_kind must be one of: ${CORPUS_LANE_ARTIFACT_KINDS.join(', ')}`);
     }
     output[laneField] = trimmed;
   }
@@ -212,12 +179,7 @@ function optionalCorpusLaneMetadata(
   return output as unknown as CorpusLaneMetadata;
 }
 
-function requireEnumValue<T extends string>(
-  deps: { OperationError: OperationErrorCtor },
-  field: string,
-  value: unknown,
-  allowed: readonly T[],
-): T {
+function requireEnumValue<T extends string>(deps: { OperationError: OperationErrorCtor }, field: string, value: unknown, allowed: readonly T[]): T {
   if (typeof value !== 'string' || !allowed.includes(value as T)) {
     throw invalidParams(deps, `${field} must be one of: ${allowed.join(', ')}`);
   }
@@ -234,10 +196,7 @@ function optionalEnumValue<T extends string>(
   return requireEnumValue(deps, field, value, allowed);
 }
 
-function parseRouteMemoryWritebackInput(
-  deps: { OperationError: OperationErrorCtor },
-  params: Record<string, unknown>,
-): RouteMemoryWritebackInput {
+function parseRouteMemoryWritebackInput(deps: { OperationError: OperationErrorCtor }, params: Record<string, unknown>): RouteMemoryWritebackInput {
   return {
     content: requireString(deps, 'content', params.content),
     source_refs: optionalStringArray(deps, 'source_refs', params.source_refs),
@@ -245,12 +204,7 @@ function parseRouteMemoryWritebackInput(
     source_kind: optionalEnumValue(deps, 'source_kind', params.source_kind, MEMORY_SCENARIO_SOURCE_KIND_VALUES),
     evidence_kind: requireEnumValue(deps, 'evidence_kind', params.evidence_kind, MEMORY_WRITEBACK_EVIDENCE_KINDS),
     candidate_type: optionalEnumValue(deps, 'candidate_type', params.candidate_type, MEMORY_CANDIDATE_TYPE_VALUES),
-    target_object_type: optionalEnumValue(
-      deps,
-      'target_object_type',
-      params.target_object_type,
-      MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES,
-    ),
+    target_object_type: optionalEnumValue(deps, 'target_object_type', params.target_object_type, MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES),
     target_object_id: optionalString(deps, 'target_object_id', params.target_object_id),
     target_snapshot_hash: optionalTargetSnapshotHash(deps, 'target_snapshot_hash', params.target_snapshot_hash),
     scope_id: optionalString(deps, 'scope_id', params.scope_id),
@@ -264,50 +218,99 @@ function parseRouteMemoryWritebackInput(
   };
 }
 
-export function createMemoryWritebackRouterOperations(
-  deps: { defaultScopeId: string; OperationError: OperationErrorCtor },
-): Operation[] {
+export function createMemoryWritebackRouterOperations(deps: { defaultScopeId: string; OperationError: OperationErrorCtor }): Operation[] {
   const route_memory_writeback: Operation = {
     name: 'route_memory_writeback',
     description: 'Route a possible durable memory writeback to a reviewable candidate or deferred/no-write decision.',
     params: {
-      content: { type: 'string', required: true, description: 'Claim, observation, or proposed memory content to route' },
-      source_refs: { type: ['array', 'string'], items: { type: 'string' }, description: 'Provenance references for the writeback signal' },
-      corpus_lane: { type: ['object', 'string'], description: 'Optional post-scope corpus lane provenance metadata' },
-      source_kind: { type: 'string', description: 'Source kind for the writeback signal', enum: [...MEMORY_SCENARIO_SOURCE_KIND_VALUES] },
+      content: {
+        type: 'string',
+        required: true,
+        description: 'Claim, observation, or proposed memory content to route',
+      },
+      source_refs: {
+        type: ['array', 'string'],
+        items: { type: 'string' },
+        description: 'Provenance references for the writeback signal',
+      },
+      corpus_lane: {
+        type: ['object', 'string'],
+        description: 'Optional post-scope corpus lane provenance metadata',
+      },
+      source_kind: {
+        type: 'string',
+        description: 'Source kind for the writeback signal',
+        enum: [...MEMORY_SCENARIO_SOURCE_KIND_VALUES],
+      },
       evidence_kind: {
         type: 'string',
         required: true,
         description: 'Evidence quality and writeback safety category',
         enum: [...MEMORY_WRITEBACK_EVIDENCE_KINDS],
       },
-      candidate_type: { type: 'string', description: 'Optional memory candidate type override', enum: [...MEMORY_CANDIDATE_TYPE_VALUES] },
+      candidate_type: {
+        type: 'string',
+        description: 'Optional memory candidate type override',
+        enum: [...MEMORY_CANDIDATE_TYPE_VALUES],
+      },
       target_object_type: {
         type: 'string',
         description: 'Optional canonical target object type',
         enum: [...MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES],
       },
-      target_object_id: { type: 'string', description: 'Optional canonical target object id' },
-      target_snapshot_hash: { type: 'string', nullable: true, description: 'Canonical target content_hash observed before routing; null asserts that the target is absent' },
-      scope_id: { type: 'string', description: `Memory candidate scope id (default: ${deps.defaultScopeId})` },
-      sensitivity: { type: 'string', description: 'Optional sensitivity classification', enum: [...MEMORY_CANDIDATE_SENSITIVITY_VALUES] },
-      confidence_score: { type: 'number', description: 'Optional confidence score from 0 to 1' },
-      importance_score: { type: 'number', description: 'Optional importance score from 0 to 1' },
-      recurrence_score: { type: 'number', description: 'Optional recurrence score from 0 to 1' },
-      interaction_id: { type: 'string', description: 'Optional retrieval trace id for lifecycle event attribution' },
-      allow_canonical_write: { type: 'boolean', description: 'Whether the router may return canonical write requirements' },
-      apply: { type: 'boolean', description: 'Create the routed memory candidate when the route decision allows it' },
-      dry_run: { type: 'boolean', description: 'Preview routing and candidate creation without mutating memory' },
+      target_object_id: {
+        type: 'string',
+        description: 'Optional canonical target object id',
+      },
+      target_snapshot_hash: {
+        type: 'string',
+        nullable: true,
+        description: 'Canonical target content_hash observed before routing; null asserts that the target is absent',
+      },
+      scope_id: {
+        type: 'string',
+        description: `Memory candidate scope id (default: ${deps.defaultScopeId})`,
+      },
+      sensitivity: {
+        type: 'string',
+        description: 'Optional sensitivity classification',
+        enum: [...MEMORY_CANDIDATE_SENSITIVITY_VALUES],
+      },
+      confidence_score: {
+        type: 'number',
+        description: 'Optional confidence score from 0 to 1',
+      },
+      importance_score: {
+        type: 'number',
+        description: 'Optional importance score from 0 to 1',
+      },
+      recurrence_score: {
+        type: 'number',
+        description: 'Optional recurrence score from 0 to 1',
+      },
+      interaction_id: {
+        type: 'string',
+        description: 'Optional retrieval trace id for lifecycle event attribution',
+      },
+      allow_canonical_write: {
+        type: 'boolean',
+        description: 'Whether the router may return canonical write requirements',
+      },
+      apply: {
+        type: 'boolean',
+        description: 'Create the routed memory candidate when the route decision allows it',
+      },
+      dry_run: {
+        type: 'boolean',
+        description: 'Preview routing and candidate creation without mutating memory',
+      },
     },
     mutating: true,
     handler: async (ctx, params) => {
       const input = parseRouteMemoryWritebackInput(deps, params);
       let routed = routeMemoryWriteback(input);
 
-      if (
-        routed.decision === 'canonical_write_allowed'
-        && routed.canonical_write_requirements?.expected_content_hash === null
-      ) {
+      if (routed.decision === 'canonical_write_allowed' && routed.canonical_write_requirements?.expected_content_hash === null) {
         const existing = await ctx.engine.getPage(routed.canonical_write_requirements.target_object_id);
         if (existing) {
           routed = deferExistingTargetForNullSnapshot(routed);
@@ -319,6 +322,47 @@ export function createMemoryWritebackRouterOperations(
           ...routed,
           dry_run: true,
           applied: false,
+        };
+      }
+
+      if (input.apply === true && routed.decision === 'canonical_write_allowed' && routed.canonical_write_requirements) {
+        const routeDecisionId = `route-memory-writeback:${randomUUID()}`;
+        const writeSessionId = `memory-write-session:${randomUUID()}`;
+        const authPrincipal = writeSessionAuthPrincipalMetadata(ctx.auth_principal);
+        const session = await ctx.engine.createMemoryWriteSession({
+          id: writeSessionId,
+          route_decision_id: routeDecisionId,
+          scope_id: routed.normalized_signal.scope_id,
+          actor: ctx.auth_principal?.actor_id ?? 'mbrain:route_memory_writeback',
+          target_slug: routed.canonical_write_requirements.target_object_id,
+          target_object_type: routed.canonical_write_requirements.target_object_type,
+          expected_content_hash: routed.canonical_write_requirements.expected_content_hash,
+          source_refs: routed.canonical_write_requirements.source_refs,
+          route_decision: 'canonical_write_allowed',
+          intended_operation: 'put_page',
+          route_reasons: routed.reasons,
+          missing_requirements: routed.missing_requirements,
+          governance_metadata: {
+            ...(routed.writeback_governance_metadata ?? {}),
+            interaction_id: input.interaction_id ?? null,
+            routed_content: input.content.trim(),
+            routed_content_hash: routedContentHash(input.content),
+            ...(authPrincipal ? { auth_principal: authPrincipal } : {}),
+          },
+          expires_at: new Date(Date.now() + DEFAULT_MEMORY_WRITE_SESSION_TTL_MS),
+        });
+
+        return {
+          ...withWritebackApplyMode(routed, 'write_session_created'),
+          applied: true,
+          route_decision_id: routeDecisionId,
+          write_session_id: writeSessionId,
+          write_session: session,
+          canonical_write_requirements: {
+            ...routed.canonical_write_requirements,
+            route_decision_id: routeDecisionId,
+            write_session_id: writeSessionId,
+          },
         };
       }
 
@@ -385,15 +429,9 @@ export function createMemoryWritebackRouterOperations(
   return [route_memory_writeback];
 }
 
-function deferredRouteCandidateInput(
-  input: RouteMemoryWritebackInput,
-  routed: RouteMemoryWritebackResult,
-) {
+function deferredRouteCandidateInput(input: RouteMemoryWritebackInput, routed: RouteMemoryWritebackResult) {
   const signal = routed.normalized_signal;
-  const sourceRefs = mergeSourceRefs(
-    answerGroundingSourceRefs(input.source_refs),
-    corpusLaneProvenanceSourceRefs(input.corpus_lane),
-  );
+  const sourceRefs = mergeSourceRefs(answerGroundingSourceRefs(input.source_refs), corpusLaneProvenanceSourceRefs(input.corpus_lane));
 
   return {
     id: randomUUID(),
@@ -431,17 +469,15 @@ function withWritebackApplyMode(
 
 function deferredRouteReviewReason(routed: RouteMemoryWritebackResult): string {
   const reasons = routed.reasons.length > 0 ? routed.reasons.join(',') : 'unknown';
-  const missing = routed.missing_requirements.length > 0
-    ? `; missing_requirements:${routed.missing_requirements.join(',')}`
-    : '';
+  const missing = routed.missing_requirements.length > 0 ? `; missing_requirements:${routed.missing_requirements.join(',')}` : '';
   return `route_memory_writeback_deferred:${reasons}${missing}`;
 }
 
 function deferredRouteSensitivity(routed: RouteMemoryWritebackResult): MemoryCandidateSensitivity {
   if (
-    routed.normalized_signal.target_object_type === 'profile_memory'
-    || routed.normalized_signal.target_object_type === 'personal_episode'
-    || routed.missing_requirements.some((requirement) => requirement.startsWith('personal_target_'))
+    routed.normalized_signal.target_object_type === 'profile_memory' ||
+    routed.normalized_signal.target_object_type === 'personal_episode' ||
+    routed.missing_requirements.some((requirement) => requirement.startsWith('personal_target_'))
   ) {
     return 'personal';
   }
@@ -464,9 +500,7 @@ function generatedByForSourceKind(sourceKind: MemoryScenarioSourceKind | null): 
   return 'agent';
 }
 
-function deferExistingTargetForNullSnapshot(
-  routed: ReturnType<typeof routeMemoryWriteback>,
-): ReturnType<typeof routeMemoryWriteback> {
+function deferExistingTargetForNullSnapshot(routed: ReturnType<typeof routeMemoryWriteback>): ReturnType<typeof routeMemoryWriteback> {
   return {
     ...routed,
     decision: 'defer',

@@ -73,6 +73,7 @@ const ROUTER_TERMS = [
   'route_memory_writeback',
   'canonical_write_allowed',
   'target_snapshot_hash',
+  'write_session_id',
   'expected_content_hash',
 ] as const;
 

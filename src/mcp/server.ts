@@ -280,9 +280,10 @@ export function mcpResultTextBudgetForFinalFrame(
 
 /**
  * The MCP put_page surface must not create or overwrite a canonical page blind. A write is
- * allowed only when the caller has observed the target: the expected_content_hash field is
- * present (null asserts the page is absent, a content hash drives an optimistic update).
- * memory_session_id is only realm access context; it is not a route-first write grant.
+ * allowed only when the caller supplies a router-issued write_session_id or has observed
+ * the target: the expected_content_hash field is present (null asserts the page is absent,
+ * a content hash drives an optimistic update). memory_session_id is only realm access
+ * context; it is not a route-first write grant.
  *
  * Note: the MCP SDK client drops a null-valued argument, so over the SDK a put_page that meant
  * to pass `expected_content_hash: null` arrives with the field absent — and is therefore

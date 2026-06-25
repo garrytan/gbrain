@@ -107,6 +107,24 @@ export interface ReportCanonicalTargetProposal {
   bound_candidate_ids?: string[];
 }
 
+export interface ReportWriteSession {
+  id: string;
+  route_decision_id: string;
+  status: 'open' | 'applied' | 'superseded' | 'expired' | 'abandoned' | string;
+  target_slug: string;
+  expected_content_hash: string | null;
+  source_refs: string[];
+  route_decision: string;
+  intended_operation: string;
+  actor: string;
+  scope_id: string;
+  created_at: string;
+  expires_at: string;
+  consumed_at?: string | null;
+  consumed_by_event_id?: string | null;
+  status_reason?: string | null;
+}
+
 export interface ReportConflict {
   id: string;
   target_ref: string;
@@ -232,6 +250,7 @@ export interface MemoryReviewReportInput {
   purge_candidates?: ReportPurgeCandidate[];
   review_items?: ReportReviewItem[];
   canonical_target_proposals?: ReportCanonicalTargetProposal[];
+  write_sessions?: ReportWriteSession[];
   conflicts?: ReportConflict[];
   sources?: ReportSource[];
   source_items?: ReportSourceItem[];
@@ -301,6 +320,8 @@ export interface MemoryReviewReportSummary {
   candidate_unresolved_exposed: number;
   candidate_hard_blocked_by_proposal: number;
   coverage_gaps: number;
+  open_write_sessions: number;
+  expired_write_sessions: number;
 }
 
 export interface ProjectionFreshnessSummary {
@@ -331,6 +352,7 @@ export interface MemoryReviewReport {
     purge_candidates: ReportPurgeCandidate[];
     review_items: ReportReviewItem[];
     canonical_target_proposals: ReportCanonicalTargetProposal[];
+    write_sessions: ReportWriteSession[];
     conflicts: ReportConflict[];
     source_ingest: { by_source: SourceIngestSummary[] };
     extraction: { by_status: CountByStatus[] };
@@ -356,6 +378,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
   const purgeCandidates = redactReportValues(input.purge_candidates ?? []);
   const reviewItems = redactReportValues(input.review_items ?? []);
   const canonicalTargetProposals = redactReportValues(input.canonical_target_proposals ?? []);
+  const writeSessions = redactReportValues(input.write_sessions ?? []);
   const conflicts = redactReportValues(input.conflicts ?? []);
   const sources = redactReportValues(input.sources ?? []);
   const sourceItems = redactReportValues(input.source_items ?? []);
@@ -418,6 +441,8 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
     candidate_unresolved_exposed: candidateDebt.unresolved_exposed_count,
     candidate_hard_blocked_by_proposal: candidateDebt.hard_blocked_by_proposal_count,
     coverage_gaps: coverageGaps.length,
+    open_write_sessions: writeSessions.filter((session) => session.status === 'open').length,
+    expired_write_sessions: writeSessions.filter((session) => session.status === 'expired').length,
   };
 
   return {
@@ -432,6 +457,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
       purge_candidates: purgeCandidates,
       review_items: reviewItems,
       canonical_target_proposals: canonicalTargetProposals,
+      write_sessions: writeSessions,
       conflicts,
       source_ingest: { by_source: summarizeSourceIngest(sourceItems) },
       extraction: { by_status: countByStatus(extractedClaims.map((claim) => claim.status)) },
@@ -517,6 +543,14 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
         lines.push(`- ${proposal.id}: ${proposal.status} ${proposal.proposed_slug} (${proposal.proposed_title})`);
       }
     }
+
+	    if (report.sections.write_sessions.length > 0) {
+	      lines.push('', 'Write Sessions');
+	      for (const session of report.sections.write_sessions) {
+	        const reason = session.status_reason ? ` | reason:${redactSecrets(session.status_reason)}` : '';
+	        lines.push(`- ${session.status} ${session.id} -> ${session.target_slug} | route:${session.route_decision_id} | expires:${session.expires_at}${reason}`);
+	      }
+	    }
 
     if (report.actions.length > 0) {
       lines.push('', 'Actions');
@@ -672,6 +706,8 @@ function buildReportHealth(summary: MemoryReviewReportSummary): MemoryReviewRepo
   if (summary.candidate_promoted_without_handoff > 0) reasons.push(`${summary.candidate_promoted_without_handoff} promoted candidates without handoff`);
   if (summary.candidate_unresolved_exposed > 0) reasons.push(`${summary.candidate_unresolved_exposed} unresolved exposed candidates`);
   if (summary.coverage_gaps > 0) reasons.push(`${summary.coverage_gaps} coverage gaps`);
+  if (summary.open_write_sessions > 0) reasons.push(`${summary.open_write_sessions} open write sessions`);
+  if (summary.expired_write_sessions > 0) reasons.push(`${summary.expired_write_sessions} expired write sessions`);
 
   return {
     status: reasons.length === 0 ? 'ok' : summary.failed_jobs > 0 || summary.reconciliation_failures > 0 ? 'fail' : 'warn',

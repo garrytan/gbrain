@@ -59,6 +59,7 @@ import type {
   MemoryRedactionPlanItem, MemoryRedactionPlanItemFilters, MemoryRedactionPlanItemInput,
   MemoryRedactionPlanItemStatusPatch, MemoryRedactionPlanStatusPatch,
   MemorySession, MemorySessionAttachment, MemorySessionAttachmentFilters, MemorySessionAttachmentInput, MemorySessionFilters, MemorySessionInput,
+  MemoryWriteSession, MemoryWriteSessionConsumePatch, MemoryWriteSessionFilters, MemoryWriteSessionInput,
   Page, PageInput, PageFilters, PageLineSpanProjection, PageLineSpanProjectionOptions, PageProjection, PageProjectionOptions, PageType, PageVersion,
   SearchOpts, SearchResult,
   PersonalEpisodeEntry, PersonalEpisodeEntryInput, PersonalEpisodeFilters,
@@ -87,6 +88,8 @@ import {
   normalizeMemoryRedactionPlanStatusPatch,
   normalizeMemorySessionAttachmentInput,
   normalizeMemorySessionInput,
+  normalizeMemoryWriteSessionConsumePatch,
+  normalizeMemoryWriteSessionInput,
   rowToAutoPromoteVerdict,
   compareNoteSectionEntries,
   rowToCanonicalHandoffEntry,
@@ -109,6 +112,7 @@ import {
   rowToMemoryRedactionPlanItem,
   rowToMemorySession,
   rowToMemorySessionAttachment,
+  rowToMemoryWriteSession,
   rowToPage,
   rowToPageVersion,
   rowToPersonalEpisodeEntry,
@@ -2004,6 +2008,193 @@ export abstract class PgEngineBase {
       params,
     );
     return (rows as Record<string, unknown>[]).map(rowToMemorySession);
+  }
+
+  async createMemoryWriteSession(input: MemoryWriteSessionInput): Promise<MemoryWriteSession> {
+    const session = normalizeMemoryWriteSessionInput(input);
+    const createdAt = toNullableIso(session.created_at) ?? new Date().toISOString();
+    const expiresAt = toNullableIso(session.expires_at);
+    if (!expiresAt) throw new Error('Memory write session expires_at is required');
+    const { rows } = await this.queryable.query(
+      `INSERT INTO memory_write_sessions (
+        id, route_decision_id, scope_id, actor, memory_session_id, target_slug,
+        target_object_type, expected_content_hash, source_refs, route_decision,
+        intended_operation, route_reasons, missing_requirements, governance_metadata,
+        status, status_reason, consumed_by_event_id, created_at, expires_at,
+        consumed_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6,
+        $7, $8, $9::jsonb, $10,
+        $11, $12::jsonb, $13::jsonb, $14::jsonb,
+        'open', NULL, NULL, $15, $16,
+        NULL, $15
+      )
+      RETURNING id, route_decision_id, scope_id, actor, memory_session_id, target_slug,
+                target_object_type, expected_content_hash, source_refs, route_decision,
+                intended_operation, route_reasons, missing_requirements, governance_metadata,
+                status, status_reason, consumed_by_event_id, created_at, expires_at,
+                consumed_at, updated_at`,
+      [
+        session.id,
+        session.route_decision_id,
+        session.scope_id,
+        session.actor,
+        session.memory_session_id ?? null,
+        session.target_slug,
+        session.target_object_type,
+        session.expected_content_hash ?? null,
+        JSON.stringify(session.source_refs),
+        session.route_decision,
+        session.intended_operation,
+        JSON.stringify(session.route_reasons ?? []),
+        JSON.stringify(session.missing_requirements ?? []),
+        JSON.stringify(session.governance_metadata ?? {}),
+        createdAt,
+        expiresAt,
+      ],
+    );
+    return rowToMemoryWriteSession(rows[0] as Record<string, unknown>);
+  }
+
+  async getMemoryWriteSession(id: string): Promise<MemoryWriteSession | null> {
+    const { rows } = await this.queryable.query(
+      `SELECT id,
+              route_decision_id,
+              scope_id,
+              actor,
+              memory_session_id,
+              target_slug,
+              target_object_type,
+              expected_content_hash,
+              source_refs,
+              route_decision,
+              intended_operation,
+              route_reasons,
+              missing_requirements,
+              governance_metadata,
+              CASE
+                WHEN status = 'open'
+                  AND expires_at <= now()
+                THEN 'expired'
+                ELSE status
+              END AS status,
+              status_reason,
+              consumed_by_event_id,
+              created_at,
+              expires_at,
+              consumed_at,
+              updated_at
+       FROM memory_write_sessions
+       WHERE id = $1`,
+      [id],
+    );
+    if (rows.length === 0) return null;
+    return rowToMemoryWriteSession(rows[0] as Record<string, unknown>);
+  }
+
+  async listMemoryWriteSessions(filters?: MemoryWriteSessionFilters): Promise<MemoryWriteSession[]> {
+    const { limit, offset } = normalizeMemoryWriteSessionPagination(filters);
+    if (limit === 0) return [];
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+    const effectiveStatusSql = `
+      CASE
+        WHEN s.status = 'open'
+          AND s.expires_at <= now()
+        THEN 'expired'
+        ELSE s.status
+      END
+    `;
+
+    if (filters?.status !== undefined) {
+      params.push(filters.status);
+      clauses.push(`${effectiveStatusSql} = $${params.length}`);
+    }
+    if (filters?.scope_id !== undefined) {
+      params.push(filters.scope_id);
+      clauses.push(`s.scope_id = $${params.length}`);
+    }
+    if (filters?.target_slug !== undefined) {
+      params.push(filters.target_slug);
+      clauses.push(`s.target_slug = $${params.length}`);
+    }
+    if (filters?.actor !== undefined) {
+      params.push(filters.actor);
+      clauses.push(`s.actor = $${params.length}`);
+    }
+    if (filters?.created_since !== undefined) {
+      params.push(toMemoryWriteSessionFilterIso('created_since', filters.created_since));
+      clauses.push(`s.created_at >= $${params.length}`);
+    }
+    if (filters?.created_until !== undefined) {
+      params.push(toMemoryWriteSessionFilterIso('created_until', filters.created_until));
+      clauses.push(`s.created_at < $${params.length}`);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const { rows } = await this.queryable.query(
+      `SELECT s.id,
+              s.route_decision_id,
+              s.scope_id,
+              s.actor,
+              s.memory_session_id,
+              s.target_slug,
+              s.target_object_type,
+              s.expected_content_hash,
+              s.source_refs,
+              s.route_decision,
+              s.intended_operation,
+              s.route_reasons,
+              s.missing_requirements,
+              s.governance_metadata,
+              ${effectiveStatusSql} AS status,
+              s.status_reason,
+              s.consumed_by_event_id,
+              s.created_at,
+              s.expires_at,
+              s.consumed_at,
+              s.updated_at
+       FROM memory_write_sessions s
+       ${whereClause}
+       ORDER BY s.created_at DESC, s.id DESC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToMemoryWriteSession);
+  }
+
+  async consumeMemoryWriteSession(
+    id: string,
+    patch: MemoryWriteSessionConsumePatch,
+  ): Promise<MemoryWriteSession | null> {
+    const normalized = normalizeMemoryWriteSessionConsumePatch(patch);
+    const { rows } = await this.queryable.query(
+      `UPDATE memory_write_sessions
+       SET status = $1,
+           status_reason = $2,
+           consumed_by_event_id = $3,
+           consumed_at = now(),
+           updated_at = now()
+       WHERE id = $4
+         AND status = 'open'
+         AND ($1 = 'expired' OR expires_at > now())
+       RETURNING id, route_decision_id, scope_id, actor, memory_session_id, target_slug,
+                 target_object_type, expected_content_hash, source_refs, route_decision,
+                 intended_operation, route_reasons, missing_requirements, governance_metadata,
+                 status, status_reason, consumed_by_event_id, created_at, expires_at,
+                 consumed_at, updated_at`,
+      [
+        normalized.status,
+        normalized.status_reason ?? null,
+        normalized.consumed_by_event_id ?? null,
+        id,
+      ],
+    );
+    if (rows.length === 0) return null;
+    return rowToMemoryWriteSession(rows[0] as Record<string, unknown>);
   }
 
   async closeMemorySession(id: string): Promise<MemorySession | null> {
@@ -4504,6 +4695,14 @@ function toNullableIso(value: Date | string | null | undefined): string | null {
   return value instanceof Date ? value.toISOString() : String(value);
 }
 
+function toMemoryWriteSessionFilterIso(field: string, value: Date | string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw new Error(`memory write session ${field} must be a valid date`);
+  }
+  return date.toISOString();
+}
+
 function normalizePatchLedgerEventIds(
   currentIds: readonly string[],
   nextIds: string[] | undefined,
@@ -4621,6 +4820,20 @@ function normalizeMemorySessionPagination(
   }
   if (!Number.isInteger(offset) || offset < 0) {
     throw new Error('Memory session offset must be a non-negative integer');
+  }
+  return { limit, offset };
+}
+
+function normalizeMemoryWriteSessionPagination(
+  filters?: MemoryWriteSessionFilters,
+): { limit: number; offset: number } {
+  const limit = filters?.limit ?? 100;
+  const offset = filters?.offset ?? 0;
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new Error('Memory write session limit must be a non-negative integer');
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error('Memory write session offset must be a non-negative integer');
   }
   return { limit, offset };
 }

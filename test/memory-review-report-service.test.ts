@@ -443,6 +443,59 @@ describe('memory review report service', () => {
     expect(formatMemoryReviewReport(report)).not.toContain('Safety States');
   });
 
+  test('surfaces open and expired write sessions without inflating review item counts', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+      write_sessions: [
+        {
+          id: 'memory-write-session:open',
+          route_decision_id: 'route-memory-writeback:open',
+          status: 'open',
+          target_slug: 'concepts/open-write-session',
+          expected_content_hash: 'a'.repeat(64),
+          source_refs: ['Source: write session report test'],
+          route_decision: 'canonical_write_allowed',
+          intended_operation: 'put_page',
+          actor: 'agent:router',
+          scope_id: 'workspace:default',
+          created_at: '2026-05-22T11:50:00.000Z',
+          expires_at: '2026-05-22T12:10:00.000Z',
+        },
+        {
+          id: 'memory-write-session:expired',
+          route_decision_id: 'route-memory-writeback:expired',
+          status: 'expired',
+          target_slug: 'concepts/expired-write-session',
+          expected_content_hash: null,
+          source_refs: ['Source: expired write session report test'],
+          route_decision: 'canonical_write_allowed',
+          intended_operation: 'put_page',
+          actor: 'agent:router',
+          scope_id: 'workspace:default',
+          created_at: '2026-05-22T11:00:00.000Z',
+          expires_at: '2026-05-22T11:30:00.000Z',
+          status_reason: 'expired_before_put_page',
+        },
+      ],
+    } as any);
+
+    expect(report.summary).toMatchObject({
+      review_items: 0,
+      open_write_sessions: 1,
+      expired_write_sessions: 1,
+    });
+    expect(report.sections.write_sessions.map((session) => session.id)).toEqual([
+      'memory-write-session:open',
+      'memory-write-session:expired',
+    ]);
+    const formatted = formatMemoryReviewReport(report);
+    expect(formatted).toContain('Write Sessions');
+    expect(formatted).toContain('open memory-write-session:open -> concepts/open-write-session');
+    expect(formatted).toContain('expired memory-write-session:expired -> concepts/expired-write-session');
+    expect(formatted).toContain('reason:expired_before_put_page');
+  });
+
   test('updated canonical memories are reportable and not formatted as empty', () => {
     const report = buildMemoryReviewReport({
       scope_id: 'workspace:default',
@@ -900,6 +953,80 @@ describe('memory review report service', () => {
     const formatted = formatMemoryReviewReport(buildMemoryReviewReport(input));
     expect(formatted).toContain('No reportable memory exceptions.');
     expect(formatted).not.toContain('Maintenance Health');
+  });
+
+  test('collectMemoryReportInput collects open and expired write sessions for daily review', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-write-session-report-'));
+    tempPaths.push(dir);
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+    await engine.initSchema();
+
+    try {
+      await (engine as any).createMemoryWriteSession({
+        id: 'memory-write-session:report-open',
+        route_decision_id: 'route-memory-writeback:report-open',
+        scope_id: 'workspace:default',
+        actor: 'agent:router',
+        target_slug: 'concepts/report-open',
+        target_object_type: 'curated_note',
+        expected_content_hash: 'b'.repeat(64),
+        source_refs: ['Source: report open write session test'],
+        route_decision: 'canonical_write_allowed',
+        intended_operation: 'put_page',
+        route_reasons: ['canonical_write_allowed'],
+        missing_requirements: [],
+        governance_metadata: {},
+        created_at: new Date(Date.now() - 60_000),
+        expires_at: new Date(Date.now() + 60_000),
+      });
+      await (engine as any).createMemoryWriteSession({
+        id: 'memory-write-session:report-expired',
+        route_decision_id: 'route-memory-writeback:report-expired',
+        scope_id: 'workspace:default',
+        actor: 'agent:router',
+        target_slug: 'concepts/report-expired',
+        target_object_type: 'curated_note',
+        expected_content_hash: null,
+        source_refs: ['Source: report expired write session test'],
+        route_decision: 'canonical_write_allowed',
+        intended_operation: 'put_page',
+        route_reasons: ['canonical_write_allowed'],
+        missing_requirements: [],
+        governance_metadata: {},
+        created_at: new Date(Date.now() - 120_000),
+        expires_at: new Date(Date.now() - 60_000),
+      });
+      await (engine as any).createMemoryWriteSession({
+        id: 'memory-write-session:report-other-scope',
+        route_decision_id: 'route-memory-writeback:report-other-scope',
+        scope_id: 'personal:default',
+        actor: 'agent:router',
+        target_slug: 'concepts/report-other-scope',
+        target_object_type: 'curated_note',
+        expected_content_hash: null,
+        source_refs: ['Source: report other scope write session test'],
+        route_decision: 'canonical_write_allowed',
+        intended_operation: 'put_page',
+        route_reasons: ['canonical_write_allowed'],
+        missing_requirements: [],
+        governance_metadata: {},
+        expires_at: new Date(Date.now() + 60_000),
+      });
+
+      const input = await collectMemoryReportInput(engine as unknown as BrainEngine, 'workspace:default', 10, now);
+      expect((input as any).write_sessions.map((session: any) => session.id)).toEqual([
+        'memory-write-session:report-open',
+        'memory-write-session:report-expired',
+      ]);
+      const report = buildMemoryReviewReport(input as any);
+      expect(report.summary).toMatchObject({
+        open_write_sessions: 1,
+        expired_write_sessions: 1,
+      });
+    } finally {
+      await engine.disconnect();
+    }
   });
 
   test('candidate debt collection treats unstable-subject blocked proposals as hard-blocked audit state', async () => {
