@@ -139,6 +139,31 @@ describe('client registration', () => {
       sql`INSERT INTO oauth_clients (client_id, client_name, scope) VALUES (${clientId}, ${'dup'}, ${'read'})`,
     ).rejects.toThrow();
   });
+
+  test('registerClientManual persists submit_agent bindings when supplied', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'bound-agent', ['client_credentials'], 'read agent', [], 'default', undefined, undefined, {
+        boundTools: ['search', 'get_page'],
+        boundSourceId: 'dept-x',
+        boundBrainId: 'brain-a',
+        boundSlugPrefixes: ['wiki/agents/bound-agent/'],
+        boundMaxConcurrent: 2,
+        budgetUsdPerDay: '7.50',
+      },
+    );
+
+    const rows = await sql`
+      SELECT bound_tools, bound_source_id, bound_brain_id, bound_slug_prefixes,
+             bound_max_concurrent, budget_usd_per_day::text AS budget
+        FROM oauth_clients WHERE client_id = ${clientId}
+    `;
+    expect(rows[0].bound_tools).toEqual(['search', 'get_page']);
+    expect(rows[0].bound_source_id).toBe('dept-x');
+    expect(rows[0].bound_brain_id).toBe('brain-a');
+    expect(rows[0].bound_slug_prefixes).toEqual(['wiki/agents/bound-agent/']);
+    expect(Number(rows[0].bound_max_concurrent)).toBe(2);
+    expect(rows[0].budget).toBe('7.50');
+  });
 });
 
 // ---------------------------------------------------------------------------
