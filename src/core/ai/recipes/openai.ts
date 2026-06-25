@@ -23,6 +23,8 @@ export const openai: Recipe = {
       // estimate the batcher uses). 100K estimated = ~150K real tokens worst-case,
       // safely under both the 300K per-request and 1M TPM ceilings.
       max_batch_tokens: 100_000,
+      chars_per_token: 3,
+      safety_factor: 0.8,
     },
     expansion: {
       models: ['gpt-5.2', 'gpt-4o-mini'],

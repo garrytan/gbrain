@@ -1348,6 +1348,7 @@ const list_pages: Operation = {
       enum: [...LIST_PAGES_SORT_VALUES],
       description: 'Sort order. Default updated_desc (matches pre-v0.29). Options: updated_desc, updated_asc, created_desc, slug.',
     },
+    source_id: { type: 'string', description: "Scope to a single source. Defaults to caller source scope. '__all__' means all permitted sources." },
     include_deleted: { type: 'boolean', description: 'v0.26.5: include soft-deleted pages (default: false). Used by restore workflows and operator diagnostics.' },
   },
   handler: async (ctx, p) => {
@@ -1363,7 +1364,8 @@ const list_pages: Operation = {
     // enumerate src-B pages. Pre-fix, ctx.sourceId / ctx.auth?.allowedSources
     // were ignored at this op handler and the engine returned every source's
     // pages indiscriminately.
-    const scope = sourceScopeOpts(ctx);
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const scope = resolveRequestedScope(ctx, sourceIdParam);
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
