@@ -3,7 +3,7 @@ name: daily-task-manager
 version: 1.0.0
 description: |
   Task lifecycle management. Add, complete, defer, remove, and review tasks.
-  Maintains a running task list as a brain page.
+  Maintains a running task list as an ops/tasks.md workspace file.
 triggers:
   - "add task"
   - "complete task"
@@ -12,8 +12,6 @@ triggers:
   - "defer task"
 tools:
   - search
-  - get_page
-  - put_page
   - add_timeline_entry
 mutating: true
 ---
@@ -23,7 +21,8 @@ mutating: true
 ## Contract
 
 This skill guarantees:
-- Tasks stored as a brain page (`ops/tasks.md`) with structured format
+- Tasks stored in the workspace file `ops/tasks.md` with structured format
+- The live-context engine can read P1 tasks from the same file this skill writes
 - Task lifecycle: add → in-progress → complete | defer
 - Priority levels: P0 (urgent), P1 (today), P2 (this week), P3 (backlog)
 - Completed tasks archived with completion date
@@ -31,14 +30,14 @@ This skill guarantees:
 
 ## Phases
 
-1. **Load current tasks.** `gbrain get ops/tasks` — read the task list.
+1. **Load current tasks.** Read the workspace file `ops/tasks.md`. If it does not exist, create it from the Output Format below.
 2. **Execute the requested action:**
    - **Add:** Append task with priority, description, due date. Add timeline entry.
    - **Complete:** Mark as done, move to completed section with date.
    - **Defer:** Move to next day/week with reason.
    - **Remove:** Delete from list (rare, prefer complete or defer).
    - **Review:** Display all active tasks by priority.
-3. **Save.** `gbrain put ops/tasks` — write updated task list.
+3. **Save.** Write the updated task list back to `ops/tasks.md`.
 
 ## Output Format
 
@@ -67,4 +66,4 @@ This skill guarantees:
 - Completing tasks without recording the completion date
 - Deferring tasks without a reason
 - Letting the task list grow unbounded (review weekly)
-- Storing tasks outside the brain (they should be searchable)
+- Writing tasks through `gbrain put ops/tasks`; `ops/` is deliberately excluded from sync, and the live-context engine reads `ops/tasks.md` from disk.
