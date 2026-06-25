@@ -82,7 +82,7 @@ export interface ParsedFrontmatter {
  * `readFileSync(path, 'utf-8')` at the boundary.
  */
 export function parseSkillFrontmatter(content: string): ParsedFrontmatter | null {
-  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+  const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!fmMatch) return null;
   const raw = fmMatch[1];
   const out: ParsedFrontmatter = { raw };
@@ -139,11 +139,11 @@ function parseArrayField(raw: string, field: string): string[] | undefined {
       .filter(Boolean);
   }
   // Block form: `field:` + indented `- value` lines on subsequent lines.
-  const blockRe = new RegExp(`^${field}:\\s*\\n((?:[ \\t]+-[ \\t]+[^\\n]+\\n?)+)`, 'm');
+  const blockRe = new RegExp(`^${field}:\\s*\\r?\\n((?:[ \\t]+-[ \\t]+[^\\r\\n]+(?:\\r?\\n|$))+)`, 'm');
   const blockMatch = raw.match(blockRe);
   if (blockMatch) {
     return blockMatch[1]
-      .split('\n')
+      .split(/\r?\n/)
       .map(l => l.replace(/^[ \t]+-[ \t]+/, '').replace(/^["']|["']$/g, '').trim())
       .filter(Boolean);
   }
