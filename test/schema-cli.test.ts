@@ -58,11 +58,14 @@ describe('gbrain schema CLI (Phase C)', () => {
     expect(r.stdout + r.stderr).toMatch(/schema|active|list|show|validate|use/i);
   });
 
-  test('schema list shows gbrain-base bundled', () => {
+  test('schema list shows all bundled packs', () => {
     const r = gbrain(['schema', 'list']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('Bundled packs:');
     expect(r.stdout).toContain('gbrain-base');
+    expect(r.stdout).toContain('gbrain-recommended');
+    expect(r.stdout).toContain('gbrain-base-v2');
+    expect(r.stdout).toContain('gbrain-investor');
   });
 
   test('schema show gbrain-base prints manifest details', () => {
@@ -85,6 +88,40 @@ describe('gbrain schema CLI (Phase C)', () => {
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('✓');
     expect(r.stdout).toContain('valid manifest');
+  });
+
+  test('schema show/validate exposes bundled gbrain-recommended', () => {
+    const show = gbrain(['schema', 'show', 'gbrain-recommended']);
+    expect(show.code).toBe(0);
+    expect(show.stdout).toContain('gbrain-recommended v1.0.0');
+    expect(show.stdout).toContain('Page types (');
+    expect(show.stdout).toContain('meeting :: temporal');
+
+    const validate = gbrain(['schema', 'validate', 'gbrain-recommended']);
+    expect(validate.code).toBe(0);
+    expect(validate.stdout).toContain('valid manifest');
+  });
+
+  test('schema show exposes bundled gbrain-base-v2 successor pack', () => {
+    const r = gbrain(['schema', 'show', 'gbrain-base-v2']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('gbrain-base-v2 v1.0.0');
+    expect(r.stdout).toContain('Page types (15)');
+    expect(r.stdout).toContain('Link verbs (14)');
+  });
+
+  test('schema active loads configured gbrain-recommended with real types', () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-schema-active-recommended-'));
+    try {
+      mkdirSync(join(home, '.gbrain'), { recursive: true });
+      writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ schema_pack: 'gbrain-recommended' }), 'utf-8');
+      const r = gbrain(['schema', 'active'], { GBRAIN_HOME: home });
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain('Active pack: gbrain-recommended');
+      expect(r.stdout).not.toContain('Page types: 0');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test('schema active reports default resolution', () => {
