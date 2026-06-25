@@ -451,6 +451,15 @@ function isCustomDimValidForProvider(
     };
   }
 
+  // User-provided model recipes (litellm, llama-server) intentionally ship
+  // without a static model list or native width. For these providers the
+  // explicit --embedding-dimensions value is the schema contract, not a
+  // Matryoshka/custom-width request. Positive integer and pgvector max guards
+  // have already run in validateDimAgainstTouchpoint().
+  if (recipe.touchpoints.embedding?.user_provided_models === true) {
+    return { valid: true, error: '' };
+  }
+
   // Tier 3: provider not known to support custom dims at all.
   return {
     valid: false,
