@@ -147,9 +147,25 @@ describe('resolveModel — 6-tier precedence', () => {
 });
 
 describe('resolveModel — v0.31.12 tier system', () => {
-  test('models.default beats tier override', async () => {
+  test('tier override beats models.default', async () => {
+    // Fix (model precedence): a tier caller's explicit `models.tier.<tier>`
+    // config wins over a broad `models.default`. Pre-fix the order was
+    // flipped — `models.default` was checked first and swallowed every tier
+    // override, so a `tier:'reasoning'` caller could never route to its own
+    // configured model when a default was set.
     stub.set('models.default', 'opus');
     stub.set('models.tier.reasoning', 'haiku');
+    const m = await resolveModel(stub as never, {
+      tier: 'reasoning',
+      fallback: 'sonnet',
+    });
+    expect(m).toBe(DEFAULT_ALIASES.haiku);
+  });
+
+  test('models.default still applies when no matching tier override', async () => {
+    // The tier override only wins when `models.tier.<tier>` is actually set.
+    // With no tier config, resolution falls through to `models.default`.
+    stub.set('models.default', 'opus');
     const m = await resolveModel(stub as never, {
       tier: 'reasoning',
       fallback: 'sonnet',
