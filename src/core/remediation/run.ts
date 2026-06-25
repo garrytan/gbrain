@@ -66,9 +66,10 @@ export async function runRemediation(
   } = await import('../remediation-checkpoint.ts');
 
   const ctx = await loadRecommendationContext(engine);
+  const extraRemediations = opts.extraRemediations ?? [];
 
   // Pre-flight ceiling check via the shared plan computation.
-  const initialPlan = await computeRemediationPlan(engine, { targetScore });
+  const initialPlan = await computeRemediationPlan(engine, { targetScore, extraRemediations });
   if (initialPlan.target_unreachable) {
     hooks.onTargetUnreachable?.(targetScore, initialPlan.max_reachable_score);
     return {
@@ -87,7 +88,7 @@ export async function runRemediation(
   }
 
   const initialHealth = await engine.getHealth();
-  let recs: RemediationStep[] = computeRecommendations(initialHealth, ctx)
+  let recs: RemediationStep[] = computeRecommendations(initialHealth, ctx, extraRemediations)
     .filter((r) => r.status === 'remediable');
   if (recs.length === 0) {
     hooks.onNothingToDo?.(initialHealth.brain_score, targetScore);
