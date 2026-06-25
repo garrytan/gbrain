@@ -140,7 +140,7 @@ analysis is the agent's interpretation; the transcript above is sacred.]
 
 ## Timeline
 
-- **YYYY-MM-DD** | voice note from <channel> — [Brief description]
+- YYYY-MM-DD — voice note from <channel>: [Brief description]
 ```
 
 ## Citation format
