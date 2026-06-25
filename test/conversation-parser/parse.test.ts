@@ -585,6 +585,38 @@ describe('bold-name-no-time pattern (Circleback/Granola/Zoom, no timestamp)', ()
   });
 });
 
+describe('speaker-letter-no-time pattern (raw transcript sidecars)', () => {
+  test('parses plain Speaker A / Speaker B transcripts', () => {
+    const body = [
+      'Speaker A: That is exactly the issue.',
+      'Speaker B: Yeah, I know.',
+      'Speaker A: Let me ask him.',
+      'Speaker B: Sounds good.',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-06-01' });
+    expect(r.phase).toBe('regex_match');
+    expect(r.matched_pattern_id).toBe('speaker-letter-no-time');
+    expect(r.messages).toHaveLength(4);
+    expect(r.messages[0]).toEqual({
+      speaker: 'Speaker A',
+      timestamp: '2026-06-01T00:00:00Z',
+      text: 'That is exactly the issue.',
+    });
+    expect(r.messages[1].speaker).toBe('Speaker B');
+    expect(r.messages[3].text).toBe('Sounds good.');
+  });
+
+  test('does not parse ordinary prose labels as transcript lines', () => {
+    const body = [
+      'Owner: Elliot',
+      'Decision: Ship the parser fix',
+      'Next step: rerun extraction',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-06-01' });
+    expect(r.phase).toBe('no_match');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // parseConversation — full-body fallback (v0.41.18+ #1533 + Codex P1 #1, #2, #8)
 // ---------------------------------------------------------------------------
