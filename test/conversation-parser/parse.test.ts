@@ -125,9 +125,11 @@ describe('parseConversation — every built-in matches its test_positive sample'
       const body = entry.test_positive[0];
       // Multi-line patterns need a body line on the next line.
       const fullBody =
-        entry.multi_line && entry.captures.text_group === 0
-          ? `${body}\nsome body text`
-          : body;
+        entry.id === 'gbrain-role-heading'
+          ? '### User\nhello\n### Assistant\nhi'
+          : entry.multi_line && entry.captures.text_group === 0
+            ? `${body}\nsome body text`
+            : body;
       const r = parseConversation(fullBody, {
         fallbackDate: '2024-03-15',
       });
@@ -137,6 +139,59 @@ describe('parseConversation — every built-in matches its test_positive sample'
       expect(r.matched_pattern_id).toBe(entry.id);
     });
   }
+});
+
+describe('parseConversation — gbrain role heading transcripts', () => {
+  test('splits ### Role heading-delimited blocks into messages', () => {
+    const body = [
+      '### User',
+      'Please check the queue.',
+      '',
+      '### Assistant',
+      'I checked it.',
+      'Two proposals are ready.',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-06-25' });
+    expect(r.phase).toBe('regex_match');
+    expect(r.matched_pattern_id).toBe('gbrain-role-heading');
+    expect(r.messages).toHaveLength(2);
+    expect(r.messages[0]).toEqual({
+      speaker: 'User',
+      timestamp: '2026-06-25T00:00:00Z',
+      text: 'Please check the queue.',
+    });
+    expect(r.messages[1].speaker).toBe('Assistant');
+    expect(r.messages[1].text).toBe('I checked it.\nTwo proposals are ready.');
+  });
+
+  test('heading-only role transcript does not clear the score floor', () => {
+    const body = ['### User', '', '### Assistant'].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-06-25' });
+    expect(r.phase).toBe('no_match');
+    expect(r.messages).toHaveLength(0);
+  });
+
+  test('role headings inside fenced code are preserved as text, not turn splits', () => {
+    const body = [
+      '### User',
+      'Here is the repro:',
+      '```md',
+      '### Assistant',
+      'this is a markdown sample, not a role heading',
+      '```',
+      'Still user text.',
+      '### Assistant',
+      'Confirmed.',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-06-25' });
+    expect(r.matched_pattern_id).toBe('gbrain-role-heading');
+    expect(r.messages).toHaveLength(2);
+    expect(r.messages[0].speaker).toBe('User');
+    expect(r.messages[0].text).toContain('### Assistant');
+    expect(r.messages[0].text).toContain('Still user text.');
+    expect(r.messages[1].speaker).toBe('Assistant');
+    expect(r.messages[1].text).toBe('Confirmed.');
+  });
 });
 
 // ---------------------------------------------------------------------------
