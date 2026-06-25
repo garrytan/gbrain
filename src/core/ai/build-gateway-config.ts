@@ -61,6 +61,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
     chat_model: c.chat_model,
     chat_fallback_chain: c.chat_fallback_chain,
     base_urls: { ...envBaseUrls, ...(c.provider_base_urls ?? {}) }, // config wins over env
+    provider_batch_items: c.provider_batch_items,
     env: { ...envFromConfig, ...process.env }, // process.env wins
   };
 }

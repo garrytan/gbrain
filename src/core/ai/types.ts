@@ -31,6 +31,13 @@ export interface EmbeddingTouchpoint {
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string; // ISO date
   /**
+   * Maximum items (input array length) per batch for this provider's
+   * embedding endpoint. When set alongside max_batch_tokens, batches are
+   * capped by whichever limit is hit first. DashScope text-embedding-v3/v4
+   * require max_batch_items: 10.
+   */
+  max_batch_items?: number;
+  /**
    * Maximum tokens per batch for this provider's embedding endpoint.
    * When set, the gateway pre-splits batches at
    * `max_batch_tokens × safety_factor / chars_per_token` characters and
@@ -366,6 +373,12 @@ export interface AIGatewayConfig {
   chat_fallback_chain?: string[];
   /** Optional per-provider base URL override (openai-compatible variants). */
   base_urls?: Record<string, string>;
+  /**
+   * Optional per-provider max batch items override. When set, overrides
+   * the recipe's max_batch_items. Format: { providerId: number }.
+   * Useful for providers like DashScope that limit API batch size to 10.
+   */
+  provider_batch_items?: Record<string, number>;
   /** Env snapshot read once at configuration time. Gateway never reads process.env at call time. */
   env: Record<string, string | undefined>;
 }
