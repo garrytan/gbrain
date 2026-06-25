@@ -113,8 +113,27 @@ export async function runServe(
     // restart.
     const suppressBootstrapToken = args.includes('--suppress-bootstrap-token');
 
+    // OPT-IN Google-Workspace login gate (off unless --oauth-login-hd / env is set).
+    // When enabled, the browser `authorization_code` flow at /authorize first
+    // requires a Google sign-in on the allowed hosted domain before gbrain's
+    // OAuth provider issues a code. Plumbed through the same arg-index pattern
+    // as the flags above; resolved + validated (fail-fast) in serve-http.ts.
+    // Each flag falls back to an env var so secrets can be supplied out-of-band
+    // (e.g. Cloud Run --set-secrets) instead of appearing in argv / process list.
+    const flagOrEnv = (flag: string, env: string): string | undefined => {
+      const idx = args.indexOf(flag);
+      return idx >= 0 ? args[idx + 1] : process.env[env];
+    };
+    const oauthLoginHd = flagOrEnv('--oauth-login-hd', 'GBRAIN_OAUTH_LOGIN_HD');
+    const oauthGoogleClientId = flagOrEnv('--oauth-google-client-id', 'GBRAIN_OAUTH_GOOGLE_CLIENT_ID');
+    const oauthGoogleClientSecret = flagOrEnv('--oauth-google-client-secret', 'GBRAIN_OAUTH_GOOGLE_CLIENT_SECRET');
+    const oauthSessionSecret = flagOrEnv('--oauth-session-secret', 'GBRAIN_OAUTH_SESSION_SECRET');
+
     const { runServeHttp } = await import('./serve-http.ts');
-    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams, bind, suppressBootstrapToken });
+    await runServeHttp(engine, {
+      port, tokenTtl, enableDcr, publicUrl, logFullParams, bind, suppressBootstrapToken,
+      oauthLoginHd, oauthGoogleClientId, oauthGoogleClientSecret, oauthSessionSecret,
+    });
     return;
   }
 
