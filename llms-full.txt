@@ -602,9 +602,23 @@ cursor (`TODOS:2301`); and the embed wall-clock budget timer is re-armed around
 `EmbedResult.pacing` carries the end-of-run telemetry (cap, samples, EWMA, slept
 ms, max waiters) for `--json`; a one-line summary prints to stderr.
 
-## Build
+## Common commands
 
-`bun build --compile --outfile bin/gbrain src/cli.ts`
+| Task | Command |
+|---|---|
+| Install deps | `bun install` |
+| Run CLI in dev | `bun run dev <args>` (= `bun run src/cli.ts`) |
+| Build binary | `bun build --compile --outfile bin/gbrain src/cli.ts` |
+| Typecheck | `bun run typecheck` |
+| Fast unit loop (default inner loop) | `bun run test` |
+| Single test file | `bun test test/path/foo.test.ts` |
+| Single test by name | `bun test test/foo.test.ts -t "substring"` |
+| Pre-push gate (checks + typecheck) | `bun run verify` |
+| Everything CI runs | `bun run test:full` |
+| E2E (needs Docker + `DATABASE_URL`) | `bun run test:e2e` |
+
+See `docs/TESTING.md` for the seven test tiers, failure-log locations, and the
+never-pipe-test-output-through-`tail`/`head` rule (also inline above).
 
 ## Version locations (single source of truth: `VERSION` file)
 
