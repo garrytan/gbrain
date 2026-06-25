@@ -71,6 +71,16 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "Spawn agent", "background task", "parallel tasks", "steer agent", "pause/resume agent", "gbrain jobs submit", "submit a gbrain job", "submit a shell job", "shell job" | `skills/minion-orchestrator/SKILL.md` |
 | "present options", "ask before proceeding", "choice gate", "user decision" | `skills/ask-user/SKILL.md` |
 
+## Repo-local loop defaults
+
+| Trigger | Skill |
+|---------|-------|
+| `gbrain doctor` warnings, remediation triage, daily brain health loop | `skills/maintain/SKILL.md` + `docs/guides/loop-routing.md` (doctor health loop) |
+| docs drift, docs pass, refresh docs from code, regenerate `llms.txt`, refresh `llms-full.txt` | Use the docs and llms loop in `docs/guides/loop-routing.md`, then run the repo-native proof path |
+| "is Dream helping?", Dream quality, widen Dream, Dream tuning, bounded Dream run | `skills/maintain/SKILL.md` + `docs/guides/loop-routing.md` (Dream value loop) |
+| fresh clone, setup docs may lie, install promise, onboarding proof | `skills/setup/SKILL.md` + `docs/guides/loop-routing.md` (fresh clone loop) |
+| upstream drift, fork patch queue, should we keep this downstream patch | `docs/operations/fork-upstream-policy.md` (existing propagation-compliance loop) |
+
 ## Setup & migration
 
 | Trigger | Skill |

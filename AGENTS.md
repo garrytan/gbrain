@@ -45,6 +45,8 @@ start here.
    agent-facing decision table: when to switch brain, when to switch source, how
    cross-brain federation works (latent-space only; the agent decides).
 5. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — skill dispatcher. Read before any task.
+6. [`./docs/guides/loop-routing.md`](./docs/guides/loop-routing.md) — repo-local
+   loop defaults for recurring doctor, docs, Dream-value, and fresh-clone tasks.
 
 ## Trust boundary (critical)
 

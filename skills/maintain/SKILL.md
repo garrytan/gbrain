@@ -7,6 +7,9 @@ description: |
   brain health, run maintenance, or audit quality.
 triggers:
   - "brain health"
+  - "gbrain doctor"
+  - "remediation triage"
+  - "daily brain health loop"
   - "check backlinks"
   - "maintenance"
   - "orphan pages"
@@ -18,6 +21,11 @@ triggers:
   - "backfill graph"
   - "extract timeline entries"
   - "run dream"
+  - "is Dream helping?"
+  - "Dream quality"
+  - "widen Dream"
+  - "Dream tuning"
+  - "bounded Dream run"
   - "process today's session"
   - "process yesterday's transcripts"
   - "synthesize my conversations"
