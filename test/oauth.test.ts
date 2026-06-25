@@ -125,6 +125,30 @@ describe('client registration', () => {
     expect(client!.client_name).toBe('test-agent');
   });
 
+  test('registerClientManual persists source_id and federated_read into AuthInfo', async () => {
+    await sql`
+      INSERT INTO sources (id, name) VALUES (${'team-a'}, ${'Team A'}), (${'team-b'}, ${'Team B'})
+      ON CONFLICT DO NOTHING
+    `;
+    const { clientId, clientSecret } = await provider.registerClientManual(
+      'source-scoped-test',
+      ['client_credentials'],
+      'read write',
+      [],
+      'team-a',
+      ['team-a', 'team-b'],
+    );
+
+    const tokens = await provider.exchangeClientCredentials(clientId, clientSecret!, 'read');
+    const authInfo = await provider.verifyAccessToken(tokens.access_token) as {
+      sourceId?: string;
+      allowedSources?: string[];
+    };
+
+    expect(authInfo.sourceId).toBe('team-a');
+    expect(authInfo.allowedSources).toEqual(['team-a', 'team-b']);
+  });
+
   test('getClient returns undefined for unknown client', async () => {
     const client = await provider.clientsStore.getClient('nonexistent');
     expect(client).toBeUndefined();
