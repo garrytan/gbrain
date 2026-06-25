@@ -28,6 +28,7 @@ import {
   type ParsedTake,
 } from '../core/takes-fence.ts';
 import { withPageLock } from '../core/page-lock.ts';
+import { repairTakeSinceDates } from '../core/takes-since-date-repair.ts';
 
 // --- Helpers ---
 
@@ -525,6 +526,36 @@ async function cmdCalibration(engine: BrainEngine, args: string[]): Promise<void
   }
 }
 
+async function cmdRepairSinceDate(engine: BrainEngine, args: string[]): Promise<void> {
+  const json = flagPresent(args, '--json');
+  const apply = flagPresent(args, '--apply');
+  const dryRun = flagPresent(args, '--dry-run') || !apply;
+  const yes = flagPresent(args, '--yes');
+  if (apply && dryRun && flagPresent(args, '--dry-run')) {
+    console.error('Error: --apply and --dry-run are mutually exclusive.');
+    process.exit(1);
+  }
+  if (apply && !yes) {
+    console.error('Refusing to mutate takes without --yes. Preview with --dry-run --json first.');
+    process.exit(1);
+  }
+  const rawLimit = flagValue(args, '--limit');
+  const limit = rawLimit === undefined ? undefined : Number(rawLimit);
+  const result = await repairTakeSinceDates(engine, { apply, limit });
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  const mode = result.dry_run ? 'would update' : 'updated';
+  console.log(`${result.dry_run ? '[dry-run] ' : ''}takes since-date repair: ${mode} ${result.dry_run ? result.candidates.length : result.updated} row(s), limit=${result.limit}`);
+  for (const candidate of result.candidates.slice(0, 20)) {
+    console.log(`  ${candidate.page_slug}#${candidate.row_num}: ${candidate.effective_date} (${candidate.effective_date_source}) — ${candidate.claim}`);
+  }
+  if (result.candidates.length > 20) {
+    console.log(`  ... ${result.candidates.length - 20} more candidate(s) omitted`);
+  }
+}
+
 // --- Dispatcher ---
 
 export async function runTakes(engine: BrainEngine, args: string[]): Promise<void> {
@@ -551,6 +582,8 @@ Subcommands:
                                           Aggregate calibration scorecard (v0.30.0)
   takes calibration [<holder>] [--bucket-size 0.1] [--json]
                                           Calibration curve binned by stated weight (v0.30.0)
+  takes repair-since-date [--dry-run] [--apply --yes] [--limit N] [--json]
+                                          Fill missing since_date from real page effective dates
 
 Common flags:
   --dir <path>    Override the brain directory (default: sync.repo_path config)
@@ -570,6 +603,7 @@ Common flags:
     case 'resolve':     return cmdResolve(engine, rest);
     case 'scorecard':   return cmdScorecard(engine, rest);
     case 'calibration': return cmdCalibration(engine, rest);
+    case 'repair-since-date': return cmdRepairSinceDate(engine, rest);
     case 'revisit':     return cmdRevisit(engine, rest);
     case 'extract':     return cmdExtract(engine, rest);
     default:
