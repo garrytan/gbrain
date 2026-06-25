@@ -304,6 +304,7 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
     parent_symbol_path: (row.parent_symbol_path as string[] | null | undefined) ?? null,
     doc_comment: (row.doc_comment as string | null | undefined) ?? null,
     symbol_name_qualified: (row.symbol_name_qualified as string | null | undefined) ?? null,
+    source_locator: (row.source_locator as Record<string, unknown> | null | undefined) ?? null,
   };
 }
 

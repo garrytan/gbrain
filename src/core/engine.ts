@@ -956,6 +956,13 @@ export interface BrainEngine {
    */
   upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string } & BatchOpts): Promise<void>;
   /**
+   * v0.43 office-ingest — write per-chunk source_locator (JSONB) keyed by
+   * chunk_index. Separate from upsertChunks so the JSONB write goes through the
+   * cross-engine-safe executeRawJsonb path (not the hand-built bulk insert).
+   * Best-effort; no-op when the page or locator list is empty.
+   */
+  upsertChunkLocators(slug: string, locators: Array<{ idx: number; loc: Record<string, unknown> }>, opts?: { sourceId?: string }): Promise<void>;
+  /**
    * Read every chunk for a page. `opts.sourceId` source-scopes the page
    * lookup; without it, multi-source brains return chunks from every
    * same-slug source (importCodeFile uses this for incremental embedding

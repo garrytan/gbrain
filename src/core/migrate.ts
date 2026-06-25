@@ -5367,6 +5367,20 @@ export const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    version: 120,
+    name: 'content_chunks_source_locator',
+    // v0.43 office-ingest — per-chunk source locator (page/slide/sheet/
+    // cell_range/table_id/row_range/bbox) for office-format ingest. JSONB;
+    // written via executeRawJsonb (never JSON.stringify into a ::jsonb cast —
+    // check-jsonb-pattern.sh). Engine-agnostic: JSONB + ADD COLUMN IF NOT
+    // EXISTS work on both pglite and postgres. Mirrored in src/schema.sql +
+    // src/core/pglite-schema.ts so fresh installs carry it. No index (locator
+    // is for display/citation, not filtering) → not a bootstrap forward-ref.
+    // See docs/proposals/office-ingest.md §6, §9.
+    idempotent: true,
+    sql: `ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS source_locator JSONB;`,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

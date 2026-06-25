@@ -329,7 +329,12 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   embedding_image       vector(1024),
   -- v0.36 Phase 3 cross-modal: unified column populated by reindex.
   -- Migration v75 also adds it for upgrade paths.
-  embedding_multimodal  vector(1024)
+  embedding_multimodal  vector(1024),
+  -- v0.43 office-ingest: per-chunk source locator (page / slide / sheet /
+  -- cell_range / table_id / row_range / bbox) for office-format ingest. JSONB;
+  -- written via executeRawJsonb. Migration v120 adds it on upgrade.
+  -- See docs/proposals/office-ingest.md §6, §9.
+  source_locator        JSONB
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);

@@ -931,6 +931,20 @@ export async function importFromFile(
     return { slug: relativePath, status: 'skipped', chunks: 0, error: `File too large (${stat.size} bytes)` };
   }
 
+  // Route office documents (PDF/DOCX/PPTX/XLSX) through the Docling sidecar
+  // path. MUST come BEFORE the UTF-8 read below — office files are binary and
+  // readFileSync(.., 'utf-8') would corrupt them. Dynamic import keeps the
+  // office stack out of plain-markdown imports.
+  const officeExt = relativePath.slice(relativePath.lastIndexOf('.')).toLowerCase();
+  if (officeExt === '.pdf' || officeExt === '.docx' || officeExt === '.pptx' || officeExt === '.xlsx') {
+    const { importOfficeFile } = await import('./office/adapter.ts');
+    return importOfficeFile(engine, filePath, relativePath, {
+      noEmbed: opts.noEmbed,
+      sourceId: opts.sourceId,
+      forceRechunk: opts.forceRechunk,
+    });
+  }
+
   let content = readFileSync(filePath, 'utf-8');
 
   // Route code files through the code import path

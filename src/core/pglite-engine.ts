@@ -2039,6 +2039,31 @@ export class PGLiteEngine implements BrainEngine {
     return this.batchRetry(opts?.auditSite ?? 'upsertChunks', opts?.signal, () => this._upsertChunksOnce(slug, chunks, opts), chunks.length);
   }
 
+  async upsertChunkLocators(
+    slug: string,
+    locators: Array<{ idx: number; loc: Record<string, unknown> }>,
+    opts?: { sourceId?: string },
+  ): Promise<void> {
+    if (locators.length === 0) return;
+    const sourceId = opts?.sourceId ?? 'default';
+    const pageResult = await this.db.query(
+      'SELECT id FROM pages WHERE slug = $1 AND source_id = $2',
+      [slug, sourceId],
+    );
+    if (pageResult.rows.length === 0) return;
+    const pageId = (pageResult.rows[0] as { id: number }).id;
+    // Cross-engine-safe JSONB write (executeRawJsonb) — same SQL as PostgresEngine.
+    await executeRawJsonb(
+      this,
+      `UPDATE content_chunks AS cc
+          SET source_locator = v.loc
+         FROM jsonb_to_recordset(($2::jsonb)->'rows') AS v(idx int, loc jsonb)
+        WHERE cc.page_id = $1 AND cc.chunk_index = v.idx`,
+      [pageId],
+      [{ rows: locators }],
+    );
+  }
+
   private async _upsertChunksOnce(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void> {
     const sourceId = opts?.sourceId ?? 'default';
 

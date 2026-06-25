@@ -1,0 +1,8 @@
+# GBrain Docling sidecar runtime deps. Install into the venv:
+#   pip install -r requirements.txt
+# First install is large (Docling pulls torch + transformers + opencv, several GB).
+docling>=2.0
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+pillow>=10.0

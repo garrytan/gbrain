@@ -575,6 +575,9 @@ export interface Chunk {
   parent_symbol_path?: string[] | null;
   doc_comment?: string | null;
   symbol_name_qualified?: string | null;
+  /** v0.43 office-ingest: per-chunk source locator (page/slide/sheet/cell/row/
+   *  bbox). JSONB; NULL for non-office chunks. Shape: office/types.ts SourceLocator. */
+  source_locator?: Record<string, unknown> | null;
 }
 
 /**

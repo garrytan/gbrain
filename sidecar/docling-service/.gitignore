@@ -1,0 +1,6 @@
+# Python virtualenv + caches — never commit (multi-GB ML deps).
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/

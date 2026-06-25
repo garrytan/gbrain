@@ -1,0 +1,18 @@
+[project]
+name = "gbrain-docling-sidecar"
+version = "0.1.0"
+description = "Docling FastAPI sidecar that parses office documents into DocIR for GBrain"
+requires-python = ">=3.10"
+dependencies = [
+    "docling>=2.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",  # required by FastAPI for UploadFile / Form
+    "pillow>=10.0",             # PNG encoding of figures / page renders
+]
+
+[tool.uvicorn]
+# Reference only; pass on the CLI. One worker keeps a single resident model copy.
+host = "127.0.0.1"
+port = 8765
+workers = 1

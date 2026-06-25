@@ -241,7 +241,10 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   -- v0.36 Phase 3 cross-modal: unified column populated by reindex
   -- (search.unified_multimodal=true routes here). Migration v75 adds it
   -- on upgrade; fresh installs land at head with the column present.
-  embedding_multimodal vector(1024)
+  embedding_multimodal vector(1024),
+  -- v0.43 office-ingest: per-chunk source locator (page/slide/sheet/cell/row/
+  -- bbox). JSONB; written via executeRawJsonb. Migration v120 adds it on upgrade.
+  source_locator  JSONB
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);
