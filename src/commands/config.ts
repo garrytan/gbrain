@@ -35,6 +35,16 @@ export function redactConfigValue(key: string, value: string): string {
   return value;
 }
 
+// Render a single config value for `gbrain config show`. Strings route
+// through redactConfigValue (secrets masked); nested objects/arrays are
+// JSON-stringified so the display loop's template literal doesn't coerce
+// them to "[object Object]" (e.g. the mcp/self_upgrade/search blocks).
+export function formatConfigValue(key: string, value: unknown): string {
+  if (typeof value === 'string') return redactConfigValue(key, value);
+  if (value !== null && typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
 export async function runConfig(engine: BrainEngine, args: string[]) {
   const action = args[0];
 
@@ -46,8 +56,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     }
     console.log('GBrain config:');
     for (const [k, v] of Object.entries(config)) {
-      const display = typeof v === 'string' ? redactConfigValue(k, v) : v;
-      console.log(`  ${k}: ${display}`);
+      console.log(`  ${k}: ${formatConfigValue(k, v)}`);
     }
     return;
   }
