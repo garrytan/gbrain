@@ -142,14 +142,22 @@ generate while working, and is genuinely useful by day two.
 
 ```bash
 # Claude Code
-claude mcp add gbrain -- gbrain serve
+claude mcp add gbrain -- gbrain serve --surface verbs
 
 # Codex
-codex mcp add gbrain -- gbrain serve
+codex mcp add gbrain -- gbrain serve --surface verbs
 ```
 
 That's the whole wire-up. No token, no URL, no tunnel. The agent spawns
 `gbrain serve` as a stdio subprocess and talks to your local brain directly.
+
+`--surface verbs` exposes exactly the five-verb memory protocol
+(`recall`, `remember`, `entity`, `synthesize`, `forget` —
+[MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md), frozen + additive-forever)
+instead of the full operation catalog, so the agent sees a tight, stable surface
+instead of a 90-tool wall. Drop the flag (or pass `--surface full`) for every
+operation. The default when the flag is omitted is `full`, so existing wire-ups
+are unchanged.
 
 ### B4. Verify
 

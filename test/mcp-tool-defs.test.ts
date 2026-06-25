@@ -56,6 +56,10 @@ function legacyInlineMap(ops: typeof operations) {
         .filter(([, v]) => v.required)
         .map(([k]) => k),
     },
+    // MEMORY_VERBS v1: ToolAnnotations passthrough, emitted ONLY when the op
+    // defines them. The byte-stability contract is per-op: ops WITHOUT
+    // annotations keep the exact pre-v1 shape (pinned explicitly below).
+    ...(op.annotations ? { annotations: op.annotations } : {}),
   }));
 }
 
@@ -64,6 +68,17 @@ describe('buildToolDefs', () => {
     const extracted = buildToolDefs(operations);
     const inline = legacyInlineMap(operations);
     expect(JSON.stringify(extracted)).toBe(JSON.stringify(inline));
+  });
+
+  test('ops without annotations keep the pre-annotations shape exactly (no annotations key)', () => {
+    const extracted = buildToolDefs(operations);
+    for (const def of extracted) {
+      const op = operations.find(o => o.name === def.name)!;
+      if (!op.annotations) {
+        expect('annotations' in def).toBe(false);
+        expect(Object.keys(def)).toEqual(['name', 'description', 'inputSchema']);
+      }
+    }
   });
 
   test('preserves operation count', () => {

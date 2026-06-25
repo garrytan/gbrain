@@ -949,6 +949,9 @@ async function initPGLite(opts: {
     // gbrain invocation). mode_prompted=true so the upgrade-time banner doesn't
     // also fire on a fresh install. Hands-off: gbrain config set self_upgrade.mode auto
     config.self_upgrade = { mode: 'notify', mode_prompted: true, ...(config.self_upgrade ?? {}) };
+    // MEMORY_VERBS v1 [D6C]: TTHW stamp — `gbrain protocol stats` derives
+    // install→first-verb-call from this. Idempotent on re-init.
+    config.protocol_installed_at = config.protocol_installed_at ?? new Date().toISOString();
     saveConfig(config);
     if (opts.schemaPack) {
       process.stderr.write(
@@ -986,6 +989,7 @@ async function initPGLite(opts: {
       } else {
         console.log('Next: gbrain import <dir>');
       }
+      printMemoryVerbsQuickstart();
       console.log('');
       console.log('When you outgrow local: gbrain migrate --to supabase');
       reportModStatus();
@@ -1001,6 +1005,26 @@ async function initPGLite(opts: {
   } finally {
     try { await engine.disconnect(); } catch { /* best-effort */ }
   }
+}
+
+/**
+ * MEMORY_VERBS v1 quickstart funnel (E3 + D4B + T1 consent). Printed at the
+ * end of both init epilogues. The copy-next block is EXACTLY three commands
+ * (codex DX 9): wire the harness, write a memory, prove the resurrection.
+ * The demo uses the facts arm only, so it works with NO embedding key [F-B].
+ */
+function printMemoryVerbsQuickstart(): void {
+  console.log('');
+  console.log('Give your agent memory (copy these three commands):');
+  console.log('  claude mcp add gbrain -- gbrain serve --surface verbs');
+  console.log('  gbrain remember "I prefer dark mode in every editor" --provenance demo --entity people/me');
+  console.log('  gbrain recall --entity people/me');
+  console.log('Now ask your agent in a NEW session — it remembers.');
+  console.log('');
+  console.log('Note: memories agents save are readable by every agent connected to');
+  console.log('this brain; use visibility:"private" for local-only facts.');
+  console.log('Other harnesses (Codex, OpenClaw): docs/protocol/MEMORY_VERBS_v1.md');
+  console.log('If `claude` is not found: install Claude Code first, or use the per-harness blocks in that doc.');
 }
 
 async function initPostgres(opts: {
@@ -1191,6 +1215,8 @@ async function initPostgres(opts: {
     // gbrain invocation). mode_prompted=true so the upgrade-time banner doesn't
     // also fire on a fresh install. Hands-off: gbrain config set self_upgrade.mode auto
     config.self_upgrade = { mode: 'notify', mode_prompted: true, ...(config.self_upgrade ?? {}) };
+    // MEMORY_VERBS v1 [D6C]: TTHW stamp (see the PGLite path).
+    config.protocol_installed_at = config.protocol_installed_at ?? new Date().toISOString();
     saveConfig(config);
     console.log('Config saved to ~/.gbrain/config.json');
     if (opts.schemaPack) {
@@ -1225,6 +1251,7 @@ async function initPostgres(opts: {
       } else {
         console.log('Next: gbrain import <dir>');
       }
+      printMemoryVerbsQuickstart();
       reportModStatus();
       const { printAdvisoryIfRecommended } = await import('../core/skillpack/post-install-advisory.ts');
       const { VERSION } = await import('../version.ts');

@@ -64,6 +64,12 @@ export interface FenceInputFact {
   /** Defaults to 1.0 when undefined (matches engine.insertFact behavior). */
   confidence?: number;
   validFrom?: Date;
+  /**
+   * MEMORY_VERBS v1 (c5): remember's ttl → valid_until. Date-only in the
+   * fence cell; the DB column derives from it on the stamp step.
+   * Undefined/null = never expires (pre-v1 behavior unchanged).
+   */
+  validUntil?: Date | null;
   embedding: Float32Array | null;
   sessionId: string | null;
 }
@@ -223,7 +229,10 @@ export async function writeFactsToFence(
           visibility:  f.visibility,
           notability:  f.notability ?? 'medium',
           validFrom:   validFromStr,
-          validUntil:  undefined,
+          // MEMORY_VERBS v1 (c5): remember's ttl threads through to the fence
+          // cell — was hard-coded undefined, which silently dropped expiry on
+          // this path. extractFactsFromFenceText derives the DB column from it.
+          validUntil:  f.validUntil ? f.validUntil.toISOString().slice(0, 10) : undefined,
           source:      f.source,
           context:     f.context ?? undefined,
         });

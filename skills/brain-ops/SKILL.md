@@ -34,6 +34,17 @@ flows through in both directions.
 > **Convention:** See `skills/conventions/brain-first.md` for the 5-step lookup protocol.
 > **Convention:** See `skills/conventions/quality.md` for citation and back-link rules.
 
+> **Memory verbs (MEMORY_VERBS v1, gbrain ≥ 0.43).** Over MCP, prefer the five
+> frozen memory verbs for the read/write cycle: **`remember(fact, provenance,
+> ttl?)`** to save a single durable fact (mandatory provenance; dedupes +
+> supersedes), **`recall(query | entity, budget_tokens)`** to read it back
+> budget-packed, **`entity(name)`** for a zero-LLM card, **`synthesize(question)`**
+> for the expensive cross-page answer, **`forget(id)`** to expire a fact. Use
+> `remember` instead of `extract_facts` when you already have ONE formed fact;
+> `put_page` / `add_link` / `add_timeline_entry` stay the page/graph write path.
+> Fall back to the classic ops when the verbs aren't on the surface. Contract:
+> `docs/protocol/MEMORY_VERBS_v1.md`.
+
 ## Contract
 
 This skill guarantees:

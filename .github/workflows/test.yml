@@ -182,6 +182,19 @@ jobs:
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun install
       - run: bun test test/entity-resolve-perf.slow.test.ts --timeout=300000
+      # MEMORY_VERBS v1 (Cathedral 1): the entity() p99 < 100ms contract gate
+      # (20K-page corpus + ratio guard) shares this runner — same perf-job
+      # shape, runs in parallel with the matrix.
+      - run: bun test test/entity-card-perf.slow.test.ts --timeout=300000
+      # Protocol self-certification: init a scratch brain and run the
+      # conformance kit against gbrain's own stdio server. --synthesize is
+      # safe here: no LLM key in CI, so it asserts the clean `unavailable`
+      # protocol error instead of spending tokens.
+      - name: MEMORY_VERBS conformance (self-certify, stdio)
+        run: |
+          export GBRAIN_HOME="$RUNNER_TEMP/gbrain-conformance"
+          bun run src/cli.ts init --pglite --no-embedding --non-interactive
+          bun run src/cli.ts protocol conformance --synthesize
 
   test:
     # Pure matrix shard — no verify, no serial. Each shard runs its slice

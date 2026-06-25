@@ -44,7 +44,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'advisor', 'watch']);
+const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'protocol', 'advisor', 'watch']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -94,6 +94,9 @@ const CLI_ONLY_SELF_HELP = new Set([
   // `gbrain connect --help` prints its own usage (flags + examples) from
   // runConnect; route around the generic one-line short-circuit.
   'connect',
+  // MEMORY_VERBS v1 (Cathedral 1): protocol ships its own detailed HELP
+  // (subcommands, conformance targets, the cost-gated --synthesize flag).
+  'protocol',
 ]);
 
 // v114 (#1941): alias -> operation lookup, kept separate from `cliOps` so
@@ -938,9 +941,68 @@ export function formatResult(opName: string, result: unknown): string {
         `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}  ${v.compiled_truth?.slice(0, 60) || ''}...`,
       ).join('\n') + '\n';
     }
+    // MEMORY_VERBS v1 [F-E]: human-readable by default; trailing `--json`
+    // escapes to the raw envelope (parseOpArgs ignores an unmatched trailing
+    // flag, so the argv probe is safe).
+    case 'remember': {
+      if (process.argv.includes('--json')) break;
+      const r = result as any;
+      if (r.dry_run) return `[dry-run] would remember: ${r.fact}\n`;
+      const lines = [r.status_text || `${r.status} (fact #${r.id})`];
+      if (r.entity_slug) lines.push(`  entity: ${r.entity_slug}`);
+      if (r.valid_until) lines.push(`  expires: ${r.valid_until}`);
+      if (r.degraded_dedup) lines.push('  note: no embedding provider — duplicate detection degraded');
+      return lines.join('\n') + '\n';
+    }
+    case 'entity': {
+      if (process.argv.includes('--json')) break;
+      const r = result as any;
+      if (!r.found) {
+        const lines = [`No entity found. (${r.latency_ms}ms)`];
+        if (Array.isArray(r.suggestions) && r.suggestions.length) {
+          lines.push('Did you mean:');
+          for (const s of r.suggestions) lines.push(`  ${s.slug} — ${s.title} [${s.create_safety}]`);
+        }
+        return lines.join('\n') + '\n';
+      }
+      const c = r.card;
+      const lines = [`${c.entity.title} (${c.entity.slug})${c.entity.type ? ` [${c.entity.type}]` : ''}  (${r.latency_ms}ms)`];
+      if (c.summary) lines.push(`  ${c.summary}`);
+      if (c.aka?.length) lines.push(`  aka: ${c.aka.join(', ')}`);
+      const lt = c.last_touched || {};
+      const touched = lt.updated_at || lt.last_retrieved_at || lt.last_timeline_date;
+      if (touched) lines.push(`  last touched: ${String(touched).slice(0, 10)}`);
+      if (c.open_threads?.length) {
+        lines.push('  open threads:');
+        for (const t of c.open_threads) lines.push(`    [${t.kind}] ${t.text}${t.date ? ` (${String(t.date).slice(0, 10)})` : ''}`);
+      }
+      if (c.edges?.length) {
+        lines.push('  edges:');
+        for (const e of c.edges) lines.push(`    ${e.direction === 'out' ? '→' : '←'} ${e.type} ${e.slug}`);
+      }
+      lines.push(`  backlinks: ${c.backlink_count} | active facts: ${c.active_fact_count}`);
+      if (Array.isArray(r.suggestions) && r.suggestions.length) {
+        lines.push('  other matches:');
+        for (const s of r.suggestions) lines.push(`    ${s.slug} — ${s.title}`);
+      }
+      return lines.join('\n') + '\n';
+    }
+    case 'synthesize': {
+      if (process.argv.includes('--json')) break;
+      const r = result as any;
+      const lines = [r.answer || '(no answer)'];
+      if (Array.isArray(r.sources) && r.sources.length) lines.push('', `sources: ${r.sources.join(', ')}`);
+      if (Array.isArray(r.gaps) && r.gaps.length) lines.push(`gaps: ${r.gaps.join('; ')}`);
+      const cost = r.cost || {};
+      const tok = cost.input_tokens != null ? `${cost.input_tokens} in / ${cost.output_tokens} out` : 'tokens n/a';
+      const usd = cost.usd_estimate != null ? ` (~$${Number(cost.usd_estimate).toFixed(4)})` : '';
+      lines.push(`cost: ${cost.model} — ${tok}${usd}`);
+      return lines.join('\n') + '\n';
+    }
     default:
       return JSON.stringify(result, null, 2) + '\n';
   }
+  return JSON.stringify(result, null, 2) + '\n';
 }
 
 /**
@@ -1052,6 +1114,14 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'schema') {
     const { runSchema } = await import('./commands/schema.ts');
     await runSchema(args);
+    return;
+  }
+  // MEMORY_VERBS v1 (Cathedral 1): protocol introspection + conformance +
+  // local usage stats. No pre-bound engine — conformance spawns its own
+  // server; stats reads the local JSONL sidecar.
+  if (command === 'protocol') {
+    const { runProtocol } = await import('./commands/protocol.ts');
+    await runProtocol(args);
     return;
   }
   if (command === 'init') {
@@ -2320,9 +2390,13 @@ ADMIN
   features [--json] [--auto-fix]     Scan usage + recommend unused features
   autopilot [--repo] [--interval N]  Self-maintaining brain daemon
   config [show|get|set] <key> [val]  Brain config
+  protocol [conformance|stats]       MEMORY_VERBS v1: schemas, conformance
+                                     certification, local usage stats + TTHW
   storage status [--repo <path>]     Storage tier status and health
         [--json]                     (git-tracked vs supabase-only)
   serve                              MCP server (stdio)
+    --surface verbs|full             Tool surface: the 5 memory verbs only, or
+                                     every op (default full; verbs = quickstart)
   serve --http [--port N]            HTTP MCP server with OAuth 2.1
     --token-ttl N                    Access token TTL in seconds (default: 3600)
     --enable-dcr                     Enable Dynamic Client Registration

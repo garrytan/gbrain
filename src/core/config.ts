@@ -68,6 +68,17 @@ export interface GBrainConfig {
   /** Optional base URL overrides for openai-compatible providers (keyed by recipe id). */
   provider_base_urls?: Record<string, string>;
   /**
+   * MEMORY_VERBS v1 (Cathedral 1): default MCP tool surface for `gbrain serve`.
+   * 'verbs' = exactly the 5 protocol verbs (the quickstart surface);
+   * 'full' (default) = every operation. The `--surface` flag overrides per-run.
+   */
+  mcp_surface?: 'verbs' | 'full';
+  /**
+   * MEMORY_VERBS v1 [D6C]: ISO timestamp stamped by `gbrain init` so
+   * `gbrain protocol stats` can derive real TTHW (install → first verb call).
+   */
+  protocol_installed_at?: string;
+  /**
    * Optional storage backend config (S3/Supabase/local). Shape matches
    * `StorageConfig` in `./storage.ts`. Typed as `unknown` here to avoid
    * a cyclic import; callers pass this through `createStorage()` which
@@ -822,6 +833,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'chat_model',
   'chat_fallback_chain',
   'provider_base_urls',
+  // MEMORY_VERBS v1 (Cathedral 1)
+  'mcp_surface',
+  'protocol_installed_at',
   'storage',
   'eval',
   'eval.capture',

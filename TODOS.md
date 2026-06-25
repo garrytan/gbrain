@@ -1,5 +1,28 @@
 # TODOS
 
+## MEMORY_VERBS v1 follow-ups (filed v0.43.0.0 — Cathedral 1)
+
+Deferred from the Cathedral 1 ship (CEO review, EXPANSION mode). Both are
+additive to the frozen v1 contract — neither breaks it. See plan + GSTACK
+REVIEW REPORT at `~/.claude/plans/system-instruction-you-are-working-agile-iverson.md`
+and the scope record at `~/.gstack/projects/garrytan-gbrain/ceo-plans/2026-06-12-memory-verbs-protocol.md`.
+
+- [ ] **P3 — external-implementation certification PROGRAM.** The conformance
+  TOOLING shipped (`gbrain protocol conformance --target <endpoint>`); the
+  PROGRAM around it (badges, a registry of conformant implementations, listed
+  third-party servers) waits for a second implementation to exist. **Why:** the
+  protocol-not-product thesis only pays off once someone else implements
+  MEMORY_VERBS; until then a certification program certifies an empty set.
+  **Where:** new — would build on `src/commands/protocol.ts` conformance output.
+- [ ] **P3 — persistent open-threads model for the entity card.** v1 derives
+  `entity.open_threads` from active commitment-kind facts + recent timeline
+  entries (best-effort, possibly empty). A richer model (a real threads table:
+  conversation id, opened/closed state, last activity) would make open-threads
+  authoritative. **Why:** the card's open-threads field is the weakest signal
+  in v1; a first-class threads store would make it load-bearing. **Where:**
+  `src/core/verbs/entity-card.ts` open-threads assembly + a new schema table
+  (additive — the card field already exists, so this is a quality upgrade, not
+  a contract change).
 ## reliability fix-wave follow-ups (filed v0.42.52.0)
 
 Deferred from the autopilot/supervisor + sync/status/minion reliability wave

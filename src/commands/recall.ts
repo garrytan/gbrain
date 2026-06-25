@@ -66,6 +66,10 @@ interface ParsedFlags {
   json: boolean;
   source: string;
   limit: number;
+  // MEMORY_VERBS v1 [c4]: recall's verb params, routed through the recall OP
+  // (this hand-rolled CLI otherwise ignores unknown flags silently).
+  query: string | null;
+  budgetTokens: number | null;
   // v0.32
   sinceLastRun: boolean;
   pending: boolean;
@@ -94,6 +98,8 @@ function parseFlags(args: string[]): ParsedFlags {
     json: false,
     source: 'default',
     limit: 50,
+    query: null,
+    budgetTokens: null,
     sinceLastRun: false,
     pending: false,
     rollup: false,
@@ -112,6 +118,8 @@ function parseFlags(args: string[]): ParsedFlags {
     if (a === '--json') { out.json = true; continue; }
     if (a === '--source') { out.source = args[++i] ?? 'default'; continue; }
     if (a === '--limit') { out.limit = parseInt(args[++i] ?? '50', 10) || 50; continue; }
+    if (a === '--query') { out.query = args[++i] ?? null; continue; }
+    if (a === '--budget-tokens') { out.budgetTokens = parseInt(args[++i] ?? '', 10) || null; continue; }
     if (a === '--since-last-run') { out.sinceLastRun = true; continue; }
     if (a === '--pending') { out.pending = true; continue; }
     if (a === '--rollup') { out.rollup = true; continue; }
@@ -223,11 +231,81 @@ export async function runRecall(engine: BrainEngine, args: string[]): Promise<vo
 
   const sourceId = await resolveSourceForRecall(engine, flags.source, thinClient);
 
+  // MEMORY_VERBS v1 [c4]: the verb params route through the recall OP so the
+  // CLI and MCP exercise the same arm (query/budget packing/superset envelope).
+  if (flags.query !== null || flags.budgetTokens !== null) {
+    await runRecallVerb(engine, flags, sourceId);
+    return;
+  }
+
   if (flags.watchSeconds !== null) {
     await runWatchLoop(engine, flags, sourceId, thinClient, flags.watchSeconds);
     return;
   }
   await runRecallOnce(engine, flags, sourceId, thinClient, 'briefing');
+}
+
+/**
+ * MEMORY_VERBS v1 — `gbrain recall --query ... [--budget-tokens N]` routes
+ * through the recall OP (same code path MCP exercises) and renders facts +
+ * search results with the budget footer. `--json` prints the raw envelope.
+ */
+async function runRecallVerb(engine: BrainEngine, flags: ParsedFlags, sourceId: string): Promise<void> {
+  const { operationsByName } = await import('../core/operations.ts');
+  const op = operationsByName['recall'];
+  const ctx = {
+    engine,
+    config: loadConfig() || { engine: 'pglite' as const },
+    logger: {
+      info: (m: string) => process.stderr.write(`[info] ${m}\n`),
+      warn: (m: string) => process.stderr.write(`[warn] ${m}\n`),
+      error: (m: string) => process.stderr.write(`[error] ${m}\n`),
+    },
+    dryRun: false,
+    remote: false as const,
+    sourceId,
+  };
+  const result = (await op.handler(ctx, {
+    ...(flags.entity ? { entity: flags.entity } : {}),
+    ...(flags.query ? { query: flags.query } : {}),
+    ...(flags.budgetTokens ? { budget_tokens: flags.budgetTokens } : {}),
+    ...(flags.since ? { since: flags.since.toISOString() } : {}),
+    ...(flags.grep ? { grep: flags.grep } : {}),
+    include_expired: flags.includeExpired,
+    limit: flags.limit,
+  })) as {
+    facts: Array<{ fact_id: string; fact: string; kind: string; entity_slug: string | null; provenance: string }>;
+    results?: Array<{ slug: string; title: string | null; evidence: string; chunk: string | null }>;
+    search_degraded?: string;
+    budget_tokens?: number;
+    budget_used?: number;
+    dropped_count?: number;
+  };
+
+  if (flags.json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    return;
+  }
+  const lines: string[] = [];
+  if (result.facts.length) {
+    lines.push('Facts:');
+    for (const f of result.facts) {
+      lines.push(`  #${f.fact_id} [${f.kind}]${f.entity_slug ? ` (${f.entity_slug})` : ''} ${f.fact} — ${f.provenance}`);
+    }
+  }
+  if (result.results?.length) {
+    lines.push('Pages:');
+    for (const r of result.results) {
+      lines.push(`  ${r.slug} [${r.evidence}] ${r.title ?? ''}`);
+      if (r.chunk) lines.push(`    ${r.chunk.replace(/\s+/g, ' ').slice(0, 160)}`);
+    }
+  }
+  if (!lines.length) lines.push('Nothing recalled.');
+  if (result.search_degraded) lines.push(`note: search degraded (${result.search_degraded})`);
+  if (result.budget_tokens !== undefined) {
+    lines.push(`budget: ${result.budget_used}/${result.budget_tokens} tokens used, ${result.dropped_count} dropped`);
+  }
+  process.stdout.write(lines.join('\n') + '\n');
 }
 
 async function runRecallOnce(

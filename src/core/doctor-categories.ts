@@ -115,6 +115,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
  * skill-flavored name) live under 'brain'.
  */
 export const SKILL_CHECK_NAMES: ReadonlySet<string> = new Set([
+  'memory_verbs_usage',
   'resolver_health',
   'retrieval_reflex_health',
   'skill_brain_first',

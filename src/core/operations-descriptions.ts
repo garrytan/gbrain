@@ -74,7 +74,9 @@ export const SEARCH_DESCRIPTION =
   "without needing a search term. " +
   "For code-symbol questions (callers, callees, definitions, blast radius), use " +
   "code_callers / code_callees / code_def / code_refs instead — those return " +
-  "structural graph data, not text chunks.";
+  "structural graph data, not text chunks. " +
+  "For agent memory reads (saved facts + budget-packed retrieval), prefer the " +
+  "`recall` verb.";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // v0.32.6 — contradiction probe MCP surface (M3)
