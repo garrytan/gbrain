@@ -2323,6 +2323,23 @@ export interface ChatToolDef {
   inputSchema: Record<string, unknown>;
 }
 
+/** JSON.stringify that never throws (bigint / circular → best-effort string). */
+function safeStringify(v: unknown): string {
+  try { return JSON.stringify(v) ?? 'null'; } catch { return String(v); }
+}
+
+/**
+ * Coerce an arbitrary tool-output value into a plain JSON value the AI SDK's
+ * strict JSONValue schema accepts. Round-tripping through JSON converts `Date`
+ * to an ISO string, drops `undefined` object properties, and normalizes nested
+ * structures. Non-serializable inputs (bigint, circular) fall back to a string.
+ * Returns `null` for nullish input so the json part always has a defined value.
+ */
+function toJsonValue(v: unknown): unknown {
+  if (v === null || v === undefined) return null;
+  try { return JSON.parse(JSON.stringify(v)); } catch { return String(v); }
+}
+
 /**
  * Convert gbrain's provider-neutral ChatMessage[] into AI SDK v6 ModelMessage[].
  *
@@ -2351,10 +2368,20 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
             toolCallId: b.toolCallId,
             toolName: b.toolName,
             output: b.isError
-              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(b.output) }
+              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : safeStringify(b.output) }
               : (typeof b.output === 'string'
                 ? { type: 'text' as const, value: b.output }
-                : { type: 'json' as const, value: (b.output ?? null) as never }),
+                // v6 validates the json `value` against a strict JSONValue Zod
+                // schema. gbrain tool outputs routinely carry non-JSON values —
+                // e.g. node-postgres returns `timestamptz` columns as JS `Date`,
+                // so brain_get_page / brain_list_pages rows include Date-typed
+                // updated_at/created_at fields. A raw Date (or undefined/bigint)
+                // makes the whole tool message fail the union ("messages do not
+                // match the ModelMessage[] schema"). Normalize to a plain JSON
+                // value (Date → ISO string, undefined dropped) first. Replay
+                // didn't hit this because the value was already JSON-round-tripped
+                // through the jsonb column.
+                : { type: 'json' as const, value: toJsonValue(b.output) as never }),
           })),
       };
     }
@@ -2908,6 +2935,22 @@ export interface ToolLoopOpts {
   ) => Promise<{ gbrainToolUseId: string }>;
   onToolCallComplete?: (gbrainToolUseId: string, output: unknown) => Promise<void>;
   onToolCallFailed?: (gbrainToolUseId: string, error: string) => Promise<void>;
+  /**
+   * Persist the user-role message that carries this turn's tool results back to
+   * the model. Fires once per turn, AFTER every tool execution settles and
+   * BEFORE the results are appended to the in-memory history (write-before-use).
+   *
+   * The legacy Anthropic-direct path always persisted this message; the
+   * gateway path originally dropped it (`void userMessageIdx`), so on
+   * crash-replay `loadPriorMessages` rebuilt a history that ended with an
+   * assistant turn whose tool-calls had NO matching tool-result message. AI SDK
+   * v6 then rejected the prompt — "Tool results are missing for tool calls ..."
+   * (when another assistant turn followed) or "messages do not match the
+   * ModelMessage[] schema" (when it was the last message) — and the job retried
+   * the same broken history until max_attempts. Pinned by
+   * test/e2e/subagent-gateway-resume.test.ts.
+   */
+  onToolResultMessage?: (messageIdx: number, blocks: ChatBlock[]) => Promise<void>;
 
   /** Optional per-call heartbeat for observability. */
   onHeartbeat?: (event: string, data: Record<string, unknown>) => void;
@@ -3131,9 +3174,13 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
 
     if (stopReason === 'aborted') break;
 
-    // Feed all tool results back as a single user message.
+    // Feed all tool results back as a single user message. Persist it BEFORE
+    // appending to the in-memory history (write-before-use) so a crash here
+    // leaves the DB holding a complete, replayable turn: the assistant's
+    // tool-calls AND the matching tool-result message. Dropping this write was
+    // the root cause of the gateway-path resume failures (see onToolResultMessage).
     const userMessageIdx = messageIdx++;
-    void userMessageIdx;
+    await opts.onToolResultMessage?.(userMessageIdx, toolResultBlocks);
     messages.push({ role: 'user', content: toolResultBlocks });
 
     turnIdx++;

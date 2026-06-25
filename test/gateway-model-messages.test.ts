@@ -120,4 +120,58 @@ describe('toModelMessages — v6 ModelMessage shape', () => {
     expect((out[2] as any).role).toBe('tool');
     expect((out[2] as any).content[0].output).toEqual({ type: 'json', value: { hits: 0 } });
   });
+
+  // Regression: gbrain tool outputs carry non-JSON values that AI SDK v6's
+  // strict JSONValue schema rejects. node-postgres returns `timestamptz`
+  // columns as JS Date, so brain_get_page / brain_list_pages rows include
+  // Date-typed updated_at/created_at. A raw Date made the whole tool message
+  // fail the ModelMessage union ("messages do not match the ModelMessage[]
+  // schema") on every live multi-turn run. Replay didn't hit it because the
+  // value had already been JSON-round-tripped through the jsonb column.
+  test('Date in tool-result output is normalized to an ISO string (v6 JSONValue)', () => {
+    const when = new Date('2026-06-04T12:34:56.000Z');
+    const msgs: ChatMessage[] = [
+      {
+        role: 'user',
+        content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'brain_list_pages', output: { rows: [{ slug: 'a', updated_at: when }] } }],
+      },
+    ];
+    const out = toModelMessages(msgs);
+    expect((out[0] as any).content[0].output).toEqual({
+      type: 'json',
+      value: { rows: [{ slug: 'a', updated_at: '2026-06-04T12:34:56.000Z' }] },
+    });
+  });
+
+  test('undefined fields in tool-result output are dropped (valid JSONValue)', () => {
+    const msgs: ChatMessage[] = [
+      {
+        role: 'user',
+        content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'x', output: { a: 1, b: undefined } }],
+      },
+    ];
+    expect((toModelMessages(msgs)[0] as any).content[0].output).toEqual({ type: 'json', value: { a: 1 } });
+  });
+
+  test('a Date-bearing tool output is ACCEPTED by AI SDK generateText validation (no ModelMessage rejection)', async () => {
+    const { generateText } = await import('ai');
+    const { createOpenAICompatible } = await import('@ai-sdk/openai-compatible');
+    const msgs: ChatMessage[] = [
+      { role: 'user', content: 'list pages' },
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'brain_list_pages', input: {} }] },
+      { role: 'user', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'brain_list_pages', output: { rows: [{ slug: 'a', updated_at: new Date('2026-06-04T00:00:00Z') }] } }] },
+    ];
+    // Dead URL + no retries: prompt validation runs BEFORE the network call, so
+    // a schema rejection would throw synchronously. Assert the error (if any) is
+    // a connection error, NOT a ModelMessage schema rejection.
+    const provider = createOpenAICompatible({ name: 'dead', baseURL: 'http://127.0.0.1:1/v1' });
+    let msg = '';
+    try {
+      await generateText({ model: provider('m'), messages: toModelMessages(msgs) as any, maxOutputTokens: 8, maxRetries: 0 });
+    } catch (e: any) {
+      msg = String(e?.message ?? e);
+    }
+    expect(msg).not.toContain('ModelMessage');
+    expect(msg).not.toContain('Invalid prompt');
+  });
 });

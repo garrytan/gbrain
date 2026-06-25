@@ -777,22 +777,59 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     });
   }
 
-  // Convert prior Anthropic-shape messages → ChatMessage with ChatBlock content.
-  // v1 rows store Anthropic content blocks ({type:'tool_use'|'tool_result'|...});
+  // Convert prior Anthropic-shape messages → ChatMessage with ChatBlock content,
+  // healing any tool-result messages that an older (pre-fix) gateway run failed
+  // to persist. v1 rows store Anthropic content blocks ({type:'tool_use'|...});
   // we adapt them to ChatBlock shape (type: 'tool-call' | 'tool-result' | 'text').
-  const priorChatMessages: ChatMessage[] = priorMessages.map(m => ({
-    role: m.role as 'user' | 'assistant',
-    content: adaptContentBlocksToChatBlocks(m.content_blocks),
-  }));
+  //
+  // Self-healing replay: builds tool-execution outputs keyed by message_idx so
+  // an assistant turn whose tool-calls have no following tool-result message
+  // (the gap left by the historical persistence bug) gets its tool-result
+  // message reconstructed from subagent_tool_executions and re-persisted. This
+  // recovers jobs corrupted before the fix AND hardens replay against any
+  // future gap. Inert on fresh runs (priorMessages empty) and on correctly
+  // persisted histories (the tool-result message is already present).
+  const { messages: priorChatMessages, healed: healedToolResultMessages } =
+    rebuildReplayHistory(priorMessages, priorTools);
+
+  // Re-persist any reconstructed tool-result messages so the gap is closed in
+  // the DB (persistMessage uses ON CONFLICT DO NOTHING — idempotent).
+  for (const h of healedToolResultMessages) {
+    await persistMessage(engine, ctx.id, {
+      message_idx: h.messageIdx,
+      role: 'user',
+      content_blocks: h.blocks as unknown as ContentBlock[],
+      tokens_in: null,
+      tokens_out: null,
+      tokens_cache_read: null,
+      tokens_cache_create: null,
+      model: null,
+    });
+  }
+  if (healedToolResultMessages.length > 0) {
+    logSubagentHeartbeat({
+      job_id: ctx.id,
+      event: 'replay_healed_tool_results' as any,
+      count: healedToolResultMessages.length,
+    } as any);
+  }
 
   // Initial seed message if no prior state.
   const initialMessages: ChatMessage[] = priorChatMessages.length === 0
     ? [{ role: 'user', content: data.prompt }]
     : [];
 
-  // Persist seed user message at idx 0 if fresh start.
-  let nextMessageIdx = priorChatMessages.length;
-  if (nextMessageIdx === 0) {
+  // Next message_idx must exceed every persisted/healed idx (NOT the array
+  // length — a still-pending unreconstructable tail could leave a gap, and the
+  // unique (job_id, message_idx) constraint would silently drop a colliding
+  // write under ON CONFLICT DO NOTHING).
+  const maxKnownIdx = Math.max(
+    -1,
+    ...priorMessages.map(m => m.message_idx),
+    ...healedToolResultMessages.map(h => h.messageIdx),
+  );
+  let nextMessageIdx = maxKnownIdx + 1;
+  if (priorChatMessages.length === 0) {
     await persistMessage(engine, ctx.id, {
       message_idx: 0,
       role: 'user',
@@ -904,6 +941,21 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
         [errorMsg, gbrainToolUseId],
       );
     },
+    onToolResultMessage: async (messageIdx, blocks) => {
+      // Persist the tool-result user message so crash-replay rebuilds a valid
+      // conversation. Symmetric to the legacy Anthropic-direct path; its
+      // absence here was the root cause of the gateway-path resume loop.
+      await persistMessage(engine, ctx.id, {
+        message_idx: messageIdx,
+        role: 'user',
+        content_blocks: blocks as unknown as ContentBlock[],
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cache_read: null,
+        tokens_cache_create: null,
+        model: null,
+      });
+    },
     onHeartbeat: heartbeat,
   });
 
@@ -1014,8 +1066,20 @@ function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
   return out;
 }
 
+/** Parse a JSON string, returning the original value if it isn't valid JSON
+ * (a tool may legitimately return a bare string). Used when re-hydrating
+ * tool-execution outputs that the pg driver hands back as JSONB string scalars. */
+function safeJsonParse(s: string): unknown {
+  try { return JSON.parse(s); } catch { return s; }
+}
+
 interface PriorToolV2Row {
   stableKey: string;
+  /** message_idx of the assistant turn that emitted this tool call. */
+  messageIdx: number;
+  /** Provider-supplied tool-call id — matches the assistant block's toolCallId. */
+  providerToolCallId: string;
+  toolName: string;
   status: 'pending' | 'complete' | 'failed';
   output: unknown;
   error: string | null;
@@ -1051,11 +1115,94 @@ async function loadPriorToolsV2(engine: BrainEngine, jobId: number): Promise<Pri
       : `legacy:${jobId}:${r.message_idx}:${r.tool_use_id}:${r.tool_name}`;
     return {
       stableKey,
+      messageIdx: r.message_idx as number,
+      providerToolCallId: r.tool_use_id as string,
+      toolName: r.tool_name as string,
       status: r.status as 'pending' | 'complete' | 'failed',
-      output: r.output,
+      output: typeof r.output === 'string' ? safeJsonParse(r.output) : r.output,
       error: (r.error as string | null) ?? null,
     };
   });
+}
+
+/**
+ * Rebuild the gateway replay history from persisted messages, healing any
+ * tool-result message a pre-fix gateway run failed to persist.
+ *
+ * The historical bug: the gateway tool-loop persisted assistant turns and
+ * per-tool execution rows but never persisted the user-role message carrying
+ * the tool results. On resume, the rebuilt conversation ended with an
+ * assistant turn whose tool-calls had no matching tool-result message, which
+ * AI SDK v6 rejects ("Tool results are missing for tool calls ..." /
+ * "messages do not match the ModelMessage[] schema"). The job then looped on
+ * the same broken history until max_attempts.
+ *
+ * For every assistant turn that emitted tool-calls and is NOT already followed
+ * by a tool-result message, we synthesize that message from the (settled)
+ * subagent_tool_executions rows at the same message_idx, matching each
+ * assistant tool-call by provider toolCallId. The synthesized message is
+ * inserted at `assistantIdx + 1` — exactly where the forward path
+ * (onToolResultMessage) writes it — and returned in `healed` so the caller can
+ * close the gap in the DB.
+ *
+ * Conservative on ambiguity: if any tool-call's execution is still `pending` or
+ * has no row, that turn is left un-healed (no fabricated result for work that
+ * may not have run). Such a tail reproduces the original failure rather than
+ * inventing data — no regression versus pre-fix behavior.
+ */
+function rebuildReplayHistory(
+  priorMessages: PersistedMessage[],
+  priorTools: PriorToolV2Row[],
+): { messages: ChatMessage[]; healed: Array<{ messageIdx: number; blocks: ChatBlock[] }> } {
+  const execsByMsgIdx = new Map<number, PriorToolV2Row[]>();
+  for (const t of priorTools) {
+    const arr = execsByMsgIdx.get(t.messageIdx);
+    if (arr) arr.push(t); else execsByMsgIdx.set(t.messageIdx, [t]);
+  }
+
+  const messages: ChatMessage[] = [];
+  const healed: Array<{ messageIdx: number; blocks: ChatBlock[] }> = [];
+
+  for (let i = 0; i < priorMessages.length; i++) {
+    const m = priorMessages[i];
+    const content = adaptContentBlocksToChatBlocks(m.content_blocks);
+    messages.push({ role: m.role, content });
+
+    if (m.role !== 'assistant' || !Array.isArray(content)) continue;
+    const toolCalls = content.filter(
+      (b): b is Extract<ChatBlock, { type: 'tool-call' }> => b.type === 'tool-call',
+    );
+    if (toolCalls.length === 0) continue;
+
+    // Already answered? (correctly persisted history — the common post-fix case)
+    const next = priorMessages[i + 1];
+    const nextContent = next ? adaptContentBlocksToChatBlocks(next.content_blocks) : null;
+    const alreadyAnswered = next?.role === 'user' && Array.isArray(nextContent)
+      && nextContent.some(b => b.type === 'tool-result');
+    if (alreadyAnswered) continue;
+
+    // Reconstruct from settled executions, matched by provider toolCallId.
+    const byProviderId = new Map(
+      (execsByMsgIdx.get(m.message_idx) ?? []).map(e => [e.providerToolCallId, e]),
+    );
+    const blocks: ChatBlock[] = [];
+    let reconstructable = true;
+    for (const tc of toolCalls) {
+      const exec = byProviderId.get(tc.toolCallId);
+      if (!exec || exec.status === 'pending') { reconstructable = false; break; }
+      blocks.push(
+        exec.status === 'failed'
+          ? { type: 'tool-result', toolCallId: tc.toolCallId, toolName: tc.toolName, output: exec.error ?? 'tool failed', isError: true }
+          : { type: 'tool-result', toolCallId: tc.toolCallId, toolName: tc.toolName, output: exec.output ?? null },
+      );
+    }
+    if (!reconstructable) continue;
+
+    messages.push({ role: 'user', content: blocks });
+    healed.push({ messageIdx: m.message_idx + 1, blocks });
+  }
+
+  return { messages, healed };
 }
 
 // ── Internal: persistence ───────────────────────────────────
