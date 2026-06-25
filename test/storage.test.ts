@@ -156,7 +156,7 @@ describe('signed storage URLs', () => {
     const operationsSource = readFileSync(new URL('../src/core/operations.ts', import.meta.url), 'utf-8');
 
     expect(operationsSource).toContain('expires_in_seconds');
-    expect(operationsSource).toContain('storage.getUrl(String(rows[0].storage_path), { expiresInSeconds })');
+    expect(operationsSource).toMatch(/storage\.getUrl\(\s*String\(rows\[0\]\.storage_path\),\s*\{\s*expiresInSeconds,?\s*\}\s*\)/);
     expect(operationsSource).toContain('mbrain:files/${rows[0].storage_path}');
   });
 });

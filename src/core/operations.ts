@@ -3345,24 +3345,22 @@ export function assertPutPageRouteFirstPrecondition(params: Record<string, unkno
 const put_page: Operation = {
   name: 'put_page',
   description:
-    'Create or update a knowledge page to record new information about people, companies, concepts, or systems discovered during the conversation. Markdown with YAML frontmatter; content should follow the compiled truth + timeline pattern. Rejects generic, numeric-only, or globally bucketed documentation slugs. Chunks, embeds, and reconciles tags.',
+    'Create or update a governed Markdown knowledge page with compiled truth and evidence. Requires an observed target hash or router-issued write_session_id.',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: {
       type: 'string',
       required: true,
-      description: 'Full markdown content with YAML frontmatter',
+      description: 'Full markdown page content',
     },
     expected_content_hash: {
       type: 'string',
       nullable: true,
-      description:
-        'Route-first write precondition. Existing page content_hash must match before writing; null requires that the page is absent. Omit only when supplying a router-issued write_session_id.',
+      description: 'Observed-target precondition: existing content_hash, or null for confirmed absence. Omit only with write_session_id.',
     },
     write_session_id: {
       type: 'string',
-      description:
-        'Optional route_memory_writeback write session id. When supplied, put_page consumes its target slug, source refs, scope, and expected hash as the route-first precondition.',
+      description: 'Router-issued write session id; binds target slug, source refs, scope, expected hash, and routed content.',
     },
     repo: {
       type: 'string',
