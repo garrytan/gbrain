@@ -968,22 +968,31 @@ async function writeSyncAnchor(
   // git-intrinsic committer time of the HEAD we just synced). `undefined` keeps
   // the legacy 2-column write; `null` clears the column (git unavailable).
   newestContentEpochMs?: number | null,
+  // #1430: when the upstream pull failed this run, advance last_commit (and
+  // newest_content_at — local import may have succeeded against the stale
+  // checkout) but do NOT stamp last_sync_at. doctor/autopilot's sync_freshness
+  // must not read the source as "fresh" when we never observed remote state
+  // (network partition, revoked credentials, diverged remote). Operator-skipped
+  // offline modes (--no-pull, detached HEAD, no origin) are NOT failures and
+  // pass pullFailed=false so freshness advances normally.
+  pullFailed = false,
 ): Promise<void> {
   if (sourceId) {
     const col = which === 'repo_path' ? 'local_path' : 'last_commit';
-    // last_sync_at bookmarked on every last_commit advance.
+    // last_sync_at bookmarked on every last_commit advance — gated by #1430.
     if (which === 'last_commit') {
+      const syncAt = pullFailed ? '' : ', last_sync_at = now()';
       if (newestContentEpochMs !== undefined) {
         const iso = newestContentEpochMs === null
           ? null
           : new Date(newestContentEpochMs).toISOString();
         await engine.executeRaw(
-          `UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2`,
+          `UPDATE sources SET last_commit = $1${syncAt}, newest_content_at = $3 WHERE id = $2`,
           [value, sourceId, iso],
         );
       } else {
         await engine.executeRaw(
-          `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
+          `UPDATE sources SET last_commit = $1${syncAt} WHERE id = $2`,
           [value, sourceId],
         );
       }
@@ -1616,6 +1625,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     });
   }
 
+  // #1430: distinguishes a true pull FAILURE (network/credentials/diverged)
+  // from operator-skipped offline modes. Only a real failure suppresses the
+  // last_sync_at freshness bump on the anchor writes below; the pull_timeout
+  // path early-returns a partial before any anchor write.
+  let pullAttemptedAndFailed = false;
+
   if (!opts.noPull && !detachedHead && originRemotePresent) {
     const _t0 = Date.now();
     serr(`[gbrain phase] sync.git_pull start`);
@@ -1662,6 +1677,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       } else {
         serr(`Warning: git pull failed: ${msg.slice(0, 100)}`);
       }
+      pullAttemptedAndFailed = true; // #1430: suppress last_sync_at on the anchor writes below
     }
   }
 
@@ -1699,7 +1715,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // back to the authoritative full reconcile (which now also purges stale
       // pages for deleted files; see performFullSync's delete-reconcile pass).
       serr(`Sync anchor ${lastCommit.slice(0, 8)} object missing (gc'd after history rewrite). Running full reimport.`);
-      return performFullSync(engine, repoPath, headCommit, opts);
+      return performFullSync(engine, repoPath, headCommit, opts, pullAttemptedAndFailed);
     }
 
     // Observability only — NOT control flow. A non-ancestor bookmark is still
@@ -1722,7 +1738,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // First sync
   if (!lastCommit) {
-    return performFullSync(engine, repoPath, headCommit, opts);
+    return performFullSync(engine, repoPath, headCommit, opts, pullAttemptedAndFailed);
   }
 
   // v0.42.x (#1794): resumable incremental sync — resolve the PINNED target.
@@ -1786,6 +1802,25 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       detachedWorkingTreeManifest.renamed.length > 0);
 
   if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
+    // #1430: even on a pure no-op (no new commits, chunker matches, no
+    // working-tree changes), record the sync attempt timestamp. Without this,
+    // sources.last_sync_at only advances when sync actually imports new pages,
+    // so doctor's sync_freshness check misreads quiet sources (no upstream
+    // commits in N days) as "stale" even when every cron tick polls them. The
+    // metric users intuit from "last sync" is "last time we attempted a sync",
+    // not "last time we had new data". Suppress when the pull was attempted AND
+    // failed — we never observed remote state, so advancing freshness would
+    // mask the failure. Operator-skipped offline modes (--no-pull, detached
+    // HEAD, no origin) are not failures and DO advance. --dry-run must stay
+    // side-effect free. The legacy non-federated path (no opts.sourceId) writes
+    // config.sync.last_run elsewhere and isn't reached by sync_freshness's
+    // `WHERE local_path IS NOT NULL` filter, so leave it alone.
+    if (opts.sourceId && !pullAttemptedAndFailed && !opts.dryRun) {
+      await engine.executeRaw(
+        `UPDATE sources SET last_sync_at = now() WHERE id = $1`,
+        [opts.sourceId],
+      );
+    }
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,
@@ -1802,7 +1837,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       `[sync] chunker_version gate: stored=${storedVersion ?? 'unset'}, current=${currentVersion}. ` +
       `Forcing full re-chunk pass (git HEAD unchanged but pipeline version advanced).`,
     );
-    const result = await performFullSync(engine, repoPath, headCommit, opts);
+    const result = await performFullSync(engine, repoPath, headCommit, opts, pullAttemptedAndFailed);
     await writeChunkerVersion(engine, opts.sourceId, currentVersion);
     return result;
   }
@@ -1831,7 +1866,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       `[sync] delta ${lastCommit.slice(0, 8)}..${pin.slice(0, 8)} unavailable ` +
       `(${delta.reason}) — falling back to full reconcile.`,
     );
-    return performFullSync(engine, repoPath, headCommit, opts);
+    return performFullSync(engine, repoPath, headCommit, opts, pullAttemptedAndFailed);
   }
   const manifest = delta.manifest;
 
@@ -1926,7 +1961,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // (#1794): advance to the PINNED target, and clear any checkpoint (a resume
     // whose remaining range turned out to have no syncable changes still
     // completes cleanly here).
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(repoPath, pin));
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(repoPath, pin), pullAttemptedAndFailed);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
     await clearOpCheckpoint(engine, ckpt.paths);
@@ -2723,7 +2758,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // "fresh". The checkpoint rows clear here — CONVERGENCE CONTRACT: sync
     // convergence == IMPORT convergence; downstream extract/facts/embed is
     // decoupled (its own resumable stale sweeps).
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(repoPath, pin));
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(repoPath, pin), pullAttemptedAndFailed);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
@@ -2954,6 +2989,9 @@ async function performFullSync(
   repoPath: string,
   headCommit: string,
   opts: SyncOpts,
+  // #1430: gate last_sync_at on the full-import anchor write — a full reimport
+  // triggered after a failed pull still must not mark the source "fresh".
+  pullFailed = false,
 ): Promise<SyncResult> {
   // Dry-run: walk the repo, count syncable files, return without writing.
   // Fixes the silent-write-on-dry-run bug where performFullSync called
@@ -3030,7 +3068,7 @@ async function performFullSync(
   const advanceFull = async (): Promise<void> => {
     // Persist sync state so the next sync is incremental. Routed through
     // writeSyncAnchor so --source pins the right sources row.
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(repoPath));
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(repoPath), pullFailed);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
