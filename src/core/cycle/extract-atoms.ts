@@ -116,6 +116,7 @@ interface ExtractedAtom {
   title: string;
   atom_type: typeof ATOM_TYPES[number];
   body: string;
+  concepts?: string[];
   source_quote?: string;
   lesson?: string;
   virality_score?: number;
@@ -132,11 +133,14 @@ quote, or short essay angle. Each atom must:
 
 Output a JSON array of atoms (1-3 per transcript, never more than 3).
 Each atom: {title (≤80 chars), atom_type, body (2-4 sentences),
+concepts (0-5 reusable kebab-case labels, max 32 chars each),
 source_quote (verbatim ≤200 chars), lesson (one sentence), virality_score
 (0-100), emotional_register (one of: shocking, inspiring, funny, sobering,
 practical, controversial)}.
 
 atom_type MUST be one of: ${ATOM_TYPES.join(', ')}.
+concepts MUST be reusable short labels like "ai-agents" or "founder-psychology",
+not sentence-length tags.
 
 Output ONLY the JSON array, no prose.`;
 
@@ -522,6 +526,7 @@ export async function runPhaseExtractAtoms(
             item.kind === 'transcript'
               ? { source_path: item.filePath }
               : { source_slug: item.slug };
+          const concepts = normalizeAtomConceptLabels(atom.concepts);
           // v0.41.2.1 D9 #1 — thread sourceId through every putPage so
           // atoms land in the source we discovered them from. Pre-fix
           // the third arg was missing and atoms always wrote to 'default'.
@@ -534,6 +539,7 @@ export async function runPhaseExtractAtoms(
               frontmatter: {
                 type: 'atom',
                 atom_type: atom.atom_type,
+                ...(concepts.length > 0 && { concepts }),
                 ...originFrontmatter,
                 source_hash: item.contentHash.slice(0, 16),
                 ...(atom.source_quote && { source_quote: atom.source_quote }),
@@ -672,6 +678,7 @@ export function parseAtomsResponse(raw: string): ExtractedAtom[] {
       title,
       atom_type: atomType as typeof ATOM_TYPES[number],
       body,
+      concepts: normalizeAtomConceptLabels(obj.concepts),
       source_quote: typeof obj.source_quote === 'string' ? obj.source_quote.slice(0, 500) : undefined,
       lesson: typeof obj.lesson === 'string' ? obj.lesson : undefined,
       virality_score:
@@ -685,6 +692,27 @@ export function parseAtomsResponse(raw: string): ExtractedAtom[] {
     });
   }
   return atoms;
+}
+
+export function normalizeAtomConceptLabels(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of raw) {
+    if (typeof value !== 'string') continue;
+    const normalized = value
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    if (normalized.length === 0 || normalized.length > 32) continue;
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(normalized)) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+    if (out.length >= 5) break;
+  }
+  return out;
 }
 
 function todayDate(): string {
