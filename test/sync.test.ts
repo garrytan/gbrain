@@ -132,6 +132,16 @@ describe('pruneDir', () => {
     expect(pruneDir('ops')).toBe(false);
   });
 
+  test('blocks build-output / vendored-dep dirs (vendor, dist, build)', () => {
+    // Gitignored dirs that exist on disk after `composer install` / `npm
+    // run build`. The walker doesn't read .gitignore, so without these
+    // entries code-strategy sync hits tsvector + bind-param caps on
+    // composer autoload bundles and minified JS chunks.
+    expect(pruneDir('vendor')).toBe(false);
+    expect(pruneDir('dist')).toBe(false);
+    expect(pruneDir('build')).toBe(false);
+  });
+
   test('blocks *.raw sidecar dirs (gbrain convention)', () => {
     expect(pruneDir('.raw')).toBe(false);
     expect(pruneDir('pedro.raw')).toBe(false);

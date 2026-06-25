@@ -238,6 +238,18 @@ function matchesAnyGlob(path: string, patterns?: string[]): boolean {
  * `node_modules` lacks a leading dot so the dot-prefix exclusion in
  * isSyncable below doesn't catch it; explicit entry here closes the
  * latent walker bug (#923, #202).
+ *
+ * `vendor`, `dist`, `build` are the same shape one tier up: gitignored
+ * dependency / build-output dirs that exist on disk after `composer
+ * install` / `npm run build` / equivalent. The walker doesn't consult
+ * `.gitignore`, so without these entries a code-strategy sync of a
+ * built PHP/JS repo trips two structural Postgres limits:
+ *   - composer's `autoload_classmap.php` etc. exceed the 1 MiB
+ *     `tsvector` cap → `FILE_TOO_LARGE` rows in `sync_failures`.
+ *   - minified bundles produce >10 900 chunks in a single INSERT,
+ *     blowing the 65 534 bind-param wire-protocol cap → `UNKNOWN`
+ *     rows in `sync_failures` (MAX_PARAMETERS_EXCEEDED).
+ * Empirically hit on PHP+Vue repos at the >2k-page scale.
  */
 const PRUNE_DIR_NAMES = new Set<string>([
   'node_modules',
@@ -256,6 +268,9 @@ const PRUNE_DIR_NAMES = new Set<string>([
   'venv',
   '.raw',
   'ops',
+  'vendor',
+  'dist',
+  'build',
 ]);
 
 /**
