@@ -155,6 +155,33 @@ describe('thin-client doctor routes to runRemoteDoctor', () => {
   });
 });
 
+describe('thin-client capture routes remote (does NOT open local engine)', () => {
+  // Regression for the "capture breaks on thin-client" bug. `capture` is a
+  // CLI_ONLY command, so it does NOT pass through the shared-op routing seam
+  // that put / search / whoami use. Before the fix, handleCliOnly had no
+  // thin-client bypass for capture (unlike `status` / `eval whoknows`), so it
+  // fell through to the unconditional `connectEngine()` and died with
+  // "No database URL: database_url is missing from config" — even though
+  // capture has a perfectly good thin-client branch that routes through
+  // callRemoteTool('put_page', ...). put routed remote fine; only capture broke.
+  test('`gbrain capture "..."` routes through put_page, never opens the local engine', async () => {
+    seedThinClientConfig();
+    const r = await run(['capture', 'a thin-client capture thought']);
+    // MUST NOT have tried to open a local Postgres engine. That path throws
+    // the "No database URL" GBrainError from src/core/db.ts — the exact bug.
+    expect(r.stderr).not.toContain('No database URL');
+    expect(r.stderr).not.toContain('database_url is missing');
+    // MUST have routed to the remote MCP instead. brain-host.example is
+    // unreachable in the test env, so capture's thin-client branch surfaces a
+    // remote put_page failure. The "remote put_page failed:" prefix is unique
+    // to capture.ts's thin-client catch block — it can never appear on the
+    // local-engine path — so it is the precise proof that capture routed
+    // through callRemoteTool('put_page', ...) per the README contract.
+    expect(r.stderr).toContain('remote put_page failed');
+    expect(r.exitCode).toBe(1);
+  });
+});
+
 describe('regression — local config still passes through normally', () => {
   test('local PGLite config does NOT trigger thin-client guard for `sync`', async () => {
     // Seed a local PGLite config (no remote_mcp). `gbrain sync` shouldn't
