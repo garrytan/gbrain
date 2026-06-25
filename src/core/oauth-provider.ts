@@ -27,6 +27,13 @@ import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
 import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
 import { parseLegacyTokenScope } from './legacy-token-scope.ts';
+import {
+  type OidcRp,
+  OidcRpError,
+  generatePkcePair,
+  mapIdentityToScopes,
+  clampScopes,
+} from './oidc-rp.ts';
 import type { SqlQuery, SqlValue } from './sql-query.ts';
 export type { SqlQuery, SqlValue };
 
@@ -50,6 +57,40 @@ function pgArray(arr: string[]): string {
   if (!arr || arr.length === 0) return '{}';
   const escaped = arr.map(s => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
   return `{${escaped.join(',')}}`;
+}
+
+/**
+ * OIDC-bound SSO identity carried on oauth_codes / oauth_tokens rows (all
+ * columns NULL for the non-OIDC path + the client_credentials grant). Threaded
+ * code → token at exchange and surfaced on AuthInfo by verifyAccessToken.
+ */
+interface BoundIdentity {
+  subject?: string;
+  email?: string;
+  groups?: string[];
+}
+
+/**
+ * Read a BoundIdentity off a code/token row. Returns undefined when the row
+ * carries no identity (every column NULL/absent) so the non-OIDC path stores
+ * nothing and AuthInfo.email stays undefined.
+ */
+function identityFromRow(row: Record<string, unknown>): BoundIdentity | undefined {
+  const email = (row.email as string | null) ?? undefined;
+  const subject = (row.subject as string | null) ?? undefined;
+  const groupsRaw = row.groups;
+  const groups = Array.isArray(groupsRaw) ? (groupsRaw as string[]) : undefined;
+  if (email === undefined && subject === undefined && groups === undefined) return undefined;
+  return { subject, email, groups };
+}
+
+/**
+ * Spread a BoundIdentity onto an AuthInfo literal — `{}` when undefined so the
+ * non-OIDC path adds no identity keys. Keeps verifyAccessToken's return literal
+ * clean while leaving subject/email/groups `undefined` (not present) when unbound.
+ */
+function spreadBoundIdentity(identity: BoundIdentity | undefined): BoundIdentity {
+  return identity ?? {};
 }
 
 /**
@@ -183,6 +224,15 @@ interface GBrainOAuthProviderOptions {
    * before mcpAuthRouter ran).
    */
   dcrDisabled?: boolean;
+  /**
+   * OIDC relying-party runtime (oidc-rp.ts). When present, `authorize()`
+   * federates the human login upstream to the configured OIDC IdP (Cloudflare
+   * Access-for-SaaS → Azure AD) instead of minting a code immediately, and the
+   * verified SSO identity is bound to the issued token. Undefined (the default)
+   * preserves the pre-OIDC behavior exactly. Never engaged by the
+   * client_credentials grant — machine clients authenticate by secret as before.
+   */
+  oidcRp?: OidcRp;
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +397,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   private readonly dcrDisabled: boolean;
   private tokenTtl: number;
   private refreshTtl: number;
+  private readonly oidcRp?: OidcRp;
 
   constructor(options: GBrainOAuthProviderOptions) {
     this.sql = options.sql;
@@ -354,6 +405,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
+    this.oidcRp = options.oidcRp;
+  }
+
+  /** True when OIDC relying-party federation is wired (see oidcRp option). */
+  get oidcEnabled(): boolean {
+    return this.oidcRp !== undefined;
   }
 
   get clientsStore(): OAuthRegisteredClientsStore {
@@ -379,6 +436,16 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
+    // OIDC relying-party federation: when wired, do NOT mint a code here.
+    // Instead persist a pending record correlating THIS MCP-client authorize
+    // request (its redirect_uri, PKCE challenge, requested scopes, state) and
+    // redirect the browser UPSTREAM to the OIDC IdP. The gbrain code is minted
+    // later in completeOidcCallback(), bound to the verified SSO identity. The
+    // pre-OIDC immediate-mint path below runs unchanged when oidcRp is unset.
+    if (this.oidcRp) {
+      return this.authorizeViaOidc(client, params, res);
+    }
+
     const code = generateToken('gbrain_code_');
     const codeHash = hashToken(code);
     const expiresAt = Math.floor(Date.now() / 1000) + 600; // 10 minute TTL
@@ -419,6 +486,158 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     redirectUrl.searchParams.set('code', code);
     if (params.state) redirectUrl.searchParams.set('state', params.state);
     res.redirect(redirectUrl.toString());
+  }
+
+  // -------------------------------------------------------------------------
+  // OIDC Relying-Party federation (see oidc-rp.ts)
+  // -------------------------------------------------------------------------
+
+  /**
+   * /authorize handler when OIDC RP is wired. Stores a pending record keyed by
+   * a hashed `state` and redirects the browser to the upstream IdP. The MCP
+   * client's own PKCE challenge + redirect_uri + requested scopes are captured
+   * verbatim so the eventual gbrain code (minted in completeOidcCallback) is
+   * indistinguishable to the client from the non-OIDC path.
+   *
+   * Requested scopes are clamped to the client's registered grant HERE (same
+   * RFC 6749 §3.3 clamp as the non-OIDC path); completeOidcCallback further
+   * intersects them with what the SSO identity is allowed.
+   */
+  private async authorizeViaOidc(
+    client: OAuthClientInformationFull,
+    params: AuthorizationParams,
+    res: Response,
+  ): Promise<void> {
+    const allowedScopes = parseScopeString(client.scope);
+    const requestedScopes = (params.scopes && params.scopes.length) ? params.scopes : allowedScopes;
+    const grantedScopes = requestedScopes.filter(s => hasScope(allowedScopes, s));
+
+    // gbrain→IdP correlation secrets. `state` is the lookup key (hashed at
+    // rest); the PKCE verifier + nonce defend the upstream leg (verifier ↔ the
+    // IdP's PKCE, nonce ↔ id_token replay). These are DISTINCT from the MCP
+    // client's PKCE challenge, which we stash in code_challenge for replay into
+    // oauth_codes so the client's /token PKCE check (challengeForAuthorizationCode)
+    // still validates against the client's own verifier.
+    const state = generateToken('gbrain_oidc_state_');
+    const stateHash = hashToken(state);
+    const nonce = generateToken('gbrain_oidc_nonce_');
+    const { verifier, challenge } = generatePkcePair();
+    const expiresAt = Math.floor(Date.now() / 1000) + 600; // 10 minute TTL
+
+    await this.sql`
+      INSERT INTO oauth_pending (state_hash, client_id, redirect_uri, code_challenge,
+                                 code_challenge_method, scopes, client_state, resource,
+                                 pkce_verifier, nonce, expires_at)
+      VALUES (${stateHash}, ${client.client_id}, ${params.redirectUri},
+              ${params.codeChallenge}, ${'S256'},
+              ${pgArray(grantedScopes)}, ${params.state || null},
+              ${params.resource?.toString() || null},
+              ${verifier}, ${nonce}, ${expiresAt})
+    `;
+
+    try {
+      const url = await this.oidcRp!.buildAuthorizationUrl({ state, nonce, codeChallenge: challenge });
+      res.redirect(url);
+    } catch (e) {
+      // Discovery/build failure: clean up the pending row and bounce the client
+      // back with an OAuth error rather than hanging the browser on a 500.
+      await this.sql`DELETE FROM oauth_pending WHERE state_hash = ${stateHash}`.catch(() => {});
+      const back = new URL(params.redirectUri);
+      back.searchParams.set('error', 'server_error');
+      back.searchParams.set('error_description', `OIDC federation unavailable (${
+        e instanceof OidcRpError ? e.code : 'unknown'
+      })`);
+      if (params.state) back.searchParams.set('state', params.state);
+      res.redirect(back.toString());
+    }
+  }
+
+  /**
+   * Complete the OIDC round-trip (called by the GET /oidc/callback route in
+   * serve-http.ts). Consumes the pending record, exchanges the IdP code,
+   * verifies the id_token, maps identity→scopes, mints the gbrain authorization
+   * code bound to the SSO identity, and returns the URL to redirect the browser
+   * back to the original MCP client (its redirect_uri + the gbrain code).
+   *
+   * Returns `{ redirectUrl }` for both the success path AND recoverable
+   * failures where we still hold the client's redirect_uri (the browser is
+   * bounced back with an OAuth `error`). Throws OidcRpError ('misconfigured')
+   * only when there is no safe redirect target (missing/expired/forged state) —
+   * the route renders a 400 in that case.
+   */
+  async completeOidcCallback(code: string, state: string): Promise<{ redirectUrl: string }> {
+    if (!this.oidcRp) {
+      throw new OidcRpError('OIDC callback hit but OIDC RP is not configured', 'misconfigured');
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const stateHash = hashToken(state);
+
+    // Single-use: DELETE…RETURNING burns the pending row atomically. A second
+    // callback (replay) or a forged/expired state returns zero rows.
+    const rows = await this.sql`
+      DELETE FROM oauth_pending
+      WHERE state_hash = ${stateHash} AND expires_at > ${now}
+      RETURNING client_id, redirect_uri, code_challenge, code_challenge_method,
+                scopes, client_state, resource, pkce_verifier, nonce
+    `;
+    if (rows.length === 0) {
+      throw new OidcRpError('OIDC callback state not found or expired', 'misconfigured');
+    }
+    const p = rows[0];
+    const clientRedirect = p.redirect_uri as string;
+    const clientState = (p.client_state as string | null) ?? undefined;
+
+    // Helper: bounce the browser back to the MCP client with an OAuth error.
+    const errorRedirect = (error: string, description: string): { redirectUrl: string } => {
+      const back = new URL(clientRedirect);
+      back.searchParams.set('error', error);
+      back.searchParams.set('error_description', description);
+      if (clientState) back.searchParams.set('state', clientState);
+      return { redirectUrl: back.toString() };
+    };
+
+    // Exchange + verify upstream. Any failure → access_denied back to client.
+    let identity;
+    try {
+      identity = await this.oidcRp.exchangeCode(code, p.pkce_verifier as string, p.nonce as string);
+    } catch (e) {
+      const reason = e instanceof OidcRpError ? e.code : 'unknown';
+      return errorRedirect('access_denied', `SSO login failed (${reason})`);
+    }
+
+    // Identity → scopes, then intersect with the client's requested grant.
+    const identityScopes = mapIdentityToScopes(identity, this.oidcRp.config);
+    const requestedScopes = (p.scopes as string[]) || [];
+    const grantedScopes = clampScopes(requestedScopes, identityScopes);
+    if (grantedScopes.length === 0) {
+      // The SSO identity maps to no scope the client asked for → nothing to
+      // grant. Surface as access_denied rather than mint a uselessly-empty code.
+      return errorRedirect('access_denied', 'SSO identity is not authorized for the requested scope');
+    }
+
+    // Mint the gbrain authorization code, bound to the verified identity. The
+    // client's own PKCE challenge is replayed so its /token PKCE check passes.
+    const gbrainCode = generateToken('gbrain_code_');
+    const gbrainCodeHash = hashToken(gbrainCode);
+    const codeExpiry = now + 600; // 10 minute TTL (matches the non-OIDC path)
+    await this.sql`
+      INSERT INTO oauth_codes (code_hash, client_id, scopes, code_challenge,
+                               code_challenge_method, redirect_uri, state, resource,
+                               expires_at, subject, email, groups)
+      VALUES (${gbrainCodeHash}, ${p.client_id as string},
+              ${pgArray(grantedScopes)},
+              ${(p.code_challenge as string | null) ?? null},
+              ${(p.code_challenge_method as string | null) ?? 'S256'},
+              ${clientRedirect}, ${clientState ?? null},
+              ${(p.resource as string | null) ?? null},
+              ${codeExpiry}, ${identity.subject || null}, ${identity.email},
+              ${pgArray(identity.groups)})
+    `;
+
+    const back = new URL(clientRedirect);
+    back.searchParams.set('code', gbrainCode);
+    if (clientState) back.searchParams.set('state', clientState);
+    return { redirectUrl: back.toString() };
   }
 
   async challengeForAuthorizationCode(
@@ -469,22 +688,23 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
             AND client_id = ${client.client_id}
             AND redirect_uri = ${redirectUri}
             AND expires_at > ${now}
-          RETURNING client_id, scopes, resource
+          RETURNING client_id, scopes, resource, subject, email, groups
         `
       : await this.sql`
           DELETE FROM oauth_codes
           WHERE code_hash = ${codeHash}
             AND client_id = ${client.client_id}
             AND expires_at > ${now}
-          RETURNING client_id, scopes, resource
+          RETURNING client_id, scopes, resource, subject, email, groups
         `;
     if (rows.length === 0) throw new Error('Authorization code not found or expired');
 
     const codeRow = rows[0];
 
-    // Issue tokens
+    // Issue tokens, carrying any OIDC-bound identity from the code onto the
+    // token (NULL columns for the non-OIDC path — identity stays undefined).
     const scopes = (codeRow.scopes as string[]) || [];
-    return this.issueTokens(client.client_id, scopes, resource, true);
+    return this.issueTokens(client.client_id, scopes, resource, true, undefined, identityFromRow(codeRow));
   }
 
   // -------------------------------------------------------------------------
@@ -513,7 +733,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       WHERE token_hash = ${tokenHash}
         AND token_type = 'refresh'
         AND client_id = ${client.client_id}
-      RETURNING client_id, scopes, expires_at
+      RETURNING client_id, scopes, expires_at, subject, email, groups
     `;
     if (rows.length === 0) throw new Error('Refresh token not found');
 
@@ -542,7 +762,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       throw new Error('Requested scope exceeds refresh token grant');
     }
     const tokenScopes = scopes ?? grantedScopes;
-    return this.issueTokens(client.client_id, tokenScopes, resource, true);
+    // Carry the OIDC-bound identity across rotation so refreshed tokens keep
+    // the same SSO subject/email/groups (undefined for non-OIDC refresh rows).
+    return this.issueTokens(client.client_id, tokenScopes, resource, true, undefined, identityFromRow(row));
   }
 
   // -------------------------------------------------------------------------
@@ -568,18 +790,26 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     try {
       oauthRows = await this.sql`
         SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
-               c.source_id, c.federated_read
+               c.source_id, c.federated_read, t.subject, t.email, t.groups
         FROM oauth_tokens t
         LEFT JOIN oauth_clients c ON c.client_id = t.client_id
         WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
       `;
     } catch (err) {
       // v0.34.1: pre-v60 brain → source_id column missing. Pre-v61 brain →
-      // federated_read column missing. Both classes degrade to legacy
-      // projection so auth keeps working until the operator runs
-      // apply-migrations. Probe both column names so partial-upgrade brains
-      // (v60 applied but v61 didn't yet) also fall through cleanly.
-      if (isUndefinedColumnError(err, 'source_id') || isUndefinedColumnError(err, 'federated_read')) {
+      // federated_read column missing. v120 (OIDC): pre-v120 brain → identity
+      // columns (subject/email/groups) missing. All classes degrade to a
+      // projection without the missing columns so auth keeps working until the
+      // operator runs apply-migrations (the boot path applies them before
+      // serving; this ladder is the partial-upgrade backstop). Identity is
+      // simply absent on the degraded rows.
+      if (
+        isUndefinedColumnError(err, 'source_id') ||
+        isUndefinedColumnError(err, 'federated_read') ||
+        isUndefinedColumnError(err, 'subject') ||
+        isUndefinedColumnError(err, 'email') ||
+        isUndefinedColumnError(err, 'groups')
+      ) {
         // Try the v60-only projection first (source_id but no federated_read).
         try {
           oauthRows = await this.sql`
@@ -639,6 +869,10 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // operations.ts prefers this array over scalar sourceId when set
         // and non-empty.
         allowedSources,
+        // v120 (OIDC RP): SSO identity bound at the callback. Undefined for the
+        // non-OIDC path, the client_credentials grant, and pre-v120 degraded
+        // rows. Exposed for downstream per-user scoping (not yet enforced).
+        ...spreadBoundIdentity(identityFromRow(row)),
       } as CoreAuthInfo as SdkAuthInfo;
     }
 
@@ -950,6 +1184,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     resource: URL | undefined,
     includeRefresh: boolean,
     ttlOverride?: number,
+    identity?: BoundIdentity,
   ): Promise<OAuthTokens> {
     const accessToken = generateToken('gbrain_at_');
     const accessHash = hashToken(accessToken);
@@ -957,10 +1192,17 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const effectiveTtl = ttlOverride || this.tokenTtl;
     const accessExpiry = now + effectiveTtl;
 
+    // OIDC-bound identity (NULL for the non-OIDC + client_credentials paths).
+    const idSubject = identity?.subject ?? null;
+    const idEmail = identity?.email ?? null;
+    const idGroups = identity?.groups ? pgArray(identity.groups) : null;
+
     await this.sql`
-      INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource)
+      INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource,
+                                subject, email, groups)
       VALUES (${accessHash}, ${'access'}, ${clientId},
-              ${pgArray(scopes)}, ${accessExpiry}, ${resource?.toString() || null})
+              ${pgArray(scopes)}, ${accessExpiry}, ${resource?.toString() || null},
+              ${idSubject}, ${idEmail}, ${idGroups})
     `;
 
     const result: OAuthTokens = {
@@ -976,9 +1218,11 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       const refreshExpiry = now + this.refreshTtl;
 
       await this.sql`
-        INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource)
+        INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource,
+                                  subject, email, groups)
         VALUES (${refreshHash}, ${'refresh'}, ${clientId},
-                ${pgArray(scopes)}, ${refreshExpiry}, ${resource?.toString() || null})
+                ${pgArray(scopes)}, ${refreshExpiry}, ${resource?.toString() || null},
+                ${idSubject}, ${idEmail}, ${idGroups})
       `;
 
       result.refresh_token = refreshToken;

@@ -43,6 +43,7 @@ import {
   type IngestionContentType,
   type IngestionEvent,
 } from '../core/ingestion/types.ts';
+import { resolveOidcRpConfig, createOidcRp, OidcRpError, type OidcRp } from '../core/oidc-rp.ts';
 
 /**
  * /health endpoint timeout. 3s rather than 5s: Fly.io's default
@@ -475,10 +476,32 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // constructor option instead of monkey-patching `_clientsStore` after
   // construction. Same outcome (no /register endpoint when --enable-dcr
   // is not passed); cleaner shape for tests and future maintainers.
+  // ── OIDC relying-party federation (optional) ────────────────────────────
+  // When GBRAIN_OIDC_ENABLED is set + the IdP coordinates are configured, the
+  // OAuth provider's /authorize federates the human login upstream to an OIDC
+  // IdP (Cloudflare Access-for-SaaS → Azure AD) and binds the verified SSO
+  // identity to the issued token. Unset/misconfigured → the provider behaves
+  // exactly as before (immediate code mint, no identity). See oidc-rp.ts.
+  const oidcRpConfig = resolveOidcRpConfig();
+  let oidcRp: OidcRp | undefined;
+  if (oidcRpConfig.enabled) {
+    oidcRp = createOidcRp(oidcRpConfig);
+    console.error(
+      `[serve-http] OIDC relying-party federation ENABLED (issuer=${oidcRpConfig.issuer}, redirect_uri=${oidcRpConfig.redirectUri})`,
+    );
+  } else if ((process.env.GBRAIN_OIDC_ENABLED ?? '').trim()) {
+    // Operator asked for OIDC but a required field is blank — fail closed to
+    // the non-OIDC path rather than half-wire it, and say so loudly.
+    console.error(
+      '[serve-http] WARNING: GBRAIN_OIDC_ENABLED is set but issuer/client_id/client_secret/redirect_uri are incomplete — OIDC federation DISABLED (falling back to immediate-code authorize).',
+    );
+  }
+
   const oauthProvider = new GBrainOAuthProvider({
     sql,
     tokenTtl,
     dcrDisabled: !enableDcr,
+    oidcRp,
   });
 
   // Sweep expired tokens on startup (non-blocking)
@@ -743,6 +766,42 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
     next();
   });
+
+  // ── OIDC relying-party callback ─────────────────────────────────────────
+  // The upstream IdP (Cloudflare Access-for-SaaS → Azure AD) redirects the
+  // browser here after authenticating the human. The provider exchanges +
+  // verifies the id_token, mints the gbrain authorization code bound to the
+  // SSO identity, and returns where to send the browser next (the original MCP
+  // client's redirect_uri). Mounted only when OIDC federation is wired. Plain
+  // text/plain responses on the error paths neutralize reflected-XSS on the
+  // echoed reason. Must be registered before authRouter so it owns its path.
+  if (oidcRp) {
+    app.get('/oidc/callback', async (req: Request, res: Response) => {
+      const code = typeof req.query.code === 'string' ? req.query.code : '';
+      const state = typeof req.query.state === 'string' ? req.query.state : '';
+      const idpError = typeof req.query.error === 'string' ? req.query.error : '';
+      if (idpError) {
+        // The IdP itself rejected the login (user denied, policy block, …).
+        res.type('text/plain').status(400).send(`SSO sign-in failed at the identity provider: ${idpError}`);
+        return;
+      }
+      if (!code || !state) {
+        res.type('text/plain').status(400).send('Missing code or state on the OIDC callback.');
+        return;
+      }
+      try {
+        const { redirectUrl } = await oauthProvider.completeOidcCallback(code, state);
+        res.redirect(redirectUrl);
+      } catch (e) {
+        // No safe client redirect target (missing/expired/forged state) → 400.
+        const reason = e instanceof OidcRpError ? e.code : 'error';
+        res
+          .type('text/plain')
+          .status(400)
+          .send(`OIDC sign-in could not be completed (${reason}). Please retry the connection.`);
+      }
+    });
+  }
 
   app.use(authRouter);
 

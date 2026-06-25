@@ -272,6 +272,18 @@ export interface AuthInfo {
    * case (back-compat).
    */
   allowedSources?: string[];
+  /**
+   * v120 — OIDC relying-party SSO identity bound at `/oidc/callback`
+   * (see oidc-rp.ts + oauth-provider.ts). Present only when the token
+   * was issued through the OIDC federation path (GBRAIN_OIDC_ENABLED).
+   * Undefined for the non-OIDC authorization-code path, the
+   * client_credentials grant, and legacy bearer tokens. Exposed so
+   * downstream ops can scope/audit per human user; content-level
+   * per-user filtering is NOT yet enforced off these fields.
+   */
+  subject?: string;
+  email?: string;
+  groups?: string[];
 }
 
 export interface OperationContext {

@@ -666,6 +666,11 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
   scopes       TEXT[],
   expires_at   BIGINT,
   resource     TEXT,
+  -- v120 (OIDC RP): SSO identity bound at /oidc/callback (NULL for the
+  -- non-OIDC + client_credentials paths). See oidc-rp.ts / oauth-provider.ts.
+  subject      TEXT,
+  email        TEXT,
+  groups       TEXT[],
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -682,8 +687,33 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
   state                  TEXT,
   resource               TEXT,
   expires_at             BIGINT NOT NULL,
+  -- v120 (OIDC RP): SSO identity carried code → token at exchange (NULL on the
+  -- non-OIDC path). All nullable so existing flows are unaffected.
+  subject                TEXT,
+  email                  TEXT,
+  groups                 TEXT[],
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- v120 (OIDC RP): short-lived (10-min) store correlating the upstream IdP
+-- round-trip back to the original MCP-client authorize request. state_hash is
+-- the hashed lookup key; pkce_verifier + nonce are gbrain→IdP secrets (distinct
+-- from the MCP client's PKCE challenge, kept in code_challenge for replay into
+-- oauth_codes). Populated only when OIDC federation is enabled.
+CREATE TABLE IF NOT EXISTS oauth_pending (
+  state_hash            TEXT PRIMARY KEY,
+  client_id             TEXT NOT NULL,
+  redirect_uri          TEXT NOT NULL,
+  code_challenge        TEXT,
+  code_challenge_method  TEXT,
+  scopes                TEXT[] NOT NULL DEFAULT '{}',
+  client_state          TEXT,
+  resource              TEXT,
+  pkce_verifier         TEXT NOT NULL,
+  nonce                 TEXT NOT NULL,
+  expires_at            BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS oauth_pending_expires_at_idx ON oauth_pending(expires_at);
 
 -- Composite indexes for admin dashboard request log queries
 CREATE INDEX IF NOT EXISTS idx_mcp_log_time_agent ON mcp_request_log(created_at, token_name);

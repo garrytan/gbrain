@@ -5406,6 +5406,71 @@ export const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    version: 120,
+    name: 'oidc_rp_identity_binding',
+    // OIDC relying-party federation (Cloudflare Access-for-SaaS → Azure AD).
+    // gbrain's /authorize federates the human login upstream, then binds the
+    // verified SSO identity (sub/email/groups) to the gbrain authorization code
+    // it mints (see oauth-provider.ts authorize/completeOidcCallback + the RP
+    // in oidc-rp.ts). This migration adds:
+    //   1. identity columns on oauth_codes + oauth_tokens (all NULLABLE — the
+    //      non-OIDC path and the client_credentials grant leave them NULL, so
+    //      existing rows + machine clients are unaffected).
+    //   2. oauth_pending — the short-lived (10-min) store correlating the
+    //      upstream IdP round-trip back to the original MCP-client authorize
+    //      request (state hashed at rest, like codes/tokens). The PKCE verifier
+    //      + nonce here are gbrain→IdP, distinct from the MCP client's PKCE
+    //      challenge (carried in code_challenge for replay into oauth_codes).
+    // Pure additive DDL (ADD COLUMN IF NOT EXISTS / CREATE TABLE IF NOT EXISTS)
+    // — no BYPASSRLS needed. RLS-enable on oauth_pending is gated on BYPASSRLS
+    // and warn-skips on managed Postgres/Aurora (mirrors v24), so Supabase
+    // installs stay hardened while Aurora records the migration as applied.
+    idempotent: true,
+    sql: `
+      ALTER TABLE oauth_codes  ADD COLUMN IF NOT EXISTS subject TEXT;
+      ALTER TABLE oauth_codes  ADD COLUMN IF NOT EXISTS email   TEXT;
+      ALTER TABLE oauth_codes  ADD COLUMN IF NOT EXISTS groups  TEXT[];
+      ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject TEXT;
+      ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS email   TEXT;
+      ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS groups  TEXT[];
+
+      CREATE TABLE IF NOT EXISTS oauth_pending (
+        state_hash            TEXT PRIMARY KEY,
+        client_id             TEXT NOT NULL,
+        redirect_uri          TEXT NOT NULL,
+        code_challenge        TEXT,
+        code_challenge_method TEXT,
+        scopes                TEXT[] NOT NULL DEFAULT '{}',
+        client_state          TEXT,
+        resource              TEXT,
+        pkce_verifier         TEXT NOT NULL,
+        nonce                 TEXT NOT NULL,
+        expires_at            BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS oauth_pending_expires_at_idx ON oauth_pending (expires_at);
+
+      DO $$
+      DECLARE
+        has_bypass BOOLEAN;
+      BEGIN
+        SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+        IF has_bypass IS NOT TRUE THEN
+          -- Managed-Postgres graceful degrade (Aurora/RDS): no PostgREST/anon
+          -- exposure, and enabling RLS without BYPASSRLS would lock the session
+          -- out of its own rows. Warn + skip; the migration still records as
+          -- applied. Mirrors v24's rls_backfill block.
+          RAISE WARNING 'v120 oidc_rp_identity_binding: role % lacks BYPASSRLS — skipping RLS enable on oauth_pending (expected on managed Postgres/Aurora; no anon exposure).', current_user;
+        ELSE
+          ALTER TABLE oauth_pending ENABLE ROW LEVEL SECURITY;
+        END IF;
+      END $$;
+    `,
+    // PGLite is single-tenant (local file) and has no RLS engine; the DO block
+    // above no-ops there (pg_roles shows the single role without BYPASSRLS, so
+    // it takes the warn-skip branch). The ALTER/CREATE statements are PGLite-
+    // compatible (ADD COLUMN IF NOT EXISTS, CREATE TABLE/INDEX IF NOT EXISTS).
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
