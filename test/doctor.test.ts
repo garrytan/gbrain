@@ -54,6 +54,25 @@ describe('doctor command', () => {
     expect(runDoctor.length).toBeLessThanOrEqual(3);
   });
 
+  test('doctor --json suppresses implicit progress unless --progress-json is explicit', async () => {
+    const { _resetCliOptionsForTest, setCliOptions, DEFAULT_CLI_OPTIONS } = await import('../src/core/cli-options.ts');
+    const { doctorProgressOptions } = await import('../src/commands/doctor.ts');
+
+    try {
+      _resetCliOptionsForTest();
+      expect(doctorProgressOptions(true).mode).toBe('quiet');
+      expect(doctorProgressOptions(false).mode).toBe('auto');
+
+      setCliOptions({ ...DEFAULT_CLI_OPTIONS, progressJson: true });
+      expect(doctorProgressOptions(true).mode).toBe('json');
+
+      setCliOptions({ ...DEFAULT_CLI_OPTIONS, quiet: true, progressJson: true });
+      expect(doctorProgressOptions(true).mode).toBe('quiet');
+    } finally {
+      _resetCliOptionsForTest();
+    }
+  });
+
   // Bug 7 — --fast should differentiate "no config anywhere" from "user
   // chose --fast with GBRAIN_DATABASE_URL / config-file URL present".
   test('getDbUrlSource reflects GBRAIN_DATABASE_URL env var', async () => {
