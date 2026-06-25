@@ -26,6 +26,11 @@ import { isSearchMode } from './search/mode.ts';
 import { stampEvidence } from './search/evidence.ts';
 import type { SearchResult } from './types.ts';
 import { CJK_SLUG_CHARS } from './cjk.ts';
+import {
+  acceptTakeProposal,
+  listTakeProposals,
+  rejectTakeProposal,
+} from './take-proposals.ts';
 import * as db from './db.ts';
 import { VERSION } from '../version.ts';
 import {
@@ -1730,6 +1735,57 @@ const takes_search: Operation = {
     });
   },
   cliHints: { name: 'takes-search', positional: ['query'] },
+};
+
+const takes_propose_list: Operation = {
+  name: 'takes_propose_list',
+  description: 'List pending reviewed take proposals before promotion into canonical takes.',
+  scope: 'read',
+  params: {
+    limit: { type: 'number', description: 'Max rows (default 50, cap 500)' },
+    offset: { type: 'number', description: 'Skip first N rows' },
+    status: { type: 'string', description: 'pending | accepted | rejected | superseded (default pending)' },
+  },
+  handler: async (ctx, p) => {
+    return listTakeProposals(ctx.engine, {
+      limit: p.limit as number | undefined,
+      offset: p.offset as number | undefined,
+      status: p.status as never,
+      sourceId: ctx.remote ? ctx.sourceId : undefined,
+    });
+  },
+};
+
+const takes_propose_accept: Operation = {
+  name: 'takes_propose_accept',
+  description: 'Accept one reviewed take proposal, append it to the source markdown takes fence, mirror it to DB, and stamp the proposal accepted.',
+  scope: 'write',
+  params: {
+    proposal_id: { type: 'number', required: true },
+  },
+  handler: async (ctx, p) => {
+    return acceptTakeProposal(ctx.engine, p.proposal_id as number, {
+      actedBy: ctx.auth?.clientName ?? 'mcp',
+      sourceId: ctx.remote ? ctx.sourceId : undefined,
+    });
+  },
+};
+
+const takes_propose_reject: Operation = {
+  name: 'takes_propose_reject',
+  description: 'Reject one take proposal so review-first queues do not re-offer it.',
+  scope: 'write',
+  params: {
+    proposal_id: { type: 'number', required: true },
+    reason: { type: 'string', description: 'Operator note. Current schema records acted_by/acted_at, not a reason column.' },
+  },
+  handler: async (ctx, p) => {
+    return rejectTakeProposal(ctx.engine, p.proposal_id as number, {
+      actedBy: ctx.auth?.clientName ?? 'mcp',
+      reason: p.reason as string | undefined,
+      sourceId: ctx.remote ? ctx.sourceId : undefined,
+    });
+  },
 };
 
 /**
@@ -5062,7 +5118,7 @@ export const operations: Operation[] = [
   // v0.36.1.0 (T7) — Hindsight calibration wave: read profile via MCP
   get_calibration_profile,
   // v0.28: Takes + think
-  takes_list, takes_search, think,
+  takes_list, takes_search, takes_propose_list, takes_propose_accept, takes_propose_reject, think,
   // v0.30: calibration aggregates over takes
   takes_scorecard, takes_calibration,
   // v0.28: whoami + scoped sources management
