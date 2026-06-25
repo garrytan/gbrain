@@ -578,6 +578,8 @@ export interface TrajectoryOpts {
   sourceIds?: string[];
   /** When true, filters to visibility='world' only. Set by MCP layer from ctx.remote. */
   remote?: boolean;
+  /** Owner opt-in: read private facts despite `remote`. See facts/reader-trust.ts. */
+  trustedFactReads?: boolean;
   /** Metric filter. When set, only facts with this canonical metric label participate. */
   metric?: string;
   /**

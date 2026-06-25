@@ -17,6 +17,7 @@
 import type { OperationContext } from './../operations.ts';
 import type { FactRow } from './../engine.ts';
 import { effectiveConfidence } from './decay.ts';
+import { readableFactVisibilities } from './reader-trust.ts';
 
 const DEFAULT_TTL_MS = 30_000;
 const DEFAULT_TOP_K = 10;
@@ -61,9 +62,9 @@ export async function getBrainHotMemoryMeta(
     return cached.payload;
   }
 
-  // Build a fresh payload. Visibility tier: remote → world-only;
-  // local → all rows.
-  const visibility = ctx.remote === false ? undefined : ['world'] as ('world' | 'private')[];
+  // Build a fresh payload. Visibility tier: untrusted remote → world-only;
+  // trusted local + owner-trusted reads → all rows.
+  const visibility = readableFactVisibilities(ctx);
 
   let rows: FactRow[] = [];
   if (sessionId) {

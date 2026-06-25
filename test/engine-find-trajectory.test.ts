@@ -153,6 +153,22 @@ describe('findTrajectory — visibility filter (D-CDX-1 / R6)', () => {
     const all = await engine.findTrajectory({ entitySlug: 'traj-vis-default' });
     expect(all.length).toBe(2);
   });
+
+  test('remote=true + trustedFactReads bypasses world-only (owner-trusted reads)', async () => {
+    await insertTyped({ entity_slug: 'traj-vis-trusted', metric: 'mrr', value: 50000, visibility: 'private', valid_from: new Date('2026-01-15') });
+    await insertTyped({ entity_slug: 'traj-vis-trusted', metric: 'mrr', value: 99999, visibility: 'world',   valid_from: new Date('2026-04-12') });
+
+    // Untrusted remote: world only.
+    const untrusted = await engine.findTrajectory({ entitySlug: 'traj-vis-trusted', remote: true });
+    expect(untrusted.length).toBe(1);
+    expect(untrusted[0].value).toBe(99999);
+
+    // Owner-trusted remote: sees the private point too. remote stays true — only
+    // fact-read visibility is elevated.
+    const trusted = await engine.findTrajectory({ entitySlug: 'traj-vis-trusted', remote: true, trustedFactReads: true });
+    expect(trusted.length).toBe(2);
+    expect(trusted.map(p => p.value).sort((a, b) => (a! - b!))).toEqual([50000, 99999]);
+  });
 });
 
 describe('findTrajectory — metric + since + until filters', () => {
