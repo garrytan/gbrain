@@ -310,9 +310,19 @@ function collectValidationErrors(
   if (ctx.expectedSlug && typeof ctx.parsedFrontmatter.slug === 'string') {
     const declared = ctx.parsedFrontmatter.slug as string;
     if (declared !== ctx.expectedSlug) {
+      // #1916: case-only diff is the common typo (e.g. `slug: projects/README`
+      // against the path-derived `projects/readme`). The two strings look
+      // identical to a quick eye, so the bare "does not match" message left
+      // operators stuck. The path-derived slug is always lowercased by
+      // slugifySegment (sync.ts), so any declared slug that matches under
+      // case-fold but not directly is a casing typo. Name that specifically.
+      const caseOnly = declared.toLowerCase() === ctx.expectedSlug;
+      const message = caseOnly
+        ? `Frontmatter slug "${declared}" differs from path-derived slug "${ctx.expectedSlug}" by case only (gbrain slugs are lowercase). Lowercase the slug field, or remove it to let the path-derived default apply.`
+        : `Frontmatter slug "${declared}" does not match path-derived slug "${ctx.expectedSlug}"`;
       errors.push({
         code: 'SLUG_MISMATCH',
-        message: `Frontmatter slug "${declared}" does not match path-derived slug "${ctx.expectedSlug}"`,
+        message,
       });
     }
   }

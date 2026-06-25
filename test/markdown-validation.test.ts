@@ -97,6 +97,37 @@ describe('parseMarkdown validation surface', () => {
       const parsed = parseMarkdown(md, undefined, { validate: true });
       expect(parsed.errors!.map(e => e.code)).not.toContain('SLUG_MISMATCH');
     });
+
+    // #1916: when the only difference is case (the common typo on macOS APFS
+    // where `README.md` files end up with a `slug: projects/README` field but
+    // the path-derived slug is lowercased), the message names the case
+    // mismatch so the operator can act without eyeballing two strings.
+    test('case-only mismatch -> message specifically names case + fix', () => {
+      const md = `${fence}\ntype: doc\ntitle: Readme\nslug: projects/README\n${fence}\n\nbody`;
+      const parsed = parseMarkdown(md, 'projects/README.md', {
+        validate: true,
+        expectedSlug: 'projects/readme',
+      });
+      const e = parsed.errors!.find(err => err.code === 'SLUG_MISMATCH');
+      expect(e).toBeDefined();
+      expect(e!.message).toContain('by case only');
+      expect(e!.message).toContain('gbrain slugs are lowercase');
+      expect(e!.message).toContain('Lowercase the slug field');
+      expect(e!.message).toContain('"projects/README"');
+      expect(e!.message).toContain('"projects/readme"');
+    });
+
+    test('non-case mismatch -> existing message (unchanged)', () => {
+      const md = `${fence}\ntype: concept\ntitle: hi\nslug: wrong-slug\n${fence}\n\nbody`;
+      const parsed = parseMarkdown(md, 'people/jane-doe.md', {
+        validate: true,
+        expectedSlug: 'people/jane-doe',
+      });
+      const e = parsed.errors!.find(err => err.code === 'SLUG_MISMATCH');
+      expect(e).toBeDefined();
+      expect(e!.message).toBe('Frontmatter slug "wrong-slug" does not match path-derived slug "people/jane-doe"');
+      expect(e!.message).not.toContain('by case only');
+    });
   });
 
   describe('NULL_BYTES', () => {
