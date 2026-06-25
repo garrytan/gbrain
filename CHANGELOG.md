@@ -2,6 +2,17 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.44.1.0] - 2026-06-25
+
+**`gbrain extract` stops mis-typing relationship edges. The deterministic link-type inference could stamp a verb (`invested_in`, `works_at`, `advises`) on a page's own subject when the role actually described a *different* person mentioned on the page — so a note saying "Alice invested in Acme" on Bob's page could record Bob as an Acme investor. The page-role prior now fires only when the role is attributed to the page subject, and the fuzzy wikilink resolver no longer redirects a weak name onto an internal/test page.**
+
+### Fixed
+- **The page-role prior no longer attributes a third party's role to the page subject.** Extraction scanned the whole page for role keywords and applied the verb to every company link on it, so a third party's investment or job described on someone else's page leaked onto the subject. The prior now fires only when the role's clause subject is the page subject (distinct people who merely share a name token are kept apart), and it scans every role mention so an earlier third-party reference can't suppress the subject's own role. Unattributable cases fall back to `mentions` — never worse than before.
+- **Fuzzy wikilink/attendee resolution no longer lands on reserved pages.** A weak or partial name could cross the title-similarity floor and resolve to an internal `_`-prefixed page (e.g. a leftover test fixture); reserved slugs are now excluded as fuzzy-resolution targets.
+
+### To take advantage of v0.44.1.0
+`gbrain upgrade` (or rebuild the binary). Re-run `gbrain extract links` — or let the autopilot cycle's extract sweep run — to recompute graph edges with the corrected inference; existing mis-typed `markdown`-source edges are reconciled on the next extraction of each affected page. Edges you added by hand with `gbrain link` are untouched.
+
 ## [0.42.53.0] - 2026-06-23
 
 **`gbrain sync` works again on managed Postgres brains: the durable-checkpoint pin write was encoding its value the wrong way, so every multi-source sync aborted at the very first checkpoint. Fixed, plus a repo-wide sweep of the same JSONB footgun and a new CI guard so it can't come back.** A recent release added a structural check on the sync checkpoint table; the pin write that runs before every drain bound its value as a string rather than a real array, so the check rejected it and the run bailed before importing anything. The bug was invisible on the embedded engine (its driver parses the value either way) and only bit managed Postgres.
