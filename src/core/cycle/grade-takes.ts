@@ -395,7 +395,7 @@ class GradeTakesPhase extends BaseCyclePhase {
     const autoResolve = opts.autoResolve ?? false; // D17 default OFF
     const autoResolveThreshold = opts.autoResolveThreshold ?? 0.95; // D12 conservative
     const resolvedByLabel = opts.resolvedByLabel ?? 'gbrain:grade_takes';
-    const judgeModelId = opts.model ?? 'claude-sonnet-4-6';
+    const judgeModelId = opts.model ?? opts.judgeModel ?? 'claude-sonnet-4-6';
 
     const useEnsemble = opts.useEnsemble ?? false;
     const ensembleThreshold = opts.ensembleThreshold ?? 0.85;

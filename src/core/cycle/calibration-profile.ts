@@ -228,7 +228,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
     const holder = opts.holder ?? 'garry';
     const promptVersion = opts.promptVersion ?? CALIBRATION_PROFILE_PROMPT_VERSION;
-    const modelId = opts.model ?? 'claude-sonnet-4-6';
+    const modelId = opts.model ?? 'claude-sonnet-4-6'; // resolved from config via cycle.ts
     const gradeCompletion = opts.gradeCompletion ?? 1.0;
     const patternsGenerator = opts.patternsGenerator ?? defaultPatternsGenerator;
     const biasTagsGenerator = opts.biasTagsGenerator ?? defaultBiasTagsGenerator;
