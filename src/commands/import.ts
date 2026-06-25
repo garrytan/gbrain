@@ -42,6 +42,56 @@ export interface RunImportResult {
   failures: Array<{ path: string; error: string }>;
 }
 
+export interface ImportHeartbeatState {
+  processed: number;
+  total: number;
+  imported: number;
+  skipped: number;
+  errors: number;
+  chunksCreated: number;
+  activeWorkers: number;
+  lastSuccessPath: string | null;
+  slowFiles: Array<{ path: string; elapsedMs: number }>;
+  elapsedMs: number;
+}
+
+export function formatImportHeartbeat(state: ImportHeartbeatState): string {
+  const pct = state.total > 0 ? Math.floor((state.processed / state.total) * 100) : 100;
+  const elapsedS = Math.max(0, Math.round(state.elapsedMs / 1000));
+  const rate = state.elapsedMs > 0 ? state.processed / (state.elapsedMs / 1000) : 0;
+  const remaining = Math.max(0, state.total - state.processed);
+  const etaS = rate > 0 ? Math.round(remaining / rate) : null;
+  const parts = [
+    `[gbrain heartbeat] import.files ${state.processed}/${state.total} (${pct}%)`,
+    `imported=${state.imported}`,
+    `skipped=${state.skipped}`,
+    `errors=${state.errors}`,
+    `chunks=${state.chunksCreated}`,
+    `active=${state.activeWorkers}`,
+    `elapsed=${elapsedS}s`,
+  ];
+  if (etaS !== null) parts.push(`eta=${etaS}s`);
+  if (state.lastSuccessPath) parts.push(`last_success=${state.lastSuccessPath}`);
+  if (state.slowFiles.length > 0) {
+    const slow = state.slowFiles
+      .slice(0, 3)
+      .map(f => `${f.path}:${Math.round(f.elapsedMs / 1000)}s`)
+      .join(',');
+    parts.push(`slow=${slow}`);
+  }
+  return parts.join(' ');
+}
+
+function resolveImportHeartbeatMs(): number {
+  const raw = process.env.GBRAIN_IMPORT_HEARTBEAT_MS;
+  if (raw === '0' || raw === 'false') return 0;
+  if (raw) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 30_000;
+}
+
 export async function runImport(
   engine: BrainEngine,
   args: string[],
@@ -216,7 +266,31 @@ export async function runImport(
   const importedSlugs: string[] = [];
   const errorCounts: Record<string, number> = {};
   const failures: Array<{ path: string; error: string }> = []; // Bug 9
+  let lastSuccessPath: string | null = null;
+  const activeFiles = new Map<string, number>();
   const startTime = Date.now();
+  const heartbeatMs = resolveImportHeartbeatMs();
+  const heartbeat = heartbeatMs > 0
+    ? setInterval(() => {
+      const now = Date.now();
+      console.error(formatImportHeartbeat({
+        processed,
+        total: files.length,
+        imported,
+        skipped,
+        errors,
+        chunksCreated,
+        activeWorkers: activeFiles.size,
+        lastSuccessPath,
+        slowFiles: Array.from(activeFiles.entries())
+          .map(([path, startedAt]) => ({ path, elapsedMs: now - startedAt }))
+          .filter(f => f.elapsedMs >= 5000)
+          .sort((a, b) => b.elapsedMs - a.elapsedMs),
+        elapsedMs: now - startTime,
+      }));
+    }, heartbeatMs)
+    : null;
+  if (heartbeat?.unref) heartbeat.unref();
 
   // Progress on stderr so stdout stays clean for the final summary / --json payload.
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
@@ -228,6 +302,7 @@ export async function runImport(
 
   async function processFile(eng: BrainEngine, filePath: string) {
     const relativePath = relative(dir, filePath);
+    activeFiles.set(relativePath, Date.now());
     // v0.31.2 (D5): per-file slow-path log. Fires only when a single
     // file takes >5s. The user's hang surfaces as one file taking
     // forever — without this, the agent can't see which file.
@@ -248,6 +323,7 @@ export async function runImport(
         imported++;
         chunksCreated += result.chunks;
         importedSlugs.push(result.slug);
+        lastSuccessPath = relativePath;
         // v0.33.2: path-based checkpoint — record only on success.
         completed.add(relativePath);
       } else {
@@ -276,6 +352,7 @@ export async function runImport(
       failures.push({ path: relativePath, error: msg });
     }
     processed++;
+    activeFiles.delete(relativePath);
     tickProgress();
     // Save checkpoint every 100 SUCCESSFUL adds (not every 100 processed).
     // Failed files never enter `completed`, so a flaky file can't push the
@@ -354,6 +431,7 @@ export async function runImport(
     }
   }
 
+  if (heartbeat) clearInterval(heartbeat);
   progress.finish();
 
   // Error summary
