@@ -143,7 +143,8 @@ This is a fork (`TojotheTerror/gbrain`). Its divergence from upstream and the op
 context a resuming session needs are recorded in **[`docs/fork/FORK_ACTIVITY.md`](docs/fork/FORK_ACTIVITY.md)**
 — a living, append-only log, separate from upstream `CHANGELOG.md`. It carries the standing
 fork facts (load-bearing patches, paused missions, tooling posture) plus a dated narrative per
-session. **Future sessions: read it FIRST, then prepend a new dated entry.**
+session. **Future sessions: read the `▶ START HERE` block at the top of that file FIRST** (a
+one-screen snapshot of current state + the immediate next actions), then prepend a new dated entry.
 
 ## Search Mode (v0.32.3)
 

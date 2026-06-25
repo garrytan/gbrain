@@ -3,6 +3,45 @@
 > **This is the standing jumping-off point for any agent or human resuming work on
 > this fork.** Read this file FIRST, then prepend a new dated entry for your session.
 
+---
+
+## ▶ START HERE — current state & next actions
+
+**Read this block first; it's the one-screen snapshot a resuming session needs.**
+
+### Current state (as of 2026-06-25)
+- **Corpus import: Phase B COMPLETE — go-live ready.** All 5 `test_corpus` textbooks are imported
+  + embedded: **15 pages / 1,795 chunks**, clean `<book>/partNN` slugs, retrieval verified across
+  the corpus.
+- **PR #4 merged to master** — carries Entries 1–4, this START HERE block, the `CLAUDE.md`
+  pointer to it, and the `test_corpus/` gitignore.
+
+### Pending operator actions (run LOCALLY on the Windows box, pre-reboot — full runbooks in Entry 4)
+1. **Expansion auth fix** — `gbrain query` logs `[ai.gateway] expansion disabled: invalid
+   x-api-key`, so multi-query expansion is off (core vector retrieval still works). Set
+   `OLLAMA_API_KEY` so it stops erroring. *(Root cause + exact commands: Entry 4.)*
+2. **Transient-dir cleanup** — delete the conversion scratch dirs (~168 MB), **keep** the proven
+   re-import safety net. *(Exact keep/delete list: Entry 4.)*
+
+### Immediate next actions for a resuming session
+1. Execute the two runbooks above (from Entry 4) and verify each.
+2. **Open a NEW branch off `master`** and record the outcomes as **Entry 5** — PR #4's branch is
+   closed once merged, so never reuse `fork-activity-log`.
+
+### Working conventions
+- **One new branch off `master` per session/entry**; newest entry on top.
+- **Open fork PRs with the `--repo` pin** (gh is installed locally per Entry 3):
+  `gh pr create --repo TojotheTerror/gbrain --base master --head <branch> --draft`. The pin is
+  mandatory — gh otherwise defaults the base to the `garrytan` **upstream**. **Never touch
+  upstream.**
+- **Docs-only fork changes take no VERSION bump** (no `/ship`, no 5-file version sync).
+- **textbook→gbrain pipeline:** docling `--pdf-backend pypdfium2 --no-ocr` (default backend OOMs)
+  → strip base64 `![...](data:...)` figures → split to <500 KB parts → `gbrain import`. docling is
+  external pre-conversion, NOT on gbrain's import path.
+- **Query-expansion requires `OLLAMA_API_KEY`** (see pending action 1).
+
+---
+
 ## Purpose & scope
 
 This is a living, append-only record of everything done to the **`TojotheTerror/gbrain`
@@ -58,11 +97,57 @@ Durable, load-bearing facts. Update in place when they change.
   is live at runtime (`bin → src/cli.ts`).
 - **Open follow-up: query expansion is broken** — `gbrain query` logs `[ai.gateway] expansion
   disabled: invalid x-api-key`, so multi-query expansion doesn't run (core vector retrieval
-  still works). Worth fixing for go-live retrieval quality.
+  still works). **Root cause:** the `ollama` recipe declares `OLLAMA_API_KEY` *optional*
+  (`recipes/ollama.ts`); unset, `defaultResolveAuth` sends `Bearer unauthenticated`
+  (`gateway.ts` ~287) which LM Studio rejects. **Fix runbook in Entry 4** (set `OLLAMA_API_KEY`).
 
 ---
 
 ## Entries
+
+### Entry 4 — 2026-06-25 — Reboot-resume mechanism + two pending operator runbooks
+
+**Summary:** Built the reboot-resume mechanism — a `▶ START HERE` block at the top of this file
+plus a strengthened `CLAUDE.md` pointer — so a fresh post-reboot session lands on current state +
+next actions the moment `CLAUDE.md` loads. Captured the two remaining operational follow-ups
+(query-expansion auth; transient-dir cleanup) as **precise PENDING runbooks** for the local
+pre-reboot session to execute. Merged PR #4 to `master` so the mechanism is live there.
+
+**Why these are runbooks, not done:** this entry was authored in a **remote Linux container** with
+no access to the owner's Windows machine, `~/.gbrain`, or LM Studio — so the two operational steps
+(`setx`, deleting `C:\…` dirs) and their `gbrain` verifications cannot be run or verified here.
+They are documented exactly so the local session can run them and record the outcomes as Entry 5.
+
+**Operator runbook 1 — expansion auth fix (run locally, PowerShell):**
+- *Root cause:* the `ollama` recipe declares `OLLAMA_API_KEY` **optional**
+  (`src/core/ai/recipes/ollama.ts:11`). When unset, `defaultResolveAuth` falls back to a
+  `Bearer unauthenticated` token (`src/core/ai/gateway.ts:287`), which LM Studio rejects →
+  `[ai.gateway] expansion disabled: invalid x-api-key` (`gateway.ts:2211`) → multi-query expansion
+  is silently off (core vector retrieval still works).
+- *Fix:* `setx OLLAMA_API_KEY ollama` (persists across the reboot) **and**
+  `$env:OLLAMA_API_KEY='ollama'` (current shell, to verify now).
+- *Verify:* `gbrain query "<any phrase>"` shows **no** `expansion disabled` warn.
+- *Bounded:* if `invalid x-api-key` persists (LM Studio wants a real key / deeper cause), do **not**
+  rabbit-hole — record it as a known follow-up and move on.
+
+**Operator runbook 2 — transient-dir cleanup (run locally):**
+- *Delete* (all outside the repo): `%USERPROFILE%\gbrain-corpus` (~84 MB raw md),
+  `%USERPROFILE%\gbrain-corpus-split` (~84 MB failed 4 MB parts), `%USERPROFILE%\gbrain-canary`
+  (canary md); also tidy the session scratchpad's large logs.
+- *KEEP:* `%USERPROFILE%\gbrain-corpus-final` (~4.5 MB — the proven <500 KB import source /
+  re-import safety net) and `test_corpus\` (source PDFs, gitignored).
+- *Verify:* dirs gone; `gbrain stats` unchanged (**15 pages / 1,795 chunks** — brain untouched);
+  ~168 MB reclaimed.
+
+**Decisions:** operational steps captured as runbooks (not executed) because the session had no
+Windows/brain access; PR #4 merged so `master` carries the resume mechanism before reboot; runbook
+paths written as `%USERPROFILE%\…` (not the literal username) to keep the checked-in doc free of
+identifying detail.
+
+**Resulting changes:** the `▶ START HERE` block + this Entry 4 + the refreshed expansion
+standing-fact in this file, the `CLAUDE.md` pointer change, and the regenerated `llms.txt` /
+`llms-full.txt`, committed on `fork-activity-log` → **PR #4 merged to `master`** (intra-fork,
+never the `garrytan` upstream).
 
 ### Entry 3 — 2026-06-25 — Phase B: full corpus imported (+ go-live prep)
 
