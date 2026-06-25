@@ -220,6 +220,17 @@ export function dimsProviderOptions(
       if (modelId === 'text-embedding-v3' || modelId === 'embedding-3') {
         return { openaiCompatible: { dimensions: dims } };
       }
+      // Qwen3-Embedding (commonly served via Ollama / llama.cpp on the
+      // openai-compatible adapter) is a Matryoshka model with a large native
+      // dim — 1024 for 0.6B, 2560 for 4B, 4096 for 8B. Brains configured for
+      // a narrower width — e.g. 1024 to fit pgvector HNSW's 2000-dim index
+      // cap — must forward `dimensions`, otherwise the endpoint returns the
+      // full native vector and the embed fails the dim-consistency check.
+      // Ollama's /v1/embeddings honors `dimensions` (MRL truncation +
+      // renormalize). Symmetric retrieval — inputType ignored.
+      if (modelId.startsWith('qwen3-embedding')) {
+        return { openaiCompatible: { dimensions: dims } };
+      }
       // MiniMax embo-01 takes a `type: 'db' | 'query'` field for asymmetric
       // retrieval. Today still hardcoded to 'db' for back-compat — opting
       // into the new inputType seam is a follow-up (see plan's deferred
