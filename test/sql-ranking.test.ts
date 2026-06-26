@@ -209,7 +209,15 @@ describe('parseHardExcludesEnv', () => {
 
 describe('resolveBoostMap', () => {
   test('returns defaults when env is unset', () => {
-    expect(resolveBoostMap(undefined)).toEqual(DEFAULT_SOURCE_BOOSTS);
+    // Isolate from an ambient GBRAIN_SOURCE_BOOST in the dev's shell (#2409):
+    // resolveBoostMap(undefined) falls through to process.env via its default param.
+    const saved = process.env.GBRAIN_SOURCE_BOOST;
+    delete process.env.GBRAIN_SOURCE_BOOST;
+    try {
+      expect(resolveBoostMap(undefined)).toEqual(DEFAULT_SOURCE_BOOSTS);
+    } finally {
+      if (saved !== undefined) process.env.GBRAIN_SOURCE_BOOST = saved;
+    }
   });
 
   test('env override takes precedence over defaults', () => {
