@@ -17,12 +17,13 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { execSync } from 'child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runDream } from '../src/commands/dream.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 // ─── Helpers ───────────────────────────────────────────────────────
 
@@ -177,6 +178,56 @@ describe('runDream — output format', () => {
     expect(parsed).toHaveProperty('status');
     expect(parsed).toHaveProperty('phases');
     expect(parsed).toHaveProperty('totals');
+  });
+
+  test('synthesize JSON includes a Dream spend receipt for the run window', async () => {
+    const auditDir = mkdtempSync(join(tmpdir(), 'gbrain-dream-audit-'));
+    const corpusDir = mkdtempSync(join(tmpdir(), 'gbrain-dream-corpus-'));
+    writeFileSync(
+      join(corpusDir, '2026-06-25.txt'),
+      'A long enough transcript about a product decision. '.repeat(80),
+      'utf-8',
+    );
+    writeFileSync(join(auditDir, 'budget-2026-W26.jsonl'), [
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        event: 'record',
+        label: 'cycle.synthesize.significance',
+        kind: 'chat',
+        model: 'anthropic:claude-haiku-4-5-20251001',
+        actual_cost_usd: 0.05,
+      }),
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        event: 'record',
+        label: 'unrelated.workflow',
+        kind: 'chat',
+        model: 'zai:glm-5.2',
+        actual_cost_usd: 9,
+      }),
+    ].join('\n') + '\n', 'utf-8');
+    mkdirSync(join(repo, 'skills'), { recursive: true });
+    writeFileSync(join(repo, 'skills', '_brain-filing-rules.json'), JSON.stringify({
+      dream_synthesize_paths: { globs: ['wiki/personal/reflections/**'] },
+    }), 'utf-8');
+
+    await engine.setConfig('dream.synthesize.session_corpus_dir', corpusDir);
+    await engine.setConfig('dream.synthesize.enabled', 'true');
+    await engine.setConfig('models.dream.synthesize_verdict', 'unknown-provider:model');
+
+    await withEnv({ GBRAIN_AUDIT_DIR: auditDir }, async () => {
+      const report = await runDream(engine, ['--dir', repo, '--phase', 'synthesize', '--json']);
+      expect(report).toBeTruthy();
+      const synth = report?.phases.find((p) => p.phase === 'synthesize');
+      const receipt = (synth?.details as any)?.spend_receipt;
+      expect(receipt).toBeTruthy();
+      expect(receipt.label_prefixes).toEqual(['subagent.gateway', 'cycle.synthesize.significance']);
+      expect(receipt.internal.records).toBe(1);
+      expect(receipt.internal.cost_usd).toBe(0.05);
+    });
+
+    rmSync(auditDir, { recursive: true, force: true });
+    rmSync(corpusDir, { recursive: true, force: true });
   });
 
   test('human output for clean status mentions "Brain is healthy"', async () => {

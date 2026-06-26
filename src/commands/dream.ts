@@ -34,6 +34,11 @@ import { resolveSourceId } from '../core/source-resolver.ts';
 import { fetchSource } from '../core/sources-load.ts';
 import { existsSync } from 'fs';
 import { resolve } from 'node:path';
+import {
+  buildBudgetReconcileReport,
+  parseBudgetDreamRunArgs,
+  type BudgetReconcileReport,
+} from './budget.ts';
 
 interface DreamArgs {
   json: boolean;
@@ -589,6 +594,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   }
 
   const phases: CyclePhase[] | undefined = opts.phase ? [opts.phase] : undefined;
+  const runStartedAt = new Date();
 
   const report = await runCycle(engine, {
     brainDir,
@@ -602,6 +608,15 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     synthTo: opts.to ?? undefined,
     synthBypassDreamGuard: opts.bypassDreamGuard,
   });
+  const runEndedAt = new Date();
+
+  if (!opts.dryRun && (phases === undefined || phases.includes('synthesize'))) {
+    attachDreamSpendReceipt(
+      report,
+      new Date(runStartedAt.getTime() - 1000),
+      new Date(runEndedAt.getTime() + 1000),
+    );
+  }
 
   if (opts.json) {
     console.log(JSON.stringify(report, null, 2));
@@ -616,4 +631,26 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   }
 
   return report;
+}
+
+function attachDreamSpendReceipt(report: CycleReport, since: Date, until: Date): void {
+  const synth = report.phases.find((p) => p.phase === 'synthesize');
+  if (!synth || synth.status === 'skipped') return;
+  let receipt: BudgetReconcileReport;
+  try {
+    receipt = buildBudgetReconcileReport(parseBudgetDreamRunArgs([
+      '--since', since.toISOString(),
+      '--until', until.toISOString(),
+    ], until));
+  } catch (err) {
+    synth.details = {
+      ...(synth.details ?? {}),
+      spend_receipt_error: err instanceof Error ? err.message : String(err),
+    };
+    return;
+  }
+  synth.details = {
+    ...(synth.details ?? {}),
+    spend_receipt: receipt,
+  };
 }

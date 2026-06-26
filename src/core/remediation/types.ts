@@ -53,6 +53,12 @@ export interface RemediationPlan {
 export interface RemediationOpts {
   /** Target brain_score (default: 90). */
   targetScore?: number;
+  /**
+   * Caller-supplied remediation steps discovered outside the hardcoded
+   * doctor planner. Onboard and MCP use this to execute the same extra
+   * plan entries they previewed.
+   */
+  extraRemediations?: RemediationStep[];
   /** Cap inner loop iterations (default: Infinity). */
   maxJobs?: number;
   /** USD cap for total plan cost. Pre-flight refuse + mid-run BudgetExhausted gate. */

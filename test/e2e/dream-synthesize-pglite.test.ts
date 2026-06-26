@@ -1158,6 +1158,135 @@ describe('E2E synthesize — child failures do not look successful', () => {
       await rig.cleanup();
     }
   }, 30_000);
+
+  test('boxed synth children carry tighter turn, timeout, stall, and cost limits', async () => {
+    const { __setChatTransportForTests, resetGateway } = await import('../../src/core/ai/gateway.ts');
+
+    const rig = await setupRig();
+    const worker = new MinionWorker(rig.engine, {
+      queue: 'dream-synth-test',
+      pollInterval: 25,
+      lockDuration: 30_000,
+    });
+    await registerBuiltinHandlers(worker, rig.engine);
+    const runPromise = worker.start();
+
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+      await rig.engine.setConfig('dream.synthesize.queue', 'dream-synth-test');
+      await rig.engine.setConfig('dream.synthesize.max_child_cost_usd', '0.42');
+      await rig.engine.setConfig('models.dream.synthesize', 'zai:glm-5.2');
+      await rig.engine.setConfig('models.dream.synthesize_verdict', 'anthropic:claude-haiku-4-5-20251001');
+      await rig.engine.setConfig('agent.use_gateway_loop', 'true');
+      await rig.engine.setConfig('dream.synthesize.last_completion_ts', '2000-01-01T00:00:00.000Z');
+
+      writeFileSync(
+        join(rig.corpusDir, '2026-06-23-glm-boxed-guards.txt'),
+        'User: keep the Dream child boxed tightly.\n' +
+        'Agent: ' + 'meaningful conversation '.repeat(220),
+      );
+
+      let synthTurn = 0;
+      __setChatTransportForTests(async (opts: ChatOpts): Promise<ChatResult> => {
+        if ((opts.system ?? '').includes('You judge whether a conversation transcript is worth synthesizing')) {
+          return {
+            text: JSON.stringify({
+              worth_processing: true,
+              reasons: ['user wants to validate Dream child guardrails'],
+            }),
+            blocks: [{
+              type: 'text',
+              text: JSON.stringify({
+                worth_processing: true,
+                reasons: ['user wants to validate Dream child guardrails'],
+              }),
+            }],
+            stopReason: 'end',
+            usage: { input_tokens: 12, output_tokens: 8, cache_read_tokens: 0, cache_creation_tokens: 0 },
+            model: 'anthropic:claude-haiku-4-5-20251001',
+            providerId: 'anthropic',
+          };
+        }
+
+        if (opts.model === 'zai:glm-5.2') {
+          synthTurn++;
+          if (synthTurn === 1) {
+            return {
+              text: '',
+              blocks: [{
+                type: 'tool-call',
+                toolCallId: 'glm-boxed-guards-put-page',
+                toolName: 'brain_put_page',
+                input: {
+                  slug: 'wiki/personal/reflections/2026-06-23-glm-boxed-guards',
+                  content: [
+                    '---',
+                    'title: GLM boxed guards',
+                    'type: note',
+                    '---',
+                    '',
+                    '# GLM boxed guards',
+                    '',
+                    'The Dream synth child carried the tighter runtime guardrails.',
+                  ].join('\n'),
+                },
+              }],
+              stopReason: 'tool_calls',
+              usage: { input_tokens: 40, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 },
+              model: 'zai:glm-5.2',
+              providerId: 'zai',
+            };
+          }
+
+          return {
+            text: 'reflection written',
+            blocks: [{ type: 'text', text: 'reflection written' }],
+            stopReason: 'end',
+            usage: { input_tokens: 30, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 },
+            model: 'zai:glm-5.2',
+            providerId: 'zai',
+          };
+        }
+
+        throw new Error(`unexpected chat transport model/system: ${opts.model ?? '<default>'}`);
+      });
+
+      const savedKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-glm-judge';
+      try {
+        const result = await runPhaseSynthesize(rig.engine, {
+          brainDir: rig.brainDir,
+          dryRun: false,
+        });
+
+        expect(result.status).toBe('ok');
+        const details = result.details as {
+          child_outcomes: Array<{ jobId: number; status: string }>;
+        };
+        expect(details.child_outcomes).toHaveLength(1);
+
+        const queue = new MinionQueue(rig.engine);
+        const child = await queue.getJob(details.child_outcomes[0].jobId);
+        expect(child).not.toBeNull();
+        expect(child?.queue).toBe('dream-synth-test');
+        expect(child?.max_stalled).toBe(2);
+        expect(child?.timeout_ms).toBe(15 * 60 * 1000);
+        expect(child?.data.max_turns).toBe(12);
+        expect(child?.data.max_cost_usd).toBe(0.42);
+        expect(child?.data.model).toBe('zai:glm-5.2');
+      } finally {
+        if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+        else process.env.ANTHROPIC_API_KEY = savedKey;
+        __setChatTransportForTests(null);
+        resetGateway();
+      }
+    } finally {
+      worker.stop();
+      await runPromise;
+      await rig.cleanup();
+    }
+  }, 30_000);
 });
 
 describe('E2E synthesize — round-trip self-consumption guard (v0.23.2)', () => {

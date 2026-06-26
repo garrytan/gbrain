@@ -14,8 +14,13 @@
 import { describe, expect, test, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { computeRemediationPlan } from '../../src/core/remediation/index.ts';
+import { runRemediation } from '../../src/core/remediation/run.ts';
 import { captureMetric } from '../../src/core/onboard/impact-capture.ts';
-import { buildOnboardReport, toOnboardRecommendation } from '../../src/core/onboard/render.ts';
+import {
+  buildOnboardReport,
+  filterRunnableOnboardRemediations,
+  toOnboardRecommendation,
+} from '../../src/core/onboard/render.ts';
 import { runAllOnboardChecks } from '../../src/core/onboard/checks.ts';
 import { makeRemediationStep } from '../../src/core/remediation-step.ts';
 
@@ -131,6 +136,28 @@ describe('onboard E2E — computeRemediationPlan with extras', () => {
   });
 });
 
+describe('onboard E2E — runRemediation with extras', () => {
+  test('dry-run preserves caller-supplied extra remediations', async () => {
+    const extra = makeRemediationStep({
+      id: 'test.synthetic.run',
+      job: 'test-job',
+      params: {},
+      severity: 'low',
+      est_seconds: 10,
+      est_usd_cost: 0,
+      rationale: 'synthetic test entry',
+      status: 'remediable',
+    });
+    const result = await runRemediation(engine, {
+      targetScore: 90,
+      dryRun: true,
+      extraRemediations: [extra],
+    });
+    expect(result.submitted.map((s) => s.id)).toContain('test.synthetic.run');
+    expect(result.submitted.find((s) => s.id === 'test.synthetic.run')?.status).toBe('dry_run');
+  });
+});
+
 describe('onboard E2E — buildOnboardReport', () => {
   test('produces stable JSON envelope with schema_version: 1', async () => {
     const plan = await computeRemediationPlan(engine, { targetScore: 90 });
@@ -177,5 +204,54 @@ describe('onboard E2E — toOnboardRecommendation tier policy', () => {
     });
     const r = toOnboardRecommendation(step);
     expect(r.apply_policy).toBe('prompt_required');
+  });
+
+  test('auto mode keeps only auto_apply', () => {
+    const steps = [
+      makeRemediationStep({
+        id: 'test.auto', job: 'embed-catch-up', params: {},
+        severity: 'medium', est_seconds: 60, est_usd_cost: 0.1,
+        rationale: 'embed', status: 'remediable',
+      }),
+      makeRemediationStep({
+        id: 'test.prompt', job: 'synthesize',
+        protected: true, params: {},
+        severity: 'medium', est_seconds: 600, est_usd_cost: 1,
+        rationale: 'synth', status: 'remediable',
+      }),
+      makeRemediationStep({
+        id: 'test.manual', job: 'unify-types',
+        protected: true, params: {},
+        severity: 'medium', est_seconds: 600, est_usd_cost: 1,
+        rationale: 'unify', status: 'remediable',
+      }),
+    ];
+    expect(filterRunnableOnboardRemediations(steps, 'auto').map((s) => s.id)).toEqual(['test.auto']);
+  });
+
+  test('auto-with-prompt includes prompt_required but excludes manual_only', () => {
+    const steps = [
+      makeRemediationStep({
+        id: 'test.auto', job: 'embed-catch-up', params: {},
+        severity: 'medium', est_seconds: 60, est_usd_cost: 0.1,
+        rationale: 'embed', status: 'remediable',
+      }),
+      makeRemediationStep({
+        id: 'test.prompt', job: 'synthesize',
+        protected: true, params: {},
+        severity: 'medium', est_seconds: 600, est_usd_cost: 1,
+        rationale: 'synth', status: 'remediable',
+      }),
+      makeRemediationStep({
+        id: 'test.manual', job: 'extract-takes-from-pages',
+        protected: true, params: {},
+        severity: 'medium', est_seconds: 600, est_usd_cost: 1,
+        rationale: 'takes', status: 'remediable',
+      }),
+    ];
+    expect(filterRunnableOnboardRemediations(steps, 'auto-with-prompt').map((s) => s.id)).toEqual([
+      'test.auto',
+      'test.prompt',
+    ]);
   });
 });

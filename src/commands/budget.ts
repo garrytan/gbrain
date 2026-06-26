@@ -27,9 +27,12 @@ export interface BudgetReconcileArgs {
   outPath: string | null;
   maxDeltaUsd: number | null;
   now: Date;
+  since: Date | null;
+  until: Date | null;
+  labelPrefixes: string[];
 }
 
-interface SpendRecord {
+export interface SpendRecord {
   ts: string;
   event: string | null;
   model: string | null;
@@ -76,6 +79,7 @@ export interface BudgetReconcileReport {
   schema_version: 1;
   window: { since: string; until: string; days: number };
   provider: BudgetProviderFilter;
+  label_prefixes: string[];
   internal: BudgetSpendSummary & { audit_dir: string; files_read: string[] };
   non_billed_internal: BudgetNonBilledSummary;
   excluded_internal: BudgetExcludedSpendSummary;
@@ -95,6 +99,9 @@ USAGE
   gbrain budget reconcile [--days N] [--provider anthropic|deepseek|all]
                            [--external-receipts PATH] [--max-delta-usd N]
                            [--out PATH] [--json]
+  gbrain budget daily [--date YYYY-MM-DD] [--provider anthropic|deepseek|all]
+                      [--out PATH] [--json]
+  gbrain budget dream-run --since ISO --until ISO [--out PATH] [--json]
 
 WHAT IT DOES
   Reads ~/.gbrain/audit/budget-*.jsonl (or GBRAIN_AUDIT_DIR), separates provider
@@ -104,6 +111,8 @@ WHAT IT DOES
 
 EXAMPLES
   gbrain budget reconcile --days 7
+  gbrain budget daily --date 2026-06-25
+  gbrain budget dream-run --since 2026-06-25T18:08:00Z --until 2026-06-25T18:23:00Z
   gbrain budget reconcile --days 7 --external-receipts ~/Downloads/anthropic-usage.jsonl
   gbrain budget reconcile --days 7 --external-receipts ~/Downloads/anthropic-usage.jsonl --max-delta-usd 0.05
   gbrain budget reconcile --days 7 --json --out .context/budget-reconcile.json
@@ -115,7 +124,7 @@ export async function runBudget(args: string[]): Promise<number> {
     process.stdout.write(HELP);
     return 0;
   }
-  if (sub !== 'reconcile') {
+  if (sub !== 'reconcile' && sub !== 'daily' && sub !== 'dream-run') {
     process.stderr.write(`Unknown budget subcommand: ${sub}\n\n${HELP}`);
     return 2;
   }
@@ -126,7 +135,11 @@ export async function runBudget(args: string[]): Promise<number> {
 
   let parsed: BudgetReconcileArgs;
   try {
-    parsed = parseBudgetReconcileArgs(args.slice(1));
+    parsed = sub === 'daily'
+      ? parseBudgetDailyArgs(args.slice(1))
+      : sub === 'dream-run'
+        ? parseBudgetDreamRunArgs(args.slice(1))
+        : parseBudgetReconcileArgs(args.slice(1));
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n\n${HELP}`);
     return 2;
@@ -139,7 +152,7 @@ export async function runBudget(args: string[]): Promise<number> {
     writeFileSync(out, JSON.stringify(report, null, 2) + '\n', 'utf-8');
     if (!parsed.json) process.stdout.write(`Wrote receipt: ${out}\n\n`);
   }
-  process.stdout.write(parsed.json ? JSON.stringify(report, null, 2) + '\n' : formatBudgetReconcileText(report));
+  process.stdout.write(parsed.json ? JSON.stringify(report, null, 2) + '\n' : formatBudgetReconcileText(report, sub));
   return report.comparison.gate_passed === false ? 1 : 0;
 }
 
@@ -150,6 +163,9 @@ export function parseBudgetReconcileArgs(args: string[], now = new Date()): Budg
   let externalReceiptsPath: string | null = null;
   let outPath: string | null = null;
   let maxDeltaUsd: number | null = null;
+  let since: Date | null = null;
+  let until: Date | null = null;
+  const labelPrefixes: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -182,6 +198,24 @@ export function parseBudgetReconcileArgs(args: string[], now = new Date()): Budg
         outPath = raw;
         break;
       }
+      case '--since': {
+        const raw = args[++i];
+        since = parseIsoDateTimeFlag('--since', raw);
+        break;
+      }
+      case '--until': {
+        const raw = args[++i];
+        until = parseIsoDateTimeFlag('--until', raw);
+        break;
+      }
+      case '--label-prefix': {
+        const raw = args[++i];
+        if (!raw) throw new Error('--label-prefix requires a value');
+        for (const prefix of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
+          labelPrefixes.push(prefix);
+        }
+        break;
+      }
       case '--max-delta-usd': {
         const raw = args[++i];
         const parsed = numberFrom(raw);
@@ -200,18 +234,58 @@ export function parseBudgetReconcileArgs(args: string[], now = new Date()): Budg
   if (maxDeltaUsd !== null && externalReceiptsPath === null) {
     throw new Error('--max-delta-usd requires --external-receipts');
   }
+  if ((since === null) !== (until === null)) {
+    throw new Error('--since and --until must be provided together');
+  }
+  if (since && until && since >= until) {
+    throw new Error('--since must be before --until');
+  }
 
-  return { days, provider, json, externalReceiptsPath, outPath, maxDeltaUsd, now };
+  return { days, provider, json, externalReceiptsPath, outPath, maxDeltaUsd, now, since, until, labelPrefixes };
+}
+
+export function parseBudgetDailyArgs(args: string[], now = new Date()): BudgetReconcileArgs {
+  let date = now.toISOString().slice(0, 10);
+  const rest: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--date') {
+      const raw = args[++i];
+      if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) throw new Error('--date must be YYYY-MM-DD');
+      date = raw;
+    } else {
+      rest.push(args[i]);
+    }
+  }
+  const since = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(since.getTime()) || since.toISOString().slice(0, 10) !== date) {
+    throw new Error('--date must be a valid UTC date in YYYY-MM-DD format');
+  }
+  const until = new Date(since.getTime() + 24 * 60 * 60 * 1000);
+  return { ...parseBudgetReconcileArgs(['--provider', 'all', ...rest], now), days: 1, since, until };
+}
+
+export function parseBudgetDreamRunArgs(args: string[], now = new Date()): BudgetReconcileArgs {
+  const parsed = parseBudgetReconcileArgs(['--provider', 'all', ...args], now);
+  if (!parsed.since || !parsed.until) {
+    throw new Error('budget dream-run requires --since ISO and --until ISO');
+  }
+  return {
+    ...parsed,
+    labelPrefixes: parsed.labelPrefixes.length > 0
+      ? parsed.labelPrefixes
+      : ['subagent.gateway', 'cycle.synthesize.significance'],
+  };
 }
 
 export function buildBudgetReconcileReport(args: BudgetReconcileArgs): BudgetReconcileReport {
-  const until = args.now;
-  const since = new Date(until.getTime() - args.days * 24 * 60 * 60 * 1000);
+  const until = args.until ?? args.now;
+  const since = args.since ?? new Date(until.getTime() - args.days * 24 * 60 * 60 * 1000);
+  const windowDays = Number(((until.getTime() - since.getTime()) / (24 * 60 * 60 * 1000)).toFixed(6));
   const auditDir = resolveAuditDir();
-  const internalRead = readInternalBudgetRecords(auditDir, since, until, args.provider);
+  const internalRead = readInternalBudgetRecords(auditDir, since, until, args.provider, args.labelPrefixes);
   const internalRecords = internalRead.billed;
   const externalRecords = args.externalReceiptsPath
-    ? readExternalReceiptRecords(args.externalReceiptsPath, since, until, args.provider)
+    ? readExternalReceiptRecords(args.externalReceiptsPath, since, until, args.provider, args.labelPrefixes)
     : null;
   const internalSummary = summarizeRecords(internalRecords);
   const nonBilledSummary: BudgetNonBilledSummary = {
@@ -229,8 +303,9 @@ export function buildBudgetReconcileReport(args: BudgetReconcileArgs): BudgetRec
     : Math.abs(delta) <= args.maxDeltaUsd;
   return {
     schema_version: 1,
-    window: { since: since.toISOString(), until: until.toISOString(), days: args.days },
+    window: { since: since.toISOString(), until: until.toISOString(), days: windowDays },
     provider: args.provider,
+    label_prefixes: args.labelPrefixes,
     internal: { ...internalSummary, audit_dir: auditDir, files_read: filesRead },
     non_billed_internal: nonBilledSummary,
     excluded_internal: excludedSummary,
@@ -252,6 +327,7 @@ function readInternalBudgetRecords(
   since: Date,
   until: Date,
   provider: BudgetProviderFilter,
+  labelPrefixes: string[] = [],
 ): {
   billed: SpendRecord[];
   estimates: Array<{ record: SpendRecord; reason: string; kind: BudgetAuditAccountingKind }>;
@@ -300,6 +376,7 @@ function readInternalBudgetRecords(
         cacheCreationTokens: numberFrom(row.cache_creation_tokens) ?? 0,
         sourceFile: file,
       };
+      if (!labelMatchesPrefixes(record.label, labelPrefixes)) continue;
       let classification = classifyBudgetAuditRow(row);
       const quarantineReason = quarantine.get(budgetAuditRowFingerprint(row));
       if (quarantineReason) {
@@ -331,6 +408,7 @@ function readExternalReceiptRecords(
   since: Date,
   until: Date,
   provider: BudgetProviderFilter,
+  labelPrefixes: string[] = [],
 ): SpendRecord[] {
   const fullPath = isAbsolute(path) ? path : resolve(path);
   if (!existsSync(fullPath)) throw new Error(`External receipt file not found: ${fullPath}`);
@@ -344,7 +422,7 @@ function readExternalReceiptRecords(
     if (!providerMatches(rowProvider, provider, true)) continue;
     const costUsd = firstNumber(row.actual_cost_usd, row.cost_usd, row.amount_usd, row.total_usd, row.usd, row.amount);
     if (costUsd === null) continue;
-    records.push({
+    const record = {
       ts,
       event: stringFrom(row.event),
       model,
@@ -360,7 +438,8 @@ function readExternalReceiptRecords(
       cacheReadTokens: firstNumber(row.cache_read_tokens, row.cacheReadTokens, row.cache_read_input_tokens) ?? 0,
       cacheCreationTokens: firstNumber(row.cache_creation_tokens, row.cacheCreationTokens, row.cache_creation_input_tokens) ?? 0,
       sourceFile: fullPath,
-    });
+    };
+    if (labelMatchesPrefixes(record.label, labelPrefixes)) records.push(record);
   }
   return records;
 }
@@ -442,10 +521,18 @@ function summarizeExcludedRecords(
   };
 }
 
-function formatBudgetReconcileText(report: BudgetReconcileReport): string {
+function formatBudgetReconcileText(report: BudgetReconcileReport, subcommand = 'reconcile'): string {
   const lines: string[] = [];
-  lines.push(`Budget readback (${report.window.since.slice(0, 10)} to ${report.window.until.slice(0, 10)} UTC)`);
+  const title = subcommand === 'daily'
+    ? 'Daily spend summary'
+    : subcommand === 'dream-run'
+      ? 'Dream run spend receipt'
+      : 'Budget readback';
+  lines.push(`${title} (${report.window.since} to ${report.window.until})`);
   lines.push(`Provider: ${report.provider}`);
+  if (report.label_prefixes.length > 0) {
+    lines.push(`Labels: ${report.label_prefixes.join(', ')}`);
+  }
   lines.push(`Provider-billed candidate usage: ${formatUsd(report.internal.cost_usd)} across ${report.internal.records} chat record(s)`);
   lines.push(`Not counted as provider spend: ${formatUsd(report.excluded_internal.cost_usd)} accounted / ${formatUsd(report.excluded_internal.projected_cost_usd)} projected across ${report.excluded_internal.records} audit row(s)`);
   lines.push(`Audit dir: ${report.internal.audit_dir}`);
@@ -492,6 +579,19 @@ function formatBudgetReconcileText(report: BudgetReconcileReport): string {
   return lines.join('\n') + '\n';
 }
 
+function labelMatchesPrefixes(label: string | null, prefixes: string[]): boolean {
+  if (prefixes.length === 0) return true;
+  if (!label) return false;
+  return prefixes.some((prefix) => label === prefix || label.startsWith(`${prefix}.`));
+}
+
+function parseIsoDateTimeFlag(flag: string, raw: string | undefined): Date {
+  if (!raw) throw new Error(`${flag} requires an ISO timestamp`);
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) throw new Error(`${flag} requires an ISO timestamp`);
+  return parsed;
+}
+
 function providerMatches(rowProvider: string | null, filter: BudgetProviderFilter, allowUnknownExternal: boolean): boolean {
   if (filter === 'all') return true;
   if (rowProvider === filter) return true;
@@ -502,7 +602,7 @@ function timestampInWindow(value: unknown, since: Date, until: Date): string | n
   if (typeof value !== 'string' && typeof value !== 'number') return null;
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return null;
-  if (d < since || d > until) return null;
+  if (d < since || d >= until) return null;
   return d.toISOString();
 }
 

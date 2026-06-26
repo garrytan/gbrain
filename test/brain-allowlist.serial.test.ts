@@ -154,6 +154,22 @@ describe('buildBrainTools', () => {
       ),
     ).rejects.toBeInstanceOf(OperationError);
   });
+
+  test('execute() on put_page without slug fails fast with invalid_params', async () => {
+    const tools = buildBrainTools({ subagentId: 42, engine, config });
+    const putPage = tools.find(t => t.name === 'brain_put_page');
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+
+    await expect(
+      putPage!.execute(
+        { content: '---\ntitle: Missing slug\n---\nbody' },
+        ctx,
+      ),
+    ).rejects.toMatchObject({
+      code: 'invalid_params',
+      message: 'Missing required parameter: slug',
+    });
+  });
 });
 
 describe('filterAllowedTools', () => {

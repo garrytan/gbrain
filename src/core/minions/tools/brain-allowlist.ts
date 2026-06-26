@@ -24,8 +24,9 @@
 
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
-import { operations } from '../../operations.ts';
+import { operations, OperationError } from '../../operations.ts';
 import type { Operation, OperationContext } from '../../operations.ts';
+import { validateParams } from '../../operation-params.ts';
 import { paramDefToSchema } from '../../../mcp/tool-defs.ts';
 import type { ToolCtx, ToolDef } from '../types.ts';
 
@@ -295,6 +296,10 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           allowedSlugPrefixes: opts.allowedSlugPrefixes,
         });
         const params = normalizeToolInputParams(input);
+        const validationError = validateParams(op, params);
+        if (validationError) {
+          throw new OperationError('invalid_params', validationError);
+        }
         return op.handler(opCtx, params);
       },
     };

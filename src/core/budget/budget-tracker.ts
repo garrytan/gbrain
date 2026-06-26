@@ -599,6 +599,56 @@ export class BudgetTracker {
 }
 
 /**
+ * Compose multiple trackers into one gateway-visible scope.
+ *
+ * Use this when an inner operation needs its own local cap without dropping an
+ * already-active outer tracker. reserve() short-circuits on the first deny so
+ * we never approve a provider call that the outer scope already rejected.
+ * record() fans out to every tracker so parent receipts still accumulate even
+ * when the inner cap is the one that ultimately trips.
+ */
+export class CompositeBudgetTracker extends BudgetTracker {
+  private readonly trackers: readonly [BudgetTracker, ...BudgetTracker[]];
+
+  constructor(trackers: readonly [BudgetTracker, ...BudgetTracker[]]) {
+    super({ label: 'budget.composite' });
+    this.trackers = trackers;
+  }
+
+  override get totalSpent(): number {
+    return this.trackers[this.trackers.length - 1].totalSpent;
+  }
+
+  override get cap(): number | undefined {
+    return this.trackers[this.trackers.length - 1].cap;
+  }
+
+  override onExhausted(cb: () => void): void {
+    for (const tracker of this.trackers) tracker.onExhausted(cb);
+  }
+
+  override reserve(estimate: BudgetEstimate): void {
+    for (const tracker of this.trackers) tracker.reserve(estimate);
+  }
+
+  override record(actual: BudgetActualUsage & { kind?: BudgetKind }): void {
+    let lastError: unknown = null;
+    for (const tracker of this.trackers) {
+      try {
+        tracker.record(actual);
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    if (lastError) throw lastError;
+  }
+
+  override snapshot(): BudgetSnapshot {
+    return this.trackers[this.trackers.length - 1].snapshot();
+  }
+}
+
+/**
  * Pull usage out of an SDK error envelope. Common providers attach `usage`
  * either at the top level (Anthropic) or under `response.usage` (OpenAI).
  * Returns the fallback (pessimistic ceiling) when no usage can be found —

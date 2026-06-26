@@ -3,10 +3,12 @@ import {
   computeRecommendations,
   classifyChecks,
   maxReachableScore,
+  maxReachableScoreFromRecommendations,
   estimateAnthropicCost,
   embeddingProviderConfigured,
   HOSTED_EMBED_KEY_CONFIG,
 } from '../src/core/brain-score-recommendations.ts';
+import { makeRemediationStep } from '../src/core/remediation-step.ts';
 import type { BrainHealth } from '../src/core/types.ts';
 
 /**
@@ -281,6 +283,75 @@ describe('maxReachableScore (D13)', () => {
     ];
     // 5 + 25 + 15 + 10 + 5 = 60
     expect(maxReachableScore(health, classes)).toBe(60);
+  });
+});
+
+describe('maxReachableScoreFromRecommendations', () => {
+  test('extract-capable plan lifts link and timeline components', () => {
+    const health = makeHealth({
+      embed_coverage_score: 35,
+      link_density_score: 4,
+      timeline_coverage_score: 0,
+      no_orphans_score: 2,
+      no_dead_links_score: 10,
+    });
+    const recs = [
+      makeRemediationStep({
+        id: 'sync.repo',
+        job: 'sync',
+        params: {},
+        severity: 'medium',
+        est_seconds: 10,
+        est_usd_cost: 0,
+        rationale: 'sync',
+        status: 'remediable',
+      }),
+      makeRemediationStep({
+        id: 'extract.all',
+        job: 'extract',
+        params: {},
+        severity: 'medium',
+        est_seconds: 10,
+        est_usd_cost: 0,
+        rationale: 'extract',
+        status: 'remediable',
+      }),
+    ];
+    expect(maxReachableScoreFromRecommendations(health, recs)).toBe(87);
+  });
+
+  test('extra timeline remediation lifts the timeline component', () => {
+    const health = makeHealth({
+      embed_coverage_score: 35,
+      link_density_score: 25,
+      timeline_coverage_score: 0,
+      no_orphans_score: 10,
+      no_dead_links_score: 10,
+    });
+    const recs = [
+      makeRemediationStep({
+        id: 'onboard.extract_timeline_from_meetings',
+        job: 'extract-timeline-from-meetings',
+        params: {},
+        severity: 'medium',
+        est_seconds: 10,
+        est_usd_cost: 0,
+        rationale: 'timeline',
+        status: 'remediable',
+      }),
+    ];
+    expect(maxReachableScoreFromRecommendations(health, recs)).toBe(95);
+  });
+
+  test('no recommendations leaves the current score ceiling intact', () => {
+    const health = makeHealth({
+      embed_coverage_score: 20,
+      link_density_score: 12,
+      timeline_coverage_score: 7,
+      no_orphans_score: 5,
+      no_dead_links_score: 9,
+    });
+    expect(maxReachableScoreFromRecommendations(health, [])).toBe(53);
   });
 });
 

@@ -9,7 +9,10 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { Operation, OperationContext, AuthInfo } from '../core/operations.ts';
+import { validateParams } from '../core/operation-params.ts';
 import { loadConfig } from '../core/config.ts';
+
+export { validateParams } from '../core/operation-params.ts';
 
 export interface ToolResult {
   content: { type: 'text'; text: string }[];
@@ -165,25 +168,6 @@ export function summarizeMcpParams(opName: string, params: unknown): ParamSummar
     kind: typeof params,
     ...(approxBytes !== undefined ? { approx_bytes: approxBytes } : {}),
   };
-}
-
-/** Validate required params exist and have the expected type. Returns null on success, error message on failure. */
-export function validateParams(op: Operation, params: Record<string, unknown>): string | null {
-  for (const [key, def] of Object.entries(op.params)) {
-    if (def.required && (params[key] === undefined || params[key] === null)) {
-      return `Missing required parameter: ${key}`;
-    }
-    if (params[key] !== undefined && params[key] !== null) {
-      const val = params[key];
-      const expected = def.type;
-      if (expected === 'string' && typeof val !== 'string') return `Parameter "${key}" must be a string`;
-      if (expected === 'number' && typeof val !== 'number') return `Parameter "${key}" must be a number`;
-      if (expected === 'boolean' && typeof val !== 'boolean') return `Parameter "${key}" must be a boolean`;
-      if (expected === 'object' && (typeof val !== 'object' || Array.isArray(val))) return `Parameter "${key}" must be an object`;
-      if (expected === 'array' && !Array.isArray(val)) return `Parameter "${key}" must be an array`;
-    }
-  }
-  return null;
 }
 
 const stderrLogger: OperationContext['logger'] = {

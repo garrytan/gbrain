@@ -75,6 +75,14 @@ const DEFAULT_MAX_CHUNKS = 24;
 const UNKNOWN_MODEL_BUDGET_TOKENS = 180_000;
 /** Default minion queue for synth children unless the operator boxes them off. */
 const DEFAULT_SYNTH_QUEUE = 'default';
+/** Tighter default turn budget for Dream child jobs. */
+const DEFAULT_SYNTH_CHILD_MAX_TURNS = 12;
+/** Wall-clock cap per Dream child job. */
+const DEFAULT_SYNTH_CHILD_TIMEOUT_MS = 15 * 60 * 1000;
+/** Wait slightly longer than the child timeout so the parent can observe the terminal state. */
+const DEFAULT_SYNTH_CHILD_WAIT_TIMEOUT_MS = DEFAULT_SYNTH_CHILD_TIMEOUT_MS + (5 * 60 * 1000);
+/** Per-child spend cap. Keeps one bad transcript from burning the batch budget alone. */
+const DEFAULT_SYNTH_CHILD_MAX_COST_USD = 1.0;
 
 /**
  * Compute per-chunk character budget for the resolved model + config override.
@@ -535,7 +543,8 @@ export async function runPhaseSynthesize(
         const childData: SubagentHandlerData = {
           prompt: buildSynthesisPrompt(t, chunks[i], i, chunks.length, priorContradictionsBlock),
           model: subagentModel,
-          max_turns: 30,
+          max_turns: DEFAULT_SYNTH_CHILD_MAX_TURNS,
+          max_cost_usd: config.maxChildCostUsd,
           allowed_slug_prefixes: allowedSlugPrefixes,
         };
         // Idempotency key parity:
@@ -560,10 +569,10 @@ export async function runPhaseSynthesize(
         }
         const submitOpts: Partial<MinionJobInput> = {
           queue: config.queueName,
-          max_stalled: 3,
+          max_stalled: 2,
           on_child_fail: 'continue',
           idempotency_key,
-          timeout_ms: 30 * 60 * 1000, // 30 min per chunk
+          timeout_ms: DEFAULT_SYNTH_CHILD_TIMEOUT_MS,
         };
         const child = await queue.add(
           'subagent',
@@ -584,7 +593,7 @@ export async function runPhaseSynthesize(
     for (const jobId of childIds) {
       try {
         const job = await waitForCompletion(queue, jobId, {
-          timeoutMs: 35 * 60 * 1000,
+          timeoutMs: DEFAULT_SYNTH_CHILD_WAIT_TIMEOUT_MS,
           pollMs: 5 * 1000,
         });
         childJobs.push({ id: job.id, status: job.status, result: job.result });
@@ -751,6 +760,7 @@ interface SynthConfig {
    */
   maxChunksPerTranscript: number;
   maxTranscriptsPerCycle: number | null;
+  maxChildCostUsd: number;
 }
 
 async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
@@ -781,6 +791,7 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
   const maxPromptTokensStr = await engine.getConfig('dream.synthesize.max_prompt_tokens');
   const maxChunksStr = await engine.getConfig('dream.synthesize.max_chunks_per_transcript');
   const maxTranscriptsStr = await engine.getConfig('dream.synthesize.max_transcripts_per_cycle');
+  const maxChildCostUsdStr = await engine.getConfig('dream.synthesize.max_child_cost_usd');
 
   let excludePatterns: string[] = ['medical', 'therapy'];
   if (excludeStr) {
@@ -813,6 +824,13 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
       maxTranscriptsPerCycle = parsed;
     }
   }
+  let maxChildCostUsd = DEFAULT_SYNTH_CHILD_MAX_COST_USD;
+  if (maxChildCostUsdStr) {
+    const parsed = Number(maxChildCostUsdStr);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      maxChildCostUsd = parsed;
+    }
+  }
 
   return {
     enabled,
@@ -827,6 +845,7 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     maxPromptTokens,
     maxChunksPerTranscript,
     maxTranscriptsPerCycle,
+    maxChildCostUsd,
   };
 }
 

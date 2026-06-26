@@ -418,6 +418,13 @@ export interface SubagentHandlerData {
   /** Max assistant turns before the loop fails with stop_reason='max_turns'. */
   max_turns?: number;
   /**
+   * Optional per-job spend cap in USD for gateway-routed subagent calls.
+   *
+   * Trusted local callers such as Dream synthesize use this to bound a child's
+   * total LLM spend even when the model/tool loop would otherwise keep retrying.
+   */
+  max_cost_usd?: number;
+  /**
    * Whitelist of tool names the agent may call. MUST be a subset of the
    * derived registry names — invalid entries are rejected at tool-dispatch
    * time, not silently ignored. Empty array = no tools.

@@ -4893,7 +4893,10 @@ const run_onboard: Operation = {
 
     const { computeRemediationPlan, runRemediation } = await import('./remediation/index.ts');
     const { runAllOnboardChecks } = await import('./onboard/checks.ts');
-    const { buildOnboardReport } = await import('./onboard/render.ts');
+    const {
+      buildOnboardReport,
+      filterRunnableOnboardRemediations,
+    } = await import('./onboard/render.ts');
 
     // Per A26: source-scope via sourceScopeOpts(ctx). The recommendation
     // planner is brain-wide today; future extension can scope by reading
@@ -4927,8 +4930,12 @@ const run_onboard: Operation = {
     const canRunProtected = grantedScopes.includes('run_protected_onboard');
     const { isProtectedJobName } = await import('./minions/protected-names.ts');
 
+    const runnableExtras = filterRunnableOnboardRemediations(
+      extraRemediations,
+      mode === 'auto-with-prompt' ? 'auto-with-prompt' : 'auto',
+    );
     const skippedMissingScope: Array<{ id: string; job: string; reason: string }> = [];
-    const allowedExtras = extraRemediations.filter((r) => {
+    const allowedExtras = runnableExtras.filter((r) => {
       if (canRunProtected) return true;
       if (isProtectedJobName(r.job)) {
         skippedMissingScope.push({ id: r.id, job: r.job, reason: 'requires run_protected_onboard scope' });
@@ -4946,7 +4953,7 @@ const run_onboard: Operation = {
     // typo, the underlying queue.add would reject. Defense-in-depth.
     const result = await runRemediation(
       ctx.engine,
-      { targetScore, maxUsd },
+      { targetScore, maxUsd, extraRemediations: allowedExtras },
       {},
     );
 

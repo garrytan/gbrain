@@ -350,4 +350,89 @@ describe('budget reconcile readback', () => {
       expect(printed.comparison.gate_passed).toBe(true);
     });
   });
+
+  test('daily summarizes one UTC day across all providers', async () => {
+    writeJsonl(join(tmp, 'budget-2026-W26.jsonl'), [
+      {
+        ts: '2026-06-25T01:00:00.000Z',
+        event: 'record',
+        label: 'subagent.gateway',
+        kind: 'chat',
+        model: 'zai:glm-5.2',
+        actual_cost_usd: 0.75,
+      },
+      {
+        ts: '2026-06-26T00:00:00.000Z',
+        event: 'record',
+        label: 'subagent.gateway',
+        kind: 'chat',
+        model: 'zai:glm-5.2',
+        actual_cost_usd: 1.25,
+      },
+    ]);
+
+    await withEnv({ GBRAIN_AUDIT_DIR: tmp }, async () => {
+      const rc = await runBudget(['daily', '--date', '2026-06-25', '--json']);
+      expect(rc).toBe(0);
+      const printed = JSON.parse(stdoutCapture);
+      expect(printed.provider).toBe('all');
+      expect(printed.window.since).toBe('2026-06-25T00:00:00.000Z');
+      expect(printed.window.until).toBe('2026-06-26T00:00:00.000Z');
+      expect(printed.internal.cost_usd).toBe(0.75);
+      expect(printed.internal.by_model[0].model).toBe('zai:glm-5.2');
+    });
+  });
+
+  test('dream-run filters to Dream synth receipt labels by default', async () => {
+    writeJsonl(join(tmp, 'budget-2026-W26.jsonl'), [
+      {
+        ts: '2026-06-25T18:10:00.000Z',
+        event: 'record',
+        label: 'subagent.gateway',
+        kind: 'chat',
+        model: 'zai:glm-5.2',
+        actual_cost_usd: 1.25,
+      },
+      {
+        ts: '2026-06-25T18:11:00.000Z',
+        event: 'record',
+        label: 'cycle.synthesize.significance',
+        kind: 'chat',
+        model: 'anthropic:claude-haiku-4-5-20251001',
+        actual_cost_usd: 0.05,
+      },
+      {
+        ts: '2026-06-25T18:12:00.000Z',
+        event: 'record',
+        label: 'unrelated.workflow',
+        kind: 'chat',
+        model: 'zai:glm-5.2',
+        actual_cost_usd: 9,
+      },
+    ]);
+
+    await withEnv({ GBRAIN_AUDIT_DIR: tmp }, async () => {
+      const rc = await runBudget([
+        'dream-run',
+        '--since', '2026-06-25T18:08:00.000Z',
+        '--until', '2026-06-25T18:23:00.000Z',
+        '--json',
+      ]);
+      expect(rc).toBe(0);
+      const printed = JSON.parse(stdoutCapture);
+      expect(printed.label_prefixes).toEqual(['subagent.gateway', 'cycle.synthesize.significance']);
+      expect(printed.window.days).toBeCloseTo(15 / (24 * 60), 6);
+      expect(printed.internal.records).toBe(2);
+      expect(printed.internal.cost_usd).toBe(1.3);
+      expect(printed.internal.by_label.map((row: { label: string }) => row.label)).toEqual([
+        'subagent.gateway',
+        'cycle.synthesize.significance',
+      ]);
+    });
+  });
+
+  test('daily rejects impossible UTC dates before report building', async () => {
+    const rc = await runBudget(['daily', '--date', '2026-13-01', '--json']);
+    expect(rc).toBe(2);
+  });
 });

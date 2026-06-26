@@ -10,6 +10,8 @@ import type {
   OnboardReport,
 } from './types.ts';
 
+export type OnboardApplyMode = 'auto' | 'auto-with-prompt';
+
 /**
  * Translate a RemediationStep into an OnboardRecommendation. Layers the
  * apply_policy + prompt_text + migration_id metadata.
@@ -50,6 +52,18 @@ export function toOnboardRecommendation(step: RemediationStep): OnboardRecommend
     prompt_text: step.rationale,
     migration_id: step.id,
   };
+}
+
+export function filterRunnableOnboardRemediations(
+  steps: RemediationStep[],
+  mode: OnboardApplyMode,
+): RemediationStep[] {
+  return steps.filter((step) => {
+    const policy = toOnboardRecommendation(step).apply_policy ?? 'prompt_required';
+    if (policy === 'manual_only') return false;
+    if (mode === 'auto') return policy === 'auto_apply';
+    return policy === 'auto_apply' || policy === 'prompt_required';
+  });
 }
 
 /**

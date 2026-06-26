@@ -18,7 +18,11 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { computeRemediationPlan, runRemediation } from '../core/remediation/index.ts';
 import { runAllOnboardChecks } from '../core/onboard/checks.ts';
-import { buildOnboardReport, renderHuman } from '../core/onboard/render.ts';
+import {
+  buildOnboardReport,
+  filterRunnableOnboardRemediations,
+  renderHuman,
+} from '../core/onboard/render.ts';
 
 function parseInt10(args: string[], flag: string): number | null {
   const i = args.indexOf(flag);
@@ -147,13 +151,14 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
     engine,
     {
       targetScore,
+      extraRemediations: filterRunnableOnboardRemediations(
+        extraRemediations,
+        yes ? 'auto-with-prompt' : 'auto',
+      ),
       maxUsd,
-      // --auto --yes opts into the prompt_required tier too; library
-      // doesn't distinguish auto_apply vs prompt_required, it just runs
-      // every remediation in the plan. The plan-building side (T12 render)
-      // does the tier distinction; for --auto without --yes, the CLI shell
-      // would pre-filter the extras to auto_apply only. For now: pass
-      // everything; CLI documents this is "everything" behavior.
+      // CLI shell owns the consent tiers. --auto runs only auto_apply;
+      // --auto --yes additionally opts into prompt_required. manual_only
+      // stays out of the unattended path entirely.
     },
     {
       onTargetUnreachable: (target, ceiling) => {

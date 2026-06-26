@@ -156,6 +156,13 @@ export interface CheckClassification {
   reason?: string;
 }
 
+const REACHABILITY_JOB_CAPABILITIES = {
+  embed_coverage: new Set(['embed', 'embed-catch-up']),
+  link_density: new Set(['extract', 'extract-ner']),
+  timeline_coverage: new Set(['extract', 'extract-timeline-from-meetings']),
+  no_dead_links: new Set(['backlinks']),
+} as const;
+
 /**
  * Generate ordered Remediation list from health snapshot + context.
  *
@@ -396,6 +403,36 @@ export function maxReachableScore(
 function pickMax(current: number, max: number, status: RemediationStatus | undefined): number {
   if (status === 'remediable') return max;
   return current;
+}
+
+export function maxReachableScoreFromRecommendations(
+  health: BrainHealth,
+  recommendations: Array<Pick<RemediationStep, 'job' | 'status'>>,
+): number {
+  const runnableJobs = new Set(
+    recommendations
+      .filter((r) => r.status === 'remediable')
+      .map((r) => r.job),
+  );
+
+  const hasCapability = (jobs: ReadonlySet<string>) =>
+    Array.from(jobs).some((job) => runnableJobs.has(job));
+
+  let ceiling = 0;
+  ceiling += hasCapability(REACHABILITY_JOB_CAPABILITIES.embed_coverage)
+    ? 35
+    : health.embed_coverage_score;
+  ceiling += hasCapability(REACHABILITY_JOB_CAPABILITIES.link_density)
+    ? 25
+    : health.link_density_score;
+  ceiling += hasCapability(REACHABILITY_JOB_CAPABILITIES.timeline_coverage)
+    ? 15
+    : health.timeline_coverage_score;
+  ceiling += health.no_orphans_score;
+  ceiling += hasCapability(REACHABILITY_JOB_CAPABILITIES.no_dead_links)
+    ? 10
+    : health.no_dead_links_score;
+  return Math.min(100, Math.round(ceiling));
 }
 
 // ---------------------------------------------------------------------

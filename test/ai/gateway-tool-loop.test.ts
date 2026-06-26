@@ -202,7 +202,7 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     expect(result.finalText).toBe('fin');
   });
 
-  it('refuses replay of non-idempotent pending tool with unrecoverable error', async () => {
+  it('stops with unrecoverable status on replay of a non-idempotent pending tool', async () => {
     __setChatTransportForTests(async () => ({
       text: '',
       blocks: [
@@ -214,20 +214,21 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
       providerId: 'anthropic',
     }));
 
-    await expect(
-      toolLoop({
-        initialMessages: [{ role: 'user', content: 'go' }],
-        tools: [{ name: 'mutate', description: 'm', inputSchema: { type: 'object' } }],
-        toolHandlers: new Map([['mutate', { idempotent: false, async execute() { return null; } }]]),
-        onToolCallStart: async () => ({ gbrainToolUseId: 'gb-pending-key' }),
-        replayState: {
-          priorMessages: [],
-          priorTools: new Map([['gb-pending-key', { status: 'pending' as const }]]),
-          nextTurnIdx: 0,
-          nextMessageIdx: 0,
-        },
-      }),
-    ).rejects.toThrow(/non-idempotent.*pending/i);
+    const result = await toolLoop({
+      initialMessages: [{ role: 'user', content: 'go' }],
+      tools: [{ name: 'mutate', description: 'm', inputSchema: { type: 'object' } }],
+      toolHandlers: new Map([['mutate', { idempotent: false, async execute() { return null; } }]]),
+      onToolCallStart: async () => ({ gbrainToolUseId: 'gb-pending-key' }),
+      replayState: {
+        priorMessages: [],
+        priorTools: new Map([['gb-pending-key', { status: 'pending' as const }]]),
+        nextTurnIdx: 0,
+        nextMessageIdx: 0,
+      },
+    });
+
+    expect(result.stopReason).toBe('unrecoverable');
+    expect(result.stopDetail).toContain('non_idempotent_pending_tool');
   });
 
   it('hits max_turns when the model keeps calling tools', async () => {
@@ -251,6 +252,34 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
 
     expect(result.stopReason).toBe('max_turns');
     expect(result.totalTurns).toBeGreaterThanOrEqual(3);
+  });
+
+  it('stops early on repeated identical tool failures', async () => {
+    __setChatTransportForTests(async () => ({
+      text: '',
+      blocks: [
+        { type: 'tool-call', toolCallId: `tc-${Math.random()}`, toolName: 'loop', input: {} },
+      ] as ChatBlock[],
+      stopReason: 'tool_calls',
+      usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-sonnet-4-6',
+      providerId: 'anthropic',
+    }));
+
+    const result = await toolLoop({
+      initialMessages: [{ role: 'user', content: 'loop' }],
+      tools: [{ name: 'loop', description: 'l', inputSchema: { type: 'object' } }],
+      toolHandlers: new Map([['loop', {
+        idempotent: true,
+        async execute() { throw new Error('same failure'); },
+      }]]),
+      maxTurns: 10,
+      maxConsecutiveIdenticalToolFailures: 2,
+    });
+
+    expect(result.stopReason).toBe('unrecoverable');
+    expect(result.stopDetail).toContain('repeated_tool_failure');
+    expect(result.totalTurns).toBe(2);
   });
 
   it('returns refusal reason without dispatching tools when stopReason=refusal', async () => {

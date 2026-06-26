@@ -23,15 +23,20 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
-import { makeSubagentHandler } from '../../src/core/minions/handlers/subagent.ts';
+import {
+  __testing as subagentTesting,
+  makeSubagentHandler,
+} from '../../src/core/minions/handlers/subagent.ts';
 import type { MinionJobContext, ToolDef, ToolCtx } from '../../src/core/minions/types.ts';
 import {
   __setChatTransportForTests,
   configureGateway,
   resetGateway,
+  withBudgetTracker,
   type ChatBlock,
   type ChatResult,
 } from '../../src/core/ai/gateway.ts';
+import { BudgetExhausted, BudgetTracker } from '../../src/core/budget/budget-tracker.ts';
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -66,12 +71,34 @@ function clearGateway(): void {
   resetGateway();
 }
 
+it('post-run gateway budget overage is surfaced after the final response', () => {
+  const tracker = new BudgetTracker({
+    label: 'subagent.gateway',
+    maxCostUsd: 0.01,
+  });
+
+  expect(() => {
+    tracker.record({
+      modelId: 'anthropic:claude-sonnet-4-6',
+      inputTokens: 20_000,
+      outputTokens: 20_000,
+      kind: 'chat',
+      label: 'synthetic-final-response',
+    });
+  }).toThrow(BudgetExhausted);
+
+  expect(() => {
+    subagentTesting.assertGatewayScopedBudgetNotExceeded(tracker, 'subagent.gateway');
+  }).toThrow(/budget_exhausted_after_response/);
+});
+
 interface FakeJobOpts {
   prompt: string;
   model?: string;
   allowed_tools?: string[];
   required_tools?: string[];
   max_turns?: number;
+  max_cost_usd?: number;
 }
 
 async function makeFakeJob(opts: FakeJobOpts): Promise<{ jobId: number; ctx: MinionJobContext; tokenSink: any[] }> {
@@ -82,6 +109,7 @@ async function makeFakeJob(opts: FakeJobOpts): Promise<{ jobId: number; ctx: Min
     allowed_tools: opts.allowed_tools,
     required_tools: opts.required_tools,
     max_turns: opts.max_turns,
+    max_cost_usd: opts.max_cost_usd,
   };
   const rows = await engine.executeRaw<{ id: number }>(
     `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
@@ -617,6 +645,73 @@ describe('runSubagentViaGateway (v0.38 Slice 1 — full handler path through gat
     expect(result.stop_reason).toBe('max_turns');
     // 3 tool dispatches over 3 turns (max_turns cap).
     expect(executions.length).toBe(3);
+  });
+
+  it('repeated identical tool failures surface as unrecoverable', async () => {
+    __setChatTransportForTests(async () => ({
+      text: '',
+      blocks: [
+        { type: 'tool-call', toolCallId: `tc-${Math.random()}`, toolName: 'always_fail', input: {} },
+      ] as ChatBlock[],
+      stopReason: 'tool_calls',
+      usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-sonnet-4-6',
+      providerId: 'anthropic',
+    } satisfies ChatResult));
+
+    const tools = makeStubTools([]);
+    const handler = buildHandler(tools);
+    const { ctx } = await makeFakeJob({
+      prompt: 'keep trying',
+      model: 'anthropic:claude-sonnet-4-6',
+      max_turns: 10,
+    });
+
+    await expect(handler(ctx)).rejects.toThrow(/repeated_tool_failure/);
+  });
+
+  it('per-job max_cost_usd is enforced on the gateway path', async () => {
+    __setChatTransportForTests(async () => ({
+      text: 'too expensive',
+      blocks: [{ type: 'text', text: 'too expensive' }] as ChatBlock[],
+      stopReason: 'end',
+      usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-sonnet-4-6',
+      providerId: 'anthropic',
+    } satisfies ChatResult));
+
+    const tools = makeStubTools([]);
+    const handler = buildHandler(tools);
+    const { ctx } = await makeFakeJob({
+      prompt: 'hi',
+      model: 'anthropic:claude-sonnet-4-6',
+      max_cost_usd: 0.000001,
+    });
+
+    await expect(handler(ctx)).rejects.toThrow(/budget_exhausted/);
+  });
+
+  it('per-job max_cost_usd still applies inside an outer budget scope', async () => {
+    __setChatTransportForTests(async () => ({
+      text: 'still too expensive',
+      blocks: [{ type: 'text', text: 'still too expensive' }] as ChatBlock[],
+      stopReason: 'end',
+      usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-sonnet-4-6',
+      providerId: 'anthropic',
+    } satisfies ChatResult));
+
+    const tools = makeStubTools([]);
+    const handler = buildHandler(tools);
+    const { ctx } = await makeFakeJob({
+      prompt: 'hi again',
+      model: 'anthropic:claude-sonnet-4-6',
+      max_cost_usd: 0.000001,
+    });
+    const outerTracker = new BudgetTracker({ label: 'outer.scope' });
+
+    await expect(withBudgetTracker(outerTracker, () => handler(ctx))).rejects.toThrow(/budget_exhausted/);
+    expect(outerTracker.totalSpent).toBeGreaterThan(0);
   });
 
   it('refusal stop reason: handler maps refusal → SubagentStopReason refusal', async () => {

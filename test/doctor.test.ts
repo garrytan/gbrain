@@ -133,6 +133,20 @@ describe('doctor command', () => {
     expect(source).toContain('idempotency_key: step.idempotency_key');
   });
 
+  test('onboard CLI filters extra remediations by apply policy before runRemediation', async () => {
+    const source = await Bun.file(new URL('../src/commands/onboard.ts', import.meta.url)).text();
+    expect(source).toContain('filterRunnableOnboardRemediations');
+    expect(source).toContain("yes ? 'auto-with-prompt' : 'auto'");
+    expect(source).toContain('extraRemediations: filterRunnableOnboardRemediations(');
+  });
+
+  test('run_onboard operation filters extra remediations by mode before protected-scope gating', async () => {
+    const source = await Bun.file(new URL('../src/core/operations.ts', import.meta.url)).text();
+    expect(source).toContain('const runnableExtras = filterRunnableOnboardRemediations(');
+    expect(source).toContain("mode === 'auto-with-prompt' ? 'auto-with-prompt' : 'auto'");
+    expect(source).toContain('const allowedExtras = runnableExtras.filter((r) => {');
+  });
+
   test('subagent no-cache models are a yellow spend warning, not red runtime failure', async () => {
     const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
     const engine = {

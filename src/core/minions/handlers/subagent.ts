@@ -50,10 +50,15 @@ import {
 } from './subagent-audit.ts';
 import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
 import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts';
-import { getCurrentBudgetTracker, toolLoop as gatewayToolLoop } from '../../ai/gateway.ts';
+import { getCurrentBudgetTracker, toolLoop as gatewayToolLoop, withBudgetTracker } from '../../ai/gateway.ts';
 import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
 import { classifyCapabilities } from '../../ai/capabilities.ts';
-import { BudgetTracker, extractUsageFromError } from '../../budget/budget-tracker.ts';
+import {
+  BudgetExhausted,
+  BudgetTracker,
+  CompositeBudgetTracker,
+  extractUsageFromError,
+} from '../../budget/budget-tracker.ts';
 import { randomUUIDv7 } from 'bun';
 
 // ── Defaults ────────────────────────────────────────────────
@@ -998,14 +1003,14 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     } as any);
   };
 
-  // Run the loop.
-  const result = await gatewayToolLoop({
+  const runGatewayLoop = async () => gatewayToolLoop({
     model,
     system: systemPrompt,
     initialMessages,
     tools: chatTools,
     toolHandlers,
     maxTurns,
+    maxConsecutiveIdenticalToolFailures: 3,
     budgetLabel: 'subagent.gateway',
     abortSignal: ctx.signal,
     cacheSystem,
@@ -1132,9 +1137,40 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     onHeartbeat: heartbeat,
   });
 
+  let result;
+  let scopedGatewayBudgetTracker: BudgetTracker | null = null;
+  try {
+    const hasScopedMaxCost = typeof data.max_cost_usd === 'number'
+      && Number.isFinite(data.max_cost_usd)
+      && data.max_cost_usd > 0;
+    if (hasScopedMaxCost) {
+      const activeBudgetTracker = getCurrentBudgetTracker();
+      scopedGatewayBudgetTracker = new BudgetTracker({
+        label: 'subagent.gateway',
+        maxCostUsd: data.max_cost_usd,
+      });
+      const trackerForRun = activeBudgetTracker
+        ? new CompositeBudgetTracker([activeBudgetTracker, scopedGatewayBudgetTracker])
+        : scopedGatewayBudgetTracker;
+      result = await withBudgetTracker(trackerForRun, runGatewayLoop);
+      assertGatewayScopedBudgetNotExceeded(scopedGatewayBudgetTracker, 'subagent.gateway');
+    } else {
+      result = await runGatewayLoop();
+    }
+  } catch (err) {
+    if (err instanceof BudgetExhausted) {
+      throw new UnrecoverableError(`budget_exhausted: ${err.message}`);
+    }
+    throw err;
+  }
+
   const missingRequiredTools = await missingRequiredCompletedTools(engine, ctx.id, requiredTools);
   if (missingRequiredTools.length > 0) {
     throw new UnrecoverableError(`required_tools_missing: ${missingRequiredTools.join(', ')}`);
+  }
+
+  if (result.stopReason === 'unrecoverable') {
+    throw new UnrecoverableError(result.stopDetail ?? 'gateway_tool_loop_unrecoverable');
   }
 
   // Map gateway stop reason to SubagentStopReason. SubagentStopReason has
@@ -1563,6 +1599,15 @@ function mergeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
   return ac.signal;
 }
 
+function assertGatewayScopedBudgetNotExceeded(tracker: BudgetTracker | null, label: string): void {
+  if (!tracker || tracker.cap === undefined) return;
+  if (tracker.totalSpent <= tracker.cap) return;
+  throw new UnrecoverableError(
+    `budget_exhausted_after_response: ${label}: cumulative cost ` +
+    `$${tracker.totalSpent.toFixed(4)} exceeded --max-cost $${tracker.cap.toFixed(2)}`,
+  );
+}
+
 /**
  * Error thrown when acquireLease returns acquired=false. The worker
  * treats this as a renewable error — job goes back to waiting with
@@ -1615,6 +1660,7 @@ export function isPromptTooLongError(err: unknown): boolean {
 // ── Testing surface ─────────────────────────────────────────
 
 export const __testing = {
+  assertGatewayScopedBudgetNotExceeded,
   loadPriorMessages,
   loadPriorTools,
   persistMessage,

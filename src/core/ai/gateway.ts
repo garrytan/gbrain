@@ -3030,6 +3030,12 @@ export interface ToolLoopOpts {
   toolHandlers: Map<string, ToolHandler>;
   /** Hard cap on loop iterations. Default 20. */
   maxTurns?: number;
+  /**
+   * Break the loop when the same tool fails with the same normalized error
+   * this many consecutive times without any successful tool result in between.
+   * Default 3.
+   */
+  maxConsecutiveIdenticalToolFailures?: number;
   /** Per-turn max output tokens. Default 4096. */
   maxTokens?: number;
   /** Budget/audit owner label for the gateway chat calls made by this loop. */
@@ -3091,8 +3097,20 @@ export interface ToolLoopResult {
   totalTurns: number;
   totalUsage: ChatResult['usage'];
   stopReason: ToolLoopStopReason;
+  stopDetail?: string;
   /** Final messages array including all assistant + tool results. Caller persists if desired. */
   messages: ChatMessage[];
+}
+
+const DEFAULT_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES = 3;
+const TOOL_FAILURE_SIGNATURE_MAX_LEN = 200;
+
+function normalizeToolFailureSignature(toolName: string, error: string): string {
+  const normalizedError = error
+    .trim()
+    .replace(/\s+/g, ' ')
+    .slice(0, TOOL_FAILURE_SIGNATURE_MAX_LEN);
+  return `${toolName}::${normalizedError}`;
 }
 
 /**
@@ -3113,6 +3131,10 @@ export interface ToolLoopResult {
  */
 export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
   const maxTurns = opts.maxTurns ?? 20;
+  const maxConsecutiveIdenticalToolFailures = Math.max(
+    1,
+    opts.maxConsecutiveIdenticalToolFailures ?? DEFAULT_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES,
+  );
   const maxTokens = opts.maxTokens ?? 4096;
   const handlers = opts.toolHandlers;
   const totalUsage: ChatResult['usage'] = {
@@ -3133,6 +3155,9 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
   let messageIdx = opts.replayState?.nextMessageIdx ?? 0;
   let finalText = '';
   let stopReason: ToolLoopStopReason = 'end';
+  let stopDetail: string | undefined;
+  let lastFailureSignature: string | null = null;
+  let consecutiveIdenticalToolFailures = 0;
 
   while (turnIdx < maxTurns) {
     if (opts.abortSignal?.aborted) {
@@ -3209,6 +3234,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
 
     // D11 + write-ordering invariant: persist pending → execute → settle.
     const toolResultBlocks: ChatBlock[] = [];
+    let shouldBreakAfterToolResults = false;
     for (let callIdx = 0; callIdx < toolCalls.length; callIdx++) {
       const call = toolCalls[callIdx];
       if (opts.abortSignal?.aborted) {
@@ -3227,6 +3253,25 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
           isError: true,
         });
         opts.onHeartbeat?.('tool_failed', { turn_idx: turnIdx, tool_name: call.toolName, error: 'not_registered' });
+        const signature = normalizeToolFailureSignature(call.toolName, 'not_registered');
+        consecutiveIdenticalToolFailures = lastFailureSignature === signature
+          ? consecutiveIdenticalToolFailures + 1
+          : 1;
+        lastFailureSignature = signature;
+        if (consecutiveIdenticalToolFailures >= maxConsecutiveIdenticalToolFailures) {
+          stopReason = 'unrecoverable';
+          stopDetail =
+            `repeated_tool_failure: ${call.toolName} failed ${consecutiveIdenticalToolFailures} consecutive time(s) ` +
+            `with error "not_registered"`;
+          opts.onHeartbeat?.('tool_loop_unrecoverable', {
+            turn_idx: turnIdx,
+            tool_name: call.toolName,
+            failure_count: consecutiveIdenticalToolFailures,
+            error: 'not_registered',
+          });
+          shouldBreakAfterToolResults = true;
+          break;
+        }
         continue;
       }
 
@@ -3279,11 +3324,12 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
         continue;
       }
       if (prior?.status === 'pending' && !handler.idempotent) {
-        // Non-idempotent crash-mid-execute. Surface as unrecoverable.
         stopReason = 'unrecoverable';
-        throw new Error(
-          `non-idempotent tool "${call.toolName}" pending on resume; gbrainToolUseId=${gbrainToolUseId} — cannot safely re-run`,
-        );
+        stopDetail =
+          `non_idempotent_pending_tool: ${call.toolName}; ` +
+          `gbrainToolUseId=${gbrainToolUseId}; cannot safely re-run`;
+        shouldBreakAfterToolResults = true;
+        break;
       }
 
       // Step 3: execute (side effect).
@@ -3299,6 +3345,8 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
           output,
         });
         opts.onHeartbeat?.('tool_result', { turn_idx: turnIdx, tool_name: call.toolName });
+        lastFailureSignature = null;
+        consecutiveIdenticalToolFailures = 0;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         await opts.onToolCallFailed?.(gbrainToolUseId, errMsg);
@@ -3310,6 +3358,25 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
           isError: true,
         });
         opts.onHeartbeat?.('tool_failed', { turn_idx: turnIdx, tool_name: call.toolName, error: errMsg });
+        const signature = normalizeToolFailureSignature(call.toolName, errMsg);
+        consecutiveIdenticalToolFailures = lastFailureSignature === signature
+          ? consecutiveIdenticalToolFailures + 1
+          : 1;
+        lastFailureSignature = signature;
+        if (consecutiveIdenticalToolFailures >= maxConsecutiveIdenticalToolFailures) {
+          stopReason = 'unrecoverable';
+          stopDetail =
+            `repeated_tool_failure: ${call.toolName} failed ${consecutiveIdenticalToolFailures} consecutive time(s) ` +
+            `with error "${errMsg.trim().replace(/\s+/g, ' ').slice(0, TOOL_FAILURE_SIGNATURE_MAX_LEN)}"`;
+          opts.onHeartbeat?.('tool_loop_unrecoverable', {
+            turn_idx: turnIdx,
+            tool_name: call.toolName,
+            failure_count: consecutiveIdenticalToolFailures,
+            error: errMsg,
+          });
+          shouldBreakAfterToolResults = true;
+          break;
+        }
       }
     }
 
@@ -3317,18 +3384,21 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
 
     // Feed all tool results back as a single user message. Persist first so a
     // crash between turns resumes with provider-valid tool history.
-    const userMessageIdx = messageIdx++;
-    await opts.onToolResults?.(turnIdx, userMessageIdx, toolResultBlocks);
-    messages.push({ role: 'user', content: toolResultBlocks });
+    if (toolResultBlocks.length > 0) {
+      const userMessageIdx = messageIdx++;
+      await opts.onToolResults?.(turnIdx, userMessageIdx, toolResultBlocks);
+      messages.push({ role: 'user', content: toolResultBlocks });
+    }
 
     turnIdx++;
+    if (shouldBreakAfterToolResults) break;
   }
 
   if (turnIdx >= maxTurns && stopReason === 'end') {
     stopReason = 'max_turns';
   }
 
-  return { finalText, totalTurns: turnIdx, totalUsage, stopReason, messages };
+  return { finalText, totalTurns: turnIdx, totalUsage, stopReason, stopDetail, messages };
 }
 
 // ---- Reranker (v0.35.0.0+) ----
