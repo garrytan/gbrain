@@ -201,6 +201,9 @@ export interface ImportResult {
   flagged?: boolean;
   /** Which flag tier fired, when `flagged`. */
   flag_reason?: 'markup_heavy' | 'oversized';
+  /** Non-fatal parser warnings (e.g. office LOW_CONFIDENCE_TABLE). Surfaced so
+   *  low-confidence content isn't silently trusted; never blocks the import. */
+  warnings?: string[];
 }
 
 const MAX_FILE_SIZE = 5_000_000; // 5MB

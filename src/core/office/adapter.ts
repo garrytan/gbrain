@@ -179,7 +179,14 @@ export async function importOfficeFile(
         title,
         compiled_truth: body,
         timeline: '',
-        frontmatter: { source: 'office', format: docir.doc.format, file: relativePath },
+        frontmatter: {
+          source: 'office',
+          format: docir.doc.format,
+          file: relativePath,
+          // R3: surface low-confidence-table (and any other) parser warnings so
+          // whoever later authors a `## Facts` fence from this page sees them.
+          ...(docir.warnings.length > 0 ? { warnings: docir.warnings } : {}),
+        },
         content_hash: hash,
       },
       txOpts,
@@ -203,5 +210,10 @@ export async function importOfficeFile(
     }
   }
 
-  return { slug, status: 'imported', chunks: chunks.length };
+  return {
+    slug,
+    status: 'imported',
+    chunks: chunks.length,
+    ...(docir.warnings.length > 0 ? { warnings: docir.warnings } : {}),
+  };
 }

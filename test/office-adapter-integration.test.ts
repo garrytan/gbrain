@@ -98,3 +98,29 @@ test('DocIR version mismatch is rejected cleanly', async () => {
   expect(res.status).toBe('error');
   expect(res.error).toContain('version mismatch');
 });
+
+test('R3: low-confidence-table warnings surface in ImportResult + page frontmatter', async () => {
+  const fp = join(dir, 'warned.docx');
+  writeFileSync(fp, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+  const res = await importOfficeFile(engine, fp, 'warned.docx', {
+    noEmbed: true,
+    _parseForTest: async () => ({ ...fixtureDocIR(), warnings: ['LOW_CONFIDENCE_TABLE:b2'] }),
+  });
+  expect(res.status).toBe('imported');
+  expect(res.warnings).toContain('LOW_CONFIDENCE_TABLE:b2');
+
+  const page = await engine.getPage('warned.docx');
+  const fm = page?.frontmatter as Record<string, unknown> | undefined;
+  expect(fm?.warnings).toContain('LOW_CONFIDENCE_TABLE:b2');
+});
+
+test('R3: a clean office import carries no warnings field', async () => {
+  const fp = join(dir, 'clean.docx');
+  writeFileSync(fp, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+  const res = await importOfficeFile(engine, fp, 'clean.docx', {
+    noEmbed: true,
+    _parseForTest: async () => fixtureDocIR(), // warnings: []
+  });
+  expect(res.status).toBe('imported');
+  expect(res.warnings).toBeUndefined();
+});
