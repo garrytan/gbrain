@@ -9,7 +9,17 @@
 
 **Read this block first; it's the one-screen snapshot a resuming session needs.**
 
-### Current state (as of 2026-06-25, Entry 9)
+### Current state (as of 2026-06-25, Entry 10)
+- **Runtime is now a LIVE LINK to the fork (Entry 10) — off OneDrive, no more manual sync.** `gbrain`
+  (CLI + the MCP server `~/.claude.json` spawns) ran from a stale *copy* at `~/node_modules/gbrain`
+  (every fork patch this session had to be hand-synced into it). Now: the canonical working tree is
+  cloned **off OneDrive** to **`C:\dev\gbrain`**, and `~/node_modules/gbrain` is a **directory
+  junction → `C:\dev\gbrain`**. Editing/pulling that repo updates `gbrain` instantly. Durability: the
+  `~/package.json` `file:` dep was removed so `bun install` no longer re-copies (verified — junction
+  survived a real `bun install`). Verified: liveness marker fired via the typed `gbrain`; CLI (stats
+  15/1,795/1,795, expansion clean, full doctor exit 0) + MCP stdio acceptance both pass from the new
+  runtime. OneDrive tree retained as rollback (delete in a future session). **You now edit/commit/pull
+  from `C:\dev\gbrain`.**
 - **`resolver_health` RESOLVED (Entry 9) — it was a CRLF parser bug, not a skills problem.** The
   full `gbrain doctor` now exits 0. The 68 "issues" (49 mece_gap + 1 unreachable + 18 routing) were
   **false positives on Windows**: the two frontmatter parsers (`skill-frontmatter.ts`,
@@ -48,19 +58,18 @@
   local qwen, Entry 7) + Layer-2 (`json_object` → `json_schema` via `supports_structured_outputs`,
   Entry 8) + Layer-3 confirmed (qwen honors the schema). The Entry-5 `OLLAMA_API_KEY`/`invalid
   x-api-key` framing was a wrong-service red herring — see Entries 7–8.
-- **PRs:** PR #4 (Entries 1–4), PR #5 (Entry 5), PR #6 (Entry 6) merged to master. PR #7 (Entry 7),
-  PR #8 (Entry 8), PR #9 (Entry 9) are the current intra-fork follow-ups (each stacks on the prior
-  until merged).
+- **PRs:** #4 (Entries 1–4), #5, #6, **#7, #8, #9 all merged to master** (master `a62bae5`). PR #10
+  (Entry 10, runtime relink) is the current intra-fork follow-up.
 
 ### Pending operator actions
-- **None.** Go-live accepted; brain healthy; **expansion working; full doctor exit 0.** No open
-  fork follow-ups remain.
+- **Delete the old OneDrive tree** (`…\OneDrive\Documents\GitHub\gbrain`) once you've confirmed
+  `C:\dev\gbrain` is solid — it's retained only as rollback (Entry 10). Do it from a session NOT
+  cwd'd there. The GitHub fork is the durable backup regardless.
 
 ### Immediate next actions for a resuming session
-1. Nothing pending — brain **go-live accepted**, schema on v2, **expansion working**, **full doctor
-   exit 0**. All Entry 5–9 follow-ups are closed.
-2. **Open a NEW branch off `master`** for any new work; newest entry on top.
-3. **Open a NEW branch off `master`** for any new work; newest entry on top.
+1. Nothing else pending — brain **go-live accepted**, schema on v2, **expansion working**, **full
+   doctor exit 0**, runtime live-linked. All Entry 5–10 follow-ups are closed.
+2. **Work from `C:\dev\gbrain`** now (NOT the OneDrive tree); open a NEW branch off `master` per entry.
 
 ### Working conventions
 - **One new branch off `master` per session/entry**; newest entry on top.
@@ -154,8 +163,16 @@ Durable, load-bearing facts. Update in place when they change.
   (gh otherwise defaults the base to the `garrytan` **upstream**). gh lives at
   `…\WinGet\Packages\GitHub.cli_…\bin\gh.exe` (PATH needs a fresh shell). `/ship` is still not
   installed (`[[ship-not-installed-locally]]`); docs-only fork changes take no VERSION bump.
-- **Runtime executes `node_modules/gbrain/src/cli.ts` via a Bun shim** — the `b750d3f` patch
-  is live at runtime (`bin → src/cli.ts`).
+- **Runtime is a LIVE JUNCTION to the canonical clone (Entry 10).** `~/node_modules/gbrain` is a
+  Windows **directory junction → `C:\dev\gbrain`** (the off-OneDrive working tree). The `gbrain`
+  shim runs `~/node_modules/gbrain/src/cli.ts` → junction → `C:\dev\gbrain/src/cli.ts` (Case A —
+  verified by a liveness marker). **Editing/pulling `C:\dev\gbrain` updates `gbrain` (CLI + MCP)
+  instantly — the robocopy/`/MIR`/per-file copy-sync ritual from Entries 2 & 8 is OBSOLETE.**
+  Durability: the `~/package.json` `file: <OneDrive path>` dep was REMOVED so `bun install` no longer
+  re-materializes a copy over the junction (verified — junction survived a real `bun install`). All
+  fork patches (`b750d3f`, `supports_structured_outputs`, the CRLF fix) are inherently live because
+  the runtime *is* the repo. To re-create the link if it's ever lost:
+  `Remove-Item ~/node_modules/gbrain; New-Item -ItemType Junction ~/node_modules/gbrain -Target C:\dev\gbrain`.
 - **Query-expansion: ROOT CAUSE FOUND (Entry 7); Layer-1 fixed, Layer-2 deferred.** Multi-query
   expansion was disabled by `[ai.gateway] expansion disabled: [expand] invalid x-api-key`. **The
   message was Anthropic's, not LM Studio's** — instrumenting `expand()`'s catch
@@ -176,6 +193,51 @@ Durable, load-bearing facts. Update in place when they change.
 ---
 
 ## Entries
+
+### Entry 10 — 2026-06-26 — Runtime relinked: off OneDrive + live junction (no more manual sync)
+
+**Summary:** Made the `gbrain` runtime (CLI **and** the MCP server `~/.claude.json` spawns) *be* the
+fork, live. It had been running from a stale **directory copy** at `~/node_modules/gbrain` — which is
+why every fork patch this session (`b750d3f`, `supports_structured_outputs`, the CRLF fix) had to be
+hand-synced. Now the canonical working tree lives **off OneDrive** at `C:\dev\gbrain`, and
+`~/node_modules/gbrain` is a **junction** to it. Editing/pulling the repo updates `gbrain` instantly.
+Authored remotely (Entry-4→5 handoff pattern), executed locally — the only place it *can* run.
+
+**Discovery (Step 1, the keystone):** `gbrain` = `~/.bun/bin/gbrain.exe`; its `.bunx` targets
+`..\node_modules\gbrain\src\cli.ts` (a `node_modules/gbrain`, NOT the OneDrive path) → **Case A**.
+Confirmed empirically: a marker placed (after the shebang) in `~/node_modules/gbrain/src/cli.ts`
+printed from a typed `gbrain` → the shim runs that dir. `~/node_modules/gbrain` was a plain copy
+(blank LinkType); `~/package.json` declared `gbrain: "<OneDrive path>"` (the `file:` dep that
+re-copies on install); MCP uses PATH-resolved `command: gbrain`. So junctioning that one dir
+redirects everything — no shim repoint needed.
+
+**Change:** (1) `git clone` the fork → `C:\dev\gbrain` (+ `upstream` remote for parity; `bun install`
+— deps cached, the postinstall `apply-migrations` script no-ops with a Windows shell-redirect error,
+harmless). (2) Reconcile `~/package.json` — **removed** the `gbrain` (and stray `""`) dep (the
+durability lever; backed up to `~/package.json.pre-relink`). (3) `Remove-Item ~/node_modules/gbrain`
+then `New-Item -ItemType Junction ~/node_modules/gbrain -Target C:\dev\gbrain`.
+
+**Gates (all passed):**
+- **Liveness:** a temp `[LIVE-LINK]` marker in `C:\dev\gbrain/src/cli.ts` fired from a typed `gbrain`
+  (reverted) → the runtime now *is* the clone.
+- **Durability (decisive):** a real `cd ~; bun install` left the junction intact (still
+  `Junction → C:\dev\gbrain`, not re-copied/pruned) — the package.json reconciliation held.
+- **CLI acceptance:** `stats` 15/1,795/1,795; `query --expand` clean; `doctor --scope=brain` exit 0;
+  full `doctor` exit 0 (CRLF fix live).
+- **MCP acceptance (highest stakes):** the Entry-6 stdio probe spawning the global `gbrain serve`
+  (exactly as `~/.claude.json` does) handshook, exposed query/search/get_page/get_brain_identity,
+  reported 15/1,795, and returned corpus chunks — from the new runtime. `~/.claude.json` unchanged.
+
+**Decisions:** **cloned, did NOT move** the OneDrive tree (it's this session's cwd — moving would
+break the session; the GitHub fork + the retained OneDrive tree are both backups). Junction-first
+(privilege-free on Windows; bun-managed `bun link` was the fallback, not needed). OneDrive tree
+**retained as rollback** — decommission deferred to a future session (Pending operator actions).
+
+**Resulting changes:** operational (runtime relinked; `~/package.json` reconciled; no brain change —
+`gbrain stats` 15/1,795/1,795 throughout); repo changes = this Entry 10 + the rewritten runtime
+standing fact + refreshed START HERE, committed from **`C:\dev\gbrain`** on
+`fork-entry-10-runtime-relink` → intra-fork **PR #10** (docs-only, no VERSION bump; never the
+`garrytan` upstream).
 
 ### Entry 9 — 2026-06-25 — `resolver_health` resolved: it was a CRLF frontmatter-parser bug
 
