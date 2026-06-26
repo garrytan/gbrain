@@ -123,7 +123,9 @@ async function extractFencedChunks(
   // accumulated chunk/embedding memory and can OOM the worker, and the
   // try/catch below cannot rescue an OOM (it is process death, not a throw).
   // Skip the lexer entirely when no fence marker (``` or ~~~) is present.
-  if (!/(^|\n)[ \t]{0,3}(```|~~~)/.test(markdown)) return out;
+  // The `\r` in the line-start class mirrors marked's own `\r\n|\r → \n`
+  // normalization, so CR/CRLF-only documents don't lose a real fence.
+  if (!/(^|[\r\n])[ \t]{0,3}(```|~~~)/.test(markdown)) return out;
   let tokens: ReturnType<typeof marked.lexer>;
   try {
     tokens = marked.lexer(markdown);
