@@ -54,6 +54,11 @@ import {
   isSourceFederated,
   type SourceRow as LoadedSourceRow,
 } from '../core/sources-load.ts';
+import {
+  parseRemoteUrl,
+  RemoteUrlError,
+  validateRepoState,
+} from '../core/git-remote.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -518,6 +523,67 @@ async function runSetStrategy(engine: BrainEngine, args: string[]): Promise<void
   console.log(`Set source "${id}" sync strategy = ${strategy}.`);
   if (strategy !== 'markdown') {
     console.log(`  → Run 'gbrain sync --source ${id} --full' to re-ingest existing files under the new strategy.`);
+  }
+}
+
+// ── Subcommand: set-url ─────────────────────────────────────────────
+// `gbrain sources set-url <id> <url>` — record `config.remote_url` on an
+// EXISTING source (non-destructively), so a path-mode clone becomes managed
+// + self-healing: a later sync compares the clone's origin against the
+// recorded url (`validateRepoState`) and re-clones/repairs instead of wedging.
+// ADR-0038 (gbrain = derived index over git-backed sources), Sub-plan 1.
+async function runSetUrl(engine: BrainEngine, args: string[]): Promise<void> {
+  const id = args[0];
+  const url = args[1];
+
+  if (!id || !url) {
+    console.error('Usage: gbrain sources set-url <id> <url>');
+    console.error('  Record the git remote_url for an existing source so its');
+    console.error('  clone becomes managed + self-healing (https:// only).');
+    process.exit(2);
+  }
+
+  // Validate the URL with the same SSRF-defensive rules as clone (https-only,
+  // no embedded credentials, no path traversal, no internal targets).
+  try {
+    parseRemoteUrl(url);
+  } catch (e) {
+    if (e instanceof RemoteUrlError) {
+      console.error(`Error: invalid remote url: ${e.message}`);
+      process.exit(2);
+    }
+    throw e;
+  }
+
+  const src = await fetchSource(engine, id);
+  if (!src) {
+    console.error(`Error: source "${id}" not found.`);
+    console.error(`  Run 'gbrain sources list' to see registered sources.`);
+    process.exit(4);
+  }
+
+  const config = parseConfig(src.config);
+  config.remote_url = url;
+  await engine.executeRaw(
+    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
+    [JSON.stringify(config), id],
+  );
+  console.log(`Set source "${id}" remote_url = ${url}.`);
+
+  // T4 (defensive): if the source has an on-disk clone whose origin differs
+  // from the supplied url, surface the drift. Don't hard-fail — set-url is
+  // allowed before a clone exists — but url-drift would block a `--ff-only`
+  // sync, so warn loudly.
+  if (src.local_path) {
+    const state = validateRepoState(src.local_path, url);
+    if (state === 'url-drift') {
+      console.error(
+        `  WARN: clone at ${src.local_path} has a different origin than ${url}.`,
+      );
+      console.error(
+        `  This url-drift will block sync until the clone's origin matches.`,
+      );
+    }
   }
 }
 
@@ -1374,6 +1440,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     // v0.40.3.0 contextual retrieval (from master)
     case 'set-cr-mode': return runSetCrMode(engine, rest);
     case 'set-strategy': return runSetStrategy(engine, rest);
+    case 'set-url':    return runSetUrl(engine, rest);
     case 'audit':      return runAudit(engine, rest);
     // v0.42.44 brain-repo git durability
     case 'harden':     { const { runHarden } = await import('./sources-harden.ts'); return runHarden(engine, rest); }
@@ -1436,6 +1503,10 @@ Subcommands:
                                     files the same way. Use "auto" for mixed
                                     code+docs repos (code→code, .md→prose).
                                     Re-run 'sync --source <id> --full' after.
+  set-url <id> <url>                Record the git remote_url for an existing
+                                    source (https:// only) so its clone becomes
+                                    managed + self-healing (re-clone/repair on
+                                    drift instead of wedging). Non-destructive.
   harden <id|--all> [--pat-file <p>] [--branch <b>] [--no-cron] [--no-verify] [--dry-run] [--json]
                                     v0.42.44 — make a brain repo durable: local
                                     auto-push hook, committed commit-push helper,

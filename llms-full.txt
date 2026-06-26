@@ -17,6 +17,16 @@ This is your install + operating protocol. Claude Code reads `./CLAUDE.md` autom
 Everyone else (Codex, Cursor, OpenClaw, Aider, Continue, or an LLM fetching via URL):
 start here.
 
+> **iTradeAIMS fork note.** `immy2good/gbrain` is a **maintained, connected fork**
+> of `garrytan/gbrain` — the **AIMS Brain** engine (semantic memory substrate)
+> for the iTradeAIMS agent network. It serves the live brain on Fly (`gbrain-immy`)
+> and is maintained against upstream on a trigger-based cadence. Governance lives
+> in the control plane (`itradeaims-agent-workflows`, ADR-0037): gbrain owns
+> semantic memory; the control plane owns network governance/routing.
+> **Operating + maintenance runbook:** `docs/operations/fork-ops-and-maintenance.md`.
+> Push to `upstream` (garrytan) is disabled; contribute via PR. The install
+> protocol below is upstream's and still applies.
+
 ## Install (5 min)
 
 1. Install gbrain via Bun (the canonical path):
