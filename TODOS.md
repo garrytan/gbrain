@@ -6,17 +6,22 @@
   full-run FAILs `resolver_health` with 1 error + 67 warnings: `skill-optimizer` is unreachable
   (no row in `skills/RESOLVER.md`) plus MECE routing-coverage + routing-fixture lints across the
   skill set. **Brain-independent** (excluded by `gbrain doctor --scope=brain`, which passes exit 0)
-  and pre-existing — fails identically on a fresh upstream clone. Fix is a `skills/` metadata pass
+  and believed pre-existing/upstream (NOT re-verified against a clean upstream clone; Entry 7
+  confirmed the *repo* `skills/` tree fails it too — not only a bundled/OpenClaw tree). Fix is a `skills/` metadata pass
   (add the `skill-optimizer` RESOLVER row + reconcile `triggers:`/routing fixtures); `gbrain doctor
   --fix` auto-adds triggers but mutates many shared `SKILL.md` files. Deliberately NOT bundled into
   a brain go-live entry. Where: `skills/RESOLVER.md` + per-skill frontmatter.
-- [ ] **P3 — expansion `invalid x-api-key` real next lead (Entry 5).** `OLLAMA_API_KEY` fix
-  disproven; non-blocking (core retrieval works). Next: capture LM Studio's server-side request log
-  for the expansion call and diff vs a hand-issued probe; suspect the openai-compat custom-fetch
-  wrapper (`gateway.ts:2153`).
-- [ ] **P3 — schema-pack v2 migration (Entry 6, deferred per owner).** Config declares
-  `gbrain-base-v2`, data typed `gbrain-base@1.0.0`; zero functional impact. Reversible `unify-types`
-  migration available (`gbrain onboard --apply`) if v2 alignment is ever wanted.
+- [ ] **P3 — expansion Layer-2: SDK↔LM-Studio `response_format` mismatch (Entry 7).** Root cause of
+  the old `invalid x-api-key` was **Anthropic-default routing**, now fixed at Layer-1 (`gbrain config
+  set models.expansion ollama:qwen3.5-4b` — expansion routes to local qwen). Remaining: LM Studio
+  returns `400 'response_format.type' must be 'json_schema' or 'text'` because the openai-compat
+  `generateObject` sends a `response_format` shape it rejects (a hand-issued `json_schema` request
+  returns 200). Fix: make the openai-compat expansion path emit `response_format: json_schema`, or
+  use a compatible LM Studio build/model. Non-blocking (core retrieval works). The Entry-5/6
+  `OLLAMA_API_KEY` / "diff the LM Studio request" leads are **obsolete**.
+- [x] **DONE (Entry 7) — schema-pack v2 migration.** Data migrated `gbrain-base@1.0.0 →
+  gbrain-base-v2` via `gbrain jobs submit unify-types --allow-protected --params
+  '{"target_pack":"gbrain-base-v2"}' --follow` (0 pages retyped; config/data drift resolved).
 
 ## Pace Mode follow-ups (filed v0.42.49.0)
 

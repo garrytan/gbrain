@@ -9,7 +9,13 @@
 
 **Read this block first; it's the one-screen snapshot a resuming session needs.**
 
-### Current state (as of 2026-06-25, Entry 6)
+### Current state (as of 2026-06-25, Entry 7)
+- **Forward follow-ups worked (Entry 7).** Local repo synced to the cleaned master (Entries 1–6);
+  **schema-pack v2 migration DONE** (data now `gbrain-base-v2`, config/data drift resolved, 0 pages
+  retyped, `pack_upgrade` nudge cleared); **expansion root cause FOUND + Layer-1 fixed** (see below).
+  The `resolver_health` "green the full doctor" item was **deferred** (the cloud's "repo is clean"
+  premise was disproven locally — the repo tree fails it too; `--scope=brain` exit 0 is the real
+  signal). Brain untouched at 15 / 1,795 / 1,795 throughout.
 - **GO-LIVE ACCEPTED (Entry 6 — Phase C).** Full health validation passed:
   `gbrain doctor --scope=brain` = **exit 0, 65/100, all checks OK**; the **agent-facing MCP path
   proven end-to-end** (`gbrain serve` stdio → `query` op returns corpus chunks, 15 pages /
@@ -22,12 +28,17 @@
   the `brain_score` 45 is corpus-expected — split textbooks have no wikilinks/timeline/entity pages).
 - **Corpus import: Phase B COMPLETE.** 15 pages / 1,795 chunks, all embedded; clean `<book>/partNN`
   slugs.
-- **Two non-blocking, documented open items:** (a) expansion disabled (`invalid x-api-key`);
-  `OLLAMA_API_KEY` fix DISPROVEN (Entry 5); deprioritized. (b) schema pack: config declares
-  `gbrain-base-v2`, data typed `gbrain-base@1.0.0` — **zero functional impact**, documented &
-  deferred (owner's call, Entry 6); reversible v2 `unify-types` migration available if ever wanted.
-- **PRs:** PR #4 merged (Entries 1–4). PR #5 (Entry 5) and PR #6 (Entry 6) are intra-fork follow-ups
-  (PR #6 stacks on #5 until #5 merges).
+- **Schema pack: RESOLVED (Entry 7).** Data migrated to `gbrain-base-v2`; config == data; no nudge.
+- **Expansion: root cause FOUND; Layer-1 fixed, Layer-2 deferred (Entry 7).** The `invalid x-api-key`
+  was **Anthropic's** error — expansion was routing to the `anthropic:claude-haiku-4-5` *default*
+  (the `utility`-tier resolution outranks the config.json `expansion_model` fallback), hitting
+  `api.anthropic.com` with no key. **LM Studio was never involved** (corrects Entry 5's premise).
+  **Layer-1 fix:** `gbrain config set models.expansion ollama:qwen3.5-4b` → expansion now routes to
+  local qwen. **Layer-2 (deferred):** LM Studio then returns `400 'response_format.type' must be
+  'json_schema' or 'text'` — an SDK↔LM-Studio structured-output mismatch. Non-blocking; core
+  retrieval unaffected; tracked in `TODOS.md`.
+- **PRs:** PR #4 (Entries 1–4), PR #5 (Entry 5), PR #6 (Entry 6) merged to master. PR #7 (Entry 7)
+  is the current intra-fork follow-up.
 
 ### Pending operator actions
 - **None.** Go-live is accepted and the brain is healthy. All open items are non-blocking and
@@ -35,9 +46,12 @@
   cleanup filed in `TODOS.md`).
 
 ### Immediate next actions for a resuming session
-1. Nothing operational is pending — the brain is **go-live accepted**.
-2. Optional non-blocking follow-ups: expansion "real next lead" (Entry 5); schema-pack v2 migration
-   (Entry 6); `skills/` routing-lint cleanup (`resolver_health`, `TODOS.md`). None affect retrieval.
+1. Nothing operational is pending — the brain is **go-live accepted**; schema is on v2.
+2. Optional non-blocking follow-ups (all in `TODOS.md`): **expansion Layer-2** (SDK↔LM-Studio
+   `response_format` mismatch — make the openai-compat `generateObject` send `json_schema`, or use a
+   compatible LM Studio build/model); the `skills/` `resolver_health` routing-lint cleanup. None
+   affect retrieval. The expansion "set OLLAMA_API_KEY / diff LM Studio request" leads from Entries
+   5–6 are **obsolete** (root cause was Anthropic-default routing, now fixed at Layer-1).
 3. **Open a NEW branch off `master`** for any new work; newest entry on top.
 
 ### Working conventions
@@ -50,8 +64,12 @@
 - **textbook→gbrain pipeline:** docling `--pdf-backend pypdfium2 --no-ocr` (default backend OOMs)
   → strip base64 `![...](data:...)` figures → split to <500 KB parts → `gbrain import`. docling is
   external pre-conversion, NOT on gbrain's import path.
-- **Query-expansion is disabled (`invalid x-api-key`) and the `OLLAMA_API_KEY` fix is disproven**
-  (Entry 5). Deprioritized; core retrieval is unaffected.
+- **Query-expansion root cause (Entry 7):** `invalid x-api-key` was **Anthropic's** auth error —
+  expansion routed to the `anthropic:claude-haiku-4-5` default (utility-tier outranks the config
+  `expansion_model` fallback), NOT LM Studio. **Layer-1 fixed** via `gbrain config set
+  models.expansion ollama:qwen3.5-4b`. **Layer-2 deferred:** LM Studio `400 response_format.type`
+  (SDK structured-output mismatch). Core retrieval unaffected. The Entry-5/6 `OLLAMA_API_KEY` and
+  "diff the LM Studio request" leads are **obsolete**.
 
 ---
 
@@ -98,9 +116,11 @@ Durable, load-bearing facts. Update in place when they change.
   exit 0; agent-facing MCP path proven (`gbrain serve` → `query`); 5/5 books retrieve to their own
   book @0.91–0.93. **Read the doctor score correctly:** use `gbrain doctor --scope=brain`
   (**65/100, exit 0**) as the brain-health signal. The full `gbrain doctor` (**35/100, exit 1**) is
-  dragged down by `resolver_health` (1 err + 67 warn) — a **pre-existing `skills/` routing-metadata
-  lint, brain-independent**, that would fail identically on a fresh upstream clone (`skill-optimizer`
-  unreachable + MECE/fixture gaps). It is NOT a brain regression. The `brain_score` 45 (links 0/25,
+  dragged down by `resolver_health` (1 err + 67 warn) — a **`skills/` routing-metadata lint,
+  brain-independent** (`skill-optimizer` unreachable + MECE/fixture gaps), believed pre-existing /
+  upstream (NOT re-verified against a clean upstream clone). It is NOT a brain regression. **Entry 7
+  note:** the cloud's claim that the *repo* `skills/` passes was disproven locally — the repo tree
+  fails `resolver_health` too; `--scope=brain` (exit 0) is the trustworthy signal, not a green full doctor. The `brain_score` 45 (links 0/25,
   timeline 0/15, orphans 0/15) is **corpus-expected** — a split-textbook corpus has no
   wikilinks/timeline/entity pages; embed/retrieval is a perfect 35/35. `pgvector` /
   `embedding_width_consistency` "could not check / skipped" are benign **PGLite** introspection
@@ -120,21 +140,83 @@ Durable, load-bearing facts. Update in place when they change.
   installed (`[[ship-not-installed-locally]]`); docs-only fork changes take no VERSION bump.
 - **Runtime executes `node_modules/gbrain/src/cli.ts` via a Bun shim** — the `b750d3f` patch
   is live at runtime (`bin → src/cli.ts`).
-- **Open follow-up (deprioritized): query expansion is disabled** — `gbrain query` logs
-  `[ai.gateway] expansion disabled: [expand] invalid x-api-key`, so multi-query expansion doesn't
-  run. **Core vector retrieval is unaffected** (queries return ranked corpus chunks normally).
-  **The `OLLAMA_API_KEY` hypothesis is DISPROVEN (Entry 5, tested locally):** setting it does not
-  clear the warning; LM Studio accepts any token (incl. `Bearer unauthenticated` → 200) and serves
-  gbrain's exact `generateObject` json_schema request → 200 with `qwen3.5-4b` loaded; embedding and
-  expansion share the *same* `defaultResolveAuth(recipe, cfg.env, …)` (`gateway.ts:316` vs `:1876`)
-  and embedding succeeds in the same process — so `invalid x-api-key` is **misleading, not an auth
-  failure you can set**. **Real next lead (future session):** capture LM Studio's server-side
-  request log for the expansion call and diff it against a hand-issued probe; suspect the
-  openai-compat custom-fetch wrapper (`gateway.ts:2153`). Do NOT re-chase the set-key path.
+- **Query-expansion: ROOT CAUSE FOUND (Entry 7); Layer-1 fixed, Layer-2 deferred.** Multi-query
+  expansion was disabled by `[ai.gateway] expansion disabled: [expand] invalid x-api-key`. **The
+  message was Anthropic's, not LM Studio's** — instrumenting `expand()`'s catch
+  (`gateway.ts:~2207`) showed the call going to `https://api.anthropic.com/v1/messages` with
+  `anthropic:claude-haiku-4-5-20251001` and no key → HTTP 401 `authentication_error / invalid
+  x-api-key`. **Why that model:** `reconfigureGatewayWithEngine` (`gateway.ts:446`) resolves
+  expansion via `resolveModel(configKey:'models.expansion', tier:'utility', fallback:
+  cfg.expansion_model)` — the `utility`-tier default **outranks** the `config.json`
+  `expansion_model: ollama:qwen3.5-4b`, which is only the lowest-precedence fallback (so neither
+  config.json nor `GBRAIN_EXPANSION_MODEL` changed it). **Layer-1 fix (applied):** `gbrain config
+  set models.expansion ollama:qwen3.5-4b` → expansion now routes to local qwen. **Layer-2
+  (deferred, `TODOS.md`):** LM Studio then returns `400 'response_format.type' must be 'json_schema'
+  or 'text'` — the openai-compat `generateObject` sends a `response_format` shape this LM Studio
+  build rejects (a hand-issued `json_schema` request returns 200). **Core vector retrieval is
+  unaffected.** The Entry-5/6 `OLLAMA_API_KEY` + "diff the LM Studio request" leads are **obsolete**
+  (they targeted the wrong service).
 
 ---
 
 ## Entries
+
+### Entry 7 — 2026-06-25 — Four forward follow-ups (sync · resolver-defer · schema-v2 · expansion root cause)
+
+**Summary:** Executed an ultraplan-refined, leverage-ordered sequence of the four remaining
+non-blocking follow-ups locally. **Schema-pack v2 migration DONE; expansion root cause FOUND and
+Layer-1 fixed** (a major correction to Entries 5–6); resolver "green doctor" deferred after its
+premise was disproven. Brain untouched at 15 / 1,795 / 1,795 throughout. Ordering rationale: easy
+enabling work first (sync → trustworthy signal), the one reversible mutation next (schema), the
+open-ended debug last (expansion).
+
+**Step 1 — Local sync (foundation).** Synced the stranded local clone (it was on the deleted
+`fork-entry-6-golive-acceptance`) to the cleaned remote `master` (Entries 1–6 merged); pruned the
+five stale feature branches so only `master` remained. Then branched `fork-entry-7-followups`.
+
+**Step 2 — "Green the full doctor" → DEFERRED (premise disproven).** The ultraplan refinement
+claimed the repo `skills/` was already clean and `resolver_health` only failed on a *different*
+(bundled/OpenClaw) skills tree. **Disproven locally:** with `GBRAIN_SKILLS_DIR` pointed explicitly
+at the repo `skills/`, `gbrain doctor` still FAILs `resolver_health` (1 err + 67 warn; fix paths
+resolve to the repo's own `RESOLVER.md`). So greening the full doctor is a real, upstream-shared
+`skills/` refactor with zero brain value — and it was never needed: **`gbrain doctor --scope=brain`
+= exit 0** is the trustworthy go-live signal (it excludes the SKILL category). Per owner: defer;
+resolver stays the `TODOS.md` item.
+
+**Step 3 — Schema-pack v2 migration → DONE.** Backed up `~/.gbrain` (`brain.pglite.pre-v2-*`).
+`gbrain onboard --check --explain` → `gbrain jobs submit unify-types --allow-protected --params
+'{"target_pack":"gbrain-base-v2"}' --follow` (PGLite runs jobs **inline only** via `--follow`; the
+`jobs work` daemon is Postgres-only). The migration flipped the active pack
+`gbrain-base@1.0.0 → gbrain-base-v2@1.0.0+b9bebaa4` with **0 pages retyped** (the 2-type corpus
+needed no collapsing — it was a clean config/data-drift resolution). Verified: `gbrain schema
+active` == v2; brain-scope doctor exit 0 with `pack_upgrade_available` now **OK** (was WARN);
+`gbrain stats` unchanged 15 / 1,795 / 1,795; retrieval @0.93 unchanged.
+
+**Step 4 — Expansion bug → ROOT CAUSE FOUND (corrects Entries 5–6).** Instrumented `expand()`'s
+catch (transient, reverted after) and found the failure was **never LM Studio**: expansion was
+calling `https://api.anthropic.com/v1/messages` with `anthropic:claude-haiku-4-5-20251001` and no
+key → 401 `invalid x-api-key` (Anthropic's own header/error). Cause:
+`reconfigureGatewayWithEngine` (`gateway.ts:446`) resolves expansion through
+`resolveModel(configKey:'models.expansion', tier:'utility', fallback:cfg.expansion_model)` — the
+`utility`-tier default **outranks** the `config.json` `expansion_model`, which is only the
+fallback (so neither config.json nor `GBRAIN_EXPANSION_MODEL` could change it). **Layer-1 fix
+applied:** `gbrain config set models.expansion ollama:qwen3.5-4b` → expansion now routes to local
+qwen. That exposed **Layer-2 (deferred):** LM Studio returns `400 'response_format.type' must be
+'json_schema' or 'text'` — the openai-compat `generateObject` sends a `response_format` this LM
+Studio build rejects (a hand-issued `json_schema` request returns 200). Instrumentation reverted;
+runtime verified clean (`b750d3f` prefix intact). Core retrieval unaffected.
+
+**Decisions:** treated the disproven resolver premise as ground-truth-over-static-read (ran the
+doctor, didn't trust the claim); skipped the upstream-shared `skills/` refactor (no brain value,
+owner-deferred); kept the `models.expansion` config (correct local routing, strictly better than
+the accidental Anthropic default, reversible); bounded Step 4 at root-cause + Layer-1 fix +
+Layer-2 documentation rather than chasing the SDK/LM-Studio `response_format` mismatch.
+
+**Resulting changes:** operational (schema→v2; `models.expansion` set; `~/.gbrain` backup kept; no
+repo code change — instrumentation was runtime-only and reverted); repo changes = this Entry 7 +
+the refreshed START HERE + corrected standing facts + the `TODOS.md` expansion-followup rewrite, on
+`fork-entry-7-followups` → intra-fork **PR #7** (docs-only, no VERSION bump; never the `garrytan`
+upstream).
 
 ### Entry 6 — 2026-06-25 — Phase C: go-live health validation & acceptance
 
