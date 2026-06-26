@@ -836,6 +836,18 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'sync',
   'sync.repo_path',
   'sync.last_commit',
+  // office ingest (Docling sidecar — docs/proposals/office-ingest.md §10)
+  'ingest.docling.enabled',
+  'ingest.docling.url',
+  'ingest.docling.python',
+  'ingest.docling.ocr',
+  'ingest.docling.images_scale',
+  'ingest.docling.max_concurrency',
+  'ingest.office.chunk_tokens',
+  'ingest.office.table_summary.model',
+  'ingest.office.table_summary.enabled',
+  'ingest.office.multimodal',
+  'ingest.office.max_file_mb',
   // DB-plane (v0.32.3 search modes + related)
   'search.mode',
   'search.cache.enabled',

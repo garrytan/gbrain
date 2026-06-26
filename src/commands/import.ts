@@ -4,6 +4,7 @@ import { join, relative } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
+import { isOfficeFilePath } from '../core/office/adapter.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -174,9 +175,14 @@ export async function runImport(
   // silently no-op'd because no code file ever made it through walker
   // enumeration (codex C11 confirms dispatch was correct; bug was here).
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
+  // Office ingest collects PDF/DOCX/PPTX/XLSX only when enabled on the brain
+  // (mirrors the multimodal image carve-out, which keys off env). Without this
+  // the office adapter is wired but the walker never yields office files.
+  const _officeCfg = await engine.getConfig('ingest.docling.enabled');
+  const officeOn = _officeCfg === 'true' || _officeCfg === '1';
   const _walkT0 = Date.now();
   console.error(`[gbrain phase] import.collect_files start dir=${dir} strategy=${strategy}`);
-  const allFiles = collectSyncableFiles(dir, { strategy });
+  const allFiles = collectSyncableFiles(dir, { strategy, officeOn });
   console.error(
     `[gbrain phase] import.collect_files done ${Date.now() - _walkT0}ms files=${allFiles.length}`,
   );
@@ -485,6 +491,7 @@ function resolveMaxWalkDepth(): number {
 
 interface CollectOpts {
   strategy?: SyncStrategy;
+  officeOn?: boolean;
 }
 
 /**
@@ -498,17 +505,23 @@ function isCollectibleForWalker(
   path: string,
   strategy: SyncStrategy,
   multimodalOn: boolean,
+  officeOn: boolean,
 ): boolean {
   switch (strategy) {
     case 'code':
       return isCodeFilePath(path);
     case 'markdown':
-      return isMarkdownFilePath(path) || (multimodalOn && isImageFilePathFromSync(path));
+      return (
+        isMarkdownFilePath(path) ||
+        (multimodalOn && isImageFilePathFromSync(path)) ||
+        (officeOn && isOfficeFilePath(path))
+      );
     case 'auto':
       return (
         isMarkdownFilePath(path) ||
         isCodeFilePath(path) ||
-        (multimodalOn && isImageFilePathFromSync(path))
+        (multimodalOn && isImageFilePathFromSync(path)) ||
+        (officeOn && isOfficeFilePath(path))
       );
   }
 }
@@ -530,6 +543,7 @@ function gitListSyncableFiles(
   dir: string,
   strategy: SyncStrategy,
   multimodalOn: boolean,
+  officeOn: boolean,
 ): string[] | null {
   let stdout: string;
   try {
@@ -544,7 +558,7 @@ function gitListSyncableFiles(
   const files: string[] = [];
   for (const rel of stdout.split('\0')) {
     if (!rel) continue;
-    if (!isCollectibleForWalker(rel, strategy, multimodalOn)) continue;
+    if (!isCollectibleForWalker(rel, strategy, multimodalOn, officeOn)) continue;
     const full = join(dir, rel);
     let st;
     try {
@@ -578,6 +592,7 @@ function gitListSyncableFiles(
 export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): string[] {
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
   const multimodalOn = process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
+  const officeOn = opts.officeOn ?? false;
 
   // v0.42.x (#1159 --respect-gitignore / #1483 .gbrainignore): when `dir` is a
   // git work tree, enumerate via `git ls-files` so the walk honors
@@ -588,7 +603,7 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
   // vendored data/fixtures). `--cached --others --exclude-standard` = tracked
   // PLUS untracked-not-ignored, so uncommitted source is still indexed. Non-git
   // dirs (or git unavailable) fall through to the FS walk below.
-  const gitFiles = gitListSyncableFiles(dir, strategy, multimodalOn);
+  const gitFiles = gitListSyncableFiles(dir, strategy, multimodalOn, officeOn);
   if (gitFiles) return gitFiles;
 
   const maxDepth = resolveMaxWalkDepth();
@@ -636,7 +651,7 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
         visitedInodes.set(inodeKey, true);
         walk(full, depth + 1);
       } else if (stat.isFile()) {
-        if (!isCollectibleForWalker(entry, strategy, multimodalOn)) continue;
+        if (!isCollectibleForWalker(entry, strategy, multimodalOn, officeOn)) continue;
         files.push(full);
       }
     }
