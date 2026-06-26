@@ -53,6 +53,23 @@ describe('user-provided OpenAI-compatible embedding models', () => {
     });
   });
 
+  test('LiteLLM embedding diagnosis rejects unconfigured user-provided model overrides', () => {
+    configureGateway({
+      embedding_model: 'litellm:local.embed.qwen3-4b.1536.mlx',
+      embedding_dimensions: 1536,
+      base_urls: { litellm: 'http://127.0.0.1:4000/v1' },
+      env: {},
+    });
+
+    expect(diagnoseEmbedding('litellm:local.embed.qwen3-vl.1536.mlx')).toEqual({
+      ok: false,
+      reason: 'user_provided_model_unset',
+      model: 'litellm:local.embed.qwen3-vl.1536.mlx',
+      provider: 'litellm',
+      recipeId: 'litellm',
+    });
+  });
+
   test('llama-server embedding diagnosis accepts the configured explicit model', () => {
     configureGateway({
       embedding_model: 'llama-server:bge-small-en-v1.5',
