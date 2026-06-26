@@ -121,5 +121,15 @@ adapter 传 `wantPageImages = multimodal !== 'off'`、config keys(`ingest.doclin
 `million`/`fiscal` 可检索;直打 `/parse(want_page_images=true)` → `DocIR.assets` 产出合法页
 渲染 PNG(`is_rendered_page=true`、`page` 定位、~46KB)。**OCR 引擎**:Python 3.14 上
 `rapidocr_onnxruntime` 不兼容(要求 <3.13)→ 默认 **easyocr**(Docling `OcrAutoOptions` 自动选);
-首次需预热下载模型(~140MB)。**待**:R1b 图像嵌入(需视觉 embedder;ollama 纯文本)。
+首次需预热下载模型(~140MB)。
+
+**实现状态(R1b 已验证)**:启用多模态臂 = 配三个 env(`.env` 即可,bun 自动加载):
+`VOYAGE_API_KEY` + `GBRAIN_EMBEDDING_MULTIMODAL=true` +
+`GBRAIN_EMBEDDING_MULTIMODAL_MODEL=voyage:voyage-multimodal-3`(主嵌入留 ollama 文本,
+多模态单独指 Voyage,否则报"recipe 不支持多模态")。**真实验证**:
+① `embedMultimodal(图)` → 1024 维,cosine(图,"revenue chart")=0.65;
+② 含图 PDF 完整导入(`multimodal=all`)→ `image_asset` chunk 的 `embedding_image` 落库(text chunk 不落);
+③ 文本 "revenue" 嵌入图空间 → pgvector 余弦搜 `embedding_image` → 命中该图 chunk(cos_dist 0.75,跨模态检索打通)。
+R1b 无新代码(M0/R1a 的 `multimodal.ts` + adapter 已就位),纯配置 + 验证。
+
 typecheck 干净、20 个 office 单测无回归。
