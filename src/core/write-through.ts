@@ -3,7 +3,8 @@
  *
  * After a page row lands in the DB (via importFromContent / putPage), this
  * renders the row to markdown via `serializePageToMarkdown` and writes it to
- * `sync.repo_path` so the brain repo has a committable `.md` artifact that
+ * the source's `local_path`, or the legacy `sync.repo_path` for single-default
+ * brains, so the brain repo has a committable `.md` artifact that
  * round-trips cleanly through `gbrain sync`. The file is rendered FROM the DB
  * row, so the two sinks cannot diverge.
  *
@@ -43,10 +44,17 @@ export interface WriteThroughResult {
    *   - source_repo_belongs_to_other_source: the assigned source has no
    *     `local_path`, and `sync.repo_path` is another source's own working tree
    *     — #2018: writing here would pollute that sibling's repo, so we skip.
+   *   - source_local_path_required: a non-default or multi-source source lacks
+   *     its own `local_path`; refusing to borrow legacy `sync.repo_path`.
    *   - page_not_found_after_write: the DB row isn't readable back (the caller's
    *     DB write failed or targeted a different source).
    */
-  skipped?: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write';
+  skipped?:
+    | 'no_repo_configured'
+    | 'repo_not_found'
+    | 'source_repo_belongs_to_other_source'
+    | 'source_local_path_required'
+    | 'page_not_found_after_write';
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
   error?: string;
 }
@@ -60,9 +68,10 @@ export interface WritePageThroughOpts {
 
 /**
  * Render the DB row for `slug` to markdown and atomically write it under
- * `sync.repo_path`. Never throws — failures are reported via the result's
- * `skipped` / `error` fields (the DB write is the durable sink; the file is
- * best-effort and reconciled by the next `gbrain sync`).
+ * the source's registered `local_path`, falling back to legacy `sync.repo_path`
+ * only for single-default brains. Never throws — failures are reported via the
+ * result's `skipped` / `error` fields (the DB write is the durable sink; the
+ * file is best-effort and reconciled by the next `gbrain sync`).
  */
 export async function writePageThrough(
   engine: BrainEngine,
@@ -71,15 +80,16 @@ export async function writePageThrough(
 ): Promise<WriteThroughResult> {
   const sourceId = opts.sourceId ?? 'default';
   try {
-    // #2018: pick the disk target so a page is NEVER written into a different
-    // source's working tree. Two legitimate topologies, plus the leak guard:
+    // #2018/#1102 Arc 4: pick the disk target so a page is NEVER written into a
+    // different or stale source working tree. Two legitimate topologies, plus
+    // the leak guards:
     //   1. The assigned source has its OWN `local_path` (a separate working
     //      tree) → write at that tree's root (matches how `scanOneSource` reads
     //      it back; never nested under `.sources/`).
-    //   2. No per-source `local_path` → nest under the host repo
-    //      (`sync.repo_path`): default at the root, non-default under
-    //      `.sources/<id>/` (the established multi-source layout).
-    //   3. LEAK GUARD: if `sync.repo_path` is literally ANOTHER source's own
+    //   2. Legacy single-default brains may still use `sync.repo_path`.
+    //   3. LEAK GUARD: non-default and multi-source brains require
+    //      `sources.local_path`; they do not borrow `sync.repo_path`.
+    //   4. LEAK GUARD: if `sync.repo_path` is literally ANOTHER source's own
     //      `local_path`, nesting this page there would pollute that sibling's
     //      git repo (the reported bug). Skip instead.
     let filePath: string;
@@ -101,14 +111,19 @@ export async function writePageThrough(
       if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
         return { written: false, skipped: 'repo_not_found' };
       }
-      // Leak guard: refuse to write into a path that is some OTHER source's
-      // own working tree (#2018).
-      const collide = await engine.executeRaw<{ one: number }>(
-        `SELECT 1 AS one FROM sources WHERE id <> $1 AND local_path = $2 LIMIT 1`,
-        [sourceId, repoPath],
+      // Leak guard: refuse to write into a path that is some OTHER source's own
+      // working tree (#2018), and refuse to borrow any legacy global path for a
+      // non-default or multi-source brain. That keeps source-backed writes
+      // anchored to a registered source row instead of a stale scratch path.
+      const otherSources = await engine.executeRaw<{ id: string; local_path: string }>(
+        `SELECT id, local_path FROM sources WHERE id <> $1 AND local_path IS NOT NULL`,
+        [sourceId],
       );
-      if (collide.length > 0) {
+      if (otherSources.some((s) => s.local_path === repoPath)) {
         return { written: false, skipped: 'source_repo_belongs_to_other_source' };
+      }
+      if (sourceId !== 'default' || otherSources.some((s) => s.id !== 'default')) {
+        return { written: false, skipped: 'source_local_path_required' };
       }
       filePath = resolvePageFilePath(repoPath, slug, sourceId);
     }

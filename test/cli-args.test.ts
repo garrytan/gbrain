@@ -20,5 +20,25 @@ describe('parseOpArgs', () => {
       source_id: 'gstack-code-repo-0e4763c9',
     });
   });
-});
 
+  test('--no-cache maps to cache false without consuming limit', () => {
+    const params = parseOpArgs(operationsByName.query, [
+      'current owner truth',
+      '--source-id',
+      'issue164-research',
+      '--recency',
+      'strong',
+      '--no-cache',
+      '--limit',
+      '10',
+    ]);
+
+    expect(params).toEqual({
+      query: 'current owner truth',
+      source_id: 'issue164-research',
+      recency: 'strong',
+      cache: false,
+      limit: 10,
+    });
+  });
+});

@@ -1016,6 +1016,15 @@ export interface SearchOpts {
    */
   recency?: 'off' | 'on' | 'strong';
   /**
+   * v0.42.54: caller-resolved recency decay map. Used by local query ops to
+   * thread source repo gbrain.yml `recency:` config into hybrid search.
+   * Programmatic callers may pass it directly; CLI/MCP do not expose it as a
+   * free-form user parameter.
+   */
+  recencyDecay?: import('./search/recency-decay.ts').RecencyDecayMap;
+  /** Optional fallback paired with `recencyDecay`; defaults to DEFAULT_FALLBACK. */
+  recencyFallback?: import('./search/recency-decay.ts').RecencyDecayConfig;
+  /**
    * v0.29.1: ISO-8601 date OR relative duration ('7d', '2w', '1y'). Filter to
    * pages whose effective_date >= this time. Replaces afterDate (kept as alias).
    */

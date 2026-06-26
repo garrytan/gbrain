@@ -85,6 +85,12 @@ describe('classifyQuery — current-state queries → both axes on', () => {
 });
 
 describe('classifyQuery — recency-only patterns (no salience signal)', () => {
+  test('"current owner truth" → recency=on, salience=off', () => {
+    const r = classifyQuery('current Issue 164 GBrain promotion advisory disposition');
+    expect(r.suggestedRecency).toBe('on');
+    expect(r.suggestedSalience).toBe('off');
+  });
+
   test('"latest news on AI" → recency=on, salience=off', () => {
     const r = classifyQuery('latest news on AI');
     expect(r.suggestedRecency).toBe('on');
@@ -130,6 +136,11 @@ describe('classifyQuery — D6 narrow temporal-bound exception', () => {
 
   test('"what is widget-co\'s status this week" → recency=on (temporal bound wins)', () => {
     const r = classifyQuery("what is widget-co's status this week");
+    expect(r.suggestedRecency).toBe('on');
+  });
+
+  test('"what is widget-co\'s current status" → recency=on (current-state bound wins)', () => {
+    const r = classifyQuery("what is widget-co's current status");
     expect(r.suggestedRecency).toBe('on');
   });
 });

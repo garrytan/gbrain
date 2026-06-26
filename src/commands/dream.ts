@@ -16,6 +16,7 @@
  *   gbrain dream --phase lint          # run a single phase
  *   gbrain dream --pull                # also git pull the brain repo
  *   gbrain dream --dir /path/to/brain  # explicit brain location
+ *   gbrain cycle --source repo-a       # foreground source-freshness alias
  *
  * Cron: 0 2 * * * gbrain dream --json >> /var/log/gbrain-dream.log
  *
@@ -76,6 +77,10 @@ interface DreamArgs {
   drain: boolean;
   /** Drain wallclock budget in seconds. Default 300 (5 min). */
   windowSeconds: number;
+}
+
+interface RunDreamOptions {
+  commandName?: string;
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -293,10 +298,11 @@ async function resolveBrainDir(
   return null;
 }
 
-function printHelp() {
-  console.log(`Usage: gbrain dream [options]
+function printHelp(commandName = 'dream') {
+  const command = commandName === 'cycle' ? 'cycle' : 'dream';
+  console.log(`Usage: gbrain ${command} [options]
 
-Run one brain maintenance cycle. Eight phases:
+Run one foreground brain maintenance cycle. Eight phases:
   lint -> backlinks -> sync -> synthesize -> extract -> patterns -> embed -> orphans
 
 The synthesize + patterns phases (v0.21) consolidate yesterday's
@@ -317,9 +323,9 @@ Options:
                       extract, patterns) are skipped (reason: no_brain_dir)
                       and the DB-only phases still run.
 
-  --source <id>       Scope the cycle to one source so doctor's
+  --source <id>       Scope the foreground cycle to one source so doctor's
                       cycle_freshness check sees a fresh stamp on
-                      completion. Without this, gbrain dream's
+                      completion. Without this, gbrain ${command}'s
                       timestamp never lands and federated brains
                       see "stale cycle" forever.
   --source-id <id>    Alias for --source. Matches the v0.37.7.0+
@@ -350,11 +356,12 @@ Options:
   --help, -h          Show this help
 
 Examples:
-  gbrain dream
-  gbrain dream --dry-run --json
-  gbrain dream --phase lint
-  gbrain dream --phase synthesize --input ~/transcripts/2026-04-25.txt
-  gbrain dream --phase synthesize --from 2026-04-01 --to 2026-04-25
+  gbrain ${command}
+  gbrain ${command} --source issue164-research --json
+  gbrain ${command} --dry-run --json
+  gbrain ${command} --phase lint
+  gbrain ${command} --phase synthesize --input ~/transcripts/2026-04-25.txt
+  gbrain ${command} --phase synthesize --from 2026-04-01 --to 2026-04-25
   0 2 * * * gbrain dream --json         # nightly via cron
 
 Configure synthesize:
@@ -362,6 +369,7 @@ Configure synthesize:
   gbrain config set dream.synthesize.session_corpus_dir /path/to/transcripts
 
 Related:
+  gbrain dream                          # legacy name for this one-shot command
   gbrain autopilot --install            # continuous maintenance as a daemon
   gbrain autopilot                      # same maintenance cycle, scheduled
 `);
@@ -505,7 +513,11 @@ async function runDrain(
   if (result.remaining === null || result.remaining > 0) process.exit(EXIT_DRAIN_INCOMPLETE);
 }
 
-export async function runDream(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {
+export async function runDream(
+  engine: BrainEngine | null,
+  args: string[],
+  options: RunDreamOptions = {},
+): Promise<CycleReport | void> {
   const opts = parseArgs(args);
 
   // ─── IRON RULE: --help short-circuits BEFORE any engine-bearing work ─
@@ -513,7 +525,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   // ALWAYS prints help and exits 0, never reaching the engine-null gate
   // below. If you reorder this, dream-cli-flags.test.ts will fail.
   if (opts.help) {
-    printHelp();
+    printHelp(options.commandName);
     return;
   }
 

@@ -303,7 +303,16 @@ export async function importFromContent(
     };
   }
 
-  const parsed = parseMarkdown(content, slug + '.md', { activePack: opts.activePack });
+  const parsed = parseMarkdown(content, slug + '.md', { validate: true, activePack: opts.activePack });
+  const yamlError = parsed.errors?.find((e) => e.code === 'YAML_PARSE');
+  if (yamlError) {
+    return {
+      slug,
+      status: 'skipped',
+      chunks: 0,
+      error: `YAML frontmatter parse failed in ${slug}.md: ${yamlError.message}`,
+    };
+  }
 
   // v0.42 (#1699 trust boundary): strip gate-owned markers from UNTRUSTED
   // input. parseMarkdown preserves every frontmatter key except type/title/
@@ -955,7 +964,16 @@ export async function importFromFile(
     }
   }
 
-  const parsed = parseMarkdown(content, relativePath, { activePack: opts.activePack });
+  const parsed = parseMarkdown(content, relativePath, { validate: true, activePack: opts.activePack });
+  const yamlError = parsed.errors?.find((e) => e.code === 'YAML_PARSE');
+  if (yamlError) {
+    return {
+      slug: slugifyPath(relativePath),
+      status: 'skipped',
+      chunks: 0,
+      error: `YAML frontmatter parse failed in ${relativePath}: ${yamlError.message}`,
+    };
+  }
 
   // Enforce path-authoritative slug. parseMarkdown prefers frontmatter.slug over
   // the path-derived slug, so a mismatch here means the frontmatter is trying

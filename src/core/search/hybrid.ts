@@ -12,6 +12,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
+import { createHash } from 'crypto';
 import { embed, embedQuery } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
@@ -43,10 +44,33 @@ import {
   SemanticQueryCache,
   loadCacheConfig,
 } from './query-cache.ts';
+import {
+  DEFAULT_FALLBACK,
+  resolveRecencyDecayMap,
+  type RecencyDecayConfig,
+  type RecencyDecayMap,
+} from './recency-decay.ts';
 
 export const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
 const pendingCacheWrites = new Set<Promise<unknown>>();
+
+function recencyDecayPolicyHash(
+  decayMap?: RecencyDecayMap,
+  fallback?: RecencyDecayConfig,
+): string {
+  const resolved = decayMap ?? resolveRecencyDecayMap();
+  const fb = fallback ?? DEFAULT_FALLBACK;
+  const normalized = {
+    entries: Object.entries(resolved)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([prefix, cfg]) => [prefix, cfg.halflifeDays, cfg.coefficient]),
+    fallback: [fb.halflifeDays, fb.coefficient],
+  };
+  const h = createHash('sha256');
+  h.update(JSON.stringify(normalized));
+  return h.digest('hex').slice(0, 16);
+}
 
 /**
  * v0.42 (issue #1699) agent-warning channel. Stamps `SearchResult.content_flag`
@@ -459,12 +483,11 @@ export async function runPostFusionStages(
   if (opts.recency !== 'off') {
     try {
       const dates = await engine.getEffectiveDates(refs);
-      const { DEFAULT_RECENCY_DECAY, DEFAULT_FALLBACK } = await import('./recency-decay.ts');
       applyRecencyBoost(
         results,
         dates,
         opts.recency,
-        opts.decayMap ?? DEFAULT_RECENCY_DECAY,
+        opts.decayMap ?? resolveRecencyDecayMap(),
         opts.fallback ?? DEFAULT_FALLBACK,
         Date.now(),
         floorThreshold,
@@ -970,6 +993,8 @@ export async function hybridSearch(
     applyBacklinks: true,
     salience: salienceMode,
     recency: recencyMode,
+    decayMap: opts?.recencyDecay,
+    fallback: opts?.recencyFallback,
     // v0.35.6.0 — floor-ratio gate threaded from resolved mode. Default
     // undefined for all 3 bundles → no behavior change unless caller sets
     // SearchOpts.floorRatio or `search.floor_ratio` config key.
@@ -1599,6 +1624,7 @@ export async function hybridSearchCached(
   const cacheKnobsHash = knobsHash(resolvedForCache, {
     embeddingColumn: resolvedColCached.name,
     embeddingModel: resolvedColCached.embeddingModel,
+    recencyDecayHash: recencyDecayPolicyHash(opts?.recencyDecay, opts?.recencyFallback),
   });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global

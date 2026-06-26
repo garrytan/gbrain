@@ -295,6 +295,27 @@ Body content; tags get reconciled inside the transaction.
     });
     expect(result.status).toBe('skipped');
   });
+
+  test('malformed YAML frontmatter fails closed instead of importing as a generic page', async () => {
+    const slug = 'topics/malformed-frontmatter-import';
+    const md = `---
+type: concept
+title: Broken: unquoted colon
+---
+
+This body must not be imported with raw frontmatter as compiled truth.
+`;
+
+    const result = await importFromContent(engine, slug, md, {
+      noEmbed: true,
+      sourceId: 'testsrc',
+    });
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('YAML frontmatter parse failed');
+
+    const page = await engine.getPage(slug, { sourceId: 'testsrc' });
+    expect(page).toBeNull();
+  });
 });
 
 describe('addTimelineEntry source-scoping (Data R1 HIGH 2 fix)', () => {

@@ -76,7 +76,7 @@ describe('doctor checkCycleFreshness', () => {
     const result = await checkCycleFreshness(engine, { nowMs: NOW });
     expect(result.status).toBe('fail');
     expect(result.message).toMatch(/stale/);
-    expect(result.message).toMatch(/gbrain dream --source/);
+    expect(result.message).toMatch(/gbrain cycle --source/);
   });
 
   test('source with NO last_full_cycle_at (never cycled) returns fail', async () => {

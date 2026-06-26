@@ -3818,7 +3818,7 @@ export async function checkCycleFreshness(
       return {
         name: 'cycle_freshness',
         status: 'fail',
-        message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` for each stale source, or start \`gbrain autopilot\`.`,
+        message: `${issues.join('; ')}. Run \`gbrain cycle --source <id>\` for each stale source (foreground one-shot; add \`--json\` for a receipt).`,
       };
     }
     if (hasWarnings) {

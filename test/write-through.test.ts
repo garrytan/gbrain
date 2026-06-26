@@ -143,6 +143,26 @@ describe('writePageThrough', () => {
     expect(walkFiles(siblingDir).some((f) => f.endsWith('.md'))).toBe(false);
   });
 
+  test('[REGRESSION #1102] default page in multi-source brain does not borrow stale global sync.repo_path', async () => {
+    const alphaDir = path.join(tmpRoot, 'alpha-repo');
+    const staleGlobalDir = path.join(tmpRoot, 'stale-global');
+    fs.mkdirSync(alphaDir, { recursive: true });
+    fs.mkdirSync(staleGlobalDir, { recursive: true });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config) VALUES ('alpha', 'Alpha', $1, '{}'::jsonb)`,
+      [alphaDir],
+    );
+    await engine.setConfig('sync.repo_path', staleGlobalDir);
+
+    const slug = 'internal/default-note';
+    await seedPage(slug);
+
+    const res = await writePageThrough(engine, slug, { sourceId: 'default' });
+
+    expect(res).toEqual({ written: false, skipped: 'source_local_path_required' });
+    expect(walkFiles(staleGlobalDir).some((f) => f.endsWith('.md'))).toBe(false);
+  });
+
   test('[#2018] page assigned to a source with its own local_path writes to that tree root, not the global path', async () => {
     const alphaDir = path.join(tmpRoot, 'alpha-repo');
     fs.mkdirSync(alphaDir, { recursive: true });
@@ -170,6 +190,25 @@ describe('writePageThrough', () => {
     expect(fs.existsSync(path.join(alphaDir, `${slug}.md`))).toBe(true);
     // The global repo path is untouched.
     expect(walkFiles(globalDir).some((f) => f.endsWith('.md'))).toBe(false);
+  });
+
+  test('[REGRESSION #1102] non-default source without local_path stays DB-only instead of borrowing sync.repo_path', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('alpha', 'Alpha', '{}'::jsonb)`,
+    );
+    await engine.setConfig('sync.repo_path', brainDir);
+
+    const slug = 'notes/alpha-no-path';
+    await importFromContent(engine, slug, `---\ntitle: T\ntype: note\n---\n\n# Body\n`, {
+      noEmbed: true,
+      sourceId: 'alpha',
+      sourcePath: `${slug}.md`,
+    });
+
+    const res = await writePageThrough(engine, slug, { sourceId: 'alpha' });
+
+    expect(res).toEqual({ written: false, skipped: 'source_local_path_required' });
+    expect(fs.existsSync(path.join(brainDir, '.sources/alpha/notes/alpha-no-path.md'))).toBe(false);
   });
 
   test('[REGRESSION] mkdir ENOTDIR (parent is a file) → error, no partial .md, no .tmp', async () => {

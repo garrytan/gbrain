@@ -747,7 +747,11 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // to post-fix lookups. Same one-time global cold-miss pattern as the bumps
 // above (the hash is global, not per-provider); refills within
 // cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 11;
+//
+// bump 11→12: recency decay policy now participates in query ranking via
+// source gbrain.yml / GBRAIN_RECENCY_DECAY. Cache rows ranked with one policy
+// must not be served after that policy changes.
+export const KNOBS_HASH_VERSION = 12;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -776,6 +780,8 @@ export interface KnobsHashContext {
    */
   schemaPack?: string;
   schemaPackVersion?: string;
+  /** Stable digest of the resolved recency decay map + fallback. */
+  recencyDecayHash?: string;
 }
 
 export function knobsHash(
@@ -863,6 +869,8 @@ export function knobsHash(
     // test/model-pricing.test.ts-style drift guards and the mode tests.
     `rel=${knobs.relationalRetrieval ? 1 : 0}`,
     `reld=${knobs.relational_retrieval_depth ?? 2}`,
+    // v=12 addition: source/env recency policy changes ranking.
+    `rd=${ctx?.recencyDecayHash ?? 'none'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -1134,4 +1142,3 @@ export async function loadSearchModeConfig(
     overrides: loadOverridesFromConfig(configMap),
   };
 }
-

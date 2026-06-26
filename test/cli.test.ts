@@ -46,6 +46,12 @@ describe('CLI structure', () => {
     expect(onlyMatch![1]).toContain(`'reindex'`);
   });
 
+  test('cycle is in CLI_ONLY as the foreground source-cycle command', () => {
+    const onlyMatch = cliSource.match(/const CLI_ONLY = new Set\(\[([\s\S]*?)\]\)/);
+    expect(onlyMatch).not.toBeNull();
+    expect(onlyMatch![1]).toContain(`'cycle'`);
+  });
+
   test('has formatResult function for CLI output', () => {
     expect(cliSource).toContain('function formatResult');
   });
@@ -178,6 +184,28 @@ describe('CLI dispatch integration', () => {
       expect(stdout).toContain('Usage: gbrain doctor');
       expect(stdout).not.toContain('resolver_health');
       expect(stderr).not.toContain('No brain configured');
+      expect(exitCode).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('cycle --help reaches foreground cycle help without DB connection', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-help-'));
+    try {
+      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'cycle', '--help'], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+      const exitCode = await proc.exited;
+      expect(stdout).toContain('Usage: gbrain cycle');
+      expect(stdout).toContain('--source <id>');
+      expect(stdout).toContain('foreground');
+      expect(stderr).not.toContain('could not connect to DB');
       expect(exitCode).toBe(0);
     } finally {
       rmSync(home, { recursive: true, force: true });

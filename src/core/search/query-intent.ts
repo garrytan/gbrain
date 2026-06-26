@@ -140,7 +140,7 @@ const STRONG_RECENCY_PATTERNS = [
 // meeting prep, conversation recall, status updates.
 const RECENCY_ON_PATTERNS = [
   /\bwhat'?s\s+(going\s+on|happening|new|latest|up)\b/i,
-  /\b(latest|recent(ly)?|currently)\b/i,
+  /\b(latest|recent(ly)?|current(ly)?)\b/i,
   /\b(this|last|past)\s+(week|month|few\s+days|couple\s+days)\b/i,
   /\bmeeting\s+(prep|with|for|notes?|brief)\b/i,
   /\bbefore\s+(my|the|our)\s+(meeting|call|sync|chat)\b/i,
@@ -157,6 +157,7 @@ const EXPLICIT_TEMPORAL_BOUND_PATTERNS = [
   /\bright\s+now\b/i,
   /\bthis\s+morning\b/i,
   /\bthis\s+week\b/i,
+  /\bcurrent(ly)?\b/i,
   /\bsince\s+(launch|last|the|\d)/i,
   /\blast\s+\d+\s+(day|days|week|weeks|month|months)\b/i,
 ];
