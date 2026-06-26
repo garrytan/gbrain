@@ -1576,6 +1576,17 @@ export async function registerBuiltinHandlers(
   });
 
   worker.register('extract', async (job) => {
+    if (job.data.stale === true) {
+      const { runExtractStaleCore } = await import('./extract.ts');
+      const sourceIdFilter = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
+      return await runExtractStaleCore(engine, {
+        dryRun: !!job.data.dryRun,
+        includeFrontmatter: !!job.data.includeFrontmatter,
+        sourceIdFilter,
+        catchUp: job.data.catchUp !== false,
+      });
+    }
+
     const { runExtractCore } = await import('./extract.ts');
     const mode = (typeof job.data.mode === 'string' && ['links', 'timeline', 'all'].includes(job.data.mode))
       ? (job.data.mode as 'links' | 'timeline' | 'all')

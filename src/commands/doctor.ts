@@ -4474,6 +4474,25 @@ export async function buildChecks(
       } catch { /* pre-migration / transient: pidfile-only */ }
     }
     const running = pidfileRunning || detectedViaDbLock;
+    let autopilotManaged = false;
+    let autopilotPid: number | null = null;
+    let autopilotWorkerCount = 0;
+    if (!running) {
+      try {
+        const { inspectAutopilotLock } = await import('./autopilot.ts');
+        const { readWorkers } = await import('../core/minions/worker-registry.ts');
+        const autoLock = inspectAutopilotLock(gbrainPath('autopilot.lock'));
+        const liveWorkers = readWorkers();
+        if (autoLock.running && liveWorkers.length > 0) {
+          autopilotManaged = true;
+          autopilotPid = autoLock.pid;
+          autopilotWorkerCount = liveWorkers.length;
+        }
+      } catch {
+        // Best-effort fallback only; if this probe fails, keep the
+        // standalone supervisor readback unchanged.
+      }
+    }
 
     const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
     const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
@@ -4495,8 +4514,14 @@ export async function buildChecks(
 
     // Only surface a Check if the supervisor was ever observed (stops the
     // "never used the supervisor" install from getting a warn about it).
-    if (supervisorPid !== null || events.length > 0) {
-      if (maxCrashesEvent) {
+    if (supervisorPid !== null || events.length > 0 || autopilotManaged) {
+      if (autopilotManaged) {
+        checks.push({
+          name: 'supervisor',
+          status: 'ok',
+          message: `autopilot-managed worker loop is healthy (autopilot_pid=${autopilotPid ?? 'unknown'}, workers=${autopilotWorkerCount}); standalone supervisor not in use`,
+        });
+      } else if (maxCrashesEvent) {
         checks.push({
           name: 'supervisor',
           status: 'fail',
@@ -6991,6 +7016,7 @@ export async function buildChecks(
         SELECT name, queue, count(*)::int AS depth
           FROM minion_jobs
          WHERE status = 'waiting'
+           AND parent_job_id IS NULL
          GROUP BY name, queue
         HAVING count(*) > ${threshold}
          ORDER BY depth DESC

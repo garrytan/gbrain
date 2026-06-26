@@ -34,6 +34,23 @@ export async function runEvalDreamQuality(engine: BrainEngine, args: string[]): 
   }
 
   if (slugs.length === 0) {
+    if (opts.summaryFile) {
+      const receipt = buildDreamQualityReceipt({
+        pages: [],
+        summarySlug,
+        source: 'summary',
+      });
+      const output = opts.output ?? defaultDreamQualityReceiptPath();
+      writeDreamQualityReceipt(output, receipt);
+      if (opts.json) {
+        console.log(JSON.stringify({ ...receipt, output }, null, 2));
+      } else {
+        console.log('Dream quality: INCONCLUSIVE (0/0 passed, avg=0, min=0)');
+        console.log('Reason: summary file contains no Dream page links to score');
+        console.log(`Receipt: ${output}`);
+      }
+      process.exit(2);
+    }
     console.error('Error: pass --summary-file <path> or at least one --slug <slug>');
     process.exit(2);
   }

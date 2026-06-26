@@ -131,6 +131,10 @@ export interface RecommendationContext {
   sourceId?: string;
   /** Brain repo path on disk (for sync). */
   repoPath?: string;
+  /** True when the configured source has moved since its last sync. */
+  repoNeedsSync?: boolean;
+  /** Pages whose DB extraction watermark is stale. */
+  staleExtractionPages?: number;
   /** Configured embedding model id (e.g. 'openai:text-embedding-3-large'). */
   embeddingModel?: string;
   /** Configured embedding dimension (3072 / 1536 / 1024 / etc.). */
@@ -199,20 +203,21 @@ export function computeRecommendations(
   const source = ctx.sourceId ?? 'default';
 
   // ---------------------------------------------------------------------
-  // sync.repo — fires when sync hasn't run recently OR pages are stale
+  // sync.repo — fires when the configured source has moved since last sync.
   // ---------------------------------------------------------------------
-  if (ctx.repoPath && health.stale_pages > 0) {
+  const repoNeedsSync = ctx.repoPath && ctx.repoNeedsSync === true;
+  if (repoNeedsSync) {
     const params = { repoPath: ctx.repoPath, sourceId: ctx.sourceId, noEmbed: true };
     out.push({
       id: 'sync.repo',
       job: 'sync',
       params,
       idempotency_key: idemKey(source, 'sync', params),
-      severity: health.stale_pages > 50 ? 'high' : 'medium',
-      est_seconds: Math.min(600, 30 + health.stale_pages * 0.5),
+      severity: 'medium',
+      est_seconds: 60,
       est_usd_cost: 0,  // sync is fs+DB only
       depends_on: [],
-      rationale: `${health.stale_pages} stale page${health.stale_pages === 1 ? '' : 's'} on disk`,
+      rationale: 'Configured source has new commits or chunker drift',
       status: 'remediable',
     });
   }
@@ -244,7 +249,7 @@ export function computeRecommendations(
       est_seconds: Math.min(3600, 5 + health.missing_embeddings * 0.05),
       est_usd_cost,
       // sync should run first so embed sees fresh pages.
-      depends_on: ctx.repoPath && health.stale_pages > 0 ? ['sync.repo'] : [],
+      depends_on: repoNeedsSync ? ['sync.repo'] : [],
       rationale: `${health.missing_embeddings} chunk${health.missing_embeddings === 1 ? '' : 's'} invisible to vector search`,
       status: 'remediable',
     });
@@ -270,22 +275,26 @@ export function computeRecommendations(
   }
 
   // ---------------------------------------------------------------------
-  // extract.all — runs after sync to materialize links + timeline.
-  // Triggered when sync.repo fires (because sync was set to noEmbed:true,
-  // and noExtract:true after T5 lands → extract job is the materializer).
+  // extract.stale — DB-backed incremental link + timeline extraction.
+  // Runs for actual extraction watermark lag, and after sync because fresh
+  // page writes can create new stale extraction work.
   // ---------------------------------------------------------------------
-  if (ctx.repoPath && health.stale_pages > 0) {
-    const params = { mode: 'all', dir: ctx.repoPath };
+  const staleExtractionPages = Math.max(0, ctx.staleExtractionPages ?? 0);
+  if (staleExtractionPages > 0 || repoNeedsSync) {
+    const params: Record<string, unknown> = { stale: true, catchUp: true };
+    if (ctx.sourceId) params.sourceId = ctx.sourceId;
     out.push({
-      id: 'extract.all',
+      id: 'extract.stale',
       job: 'extract',
       params,
       idempotency_key: idemKey(source, 'extract', params),
       severity: 'medium',
-      est_seconds: Math.min(600, 30 + health.page_count * 0.01),
+      est_seconds: Math.min(600, 30 + Math.max(staleExtractionPages, health.page_count) * 0.01),
       est_usd_cost: 0,
-      depends_on: ['sync.repo'],
-      rationale: 'Materialize link + timeline edges from fresh pages',
+      depends_on: repoNeedsSync ? ['sync.repo'] : [],
+      rationale: staleExtractionPages > 0
+        ? `${staleExtractionPages} page${staleExtractionPages === 1 ? '' : 's'} need link/timeline extraction`
+        : 'Extract stale edges after sync',
       status: 'remediable',
     });
   }
@@ -305,13 +314,39 @@ export function computeRecommendations(
   const sevRank: Record<RemediationSeverity, number> = {
     critical: 0, high: 1, medium: 2, low: 3,
   };
-  out.sort((a, b) => {
+  const ranked = (a: RemediationStep, b: RemediationStep) => {
     const sd = sevRank[a.severity] - sevRank[b.severity];
     if (sd !== 0) return sd;
     return a.est_seconds - b.est_seconds;
-  });
+  };
+  out.sort(ranked);
 
-  return out;
+  // Dependency ordering is load-bearing for remediate execution. The runner
+  // submits the list sequentially and uses depends_on only for cascade skips,
+  // so dependents must appear after their prerequisites in the plan itself.
+  return orderRemediationsByDependencies(out, ranked);
+}
+
+function orderRemediationsByDependencies(
+  steps: RemediationStep[],
+  ranked: (a: RemediationStep, b: RemediationStep) => number,
+): RemediationStep[] {
+  const byId = new Map(steps.map((s) => [s.id, s]));
+  const remaining = new Map(steps.map((s) => [s.id, s]));
+  const ordered: RemediationStep[] = [];
+  const completed = new Set<string>();
+
+  while (remaining.size > 0) {
+    const ready = [...remaining.values()]
+      .filter((s) => (s.depends_on ?? []).every((dep) => !byId.has(dep) || completed.has(dep)))
+      .sort(ranked);
+    const next = ready[0] ?? [...remaining.values()].sort(ranked)[0];
+    ordered.push(next);
+    remaining.delete(next.id);
+    completed.add(next.id);
+  }
+
+  return ordered;
 }
 
 /**

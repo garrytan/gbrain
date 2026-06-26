@@ -130,7 +130,12 @@ export interface MinionJobInput {
   max_spawn_depth?: number;
   /** Global dedup key. Same key returns the existing job, no second row created. */
   idempotency_key?: string;
-  /** Submission backpressure: cap waiting jobs with this name before inserting a new row. */
+  /**
+   * Submission backpressure: cap waiting jobs with this name before inserting a
+   * new row. When `stagger_key` is present, the cap is scoped by
+   * `(name, queue, stagger_key)` so one logical stream can coalesce without
+   * suppressing siblings that share the same handler name.
+   */
   maxWaiting?: number;
   /** Insert as paused so callers can attach children before the parent is claimable. */
   hold_until_children?: boolean;

@@ -142,45 +142,56 @@ export class MinionQueue {
       }
 
       // 1b. Submission-time backpressure for high-frequency named jobs.
-      // If waiting jobs for this (name, queue) already hit maxWaiting, return
-      // the most-recent waiting row instead of inserting another slot.
+      // If waiting jobs for this (name, queue[, stagger_key]) already hit
+      // maxWaiting, return the most-recent waiting row instead of inserting
+      // another slot.
       //
       // Correctness: two concurrent submitters could both see waitingCount <
       // maxWaiting and both insert, violating the cap. `pg_advisory_xact_lock`
-      // keyed on (name, queue) serializes concurrent count+insert decisions
-      // for the SAME key while leaving different keys fully parallel. The
-      // lock releases on txn commit/rollback automatically — no cleanup path
-      // to leak. Cost: one no-op SELECT on the hot path per coalesce-guarded
-      // submission; trivial compared to the protection.
+      // keyed on (name, queue, stagger_key) serializes concurrent count+insert
+      // decisions for the SAME logical stream while leaving different streams
+      // fully parallel. The lock releases on txn commit/rollback automatically
+      // — no cleanup path to leak. Cost: one no-op SELECT on the hot path per
+      // coalesce-guarded submission; trivial compared to the protection.
       //
       // Queue scope: the filter includes `queue=$2` so a waiting
       // 'autopilot-cycle' in queue 'default' does NOT suppress submissions
-      // to queue 'shell' with the same name. Pre-D2 code filtered on `name`
-      // alone — a real cross-queue bleed that sequential tests missed.
+      // to queue 'shell' with the same name. When `stagger_key` is present,
+      // the cap is also scoped by that key so source A can coalesce without
+      // suppressing source B even if both share `name='sync'`.
       //
       // Engine compatibility: PGLite (WASM Postgres 17) supports
       // pg_advisory_xact_lock, so this works on both engines without branching.
       if (opts?.maxWaiting !== undefined) {
         const maxWaiting = Math.max(1, Math.floor(opts.maxWaiting));
         const backpressureQueue = opts?.queue ?? 'default';
+        const backpressureKey = opts?.stagger_key ?? null;
         await tx.executeRaw(
-          `SELECT pg_advisory_xact_lock(hashtext('minion_maxwaiting:' || $1 || ':' || $2))`,
-          [jobName, backpressureQueue]
+          `SELECT pg_advisory_xact_lock(hashtext('minion_maxwaiting:' || $1 || ':' || $2 || ':' || COALESCE($3, '')))`,
+          [jobName, backpressureQueue, backpressureKey]
         );
         const waitingCountRows = await tx.executeRaw<{ count: string }>(
           `SELECT count(*)::text AS count
            FROM minion_jobs
-           WHERE name = $1 AND queue = $2 AND status = 'waiting'`,
-          [jobName, backpressureQueue]
+           WHERE name = $1 AND queue = $2 AND status = 'waiting'
+             AND (
+               ($3::text IS NULL AND stagger_key IS NULL) OR
+               stagger_key = $3::text
+             )`,
+          [jobName, backpressureQueue, backpressureKey]
         );
         const waitingCount = parseInt(waitingCountRows[0]?.count ?? '0', 10);
         if (waitingCount >= maxWaiting) {
           const existingWaiting = await tx.executeRaw<Record<string, unknown>>(
             `SELECT * FROM minion_jobs
              WHERE name = $1 AND queue = $2 AND status = 'waiting'
+               AND (
+                 ($3::text IS NULL AND stagger_key IS NULL) OR
+                 stagger_key = $3::text
+               )
              ORDER BY created_at DESC, id DESC
              LIMIT 1`,
-            [jobName, backpressureQueue]
+            [jobName, backpressureQueue, backpressureKey]
           );
           if (existingWaiting.length > 0) {
             const coalesced = rowToMinionJob(existingWaiting[0]);

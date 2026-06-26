@@ -68,6 +68,19 @@ describe('dream quality receipt', () => {
     expect(receipt.receipt_sha8).toHaveLength(8);
   });
 
+  test('empty summary sets produce an inconclusive receipt', () => {
+    const receipt = buildDreamQualityReceipt({
+      pages: [],
+      summarySlug: 'dream-cycle-summaries/2026-06-26',
+      source: 'summary',
+      now: new Date('2026-06-26T00:00:00Z'),
+    });
+    expect(receipt.verdict).toBe('inconclusive');
+    expect(receipt.pages_scored).toBe(0);
+    expect(receipt.pages_passed).toBe(0);
+    expect(receipt.receipt_sha8).toHaveLength(8);
+  });
+
   test('traceability counts frontmatter provenance fields', () => {
     const scored = scoreDreamPage(page({
       compiled_truth: '# Cost Cap as Forcing Function\n\n## What Happened\n\n' + 'Grounded detail '.repeat(90),

@@ -2,6 +2,44 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.45.2.0] - 2026-06-26
+
+**Autopilot now waits its turn when the brain is already busy, and `gbrain doctor` explains freshness problems in plain operational terms.** This release keeps the current Dream and remediation lane narrow: it ships the finished runtime-safety work, leaves the explicit spend-readback WIP out, and does not pull in unchecked upstream PRs.
+
+The main change is quieter background behavior. Global autopilot maintenance now backs off when source-scoped work is already queued or running, so it does not pile more work onto a brain that is still catching up. Doctor and remediation output also get sharper: stale extraction warnings distinguish sources that can be fixed by sync/extract from sources that are waiting on real path or checkout state, and the new operator brief script prints the practical status in one place.
+
+### To take advantage of v0.45.2.0
+`gbrain upgrade`. No migration or config change is required.
+
+For a local status readback:
+
+```bash
+gbrain doctor --json
+bash scripts/gbrain-operator-brief.sh
+```
+
+For Dream quality after a manual run:
+
+```bash
+gbrain eval dream-quality --json
+```
+
+### Itemized changes
+
+### Added
+- **Operator brief script.** `scripts/gbrain-operator-brief.sh` collects the current runtime signals an agent or operator needs before deciding whether to widen Dream, run remediation, or leave the brain alone.
+- **Remediation routing coverage.** New tests pin the planner behavior for extraction freshness and backpressure cases.
+
+### Changed
+- **Autopilot global work respects source backpressure.** Global maintenance checks queue pressure before dispatching more background work, reducing duplicate or premature jobs.
+- **Doctor freshness messages are more specific.** Extraction and cycle freshness checks now better separate actionable stale work from state that needs a checkout, source, or operator decision first.
+- **Dream quality readbacks include clearer status fields.** `gbrain eval dream-quality` exposes the signals needed to decide whether a bounded Dream pass helped.
+- **The local Docker CI guard compiles its WASM smoketest off the bind mount.** `scripts/check-wasm-embedded.sh` now avoids Bun's container rename failure while keeping the same semantic chunking check.
+
+### Excluded from this release
+- **WIP spend readbacks.** The local `WIP: add dream spend readbacks` commit was reviewed and intentionally left out.
+- **Unchecked upstream PRs.** Draft, conflicting, CI-empty, or stale-version upstream PRs were not folded into this branch.
+
 ## [0.45.1.0] - 2026-06-25
 
 **Dream runs now do less wasted work, subagents stop safely after a real answer, and collector previews survive ordinary token refreshes.** This release tightens the parts of GBrain that are supposed to run quietly in the background: long Dream synth jobs, small delegated subagent tasks, and read-only inbox or Drive scouting before anything is written.

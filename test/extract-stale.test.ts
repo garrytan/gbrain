@@ -35,6 +35,7 @@ async function truncateAll() {
   for (const t of ['content_chunks', 'links', 'tags', 'raw_data', 'timeline_entries', 'page_versions', 'ingest_log', 'pages']) {
     await (engine as any).db.exec(`DELETE FROM ${t}`);
   }
+  await engine.executeRaw(`DELETE FROM config WHERE key = 'link_resolution.global_basename'`);
 }
 beforeEach(truncateAll);
 
@@ -116,6 +117,21 @@ describe('gbrain extract --stale', () => {
     expect(await stampOf('companies/acme')).not.toBeNull();
     expect(await stampOf('people/lonely')).not.toBeNull();
     // Nothing left stale.
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
+  });
+
+  test('stale extraction honors global basename wikilinks before stamping fresh', async () => {
+    await engine.setConfig('link_resolution.global_basename', 'true');
+    await engine.putPage('wiki/concepts/struktura', { type: 'concept', title: 'Struktura', compiled_truth: 'Target page', timeline: '' });
+    await engine.putPage('notes/source', { type: 'concept', title: 'Source', compiled_truth: 'See [[struktura]] for the pattern.', timeline: '' });
+
+    await runExtract(engine, ['--stale']);
+
+    const links = await engine.getLinks('notes/source');
+    const basenameLink = links.find(l => l.to_slug === 'wiki/concepts/struktura');
+    expect(basenameLink?.link_type).toBe('wikilink_basename');
+    expect(basenameLink?.link_source).toBe('wikilink-resolved');
+    expect(await stampOf('notes/source')).not.toBeNull();
     expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
   });
 

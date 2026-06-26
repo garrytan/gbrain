@@ -335,7 +335,7 @@ describe('Lane E.4 — loadRecommendationContext is provider-aware', () => {
     // ZE strings.
     const fnIdx = src.indexOf('async function loadRecommendationContext');
     expect(fnIdx).toBeGreaterThan(0);
-    const slice = src.slice(fnIdx, fnIdx + 3000);
+    const slice = src.slice(fnIdx, fnIdx + 4500);
     // Delegates to the shared helper + the env→config key map.
     expect(slice).toContain('embeddingProviderConfigured');
     expect(slice).toContain('HOSTED_EMBED_KEY_CONFIG');

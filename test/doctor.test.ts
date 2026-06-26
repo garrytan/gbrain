@@ -1146,6 +1146,13 @@ describe('supervisor crash classifier wiring (v0.35.x)', () => {
     expect(source).toContain('clean_exits_24h=');
   });
 
+  test('doctor.ts treats an autopilot-managed worker loop as a healthy manager fallback', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    expect(source).toContain('inspectAutopilotLock');
+    expect(source).toContain('readWorkers');
+    expect(source).toContain('autopilot-managed worker loop is healthy');
+  });
+
   test('jobs.ts supervisor status uses summarizeCrashes — same wiring as doctor', async () => {
     const source = await Bun.file(new URL('../src/commands/jobs.ts', import.meta.url)).text();
     // Both surfaces MUST go through the shared helper. Without this, the two
@@ -1159,6 +1166,13 @@ describe('supervisor crash classifier wiring (v0.35.x)', () => {
     // distinguish memory pressure from code bugs without re-classifying.
     expect(source).toContain('crashes_by_cause');
     expect(source).toContain('clean_exits_24h');
+  });
+});
+
+describe('queue_health top-level backlog readback', () => {
+  test('doctor.ts counts only top-level waiting jobs for backpressure warnings', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    expect(source).toContain("parent_job_id IS NULL");
   });
 });
 

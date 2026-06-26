@@ -342,7 +342,8 @@ export async function runRemediation(
       // steps with bumped retry suffix (D1).
       if (recs.length === 0 || stepCount >= maxJobs) break;
       const freshHealth = await engine.getHealth();
-      recs = computeRecommendations(freshHealth, ctx, extraRemediations)
+      const freshCtx = await loadRecommendationContext(engine);
+      recs = computeRecommendations(freshHealth, freshCtx, extraRemediations)
         .filter((r) => r.status === 'remediable' && !attemptedIds.has(r.id));
     }
   };

@@ -1874,6 +1874,25 @@ describe('MinionQueue: v0.19.1 maxWaiting — cap correctness + race (D2/H2)', (
     expect(b.queue).toBe('shell');
   });
 
+  test('stagger_key scopes maxWaiting so sibling streams do not coalesce together', async () => {
+    const a1 = await queue.add('sync', {}, { maxWaiting: 1, stagger_key: 'src:a' });
+    const a2 = await queue.add('sync', {}, { maxWaiting: 1, stagger_key: 'src:a' });
+    const b1 = await queue.add('sync', {}, { maxWaiting: 1, stagger_key: 'src:b' });
+    expect(a2.id).toBe(a1.id);
+    expect(b1.id).not.toBe(a1.id);
+    const rows = await engine.executeRaw<{ stagger_key: string; count: string }>(
+      `SELECT stagger_key, count(*)::text AS count
+         FROM minion_jobs
+        WHERE name = 'sync' AND status = 'waiting'
+        GROUP BY stagger_key
+        ORDER BY stagger_key`,
+    );
+    expect(rows).toEqual([
+      { stagger_key: 'src:a', count: '1' },
+      { stagger_key: 'src:b', count: '1' },
+    ]);
+  });
+
   test('unset maxWaiting — normal submit path, no coalesce, no cap', async () => {
     const a = await queue.add('uncapped', {});
     const b = await queue.add('uncapped', {});

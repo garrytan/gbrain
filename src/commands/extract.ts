@@ -654,7 +654,7 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
     }
     const sidIdx = args.indexOf('--source-id');
     const staleSourceId = (sidIdx >= 0 && sidIdx + 1 < args.length) ? args[sidIdx + 1] : undefined;
-    await extractStaleFromDB(engine, {
+    await runExtractStaleCore(engine, {
       dryRun: args.includes('--dry-run'),
       jsonMode: args.includes('--json'),
       includeFrontmatter: args.includes('--include-frontmatter'),
@@ -1666,9 +1666,8 @@ async function extractStaleFromDB(
   // Batch mode = pg_trgm + exact only, NO per-name search fallback. The
   // resolution map sees ALL sources so qualified cross-source wikilinks resolve
   // even when --source-id scopes the stale SCAN.
-  const resolver = makeResolver(engine, { mode: 'batch' });
-  const nullResolver = { resolve: async () => null as string | null };
-  const activeResolver = includeFrontmatter ? resolver : nullResolver;
+  const resolver = makeResolver(engine, { mode: 'batch', sourceId: sourceIdFilter });
+  const globalBasename = await isGlobalBasenameEnabled(engine);
   const allRefs = await engine.listAllPageRefs();
   const allSlugs = new Set<string>();
   const slugToSources = new Map<string, string[]>();
@@ -1700,7 +1699,8 @@ async function extractStaleFromDB(
     for (const page of rows) {
       const fullContent = page.compiled_truth + '\n' + page.timeline;
       const extracted = await extractPageLinks(
-        page.slug, fullContent, page.frontmatter, page.type, activeResolver,
+        page.slug, fullContent, page.frontmatter, page.type, resolver,
+        { skipFrontmatter: !includeFrontmatter, globalBasename },
       );
       for (const c of extracted.candidates) {
         const r = resolveCandidateSources(c, page.slug, page.source_id, allSlugs, slugToSources);
@@ -1764,6 +1764,36 @@ async function extractStaleFromDB(
     }) + '\n');
   }
   return { linksCreated, timelineCreated, pagesProcessed, staleRemaining };
+}
+
+export async function runExtractStaleCore(
+  engine: BrainEngine,
+  opts: {
+    dryRun?: boolean;
+    jsonMode?: boolean;
+    includeFrontmatter?: boolean;
+    sourceIdFilter?: string;
+    catchUp?: boolean;
+  } = {},
+): Promise<{
+  links_created: number;
+  timeline_entries_created: number;
+  pages_processed: number;
+  stale_remaining: number;
+}> {
+  const result = await extractStaleFromDB(engine, {
+    dryRun: !!opts.dryRun,
+    jsonMode: !!opts.jsonMode,
+    includeFrontmatter: !!opts.includeFrontmatter,
+    sourceIdFilter: opts.sourceIdFilter,
+    catchUp: !!opts.catchUp,
+  });
+  return {
+    links_created: result.linksCreated,
+    timeline_entries_created: result.timelineCreated,
+    pages_processed: result.pagesProcessed,
+    stale_remaining: result.staleRemaining,
+  };
 }
 
 /**

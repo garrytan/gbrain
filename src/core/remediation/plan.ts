@@ -7,7 +7,6 @@ import type { BrainEngine } from '../engine.ts';
 import {
   computeRecommendations,
   classifyChecks,
-  maxReachableScore,
   maxReachableScoreFromRecommendations,
 } from '../brain-score-recommendations.ts';
 import { loadRecommendationContext } from './context.ts';
@@ -54,9 +53,7 @@ export async function computeRemediationPlan(
   }));
   const classifications = classifyChecks(syntheticChecks, ctx);
   const filteredRecs = recs.filter((r) => r.status === 'remediable');
-  const ceiling = filteredRecs.length > 0
-    ? maxReachableScoreFromRecommendations(health, filteredRecs)
-    : maxReachableScore(health, classifications);
+  const ceiling = maxReachableScoreFromRecommendations(health, filteredRecs);
   const estTotalSeconds = filteredRecs.reduce((sum, r) => sum + r.est_seconds, 0);
   const estTotalUsd = filteredRecs.reduce((sum, r) => sum + (r.est_usd_cost ?? 0), 0);
 
