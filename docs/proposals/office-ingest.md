@@ -235,12 +235,19 @@ ingest.docling.enabled              bool      默认 false（opt-in）
 ingest.docling.url                  string    http://127.0.0.1:<port>
 ingest.docling.python               string    受管 venv 的 python 路径
 ingest.docling.max_concurrency      int       默认 2（gbrain 侧在途 /parse 上限，§21.3）
+ingest.docling.ocr                  enum      'auto'(默认) | 'on' | 'off'（R1：扫描 PDF OCR）
+ingest.docling.images_scale         float     默认 1.5（R1：页/图渲染 scale，内存 vs 质量）
 ingest.office.chunk_tokens          int       默认 512（D4，独立于 markdown 分块）
 ingest.office.table_summary.model   string    chat 模型别名（D9）
 ingest.office.table_summary.enabled bool      默认 true；false → 总是模板摘要
 ingest.office.multimodal            enum      'selective'(默认) | 'all' | 'off'（D6）
 ingest.office.max_file_mb           int       默认 50（§13）
 ```
+
+**R1b 多模态图像嵌入(网关级 env,非 office 配置键)**:要让图像真正嵌入,需配
+`VOYAGE_API_KEY` + `GBRAIN_EMBEDDING_MULTIMODAL=true` +
+`GBRAIN_EMBEDDING_MULTIMODAL_MODEL=voyage:voyage-multimodal-3`——主嵌入(ollama)纯文本时
+多模态单独指到 Voyage,否则报"recipe 不支持多模态";图向量落 `content_chunks.embedding_image`(1024d)。
 
 ## 11. LLM 表摘要 + 降级链（D9 规范）
 
@@ -316,6 +323,10 @@ doctor `docling_service` 健康检查。**验证**：20 个单测通过、typech
 e2e、OCR(M1)/条件 Facts(M4)。
 
 ## 17. 分期路线
+
+> **✅ 全部完成(2026-06)。** 下表 M1–M4 在 M0 落地后被**重规划**为 R1/R2/R3
+> (因 M0 超额交付 + Facts 是围栏制非自动抽取)——详见 `office-ingest-roadmap.md`。
+> M0 + R1 + R2 + R3 + Postgres 引擎对等 e2e 均已落地并验证。
 
 | 阶段 | 范围 | 出口 |
 |---|---|---|
