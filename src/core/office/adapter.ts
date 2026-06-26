@@ -86,11 +86,25 @@ export async function importOfficeFile(
     return { slug, status: 'skipped', chunks: 0 };
   }
 
+  // R1: request page/figure images for the visual arm only when multimodal is on.
+  const wantPageImages = cfg.multimodal !== 'off';
+
   // Auto-start the Docling sidecar if it isn't already serving (best-effort;
   // spawns a detached uvicorn that later imports reuse). Skipped in tests.
+  // Pipeline config (OCR + render scale) is passed as env at spawn time.
   if (!opts._parseForTest) {
     const { ensureSidecarUp } = await import('./sidecar-manage.ts');
-    await ensureSidecarUp({ url: cfg.url, python: cfg.python }, (l) => console.error(`[docling] ${l}`));
+    await ensureSidecarUp(
+      {
+        url: cfg.url,
+        python: cfg.python,
+        env: {
+          DOCLING_DO_OCR: cfg.ocr === 'off' ? 'false' : 'true',
+          DOCLING_IMAGES_SCALE: String(cfg.imagesScale),
+        },
+      },
+      (l) => console.error(`[docling] ${l}`),
+    );
   }
 
   // Parse via the Docling sidecar (or the test seam).
@@ -98,7 +112,7 @@ export async function importOfficeFile(
   try {
     docir = opts._parseForTest
       ? await opts._parseForTest(relativePath, bytes)
-      : await parseViaSidecar(cfg.url, relativePath, bytes);
+      : await parseViaSidecar(cfg.url, relativePath, bytes, { wantPageImages });
   } catch (e) {
     return { slug, status: 'error', chunks: 0, error: `docling sidecar: ${e instanceof Error ? e.message : String(e)}` };
   }

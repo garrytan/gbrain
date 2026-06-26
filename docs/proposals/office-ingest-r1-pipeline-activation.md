@@ -113,3 +113,13 @@ adapter.ts: parseViaSidecar(url, rel, bytes, { wantPageImages: cfg.multimodal !=
 
 R1a **OCR 臂**先(ollama 可全验,价值立得)→ R1b **多模态臂**(配视觉 embedder 后验)。
 两者共享 converter 配置一次落地;验证分两批。
+
+**实现状态(R1a 已落地 + 真实验证)**:converter 配 `PdfPipelineOptions`(出图 + OCR)、
+env 驱动(`DOCLING_DO_OCR` / `DOCLING_IMAGES_SCALE`,由 `ensureSidecarUp` 在 spawn 时传)、
+adapter 传 `wantPageImages = multimodal !== 'off'`、config keys(`ingest.docling.ocr` /
+`images_scale`)全部落地。**真实烟雾**:图像版扫描 PDF → easyocr → 文本入库且 `revenue`/
+`million`/`fiscal` 可检索;直打 `/parse(want_page_images=true)` → `DocIR.assets` 产出合法页
+渲染 PNG(`is_rendered_page=true`、`page` 定位、~46KB)。**OCR 引擎**:Python 3.14 上
+`rapidocr_onnxruntime` 不兼容(要求 <3.13)→ 默认 **easyocr**(Docling `OcrAutoOptions` 自动选);
+首次需预热下载模型(~140MB)。**待**:R1b 图像嵌入(需视觉 embedder;ollama 纯文本)。
+typecheck 干净、20 个 office 单测无回归。

@@ -23,6 +23,10 @@ export interface OfficeConfig {
   tableSummaryEnabled: boolean;
   /** ingest.office.multimodal — visual embedding policy. */
   multimodal: 'selective' | 'all' | 'off';
+  /** ingest.docling.ocr — scanned-PDF OCR: auto (Docling decides) | on | off. */
+  ocr: 'auto' | 'on' | 'off';
+  /** ingest.docling.images_scale — page/figure render scale (memory vs quality). */
+  imagesScale: number;
   /** ingest.office.max_file_mb — per-file size cap. */
   maxFileMb: number;
 }
@@ -32,6 +36,8 @@ const DEFAULTS = {
   maxConcurrency: 2,
   chunkTokens: 512,
   multimodal: 'selective' as const,
+  ocr: 'auto' as const,
+  imagesScale: 1.5,
   maxFileMb: 50,
 };
 
@@ -57,6 +63,8 @@ export async function resolveOfficeConfig(engine: BrainEngine): Promise<OfficeCo
     tableSummaryModel,
     tableSummaryEnabled,
     multimodalRaw,
+    ocrRaw,
+    imagesScaleRaw,
     maxFileMb,
   ] = await Promise.all([
     getBool(engine, 'ingest.docling.enabled', false),
@@ -67,6 +75,8 @@ export async function resolveOfficeConfig(engine: BrainEngine): Promise<OfficeCo
     engine.getConfig('ingest.office.table_summary.model'),
     getBool(engine, 'ingest.office.table_summary.enabled', true),
     engine.getConfig('ingest.office.multimodal'),
+    engine.getConfig('ingest.docling.ocr'),
+    engine.getConfig('ingest.docling.images_scale'),
     getInt(engine, 'ingest.office.max_file_mb', DEFAULTS.maxFileMb),
   ]);
 
@@ -74,6 +84,10 @@ export async function resolveOfficeConfig(engine: BrainEngine): Promise<OfficeCo
     multimodalRaw === 'all' || multimodalRaw === 'off' || multimodalRaw === 'selective'
       ? multimodalRaw
       : DEFAULTS.multimodal;
+
+  const ocr: OfficeConfig['ocr'] = ocrRaw === 'on' || ocrRaw === 'off' ? ocrRaw : DEFAULTS.ocr;
+  const scaleN = imagesScaleRaw != null ? parseFloat(imagesScaleRaw) : NaN;
+  const imagesScale = Number.isFinite(scaleN) && scaleN > 0 ? scaleN : DEFAULTS.imagesScale;
 
   return {
     enabled,
@@ -84,6 +98,8 @@ export async function resolveOfficeConfig(engine: BrainEngine): Promise<OfficeCo
     tableSummaryModel,
     tableSummaryEnabled,
     multimodal,
+    ocr,
+    imagesScale,
     maxFileMb,
   };
 }

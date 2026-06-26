@@ -70,7 +70,7 @@ export async function setupDocling(onLog: (l: string) => void = () => {}): Promi
  * Best-effort: returns false (caller surfaces a clear error) if it can't start.
  */
 export async function ensureSidecarUp(
-  opts: { url: string; python?: string | null },
+  opts: { url: string; python?: string | null; env?: Record<string, string> },
   onLog: (l: string) => void = () => {},
 ): Promise<boolean> {
   if (await sidecarHealthy(opts.url, 3_000)) return true;
@@ -85,7 +85,7 @@ export async function ensureSidecarUp(
   const child = spawn(
     py,
     ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', String(port), '--workers', '1'],
-    { cwd: sidecarDir(), detached: true, stdio: 'ignore' },
+    { cwd: sidecarDir(), detached: true, stdio: 'ignore', env: { ...process.env, ...(opts.env ?? {}) } },
   );
   child.unref(); // survive CLI exit; the warm server is reused by later imports
 

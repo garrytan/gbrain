@@ -6,3 +6,9 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart>=0.0.9
 pillow>=10.0
+# OCR engine for scanned PDFs (R1). do_ocr=True uses Docling's auto-detect
+# (OcrAutoOptions), which picks whatever engine is installed. easyocr has the
+# broadest Python support (incl. 3.14) so it's the default; on Python <3.13 you
+# may swap to the lighter `rapidocr-onnxruntime` (ONNX, pip-only).
+easyocr>=1.7
+# rapidocr-onnxruntime>=1.3   # lighter alternative, but caps at Python <3.13
