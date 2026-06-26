@@ -21,8 +21,9 @@
  *     rotation (via configureGateway()) invalidates stale entries.
  */
 
-import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
+import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema, type SystemModelMessage } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash } from 'node:crypto';
 import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -2310,6 +2311,14 @@ export interface ChatOpts {
    * ignored on providers without `supports_prompt_cache`.
    */
   cacheSystem?: boolean;
+  /**
+   * OpenAI-specific routing hint. Sets `prompt_cache_key` so requests that
+   * share a prompt prefix stick to the same inference engine, lifting OpenAI's
+   * automatic prefix-cache hit rate (OpenAI reports 60%→87% from this alone).
+   * When omitted, a stable key is derived from the system prompt + tool names.
+   * Ignored by non-OpenAI providers.
+   */
+  cacheKey?: string;
 }
 
 /**
@@ -2532,6 +2541,87 @@ async function classifyGatewayGuardrail(input: {
   }
 }
 
+/**
+ * Build the `system` + `tools` arguments for `generateText()` with Anthropic
+ * prompt-cache breakpoints placed where `@ai-sdk/anthropic` actually reads them:
+ * per-message and per-tool `providerOptions`.
+ *
+ * WHY THIS EXISTS (regression guard): the @ai-sdk/anthropic provider sources
+ * `cache_control` from each system message's / tool's own `providerOptions`
+ * (dist/index.js: `validator.getCacheControl(providerOptions, …)`), NEVER from
+ * the top-level `generateText({ providerOptions })`. And `ai` core converts a
+ * bare `system:` STRING into `{ role:'system', content }` with NO
+ * `providerOptions`. So the pre-fix code — a string `system` plus a top-level
+ * `providerOptions.anthropic.cacheControl` — wrote ZERO breakpoints: a silent
+ * no-op that left every `cacheSystem:true` caller paying full price while the
+ * telemetry read 0 cache tokens. Marking the LAST tool def caches the whole
+ * tools→system prefix (Anthropic caches up to and including a marked block);
+ * marking the system message caches tools+system. Mirrors the native subagent
+ * path. Matches the `ChatOpts.cacheSystem` contract ("system prompt + last
+ * tool def").
+ *
+ * @internal exported for test/gateway-prompt-cache.test.ts; not public API.
+ */
+export function buildChatCacheArgs(args: {
+  useCache: boolean;
+  system?: string;
+  tools: ChatToolDef[];
+}): { system: string | SystemModelMessage | undefined; tools: Record<string, any> } {
+  const { useCache, system, tools: toolDefs } = args;
+  const ephemeral = { anthropic: { cacheControl: { type: 'ephemeral' } } };
+
+  const tools = toolDefs.reduce((acc, t, i) => {
+    acc[t.name] = {
+      description: t.description,
+      // AI SDK v6 requires a Schema (carrying the schema symbol), not a plain
+      // `{jsonSchema}` object — the bare object makes asSchema() treat it as a
+      // thunk and call schema(), throwing "schema is not a function". Wrap the
+      // raw JSON Schema with the SDK's jsonSchema() helper so tool calls work
+      // through the real toolLoop (skillopt rollouts + subagent jobs).
+      inputSchema: jsonSchema(t.inputSchema as any),
+      // Cache breakpoint on the LAST tool def only (Anthropic caches the whole
+      // prefix up to the marked block, so this covers ALL tool defs).
+      ...(useCache && i === toolDefs.length - 1 ? { providerOptions: ephemeral } : {}),
+    };
+    return acc;
+  }, {} as Record<string, any>);
+
+  // Cache the system prompt by passing it as a SystemModelMessage carrying
+  // providerOptions — NOT a bare string (which drops the marker). Only when
+  // there is actually a system prompt to cache.
+  const systemArg: string | SystemModelMessage | undefined =
+    useCache && system
+      ? { role: 'system', content: system, providerOptions: ephemeral }
+      : system;
+
+  return { system: systemArg, tools };
+}
+
+/**
+ * Derive OpenAI's `prompt_cache_key` (the AI SDK's `providerOptions.openai.
+ * promptCacheKey`). It's a ROUTING hint, not a cache breakpoint: OpenAI caches
+ * prefixes automatically, and a stable key makes requests sharing a prefix
+ * land on the same engine, raising the hit rate (OpenAI cites 60%→87%).
+ *
+ * Default: hash the system prompt + sorted tool names — that's the stable
+ * prefix gbrain's repeated loops (enrich, page-summary, skillopt, subagent)
+ * actually share. An explicit `cacheKey` (e.g. a session id) overrides. Returns
+ * undefined when there's nothing stable to key on (no system, no explicit key),
+ * so we don't pin one-off requests to a single engine.
+ *
+ * @internal exported for test/gateway-prompt-cache.test.ts; not public API.
+ */
+export function openAIPromptCacheKey(args: {
+  system?: string;
+  toolNames?: string[];
+  explicit?: string;
+}): string | undefined {
+  if (args.explicit) return args.explicit;
+  if (!args.system) return undefined;
+  const basis = `${args.system} ${(args.toolNames ?? []).slice().sort().join(',')}`;
+  return `gbrain:${createHash('sha256').update(basis).digest('hex').slice(0, 32)}`;
+}
+
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const tracker = __budgetStore.getStore() ?? null;
   const modelStrEarly = opts.model ?? getChatModel();
@@ -2622,23 +2712,31 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   // Build messages. Anthropic prompt-cache markers ride on system + last tool
   // via providerOptions; the AI SDK accepts the system as a string for
   // generateText, so cache markers go through providerOptions.anthropic.
-  const tools = (opts.tools ?? []).reduce((acc, t) => {
-    acc[t.name] = {
-      description: t.description,
-      // AI SDK v6 requires a Schema (carrying the schema symbol), not a plain
-      // `{jsonSchema}` object — the bare object makes asSchema() treat it as a
-      // thunk and call schema(), throwing "schema is not a function". Wrap the
-      // raw JSON Schema with the SDK's jsonSchema() helper so tool calls work
-      // through the real toolLoop (skillopt rollouts + subagent jobs).
-      inputSchema: jsonSchema(t.inputSchema as any),
-    };
-    return acc;
-  }, {} as Record<string, any>);
+  // Anthropic prompt-cache breakpoints ride on per-message / per-tool
+  // providerOptions — the ONLY place @ai-sdk/anthropic reads cache_control.
+  // (Top-level generateText `providerOptions` is NOT a cache site; see
+  // buildChatCacheArgs for the full rationale + regression guard.)
+  const { system: systemArg, tools } = buildChatCacheArgs({
+    useCache,
+    system: opts.system,
+    tools: opts.tools ?? [],
+  });
 
-  const providerOptions: Record<string, any> = {};
-  if (useCache) {
-    providerOptions.anthropic = { cacheControl: { type: 'ephemeral' } };
-  }
+  // OpenAI prompt_cache_key (routing hint). Native-OpenAI only — the
+  // openai-compatible path (litellm/azure) uses a provider that does not read
+  // `providerOptions.openai`. Unlike Anthropic's per-message cache_control,
+  // this IS a call-level provider option.
+  const providerOptions =
+    recipe.implementation === 'native-openai'
+      ? (() => {
+          const promptCacheKey = openAIPromptCacheKey({
+            system: opts.system,
+            toolNames: (opts.tools ?? []).map(t => t.name),
+            explicit: opts.cacheKey,
+          });
+          return promptCacheKey ? { openai: { promptCacheKey } } : undefined;
+        })()
+      : undefined;
 
   let _budgetRecorded = false;
   const _recordBudget = (modelLabel: string, inputTokens: number, outputTokens: number): void => {
@@ -2659,14 +2757,14 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   try {
     const result = await generateText({
       model,
-      system: opts.system,
+      system: systemArg,
       messages: toModelMessages(opts.messages) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
       maxOutputTokens: opts.maxTokens ?? 4096,
       // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
       // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
       abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
-      providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
+      providerOptions,
     });
 
     // Normalize blocks. Vercel SDK gives us `result.content` (an array of typed
