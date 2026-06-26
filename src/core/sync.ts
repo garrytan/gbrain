@@ -15,7 +15,7 @@ import { CJK_SLUG_CHARS } from './cjk.ts';
 // v0.37.7.0 #1169 submodule-detection helpers. Bottom-of-file already
 // aliases existsSync as `_existsSync` for other purposes; the top-of-file
 // import keeps the pruneDir helper's deps near its callsite.
-import { existsSync, statSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
 import { join as pathJoin } from 'path';
 
 export interface SyncManifest {
@@ -219,7 +219,7 @@ function globToRegex(pattern: string): RegExp {
   return new RegExp(regex);
 }
 
-function matchesAnyGlob(path: string, patterns?: string[]): boolean {
+export function matchesSyncGlobs(path: string, patterns?: string[]): boolean {
   if (!patterns || patterns.length === 0) return false;
   const normalized = path.replace(/\\/g, '/');
   return patterns.some((pattern) => globToRegex(pattern).test(normalized));
@@ -330,6 +330,34 @@ export type SyncableReason =
 export const SYNC_SKIP_FILES = ['schema.md', 'index.md', 'log.md', 'README.md'] as const;
 
 /**
+ * Repo-local synthetic corpora that should stay out of the gbrain repo's own
+ * sync/import surface, while remaining syncable in arbitrary user repos that
+ * happen to use the same path.
+ *
+ * The gbrain repo ships prompt-tuning / holdout fixtures under this subtree.
+ * They intentionally model canonical brain slugs like `people/alice-example`
+ * while living under a test-only path, so syncing them into the gbrain source
+ * is noisy and can trip SLUG_MISMATCH. Scope the carve-out by repo identity,
+ * not by the raw path string alone, so a user repo's legitimate
+ * `test/fixtures/calibration/...` content is unaffected.
+ */
+export const GBRAIN_CALIBRATION_FIXTURE_DIR = 'test/fixtures/calibration' as const;
+export const GBRAIN_CALIBRATION_FIXTURE_PREFIX = `${GBRAIN_CALIBRATION_FIXTURE_DIR}/` as const;
+export const GBRAIN_CALIBRATION_FIXTURE_GLOB = `${GBRAIN_CALIBRATION_FIXTURE_DIR}/**` as const;
+
+export function resolveRepoLocalSyncExcludes(repoPath: string): string[] {
+  const packageJsonPath = pathJoin(repoPath, 'package.json');
+  const fixtureDir = pathJoin(repoPath, GBRAIN_CALIBRATION_FIXTURE_DIR);
+  if (!existsSync(packageJsonPath) || !existsSync(fixtureDir)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { name?: unknown };
+    return parsed.name === 'gbrain' ? [GBRAIN_CALIBRATION_FIXTURE_GLOB] : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Internal classifier. Returns null when the path IS syncable, or a tagged
  * SyncableReason explaining why it isn't. The single source of truth that
  * both `isSyncable` (boolean) and `unsyncableReason` (tagged) call.
@@ -353,8 +381,8 @@ function classifySync(path: string, opts: SyncableOptions = {}): SyncableReason 
   const basename = segments[segments.length - 1] || '';
   if ((SYNC_SKIP_FILES as readonly string[]).includes(basename)) return 'metafile';
 
-  if (opts.include && opts.include.length > 0 && !matchesAnyGlob(path, opts.include)) return 'include-glob-miss';
-  if (opts.exclude && opts.exclude.length > 0 && matchesAnyGlob(path, opts.exclude)) return 'exclude-glob-hit';
+  if (opts.include && opts.include.length > 0 && !matchesSyncGlobs(path, opts.include)) return 'include-glob-miss';
+  if (opts.exclude && opts.exclude.length > 0 && matchesSyncGlobs(path, opts.exclude)) return 'exclude-glob-hit';
 
   return null;
 }

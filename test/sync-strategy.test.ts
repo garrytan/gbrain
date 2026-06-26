@@ -62,6 +62,17 @@ describe('isSyncable with strategy', () => {
     expect(isSyncable('dir/.raw/code.ts', { strategy: 'code' })).toBe(false);
   });
 
+  test('repo-local excludes can carve out synthetic fixture corpora without changing the global classifier', () => {
+    const fixturePath = 'test/fixtures/calibration/extract-takes-corpus/people-alice-example.md';
+    expect(isSyncable(fixturePath, { strategy: 'markdown' })).toBe(true);
+    expect(
+      isSyncable(fixturePath, {
+        strategy: 'markdown',
+        exclude: ['test/fixtures/calibration/**'],
+      }),
+    ).toBe(false);
+  });
+
   test('include globs whitelist specific patterns', () => {
     expect(isSyncable('src/foo.ts', { strategy: 'code', include: ['src/**/*.ts'] })).toBe(true);
     expect(isSyncable('lib/bar.ts', { strategy: 'code', include: ['src/**/*.ts'] })).toBe(false);

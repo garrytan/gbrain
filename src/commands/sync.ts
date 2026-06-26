@@ -8,8 +8,10 @@ import { collectSyncableFiles } from './import.ts';
 import { createInterface } from 'readline';
 import {
   isSyncable,
+  matchesSyncGlobs,
   unsyncableReason,
   resolveSlugForPath,
+  resolveRepoLocalSyncExcludes,
   unacknowledgedSyncFailures,
   acknowledgeFailures,
   loadSyncFailures,
@@ -103,6 +105,15 @@ import { AbortError } from '../core/abort-check.ts';
  */
 const SYNC_CKPT_OP = 'sync';
 const SYNC_TARGET_OP = 'sync-target';
+
+function buildRepoSyncFilterOpts(
+  repoPath: string,
+  strategy?: 'markdown' | 'code' | 'auto',
+): { strategy?: 'markdown' | 'code' | 'auto'; exclude?: string[] } | undefined {
+  const exclude = resolveRepoLocalSyncExcludes(repoPath);
+  if (strategy) return exclude.length > 0 ? { strategy, exclude } : { strategy };
+  return exclude.length > 0 ? { exclude } : undefined;
+}
 
 function syncCheckpointKeys(
   sourceId: string | undefined,
@@ -440,7 +451,7 @@ export function estimateInlineNewTokens(
       ceiling(localPath, strategy, 'git_unavailable');
       continue;
     }
-    const syncOpts = { strategy };
+    const syncOpts = buildRepoSyncFilterOpts(localPath, strategy);
     const changedPaths = unique([
       ...delta.manifest.added.filter(p => isSyncable(p, syncOpts)),
       ...delta.manifest.modified.filter(p => isSyncable(p, syncOpts)),
@@ -1839,7 +1850,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   const manifest = delta.manifest;
 
   // Filter to syncable files (strategy-aware)
-  const syncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
+  const syncOpts = buildRepoSyncFilterOpts(repoPath, opts.strategy);
   // #1970 (F-C): a rename whose DESTINATION is unsyncable drops out of BOTH
   // `renamed` (only `r.to` is kept below) AND `deleted` (git emits it as `R`,
   // not `D`), leaving the OLD page stale. Fold the source side into the delete
@@ -3107,7 +3118,8 @@ async function performFullSync(
   let reconciledDeletes = 0;
   if (opts.sourceId) {
     const sid = opts.sourceId;
-    const reconcileSyncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
+    const repoLocalExcludes = resolveRepoLocalSyncExcludes(repoPath);
+    const reconcileSyncOpts = buildRepoSyncFilterOpts(repoPath, opts.strategy);
     // collectSyncableFiles returns ABSOLUTE paths; source_path is stored
     // repo-relative (importFile uses `relative(dir, filePath)`), so relativize
     // to the same form before membership-testing — otherwise every page looks
@@ -3121,9 +3133,12 @@ async function performFullSync(
       [sid],
     );
     const staleSlugs = rows
-      .filter(r => r.source_path != null
-        && isSyncable(r.source_path, reconcileSyncOpts)
-        && !current.has(r.source_path))
+      .filter((r) => {
+        if (r.source_path == null || current.has(r.source_path)) return false;
+        const repoLocalExcluded = repoLocalExcludes.length > 0
+          && matchesSyncGlobs(r.source_path, repoLocalExcludes);
+        return repoLocalExcluded || isSyncable(r.source_path, reconcileSyncOpts);
+      })
       .map(r => r.slug);
     if (staleSlugs.length > 0) {
       const deleteScopedOpts = { sourceId: sid };

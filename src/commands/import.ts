@@ -11,7 +11,9 @@ import {
   isCodeFilePath,
   isMarkdownFilePath,
   isImageFilePath as isImageFilePathFromSync,
+  matchesSyncGlobs,
   pruneDir,
+  resolveRepoLocalSyncExcludes,
   type SyncStrategy,
 } from '../core/sync.ts';
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
@@ -485,6 +487,7 @@ function resolveMaxWalkDepth(): number {
 
 interface CollectOpts {
   strategy?: SyncStrategy;
+  exclude?: string[];
 }
 
 /**
@@ -498,7 +501,11 @@ function isCollectibleForWalker(
   path: string,
   strategy: SyncStrategy,
   multimodalOn: boolean,
+  exclude?: string[],
 ): boolean {
+  if (exclude && exclude.length > 0 && matchesSyncGlobs(path, exclude)) {
+    return false;
+  }
   switch (strategy) {
     case 'code':
       return isCodeFilePath(path);
@@ -530,6 +537,7 @@ function gitListSyncableFiles(
   dir: string,
   strategy: SyncStrategy,
   multimodalOn: boolean,
+  exclude?: string[],
 ): string[] | null {
   let stdout: string;
   try {
@@ -544,7 +552,7 @@ function gitListSyncableFiles(
   const files: string[] = [];
   for (const rel of stdout.split('\0')) {
     if (!rel) continue;
-    if (!isCollectibleForWalker(rel, strategy, multimodalOn)) continue;
+    if (!isCollectibleForWalker(rel, strategy, multimodalOn, exclude)) continue;
     const full = join(dir, rel);
     let st;
     try {
@@ -577,6 +585,7 @@ function gitListSyncableFiles(
  */
 export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): string[] {
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
+  const exclude = opts.exclude ?? resolveRepoLocalSyncExcludes(dir);
   const multimodalOn = process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
 
   // v0.42.x (#1159 --respect-gitignore / #1483 .gbrainignore): when `dir` is a
@@ -588,7 +597,7 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
   // vendored data/fixtures). `--cached --others --exclude-standard` = tracked
   // PLUS untracked-not-ignored, so uncommitted source is still indexed. Non-git
   // dirs (or git unavailable) fall through to the FS walk below.
-  const gitFiles = gitListSyncableFiles(dir, strategy, multimodalOn);
+  const gitFiles = gitListSyncableFiles(dir, strategy, multimodalOn, exclude);
   if (gitFiles) return gitFiles;
 
   const maxDepth = resolveMaxWalkDepth();
@@ -636,7 +645,8 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
         visitedInodes.set(inodeKey, true);
         walk(full, depth + 1);
       } else if (stat.isFile()) {
-        if (!isCollectibleForWalker(entry, strategy, multimodalOn)) continue;
+        const relPath = relative(dir, full).replace(/\\/g, '/');
+        if (!isCollectibleForWalker(relPath, strategy, multimodalOn, exclude)) continue;
         files.push(full);
       }
     }

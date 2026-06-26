@@ -871,6 +871,30 @@ describe('#1970: unreachable last_commit bookmark recovery', () => {
     expect(await engine.getPage('people/log')).not.toBeNull();      // metafile source_path → spared
   });
 
+  test('F-A2: full reconcile purges repo-local excluded calibration fixture pages in the gbrain repo', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const fixturePath = 'test/fixtures/calibration/extract-takes-corpus/people-alice-example.md';
+    const repo = mkRepo({
+      'package.json': JSON.stringify({ name: 'gbrain', version: '0.0.0' }, null, 2),
+      'people/alice.md': personMd('Alice', 'Alice is a person.'),
+      [fixturePath]: ['---', 'type: person', 'title: Alice Example', '---', '', 'fixture only'].join('\n'),
+    });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    // Simulate a fixture page that was indexed before the repo-local exclude existed.
+    await engine.putPage('people/alice-example', {
+      type: 'person',
+      title: 'Alice Example',
+      compiled_truth: 'fixture page',
+      source_path: fixturePath,
+    }, { sourceId: 'default' });
+
+    const result = await performSync(engine, { repoPath: repo, full: true, ...SYNC_OPTS });
+    expect(result.status).toBe('first_sync');
+    expect(await engine.getPage('people/alice')).not.toBeNull();
+    expect(await engine.getPage('people/alice-example')).toBeNull();
+  });
+
   test('F-B: an undiffable-but-present bookmark falls back to a full reconcile instead of throwing', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
     const repo = mkRepo({ 'people/alice.md': personMd('Alice', 'Alice is a person.') });
