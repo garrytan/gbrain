@@ -136,4 +136,32 @@ echo hi
     const fenceChunks = chunks.filter(c => c.chunk_source === 'fenced_code');
     expect(fenceChunks.length).toBe(0);
   });
+
+  // #2437 — extractFencedChunks skips marked.lexer entirely when the body has
+  // no fence marker (the lexer transiently allocates ~60x the page size, which
+  // OOMs the import worker under memory pressure). These two guard that the
+  // fast-path neither breaks tilde fences nor lexes fence-less pages.
+  test('tilde-fenced (~~~) code is still extracted after the no-fence fast-path (#2437)', async () => {
+    const md = 'Docs.\n\n~~~ts\nexport const x = 1;\n~~~\n';
+    await importFromContent(engine, 'guides/fence-tilde', md, { noEmbed: true });
+    const chunks = await engine.getChunks('guides/fence-tilde');
+    const fenceChunks = chunks.filter(c => c.chunk_source === 'fenced_code');
+    expect(fenceChunks.length).toBeGreaterThan(0);
+    expect(fenceChunks[0]!.language).toBe('typescript');
+  });
+
+  test('large fence-less table page imports with zero fenced chunks (no lexer pass) (#2437)', async () => {
+    const cols = 16;
+    const header = '| ' + Array.from({ length: cols }, (_, i) => 'col' + i).join(' | ') + ' |';
+    const sep = '| ' + Array.from({ length: cols }, () => '---').join(' | ') + ' |';
+    const body = Array.from({ length: 2000 }, (_, r) =>
+      '| ' + Array.from({ length: cols }, (_, c) => 'v' + r + '_' + c).join(' | ') + ' |').join('\n');
+    const md = '# Overview\n\n' + header + '\n' + sep + '\n' + body + '\n';
+    // sanity: the page is genuinely fence-less, so the fast-path applies
+    expect(/(^|\n)[ \t]{0,3}(```|~~~)/.test(md)).toBe(false);
+    await importFromContent(engine, 'guides/fence-less-table', md, { noEmbed: true });
+    const chunks = await engine.getChunks('guides/fence-less-table');
+    const fenceChunks = chunks.filter(c => c.chunk_source === 'fenced_code');
+    expect(fenceChunks.length).toBe(0);
+  });
 });
