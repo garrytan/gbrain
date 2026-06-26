@@ -180,12 +180,15 @@ Deferred from the v0.42.41.0 fix wave (eng-reviewed as separate scope, not hotfi
 See plan + GSTACK REVIEW REPORT at
 `~/.claude/plans/system-instruction-you-are-working-zany-thacker.md`.
 
-- [ ] **P1 — supervisor: retry-with-backoff instead of hard stop on transient DB outages (#1994).**
+- [x] **P1 — supervisor: retry-with-backoff instead of hard stop on transient DB outages (#1994).**
   `max_crashes_exceeded` gives up permanently; a transient pooler blip that trips the
   counter wedges the supervisor until manual restart. **Why:** the #2034 reconnect fix
   makes the engine recover, but the supervisor still hard-stops. **Where:**
   `src/core/minions/supervisor.ts` crash-count loop — add exponential backoff with a
-  much higher (or no) permanent-give-up threshold for recoverable errors.
+  much higher (or no) permanent-give-up threshold for recoverable errors. **Completed:**
+  `ChildWorkerSupervisor` now treats `maxCrashes` as a soft degraded-retry budget,
+  emits `crash_budget_degraded`, and only permanently stops at the hard ceiling
+  (`GBRAIN_SUPERVISOR_HARD_STOP_CRASHES`, `0` = retry forever).
 - [ ] **P2 — PGLite `reindex-frontmatter` / backfill statement_timeout boost (#1963).**
   Community RCA: `SET LOCAL statement_timeout` is gated on `engine.kind === 'postgres'`,
   so PGLite inherits the 30s session default and trips on non-trivial batches; the CLI

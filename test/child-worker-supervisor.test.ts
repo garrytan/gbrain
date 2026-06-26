@@ -535,6 +535,54 @@ esac
         h.cleanup();
       }
     });
+
+    it('a stable respawn after a transient outage clears degraded mode before the hard ceiling', async () => {
+      const h = makeHarness(
+        'degraded-recovers',
+        `
+# First four runs model a transient DB outage that crosses the soft budget.
+# The fifth run exits non-zero after a stable interval; crashCount should reset
+# to 1 instead of marching toward the hard ceiling.
+exit 1
+`,
+      );
+      try {
+        const SIX_MIN = 6 * 60_000;
+        const timestamps = [
+          0, 1_000,              // crashCount 1
+          1_000, 2_000,          // crashCount 2
+          2_000, 3_000,          // crashCount 3: degraded warn
+          3_000, 4_000,          // crashCount 4: retry continues
+          4_000, 4_000 + SIX_MIN, // stable run resets crashCount to 1
+        ];
+        let idx = 0;
+        const fakeNow = () => timestamps[idx++] ?? timestamps[timestamps.length - 1];
+
+        const { events, maxCrashesFired } = await runUntilTerminal(h, {
+          maxCrashes: 3,
+          hardStopMaxCrashes: 6,
+          _backoffFloorMs: 1,
+          _now: fakeNow,
+          stopAfterEvents: 15,
+        });
+
+        expect(maxCrashesFired).toBeNull();
+        const exits = events.filter(
+          (e): e is Extract<ChildSupervisorEvent, { kind: 'worker_exited' }> =>
+            e.kind === 'worker_exited',
+        );
+        expect(exits.map((e) => e.crashCount)).toEqual([1, 2, 3, 4, 1]);
+
+        const degraded = events.filter(
+          (e): e is Extract<ChildSupervisorEvent, { kind: 'health_warn' }> =>
+            e.kind === 'health_warn' && e.reason === 'crash_budget_degraded',
+        );
+        expect(degraded.length).toBe(1);
+        expect(degraded[0]).toMatchObject({ count: 3, max: 3 });
+      } finally {
+        h.cleanup();
+      }
+    });
   });
 
   describe('issue #1801 — restartCurrentChild + killChild liveness fix', () => {
