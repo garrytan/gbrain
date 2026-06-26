@@ -340,7 +340,10 @@ export type SyncableReason =
  * It was the lone structural sibling missing from this list, so it leaked
  * into the index as a content page (slug `resolver`).
  */
-export const SYNC_SKIP_FILES = ['schema.md', 'index.md', 'log.md', 'README.md', 'RESOLVER.md'] as const;
+// Also skip CLAUDE.md / AGENTS.md alongside RESOLVER.md: these self-documenting
+// authoring files (agent guides, routing decision tree) belong on disk as
+// git-versioned agent context, but should NOT be ingested as brain pages.
+export const SYNC_SKIP_FILES = ['schema.md', 'index.md', 'log.md', 'README.md', 'RESOLVER.md', 'CLAUDE.md', 'AGENTS.md'] as const;
 
 /**
  * Internal classifier. Returns null when the path IS syncable, or a tagged
