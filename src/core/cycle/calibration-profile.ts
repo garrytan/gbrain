@@ -356,7 +356,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
          active_bias_tags, model_id, cost_usd, judge_model_agreement
        ) VALUES ($1, $2, now(), false,
                  $3, $4, $5, $6, $7,
-                 $8::jsonb, $9::text[],
+                 $8::text::jsonb, $9::text[],
                  $10, $11,
                  $12::text[], $13, NULL, NULL)`,
       [
