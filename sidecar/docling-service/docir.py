@@ -65,14 +65,24 @@ def _detect_format(filename: str, hint: Optional[str]) -> str:
     return "pdf"
 
 
-def _locator_from_prov(prov: Any, fmt: str) -> dict:
+def _locator_from_prov(prov: Any, fmt: str, sheet_names: Optional[list] = None) -> dict:
     loc = _empty_locator()
     if not prov:
         return loc
     p = prov[0]  # DOCLING-API: ProvenanceItem
     page = getattr(p, "page_no", None)
     if page is not None:
-        loc["slide" if fmt == "pptx" else "page"] = int(page)
+        if fmt == "pptx":
+            loc["slide"] = int(page)
+        elif fmt == "xlsx":
+            # Docling maps each sheet to a 1-based page_no; resolve to the sheet
+            # NAME when the workbook is readable, else fall back to the index.
+            idx = int(page)
+            loc["sheet"] = (
+                sheet_names[idx - 1] if sheet_names and 1 <= idx <= len(sheet_names) else str(idx)
+            )
+        else:
+            loc["page"] = int(page)
     bbox = getattr(p, "bbox", None)
     if bbox is not None:
         try:
@@ -160,6 +170,20 @@ def document_to_docir(
     doc = result.document
     fmt = _detect_format(filename, format_hint)
 
+    # xlsx: resolve sheet index → sheet name (Docling exposes only a 1-based
+    # page_no per sheet, not the name). Best-effort; falls back to the index.
+    sheet_names: Optional[list] = None
+    if fmt == "xlsx":
+        try:
+            import io as _io
+            import openpyxl  # available via Docling's xlsx backend
+
+            _wb = openpyxl.load_workbook(_io.BytesIO(data), read_only=True)
+            sheet_names = list(_wb.sheetnames)
+            _wb.close()
+        except Exception:
+            sheet_names = None
+
     blocks: list[dict] = []
     assets: list[dict] = []
     warnings: list[str] = []
@@ -180,7 +204,7 @@ def document_to_docir(
             "markdown": _item_markdown(item, doc),
             "text": getattr(item, "text", "") or "",
             "order": order,
-            "locator": _locator_from_prov(getattr(item, "prov", None), fmt),
+            "locator": _locator_from_prov(getattr(item, "prov", None), fmt, sheet_names),
             "table": None,
             "asset_ref": None,
         }
