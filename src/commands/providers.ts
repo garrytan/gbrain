@@ -8,7 +8,8 @@
 import { listRecipes, getRecipe } from '../core/ai/recipes/index.ts';
 import { configureGateway, embedOne, isAvailable as gwIsAvailable, chat as gwChat } from '../core/ai/gateway.ts';
 import { probeOllama, probeLMStudio } from '../core/ai/probes.ts';
-import { loadConfig } from '../core/config.ts';
+import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
+import { loadConfig, type GBrainConfig } from '../core/config.ts';
 import { AIConfigError, AITransientError } from '../core/ai/errors.ts';
 import type { Recipe } from '../core/ai/types.ts';
 
@@ -33,15 +34,7 @@ interface ProviderOption {
 
 function configureFromEnv(): void {
   const config = loadConfig();
-  configureGateway({
-    embedding_model: config?.embedding_model,
-    embedding_dimensions: config?.embedding_dimensions,
-    expansion_model: config?.expansion_model,
-    chat_model: config?.chat_model,
-    chat_fallback_chain: config?.chat_fallback_chain,
-    base_urls: config?.provider_base_urls,
-    env: { ...process.env },
-  });
+  configureGateway(buildGatewayConfig((config ?? {}) as GBrainConfig));
 }
 
 export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): boolean {
@@ -183,14 +176,14 @@ async function runTest(args: string[]): Promise<void> {
     if (tpArg === 'embedding') {
       const dims = recipe?.touchpoints.embedding?.default_dims ?? 1536;
       configureGateway({
+        ...buildGatewayConfig((loadConfig() ?? {}) as GBrainConfig),
         embedding_model: modelArg,
         embedding_dimensions: dims,
-        env: { ...process.env },
       });
     } else {
       configureGateway({
+        ...buildGatewayConfig((loadConfig() ?? {}) as GBrainConfig),
         chat_model: modelArg,
-        env: { ...process.env },
       });
     }
     void modelId; // intentionally unused but preserved for readability
