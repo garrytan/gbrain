@@ -17,7 +17,12 @@
  * to pass additional provider options (e.g. for caching), a SystemModelMessage".
  */
 import { describe, test, expect } from 'bun:test';
-import { buildChatCacheArgs, openAIPromptCacheKey, type ChatToolDef } from '../src/core/ai/gateway.ts';
+import {
+  buildChatCacheArgs,
+  buildOpenAIProviderOptions,
+  openAIPromptCacheKey,
+  type ChatToolDef,
+} from '../src/core/ai/gateway.ts';
 
 const EPHEMERAL = { anthropic: { cacheControl: { type: 'ephemeral' } } };
 
@@ -94,5 +99,29 @@ describe('openAIPromptCacheKey — prompt_cache_key routing hint', () => {
 
   test('no system and no explicit key → undefined (do not pin one-off requests)', () => {
     expect(openAIPromptCacheKey({ system: undefined, toolNames: ['search'] })).toBeUndefined();
+  });
+});
+
+describe('buildOpenAIProviderOptions — recipe gate (the chat() wiring)', () => {
+  test('native-openai with a system prompt → { openai: { promptCacheKey } }', () => {
+    const opts = buildOpenAIProviderOptions({ implementation: 'native-openai', system: 'SYS', toolNames: ['search'] });
+    expect(opts?.openai?.promptCacheKey).toMatch(/^gbrain:[0-9a-f]{32}$/);
+  });
+
+  test('native-openai with an explicit key passes it through', () => {
+    const opts = buildOpenAIProviderOptions({ implementation: 'native-openai', system: 'SYS', explicit: 'session-42' });
+    expect(opts).toEqual({ openai: { promptCacheKey: 'session-42' } });
+  });
+
+  test('native-anthropic → undefined (never sends promptCacheKey to Anthropic)', () => {
+    expect(buildOpenAIProviderOptions({ implementation: 'native-anthropic', system: 'SYS' })).toBeUndefined();
+  });
+
+  test('openai-compatible (litellm/azure) → undefined (provider ignores providerOptions.openai)', () => {
+    expect(buildOpenAIProviderOptions({ implementation: 'openai-compatible', system: 'SYS' })).toBeUndefined();
+  });
+
+  test('native-openai but nothing stable to key on → undefined (no empty options object)', () => {
+    expect(buildOpenAIProviderOptions({ implementation: 'native-openai', system: undefined })).toBeUndefined();
   });
 });

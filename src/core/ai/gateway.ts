@@ -2560,7 +2560,7 @@ async function classifyGatewayGuardrail(input: {
  * path. Matches the `ChatOpts.cacheSystem` contract ("system prompt + last
  * tool def").
  *
- * @internal exported for test/gateway-prompt-cache.test.ts; not public API.
+ * @internal exported for tests; not part of the public gateway API.
  */
 export function buildChatCacheArgs(args: {
   useCache: boolean;
@@ -2609,7 +2609,7 @@ export function buildChatCacheArgs(args: {
  * undefined when there's nothing stable to key on (no system, no explicit key),
  * so we don't pin one-off requests to a single engine.
  *
- * @internal exported for test/gateway-prompt-cache.test.ts; not public API.
+ * @internal exported for tests; not part of the public gateway API.
  */
 export function openAIPromptCacheKey(args: {
   system?: string;
@@ -2620,6 +2620,33 @@ export function openAIPromptCacheKey(args: {
   if (!args.system) return undefined;
   const basis = `${args.system} ${(args.toolNames ?? []).slice().sort().join(',')}`;
   return `gbrain:${createHash('sha256').update(basis).digest('hex').slice(0, 32)}`;
+}
+
+/**
+ * Wrap `openAIPromptCacheKey()` in the call-level `providerOptions.openai`
+ * envelope — but ONLY for the `native-openai` provider. The openai-compatible
+ * path (litellm / azure / groq / openrouter) routes through a provider that
+ * ignores `providerOptions.openai`, and Anthropic / Google read nothing here.
+ * Returns undefined when there's no key to set, so generateText never gets an
+ * empty options object. Pairs with `buildChatCacheArgs` (the Anthropic side);
+ * together they keep the per-provider cache wiring in named, tested helpers
+ * instead of an inline branch in `chat()`.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function buildOpenAIProviderOptions(args: {
+  implementation: string;
+  system?: string;
+  toolNames?: string[];
+  explicit?: string;
+}): Record<string, any> | undefined {
+  if (args.implementation !== 'native-openai') return undefined;
+  const promptCacheKey = openAIPromptCacheKey({
+    system: args.system,
+    toolNames: args.toolNames,
+    explicit: args.explicit,
+  });
+  return promptCacheKey ? { openai: { promptCacheKey } } : undefined;
 }
 
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
@@ -2709,9 +2736,8 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;
   const useCache = !!opts.cacheSystem && supportsCache;
 
-  // Build messages. Anthropic prompt-cache markers ride on system + last tool
-  // via providerOptions; the AI SDK accepts the system as a string for
-  // generateText, so cache markers go through providerOptions.anthropic.
+  const toolDefs = opts.tools ?? [];
+
   // Anthropic prompt-cache breakpoints ride on per-message / per-tool
   // providerOptions — the ONLY place @ai-sdk/anthropic reads cache_control.
   // (Top-level generateText `providerOptions` is NOT a cache site; see
@@ -2719,24 +2745,17 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const { system: systemArg, tools } = buildChatCacheArgs({
     useCache,
     system: opts.system,
-    tools: opts.tools ?? [],
+    tools: toolDefs,
   });
 
-  // OpenAI prompt_cache_key (routing hint). Native-OpenAI only — the
-  // openai-compatible path (litellm/azure) uses a provider that does not read
-  // `providerOptions.openai`. Unlike Anthropic's per-message cache_control,
-  // this IS a call-level provider option.
-  const providerOptions =
-    recipe.implementation === 'native-openai'
-      ? (() => {
-          const promptCacheKey = openAIPromptCacheKey({
-            system: opts.system,
-            toolNames: (opts.tools ?? []).map(t => t.name),
-            explicit: opts.cacheKey,
-          });
-          return promptCacheKey ? { openai: { promptCacheKey } } : undefined;
-        })()
-      : undefined;
+  // OpenAI prompt_cache_key (routing hint), native-openai only. See
+  // buildOpenAIProviderOptions for the provider gate + rationale.
+  const providerOptions = buildOpenAIProviderOptions({
+    implementation: recipe.implementation,
+    system: opts.system,
+    toolNames: toolDefs.map(t => t.name),
+    explicit: opts.cacheKey,
+  });
 
   let _budgetRecorded = false;
   const _recordBudget = (modelLabel: string, inputTokens: number, outputTokens: number): void => {
