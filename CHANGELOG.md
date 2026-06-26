@@ -2,6 +2,25 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.27.0] - 2026-06-26
+
+**Prompt caching actually works now. The Anthropic cache markers gbrain thought it was setting were landing where the SDK never looks, so every "cached" chat call quietly paid full price.** The chat gateway set the Anthropic `cache_control` marker on the top-level `generateText` call options. The `@ai-sdk/anthropic` provider only reads cache markers from each system message's and each tool's own `providerOptions`, and a plain `system:` string reaches the provider with none attached. So every caller that asked for caching (`enrich`, page summaries, skillopt, the subagent tool loop's gateway path) wrote zero cache breakpoints while the usage telemetry kept reading 0 cache tokens, so nothing looked broken. This release puts the markers where the provider reads them: the system prompt as a structured message carrying `providerOptions`, plus a breakpoint on the last tool definition, which caches the whole tools-plus-system prefix.
+
+It also wires up OpenAI's `prompt_cache_key`. OpenAI caches prefixes automatically, but a stable key keeps requests that share a prefix on the same inference engine and lifts the hit rate. gbrain now derives one from the system prompt and tool set for native-OpenAI chat models.
+
+Nothing to configure. The savings land on your next `gbrain enrich` or agent run.
+
+### Fixed
+- Anthropic prompt caching was a silent no-op in the chat gateway: `cache_control` was placed on the top-level `generateText` options, which `@ai-sdk/anthropic` never reads. Markers now ride on the system message + last tool def, where the provider reads them, restoring the documented `cacheSystem` behavior. Every `cacheSystem`-enabled path (enrich, page summaries, skillopt, the gateway tool loop) was affected.
+
+### Added
+- OpenAI `prompt_cache_key` routing hint for native-OpenAI chat models, derived from the system prompt + tool names (overridable via `ChatOpts.cacheKey`). Keeps shared-prefix requests on the same engine to raise OpenAI's automatic prefix-cache hit rate.
+- `test/gateway-prompt-cache.test.ts` pins cache-marker placement and routing-key derivation so the silent no-op cannot regress.
+
+### To take advantage of v0.42.27.0
+
+Nothing to run. Anthropic-backed brains start getting real cache reads on the next cached call (`gbrain enrich`, agent runs, page summaries). To verify, watch the usage telemetry: `cache_read_tokens` should be non-zero on the second call that shares a system prompt.
+
 ## [0.42.26.0] - 2026-06-04
 
 **The Supabase setup docs now match the current dashboard and call out the one thing that actually breaks on IPv4 hosts.** The connection-string instructions were written for the old Supabase UI (two options under Project Settings) and used inconsistent pooler names: some docs said "Connection pooler," others mislabeled port 6543 as the "Session pooler," and a few carried a stale warning to avoid the transaction pooler entirely. The current Supabase UI puts the string under **Connect** in the top navigation with three options (Direct, Transaction pooler, Session pooler). gbrain is tuned for the **Transaction pooler** (port 6543): it disables prepared statements there and routes migrations, DDL, and worker locks to a separate direct connection. This release makes every setup surface say that, consistently.
