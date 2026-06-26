@@ -56,6 +56,12 @@ def _detect_format(filename: str, hint: Optional[str]) -> str:
         (".docx", "docx"),
         (".pptx", "pptx"),
         (".xlsx", "xlsx"),
+        (".odt", "odt"),
+        (".ods", "ods"),
+        (".odp", "odp"),
+        (".html", "html"),
+        (".htm", "html"),
+        (".csv", "csv"),
         (".png", "image"),
         (".jpg", "image"),
         (".jpeg", "image"),
@@ -72,11 +78,11 @@ def _locator_from_prov(prov: Any, fmt: str, sheet_names: Optional[list] = None) 
     p = prov[0]  # DOCLING-API: ProvenanceItem
     page = getattr(p, "page_no", None)
     if page is not None:
-        if fmt == "pptx":
+        if fmt in ("pptx", "odp"):
             loc["slide"] = int(page)
-        elif fmt == "xlsx":
+        elif fmt in ("xlsx", "ods"):
             # Docling maps each sheet to a 1-based page_no; resolve to the sheet
-            # NAME when the workbook is readable, else fall back to the index.
+            # NAME when the workbook is readable (xlsx only), else the index.
             idx = int(page)
             loc["sheet"] = (
                 sheet_names[idx - 1] if sheet_names and 1 <= idx <= len(sheet_names) else str(idx)

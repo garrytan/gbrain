@@ -15,7 +15,7 @@
 
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { extname, basename } from 'node:path';
+import { basename } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { ChunkInput } from '../types.ts';
 import type { ImportResult } from '../import-file.ts';
@@ -27,11 +27,9 @@ import { tableChunksFor } from './table.ts';
 import { multimodalChunks } from './multimodal.ts';
 import { DOCIR_VERSION, type DocIR } from './types.ts';
 
-const OFFICE_EXTS = new Set(['.pdf', '.docx', '.pptx', '.xlsx']);
-
-export function isOfficeFilePath(relativePath: string): boolean {
-  return OFFICE_EXTS.has(extname(relativePath).toLowerCase());
-}
+// Office extensions + the predicate live in a dependency-light module so the
+// collection walker + dispatch can import them without the adapter's graph.
+export { isOfficeFilePath, OFFICE_EXTS } from './extensions.ts';
 
 /** Deterministic slug that KEEPS the extension so report.pdf can't collide
  *  with report.md or report.docx. */

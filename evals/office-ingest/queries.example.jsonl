@@ -1,0 +1,2 @@
+{"query": "revenue", "expect_substring": "Revenue"}
+{"query": "250", "expect_substring": "250"}

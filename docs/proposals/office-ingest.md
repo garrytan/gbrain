@@ -275,7 +275,7 @@ ingest.office.max_file_mb           int       默认 50（§13）
 ## 13. 性能 / 成本 / 上限
 
 - **大文件**：逐页流式处理 + 有界并发 + `progress.ts` 心跳；`ingest.office.max_file_mb` 闸门（默认 50MB，仿 transcription 的 25MB 模式）。M0 先搭骨架，M1 OCR 时补满逐页渲染。
-- **多模态成本**：选择性默认（仅 figure + 视觉密集 slide）；过 spend 闸门；量级参考 embedding-pricing（千图量级 ≈ 数元，一次性）。
+- **多模态成本（已核实，2026-06）**：图像嵌入走 Voyage `voyage-multimodal-3`，落 `embedding_image`（1024d）。**成本控制杠杆 = `ingest.office.multimodal`**（`off` / `selective`默认 / `all`）——`selective` 只嵌 figure + 视觉密集页；`off` 完全不嵌（零成本）。**诚实更正**：import 时的**内联**嵌入（文本走 ollama、图走 Voyage）**不经过** `gbrain embed` 的交互式 spend 闸门（`spend.posture` 那个是 bulk 补嵌路径的）；所以多模态实际的成本闸门是上面这个 config 键 + Voyage 免费额度，**不是** spend gate。**Voyage 免费额度**：每账号 200M text tokens + 150B pixels（≈ 7.5 万页图），个人用基本花不完；超出后 \$0.60/十亿像素。
 - **表摘要成本**：chat 调用，受 spend 控制 + 降级链兜底。
 
 ## 14. 必须遵守的 GBrain 不变式

@@ -14,6 +14,7 @@ import type { ChunkInput, PageInput, PageType } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { logSlugFallback } from './audit-slug-fallback.ts';
+import { isOfficeFilePath } from './office/extensions.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
 import { assessContentSanity, ContentSanityBlockError } from './content-sanity.ts';
 import { loadOperatorLiterals } from './content-sanity-literals.ts';
@@ -938,8 +939,7 @@ export async function importFromFile(
   // path. MUST come BEFORE the UTF-8 read below — office files are binary and
   // readFileSync(.., 'utf-8') would corrupt them. Dynamic import keeps the
   // office stack out of plain-markdown imports.
-  const officeExt = relativePath.slice(relativePath.lastIndexOf('.')).toLowerCase();
-  if (officeExt === '.pdf' || officeExt === '.docx' || officeExt === '.pptx' || officeExt === '.xlsx') {
+  if (isOfficeFilePath(relativePath)) {
     const { importOfficeFile } = await import('./office/adapter.ts');
     return importOfficeFile(engine, filePath, relativePath, {
       noEmbed: opts.noEmbed,
