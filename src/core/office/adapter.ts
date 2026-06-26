@@ -7,9 +7,11 @@
 //
 // Spec: docs/proposals/office-ingest.md §8.
 //
-// M0 scope: PDF/DOCX/PPTX/XLSX text layer. Deferred (column/sidecar already in
-// place): source_locator PERSISTENCE (needs upsertChunks JSONB threading +
-// engine-parity e2e), LLM table summaries, selective multimodal embedding.
+// M0 scope (landed): PDF/DOCX/PPTX/XLSX text layer, LLM table summaries +
+// row-blocks, source_locator persistence (cross-engine JSONB path), selective
+// multimodal embedding (no-op until the sidecar emits images), and detached
+// sidecar auto-start. Deferred to later milestones: OCR (M1), conditional
+// Facts, Postgres engine-parity e2e.
 
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -22,6 +24,7 @@ import { chunkDocBlocks } from '../chunkers/doc-block.ts';
 import { resolveOfficeConfig } from './config.ts';
 import { parseViaSidecar } from './sidecar-client.ts';
 import { tableChunksFor } from './table.ts';
+import { multimodalChunks } from './multimodal.ts';
 import { DOCIR_VERSION, type DocIR } from './types.ts';
 
 const OFFICE_EXTS = new Set(['.pdf', '.docx', '.pptx', '.xlsx']);
@@ -83,6 +86,13 @@ export async function importOfficeFile(
     return { slug, status: 'skipped', chunks: 0 };
   }
 
+  // Auto-start the Docling sidecar if it isn't already serving (best-effort;
+  // spawns a detached uvicorn that later imports reuse). Skipped in tests.
+  if (!opts._parseForTest) {
+    const { ensureSidecarUp } = await import('./sidecar-manage.ts');
+    await ensureSidecarUp({ url: cfg.url, python: cfg.python }, (l) => console.error(`[docling] ${l}`));
+  }
+
   // Parse via the Docling sidecar (or the test seam).
   let docir: DocIR;
   try {
@@ -103,27 +113,42 @@ export async function importOfficeFile(
   const tableGroups = await Promise.all(
     docir.blocks.filter((b) => b.type === 'table').map((b) => tableChunksFor(b, cfg)),
   );
-  const officeChunks = [...prose, ...tableGroups.flat()];
+  const textChunks = [...prose, ...tableGroups.flat()]; // OfficeChunk[] (carry source_locator)
+  const imageChunks = await multimodalChunks(docir, cfg); // selective visual embedding (no-op until images flow)
 
-  // Persist text as 'compiled_truth' (standard searchable text chunks); the
-  // office-specific chunk_source tags are cosmetic for M0. source_locator is
-  // written separately below via the cross-engine-safe JSONB path.
-  const chunks: ChunkInput[] = officeChunks.map((c, i) => ({
-    chunk_index: i,
-    chunk_text: c.chunk_text,
-    chunk_source: 'compiled_truth' as const,
-  }));
+  // Assemble ChunkInput[] + aligned source locators. Text chunks persist as
+  // 'compiled_truth'; image chunks carry embedding_image (modality 'image').
+  // source_locator is written separately below via the cross-engine-safe path.
+  const chunks: ChunkInput[] = [];
+  const locators: Array<{ idx: number; loc: Record<string, unknown> }> = [];
+  for (const c of textChunks) {
+    locators.push({ idx: chunks.length, loc: c.source_locator as unknown as Record<string, unknown> });
+    chunks.push({ chunk_index: chunks.length, chunk_text: c.chunk_text, chunk_source: 'compiled_truth' });
+  }
+  for (const ic of imageChunks) {
+    locators.push({ idx: chunks.length, loc: ic.loc as unknown as Record<string, unknown> });
+    chunks.push({
+      chunk_index: chunks.length,
+      chunk_text: ic.chunk_text,
+      chunk_source: 'image_asset',
+      modality: 'image',
+      embedding_image: ic.embedding_image,
+    });
+  }
 
-  // Embed (best-effort — matches importCodeFile's tolerance).
-  if (!opts.noEmbed && chunks.length > 0) {
-    try {
-      const embeddings = await embedBatch(chunks.map((c) => c.chunk_text));
-      for (let i = 0; i < chunks.length; i++) {
-        chunks[i]!.embedding = embeddings[i];
-        chunks[i]!.token_count = Math.ceil(chunks[i]!.chunk_text.length / 4);
+  // Embed text chunks only (image chunks already carry embedding_image).
+  if (!opts.noEmbed) {
+    const textIdx = chunks.map((c, i) => (c.chunk_source === 'image_asset' ? -1 : i)).filter((i) => i >= 0);
+    if (textIdx.length > 0) {
+      try {
+        const embeddings = await embedBatch(textIdx.map((i) => chunks[i]!.chunk_text));
+        textIdx.forEach((i, j) => {
+          chunks[i]!.embedding = embeddings[j];
+          chunks[i]!.token_count = Math.ceil(chunks[i]!.chunk_text.length / 4);
+        });
+      } catch (e) {
+        console.warn(`[gbrain] embedding failed for office file ${slug}: ${e instanceof Error ? e.message : String(e)}`);
       }
-    } catch (e) {
-      console.warn(`[gbrain] embedding failed for office file ${slug}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -156,12 +181,8 @@ export async function importOfficeFile(
 
   // Per-chunk source locators via the cross-engine-safe JSONB path (best-effort:
   // a locator write failure must not fail an otherwise-successful import).
-  if (chunks.length > 0) {
+  if (locators.length > 0) {
     try {
-      const locators = officeChunks.map((c, i) => ({
-        idx: i,
-        loc: c.source_locator as unknown as Record<string, unknown>,
-      }));
       await engine.upsertChunkLocators(slug, locators, txOpts);
     } catch (e) {
       console.warn(`[gbrain] source_locator write failed for ${slug}: ${e instanceof Error ? e.message : String(e)}`);

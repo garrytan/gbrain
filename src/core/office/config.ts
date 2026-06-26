@@ -11,6 +11,8 @@ export interface OfficeConfig {
   enabled: boolean;
   /** ingest.docling.url — sidecar base URL. */
   url: string;
+  /** ingest.docling.python — venv python path; null → derived from the sidecar dir. */
+  python: string | null;
   /** ingest.docling.max_concurrency — gbrain-side cap on in-flight /parse. */
   maxConcurrency: number;
   /** ingest.office.chunk_tokens — target chunk size (tokens). */
@@ -49,6 +51,7 @@ export async function resolveOfficeConfig(engine: BrainEngine): Promise<OfficeCo
   const [
     enabled,
     url,
+    python,
     maxConcurrency,
     chunkTokens,
     tableSummaryModel,
@@ -58,6 +61,7 @@ export async function resolveOfficeConfig(engine: BrainEngine): Promise<OfficeCo
   ] = await Promise.all([
     getBool(engine, 'ingest.docling.enabled', false),
     engine.getConfig('ingest.docling.url'),
+    engine.getConfig('ingest.docling.python'),
     getInt(engine, 'ingest.docling.max_concurrency', DEFAULTS.maxConcurrency),
     getInt(engine, 'ingest.office.chunk_tokens', DEFAULTS.chunkTokens),
     engine.getConfig('ingest.office.table_summary.model'),
@@ -74,6 +78,7 @@ export async function resolveOfficeConfig(engine: BrainEngine): Promise<OfficeCo
   return {
     enabled,
     url: (url && url.trim()) || DEFAULTS.url,
+    python: python && python.trim() ? python : null,
     maxConcurrency,
     chunkTokens,
     tableSummaryModel,

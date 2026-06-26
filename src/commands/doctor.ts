@@ -5411,6 +5411,28 @@ export async function buildChecks(
     checks.push({ name: 'embeddings', status: 'warn', message: 'Could not check embedding health' });
   }
 
+  // 8a'. v0.43 office-ingest: Docling sidecar health — only when office ingest
+  //      is enabled; best-effort so doctor never fails on the probe.
+  progress.heartbeat('docling_service');
+  try {
+    const { resolveOfficeConfig } = await import('../core/office/config.ts');
+    const officeCfg = await resolveOfficeConfig(engine);
+    if (officeCfg.enabled) {
+      const { sidecarHealthy } = await import('../core/office/sidecar-client.ts');
+      const up = await sidecarHealthy(officeCfg.url, 4_000);
+      checks.push({
+        name: 'docling_service',
+        status: up ? 'ok' : 'warn',
+        message: up
+          ? `Docling sidecar reachable at ${officeCfg.url}.`
+          : `Office ingest enabled but Docling sidecar unreachable at ${officeCfg.url}. ` +
+            `Start it: cd sidecar/docling-service && uvicorn app:app --port 8765 --workers 1`,
+      });
+    }
+  } catch {
+    /* office config / sidecar probe best-effort — never fail doctor */
+  }
+
   // 8b. Embedding provider eval — live smoke test of the configured provider.
   //     Verifies: correct model, API key works, dimensions match config, DB column matches.
   progress.heartbeat('embedding_provider');

@@ -20,6 +20,14 @@ adapter. See `docs/proposals/office-ingest.md` §6–§7 for the spec.
 
 ## Setup (run once)
 
+One command from anywhere in the repo:
+
+```bash
+gbrain ingest setup-docling     # creates .venv + installs Docling
+```
+
+Or manually:
+
 ```bash
 cd sidecar/docling-service
 python -m venv .venv
@@ -29,7 +37,13 @@ pip install -r requirements.txt   # pulls Docling + torch — several GB; first 
 
 ## Run
 
+`gbrain import` auto-starts a detached sidecar when `ingest.docling.enabled` is
+true (the warm, model-loaded server is reused by later imports), so you usually
+don't run this by hand. To start it explicitly:
+
 ```bash
+gbrain ingest start
+# …or directly:
 uvicorn app:app --host 127.0.0.1 --port 8765 --workers 1
 ```
 

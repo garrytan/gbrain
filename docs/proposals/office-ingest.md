@@ -304,6 +304,17 @@ ingest.office.max_file_mb           int       默认 50（§13）
 - **AC4**：Given 一份含表格的文档，When 导入，Then 存在 `table_summary` + `table_rows` chunk；Given 无 chat key，Then 摘要自动降级为模板且导入成功。
 - **AC5**：Given 任意改动，When CI（含 engine-parity / schema-bootstrap / jsonb 守护），Then 全绿；pglite 与 postgres 行为一致。
 
+**实现状态（M0 已落地，分支 `feature/office-ingest-m0`）**：DocIR 契约 v1 + types；
+doc-block chunker；`source_locator` 迁移(v120) + 跨引擎 JSONB 写入(`upsertChunkLocators`，
+pglite/postgres 对等)；表格 handler（LLM 摘要 + 无 key 时模板降级 + 行块）；
+`importOfficeFile` + import-file 分发；office config keys；FastAPI sidecar；
+选择性多模态嵌入（选择启发式已单测；待 sidecar 出图时生效）；sidecar 监督
+(`src/core/docling-supervisor.ts`，抖动退避重启) + 导入时分离式自动拉起
+(`ensureSidecarUp`，复用热进程) + `gbrain ingest setup-docling|start` 命令 +
+doctor `docling_service` 健康检查。**验证**：20 个单测通过、typecheck 干净、CLI 命令
+端到端可用。**仍待**：真实 Docling 全链 e2e（装好依赖跑一遍）、Postgres engine-parity
+e2e、OCR(M1)/条件 Facts(M4)。
+
 ## 17. 分期路线
 
 | 阶段 | 范围 | 出口 |
