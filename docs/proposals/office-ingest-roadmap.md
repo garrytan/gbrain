@@ -6,8 +6,15 @@
 
 > **✅ 状态(2026-06 更新):本路线图已全部执行完毕。** M0 + R1(a/b) + R2 + R3 +
 > Postgres 引擎对等 e2e 全部落地并验证(PGLite 真实全链路 + 真实 Postgres `2 pass / 0 fail`),
-> 共 9 个提交(`857c4c61` → `bf1710f5`)。**下方 §2–§3、§5 是重规划当时的分析/计划快照
+> 共 11 个提交(`857c4c61` → `430a0dd0`)。**下方 §2–§3、§5 是重规划当时的分析/计划快照
 > (历史,保留以记录"为何这么分")**;每个里程碑的最终落地状态见 §4 各节的「实现状态」注记。
+>
+> **命令层可达性修复(接入真实脑子时发现)**:M0–R3 的测试都直接调 `importOfficeFile`,绕过
+> 了命令层,漏掉两个阻断真实可用的缺口——① `gbrain import`/`sync` 的文件收集 walker
+> (`isCollectibleForWalker`)在任何 strategy 下都**不收 office 扩展名**(adapter 通但文件进不
+> 来,收集到 0 个);② office 配置键没进 `config set` 白名单(要 `--force`)。均已修复(加
+> `officeOn` 穿线 + 注册 §10 键)。**已在真实 `~/.gbrain` 端到端验证**:`gbrain import` 收 PDF
+> → Docling → Voyage 嵌入 `embedding_image` → 文搜图命中(cos_dist 0.45)。
 
 ## 1. 为什么要重规划
 
