@@ -36,7 +36,7 @@ import {
 } from './embedding-context.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { normalizeAliasList } from './search/alias-normalize.ts';
-import { isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { isUndefinedTableError, warnOncePerProcess, validateSlug } from './utils.ts';
 import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
 import { runGuardrails } from './guardrails.ts';
 
@@ -290,6 +290,15 @@ export async function importFromContent(
   // silently fabricated a duplicate at (default, slug) — causing later
   // bare-slug subqueries (getTags, deleteChunks, etc.) to crash with 21000.
   const sourceId = opts.sourceId;
+  // Canonicalize the slug ONCE up front so every per-page write in this import
+  // agrees on it. putPage lowercases via validateSlug, but the tag/link/timeline
+  // reconcilers (tx.addTag, addLink, addTimelineEntry) query the slug as passed.
+  // A mixed-case slug from a remote put_page (e.g. 'Projects/Team-Wiki/Roadmap')
+  // therefore stored the page as 'projects/team-wiki/roadmap' then threw
+  // `addTag failed: page "…" not found`, rolling back the whole write. Disk
+  // imports already pass slugifyPath() output (lowercase), so this is a no-op
+  // for them and idempotent with putPage's own internal call.
+  slug = validateSlug(slug);
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
