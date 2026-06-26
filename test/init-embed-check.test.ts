@@ -113,6 +113,21 @@ describe('runInitEmbedCheck — config diagnose', () => {
       expect(warned).toHaveLength(0);
     });
   });
+
+  test('init diagnose uses buildGatewayConfig for non-OpenAI file-plane keys', async () => {
+    await withEnv({ ZEROENTROPY_API_KEY: undefined }, async () => {
+      const { warn, warned } = capture();
+      const r = await runInitEmbedCheck({
+        resolvedModel: 'zeroentropyai:zembed-1',
+        resolvedDim: 2560,
+        loadFileConfig: () => ({ zeroentropy_api_key: 'ze-from-config-file' } as GBrainConfig),
+        skipLiveProbe: true,
+        warn,
+      });
+      expect(r.ok).toBe(true);
+      expect(warned).toHaveLength(0);
+    });
+  });
 });
 
 describe('runInitEmbedCheck — live probe (best-effort)', () => {
