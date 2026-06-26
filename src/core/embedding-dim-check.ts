@@ -19,6 +19,7 @@ import { gbrainPath } from './config.ts';
 import { resolveRecipe } from './ai/model-resolver.ts';
 import type { Recipe } from './ai/types.ts';
 import { AIConfigError } from './ai/errors.ts';
+import { embeddingProviderContract } from './ai/embedding-provider-contract.ts';
 import {
   supportsVoyageOutputDimension,
   isValidVoyageOutputDim,
@@ -456,7 +457,11 @@ function isCustomDimValidForProvider(
   // explicit --embedding-dimensions value is the schema contract, not a
   // Matryoshka/custom-width request. Positive integer and pgvector max guards
   // have already run in validateDimAgainstTouchpoint().
-  if (recipe.touchpoints.embedding?.user_provided_models === true) {
+  const embeddingTouchpoint = recipe.touchpoints.embedding;
+  if (
+    embeddingTouchpoint &&
+    embeddingProviderContract(recipe, modelId, embeddingTouchpoint).userProvidedModels
+  ) {
     return { valid: true, error: '' };
   }
 

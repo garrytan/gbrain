@@ -52,4 +52,20 @@ describe('user-provided OpenAI-compatible embedding models', () => {
       recipeId: 'litellm',
     });
   });
+
+  test('llama-server embedding diagnosis accepts the configured explicit model', () => {
+    configureGateway({
+      embedding_model: 'llama-server:bge-small-en-v1.5',
+      embedding_dimensions: 384,
+      base_urls: { 'llama-server': 'http://127.0.0.1:8080/v1' },
+      env: {},
+    });
+
+    expect(diagnoseEmbedding()).toEqual({
+      ok: true,
+      model: 'llama-server:bge-small-en-v1.5',
+      provider: 'llama-server',
+      recipeId: 'llama-server',
+    });
+  });
 });

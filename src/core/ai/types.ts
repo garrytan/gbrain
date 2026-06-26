@@ -80,6 +80,8 @@ export interface EmbeddingTouchpoint {
    * llama-server (and any future "bring your own backend" recipe).
    *
    * Consumers:
+   *  - `embedding-provider-contract.ts` centralizes the runtime contract for
+   *    schema dimension checks and gateway embedding diagnostics.
    *  - `recipes-contract.test.ts` permits `models.length === 0` only when
    *    this flag is true.
    *  - `gateway.ts` skips the model-list-must-include-modelId check.
