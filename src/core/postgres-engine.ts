@@ -4379,11 +4379,18 @@ export class PostgresEngine implements BrainEngine {
 
   async searchTakesVector(
     embedding: Float32Array,
-    opts: SearchOpts & { takesHoldersAllowList?: string[] } = {},
+    opts: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[] } = {},
   ): Promise<TakeHit[]> {
     const sql = this.sql;
     const limit = clampSearchLimit(opts.limit, 30, 100);
     const vec = `[${Array.from(embedding).join(',')}]`;
+    // #2200-class: source scope via the take's page.source_id (array wins over scalar).
+    const sourceFilter =
+      opts.sourceIds && opts.sourceIds.length > 0
+        ? sql`AND p.source_id = ANY(${opts.sourceIds}::text[])`
+        : opts.sourceId
+          ? sql`AND p.source_id = ${opts.sourceId}`
+          : sql``;
     const rows = await sql`
       SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
              t.claim, t.kind, t.holder, t.weight,
@@ -4396,6 +4403,7 @@ export class PostgresEngine implements BrainEngine {
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
         )
+        ${sourceFilter}
       ORDER BY t.embedding <=> ${vec}::vector
       LIMIT ${limit}
     `;

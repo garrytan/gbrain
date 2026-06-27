@@ -4334,7 +4334,7 @@ export class PGLiteEngine implements BrainEngine {
 
   async searchTakesVector(
     embedding: Float32Array,
-    opts: { limit?: number; takesHoldersAllowList?: string[] } = {},
+    opts: { limit?: number; takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[] } = {},
   ): Promise<TakeHit[]> {
     const limit = clampSearchLimit(opts.limit, 30, 100);
     const vec = `[${Array.from(embedding).join(',')}]`;
@@ -4347,9 +4347,18 @@ export class PGLiteEngine implements BrainEngine {
        WHERE t.active
          AND t.embedding IS NOT NULL
          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
+         AND ($4::text[] IS NULL OR p.source_id = ANY($4::text[]))
+         AND ($5::text   IS NULL OR p.source_id = $5::text)
        ORDER BY t.embedding <=> $1::vector
        LIMIT $3`,
-      [vec, opts.takesHoldersAllowList ?? null, limit]
+      [
+        vec,
+        opts.takesHoldersAllowList ?? null,
+        limit,
+        // #2200-class: source scope via the take's page.source_id (array wins over scalar).
+        opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null,
+        opts.sourceIds && opts.sourceIds.length > 0 ? null : (opts.sourceId ?? null),
+      ]
     );
     return rows as unknown as TakeHit[];
   }
