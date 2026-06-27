@@ -135,7 +135,9 @@ export function parseMarkdown(
   const type = coerceFrontmatterString(frontmatter.type) || (
     opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath)
   );
-  const title = coerceFrontmatterString(frontmatter.title).trim() || inferTitle(filePath);
+  const title = coerceFrontmatterString(frontmatter.title).trim()
+    || inferBodyH1(compiled_truth)
+    || inferTitle(filePath);
   const tags = extractTags(frontmatter);
   const slug = coerceFrontmatterString(frontmatter.slug) || inferSlug(filePath);
 
@@ -597,6 +599,11 @@ function inferTypeWithPrefixes(
     }
   }
   return 'concept';
+}
+
+function inferBodyH1(body: string): string {
+  const h1Match = body.match(/^#\s+(.+)$/m);
+  return h1Match?.[1]?.trim() || '';
 }
 
 function inferTitle(filePath?: string): string {
