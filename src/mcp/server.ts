@@ -94,24 +94,26 @@ export async function startMcpServer(engine: BrainEngine | EngineProvider) {
   // connection, so the context engine resolves salient entities THROUGH us over
   // a local unix socket rather than opening a second (impossible) connection.
   // Best-effort; failure to bind never blocks the MCP server.
-  // #2091: gated on engine readiness — the IPC handler needs a live engine,
-  // and binding the socket before the engine exists would advertise a
-  // resolver that can only fail. Chained off ensure() so it comes up as
-  // soon as the background connect lands; if connect fails, there is no
-  // IPC server, matching the pre-lazy behavior of a serve that never got
-  // this far.
+  // #2458: bind the PGLite resolve socket without eagerly connecting the
+  // engine. Durable MCP_STDIO=1 serve exists mainly to host this narrow
+  // resolver; if merely starting it boots PGLite, it monopolizes the single
+  // embedded connection and makes normal local CLI commands hang. The
+  // handler connects only for an actual resolve request, then releases the
+  // engine again in durable stdio mode so status/search/doctor can coexist.
   let resolveServer: import('node:net').Server | null = null;
   let resolveSocket: string | null = null;
-  void provider.ensure().then(async (liveEngine) => {
-    try {
-      const cfg = loadConfig();
-      if (cfg?.engine === 'pglite' && cfg.database_path) {
-        resolveSocket = resolveSocketPath(cfg.database_path);
-        const defaultSource = process.env.GBRAIN_SOURCE || 'default';
-        resolveServer = await startResolveIpcServer(
-          resolveSocket,
-          (req) =>
-            resolveEntitiesToPointers(
+  try {
+    const cfg = loadConfig();
+    if (cfg?.engine === 'pglite' && cfg.database_path) {
+      resolveSocket = resolveSocketPath(cfg.database_path);
+      const defaultSource = process.env.GBRAIN_SOURCE || 'default';
+      const releaseAfterResolve = process.env.MCP_STDIO === '1';
+      resolveServer = await startResolveIpcServer(
+        resolveSocket,
+        async (req) => {
+          const liveEngine = await provider.ensure();
+          try {
+            const block = await resolveEntitiesToPointers(
               liveEngine,
               req.sourceId || defaultSource,
               req.candidates ?? [],
@@ -120,20 +122,20 @@ export async function startMcpServer(engine: BrainEngine | EngineProvider) {
                 maxPointers: req.maxPointers,
                 suppression: req.suppression,
               },
-            ),
-          // The IPC resolve path IS the ambient reflex channel. Logging happens
-          // at DELIVERY (post-write), not inside the resolver — a block the
-          // client's 250ms budget abandoned was never injected, and counting it
-          // would corrupt the volunteered-vs-used precision stats (red-team).
-          (block) => logDeliveredReflexPointers(liveEngine, block.pointers),
-        );
-      }
-    } catch {
-      /* resolve IPC is best-effort; never block serve */
+            );
+            if (block) logDeliveredReflexPointers(liveEngine, block.pointers);
+            return block;
+          } finally {
+            if (releaseAfterResolve) {
+              try { await provider.disconnect(); } catch { /* best-effort release */ }
+            }
+          }
+        },
+      );
     }
-  }).catch(() => {
-    /* engine connect failure is surfaced per tool call; nothing to bind */
-  });
+  } catch {
+    /* resolve IPC is best-effort; never block serve */
+  }
 
   // Exit cleanly when MCP client disconnects (stdin EOF) or on signals.
   // Without this, orphaned serve processes accumulate and contend for the

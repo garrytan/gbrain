@@ -143,11 +143,20 @@ export async function runServe(
   // failure here is NOT fatal: ensure() clears its memo on rejection, so
   // the first tools/call retries and surfaces the real error (e.g. "lock
   // held by pid N") as a structured tool result instead of a dead server.
+  //
+  // Exception: MCP_STDIO=1 is the durable/gateway-wrapped stdio mode. In
+  // that topology stdin may be closed/idle for the process lifetime, and an
+  // eager warm would monopolize PGLite before any actual MCP tool call or
+  // reflex IPC request exists (#2458). Keep initialize fast and leave the
+  // engine disconnected until real work arrives.
   const log = opts.log ?? ((msg: string) => console.error(msg));
-  void provider.ensure().catch((err: unknown) => {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`[gbrain serve] engine connect failed (will retry on first tool call): ${msg}`);
-  });
+  const mcpStdio = opts.mcpStdio ?? process.env.MCP_STDIO === '1';
+  if (!mcpStdio) {
+    void provider.ensure().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`[gbrain serve] engine connect failed (will retry on first tool call): ${msg}`);
+    });
+  }
 
   const start = opts.startMcpServer ?? startMcpServer;
   await start(provider);

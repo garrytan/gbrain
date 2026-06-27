@@ -208,6 +208,24 @@ describe('runServe stdio with a lazy connector (#2091)', () => {
     expect(provider.peek()).toBe(asEngine(engine));
   });
 
+  test('MCP_STDIO durable mode does not warm/connect until real work arrives (#2458)', async () => {
+    const h = makeLazyHarness();
+    h.opts.mcpStdio = true;
+    let connects = 0;
+
+    await runServe(async () => {
+      connects += 1;
+      return asEngine(new StubEngine());
+    }, [], h.opts);
+
+    expect(h.startedWith.length).toBe(1);
+    const provider = h.startedWith[0] as EngineProvider;
+    expect(isEngineProvider(provider)).toBe(true);
+    expect(provider.peek()).toBeNull();
+    expect(provider.inFlight()).toBeNull();
+    expect(connects).toBe(0);
+  });
+
   test('shutdown racing the in-flight connect still disconnects the engine', async () => {
     // The production incident: host killed the serve while PGLite was
     // booting; disconnect ran before the lock was acquired, the in-flight
