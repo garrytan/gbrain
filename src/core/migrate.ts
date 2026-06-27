@@ -5367,6 +5367,32 @@ export const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    version: 120,
+    name: 'page_links_view_security_invoker',
+    // v0.42.x — close an RLS bypass on the page_links view. The view (v86)
+    // is gbrain's only view; Postgres creates views SECURITY DEFINER by
+    // default, so it reads the RLS-protected `links` table as its owner
+    // (postgres) and skips the row-level policy. On a managed Supabase brain
+    // the anon/authenticated roles could thus read every link's
+    // (from_page_id, to_page_id) through the view even when direct SELECT on
+    // `links` is denied. (Low blast radius — the projection is integer page
+    // IDs only, no titles or content — but it is a genuine bypass and the
+    // Supabase linter flags it ERROR-level: lint=0010_security_definer_view.)
+    //
+    // Fix: flip the view to security_invoker so it honors the caller's RLS.
+    // No effect on gbrain itself — it connects as the table-owning role,
+    // which bypasses RLS regardless; this only constrains untrusted roles.
+    // CREATE OR REPLACE (identical narrow projection) sets the reloption
+    // idempotently and is born-secure on fresh installs that ran v86 first.
+    // PGLite (single embedded connection, no RLS roles) accepts the option
+    // as a harmless no-op — verified on PG18.3.
+    idempotent: true,
+    sql: `
+      CREATE OR REPLACE VIEW page_links WITH (security_invoker = on) AS
+        SELECT id, from_page_id, to_page_id FROM links;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
