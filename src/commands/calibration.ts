@@ -25,7 +25,9 @@ import type { GBrainConfig } from '../core/config.ts';
 import { GBrainError } from '../core/types.ts';
 
 export interface CalibrationProfileRow {
-  id: number;
+  /** BIGSERIAL → string (postgres.js int8 wire shape; never Number() — int8
+   *  exceeds 2^53). No consumer does arithmetic on it; it's audit/serialize only. */
+  id: string;
   source_id: string;
   holder: string;
   wave_version: string;
@@ -67,7 +69,12 @@ export async function getLatestProfile(
   sql += ` ORDER BY generated_at DESC LIMIT 1`;
 
   const rows = await engine.executeRaw<CalibrationProfileRow>(sql, params);
-  return rows[0] ?? null;
+  if (!rows[0]) return null;
+  // `id` is BIGSERIAL → the pg driver returns it as a JS bigint, which crashes
+  // JSON.stringify on the --json / MCP output paths once a row exists. Coerce to
+  // string — matches the postgres.js int8 wire shape (and cli.ts's ENG-2
+  // "bigint → string" contract); String() has no 2^53 ceiling, unlike Number().
+  return { ...rows[0], id: String(rows[0].id) };
 }
 
 /** Human format the profile for terminal output. */
