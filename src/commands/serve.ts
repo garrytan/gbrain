@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import type { BrainEngine } from '../core/engine.ts';
+import { createEngineProvider, type EngineProvider } from '../core/engine-provider.ts';
 import { startMcpServer } from '../mcp/server.ts';
 
 // Maximum time the stdio path will wait for engine.disconnect() (PGLite
@@ -33,7 +34,7 @@ export interface ServeOptions {
   // (which unconditionally attaches a 'data' listener to real
   // process.stdin and would pollute the test runner's stdin handle).
   // Defaults to the real implementation when omitted.
-  startMcpServer?: (engine: BrainEngine) => Promise<void>;
+  startMcpServer?: (engine: BrainEngine | EngineProvider) => Promise<void>;
   // Test seam for the parent-process watchdog. The default
   // (`readLiveParentPid`) reads the live kernel PPID via `ps` because
   // `process.ppid` is captured at process creation and does not refresh
@@ -66,7 +67,7 @@ export interface ServeOptions {
 }
 
 export async function runServe(
-  engine: BrainEngine,
+  engine: BrainEngine | (() => Promise<BrainEngine>),
   args: string[] = [],
   opts: ServeOptions = {},
 ) {
@@ -113,8 +114,12 @@ export async function runServe(
     // restart.
     const suppressBootstrapToken = args.includes('--suppress-bootstrap-token');
 
+    // The HTTP path keeps the eager connect: its hosts dial TCP after the
+    // listener is up, so there is no initialize-handshake deadline racing
+    // the engine boot (#2091 is stdio-specific).
+    const resolvedEngine = typeof engine === 'function' ? await engine() : engine;
     const { runServeHttp } = await import('./serve-http.ts');
-    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams, bind, suppressBootstrapToken });
+    await runServeHttp(resolvedEngine, { port, tokenTtl, enableDcr, publicUrl, logFullParams, bind, suppressBootstrapToken });
     return;
   }
 
@@ -125,10 +130,36 @@ export async function runServe(
   // and is intentionally NOT wired into this stdio plumbing.
   console.error('Starting GBrain MCP server (stdio)...');
 
-  installStdioLifecycle(engine, args, opts);
+  // #2091: wrap the engine (or lazy connector) in a provider so the MCP
+  // handshake never waits on the PGLite boot. With a connector, the engine
+  // connects in the background below; with a pre-connected engine (tests,
+  // legacy callers) the provider is already resolved and behavior is
+  // unchanged.
+  const provider = createEngineProvider(engine);
+
+  installStdioLifecycle(provider, args, opts);
+
+  // Warm the engine while the host runs its initialize handshake. A
+  // failure here is NOT fatal: ensure() clears its memo on rejection, so
+  // the first tools/call retries and surfaces the real error (e.g. "lock
+  // held by pid N") as a structured tool result instead of a dead server.
+  //
+  // Exception: MCP_STDIO=1 is the durable/gateway-wrapped stdio mode. In
+  // that topology stdin may be closed/idle for the process lifetime, and an
+  // eager warm would monopolize PGLite before any actual MCP tool call or
+  // reflex IPC request exists (#2458). Keep initialize fast and leave the
+  // engine disconnected until real work arrives.
+  const log = opts.log ?? ((msg: string) => console.error(msg));
+  const mcpStdio = opts.mcpStdio ?? process.env.MCP_STDIO === '1';
+  if (!mcpStdio) {
+    void provider.ensure().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`[gbrain serve] engine connect failed (will retry on first tool call): ${msg}`);
+    });
+  }
 
   const start = opts.startMcpServer ?? startMcpServer;
-  await start(engine);
+  await start(provider);
   // startMcpServer's `await server.connect(transport)` resolves once the
   // SDK has wired up its stdin 'data' listener; that listener keeps the
   // event loop alive. We deliberately do NOT add `await new Promise(() =>
@@ -148,7 +179,7 @@ interface StdioLifecycleDeps {
 }
 
 function installStdioLifecycle(
-  engine: BrainEngine,
+  provider: EngineProvider,
   args: string[],
   opts: ServeOptions,
 ): void {
@@ -179,12 +210,18 @@ function installStdioLifecycle(
 
     deps.log(`GBrain MCP server: graceful exit (${reason})`);
 
-    // Race the cleanup against a deadline. engine.disconnect() does a
-    // PGLite WASM close + a synchronous rmSync on the lock dir; both
-    // should be sub-second, but a wedged WASM runtime shouldn't be able
-    // to trap us forever. If we hit the deadline we still exit; the
-    // lock dir is advisory and the next process's stale-lock check
-    // (process.kill(pid, 0) → ESRCH) will reclaim it.
+    // Race the cleanup against a deadline. provider.disconnect() awaits
+    // any in-flight engine connect first (#2091: a shutdown that arrives
+    // while the engine is still booting must release the lock that the
+    // in-flight connect goes on to acquire — disconnecting "around" it
+    // released nothing and leaked the lock dir), then does the PGLite
+    // WASM close + a synchronous rmSync on the lock dir. All of it should
+    // be sub-second in the steady state, but a connect wedged on lock
+    // contention (acquireLock waits up to 30s) or a wedged WASM runtime
+    // shouldn't trap us forever. If we hit the deadline we still exit;
+    // at that point the lock either wasn't acquired yet (nothing leaks)
+    // or the dir is reclaimed by the next process's stale-lock check
+    // (process.kill(pid, 0) → ESRCH).
     const deadline = setTimeout(() => {
       deps.log(
         `GBrain MCP server: cleanup deadline (${CLEANUP_DEADLINE_MS}ms) exceeded — forcing exit`,
@@ -194,7 +231,7 @@ function installStdioLifecycle(
     deadline.unref?.();
 
     Promise.resolve()
-      .then(() => engine.disconnect())
+      .then(() => provider.disconnect())
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         deps.log(`GBrain MCP server: cleanup error: ${msg}`);
