@@ -2,6 +2,11 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
+import {
+  createEngineProvider,
+  isEngineProvider,
+  type EngineProvider,
+} from '../core/engine-provider.ts';
 import { operations } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
@@ -15,7 +20,12 @@ import {
 } from '../core/context/resolve-ipc.ts';
 import { resolveEntitiesToPointers, logDeliveredReflexPointers } from '../core/context/retrieval-reflex.ts';
 
-export async function startMcpServer(engine: BrainEngine) {
+export async function startMcpServer(engine: BrainEngine | EngineProvider) {
+  // #2091: accept a lazy provider so the initialize handshake never waits
+  // on the PGLite boot. Bare-engine callers (tests, `gbrain call` paths)
+  // get wrapped in an already-resolved provider — behavior unchanged.
+  const provider = isEngineProvider(engine) ? engine : createEngineProvider(engine);
+
   const server = new Server(
     { name: 'gbrain', version: VERSION },
     { capabilities: { tools: {} } },
@@ -35,12 +45,35 @@ export async function startMcpServer(engine: BrainEngine) {
   // shape and cast through `any` (the SDK accepts it via the ServerResult union).
   server.setRequestHandler(CallToolRequestSchema, async (request: any): Promise<any> => {
     const { name, arguments: params } = request.params;
+    // #2091: the engine connects lazily — the first call (or the first
+    // call after a failed connect) awaits readiness here. Failure becomes
+    // a structured per-call error instead of a dead server: the host's
+    // MCP connection stays up, the user sees the actual cause (most
+    // commonly "another process holds the PGLite write lock"), and the
+    // next call retries because ensure() un-memoizes rejected attempts.
+    let liveEngine: BrainEngine;
+    try {
+      liveEngine = await provider.ensure();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: 'engine_unavailable',
+            message,
+            hint: 'The brain engine could not connect. If another gbrain process holds the PGLite write lock, retry after it exits.',
+          }),
+        }],
+        isError: true,
+      };
+    }
     // v0.28: stdio MCP has no per-token auth (local pipe). Default the
     // takes-holder allow-list to ['world'] so agent-facing callers don't
     // see private hunches via takes_list / takes_search / query. Operators
     // who want stdio to see everything should call ops directly via
     // `gbrain call <op>` (sets remote=false in src/cli.ts).
-    return dispatchToolCall(engine, name, params, {
+    return dispatchToolCall(liveEngine, name, params, {
       remote: true,
       takesHoldersAllowList: ['world'],
       // v0.31: source defaults to 'default' for stdio (no per-token scope).
@@ -61,36 +94,46 @@ export async function startMcpServer(engine: BrainEngine) {
   // connection, so the context engine resolves salient entities THROUGH us over
   // a local unix socket rather than opening a second (impossible) connection.
   // Best-effort; failure to bind never blocks the MCP server.
+  // #2091: gated on engine readiness — the IPC handler needs a live engine,
+  // and binding the socket before the engine exists would advertise a
+  // resolver that can only fail. Chained off ensure() so it comes up as
+  // soon as the background connect lands; if connect fails, there is no
+  // IPC server, matching the pre-lazy behavior of a serve that never got
+  // this far.
   let resolveServer: import('node:net').Server | null = null;
   let resolveSocket: string | null = null;
-  try {
-    const cfg = loadConfig();
-    if (cfg?.engine === 'pglite' && cfg.database_path) {
-      resolveSocket = resolveSocketPath(cfg.database_path);
-      const defaultSource = process.env.GBRAIN_SOURCE || 'default';
-      resolveServer = await startResolveIpcServer(
-        resolveSocket,
-        (req) =>
-          resolveEntitiesToPointers(
-            engine,
-            req.sourceId || defaultSource,
-            req.candidates ?? [],
-            {
-              priorContextText: req.priorContextText,
-              maxPointers: req.maxPointers,
-              suppression: req.suppression,
-            },
-          ),
-        // The IPC resolve path IS the ambient reflex channel. Logging happens
-        // at DELIVERY (post-write), not inside the resolver — a block the
-        // client's 250ms budget abandoned was never injected, and counting it
-        // would corrupt the volunteered-vs-used precision stats (red-team).
-        (block) => logDeliveredReflexPointers(engine, block.pointers),
-      );
+  void provider.ensure().then(async (liveEngine) => {
+    try {
+      const cfg = loadConfig();
+      if (cfg?.engine === 'pglite' && cfg.database_path) {
+        resolveSocket = resolveSocketPath(cfg.database_path);
+        const defaultSource = process.env.GBRAIN_SOURCE || 'default';
+        resolveServer = await startResolveIpcServer(
+          resolveSocket,
+          (req) =>
+            resolveEntitiesToPointers(
+              liveEngine,
+              req.sourceId || defaultSource,
+              req.candidates ?? [],
+              {
+                priorContextText: req.priorContextText,
+                maxPointers: req.maxPointers,
+                suppression: req.suppression,
+              },
+            ),
+          // The IPC resolve path IS the ambient reflex channel. Logging happens
+          // at DELIVERY (post-write), not inside the resolver — a block the
+          // client's 250ms budget abandoned was never injected, and counting it
+          // would corrupt the volunteered-vs-used precision stats (red-team).
+          (block) => logDeliveredReflexPointers(liveEngine, block.pointers),
+        );
+      }
+    } catch {
+      /* resolve IPC is best-effort; never block serve */
     }
-  } catch {
-    /* resolve IPC is best-effort; never block serve */
-  }
+  }).catch(() => {
+    /* engine connect failure is surfaced per tool call; nothing to bind */
+  });
 
   // Exit cleanly when MCP client disconnects (stdin EOF) or on signals.
   // Without this, orphaned serve processes accumulate and contend for the
@@ -102,7 +145,10 @@ export async function startMcpServer(engine: BrainEngine) {
     process.stderr.write(`[gbrain-serve] shutdown: ${reason}\n`);
     try { resolveServer?.close(); } catch { /* noop */ }
     if (resolveSocket) cleanupStaleSocket(resolveSocket);
-    Promise.resolve(engine.disconnect?.())
+    // #2091: provider.disconnect() awaits an in-flight connect before
+    // tearing down, so a shutdown that races the engine boot releases the
+    // lock that connect acquired instead of disconnecting "around" it.
+    Promise.resolve(provider.disconnect())
       .catch(() => {})
       .finally(() => process.exit(code));
   };
