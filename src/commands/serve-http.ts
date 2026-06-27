@@ -1050,7 +1050,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // v0.36.1.0 ship state: surface the top resolved takes for the
       // holder as drill-down evidence. Per-pattern provenance is v0.37.
       const takes = await engine.executeRaw<{
-        id: number;
+        id: string;
         page_slug: string;
         row_num: number;
         claim: string;
@@ -1059,7 +1059,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         since_date: string | null;
       }>(
         // `takes` has no page_slug column — it comes from the joined page.
-        `SELECT t.id, p.slug AS page_slug, t.row_num, t.claim, t.weight, t.resolved_quality, t.since_date
+        // id::text — it's a BIGSERIAL (bigint); res.json() below can't serialize a
+        // raw bigint ("cannot serialize BigInt"), so project it as a string.
+        `SELECT t.id::text AS id, p.slug AS page_slug, t.row_num, t.claim, t.weight, t.resolved_quality, t.since_date
            FROM takes t JOIN pages p ON p.id = t.page_id
            WHERE t.holder = $1 AND t.active = true AND t.resolved_at IS NOT NULL
            ORDER BY t.weight DESC, t.since_date DESC
@@ -1140,11 +1142,15 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           since_date: string;
         }>(
           // `takes` has no page_slug column — it comes from the joined page.
+          // since_date is TEXT and may be month-precision ('YYYY-MM'); '2026-06'::date
+          // throws "invalid input syntax for type date", so normalize to the 1st
+          // before casting.
           `SELECT t.id, p.slug AS page_slug, t.claim, t.weight, t.since_date
              FROM takes t JOIN pages p ON p.id = t.page_id
              WHERE t.active = true AND t.resolved_at IS NULL AND t.superseded_by IS NULL
                AND t.weight >= 0.7
-               AND t.since_date::date < (now() - INTERVAL '12 months')
+               AND (t.since_date || CASE WHEN length(t.since_date) = 7 THEN '-01' ELSE '' END)::date
+                   < (now() - INTERVAL '12 months')
              ORDER BY t.since_date ASC
              LIMIT 5`,
         );
