@@ -2,6 +2,16 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.54.0] - 2026-06-28
+
+**Security hardening: row-level security is now enforced consistently across GBrain's schema.** GBrain enables RLS on its core tables, but a Postgres view reads its underlying table as the view's owner by default — so a view over an RLS-protected table did not apply the caller's policy. The view layer is now defined with `security_invoker`, closing that gap. Fresh installs are secure by default; existing brains are brought to the same bar automatically on the next upgrade.
+
+### Security
+- **The schema's view enforces the caller's RLS.** It now runs with `security_invoker`, so it honors the querying role's row-level policy instead of the view owner's. Local and admin access is unchanged — it bypasses RLS regardless — so this only tightens untrusted-role access on managed Postgres brains. Embedded brains are unaffected: a single trusted connection with no separate roles.
+
+### To take advantage of v0.42.54.0
+`gbrain upgrade`. Existing brains pick up the change automatically on the next migration — no manual step, nothing to configure. Managed Postgres brains can confirm the result with their provider's database linter.
+
 ## [0.42.53.0] - 2026-06-23
 
 **`gbrain sync` works again on managed Postgres brains: the durable-checkpoint pin write was encoding its value the wrong way, so every multi-source sync aborted at the very first checkpoint. Fixed, plus a repo-wide sweep of the same JSONB footgun and a new CI guard so it can't come back.** A recent release added a structural check on the sync checkpoint table; the pin write that runs before every drain bound its value as a string rather than a real array, so the check rejected it and the run bailed before importing anything. The bug was invisible on the embedded engine (its driver parses the value either way) and only bit managed Postgres.
