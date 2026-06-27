@@ -4522,6 +4522,8 @@ export class PostgresEngine implements BrainEngine {
     // (correct|incorrect|partial) — NOT `resolved_quality IS NOT NULL` — so
     // historical comparisons against pre-v74 scorecards stay valid.
     // `unresolvable_count` is a sibling field counting the new 4th state.
+    // The whole aggregate is bets-only; resolved facts/takes/forecasts must
+    // never affect outcome counts, rates, Brier, or calibration.
     const rows = await sql`
       SELECT
         COUNT(*) FILTER (WHERE kind = 'bet')::int                                              AS total_bets,
@@ -4536,7 +4538,7 @@ export class PostgresEngine implements BrainEngine {
           END
         )::float                                                                               AS brier
       FROM takes
-      WHERE 1=1 ${holderClause} ${domainClause} ${sinceClause} ${untilClause} ${allowed}
+      WHERE kind = 'bet' ${holderClause} ${domainClause} ${sinceClause} ${untilClause} ${allowed}
     `;
     const r = rows[0] as { total_bets: number; resolved: number; correct: number; incorrect: number; partial: number; unresolvable_count: number; brier: number | null };
     return finalizeScorecard(r);
@@ -4570,7 +4572,8 @@ export class PostgresEngine implements BrainEngine {
           weight,
           (resolved_quality = 'correct')::int AS hit
         FROM takes
-        WHERE resolved_quality IN ('correct','incorrect')
+        WHERE kind = 'bet'
+          AND resolved_quality IN ('correct','incorrect')
           ${holderClause} ${allowed}
       )
       SELECT
