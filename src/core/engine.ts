@@ -304,6 +304,10 @@ export interface TakesListOpts {
   sortBy?: 'weight' | 'since_date' | 'created_at';
   limit?: number;
   offset?: number;
+  /** Federated/source scope via the take's page.source_id. Array wins over
+   *  scalar, matching sourceScopeOpts. Omitted (local CLI) = no source filter. */
+  sourceId?: string;
+  sourceIds?: string[];
 }
 
 /** Search result row from searchTakes / searchTakesVector. */
@@ -402,6 +406,9 @@ export interface TakesScorecardOpts {
   domainPrefix?: string; // e.g. 'companies/' to scope the scorecard
   since?: string;        // ISO date 'YYYY-MM-DD'
   until?: string;        // ISO date 'YYYY-MM-DD'
+  /** Federated/source scope via the take's page.source_id (array wins over scalar). */
+  sourceId?: string;
+  sourceIds?: string[];
 }
 
 /** v0.30.0: calibration curve bucket. */
@@ -421,6 +428,9 @@ export interface CalibrationBucket {
 export interface CalibrationCurveOpts {
   holder?: string;
   bucketSize?: number; // default 0.1
+  /** Federated/source scope via the take's page.source_id (array wins over scalar). */
+  sourceId?: string;
+  sourceIds?: string[];
 }
 
 /** Synthesis evidence row input (provenance from think synthesis pages). */
@@ -1434,7 +1444,7 @@ export interface BrainEngine {
    * Honors `takesHoldersAllowList` via WHERE filter so MCP-bound calls cannot
    * retrieve holders outside the token's allow-list.
    */
-  searchTakes(query: string, opts?: SearchOpts & { takesHoldersAllowList?: string[] }): Promise<TakeHit[]>;
+  searchTakes(query: string, opts?: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[] }): Promise<TakeHit[]>;
 
   /**
    * Vector search across active takes. Cosine distance against `embedding`.

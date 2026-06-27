@@ -4312,6 +4312,14 @@ export class PostgresEngine implements BrainEngine {
     const limit = clampSearchLimit(opts.limit, 100, 500);
     const offset = Math.max(0, Math.floor(opts.offset ?? 0));
     const active = opts.active ?? true;
+    // #2200-class: takes have no source_id of their own; scope via the page's
+    // source_id (already JOINed). Array wins over scalar, matching sourceScopeOpts.
+    const sourceFilter =
+      opts.sourceIds && opts.sourceIds.length > 0
+        ? sql`AND p.source_id = ANY(${opts.sourceIds}::text[])`
+        : opts.sourceId
+          ? sql`AND p.source_id = ${opts.sourceId}`
+          : sql``;
     const rows = await sql`
       SELECT t.*, p.slug AS page_slug
       FROM takes t
@@ -4331,6 +4339,7 @@ export class PostgresEngine implements BrainEngine {
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
         )
+        ${sourceFilter}
       ORDER BY
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'weight'      THEN t.weight     END DESC NULLS LAST,
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date'  THEN t.since_date END DESC NULLS LAST,
@@ -4340,9 +4349,15 @@ export class PostgresEngine implements BrainEngine {
     return rows.map((r) => takeRowToTake(r as Record<string, unknown>));
   }
 
-  async searchTakes(query: string, opts: SearchOpts & { takesHoldersAllowList?: string[] } = {}): Promise<TakeHit[]> {
+  async searchTakes(query: string, opts: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[] } = {}): Promise<TakeHit[]> {
     const sql = this.sql;
     const limit = clampSearchLimit(opts.limit, 30, 100);
+    const sourceFilter =
+      opts.sourceIds && opts.sourceIds.length > 0
+        ? sql`AND p.source_id = ANY(${opts.sourceIds}::text[])`
+        : opts.sourceId
+          ? sql`AND p.source_id = ${opts.sourceId}`
+          : sql``;
     const rows = await sql`
       SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
              t.claim, t.kind, t.holder, t.weight,
@@ -4355,6 +4370,7 @@ export class PostgresEngine implements BrainEngine {
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
         )
+        ${sourceFilter}
       ORDER BY score DESC, t.weight DESC
       LIMIT ${limit}
     `;
@@ -4518,6 +4534,14 @@ export class PostgresEngine implements BrainEngine {
       : sql``;
     const sinceClause = opts.since ? sql`AND since_date >= ${opts.since}` : sql``;
     const untilClause = opts.until ? sql`AND since_date <= ${opts.until}` : sql``;
+    // #2200-class: takes carry no source_id; scope via the take's page via EXISTS
+    // (this query has no pages JOIN). Array wins over scalar (sourceScopeOpts shape).
+    const sourceFilter =
+      opts.sourceIds && opts.sourceIds.length > 0
+        ? sql`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY(${opts.sourceIds}::text[]))`
+        : opts.sourceId
+          ? sql`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ${opts.sourceId})`
+          : sql``;
     // v0.36.1.1 T1c: `resolved` deliberately filters to the 3-state subset
     // (correct|incorrect|partial) — NOT `resolved_quality IS NOT NULL` — so
     // historical comparisons against pre-v74 scorecards stay valid.
@@ -4536,7 +4560,7 @@ export class PostgresEngine implements BrainEngine {
           END
         )::float                                                                               AS brier
       FROM takes
-      WHERE 1=1 ${holderClause} ${domainClause} ${sinceClause} ${untilClause} ${allowed}
+      WHERE 1=1 ${holderClause} ${domainClause} ${sinceClause} ${untilClause} ${allowed} ${sourceFilter}
     `;
     const r = rows[0] as { total_bets: number; resolved: number; correct: number; incorrect: number; partial: number; unresolvable_count: number; brier: number | null };
     return finalizeScorecard(r);
@@ -4558,6 +4582,12 @@ export class PostgresEngine implements BrainEngine {
     const maxIdx = Math.floor(1 / bucketSize) - 1;
     const allowed = allowList ? sql`AND holder = ANY(${allowList}::text[])` : sql``;
     const holderClause = opts.holder ? sql`AND holder = ${opts.holder}` : sql``;
+    const sourceFilter =
+      opts.sourceIds && opts.sourceIds.length > 0
+        ? sql`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY(${opts.sourceIds}::text[]))`
+        : opts.sourceId
+          ? sql`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ${opts.sourceId})`
+          : sql``;
     // Bucketing uses NUMERIC for exact decimal arithmetic. Going through
     // FLOAT introduces IEEE 754 rounding (e.g. 0.7/0.1 = 6.9999..., FLOOR=6
     // instead of the expected 7), which makes Postgres and PGLite diverge
@@ -4571,7 +4601,7 @@ export class PostgresEngine implements BrainEngine {
           (resolved_quality = 'correct')::int AS hit
         FROM takes
         WHERE resolved_quality IN ('correct','incorrect')
-          ${holderClause} ${allowed}
+          ${holderClause} ${allowed} ${sourceFilter}
       )
       SELECT
         (bucket_idx::numeric * ${bucketSize}::numeric)::float       AS bucket_lo,
