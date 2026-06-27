@@ -99,6 +99,10 @@ describe('parseArgs', () => {
     expect(parseArgs(['--regenerate']).opts.regenerate).toBe(true);
   });
 
+  test('--source <id> (so the reachable command can target a non-default source)', () => {
+    expect(parseArgs(['--source', 'canon']).opts.source).toBe('canon');
+  });
+
   test('--undo-wave <version>', () => {
     expect(parseArgs(['--undo-wave', 'v0.36.1.0']).opts.undoWave).toBe('v0.36.1.0');
   });
