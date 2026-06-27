@@ -90,12 +90,16 @@ won't emit more often than `minIntervalMs` (default 1000) and
 
 Fields:
 
-- `done` — items completed in this phase.
+- `done` — items completed in this phase. When a caller's initial `total`
+  later proves stale and ticks past it, the reporter clamps emitted `done` to
+  `total` so progress never renders impossible values such as `164%`.
 - `total` — total items, if known. Omitted when the scan doesn't have a
   total up front (e.g. a streaming iterator).
-- `pct` — `done/total * 100`, one decimal. Omitted when `total` is unknown.
-- `eta_ms` — projected ms until `done === total`, from the observed rate.
-  Omitted when `total` is unknown.
+- `pct` — `done/total * 100`, one decimal, capped at `100.0`. Omitted when
+  `total` is unknown.
+- `eta_ms` — projected ms until `done === total`, from the observed rate,
+  bottoming out at `0` when reported `done` reaches `total`. Omitted when
+  `total` is unknown.
 - `note` — optional string with the current item (e.g. a slug or filename).
 
 ### `heartbeat`

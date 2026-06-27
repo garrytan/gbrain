@@ -131,15 +131,21 @@ function attachErrorListener(stream: NodeJS.WritableStream): void {
 function renderHumanLine(phase: string, done: number | undefined, total: number | undefined, note: string | undefined): string {
   const parts: string[] = [`[${phase}]`];
   if (typeof done === 'number') {
+    const displayDone = displayDoneForTotal(done, total);
     if (typeof total === 'number' && total > 0) {
-      const pct = Math.floor((done / total) * 100);
-      parts.push(`${done}/${total} (${pct}%)`);
+      const pct = Math.floor((displayDone / total) * 100);
+      parts.push(`${displayDone}/${total} (${pct}%)`);
     } else {
-      parts.push(`${done}`);
+      parts.push(`${displayDone}`);
     }
   }
   if (note) parts.push(note);
   return parts.join(' ');
+}
+
+function displayDoneForTotal(done: number, total: number | undefined): number {
+  if (typeof total === 'number' && total >= 0) return Math.min(done, total);
+  return done;
 }
 
 function nowIso(): string {
@@ -280,7 +286,7 @@ class Reporter implements ReporterInternal {
     const sinceEmit = now - s.lastEmitMs;
     const itemsSinceEmit = s.done - s.lastDoneEmitted;
     const minItems = this.defaultMinItems(s.total);
-    const isFinalTick = s.total !== undefined && s.done >= s.total;
+    const isFinalTick = s.total !== undefined && s.done >= s.total && s.lastDoneEmitted < s.total;
 
     // Emit if: time-gate passed, OR enough items since last emit, OR this is the final tick.
     const shouldEmit = sinceEmit >= this.minIntervalMs || itemsSinceEmit >= minItems || isFinalTick;
@@ -290,20 +296,21 @@ class Reporter implements ReporterInternal {
     s.lastDoneEmitted = s.done;
 
     const elapsedMs = now - s.startedAt;
+    const displayDone = displayDoneForTotal(s.done, s.total);
     if (this.renderMode === 'json') {
       const obj: Record<string, unknown> = {
         event: 'tick',
         phase: s.phase,
-        done: s.done,
+        done: displayDone,
         elapsed_ms: elapsedMs,
         ts: nowIso(),
       };
       if (typeof s.total === 'number' && s.total > 0) {
         obj.total = s.total;
-        obj.pct = Math.round((s.done / s.total) * 1000) / 10; // one decimal
-        if (s.done > 0) {
-          const msPerItem = elapsedMs / s.done;
-          const remaining = Math.max(0, s.total - s.done);
+        obj.pct = Math.round((displayDone / s.total) * 1000) / 10; // one decimal
+        if (displayDone > 0) {
+          const msPerItem = elapsedMs / displayDone;
+          const remaining = Math.max(0, s.total - displayDone);
           obj.eta_ms = Math.round(msPerItem * remaining);
         }
       }
@@ -357,7 +364,8 @@ class Reporter implements ReporterInternal {
           elapsed_ms: elapsedMs,
           ts: nowIso(),
         };
-        if (s.done > 0) obj.done = s.done;
+        const displayDone = displayDoneForTotal(s.done, s.total);
+        if (displayDone > 0) obj.done = displayDone;
         if (typeof s.total === 'number') obj.total = s.total;
         if (note) obj.note = note;
         this.emitJson(obj);

@@ -27,6 +27,9 @@ import {
 } from '../src/core/source-health.ts';
 import { isSourceUnchangedSinceSync } from '../src/core/git-head.ts';
 import { loadAllSources } from '../src/core/sources-load.ts';
+import { runSources } from '../src/commands/sources.ts';
+import { tryAcquireDbLock } from '../src/core/db-lock.ts';
+import { embedBackfillLockId, EMBED_BACKFILL_LOCK_TTL_MIN } from '../src/core/embed-backfill-lock.ts';
 
 const HOUR = 3600_000;
 
@@ -69,6 +72,7 @@ afterAll(async () => {
 beforeEach(async () => {
   // Surgical reset: preserves config table (schema version).
   await engine.executeRaw('DELETE FROM minion_jobs');
+  await engine.executeRaw('DELETE FROM gbrain_cycle_locks');
   await engine.executeRaw('DELETE FROM content_chunks');
   await engine.executeRaw('DELETE FROM pages');
   await engine.executeRaw(`DELETE FROM sources WHERE id != 'default'`);
@@ -290,6 +294,26 @@ describe('computeAllSourceMetrics', () => {
     expect(dflt.backfill_queued).toBe(2);
     // generic queue_depth includes the sync job too (4 total waiting/active).
     expect(dflt.queue_depth).toBe(4);
+  });
+
+  test('sources status JSON surfaces live CLI embed-backfill lock even without a minion job row', async () => {
+    const holder = await tryAcquireDbLock(engine, embedBackfillLockId('default'), EMBED_BACKFILL_LOCK_TTL_MIN);
+    expect(holder).not.toBeNull();
+    const originalLog = console.log;
+    const lines: string[] = [];
+    console.log = ((...args: unknown[]) => { lines.push(args.join(' ')); }) as typeof console.log;
+    try {
+      await runSources(engine, ['status', '--json']);
+    } finally {
+      console.log = originalLog;
+      await holder!.release();
+    }
+    const payload = JSON.parse(lines.join('\n')) as { sources: Array<Record<string, unknown>> };
+    const dflt = payload.sources.find((s) => s.source_id === 'default')!;
+    expect(dflt.backfill_active).toBe(0);
+    expect(dflt.backfill_queued).toBe(0);
+    expect(dflt.embed_backfill_running).toBe(true);
+    expect(dflt.embed_backfill_holder).toMatchObject({ holder_pid: process.pid });
   });
 
   test('webhook_configured reflects config.webhook_secret presence', async () => {

@@ -116,6 +116,29 @@ describe('progress reporter', () => {
     expect(ticks[0]).toMatchObject({ done: 3, total: 3 });
   });
 
+  test('bounded progress never renders more than 100% when caller over-ticks', () => {
+    const json = sink(false);
+    const pj = createProgress({ mode: 'json', stream: json.stream, minIntervalMs: 0, minItems: 1 });
+    pj.start('embed.pages', 3);
+    pj.tick(5);
+    pj.finish();
+    const events = parseJsonl(json.read());
+    const tick = events.find((e) => e.event === 'tick')!;
+    const finish = events.find((e) => e.event === 'finish')!;
+    expect(tick).toMatchObject({ done: 3, total: 3, pct: 100 });
+    expect(finish).toMatchObject({ done: 3, total: 3 });
+
+    const human = sink(false);
+    const ph = createProgress({ mode: 'human', stream: human.stream, minIntervalMs: 0, minItems: 1 });
+    ph.start('embed.pages', 3);
+    ph.tick(5);
+    ph.finish();
+    const out = human.read();
+    expect(out).toContain('3/3 (100%)');
+    expect(out).not.toContain('5/3');
+    expect(out).not.toContain('166%');
+  });
+
   test('start(phase) with no total → ticks omit pct/eta_ms', () => {
     const { stream, read } = sink(false);
     const p = createProgress({ mode: 'json', stream, minIntervalMs: 0, minItems: 1 });

@@ -457,6 +457,32 @@ export async function inspectLock(engine: BrainEngine, lockId: string): Promise<
   return rows[0] ?? null;
 }
 
+export interface LiveLockStatus {
+  holder_pid: number;
+  holder_host: string;
+}
+
+/**
+ * Is an arbitrary DB lock live enough for status surfaces to report it as
+ * running? Pure read; fail-closed to null on inspection errors. This keeps
+ * source dashboards from re-implementing namespace-specific TTL logic.
+ */
+export async function liveLockStatus(
+  engine: BrainEngine,
+  lockId: string,
+  ttlMinutes: number = DEFAULT_TTL_MINUTES,
+): Promise<LiveLockStatus | null> {
+  try {
+    const snap = await inspectLock(engine, lockId);
+    if (snap && isLockHolderLive(snap, ttlMinutes)) {
+      return { holder_pid: snap.holder_pid, holder_host: snap.holder_host };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * v0.41.6.0 D3: list every lock whose TTL has expired. Used by gbrain
  * doctor's `stale_locks` check. The query reuses the same canonical
@@ -750,15 +776,7 @@ export async function liveSyncStatus(
   engine: BrainEngine,
   sourceId: string,
 ): Promise<{ holder_pid: number; holder_host: string } | null> {
-  try {
-    const snap = await inspectLock(engine, syncLockId(sourceId));
-    if (snap && !snap.ttl_expired) {
-      return { holder_pid: snap.holder_pid, holder_host: snap.holder_host };
-    }
-    return null;
-  } catch {
-    return null;
-  }
+  return liveLockStatus(engine, syncLockId(sourceId));
 }
 
 /**
