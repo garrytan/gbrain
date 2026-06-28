@@ -77,8 +77,8 @@ export interface RunThinkOpts {
    */
   withCalibration?: boolean;
   /**
-   * Holder to retrieve the calibration profile for. Default 'garry'. Only
-   * consulted when withCalibration=true.
+   * Holder to retrieve the calibration profile for. Resolves via resolveOwnerHolder
+   * (config emotional_weight.user_holder, else 'self'). Only consulted when withCalibration=true.
    */
   calibrationHolder?: string;
   /**

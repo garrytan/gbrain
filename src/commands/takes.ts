@@ -28,6 +28,7 @@ import {
   type ParsedTake,
 } from '../core/takes-fence.ts';
 import { withPageLock } from '../core/page-lock.ts';
+import { resolveOwnerHolder } from '../core/owner-holder.ts';
 
 // --- Helpers ---
 
@@ -344,7 +345,7 @@ async function cmdResolve(engine: BrainEngine, args: string[]): Promise<void> {
   // --evidence is the v0.30.0 alias for --source on the resolve subcommand
   // (semantic clarity: "what evidence resolved this bet?").
   const source = flagValue(args, '--evidence') ?? flagValue(args, '--source');
-  const resolvedBy = flagValue(args, '--by') ?? 'garry';
+  const resolvedBy = flagValue(args, '--by') ?? resolveOwnerHolder({ configValue: await engine.getConfig('emotional_weight.user_holder') });
   const dirArg = flagValue(args, '--dir');
 
   const pageId = await getPageId(engine, slug);
