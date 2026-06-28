@@ -26,6 +26,7 @@
  */
 
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
+import { resolveOwnerHolder } from '../owner-holder.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
 import { gateVoice, type VoiceGateGenerator, type VoiceGateJudge } from '../calibration/voice-gate.ts';
 import { patternStatementTemplate, type PatternStatementSlots } from '../calibration/templates.ts';
@@ -95,7 +96,7 @@ export type PatternStatementsGenerator = (input: {
 export type BiasTagsGenerator = (patterns: string[]) => Promise<string[]>;
 
 export interface CalibrationProfileOpts extends BasePhaseOpts {
-  /** Holder to generate the profile for. Default 'garry'. */
+  /** Holder to generate the profile for. Default resolves via resolveOwnerHolder (config emotional_weight.user_holder, else 'self'). */
   holder?: string;
   /** Inject the patterns generator (tests). */
   patternsGenerator?: PatternStatementsGenerator;
@@ -226,7 +227,10 @@ class CalibrationProfilePhase extends BaseCyclePhase {
     _ctx: OperationContext,
     opts: CalibrationProfileOpts,
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
-    const holder = opts.holder ?? 'garry';
+    const holder = resolveOwnerHolder({
+      override: opts.holder,
+      configValue: await engine.getConfig('emotional_weight.user_holder'),
+    });
     const promptVersion = opts.promptVersion ?? CALIBRATION_PROFILE_PROMPT_VERSION;
     const modelId = opts.model ?? 'claude-sonnet-4-6';
     const gradeCompletion = opts.gradeCompletion ?? 1.0;
