@@ -21,6 +21,17 @@ for (const op of operations) {
 // CLI-only commands that bypass the operation layer
 const CLI_ONLY = new Set(['init', 'upgrade', 'check-update', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor']);
 
+const RETRIEVAL_ROUTING_HINTS: Record<string, string[]> = {
+  search: [
+    'Use for exact known tokens, structured fields, and historical exact-match lookups.',
+    'For concept, synonym, landscape, all matching/every matching/anything matching, or recall-completeness questions, use gbrain query.',
+  ],
+  query: [
+    'Use for concept, synonym, landscape, all matching/every matching/anything matching, and recall-completeness questions.',
+    'Use gbrain search for exact known tokens, structured fields, or historical exact-match lookups.',
+  ],
+};
+
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0];
@@ -305,6 +316,14 @@ function printOpHelp(op: Operation) {
   const name = op.cliHints?.name || op.name;
   console.log(`Usage: gbrain ${name} ${positional} [options]\n`);
   console.log(op.description + '\n');
+  const routingHints = RETRIEVAL_ROUTING_HINTS[name];
+  if (routingHints) {
+    console.log('When to use which:');
+    for (const hint of routingHints) {
+      console.log(`  ${hint}`);
+    }
+    console.log('');
+  }
   const entries = Object.entries(op.params);
   if (entries.length > 0) {
     console.log('Options:');
@@ -340,8 +359,9 @@ PAGES
   list [--type T] [--tag T] [-n N]   List pages
 
 SEARCH
-  search <query>                     Keyword search (tsvector)
-  query <question> [--no-expand]     Hybrid search (RRF + expansion)
+  search <query>                     Keyword search (tsvector): exact known token, structured field, historical exact-match
+  query <question> [--no-expand]     Hybrid search (RRF + expansion): concept, synonym, landscape, recall-completeness
+                                     When to use which: start with query for all matching/every matching/anything matching questions.
 
 IMPORT/EXPORT
   import <dir> [--no-embed]          Import markdown directory
