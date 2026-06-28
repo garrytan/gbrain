@@ -28,6 +28,7 @@ import type { DbUrlSource } from '../core/config.ts';
 import { gbrainPath, loadConfig } from '../core/config.ts';
 import { reflexEnabled } from '../core/context/reflex.ts';
 import { resolveSocketPath } from '../core/context/resolve-ipc.ts';
+import { resolveOwnerHolder } from '../core/owner-holder.ts';
 import { homedir } from 'os';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
@@ -1196,14 +1197,19 @@ export async function checkAbandonedThreads(engine: BrainEngine): Promise<Check>
 
 /**
  * calibration_freshness: warns when the active calibration profile is
- * older than 7 days (configurable). Default holder 'garry'. Multi-source
+ * older than 7 days (configurable). Default holder resolves via resolveOwnerHolder
+ * (config emotional_weight.user_holder, else 'self'). Multi-source
  * brains see one row per source; this check uses the most recent across
  * all sources.
  */
 export async function checkCalibrationFreshness(engine: BrainEngine): Promise<Check> {
   try {
+    const ownerHolder = resolveOwnerHolder({
+      configValue: await engine.getConfig('emotional_weight.user_holder'),
+    });
     const rows = await engine.executeRaw<{ generated_at: Date | null }>(
-      `SELECT MAX(generated_at) AS generated_at FROM calibration_profiles WHERE holder = 'garry'`,
+      `SELECT MAX(generated_at) AS generated_at FROM calibration_profiles WHERE holder = $1`,
+      [ownerHolder],
     );
     const generated = rows[0]?.generated_at;
     if (!generated) {
