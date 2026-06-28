@@ -12,7 +12,7 @@
  * people/<owner> (extraction that names the owner). This resolver only selects
  * the *default* canonical owner string for reads; it does NOT merge those other
  * strings. Unifying them is owner-identity entity-resolution, tracked separately
- * (see the owner-holder-fragmentation issue). Until then, historical owner takes
+ * (see garrytan/gbrain#2465). Until then, historical owner takes
  * under 'brain'/people-<owner> are not folded into the default profile.
  */
 export const DEFAULT_OWNER_HOLDER = 'self';
