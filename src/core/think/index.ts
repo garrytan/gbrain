@@ -23,6 +23,7 @@ import { runGather, renderPagesBlock, takesHitToTakeForPrompt } from './gather.t
 import { renderTakesBlock } from './sanitize.ts';
 import { buildThinkSystemPrompt, buildThinkUserMessage } from './prompt.ts';
 import { resolveCitations, type ParsedCitation } from './cite-render.ts';
+import { resolveOwnerHolder } from '../owner-holder.ts';
 import { resolveModel } from '../model-config.ts';
 import { chat as gatewayChat, probeChatModel, type ChatResult } from '../ai/gateway.ts';
 import { AIConfigError } from '../ai/errors.ts';
@@ -293,7 +294,10 @@ export async function runThink(
     try {
       const { getLatestProfile } = await import('../../commands/calibration.ts');
       const profile = await getLatestProfile(engine, {
-        holder: opts.calibrationHolder ?? 'garry',
+        holder: resolveOwnerHolder({
+          override: opts.calibrationHolder,
+          configValue: await engine.getConfig('emotional_weight.user_holder'),
+        }),
       });
       if (profile) {
         calibrationBlockOpts = {
