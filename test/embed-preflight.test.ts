@@ -108,6 +108,16 @@ describe('validateEmbeddingCreds', () => {
     }
   });
 
+  test('passes for user-provided llama-server model ids with no env key', () => {
+    configureGateway(baseConfig({
+      embedding_model: 'llama-server:text-embedding-qwen3-embedding-0.6b',
+      embedding_dimensions: 1024,
+      base_urls: { 'llama-server': 'http://127.0.0.1:18080/v1' },
+      env: {},
+    }));
+    expect(() => validateEmbeddingCreds()).not.toThrow();
+  });
+
   test('throws no_gateway_config when gateway was not configured', () => {
     // resetGateway() in beforeEach already cleared _config.
     let caught: unknown;

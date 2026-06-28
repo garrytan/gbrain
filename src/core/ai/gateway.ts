@@ -704,24 +704,16 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
     };
   }
 
-  // Openai-compat recipes with empty models list require a user-provided model.
-  const isUserProvided = (tp as any).user_provided_models === true;
-  if (
-    Array.isArray(tp.models) &&
-    tp.models.length === 0 &&
-    (recipe.id === 'litellm' || isUserProvided)
-  ) {
-    return {
-      ok: false,
-      reason: 'user_provided_model_unset',
-      model: modelStr,
-      provider: parsed.providerId,
-      recipeId: recipe.id,
-    };
-  }
+  // OpenAI-compat recipes with an empty model list normally mean "the
+  // server/proxy accepts operator-provided model IDs" (llama-server, LiteLLM).
+  // `parseModelId()` has already guaranteed a non-empty model suffix, so an
+  // empty list must not be interpreted as "model unset" here; otherwise valid
+  // configs like `llama-server:text-embedding-qwen3-embedding-0.6b` fail before
+  // reaching the local server.
 
   const required = recipe.auth_env?.required ?? [];
   const missing = required.filter(k => !_config!.env[k]);
+
   if (missing.length > 0) {
     return {
       ok: false,
