@@ -1,18 +1,48 @@
-# Agents working on GBrain
+# AGENTS.md — AIMS Brain (engine repo `itradeaims-brain`)
 
-This is your install + operating protocol. Claude Code reads `./CLAUDE.md` automatically.
-Everyone else (Codex, Cursor, OpenClaw, Aider, Continue, or an LLM fetching via URL):
-start here.
+You are working on **AIMS Brain** — the iTradeAIMS network's **owned** semantic-memory
++ code-intelligence engine. This is a **maintained fork** of `garrytan/gbrain`
+(governance: ADR-0041 in `itradeaims-agent-workflows`), not Garry's personal-brain
+product. Identity: **AIMS Brain** = the product · this repo `itradeaims-brain` = the
+engine · `gbrain-immy` (Fly) = the served instance · `garrytan/gbrain` = upstream.
 
-> **iTradeAIMS fork note.** `immy2good/gbrain` is a **maintained, connected fork**
-> of `garrytan/gbrain` — the **AIMS Brain** engine (semantic memory substrate)
-> for the iTradeAIMS agent network. It serves the live brain on Fly (`gbrain-immy`)
-> and is maintained against upstream on a trigger-based cadence. Governance lives
-> in the control plane (`itradeaims-agent-workflows`, ADR-0037): gbrain owns
-> semantic memory; the control plane owns network governance/routing.
-> **Operating + maintenance runbook:** `docs/operations/fork-ops-and-maintenance.md`.
-> Push to `upstream` (garrytan) is disabled; contribute via PR. The install
-> protocol below is upstream's and still applies.
+## What this brain is (and is NOT)
+- It is iTradeAIMS infrastructure: a **pull-only derived index** (ADR-0038) over the
+  iTradeAIMS repo network + MQL/C++ code-intelligence, queried by a coding-agent fleet
+  and the AIMS MCP. `put_page` write-through is forbidden.
+- It is NOT a personal knowledge brain, NOT a Telegram/OpenClaw agent, NOT a
+  "billion-user" product. **Do not optimise for `brain_score` / BrainBench / longmemeval**
+  — those are upstream's personal-wiki metrics; a code brain scores low on them
+  structurally and that is fine. Health = the green integrity/sync/embed checks.
+
+## Operating rules
+- **Governance is the AIMS control plane** (`itradeaims-agent-workflows`), a SEPARATE
+  authority (ADR-0031): it governs around this brain, never merges with it.
+- **Engineering discipline is gbrain's own** — use `/ship`, the `VERSION` 5-file sync,
+  and this repo's CI for engine releases. The architecture invariants in `CLAUDE.md`
+  (trust boundary, engine parity, JSONB, migrations, contract-first) are load-bearing —
+  follow them for any engine edit.
+- **Do NOT apply upstream's privacy / responsible-disclosure rules** (the README/CLAUDE
+  text about names like `Wintermute` / `Garry's OpenClaw`) — those are Garry's contacts,
+  not ours. Our privacy rule: never expose real iTradeAIMS customers/contacts.
+- **Upstream relationship:** we merge `garrytan/gbrain` INBOUND for engine + security
+  fixes; we do NOT contribute outbound (`upstream` push is DISABLED). Keep `README.md`,
+  this `AGENTS.md`, and the `CLAUDE.md` AIMS-Brain header as "keep ours" on merge.
+
+## Governance scaffolding
+- Engine design decisions → `docs/adr/` here. Engine specs/plans → `docs/superpowers/`.
+- `/to-prd` `/to-issues` → this repo's own GitHub issues.
+- Network/identity decisions live in the control plane, NOT here. Do not duplicate the
+  AIMS-Brain glossary (it lives in `itradeaims-agent-workflows/CONTEXT.md`).
+
+See `AIMS-BRAIN.md` for the full charter.
+
+---
+
+The sections below are the engine's practical install + operating protocol (inherited
+from upstream gbrain, still correct for working on this engine). Claude Code reads
+`./CLAUDE.md` automatically; everyone else (Codex, Cursor, OpenClaw, Aider, Continue,
+or an LLM fetching via URL) starts here.
 
 ## Install (5 min)
 
@@ -41,20 +71,22 @@ start here.
 
 ## Read this order
 
-1. `./AGENTS.md` (this file) — install + operating protocol.
-2. [`./CLAUDE.md`](./CLAUDE.md) — orientation + resolver: architecture, cross-cutting
-   invariants, the reference map, inline ship rules. It routes to on-demand detail docs:
+1. `./AIMS-BRAIN.md` — the AIMS Brain charter (identity, owned-fork relationship, boundaries).
+2. `./AGENTS.md` (this file) — install + operating protocol.
+3. [`./CLAUDE.md`](./CLAUDE.md) — orientation + resolver: the AIMS-Brain header (read first),
+   then architecture, cross-cutting invariants, the reference map, inline ship rules. It
+   routes to on-demand detail docs:
    [`./docs/architecture/KEY_FILES.md`](./docs/architecture/KEY_FILES.md) (per-file index —
    read a file's entry before editing it), [`./docs/TESTING.md`](./docs/TESTING.md) (test
    tiers + isolation lint + E2E lifecycle), and
    [`./docs/architecture/thin-client.md`](./docs/architecture/thin-client.md) (remote-MCP seam).
-3. [`./docs/architecture/brains-and-sources.md`](./docs/architecture/brains-and-sources.md)
+4. [`./docs/architecture/brains-and-sources.md`](./docs/architecture/brains-and-sources.md)
    — the two-axis mental model (brain = which DB, source = which repo in the DB). Every
    query routes on both axes. Read before writing anything that touches brain ops.
-4. [`./skills/conventions/brain-routing.md`](./skills/conventions/brain-routing.md) —
+5. [`./skills/conventions/brain-routing.md`](./skills/conventions/brain-routing.md) —
    agent-facing decision table: when to switch brain, when to switch source, how
    cross-brain federation works (latent-space only; the agent decides).
-5. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — skill dispatcher. Read before any task.
+6. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — skill dispatcher. Read before any task.
 
 ## Trust boundary (critical)
 
@@ -74,39 +106,6 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
   [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
   [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes` (manual schema-only).
-- **Eval retrieval changes:** capture is off by default. To benchmark a
-  retrieval change against real captured queries, set
-  `GBRAIN_CONTRIBUTOR_MODE=1`, then `gbrain eval export --since 7d > base.ndjson`
-  and `gbrain eval replay --against base.ndjson`. For public benchmark
-  coverage (LongMemEval, ground-truth scoring), `gbrain eval longmemeval
-  <dataset.jsonl>` (v0.28.8) runs against an isolated in-memory PGLite
-  per question — your `~/.gbrain` is never opened. Full guide:
-  [`docs/eval-bench.md`](./docs/eval-bench.md).
-- **Drive the brain to a target health score (v0.36.4.0):** the one-command
-  loop. `gbrain doctor --remediation-plan --json` previews what would be
-  fixed; `gbrain doctor --remediate --yes --target-score 90 --max-usd 5`
-  walks a dependency-ordered plan (sync before extract, embed after
-  consolidate), re-checking score between every step, refusing to spend
-  past the cost cap. Empty brains (no entity pages) or unconfigured embedding
-  keys hit a `max_reachable_score` ceiling and bail with what's missing.
-  Three phase handlers (synthesize / patterns / consolidate) are
-  PROTECTED — only trusted local callers can submit them; MCP cannot.
-  Reference: [`docs/architecture/topologies.md`](./docs/architecture/topologies.md)
-  and the CHANGELOG entry for v0.36.4.0.
-- **Track a founder/company over time (v0.35.7):** when an entity has
-  typed metric claims in its `## Facts` fence (`metric: mrr`, `value: 50000`,
-  `unit: USD`, `period: monthly` columns), run
-  `gbrain eval trajectory <entity-slug>` for the chronological history
-  with regressions auto-flagged, or `gbrain founder scorecard <entity-slug>`
-  for a four-signal JSON rollup (claim_accuracy / consistency /
-  growth_trajectory / red_flags). MCP op `find_trajectory` exposes the
-  same data — read scope, visibility-filtered for remote callers. **v0.40.2.0:**
-  `gbrain think` now uses this substrate automatically on temporal /
-  knowledge_update intent (default ON; flip `think.trajectory_enabled=false`
-  to opt out). Migration v82 added `facts.event_type` so non-metric event
-  rows (`meeting`, `job_change`, `location_change`) ride through the same
-  pipeline; pass `kind: 'event'` or `'all'` to `find_trajectory` to query
-  them.
 - **Everything else:** [`./llms.txt`](./llms.txt) is the full documentation map.
   [`./llms-full.txt`](./llms-full.txt) is the same map with core docs inlined for
   single-fetch ingestion.
@@ -123,17 +122,12 @@ diff-aware subset during fast iteration on a focused branch. Requires Docker
 Manual path: `bun test` plus the E2E lifecycle described in `./CLAUDE.md` (spin
 up the test Postgres container, run `bun run test:e2e`, tear it down).
 
-Ship via the `/ship` skill, not by hand. The full release + contributor process
-(CHANGELOG voice, version-locations sync, PR conventions, community-PR-wave) lives in
+Ship via the `/ship` skill, not by hand. The full release process (CHANGELOG voice,
+version-locations sync, PR conventions) lives in
 [`./docs/RELEASING.md`](./docs/RELEASING.md); read it before shipping.
 
 ## Privacy
 
-Never commit real names of people, companies, or funds into public artifacts. See the
-Privacy rule in `./CLAUDE.md`. GBrain pages reference real contacts; public docs must
-use generic placeholders (`alice-example`, `acme-example`, `fund-a`).
-
-## Forks
-
-If you are a fork, regenerate `llms.txt` + `llms-full.txt` with your own URL base before
-publishing: `LLMS_REPO_BASE=https://raw.githubusercontent.com/your-org/your-fork/main bun run build:llms`.
+Never expose real iTradeAIMS customers or contacts in public artifacts. (We do NOT
+carry upstream's `Wintermute` / `Garry's OpenClaw` naming rules — those are Garry's
+contacts.) Use generic placeholders in examples.

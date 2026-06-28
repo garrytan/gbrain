@@ -2,6 +2,36 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.54.0] - 2026-06-28
+
+This fork now reads as its own product, **AIMS Brain** — the iTradeAIMS network's
+owned semantic-memory + code-intelligence engine — instead of inheriting the upstream
+"personal knowledge brain" framing. Agents working in this repo now get a frame that
+matches what the brain actually is, so they stop optimising for upstream's
+personal-wiki metrics and stop applying upstream's contact-specific rules.
+
+### Added
+- `AIMS-BRAIN.md` — the charter: identity, the four-layer terminology (product /
+  engine repo / served instance / upstream), the inbound-only maintained-fork
+  relationship, the "keep ours" merge zones, how to merge upstream, and boundaries.
+- `docs/adr/README.md` — home for engine-internal ADRs (network/identity decisions
+  stay in the control plane).
+
+### Changed
+- `AGENTS.md` is now the AIMS Brain agent operating contract (what the brain is and
+  is NOT, operating rules, governance scaffolding), with the upstream install +
+  read-order protocol preserved below it.
+- `CLAUDE.md` gains a read-first AIMS-Brain header that overrides conflicting text
+  below it: it keeps the load-bearing engine invariants and ship discipline, and
+  quarantines upstream's product framing (North Star / personal-brain identity /
+  contact-specific privacy rules) as not applicable here.
+- `README.md` is now the AIMS Brain public face (one-liner, the four layers,
+  maintained-fork note, quick links).
+
+### To take advantage of v0.42.54.0
+Nothing to run — agents pick up the new frame on their next read of `AGENTS.md` /
+`CLAUDE.md`. The header and these files are "keep ours" on inbound upstream merges.
+
 ## [0.42.53.2] - 2026-06-25
 
 Adds `gbrain sources set-strategy <id> <markdown|code|auto>` to persist a

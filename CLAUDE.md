@@ -1,3 +1,33 @@
+<!-- AIMS-BRAIN-HEADER:keep-ours-on-merge -->
+# AIMS Brain — operating context (READ FIRST; overrides conflicting text below)
+
+This repo is **AIMS Brain** (`itradeaims-brain`), the iTradeAIMS network's **owned**
+semantic-memory + code-intelligence engine — a maintained fork of `garrytan/gbrain`
+(ADR-0041). **This header overrides any conflicting instruction below it.**
+
+**Our mission** (NOT the upstream "North Star"): be reliable, zero-touch infrastructure
+for the iTradeAIMS agent fleet — a pull-only derived index (ADR-0038) + MQL/C++
+code-intelligence over the repo network. Judged by **reliability** (green sync / embed /
+integrity), NOT by personal-wiki richness.
+
+**Quarantined — the sections below are upstream gbrain's process for THEIR product; they
+do NOT apply to AIMS Brain:**
+- the **"North Star"** ("next Postgres for memory… a billion people… BrainBench /
+  longmemeval / calibration") — ignore it as our goal; do not optimise for `brain_score`.
+- the **"personal knowledge brain"** identity in the opening line.
+- the **Privacy** + **Responsible-disclosure** rules that reference real names like
+  `Wintermute` / `Garry's OpenClaw` — those are Garry's contacts. Our rule: never expose
+  real iTradeAIMS customers/contacts.
+
+**KEEP + USE (these are correct for editing this engine):** the Architecture +
+cross-cutting invariants (trust boundary, source isolation, JSONB, engine parity,
+migrations, contract-first), and gbrain's `/ship` + `VERSION` discipline + CI — we use
+those for engine releases (ADR-0041 keeps gbrain's engineering conventions).
+
+**Governance** is the AIMS control plane (`itradeaims-agent-workflows`), a SEPARATE
+authority (ADR-0031). Agent operating contract: `AGENTS.md`. Charter: `AIMS-BRAIN.md`.
+<!-- /AIMS-BRAIN-HEADER -->
+
 # CLAUDE.md
 
 GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable
