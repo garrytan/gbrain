@@ -426,6 +426,20 @@ function _recordAndClear(
       if (byKey.delete(_ledgerKey({ source_id: sourceId, path: p }))) mutated = true;
     }
 
+    // Source-level sentinels (for example `<head>`) are not file paths, so they
+    // never appear in `succeededPaths`. A later run that gets past the sentinel
+    // boundary proves the prior infra failure is resolved; clear same-source
+    // sentinel rows unless this run recorded a fresh sentinel failure.
+    const hasCurrentSentinelFailure = failures.some(f => !isSkippablePath(f.path));
+    if (!hasCurrentSentinelFailure) {
+      for (const [key, e] of byKey) {
+        if (e.source_id === sourceId && !isSkippablePath(e.path)) {
+          byKey.delete(key);
+          mutated = true;
+        }
+      }
+    }
+
     const now = new Date().toISOString();
     for (const f of failures) {
       const key = _ledgerKey({ source_id: sourceId, path: f.path });
@@ -694,8 +708,16 @@ export async function applySyncFailureGate(input: SyncGateInput): Promise<SyncGa
   const sentinels = input.failedFiles.filter(f => !isSkippablePath(f.path));
   const fileFailures = input.failedFiles.filter(f => isSkippablePath(f.path));
 
-  // Fast path: clean run touched no failures and no successes — nothing to
-  // reconcile in the ledger, just advance.
+  const attemptsByPath = _recordAndClear(
+    input.sourceId,
+    input.succeededPaths,
+    input.failedFiles,
+    input.commit,
+  );
+
+  // Fast path: clean run touched no file failures and no file successes. We
+  // still reconciled the ledger above so resolved source-level sentinels such
+  // as `<head>` do not linger after a later successful no-op sync.
   if (input.failedFiles.length === 0 && input.succeededPaths.length === 0) {
     await input.advance();
     return {
@@ -707,13 +729,6 @@ export async function applySyncFailureGate(input: SyncGateInput): Promise<SyncGa
       acknowledged: 0,
     };
   }
-
-  const attemptsByPath = _recordAndClear(
-    input.sourceId,
-    input.succeededPaths,
-    input.failedFiles,
-    input.commit,
-  );
 
   const decision = decideGateAction({
     fileFailures,

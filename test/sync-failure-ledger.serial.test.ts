@@ -119,6 +119,44 @@ describe('#3 sentinel never auto-skips', () => {
     expect(isSkippablePath('people/x.md')).toBe(true);
     expect(isSkippablePath('<head>')).toBe(false);
   });
+
+  test('a later clean source run clears a prior sentinel failure', async () => {
+    const { recordFailures, applySyncFailureGate, loadSyncFailures } = await L();
+    recordFailures('s', [{ path: '<head>', error: 'git HEAD verification failed' }], 'c1');
+
+    let advanced = false;
+    const out = await applySyncFailureGate({
+      sourceId: 's',
+      failedFiles: [],
+      succeededPaths: [],
+      commit: 'c2',
+      skipFailed: false,
+      advance: () => { advanced = true; },
+    });
+
+    expect(out.advanced).toBe(true);
+    expect(advanced).toBe(true);
+    expect(loadSyncFailures()).toEqual([]);
+  });
+
+  test('a later non-sentinel source run clears a prior sentinel failure', async () => {
+    const { recordFailures, applySyncFailureGate, loadSyncFailures } = await L();
+    recordFailures('s', [
+      { path: '<head>', error: 'git HEAD verification failed' },
+      { path: 'a.md', error: 'YAML parse failed' },
+    ], 'c1');
+
+    await applySyncFailureGate({
+      sourceId: 's',
+      failedFiles: [],
+      succeededPaths: ['a.md'],
+      commit: 'c2',
+      skipFailed: false,
+      advance: () => {},
+    });
+
+    expect(loadSyncFailures()).toEqual([]);
+  });
 });
 
 describe('#7 legacy normalization + dup collapse', () => {
