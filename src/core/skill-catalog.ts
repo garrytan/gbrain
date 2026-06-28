@@ -223,7 +223,7 @@ function assertSkillNameShape(name: unknown): asserts name is string {
   }
   // No path separators, no traversal, no null byte. The name is a manifest
   // LOOKUP KEY — it must never look like a path component.
-  if (/[/\\]|\.\.| /.test(name)) {
+  if (/[/\\]|\.\.|\x00/.test(name)) {
     throw new OperationError('invalid_params', `Invalid skill name: ${name}`);
   }
 }
