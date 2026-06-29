@@ -173,4 +173,20 @@ describe('isAvailable(touchpoint, modelOverride) — D10', () => {
     });
     expect(isAvailable('embedding', 'totally:unknown')).toBe(false);
   });
+
+  test('llama-server accepts explicit user-provided local embedding model ids', () => {
+    // llama-server intentionally ships with an empty static model list: the
+    // served id is whatever the operator launched with --model_alias. The
+    // configured provider:model string is therefore the model allowlist. Pre-fix,
+    // diagnoseEmbedding rejected every llama-server embedding model because the
+    // recipe had user_provided_models=true and models=[] even when the model id
+    // was explicit.
+    configureGateway({
+      embedding_model: 'llama-server:bge-small-en-v1.5-q4_k_m',
+      embedding_dimensions: 384,
+      env: {},
+      base_urls: { 'llama-server': 'http://127.0.0.1:18080/v1' },
+    });
+    expect(isAvailable('embedding')).toBe(true);
+  });
 });

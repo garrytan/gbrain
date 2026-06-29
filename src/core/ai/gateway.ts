@@ -704,12 +704,19 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
     };
   }
 
-  // Openai-compat recipes with empty models list require a user-provided model.
+  // OpenAI-compatible recipes with an empty static model list are valid when
+  // the caller supplied a concrete provider:model id. Pre-fix, llama-server
+  // declared `user_provided_models: true` and a configured model such as
+  // `llama-server:bge-small-en-v1.5-q4_k_m` was still rejected here, making
+  // the local embedding recipe impossible to use outside tests. Keep the
+  // diagnostic for malformed/bare provider ids; parseModelId above guarantees
+  // `parsed.modelId` is non-empty for real provider:model strings.
   const isUserProvided = (tp as any).user_provided_models === true;
   if (
     Array.isArray(tp.models) &&
     tp.models.length === 0 &&
-    (recipe.id === 'litellm' || isUserProvided)
+    (recipe.id === 'litellm' || isUserProvided) &&
+    !parsed.modelId
   ) {
     return {
       ok: false,
