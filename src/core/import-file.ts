@@ -115,6 +115,9 @@ async function extractFencedChunks(
   startChunkIndex: number,
 ): Promise<ChunkInput[]> {
   const out: ChunkInput[] = [];
+  // #2437: marked.lexer transiently allocates ~60x the input; skip it entirely
+  // when there's no fence to find (the ~99% case) to avoid OOM on large bodies.
+  if (!/(^|\n)[ \t]{0,3}(```|~~~)/.test(markdown)) return out;
   let tokens: ReturnType<typeof marked.lexer>;
   try {
     tokens = marked.lexer(markdown);

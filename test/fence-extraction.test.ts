@@ -136,4 +136,34 @@ echo hi
     const fenceChunks = chunks.filter(c => c.chunk_source === 'fenced_code');
     expect(fenceChunks.length).toBe(0);
   });
+
+  // #2437: a large fence-less body must produce zero fenced_code chunks. The
+  // fence-opener guard short-circuits marked.lexer (the transient-OOM source)
+  // for these — proven here by the [] result on a body with no ``` / ~~~ at all.
+  test('large fence-less prose page produces zero fenced_code chunks', async () => {
+    // ~50KB of prose, no code fence anywhere (the ~99% case, and the shape
+    // that drove marked.lexer to a ~60x transient spike and OOM).
+    const para =
+      'This is ordinary wiki prose with no fenced code block of any kind. ' +
+      'It mentions code informally but never opens a fence. ';
+    const md = `# Large fence-less page\n\n${para.repeat(800)}\n`;
+    expect(md.length).toBeGreaterThan(40_000);
+    expect(md).not.toMatch(/```|~~~/); // sanity: truly fence-less
+
+    await importFromContent(engine, 'guides/fence-less-large', md, { noEmbed: true });
+    const chunks = await engine.getChunks('guides/fence-less-large');
+    const fenceChunks = chunks.filter(c => c.chunk_source === 'fenced_code');
+    expect(fenceChunks.length).toBe(0);
+  });
+
+  // #2437: the guard must not break the happy path — a body WITH a recognized
+  // fence still extracts its chunk(s) past the early-return.
+  test('fenced page still extracts after the fence-less guard (happy path intact)', async () => {
+    const md = `# Has a fence\n\nIntro prose.\n\n\`\`\`ts\nexport const answer = 42;\n\`\`\`\n\nOutro prose.`;
+    await importFromContent(engine, 'guides/fence-guard-happy', md, { noEmbed: true });
+    const chunks = await engine.getChunks('guides/fence-guard-happy');
+    const fenceChunks = chunks.filter(c => c.chunk_source === 'fenced_code');
+    expect(fenceChunks.length).toBeGreaterThan(0);
+    expect(fenceChunks[0]!.language).toBe('typescript');
+  });
 });
