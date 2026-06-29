@@ -19,17 +19,26 @@
  * against `lib/twilio-bridge.mjs` (port-ready stubs included).
  *
  * Configuration via env:
- *   PORT                   default 8765
- *   OPENAI_API_KEY         required for /session
- *   OPENAI_REALTIME_MODEL  default 'gpt-4o-realtime-preview'
- *   DEFAULT_PERSONA        default 'venus' (one of 'mars' | 'venus')
- *   BRAIN_ROOT             passed through to context-builder
- *   TIMEZONE               passed through to context-builder
+ *   PORT                      default 8765
+ *   OPENAI_API_KEY            required for /session
+ *   OPENAI_REALTIME_MODEL     default 'gpt-4o-realtime-preview'
+ *   DEFAULT_PERSONA           default 'venus' (one of 'mars' | 'venus')
+ *   BRAIN_ROOT                passed through to context-builder
+ *   TIMEZONE                  passed through to context-builder
+ *   AGENT_VOICE_CORS_ORIGIN   comma-separated allowlist of browser origins
+ *                             permitted to read /tool and /session responses.
+ *                             Unset (default) ⇒ no Access-Control-Allow-Origin
+ *                             emitted — same-origin browser clients still work,
+ *                             cross-origin reads are denied by the browser.
  *
  * Security posture: this is reference code. It does NOT ship hardening for
- * production deployment (no rate limiting, no Twilio signature validation,
- * no CORS allowlist). Operators add those at install time per the recipe's
- * "production checklist."
+ * production deployment (no rate limiting, no Twilio signature validation).
+ * Operators add those at install time per the recipe's "production checklist."
+ * CORS, however, is default-deny here: /tool dispatches gbrain read ops and
+ * /session spends the operator's OPENAI_API_KEY, so reflecting an arbitrary
+ * Origin would let any web page read brain contents or consume the quota
+ * from a visiting browser. Set AGENT_VOICE_CORS_ORIGIN explicitly to allow
+ * known browser origins.
  */
 
 import { createServer } from 'node:http';
@@ -46,6 +55,21 @@ const PORT = parseInt(process.env.PORT || '8765', 10);
 const DEFAULT_PERSONA = (process.env.DEFAULT_PERSONA || 'venus').toLowerCase();
 const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview';
 const OPENAI_REALTIME_URL = 'https://api.openai.com/v1/realtime/calls';
+
+/**
+ * Parse the CORS allowlist from AGENT_VOICE_CORS_ORIGIN (comma-separated).
+ * Returns null when unset — meaning "do not emit Access-Control-Allow-Origin
+ * at all" (default-deny; same-origin requests still work). Mirrors the
+ * GBRAIN_HTTP_CORS_ORIGIN pattern used by the main gbrain HTTP transport.
+ */
+function parseCorsAllowlist() {
+  const v = process.env.AGENT_VOICE_CORS_ORIGIN;
+  if (!v) return null;
+  const set = new Set(v.split(',').map((s) => s.trim()).filter(Boolean));
+  return set.size > 0 ? set : null;
+}
+
+const CORS_ALLOWLIST = parseCorsAllowlist();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -219,14 +243,33 @@ function handleVoiceTwiml(req, res) {
   res.end(twiml);
 }
 
+/**
+ * Apply CORS headers to the response, gated on the configured allowlist.
+ *
+ * Default-deny: when AGENT_VOICE_CORS_ORIGIN is unset OR the request Origin
+ * is not in the allowlist, NO Access-Control-Allow-Origin header is emitted.
+ * Browsers will then block any cross-origin attempt to read the response
+ * body (which would otherwise leak brain contents from /tool or burn through
+ * the operator's OpenAI quota via /session).
+ *
+ * Same-origin requests are unaffected (the browser doesn't enforce CORS on
+ * them), so the bundled public/call.html keeps working out of the box.
+ */
+function applyCors(req, res) {
+  const origin = req.headers.origin;
+  if (!CORS_ALLOWLIST || !origin || !CORS_ALLOWLIST.has(origin)) return;
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+}
+
 // ── HTTP router ──────────────────────────────────────────────────────
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
-  // CORS: allow same-origin only by default. Operators relax in production.
-  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  // CORS: default-deny. Allowlist via AGENT_VOICE_CORS_ORIGIN (comma-separated).
+  applyCors(req, res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
 
   try {
@@ -271,6 +314,11 @@ server.listen(PORT, () => {
   console.log(`[agent-voice] listening on http://localhost:${PORT}`);
   console.log(`[agent-voice] default persona: ${DEFAULT_PERSONA}`);
   console.log(`[agent-voice] read-only tools: ${getEffectiveAllowlist().join(', ')}`);
+  if (!CORS_ALLOWLIST) {
+    console.log('[agent-voice] CORS: default-deny. Set AGENT_VOICE_CORS_ORIGIN=https://your.app to allow browser clients on other origins.');
+  } else {
+    console.log(`[agent-voice] CORS allowlist: ${[...CORS_ALLOWLIST].join(', ')}`);
+  }
 });
 
 process.on('SIGTERM', () => server.close(() => process.exit(0)));
