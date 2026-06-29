@@ -4,6 +4,40 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-06-30
+
+### Added
+
+- **Self-service analytics is now a governed operator surface.** The eval CLI,
+  memory report, skill surface manifest, MCP compatibility checks, and
+  supporting docs now expose analytics-friendly artifacts without bypassing
+  canonical read/write authority.
+- **Canonical writeback now uses routed write sessions.** Agents get a
+  route-first write path with explicit write sessions, target hashes, and
+  readiness diagnostics instead of ad hoc direct writes.
+- **Memory operations gained stronger conformance and evidence metadata.**
+  Operation manifests, evidence governance, auto-promotion audit details, and
+  acceptance metadata make review and release checks easier to verify.
+
+### Changed
+
+- **MCP and agent surfaces are more proportional.** Tool catalogs now enforce
+  surface profiles and tier visibility, while compact discovery preserves the
+  safety annotations agents need.
+- **Doctor, maintenance, and retrieval paths are more self-healing.** Doctor
+  remediation, durable embed backfill, maintenance lease renewal, selector-first
+  push context, and lazy `read_context` recovery reduce manual repair work.
+- **Version metadata now reports `0.14.3`.** `VERSION`, `package.json`,
+  `skills/manifest.json`, and `openclaw.plugin.json` are aligned so the CLI,
+  skills manifest, and plugin bundle describe the same release.
+
+### Security
+
+- **Memory and raw-source access now has tighter authority boundaries.** OAuth
+  refresh tokens are one-time use, auth principals flow into raw-source audit,
+  personal writes are scope-gated, and `put_page` enforces the route-first
+  contract at the MCP boundary.
+
 ## [0.14.2] - 2026-06-18
 
 ### Fixed
