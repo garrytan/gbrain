@@ -3480,6 +3480,54 @@ const MIGRATIONS: Migration[] = [
     version: 60,
     name: 'context_eval_ledger',
     sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('retrieval_traces') IS NULL THEN
+          IF to_regclass('task_threads') IS NULL THEN
+            CREATE TABLE retrieval_traces (
+              id TEXT PRIMARY KEY,
+              task_id TEXT,
+              scope TEXT NOT NULL,
+              route JSONB NOT NULL DEFAULT '[]',
+              source_refs JSONB NOT NULL DEFAULT '[]',
+              derived_consulted JSONB NOT NULL DEFAULT '[]',
+              verification JSONB NOT NULL DEFAULT '[]',
+              write_outcome TEXT NOT NULL DEFAULT 'no_durable_write',
+              selected_intent TEXT,
+              scope_gate_policy TEXT,
+              scope_gate_reason TEXT,
+              outcome TEXT NOT NULL DEFAULT '',
+              created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+          ELSE
+            CREATE TABLE retrieval_traces (
+              id TEXT PRIMARY KEY,
+              task_id TEXT REFERENCES task_threads(id) ON DELETE SET NULL,
+              scope TEXT NOT NULL,
+              route JSONB NOT NULL DEFAULT '[]',
+              source_refs JSONB NOT NULL DEFAULT '[]',
+              derived_consulted JSONB NOT NULL DEFAULT '[]',
+              verification JSONB NOT NULL DEFAULT '[]',
+              write_outcome TEXT NOT NULL DEFAULT 'no_durable_write',
+              selected_intent TEXT,
+              scope_gate_policy TEXT,
+              scope_gate_reason TEXT,
+              outcome TEXT NOT NULL DEFAULT '',
+              created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+          END IF;
+        END IF;
+      END
+      $$;
+      CREATE INDEX IF NOT EXISTS idx_retrieval_traces_task_created
+        ON retrieval_traces(task_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_retrieval_traces_write_outcome
+        ON retrieval_traces(write_outcome, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_retrieval_traces_selected_intent
+        ON retrieval_traces(selected_intent, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_retrieval_traces_gate_policy
+        ON retrieval_traces(scope_gate_policy, created_at DESC);
+
       CREATE TABLE IF NOT EXISTS context_eval_runs (
         id                  TEXT PRIMARY KEY,
         fixture_id          TEXT NOT NULL,

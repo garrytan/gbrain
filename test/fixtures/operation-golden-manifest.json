@@ -5,8 +5,8 @@
     "operation_count": 180,
     "mcp_operation_count": 180,
     "cli_shared_count": 168,
-    "cli_direct_count": 23,
-    "cli_only_count": 5,
+    "cli_direct_count": 24,
+    "cli_only_count": 6,
     "not_cli_count": 2,
     "mutating_count": 76,
     "read_only_count": 104
@@ -246,6 +246,12 @@
       "command": "embed",
       "mode": "cli_direct_engine",
       "operation_spec_name": "embed",
+      "reason": "direct_engine_command"
+    },
+    {
+      "command": "eval",
+      "mode": "cli_direct_engine",
+      "operation_spec_name": "eval",
       "reason": "direct_engine_command"
     },
     {
@@ -820,6 +826,12 @@
       "command": "setup-agent",
       "mode": "cli_only",
       "operation_spec_name": "setup_agent",
+      "reason": "process_or_shell_bound"
+    },
+    {
+      "command": "skill-surface",
+      "mode": "cli_only",
+      "operation_spec_name": "skill_surface",
       "reason": "process_or_shell_bound"
     },
     {
@@ -15506,6 +15518,15 @@
           "nullable": false,
           "description": "Persist a retrieval trace for this canonical read"
         },
+        "probe_context": {
+          "type": [
+            "object",
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional bounded handoff from the preceding retrieve_context result: trace ids and counts only, never raw candidate text."
+        },
         "query": {
           "type": [
             "string"
@@ -15624,8 +15645,8 @@
           }
         }
       },
-      "compact_schema_hash": "779218a6de3eecdb2e87047c0e38da9441e7f404b1e555b6e7660e1efc9c19c7",
-      "full_schema_hash": "e81d9c461b764a95035bb942cc296277581bab26f95b9d4fe0237112579ae054",
+      "compact_schema_hash": "a22610e2dd40f3d9413a3f6d8e39a930912f39dd49a48d46271418d9977b89f2",
+      "full_schema_hash": "7a397bf88f5b0434860254dea2f4d6ef852f969ff82ef07c1aab1089cd8f09ff",
       "memory_verb_families": [
         "read_evidence"
       ],
