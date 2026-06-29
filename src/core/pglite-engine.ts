@@ -4302,20 +4302,48 @@ export class PGLiteEngine implements BrainEngine {
     opts: { limit?: number; takesHoldersAllowList?: string[] } = {},
   ): Promise<TakeHit[]> {
     const limit = clampSearchLimit(opts.limit, 30, 100);
+    const anyTermQuery = query.trim().split(/\s+/).filter(Boolean).join(' OR ') || query;
     const { rows } = await this.db.query(
-      `SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
+      `WITH q AS (
+         SELECT
+           websearch_to_tsquery('english', $1) AS q_all,
+           websearch_to_tsquery('english', $4) AS q_any
+       )
+       SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
               t.claim, t.kind, t.holder, t.weight,
-              similarity(t.claim, $1)::real AS score
+              GREATEST(
+                similarity(t.claim, $1),
+                ts_rank_cd(to_tsvector('english', t.claim), q.q_all),
+                ts_rank_cd(to_tsvector('english', t.claim), q.q_any)
+              )::real AS score
        FROM takes t
        JOIN pages p ON p.id = t.page_id
+       CROSS JOIN q
        WHERE t.active
-         AND t.claim % $1
+         AND (
+           t.claim % $1
+           OR to_tsvector('english', t.claim) @@ q.q_all
+           OR to_tsvector('english', t.claim) @@ q.q_any
+         )
          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
-       ORDER BY score DESC, t.weight DESC
+       ORDER BY
+         CASE WHEN to_tsvector('english', t.claim) @@ q.q_all THEN 1 ELSE 0 END DESC,
+         score DESC,
+         t.weight DESC
        LIMIT $3`,
-      [query, opts.takesHoldersAllowList ?? null, limit]
+      [query, opts.takesHoldersAllowList ?? null, limit, anyTermQuery]
     );
-    return rows as unknown as TakeHit[];
+    return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+      take_id: Number(r.take_id),
+      page_id: Number(r.page_id),
+      page_slug: String(r.page_slug),
+      row_num: Number(r.row_num),
+      claim: String(r.claim),
+      kind: r.kind as TakeHit['kind'],
+      holder: String(r.holder),
+      weight: Number(r.weight),
+      score: Number(r.score),
+    }));
   }
 
   async searchTakesVector(
@@ -4337,7 +4365,17 @@ export class PGLiteEngine implements BrainEngine {
        LIMIT $3`,
       [vec, opts.takesHoldersAllowList ?? null, limit]
     );
-    return rows as unknown as TakeHit[];
+    return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+      take_id: Number(r.take_id),
+      page_id: Number(r.page_id),
+      page_slug: String(r.page_slug),
+      row_num: Number(r.row_num),
+      claim: String(r.claim),
+      kind: r.kind as TakeHit['kind'],
+      holder: String(r.holder),
+      weight: Number(r.weight),
+      score: Number(r.score),
+    }));
   }
 
   async getTakeEmbeddings(ids: number[]): Promise<Map<number, Float32Array>> {
