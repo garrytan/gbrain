@@ -882,8 +882,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Emotional weight (v0.29)
   'emotional_weight.high_tags',
   'emotional_weight.user_holder',
-  // Cycle phase config
+  // Cycle phase/config health
   'cycle.grade_takes.write_gstack_learnings',
+  'doctor.cycle_freshness.source_allowlist',
+  'doctor.cycle_freshness.source_ignorelist',
   // Content sanity (v0.41)
   'content_sanity.bytes_warn',
   'content_sanity.bytes_block',

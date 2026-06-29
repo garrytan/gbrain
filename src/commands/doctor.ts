@@ -3742,6 +3742,105 @@ export async function checkPoolBudget(_engine: BrainEngine): Promise<Check> {
   }
 }
 
+type CycleFreshnessSourceScope = {
+  allowlist?: Set<string>;
+  ignorelist: Set<string>;
+  invalid: string[];
+  configured: boolean;
+};
+
+const CYCLE_FRESHNESS_SOURCE_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+type DoctorSourceRow = Awaited<ReturnType<BrainEngine['listAllSources']>>[number];
+
+function parseCycleFreshnessSourceList(raw: string | null | undefined, label: string): {
+  ids: string[];
+  invalid: string[];
+} | null {
+  if (raw === null || raw === undefined || raw.trim() === '') return null;
+  const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const invalid: string[] = [];
+  for (const part of parts) {
+    if (!CYCLE_FRESHNESS_SOURCE_ID_RE.test(part)) {
+      invalid.push(`${label} contains invalid source id "${part}"`);
+      continue;
+    }
+    if (!seen.has(part)) {
+      seen.add(part);
+      ids.push(part);
+    }
+  }
+  return { ids, invalid };
+}
+
+async function getCycleFreshnessConfig(engine: BrainEngine, key: string): Promise<string | null> {
+  try {
+    return await engine.getConfig(key);
+  } catch {
+    return null;
+  }
+}
+
+async function resolveCycleFreshnessSourceScope(
+  engine: BrainEngine,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<CycleFreshnessSourceScope> {
+  const dbAllowlist = await getCycleFreshnessConfig(engine, 'doctor.cycle_freshness.source_allowlist');
+  const dbIgnorelist = await getCycleFreshnessConfig(engine, 'doctor.cycle_freshness.source_ignorelist');
+  const allowRaw =
+    (env.GBRAIN_CYCLE_FRESHNESS_SOURCE_ALLOWLIST?.trim() ? env.GBRAIN_CYCLE_FRESHNESS_SOURCE_ALLOWLIST : undefined) ??
+    (env.DREAM_SOURCE_ALLOWLIST?.trim() ? env.DREAM_SOURCE_ALLOWLIST : undefined) ??
+    dbAllowlist;
+  const ignoreRaw =
+    (env.GBRAIN_CYCLE_FRESHNESS_SOURCE_IGNORELIST?.trim() ? env.GBRAIN_CYCLE_FRESHNESS_SOURCE_IGNORELIST : undefined) ??
+    dbIgnorelist;
+
+  const parsedAllow = parseCycleFreshnessSourceList(allowRaw, 'source allowlist');
+  const parsedIgnore = parseCycleFreshnessSourceList(ignoreRaw, 'source ignorelist');
+  return {
+    allowlist: parsedAllow ? new Set(parsedAllow.ids) : undefined,
+    ignorelist: new Set(parsedIgnore?.ids ?? []),
+    invalid: [...(parsedAllow?.invalid ?? []), ...(parsedIgnore?.invalid ?? [])],
+    configured: !!parsedAllow || !!parsedIgnore,
+  };
+}
+
+function applyCycleFreshnessSourceScope(
+  sources: DoctorSourceRow[],
+  scope: CycleFreshnessSourceScope,
+): DoctorSourceRow[] {
+  return sources.filter((source) => {
+    if (scope.allowlist && !scope.allowlist.has(source.id)) return false;
+    if (scope.ignorelist.has(source.id)) return false;
+    return true;
+  });
+}
+
+function cycleFreshnessScopeDetails(
+  sources: DoctorSourceRow[],
+  scopedSources: DoctorSourceRow[],
+  scope: CycleFreshnessSourceScope,
+): Record<string, unknown> | undefined {
+  if (!scope.configured) return undefined;
+  return {
+    checked_source_count: scopedSources.length,
+    skipped_source_count: sources.length - scopedSources.length,
+    source_allowlist: scope.allowlist ? Array.from(scope.allowlist).sort() : undefined,
+    source_ignorelist: Array.from(scope.ignorelist).sort(),
+  };
+}
+
+function cycleFreshnessScopeSuffix(
+  sources: DoctorSourceRow[],
+  scopedSources: DoctorSourceRow[],
+  scope: CycleFreshnessSourceScope,
+): string {
+  if (!scope.configured) return '';
+  return ` (${scopedSources.length}/${sources.length} source(s) checked by cycle_freshness source scope)`;
+}
+
 /**
  * v0.38 — per-source `last_full_cycle_at` freshness check.
  *
@@ -3754,13 +3853,16 @@ export async function checkPoolBudget(_engine: BrainEngine): Promise<Check> {
  *
  * Default thresholds: warn at 6h, fail at 24h. Tighter than sync_freshness
  * because full-cycle staleness compounds (sync stale → extract stale →
- * embed stale → search stale). Env overrides:
+ * embed stale → search stale). Env/config overrides:
  *   - GBRAIN_CYCLE_FRESHNESS_WARN_HOURS (default 6)
  *   - GBRAIN_CYCLE_FRESHNESS_FAIL_HOURS (default 24)
+ *   - GBRAIN_CYCLE_FRESHNESS_SOURCE_ALLOWLIST / DREAM_SOURCE_ALLOWLIST
+ *   - GBRAIN_CYCLE_FRESHNESS_SOURCE_IGNORELIST
+ *   - DB config: doctor.cycle_freshness.source_allowlist / source_ignorelist
  */
 export async function checkCycleFreshness(
   engine: BrainEngine,
-  opts?: { nowMs?: number },
+  opts?: { nowMs?: number; env?: NodeJS.ProcessEnv },
 ): Promise<Check> {
   try {
     const sources = await engine.listAllSources({ localPathOnly: true });
@@ -3769,6 +3871,27 @@ export async function checkCycleFreshness(
         name: 'cycle_freshness',
         status: 'ok',
         message: 'No federated sources to cycle',
+      };
+    }
+
+    const scope = await resolveCycleFreshnessSourceScope(engine, opts?.env);
+    if (scope.invalid.length > 0) {
+      return {
+        name: 'cycle_freshness',
+        status: 'warn',
+        message: `Invalid cycle_freshness source scope: ${scope.invalid.join('; ')}`,
+        details: cycleFreshnessScopeDetails(sources, sources, scope),
+      };
+    }
+    const scopedSources = applyCycleFreshnessSourceScope(sources, scope);
+    const details = cycleFreshnessScopeDetails(sources, scopedSources, scope);
+    const scopeSuffix = cycleFreshnessScopeSuffix(sources, scopedSources, scope);
+    if (scopedSources.length === 0) {
+      return {
+        name: 'cycle_freshness',
+        status: 'ok',
+        message: `No federated sources to cycle after cycle_freshness source scope${scopeSuffix}`,
+        details,
       };
     }
 
@@ -3782,7 +3905,7 @@ export async function checkCycleFreshness(
     let hasWarnings = false;
     let hasFailures = false;
 
-    for (const source of sources) {
+    for (const source of scopedSources) {
       const display = source.name && source.name !== source.id
         ? `'${source.id}' (${source.name})`
         : `'${source.id}'`;
@@ -3818,20 +3941,23 @@ export async function checkCycleFreshness(
       return {
         name: 'cycle_freshness',
         status: 'fail',
-        message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` for each stale source, or start \`gbrain autopilot\`.`,
+        message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` for each stale source, or start \`gbrain autopilot\`${scopeSuffix}.`,
+        details,
       };
     }
     if (hasWarnings) {
       return {
         name: 'cycle_freshness',
         status: 'warn',
-        message: `${issues.join('; ')}.`,
+        message: `${issues.join('; ')}${scopeSuffix}.`,
+        details,
       };
     }
     return {
       name: 'cycle_freshness',
       status: 'ok',
-      message: `All ${sources.length} federated source(s) cycled recently`,
+      message: `All ${scopedSources.length} federated source(s) cycled recently${scopeSuffix}`,
+      details,
     };
   } catch (e) {
     return {
