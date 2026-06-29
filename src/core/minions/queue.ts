@@ -647,9 +647,18 @@ export class MinionQueue {
   async handleTimeouts(): Promise<MinionJob[]> {
     return this.engine.transaction(async (tx) => {
       const rows = await tx.executeRaw<Record<string, unknown>>(
+        // #1737: count the timed-out run as a spent attempt (terminal, no retry),
+        // mirroring handleWallClockTimeouts + handleStalled. handleTimeouts is the
+        // FIRST killer to fire for the long-lane handlers (timeout_ms stamped at
+        // submit), so without this the job reads `attempts: 0/N (started: N)`.
+        // Safe against double-count: the worker sweep runs handleStalled ->
+        // handleTimeouts -> handleWallClockTimeouts sequentially and awaited, and
+        // each guards on `status = 'active'`, so the first to set status='dead'
+        // excludes the row from the later sweeps.
         `UPDATE minion_jobs SET
           status = 'dead',
           error_text = 'timeout exceeded',
+          attempts_made = attempts_made + 1,
           lock_token = NULL,
           lock_until = NULL,
           finished_at = now(),

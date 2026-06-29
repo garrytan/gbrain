@@ -426,6 +426,29 @@ export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sou
 }
 
 /**
+ * #2200: source scope for the LINK read ops (get_links / get_backlinks). A link
+ * row references three pages (from, to, origin); the engine's federated
+ * (`sourceIds[]`) branch scopes ALL THREE, but its scalar (`sourceId`) branch
+ * scopes only the near endpoint — by design, because trusted internal callers
+ * (reconcileLinks, back-link validators, enrich) call the engine directly with a
+ * scalar scope and need the cross-source view.
+ *
+ * An UNTRUSTED remote caller carrying only a scalar scope (a legacy bearer token
+ * or a pre-`federated_read` OAuth client) would otherwise hit that scalar branch
+ * and have a foreign far/origin slug disclosed. So for remote callers we promote a
+ * scalar scope to a single-element `sourceIds:[id]`, routing them through the
+ * all-endpoint branch. Trusted local CLI (`ctx.remote === false`) keeps the scalar
+ * cross-source view, and a federated array passes through unchanged.
+ */
+export function linkReadScopeOpts(ctx: OperationContext): { sourceId?: string; sourceIds?: string[] } {
+  const scope = sourceScopeOpts(ctx);
+  if (ctx.remote !== false && scope.sourceId && !scope.sourceIds) {
+    return { sourceIds: [scope.sourceId] };
+  }
+  return scope;
+}
+
+/**
  * Resolve a per-call requested source scope against the caller's trust + grant.
  * FAIL-CLOSED: anything not strictly `ctx.remote === false` is untrusted.
  *
@@ -642,7 +665,12 @@ const get_page: Operation = {
     // inside bumpLastRetrievedAt (D2).
     bumpLastRetrievedAt(ctx.engine, [page.id]);
 
-    const tags = await ctx.engine.getTags(page.slug, sourceOpts);
+    // #2200: resolve tags against the concrete page's source. `sourceOpts` may
+    // be { sourceIds:[...] } (federated) with no scalar sourceId, which getTags
+    // would otherwise fall back to 'default' for — the wrong source for a
+    // non-default page. We already hold the resolved page, so its source is
+    // unambiguous.
+    const tags = await ctx.engine.getTags(page.slug, { sourceId: page.source_id });
     // Privacy boundary for the per-token allow-list (v0.28.6 for takes,
     // v0.32.2 for facts).
     //
@@ -1875,8 +1903,11 @@ const get_tags: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D20): thread ctx.sourceId for read-side ops on multi-source brains.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // #2200: route through sourceScopeOpts so a federated read grant
+    // (ctx.auth.allowedSources) reaches the engine, not just scalar ctx.sourceId.
+    // Was `ctx.sourceId ? {sourceId} : {}` — a federated client got '{}' →
+    // engine fell back to 'default' (functionality gap + cross-source leak).
+    const sourceOpts = sourceScopeOpts(ctx);
     return ctx.engine.getTags(p.slug as string, sourceOpts);
   },
   scope: 'read',
@@ -1972,9 +2003,10 @@ const get_links: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D16): thread ctx.sourceId. When unset, engine falls through
-    // to cross-source view (back-compat).
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // #2200: linkReadScopeOpts so a federated grant — and an untrusted remote
+    // scalar scope (promoted to sourceIds[]) — reaches the engine's all-endpoint
+    // branch. Trusted local/internal callers keep the scalar cross-source view.
+    const sourceOpts = linkReadScopeOpts(ctx);
     return ctx.engine.getLinks(p.slug as string, sourceOpts);
   },
   scope: 'read',
@@ -1987,7 +2019,9 @@ const get_backlinks: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // #2200: linkReadScopeOpts — federated grant + untrusted remote scalar
+    // (promoted to sourceIds[]) reach the engine's all-endpoint branch.
+    const sourceOpts = linkReadScopeOpts(ctx);
     return ctx.engine.getBacklinks(p.slug as string, sourceOpts);
   },
   scope: 'read',
@@ -2106,9 +2140,9 @@ const get_timeline: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D20): thread ctx.sourceId.
-    const sourceId = ctx.sourceId;
-    return ctx.engine.getTimeline(p.slug as string, sourceId ? { sourceId } : undefined);
+    // #2200: route through sourceScopeOpts so a federated grant reaches the
+    // engine via TimelineOpts.sourceIds; scalar/unset unchanged.
+    return ctx.engine.getTimeline(p.slug as string, sourceScopeOpts(ctx));
   },
   scope: 'read',
   cliHints: { name: 'timeline', positional: ['slug'] },
@@ -2222,13 +2256,26 @@ const get_skill: Operation = {
     name: {
       type: 'string',
       required: true,
-      description: 'Skill name exactly as returned by list_skills.',
+      description: 'Skill name exactly as returned by list_skills (or the brain-pack skill slug when source_id is set).',
+    },
+    source_id: {
+      type: 'string',
+      description:
+        'Optional: fetch a brain-resident pack skill from this source instead of the host catalog. ' +
+        'Disambiguates a slug that exists on more than one source (see list_brain_skillpack).',
     },
   },
   handler: async (ctx, p) => {
     const sc = await import('./skill-catalog.ts');
     const publish = await sc.readMcpPublishSkills(ctx);
     sc.assertPublishEnabled(ctx, publish);
+    // Brain-resident path: when source_id is supplied, fetch the per-source pack
+    // skill (confined to that source's pack root) rather than the host catalog.
+    if (typeof p.source_id === 'string' && p.source_id.length > 0) {
+      const brl = await import('./skillpack/brain-resident-locate.ts');
+      const slug = typeof p.name === 'string' ? p.name : '';
+      return brl.getResidentSkillDetail(ctx, p.source_id, slug);
+    }
     const override = await sc.readMcpSkillsDir(ctx);
     const { dir } = sc.resolveSkillsDir(ctx, override);
     const name = typeof p.name === 'string' ? p.name : '';
@@ -2236,6 +2283,76 @@ const get_skill: Operation = {
   },
   scope: 'read',
   cliHints: { name: 'skill', positional: ['name'] },
+};
+
+const list_brain_skillpack: Operation = {
+  name: 'list_brain_skillpack',
+  description:
+    'List brain-resident skillpacks this brain ships (per-source). Returns each pack\'s skills, ' +
+    'one-line descriptions, the schema pack it targets + whether that matches this brain, and a ' +
+    'git scaffold spec. Read-only; gated by mcp.publish_skills. After orienting, call this and ' +
+    'ask the user whether to install any pack the brain offers (gbrain skillpack scaffold <spec>).',
+  params: {},
+  handler: async (ctx) => {
+    const sc = await import('./skill-catalog.ts');
+    const publish = await sc.readMcpPublishSkills(ctx);
+    sc.assertPublishEnabled(ctx, publish);
+    const brl = await import('./skillpack/brain-resident-locate.ts');
+    return brl.loadResidentPacksForServer(ctx);
+  },
+  scope: 'read',
+  cliHints: { name: 'brain-skillpack', positional: [] },
+};
+
+const advisor: Operation = {
+  name: 'advisor',
+  description:
+    'Ranked, read-only "what to do next" for this brain: version drift, pending migrations, ' +
+    'schema-pack issues, stalled jobs, usage-shape gaps, and setup smells. Each finding has a ' +
+    'severity, why-it-matters, and the exact fix command. Never mutates. Tell the user; ask ' +
+    'before running any fix. Gated by mcp.publish_advisor (separate from mcp.publish_skills ' +
+    'because diagnostics are not prose skills).',
+  params: {},
+  handler: async (ctx) => {
+    // Publish gate: a remote caller needs mcp.publish_advisor=true. Local
+    // (ctx.remote === false) callers bypass — the trust boundary is the OS.
+    if (ctx.remote !== false) {
+      let enabled = false;
+      try {
+        const dbVal = await ctx.engine.getConfig('mcp.publish_advisor');
+        enabled = dbVal != null ? dbVal === 'true' : ctx.config?.mcp?.publish_advisor === true;
+      } catch {
+        enabled = ctx.config?.mcp?.publish_advisor === true;
+      }
+      if (!enabled) {
+        throw new OperationError(
+          'permission_denied',
+          'The advisor is not published over MCP by the brain owner.',
+          'The owner can enable it with `gbrain config set mcp.publish_advisor true`.',
+        );
+      }
+    }
+    const { runAdvisor } = await import('./advisor/run.ts');
+    const { VERSION } = await import('../version.ts');
+    // Over MCP there is no agent workspace on the server side: remote=true makes
+    // runAdvisor drop workspace-dependent collectors (A1). The op never writes
+    // history or nag state — it is strictly read-only.
+    const report = await runAdvisor({
+      engine: ctx.engine,
+      config: ctx.config,
+      version: VERSION,
+      workspace: null,
+      skillsDir: null,
+      now: new Date(),
+      remote: ctx.remote !== false,
+    });
+    return report;
+  },
+  scope: 'read',
+  // NOT localOnly — exposed over MCP (E1) behind mcp.publish_advisor.
+  // No cliHints: the CLI surface is the richer `gbrain advisor` command
+  // (commands/advisor.ts) which adds --json exit codes + --apply.
+  cliHints: { name: 'advisor', hidden: true },
 };
 
 /**
@@ -2300,7 +2417,10 @@ const get_status_snapshot: Operation = {
     }
     const sync = await buildSyncStatusReport(ctx.engine, sources);
     const cycle = await buildCycleSnapshot(ctx.engine);
-    return { schema_version: 1 as const, sync, cycle };
+    // #1984: report the brain server's version so a thin-client `gbrain status`
+    // can surface remote_version alongside its own local CLI version.
+    const { VERSION } = await import('../version.ts');
+    return { schema_version: 1 as const, version: VERSION, sync, cycle };
   },
   scope: 'admin',
   localOnly: false,
@@ -3143,6 +3263,99 @@ const get_recent_salience: Operation = {
     });
   },
   cliHints: { name: 'salience' },
+};
+
+// --- v0.43 (#2095): push-based context — the brain volunteers pages ---
+
+const volunteer_context: Operation = {
+  name: 'volunteer_context',
+  description:
+    'Push-based context: volunteer brain pages relevant to a rolling conversation window ' +
+    'WITHOUT being asked. Zero-LLM, confidence-gated (alias 0.9 / exact-title 0.8 / ' +
+    'slug-suffix 0.6, +0.05 for multi-turn or newest-turn mentions; default gate 0.7), ' +
+    'capped at 3 pages (max 5). Returns pointers with one-line rationales + synopses — ' +
+    'open the page (get_page) before relying on details. Pass stats: true for the ' +
+    'approximate volunteered-vs-used precision summary (the feedback loop).',
+  scope: 'read',
+  params: {
+    window: {
+      type: 'string',
+      description:
+        "Recent conversation turns, oldest → newest, as 'user:' / 'assistant:' prefixed " +
+        'lines (unprefixed text = one user turn). Required unless stats: true. ' +
+        'CLI: piped stdin fills this.',
+    },
+    prior_context: {
+      type: 'string',
+      description:
+        'Already-surfaced context (pointer blocks / opened page bodies). Pages whose slug ' +
+        'appears here are not re-volunteered.',
+    },
+    max_pages: { type: 'number', description: 'Max pages to volunteer (default 3, hard cap 5).' },
+    min_confidence: {
+      type: 'number',
+      description:
+        'Confidence gate 0..1 (default 0.7 — slug-suffix matches need an explicit lower gate).',
+    },
+    session_id: { type: 'string', description: 'Optional caller session id, logged for attribution.' },
+    turn: { type: 'number', description: 'Optional caller turn number, logged for attribution.' },
+    stats: {
+      type: 'boolean',
+      description:
+        'Return the volunteered-vs-used precision summary instead of volunteering. ' +
+        'APPROXIMATE: "used" = pages.last_retrieved_at > volunteered_at.',
+    },
+    days: { type: 'number', description: 'Stats window in days (default 30; stats mode only).' },
+  },
+  handler: async (ctx, p) => {
+    const { parseWindow, volunteerContext, volunteerUsageStats } = await import('./context/volunteer.ts');
+    const scope = sourceScopeOpts(ctx);
+    const sourceIds = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : ['default']);
+
+    if (p.stats === true) {
+      return volunteerUsageStats(ctx.engine, sourceIds, typeof p.days === 'number' ? p.days : undefined);
+    }
+
+    if (typeof p.window !== 'string' || !p.window.trim()) {
+      throw new OperationError(
+        'invalid_params',
+        'window is required unless stats: true',
+        'Pass the recent turns as a string (CLI: pipe them on stdin), or use --stats.',
+      );
+    }
+    const turns = parseWindow(p.window);
+    const pages = await volunteerContext(ctx.engine, turns, {
+      sourceIds,
+      priorContext: typeof p.prior_context === 'string' ? p.prior_context : undefined,
+      maxPages: typeof p.max_pages === 'number' ? p.max_pages : undefined,
+      minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
+    });
+
+    // Feedback-loop logging: fire-and-forget batched INSERT through the
+    // volunteer-events sink (drained at exit). Never fails the op.
+    if (pages.length) {
+      try {
+        const { logVolunteerEventsFireAndForget, volunteerEventRowsFrom } = await import('./context/volunteer-events.ts');
+        // Trust-boundary clamps (remote MCP callers): cap session_id length so
+        // a read-scoped token can't bank unbounded TEXT per request, and only
+        // log integer turns — a non-integer would throw inside the single
+        // multi-row INSERT and silently drop the whole batch.
+        const sessionId = typeof p.session_id === 'string' ? p.session_id.slice(0, 256) : null;
+        const turn =
+          typeof p.turn === 'number' && Number.isInteger(p.turn) && Math.abs(p.turn) <= 2_147_483_647
+            ? p.turn
+            : null;
+        logVolunteerEventsFireAndForget(
+          ctx.engine,
+          volunteerEventRowsFrom(pages, { channel: 'op', session_id: sessionId, turn }),
+        );
+      } catch {
+        /* telemetry only */
+      }
+    }
+    return { pages, count: pages.length, window_turns: turns.length };
+  },
+  cliHints: { name: 'volunteer-context', stdin: 'window' },
 };
 
 const find_anomalies: Operation = {
@@ -4826,7 +5039,7 @@ export const operations: Operation[] = [
   // v0.31.1 (Issue #734): thin-client banner identity packet (read-scope, banner-only)
   get_brain_identity,
   // PR1: skill catalog over MCP — discover + fetch host-repo skills (read-scope)
-  list_skills, get_skill,
+  list_skills, get_skill, list_brain_skillpack, advisor,
   // v0.41.19.0: thin-client `gbrain status` payload (admin-scope, sync + cycle only)
   get_status_snapshot,
   // Sync
@@ -4856,6 +5069,8 @@ export const operations: Operation[] = [
   whoami, sources_add, sources_list, sources_remove, sources_status,
   // v0.29: Salience + anomalies + recent transcripts
   get_recent_salience, find_anomalies, get_recent_transcripts,
+  // v0.43 (#2095): push-based context
+  volunteer_context,
   // v0.31: hot memory (facts table)
   extract_facts, recall, forget_fact,
   // v0.32.6: contradiction probe MCP surface (M3)

@@ -65,6 +65,16 @@ export function registerBackgroundWorkDrainer(d: BackgroundWorkDrainer): void {
 }
 
 /**
+ * Number of registered sinks. Used by `finishCliTeardown` (cli-force-exit.ts)
+ * to COMPUTE its backstop deadline from the bounds it guards — a 5th sink
+ * registering automatically widens the deadline instead of silently making
+ * the worst-case bounded drain exceed a static number (#2084 eng-review D9).
+ */
+export function backgroundWorkSinkCount(): number {
+  return drainers.size;
+}
+
+/**
  * Test seam — registers a drainer and returns an unregister handle. Preferred
  * over a blunt reset: real sink modules register at import time and won't re-run
  * that top-level side effect on a second import, so a global clear would

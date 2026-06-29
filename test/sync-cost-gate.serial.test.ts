@@ -1,15 +1,17 @@
 /**
- * v0.41.31 — `gbrain sync --all` cost-gate wiring regressions (PGLite).
+ * `gbrain sync` cost-gate wiring regressions (PGLite).
  *
- * Pure shouldBlockSync / willEmbedSynchronously logic is pinned in
- * test/sync-cost-preview.test.ts. THIS file pins the end-to-end wiring in
- * runSync's --all path:
+ * Pure shouldBlockSync / willEmbedSynchronously / parseUsdLimit logic is pinned
+ * in test/sync-cost-preview.test.ts. THIS file pins the end-to-end wiring in
+ * runSync's --all AND single-source paths:
  *
  *   R-1 (headline): deferred-embed sync --all, non-TTY, with backlog →
- *        emits gate:'deferred_notice' and NEVER exit 2 (the cron-blocking
- *        bug this release fixes).
- *   R-2 (protection): inline-embed sync --all (--serial), non-TTY, above
- *        floor → still exit 2 with gate:'confirmation_required'.
+ *        emits gate:'deferred_notice' and NEVER exit 2.
+ *   R-2 (v0.42.42.0, #2139): inline sync --all (--serial), non-TTY, above floor
+ *        → AUTO-DEFERS (exit 0, gate:'auto_deferred_embeds') and enqueues an
+ *        embed-backfill job. The exit-2 wedge is gone.
+ *   R-3: chunker drift → full-tree CEILING estimate, auto-defers (not exit 2).
+ *   + posture tokenmax, off-switch, format split (#1784/D3A), single-source gate.
  *
  * Serial-quarantined: stubs process.exit + console.log (process-global).
  */
@@ -21,9 +23,17 @@ import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runSources } from '../src/commands/sources.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
-import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { CHUNKER_VERSION } from '../src/core/chunkers/code.ts';
 import type { ChunkInput } from '../src/core/types.ts';
+
+/** Offline embed stub so inline-proceed paths (posture tokenmax) don't network. */
+function stubOfflineEmbed(): void {
+  __setEmbedTransportForTests(async ({ values }: any) => ({
+    embeddings: values.map(() => new Array(1536).fill(0)),
+    usage: { tokens: 0 },
+  }) as any);
+}
 
 let engine: PGLiteEngine;
 let repoPath: string;
@@ -64,6 +74,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  __setEmbedTransportForTests(null);
   resetGateway();
   if (repoPath) rmSync(repoPath, { recursive: true, force: true });
 });
@@ -115,39 +126,43 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     expect(stdout).toContain('"gate":"deferred_notice"');
   }, 60_000);
 
-  test('R-2: inline sync --all (--serial) above floor still exit 2', async () => {
+  test('R-2 (#2139): inline sync --all (--serial) above floor AUTO-DEFERS (exit 0, never exit 2) + enqueues backfill', async () => {
     await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
-    // Floor 0 → any nonzero inline cost blocks. Source is unsynced
-    // (last_commit NULL) so estimateInlineNewTokens sees it as changed →
-    // full-tree tokens > 0 → costUsd > 0 > floor.
+    // Floor 0 → any nonzero inline cost trips the gate. Source is unsynced
+    // (last_commit NULL) → first-sync ceiling > 0 > floor.
     await engine.setConfig('sync.cost_gate_min_usd', '0');
 
-    // --serial forces inline even with v2 on. --json → non-TTY exit-2 path.
+    // --serial forces inline even with v2 on. --json → non-TTY path → AUTO-DEFER.
     const { exitCode, stdout } = await runSyncCaptured(['--all', '--serial', '--json', '--no-pull']);
 
-    expect(exitCode).toBe(2);
-    expect(stdout).toContain('"gate":"confirmation_required"');
+    expect(exitCode).not.toBe(2);
+    expect(stdout).toContain('"gate":"auto_deferred_embeds"');
+    expect(stdout).not.toContain('"gate":"confirmation_required"');
+    // The run PROCEEDED to import (the wedge is gone) — embeds were deferred,
+    // not blocked. (The embed-backfill enqueue wiring + its graceful
+    // missing-table tolerance is pinned in embed-backfill-submit.test.ts; the
+    // minion_jobs table isn't provisioned in this gate-wiring harness.)
+    expect(stdout).toContain('"sync_status":"first_sync"');
   }, 60_000);
 
-  test('R-3: inline, git-unchanged source but STALE chunker_version still estimates (not $0)', async () => {
-    // The unchanged-source short-circuit requires HEAD==last_commit AND clean
-    // tree AND chunker_version == current. Here git is unchanged but the
-    // chunker drifted, so the source must NOT be treated as 0 — sync would
-    // re-chunk + re-embed everything. floor=0 so any nonzero cost blocks.
+  test('R-3 (#2139): chunker drift → full-tree CEILING estimate, auto-defers (not exit 2)', async () => {
+    // git unchanged (HEAD==last_commit) but chunker drifted → the source must
+    // NOT price $0 (sync would re-chunk + re-embed everything). The estimate is
+    // the full-tree ceiling; the gate auto-defers rather than wedging.
     await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
     await engine.executeRaw(`UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`, [headSha, 'STALE-0']);
     await engine.setConfig('sync.cost_gate_min_usd', '0');
 
     const { exitCode, stdout } = await runSyncCaptured(['--all', '--serial', '--json', '--no-pull']);
 
-    expect(exitCode).toBe(2);
-    expect(stdout).toContain('"gate":"confirmation_required"');
+    expect(exitCode).not.toBe(2);
+    expect(stdout).toContain('"gate":"auto_deferred_embeds"');
+    expect(stdout).toContain('"estimateKind":"ceiling"');
   }, 60_000);
 
-  test('R-3 control: inline, git-unchanged + CURRENT chunker_version short-circuits to $0 (no exit 2)', async () => {
-    // Same setup but chunker_version matches current → the source IS unchanged
-    // → contributes 0 new-content tokens → below floor → proceeds (no block).
-    // Proves the short-circuit fires when (and only when) everything matches.
+  test('R-3 control: git-unchanged + CURRENT chunker → $0 estimate, below floor (no auto-defer)', async () => {
+    // Mirrors the executor's up_to_date predicate: HEAD==last_commit AND chunker
+    // matches → 0 new tokens → below floor → proceeds without deferring.
     await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
     await engine.executeRaw(`UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`, [headSha, String(CHUNKER_VERSION)]);
     await engine.setConfig('sync.cost_gate_min_usd', '0');
@@ -155,6 +170,78 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     const { exitCode, stdout } = await runSyncCaptured(['--all', '--serial', '--json', '--no-pull']);
 
     expect(exitCode).not.toBe(2);
-    expect(stdout).not.toContain('"gate":"confirmation_required"');
+    expect(stdout).not.toContain('"gate":"auto_deferred_embeds"');
+    expect(stdout).toContain('"estimateKind":"unchanged"');
+  }, 60_000);
+
+  test('headline regression: HEAD==last_commit + DIRTY untracked file → $0, no gate (the false-fire)', async () => {
+    // The exact pre-fix false-fire: a busy brain's working tree is never
+    // git-clean, but the commits are caught up. The OLD estimator priced the
+    // whole tree (158M-token phantom); the new one mirrors execution → $0.
+    await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
+    await engine.executeRaw(`UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`, [headSha, String(CHUNKER_VERSION)]);
+    // Dirty the tree with an untracked non-syncable scratch file (agents/crons
+    // write constantly) — attached-HEAD sync never imports it.
+    writeFileSync(join(repoPath, 'scratch.tmp'), 'uncommitted agent scratch');
+    writeFileSync(join(repoPath, 'topics/foo.md'), 'uncommitted edit, not staged');
+    await engine.setConfig('sync.cost_gate_min_usd', '0');
+
+    const { exitCode, stdout } = await runSyncCaptured(['--all', '--serial', '--json', '--no-pull']);
+
+    expect(exitCode).not.toBe(2);
+    expect(stdout).not.toContain('"gate":"auto_deferred_embeds"');
+    expect(stdout).toContain('"estimateKind":"unchanged"');
+  }, 60_000);
+
+  test('spend.posture=tokenmax → proceeds inline, gate:posture_tokenmax (informational)', async () => {
+    stubOfflineEmbed(); // inline embed proceeds — keep it off the network.
+    await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
+    await engine.setConfig('sync.cost_gate_min_usd', '0');
+    await engine.setConfig('spend.posture', 'tokenmax');
+
+    const { exitCode, stdout } = await runSyncCaptured(['--all', '--serial', '--json', '--no-pull']);
+
+    expect(exitCode).not.toBe(2);
+    expect(stdout).toContain('"gate":"posture_tokenmax"');
+    expect(stdout).not.toContain('"gate":"auto_deferred_embeds"');
+  }, 60_000);
+
+  test('sync.cost_gate_min_usd=off → floor renders "unlimited", never blocks', async () => {
+    stubOfflineEmbed();
+    await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
+    await engine.setConfig('sync.cost_gate_min_usd', 'off');
+
+    const { exitCode, stdout } = await runSyncCaptured(['--all', '--serial', '--json', '--no-pull']);
+
+    expect(exitCode).not.toBe(2);
+    expect(stdout).toContain('"floorUsd":"unlimited"');
+    expect(stdout).not.toContain('"gate":"auto_deferred_embeds"');
+  }, 60_000);
+
+  test('format split (#1784/D3A): non-TTY WITHOUT --json emits human text, no JSON envelope', async () => {
+    await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
+    await engine.setConfig('sync.cost_gate_min_usd', '0');
+
+    // No --json: above floor in a non-TTY session → human auto-defer text.
+    const { exitCode, stdout } = await runSyncCaptured(['--all', '--serial', '--no-pull']);
+
+    expect(exitCode).not.toBe(2);
+    expect(stdout).not.toContain('"gate":'); // no JSON envelope without --json
+    expect(stdout.toLowerCase()).toContain('deferring embeds');
+    expect(stdout).toContain('spend.posture'); // self-describing hint present
+  }, 60_000);
+
+  test('single-source sync gets the same gate (auto-defers above floor, exit 0)', async () => {
+    await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
+    await engine.setConfig('sync.cost_gate_min_usd', '0');
+
+    // Single-source (no --all): unsynced → ceiling > 0 → non-TTY auto-defer.
+    const { exitCode, stdout } = await runSyncCaptured(['--source', 'vault', '--json', '--no-pull']);
+
+    expect(exitCode).not.toBe(2);
+    expect(stdout).toContain('"gate":"auto_deferred_embeds"');
+    // The gate now exists on the single-source path (was ungated before
+    // #2139) and proceeds to import rather than blocking.
+    expect(stdout.toLowerCase()).toContain('imported');
   }, 60_000);
 });

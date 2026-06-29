@@ -6,7 +6,7 @@ import { homedir } from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-import { saveConfig, loadConfig, loadConfigFileOnly, toEngineConfig, gbrainPath, configPath, isThinClient, type GBrainConfig } from '../core/config.ts';
+import { saveConfig, loadConfig, loadConfigFileOnly, toEngineConfig, gbrainPath, configPath, isThinClient, effectiveEnvDatabaseUrl, type GBrainConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core/remote-mcp-probe.ts';
 import { runInitEmbedCheck } from '../core/init-embed-check.ts';
@@ -133,7 +133,11 @@ export async function runInit(args: string[]) {
   if (manualUrl) {
     databaseUrl = manualUrl;
   } else if (isNonInteractive) {
-    const envUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+    // effectiveEnvDatabaseUrl applies the #427 guard: a DATABASE_URL that Bun
+    // auto-loaded from a .env in cwd must not seed a brain config — that is
+    // the "init inside a web-app checkout writes the app's DB into
+    // ~/.gbrain/config.json" failure mode.
+    const envUrl = effectiveEnvDatabaseUrl();
     if (envUrl) {
       databaseUrl = envUrl;
     } else {

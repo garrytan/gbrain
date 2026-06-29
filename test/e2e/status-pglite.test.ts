@@ -82,6 +82,11 @@ describe('gbrain status E2E (PGLite)', () => {
     expect(parsed).toHaveProperty('workers');
     expect(parsed).toHaveProperty('queue');
     expect(parsed).toHaveProperty('autopilot');
+    // #1984: version field present (local CLI version) for poller pinning;
+    // a normal (un-budgeted) run is never partial.
+    expect(typeof parsed.version).toBe('string');
+    expect(parsed.version.length).toBeGreaterThan(0);
+    expect(parsed.partial).toBeUndefined();
   });
 
   test('dual cycle rows: last_full + last_targeted surface independently', async () => {

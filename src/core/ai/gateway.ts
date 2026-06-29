@@ -798,6 +798,26 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
 // ---- Embedding ----
 
 /**
+ * Carries the asymmetric-embedding `input_type` ('query' | 'document')
+ * across the AI SDK boundary, from embedSubBatch() to the per-recipe fetch
+ * shims below (#1400).
+ *
+ * Why this exists: `dimsProviderOptions()` correctly emits `input_type`
+ * into `providerOptions.openaiCompatible` for asymmetric models (ZE
+ * zembed-1, Voyage v3+), but the AI SDK's openai-compatible adapter
+ * validates providerOptions against a fixed schema (`dimensions`, `user`)
+ * and silently DROPS every other field before building the wire body. By
+ * the time a compat shim sees the request, the threaded 'query' is gone —
+ * so every embedQuery() was encoded document-side and asymmetric retrieval
+ * silently collapsed to surface-token overlap.
+ *
+ * embedSubBatch() populates the store only when providerOptions actually
+ * threads an input_type; shims that need a default (ZE) apply their own.
+ * Same module-level ALS pattern as `__budgetStore` below.
+ */
+const __embedInputTypeStore = new AsyncLocalStorage<'query' | 'document'>();
+
+/**
  * Voyage AI compatibility shim. Voyage's `/v1/embeddings` endpoint is OpenAI-shaped
  * but diverges on two parameters:
  *   - `encoding_format` only accepts `'base64'` (the AI SDK sends `'float'` by default,
@@ -833,6 +853,15 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
           const dims = parsed.dimensions;
           delete parsed.dimensions;
           if (typeof dims === 'number') parsed.output_dimension = dims;
+          mutated = true;
+        }
+        // Recover the SDK-stripped input_type (#1400) — opt-in, mirroring
+        // the dims.ts Voyage branch: inject only when a caller actually
+        // threaded one; when absent, the field stays off the wire
+        // (pre-v0.35.0.0 behavior preserved).
+        const threadedInputType = __embedInputTypeStore.getStore();
+        if (threadedInputType !== undefined && parsed.input_type === undefined) {
+          parsed.input_type = threadedInputType;
           mutated = true;
         }
         if (mutated) {
@@ -1005,10 +1034,13 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
           parsed.encoding_format = 'float';
           mutated = true;
         }
-        // Default input_type when caller didn't thread one (document-side
-        // embedding is the correct default for ingest paths).
+        // Recover the SDK-stripped input_type (#1400): the threaded value
+        // arrives via __embedInputTypeStore because the openai-compatible
+        // adapter drops it from providerOptions before building the body.
+        // Document-side default preserved for paths that didn't thread one
+        // (ingest).
         if (parsed.input_type === undefined) {
-          parsed.input_type = 'document';
+          parsed.input_type = __embedInputTypeStore.getStore() ?? 'document';
           mutated = true;
         }
         if (mutated) {
@@ -1096,6 +1128,56 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
   }
 }) as unknown as typeof fetch;
 
+/**
+ * Generic asymmetric-embedding shim for openai-compatible recipes that
+ * ship no compat fetch of their own (llama-server, litellm, ollama, ...).
+ * Those deployments are the canonical local/proxy paths for serving
+ * asymmetric models (e.g. a zembed-1 behind llama.cpp, vLLM, or an
+ * OpenAI-compatible proxy), and they need the same `input_type` signal the
+ * hosted ZE endpoint gets — the serving layer can't apply query-side vs
+ * document-side encoding without it.
+ *
+ * Strictly opt-in at the wire level: when no input_type was threaded (the
+ * model isn't asymmetric — dims.ts threads it by model id, never for
+ * Azure/DashScope/Zhipu-style fixed models — or the caller didn't ask),
+ * the request passes through byte-identical. When one WAS threaded
+ * (recovered from __embedInputTypeStore — see #1400), inject it into the
+ * JSON body; OpenAI-compatible servers that don't understand the field
+ * ignore unknown body keys (llama-server does), and asymmetric-aware
+ * servers/proxies read it. URL + response shape are untouched — these
+ * endpoints are already OpenAI-shaped. Recipes with their own compat
+ * fetch (voyage, zeroentropyai, azure) never reach this shim: the
+ * `compat.fetch ??` precedence in instantiateEmbedding wins.
+ */
+const openAICompatAsymmetricFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const threadedInputType = __embedInputTypeStore.getStore();
+  if (threadedInputType === undefined) return fetch(input as any, init);
+  // Inject only on the string-URL + string-body shape the AI SDK actually
+  // sends. A Request-shaped input may carry its body on the Request object
+  // itself, where a rebuild would silently drop it — pass it through
+  // untouched instead (unreachable via the SDK today; preserves the
+  // byte-identical contract if it ever becomes reachable).
+  if (typeof input !== 'string' && !(input instanceof URL)) {
+    return fetch(input as any, init);
+  }
+  let baseInit: RequestInit = init ?? {};
+  if (baseInit.body && typeof baseInit.body === 'string') {
+    try {
+      const parsed = JSON.parse(baseInit.body);
+      if (parsed && typeof parsed === 'object' && parsed.input_type === undefined) {
+        parsed.input_type = threadedInputType;
+        // Drop Content-Length so fetch recomputes from the new body.
+        const headers = new Headers(baseInit.headers ?? {});
+        headers.delete('content-length');
+        baseInit = { ...baseInit, body: JSON.stringify(parsed), headers };
+      }
+    } catch {
+      // Body wasn't JSON — pass through untouched.
+    }
+  }
+  return fetch(typeof input === 'string' ? input : input.toString(), baseInit);
+}) as unknown as typeof fetch;
+
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'embedding', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
@@ -1149,15 +1231,19 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       // wrapper via resolveOpenAICompatConfig. Azure recipes ship their own
       // fetch (api-version splice); voyage doesn't — use voyageCompatFetch.
       // ZeroEntropy needs zeroEntropyCompatFetch (URL path + body input_type
-      // + response shape rewrite + OOM caps). Same per-recipe-id branch
-      // pattern as voyage so adding a third compat shim is one more case.
+      // + response shape rewrite + OOM caps). Every other openai-compat
+      // recipe (llama-server, litellm, ollama, ...) falls through to
+      // openAICompatAsymmetricFetch so the threaded input_type reaches
+      // asymmetric models there too (#1400) — a strict pass-through when no
+      // input_type was threaded, so symmetric deployments see zero wire
+      // change.
       const fetchWrapper =
         compat.fetch ??
         (recipe.id === 'voyage'
           ? voyageCompatFetch
           : recipe.id === 'zeroentropyai'
           ? zeroEntropyCompatFetch
-          : undefined);
+          : openAICompatAsymmetricFetch);
       const client = createOpenAICompatible({
         name: recipe.id,
         baseURL: compat.baseURL,
@@ -1472,7 +1558,7 @@ async function embedSubBatch(
   opts?: EmbedOpts,
 ): Promise<Float32Array[]> {
   try {
-    const result = await _embedTransport({
+    const callTransport = () => _embedTransport({
       model,
       values: texts,
       providerOptions: providerOpts,
@@ -1483,6 +1569,15 @@ async function embedSubBatch(
       abortSignal: withDefaultTimeout(opts?.abortSignal, AI_EMBED_TIMEOUT_MS),
       ...(opts?.maxRetries !== undefined && { maxRetries: opts.maxRetries }),
     });
+    // Carry the threaded input_type across the SDK boundary via
+    // __embedInputTypeStore (the adapter strips it from providerOptions —
+    // see the store's doc comment). Populated only when dimsProviderOptions
+    // actually emitted one, so non-asymmetric paths run store-empty and the
+    // fetch shims leave their wire bodies untouched.
+    const threadedInputType = providerOpts?.openaiCompatible?.input_type;
+    const result = await (threadedInputType === 'query' || threadedInputType === 'document'
+      ? __embedInputTypeStore.run(threadedInputType, callTransport)
+      : callTransport());
 
     if (!Array.isArray(result.embeddings) || result.embeddings.length !== texts.length) {
       throw new AIConfigError(

@@ -26,7 +26,10 @@ describe('resolve IPC', () => {
   test('round-trip: client gets the pointer block the server returns', async () => {
     const dir = tmpDir();
     const sock = resolveSocketPath(dir);
-    const block: PointerBlock = { pointers: [{ display: 'Alice', slug: 'people/alice', synopsis: 'x' }], text: 'BLOCK' };
+    const block: PointerBlock = {
+      pointers: [{ display: 'Alice', slug: 'people/alice', source_id: 'default', synopsis: 'x', arm: 'alias', confidence: 0.9 }],
+      text: 'BLOCK',
+    };
     const server = await startResolveIpcServer(sock, async (req) => {
       expect(req.candidates[0].query).toBe('Alice');
       return block;

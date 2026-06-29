@@ -195,10 +195,39 @@ export function buildPgliteInitErrorMessage(
   return `${header}\n${hint}\n  Original error: ${original}`;
 }
 
+/**
+ * #2084 — PGLite's Emscripten runtime hijacks `process.exitCode` as ITS status
+ * channel: instantiation REPLACES the property with an accessor whose getter
+ * falls back to the WASM runtime status (99 while alive, the exit status after
+ * close) whenever no explicit value was assigned — and assigning `undefined`
+ * resets to that fallback, so "unset" cannot be restored. Pre-fix, every clean
+ * PGLite run carried a bogus 99 until close zeroed it, and an errored op's
+ * exit 1 survived only by accident of write ordering.
+ *
+ * Containment: around PGlite.create(), snapshot the pre-call value and restore
+ * it — pinning an explicit 0 when nothing was set, because restoring
+ * `undefined` would surface the WASM fallback instead. This keeps the GLOBAL
+ * tidy for external readers; the CLI's own verdict never reads it (it lives in
+ * the owned channel: setCliExitVerdict/currentExitCode, cli-force-exit.ts —
+ * in-memory brains run initdb whose status lands on a later tick, past any
+ * snapshot). db.close() stays unwrapped (see the comment at the close site).
+ */
+async function preservingProcessExitCode<T>(fn: () => Promise<T>): Promise<T> {
+  const pre = process.exitCode;
+  try {
+    return await fn();
+  } finally {
+    process.exitCode = typeof pre === 'number' || typeof pre === 'string' ? pre : 0;
+  }
+}
+
 export class PGLiteEngine implements BrainEngine {
   readonly kind = 'pglite' as const;
   private _db: PGLiteDB | null = null;
   private _lock: LockHandle | null = null;
+  // #2034: captured at connect() so reconnect() can restore the same data dir
+  // after a drop, matching PostgresEngine's _savedConfig contract.
+  private _savedConfig: EngineConfig | null = null;
   // Tier 3: when GBRAIN_PGLITE_SNAPSHOT loaded a post-initSchema state into
   // PGlite.create(loadDataDir), initSchema is a no-op (schema is already
   // present + migrations already applied). Saves ~1-3s per fresh test PGLite.
@@ -211,6 +240,7 @@ export class PGLiteEngine implements BrainEngine {
 
   // Lifecycle
   async connect(config: EngineConfig): Promise<void> {
+    this._savedConfig = config; // #2034: remember for reconnect()
     const dataDir = config.database_path || undefined; // undefined = in-memory
 
     // Acquire file lock to prevent concurrent PGLite access (crashes with Aborted())
@@ -234,12 +264,20 @@ export class PGLiteEngine implements BrainEngine {
       }
     }
 
+    // NOTE (#2084): PGLite's Emscripten runtime writes the WASM backend's
+    // proc_exit status into `process.exitCode` (initdb here at create-time,
+    // the postmaster at close-time), and the writes land asynchronously —
+    // a snapshot/restore around these awaits does NOT contain them. That is
+    // why the CLI's exit paths read gbrain's own verdict
+    // (cli-force-exit.ts currentExitCode), never ambient process.exitCode.
     try {
-      this._db = await PGlite.create({
-        dataDir,
-        loadDataDir,
-        extensions: { vector, pg_trgm },
-      });
+      this._db = await preservingProcessExitCode(() =>
+        PGlite.create({
+          dataDir,
+          loadDataDir,
+          extensions: { vector, pg_trgm },
+        }),
+      );
     } catch (err) {
       // v0.13.1: any PGLite.create() failure becomes actionable. v0.41.8.0
       // (#1340): the previous error hint hardcoded the macOS 26.3 link, but
@@ -279,6 +317,12 @@ export class PGLiteEngine implements BrainEngine {
     this._lock = null;
     try {
       if (db) {
+        // Deliberately NOT wrapped in preservingProcessExitCode: close's
+        // status write (0) is long-standing baseline behavior that test-runner
+        // processes depend on (wrapping it flipped bun test's own exit code —
+        // #2084 implementation note), and the CLI's exit verdict doesn't read
+        // process.exitCode at all — it lives in the gbrain-owned channel
+        // (setCliExitVerdict/currentExitCode in cli-force-exit.ts).
         await db.close();
       }
     } finally {
@@ -286,6 +330,27 @@ export class PGLiteEngine implements BrainEngine {
         await releaseLock(lock);
       }
     }
+  }
+
+  /**
+   * #2034: engine-parity reconnect. PGLite is single-writer in-process so it
+   * doesn't suffer the pool-drop class PostgresEngine.reconnect() handles, but
+   * the method MUST exist so callers (autopilot health probe, worker/queue
+   * claim-error recovery) can call `engine.reconnect()` uniformly.
+   *
+   * IN-MEMORY (no `database_path`) is a NO-OP: there is no persistent backing,
+   * the connection can't recoverably "drop" in-process, and a disconnect+reopen
+   * would DISCARD all state. This matches the long-standing assumption the
+   * worker/queue recovery paths are written against ("PGLite has no pooler
+   * reaping so reconnect is absent" — src/core/minions/queue.ts). A FILE-backed
+   * engine genuinely re-opens the same data dir (state persists on disk).
+   */
+  async reconnect(_ctx?: { error?: unknown }): Promise<void> {
+    if (!this._savedConfig) return; // never connected — nothing to restore
+    if (!this._savedConfig.database_path) return; // in-memory — no-op, preserve state
+    const config = this._savedConfig;
+    await this.disconnect();
+    await this.connect(config);
   }
 
   async initSchema(): Promise<void> {
@@ -2518,12 +2583,29 @@ export class PGLiteEngine implements BrainEngine {
     }
   }
 
-  async getLinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
-    // v0.31.8 (D16): two-branch query. Without opts.sourceId, no source filter
-    // (preserves pre-v0.31.8 cross-source semantics for back-link validators
-    // and read-side op handlers that haven't threaded sourceId yet). With
-    // opts.sourceId, scope to that source — used by reconcileLinks and any
-    // ctx.sourceId-aware read op (D20).
+  async getLinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Link[]> {
+    // #2200: federated grant scopes ALL THREE page endpoints — from, to, AND the
+    // origin (the authoring page, surfaced as origin_slug). The origin LEFT JOIN
+    // carries the same ANY($) filter so an out-of-grant origin's slug nulls out.
+    // Remote MCP clients always land here.
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      const { rows } = await this.db.query(
+        `SELECT f.slug as from_slug, t.slug as to_slug,
+                l.link_type, l.context, l.link_source,
+                o.slug as origin_slug, l.origin_field
+         FROM links l
+         JOIN pages f ON f.id = l.from_page_id
+         JOIN pages t ON t.id = l.to_page_id
+         LEFT JOIN pages o ON o.id = l.origin_page_id AND o.source_id = ANY($2::text[])
+         WHERE f.slug = $1 AND f.source_id = ANY($2::text[]) AND t.source_id = ANY($2::text[])`,
+        [slug, opts.sourceIds]
+      );
+      return rows as unknown as Link[];
+    }
+    // v0.31.8 (D16) + #2200: the federated arm above is the first branch; the two
+    // below preserve pre-v0.31.8 semantics. Without opts.sourceId, no source filter
+    // (cross-source view for back-link validators and reconcileLinks). With
+    // opts.sourceId, scope to that source (D20).
     if (opts?.sourceId) {
       const { rows } = await this.db.query(
         `SELECT f.slug as from_slug, t.slug as to_slug,
@@ -2552,8 +2634,25 @@ export class PGLiteEngine implements BrainEngine {
     return rows as unknown as Link[];
   }
 
-  async getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
-    // v0.31.8 (D16): two-branch query. See getLinks() comment.
+  async getBacklinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Link[]> {
+    // #2200: federated grant scopes all three endpoints (mirrors getLinks) — the
+    // referrer (from), the queried page (to), AND the origin — so neither a
+    // foreign referrer nor a foreign origin slug is disclosed to the caller.
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      const { rows } = await this.db.query(
+        `SELECT f.slug as from_slug, t.slug as to_slug,
+                l.link_type, l.context, l.link_source,
+                o.slug as origin_slug, l.origin_field
+         FROM links l
+         JOIN pages f ON f.id = l.from_page_id
+         JOIN pages t ON t.id = l.to_page_id
+         LEFT JOIN pages o ON o.id = l.origin_page_id AND o.source_id = ANY($2::text[])
+         WHERE t.slug = $1 AND t.source_id = ANY($2::text[]) AND f.source_id = ANY($2::text[])`,
+        [slug, opts.sourceIds]
+      );
+      return rows as unknown as Link[];
+    }
+    // v0.31.8 (D16) + #2200: federated arm above is first; two below mirror getLinks.
     if (opts?.sourceId) {
       const { rows } = await this.db.query(
         `SELECT f.slug as from_slug, t.slug as to_slug,
@@ -3166,14 +3265,20 @@ export class PGLiteEngine implements BrainEngine {
     );
   }
 
-  async getTags(slug: string, opts?: { sourceId?: string }): Promise<string[]> {
-    const sourceId = opts?.sourceId ?? 'default';
-    // Source-qualify the page-id subquery; slugs are only unique per source.
+  async getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<string[]> {
+    // #2200: federated grant (sourceIds[]) wins over scalar. `page_id IN (..)`
+    // (not `= (..)`) so a slug present in >1 allowed source doesn't blow up;
+    // DISTINCT unions tags across the matched pages. Scalar/unscoped keeps the
+    // legacy `?? 'default'` default. Source-qualify; slugs are unique per source.
+    const scope =
+      opts?.sourceIds && opts.sourceIds.length > 0
+        ? { sql: 'source_id = ANY($2::text[])', param: opts.sourceIds }
+        : { sql: 'source_id = $2', param: opts?.sourceId ?? 'default' };
     const { rows } = await this.db.query(
-      `SELECT tag FROM tags
-       WHERE page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = $2)
+      `SELECT DISTINCT tag FROM tags
+       WHERE page_id IN (SELECT id FROM pages WHERE slug = $1 AND ${scope.sql})
        ORDER BY tag`,
-      [slug, sourceId]
+      [slug, scope.param]
     );
     return (rows as { tag: string }[]).map(r => r.tag);
   }
@@ -3235,9 +3340,11 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]> {
-    // v0.31.8 (D16): build WHERE clause dynamically so opts.sourceId composes
-    // cleanly with the existing after/before filters. Without sourceId, no
-    // source filter applies (preserves pre-v0.31.8 cross-source semantics).
+    // v0.31.8 (D16) + #2200: build WHERE clause dynamically so the source scope
+    // composes cleanly with the after/before filters. Precedence: federated
+    // sourceIds[] > scalar sourceId > unscoped (cross-source, pre-v0.31.8).
+    // (Postgres builds the equivalent via sql`` fragment composition — different
+    // idiom, same result; the engines stay lockstep on behavior, not on builder.)
     const limit = opts?.limit || 100;
     const where: string[] = ['p.slug = $1'];
     const params: unknown[] = [slug];
@@ -3249,7 +3356,12 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.before);
       where.push(`te.date <= $${params.length}::date`);
     }
-    if (opts?.sourceId) {
+    // #2200: federated grant (sourceIds[]) wins over scalar sourceId. The join
+    // unions timeline entries across every same-slug page in the grant.
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      where.push(`p.source_id = ANY($${params.length}::text[])`);
+    } else if (opts?.sourceId) {
       params.push(opts.sourceId);
       where.push(`p.source_id = $${params.length}`);
     }
@@ -3598,7 +3710,25 @@ export class PGLiteEngine implements BrainEngine {
     return { inserted: ids.length, ids };
   }
 
-  async deleteFactsForPage(slug: string, source_id: string): Promise<{ deleted: number }> {
+  async deleteFactsForPage(
+    slug: string,
+    source_id: string,
+    opts?: { excludeSourcePrefixes?: string[] },
+  ): Promise<{ deleted: number }> {
+    const prefixes = opts?.excludeSourcePrefixes;
+    if (prefixes && prefixes.length > 0) {
+      // #1928: keep rows whose `source` matches an excluded prefix (e.g.
+      // `cli:` conversation facts). COALESCE so NULL/empty-source fence rows
+      // stay deletable — only the explicitly-protected prefixes survive.
+      const patterns = prefixes.map(p => `${p}%`);
+      const result = await this.db.query(
+        `DELETE FROM facts
+           WHERE source_id = $1 AND source_markdown_slug = $2
+             AND NOT (COALESCE(source, '') LIKE ANY($3::text[]))`,
+        [source_id, slug, patterns],
+      );
+      return { deleted: result.affectedRows ?? 0 };
+    }
     const result = await this.db.query(
       `DELETE FROM facts WHERE source_id = $1 AND source_markdown_slug = $2`,
       [source_id, slug],
@@ -4908,7 +5038,7 @@ export class PGLiteEngine implements BrainEngine {
           e.from_chunk_id, e.to_chunk_id, e.from_symbol_qualified,
           e.to_symbol_qualified, e.edge_type,
           JSON.stringify(e.edge_metadata ?? {}),
-          e.source_id ?? null,
+          e.source_id ?? 'default',
         );
       }
       const res = await this.db.query(
@@ -4929,7 +5059,7 @@ export class PGLiteEngine implements BrainEngine {
         params.push(
           e.from_chunk_id, e.from_symbol_qualified, e.to_symbol_qualified, e.edge_type,
           JSON.stringify(e.edge_metadata ?? {}),
-          e.source_id ?? null,
+          e.source_id ?? 'default',
         );
       }
       const res = await this.db.query(

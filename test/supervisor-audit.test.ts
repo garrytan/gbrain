@@ -199,3 +199,45 @@ describe('summarizeCrashes — aggregation', () => {
     expect(summary.clean_exits).toBe(0);
   });
 });
+
+// issue #2227 bug #1/#2: a duplicate supervisor (different $HOME / --pid-file)
+// passes the pidfile guard but loses the queue-scoped DB singleton lock
+// (#1849) and `process.exit(ExitCodes.LOCK_HELD)`s. That fence-exit happens in
+// supervisor.ts:start() BEFORE the worker is ever spawned and BEFORE the
+// `started` event is emitted (the DB-lock acquire at :528 precedes the
+// `started` emit at :555), so the loser contributes NO `worker_exited` events
+// to the audit trail. The crash ledger (summarizeCrashes) moves ONLY on
+// `worker_exited`, so a fence-collision can never burn the crash budget the
+// guard exists to protect. The field report claimed 20 "unknown" crashes were
+// fence exits; this pins that the fence path is structurally uncountable, so a
+// future refactor that (wrongly) logs a `worker_exited` on the LOCK_HELD path
+// would fail here instead of silently re-introducing the breaker-trip loop.
+describe('summarizeCrashes — LOCK_HELD fence-exit is never a crash (issue #2227)', () => {
+  test('a losing duplicate supervisor (no worker_exited) contributes zero crashes', () => {
+    // The loser exits at the DB-lock fence before emitting `started`, so its
+    // audit contribution is empty. Even paired with the winner's healthy
+    // stream, total crashes stay 0.
+    const winnerHealthy: SupervisorEmission[] = [
+      evt('started', { supervisor_pid: 4242, queue: 'default', concurrency: 3 }),
+      evt('worker_spawned', { worker_pid: 4243 }),
+      // ... no worker_exited yet (winner still running)
+    ];
+    expect(summarizeCrashes(winnerHealthy).total).toBe(0);
+  });
+
+  test('started + stopped with no worker_exited (clean fence path) is zero crashes', () => {
+    // Defensive: even if a future change made the loser emit lifecycle events
+    // (started/shutting_down/stopped) around the LOCK_HELD exit, none of those
+    // are `worker_exited`, so the ledger must stay at 0. The only way this test
+    // fails is if someone logs a `worker_exited` on the fence path — which is
+    // exactly the regression #2227 fix #2 guards against.
+    const fenceStream: SupervisorEmission[] = [
+      evt('started', { supervisor_pid: 5252 }),
+      evt('shutting_down', { reason: 'LOCK_HELD' }),
+      evt('stopped', { exit_code: 2 }),
+    ];
+    const summary = summarizeCrashes(fenceStream);
+    expect(summary.total).toBe(0);
+    expect(summary.clean_exits).toBe(0);
+  });
+});

@@ -78,6 +78,21 @@ export interface SkillpackManifest {
 
   /** Path to CHANGELOG.md. */
   changelog?: string;
+
+  /**
+   * Marks this pack as authored for the brain/source repo it lives in.
+   * Drives connect-time discovery (Topology A `sources add` advisory + the
+   * `list_brain_skillpack` MCP tool) and the install nag. Absent/false = a
+   * legacy or registry third-party pack. Additive + forward-compatible:
+   * older gbrain ignores it; this validator tolerates it being absent.
+   */
+  brain_resident?: boolean;
+  /**
+   * The schema pack these skills assume (e.g. "gbrain-base"). When set, the
+   * discovery advisory warns if it differs from the brain's active schema
+   * pack so a connecting harness installs against a compatible schema.
+   */
+  schema_pack?: string;
 }
 
 /** Structured error code surface. */
@@ -255,6 +270,22 @@ export function validateSkillpackManifest(
       `changelog must be a string path`,
       'manifest_invalid_field',
       { field: 'changelog', actual: obj.changelog },
+    );
+  }
+
+  // Brain-resident pack fields (v0.43 — issue #2180). Both optional + additive.
+  if (obj.brain_resident !== undefined && typeof obj.brain_resident !== 'boolean') {
+    throw new SkillpackManifestError(
+      `brain_resident, if present, must be a boolean`,
+      'manifest_invalid_field',
+      { field: 'brain_resident', actual: obj.brain_resident },
+    );
+  }
+  if (obj.schema_pack !== undefined && (typeof obj.schema_pack !== 'string' || !NAME_RE.test(obj.schema_pack))) {
+    throw new SkillpackManifestError(
+      `schema_pack, if present, must be a lowercase kebab-case pack name; got ${JSON.stringify(obj.schema_pack)}`,
+      'manifest_invalid_field',
+      { field: 'schema_pack', expected: NAME_RE.source, actual: obj.schema_pack },
     );
   }
 
