@@ -1141,6 +1141,8 @@ describe('read context service', () => {
         'Selector deferred by max_selectors: compiled_truth:workspace:default:concepts/second-context',
       );
       expect(result.answer_ready.ready).toBe(false);
+      expect(result.answer_trust_footer?.authority_class).toBe('not_answer_evidence');
+      expect(result.answer_trust_footer?.underlying_authorities).toEqual(['canonical_compiled_truth']);
     });
   });
 

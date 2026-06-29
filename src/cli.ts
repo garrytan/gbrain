@@ -128,10 +128,17 @@ const EVAL_CLI_SPEC: Operation = {
   description: 'Run context retrieval eval fixtures, compare eval reports, or record trace-linked corrections.',
   params: {
     domain: { type: 'string', description: 'Eval domain: context or correction' },
+    action: { type: 'string', description: 'Eval subcommand, such as correction record' },
+    fixture: { type: 'string', description: 'Context eval fixture JSON path' },
+    compare: { type: 'boolean', description: 'Compare two eval report JSON files' },
+    trace_id: { type: 'string', description: 'Trace id for correction records' },
+    case_id: { type: 'string', description: 'Eval case id for correction records' },
+    reason: { type: 'string', description: 'Correction reason or summary' },
+    run_id: { type: 'string', description: 'Optional eval run id for correction records' },
     json: { type: 'boolean', description: 'Emit JSON output' },
   },
   handler: noopHandler,
-  cliHints: { name: 'eval', positional: ['domain'] },
+  cliHints: { name: 'eval', positional: ['domain', 'action'] },
 };
 
 const SERVE_CLI_SPEC: Operation = {
@@ -698,7 +705,9 @@ async function handleDirectCommand(command: string, args: string[]): Promise<boo
   const engine = await connectEngine();
   try {
     const runCommand = await engineLoader();
-    const normalizedArgs = CLI_ONLY_SPECS[command] ? normalizeCliOnlyArgs(command, args) : args;
+    const normalizedArgs = command === 'eval'
+      ? args
+      : CLI_ONLY_SPECS[command] ? normalizeCliOnlyArgs(command, args) : args;
     await runCommand(engine, normalizedArgs);
     return true;
   } finally {

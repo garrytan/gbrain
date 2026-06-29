@@ -1496,7 +1496,9 @@ function buildReadTrustFooter(result: ReadContextResult, input: ReadContextInput
   ]);
 
   return {
-    authority_class: result.canonical_reads.length > 0 ? 'canonical_read' : 'not_answer_evidence',
+    authority_class: result.answer_ready.ready && result.canonical_reads.length > 0
+      ? 'canonical_read'
+      : 'not_answer_evidence',
     underlying_authorities: underlyingAuthorities,
     evidence_selectors: result.canonical_reads.map((read) => retrievalSelectorId(read.selector)),
     source_refs: sourceRefs,
