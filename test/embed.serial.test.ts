@@ -56,6 +56,9 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
   const track = (method: string) => (...args: any[]) => {
     calls.push({ method, args });
     if (overrides[method]) return overrides[method](...args);
+    if (method === 'countStaleTakes') return Promise.resolve(0);
+    if (method === 'listStaleTakes') return Promise.resolve([]);
+    if (method === 'setTakeEmbedding') return Promise.resolve(true);
     return Promise.resolve(null);
   };
   const engine = new Proxy({} as any, {
@@ -224,6 +227,27 @@ describe('runEmbed --all (parallel)', () => {
 
     // Only the stale page triggers an embedBatch call.
     expect(totalEmbedCalls).toBe(1);
+  });
+
+  test('wires stale takes through the same --stale embedding pass', async () => {
+    const staleTakes = [
+      { take_id: 101, source_id: 'default', page_slug: 'people/alice-example', row_num: 1, claim: 'Alice is technical' },
+      { take_id: 102, source_id: 'default', page_slug: 'companies/acme-example', row_num: 1, claim: 'Acme is growing' },
+    ];
+    const updated: number[] = [];
+    const engine = mockEngine({
+      countStaleChunks: async () => 0,
+      countStaleTakes: async () => staleTakes.length,
+      listStaleTakes: async ({ afterTakeId }: { afterTakeId?: number }) =>
+        afterTakeId && afterTakeId >= 102 ? [] : staleTakes,
+      setTakeEmbedding: async (id: number) => { updated.push(id); return true; },
+    });
+
+    const result = await runEmbedCore(engine, { stale: true });
+
+    expect(totalEmbedCalls).toBe(1);
+    expect(updated.sort()).toEqual([101, 102]);
+    expect(result.embedded_takes).toBe(2);
   });
 });
 

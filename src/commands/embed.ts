@@ -128,6 +128,12 @@ export interface EmbedResult {
   total_chunks: number;
   /** Number of pages processed (whether or not they had stale chunks). */
   pages_processed: number;
+  /** Takes newly embedded in this run (separate from chunk count). */
+  embedded_takes?: number;
+  /** Takes that would be embedded in dry-run mode. */
+  would_embed_takes?: number;
+  /** Total stale takes considered by the stale-takes lane. */
+  total_takes?: number;
   /** True if this run was a dry-run. */
   dryRun: boolean;
   /**
@@ -644,7 +650,11 @@ async function embedAll(
     // D7: thread sourceId so `gbrain embed --stale --source X` actually scopes.
     // v0.41.18.0 (A13): thread batchSize/priority/catchUp into the stale path.
     // #1737: thread the external abort signal so the cycle embed phase bails.
-    return await embedAllStale(engine, sourceId, dryRun, result, onProgress, staleOpts, signature, signal);
+    await embedAllStale(engine, sourceId, dryRun, result, onProgress, staleOpts, signature, signal);
+    if (!isAborted(signal)) {
+      await embedAllStaleTakes(engine, sourceId, dryRun, result, staleOpts, signal);
+    }
+    return;
   }
 
   // --all path: pacer (no-op when off). E-1: lower the worker count to the
@@ -1095,6 +1105,93 @@ async function embedAllStale(
     if (remaining > 0) {
       serr(`\n  [embed] catch-up finished but ${remaining} chunk(s) remain stale after ${embedFailures} embed failure(s). These are not embeddable as-is; re-running won't clear them until the underlying error is resolved.`);
     }
+  }
+}
+
+async function embedAllStaleTakes(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+  dryRun: boolean,
+  result: EmbedResult,
+  staleOpts?: {
+    batchSize?: number;
+    pacer?: DbPacer;
+    paceMaxConcurrency?: number;
+  },
+  signal?: AbortSignal,
+) {
+  const sourceOpt = sourceId ? { sourceId } : undefined;
+  const staleCount = await engine.countStaleTakes(sourceOpt);
+  result.total_takes = (result.total_takes ?? 0) + staleCount;
+
+  if (staleCount === 0) {
+    if (dryRun) slog('[dry-run] Would embed 0 takes (0 stale found)');
+    else slog('Embedded 0 takes (0 stale found)');
+    return;
+  }
+
+  if (dryRun) {
+    result.would_embed_takes = (result.would_embed_takes ?? 0) + staleCount;
+    slog(`[dry-run] Would embed ${staleCount} stale takes`);
+    return;
+  }
+
+  const PAGE_SIZE = staleOpts?.batchSize ?? 2000;
+  const BASE_CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
+  const CONCURRENCY = staleOpts?.paceMaxConcurrency
+    ? Math.min(BASE_CONCURRENCY, staleOpts.paceMaxConcurrency)
+    : BASE_CONCURRENCY;
+  const pacer = staleOpts?.pacer ?? createNoopPacer();
+  let afterTakeId = 0;
+  let embedded = 0;
+  let failures = 0;
+
+  while (!isAborted(signal)) {
+    const batch = await observed(pacer, () =>
+      engine.listStaleTakes({
+        batchSize: PAGE_SIZE,
+        afterTakeId,
+        ...(sourceId && { sourceId }),
+      }),
+    );
+    if (batch.length === 0) break;
+    afterTakeId = batch[batch.length - 1].take_id;
+
+    let embeddings: Float32Array[];
+    try {
+      embeddings = await embedBatchWithBackoff(batch.map(t => t.claim), { abortSignal: signal });
+    } catch (e: unknown) {
+      if (isAborted(signal)) break;
+      failures += batch.length;
+      serr(`\n  Error embedding take batch after id ${afterTakeId}: ${e instanceof Error ? e.message : e}`);
+      if (batch.length < PAGE_SIZE) break;
+      continue;
+    }
+    const tasks = batch.map((row, i) => ({ row, embedding: embeddings[i] }));
+    await runSlidingPool({
+      items: tasks,
+      workers: CONCURRENCY,
+      signal,
+      onItem: async ({ row, embedding }) => {
+        try {
+          const updated = await observed(pacer, () => engine.setTakeEmbedding(row.take_id, embedding));
+          if (updated) embedded++;
+        } catch (e: unknown) {
+          if (isAborted(signal)) return;
+          failures++;
+          serr(`\n  Error embedding take ${row.page_slug}#${row.row_num}: ${e instanceof Error ? e.message : e}`);
+        }
+      },
+      failureLabel: ({ row }) => `${row.page_slug}#${row.row_num}`,
+    });
+
+    if (batch.length < PAGE_SIZE) break;
+  }
+
+  result.embedded_takes = (result.embedded_takes ?? 0) + embedded;
+  slog(`Embedded ${embedded} takes`);
+  if (failures > 0) {
+    serr(`\n  [embed] ${failures} take embedding update(s) failed; re-run picks them up via embedding IS NULL.`);
   }
 }
 

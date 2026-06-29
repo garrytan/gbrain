@@ -152,6 +152,27 @@ describe('runPhaseConsolidate', () => {
     }
   });
 
+  test('display-name entity_slug resolves to an existing entity page', async () => {
+    const pageId = await engine.putPage('wiki/people/brad-mills', {
+      title: 'Brad Mills',
+      type: 'person' as const,
+      compiled_truth: '# Brad Mills\n',
+    });
+    for (let i = 0; i < 3; i++) {
+      await engine.executeRaw(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, confidence, embedding, embedded_at)
+         VALUES ('default', 'Brad Mills', $1, 'fact', 'test', $2::timestamptz, 0.9, $3::vector, $2::timestamptz)`,
+        [`brad display-name fact ${i}`, oldDate(), unitVec()],
+      );
+    }
+
+    const r = await runPhaseConsolidate(engine, {});
+    expect(r.details.facts_consolidated).toBe(3);
+    expect(r.details.takes_written).toBe(1);
+    const takes = await engine.executeRaw<{ page_id: number }>(`SELECT page_id FROM takes`);
+    expect(takes[0]?.page_id).toBe(pageId.id);
+  });
+
   test('skips bucket when no matching page exists in source', async () => {
     // Don't seed a page — entity_slug 'no-page' won't resolve.
     for (let i = 0; i < 4; i++) {

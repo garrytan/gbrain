@@ -26,6 +26,7 @@ import type { BrainEngine, FactRow } from '../../engine.ts';
 import type { PhaseResult } from '../../cycle.ts';
 import { cosineSimilarity } from '../../facts/classify.ts';
 import { isAborted } from '../../abort-check.ts';
+import { slugify } from '../../entities/resolve.ts';
 
 export interface ConsolidatePhaseOpts {
   dryRun?: boolean;
@@ -58,6 +59,7 @@ export async function runPhaseConsolidate(
   let takesWritten = 0;
   let bucketsProcessed = 0;
   let bucketsSkipped = 0;
+  let bucketsMissingPage = 0;
 
   // Pull every (source_id, entity_slug) bucket of unconsolidated facts.
   // Uses the partial idx_facts_unconsolidated index.
@@ -122,13 +124,16 @@ export async function runPhaseConsolidate(
     bucketsProcessed += 1;
     const clusters = clusterFacts(unconsolidated, threshold);
 
-    // Resolve entity_slug → page_id. If page missing in this source, skip.
-    const pageRows = await engine.executeRaw<{ id: number }>(
-      `SELECT id FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`,
-      [b.source_id, b.entity_slug],
-    );
-    if (pageRows.length === 0) continue;
-    const pageId = pageRows[0].id;
+    // Resolve entity_slug → page_id. Extractors can leave display-name-shaped
+    // values ("Alice Example") in older facts, so accept exact slug first and
+    // then entity-page title / slugified forms. If no entity page exists in
+    // this source, skip; consolidate never auto-creates pages.
+    const page = await resolveEntityPageForConsolidate(engine, b.source_id, b.entity_slug);
+    if (!page) {
+      bucketsMissingPage += 1;
+      continue;
+    }
+    const pageId = page.id;
 
     // Existing row_num max for this page → start appending after it.
     const rowMaxRows = await engine.executeRaw<{ max: number }>(
@@ -264,8 +269,92 @@ export async function runPhaseConsolidate(
       takes_written: takesWritten,
       buckets_processed: bucketsProcessed,
       buckets_skipped: bucketsSkipped,
+      buckets_missing_page: bucketsMissingPage,
     },
   };
+}
+
+const CONSOLIDATE_ENTITY_TYPES = ['person', 'company', 'concept', 'organization'] as const;
+
+async function resolveEntityPageForConsolidate(
+  engine: BrainEngine,
+  sourceId: string,
+  entitySlugOrName: string,
+): Promise<{ id: number; slug: string } | null> {
+  const raw = entitySlugOrName.trim();
+  if (!raw) return null;
+  const token = slugify(raw);
+  const candidates = Array.from(new Set([
+    raw,
+    token,
+    `people/${token}`,
+    `companies/${token}`,
+    `concepts/${token}`,
+    `wiki/people/${token}`,
+    `wiki/companies/${token}`,
+    `wiki/concepts/${token}`,
+    `wiki/organizations/${token}`,
+  ].filter(Boolean)));
+
+  const direct = await engine.executeRaw<{ id: number; slug: string }>(
+    `SELECT id, slug
+       FROM pages
+      WHERE source_id = $1
+        AND deleted_at IS NULL
+        AND slug = ANY($2::text[])
+      ORDER BY CASE WHEN slug = $3 THEN 0 ELSE 1 END, slug ASC
+      LIMIT 1`,
+    [sourceId, candidates, raw],
+  );
+  if (direct.length > 0) return direct[0];
+
+  const byTitle = await engine.executeRaw<{ id: number; slug: string }>(
+    `SELECT id, slug
+       FROM pages
+      WHERE source_id = $1
+        AND deleted_at IS NULL
+        AND type = ANY($3::text[])
+        AND lower(title) = lower($2)
+      ORDER BY slug ASC
+      LIMIT 1`,
+    [sourceId, raw, [...CONSOLIDATE_ENTITY_TYPES]],
+  );
+  if (byTitle.length > 0) return byTitle[0];
+
+  const suffixes = [`%/${token}`];
+  const bySuffix = await engine.executeRaw<{ id: number; slug: string }>(
+    `SELECT id, slug
+       FROM pages
+      WHERE source_id = $1
+        AND deleted_at IS NULL
+        AND type = ANY($3::text[])
+        AND slug LIKE ANY($2::text[])
+      ORDER BY slug ASC
+      LIMIT 1`,
+    [sourceId, suffixes, [...CONSOLIDATE_ENTITY_TYPES]],
+  );
+  if (bySuffix.length > 0) return bySuffix[0];
+
+  try {
+    const fuzzy = await engine.executeRaw<{ id: number; slug: string; score: number }>(
+      `SELECT id, slug,
+              GREATEST(similarity(lower(title), lower($2)), similarity(slug, $4)) AS score
+         FROM pages
+        WHERE source_id = $1
+          AND deleted_at IS NULL
+          AND type = ANY($3::text[])
+          AND (lower(title) % lower($2) OR slug ILIKE '%' || $4 || '%')
+        ORDER BY score DESC, slug ASC
+        LIMIT 1`,
+      [sourceId, raw, [...CONSOLIDATE_ENTITY_TYPES], token],
+    );
+    if (fuzzy.length > 0 && fuzzy[0].score >= 0.55) return fuzzy[0];
+  } catch {
+    // pg_trgm may be unavailable on some PGLite/Postgres builds; exact paths above
+    // are sufficient for deterministic operation.
+  }
+
+  return null;
 }
 
 /**
