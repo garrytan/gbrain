@@ -150,7 +150,13 @@ export interface ThinkResult {
   };
 }
 
-const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
+// Default 4000; override via GBRAIN_THINK_MAX_OUTPUT_TOKENS. Conflict-dense
+// syntheses (e.g. drift probes over a brain with many divergent sources) can
+// truncate mid-JSON at 4000 — raise the cap per-install rather than hardcode it.
+const DEFAULT_MAX_OUTPUT_TOKENS = (() => {
+  const n = parseInt(process.env.GBRAIN_THINK_MAX_OUTPUT_TOKENS ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? n : 4000;
+})();
 
 function inferIntent(question: string, anchor?: string): string {
   if (anchor) return 'entity';

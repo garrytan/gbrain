@@ -24,7 +24,8 @@ export interface ThinkGatherOpts {
   question: string;
   /** Anchor entity slug. When set, the graph stream activates. */
   anchor?: string;
-  /** Soft cap on total results across all streams. Default 40. */
+  /** Soft cap on total results across all streams. Default 40, overridable via
+   *  GBRAIN_THINK_GATHER_LIMIT (widen for conflict/variant recall, e.g. drift probes). */
   gatherLimit?: number;
   /** Soft cap on take results. Default 30. */
   takesLimit?: number;
@@ -54,6 +55,17 @@ export interface ThinkGatherResult {
 }
 
 const RRF_K = 60;
+
+/**
+ * Read a positive-integer tuning knob from the environment, falling back to the
+ * upstream default. Lets retrieval breadth be tuned per-install (e.g. a brain
+ * with many near-duplicate sources that needs wider conflict/variant recall)
+ * without changing default behavior. Matches gbrain's GBRAIN_* env-knob pattern.
+ */
+function envInt(name: string, fallback: number): number {
+  const n = parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 
 /** Reciprocal-rank fusion: 1/(k+rank). Stable, parameter-light, matches search/hybrid.ts k. */
 function rrfScore(rank: number): number {
@@ -98,7 +110,7 @@ export async function runGather(
   engine: BrainEngine,
   opts: ThinkGatherOpts,
 ): Promise<ThinkGatherResult> {
-  const gatherLimit = opts.gatherLimit ?? 40;
+  const gatherLimit = opts.gatherLimit ?? envInt('GBRAIN_THINK_GATHER_LIMIT', 40);
   const takesLimit = opts.takesLimit ?? 30;
   const graphDepth = opts.graphDepth ?? 2;
 
@@ -181,7 +193,7 @@ export async function runGather(
  * Pages are rendered as `<page slug="..." score="...">excerpt</page>`;
  * takes are rendered via the renderTakesBlock helper from sanitize.ts.
  */
-export function renderPagesBlock(pages: SearchResult[], excerptLen = 600): string {
+export function renderPagesBlock(pages: SearchResult[], excerptLen = envInt('GBRAIN_THINK_EXCERPT_LEN', 600)): string {
   return pages.map((p, idx) => {
     const slug = String((p as unknown as { slug?: string }).slug ?? '');
     const excerpt = String(
