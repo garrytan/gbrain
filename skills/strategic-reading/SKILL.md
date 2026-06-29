@@ -21,6 +21,8 @@ writes_to:
 brain_first: exempt
 ---
 
+> **Convention:** see [conventions/brain-first.md](../conventions/brain-first.md) for the lookup chain (search → query → get_page → external).
+
 # strategic-reading — Applied Analysis from Source Texts
 
 > **Convention:** see [conventions/quality.md](../conventions/quality.md) for

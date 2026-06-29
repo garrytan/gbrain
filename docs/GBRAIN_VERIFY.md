@@ -172,7 +172,42 @@ gbrain embed --stale
 
 ---
 
-## 6. Brain-First Lookup Protocol
+## 6. Sequential Doctor Remediation
+
+When full `gbrain doctor` reports `unhealthy`, fix rows in dependency order instead
+of chasing the score directly:
+
+1. **Resolver / skillpack checks.** If `resolver_health` reports gaps, validate the
+   resolver against the real skill directory first:
+   ```bash
+   gbrain check-resolvable --json --skills-dir ./skills
+   ```
+   On Windows, skill frontmatter may be CRLF-normalized; the resolver parser must
+   accept both LF and CRLF before treating a skill as missing triggers.
+2. **Cycle freshness.** For many stale sources, prefer the source-scoped job path
+   over ad-hoc `dream` calls. Submit `autopilot-cycle` with a concrete
+   `source_id`, `pull:false`, and non-global phases, then verify
+   `sources.config.last_full_cycle_at` moved.
+3. **Sync freshness / ledger.** Run source-scoped syncs before touching failure
+   ledgers. Retry transient `<head>` / `git HEAD verification failed` sentinels
+   with `--no-pull`; only acknowledge intentional file-level failures after
+   inspecting the files.
+4. **Embedding lag.** After sync/cycle repair, run source-scoped or global stale
+   embedding catch-up. If a catch-up says another backfill is running, verify the
+   `gbrain-embed-backfill:<source>` lock holder PID before starting another run;
+   do not clear a lock unless the exact holder PID is proven dead.
+5. **Graph lag and quality warnings.** Once sync and embeddings are current, run
+   `gbrain extract --stale` and then address lower-priority content quality rows
+   such as frontmatter warnings, graph/timeline coverage, takes, and pack upgrade
+   previews.
+
+Repeat `gbrain doctor --json` after each tier. A source can be operationally fresh
+while lower-priority content-quality warnings remain; report those separately from
+P1 blockers.
+
+---
+
+## 7. Brain-First Lookup Protocol
 
 **Check:** Ask the agent about a person or concept that exists in the brain.
 
@@ -185,7 +220,7 @@ system context. See `skills/setup/SKILL.md` Phase D.
 
 ---
 
-## 7. Knowledge Graph Wired
+## 8. Knowledge Graph Wired
 
 The v0.12.0 graph layer needs to be populated for existing brains. New writes are
 auto-linked, but historical pages need a one-time backfill.
@@ -226,7 +261,7 @@ heuristics won't find them — file an issue with a sample page.
 
 ---
 
-## 8. JSONB Frontmatter Integrity (v0.12.2)
+## 9. JSONB Frontmatter Integrity (v0.12.2)
 
 Postgres-backed brains created before v0.12.2 had double-encoded JSONB columns
 (`frontmatter->>'key'` returned NULL, GIN indexes were inert). `gbrain upgrade`

@@ -219,13 +219,16 @@ export function parseResolverEntries(resolverContent: string): ResolverEntry[] {
 
 /** Simple YAML frontmatter parser — extracts triggers array if present. */
 function extractTriggers(skillContent: string): string[] {
-  const fmMatch = skillContent.match(/^---\n([\s\S]*?)\n---/);
+  // Skill files in the repo may be checked out with CRLF on Windows. Accept
+  // both line endings; otherwise resolver_health misreports every valid skill
+  // as a mece_gap on Windows even when `triggers:` is present.
+  const fmMatch = skillContent.match(/^---\x0d?\n([\s\S]*?)\x0d?\n---(?:\x0d?\n|$)/);
   if (!fmMatch) return [];
   const fm = fmMatch[1];
-  const triggersMatch = fm.match(/^triggers:\s*\n((?:\s+-\s+.+\n?)*)/m);
+  const triggersMatch = fm.match(/^triggers:\s*\x0d?\n((?:\s+-\s+.+(?:\x0d?\n|$))*)/m);
   if (!triggersMatch) return [];
   return triggersMatch[1]
-    .split('\n')
+    .split(/\x0d?\n/)
     .map(l => l.replace(/^\s+-\s+/, '').replace(/^["']|["']$/g, '').trim())
     .filter(Boolean);
 }

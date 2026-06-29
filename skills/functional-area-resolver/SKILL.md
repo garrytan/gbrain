@@ -34,6 +34,8 @@ mutating: true
 brain_first: exempt
 ---
 
+> **Convention:** see [conventions/brain-first.md](../conventions/brain-first.md) for the lookup chain (search → query → get_page → external).
+
 # Functional-Area Resolver — Pattern for Compressing Routing Tables
 
 ## Problem

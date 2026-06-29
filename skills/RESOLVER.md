@@ -59,11 +59,12 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | Cron scheduling, quiet hours, job staggering | `skills/cron-scheduler/SKILL.md` |
 | "get more out of gbrain", "is my brain set up right", "weekly brain checkup", "advise me on my brain", "gbrain advisor" | `skills/gbrain-advisor/SKILL.md` |
 | Save or load reports | `skills/reports/SKILL.md` |
-| "Create a skill", "improve this skill" | `skills/skill-creator/SKILL.md` |
+| "Create a skill", "create a new skill", "improve this skill" | `skills/skill-creator/SKILL.md` |
+| "optimize this skill", "tune the skill against the benchmark", "make the skill better", "run skillopt", "skillopt for" | `skills/skill-optimizer/SKILL.md` |
 | "Skillify this", "is this a skill?", "make this proper" | `skills/skillify/SKILL.md` |
 | "Compress my resolver", "AGENTS.md too large", "RESOLVER.md too big", "functional area dispatcher", "shrink routing table" | `skills/functional-area-resolver/SKILL.md` |
 | "Is gbrain healthy?", morning health check, skillpack-check | `skills/skillpack-check/SKILL.md` |
-| "harvest this skill into gbrain", "publish this skill to gbrain", "lift this skill upstream", "share this skill with other gbrain clients", "promote my skill to gbrain" | `skills/skillpack-harvest/SKILL.md` |
+| "harvest this skill into gbrain", "harvest my skill into gbrain", "publish this skill to gbrain", "fork-only skill upstream", "lift this skill upstream", "lift this skill back into gbrain", "share this skill with other gbrain clients", "gbrain bundle", "promote my skill to gbrain", "promote this skill to gbrain", "custom skill into the gbrain core" | `skills/skillpack-harvest/SKILL.md` |
 | Post-restart health + auto-fix, "did the container restart break anything", smoke test | `skills/smoke-test/SKILL.md` |
 | Cross-modal review, second opinion | `skills/cross-modal-review/SKILL.md` |
 | "Validate skills", skill health check | `skills/testing/SKILL.md` |
