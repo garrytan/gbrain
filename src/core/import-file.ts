@@ -36,7 +36,7 @@ import {
 } from './embedding-context.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { normalizeAliasList } from './search/alias-normalize.ts';
-import { isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { isUndefinedTableError, validateSlug, warnOncePerProcess } from './utils.ts';
 import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
 import { runGuardrails } from './guardrails.ts';
 
@@ -284,6 +284,14 @@ export async function importFromContent(
     remote?: boolean;
   } = {},
 ): Promise<ImportResult> {
+  // Canonicalize once at the import boundary. PostgresEngine.putPage also
+  // validates/canonicalizes slugs before INSERT; without this, explicit
+  // mixed-case slugs are inserted lowercased but chunked under the original
+  // slug, causing `Page not found` in upsertChunks. Default capture slugs are
+  // already lowercase, which is why the bug only hit explicit slugs like
+  // timestamped `...T...Z` canaries.
+  slug = validateSlug(slug);
+
   // v0.18.0+ multi-source: when caller is syncing under a non-default source,
   // every per-page tx call must carry `sourceId` so writes target the right
   // (source_id, slug) row. Pre-fix, putPage relied on the schema DEFAULT and
