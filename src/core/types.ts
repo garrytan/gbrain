@@ -21,3 +21,4 @@ export * from './types/decision-projections.ts';
 export * from './types/memory-why.ts';
 export * from './types/episode-capture.ts';
 export * from './types/graph-frontier.ts';
+export * from './types/context-eval.ts';

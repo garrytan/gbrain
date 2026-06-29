@@ -24,6 +24,11 @@ export interface AgentTrustExplainReport {
     authority_violations: number;
     mutations: number;
   };
+  self_service_analytics: {
+    docs_manifest_resources: string[];
+    trust_footer_contract: 'retrieve_context_and_read_context';
+    eval_ledger: 'context_eval_runs_assertions_corrections';
+  };
   next_actions: string[];
   limitations: string[];
 }

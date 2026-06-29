@@ -35,8 +35,21 @@ on brain_write(page, fact):
     elif source.type == "funding":
         # [Source: Captain API funding data, 2026-04-07 2:00 PM PT]
 
-    # Attach citation inline with the fact
-    mbrain put <slug> --content "...fact [Source: ...]..."
+    # Route durable writeback before any canonical mutation.
+    route = route_memory_writeback({
+        target_slug,
+        source_refs: [citation],
+        assertions: ["...fact [Source: ...]..."],
+        target_snapshot_hash: current_content_hash_or_null
+    })
+    if route.decision == "canonical_write_allowed":
+        put_page({
+            slug: target_slug,
+            write_session_id: route.write_session_id,
+            content: "...compiled truth with inline [Source: ...]..."
+        })
+    else:
+        create_or_review_memory_candidate(route)
 
     # When sources conflict, note BOTH -- never silently pick one
     if conflicts_exist(fact, existing_page):

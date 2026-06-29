@@ -236,6 +236,7 @@ const MIGRATIONS: Migration[] = [
         outgoing_wikilinks JSONB NOT NULL DEFAULT '[]',
         outgoing_urls JSONB NOT NULL DEFAULT '[]',
         source_refs JSONB NOT NULL DEFAULT '[]',
+        resolver_metadata JSONB NOT NULL DEFAULT '{}',
         heading_index JSONB NOT NULL DEFAULT '[]',
         content_hash TEXT NOT NULL,
         extractor_version TEXT NOT NULL,
@@ -3459,6 +3460,75 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_memory_write_sessions_consumed_event
         ON memory_write_sessions(consumed_by_event_id)
         WHERE consumed_by_event_id IS NOT NULL;
+    `,
+  },
+  {
+    version: 59,
+    name: 'note_manifest_resolver_metadata',
+    sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('note_manifest_entries') IS NOT NULL THEN
+          ALTER TABLE note_manifest_entries
+            ADD COLUMN IF NOT EXISTS resolver_metadata JSONB NOT NULL DEFAULT '{}';
+        END IF;
+      END
+      $$;
+    `,
+  },
+  {
+    version: 60,
+    name: 'context_eval_ledger',
+    sql: `
+      CREATE TABLE IF NOT EXISTS context_eval_runs (
+        id                  TEXT PRIMARY KEY,
+        fixture_id          TEXT NOT NULL,
+        fixture_mode        TEXT NOT NULL CHECK (fixture_mode IN ('injected_candidates', 'live_retrieve')),
+        status              TEXT NOT NULL CHECK (status IN ('running', 'passed', 'failed', 'error')),
+        model_id            TEXT,
+        skill_surface_hash  TEXT,
+        agent_rules_version TEXT,
+        git_sha             TEXT,
+        retrieval_trace_ids JSONB NOT NULL DEFAULT '[]',
+        metrics             JSONB NOT NULL DEFAULT '{}',
+        metadata            JSONB NOT NULL DEFAULT '{}',
+        started_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+        completed_at        TIMESTAMPTZ,
+        created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_context_eval_runs_fixture_created
+        ON context_eval_runs(fixture_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS context_eval_assertions (
+        id                 TEXT PRIMARY KEY,
+        run_id             TEXT NOT NULL REFERENCES context_eval_runs(id) ON DELETE CASCADE,
+        case_id            TEXT NOT NULL,
+        assertion_kind     TEXT NOT NULL,
+        passed             BOOLEAN NOT NULL,
+        score              DOUBLE PRECISION,
+        expected           JSONB NOT NULL DEFAULT 'null',
+        actual             JSONB NOT NULL DEFAULT 'null',
+        message            TEXT,
+        retrieval_trace_id TEXT REFERENCES retrieval_traces(id) ON DELETE SET NULL,
+        metadata           JSONB NOT NULL DEFAULT '{}',
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_context_eval_assertions_run_case
+        ON context_eval_assertions(run_id, case_id);
+
+      CREATE TABLE IF NOT EXISTS context_eval_corrections (
+        id                    TEXT PRIMARY KEY,
+        trace_id              TEXT NOT NULL REFERENCES retrieval_traces(id) ON DELETE CASCADE,
+        run_id                TEXT REFERENCES context_eval_runs(id) ON DELETE SET NULL,
+        case_id               TEXT NOT NULL,
+        reason                TEXT NOT NULL,
+        proposed_assertion_id TEXT REFERENCES context_eval_assertions(id) ON DELETE SET NULL,
+        metadata              JSONB NOT NULL DEFAULT '{}',
+        created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_context_eval_corrections_trace_created
+        ON context_eval_corrections(trace_id, created_at DESC);
     `,
   },
 ];

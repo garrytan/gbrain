@@ -110,13 +110,26 @@ describe('MCP HTTP transport', () => {
       params: {},
       id: 4,
     }));
-    expect(resourcesList.result.resources).toEqual([]);
+    expect(resourcesList.result.resources.some((resource: { uri: string }) => resource.uri === 'mbrain://docs/agent-rules')).toBe(true);
+    expect(resourcesList.result.resources.some((resource: { uri: string }) => resource.uri === 'mbrain://docs/guides/brain-first-lookup')).toBe(true);
+
+    const agentRules = await readJsonRpcResponse(await postMcp(handler, {
+      jsonrpc: '2.0',
+      method: 'resources/read',
+      params: { uri: 'mbrain://docs/agent-rules' },
+      id: 5,
+    }));
+    expect(agentRules.result.contents[0]).toMatchObject({
+      uri: 'mbrain://docs/agent-rules',
+      mimeType: 'text/markdown',
+    });
+    expect(agentRules.result.contents[0].text).toContain('retrieve_context');
 
     const stats = await readJsonRpcResponse(await postMcp(handler, {
       jsonrpc: '2.0',
       method: 'tools/call',
       params: { name: 'get_stats', arguments: {} },
-      id: 5,
+      id: 6,
     }));
     expect(stats.result.content[0].text).toContain('"pages":3');
   });

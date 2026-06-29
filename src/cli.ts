@@ -97,6 +97,17 @@ const SETUP_AGENT_CLI_SPEC: Operation = {
   cliHints: { name: 'setup-agent' },
 };
 
+const SKILL_SURFACE_CLI_SPEC: Operation = {
+  name: 'skill_surface',
+  description: 'Inspect the packaged agent docs manifest and MCP docs resources.',
+  params: {
+    action: { type: 'string', description: 'Action: manifest or resources', enum: ['manifest', 'resources'] },
+    json: { type: 'boolean', description: 'Emit JSON output' },
+  },
+  handler: noopHandler,
+  cliHints: { name: 'skill-surface', positional: ['action'] },
+};
+
 const MEMORY_REPORT_CLI_SPEC: Operation = {
   name: 'memory_report',
   description: 'Show the exception-first memory review report for the configured brain.',
@@ -110,6 +121,17 @@ const MEMORY_REPORT_CLI_SPEC: Operation = {
   },
   handler: noopHandler,
   cliHints: { name: 'memory-report' },
+};
+
+const EVAL_CLI_SPEC: Operation = {
+  name: 'eval',
+  description: 'Run context retrieval eval fixtures, compare eval reports, or record trace-linked corrections.',
+  params: {
+    domain: { type: 'string', description: 'Eval domain: context or correction' },
+    json: { type: 'boolean', description: 'Emit JSON output' },
+  },
+  handler: noopHandler,
+  cliHints: { name: 'eval', positional: ['domain'] },
 };
 
 const SERVE_CLI_SPEC: Operation = {
@@ -247,11 +269,13 @@ const CLI_ONLY_SPECS: Partial<Record<string, Operation>> = {
   doctor: DOCTOR_CLI_SPEC,
   migrate: MIGRATE_CLI_SPEC,
   'memory-report': MEMORY_REPORT_CLI_SPEC,
+  eval: EVAL_CLI_SPEC,
   'auto-promote': AUTO_PROMOTE_CLI_SPEC,
   'agent-session': AGENT_SESSION_CLI_SPEC,
   canonicalize: CANONICALIZE_CLI_SPEC,
   'canonicalize-code': CANONICALIZE_CODE_CLI_SPEC,
   'setup-agent': SETUP_AGENT_CLI_SPEC,
+  'skill-surface': SKILL_SURFACE_CLI_SPEC,
 };
 
 const DIRECT_NO_ENGINE_COMMANDS: Record<string, CliNoEngineLoader> = {
@@ -278,6 +302,7 @@ const CLI_NO_ENGINE_COMMANDS: Record<string, CliNoEngineLoader> = {
   'check-update': async () => (await import('./commands/check-update.ts')).runCheckUpdate,
   // `setup-agent` edits user tooling config and installs hooks outside the shared contract.
   'setup-agent': async () => (await import('./commands/setup-agent.ts')).runSetupAgent,
+  'skill-surface': async () => (await import('./commands/skill-surface.ts')).runSkillSurface,
 };
 
 const DIRECT_ENGINE_COMMANDS: Record<string, CliEngineLoader> = {
@@ -290,6 +315,7 @@ const DIRECT_ENGINE_COMMANDS: Record<string, CliEngineLoader> = {
   config: async () => (await import('./commands/config.ts')).runConfig,
   doctor: async () => (await import('./commands/doctor.ts')).runDoctor,
   'memory-report': async () => (await import('./commands/memory-report.ts')).runMemoryReport,
+  eval: async () => (await import('./commands/eval.ts')).runEval,
   'auto-promote': async () => (await import('./commands/auto-promote.ts')).runAutoPromoteCommand,
   'agent-session': async () => (await import('./commands/agent-session.ts')).runAgentSession,
   connectors: async () => (await import('./commands/connectors.ts')).runConnectors,
@@ -300,6 +326,7 @@ const DIRECT_ENGINE_COMMANDS: Record<string, CliEngineLoader> = {
 const CLI_ONLY = new Set([
   'serve',
   'setup-agent',
+  'skill-surface',
   'upgrade',
   'post-upgrade',
   'check-update',
@@ -739,6 +766,7 @@ AGENT MEMORY LOOP
   read-context --selectors <json>    Read canonical evidence selected by retrieve-context
   route-memory-writeback             Route durable writes before canonical mutation
   memory-report [--json] [--save]    Show or save the review surface for memory debt
+  eval context --fixture <file>       Persist a context eval fixture run
 
 PAGES
   get <slug>                         Read a page

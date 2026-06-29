@@ -19,24 +19,28 @@ fill gaps.
 
 ```
 lookup(name_or_topic):
-  // STEP 1: Keyword search (fast, works day one, no embeddings needed)
-  results = mbrain search "{name_or_topic}"
-  if results.length > 0:
-    page = mbrain get {results[0].slug}
-    return page  // done, brain had it
+  // STEP 1: Probe the governed context surface.
+  probe = mbrain retrieve-context "{name_or_topic}"
 
-  // STEP 2: Hybrid search (needs embeddings, finds semantic matches)
-  results = mbrain query "what do we know about {name_or_topic}"
-  if results.length > 0:
-    page = mbrain get {results[0].slug}
-    return page
+  // STEP 2: Read canonical evidence selected by the probe.
+  if probe.required_reads.length > 0:
+    read = mbrain read-context --selectors '<probe.required_reads json>'
+    if read.answer_ready:
+      return answer_from(read.canonical_reads)
 
-  // STEP 3: Direct slug (if you know or can guess the slug)
-  page = mbrain get "people/{slugify(name_or_topic)}"
-  if page: return page
+  // STEP 3: If you already know the exact slug/selector, read it directly.
+  if exact_selector_known(name_or_topic):
+    read = mbrain read-context --selectors '[...]'
+    if read.answer_ready:
+      return answer_from(read.canonical_reads)
 
-  // STEP 4: External API or broad repo search (FALLBACK ONLY)
-  // Only reach here if brain has nothing useful
+  // STEP 4: Keyword, hybrid, and get_page remain lower-level escape hatches.
+  // search/query chunks and candidate_signals are pointers, not answer evidence.
+  // Use them to refine a new retrieve_context/read_context pass or disclose that
+  // only probe metadata exists.
+
+  // STEP 5: External API or broad repo search (FALLBACK ONLY)
+  // Only reach here if canonical brain evidence is absent or insufficient.
   return external_search_or_repo_scan(name_or_topic)
 ```
 
@@ -62,21 +66,21 @@ entry points, and here is the vocabulary each codebase uses."
 
 ## Tricky Spots
 
-1. **Try keyword first, then hybrid.** Keyword search works without embeddings
-   (day one). Hybrid search needs embeddings but finds semantic matches. Try
-   both in sequence.
+1. **Probe first, then read.** `retrieve_context` is cheap discovery and
+   planning; `read_context` is the factual evidence boundary. Do not answer
+   from search/query chunks or Memory Inbox candidate signals.
 
-2. **Fuzzy slug matching.** `mbrain get` supports fuzzy matching. If the exact
-   slug doesn't exist, it suggests alternatives. Use this for name variants
-   ("Pedro" → "pedro-franceschi").
+2. **Fuzzy slug matching is an escape hatch.** `mbrain get` can still help when
+   a user asks for a complete page or when you are debugging selectors, but
+   ordinary answers should prefer bounded `read_context` evidence.
 
 3. **Don't skip for "simple" questions.** Even "what's Acme Corp's address?"
    should check the brain first. The brain might have it, and the lookup adds
    no latency (< 100ms for keyword search).
 
-4. **Load compiled truth + recent timeline.** The compiled truth gives you the
-   state of play in 30 seconds. The timeline gives you what changed recently.
-   Both together = full context.
+4. **Load compiled truth + recent timeline intentionally.** The compiled truth
+   gives you the state of play in 30 seconds. Include timeline only when the
+   question needs recency or change history; otherwise keep reads bounded.
 
 5. **Use the same protocol for code questions.** Before searching a repo for
    "autograd" or "dispatcher", check `concepts/` and `systems/` first. The map
@@ -84,10 +88,11 @@ entry points, and here is the vocabulary each codebase uses."
 
 ## How to Verify
 
-1. Ask about someone in the brain. Verify the agent searched the brain FIRST
-   (check tool call order in the response).
-2. Ask about someone NOT in the brain. Verify the agent searched the brain,
-   found nothing, THEN fell back to external search.
+1. Ask about someone in the brain. Verify the agent called `retrieve_context`
+   first, then `read_context` before factual claims.
+2. Ask about someone NOT in the brain. Verify the agent probed/read the brain,
+   found no canonical evidence, disclosed the gap, THEN fell back to external
+   search.
 3. Ask the same question twice. Second time should be instant (brain has it).
 
 ---

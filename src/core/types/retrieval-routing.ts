@@ -625,6 +625,8 @@ export type RetrieveContextReadPlanGapReason =
   | 'candidate_pool_exceeds_read_budget'
   | 'orientation_reads_deferred'
   | 'candidate_signals_are_non_canonical'
+  | 'resolver_metadata_ambiguity'
+  | 'resolver_scope_excluded'
   | 'retrieval_backend_partial_failure'
   | 'retrieval_backend_failed';
 
@@ -653,6 +655,57 @@ export interface RetrieveContextGraphFrontierOptions {
   enabled: boolean;
   max_depth?: number;
   fanout_cap?: number;
+}
+
+export type AnswerTrustFooterAuthorityClass =
+  | 'canonical_read'
+  | 'operational_memory'
+  | 'candidate_only'
+  | 'raw_audited_redacted'
+  | 'not_answer_evidence';
+
+export type AnswerTrustFooterExcludedSignalKind =
+  | 'candidate_signal'
+  | 'search_chunk'
+  | 'graph_frontier'
+  | 'context_map'
+  | 'raw_source';
+
+export interface AnswerTrustFooterExcludedSignal {
+  kind: AnswerTrustFooterExcludedSignalKind;
+  reason: string;
+  count?: number;
+}
+
+export interface AnswerTrustFooter {
+  authority_class: AnswerTrustFooterAuthorityClass;
+  underlying_authorities: string[];
+  evidence_selectors: string[];
+  source_refs: string[];
+  excluded_signals: AnswerTrustFooterExcludedSignal[];
+  freshness: {
+    content_hashes: string[];
+    derived_index_status: 'current' | 'stale' | 'unknown';
+    generated_at: string;
+  };
+  write_status:
+    | 'no_write'
+    | 'candidate_created'
+    | 'write_session_open'
+    | 'write_session_expired'
+    | 'canonical_write_applied';
+  next_verification_action: string | null;
+  trace_ids: string[];
+}
+
+export interface ReadContextProbeContext {
+  retrieve_trace_ids?: string[];
+  candidate_signal_count?: number;
+  candidate_signal_ids?: string[];
+  search_chunk_count?: number;
+  graph_frontier_considered?: boolean;
+  context_map_consulted?: boolean;
+  raw_source_consulted?: boolean;
 }
 
 export interface SelectorFirstPushContextAnswerReadiness {
@@ -724,6 +777,7 @@ export interface RetrieveContextResult {
   candidate_signals: CandidateSignal[];
   create_safety?: RetrieveContextCreateSafety;
   push_context?: SelectorFirstPushContextEnvelope;
+  answer_trust_footer?: AnswerTrustFooter;
   warnings: string[];
   trace?: RetrievalTrace | null;
 }
@@ -841,6 +895,7 @@ export interface ReadContextInput {
   persist_trace?: boolean;
   task_id?: string | null;
   requested_scope?: Exclude<ScopeGateScope, 'unknown'>;
+  probe_context?: ReadContextProbeContext;
 }
 
 export interface ReadContextResult {
@@ -853,6 +908,7 @@ export interface ReadContextResult {
   unread_required: RetrievalSelector[];
   continuations: RetrievalSelector[];
   scope_gate?: ScopeGateDecisionResult;
+  answer_trust_footer?: AnswerTrustFooter;
   trace?: RetrievalTrace | null;
 }
 

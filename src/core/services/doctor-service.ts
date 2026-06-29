@@ -945,6 +945,7 @@ export function formatDoctorReport(report: DoctorReport): string {
       `  read_context evidence boundary: ${explain.memory_behavior.read_context_evidence_boundary}`,
       `  Graph frontier: ${explain.memory_behavior.graph_frontier_default}`,
       `  Proof: ${proof.status}; ${proof.scenarios.length} scenarios; ${proof.authority_violations} authority violations; ${proof.mutations} mutations`,
+      `  Self-service analytics: ${explain.self_service_analytics.docs_manifest_resources.length} docs resources; trust footer ${explain.self_service_analytics.trust_footer_contract}; eval ledger ${explain.self_service_analytics.eval_ledger}`,
       `  Next: ${explain.next_actions.join('; ')}`,
       `  Limits: ${explain.limitations.join('; ')}`,
     );

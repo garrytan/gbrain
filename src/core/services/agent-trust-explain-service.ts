@@ -4,6 +4,7 @@ import type {
   InstalledAgentCheck,
   InstalledAgentReadinessReport,
 } from './installed-agent-readiness-service.ts';
+import { listSkillSurfaceResources } from './skill-surface-manifest-service.ts';
 
 export interface BuildAgentTrustExplainInput {
   command: string;
@@ -52,6 +53,11 @@ export function buildAgentTrustExplainReport(
       scenarios: input.proof.scenarios.map((scenario) => scenario.id),
       authority_violations: input.proof.authority_violations.length,
       mutations: input.proof.mutations.length,
+    },
+    self_service_analytics: {
+      docs_manifest_resources: listSkillSurfaceResources().map((resource) => resource.uri),
+      trust_footer_contract: 'retrieve_context_and_read_context',
+      eval_ledger: 'context_eval_runs_assertions_corrections',
     },
     next_actions: buildNextActions(input.installedAgent, input.proof),
     limitations: [

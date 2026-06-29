@@ -17,6 +17,14 @@ import type {AutoPromoteVerdictKey,
   ContextAtlasEntry,
   ContextAtlasEntryInput,
   ContextAtlasFilters,
+  ContextEvalAssertion,
+  ContextEvalAssertionFilters,
+  ContextEvalAssertionInput,
+  ContextEvalCorrection,
+  ContextEvalCorrectionInput,
+  ContextEvalRun,
+  ContextEvalRunFilters,
+  ContextEvalRunInput,
   ContextMapEntry,
   ContextMapEntryInput,
   ContextMapFilters,
@@ -197,6 +205,12 @@ export interface OperationalMemoryStore {
   getRetrievalTrace(id: string): Promise<RetrievalTrace | null>;
   listRetrievalTraces(taskId: string, opts?: { limit?: number }): Promise<RetrievalTrace[]>;
   listRetrievalTracesByWindow(filters: RetrievalTraceWindowFilters): Promise<RetrievalTrace[]>;
+  putContextEvalRun(input: ContextEvalRunInput): Promise<ContextEvalRun>;
+  getContextEvalRun(id: string): Promise<ContextEvalRun | null>;
+  listContextEvalRuns(filters?: ContextEvalRunFilters): Promise<ContextEvalRun[]>;
+  putContextEvalAssertion(input: ContextEvalAssertionInput): Promise<ContextEvalAssertion>;
+  listContextEvalAssertions(filters?: ContextEvalAssertionFilters): Promise<ContextEvalAssertion[]>;
+  createContextEvalCorrection(input: ContextEvalCorrectionInput): Promise<ContextEvalCorrection>;
 }
 
 export interface PersonalMemoryStore {

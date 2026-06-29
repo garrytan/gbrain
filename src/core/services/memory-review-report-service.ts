@@ -231,6 +231,22 @@ export interface ReportConnectorHealth {
   next_action?: string;
 }
 
+export interface ReportContextEvalRun {
+  id: string;
+  fixture_id: string;
+  status: 'running' | 'passed' | 'failed' | 'error' | string;
+  total: number;
+  failed: number;
+  pass_rate: number;
+  created_at: string;
+}
+
+export interface ReportSkillSurfaceSummary {
+  resource_count: number;
+  manifest_hash: string;
+  agent_rules_version: string | null;
+}
+
 export interface AutoPromoteReportSummary {
   auto_promoted: number;
   canonical_handoffs?: number;
@@ -264,6 +280,8 @@ export interface MemoryReviewReportInput {
   auto_promote_summary?: AutoPromoteReportSummary;
   candidate_debt?: CandidateDebtMetrics;
   negative_memory_projections?: NegativeMemoryProjection[];
+  context_eval_runs?: ReportContextEvalRun[];
+  skill_surface?: ReportSkillSurfaceSummary;
 }
 
 export interface SourceIngestSummary {
@@ -322,6 +340,7 @@ export interface MemoryReviewReportSummary {
   coverage_gaps: number;
   open_write_sessions: number;
   expired_write_sessions: number;
+  failed_context_eval_runs: number;
 }
 
 export interface ProjectionFreshnessSummary {
@@ -363,6 +382,8 @@ export interface MemoryReviewReport {
     failed_jobs: Array<ReportRunnerJob | ReportMaintenanceJob>;
     source_health: ReportSource[];
     connector_health: ReportConnectorHealth[];
+    context_eval_runs: ReportContextEvalRun[];
+    skill_surface?: ReportSkillSurfaceSummary;
     safety_states: ReportSafetyState[];
     maintenance_health: MaintenanceHealthSummary;
     coverage_gaps: ReportCoverageGap[];
@@ -393,6 +414,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
       enrichConnectorHealth(connector, input.generated_at)
     ),
   );
+  const contextEvalRuns = redactReportValues(input.context_eval_runs ?? []);
 
   const failedRunnerJobs = runnerJobs.filter((job) => job.status === 'failed' || job.status === 'degraded');
   const failedMaintenanceJobs = jobs.filter((job) => job.status === 'failed' || job.status === 'dead');
@@ -443,6 +465,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
     coverage_gaps: coverageGaps.length,
     open_write_sessions: writeSessions.filter((session) => session.status === 'open').length,
     expired_write_sessions: writeSessions.filter((session) => session.status === 'expired').length,
+    failed_context_eval_runs: contextEvalRuns.filter((run) => run.status === 'failed' || run.status === 'error').length,
   };
 
   return {
@@ -468,6 +491,8 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
       failed_jobs: [...failedRunnerJobs, ...failedMaintenanceJobs],
       source_health: sources,
       connector_health: connectorHealth,
+      context_eval_runs: contextEvalRuns,
+      ...(input.skill_surface ? { skill_surface: input.skill_surface } : {}),
       safety_states: safetyStates,
       maintenance_health: {
         candidate_debt: candidateDebt,
@@ -544,6 +569,14 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
       }
     }
 
+    const failedEvalRuns = report.sections.context_eval_runs.filter((run) => run.status === 'failed' || run.status === 'error');
+    if (failedEvalRuns.length > 0) {
+      lines.push('', 'Context Eval Ledger');
+      for (const run of failedEvalRuns) {
+        lines.push(`- ${run.status} ${run.fixture_id} (${run.id}): failed ${run.failed}/${run.total}, pass_rate ${run.pass_rate.toFixed(2)}`);
+      }
+    }
+
 	    if (report.sections.write_sessions.length > 0) {
 	      lines.push('', 'Write Sessions');
 	      for (const session of report.sections.write_sessions) {
@@ -567,6 +600,12 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
       lines.push(formatConnectorHealthLine(connector));
       if (connector.last_error) lines.push(`  last_error: ${redactSecrets(connector.last_error)}`);
     }
+  }
+
+  if (report.sections.skill_surface) {
+    const skillSurface = report.sections.skill_surface;
+    lines.push('', 'Skill Surface');
+    lines.push(`- Docs resources: ${skillSurface.resource_count}; agent rules ${skillSurface.agent_rules_version ?? 'unknown'}; manifest ${skillSurface.manifest_hash}`);
   }
 
   if (hasMaintenanceHealthSignals(report.sections.maintenance_health)) {

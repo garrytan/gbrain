@@ -35,11 +35,11 @@ describe('post-merge runtime documentation', () => {
 
     expect(readme).toContain('To verify the OAuth runtime locally, or to reproduce a ChatGPT-style setup');
     expect(readme).toContain('HTTP MCP clients receive full tool descriptors');
-    expect(readme).toContain('`resources/list` returns an explicit empty list');
+    expect(readme).toContain('`resources/list` returns manifest-backed MBrain');
     expect(verify).toContain('The ChatGPT Developer Mode guide was live-validated on 2026-05-31');
     expect(verify).toContain('full HTTP `tools/list` descriptors/action discovery');
     expect(deploy).toContain('For HTTP MCP clients such as ChatGPT Developer Mode');
-    expect(deploy).toContain('`resources/list` returns an explicit empty list');
+    expect(deploy).toContain('`resources/list` returns manifest-backed MBrain');
   });
 
   test('links the implementation index to the current phase status snapshot', () => {

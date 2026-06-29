@@ -32,6 +32,7 @@ describe('agentic retrieval context operations', () => {
     expect(read?.cliHints?.name).toBe('read-context');
     expect(read?.cliHints?.positional ?? []).toEqual([]);
     expect(read?.params.selectors?.type).toContain('string');
+    expect(read?.params.probe_context?.type).toContain('string');
   });
 
   test('retrieve_context returns candidates and required read selectors without making chunks answer ground', async () => {
@@ -111,6 +112,17 @@ describe('agentic retrieval context operations', () => {
     expect(result.required_reads[0].line_start).toBe(1);
     expect(result.required_reads[0].line_end).toBe(4);
     expect(result.required_reads[0].content_hash).toBe('page-hash-1');
+    expect(result.answer_trust_footer).toMatchObject({
+      authority_class: 'not_answer_evidence',
+      underlying_authorities: ['not_answer_evidence'],
+      evidence_selectors: ['section:workspace:default:concepts/retrieval#compiled-truth'],
+      write_status: 'no_write',
+      next_verification_action: 'Call read_context with read_plan.selected_selector_snapshots before making factual claims.',
+    });
+    expect(result.answer_trust_footer.excluded_signals).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'candidate_signal', count: 1 }),
+      expect.objectContaining({ kind: 'search_chunk', count: 1 }),
+    ]));
     expect(JSON.stringify(result.candidate_signals)).not.toContain(
       'Candidate signal for retrieval operation output should stay non-canonical.',
     );
@@ -249,6 +261,12 @@ describe('agentic retrieval context operations', () => {
       }]),
       token_budget: 20,
       include_source_refs: false,
+      probe_context: JSON.stringify({
+        retrieve_trace_ids: ['retrieve-trace-1'],
+        candidate_signal_count: 2,
+        search_chunk_count: 1,
+        context_map_consulted: true,
+      }),
     }) as any;
 
     expect(result.canonical_reads).toHaveLength(1);
@@ -256,6 +274,18 @@ describe('agentic retrieval context operations', () => {
     expect(result.canonical_reads[0].selector.char_start).toBe(6);
     expect(result.canonical_reads[0].selector.char_end).toBe(24);
     expect(result.canonical_reads[0].selector.selector_id).toContain('@chars:6:24');
+    expect(result.answer_trust_footer).toMatchObject({
+      authority_class: 'canonical_read',
+      underlying_authorities: ['source_or_timeline_evidence'],
+      evidence_selectors: ['line_span:workspace:default:concepts/retrieval:1:1@chars:6:24'],
+      trace_ids: ['retrieve-trace-1'],
+      write_status: 'no_write',
+    });
+    expect(result.answer_trust_footer.excluded_signals).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'candidate_signal', count: 2 }),
+      expect.objectContaining({ kind: 'search_chunk', count: 1 }),
+      expect.objectContaining({ kind: 'context_map' }),
+    ]));
 
     const output = formatResult('read_context', result);
     expect(output).toContain('Answer ready: yes');

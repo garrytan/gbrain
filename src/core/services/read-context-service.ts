@@ -17,6 +17,8 @@ import type {
   ScopeGateDecisionResult,
   ScopeGateScope,
   TimelineEntry,
+  AnswerTrustFooter,
+  AnswerTrustFooterExcludedSignal,
 } from '../types.ts';
 import { scalarLength, sliceScalars } from '../text-offsets.ts';
 import {
@@ -1466,11 +1468,111 @@ async function maybePersistReadTrace(
   result: ReadContextResult,
   input: ReadContextInput,
 ): Promise<ReadContextResult> {
-  if (!input.persist_trace) return result;
-  return {
+  if (!input.persist_trace) return withReadTrustFooter(result, input);
+  const resultWithTrace = {
     ...result,
     trace: await persistReadTrace(engine, result, input),
   };
+  return withReadTrustFooter(resultWithTrace, input);
+}
+
+function withReadTrustFooter(result: ReadContextResult, input: ReadContextInput): ReadContextResult {
+  return {
+    ...result,
+    answer_trust_footer: buildReadTrustFooter(result, input),
+  };
+}
+
+function buildReadTrustFooter(result: ReadContextResult, input: ReadContextInput): AnswerTrustFooter {
+  const sourceRefs = traceSourceRefs(result.canonical_reads);
+  const contentHashes = uniqueStrings(result.canonical_reads
+    .map((read) => read.evidence_metadata?.content_hash ?? read.selector.content_hash)
+    .filter((hash): hash is string => typeof hash === 'string' && hash.length > 0));
+  const underlyingAuthorities = uniqueStrings(result.canonical_reads.map((read) => read.authority));
+  const excludedSignals = probeExcludedSignals(input.probe_context);
+  const traceIds = uniqueStrings([
+    ...(input.probe_context?.retrieve_trace_ids ?? []),
+    ...(result.trace?.id ? [result.trace.id] : []),
+  ]);
+
+  return {
+    authority_class: result.canonical_reads.length > 0 ? 'canonical_read' : 'not_answer_evidence',
+    underlying_authorities: underlyingAuthorities,
+    evidence_selectors: result.canonical_reads.map((read) => retrievalSelectorId(read.selector)),
+    source_refs: sourceRefs,
+    excluded_signals: excludedSignals,
+    freshness: {
+      content_hashes: contentHashes,
+      derived_index_status: derivedIndexStatus(result.canonical_reads),
+      generated_at: new Date().toISOString(),
+    },
+    write_status: 'no_write',
+    next_verification_action: readNextVerificationAction(result),
+    trace_ids: traceIds,
+  };
+}
+
+function probeExcludedSignals(probeContext: ReadContextInput['probe_context']): AnswerTrustFooterExcludedSignal[] {
+  if (!probeContext) return [];
+  const excluded: AnswerTrustFooterExcludedSignal[] = [];
+  if ((probeContext.candidate_signal_count ?? 0) > 0 || (probeContext.candidate_signal_ids?.length ?? 0) > 0) {
+    excluded.push({
+      kind: 'candidate_signal',
+      count: probeContext.candidate_signal_count ?? probeContext.candidate_signal_ids?.length,
+      reason: 'Candidate signals from the preceding probe were excluded from canonical answer evidence.',
+    });
+  }
+  if ((probeContext.search_chunk_count ?? 0) > 0) {
+    excluded.push({
+      kind: 'search_chunk',
+      count: probeContext.search_chunk_count,
+      reason: 'Search/query chunks from the preceding probe were excluded; canonical_reads provide the answer evidence.',
+    });
+  }
+  if (probeContext.graph_frontier_considered) {
+    excluded.push({
+      kind: 'graph_frontier',
+      reason: 'Graph frontier orientation was excluded from answer evidence.',
+    });
+  }
+  if (probeContext.context_map_consulted) {
+    excluded.push({
+      kind: 'context_map',
+      reason: 'Context map orientation was excluded from answer evidence.',
+    });
+  }
+  if (probeContext.raw_source_consulted) {
+    excluded.push({
+      kind: 'raw_source',
+      reason: 'Raw source was not promoted to canonical evidence by read_context.',
+    });
+  }
+  return excluded;
+}
+
+function derivedIndexStatus(reads: CanonicalContextRead[]): AnswerTrustFooter['freshness']['derived_index_status'] {
+  if (reads.length === 0) return 'unknown';
+  let sawKnown = false;
+  for (const read of reads) {
+    const status = read.evidence_metadata?.derived_index_status;
+    if (!status) continue;
+    sawKnown = true;
+    if (status !== 'current') return 'stale';
+  }
+  return sawKnown ? 'current' : 'unknown';
+}
+
+function readNextVerificationAction(result: ReadContextResult): string | null {
+  if (result.unread_required.length > 0) {
+    return 'Read or explicitly disclose unread_required selectors before making broader factual claims.';
+  }
+  if (result.selector_warnings && result.selector_warnings.length > 0) {
+    return 'Resolve selector_warnings before treating the answer as complete.';
+  }
+  if (!result.answer_ready.ready) {
+    return result.answer_ready.unsupported_reasons[0] ?? 'Gather additional canonical reads before answering.';
+  }
+  return null;
 }
 
 async function persistReadTrace(
@@ -1509,6 +1611,10 @@ function traceSourceRefs(reads: CanonicalContextRead[]): string[] {
     reads.map((read) => retrievalSelectorId(read.selector)),
     reads.flatMap((read) => read.source_refs),
   );
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function corpusLaneVerification(lanes: Array<CanonicalContextRead['corpus_lane']>): string[] {

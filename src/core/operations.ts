@@ -95,6 +95,7 @@ import type {
   PersonalWriteTargetResult,
   PersonalEpisodeSourceKind,
   ProfileMemoryType,
+  ReadContextProbeContext,
   RetrievalRequestPlannerInput,
   RetrievalRouteIntent,
   RetrievalSelector,
@@ -1606,6 +1607,80 @@ function parseRetrieveContextGraphFrontierParam(value: unknown, key: string): Re
         }
       : {}),
   };
+}
+
+function parseReadContextProbeContextParam(value: unknown, key: string): ReadContextProbeContext | undefined {
+  if (value === undefined || value === null) return undefined;
+
+  let parsed: unknown = value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return undefined;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      throw new OperationError('invalid_params', `${key} must be valid JSON when passed as a string.`);
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new OperationError('invalid_params', `${key} must be an object or JSON object string.`);
+  }
+
+  const object = parsed as Record<string, unknown>;
+  const allowedKeys = new Set([
+    'retrieve_trace_ids',
+    'candidate_signal_count',
+    'candidate_signal_ids',
+    'search_chunk_count',
+    'graph_frontier_considered',
+    'context_map_consulted',
+    'raw_source_consulted',
+  ]);
+  for (const optionKey of Object.keys(object)) {
+    if (!allowedKeys.has(optionKey)) {
+      throw new OperationError('invalid_params', `${key}.${optionKey} is not a supported option.`);
+    }
+  }
+
+  return {
+    retrieve_trace_ids: parseOptionalStringArray(object.retrieve_trace_ids, `${key}.retrieve_trace_ids`),
+    candidate_signal_count: parseOptionalNonNegativeInteger(object.candidate_signal_count, `${key}.candidate_signal_count`),
+    candidate_signal_ids: parseOptionalStringArray(object.candidate_signal_ids, `${key}.candidate_signal_ids`),
+    search_chunk_count: parseOptionalNonNegativeInteger(object.search_chunk_count, `${key}.search_chunk_count`),
+    graph_frontier_considered: parseOptionalBoolean(object.graph_frontier_considered, `${key}.graph_frontier_considered`),
+    context_map_consulted: parseOptionalBoolean(object.context_map_consulted, `${key}.context_map_consulted`),
+    raw_source_consulted: parseOptionalBoolean(object.raw_source_consulted, `${key}.raw_source_consulted`),
+  };
+}
+
+function parseOptionalStringArray(value: unknown, key: string): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) {
+    throw new OperationError('invalid_params', `${key} must be an array of strings.`);
+  }
+  return value.map((item, index) => {
+    if (typeof item !== 'string') {
+      throw new OperationError('invalid_params', `${key}[${index}] must be a string.`);
+    }
+    return item;
+  });
+}
+
+function parseOptionalNonNegativeInteger(value: unknown, key: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+    throw new OperationError('invalid_params', `${key} must be a non-negative integer.`);
+  }
+  return value;
+}
+
+function parseOptionalBoolean(value: unknown, key: string): boolean | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'boolean') {
+    throw new OperationError('invalid_params', `${key} must be a boolean.`);
+  }
+  return value;
 }
 
 function parseKnownSubjectsParam(value: unknown, key: string): Array<string | MemoryScenarioKnownSubject> | undefined {
@@ -7067,6 +7142,10 @@ const read_context: Operation = {
     },
     task_id: { type: 'string', description: 'Optional active task id' },
     requested_scope: requestedScopeParam('Optional access scope override for scope-gate enforcement. Use query for topical retrieval details.'),
+    probe_context: {
+      type: ['object', 'string'],
+      description: 'Optional bounded handoff from the preceding retrieve_context result: trace ids and counts only, never raw candidate text.',
+    },
   },
   mutating: false,
   handler: async (ctx, p) =>
@@ -7084,6 +7163,7 @@ const read_context: Operation = {
           persist_trace: p.persist_trace === true,
           task_id: parseOptionalStringParam(p.task_id, 'task_id') ?? null,
           requested_scope: parseRequestedScopeParam(p.requested_scope),
+          probe_context: parseReadContextProbeContextParam(p.probe_context, 'probe_context'),
         },
         governedProbeRetrieveDependencies(ctx),
       ),
