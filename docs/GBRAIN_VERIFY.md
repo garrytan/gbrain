@@ -205,6 +205,22 @@ Repeat `gbrain doctor --json` after each tier. A source can be operationally fre
 while lower-priority content-quality warnings remain; report those separately from
 P1 blockers.
 
+For a code repository that is also registered as a GBrain source, re-pin the
+source after landing a commit. Use the explicit code strategy so markdown test
+fixtures or skill examples do not force the sync path through frontmatter-only
+validation:
+
+```bash
+gbrain sync --source <source-id> --repo <repo-path> --no-pull --full \
+  --workers 1 --yes --strategy code --no-embed --no-extract
+gbrain embed --stale --source <source-id> --catch-up
+gbrain extract --stale
+gbrain status --json
+```
+
+The source is current only when `last_commit` equals `git rev-parse HEAD`,
+`staleness_class` is `fresh`, and `chunks_unembedded` is `0`.
+
 ---
 
 ## 7. Brain-First Lookup Protocol
