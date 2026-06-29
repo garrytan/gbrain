@@ -18,6 +18,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { loadActivePackBestEffort } from './best-effort.ts';
 import type { OperationContext } from '../operations.ts';
+import { isUndefinedTableError } from '../utils.ts';
 
 export interface StatsOpts {
   /** Single source scope. Omit + omit sourceIds for whole-brain aggregate. */
@@ -164,9 +165,17 @@ async function fetchCountRows(engine: BrainEngine, opts: StatsOpts): Promise<Raw
   `;
   try {
     return await engine.executeRaw<RawCountRow>(sql, params);
-  } catch {
-    // Empty / pre-init brain: pages table may not exist yet.
-    return [];
+  } catch (err) {
+    // ONLY swallow the genuine "pages table doesn't exist yet" case
+    // (empty / pre-init brain). #2466: the old bare `catch {}` masked
+    // EVERY error — so any engine-level failure (connection, version
+    // skew, a query incompatibility) was silently converted to 0 rows,
+    // printing "Total pages: 0" on a populated brain and cascading into
+    // false "100% coverage" + a starved `schema suggest`. Surface
+    // everything that is not a missing-table error so the real failure
+    // is visible instead of hidden behind a fake zero.
+    if (isUndefinedTableError(err)) return [];
+    throw err;
   }
 }
 
@@ -204,9 +213,11 @@ async function detectDeadPrefixes(
         if (cnt === 0) {
           hints.push({ type: t.name, prefix });
         }
-      } catch {
-        // Skip on engine error (no pages table yet, etc.).
-        continue;
+      } catch (err) {
+        // #2466: only skip on the genuine "no pages table yet" case;
+        // rethrow any other engine error so it isn't silently masked.
+        if (isUndefinedTableError(err)) continue;
+        throw err;
       }
     }
   }
