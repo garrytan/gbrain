@@ -602,7 +602,7 @@ describe('verification runbook integrity', () => {
 
   test('finds prose inline-code commands after earlier inline-code spans', () => {
     expect(bunCommandsFromMarkdown('docs/example.md', [
-      'Markdown import, `projection-explain`, `bun run test:phase13`, and',
+      'Markdown import, bounded `mbrain call get_page`, `bun run test:phase13`, and',
       '`doctor --json`.',
     ].join('\n'))).toEqual([{
       line: 1,

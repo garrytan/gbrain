@@ -6,8 +6,9 @@
  *   DATABASE_URL=postgresql://... bun run smoke:postgres-runtime
  *
  * This is intended for a disposable Postgres database. It runs `mbrain init`,
- * imports a Markdown fixture, runs the projection lineage surface, executes the
- * deterministic Phase 13 replay gate, and finishes with `mbrain doctor --json`.
+ * imports a Markdown fixture, reads it through the bounded get_page operation,
+ * executes the deterministic Phase 13 replay gate, and finishes with
+ * `mbrain doctor --json`.
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
@@ -158,12 +159,19 @@ try {
     throw new Error(`Imported page did not round-trip through get_page: ${page}`);
   }
 
-  const projection = parseLastJsonObject<any>(
-    runMbrain(['projection-explain', '--target-type', 'page', '--target-id', slug, '--limit', '1']).stdout,
-    'projection-explain',
+  const boundedPage = parseLastJsonObject<any>(
+    runMbrain(['call', 'get_page', JSON.stringify({ slug, content_char_limit: 80 })]).stdout,
+    'get_page',
   );
-  if (projection?.query?.target_id !== slug) {
-    throw new Error(`Projection explain did not echo the target slug: ${JSON.stringify(projection)}`);
+  if (
+    boundedPage?.slug !== slug
+    || boundedPage?.title !== 'Phase 14 Runtime Smoke'
+    || typeof boundedPage?.content_hash !== 'string'
+    || !boundedPage?.content_window
+    || boundedPage?.content_window?.char_limit !== 80
+    || !String(boundedPage?.compiled_truth ?? '').includes('Postgres runtime confidence smoke')
+  ) {
+    throw new Error(`Bounded get_page did not return the imported page window: ${JSON.stringify(boundedPage)}`);
   }
 
   runDeterministicPhase13();

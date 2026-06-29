@@ -377,7 +377,7 @@ export function formatPostgresRuntimeMigrationGuide(input: PostgresRuntimeMigrat
     '4. Import exported Markdown through source ingest: mbrain import <backup/markdown-export> --no-embed.',
     '5. Manually review legacy DB-only candidates, profile memory, tasks, sessions, and mutation records before deciding what to import.',
     '6. No one-shot assertion rebuild command exists yet; keep DB-only claims manual until a governed rebuild command lands.',
-    '7. Inspect projection lineage before accepting drift repair: mbrain projection-explain --target-type page --target-id <slug>.',
+    '7. Inspect imported page content before accepting drift repair: mbrain call get_page \'{"slug":"<slug>","content_char_limit":200}\'.',
     '8. Run the real Postgres confidence smoke against a disposable target: DATABASE_URL=<connection_string> bun run smoke:postgres-runtime.',
     '9. Run deterministic eval/replay smoke when debugging the smoke gate directly: bun run test:phase13.',
     '10. Run doctor after migration checks when debugging the smoke gate directly: mbrain doctor --json.',

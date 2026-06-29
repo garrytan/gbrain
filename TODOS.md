@@ -25,8 +25,8 @@ compiled-binary support after the Postgres target runtime migration.
 ### Phase 14 Postgres runtime confidence smoke
 **Completed:** Unreleased — `bun run smoke:postgres-runtime` now validates the
 final Postgres runtime cleanup gate against a disposable Postgres target:
-`mbrain init`, Markdown import, projection lineage, deterministic Phase 13
-replay, and `mbrain doctor --json`. It intentionally clears OpenAI and
+`mbrain init`, Markdown import, bounded `mbrain call get_page` retrieval,
+deterministic Phase 13 replay, and `mbrain doctor --json`. It intentionally clears OpenAI and
 Anthropic provider keys for child commands, so it is a no-provider-key release
 confidence gate for the runtime migration path.
 

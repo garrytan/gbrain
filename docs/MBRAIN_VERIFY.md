@@ -87,15 +87,15 @@ Expected:
 - DB-only legacy state is called out for manual review instead of silently
   claiming full migration.
 - the real Postgres confidence smoke initializes a disposable target, imports a
-  Markdown fixture, runs `projection-explain` (empty lineage for a fresh `--no-embed` import), runs `bun run test:phase13` <!-- runbook:executable -->, and
+  Markdown fixture, reads it through bounded `mbrain call get_page`, runs `bun run test:phase13` <!-- runbook:executable -->, and
   finishes with `mbrain doctor --json` without OpenAI or Anthropic API keys.
 
 ## Postgres runtime confidence smoke
 
 Use this gate when validating a release binary or an installed command, not just
 the source tree. The source-tree gate exercises real Postgres init, Markdown
-import, projection lineage, deterministic Phase 13 replay, and doctor against a
-disposable target:
+import, bounded canonical page reads, deterministic Phase 13 replay, and doctor
+against a disposable target:
 
 ```bash runbook:manual
 DATABASE_URL='postgresql://...' bun run smoke:postgres-runtime
@@ -118,7 +118,7 @@ MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
 Expected:
 
 - `bun run smoke:postgres-runtime` <!-- runbook:manual --> returns `{"ok":true,...}` after `init`,
-  Markdown import, `projection-explain`, `bun run test:phase13` <!-- runbook:executable -->, and
+  Markdown import, bounded `mbrain call get_page`, `bun run test:phase13` <!-- runbook:executable -->, and
   `doctor --json`.
 - `mbrain --version` reports the release being validated.
 - Postgres doctor checks are healthy for the active profile.

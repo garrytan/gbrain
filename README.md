@@ -742,8 +742,9 @@ bunx tsc --noEmit --pretty false
 
 `smoke:postgres-runtime` is the Phase 14 confidence gate for a disposable
 Postgres target: it runs `mbrain init`, imports a Markdown fixture,
-checks projection lineage, runs deterministic Phase 13 replay, and finishes with
-`mbrain doctor --json` without requiring OpenAI or Anthropic API keys.
+reads the imported page through bounded `mbrain call get_page`, runs
+deterministic Phase 13 replay, and finishes with `mbrain doctor --json` without
+requiring OpenAI or Anthropic API keys.
 
 For release or installed-command confidence, also run the installed-command
 doctor checks plus the MCP binary-compatibility smoke:
