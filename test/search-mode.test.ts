@@ -403,7 +403,11 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // must not be served from a cache row written before the policy change.
     // v0.43: bumped 9→10 for the relational recall arm (rel=/reld=) — a
     // relational-on write must not be served to a relational-off lookup.
-    expect(KNOBS_HASH_VERSION).toBe(10);
+    // #1400: bumped 10→11 for the asymmetric input_type fix — embedQuery()
+    // now produces query-side vectors for asymmetric providers (zembed-1,
+    // Voyage v3+), so rows keyed on pre-fix document-side query vectors
+    // must not be served to post-fix lookups.
+    expect(KNOBS_HASH_VERSION).toBe(11);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -568,8 +572,8 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 10 (9→10 relational recall arm, v0.43)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(10);
+  test('KNOBS_HASH_VERSION is 11 (10→11 asymmetric input_type fix, #1400)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(11);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {

@@ -9,7 +9,16 @@ import { loadConfig } from '../core/config.ts';
 import { slog, serr } from '../core/console-prefix.ts';
 import { filterOutEmbedSkipped } from '../core/embed-skip.ts';
 import { runSlidingPool } from '../core/worker-pool.ts';
-import { isAborted, anySignal } from '../core/abort-check.ts';
+import { isAborted, anySignal, AbortError } from '../core/abort-check.ts';
+import { type DbPacer, createDbPacer, createNoopPacer, observed } from '../core/db-pacer.ts';
+import {
+  resolvePaceMode,
+  loadPaceModeConfig,
+  readPaceEnv,
+  type PaceKeyOverrides,
+} from '../core/pace-mode.ts';
+import { tryAcquireDbLock, type DbLockHandle } from '../core/db-lock.ts';
+import { embedBackfillLockId } from '../core/embed-backfill-lock.ts';
 
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
@@ -71,6 +80,33 @@ export interface EmbedOpts {
    * with the internal wall-clock budget timer via `anySignal`.
    */
   signal?: AbortSignal;
+  /**
+   * DB-contention pacing (paced-backfill). Raw inputs resolved in
+   * runEmbedCore via env > config > bundle (env beats config = incident
+   * escape hatch). `perCallMode` is from `--pace[=mode]`; `perCall` from
+   * `--pace-max-concurrency` etc. Absent ⇒ resolves from env/config (so a
+   * queued job paced by config alone still throttles). Mode `off` ⇒ no-op.
+   */
+  pace?: {
+    perCallMode?: string;
+    perCall?: PaceKeyOverrides;
+  };
+  /**
+   * When the pace overrides were SERIALIZED from a background-job payload (not
+   * typed at an interactive CLI), resolve them at the config tier so
+   * `GBRAIN_PACE_*` on the worker still overrides at execution (Codex P2). Set
+   * by the `embed` job handler; unset for interactive CLI runs.
+   */
+  paceFromBackground?: boolean;
+  /**
+   * E-2 (paced-backfill): single-flight the stale run by taking the SAME
+   * per-source lock the `embed-backfill` minion handler uses, so a hand-run CLI
+   * backfill and a queued job can't grind the same source at once (closing the
+   * NULL→non-NULL upsert race window that paced — longer — runs widen). Set
+   * ONLY by the CLI (`runEmbed`); the minion path already locks. All-source
+   * runs lock every source in sorted order. dryRun skips it.
+   */
+  singleFlight?: boolean;
 }
 
 /**
@@ -94,6 +130,24 @@ export interface EmbedResult {
   pages_processed: number;
   /** True if this run was a dry-run. */
   dryRun: boolean;
+  /**
+   * E1 (paced-backfill): end-of-run pacing telemetry. Present ONLY when pacing
+   * was active (enabled bundle). The number the operator could not get from an
+   * external wrapper ("zero pauses" ≠ "queue safe").
+   */
+  pacing?: {
+    maxConcurrency: number;
+    /** In-band latency samples folded into the EWMA. */
+    samples: number;
+    /** Final EWMA of observed DB-op latency (ms), or null if no samples. */
+    ewmaMs: number | null;
+    /** Cumulative cooperative-sleep time (ms). */
+    totalSleptMs: number;
+    /** Number of cooperative sleeps. */
+    sleeps: number;
+    /** High-water mark of acquirers blocked on the permit (sync path). */
+    maxWaiters: number;
+  };
 }
 
 /**
@@ -207,11 +261,118 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     return result;
   }
   if (opts.all || opts.stale) {
-    await embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, opts.sourceId, {
-      batchSize: opts.batchSize,
-      priority: opts.priority,
-      catchUp: opts.catchUp,
-    }, opts.signal);
+    // E-2 (paced-backfill): CLI single-flight. Take the SAME per-source lock as
+    // the embed-backfill minion handler so a hand-run backfill and a queued job
+    // are mutually exclusive per source. All-source runs lock every source in
+    // sorted (deterministic) order to avoid acquire-order deadlock. Released in
+    // the finally below. Skipped for dryRun and when the caller didn't opt in
+    // (cycle / catch-up / sync-auto-embed callers never single-flight).
+    const sfLocks: DbLockHandle[] = [];
+    if (opts.singleFlight && opts.stale && !opts.dryRun) {
+      let lockSourceIds: string[];
+      if (opts.sourceId) {
+        lockSourceIds = [opts.sourceId];
+      } else {
+        try {
+          const rows = await engine.listAllSources();
+          lockSourceIds = rows.map((r) => r.id).sort();
+        } catch {
+          lockSourceIds = [];
+        }
+      }
+      for (const sid of lockSourceIds) {
+        let lock: DbLockHandle | null = null;
+        try {
+          lock = await tryAcquireDbLock(engine, embedBackfillLockId(sid), 60);
+        } catch {
+          // Fail-open: a lock-subsystem error must not crash a backfill. Drop
+          // single-flight for this run (release what we took) and proceed.
+          for (const h of sfLocks) {
+            try { await h.release(); } catch { /* best-effort */ }
+          }
+          sfLocks.length = 0;
+          break;
+        }
+        if (!lock) {
+          // Another backfill (CLI or job) holds this source. Release what we
+          // took and bail cleanly rather than racing the upsert path.
+          for (const h of sfLocks) {
+            try { await h.release(); } catch { /* best-effort */ }
+          }
+          serr(`  [embed] another backfill is already running for source "${sid}"; skipping (single-flight).`);
+          return result;
+        }
+        sfLocks.push(lock);
+      }
+    }
+
+    // Resolve DB-contention pacing (env > config > bundle; env is the
+    // incident escape hatch). dryRun skips it — no writes to pace. A
+    // disabled bundle yields a no-op pacer (zero overhead on the hot path).
+    let pacer: DbPacer = createNoopPacer();
+    let paceMaxConcurrency: number | undefined;
+    if (!opts.dryRun) {
+      try {
+        const cfg = await loadPaceModeConfig(engine);
+        const { envMode, envOverrides } = readPaceEnv();
+        // Codex P2: an interactive CLI flag (--pace) is the most immediate
+        // intent and sits at the per-call tier (beats env). But a flag
+        // SERIALIZED into a background job payload must sit at the CONFIG tier
+        // so GBRAIN_PACE_* on the worker can still override it at execution
+        // (incident escape hatch). paceFromBackground distinguishes the two.
+        const fromBg = !!opts.paceFromBackground;
+        const knobs = resolvePaceMode({
+          mode: fromBg ? (opts.pace?.perCallMode ?? cfg.mode) : cfg.mode,
+          configOverrides: fromBg
+            ? { ...cfg.configOverrides, ...(opts.pace?.perCall ?? {}) }
+            : cfg.configOverrides,
+          envMode,
+          envOverrides,
+          perCallMode: fromBg ? undefined : opts.pace?.perCallMode,
+          perCall: fromBg ? undefined : opts.pace?.perCall,
+        });
+        if (knobs.enabled) {
+          pacer = createDbPacer({ bundle: knobs });
+          paceMaxConcurrency = knobs.maxConcurrency;
+        }
+      } catch {
+        // Fail-open: pacing must never break a backfill.
+        pacer = createNoopPacer();
+      }
+    }
+    try {
+      await embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, opts.sourceId, {
+        batchSize: opts.batchSize,
+        priority: opts.priority,
+        catchUp: opts.catchUp,
+        pacer,
+        paceMaxConcurrency,
+      }, opts.signal);
+    } finally {
+      // E1: surface pacing telemetry (human + structured) when pacing was on.
+      const snap = pacer.snapshot();
+      if (snap.enabled) {
+        result.pacing = {
+          maxConcurrency: snap.maxConcurrency,
+          samples: snap.sampleCount,
+          ewmaMs: snap.ewmaMs,
+          totalSleptMs: snap.totalSleptMs,
+          sleeps: snap.sleepCount,
+          maxWaiters: snap.maxWaiters,
+        };
+        serr(
+          `  [embed] pacing: cap=${snap.maxConcurrency} samples=${snap.sampleCount} ` +
+            `ewma=${snap.ewmaMs === null ? 'n/a' : Math.round(snap.ewmaMs) + 'ms'} ` +
+            `slept=${snap.totalSleptMs}ms/${snap.sleepCount}`,
+        );
+      }
+      pacer.dispose();
+      // E-2: release single-flight locks (reverse order). Best-effort; the
+      // lock TTL is the backstop if a release fails.
+      for (const h of sfLocks.reverse()) {
+        try { await h.release(); } catch { /* best-effort; TTL covers it */ }
+      }
+    }
     return result;
   }
   if (opts.slug) {
@@ -219,6 +380,39 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     return result;
   }
   throw new Error('No embed target specified. Pass { slug }, { slugs }, { all }, or { stale }.');
+}
+
+/**
+ * Parse the `--pace` family from a CLI arg list. Returns ONLY the explicit
+ * overrides (CX5: never the full resolved bundle) so they can be serialized
+ * into a background-job payload and re-resolved (env > config > bundle) at
+ * execution. Returns undefined when no pace flag is present.
+ *
+ * Recognized: `--pace` (bare ⇒ balanced), `--pace=<mode>`,
+ * `--pace-max-concurrency=<n>` / `--pace-max-concurrency <n>`.
+ */
+export function parsePaceArgs(
+  args: string[],
+): { perCallMode?: string; perCall?: PaceKeyOverrides } | undefined {
+  let perCallMode: string | undefined;
+  let perCall: PaceKeyOverrides | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--pace') {
+      perCallMode = 'balanced';
+    } else if (a.startsWith('--pace=')) {
+      perCallMode = a.slice('--pace='.length) || 'balanced';
+    } else if (a.startsWith('--pace-max-concurrency=')) {
+      const n = parseInt(a.slice('--pace-max-concurrency='.length), 10);
+      if (Number.isFinite(n) && n >= 1) (perCall ??= {}).maxConcurrency = n;
+    } else if (a === '--pace-max-concurrency') {
+      const n = parseInt(args[i + 1] ?? '', 10);
+      if (Number.isFinite(n) && n >= 1) (perCall ??= {}).maxConcurrency = n;
+      i++; // consume the value token so positional parsing can't read it as a slug (Codex P2)
+    }
+  }
+  if (perCallMode === undefined && perCall === undefined) return undefined;
+  return { ...(perCallMode !== undefined && { perCallMode }), ...(perCall && { perCall }) };
 }
 
 export async function runEmbed(engine: BrainEngine, args: string[]): Promise<EmbedResult | undefined> {
@@ -239,6 +433,10 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
           dryRun: cleanArgs.includes('--dry-run'),
           slugs: slugsI >= 0 ? cleanArgs.slice(slugsI + 1).filter(a => !a.startsWith('--')) : undefined,
           sourceId: srcI >= 0 ? cleanArgs[srcI + 1] : undefined,
+          // CX1+CX5: carry explicit pace overrides into the `embed` job payload
+          // (the job name CLI --background actually submits). The handler
+          // re-resolves env > config > bundle at execution.
+          ...(parsePaceArgs(cleanArgs) && { pace: parsePaceArgs(cleanArgs) }),
         };
       },
       source: 'cli',
@@ -262,12 +460,14 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
   const priorityRaw = priorityIdx >= 0 ? args[priorityIdx + 1] : undefined;
   const priority = priorityRaw === 'recent' ? 'recent' as const : undefined;
   const catchUp = args.includes('--catch-up');
+  const pace = parsePaceArgs(args);
 
   let opts: EmbedOpts;
   if (slugsIdx >= 0) {
     opts = { slugs: args.slice(slugsIdx + 1).filter(a => !a.startsWith('--')), dryRun, sourceId, batchSize, priority, catchUp };
   } else if (all || stale) {
-    opts = { all, stale, dryRun, sourceId, batchSize, priority, catchUp };
+    // E-2: CLI-only single-flight for stale runs (the minion path locks itself).
+    opts = { all, stale, dryRun, sourceId, batchSize, priority, catchUp, ...(pace && { pace }), ...(stale && { singleFlight: true }) };
   } else {
     const slug = args.find(a => !a.startsWith('--'));
     if (!slug) {
@@ -416,6 +616,10 @@ async function embedAll(
     batchSize?: number;
     priority?: 'recent';
     catchUp?: boolean;
+    /** DB-contention pacer (paced-backfill); no-op when pacing is off. */
+    pacer?: DbPacer;
+    /** Resolved concurrency cap (E-1: the worker count, no separate permit). */
+    paceMaxConcurrency?: number;
   },
   signal?: AbortSignal,
 ) {
@@ -443,6 +647,10 @@ async function embedAll(
     return await embedAllStale(engine, sourceId, dryRun, result, onProgress, staleOpts, signature, signal);
   }
 
+  // --all path: pacer (no-op when off). E-1: lower the worker count to the
+  // resolved cap instead of adding a separate permit.
+  const pacer = staleOpts?.pacer ?? createNoopPacer();
+
   // v0.31.12: when sourceId is set, scope listPages to that source.
   // v0.41 (D8 + Codex r2 #11): apply embed-skip filter via the shared
   // helper so the `--all` path honors `frontmatter.embed_skip` the same
@@ -466,7 +674,13 @@ async function embedAll(
   // (3000+/min for tier 1 = 50+/sec, 20 parallel is safely below) and
   // avoids overwhelming postgres connection pools. Users can tune via
   // GBRAIN_EMBED_CONCURRENCY env var based on their tier/infra.
-  const CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
+  // Paced runs lower this to the resolved cap (the real lever vs pooler-slot
+  // starvation); unpaced keeps the env/default 20. Codex P2: only ever LOWER —
+  // never raise above an operator's existing env cap.
+  const BASE_CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
+  const CONCURRENCY = staleOpts?.paceMaxConcurrency
+    ? Math.min(BASE_CONCURRENCY, staleOpts.paceMaxConcurrency)
+    : BASE_CONCURRENCY;
 
   async function embedOnePage(page: typeof pages[number]) {
     // #1737: bail before doing any work for this page if the run was aborted.
@@ -475,7 +689,7 @@ async function embedAll(
     // target the correct (source_id, slug) row, not the 'default' source.
     const pageSourceId = page.source_id;
     const pageOpts = pageSourceId ? { sourceId: pageSourceId } : undefined;
-    const chunks = await engine.getChunks(page.slug, pageOpts);
+    const chunks = await observed(pacer, () => engine.getChunks(page.slug, pageOpts));
     const toEmbed = chunks; // staleOnly path handled above via embedAllStale
 
     result.total_chunks += chunks.length;
@@ -511,10 +725,12 @@ async function embedAll(
         embedding: embeddingMap.get(c.chunk_index) ?? undefined,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
-      await engine.upsertChunks(page.slug, updated, pageOpts);
+      await observed(pacer, () => engine.upsertChunks(page.slug, updated, pageOpts));
       // v0.41.31: stamp embedding provenance so a later model swap is
       // detectable as stale.
-      await engine.setPageEmbeddingSignature(page.slug, { sourceId: pageSourceId, signature });
+      await observed(pacer, () =>
+        engine.setPageEmbeddingSignature(page.slug, { sourceId: pageSourceId, signature }),
+      );
       result.embedded += toEmbed.length;
     } catch (e: unknown) {
       serr(`\n  Error embedding ${page.slug}: ${e instanceof Error ? e.message : e}`);
@@ -523,6 +739,12 @@ async function embedAll(
     processed++;
     result.pages_processed++;
     onProgress?.(processed, pages.length, result.embedded);
+    // Cooperative DB-contention pace between pages (no-op when unpaced).
+    try {
+      await pacer.pace(signal);
+    } catch (e) {
+      if (!(e instanceof AbortError)) throw e;
+    }
   }
 
   // v0.41.15.0: sliding worker pool extracted into src/core/worker-pool.ts.
@@ -576,6 +798,10 @@ async function embedAllStale(
     batchSize?: number;
     priority?: 'recent';
     catchUp?: boolean;
+    /** DB-contention pacer (paced-backfill); no-op when pacing is off. */
+    pacer?: DbPacer;
+    /** Resolved concurrency cap (E-1: the worker count, no separate permit). */
+    paceMaxConcurrency?: number;
   },
   signature?: string,
   externalSignal?: AbortSignal,
@@ -626,7 +852,14 @@ async function embedAllStale(
   // (page_id, chunk_index). Each query finishes in <1s.
   // v0.41.18.0 (A13): --batch-size N CLI flag overrides hardcoded 2000 default.
   const PAGE_SIZE = staleOpts?.batchSize ?? 2000;
-  const CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
+  // Paced runs lower concurrency to the resolved cap (E-1: worker count IS the
+  // lever on this single pool, no separate permit). Codex P2: pacing only ever
+  // LOWERS concurrency — never raise above an operator's existing env cap.
+  const BASE_CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
+  const CONCURRENCY = staleOpts?.paceMaxConcurrency
+    ? Math.min(BASE_CONCURRENCY, staleOpts.paceMaxConcurrency)
+    : BASE_CONCURRENCY;
+  const pacer = staleOpts?.pacer ?? createNoopPacer();
 
   // D3 + D3a + D8: wall-clock budget. 30 min default; env override.
   // #1946: --catch-up removes the wall-clock cap. The prior code set BUDGET_MS =
@@ -640,9 +873,22 @@ async function embedAllStale(
     ? null
     : parseInt(process.env.GBRAIN_EMBED_TIME_BUDGET_MS || `${30 * 60 * 1000}`, 10);
   const budgetController = new AbortController();
-  const budgetTimer = BUDGET_MS != null
+  const budgetStart = Date.now();
+  let budgetTimer = BUDGET_MS != null
     ? setTimeout(() => budgetController.abort(), BUDGET_MS)
     : undefined;
+  // E-4 (paced-backfill): the budget measures WORK, not waiting. After each
+  // batch, re-arm the timer to fire at start + BUDGET + total-paced-sleep, so a
+  // contended DB that spends time in pace() sleeps converges instead of exiting
+  // having embedded little. No-op when unpaced (totalSleptMs stays 0) or in
+  // catch-up (no budget timer).
+  const rearmBudgetForPacing = (): void => {
+    if (BUDGET_MS == null) return;
+    const slept = pacer.snapshot().totalSleptMs;
+    if (budgetTimer) clearTimeout(budgetTimer);
+    const fireInMs = budgetStart + BUDGET_MS + slept - Date.now();
+    budgetTimer = setTimeout(() => budgetController.abort(), Math.max(0, fireInMs));
+  };
   const budgetSignal = budgetController.signal;
   // #1737: the effective signal fires when EITHER the internal wall-clock
   // budget OR the caller's abort (worker timeout / lock loss / SIGTERM) fires.
@@ -670,6 +916,33 @@ async function embedAllStale(
   // surfaces that loudly instead of looking like a clean run.
   let embedFailures = 0;
 
+  // E-3 (paced-backfill): bounded end-of-run re-entry. A longer paced run gives
+  // a live writer (sync / put_page) more time to insert NEW stale rows BEHIND
+  // the keyset cursor (TODOS:2301). When the cursor exhausts, re-scan from the
+  // start — capped at MAX_REENTRIES AND requiring forward progress (a pass that
+  // embeds 0 while count>0 stops) so a writer outrunning embed can't spin
+  // forever.
+  const MAX_REENTRIES = 3;
+  let reentries = 0;
+  let lastReentryEmbedded = 0;
+  const maybeReenter = async (): Promise<boolean> => {
+    // Scoped to PACED runs: pacing lengthens the run, which is what widens the
+    // behind-cursor window. Unpaced runs keep prior (single-pass) behavior.
+    if (!pacer.snapshot().enabled) return false;
+    if (effectiveSignal.aborted) return false;
+    if (reentries >= MAX_REENTRIES) return false;
+    const remaining = await engine.countStaleChunks(sourceOpt);
+    if (remaining === 0) return false;
+    if (result.embedded === lastReentryEmbedded) return false; // no forward progress
+    lastReentryEmbedded = result.embedded;
+    reentries++;
+    afterPageId = 0;
+    afterChunkIndex = -1;
+    afterUpdatedAt = null;
+    serr(`\n  [embed] re-entry ${reentries}/${MAX_REENTRIES}: ${remaining} stale chunk(s) appeared during the run; rescanning from start.`);
+    return true;
+  };
+
   try {
     // eslint-disable-next-line no-constant-condition
     while (true) {
@@ -684,17 +957,22 @@ async function embedAllStale(
         break;
       }
 
-      const batch = await engine.listStaleChunks({
-        batchSize: PAGE_SIZE,
-        afterPageId,
-        afterChunkIndex,
-        ...(orderBy === 'updated_desc' && {
-          orderBy,
-          afterUpdatedAt,
+      const batch = await observed(pacer, () =>
+        engine.listStaleChunks({
+          batchSize: PAGE_SIZE,
+          afterPageId,
+          afterChunkIndex,
+          ...(orderBy === 'updated_desc' && {
+            orderBy,
+            afterUpdatedAt,
+          }),
+          ...(sourceId && { sourceId }),
         }),
-        ...(sourceId && { sourceId }),
-      });
-      if (batch.length === 0) break;
+      );
+      if (batch.length === 0) {
+        if (await maybeReenter()) continue;
+        break;
+      }
       totalChunksLoaded += batch.length;
 
       // Advance cursor to last row in this batch.
@@ -729,7 +1007,7 @@ async function embedAllStale(
         try {
           const embeddings = await embedBatchWithBackoff(stale.map(c => c.chunk_text), { abortSignal: effectiveSignal });
           // Re-fetch existing chunks and merge to avoid deleting non-stale chunks.
-          const existing = await engine.getChunks(slug, { sourceId: keySourceId });
+          const existing = await observed(pacer, () => engine.getChunks(slug, { sourceId: keySourceId }));
           const staleIdxToEmbedding = new Map<number, Float32Array>();
           for (let j = 0; j < stale.length; j++) {
             staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
@@ -741,14 +1019,16 @@ async function embedAllStale(
             embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
             token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
           }));
-          await engine.upsertChunks(slug, merged, { sourceId: keySourceId });
+          await observed(pacer, () => engine.upsertChunks(slug, merged, { sourceId: keySourceId }));
           // v0.41.31: stamp provenance after the page's chunks are embedded —
           // but only when EVERY chunk was stale (fully re-embedded this pass).
           // A partially-stale page keeps preserved chunks of unknown/old
           // provenance, so don't claim it's current. (After invalidate, a
           // signature-drifted page IS fully stale → this stamps it.)
           if (signature && stale.length === existing.length) {
-            await engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature });
+            await observed(pacer, () =>
+              engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature }),
+            );
           }
           result.embedded += stale.length;
         } catch (e: unknown) {
@@ -763,6 +1043,17 @@ async function embedAllStale(
         // Use staleCount as the estimated total for progress (not exact after
         // pagination starts, but directionally correct).
         onProgress?.(totalProcessedPages, Math.ceil(staleCount / PAGE_SIZE) * keys.length, result.embedded);
+        // Cooperative DB-contention pace between keys (no-op when unpaced).
+        // E-4 (Codex P1): pace() is subject to the EXTERNAL abort only, NOT the
+        // wall-clock budget — a contended DB's sleep must not be cut by the
+        // budget timer before its time is credited. Re-arm the budget right
+        // after each sleep so accrued sleep never eats into work time.
+        try {
+          await pacer.pace(externalSignal);
+          rearmBudgetForPacing();
+        } catch (e) {
+          if (!(e instanceof AbortError)) throw e;
+        }
       }
 
       // v0.41.15.0: migrated to shared runSlidingPool. The pool checks
@@ -778,8 +1069,14 @@ async function embedAllStale(
         failureLabel: (key) => key,
       });
 
+      // E-4: extend the work budget by any paced-sleep time accrued this batch.
+      rearmBudgetForPacing();
+
       // If we got fewer rows than PAGE_SIZE, we've reached the end.
-      if (batch.length < PAGE_SIZE) break;
+      if (batch.length < PAGE_SIZE) {
+        if (await maybeReenter()) continue;
+        break;
+      }
     }
   } finally {
     if (budgetTimer) clearTimeout(budgetTimer);

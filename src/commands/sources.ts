@@ -25,6 +25,7 @@
 
 import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
+import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import {
   assessDestructiveImpact,
@@ -129,6 +130,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let displayName: string | undefined;
   let federated: boolean | null = null;
   let cloneDir: string | undefined;
+  let patFile: string | undefined;
+  let noHarden = false;
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -138,6 +141,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     if (a === '--federated') { federated = true; continue; }
     if (a === '--no-federated') { federated = false; continue; }
     if (a === '--clone-dir') { cloneDir = args[++i]; continue; }
+    if (a === '--pat-file') { patFile = args[++i]; continue; }
+    if (a === '--no-harden') { noHarden = true; continue; }
     console.error(`Unknown flag: ${a}`);
     process.exit(2);
   }
@@ -159,6 +164,11 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     cloneDir,
   });
 
+  // Topology A discovery: if the just-added source carries a brain-resident
+  // skillpack, surface it (print, never execute). Fully fail-open — a malformed
+  // or absent pack must never break `sources add`.
+  await maybeAnnounceBrainPack(engine, created);
+
   const fed = isFederated(created.config);
   const finalRemoteUrl = (created.config as Record<string, unknown>).remote_url as string | undefined;
   const tail = finalRemoteUrl
@@ -175,6 +185,130 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   console.log(
     `  federated: ${fed}${fed ? ' — appears in cross-source default search' : ' — only searched when explicitly named via --source'}`,
   );
+
+  // v0.42.44 — auto-harden managed clones for git durability the moment a brain
+  // repo is added with a PAT. Best-effort: NEVER fail `add` if hardening fails.
+  // Only managed clones (gbrain owns the working tree); --path repos are unowned.
+  if (finalRemoteUrl && created.local_path && !noHarden) {
+    try {
+      const { hardenBrainRepo, acceptPat } = await import('../core/brain-repo-durability.ts');
+      const pat = acceptPat({ patFile });
+      for (const w of pat?.warnings ?? []) console.error(`[gbrain] ${w}`);
+      if (!pat) {
+        console.error('[gbrain] No PAT provided (--pat-file or GBRAIN_GITHUB_PAT) — skipping durability hardening.');
+        console.error(`         Run \`gbrain sources harden ${id} --pat-file <p>\` later to enable auto-push.`);
+      } else {
+        console.error('[gbrain] Hardening brain repo for durability…');
+        const report = await hardenBrainRepo({
+          repoPath: created.local_path, sourceId: id, pat: pat.token,
+          logger: (l) => console.error(`  ${l}`),
+        });
+        if (report.needs_attention.length) {
+          console.error('[gbrain] Durability hardened with warnings:');
+          for (const n of report.needs_attention) console.error(`  - ${n}`);
+        } else {
+          console.error('[gbrain] Durability hardened ✓');
+        }
+      }
+    } catch (e) {
+      console.error(`[gbrain] Durability hardening skipped (non-fatal): ${(e as Error).message}`);
+      console.error(`         Run \`gbrain sources harden ${id}\` to retry.`);
+    }
+  }
+}
+
+/**
+ * Topology A brain-resident pack discovery. Inspects the just-added source's
+ * local path for a `skillpack.json` with `brain_resident: true` and, if found,
+ * prints an agent-readable advisory (escalating-then-suppressed via nag-state).
+ * Fully wrapped in try/catch: a brain-pack discovery bug must never fail a
+ * `sources add`.
+ */
+async function maybeAnnounceBrainPack(engine: BrainEngine, created: OpsSourceRow): Promise<void> {
+  try {
+    const localPath = created.local_path;
+    if (!localPath || !existsSync(join(localPath, 'skillpack.json'))) return;
+
+    const { loadSkillpackManifest } = await import('../core/skillpack/manifest-v1.ts');
+    let manifest;
+    try {
+      manifest = loadSkillpackManifest(localPath);
+    } catch {
+      return; // malformed pack → treat as no pack
+    }
+    if (manifest.brain_resident !== true) return;
+
+    const { loadState, findEntry } = await import('../core/skillpack/state.ts');
+    const { loadNagState, saveNagState, findNag, decideNagAction, recordNagDisplay, upsertNag } = await import(
+      '../core/skillpack/nag-state.ts'
+    );
+    const { buildBrainPackAdvisory } = await import('../core/skillpack/brain-pack-advisory.ts');
+
+    // Installed = pack present in skillpack-state at this exact version (#12: state-based).
+    const stateEntry = findEntry(loadState(), manifest.name);
+    const installed = !!stateEntry && stateEntry.version === manifest.version;
+
+    let activeSchemaPack: string | null = null;
+    try {
+      activeSchemaPack = await engine.getConfig('schema_pack');
+    } catch {
+      activeSchemaPack = null;
+    }
+
+    const noNagFlag = process.env.GBRAIN_NO_SKILL_NAG === '1';
+    const brainId = deriveBrainId(created, localPath);
+    const key = { brain_id: brainId, source_id: created.id, pack_name: manifest.name };
+    const nagState = loadNagState();
+    const prior = findNag(nagState, key);
+
+    // Installed packs never nag; an uninstalled pack escalates then suppresses.
+    if (installed) {
+      // Still surface a schema mismatch once (build returns null when none).
+      const text = buildBrainPackAdvisory({
+        manifest,
+        packRoot: localPath,
+        scaffoldSource: localPath,
+        installed: true,
+        activeSchemaPack,
+      });
+      if (text) process.stderr.write(text);
+      return;
+    }
+
+    const decision = decideNagAction(prior, { pack_version: manifest.version, noNagFlag });
+    if (!decision.show) return;
+
+    const text = buildBrainPackAdvisory({
+      manifest,
+      packRoot: localPath,
+      scaffoldSource: localPath,
+      installed: false,
+      activeSchemaPack,
+      level: decision.level,
+    });
+    if (!text) return;
+    process.stderr.write(text);
+
+    // CLI-interactive display → count this decline (#11: never on cron/MCP/pipe).
+    const updated = recordNagDisplay(prior, key, {
+      pack_version: manifest.version,
+      nowIso: new Date().toISOString(),
+    });
+    saveNagState(upsertNag(nagState, updated));
+  } catch {
+    // fail-open: discovery is cosmetic, never blocks `sources add`
+  }
+}
+
+/**
+ * Derive a stable brain-id for nag keying from the source's canonical git
+ * remote (the repo carrying the pack) when available; else a deterministic
+ * hash of the canonical local path. NOT the brain DB identity.
+ */
+function deriveBrainId(created: OpsSourceRow, localPath: string): string {
+  const remote = (created.config as Record<string, unknown>).remote_url as string | undefined;
+  if (remote && remote.length > 0) return `git:${remote}`;
+  return `path:${createHash('sha256').update(localPath).digest('hex').slice(0, 16)}`;
 }
 
 // ── Subcommand: list ────────────────────────────────────────
@@ -264,6 +398,16 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
       console.error('Refusing to remove without --yes or --confirm-destructive.');
       process.exit(5);
     }
+  }
+
+  // v0.42.44 — tear down durability scaffolding BEFORE the row is deleted (we
+  // need the path/label while it still exists). Best-effort; tolerates missing
+  // repo/cron/credential independently.
+  try {
+    const { unhardenBrainRepo } = await import('../core/brain-repo-durability.ts');
+    await unhardenBrainRepo({ repoPath: src.local_path ?? '', sourceId: id, logger: (l) => console.error(l) });
+  } catch (e) {
+    console.error(`[gbrain] durability teardown skipped (non-fatal): ${(e as Error).message}`);
   }
 
   await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
@@ -548,7 +692,7 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
   const config = parseConfig(src.config);
   config.federated = value;
   await engine.executeRaw(
-    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
     [JSON.stringify(config), id],
   );
   console.log(`Source "${id}" is now ${value ? 'federated (appears in cross-source default search)' : 'isolated (only searched when explicitly named)'}.`);
@@ -603,8 +747,26 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   // caught-up source reports lag 0 instead of growing wall-clock (v0.41.32.0).
   const metrics = await computeAllSourceMetrics(engine, sources, { probeContent: true });
 
+  // #1950: a source holding a live (non-TTL-expired) per-source sync lock is
+  // actively syncing RIGHT NOW. Without this it printed "idle" while a sync
+  // proc was live (the bug reported). Read the SAME live-lock signal `gbrain
+  // doctor` uses, via the shared helper, so the two surfaces never disagree.
+  const { liveSyncStatus } = await import('../core/db-lock.ts');
+  const syncRunning = new Map<string, { holder_pid: number; holder_host: string }>();
+  await Promise.all(
+    metrics.map(async (m) => {
+      const live = await liveSyncStatus(engine, m.source_id);
+      if (live) syncRunning.set(m.source_id, live);
+    }),
+  );
+
   if (json) {
-    console.log(JSON.stringify({ schema_version: 1, sources: metrics }, null, 2));
+    const enriched = metrics.map((m) => ({
+      ...m,
+      sync_running: syncRunning.has(m.source_id),
+      sync_holder: syncRunning.get(m.source_id) ?? null,
+    }));
+    console.log(JSON.stringify({ schema_version: 1, sources: enriched }, null, 2));
     return;
   }
 
@@ -621,11 +783,15 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
     const embed = `${m.embed_coverage_pct.toFixed(0)}%`;
     // v0.41.31: embed-backfill state (active beats queued beats idle) so a
     // cron operator sees deferred embedding work after `sync --all`.
-    const backfill = m.backfill_active > 0
-      ? `active(${m.backfill_active})`
-      : m.backfill_queued > 0
-        ? `queued(${m.backfill_queued})`
-        : 'idle';
+    // #1950: a live sync lock wins the column — surfacing "actively syncing"
+    // matters more than deferred embed-backfill state.
+    const backfill = syncRunning.has(m.source_id)
+      ? 'running'
+      : m.backfill_active > 0
+        ? `active(${m.backfill_active})`
+        : m.backfill_queued > 0
+          ? `queued(${m.backfill_queued})`
+          : 'idle';
     const fails = String(m.failed_jobs_24h);
     const queue = String(m.queue_depth);
     const pages = m.total_pages.toLocaleString();
@@ -636,7 +802,10 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   for (const m of metrics) {
     const warns: string[] = [];
     if (!m.local_path) warns.push('no local_path');
-    if (m.lag_seconds === null) warns.push(`never synced — run \`gbrain sync --source ${m.source_id}\``);
+    // #1950: don't cry "never synced" while a sync lock is live — it's syncing now.
+    if (m.lag_seconds === null && !syncRunning.has(m.source_id)) {
+      warns.push(`never synced — run \`gbrain sync --source ${m.source_id}\``);
+    }
     if (m.embed_coverage_pct < 95 && m.total_chunks > 100) {
       warns.push(`${(100 - m.embed_coverage_pct).toFixed(1)}% un-embedded — run \`gbrain embed --stale --source ${m.source_id}\``);
     }
@@ -710,7 +879,7 @@ async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void>
   cfg.webhook_secret = secret;
   cfg.github_repo = githubRepo;
   await engine.executeRaw(
-    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
     [JSON.stringify(cfg), id],
   );
 
@@ -766,7 +935,7 @@ async function runWebhookRotate(engine: BrainEngine, args: string[]): Promise<vo
   const cfg = parseConfig(src.config);
   cfg.webhook_secret = secret;
   await engine.executeRaw(
-    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
     [JSON.stringify(cfg), id],
   );
   console.log(`New webhook secret for source "${id}":`);
@@ -790,7 +959,7 @@ async function runWebhookClear(engine: BrainEngine, args: string[]): Promise<voi
   delete cfg.webhook_secret;
   delete cfg.github_repo;
   await engine.executeRaw(
-    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
     [JSON.stringify(cfg), id],
   );
   console.log(`Webhook configuration cleared for source "${id}".`);
@@ -815,7 +984,7 @@ async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<vo
   if (setArg) {
     cfg.tracked_branch = setArg;
     await engine.executeRaw(
-      `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+      `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
       [JSON.stringify(cfg), id],
     );
     console.log(`Tracked branch for source "${id}" set to "${setArg}".`);
@@ -831,7 +1000,7 @@ async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<vo
       const branch = execFileSync('git', ['-C', src.local_path, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
       cfg.tracked_branch = branch;
       await engine.executeRaw(
-        `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+        `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
         [JSON.stringify(cfg), id],
       );
       console.log(`Detected branch "${branch}" for source "${id}"; persisted to config.tracked_branch.`);
@@ -1165,6 +1334,10 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     // v0.40.3.0 contextual retrieval (from master)
     case 'set-cr-mode': return runSetCrMode(engine, rest);
     case 'audit':      return runAudit(engine, rest);
+    // v0.42.44 brain-repo git durability
+    case 'harden':     { const { runHarden } = await import('./sources-harden.ts'); return runHarden(engine, rest); }
+    case 'pull':       { const { runPull } = await import('./sources-harden.ts'); return runPull(engine, rest); }
+    case 'unharden':   { const { runUnharden } = await import('./sources-harden.ts'); return runUnharden(engine, rest); }
     case undefined:
     case '--help':
     case '-h':
@@ -1216,6 +1389,15 @@ Subcommands:
                                     override (v0.40.3.0). Pass "unset" or
                                     "default" to clear (NULL falls through
                                     to the global search.mode bundle).
+  harden <id|--all> [--pat-file <p>] [--branch <b>] [--no-cron] [--no-verify] [--dry-run] [--json]
+                                    v0.42.44 — make a brain repo durable: local
+                                    auto-push hook, committed commit-push helper,
+                                    always-on agent rules, 30-min pull cron, and
+                                    repo-scoped credential. Idempotent.
+  pull <id> | --path <dir> [--branch <b>]
+                                    Divergence-safe rebase-pull (skip-on-dirty).
+                                    --path is DB-free (the harden cron's entry).
+  unharden <id>                     Remove durability cron/hook/credential wiring.
 
 Source id: [a-z0-9-]{1,32}. Immutable citation key.
 

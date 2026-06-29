@@ -5186,6 +5186,187 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 116,
+    name: 'code_edges_source_backfill_and_callee_index',
+    // Repair + index pass for the call graph:
+    //
+    // 1. BACKFILL: importCodeFile built CodeEdgeInput rows without source_id,
+    //    so every extracted edge landed NULL. getCallersOf/getCalleesOf add
+    //    `AND source_id = <scoped>` whenever a worktree pin / --source is in
+    //    play — NULL never matches, so scoped call-graph queries silently
+    //    returned 0 rows on multi-source brains even though the edges
+    //    existed. The write path now stamps `sourceId ?? 'default'`; this
+    //    backfill repairs rows written before the fix by deriving each
+    //    edge's source from its own from_chunk's page (pages.source_id is
+    //    NOT NULL DEFAULT 'default', so COALESCE is belt-and-braces only).
+    //
+    // 2. INDEXES: getCalleesOf filters BOTH edge tables on
+    //    from_symbol_qualified, which had no index anywhere — every callee
+    //    lookup was a sequential scan, amplified per-BFS-node by the
+    //    recursive code walk (one getCalleesOf per frontier node, up to
+    //    maxNodes). With NULL edges repaired, scoped walks actually expand,
+    //    so the latent seq-scan cost becomes real. Plain CREATE INDEX (not
+    //    CONCURRENTLY): edge tables are modest (mirrors the v58 resolver
+    //    index). Keep in sync with src/schema.sql.
+    idempotent: true,
+    sql: `
+      UPDATE code_edges_symbol e
+         SET source_id = COALESCE(p.source_id, 'default')
+        FROM content_chunks c
+        JOIN pages p ON p.id = c.page_id
+       WHERE c.id = e.from_chunk_id
+         AND e.source_id IS NULL;
+
+      UPDATE code_edges_chunk e
+         SET source_id = COALESCE(p.source_id, 'default')
+        FROM content_chunks c
+        JOIN pages p ON p.id = c.page_id
+       WHERE c.id = e.from_chunk_id
+         AND e.source_id IS NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_from_symbol
+        ON code_edges_symbol (from_symbol_qualified);
+
+      CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_from_symbol
+        ON code_edges_chunk (from_symbol_qualified);
+    `,
+  },
+  {
+    // Renumbered 116 -> 117 at merge: master's v0.42.41.0 triage wave
+    // claimed v116 (code_edges_source_backfill_and_callee_index) first.
+    version: 117,
+    name: 'context_volunteer_events_table',
+    // #2095 push-based context: feedback-loop log of every page the brain
+    // VOLUNTEERED (via the volunteer_context op, the retrieval-reflex pointer
+    // path, or `gbrain watch`). "Used" is derived later by joining
+    // pages.last_retrieved_at > volunteered_at — no second write path.
+    // session_id/turn are caller-supplied attribution (nullable). rationale is
+    // a deterministic template string, NEVER raw conversation text. Rows are
+    // pruned past 90 days by the dream cycle's purge phase
+    // (purgeStaleVolunteerEvents). No ::jsonb anywhere. RLS: covered by the
+    // v35 auto_rls_on_create_table event trigger on Postgres (same as
+    // v110/v115 tables); pinned by the volunteer-context Postgres e2e.
+    // Created empty; plain CREATE INDEX is instant — no CONCURRENTLY needed.
+    // Keep in sync with src/schema.sql, src/core/pglite-schema.ts,
+    // src/core/schema-embedded.ts.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS context_volunteer_events (
+        id             BIGSERIAL PRIMARY KEY,
+        source_id      TEXT NOT NULL,
+        slug           TEXT NOT NULL,
+        confidence     DOUBLE PRECISION NOT NULL,
+        match_arm      TEXT NOT NULL,
+        rationale      TEXT NOT NULL DEFAULT '',
+        channel        TEXT NOT NULL DEFAULT 'op',
+        session_id     TEXT,
+        turn           INTEGER,
+        volunteered_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS context_volunteer_events_src_time_idx
+        ON context_volunteer_events (source_id, volunteered_at DESC);
+      CREATE INDEX IF NOT EXISTS context_volunteer_events_src_slug_idx
+        ON context_volunteer_events (source_id, slug);
+    `,
+  },
+  {
+    version: 118,
+    name: 'page_generation_clock_sequence_swap',
+    // v0.42.x — contention-free page-generation clock. The v107 single-row
+    // `UPDATE page_generation_clock SET value = value + 1 WHERE id = 1` took a
+    // transaction-length RowExclusiveLock on one tuple, serializing every
+    // concurrent page writer on the prior writer's COMMIT (sync ran at ~0.8
+    // cores regardless of worker count). Swap to a SEQUENCE: nextval() takes a
+    // microsecond LWLock, never a row lock. The Layer-1 cache bookmark reads
+    // `last_value` instead of the row.
+    //
+    // Correctness: `last_value` is non-transactional — it can reflect
+    // rolled-back or concurrent-uncommitted writers. That is the SAFE direction
+    // (cache OVER-invalidates, never serves stale). The clock's only contract is
+    // monotonic advancement on any page INSERT/UPDATE/DELETE.
+    //
+    // The setval is LOAD-BEARING: a fresh CREATE SEQUENCE has is_called=false,
+    // so the first nextval() returns the start value (1) and last_value would
+    // not visibly advance. The 2-arg setval (is_called=true) makes the first
+    // post-seed write strictly exceed the seed. Floor 1 (sequence MINVALUE);
+    // seed >= old clock and MAX(pages.generation) so monotonicity holds.
+    //
+    // We keep the table + trigger + function NAMES; only the function body and
+    // the three readers in query-cache-gate.ts repoint. DELETE FROM query_cache
+    // so no bookmark stamped under the old table-clock survives the swap.
+    // Mirrors: src/schema.sql, src/core/pglite-schema.ts (and the generated
+    // src/core/schema-embedded.ts) ship the sequence on fresh install.
+    //
+    // pages.generation (Layer 2) is assigned by the SEPARATE row-level trigger
+    // bump_page_generation_fn — untouched here.
+    idempotent: true,
+    sql: `
+      CREATE SEQUENCE IF NOT EXISTS page_generation_clock_seq;
+
+      SELECT setval('page_generation_clock_seq', GREATEST(
+        1,
+        COALESCE((SELECT last_value FROM page_generation_clock_seq), 0),
+        COALESCE((SELECT value FROM page_generation_clock WHERE id = 1), 0),
+        COALESCE((SELECT MAX(generation) FROM pages), 0)
+      ));
+
+      CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger AS $func$
+      BEGIN
+        PERFORM nextval('page_generation_clock_seq');
+        RETURN NULL;
+      END;
+      $func$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS bump_page_generation_clock_trg ON pages;
+      CREATE TRIGGER bump_page_generation_clock_trg
+        AFTER INSERT OR UPDATE OR DELETE ON pages
+        FOR EACH STATEMENT
+        EXECUTE FUNCTION bump_page_generation_clock_fn();
+
+      DELETE FROM query_cache;
+    `,
+  },
+  {
+    version: 119,
+    name: 'op_checkpoints_completed_keys_array_check',
+    // v0.42.x — make the op_checkpoints scalar-corruption class structurally
+    // impossible. completed_keys is JSONB and the loader runs
+    // jsonb_array_elements_text(completed_keys); a non-array (scalar) value
+    // makes that throw "cannot extract elements from a scalar", which takes
+    // down the whole UNION load (including the valid op_checkpoint_paths child
+    // rows) and loses all checkpoint progress for that key. No current writer
+    // can produce a scalar, but an older binary / external script / future bug
+    // could — the CHECK is a DB-enforced, always-on guard (the correct pattern
+    // vs a migration verify-hook, which would not run on already-stamped
+    // brains). LOCK first so an out-of-band scalar write can't land between the
+    // repair and the ADD CONSTRAINT (no-op on single-connection PGLite). The
+    // repair resets any pre-existing scalar to '[]'; op_checkpoint_paths child
+    // rows are the append-only source of truth, so the reset loses nothing.
+    // Mirrored in src/schema.sql, src/core/pglite-schema.ts, and the generated
+    // src/core/schema-embedded.ts so fresh installs carry the same CHECK.
+    idempotent: true,
+    sql: `
+      LOCK TABLE op_checkpoints IN SHARE ROW EXCLUSIVE MODE;
+
+      UPDATE op_checkpoints
+         SET completed_keys = '[]'::jsonb, updated_at = now()
+       WHERE jsonb_typeof(completed_keys) <> 'array';
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+           WHERE conname = 'op_checkpoints_completed_keys_array'
+             AND conrelid = 'op_checkpoints'::regclass
+        ) THEN
+          ALTER TABLE op_checkpoints
+            ADD CONSTRAINT op_checkpoints_completed_keys_array
+            CHECK (jsonb_typeof(completed_keys) = 'array');
+        END IF;
+      END $$;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -5524,6 +5705,26 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   const sorted = [...MIGRATIONS].sort((a, b) => a.version - b.version);
 
   const pending = sorted.filter(m => m.version > current);
+
+  // #2038: schema-drift self-heal. A migration renumbered during a master
+  // merge (v102 timeline dedup, originally v99) can be recorded-as-applied
+  // without its DDL ever running — the version counter can't see it. Repair
+  // the known drift on EVERY pass, including when nothing is pending (the
+  // affected brains are stamped AHEAD of the missing migration, so they never
+  // reach the loop below). Best-effort + idempotent: a no-op on a healthy
+  // index; `doctor` surfaces it independently if this ever fails.
+  try {
+    const { repairTimelineDedupIndex } = await import('./timeline-dedup-repair.ts');
+    const r = await repairTimelineDedupIndex(engine);
+    if (r.repaired) {
+      console.error(
+        `[migrate] healed idx_timeline_dedup drift (#2038): ${r.before.join(',') || '(absent)'} ` +
+        `→ page_id,date,summary,source` +
+        (r.collapsedDuplicates > 0 ? ` (collapsed ${r.collapsedDuplicates} duplicate row(s))` : ''),
+      );
+    }
+  } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
+
   if (pending.length === 0) {
     return { applied: 0, current };
   }

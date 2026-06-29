@@ -738,7 +738,16 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // to take effect immediately (one-time global cache cold-miss on upgrade; refills
 // within cache.ttl_seconds). Same cache-key-contamination convention as the
 // autocut / title_boost / graph_signals bumps above.
-export const KNOBS_HASH_VERSION = 10;
+//
+// bump 10→11 (#1400 input_type fix): asymmetric embedding models (zembed-1
+// hosted or local, Voyage v3+) had their query-side input_type stripped by
+// the AI SDK before the wire, so every cached row's key embedding AND result
+// set were computed with document-side query vectors. The fix changes what
+// embedQuery() produces for those providers; pre-fix rows must not be served
+// to post-fix lookups. Same one-time global cold-miss pattern as the bumps
+// above (the hash is global, not per-provider); refills within
+// cache.ttl_seconds (3600s default).
+export const KNOBS_HASH_VERSION = 11;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The

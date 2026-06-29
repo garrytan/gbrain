@@ -133,6 +133,28 @@ export function isHolderDeadLocally(
 }
 
 /**
+ * issue #2227: is a lock-row holder live enough to count as "running" for an
+ * observability surface (`gbrain jobs supervisor status`, `gbrain doctor`)?
+ *
+ * PID-reuse-safe by design (`pid-liveness-alone-pid-reuse`): keys on the lock's
+ * own freshness, NEVER `process.kill`. A live holder refreshes its TTL on a
+ * timer; a dead one stops, so its `ttl_expires_at` lapses and (after the steal
+ * grace) `last_refreshed_at` ages out. The primary signal is `!ttl_expired`;
+ * the heartbeat grace covers a starved-but-alive holder whose TTL briefly
+ * lapsed between refresh ticks (the #1794 thrash class), mirroring the
+ * steal-grace semantics `tryAcquireDbLock` already uses. Cross-host holders are
+ * still "running" for visibility (a supervisor exists, just elsewhere) — we
+ * report freshness, not takeover-eligibility, so host is not consulted here.
+ */
+export function isLockHolderLive(snap: LockSnapshot, ttlMinutes: number = DEFAULT_TTL_MINUTES): boolean {
+  if (!snap.ttl_expired) return true;
+  if (snap.ms_since_last_refresh !== null) {
+    return snap.ms_since_last_refresh < resolveStealGraceSeconds(ttlMinutes) * 1000;
+  }
+  return false;
+}
+
+/**
  * Try to acquire a named DB lock.
  *
  * Returns a handle on success. Returns `null` if another live holder has
@@ -706,6 +728,38 @@ export function syncLockId(sourceId: string): string {
  * `syncLockId(sourceId)` directly.
  */
 export const SYNC_LOCK_ID = syncLockId('default');
+
+/**
+ * #1950: is `sourceId` actively holding a live (non-TTL-expired) sync lock?
+ *
+ * Centralizes the live-sync signal that `gbrain doctor` already computes inline
+ * so `gbrain sources status` (and future surfaces) read the SAME truth instead
+ * of each re-deriving it. Returns the holder when a live lock is held, else
+ * null (idle, or a stale/expired lock that's structurally available for the
+ * next acquire). Inspect failures swallow to null — a status surface should
+ * degrade to "no indicator", never crash.
+ *
+ * Honest scope: a live lock proves the holder process is heartbeating, NOT that
+ * the import is making forward progress — `withRefreshingLock` refreshes
+ * `last_refreshed_at` on its own timer regardless of import progress. So callers
+ * report "running", NOT "healthy"; a wedged-but-alive holder still reads as
+ * running here. Forward-progress stall detection lives in the sync drain loop
+ * (#1950 stall-abort); stale-lock triage lives in `gbrain doctor`.
+ */
+export async function liveSyncStatus(
+  engine: BrainEngine,
+  sourceId: string,
+): Promise<{ holder_pid: number; holder_host: string } | null> {
+  try {
+    const snap = await inspectLock(engine, syncLockId(sourceId));
+    if (snap && !snap.ttl_expired) {
+      return { holder_pid: snap.holder_pid, holder_host: snap.holder_host };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * v0.30.1 (T4 + A4): wrap long-running work in a refreshing TTL lock.

@@ -266,13 +266,13 @@ async function writeDbCache<T>(
 ): Promise<void> {
   const [, , contentSha] = splitCacheKey(key);
   if (!contentSha) return;
-  // executeRaw with positional binding for JSONB. Per the sql-query.ts
-  // contract: object values passed via positional params reach the
-  // wire as proper jsonb when cast.
+  // #2339 class: this binds JSON.stringify(value) (a STRING) positionally, so it
+  // must cast through $4::text::jsonb — a bare $4::jsonb double-encodes under
+  // postgres.js .unsafe() (PGLite hides it). Pass a raw object to use $N::jsonb.
   await engine.executeRaw(
     `INSERT INTO conversation_parser_llm_cache
        (content_sha256, model_id, call_shape, value_json)
-     VALUES ($1, $2, $3, $4::jsonb)
+     VALUES ($1, $2, $3, $4::text::jsonb)
      ON CONFLICT (content_sha256, model_id, call_shape) DO NOTHING`,
     [contentSha, modelStr, shape, JSON.stringify(value)],
   );

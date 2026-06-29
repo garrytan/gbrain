@@ -886,7 +886,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
          ), inserted AS (
            INSERT INTO subagent_tool_executions
              (job_id, message_idx, tool_use_id, tool_name, input, status, schema_version, ordinal, gbrain_tool_use_id, provider_id)
-           SELECT $1, $2, $3, $4, $5::jsonb, 'pending', 2, $6, $7, $8
+           SELECT $1, $2, $3, $4, $5::text::jsonb, 'pending', 2, $6, $7, $8
             WHERE NOT EXISTS (SELECT 1 FROM existing)
            ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
              SET status = subagent_tool_executions.status
@@ -905,7 +905,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     onToolCallComplete: async (gbrainToolUseId, output) => {
       await engine.executeRaw(
         `UPDATE subagent_tool_executions
-           SET status = 'complete', output = $1::jsonb, ended_at = now()
+           SET status = 'complete', output = $1::text::jsonb, ended_at = now()
          WHERE gbrain_tool_use_id::text = $2`,
         [JSON.stringify(output ?? null), gbrainToolUseId],
       );
@@ -1133,7 +1133,7 @@ async function persistMessage(engine: BrainEngine, jobId: number, msg: Persisted
   await engine.executeRaw(
     `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks,
         tokens_in, tokens_out, tokens_cache_read, tokens_cache_create, model)
-     VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)
+     VALUES ($1, $2, $3, $4::text::jsonb, $5, $6, $7, $8, $9)
      ON CONFLICT (job_id, message_idx) DO NOTHING`,
     [
       jobId,
@@ -1157,13 +1157,15 @@ async function persistToolExecPending(
   toolName: string,
   input: unknown,
 ): Promise<void> {
-  // Serialize to JSON string for the ::jsonb cast. When `input` is already a
-  // string (e.g. pre-serialized), avoid double-encoding which produces a jsonb
-  // scalar string instead of a jsonb object — breaking `input->>'key'` lookups.
+  // Serialize to a JSON string, then bind through $5::text::jsonb. The value is
+  // ALWAYS a string here (pre-serialized input, or JSON.stringify) — binding a
+  // string to a bare $5::jsonb double-encodes it into a jsonb scalar string under
+  // postgres.js .unsafe() (#2339 class; PGLite hides it). The ::text cast makes
+  // the text→jsonb parse produce a real jsonb object.
   const jsonStr = typeof input === 'string' ? input : JSON.stringify(input);
   await engine.executeRaw(
     `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status)
-     VALUES ($1, $2, $3, $4, $5::jsonb, 'pending')
+     VALUES ($1, $2, $3, $4, $5::text::jsonb, 'pending')
      ON CONFLICT (job_id, tool_use_id) DO NOTHING`,
     [jobId, messageIdx, toolUseId, toolName, jsonStr],
   );
@@ -1177,7 +1179,7 @@ async function persistToolExecComplete(
 ): Promise<void> {
   await engine.executeRaw(
     `UPDATE subagent_tool_executions
-        SET status = 'complete', output = $3::jsonb, ended_at = now()
+        SET status = 'complete', output = $3::text::jsonb, ended_at = now()
       WHERE job_id = $1 AND tool_use_id = $2`,
     [jobId, toolUseId, typeof output === 'string' ? output : JSON.stringify(output)],
   );
@@ -1196,7 +1198,7 @@ async function persistToolExecFailed(
   // rejected upfront) and "pending row exists" (tool threw mid-execute).
   await engine.executeRaw(
     `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status, error, ended_at)
-     VALUES ($1, $2, $3, $4, $5::jsonb, 'failed', $6, now())
+     VALUES ($1, $2, $3, $4, $5::text::jsonb, 'failed', $6, now())
      ON CONFLICT (job_id, tool_use_id) DO UPDATE
        SET status = 'failed', error = EXCLUDED.error, ended_at = now()`,
     [jobId, messageIdx, toolUseId, toolName, typeof input === 'string' ? input : JSON.stringify(input), error],

@@ -16,6 +16,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, lstatSync, readdirSync } from 'fs';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { join, relative, resolve } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, toEngineConfig } from '../core/config.ts';
@@ -63,7 +64,7 @@ export async function runFrontmatter(args: string[]): Promise<void> {
   }
   console.error(`Unknown frontmatter subcommand: ${sub}\n`);
   printHelp();
-  process.exitCode = 1;
+  setCliExitVerdict(1);
 }
 
 async function connectEngineForAudit(): Promise<BrainEngine> {
@@ -164,14 +165,14 @@ async function runValidate(rest: string[]): Promise<void> {
   }
   if (!target) {
     console.error('error: gbrain frontmatter validate requires a <path> argument');
-    process.exitCode = 1;
+    setCliExitVerdict(1);
     return;
   }
 
   const resolved = resolve(target);
   if (!existsSync(resolved)) {
     console.error(`error: path not found: ${target}`);
-    process.exitCode = 1;
+    setCliExitVerdict(1);
     return;
   }
 
@@ -242,7 +243,7 @@ async function runValidate(rest: string[]): Promise<void> {
     }
   }
 
-  process.exitCode = totalErrors > 0 && !flags.fix ? 1 : 0;
+  setCliExitVerdict(totalErrors > 0 && !flags.fix ? 1 : 0);
 }
 
 /**
@@ -378,7 +379,7 @@ async function runGenerate(args: string[]): Promise<void> {
   if (!targetPath) {
     console.error('error: gbrain frontmatter generate requires a <path> argument');
     console.error('usage: gbrain frontmatter generate <path> [--fix] [--dry-run] [--json]');
-    process.exitCode = 1;
+    setCliExitVerdict(1);
     return;
   }
 

@@ -34,6 +34,9 @@ export const HANDLER_DEFAULT_TIMEOUT_MS: Readonly<Record<string, number>> = {
   subagent_aggregator: THIRTY_MIN_MS,
   'embed-backfill': THIRTY_MIN_MS,
   'autopilot-cycle': THIRTY_MIN_MS,
+  // #2194 fix #3: brain-wide maintenance (embed-all/orphans/purge/…) can run
+  // longer than a single source cycle; give it the same 30-min budget.
+  'autopilot-global-maintenance': THIRTY_MIN_MS,
 };
 
 /**
