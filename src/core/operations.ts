@@ -1815,6 +1815,7 @@ const think: Operation = {
     // and get default scope + remote=false from runThink's CLI path.
     const scope = sourceScopeOpts(ctx);
     const { runThink, persistSynthesis } = await import('./think/index.ts');
+    const { embedQuery } = await import('./ai/gateway.ts');
     const result = await runThink(ctx.engine, {
       question: String(p.question),
       anchor: p.anchor ? String(p.anchor) : undefined,
@@ -1830,6 +1831,10 @@ const think: Operation = {
       since: p.since ? String(p.since) : undefined,
       until: p.until ? String(p.until) : undefined,
       takesHoldersAllowList: ctx.takesHoldersAllowList,
+      // MCP callers should get parity with local CLI for the takes vector-
+      // recall lane. runThink degrades to keyword-only with a warning if the
+      // embedding provider is unavailable.
+      embedQuestion: embedQuery,
       ...(scope.sourceId !== undefined ? { sourceId: scope.sourceId } : {}),
       ...(scope.sourceIds !== undefined ? { allowedSources: scope.sourceIds } : {}),
       remote: ctx.remote === true,
