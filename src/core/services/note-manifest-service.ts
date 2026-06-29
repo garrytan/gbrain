@@ -1,6 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import { canonicalDerivedTags, DERIVED_SCHEMA_VERSION } from '../derived-jobs.ts';
-import type { DerivedJob, NoteManifestEntry, NoteManifestEntryInput, NoteManifestHeading, Page, PageInput } from '../types.ts';
+import type { DerivedJob, NoteManifestEntry, NoteManifestEntryInput, NoteManifestHeading, NoteResolverMetadata, Page, PageInput } from '../types.ts';
 import { slugifyPath } from '../sync.ts';
 import { importContentHash, validateSlug } from '../utils.ts';
 import { extractFrontmatterSourceRefs, mergeSourceRefs } from './corpus-lane-service.ts';
@@ -27,6 +27,7 @@ export function buildNoteManifestEntry(input: BuildNoteManifestEntryInput): Note
   const page = input.page;
   const tags = canonicalizeTags(input.tags ?? []);
   const body = joinCanonicalBody(page.compiled_truth, page.timeline ?? '');
+  const frontmatter = page.frontmatter ?? {};
 
   return {
     scope_id: scopeId,
@@ -35,15 +36,16 @@ export function buildNoteManifestEntry(input: BuildNoteManifestEntryInput): Note
     path,
     page_type: page.type,
     title: page.title,
-    frontmatter: page.frontmatter ?? {},
-    aliases: extractAliases(page.frontmatter ?? {}),
+    frontmatter,
+    aliases: extractAliases(frontmatter),
     tags,
     outgoing_wikilinks: extractOutgoingWikilinks(body),
     outgoing_urls: extractOutgoingUrls(body),
     source_refs: mergeSourceRefs(
       extractSourceRefs(body),
-      extractFrontmatterSourceRefs(page.frontmatter ?? {}, path),
+      extractFrontmatterSourceRefs(frontmatter, path),
     ),
+    resolver_metadata: extractResolverMetadata(frontmatter),
     heading_index: extractHeadingIndex(body),
     content_hash: input.content_hash
       ?? page.content_hash
@@ -52,7 +54,7 @@ export function buildNoteManifestEntry(input: BuildNoteManifestEntryInput): Note
         type: page.type,
         compiled_truth: page.compiled_truth,
         timeline: page.timeline ?? '',
-        frontmatter: page.frontmatter ?? {},
+        frontmatter,
         tags,
       }),
     extractor_version: NOTE_MANIFEST_EXTRACTOR_VERSION,
@@ -168,6 +170,39 @@ function extractAliases(frontmatter: Record<string, unknown>): string[] {
   }
   if (Array.isArray(aliases)) {
     return uniqueStrings(aliases.map((alias) => String(alias).trim()).filter(Boolean));
+  }
+  return [];
+}
+
+function extractResolverMetadata(frontmatter: Record<string, unknown>): NoteResolverMetadata {
+  const metadata: NoteResolverMetadata = {
+    applies_to: frontmatterStringList(frontmatter.applies_to),
+    excludes: frontmatterStringList(frontmatter.excludes),
+    routing_triggers: frontmatterStringList(frontmatter.routing_triggers),
+    gotchas: frontmatterStringList(frontmatter.gotchas),
+  };
+
+  const canonicalSubjectKey = frontmatterString(frontmatter.canonical_subject_key);
+  if (canonicalSubjectKey) metadata.canonical_subject_key = canonicalSubjectKey;
+  const definitionOwner = frontmatterString(frontmatter.definition_owner);
+  if (definitionOwner) metadata.definition_owner = definitionOwner;
+  const semanticGrain = frontmatterString(frontmatter.semantic_grain);
+  if (semanticGrain) metadata.semantic_grain = semanticGrain;
+  return metadata;
+}
+
+function frontmatterString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+}
+
+function frontmatterStringList(value: unknown): string[] {
+  if (typeof value === 'string') {
+    return uniqueStrings(value.split(',').map((item) => item.trim()).filter(Boolean));
+  }
+  if (Array.isArray(value)) {
+    return uniqueStrings(value.map((item) => String(item).trim()).filter(Boolean));
   }
   return [];
 }

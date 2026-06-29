@@ -25,6 +25,8 @@ import type {
   RetrievalSelector,
   ScopeGateDecisionResult,
   ScopeGateScope,
+  AnswerTrustFooter,
+  AnswerTrustFooterExcludedSignal,
   SearchResult,
 } from '../types.ts';
 import { getBroadSynthesisRoute, type BroadSynthesisCandidateSearch } from './broad-synthesis-route-service.ts';
@@ -1890,12 +1892,77 @@ async function maybePersistRetrieveTrace(
   result: RetrieveContextResult,
   input: RetrieveContextInput,
 ): Promise<RetrieveContextResult> {
-  if (!input.persist_trace) return attachPushContextEnvelope(result, input);
+  if (!input.persist_trace) return attachPushContextEnvelope(withRetrieveTrustFooter(result), input);
   const resultWithTrace = {
     ...result,
     trace: await persistRetrieveTrace(engine, result, input),
   };
-  return attachPushContextEnvelope(resultWithTrace, input);
+  return attachPushContextEnvelope(withRetrieveTrustFooter(resultWithTrace), input);
+}
+
+function withRetrieveTrustFooter(result: RetrieveContextResult): RetrieveContextResult {
+  return {
+    ...result,
+    answer_trust_footer: buildRetrieveTrustFooter(result),
+  };
+}
+
+function buildRetrieveTrustFooter(result: RetrieveContextResult): AnswerTrustFooter {
+  const selectors = result.read_plan.selected_selector_snapshots?.length
+    ? result.read_plan.selected_selector_snapshots
+    : result.required_reads;
+  const sourceRefs = traceSourceRefs(selectors);
+  const contentHashes = uniqueStrings(selectors
+    .map((selector) => selector.content_hash)
+    .filter((hash): hash is string => typeof hash === 'string' && hash.length > 0));
+  const excludedSignals: AnswerTrustFooterExcludedSignal[] = [];
+  if (result.candidate_signals.length > 0) {
+    excludedSignals.push({
+      kind: 'candidate_signal',
+      count: result.candidate_signals.length,
+      reason: 'Memory Inbox candidate signals are non-canonical pointers and require review before answer use.',
+    });
+  }
+  const matchedChunkCount = result.candidates.reduce((total, candidate) => total + candidate.matched_chunks.length, 0);
+  if (matchedChunkCount > 0) {
+    excludedSignals.push({
+      kind: 'search_chunk',
+      count: matchedChunkCount,
+      reason: 'Search/query chunks are discovery pointers; read_context is required for factual answer evidence.',
+    });
+  }
+  if ((result.orientation.graph_paths_considered?.length ?? 0) > 0) {
+    excludedSignals.push({
+      kind: 'graph_frontier',
+      count: result.orientation.graph_paths_considered?.length,
+      reason: 'Graph frontier paths orient selector planning but are not canonical answer evidence.',
+    });
+  }
+  if (result.orientation.derived_consulted.length > 0) {
+    excludedSignals.push({
+      kind: 'context_map',
+      count: result.orientation.derived_consulted.length,
+      reason: 'Derived orientation artifacts can rank or recommend reads, but read_context must provide answer evidence.',
+    });
+  }
+
+  return {
+    authority_class: 'not_answer_evidence',
+    underlying_authorities: ['not_answer_evidence'],
+    evidence_selectors: selectors.map(retrievalSelectorId),
+    source_refs: sourceRefs,
+    excluded_signals: excludedSignals,
+    freshness: {
+      content_hashes: contentHashes,
+      derived_index_status: result.read_plan.backend_gap ? 'unknown' : 'current',
+      generated_at: new Date().toISOString(),
+    },
+    write_status: 'no_write',
+    next_verification_action: result.required_reads.length > 0
+      ? 'Call read_context with read_plan.selected_selector_snapshots before making factual claims.'
+      : 'No canonical reads were selected; narrow the query or inspect candidate pointers without treating them as evidence.',
+    trace_ids: result.trace?.id ? [result.trace.id] : [],
+  };
 }
 
 function attachPushContextEnvelope(
@@ -1966,6 +2033,10 @@ function traceSourceRefs(selectors: RetrievalSelector[]): string[] {
 
 function countSourceRefs(selectors: RetrievalSelector[]): number {
   return mergeSourceRefs(selectors.flatMap((selector) => selector.source_refs ?? [])).length;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function corpusLaneVerification(selectors: RetrievalSelector[]): string[] {

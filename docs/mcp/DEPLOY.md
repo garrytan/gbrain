@@ -79,7 +79,8 @@ no CORS headers are emitted.
 For HTTP MCP clients such as ChatGPT Developer Mode, `tools/list` returns full
 tool descriptors with titles, descriptions, and MCP read/write/destructive
 annotations. Stdio keeps compact descriptors for frame-budget safety, and
-`resources/list` returns an explicit empty list for clients that probe resources.
+`resources/list` returns manifest-backed MBrain documentation resources for
+clients that load reference docs on demand.
 
 ### 2. Set up the tunnel
 

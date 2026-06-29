@@ -619,8 +619,8 @@ OAuth runtime tables in place.
 HTTP MCP clients receive full tool descriptors with titles, descriptions, and
 MCP read/write/destructive annotations so ChatGPT can discover MBrain app
 actions after OAuth connects. Stdio clients keep compact descriptors to preserve
-frame budget headroom, and `resources/list` returns an explicit empty list for
-clients that probe MCP resources.
+frame budget headroom, and `resources/list` returns manifest-backed MBrain
+documentation resources for clients that load docs on demand.
 
 To verify the OAuth runtime locally, or to reproduce a ChatGPT-style setup
 without using ChatGPT:

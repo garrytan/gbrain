@@ -7,6 +7,16 @@ export interface NoteManifestHeading {
   line_start: number;
 }
 
+export interface NoteResolverMetadata {
+  canonical_subject_key?: string;
+  definition_owner?: string;
+  semantic_grain?: string;
+  applies_to: string[];
+  excludes: string[];
+  routing_triggers: string[];
+  gotchas: string[];
+}
+
 export interface NoteManifestEntry {
   scope_id: string;
   page_id: number;
@@ -20,6 +30,7 @@ export interface NoteManifestEntry {
   outgoing_wikilinks: string[];
   outgoing_urls: string[];
   source_refs: string[];
+  resolver_metadata?: NoteResolverMetadata;
   heading_index: NoteManifestHeading[];
   content_hash: string;
   extractor_version: string;
@@ -39,6 +50,7 @@ export interface NoteManifestEntryInput {
   outgoing_wikilinks: string[];
   outgoing_urls: string[];
   source_refs: string[];
+  resolver_metadata?: NoteResolverMetadata;
   heading_index: NoteManifestHeading[];
   content_hash: string;
   extractor_version: string;

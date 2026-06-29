@@ -24,19 +24,18 @@ DETECT entities (people, companies, concepts, systems, original thinking)
   │
   ▼
 READ: check brain FIRST (before responding)
-  │  → mbrain search "{entity name}"
-  │  → mbrain search "{system or concept name}"
-  │  → mbrain get {slug} (if you know it)
-  │  → mbrain query "what do we know about {topic}"
+  │  → mbrain retrieve-context "{question or entity}"
+  │  → mbrain read-context --selectors '<required_reads json>'
+  │  → mbrain get {slug} only when a complete page is needed
   │
   ▼
 RESPOND with brain context (every answer is better with context)
   │
   ▼
 WRITE: update brain pages (new info → compiled truth + timeline)
-  │  → mbrain put {slug} (update page)
-  │  → add_timeline_entry (append to timeline)
-  │  → add_link (cross-reference to other entities)
+  │  → route_memory_writeback with source refs
+  │  → put_page only when the router allows canonical writeback
+  │  → otherwise create/review Memory Inbox candidates
   │
   ▼
 SYNC: mbrain indexes changes
@@ -57,24 +56,28 @@ on_message(text):
 
   // 2. READ (before composing response)
   entities = extract_entity_names(text)  // quick regex/NER
-  context = []
-  for name in entities:
-    results = mbrain_search(name)
-    if results:
-      page = mbrain_get(results[0].slug)
-      context.append(page.compiled_truth)
+  probe = mbrain_retrieve_context(text, entities)
+  read = mbrain_read_context(probe.required_reads)
+  context = read.canonical_reads
 
   // 3. RESPOND (with brain context injected)
   response = compose_response(text, context)
 
   // 4. WRITE (after responding, if durable new info emerged)
   if conversation_revealed_durable_knowledge(text, response):
-    for entity in mentioned_entities:
-      mbrain_add_timeline_entry(entity.slug, {
-        date: today,
-        summary: "Discussed {topic}",
-        source: "[Source: User, conversation, {date}]"
+    route = route_memory_writeback({
+      source_refs: direct_message_source_refs(text),
+      assertions: durable_claims(text, response),
+      target_snapshot_hash: current_target_hash_or_null
+    })
+    if route.decision == "canonical_write_allowed":
+      put_page({
+        slug: route.target_slug,
+        write_session_id: route.write_session_id,
+        content: routed_compiled_truth_with_sources
       })
+    else if route.decision == "create_candidate":
+      review_memory_candidate(route.candidate_id)
 
     // 5. SYNC only after a write batch
     mbrain_sync(no_pull=true, no_embed=true)
@@ -105,14 +108,16 @@ on_message(text):
    stale. The next query won't find what you just wrote. If there was no write,
    there is nothing to sync.
 
-4. **External APIs are fallback, not primary.** `mbrain search` before
-   Brave Search. `mbrain get` before Crustdata. The brain has relationship
-   history, your own assessments, meeting transcripts, cross-references.
-   No external API can provide that.
+4. **External APIs are fallback, not primary.** `retrieve_context` before
+   Brave Search. `read_context` before factual claims. Search/query chunks and
+   Memory Inbox candidates are pointers, not answer evidence. The brain has
+   relationship history, your own assessments, meeting transcripts, and
+   cross-references that no external API can provide.
 
 5. **Technical questions use the same loop.** Before grepping a large repo
-   for "where is X implemented?", check the relevant `concepts/` and `systems/`
-   pages. A 400-token map often saves 10,000 tokens of blind code reading.
+   for "where is X implemented?", retrieve and read the relevant `concepts/`
+   and `systems/` evidence. A 400-token map often saves 10,000 tokens of blind
+   code reading, but the answer still needs canonical reads.
 
 ## How to Verify It Works
 
@@ -128,8 +133,10 @@ on_message(text):
    pull brain context without you asking. If it doesn't reference the brain
    page, the loop isn't running.
 
-4. **Check the sync.** After a conversation, run `mbrain search "{topic}"`
-   from the CLI. The new information should be searchable.
+4. **Check the sync.** After a conversation, run
+   `mbrain retrieve-context "{topic}"` followed by `mbrain read-context` from
+   the CLI. The new information should be discoverable and answer-ready only
+   after canonical evidence is read.
 
 ---
 

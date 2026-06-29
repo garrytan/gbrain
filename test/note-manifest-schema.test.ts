@@ -36,6 +36,8 @@ describe('note-manifest schema', () => {
       .all() as Array<{ name: string }>;
 
     expect(rows.map((row) => row.name)).toEqual(['note_manifest_entries']);
+    const columns = db.query(`PRAGMA table_info(note_manifest_entries)`).all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain('resolver_metadata');
 
     await engine.disconnect();
   });
@@ -57,6 +59,16 @@ describe('note-manifest schema', () => {
 
     expect(result.rows.map((row: { table_name: string }) => row.table_name)).toEqual([
       'note_manifest_entries',
+    ]);
+    const columns = await (engine as any).db.query(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'note_manifest_entries'
+         AND column_name = 'resolver_metadata'`,
+    );
+    expect(columns.rows.map((row: { column_name: string }) => row.column_name)).toEqual([
+      'resolver_metadata',
     ]);
 
     await engine.disconnect();

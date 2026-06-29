@@ -36,6 +36,9 @@ import type {
   CanonicalTargetProposalStatusEvent, CanonicalTargetProposalStatusEventFilters,
   CanonicalTargetProposalStatusEventInput, CanonicalTargetProposalStatusPatch,
   ContextAtlasEntry, ContextAtlasEntryInput, ContextAtlasFilters,
+  ContextEvalAssertion, ContextEvalAssertionFilters, ContextEvalAssertionInput,
+  ContextEvalCorrection, ContextEvalCorrectionInput,
+  ContextEvalRun, ContextEvalRunFilters, ContextEvalRunInput,
   ContextMapEntry, ContextMapEntryInput, ContextMapFilters,
   DerivedArtifactKind,
   DerivedIndexState, DerivedIndexStateFilters,
@@ -97,6 +100,9 @@ import {
   rowToCanonicalTargetProposalStatusEvent,
   rowToChunk,
   rowToContextAtlasEntry,
+  rowToContextEvalAssertion,
+  rowToContextEvalCorrection,
+  rowToContextEvalRun,
   rowToContextMapEntry,
   rowToDerivedIndexState,
   rowToDerivedJob,
@@ -1210,6 +1216,153 @@ export abstract class PgEngineBase {
       params,
     );
     return (rows as Record<string, unknown>[]).map(rowToRetrievalTrace);
+  }
+
+  async putContextEvalRun(input: ContextEvalRunInput): Promise<ContextEvalRun> {
+    const id = input.id ?? crypto.randomUUID();
+    const { rows } = await this.queryable.query(
+      `INSERT INTO context_eval_runs (
+        id, fixture_id, fixture_mode, status, model_id, skill_surface_hash,
+        agent_rules_version, git_sha, retrieval_trace_ids, metrics, metadata,
+        started_at, completed_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12, $13)
+      ON CONFLICT (id) DO UPDATE SET
+        fixture_id = EXCLUDED.fixture_id,
+        fixture_mode = EXCLUDED.fixture_mode,
+        status = EXCLUDED.status,
+        model_id = EXCLUDED.model_id,
+        skill_surface_hash = EXCLUDED.skill_surface_hash,
+        agent_rules_version = EXCLUDED.agent_rules_version,
+        git_sha = EXCLUDED.git_sha,
+        retrieval_trace_ids = EXCLUDED.retrieval_trace_ids,
+        metrics = EXCLUDED.metrics,
+        metadata = EXCLUDED.metadata,
+        completed_at = EXCLUDED.completed_at,
+        updated_at = now()
+      RETURNING *`,
+      [
+        id,
+        input.fixture_id,
+        input.fixture_mode,
+        input.status,
+        input.model_id ?? null,
+        input.skill_surface_hash ?? null,
+        input.agent_rules_version ?? null,
+        input.git_sha ?? null,
+        JSON.stringify(input.retrieval_trace_ids ?? []),
+        JSON.stringify(input.metrics ?? {}),
+        JSON.stringify(input.metadata ?? {}),
+        input.started_at ?? new Date(),
+        input.completed_at ?? null,
+      ],
+    );
+    return rowToContextEvalRun(rows[0] as Record<string, unknown>);
+  }
+
+  async getContextEvalRun(id: string): Promise<ContextEvalRun | null> {
+    const { rows } = await this.queryable.query(
+      `SELECT * FROM context_eval_runs WHERE id = $1`,
+      [id],
+    );
+    const [row] = rows as Record<string, unknown>[];
+    return row ? rowToContextEvalRun(row) : null;
+  }
+
+  async listContextEvalRuns(filters: ContextEvalRunFilters = {}): Promise<ContextEvalRun[]> {
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+    if (filters.fixture_id) {
+      params.push(filters.fixture_id);
+      clauses.push(`fixture_id = $${params.length}`);
+    }
+    if (filters.status) {
+      params.push(filters.status);
+      clauses.push(`status = $${params.length}`);
+    }
+    params.push(filters.limit ?? 50);
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const { rows } = await this.queryable.query(
+      `SELECT *
+       FROM context_eval_runs
+       ${where}
+       ORDER BY created_at DESC, id DESC
+       LIMIT $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToContextEvalRun);
+  }
+
+  async putContextEvalAssertion(input: ContextEvalAssertionInput): Promise<ContextEvalAssertion> {
+    const id = input.id ?? crypto.randomUUID();
+    const { rows } = await this.queryable.query(
+      `INSERT INTO context_eval_assertions (
+        id, run_id, case_id, assertion_kind, passed, score, expected, actual,
+        message, retrieval_trace_id, metadata
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11::jsonb)
+      RETURNING *`,
+      [
+        id,
+        input.run_id,
+        input.case_id,
+        input.assertion_kind,
+        input.passed,
+        input.score ?? null,
+        JSON.stringify(input.expected ?? null),
+        JSON.stringify(input.actual ?? null),
+        input.message ?? null,
+        input.retrieval_trace_id ?? null,
+        JSON.stringify(input.metadata ?? {}),
+      ],
+    );
+    return rowToContextEvalAssertion(rows[0] as Record<string, unknown>);
+  }
+
+  async listContextEvalAssertions(filters: ContextEvalAssertionFilters = {}): Promise<ContextEvalAssertion[]> {
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+    if (filters.run_id) {
+      params.push(filters.run_id);
+      clauses.push(`run_id = $${params.length}`);
+    }
+    if (filters.case_id) {
+      params.push(filters.case_id);
+      clauses.push(`case_id = $${params.length}`);
+    }
+    if (filters.passed !== undefined) {
+      params.push(filters.passed);
+      clauses.push(`passed = $${params.length}`);
+    }
+    params.push(filters.limit ?? 100);
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const { rows } = await this.queryable.query(
+      `SELECT *
+       FROM context_eval_assertions
+       ${where}
+       ORDER BY created_at DESC, id DESC
+       LIMIT $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToContextEvalAssertion);
+  }
+
+  async createContextEvalCorrection(input: ContextEvalCorrectionInput): Promise<ContextEvalCorrection> {
+    const id = input.id ?? crypto.randomUUID();
+    const { rows } = await this.queryable.query(
+      `INSERT INTO context_eval_corrections (
+        id, trace_id, run_id, case_id, reason, proposed_assertion_id, metadata
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+      RETURNING *`,
+      [
+        id,
+        input.trace_id,
+        input.run_id ?? null,
+        input.case_id,
+        input.reason,
+        input.proposed_assertion_id ?? null,
+        JSON.stringify(input.metadata ?? {}),
+      ],
+    );
+    return rowToContextEvalCorrection(rows[0] as Record<string, unknown>);
   }
 
   async upsertProfileMemoryEntry(input: ProfileMemoryEntryInput): Promise<ProfileMemoryEntry> {
@@ -3442,9 +3595,9 @@ export abstract class PgEngineBase {
     const { rows } = await this.queryable.query(
       `INSERT INTO note_manifest_entries (
         scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
-        outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
-        extractor_version, last_indexed_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14, $15, now())
+        outgoing_wikilinks, outgoing_urls, source_refs, resolver_metadata, heading_index,
+        content_hash, extractor_version, last_indexed_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb, $15, $16, now())
       ON CONFLICT (scope_id, page_id) DO UPDATE SET
         slug = EXCLUDED.slug,
         path = EXCLUDED.path,
@@ -3456,13 +3609,14 @@ export abstract class PgEngineBase {
         outgoing_wikilinks = EXCLUDED.outgoing_wikilinks,
         outgoing_urls = EXCLUDED.outgoing_urls,
         source_refs = EXCLUDED.source_refs,
+        resolver_metadata = EXCLUDED.resolver_metadata,
         heading_index = EXCLUDED.heading_index,
         content_hash = EXCLUDED.content_hash,
         extractor_version = EXCLUDED.extractor_version,
         last_indexed_at = EXCLUDED.last_indexed_at
       RETURNING scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
-                outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
-                extractor_version, last_indexed_at`,
+                outgoing_wikilinks, outgoing_urls, source_refs, resolver_metadata, heading_index,
+                content_hash, extractor_version, last_indexed_at`,
       [
         input.scope_id,
         input.page_id,
@@ -3476,6 +3630,7 @@ export abstract class PgEngineBase {
         JSON.stringify(input.outgoing_wikilinks ?? []),
         JSON.stringify(input.outgoing_urls ?? []),
         JSON.stringify(input.source_refs ?? []),
+        JSON.stringify(input.resolver_metadata ?? {}),
         JSON.stringify(input.heading_index ?? []),
         input.content_hash,
         input.extractor_version,
@@ -3487,7 +3642,7 @@ export abstract class PgEngineBase {
   async getNoteManifestEntry(scopeId: string, slug: string): Promise<NoteManifestEntry | null> {
     const { rows } = await this.queryable.query(
       `SELECT scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
-              outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
+              outgoing_wikilinks, outgoing_urls, source_refs, resolver_metadata, heading_index, content_hash,
               extractor_version, last_indexed_at
        FROM note_manifest_entries
        WHERE scope_id = $1 AND slug = $2`,
@@ -3523,7 +3678,7 @@ export abstract class PgEngineBase {
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
     const { rows } = await this.queryable.query(
       `SELECT scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
-              outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
+              outgoing_wikilinks, outgoing_urls, source_refs, resolver_metadata, heading_index, content_hash,
               extractor_version, last_indexed_at
        FROM note_manifest_entries
        ${whereClause}

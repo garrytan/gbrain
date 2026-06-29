@@ -73,6 +73,16 @@ async function seedManifest(engine: BrainEngine, slug: string, path: string) {
     'tags: [phase2, engine]',
     'aliases:',
     '  - Engine Index',
+    'canonical_subject_key: mbrain.note-manifest-engine',
+    'definition_owner: systems/mbrain',
+    'semantic_grain: system-component',
+    'applies_to: [manifest persistence, resolver routing]',
+    'excludes:',
+    '  - raw source authority',
+    'routing_triggers:',
+    '  - note manifest engine',
+    'gotchas:',
+    '  - resolver metadata is a routing hint',
     '---',
     '',
     '# Manifest Heading',
@@ -98,6 +108,15 @@ async function expectManifest(engine: BrainEngine, slug: string, path: string) {
   expect(entry?.outgoing_wikilinks).toEqual(['systems/mbrain']);
   expect(entry?.outgoing_urls).toEqual(['https://example.com/engine']);
   expect(entry?.source_refs).toEqual(['User, direct message, 2026-04-20 03:00 PM KST']);
+  expect(entry?.resolver_metadata).toEqual({
+    canonical_subject_key: 'mbrain.note-manifest-engine',
+    definition_owner: 'systems/mbrain',
+    semantic_grain: 'system-component',
+    applies_to: ['manifest persistence', 'resolver routing'],
+    excludes: ['raw source authority'],
+    routing_triggers: ['note manifest engine'],
+    gotchas: ['resolver metadata is a routing hint'],
+  });
   expect(entry?.heading_index).toEqual([
     { slug: 'manifest-heading', text: 'Manifest Heading', depth: 1, line_start: 1 },
   ]);

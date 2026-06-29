@@ -37,7 +37,7 @@ describe('MCP and CLI operation compatibility', () => {
     expect(failures).toEqual([]);
     expect(manifest.summary.cli_shared_count).toBeGreaterThan(100);
     expect(manifest.summary.cli_direct_count).toBeGreaterThan(10);
-    expect(manifest.summary.cli_only_count).toBe(5);
+    expect(manifest.summary.cli_only_count).toBe(6);
     expect(manifest.summary.mcp_operation_count).toBe(manifest.summary.operation_count);
   });
 

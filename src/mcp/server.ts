@@ -1,5 +1,12 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { ListResourcesRequestSchema, ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  CallToolRequestSchema,
+  ErrorCode,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  McpError,
+  ReadResourceRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
 import { createLocalAuthPrincipal, type OperationAuthPrincipal } from '../core/auth-principal.ts';
 import { startDerivedWorker, type DerivedWorkerController } from '../core/derived-worker.ts';
@@ -13,6 +20,7 @@ import {
   truncateUtf8ByScalars,
 } from '../core/text-offsets.ts';
 import { VERSION } from '../version.ts';
+import { listSkillSurfaceResources, readSkillSurfaceResource } from '../core/services/skill-surface-manifest-service.ts';
 import { operationToMcpTool } from './tool-schema.ts';
 import { isToolVisibleAtTier, type ToolTier } from './tool-tiers.ts';
 import {
@@ -878,8 +886,31 @@ export function createMcpServer(
   }));
 
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: [],
+    resources: listSkillSurfaceResources().map((resource) => ({
+      uri: resource.uri,
+      name: resource.name,
+      description: `${resource.description} SHA-256: ${resource.manifestHash}`,
+      mimeType: resource.mimeType,
+    })),
   }));
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request: any) => {
+    const uri = request.params?.uri;
+    if (typeof uri !== 'string') {
+      throw new McpError(ErrorCode.InvalidParams, 'resources/read requires a string uri.');
+    }
+    const resource = readSkillSurfaceResource(uri);
+    if (!resource) {
+      throw new McpError(ErrorCode.InvalidParams, `Unknown MBrain docs resource: ${uri}`);
+    }
+    return {
+      contents: [{
+        uri: resource.uri,
+        mimeType: resource.mimeType,
+        text: resource.text,
+      }],
+    };
+  });
 
   // Dispatch tool calls to operation handlers
   server.setRequestHandler(CallToolRequestSchema, async (request: any) => {

@@ -6,6 +6,7 @@ import {
   type ReportConflict,
   type ReportCanonicalMemory,
   type ReportConnectorHealth,
+  type ReportContextEvalRun,
   type ReportExtractedClaim,
   type ReportLifecycleState,
   type ReportMaintenanceJob,
@@ -18,6 +19,7 @@ import {
   type ReportSource,
   type ReportSourceItem,
 } from '../core/services/memory-review-report-service.ts';
+import { createHash } from 'crypto';
 import { saveBrainReport } from './report.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type {
@@ -32,6 +34,7 @@ import type {
 import { createLifecycleForgettingStoreForEngine } from '../core/maintenance/lifecycle-forgetting.ts';
 import { computeCandidateDebtMetrics } from '../core/services/inbox-lead-service.ts';
 import { buildNegativeMemoryProjections } from '../core/services/negative-memory-projection-service.ts';
+import { buildSkillSurfaceManifest } from '../core/services/skill-surface-manifest-service.ts';
 
 const DEFAULT_SCOPE_ID = 'workspace:default';
 const DEFAULT_LIMIT = 100;
@@ -117,6 +120,7 @@ export async function collectMemoryReportInput(
     failedTaskAttempts,
     canonicalTargetProposals,
     writeSessions,
+    contextEvalRuns,
   ] = await Promise.all([
     engine.listMemoryMutationEvents({ scope_id: scopeId, limit, offset: 0 }),
     engine.listMemoryCandidateEntries({ scope_id: scopeId, limit, offset: 0 }),
@@ -136,6 +140,7 @@ export async function collectMemoryReportInput(
     collectFailedTaskAttempts(engine, scopeId, limit),
     collectCanonicalTargetProposals(engine, scopeId, limit),
     collectMemoryWriteSessions(engine, scopeId, limit),
+    collectContextEvalRuns(engine, limit),
   ]);
   const [
     canonicalHandoffCandidateIds,
@@ -188,7 +193,39 @@ export async function collectMemoryReportInput(
       canonical_target_proposals: candidateDebtCanonicalTargetProposals,
     }),
     negative_memory_projections: negativeMemoryProjections,
+    context_eval_runs: contextEvalRuns,
+    skill_surface: collectSkillSurfaceSummary(),
   };
+}
+
+function collectSkillSurfaceSummary() {
+  const manifest = buildSkillSurfaceManifest();
+  return {
+    resource_count: manifest.filter((entry) => entry.mcp_resource_loadable).length,
+    manifest_hash: createHash('sha256')
+      .update(JSON.stringify(manifest.map((entry) => [entry.id, entry.sha256])))
+      .digest('hex'),
+    agent_rules_version: manifest.find((entry) => entry.id === 'agent-rules')?.version ?? null,
+  };
+}
+
+async function collectContextEvalRuns(
+  engine: BrainEngine,
+  limit: number,
+): Promise<ReportContextEvalRun[]> {
+  if (typeof (engine as Partial<BrainEngine>).listContextEvalRuns !== 'function') {
+    return [];
+  }
+  const runs = await engine.listContextEvalRuns({ limit });
+  return runs.map((run) => ({
+    id: run.id,
+    fixture_id: run.fixture_id,
+    status: run.status,
+    total: typeof run.metrics.total === 'number' ? run.metrics.total : 0,
+    failed: typeof run.metrics.failed === 'number' ? run.metrics.failed : 0,
+    pass_rate: typeof run.metrics.pass_rate === 'number' ? run.metrics.pass_rate : 0,
+    created_at: run.created_at.toISOString(),
+  }));
 }
 
 async function collectCanonicalTargetProposals(

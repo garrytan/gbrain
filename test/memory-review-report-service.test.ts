@@ -2118,6 +2118,35 @@ describe('memory review report service', () => {
 
     expect(formatMemoryReviewReport(report)).not.toContain('WARNING: review backlog pressure');
   });
+
+  test('formats failed context eval ledger runs as reportable review surface', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+      context_eval_runs: [{
+        id: 'run:self-service',
+        fixture_id: 'self-service-context-fixture',
+        status: 'failed',
+        total: 3,
+        failed: 1,
+        pass_rate: 2 / 3,
+        created_at: now,
+      }],
+      skill_surface: {
+        resource_count: 7,
+        manifest_hash: 'manifest-hash',
+        agent_rules_version: '0.5.12',
+      },
+    });
+
+    const formatted = formatMemoryReviewReport(report);
+    expect(report.summary.failed_context_eval_runs).toBe(1);
+    expect(formatted).toContain('Context Eval Ledger');
+    expect(formatted).toContain('self-service-context-fixture');
+    expect(formatted).toContain('failed 1/3');
+    expect(formatted).toContain('Skill Surface');
+    expect(formatted).toContain('Docs resources: 7');
+  });
 });
 
 function canonicalTargetProposal(

@@ -52,6 +52,7 @@ import type {
   NoteManifestEntryInput,
   NoteManifestFilters,
   NoteManifestHeading,
+  NoteResolverMetadata,
   NoteSectionEntry,
   NoteSectionEntryInput,
   NoteSectionFilters,
@@ -70,6 +71,14 @@ import type {
   ContextAtlasEntry,
   ContextAtlasEntryInput,
   ContextAtlasFilters,
+  ContextEvalAssertion,
+  ContextEvalAssertionFilters,
+  ContextEvalAssertionInput,
+  ContextEvalCorrection,
+  ContextEvalCorrectionInput,
+  ContextEvalRun,
+  ContextEvalRunFilters,
+  ContextEvalRunInput,
   MemoryCandidateEntry,
   CanonicalTargetProposalDraftPatch,
   CanonicalTargetProposalEntry,
@@ -383,6 +392,56 @@ CREATE TABLE IF NOT EXISTS retrieval_traces (
 );
 CREATE INDEX IF NOT EXISTS idx_retrieval_traces_task_created ON retrieval_traces(task_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS context_eval_runs (
+  id TEXT PRIMARY KEY,
+  fixture_id TEXT NOT NULL,
+  fixture_mode TEXT NOT NULL CHECK (fixture_mode IN ('injected_candidates', 'live_retrieve')),
+  status TEXT NOT NULL CHECK (status IN ('running', 'passed', 'failed', 'error')),
+  model_id TEXT,
+  skill_surface_hash TEXT,
+  agent_rules_version TEXT,
+  git_sha TEXT,
+  retrieval_trace_ids TEXT NOT NULL DEFAULT '[]',
+  metrics TEXT NOT NULL DEFAULT '{}',
+  metadata TEXT NOT NULL DEFAULT '{}',
+  started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  completed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_context_eval_runs_fixture_created
+  ON context_eval_runs(fixture_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS context_eval_assertions (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES context_eval_runs(id) ON DELETE CASCADE,
+  case_id TEXT NOT NULL,
+  assertion_kind TEXT NOT NULL,
+  passed INTEGER NOT NULL,
+  score REAL,
+  expected TEXT NOT NULL DEFAULT 'null',
+  actual TEXT NOT NULL DEFAULT 'null',
+  message TEXT,
+  retrieval_trace_id TEXT REFERENCES retrieval_traces(id) ON DELETE SET NULL,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_context_eval_assertions_run_case
+  ON context_eval_assertions(run_id, case_id);
+
+CREATE TABLE IF NOT EXISTS context_eval_corrections (
+  id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL REFERENCES retrieval_traces(id) ON DELETE CASCADE,
+  run_id TEXT REFERENCES context_eval_runs(id) ON DELETE SET NULL,
+  case_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  proposed_assertion_id TEXT REFERENCES context_eval_assertions(id) ON DELETE SET NULL,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_context_eval_corrections_trace_created
+  ON context_eval_corrections(trace_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS note_manifest_entries (
   scope_id TEXT NOT NULL,
   page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
@@ -396,6 +455,7 @@ CREATE TABLE IF NOT EXISTS note_manifest_entries (
   outgoing_wikilinks TEXT NOT NULL DEFAULT '[]',
   outgoing_urls TEXT NOT NULL DEFAULT '[]',
   source_refs TEXT NOT NULL DEFAULT '[]',
+  resolver_metadata TEXT NOT NULL DEFAULT '{}',
   heading_index TEXT NOT NULL DEFAULT '[]',
   content_hash TEXT NOT NULL,
   extractor_version TEXT NOT NULL,
@@ -869,6 +929,8 @@ export class SQLiteEngine implements BrainEngine {
 
     this.ensureCanonicalTargetProposalSchema();
     this.ensureMemoryWriteSessionSchema();
+    this.ensureNoteManifestResolverMetadataSchema();
+    this.ensureContextEvalLedgerSchema();
     this.backfillMissingPageEmbeddingsFromChunks();
 
     // Rebuild FTS index after schema migration. On a fresh database at baseline
@@ -2059,6 +2121,164 @@ export class SQLiteEngine implements BrainEngine {
       LIMIT ? OFFSET ?
     `).all(...sqliteBindings(params)) as Record<string, unknown>[];
     return rows.map(rowToRetrievalTrace);
+  }
+
+  async putContextEvalRun(input: ContextEvalRunInput): Promise<ContextEvalRun> {
+    const id = input.id ?? crypto.randomUUID();
+    const timestamp = nowIso();
+    const startedAt = (input.started_at ?? new Date()).toISOString();
+    this.database.run(`
+      INSERT INTO context_eval_runs (
+        id, fixture_id, fixture_mode, status, model_id, skill_surface_hash,
+        agent_rules_version, git_sha, retrieval_trace_ids, metrics, metadata,
+        started_at, completed_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        fixture_id = excluded.fixture_id,
+        fixture_mode = excluded.fixture_mode,
+        status = excluded.status,
+        model_id = excluded.model_id,
+        skill_surface_hash = excluded.skill_surface_hash,
+        agent_rules_version = excluded.agent_rules_version,
+        git_sha = excluded.git_sha,
+        retrieval_trace_ids = excluded.retrieval_trace_ids,
+        metrics = excluded.metrics,
+        metadata = excluded.metadata,
+        completed_at = excluded.completed_at,
+        updated_at = excluded.updated_at
+    `, [
+      id,
+      input.fixture_id,
+      input.fixture_mode,
+      input.status,
+      input.model_id ?? null,
+      input.skill_surface_hash ?? null,
+      input.agent_rules_version ?? null,
+      input.git_sha ?? null,
+      JSON.stringify(input.retrieval_trace_ids ?? []),
+      JSON.stringify(input.metrics ?? {}),
+      JSON.stringify(input.metadata ?? {}),
+      startedAt,
+      input.completed_at ? input.completed_at.toISOString() : null,
+      timestamp,
+      timestamp,
+    ]);
+    const run = await this.getContextEvalRun(id);
+    if (!run) throw new Error(`Context eval run not found after upsert: ${id}`);
+    return run;
+  }
+
+  async getContextEvalRun(id: string): Promise<ContextEvalRun | null> {
+    const row = this.database.query(`
+      SELECT *
+      FROM context_eval_runs
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    return row ? rowToContextEvalRun(row) : null;
+  }
+
+  async listContextEvalRuns(filters: ContextEvalRunFilters = {}): Promise<ContextEvalRun[]> {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (filters.fixture_id) {
+      clauses.push('fixture_id = ?');
+      params.push(filters.fixture_id);
+    }
+    if (filters.status) {
+      clauses.push('status = ?');
+      params.push(filters.status);
+    }
+    params.push(filters.limit ?? 50);
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT *
+      FROM context_eval_runs
+      ${where}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    return rows.map(rowToContextEvalRun);
+  }
+
+  async putContextEvalAssertion(input: ContextEvalAssertionInput): Promise<ContextEvalAssertion> {
+    const id = input.id ?? crypto.randomUUID();
+    const timestamp = nowIso();
+    this.database.run(`
+      INSERT INTO context_eval_assertions (
+        id, run_id, case_id, assertion_kind, passed, score, expected, actual,
+        message, retrieval_trace_id, metadata, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      id,
+      input.run_id,
+      input.case_id,
+      input.assertion_kind,
+      input.passed ? 1 : 0,
+      input.score ?? null,
+      JSON.stringify(input.expected ?? null),
+      JSON.stringify(input.actual ?? null),
+      input.message ?? null,
+      input.retrieval_trace_id ?? null,
+      JSON.stringify(input.metadata ?? {}),
+      timestamp,
+    ]);
+    const rows = await this.listContextEvalAssertions({ run_id: input.run_id, case_id: input.case_id, limit: 1000 });
+    const assertion = rows.find((row) => row.id === id);
+    if (!assertion) throw new Error(`Context eval assertion not found after insert: ${id}`);
+    return assertion;
+  }
+
+  async listContextEvalAssertions(filters: ContextEvalAssertionFilters = {}): Promise<ContextEvalAssertion[]> {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (filters.run_id) {
+      clauses.push('run_id = ?');
+      params.push(filters.run_id);
+    }
+    if (filters.case_id) {
+      clauses.push('case_id = ?');
+      params.push(filters.case_id);
+    }
+    if (filters.passed !== undefined) {
+      clauses.push('passed = ?');
+      params.push(filters.passed ? 1 : 0);
+    }
+    params.push(filters.limit ?? 100);
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT *
+      FROM context_eval_assertions
+      ${where}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    return rows.map(rowToContextEvalAssertion);
+  }
+
+  async createContextEvalCorrection(input: ContextEvalCorrectionInput): Promise<ContextEvalCorrection> {
+    const id = input.id ?? crypto.randomUUID();
+    const timestamp = nowIso();
+    this.database.run(`
+      INSERT INTO context_eval_corrections (
+        id, trace_id, run_id, case_id, reason, proposed_assertion_id, metadata, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      id,
+      input.trace_id,
+      input.run_id ?? null,
+      input.case_id,
+      input.reason,
+      input.proposed_assertion_id ?? null,
+      JSON.stringify(input.metadata ?? {}),
+      timestamp,
+    ]);
+    const row = this.database.query(`
+      SELECT *
+      FROM context_eval_corrections
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    if (!row) throw new Error(`Context eval correction not found after insert: ${id}`);
+    return rowToContextEvalCorrection(row);
   }
 
   async upsertProfileMemoryEntry(input: ProfileMemoryEntryInput): Promise<ProfileMemoryEntry> {
@@ -4336,9 +4556,9 @@ export class SQLiteEngine implements BrainEngine {
     this.database.run(`
       INSERT INTO note_manifest_entries (
         scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
-        outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
-        extractor_version, last_indexed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        outgoing_wikilinks, outgoing_urls, source_refs, resolver_metadata, heading_index,
+        content_hash, extractor_version, last_indexed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(scope_id, page_id) DO UPDATE SET
         slug = excluded.slug,
         path = excluded.path,
@@ -4350,6 +4570,7 @@ export class SQLiteEngine implements BrainEngine {
         outgoing_wikilinks = excluded.outgoing_wikilinks,
         outgoing_urls = excluded.outgoing_urls,
         source_refs = excluded.source_refs,
+        resolver_metadata = excluded.resolver_metadata,
         heading_index = excluded.heading_index,
         content_hash = excluded.content_hash,
         extractor_version = excluded.extractor_version,
@@ -4367,6 +4588,7 @@ export class SQLiteEngine implements BrainEngine {
       JSON.stringify(input.outgoing_wikilinks ?? []),
       JSON.stringify(input.outgoing_urls ?? []),
       JSON.stringify(input.source_refs ?? []),
+      JSON.stringify(input.resolver_metadata ?? {}),
       JSON.stringify(input.heading_index ?? []),
       input.content_hash,
       input.extractor_version,
@@ -4375,7 +4597,7 @@ export class SQLiteEngine implements BrainEngine {
 
     const row = this.database.query(`
       SELECT scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
-             outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
+             outgoing_wikilinks, outgoing_urls, source_refs, resolver_metadata, heading_index, content_hash,
              extractor_version, last_indexed_at
       FROM note_manifest_entries
       WHERE scope_id = ? AND page_id = ?
@@ -4387,7 +4609,7 @@ export class SQLiteEngine implements BrainEngine {
   async getNoteManifestEntry(scopeId: string, slug: string): Promise<NoteManifestEntry | null> {
     const row = this.database.query(`
       SELECT scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
-             outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
+             outgoing_wikilinks, outgoing_urls, source_refs, resolver_metadata, heading_index, content_hash,
              extractor_version, last_indexed_at
       FROM note_manifest_entries
       WHERE scope_id = ? AND slug = ?
@@ -4421,7 +4643,7 @@ export class SQLiteEngine implements BrainEngine {
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = this.database.query(`
       SELECT scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
-             outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
+             outgoing_wikilinks, outgoing_urls, source_refs, resolver_metadata, heading_index, content_hash,
              extractor_version, last_indexed_at
       FROM note_manifest_entries
       ${whereClause}
@@ -5562,6 +5784,56 @@ export class SQLiteEngine implements BrainEngine {
               ON retrieval_traces(selected_intent, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_retrieval_traces_gate_policy
               ON retrieval_traces(scope_gate_policy, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS context_eval_runs (
+              id TEXT PRIMARY KEY,
+              fixture_id TEXT NOT NULL,
+              fixture_mode TEXT NOT NULL CHECK (fixture_mode IN ('injected_candidates', 'live_retrieve')),
+              status TEXT NOT NULL CHECK (status IN ('running', 'passed', 'failed', 'error')),
+              model_id TEXT,
+              skill_surface_hash TEXT,
+              agent_rules_version TEXT,
+              git_sha TEXT,
+              retrieval_trace_ids TEXT NOT NULL DEFAULT '[]',
+              metrics TEXT NOT NULL DEFAULT '{}',
+              metadata TEXT NOT NULL DEFAULT '{}',
+              started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              completed_at TEXT,
+              created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_context_eval_runs_fixture_created
+              ON context_eval_runs(fixture_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS context_eval_assertions (
+              id TEXT PRIMARY KEY,
+              run_id TEXT NOT NULL REFERENCES context_eval_runs(id) ON DELETE CASCADE,
+              case_id TEXT NOT NULL,
+              assertion_kind TEXT NOT NULL,
+              passed INTEGER NOT NULL,
+              score REAL,
+              expected TEXT NOT NULL DEFAULT 'null',
+              actual TEXT NOT NULL DEFAULT 'null',
+              message TEXT,
+              retrieval_trace_id TEXT REFERENCES retrieval_traces(id) ON DELETE SET NULL,
+              metadata TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_context_eval_assertions_run_case
+              ON context_eval_assertions(run_id, case_id);
+
+            CREATE TABLE IF NOT EXISTS context_eval_corrections (
+              id TEXT PRIMARY KEY,
+              trace_id TEXT NOT NULL REFERENCES retrieval_traces(id) ON DELETE CASCADE,
+              run_id TEXT REFERENCES context_eval_runs(id) ON DELETE SET NULL,
+              case_id TEXT NOT NULL,
+              reason TEXT NOT NULL,
+              proposed_assertion_id TEXT REFERENCES context_eval_assertions(id) ON DELETE SET NULL,
+              metadata TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_context_eval_corrections_trace_created
+              ON context_eval_corrections(trace_id, created_at DESC);
           `);
           break;
         case 9:
@@ -5579,6 +5851,7 @@ export class SQLiteEngine implements BrainEngine {
               outgoing_wikilinks TEXT NOT NULL DEFAULT '[]',
               outgoing_urls TEXT NOT NULL DEFAULT '[]',
               source_refs TEXT NOT NULL DEFAULT '[]',
+              resolver_metadata TEXT NOT NULL DEFAULT '{}',
               heading_index TEXT NOT NULL DEFAULT '[]',
               content_hash TEXT NOT NULL,
               extractor_version TEXT NOT NULL,
@@ -6020,6 +6293,12 @@ export class SQLiteEngine implements BrainEngine {
           break;
         case 58:
           this.ensureMemoryWriteSessionSchema();
+          break;
+        case 59:
+          this.ensureNoteManifestResolverMetadataSchema();
+          break;
+        case 60:
+          this.ensureContextEvalLedgerSchema();
           break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
@@ -8657,6 +8936,68 @@ export class SQLiteEngine implements BrainEngine {
     }
   }
 
+  private ensureNoteManifestResolverMetadataSchema(): void {
+    if (!this.sqliteTableExists('note_manifest_entries')) return;
+    const columns = this.database.query(`PRAGMA table_info(note_manifest_entries)`).all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'resolver_metadata')) {
+      this.database.exec(`ALTER TABLE note_manifest_entries ADD COLUMN resolver_metadata TEXT NOT NULL DEFAULT '{}';`);
+    }
+  }
+
+  private ensureContextEvalLedgerSchema(): void {
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS context_eval_runs (
+        id TEXT PRIMARY KEY,
+        fixture_id TEXT NOT NULL,
+        fixture_mode TEXT NOT NULL CHECK (fixture_mode IN ('injected_candidates', 'live_retrieve')),
+        status TEXT NOT NULL CHECK (status IN ('running', 'passed', 'failed', 'error')),
+        model_id TEXT,
+        skill_surface_hash TEXT,
+        agent_rules_version TEXT,
+        git_sha TEXT,
+        retrieval_trace_ids TEXT NOT NULL DEFAULT '[]',
+        metrics TEXT NOT NULL DEFAULT '{}',
+        metadata TEXT NOT NULL DEFAULT '{}',
+        started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        completed_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_context_eval_runs_fixture_created
+        ON context_eval_runs(fixture_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS context_eval_assertions (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES context_eval_runs(id) ON DELETE CASCADE,
+        case_id TEXT NOT NULL,
+        assertion_kind TEXT NOT NULL,
+        passed INTEGER NOT NULL,
+        score REAL,
+        expected TEXT NOT NULL DEFAULT 'null',
+        actual TEXT NOT NULL DEFAULT 'null',
+        message TEXT,
+        retrieval_trace_id TEXT REFERENCES retrieval_traces(id) ON DELETE SET NULL,
+        metadata TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_context_eval_assertions_run_case
+        ON context_eval_assertions(run_id, case_id);
+
+      CREATE TABLE IF NOT EXISTS context_eval_corrections (
+        id TEXT PRIMARY KEY,
+        trace_id TEXT NOT NULL REFERENCES retrieval_traces(id) ON DELETE CASCADE,
+        run_id TEXT REFERENCES context_eval_runs(id) ON DELETE SET NULL,
+        case_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        proposed_assertion_id TEXT REFERENCES context_eval_assertions(id) ON DELETE SET NULL,
+        metadata TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_context_eval_corrections_trace_created
+        ON context_eval_corrections(trace_id, created_at DESC);
+    `);
+  }
+
   private ensureAccessTokenScopesMcpDefault(columns: Array<{ name: string; dflt_value: string | null }>): void {
     const scopesColumn = columns.find((column) => column.name === 'scopes');
     if (scopesColumn?.dflt_value === '\'["mcp"]\'') return;
@@ -9383,6 +9724,56 @@ function rowToRetrievalTrace(row: Record<string, unknown>): RetrievalTrace {
   };
 }
 
+function rowToContextEvalRun(row: Record<string, unknown>): ContextEvalRun {
+  return {
+    id: String(row.id),
+    fixture_id: String(row.fixture_id),
+    fixture_mode: row.fixture_mode as ContextEvalRun['fixture_mode'],
+    status: row.status as ContextEvalRun['status'],
+    model_id: row.model_id == null ? null : String(row.model_id),
+    skill_surface_hash: row.skill_surface_hash == null ? null : String(row.skill_surface_hash),
+    agent_rules_version: row.agent_rules_version == null ? null : String(row.agent_rules_version),
+    git_sha: row.git_sha == null ? null : String(row.git_sha),
+    retrieval_trace_ids: parseJsonArray(row.retrieval_trace_ids),
+    metrics: parseJsonObject(row.metrics),
+    metadata: parseJsonObject(row.metadata),
+    started_at: new Date(String(row.started_at)),
+    completed_at: row.completed_at == null ? null : new Date(String(row.completed_at)),
+    created_at: new Date(String(row.created_at)),
+    updated_at: new Date(String(row.updated_at)),
+  };
+}
+
+function rowToContextEvalAssertion(row: Record<string, unknown>): ContextEvalAssertion {
+  return {
+    id: String(row.id),
+    run_id: String(row.run_id),
+    case_id: String(row.case_id),
+    assertion_kind: String(row.assertion_kind),
+    passed: Boolean(Number(row.passed)),
+    score: row.score == null ? null : Number(row.score),
+    expected: parseJsonValue(row.expected),
+    actual: parseJsonValue(row.actual),
+    message: row.message == null ? null : String(row.message),
+    retrieval_trace_id: row.retrieval_trace_id == null ? null : String(row.retrieval_trace_id),
+    metadata: parseJsonObject(row.metadata),
+    created_at: new Date(String(row.created_at)),
+  };
+}
+
+function rowToContextEvalCorrection(row: Record<string, unknown>): ContextEvalCorrection {
+  return {
+    id: String(row.id),
+    trace_id: String(row.trace_id),
+    run_id: row.run_id == null ? null : String(row.run_id),
+    case_id: String(row.case_id),
+    reason: String(row.reason),
+    proposed_assertion_id: row.proposed_assertion_id == null ? null : String(row.proposed_assertion_id),
+    metadata: parseJsonObject(row.metadata),
+    created_at: new Date(String(row.created_at)),
+  };
+}
+
 function rowToNoteManifestEntry(row: Record<string, unknown>): NoteManifestEntry {
   return {
     scope_id: String(row.scope_id),
@@ -9397,6 +9788,7 @@ function rowToNoteManifestEntry(row: Record<string, unknown>): NoteManifestEntry
     outgoing_wikilinks: parseJsonArray(row.outgoing_wikilinks),
     outgoing_urls: parseJsonArray(row.outgoing_urls),
     source_refs: parseJsonArray(row.source_refs),
+    resolver_metadata: parseNoteResolverMetadata(row.resolver_metadata),
     heading_index: parseNoteManifestHeadingArray(row.heading_index),
     content_hash: String(row.content_hash),
     extractor_version: String(row.extractor_version),
@@ -9872,4 +10264,22 @@ function normalizeNoteManifestHeading(heading: Record<string, unknown>): NoteMan
     depth: Number(heading.depth ?? 0),
     line_start: Number(heading.line_start ?? 0),
   };
+}
+
+function parseNoteResolverMetadata(value: unknown): NoteResolverMetadata {
+  const raw = parseJsonObject(value ?? {});
+  const metadata: NoteResolverMetadata = {
+    applies_to: parseJsonStringArrayLike(raw.applies_to),
+    excludes: parseJsonStringArrayLike(raw.excludes),
+    routing_triggers: parseJsonStringArrayLike(raw.routing_triggers),
+    gotchas: parseJsonStringArrayLike(raw.gotchas),
+  };
+  if (typeof raw.canonical_subject_key === 'string') metadata.canonical_subject_key = raw.canonical_subject_key;
+  if (typeof raw.definition_owner === 'string') metadata.definition_owner = raw.definition_owner;
+  if (typeof raw.semantic_grain === 'string') metadata.semantic_grain = raw.semantic_grain;
+  return metadata;
+}
+
+function parseJsonStringArrayLike(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
 }

@@ -31,6 +31,13 @@ describe('note manifest service', () => {
         frontmatter: {
           aliases: ['Context Manifest', 'Structural Index'],
           repo: 'meghendra6/mbrain',
+          canonical_subject_key: 'mbrain.note-manifest',
+          definition_owner: 'systems/mbrain',
+          semantic_grain: 'system-component',
+          applies_to: ['manifest rebuilds', 'context routing'],
+          excludes: 'raw source authority, candidate evidence',
+          routing_triggers: ['note manifest', 'structural index'],
+          gotchas: ['candidate chunks are not answer evidence'],
         },
       },
     });
@@ -48,6 +55,15 @@ describe('note manifest service', () => {
       'User, direct message, 2026-04-20 09:00 AM KST',
       'Meeting notes, design sync, 2026-04-20 10:00 AM KST',
     ]);
+    expect(entry.resolver_metadata).toEqual({
+      canonical_subject_key: 'mbrain.note-manifest',
+      definition_owner: 'systems/mbrain',
+      semantic_grain: 'system-component',
+      applies_to: ['manifest rebuilds', 'context routing'],
+      excludes: ['raw source authority', 'candidate evidence'],
+      routing_triggers: ['note manifest', 'structural index'],
+      gotchas: ['candidate chunks are not answer evidence'],
+    });
     expect(entry.heading_index).toEqual([
       { slug: 'overview', text: 'Overview', depth: 1, line_start: 1 },
       { slug: 'details', text: 'Details', depth: 2, line_start: 5 },

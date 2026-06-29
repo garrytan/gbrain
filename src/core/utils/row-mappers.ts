@@ -5,6 +5,9 @@ import type {
   CanonicalTargetProposalStatusEvent,
   Chunk,
   ContextAtlasEntry,
+  ContextEvalAssertion,
+  ContextEvalCorrection,
+  ContextEvalRun,
   ContextMapEntry,
   DerivedIndexState,
   DerivedJob,
@@ -26,6 +29,7 @@ import type {
   MemoryWriteSessionInput,
   NoteManifestEntry,
   NoteManifestHeading,
+  NoteResolverMetadata,
   NoteSectionEntry,
   Page,
   PageType,
@@ -199,6 +203,7 @@ export function rowToNoteManifestEntry(row: Record<string, unknown>): NoteManife
     outgoing_wikilinks: parseJsonStringArray(row.outgoing_wikilinks),
     outgoing_urls: parseJsonStringArray(row.outgoing_urls),
     source_refs: parseJsonStringArray(row.source_refs),
+    resolver_metadata: parseNoteResolverMetadata(row.resolver_metadata),
     heading_index: parseNoteManifestHeadings(row.heading_index),
     content_hash: row.content_hash as string,
     extractor_version: row.extractor_version as string,
@@ -824,6 +829,56 @@ export function rowToRetrievalTrace(row: Record<string, unknown>): RetrievalTrac
   };
 }
 
+export function rowToContextEvalRun(row: Record<string, unknown>): ContextEvalRun {
+  return {
+    id: String(row.id),
+    fixture_id: String(row.fixture_id),
+    fixture_mode: row.fixture_mode as ContextEvalRun['fixture_mode'],
+    status: row.status as ContextEvalRun['status'],
+    model_id: row.model_id == null ? null : String(row.model_id),
+    skill_surface_hash: row.skill_surface_hash == null ? null : String(row.skill_surface_hash),
+    agent_rules_version: row.agent_rules_version == null ? null : String(row.agent_rules_version),
+    git_sha: row.git_sha == null ? null : String(row.git_sha),
+    retrieval_trace_ids: parseJsonStringArray(row.retrieval_trace_ids),
+    metrics: parseJsonObject(row.metrics),
+    metadata: parseJsonObject(row.metadata),
+    started_at: new Date(String(row.started_at)),
+    completed_at: row.completed_at == null ? null : new Date(String(row.completed_at)),
+    created_at: new Date(String(row.created_at)),
+    updated_at: new Date(String(row.updated_at)),
+  };
+}
+
+export function rowToContextEvalAssertion(row: Record<string, unknown>): ContextEvalAssertion {
+  return {
+    id: String(row.id),
+    run_id: String(row.run_id),
+    case_id: String(row.case_id),
+    assertion_kind: String(row.assertion_kind),
+    passed: typeof row.passed === 'boolean' ? row.passed : Boolean(Number(row.passed)),
+    score: row.score == null ? null : Number(row.score),
+    expected: parseNullableJsonValue(row.expected),
+    actual: parseNullableJsonValue(row.actual),
+    message: row.message == null ? null : String(row.message),
+    retrieval_trace_id: row.retrieval_trace_id == null ? null : String(row.retrieval_trace_id),
+    metadata: parseJsonObject(row.metadata),
+    created_at: new Date(String(row.created_at)),
+  };
+}
+
+export function rowToContextEvalCorrection(row: Record<string, unknown>): ContextEvalCorrection {
+  return {
+    id: String(row.id),
+    trace_id: String(row.trace_id),
+    run_id: row.run_id == null ? null : String(row.run_id),
+    case_id: String(row.case_id),
+    reason: String(row.reason),
+    proposed_assertion_id: row.proposed_assertion_id == null ? null : String(row.proposed_assertion_id),
+    metadata: parseJsonObject(row.metadata),
+    created_at: new Date(String(row.created_at)),
+  };
+}
+
 function normalizeMemoryMutationSourceRefs(value: unknown): string[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error('memory mutation source_refs must be a non-empty array of strings');
@@ -883,4 +938,22 @@ function parseNoteManifestHeadings(value: unknown): NoteManifestHeading[] {
     depth: Number(heading.depth ?? 0),
     line_start: Number(heading.line_start ?? 0),
   }));
+}
+
+function parseNoteResolverMetadata(value: unknown): NoteResolverMetadata {
+  const raw = parseJsonObject(value ?? {});
+  const metadata: NoteResolverMetadata = {
+    applies_to: parseStringArrayLike(raw.applies_to),
+    excludes: parseStringArrayLike(raw.excludes),
+    routing_triggers: parseStringArrayLike(raw.routing_triggers),
+    gotchas: parseStringArrayLike(raw.gotchas),
+  };
+  if (typeof raw.canonical_subject_key === 'string') metadata.canonical_subject_key = raw.canonical_subject_key;
+  if (typeof raw.definition_owner === 'string') metadata.definition_owner = raw.definition_owner;
+  if (typeof raw.semantic_grain === 'string') metadata.semantic_grain = raw.semantic_grain;
+  return metadata;
+}
+
+function parseStringArrayLike(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
 }
