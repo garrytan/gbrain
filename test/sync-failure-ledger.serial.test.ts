@@ -18,11 +18,15 @@ import { tmpdir } from 'os';
 
 let tmpHome: string;
 const originalHome = process.env.HOME;
+const originalGbrainHome = process.env.GBRAIN_HOME;
 const originalThreshold = process.env.GBRAIN_SYNC_AUTOSKIP_AFTER;
 
 beforeEach(async () => {
   tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-ledger-'));
   process.env.HOME = tmpHome;
+  // configDir() honors GBRAIN_HOME before os.homedir(); set it explicitly so
+  // Windows test runs never write to the operator's real ~/.gbrain ledger.
+  process.env.GBRAIN_HOME = tmpHome;
   delete process.env.GBRAIN_SYNC_AUTOSKIP_AFTER;
   const { syncFailuresPath } = await import('../src/core/sync-failure-ledger.ts');
   try { rmSync(syncFailuresPath(), { force: true }); } catch { /* none */ }
@@ -30,6 +34,8 @@ beforeEach(async () => {
 
 afterEach(() => {
   if (originalHome) process.env.HOME = originalHome; else delete process.env.HOME;
+  if (originalGbrainHome) process.env.GBRAIN_HOME = originalGbrainHome;
+  else delete process.env.GBRAIN_HOME;
   if (originalThreshold === undefined) delete process.env.GBRAIN_SYNC_AUTOSKIP_AFTER;
   else process.env.GBRAIN_SYNC_AUTOSKIP_AFTER = originalThreshold;
   try { rmSync(tmpHome, { recursive: true, force: true }); } catch { /* ignore */ }
