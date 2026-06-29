@@ -31,5 +31,5 @@ EXPOSE ${PORT:-3131}
 CMD bun run src/cli.ts serve --http \
     --bind 0.0.0.0 \
     --port ${PORT:-3131} \
-    --public-url ${PUBLIC_URL} \
+    ${PUBLIC_URL:+--public-url ${PUBLIC_URL}} \
     --enable-dcr
