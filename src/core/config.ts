@@ -884,6 +884,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'emotional_weight.user_holder',
   // Cycle phase/config health
   'cycle.grade_takes.write_gstack_learnings',
+  'doctor.cycle_freshness.warn_hours',
+  'doctor.cycle_freshness.fail_hours',
   'doctor.cycle_freshness.source_allowlist',
   'doctor.cycle_freshness.source_ignorelist',
   // Content sanity (v0.41)

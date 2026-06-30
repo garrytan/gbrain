@@ -3783,6 +3783,34 @@ async function getCycleFreshnessConfig(engine: BrainEngine, key: string): Promis
   }
 }
 
+function parseCycleFreshnessHours(raw: string | null | undefined, label: string, fallback: number): number | null {
+  if (raw === null || raw === undefined || raw.trim() === '') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    if (!_envNumberWarned.has(label)) {
+      _envNumberWarned.add(label);
+      console.warn(`[gbrain doctor] Ignoring invalid ${label}=${raw}; using default ${fallback}h.`);
+    }
+    return fallback;
+  }
+  return n;
+}
+
+async function resolveCycleFreshnessHours(
+  engine: BrainEngine,
+  env: NodeJS.ProcessEnv | undefined,
+  envKey: string,
+  dbKey: string,
+  fallback: number,
+): Promise<number> {
+  const scopedEnv = env ?? process.env;
+  const envHours = parseCycleFreshnessHours(scopedEnv[envKey], envKey, fallback);
+  if (envHours !== null) return envHours;
+  const dbHours = parseCycleFreshnessHours(await getCycleFreshnessConfig(engine, dbKey), dbKey, fallback);
+  if (dbHours !== null) return dbHours;
+  return fallback;
+}
+
 async function resolveCycleFreshnessSourceScope(
   engine: BrainEngine,
   env: NodeJS.ProcessEnv = process.env,
@@ -3858,6 +3886,7 @@ function cycleFreshnessScopeSuffix(
  *   - GBRAIN_CYCLE_FRESHNESS_FAIL_HOURS (default 24)
  *   - GBRAIN_CYCLE_FRESHNESS_SOURCE_ALLOWLIST / DREAM_SOURCE_ALLOWLIST
  *   - GBRAIN_CYCLE_FRESHNESS_SOURCE_IGNORELIST
+ *   - DB config: doctor.cycle_freshness.warn_hours / fail_hours
  *   - DB config: doctor.cycle_freshness.source_allowlist / source_ignorelist
  */
 export async function checkCycleFreshness(
@@ -3895,8 +3924,20 @@ export async function checkCycleFreshness(
       };
     }
 
-    const warnHours = _resolveSyncFreshnessHours('GBRAIN_CYCLE_FRESHNESS_WARN_HOURS', 6);
-    const failHours = _resolveSyncFreshnessHours('GBRAIN_CYCLE_FRESHNESS_FAIL_HOURS', 24);
+    const warnHours = await resolveCycleFreshnessHours(
+      engine,
+      opts?.env,
+      'GBRAIN_CYCLE_FRESHNESS_WARN_HOURS',
+      'doctor.cycle_freshness.warn_hours',
+      6,
+    );
+    const failHours = await resolveCycleFreshnessHours(
+      engine,
+      opts?.env,
+      'GBRAIN_CYCLE_FRESHNESS_FAIL_HOURS',
+      'doctor.cycle_freshness.fail_hours',
+      24,
+    );
     const warnMs = warnHours * 60 * 60 * 1000;
     const failMs = failHours * 60 * 60 * 1000;
     const now = opts?.nowMs ?? Date.now();

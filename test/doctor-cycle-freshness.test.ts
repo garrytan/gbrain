@@ -79,6 +79,38 @@ describe('doctor checkCycleFreshness', () => {
     expect(result.message).toMatch(/gbrain dream --source/);
   });
 
+  test('DB-configured cycle freshness thresholds support nightly cadence with grace', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('nightly-fresh', agoH(29));
+    await seed('missed-one-night', agoH(36));
+    await engine.setConfig('doctor.cycle_freshness.warn_hours', '30');
+    await engine.setConfig('doctor.cycle_freshness.fail_hours', '48');
+
+    const result = await checkCycleFreshness(engine, { nowMs: NOW, env: {} as NodeJS.ProcessEnv });
+
+    expect(result.status).toBe('warn');
+    expect(result.message).toMatch(/missed-one-night/);
+    expect(result.message).not.toMatch(/nightly-fresh/);
+  });
+
+  test('cycle freshness env thresholds override DB-configured thresholds', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('env-overrides-db', agoH(36));
+    await engine.setConfig('doctor.cycle_freshness.warn_hours', '30');
+    await engine.setConfig('doctor.cycle_freshness.fail_hours', '48');
+
+    const result = await checkCycleFreshness(engine, {
+      nowMs: NOW,
+      env: {
+        GBRAIN_CYCLE_FRESHNESS_WARN_HOURS: '6',
+        GBRAIN_CYCLE_FRESHNESS_FAIL_HOURS: '24',
+      } as NodeJS.ProcessEnv,
+    });
+
+    expect(result.status).toBe('fail');
+    expect(result.message).toMatch(/env-overrides-db/);
+  });
+
   test('source with NO last_full_cycle_at (never cycled) returns fail', async () => {
     await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
     await seed('virgin');
