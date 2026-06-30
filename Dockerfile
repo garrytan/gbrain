@@ -34,6 +34,12 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/bin/gbrain /usr/local/bin/gbrain
+# Ship the bundled schema-pack YAMLs alongside the binary. `bun build --compile`
+# cannot embed these (load-active.ts resolves them via a dynamic path), so
+# without this COPY every file-backed pack (gbrain-recommended, the lens packs,
+# gbrain-bravura) is unloadable in the container — only the hardcoded gbrain-base
+# behavior works. defaultPackLocator checks /usr/local/share/gbrain/schema-packs/base.
+COPY --from=build /app/src/core/schema-pack/base /usr/local/share/gbrain/schema-packs/base
 ENV HOME=/home/bun \
     GBRAIN_HOME=/home/bun/.gbrain
 RUN mkdir -p /home/bun/.gbrain && chown -R bun:bun /home/bun

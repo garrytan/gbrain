@@ -126,6 +126,17 @@ function defaultPackLocator(name: string): string | null {
     // module path doesn't resolve to the source tree.
     const repoRootFallback = join(here, '..', '..', '..', 'src', 'core', 'schema-pack', 'base', `${name}.yaml`);
     if (existsSync(repoRootFallback)) return repoRootFallback;
+    // Compiled-binary deploy: `bun build --compile` cannot embed these
+    // dynamically-resolved YAMLs, and the production image ships only the
+    // binary — so `here`/repo-root resolution both miss and EVERY bundled pack
+    // (recommended, the lens packs, …) is unloadable. Check a fixed install dir
+    // the Dockerfile populates (COPY src/core/schema-pack/base → there), plus an
+    // env override, so explicit pack activation works in the container.
+    for (const dir of [process.env.GBRAIN_PACK_DIR, '/usr/local/share/gbrain/schema-packs/base']) {
+      if (!dir) continue;
+      const installed = join(dir, `${name}.yaml`);
+      if (existsSync(installed)) return installed;
+    }
     return null;
   }
   // User-installed pack at ~/.gbrain/schema-packs/<name>/pack.{yaml,json}
