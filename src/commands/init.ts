@@ -270,7 +270,20 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
       );
       process.exit(1);
     }
-    if (recipe?.touchpoints.embedding?.default_dims) {
+    // Ollama models have heterogeneous native dims (nomic 768, bge-m3 /
+    // mxbai-embed-large 1024, all-minilm 384) and the local endpoint can't
+    // truncate. When the user picked a non-default ollama model but omitted
+    // --embedding-dimensions, derive its KNOWN native dim instead of the
+    // recipe's nomic-anchored default_dims (768) — otherwise we'd size a 768
+    // column for a 1024-dim model and explode at first embed. Unknown ollama
+    // tags fall through to default_dims (documented residual).
+    if (providerId === 'ollama') {
+      const { ollamaNativeDim } = await import('../core/ai/dims.ts');
+      const modelId = out.embedding_model.split(':').slice(1).join(':');
+      const native = ollamaNativeDim(modelId);
+      if (native !== undefined) out.embedding_dimensions = native;
+    }
+    if (out.embedding_dimensions === undefined && recipe?.touchpoints.embedding?.default_dims) {
       out.embedding_dimensions = recipe.touchpoints.embedding.default_dims;
     }
   }
