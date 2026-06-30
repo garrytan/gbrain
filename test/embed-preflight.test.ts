@@ -6,7 +6,7 @@
  * process.env.
  */
 import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
-import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway, diagnoseEmbedding, isAvailable } from '../src/core/ai/gateway.ts';
 import {
   validateEmbeddingCreds,
   formatEmbeddingCredsError,
@@ -117,6 +117,55 @@ describe('validateEmbeddingCreds', () => {
     if (!e.diagnosis.ok) {
       expect(e.diagnosis.reason).toBe('no_gateway_config');
     }
+  });
+});
+
+// First direct tests of diagnoseEmbedding() — nothing called it directly
+// before. Pins the user-provided-model recipes (litellm, llama-server) so a
+// NAMED model passes preflight, while a genuinely-unset model still errors.
+// Regression target: the guard used to reject `litellm:my-model` outright,
+// which also degraded hybrid search to keyword-only via isAvailable('embedding').
+describe('diagnoseEmbedding — user-provided-model recipes', () => {
+  beforeEach(() => { resetGateway(); });
+
+  test('litellm with a named model passes (auth_env.required is empty)', () => {
+    configureGateway(baseConfig({ embedding_model: 'litellm:my-model', env: {} }));
+    const d = diagnoseEmbedding();
+    expect(d.ok).toBe(true);
+    if (d.ok) {
+      expect(d.provider).toBe('litellm');
+      expect(d.recipeId).toBe('litellm');
+    }
+  });
+
+  test('llama-server with a named model passes', () => {
+    configureGateway(baseConfig({ embedding_model: 'llama-server:bge-m3', env: {} }));
+    const d = diagnoseEmbedding();
+    expect(d.ok).toBe(true);
+    if (d.ok) expect(d.provider).toBe('llama-server');
+  });
+
+  test('bare provider (no :model) errors as unknown_provider — parser rejects it upstream', () => {
+    configureGateway(baseConfig({ embedding_model: 'litellm', env: {} }));
+    const d = diagnoseEmbedding();
+    expect(d.ok).toBe(false);
+    if (!d.ok) expect(d.reason).toBe('unknown_provider');
+  });
+
+  test('ollama with a named model passes (non-empty predeclared models list)', () => {
+    // Ollama was never affected by the guard — predeclared models list is
+    // non-empty. Kept as a regression pin; it is true with or without the fix.
+    configureGateway(baseConfig({ embedding_model: 'ollama:nomic-embed-text', env: {} }));
+    expect(diagnoseEmbedding().ok).toBe(true);
+  });
+
+  test('#1812 cascade: isAvailable("embedding") is true for named litellm/llama-server models', () => {
+    // These flip false->true with the fix, so they actually pin it (unlike
+    // ollama). A false here means hybrid search silently drops to keyword-only.
+    configureGateway(baseConfig({ embedding_model: 'litellm:my-model', env: {} }));
+    expect(isAvailable('embedding')).toBe(true);
+    configureGateway(baseConfig({ embedding_model: 'llama-server:bge-m3', env: {} }));
+    expect(isAvailable('embedding')).toBe(true);
   });
 });
 
