@@ -46,13 +46,18 @@ interface CapturedResolve {
 function buildMockEngine(opts: {
   takes: Take[];
   cachedGrades?: Set<string>; // composite-key strings already in take_grade_cache
+  config?: Record<string, string>;
 }): { engine: BrainEngine; captured: CapturedSql[]; resolves: CapturedResolve[] } {
   const captured: CapturedSql[] = [];
   const resolves: CapturedResolve[] = [];
   const cached = opts.cachedGrades ?? new Set<string>();
+  const config = opts.config ?? {};
 
   const engine = {
     kind: 'pglite',
+    async getConfig(key: string) {
+      return config[key] ?? null;
+    },
     async listTakes() {
       return opts.takes;
     },
@@ -224,6 +229,26 @@ describe('runPhaseGradeTakes — phase integration', () => {
     expect(resolves).toHaveLength(0); // no canonical mutation
   });
 
+  test('routes judge model through models.tier.grade_takes with reasoning-tier fallback', async () => {
+    const takes = [buildTake({ id: 1, sinceDate: '2023-01-01' })];
+    const { engine, captured } = buildMockEngine({
+      takes,
+      config: { 'models.tier.reasoning': 'openrouter:private/gemma4-31b' },
+    });
+    let seenModel: string | undefined;
+    const judge: JudgeFn = async input => {
+      seenModel = input.modelHint;
+      return { verdict: 'correct', confidence: 0.98, reasoning: 'evidence held' };
+    };
+    const evidenceRetriever: EvidenceRetrieverFn = async () => 'mock evidence body';
+
+    await runPhaseGradeTakes(buildCtx(engine), { judge, evidenceRetriever });
+
+    expect(seenModel).toBe('openrouter:private/gemma4-31b');
+    const insert = captured.find(c => c.sql.includes('INSERT INTO take_grade_cache'));
+    expect(insert!.params[2]).toBe('openrouter:private/gemma4-31b');
+  });
+
   test('D17: auto-resolve OFF by default — even high-confidence verdict does NOT mutate takes', async () => {
     const takes = [buildTake({ id: 1, sinceDate: '2023-01-01' })];
     const { engine, resolves } = buildMockEngine({ takes });
@@ -277,8 +302,8 @@ describe('runPhaseGradeTakes — phase integration', () => {
 
   test('cache hit: (take, prompt, judge, evidence_sig) match → skip', async () => {
     const takes = [buildTake({ id: 1, sinceDate: '2023-01-01' })];
-    const sig = evidenceSignature('mock evidence body', 'claude-sonnet-4-6');
-    const cached = new Set([`1|${GRADE_TAKES_PROMPT_VERSION}|claude-sonnet-4-6|${sig}`]);
+    const sig = evidenceSignature('mock evidence body', 'anthropic:claude-sonnet-4-6');
+    const cached = new Set([`1|${GRADE_TAKES_PROMPT_VERSION}|anthropic:claude-sonnet-4-6|${sig}`]);
     const { engine } = buildMockEngine({ takes, cachedGrades: cached });
     let judgeCalls = 0;
     const judge: JudgeFn = async () => {
@@ -286,7 +311,7 @@ describe('runPhaseGradeTakes — phase integration', () => {
       return { verdict: 'correct', confidence: 0.9, reasoning: 'x' };
     };
     const evidenceRetriever: EvidenceRetrieverFn = async () => 'mock evidence body';
-    const result = await runPhaseGradeTakes(buildCtx(engine), { judge, evidenceRetriever });
+    const result = await runPhaseGradeTakes(buildCtx(engine), { judge, evidenceRetriever, model: 'anthropic:claude-sonnet-4-6' });
     expect(judgeCalls).toBe(0);
     const details = result.details as Record<string, unknown>;
     expect(details.cache_hits).toBe(1);

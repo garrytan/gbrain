@@ -27,6 +27,9 @@ describe('KNOWN_CONFIG_KEYS', () => {
   test('contains the models-tier keys (v0.31.12)', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('models.default');
     expect(KNOWN_CONFIG_KEYS).toContain('models.tier.subagent');
+    expect(KNOWN_CONFIG_KEYS).toContain('models.tier.propose_takes');
+    expect(KNOWN_CONFIG_KEYS).toContain('models.tier.grade_takes');
+    expect(KNOWN_CONFIG_KEYS).toContain('models.tier.calibration_profile');
   });
 
   test('contains the spend-control keys (v0.42.42.0, #2139) — no --force archaeology', () => {

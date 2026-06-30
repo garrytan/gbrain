@@ -34,6 +34,7 @@ import { patternStatementTemplate, type PatternStatementSlots } from '../calibra
 // extras scorecards stored in calibration_profiles.domain_scorecards JSONB.
 import { aggregateDomainScorecards, type DomainScorecards } from '../calibration/domain-aggregators.ts';
 import { GBrainError } from '../types.ts';
+import { resolveCalibrationCycleModel } from './model-routing.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine, TakesScorecard } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
@@ -89,10 +90,11 @@ export type PatternStatementsGenerator = (input: {
   holder: string;
   attempt: number;
   feedback?: string;
+  modelHint?: string;
 }) => Promise<string[]>;
 
 /** Generator function for bias tags (test seam). */
-export type BiasTagsGenerator = (patterns: string[]) => Promise<string[]>;
+export type BiasTagsGenerator = (patterns: string[], opts?: { modelHint?: string }) => Promise<string[]>;
 
 export interface CalibrationProfileOpts extends BasePhaseOpts {
   /** Holder to generate the profile for. Default 'garry'. */
@@ -146,7 +148,7 @@ export async function defaultPatternsGenerator(input: {
 }
 
 /** Production bias-tags generator. */
-export async function defaultBiasTagsGenerator(patterns: string[]): Promise<string[]> {
+export async function defaultBiasTagsGenerator(patterns: string[], opts: { modelHint?: string } = {}): Promise<string[]> {
   if (patterns.length === 0) return [];
   const prompt = BIAS_TAGS_PROMPT.replace(
     '{PATTERNS_BULLETS}',
@@ -154,6 +156,7 @@ export async function defaultBiasTagsGenerator(patterns: string[]): Promise<stri
   );
   const result = await gatewayChat({
     messages: [{ role: 'user', content: prompt }],
+    ...(opts.modelHint ? { model: opts.modelHint } : {}),
     maxTokens: 200,
   });
   return parseBiasTagsOutput(result.text);
@@ -228,7 +231,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
     const holder = opts.holder ?? 'garry';
     const promptVersion = opts.promptVersion ?? CALIBRATION_PROFILE_PROMPT_VERSION;
-    const modelId = opts.model ?? 'claude-sonnet-4-6';
+    const modelId = await resolveCalibrationCycleModel(engine, 'calibration_profile', opts.model);
     const gradeCompletion = opts.gradeCompletion ?? 1.0;
     const patternsGenerator = opts.patternsGenerator ?? defaultPatternsGenerator;
     const biasTagsGenerator = opts.biasTagsGenerator ?? defaultBiasTagsGenerator;
@@ -264,6 +267,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
         scorecard,
         holder,
         attempt,
+        modelHint: modelId,
         ...(feedback !== undefined ? { feedback } : {}),
       });
       return lines.join('\n');
@@ -291,6 +295,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
         fn: patternStatementTemplate,
         slots: pickFallbackSlots(scorecard),
       },
+      modelHint: modelId,
     };
     if (opts.voiceGateJudge) gateInput.judge = opts.voiceGateJudge;
     const gated = await gateVoice<PatternStatementSlots>(gateInput);
@@ -307,7 +312,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
 
     // Bias tags from the patterns. Best-effort; failure is non-fatal.
     try {
-      result.active_bias_tags = await biasTagsGenerator(result.pattern_statements);
+      result.active_bias_tags = await biasTagsGenerator(result.pattern_statements, { modelHint: modelId });
     } catch (err) {
       result.warnings.push(`bias_tags_generator failed: ${err instanceof Error ? err.message : String(err)}`);
     }

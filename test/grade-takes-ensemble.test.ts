@@ -48,6 +48,9 @@ function buildMockEngine(opts: { takes: Take[] }): {
   const resolves: CapturedResolve[] = [];
   const engine = {
     kind: 'pglite',
+    async getConfig(_key: string) {
+      return null;
+    },
     async listTakes() {
       return opts.takes;
     },
@@ -385,6 +388,6 @@ describe('runPhaseGradeTakes ensemble — auto-apply rules', () => {
       ensembleJudges: [],
     });
     const insert = captured.find(c => c.sql.includes('INSERT INTO take_grade_cache'));
-    expect(insert!.params[2]).toBe('claude-sonnet-4-6'); // single-judge model id
+    expect(insert!.params[2]).toBe('anthropic:claude-sonnet-4-6'); // single-judge model id
   });
 });
