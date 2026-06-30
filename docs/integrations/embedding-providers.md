@@ -141,7 +141,9 @@ Set `ZHIPUAI_API_KEY`. Models: `embedding-3` (current; Matryoshka 256-2048 dims)
 
 No env required — Ollama runs unauthenticated locally. Optional `OLLAMA_BASE_URL` (default `http://localhost:11434/v1`) and `OLLAMA_API_KEY` (for auth-enabled deployments).
 
-Recipe ships with `nomic-embed-text` (768d, recommended), `mxbai-embed-large` (1024d), `all-minilm` (384d). `gbrain providers test --model ollama:nomic-embed-text` smoke-tests the local install.
+Recipe ships with `nomic-embed-text` (768d, recommended default), `mxbai-embed-large` (1024d), `all-minilm` (384d), `bge-m3` (1024d), and `snowflake-arctic-embed2` (1024d). `gbrain providers test --model ollama:nomic-embed-text` smoke-tests the local install.
+
+Pick a non-default model with `gbrain init --embedding-model ollama:bge-m3` — gbrain infers the model's native dimension (1024 here), so you don't have to pass `--embedding-dimensions` for a known model. For a model gbrain doesn't recognize, pass `--embedding-dimensions <N>` explicitly; the local server is the authority on its own vector size. Ollama emits each model's native dimension and can't truncate, so the dimension is sized into the schema at init — switching an existing brain to a different-width model is a re-init, not a config change.
 
 ### llama-server (local, llama.cpp)
 

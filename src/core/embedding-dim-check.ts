@@ -29,6 +29,8 @@ import {
   isOpenAITextEmbedding3Model,
   isValidOpenAITextEmbedding3Dim,
   maxOpenAITextEmbedding3Dim,
+  isLocalUserProvidedDims,
+  ollamaNativeDim,
 } from './ai/dims.ts';
 
 /**
@@ -449,6 +451,28 @@ function isCustomDimValidForProvider(
       error:
         `OpenAI ${modelId} accepts dimensions 1..${maxDim}, got ${requestedDims}.`,
     };
+  }
+
+  // Tier 2b: local / self-hosted providers (ollama, llama-server, litellm).
+  // The running backend is authoritative for its model's native dim, so we
+  // trust the user's explicit --embedding-dimensions (already bounded to a
+  // positive int <= PGVECTOR_COLUMN_MAX_DIMS by validateDimAgainstTouchpoint).
+  // For the curated ollama models we DO know the native dim — and Ollama can't
+  // truncate (no `dimensions` param is sent; see dims.ts:dimsProviderOptions),
+  // so a contradicting dim would build a column the model's vectors can't fit.
+  // Reject it here with a paste-ready fix instead of failing at first embed.
+  if (isLocalUserProvidedDims(recipe)) {
+    const native = recipe.id === 'ollama' ? ollamaNativeDim(modelId) : undefined;
+    if (native !== undefined && requestedDims !== native) {
+      return {
+        valid: false,
+        error:
+          `Ollama model "${modelId}" emits ${native}-dim vectors and cannot truncate, ` +
+          `but --embedding-dimensions ${requestedDims} was requested. ` +
+          `Re-init with --embedding-dimensions ${native} (or drop the flag to use ${native}).`,
+      };
+    }
+    return { valid: true, error: '' };
   }
 
   // Tier 3: provider not known to support custom dims at all.

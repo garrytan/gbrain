@@ -2,6 +2,20 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.54.0] - 2026-06-29
+
+**Local embedding works at its real vector size. Ollama gains the common 1024-dim models (`bge-m3`, `snowflake-arctic-embed2`), and `gbrain init` now accepts a custom embedding dimension for any local provider — Ollama, llama-server, and LiteLLM. Before this, a local embedder could only be initialized at one hardcoded size, so the most common modern setups (a 1024-dim model on Ollama) failed at init.** The dimension preflight only knew how to accept custom sizes for a few hosted providers; every local provider fell through to a blanket "this model doesn't support custom dimensions" refusal — even for a model the recipe itself shipped. The running local server is the authority on its model's native size, so the preflight now trusts an explicit dimension for local providers and sizes the schema correctly for Ollama's known models.
+
+### Added
+- **Two widely-used local embedding models in the Ollama catalog:** `bge-m3` and `snowflake-arctic-embed2` (both 1024-dim), alongside the existing `nomic-embed-text` (768), `mxbai-embed-large` (1024), and `all-minilm` (384).
+
+### Fixed
+- **`gbrain init` accepts a custom embedding dimension for local providers.** Ollama, llama-server, and LiteLLM previously rejected any explicit `--embedding-dimensions` at init — including dimensions the bundled model actually emits — so 1024-dim local embedders couldn't be set up at all. The preflight now trusts the local backend for its model's native size.
+- **Ollama brains are sized to the model's real vector width.** Picking a non-default Ollama model without an explicit dimension now infers that model's native size instead of defaulting to 768, so the schema column matches what the model emits (Ollama can't truncate). A dimension that contradicts a known model's native size is refused at init — naming the right value to use — rather than failing later at first embed.
+
+### To take advantage of v0.42.54.0
+`gbrain upgrade`. To use a 1024-dim local model on a fresh brain: `gbrain init --embedding-model ollama:bge-m3` (the dimension is inferred), or pass `--embedding-dimensions` explicitly for a model gbrain doesn't recognize. The embedding dimension is sized into the schema at init, so switching an existing brain to a different-width model is a re-init, not a config change.
+
 ## [0.42.53.0] - 2026-06-23
 
 **`gbrain sync` works again on managed Postgres brains: the durable-checkpoint pin write was encoding its value the wrong way, so every multi-source sync aborted at the very first checkpoint. Fixed, plus a repo-wide sweep of the same JSONB footgun and a new CI guard so it can't come back.** A recent release added a structural check on the sync checkpoint table; the pin write that runs before every drain bound its value as a string rather than a real array, so the check rejected it and the run bailed before importing anything. The bug was invisible on the embedded engine (its driver parses the value either way) and only bit managed Postgres.

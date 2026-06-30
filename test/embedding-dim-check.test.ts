@@ -257,6 +257,76 @@ describe('resolveSchemaEmbeddingDim', () => {
     if (got.ok) expect(got.dim).toBe(768);
   });
 
+  // ── Local / self-hosted providers (ollama, llama-server, litellm) ──────────
+  // The running backend is authoritative for its model's native dim. Ollama
+  // ships a curated list with KNOWN native dims (dims.ts:OLLAMA_NATIVE_DIMS) and
+  // cannot truncate, so a non-native dim is rejected; unlisted/user-driven
+  // models trust the explicit --embedding-dimensions. Before this fix all three
+  // hit the Tier-3 "does not support custom dimensions" reject (#2170/#2271/#2051).
+
+  test('ollama:bge-m3 accepts its native 1024 dim', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'ollama:bge-m3',
+      embedding_dimensions: 1024,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(1024);
+  });
+
+  test('ollama:mxbai-embed-large accepts its native 1024 dim', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'ollama:mxbai-embed-large',
+      embedding_dimensions: 1024,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(1024);
+  });
+
+  test('ollama:nomic-embed-text accepts its native 768 dim', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'ollama:nomic-embed-text',
+      embedding_dimensions: 768,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(768);
+  });
+
+  test('ollama:nomic-embed-text rejects 1024 — contradicts native 768 (cannot truncate)', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'ollama:nomic-embed-text',
+      embedding_dimensions: 1024,
+    });
+    expect(got.ok).toBe(false);
+    if (!got.ok) expect(got.error).toMatch(/emits 768-dim vectors and cannot truncate/);
+  });
+
+  test('ollama unlisted model trusts the explicit dim (backend is authoritative)', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'ollama:some-custom-model',
+      embedding_dimensions: 999,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(999);
+  });
+
+  test('llama-server trusts the explicit dim (user_provided_models)', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:my-gguf',
+      embedding_dimensions: 1024,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(1024);
+  });
+
+  test('litellm trusts the explicit dim (user_provided_models)', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'litellm:text-embedding-3-large',
+      embedding_dimensions: 1536,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(1536);
+  });
+
   test('unknown provider rejected with provider list hint', () => {
     const got = resolveSchemaEmbeddingDim({ embedding_model: 'notarealprovider:foo' });
     expect(got.ok).toBe(false);

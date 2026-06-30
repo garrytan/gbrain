@@ -9,7 +9,7 @@
  * providerOptions shape to produce vector(N)".
  */
 
-import type { Implementation } from './types.ts';
+import type { Implementation, Recipe } from './types.ts';
 import { AIConfigError } from './errors.ts';
 
 // Voyage hosted models that accept `output_dimension` (values:
@@ -88,6 +88,46 @@ export function isValidOpenAITextEmbedding3Dim(modelId: string, dims: number): b
   const max = OPENAI_TEXT3_MAX_DIMS[modelId];
   if (max === undefined) return false;
   return Number.isInteger(dims) && dims >= 1 && dims <= max;
+}
+
+// Local / self-hosted embedding providers (ollama, llama-server, litellm).
+// Unlike the hosted Matryoshka providers above, the running local backend is
+// authoritative for its model's native vector size — we can't enumerate every
+// model a user might have pulled or proxied, so we trust their explicit
+// `--embedding-dimensions`. (The dim is still bounded to a positive integer
+// <= PGVECTOR_COLUMN_MAX_DIMS by the caller.) For the curated ollama models we
+// DO know the native dim (below), so init can size the column correctly and
+// reject a contradicting dim — Ollama's /v1/embeddings can't truncate (gbrain
+// sends no `dimensions` param for openai-compatible providers; see
+// dimsProviderOptions), so the column width MUST equal the native dim exactly.
+//
+// Native dims verified against ollama.com/library (2026-06): nomic-embed-text
+// 768, mxbai-embed-large 1024, all-minilm 384, bge-m3 1024 (dense component),
+// snowflake-arctic-embed2 1024. Size-variant models (e.g. qwen3-embedding,
+// whose dim changes with the size tag) are intentionally absent — they fall to
+// the "trust the explicit dim" path rather than a wrong single-dim entry.
+const OLLAMA_NATIVE_DIMS: Record<string, number> = {
+  'nomic-embed-text': 768,
+  'mxbai-embed-large': 1024,
+  'all-minilm': 384,
+  'bge-m3': 1024,
+  'snowflake-arctic-embed2': 1024,
+};
+
+export function ollamaNativeDim(modelId: string): number | undefined {
+  return OLLAMA_NATIVE_DIMS[modelId];
+}
+
+/**
+ * True when the recipe is a local/self-hosted embedding provider whose running
+ * backend — not gbrain — is authoritative for its model's native dim. Covers
+ * ollama (by id; it ships a curated model list) plus llama-server and litellm
+ * (via the existing `user_provided_models` flag; they ship no model list at
+ * all). Used by the embedding-dim preflight to trust a user-supplied
+ * `--embedding-dimensions` instead of rejecting it as "unsupported custom dim".
+ */
+export function isLocalUserProvidedDims(recipe: Recipe): boolean {
+  return recipe.id === 'ollama' || recipe.touchpoints.embedding?.user_provided_models === true;
 }
 
 /**
