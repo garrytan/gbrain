@@ -704,12 +704,24 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
     };
   }
 
-  // Openai-compat recipes with empty models list require a user-provided model.
+  // Openai-compat recipes with an empty models list (litellm, llama-server)
+  // require the user to name a concrete model. Only complain when the model is
+  // genuinely UNSET — i.e. `parsed.modelId` is empty. A named model like
+  // `litellm:my-model` must pass; rejecting it here is what blocked every
+  // litellm/llama-server embed (and silently degraded hybrid search to
+  // keyword-only via isAvailable('embedding')).
+  //
+  // Defensive: today `parseModelId` already rejects a bare provider (no
+  // `:model`) upstream, routing to `unknown_provider` before we reach here, so
+  // `parsed.modelId` is always non-empty at this point. The `!parsed.modelId`
+  // guard is belt-and-suspenders for any future recipe/parser path that yields
+  // a known provider with an empty model id.
   const isUserProvided = (tp as any).user_provided_models === true;
   if (
     Array.isArray(tp.models) &&
     tp.models.length === 0 &&
-    (recipe.id === 'litellm' || isUserProvided)
+    (recipe.id === 'litellm' || isUserProvided) &&
+    !parsed.modelId
   ) {
     return {
       ok: false,

@@ -2,6 +2,17 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.54.0] - 2026-06-29
+
+**Embedding works again on bring-your-own-model recipes — LiteLLM and llama.cpp's llama-server — when you name a concrete model, and on those brains hybrid search no longer silently collapses to keyword-only.** The embedding preflight rejected every model on these openai-compatible/local recipes, even a fully-specified one like `litellm:my-model`, so those users couldn't embed at all. Because the same check gates whether vector search is available, the false rejection also quietly degraded `gbrain query` to keyword-only without ever erroring.
+
+### Fixed
+- **User-named embedding models on bring-your-own-model recipes pass preflight.** These recipes ship with an empty built-in model list, and the preflight treated that as "the user never picked a model" — even when they had. It now distinguishes a genuinely-unset model from a named one, so `litellm:<model>` and `llama-server:<model>` are accepted. A bare provider with no model still errors, pointing you at the `provider:model` form. (Ollama was never affected — it ships a built-in model list, so its models always resolved.)
+- **Hybrid search no longer drops to keyword-only on those brains.** The availability predicate that vector recall depends on delegates to the same preflight, so the false rejection had been disabling vector search entirely; with the preflight corrected, queries run vector + keyword as intended.
+
+### To take advantage of v0.42.54.0
+`gbrain upgrade`. If your brain embeds through LiteLLM, llama-server, or another openai-compatible/local provider with a model you named yourself, `gbrain embed` and `gbrain query` work with no further configuration — no migration, no config change.
+
 ## [0.42.53.0] - 2026-06-23
 
 **`gbrain sync` works again on managed Postgres brains: the durable-checkpoint pin write was encoding its value the wrong way, so every multi-source sync aborted at the very first checkpoint. Fixed, plus a repo-wide sweep of the same JSONB footgun and a new CI guard so it can't come back.** A recent release added a structural check on the sync checkpoint table; the pin write that runs before every drain bound its value as a string rather than a real array, so the check rejected it and the run bailed before importing anything. The bug was invisible on the embedded engine (its driver parses the value either way) and only bit managed Postgres.
