@@ -86,6 +86,10 @@ export type CyclePhase =
   // brain-wide BudgetTracker and passes it through opts.budgetTracker
   // so the core's auto-wrap doesn't REPLACE it.
   | 'conversation_facts_backfill'
+  // Durable recovery for the real-time facts pipeline: re-runs extraction
+  // (inline) on pages with an unresolved facts:absorb failure in ingest_log.
+  // Default ON, bounded by page cap + cost cap + walltime deadline.
+  | 'realtime_absorb_recovery'
   // v0.41.39 (#1700) — opt-in (default OFF) trickle that develops a few thin
   // (stub) pages per source per tick via brain-internal grounded synthesis.
   // Same brain-wide BudgetTracker + walltime-cap shape as
@@ -157,6 +161,10 @@ export const ALL_PHASES: CyclePhase[] = [
   // block placement, which runs between the calibration trio and embed),
   // and BEFORE embed so newly-inserted facts get embedded same-cycle.
   'conversation_facts_backfill',
+  // Real-time absorb recovery: after the backfill, before embed, so
+  // recovered facts get embedded same-cycle. Default ON (bounded by page
+  // cap + cost cap + walltime deadline inside the wrapper).
+  'realtime_absorb_recovery',
   // v0.41.39 (#1700) — develop thin stub pages. After
   // conversation_facts_backfill, BEFORE embed so enriched bodies get
   // chunked + embedded in the same cycle.
@@ -235,6 +243,8 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   // fanout enforcement today (per the comment above); the phase
   // wrapper does its own multi-source loop via listSources().
   conversation_facts_backfill: 'source',
+  // Per-source (wrapper loops listSources, same as above).
+  realtime_absorb_recovery: 'source',
   // v0.41.39 (#1700) — per-source (wrapper loops listSources, same as above).
   enrich_thin: 'source',
   // v0.41.20.0 SkillOpt — global (walks the skills/ directory; per-skill
@@ -296,6 +306,8 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'synthesize_concepts',
   // v0.41.11.0 — inserts facts + writes terminal audit rows; needs lock.
   'conversation_facts_backfill',
+  // Inserts facts (inline) + appends recovery tombstone rows; needs lock.
+  'realtime_absorb_recovery',
   // v0.41.39 (#1700) — writes pages via put_page (per-page advisory-locked
   // internally too); coordinate via the cycle lock like the other writers.
   'enrich_thin',
@@ -2094,6 +2106,33 @@ export async function runCycle(
         const { runPhaseConversationFactsBackfill } = await import('./cycle/conversation-facts-backfill.ts');
         const { result, duration_ms } = await timePhase(() =>
           runPhaseConversationFactsBackfill(engine, { dryRun, signal: opts.signal }),
+        );
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // ── realtime_absorb_recovery ────────────────────────────────
+    // Durable recovery for the real-time facts pipeline: re-runs extraction
+    // inline on pages with an unresolved facts:absorb failure in ingest_log.
+    // Default ON; bounded by page cap + cost cap + walltime deadline.
+    if (phases.includes('realtime_absorb_recovery')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'realtime_absorb_recovery',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.realtime_absorb_recovery');
+        const { runPhaseRealtimeAbsorbRecovery } = await import('./cycle/realtime-absorb-recovery.ts');
+        const { result, duration_ms } = await timePhase(() =>
+          runPhaseRealtimeAbsorbRecovery(engine, { dryRun, signal: opts.signal }),
         );
         result.duration_ms = duration_ms;
         phaseResults.push(result);

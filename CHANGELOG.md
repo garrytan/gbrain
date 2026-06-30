@@ -2,6 +2,25 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.54.0] - 2026-06-30
+
+**Fact extraction is now durable: real-time extraction that gets dropped on process exit is recovered automatically, and the conversation backfill makes monotonic forward progress instead of re-extracting (and re-spending) the same page every cycle.** A page could land with zero facts and stay that way forever — the real-time extractor runs fire-and-forget on an in-memory queue, and when the writing process exited before that settled, the in-flight call was aborted and nothing retried it. The durable catch-up that would have rescued it only worked for chat-shaped pages, and even then it wiped the whole page at the start of every run, so a page too large for one cycle's budget could never finish.
+
+Three fixes. First, a new default-on cycle phase recovers any page with an unresolved extraction-failure record: it re-runs the real-time pipeline inline (which carries the existing semantic dedup, so it's idempotent) and tombstones the record on success. It reuses the existing failure log as a durable backlog — no new table — and is bounded by a page cap, a cost cap, and a wall-clock deadline. Second, the conversation backfill now resumes mid-page: each segment's checkpoint advances only after its facts are durably committed, and the start-of-run cleanup is scoped to the uncommitted tail, so committed segments survive across cycles and a large page completes incrementally. Third, the backfill's per-source wall-clock cap is now actually enforced (it was read but never applied), with defaults aligned to the autopilot job window so a long drain can't dead-letter the cycle.
+
+### Added
+- **`realtime_absorb_recovery` cycle phase (default on, bounded).** Recovers pages whose real-time fact extraction was dropped (process exit aborted the in-flight call) by re-running the pipeline inline and tombstoning the failure record. Bounded by `cycle.realtime_absorb_recovery.max_pages` (25), `.max_cost_usd` (0.25), and `.deadline_seconds` (240); kill switch `cycle.realtime_absorb_recovery.enabled=false`.
+
+### Fixed
+- **Conversation backfill resumes mid-page instead of re-extracting from the start.** The per-page checkpoint now carries a row-number watermark and advances per segment on confirmed commit; the start-of-run orphan cleanup is scoped to rows at/after that watermark. A page that can't finish in one cycle's budget makes monotonic forward progress and completes over multiple cycles, rather than wiping its committed work and re-spending every cycle. Legacy checkpoints (no watermark) force one safe full re-extract on upgrade.
+- **Cursor-only-on-confirmed-write.** A swallowed best-effort insert or extract failure no longer advances the resume cursor past unwritten facts — the affected page is re-attempted on the next run.
+- **The backfill's per-source wall-clock cap is enforced.** It was read from config but never passed to the worker, and the brain-wide cap only checks between sources — so a single-source brain had no wall-clock ceiling. Defaults lowered (per-source 4 min, total 6 min) to sit under the autopilot job timeout.
+- **Terminal completion is no longer skipped when a page has exactly the segment-limit count.** The completion check now keys off "consumed every available segment," fixing a livelock where such a page sat in the backlog forever.
+
+### To take advantage of v0.42.54.0
+
+`gbrain upgrade`. The recovery phase runs by default on the next cycle — any page with a recorded extraction failure is re-extracted automatically. The conversation backfill stays opt-in (`cycle.conversation_facts_backfill.enabled`); when enabled it now resumes mid-page and is wall-clock bounded.
+
 ## [0.42.53.0] - 2026-06-23
 
 **`gbrain sync` works again on managed Postgres brains: the durable-checkpoint pin write was encoding its value the wrong way, so every multi-source sync aborted at the very first checkpoint. Fixed, plus a repo-wide sweep of the same JSONB footgun and a new CI guard so it can't come back.** A recent release added a structural check on the sync checkpoint table; the pin write that runs before every drain bound its value as a string rather than a real array, so the check rejected it and the run bailed before importing anything. The bug was invisible on the embedded engine (its driver parses the value either way) and only bit managed Postgres.

@@ -222,6 +222,17 @@ export interface ExtractConversationFactsCoreOpts {
    * a brain-wide tracker; CLI/Minion pass nothing.
    */
   budgetTracker?: BudgetTracker;
+  /**
+   * Wall-clock deadline (ms of elapsed run time) for this core invocation.
+   * Checked between pages; when exceeded the walk stops early and the
+   * remaining backlog is left for the next run (cursor-only-on-confirmed-
+   * write keeps it safe). This is the intra-source ceiling — the cost cap
+   * alone does NOT bound wall time, and on a single-source brain the
+   * brain-wide between-sources walltime check never fires once the lone
+   * source starts. Without this a long drain can blow the autopilot job
+   * timeout (~600s) and dead-letter the whole cycle. Default: unbounded.
+   */
+  deadlineMs?: number;
   /** Bypass `facts.extraction_enabled=false`. Power-user escape. */
   overrideDisabled?: boolean;
   /**
@@ -266,6 +277,8 @@ export interface ExtractConversationFactsResult {
   facts_inserted: number;
   budget_exhausted?: boolean;
   spent_usd?: number;
+  /** B3: true when the per-source wall-clock deadline stopped the walk early. */
+  deadline_hit?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -417,24 +430,56 @@ interface DecodedEntry {
   sourceId: string;
   slug: string;
   endIso: string;
+  /**
+   * Intra-page resume watermark: the page-global row_num up to which facts
+   * are durably committed for this page. Optional 4th field — absent in
+   * legacy entries (pre-intra-page-resume), in which case the consumer
+   * treats it as 0 (full re-extract from the page start, the prior
+   * whole-page behavior). endIso/sourceId/slug never contain a pipe, so the
+   * 4th delimiter is unambiguous.
+   */
+  rowNum?: number;
 }
 
-export function encodeCheckpointEntry(sourceId: string, slug: string, endIso: string): string {
+export function encodeCheckpointEntry(
+  sourceId: string,
+  slug: string,
+  endIso: string,
+  rowNum?: number,
+): string {
   // Slugs are validated to [a-z0-9_/-] + CJK; sourceId is [a-z0-9_-].
   // Neither contains the pipe character, so the delimiter is safe.
-  return `${sourceId}|${slug}|${endIso}`;
+  const base = `${sourceId}|${slug}|${endIso}`;
+  // Always append rowNum when provided (even 0) so a NEW entry is always
+  // 4-field and a LEGACY entry (no rowNum) is always 3-field. cpEntriesToMap
+  // relies on this to tell them apart: a legacy entry has no resume watermark
+  // and must force a full re-extract — a tail-only resume with the scoped
+  // delete-orphans (row_num >= 0) would WIPE the committed prefix it can't
+  // account for without re-extracting it.
+  return rowNum !== undefined ? `${base}|${rowNum}` : base;
 }
 
 export function decodeCheckpointEntry(entry: string): DecodedEntry | null {
-  // Split on first two pipes only — endIso has no pipes either.
+  // Split on the first three pipes: sourceId|slug|endIso[|rowNum]. endIso
+  // (ISO-8601) has no pipe, so a 3rd pipe (if present) starts the rowNum.
   const i1 = entry.indexOf('|');
   if (i1 < 0) return null;
   const i2 = entry.indexOf('|', i1 + 1);
   if (i2 < 0) return null;
+  const i3 = entry.indexOf('|', i2 + 1);
+  if (i3 < 0) {
+    return {
+      sourceId: entry.slice(0, i1),
+      slug: entry.slice(i1 + 1, i2),
+      endIso: entry.slice(i2 + 1),
+    };
+  }
+  const rowNum = parseInt(entry.slice(i3 + 1), 10);
   return {
     sourceId: entry.slice(0, i1),
     slug: entry.slice(i1 + 1, i2),
-    endIso: entry.slice(i2 + 1),
+    endIso: entry.slice(i2 + 1, i3),
+    rowNum: Number.isFinite(rowNum) && rowNum >= 0 ? rowNum : undefined,
   };
 }
 
@@ -584,22 +629,31 @@ async function deleteOrphanFactsForPage(
   engine: BrainEngine,
   sourceId: string,
   slug: string,
+  minRowNum = 0,
 ): Promise<number> {
   try {
     // The two write-source variants this command may have left behind:
     //   - PER_SEGMENT_SOURCE_PREFIX  ('cli:extract-conversation-facts')
     //   - TERMINAL_AUDIT_SOURCE      ('cli:extract-conversation-facts:terminal')
     // Using a LIKE prefix match covers both with one statement.
+    //
+    // Intra-page resume: only the UNCOMMITTED TAIL (row_num >= minRowNum) is
+    // wiped. Rows below the persisted watermark are committed work that a
+    // multi-cycle page must keep so it makes monotonic forward progress.
+    // minRowNum=0 (fresh page / legacy checkpoint) wipes everything — the
+    // prior whole-page behavior. All cli:extract rows carry a non-NULL
+    // row_num, so the `>=` predicate is well-defined for this source family.
     const rows = await engine.executeRaw<{ count: string }>(
       `WITH del AS (
          DELETE FROM facts
          WHERE source_id = $1
            AND source_markdown_slug = $2
            AND source LIKE 'cli:extract-conversation-facts%'
+           AND row_num >= $3
          RETURNING 1
        )
        SELECT COUNT(*)::text AS count FROM del`,
-      [sourceId, slug],
+      [sourceId, slug, minRowNum],
     );
     const n = parseInt(rows[0]?.count ?? '0', 10);
     return Number.isFinite(n) ? n : 0;
@@ -625,42 +679,64 @@ interface ExtractCoreState {
   segmentLimit: number;
   types: AllowedType[];
   signal: AbortSignal | undefined;
+  /** Run start (ms) + wall-clock deadline (ms). deadlineMs=0 ⇒ unbounded. */
+  startedAt: number;
+  deadlineMs: number;
+  /** Set true once the deadline fires so the result can report it. */
+  deadlineHit: { value: boolean };
   /**
    * v0.41.15.0 (D11): shared per-(sourceId, slug) checkpoint map mutated
    * in place from processPage callers. Map.set is atomic in JS's single-
    * threaded event loop so parallel workers (D9) don't clobber each
    * other. Serialized to op-checkpoint string[] via recordCompleted at
-   * batch boundaries + final flush.
+   * batch boundaries + final flush. Value carries the intra-page resume
+   * watermark (last committed segment endIso + page-global row_num) so a
+   * page that doesn't finish in one cycle resumes mid-page.
    */
-  cpMap: Map<string, string>;
+  cpMap: Map<string, CpEntry>;
 }
 
 function cpMapKey(sourceId: string, slug: string): string {
   return `${sourceId}|${slug}`;
 }
 
-function cpMapToEntries(map: Map<string, string>): string[] {
+function cpMapToEntries(map: Map<string, CpEntry>): string[] {
   const out: string[] = [];
-  for (const [key, endIso] of map) {
+  for (const [key, v] of map) {
     const i = key.indexOf('|');
     if (i < 0) continue;
     const sourceId = key.slice(0, i);
     const slug = key.slice(i + 1);
-    out.push(encodeCheckpointEntry(sourceId, slug, endIso));
+    out.push(encodeCheckpointEntry(sourceId, slug, v.endIso, v.rowNum));
   }
   return out;
 }
 
-function cpEntriesToMap(entries: string[]): Map<string, string> {
-  const map = new Map<string, string>();
+/** Per-page resume watermark: last committed segment endIso + page-global row_num. */
+interface CpEntry {
+  endIso: string;
+  rowNum: number;
+}
+
+function cpEntriesToMap(entries: string[]): Map<string, CpEntry> {
+  const map = new Map<string, CpEntry>();
   for (const e of entries) {
     const d = decodeCheckpointEntry(e);
     if (!d) continue;
-    // Newest-endIso wins on duplicates (defensive against pre-fix
-    // entries that may have stacked).
+    // Legacy entry (pre-intra-page-resume, no rowNum field): SKIP it so the
+    // page gets a full re-extract. Keeping it (as rowNum 0) would make the
+    // caller compute sinceIso = its endIso (tail-only) while scoped
+    // delete-orphans wipes row_num >= 0 (everything) — deleting the committed
+    // prefix without re-extracting it (silent data loss on a grown page). A
+    // one-time full re-extract per legacy page on upgrade is the safe trade.
+    if (d.rowNum === undefined) continue;
+    // Newest-endIso wins on duplicates (defensive against pre-fix entries
+    // that may have stacked).
     const key = cpMapKey(d.sourceId, d.slug);
     const prior = map.get(key);
-    if (prior === undefined || d.endIso > prior) map.set(key, d.endIso);
+    if (prior === undefined || d.endIso > prior.endIso) {
+      map.set(key, { endIso: d.endIso, rowNum: d.rowNum });
+    }
   }
   return map;
 }
@@ -700,30 +776,44 @@ async function processPage(
     return { newEndIso: null };
   }
 
-  // D11: delete-orphans-first replay safety. Wipes any facts written by
-  // a prior crashed / killed / partial run for this (sourceId, slug)
-  // pair before we re-extract. The lock we hold (D2 + D12 refreshing
-  // lock above the caller) guarantees no other worker is writing to
-  // this page right now, so the DELETE+INSERT pair is safe.
+  // Intra-page resume watermark: facts with row_num < cp.rowNum are durably
+  // committed AND persisted for this page. sinceIso (computed by the caller
+  // from the same cp.endIso) already excludes those committed segments, so
+  // `segments` above is only the uncommitted tail.
+  const cp = state.cpMap.get(cpMapKey(state.sourceId, page.slug));
+  const resumeRowNum = cp?.rowNum ?? 0;
+
+  // D11: delete-orphans-first replay safety, SCOPED to the uncommitted tail.
+  // A prior run may have crashed AFTER committing a segment but BEFORE
+  // persisting its checkpoint; those rows (>= the persisted watermark) are
+  // wiped and re-extracted. Committed+persisted rows (< watermark) are kept
+  // so a page that can't finish in one cycle (budget/deadline) makes
+  // monotonic forward progress instead of re-extracting from 0 every cycle.
+  // resumeRowNum=0 (fresh page / legacy checkpoint) wipes everything. The
+  // held per-page lock makes the DELETE+INSERT safe.
   if (!state.dryRun) {
-    const cleaned = await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug);
+    const cleaned = await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug, resumeRowNum);
     if (cleaned > 0) {
       state.result.orphan_facts_cleaned += cleaned;
       process.stderr.write(
-        `[extract-conversation-facts] cleaned ${cleaned} orphan fact(s) for ${page.slug} from prior partial run\n`,
+        `[extract-conversation-facts] cleaned ${cleaned} orphan fact(s) for ${page.slug} (>= row ${resumeRowNum}) from prior partial run\n`,
       );
     }
   }
 
-  // Page-global row_num: after delete-orphans-first the table has no
-  // rows for this (sourceId, slug), so we always start from 0. Peek
-  // is kept as a defensive fallback for dry-run + non-deleting paths.
+  // Page-global row_num continues from the committed watermark on resume.
   let rowNum = state.dryRun
     ? await peekRowNumStart(state.engine, state.sourceId, page.slug)
-    : 0;
+    : resumeRowNum;
   let newestEnd: string | null = null;
   let segmentsThisPage = 0;
   let pageInsertedTotal = 0;
+  // B1 (cursor-only-on-confirmed-write): set when any segment fails to
+  // extract or durably insert. When true we suppress the resume-state
+  // advance below so the WHOLE page is re-attempted next run — a swallowed
+  // best-effort failure must never advance the cursor past unwritten facts.
+  // delete-orphans-first (above) makes the replay idempotent.
+  let pageHadWriteError = false;
 
   for (const seg of segments) {
     if (state.segmentLimit > 0 && segmentsThisPage >= state.segmentLimit) break;
@@ -744,7 +834,11 @@ async function processPage(
     } catch (err) {
       if (isAbortError(err)) throw err;
       if (err instanceof BudgetExhausted) throw err;
-      // Per-segment LLM failures are best-effort; loop continues.
+      // Per-segment LLM failures are best-effort; loop continues. B1: a
+      // failed extraction means this segment did not durably process, so
+      // mark the page so the cursor does NOT advance past it (the segment's
+      // potential facts would otherwise be lost permanently).
+      pageHadWriteError = true;
       process.stderr.write(
         `[extract-conversation-facts] segment ${seg.startIso}..${seg.endIso} extractor failed: ${(err as Error).message}\n`,
       );
@@ -776,7 +870,10 @@ async function processPage(
         if (isAbortError(err)) throw err;
         // Batch failure is best-effort — segment is the transactional
         // boundary, so a duplicate-key or constraint error rolls back
-        // this segment only. Loop continues.
+        // this segment only. Loop continues. B1: but the page must NOT be
+        // marked complete — a swallowed insert failure here is exactly the
+        // case that previously advanced the cursor past unwritten facts.
+        pageHadWriteError = true;
         process.stderr.write(
           `[extract-conversation-facts] segment ${seg.startIso}..${seg.endIso} insertFacts failed: ${(err as Error).message}\n`,
         );
@@ -788,14 +885,35 @@ async function processPage(
     }
 
     newestEnd = seg.endIso;
+    // Intra-page resume: advance the per-page checkpoint to THIS segment as
+    // soon as it processed cleanly (cursor-only-on-confirmed-write). rowNum
+    // here is already past this segment's facts. If the page later bails
+    // (budget/deadline/abort) the committed prefix is preserved; the caller
+    // persists the cpMap at batch boundaries, and the scoped delete-orphans
+    // above recovers a crash between commit and persist. Skipped once
+    // pageHadWriteError is set so a failed segment never advances the cursor.
+    if (!state.dryRun && !pageHadWriteError) {
+      state.cpMap.set(cpMapKey(state.sourceId, page.slug), { endIso: seg.endIso, rowNum });
+    }
     if (state.sleepMs > 0) await sleep(state.sleepMs);
   }
 
-  // Eng-v2 C7 / E16: write terminal audit row after all segments commit
-  // successfully. Only run when not dry-run AND we got through every
-  // segment (no break on segmentLimit; that's an explicit partial run).
-  const fullyProcessed =
-    state.segmentLimit === 0 || segmentsThisPage < state.segmentLimit;
+  // B1 (cursor-only-on-confirmed-write): if any segment failed to extract
+  // or insert, suppress the resume-state advance entirely so the whole page
+  // is re-attempted next run. Mirrors the terminal-row-failure suppression
+  // below (the existing `newestEnd = null` pattern). Without this, a
+  // best-effort insert/extract failure marks the page complete and the
+  // unwritten facts are never retried.
+  if (pageHadWriteError) newestEnd = null;
+
+  // Eng-v2 C7 / E16: write terminal audit row after all segments commit.
+  // Fully processed = we consumed every segment that EXISTS this run. Using
+  // segments.length (not `segmentsThisPage < segmentLimit`) fixes the
+  // exact-match case: a page with EXACTLY segmentLimit segments processed all
+  // of them and MUST get its terminal row — otherwise it sits in the backlog
+  // forever (next run's sinceIso filters all segments → 0 segments → early
+  // return before any terminal write → livelock).
+  const fullyProcessed = segmentsThisPage >= segments.length;
   if (!state.dryRun && fullyProcessed && newestEnd !== null) {
     try {
       await writeTerminalAuditRow(state.engine, state.sourceId, page.slug, rowNum);
@@ -817,8 +935,10 @@ async function processPage(
     // the shared Map in place — JS single-threaded event loop makes
     // Map.set atomic across parallel workers; we don't need a load-mutate-
     // flush race. Map serializes back to op-checkpoint string[] at batch
-    // boundaries via the caller's periodic recordCompleted call.
-    state.cpMap.set(cpMapKey(state.sourceId, page.slug), newestEnd);
+    // boundaries via the caller's periodic recordCompleted call. rowNum is
+    // now past the terminal audit row, so the watermark covers everything
+    // written for a fully-completed page.
+    state.cpMap.set(cpMapKey(state.sourceId, page.slug), { endIso: newestEnd, rowNum });
   }
 
   process.stderr.write(
@@ -920,6 +1040,7 @@ export async function runExtractConversationFactsCore(
   );
   const workers = workersResolved.workers;
 
+  const deadlineHit = { value: false };
   const state: ExtractCoreState = {
     result,
     engine,
@@ -929,6 +1050,9 @@ export async function runExtractConversationFactsCore(
     segmentLimit,
     types,
     signal,
+    startedAt: Date.now(),
+    deadlineMs: opts.deadlineMs && opts.deadlineMs > 0 ? opts.deadlineMs : 0,
+    deadlineHit,
     cpMap: new Map(),
   };
 
@@ -961,7 +1085,7 @@ export async function runExtractConversationFactsCore(
         state.cpMap.delete(cpMapKey(sourceId, page.slug));
       }
       const checkpointed = state.cpMap.get(cpMapKey(sourceId, page.slug)) ?? null;
-      sinceIso = pickLaterIso(checkpointed, opts.sinceIso);
+      sinceIso = pickLaterIso(checkpointed?.endIso ?? null, opts.sinceIso);
 
       try {
         await withRefreshingLock(
@@ -1009,6 +1133,14 @@ export async function runExtractConversationFactsCore(
         while (true) {
           if (signal?.aborted) throw new Error('aborted');
           if (opts.limit && processedPagesCount >= opts.limit) break pageLoop;
+          // B3: intra-source wall-clock ceiling. The remaining backlog is
+          // left for the next run; cursor-only-on-confirmed-write keeps it
+          // safe. Checked at batch granularity (worst case overshoots by one
+          // batch of in-flight pages, bounded by PAGE_LIST_BATCH × workers).
+          if (state.deadlineMs > 0 && Date.now() - state.startedAt > state.deadlineMs) {
+            state.deadlineHit.value = true;
+            break pageLoop;
+          }
 
           const batch = await engine.listPages({
             type,
@@ -1075,6 +1207,27 @@ export async function runExtractConversationFactsCore(
       if (opts.budgetTracker) {
         result.spent_usd = opts.budgetTracker.totalSpent;
       }
+      // Intra-page resume: persist the per-segment checkpoint progress made
+      // before the budget ran out, so the page resumes mid-way next cycle
+      // instead of re-extracting (and re-spending on) the committed prefix
+      // every cycle. Without this flush a single page that costs more than
+      // the per-cycle budget would never finish. Best-effort.
+      //
+      // Known minor limitation (workers > 1, opt-in): runSlidingPool throws
+      // on the first BudgetExhausted without awaiting in-flight workers, so a
+      // straggler that commits AFTER this flush isn't persisted and is redone
+      // next cycle. Replay-safe (scoped delete-orphans → no dup, no loss),
+      // just non-monotonic under concurrency. The default cycle runs
+      // workers=1 (PGLite clamps), so it doesn't hit this.
+      if (!dryRun) {
+        try {
+          await recordCompleted(engine, checkpointKey(sourceId), cpMapToEntries(state.cpMap));
+        } catch (flushErr) {
+          process.stderr.write(
+            `[extract-conversation-facts] checkpoint flush on budget-exhaust failed: ${(flushErr as Error).message}\n`,
+          );
+        }
+      }
       // Fall through to receipt+rollup write so the partial run is
       // still observable in extract_health doctor + extracts/ pages.
       await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ true);
@@ -1084,6 +1237,10 @@ export async function runExtractConversationFactsCore(
     }
     throw err;
   }
+
+  // B3: surface whether the wall-clock deadline stopped the walk early so
+  // the cycle/doctor can see "behind, not done" instead of silent staleness.
+  result.deadline_hit = deadlineHit.value;
 
   // v0.42 — Wave B1: extract-conversation-facts writes a receipt page
   // (queryable + citable per D-EXTRACT-17/19) AND UPSERTs the per-day

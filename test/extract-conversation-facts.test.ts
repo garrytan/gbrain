@@ -228,6 +228,23 @@ describe('checkpoint entry encoding', () => {
     const decoded = decodeCheckpointEntry(entry);
     expect(decoded?.slug).toBe('conversations/group/2024/march/team-x');
   });
+
+  test('intra-page rowNum watermark round-trips; new entries always carry it (incl 0)', () => {
+    // New entries encode the rowNum (even 0) → always 4-field.
+    const e0 = encodeCheckpointEntry('default', 'conversations/x', '2024-03-16T08:05:00Z', 0);
+    expect(e0).toBe('default|conversations/x|2024-03-16T08:05:00Z|0');
+    expect(decodeCheckpointEntry(e0)?.rowNum).toBe(0);
+
+    const e5 = encodeCheckpointEntry('default', 'conversations/x', '2024-03-16T08:05:00Z', 5);
+    expect(decodeCheckpointEntry(e5)?.rowNum).toBe(5);
+
+    // Legacy 3-field entry (no rowNum) decodes with rowNum undefined — the
+    // signal cpEntriesToMap uses to force a safe full re-extract (no
+    // tail-only resume that would wipe an unaccounted committed prefix).
+    const legacy = encodeCheckpointEntry('default', 'conversations/x', '2024-03-16T08:05:00Z');
+    expect(legacy).toBe('default|conversations/x|2024-03-16T08:05:00Z');
+    expect(decodeCheckpointEntry(legacy)?.rowNum).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -380,6 +397,57 @@ describe('runExtractConversationFactsCore', () => {
     expect(Number(terminalRows[0]?.count ?? 0)).toBe(1);
   });
 
+  test('B1: a swallowed insertFacts failure does NOT advance the cursor (page re-extracts next run)', async () => {
+    // Regression for cursor-only-on-confirmed-write. The per-segment insert
+    // is best-effort (the catch swallows + continues); pre-B1 the cursor
+    // still advanced past the unwritten facts and the terminal row was
+    // written, so the page was marked complete and never retried. This
+    // forces the INSERT-failure path (NOT abort — abort was already safe).
+    type IF = PGLiteEngine['insertFacts'];
+    const realInsertFacts: IF = engine.insertFacts.bind(engine);
+    let failing = true;
+    engine.insertFacts = (async (rows, opts) => {
+      if (failing) throw new Error('synthetic insertFacts failure');
+      return realInsertFacts(rows, opts);
+    }) as IF;
+
+    let firstThrew = false;
+    let first: Awaited<ReturnType<typeof runExtractConversationFactsCore>> | null = null;
+    try {
+      first = await runExtractConversationFactsCore(engine, {
+        sourceId: 'default',
+        slug: 'conversations/imessage/alice-example',
+        sleepMs: 0,
+      });
+    } catch {
+      firstThrew = true;
+    } finally {
+      failing = false;
+      engine.insertFacts = realInsertFacts;
+    }
+
+    // Best-effort: the call resolves (does not throw) but writes nothing.
+    expect(firstThrew).toBe(false);
+    expect(first?.facts_inserted ?? -1).toBe(0);
+
+    // No terminal audit row — the page was NOT marked complete.
+    const terminalAfterFail = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM facts WHERE source = $1 AND source_session = $2`,
+      [TERMINAL_AUDIT_SOURCE, `${TERMINAL_AUDIT_SOURCE}:conversations/imessage/alice-example`],
+    );
+    expect(Number(terminalAfterFail[0]?.count ?? 0)).toBe(0);
+
+    // Second run WITHOUT --force must RE-PROCESS (the cursor never advanced).
+    // Pre-B1 this skipped (cursor had advanced past every segment).
+    const second = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/alice-example',
+      sleepMs: 0,
+    });
+    expect(second.pages_processed).toBe(1);
+    expect(second.facts_inserted).toBeGreaterThan(0);
+  });
+
   test('row_num accumulator: segment 2 facts start after segment 1 (Codex C1)', async () => {
     await runExtractConversationFactsCore(engine, {
       sourceId: 'default',
@@ -399,6 +467,81 @@ describe('runExtractConversationFactsCore', () => {
     for (let i = 0; i < nums.length; i++) {
       expect(nums[i]).toBe(i);
     }
+  });
+
+  test('intra-page resume: a partial run resumes mid-page without re-extracting the committed prefix', async () => {
+    // Force a partial run: segmentLimit=1 processes only segment 1 (Mar 15),
+    // leaves segment 2 (Mar 16) for next time, and writes NO terminal row.
+    const first = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/alice-example',
+      sleepMs: 0,
+      segmentLimit: 1,
+    });
+    expect(first.segments_processed).toBe(1);
+    expect(first.facts_inserted).toBe(1);
+
+    const seg1 = `${PER_SEGMENT_SOURCE_PREFIX}:conversations/imessage/alice-example`;
+    const factsAfter1 = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM facts WHERE source = $1 AND source_session = $2`,
+      [PER_SEGMENT_SOURCE_PREFIX, seg1],
+    );
+    expect(Number(factsAfter1[0]?.count ?? 0)).toBe(1);
+    // No terminal row — the page is NOT complete.
+    const term1 = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM facts WHERE source = $1 AND source_session = $2`,
+      [TERMINAL_AUDIT_SOURCE, `${TERMINAL_AUDIT_SOURCE}:conversations/imessage/alice-example`],
+    );
+    expect(Number(term1[0]?.count ?? 0)).toBe(0);
+
+    // Second run, NO segmentLimit: must RESUME from segment 2 — NOT wipe and
+    // re-extract segment 1. The committed prefix is preserved (no orphan
+    // cleanup), row_num stays contiguous, and the page completes.
+    const second = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/alice-example',
+      sleepMs: 0,
+    });
+    expect(second.orphan_facts_cleaned).toBe(0); // committed prefix preserved
+    expect(second.segments_processed).toBe(1);   // only segment 2 re-done
+    expect(second.facts_inserted).toBe(1);
+
+    // Total per-segment facts = 2 (segment 1 preserved + segment 2 new).
+    const factsAfter2 = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM facts WHERE source = $1 AND source_session = $2`,
+      [PER_SEGMENT_SOURCE_PREFIX, seg1],
+    );
+    expect(Number(factsAfter2[0]?.count ?? 0)).toBe(2);
+    // row_num contiguous across the two runs (0,1) — continuity preserved.
+    const rows = await engine.executeRaw<{ row_num: number }>(
+      `SELECT row_num FROM facts WHERE source = $1 AND source_markdown_slug = $2 ORDER BY row_num ASC`,
+      [PER_SEGMENT_SOURCE_PREFIX, 'conversations/imessage/alice-example'],
+    );
+    expect(rows.map((r) => Number(r.row_num))).toEqual([0, 1]);
+    // Page now complete — terminal row present.
+    const term2 = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM facts WHERE source = $1 AND source_session = $2`,
+      [TERMINAL_AUDIT_SOURCE, `${TERMINAL_AUDIT_SOURCE}:conversations/imessage/alice-example`],
+    );
+    expect(Number(term2[0]?.count ?? 0)).toBe(1);
+  });
+
+  test('segmentLimit equal to the segment count still completes (writes terminal row, no livelock)', async () => {
+    // SAMPLE_BODY has exactly 2 segments. segmentLimit=2 processes both; the
+    // page MUST get its terminal row (else it sits in the backlog forever:
+    // next run sees 0 segments and returns before any terminal write).
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/alice-example',
+      sleepMs: 0,
+      segmentLimit: 2,
+    });
+    expect(result.segments_processed).toBe(2);
+    const term = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM facts WHERE source = $1 AND source_session = $2`,
+      [TERMINAL_AUDIT_SOURCE, `${TERMINAL_AUDIT_SOURCE}:conversations/imessage/alice-example`],
+    );
+    expect(Number(term[0]?.count ?? 0)).toBe(1);
   });
 
   test('--force clears resume entry, allowing re-run', async () => {
