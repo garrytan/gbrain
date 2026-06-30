@@ -111,6 +111,25 @@ describe('extractEntityRefs', () => {
     expect(refs[0].dir).toBe('meetings');
   });
 
+  test('extracts operations and system refs across supported link shapes', () => {
+    const wikilinks = extractEntityRefs(
+      'See [[operations/gbrain-hermes-integration]] and [[system/hermes-gbrain-gemini-validation]].',
+    );
+    expect(wikilinks.map(r => r.slug)).toEqual([
+      'operations/gbrain-hermes-integration',
+      'system/hermes-gbrain-gemini-validation',
+    ]);
+    expect(wikilinks.map(r => r.dir)).toEqual(['operations', 'system']);
+
+    const markdown = extractEntityRefs(
+      'See [Integration](operations/gbrain-hermes-integration) and [Canary](system/hermes-gbrain-gemini-validation).',
+    );
+    expect(markdown.map(r => r.slug)).toEqual([
+      'operations/gbrain-hermes-integration',
+      'system/hermes-gbrain-gemini-validation',
+    ]);
+  });
+
   // ─── issue #972: generic `[[bare-name]]` wikilinks (pass 2c) ─────────────
 
   test('tags bare wikilinks with needsResolution flag', () => {
