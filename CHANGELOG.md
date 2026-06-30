@@ -2,6 +2,16 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.55.0] - 2026-06-30
+
+**`gbrain whoknows "<topic>" --explain` now shows the per-result ranking factor breakdown it always promised.** The flag was silently a no-op on the command line. `--explain` is a global flag that gets stripped from the arguments before the command runs, so `whoknows` never learned you asked for the explanation and printed its plain result instead. The ranking data was never lost — the `find_experts` tool already returned every result's factors in its JSON, so agent and `--json` callers were unaffected — but the readable breakdown the flag advertises was unreachable from the CLI.
+
+### Fixed
+- **`gbrain whoknows --explain` prints the expertise / recency / salience breakdown under each result.** The CLI now renders the breakdown the same way `gbrain search --explain` and `gbrain query --explain` do: by reading the global `--explain` flag at formatting time. Without `--explain`, output is unchanged. The `find_experts` MCP tool and its parameters are untouched — this is a presentation-only fix, so the tool surface agents see does not change.
+
+### To take advantage of v0.42.55.0
+`gbrain upgrade`, then run `gbrain whoknows "<topic>" --explain` — each result now carries a factor-breakdown line. No migration, no configuration.
+
 ## [0.42.53.0] - 2026-06-23
 
 **`gbrain sync` works again on managed Postgres brains: the durable-checkpoint pin write was encoding its value the wrong way, so every multi-source sync aborted at the very first checkpoint. Fixed, plus a repo-wide sweep of the same JSONB footgun and a new CI guard so it can't come back.** A recent release added a structural check on the sync checkpoint table; the pin write that runs before every drain bound its value as a string rather than a real array, so the check rejected it and the run bailed before importing anything. The bug was invisible on the embedded engine (its driver parses the value either way) and only bit managed Postgres.
