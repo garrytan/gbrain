@@ -2042,8 +2042,20 @@ export async function runCycle(
         if (phases.includes('grade_takes')) {
           checkAborted(opts.signal);
           progress.start('cycle.grade_takes');
-          const { runPhaseGradeTakes } = await import('./cycle/grade-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, { model: takesModel }) as Promise<PhaseResult>);
+          const { runPhaseGradeTakes, defaultJudge } = await import('./cycle/grade-takes.ts');
+          const ensembleJudgeModelIds = [
+            takesModel,
+            process.env.MOONSHOT_API_KEY ? 'moonshot:kimi-k2.6' : undefined,
+            process.env.DASHSCOPE_API_KEY ? 'dashscope-chat:qwen3.7-plus' : undefined,
+          ].filter((modelId): modelId is string => Boolean(modelId));
+          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, {
+            model: takesModel,
+            useEnsemble: ensembleJudgeModelIds.length >= 3,
+            ensembleJudges: ensembleJudgeModelIds.map(modelId => ({
+              modelId,
+              fn: input => defaultJudge({ ...input, modelHint: modelId }),
+            })),
+          }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
