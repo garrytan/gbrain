@@ -42,9 +42,36 @@ import {
   __setChatTransportForTests,
   configureGateway,
   resetGateway,
+  toModelMessages,
   type ChatBlock,
+  type ChatMessage,
   type ChatResult,
 } from '../../src/core/ai/gateway.ts';
+
+/**
+ * Assert a conversation is BALANCED: every assistant turn that carries tool-call
+ * blocks is immediately followed by a turn carrying the matching tool-result
+ * blocks. This is the property a real provider enforces and that assistant-only
+ * persistence violated on a mid-execution-crash resume.
+ */
+function assertBalanced(messages: ChatMessage[]): void {
+  for (let i = 0; i < messages.length; i++) {
+    const content = messages[i].content;
+    if (messages[i].role !== 'assistant' || !Array.isArray(content)) continue;
+    const toolCalls = content.filter((b): b is Extract<ChatBlock, { type: 'tool-call' }> => b.type === 'tool-call');
+    if (toolCalls.length === 0) continue;
+    const next = messages[i + 1];
+    expect(next).toBeDefined();
+    const resultIds = new Set(
+      (Array.isArray(next!.content) ? next!.content : [])
+        .filter((b): b is Extract<ChatBlock, { type: 'tool-result' }> => b.type === 'tool-result')
+        .map(b => b.toolCallId),
+    );
+    for (const call of toolCalls) {
+      expect(resultIds.has(call.toolCallId)).toBe(true);
+    }
+  }
+}
 
 let engine: PGLiteEngine;
 
@@ -507,6 +534,91 @@ describe('SIGKILL crash-replay reconciliation across provider matrix (v0.38 LOAD
         [jobId],
       );
       expect(Number(toolRows[0].n)).toBe(1);
+    });
+  });
+
+  describe('resume rebalance — mid-execution crash yields a balanced history (#2256)', () => {
+    it('synthesizes the missing tool-result turn so the resume chat() history is balanced', async () => {
+      const { jobId } = await seedCrashedState('find foo', 'v2');
+
+      // Capture the message history handed to chat() on the FIRST (resume) call.
+      // Unlike the reconciliation tests above (which stub chat() and ignore its
+      // input), this asserts that history is BALANCED — the exact property a real
+      // provider enforces and that the old assistant-only persistence violated.
+      let firstCall: ChatMessage[] | null = null;
+      __setChatTransportForTests(async (opts) => {
+        if (!firstCall) firstCall = opts.messages;
+        return PROVIDER_MATRIX[0].finalResponse;
+      });
+
+      const executions: Array<{ name: string; input: unknown }> = [];
+      const handler = buildHandler(makeStubTools(executions));
+      const ctx = await makeCrashedCtx(jobId, 'find foo', 'anthropic:claude-sonnet-4-6');
+      const result = await handler(ctx);
+
+      // Prior complete tool is reconstructed from the DB, never re-executed.
+      expect(executions.length).toBe(0);
+
+      // The resume history is balanced: the crashed assistant tool_use turn is
+      // now followed by its synthesized tool-result turn. Without the fix it
+      // ended on the dangling tool_use and a real provider would reject it.
+      expect(firstCall).not.toBeNull();
+      assertBalanced(firstCall!);
+      // The v6 ModelMessage projection succeeds (no dangling tool_use).
+      expect(() => toModelMessages(firstCall!)).not.toThrow();
+      // The synthesized tool-result carries the prior completed output.
+      const toolMsg = (firstCall as unknown as ChatMessage[])[2];
+      expect(toolMsg.role).toBe('user');
+      expect((toolMsg.content as ChatBlock[])[0]).toMatchObject({
+        type: 'tool-result',
+        toolCallId: 'provider-tc-v2-crashed',
+      });
+
+      // Persisted durably so a SECOND crash also resumes balanced.
+      const rows = await engine.executeRaw<{ message_idx: number; role: string }>(
+        `SELECT message_idx, role FROM subagent_messages WHERE job_id = $1 ORDER BY message_idx`,
+        [jobId],
+      );
+      expect(rows.map(r => r.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
+      expect(result.result).toBe(PROVIDER_MATRIX[0].finalResponse.text);
+      expect(result.stop_reason).toBe('end_turn');
+    });
+
+    it('surfaces a still-pending non-idempotent tool on the trailing turn as unrecoverable', async () => {
+      // Trailing ASSISTANT tool_use turn whose tool is still 'pending' (worker
+      // killed mid-execute, before the result was written). It cannot be
+      // reconstructed without risking a double side-effect, so rebalance refuses.
+      const jobRows = await engine.executeRaw<{ id: number }>(
+        `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
+         VALUES ('subagent', 'active', '{}'::jsonb, 'default', 0, now())
+         RETURNING id`,
+      );
+      const jobId = jobRows[0].id;
+      await engine.executeRaw(
+        `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks, model)
+         VALUES ($1, 0, 'user', '[{"type":"text","text":"do it"}]'::jsonb, NULL),
+                ($1, 1, 'assistant', $2::jsonb, 'anthropic:claude-sonnet-4-6')`,
+        [jobId, JSON.stringify([{ type: 'tool-call', toolCallId: 'tc-mid', toolName: 'put_page', input: { slug: 'foo' } }])],
+      );
+      await engine.executeRaw(
+        `INSERT INTO subagent_tool_executions
+           (job_id, message_idx, tool_use_id, tool_name, input, status, schema_version, ordinal, gbrain_tool_use_id)
+         VALUES ($1, 1, 'tc-mid', 'put_page', '{}'::jsonb, 'pending', 2, 0, '01987654-3210-7000-8000-dddddddddddd'::uuid)`,
+        [jobId],
+      );
+
+      __setChatTransportForTests(async () => PROVIDER_MATRIX[0].finalResponse);
+      const tools: ToolDef[] = [{
+        name: 'put_page',
+        description: 'non-idempotent stub',
+        input_schema: { type: 'object' },
+        idempotent: false,
+        async execute() { throw new Error('should not be called'); },
+      }];
+      const handler = buildHandler(tools);
+      const ctx = await makeCrashedCtx(jobId, 'do it', 'anthropic:claude-sonnet-4-6');
+
+      await expect(handler(ctx)).rejects.toThrow(/non-idempotent tool "put_page" pending on resume/i);
     });
   });
 });

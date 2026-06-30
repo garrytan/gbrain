@@ -785,6 +785,63 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     content: adaptContentBlocksToChatBlocks(m.content_blocks),
   }));
 
+  // Resume rebalance (#2256). A worker killed mid-tool-round leaves the trailing
+  // assistant tool_use turn persisted (onAssistantTurn fires BEFORE dispatch) but
+  // its tool-result wrapper unwritten — the outputs live only in
+  // subagent_tool_executions. The gateway loop calls chat() first thing on resume,
+  // so a non-Anthropic provider rejects the dangling tool_use ("Tool results are
+  // missing" / ModelMessage schema). Synthesize the tool-result user turn from the
+  // SETTLED executions so the rebuilt history is balanced and durable. Reading
+  // output/error directly is v1- and v2-safe — it never keys by gbrain_tool_use_id,
+  // so the legacy/D5 path can't be mis-reconciled the way an onToolCallStart-based
+  // re-dispatch would (v1 rows have ordinal=NULL and would miss the conflict key,
+  // re-executing a completed tool). A tool still 'pending' (crashed mid-execute) or
+  // with no exec row can't be reconstructed without risking a non-idempotent re-run
+  // or fabricating a result, so surface it as unrecoverable instead.
+  const lastPrior = priorMessages[priorMessages.length - 1];
+  const lastChat = priorChatMessages[priorChatMessages.length - 1];
+  const trailingToolCalls = lastPrior?.role === 'assistant' && lastChat && Array.isArray(lastChat.content)
+    ? lastChat.content.filter((b): b is Extract<ChatBlock, { type: 'tool-call' }> => b.type === 'tool-call')
+    : [];
+  if (trailingToolCalls.length > 0) {
+    const execRows = await engine.executeRaw<{
+      tool_use_id: string; ordinal: number | null; status: string; output: unknown; error: string | null;
+    }>(
+      `SELECT tool_use_id, ordinal, status, output, error
+         FROM subagent_tool_executions
+        WHERE job_id = $1 AND message_idx = $2`,
+      [ctx.id, lastPrior.message_idx],
+    );
+    const execByToolUseId = new Map(execRows.map(r => [String(r.tool_use_id), r]));
+    const resultBlocks: ChatBlock[] = trailingToolCalls.map((call, idx) => {
+      const exec = execByToolUseId.get(call.toolCallId) ?? execRows.find(r => Number(r.ordinal) === idx);
+      if (exec?.status === 'complete') {
+        return { type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: exec.output ?? null };
+      }
+      if (exec?.status === 'failed') {
+        return { type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: exec.error ?? 'tool failed', isError: true };
+      }
+      // 'pending' (crashed mid-execute) or no row at all — not safely reconcilable.
+      const label = toolHandlers.get(call.toolName)?.idempotent === true ? 'tool' : 'non-idempotent tool';
+      throw new Error(
+        `${label} "${call.toolName}" pending on resume (job_id=${ctx.id}, message_idx=${lastPrior.message_idx}) `
+        + `— cannot safely reconcile the crashed tool round`,
+      );
+    });
+    const resultIdx = priorChatMessages.length; // contiguous slot after the trailing assistant turn
+    await persistMessage(engine, ctx.id, {
+      message_idx: resultIdx,
+      role: 'user',
+      content_blocks: resultBlocks as unknown as ContentBlock[],
+      tokens_in: null,
+      tokens_out: null,
+      tokens_cache_read: null,
+      tokens_cache_create: null,
+      model: null,
+    });
+    priorChatMessages.push({ role: 'user', content: resultBlocks });
+  }
+
   // Initial seed message if no prior state.
   const initialMessages: ChatMessage[] = priorChatMessages.length === 0
     ? [{ role: 'user', content: data.prompt }]
@@ -863,6 +920,22 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
         cache_read: usage.cache_read_tokens,
       });
       heartbeat('llm_call_completed', { turn_idx: turnIdx, tokens: usage });
+    },
+    onToolResultMessage: async (_turnIdx, messageIdx, blocks) => {
+      // Persist the tool-result user turn so resume rebuilds a balanced history.
+      // Same v2 content_blocks contract as onAssistantTurn; tokens/model are
+      // null (no LLM call produced this turn). persistMessage binds via
+      // $N::text::jsonb (JSON.stringify also ISO-izes any Date in tool output).
+      await persistMessage(engine, ctx.id, {
+        message_idx: messageIdx,
+        role: 'user',
+        content_blocks: blocks as unknown as ContentBlock[],
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cache_read: null,
+        tokens_cache_create: null,
+        model: null,
+      });
     },
     onToolCallStart: async (turnIdx, messageIdx, ordinal, toolName, input, providerToolCallId) => {
       // CRITICAL — read back the canonical gbrain_tool_use_id from RETURNING,

@@ -2324,6 +2324,18 @@ export interface ChatToolDef {
 }
 
 /**
+ * Round-trip a tool output through JSON so non-JSON values (e.g. a Postgres
+ * `Date` returned by a tool) become AI-SDK v6 `JSONValue`-safe — a `Date`
+ * serializes to its ISO string instead of surviving as a `Date` instance that
+ * the SDK's Zod `JSONValue` validation rejects. This is a serialization fix at
+ * the SDK boundary, NOT a `::jsonb` DB cast. BigInt/circular outputs would throw
+ * in `JSON.stringify`; those are already not LLM-serializable and out of scope.
+ */
+function toJsonSafe(v: unknown): unknown {
+  return JSON.parse(JSON.stringify(v ?? null));
+}
+
+/**
  * Convert gbrain's provider-neutral ChatMessage[] into AI SDK v6 ModelMessage[].
  *
  * The original code passed `opts.messages as any` straight to generateText,
@@ -2354,7 +2366,7 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
               ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(b.output) }
               : (typeof b.output === 'string'
                 ? { type: 'text' as const, value: b.output }
-                : { type: 'json' as const, value: (b.output ?? null) as never }),
+                : { type: 'json' as const, value: toJsonSafe(b.output) as never }),
           })),
       };
     }
@@ -2891,6 +2903,8 @@ export interface ToolLoopOpts {
    *   2. onToolCallStart   — pending row persisted (D11 step 2)
    *   3. handler.execute   — side effect
    *   4. onToolCallComplete / onToolCallFailed (D11 step 4)
+   *   5. onToolResultMessage — tool-result user message persisted before the
+   *      in-memory push, so a crash mid-loop replays a balanced history.
    */
   onAssistantTurn?: (turnIdx: number, messageIdx: number, blocks: ChatBlock[], usage: ChatResult['usage'], model: string) => Promise<void>;
   /**
@@ -2908,6 +2922,15 @@ export interface ToolLoopOpts {
   ) => Promise<{ gbrainToolUseId: string }>;
   onToolCallComplete?: (gbrainToolUseId: string, output: unknown) => Promise<void>;
   onToolCallFailed?: (gbrainToolUseId: string, error: string) => Promise<void>;
+  /**
+   * Persist the tool-result user message that closes a tool round. Mirrors the
+   * onAssistantTurn ordering: fired (and awaited) BEFORE the in-memory push so a
+   * crash mid-loop resumes with a balanced history (every assistant tool_use turn
+   * is followed by its tool_result turn). Without this, only assistant turns are
+   * persisted and resume rebuilds an unbalanced conversation that the next chat()
+   * rejects ("Tool results are missing").
+   */
+  onToolResultMessage?: (turnIdx: number, messageIdx: number, blocks: ChatBlock[]) => Promise<void>;
 
   /** Optional per-call heartbeat for observability. */
   onHeartbeat?: (event: string, data: Record<string, unknown>) => void;
@@ -3131,9 +3154,12 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
 
     if (stopReason === 'aborted') break;
 
-    // Feed all tool results back as a single user message.
+    // Feed all tool results back as a single user message. Persist BEFORE the
+    // in-memory push (mirrors onAssistantTurn) so a crash mid-loop resumes with a
+    // balanced history. turnIdx here is still the just-finished assistant turn's
+    // index; message_idx is what governs replay ordering.
     const userMessageIdx = messageIdx++;
-    void userMessageIdx;
+    await opts.onToolResultMessage?.(turnIdx, userMessageIdx, toolResultBlocks);
     messages.push({ role: 'user', content: toolResultBlocks });
 
     turnIdx++;
