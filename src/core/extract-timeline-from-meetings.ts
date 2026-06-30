@@ -196,6 +196,32 @@ export async function extractTimelineFromMeetings(
   }
 
   await flush();
+
+  // v0.42.x: entity pages that received a timeline entry from this meeting
+  // projection would otherwise be flagged as "stale" by get_health, because
+  // pages.updated_at lags behind the newly inserted timeline_entries.created_at.
+  // Bump updated_at on every touched page so the health metric stays honest.
+  if (!dryRun && entitiesTouched.size > 0) {
+    const touchedRows = Array.from(entitiesTouched).map((key) => {
+      const [source_id, ...slugParts] = key.split('::');
+      return { source_id, slug: slugParts.join('::') };
+    });
+    try {
+      await engine.executeRaw(
+        `UPDATE pages p
+         SET updated_at = NOW()
+         FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(source_id text, slug text)
+         WHERE p.source_id = v.source_id AND p.slug = v.slug`,
+        [{ rows: touchedRows }],
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(
+        `[extract timeline] failed to update pages.updated_at for ${entitiesTouched.size} entity page(s): ${msg}`,
+      );
+    }
+  }
+
   return {
     meetings_scanned: meetingsScanned,
     entries_created: entriesCreated,
