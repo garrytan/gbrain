@@ -125,6 +125,7 @@ for c in "${CHECKS[@]}"; do
   (
     if [ -n "$TIMEOUT_BIN" ]; then
       "$TIMEOUT_BIN" "${TIMEOUT}s" bun run "$c" > "$LOG_FILE" 2>&1
+      rc=$?
     else
       bun run "$c" > "$LOG_FILE" 2>&1 &
       pid=$!
@@ -132,10 +133,10 @@ for c in "${CHECKS[@]}"; do
         sleep 5 && kill -KILL "$pid" 2>/dev/null ) &
       cap_pid=$!
       wait "$pid" 2>/dev/null
+      rc=$?                          # the check's real exit, captured BEFORE the watchdog kill below
       kill "$cap_pid" 2>/dev/null
       wait "$cap_pid" 2>/dev/null
     fi
-    rc=$?
     echo "$rc" > "$EXIT_FILE"
   ) &
   PIDS+=($!)
