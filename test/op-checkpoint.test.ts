@@ -106,6 +106,34 @@ describe('loadOpCheckpoint / recordCompleted / clearOpCheckpoint', () => {
     expect(result.sort()).toEqual(['chunk-1', 'chunk-2', 'chunk-3']);
   });
 
+  test('recordCompleted stores completed_keys as a sorted JSONB array', async () => {
+    const key = { op: 'embed', fingerprint: 'fp-array-shape' };
+    await recordCompleted(engine, key, ['b', 'a']);
+
+    const rows = await engine.executeRaw<{ typ: string; raw: string }>(
+      `SELECT jsonb_typeof(completed_keys) AS typ, completed_keys::text AS raw
+       FROM op_checkpoints WHERE op = $1 AND fingerprint = $2`,
+      [key.op, key.fingerprint],
+    );
+
+    expect(rows[0].typ).toBe('array');
+    expect(JSON.parse(rows[0].raw)).toEqual(['a', 'b']);
+  });
+
+  test('recordCompleted keeps empty completed_keys as a JSONB array', async () => {
+    const key = { op: 'embed', fingerprint: 'fp-empty-array-shape' };
+    await recordCompleted(engine, key, []);
+
+    const rows = await engine.executeRaw<{ typ: string; raw: string }>(
+      `SELECT jsonb_typeof(completed_keys) AS typ, completed_keys::text AS raw
+       FROM op_checkpoints WHERE op = $1 AND fingerprint = $2`,
+      [key.op, key.fingerprint],
+    );
+
+    expect(rows[0].typ).toBe('array');
+    expect(JSON.parse(rows[0].raw)).toEqual([]);
+  });
+
   test('write overwrites prior state', async () => {
     const key = { op: 'embed', fingerprint: 'abc12345' };
     await recordCompleted(engine, key, ['chunk-1']);
@@ -202,9 +230,9 @@ describe('appendCompleted (delta) + union read', () => {
   test('recordCompleted still REPLACES (sync appendCompleted does not)', async () => {
     // Guards V3: recordCompleted must remove stale keys, not append them.
     const key = { op: 'embed', fingerprint: 'fp-replace' };
-    await recordCompleted(engine, key, ['x', 'y']);
-    await recordCompleted(engine, key, ['x']);
-    expect((await loadOpCheckpoint(engine, key)).sort()).toEqual(['x']);
+    await recordCompleted(engine, key, ['b', 'a']);
+    await recordCompleted(engine, key, ['c']);
+    expect(await loadOpCheckpoint(engine, key)).toEqual(['c']);
   });
 
   test('purge of a stale parent cascades to its child rows', async () => {
@@ -316,6 +344,26 @@ describe('BUG 3: completed_keys array-shape guard (v119 CHECK + defensive loader
         `ALTER TABLE op_checkpoints ADD CONSTRAINT ${CONSTRAINT} CHECK (jsonb_typeof(completed_keys) = 'array')`,
       );
     }
+  });
+});
+
+describe('recordCompleted SQL parameter shape', () => {
+  test('binds sorted string[] and converts with to_jsonb($3::text[])', async () => {
+    const calls: Array<{ sql: string; params?: unknown[] }> = [];
+    const fakeEngine = {
+      async executeRawDirect(sql: string, params?: unknown[]) {
+        calls.push({ sql, params });
+        return [];
+      },
+    };
+
+    const ok = await recordCompleted(fakeEngine as any, { op: 'embed', fingerprint: 'fp-param-shape' }, ['b', 'a']);
+
+    expect(ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain('to_jsonb($3::text[])');
+    expect(calls[0].sql).not.toContain('$3::jsonb');
+    expect(calls[0].params).toEqual(['embed', 'fp-param-shape', ['a', 'b']]);
   });
 });
 
