@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'crypto';
 import type { Page, PageInput, PageType, Chunk, SearchResult, StalePageRow } from './types.ts';
 import type { Take, TakeKind } from './engine.ts';
+import { hasCJK } from './cjk.ts';
 
 /**
  * SHA-256 hash a token/secret for storage. Never store plaintext tokens.
@@ -24,6 +25,9 @@ export function validateSlug(slug: string): string {
   if (!slug || /(^|\/)\.\.($|\/)/.test(slug) || /^\//.test(slug)) {
     throw new Error(`Invalid slug: "${slug}". Slugs cannot be empty, start with /, or contain path traversal.`);
   }
+  // CJK characters have no case distinction — skip toLowerCase to preserve
+  // exact-match semantics in SQL (SELECT slug = $1).
+  if (hasCJK(slug)) return slug;
   return slug.toLowerCase();
 }
 
