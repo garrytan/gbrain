@@ -9,6 +9,7 @@ import {
   DEFAULT_ALIASES,
   TIER_DEFAULTS,
   isAnthropicProvider,
+  isBedrockAnthropicModel,
   _resetDeprecationWarningsForTest,
 } from '../src/core/model-config.ts';
 
@@ -231,6 +232,21 @@ describe('resolveModel — v0.31.12 tier system', () => {
     // widen the guard).
     expect(isAnthropicProvider('openai/gpt-5')).toBe(false);
     expect(isAnthropicProvider('google/gemini-3-pro')).toBe(false);
+  });
+
+  test('isBedrockAnthropicModel: Bedrock-hosted Claude profiles route to the native path', () => {
+    // Bedrock-hosted Claude (inference profiles + bare) — native (AnthropicBedrock).
+    expect(isBedrockAnthropicModel('bedrock:global.anthropic.claude-opus-4-8')).toBe(true);
+    expect(isBedrockAnthropicModel('bedrock:us.anthropic.claude-sonnet-5')).toBe(true);
+    expect(isBedrockAnthropicModel('bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0')).toBe(true);
+    expect(isBedrockAnthropicModel('bedrock:claude-opus-4-8')).toBe(true);
+    // Non-Anthropic Bedrock models stay on the gateway path.
+    expect(isBedrockAnthropicModel('bedrock:global.cohere.embed-v4:0')).toBe(false);
+    expect(isBedrockAnthropicModel('bedrock:amazon.titan-text-v2')).toBe(false);
+    // Direct Anthropic + other providers are not Bedrock-Anthropic.
+    expect(isBedrockAnthropicModel('anthropic:claude-opus-4-8')).toBe(false);
+    expect(isBedrockAnthropicModel('claude-opus-4-8')).toBe(false);
+    expect(isBedrockAnthropicModel('')).toBe(false);
   });
 
   test('alias-chain conflict: forward + reverse for same id (Codex F6)', async () => {

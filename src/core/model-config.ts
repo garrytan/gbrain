@@ -104,6 +104,28 @@ export function isAnthropicProvider(modelString: string): boolean {
   return model.toLowerCase().startsWith('claude-');
 }
 
+/**
+ * A Bedrock-hosted Anthropic (Claude) model, e.g.
+ * `bedrock:global.anthropic.claude-opus-4-8` / `bedrock:us.anthropic.claude-sonnet-5`.
+ *
+ * These are Claude models reachable via Bedrock's NATIVE Anthropic Messages API
+ * (through `@anthropic-ai/bedrock-sdk`'s `AnthropicBedrock` client, keyless via
+ * the AWS credential chain / IRSA). The subagent loop treats them as
+ * Anthropic-family so they run through the battle-tested native path (native
+ * tool-use incl. parallel calls, prompt caching, replay reconciliation) rather
+ * than the Vercel-AI-SDK gateway/Converse path, which mishandles parallel
+ * tool-call result pairing. See src/core/minions/handlers/subagent.ts.
+ */
+export function isBedrockAnthropicModel(modelString: string): boolean {
+  if (!modelString) return false;
+  const { provider, model } = splitProviderModelId(modelString);
+  if (provider?.trim().toLowerCase() !== 'bedrock') return false;
+  // Underlying model must be an Anthropic/Claude profile:
+  // global.anthropic.*, us.anthropic.*, anthropic.*, or a bare claude-* id.
+  const m = model.toLowerCase();
+  return m.includes('anthropic.') || m.startsWith('claude-');
+}
+
 const _subagentTierWarningsEmitted = new Set<string>();
 
 // Module-level set of deprecated config keys we've already warned about.

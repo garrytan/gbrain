@@ -2952,6 +2952,16 @@ export interface ToolLoopOpts {
   ) => Promise<{ gbrainToolUseId: string }>;
   onToolCallComplete?: (gbrainToolUseId: string, output: unknown) => Promise<void>;
   onToolCallFailed?: (gbrainToolUseId: string, error: string) => Promise<void>;
+  /**
+   * Persist the tool-result USER turn (D11 step 5). Fires once per turn after all
+   * tool calls settle, BEFORE the results are pushed to the in-memory history.
+   * REQUIRED for crash-replay correctness: without it the reloaded history ends
+   * at an assistant turn with dangling tool_use blocks, and the next chat() call
+   * throws MissingToolResultsError (AI-SDK core, provider-agnostic). The legacy
+   * Anthropic-native path persists this turn during replay reconciliation; the
+   * gateway path must persist it live for parity.
+   */
+  onToolResults?: (turnIdx: number, messageIdx: number, blocks: ChatBlock[]) => Promise<void>;
 
   /** Optional per-call heartbeat for observability. */
   onHeartbeat?: (event: string, data: Record<string, unknown>) => void;
@@ -3175,9 +3185,12 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
 
     if (stopReason === 'aborted') break;
 
-    // Feed all tool results back as a single user message.
+    // Feed all tool results back as a single user message. Persist it BEFORE the
+    // in-memory push so a crash-replay reloads a COMPLETE (paired) history — else
+    // the reloaded history dangles at the assistant tool_use turn and the next
+    // chat() throws MissingToolResultsError.
     const userMessageIdx = messageIdx++;
-    void userMessageIdx;
+    await opts.onToolResults?.(turnIdx, userMessageIdx, toolResultBlocks);
     messages.push({ role: 'user', content: toolResultBlocks });
 
     turnIdx++;

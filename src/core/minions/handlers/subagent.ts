@@ -25,6 +25,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { AnthropicBedrock } from '@anthropic-ai/bedrock-sdk';
 import type { MinionJobContext, MinionJob } from '../types.ts';
 import { UnrecoverableError } from '../types.ts';
 import type {
@@ -47,7 +48,7 @@ import {
   logSubagentSubmission,
   logSubagentHeartbeat,
 } from './subagent-audit.ts';
-import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
+import { resolveModel, isAnthropicProvider, isBedrockAnthropicModel, TIER_DEFAULTS } from '../../model-config.ts';
 import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts';
 import { toolLoop as gatewayToolLoop } from '../../ai/gateway.ts';
 import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
@@ -225,12 +226,22 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     const useGatewayLoopRaw = await engine.getConfig('agent.use_gateway_loop').catch(() => null);
     const useGatewayLoop = typeof useGatewayLoopRaw === 'string' &&
       (useGatewayLoopRaw === 'true' || useGatewayLoopRaw === '1');
-    if (!useGatewayLoop && !isAnthropicProvider(model)) {
+    // Anthropic-family = direct Anthropic OR Bedrock-hosted Anthropic. Both run
+    // on the NATIVE Anthropic Messages API (direct via `Anthropic`, Bedrock via
+    // `AnthropicBedrock`, keyless/IRSA) — the battle-tested path with native
+    // tool-use (parallel calls), prompt caching, and replay reconciliation. We
+    // ALWAYS route this family to the native path, even when use_gateway_loop is
+    // on, because the gateway/Converse path mishandles parallel tool-result
+    // pairing for Bedrock. use_gateway_loop only governs genuinely non-Anthropic
+    // providers (openai/google/…).
+    const bedrockAnthropic = isBedrockAnthropicModel(model);
+    const anthropicFamily = isAnthropicProvider(model) || bedrockAnthropic;
+    if (!useGatewayLoop && !anthropicFamily) {
       throw new Error(
         `subagent job: resolved model "${model}" is non-Anthropic but agent.use_gateway_loop is not enabled. ` +
         `Enable the gateway-native loop to run on this provider: ` +
         `\`gbrain config set agent.use_gateway_loop true\`. ` +
-        `Or use an Anthropic model (e.g. anthropic:claude-sonnet-4-6).`,
+        `Or use an Anthropic model (e.g. anthropic:claude-sonnet-4-6 or bedrock:global.anthropic.claude-opus-4-8).`,
       );
     }
 
@@ -267,8 +278,12 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       allowed_tools: toolDefs.map(t => t.name),
     });
 
-    // v0.38 S1.5 — gateway path. Route here when the feature flag is on.
-    if (useGatewayLoop) {
+    // v0.38 S1.5 — gateway path. Route here when the feature flag is on, EXCEPT
+    // for Bedrock-hosted Claude, which must use the native path (AnthropicBedrock)
+    // because the gateway/Converse path mishandles parallel tool-result pairing.
+    // Direct-Anthropic still honors the flag (gateway when on) — preserving prior
+    // behavior; only bedrock-Anthropic is force-routed to native.
+    if (useGatewayLoop && !bedrockAnthropic) {
       return await runSubagentViaGateway({
         engine,
         ctx,
@@ -279,6 +294,16 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         maxTurns,
       });
     }
+
+    // Per-job Anthropic client. Bedrock-hosted Claude uses AnthropicBedrock
+    // (native Messages API over Bedrock, keyless via the AWS default credential
+    // chain / IRSA); direct Anthropic uses the handler's default `client`. A
+    // test-injected deps.client always wins (it already flowed into `client`).
+    const activeClient: MessagesClient = (!deps.client && isBedrockAnthropicModel(model))
+      ? (new AnthropicBedrock({
+          awsRegion: process.env.BEDROCK_REGION || process.env.AWS_REGION || 'ca-central-1',
+        }).messages as unknown as MessagesClient)
+      : client;
 
     // ── Load prior state (replay) ───────────────────────────
     const priorMessages = await loadPriorMessages(engine, ctx.id);
@@ -503,7 +528,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         };
 
         const combinedSignal = mergeSignals(ctx.signal, ctx.shutdownSignal);
-        assistantMsg = await client.create(params, { signal: combinedSignal });
+        assistantMsg = await activeClient.create(params, { signal: combinedSignal });
       } catch (err) {
         // Release lease eagerly on error so we don't starve capacity.
         await releaseLease(engine, lease.leaseId!).catch(() => {});
@@ -887,6 +912,22 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       const gbrainToolUseId = rows[0]?.gbrain_tool_use_id ?? candidateId;
       heartbeat('tool_called', { turn_idx: turnIdx, tool_name: toolName });
       return { gbrainToolUseId };
+    },
+    onToolResults: async (_turnIdx, messageIdx, blocks) => {
+      // Persist the tool-result USER turn so a crash-replay reloads a COMPLETE,
+      // paired history. Without this the reloaded history ends at the assistant
+      // tool_use turn and the next chat() throws MissingToolResultsError — the
+      // gap the native path avoids via its replay reconciliation.
+      await persistMessage(engine, ctx.id, {
+        message_idx: messageIdx,
+        role: 'user',
+        content_blocks: blocks as unknown as ContentBlock[],
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cache_read: null,
+        tokens_cache_create: null,
+        model: null,
+      });
     },
     onToolCallComplete: async (gbrainToolUseId, output) => {
       await engine.executeRaw(
