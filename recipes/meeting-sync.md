@@ -1,387 +1,266 @@
 ---
 id: meeting-sync
 name: Meeting Sync
-version: 0.7.0
-description: Meeting transcripts from Circleback auto-import into brain pages with attendee detection and entity propagation.
+version: 0.8.0
+description: Fireflies and Granola transcripts imported through local Composio CLI as two-phase GBrain meeting pages with mandatory propagation before completion.
 category: sense
-requires: []
-secrets:
-  - name: CIRCLEBACK_TOKEN
-    description: Circleback API token for meeting data access
-    where: https://app.circleback.ai — Settings > API > generate token
-health_checks:
-  - type: http
-    url: "https://app.circleback.ai/api/mcp"
-    method: POST
-    headers:
-      Authorization: "Bearer $CIRCLEBACK_TOKEN"
-      Content-Type: "application/json"
-    body: '{"jsonrpc":"2.0","method":"tools/list","id":1}'
-    label: "Circleback API"
+requires:
+  - composio
+secrets: []
 setup_time: 15 min
-cost_estimate: "$0-17/mo (Circleback free for 10 meetings/mo, Pro $17/mo unlimited)"
+cost_estimate: "Depends on Fireflies, Granola, and Composio accounts already in use"
 ---
 
-# Meeting Sync: Transcripts That Become Brain Pages
+# Meeting Sync: Transcript-Grounded Meeting Memory
 
-Every meeting is automatically recorded, transcribed, and imported into your brain
-with attendee detection, entity propagation, and action item extraction. You never
-take notes again. The brain remembers what was said, who said it, and what needs
-to happen next.
+Meeting sync turns recorded Fireflies and Granola meetings into durable brain
+pages. The deterministic command only performs Phase 1: it fetches raw/diarized
+transcripts through the local Composio CLI, writes idempotent meeting markdown,
+and marks each page `ingestion_status: pending_propagation`.
 
-## IMPORTANT: Instructions for the Agent
+Phase 2 is agent work. A meeting is not fully ingested until attendees,
+mentioned entities, action items, timelines, and bidirectional backlinks have
+all been propagated and verified. Only then may the page be marked
+`ingestion_status: complete`.
 
-**You are the installer.** Follow these steps precisely.
+## Sources
 
-**Why this is high-value:** Meeting transcripts are the richest signal source.
-A 30-minute meeting mentions 5-10 people, 3-5 companies, and generates 2-3 action
-items. Each one should propagate to the relevant brain pages. Without this recipe,
-meetings are black holes. With it, every meeting compounds the brain.
+The built-in command uses Composio only. Do not call provider APIs directly and
+do not ask for Fireflies or Granola API keys.
 
-**The flow:**
-1. Circleback records and transcribes the meeting (automatic, no user action)
-2. The sync script pulls completed meetings from Circleback API
-3. Each meeting becomes a brain page at `brain/meetings/{YYYY-MM-DD}-{slug}.md`
-4. YOU (the agent) propagate entities to people/company pages
+Required connected Composio toolkits:
 
-**Do not skip steps. Verify after each step.**
+- `fireflies`
+- `granola_mcp`
+
+Required Composio tool slugs:
+
+- Fireflies listing: `FIREFLIES_GET_TRANSCRIPTS`
+- Fireflies detail: `FIREFLIES_GET_TRANSCRIPT_BY_ID`
+- Granola listing: `GRANOLA_MCP_LIST_MEETINGS`
+- Granola details: `GRANOLA_MCP_GET_MEETINGS`
+- Granola transcript: `GRANOLA_MCP_GET_MEETING_TRANSCRIPT`
+
+Circleback remains a documented meeting source elsewhere in the skillpack, but
+it is not part of this built-in Fireflies + Granola implementation.
 
 ## Architecture
 
 ```
-Video Call (Zoom, Google Meet, Teams)
-  ↓ Circleback bot joins automatically
-Circleback (recording + transcription + AI summary)
-  ↓ API (JSONRPC 2.0 over HTTP, SSE responses)
-Meeting Sync Script (deterministic Node.js)
-  ↓ Outputs:
-  └── brain/meetings/{YYYY-MM-DD}-{slug}.md
-      - Frontmatter: source_id, date, duration, attendees, location
-      - Transcript with speaker labels and timestamps
-      - Tags inferred from title
-  ↓
-Agent reads meeting page
-  ↓ Judgment calls:
-  ├── Entity detection (people, companies, topics)
-  ├── Propagate to attendee brain pages (timeline entries)
-  ├── Action item extraction
-  └── Cross-reference with calendar data
+Fireflies / Granola
+  -> local Composio CLI
+  -> gbrain meeting-sync
+  -> meetings/{YYYY-MM-DD}-{slug}.md
+     ingestion_status: pending_propagation
+  -> agent propagation
+  -> ingestion_status: complete
 ```
 
-## Opinionated Defaults
+## Phase 1: Deterministic Transcript Collection
 
-**Meeting page format:**
-```markdown
----
-type: meeting
-source_id: cb_abc123
-source_type: circleback
-title: Weekly Team Sync
-date: 2026-04-10
-duration: 32 min
-attendees: [Alice Chen, Bob Park, Carol Wu]
-location: Google Meet
-tags: [team, weekly, sync]
----
-
-## Key Points
-- Discussed Q2 roadmap priorities
-- Alice is blocked on the API migration
-- Bob's prototype is ready for review
-
-## Action Items
-- [ ] Alice: unblock API migration by Friday
-- [ ] Bob: share prototype link in Slack
-- [ ] Carol: schedule design review for next week
-
----
-
-## Transcript
-
-**Alice Chen** (00:00): Let's start with the roadmap update...
-**Bob Park** (02:15): The prototype is basically done...
-**Carol Wu** (05:30): I have some design feedback on the new flow...
-```
-
-**Attendee filtering:**
-- Skip calendar resources (e.g., "YC-SF Conference Room")
-- Skip group addresses (e.g., "team@company.com")
-- Extract display names, not email addresses
-
-**Idempotent by source_id:** If a meeting with the same `source_id` already exists
-in the brain, skip it. No duplicates.
-
-## Prerequisites
-
-1. **GBrain installed and configured** (`gbrain doctor` passes)
-2. **Node.js 18+** (for the sync script)
-3. **Circleback account** (https://circleback.ai) with meetings recorded
-
-## Setup Flow
-
-### Step 1: Get Circleback API Token
-
-Tell the user:
-"I need your Circleback API token. Here's where to find it:
-
-1. Go to https://app.circleback.ai
-2. Click your profile icon (top right) > Settings
-3. Go to the API section
-4. Generate a new API token (or copy existing)
-5. Paste it to me
-
-Note: Circleback's free tier records up to 10 meetings/month. Pro ($17/mo)
-is unlimited. You need at least one recorded meeting for the sync to work."
-
-Validate immediately:
-```bash
-curl -sf -H "Authorization: Bearer $CIRCLEBACK_TOKEN" \
-  "https://app.circleback.ai/api/mcp" \
-  -X POST -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}' \
-  | grep -q '"result"' \
-  && echo "PASS: Circleback API connected" \
-  || echo "FAIL: Circleback token invalid"
-```
-
-**If validation fails:** "That didn't work. Common issues: (1) make sure you copied
-the full token, (2) tokens are long hex strings, (3) check that your Circleback
-account is active."
-
-**STOP until Circleback validates.**
-
-### Step 2: Set Up the Meeting Sync Script
+Run:
 
 ```bash
-mkdir -p meeting-sync
-cd meeting-sync
-npm init -y
+gbrain meeting-sync --providers fireflies,granola --days 2 --repo ~/brain
 ```
 
-The sync script needs these capabilities:
-
-1. **List meetings** — call Circleback API `list_meetings` with date range
-   (SSE response format, parse streaming events)
-2. **Extract meeting data** — title, attendees, transcript, duration, date
-3. **Slugify title** — "Weekly Team Sync" → `weekly-team-sync`
-4. **Check for existing** — skip if `brain/meetings/{date}-{slug}.md` exists
-5. **Format as markdown** — frontmatter + key points + action items + transcript
-6. **Filter attendees** — remove calendar resources, groups, extract display names
-7. **Infer tags** — from title keywords (e.g., "board" → board, "1:1" → 1-on-1)
-
-### Step 3: Run First Sync
+For scheduled automation, submit the same deterministic collection through
+Minions so the run is durable and observable:
 
 ```bash
-node meeting-sync.mjs --days 7
+gbrain meeting-sync --providers fireflies,granola --days 2 --repo ~/brain --background
 ```
 
-This syncs the last 7 days of meetings. For a full backfill:
+Run a Minions worker or supervisor in Postgres-backed deployments so queued
+jobs are claimed:
+
 ```bash
-node meeting-sync.mjs --start 2026-01-01 --end $(date +%Y-%m-%d)
+gbrain jobs supervisor start --detach --json
 ```
 
-Verify:
+`meeting-sync` is submitted explicitly with `--background`; do not rely on
+legacy cron auto-rewrite for this handler.
+
+Backfill:
+
 ```bash
-ls brain/meetings/ | head -10
+gbrain meeting-sync --providers fireflies,granola --all --repo ~/brain
 ```
 
-Should show files like `2026-04-10-weekly-team-sync.md`.
-
-Tell the user: "Found and synced N meetings. Here are the most recent: [list 3]."
-
-### Step 4: Import to GBrain
+Inspect incomplete pages:
 
 ```bash
-gbrain import brain/meetings/ --no-embed
+gbrain meeting-sync --list-pending --repo ~/brain
+```
+
+Then index newly written markdown:
+
+```bash
+gbrain sync --no-pull --no-embed
 gbrain embed --stale
 ```
 
-Verify:
-```bash
-gbrain search "meeting" --limit 3
+### Ground Truth Rules
+
+- Fireflies transcript text must come from `sentences[]`.
+- Granola transcript text must come from `GRANOLA_MCP_GET_MEETING_TRANSCRIPT`.
+- AI summaries or notes may populate summary sections, but never replace the
+  transcript ground truth.
+- If no diarized/raw transcript is available, skip the meeting and report an
+  error. Do not write a summary-only meeting page.
+
+### Idempotency
+
+Every meeting uses a stable source ID:
+
+- `fireflies:<transcript_id>`
+- `granola:<meeting_uuid>`
+
+The command skips an existing meeting when either the target filename already
+exists or any existing `meetings/**/*.md` file contains the same `source_id`.
+Reruns must not create duplicates.
+
+## Meeting Page Contract
+
+Path:
+
+```text
+meetings/{YYYY-MM-DD}-{slug}.md
 ```
 
-### Step 5: Propagate to Entity Pages
+Required frontmatter:
 
-This is YOUR job (the agent). For each meeting:
-
-1. **Read the meeting page** — understand who attended and what was discussed
-2. **For each attendee**, check brain: `gbrain search "attendee name"`
-   - If page exists: append timeline entry:
-     `- YYYY-MM-DD | Meeting: {title}. Discussed: {key points relevant to this person} [Source: Circleback]`
-   - If no page and person is notable: create a brain page
-3. **For each company mentioned**: update company page timeline
-4. **Action items**: if the meeting has action items, ensure they're tracked
-5. **Cross-reference with calendar**: link meeting page to the calendar event
-6. **Sync**: `gbrain sync --no-pull --no-embed`
-
-### Step 6: Set Up Cron
-
-Sync 3x daily on weekdays:
-```bash
-# 10 AM, 4 PM, 9 PM PT on weekdays
-0 10,16,21 * * 1-5 cd /path/to/meeting-sync && node meeting-sync.mjs >> /tmp/meeting-sync.log 2>&1
-```
-
-Default (no flags): syncs yesterday and today.
-
-### Step 7: Log Setup Completion
-
-```bash
-mkdir -p ~/.gbrain/integrations/meeting-sync
-echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","event":"setup_complete","source_version":"0.7.0","status":"ok"}' >> ~/.gbrain/integrations/meeting-sync/heartbeat.jsonl
-```
-
-Tell the user: "Meeting sync is set up. Every meeting recorded by Circleback
-automatically becomes a searchable brain page. Attendee pages get updated with
-meeting history. Action items are extracted. Sync runs 3x daily on weekdays."
-
-## Implementation Guide
-
-These are production-tested patterns from syncing 280+ meeting transcripts.
-
-### SSE Response Parsing
-
-Circleback returns JSONRPC 2.0 over SSE (Server-Sent Events):
-```
-call_circleback(tool_name, args):
-  body = {jsonrpc: '2.0', id: next_id(), method: 'tools/call',
-          params: {name: tool_name, arguments: args}}
-
-  res = POST CIRCLEBACK_ENDPOINT, body,
-        headers: {Authorization: Bearer TOKEN, Accept: 'application/json, text/event-stream'}
-
-  text = res.text()
-  for line in text.split('\n'):
-    if line.startsWith('data: '):
-      json = JSON.parse(line[6:])             // strip "data: "
-      if json.result?.content?.[0]?.text:
-        return JSON.parse(json.result.content[0].text)  // double-parse
-      if json.error:
-        throw json.error
-```
-
-**Non-obvious:** The response is JSON inside SSE inside JSONRPC. You have to:
-1. Strip `data: ` prefix
-2. Parse the SSE line as JSON
-3. Drill into `result.content[0].text`
-4. Parse THAT as JSON again (it's a string containing JSON)
-
-### Idempotency (Double-Check)
-
-```
-meeting_exists(source_id):
-  // Method 1: grep all meeting files for source_id
-  result = shell(f'grep -rl "source_id: {source_id}" {MEETINGS_DIR}/')
-  if result: return true
-
-  // Method 2: check filename (backup)
-  slug = slugify(meeting.name)
-  if file_exists(f'{MEETINGS_DIR}/{date}-{slug}.md'): return true
-
-  return false
-```
-
-**Why double-check:** grep catches source_id matches even if the filename changed.
-File existence catches cases where grep fails (e.g., permission issues).
-
-### Auto-Tagging from Meeting Name
-
-```
-auto_tag(meeting_name):
-  name = meeting_name.toLowerCase()
-  tags = []
-  if 'office hours' in name or ' oh ' in name: tags.push('oh')
-  if 'standup' in name or 'sync' in name: tags.push('sync')
-  if '1:1' in name or '1on1' in name: tags.push('1on1')
-  if 'board' in name: tags.push('board')
-  if 'policy' in name or 'civic' in name: tags.push('civic')
-  if not tags: tags.push('meeting')
-  return tags
-```
-
-### Meeting Page Structure
-
-```
+```yaml
 ---
-title: "Weekly Team Sync"
 type: meeting
-date: 2026-04-10
-duration: 32 min
-source: circleback
-source_id: cb_abc123
+source_type: fireflies
+source_id: fireflies:abc123
+date: 2026-06-29
+duration: 30 min
+location: Google Meet
 attendees:
-  - {name: Alice Chen, email: alice@company.com}
-  - {name: Bob Park, email: bob@company.com}
+  - name: Alice Example
+    email: alice@example.com
 tags: [sync]
+ingestion_status: pending_propagation
 ---
+```
 
-# Weekly Team Sync
+`duration` and `location` are included when the provider returns them.
+The command may also emit metadata such as `id`, `source`, `provider_id`,
+`source_url`, and `updated_at`. These are informational; `source_id` remains
+the idempotency key.
 
+Required sections above the separator:
+
+```markdown
 ## Summary
-[Circleback AI summary]
+None
 
-## Attendees
-- Alice Chen
-- Bob Park
+## Key Decisions
+None
 
 ## Action Items
-- [ ] Alice: unblock API migration by Friday
+None
+
+## Discussion Notes / Key Points
+None
+
+## Attendees
+- Alice Example
 
 ---
 
 ## Transcript
 
-**Alice Chen** (00:00): Let's start with the roadmap...
-**Bob Park** (02:15): The prototype is basically done...
+**Alice Example** (00:00): Raw transcript line.
 ```
 
-### Git Commit After Sync
+Render `None` when any required content section is absent. Attendee display
+lists must not show raw email addresses. Calendar resources and group/list
+addresses should be filtered out. If only an email exists for a real attendee,
+derive a display name from the local part.
 
+The full diarized transcript lives below the separator and is append-only.
+Phase 2 and reruns must not rewrite, truncate, or replace that transcript
+block.
+
+## Phase 2: Mandatory Propagation
+
+For every page returned by `gbrain meeting-sync --list-pending`:
+
+1. Read the full meeting transcript.
+2. Create or update every attendee people page.
+3. Detect mentioned people, companies, projects, and topics from the full
+   transcript.
+4. Create or update each detected entity page, or document a skip reason.
+5. Add timeline entries to every attendee and every detected entity.
+6. Track action items with owner attribution where available.
+7. Create bidirectional backlinks between the meeting and every propagated
+   entity.
+8. Verify backlinks, timelines, action items, and searchability.
+9. Set `ingestion_status: complete` only after all verification passes.
+
+The CLI can do a deterministic first pass:
+
+```bash
+gbrain meeting-sync --propagate-pending --repo ~/brain
+gbrain meeting-sync --propagate-pending --meeting granola:<uuid> --repo ~/brain
+gbrain meeting-sync --propagate-pending --repo ~/brain --background
 ```
-if new_meetings_created > 0:
-  shell('git add -A', cwd=BRAIN_DIR)
-  msg = f'sync: {count} meeting(s) from Circleback ({start} to {end})'
-  shell(f'git commit -m "{msg}"', cwd=BRAIN_DIR)
-  shell('git push', cwd=BRAIN_DIR)
+
+This pass creates/updates attendee pages, links existing mentioned entity pages,
+tracks action items, writes timeline entries, creates bidirectional graph links,
+and preserves the transcript block. It deliberately leaves
+`ingestion_status: pending_propagation` and records
+`propagation_status: deterministic_propagated_pending_agent_review`, because
+new entity discovery/enrichment and the final searchability check still require
+agent review. Do not mark the page `complete` until the full verification list
+below passes.
+
+Finalize only after agent review:
+
+```bash
+gbrain meeting-sync --verify-complete --agent-reviewed --meeting granola:<uuid> --repo ~/brain
 ```
 
-The sync script commits and pushes automatically. This triggers GBrain's
-live sync to index the new pages.
+`--verify-complete` checks the Phase 2 verification list and refuses to write
+`ingestion_status: complete` unless `--agent-reviewed` is present and no
+blockers remain. This is intentionally explicit: cron/autopilot may run
+collection and deterministic propagation as Minion jobs, but final completion
+requires agent-reviewed verification. A fully autonomous deployment should
+enqueue a `meeting-ingestion` subagent job for each pending meeting, then run
+this finalizer only after that agent has resolved entity/action review markers.
 
-### What the Agent Should Test After Setup
+## Verification
 
-1. **SSE parsing:** Verify `SearchMeetings` returns parseable data (the double-JSON
-   parsing is the most common failure point).
-2. **Idempotency:** Sync a meeting, add a note to the file manually, sync again.
-   Verify the meeting is skipped (not re-created or overwritten).
-3. **Attendee filtering:** Sync a meeting that includes a conference room in attendees.
-   Verify the room doesn't appear in the attendee list.
-4. **Auto-tagging:** Sync a meeting named "1:1 with Sarah". Verify tag is `1on1`.
-5. **Transcript formatting:** Verify speaker names and timestamps are formatted
-   correctly (speaker bold, timestamp in parentheses).
-6. **Git commit:** Sync 2+ meetings. Verify the git commit message includes the count.
+After Phase 1:
 
-## Cost Estimate
+- Every created file exists at the expected path.
+- Frontmatter `source_id` matches the provider ID.
+- Frontmatter has `ingestion_status: pending_propagation`.
+- A rerun creates no duplicates.
+- The transcript section contains speaker, timestamp, and text lines.
+- The transcript block is unchanged by an idempotent rerun.
+- `gbrain search "<meeting title>" --limit 3` returns the meeting.
 
-| Component | Monthly Cost |
-|-----------|-------------|
-| Circleback Free tier | $0 (10 meetings/mo) |
-| Circleback Pro | $17/mo (unlimited) |
-| **Recommended** | **$17/mo (Pro)** |
+After Phase 2:
 
-## Troubleshooting
+- Every attendee has a people page.
+- Every detected entity has a page or documented skip reason.
+- Every attendee/entity has a timeline entry referencing the meeting.
+- Every action item is tracked and linked to the meeting.
+- Backlinks exist both directions for every propagated entity.
+- The transcript block remains unchanged.
+- `gbrain search "<meeting title>" --limit 3` returns the meeting.
+- `ingestion_status` is set to `complete`.
 
-**No meetings found:**
-- Check that Circleback has recorded meetings (open the Circleback dashboard)
-- The Circleback bot must join the meeting for recording to work
-- Check the date range: `--days 30` to widen the search
+## Failure Modes
 
-**Transcript is empty:**
-- Some meetings may not have transcripts (e.g., no audio, bot was removed)
-- Check the Circleback dashboard for the specific meeting's status
-
-**Duplicate meetings:**
-- The sync script checks for existing files by source_id
-- If duplicates appear, the idempotency check may be failing
-- Delete duplicates manually and re-run sync
+- `composio` is missing: install or restore the local Composio CLI.
+- Toolkit not connected: run `composio link fireflies` or
+  `composio link granola_mcp`, then retry.
+- Provider returns summary/notes without raw transcript: skip the meeting and
+  report the error.
+- Duplicate-looking meeting: trust `source_id`; do not create a second page for
+  the same provider meeting.
