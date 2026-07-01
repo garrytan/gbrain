@@ -115,6 +115,10 @@ function defaultPackLocator(name: string): string | null {
     // Bravura Security company-brain pack (fork-local). Support + internal +
     // sales taxonomy. See brain-deploy/docs/BRAVURA_BRAIN_DESIGN.md.
     'gbrain-bravura',
+    // Per-user personal-brain pack (fork-local). people/companies/meetings/daily/
+    // concepts/projects + inbox landing zone. Authored by the nightly
+    // personal-enrich agent. See personal-agents/ARCHITECTURE.md.
+    'gbrain-personal',
   ];
   if (BUNDLED.includes(name)) {
     // Resolve bundled YAML relative to this source file. Works in both

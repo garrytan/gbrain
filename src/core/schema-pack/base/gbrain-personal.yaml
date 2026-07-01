@@ -1,0 +1,113 @@
+# gbrain-personal — per-user PERSONAL brain pack (Option B, centralized)
+#
+# The schema the nightly personal-enrich agent uses to turn raw inbox signals
+# (Granola meetings, Outlook email/calendar, Teams DMs — collected client-side by
+# the personal-agents recipes) into compiled-truth pages in a user's personal
+# source (`personal-<user>`).
+#
+# Activate:  gbrain schema use gbrain-personal   (or GBRAIN_SCHEMA_PACK=gbrain-personal)
+#
+# Companion to gbrain-bravura (the company pack). Where gbrain-bravura spans
+# support/sales/internal, this pack is the individual's operational brain:
+# people, companies, meetings, a daily log, concepts, and projects. It is
+# deliberately thin — gbrain-recommended already supplies almost every type;
+# this pack only ADDS `inbox` (the raw landing zone) plus the personal filing
+# rules + frontmatter links the enrich agent needs.
+#
+# Design + rationale: personal-agents/ARCHITECTURE.md (collect=client / distill=server).
+
+api_version: gbrain-schema-pack-v1
+name: gbrain-personal
+version: 1.0.0
+gbrain_min_version: 0.39.0
+extends: gbrain-recommended
+description: "Per-user personal brain. Compiled-truth pages (people, companies, meetings, daily log, concepts, projects) authored by the nightly personal-enrich agent from raw inbox signals collected client-side via the user's own MCPs (Granola, Microsoft 365). Facts come from each source's structured fields — never inferred."
+
+# The base entity/temporal types this pack's filing rules + links reference all
+# arrive via the extends chain (gbrain-recommended → gbrain-base):
+#   person (people/), company (companies/), meeting (meetings/),
+#   concept (concepts/), project (projects/), daily (daily/), source (sources/).
+# borrow_from signals intent; the registry already merges via extends.
+borrow_from:
+  - pack: gbrain-recommended
+    types:
+      - person
+      - company
+      - meeting
+      - concept
+      - project
+      - daily
+      - source
+
+page_types:
+  # ---- Inbox (raw landing; awaits nightly personal-enrich) ----
+  - name: inbox
+    primitive: media
+    path_prefixes:
+      - inbox/
+    aliases: []
+    # Raw, verbatim items the client-side collectors drop here (one file per
+    # meeting / email thread / calendar event / chat). The enrich agent reads
+    # these, authors compiled-truth pages elsewhere, and archives the source
+    # item. Not directly extracted — the agent does that judgment.
+    extractable: false
+    expert_routing: false
+
+# No new cycle phases — consumes the existing extract_facts + enrich loop.
+phases: []
+
+# Personal-brain typed edges reuse the base verbs (attended, works_at). No
+# pack-specific verbs needed; declaring none keeps the graph semantics standard.
+link_types: []
+
+# Frontmatter field → link verb, page-typed by the SOURCE page. Attendees and
+# employers come ONLY from the source's structured fields (never inferred).
+frontmatter_links:
+  - page_type: meeting
+    fields: [attendees, participants]
+    link_type: attended
+  - page_type: person
+    fields: [company, employer, works_at]
+    link_type: works_at
+
+enrichable_types: []
+
+# Filing rules — where the nightly personal-enrich agent files each authored
+# type. Mirrors personal-agents/brain/RESOLVER.md.
+filing_rules:
+  - kind: inbox
+    directory: inbox/
+    examples:
+      - inbox/2026-07-01-granola-abc123
+      - inbox/2026-07-01-email-def456
+    description: "Raw signals awaiting nightly personal-enrich (date-prefixed, one per source item). The enrich agent reads inbox/, authors compiled-truth pages, and moves the raw item to sources/.raw/. Frontmatter carries the source's structured fields (title/date/attendees/from/to/messageId/meetingId) — the ONLY source of who/what."
+  - kind: meeting
+    directory: meetings/
+    examples:
+      - meetings/2026-07-01-quarterly-planning
+    description: "Enriched meeting pages distilled from inbox items (Granola / calendar / Teams). Two-layer: compiled truth (summary, decisions, action items) above the line, raw transcript/notes appended below. Attendees link via `attended` — from the structured attendee field only, never inferred. Action-item owners must be attendees."
+  - kind: person
+    directory: people/
+    examples:
+      - people/jane-doe
+    description: "Compiled profile of a person the user interacts with. Seeded from meeting attendees + email correspondents (structured fields only). Timeline accrues interactions. works_at → company. Never invent a person from free text."
+  - kind: company
+    directory: companies/
+    examples:
+      - companies/acme-example
+    description: "A company/org named in a source's structured fields (customer, vendor, employer). CRITICAL: never infer a company from a subject line, hostname, username, or free text — if it isn't in the structured fields, do not create it."
+  - kind: daily
+    directory: daily/
+    examples:
+      - daily/2026-07-01
+    description: "Per-day log/digest: agenda (from calendar), email/Teams highlights, and the day's action items. One page per date; append idempotently."
+  - kind: concept
+    directory: concepts/
+    examples:
+      - concepts/saml-sso-setup
+    description: "Durable notes / how-tos the user accumulates. Cross-link to the people, companies, and meetings they came from."
+  - kind: project
+    directory: projects/
+    examples:
+      - projects/company-brain-rollout
+    description: "Something the user is actively working on. Gathers related meetings, people, and concepts under one page."
