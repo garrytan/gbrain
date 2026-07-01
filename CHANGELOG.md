@@ -2,6 +2,15 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.54.0] - 2026-07-01
+
+**New bundled schema pack `gbrain-personal` for per-user personal brains.** A thin pack (extends `gbrain-recommended`) that gives an individual's brain the page types, filing rules, and links a nightly enrich/distill agent needs to turn raw inbox signals — meetings, email, calendar, chats collected client-side via the user's own MCPs — into compiled people/companies/meetings/daily pages. Facts come from each source's structured fields; the filing rules forbid inferring a person or company from free text.
+
+To take advantage of v0.42.54.0: activate with `gbrain schema use gbrain-personal` (or `GBRAIN_SCHEMA_PACK=gbrain-personal`) on a personal source. Existing packs are unaffected.
+
+### Added
+- **`gbrain-personal` schema pack** (bundled, read-only). Extends `gbrain-recommended`; adds the `inbox` landing type plus personal filing rules (people/companies/meetings/daily/concepts/projects) and frontmatter links (`meeting.attendees → attended`, `person.company → works_at`). Registered in the bundled-pack registry alongside `gbrain-bravura`.
+
 ## [0.42.53.0] - 2026-06-23
 
 **`gbrain sync` works again on managed Postgres brains: the durable-checkpoint pin write was encoding its value the wrong way, so every multi-source sync aborted at the very first checkpoint. Fixed, plus a repo-wide sweep of the same JSONB footgun and a new CI guard so it can't come back.** A recent release added a structural check on the sync checkpoint table; the pin write that runs before every drain bound its value as a string rather than a real array, so the check rejected it and the run bailed before importing anything. The bug was invisible on the embedded engine (its driver parses the value either way) and only bit managed Postgres.
