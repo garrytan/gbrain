@@ -44,7 +44,7 @@ const RECIPE_META = [
   { id: 'calendar-to-brain', name: 'Calendar Sync', secrets: ['GOOGLE_CALENDAR_API_KEY'] },
   { id: 'x-to-brain', name: 'X/Twitter to Brain', secrets: ['X_BEARER_TOKEN'] },
   { id: 'twilio-voice-brain', name: 'Voice to Brain', secrets: ['TWILIO_AUTH_TOKEN'] },
-  { id: 'meeting-sync', name: 'Meeting Sync', secrets: ['CIRCLEBACK_API_KEY'] },
+  { id: 'meeting-sync', name: 'Meeting Sync', secrets: [] },
   { id: 'credential-gateway', name: 'Credential Gateway', secrets: ['OAUTH_CLIENT_SECRET'] },
   { id: 'ngrok-tunnel', name: 'Ngrok Tunnel', secrets: ['NGROK_AUTHTOKEN'] },
 ] as const;

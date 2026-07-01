@@ -1537,6 +1537,97 @@ export async function registerBuiltinHandlers(
     return result;
   });
 
+  // Meeting sync is a deterministic host-side ingestion job. It goes through
+  // Minions for cron durability/observability, while keeping the LLM
+  // meeting-ingestion review as a separate subagent layer.
+  worker.register('meeting-sync', async (job) => {
+    const {
+      dateWindowFromArgs,
+      listPendingMeetings,
+      normalizeProviderList,
+      syncMeetings,
+    } = await import('../core/meeting-sync.ts');
+    const {
+      propagatePendingMeetings,
+      verifyCompleteMeetings,
+    } = await import('../core/meeting-propagation.ts');
+    const { getDefaultSourcePath, resolveSourceId } = await import('../core/source-resolver.ts');
+
+    const data = job.data;
+    const mode = typeof data.mode === 'string' ? data.mode : 'collect';
+    if (!['collect', 'list-pending', 'propagate-pending', 'verify-complete'].includes(mode)) {
+      throw new Error(`meeting-sync: unsupported mode ${JSON.stringify(mode)}`);
+    }
+    const repoPath = typeof data.repoPath === 'string'
+      ? data.repoPath
+      : await getDefaultSourcePath(engine);
+    if (!repoPath) {
+      throw new Error('meeting-sync: no brain repo path configured; pass data.repoPath or configure a source local_path');
+    }
+    const limit = typeof data.limit === 'number' && Number.isFinite(data.limit) && data.limit > 0
+      ? Math.floor(data.limit)
+      : undefined;
+    const meetings = Array.isArray(data.meetings)
+      ? (data.meetings as unknown[]).filter((m): m is string => typeof m === 'string' && m.length > 0)
+      : undefined;
+
+    if (mode === 'list-pending') {
+      const pending = listPendingMeetings(repoPath).slice(0, limit);
+      return { repoPath, pending };
+    }
+
+    if (mode === 'propagate-pending' || mode === 'verify-complete') {
+      const sourceId = await resolveSourceId(
+        engine,
+        typeof data.sourceId === 'string' ? data.sourceId : undefined,
+        repoPath,
+      );
+      if (mode === 'verify-complete') {
+        return await verifyCompleteMeetings(engine, {
+          repoPath,
+          sourceId,
+          dryRun: !!data.dryRun,
+          meetings,
+          limit,
+          agentReviewed: !!data.agentReviewed,
+        });
+      }
+      return await propagatePendingMeetings(engine, {
+        repoPath,
+        sourceId,
+        dryRun: !!data.dryRun,
+        meetings,
+        limit,
+      });
+    }
+
+    const providerList = Array.isArray(data.providers)
+      ? normalizeProviderList((data.providers as unknown[]).filter((p): p is string => typeof p === 'string').join(','))
+      : normalizeProviderList(undefined);
+    const hasExplicitWindow = data.window !== undefined && data.window !== null && typeof data.window === 'object';
+    const rawWindow = hasExplicitWindow ? data.window as { start?: unknown; end?: unknown } : {};
+    const window = hasExplicitWindow
+      ? {
+          start: typeof rawWindow.start === 'string' ? rawWindow.start : undefined,
+          end: typeof rawWindow.end === 'string' ? rawWindow.end : undefined,
+        }
+      : dateWindowFromArgs({ days: typeof data.days === 'number' ? data.days : undefined });
+
+    const results = await syncMeetings({
+      providers: providerList,
+      repoPath,
+      window,
+      dryRun: !!data.dryRun,
+      force: !!data.force,
+    });
+    const missingAll = results.every(r => r.fetched === 0 && r.created === 0 && r.skipped === 0 && r.failed > 0);
+    if (missingAll) {
+      const details = results.flatMap(r => r.errors.map(e => `${r.provider}: ${e.title ? `${e.title}: ` : ''}${e.error}`));
+      throw new Error(`meeting-sync: all providers failed${details.length > 0 ? ` (${details.join('; ')})` : ''}`);
+    }
+    return { repoPath, dryRun: !!data.dryRun, results, status: 'ok' };
+  });
+
   // v0.40.3.0 T8b: RemediationStep consumer handlers. Thin wrappers
   // around already-shipping CLI commands so doctor --remediate can
   // submit them as Minion jobs. NOT in PROTECTED_JOB_NAMES (no shell
