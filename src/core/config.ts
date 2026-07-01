@@ -41,6 +41,11 @@ export interface GBrainConfig {
    * merge → buildGatewayConfig env dict → recipe reads ZEROENTROPY_API_KEY.
    */
   zeroentropy_api_key?: string;
+  /** Amazon Bedrock — region is always required; key vars optional (IAM role fallback). */
+  aws_region?: string;
+  aws_access_key_id?: string;
+  aws_secret_access_key?: string;
+  aws_session_token?: string;
   /** AI gateway config (v0.14+). v0.36+ default: "zeroentropyai:zembed-1" / 1280 / "anthropic:claude-haiku-4-5-20251001". */
   embedding_model?: string;
   embedding_dimensions?: number;
@@ -407,6 +412,10 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
     ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
     ...(process.env.ZEROENTROPY_API_KEY ? { zeroentropy_api_key: process.env.ZEROENTROPY_API_KEY } : {}),
+    ...(process.env.AWS_REGION ? { aws_region: process.env.AWS_REGION } : {}),
+    ...(process.env.AWS_ACCESS_KEY_ID ? { aws_access_key_id: process.env.AWS_ACCESS_KEY_ID } : {}),
+    ...(process.env.AWS_SECRET_ACCESS_KEY ? { aws_secret_access_key: process.env.AWS_SECRET_ACCESS_KEY } : {}),
+    ...(process.env.AWS_SESSION_TOKEN ? { aws_session_token: process.env.AWS_SESSION_TOKEN } : {}),
     ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
     ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
     ...(process.env.GBRAIN_EXPANSION_MODEL ? { expansion_model: process.env.GBRAIN_EXPANSION_MODEL } : {}),
