@@ -2,6 +2,20 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.44.1.0] - 2026-07-01
+
+**`gbrain meeting-sync` now pulls Fireflies and Granola transcripts through your local Composio CLI and turns them into durable, two-phase meeting pages — no provider API keys, and nothing is marked done until attendees, entities, action items, timelines, and backlinks are actually propagated.** The old recipe assumed a single third-party token. This replaces it with a built-in command that fetches diarized transcripts from both Fireflies and Granola over Composio, writes idempotent Phase 1 meeting markdown, and leaves each page `pending_propagation`. Phase 2 enriches the graph and only lets a page reach `complete` when strict deterministic checks pass. It runs inline or as a durable Minion job for cron.
+
+### Added
+- **`gbrain meeting-sync` — a deterministic, two-phase meeting importer.** Phase 1 (`--providers fireflies,granola --days N`, or `--all` / `--start`/`--end`) fetches transcripts through the local Composio CLI and writes idempotent `meetings/*.md` pages marked `ingestion_status: pending_propagation`. Phase 2 (`--propagate-pending`, then `--verify-complete --agent-reviewed`) fans each meeting out to attendee, entity, and action pages, writes timeline entries, creates bidirectional backlinks, and only finalizes a page to `complete` when every deterministic check passes. `--dry-run`, `--force`, `--list-pending`, `--limit`, and `--json` round it out.
+- **A durable `meeting-sync` Minion handler.** `--background` submits the collect / propagate / verify work as a Minion job with a 30-minute handler budget, so scheduled meeting ingestion gets the same retry, timeout, and observability as the rest of the autopilot lane. Thin clients are refused with a clear "run on the host" hint, since the command writes local markdown through host-side Composio connections.
+
+### Changed
+- **The meeting-sync recipe moves to Fireflies + Granola over Composio.** The Meeting Sync feature now declares zero secrets; authentication is your existing local Composio connections (`fireflies`, `granola_mcp`) rather than a provider API key. The recipe documents the required tool slugs and the mandatory Phase 1 → Phase 2 → verify flow, and is explicit that a meeting is not fully ingested until propagation is verified.
+
+### To take advantage of v0.44.1.0
+`gbrain upgrade`, then connect the `fireflies` and `granola_mcp` toolkits in your local Composio CLI. Run `gbrain meeting-sync --providers fireflies,granola --days 7` to import the last week, `gbrain sync --no-pull --no-embed` + `gbrain embed --stale` to index them, then `gbrain meeting-sync --propagate-pending` and `gbrain meeting-sync --verify-complete --agent-reviewed` before any meeting is marked complete. Add `--background` to run it as a scheduled Minion job.
+
 ## [0.42.53.0] - 2026-06-23
 
 **`gbrain sync` works again on managed Postgres brains: the durable-checkpoint pin write was encoding its value the wrong way, so every multi-source sync aborted at the very first checkpoint. Fixed, plus a repo-wide sweep of the same JSONB footgun and a new CI guard so it can't come back.** A recent release added a structural check on the sync checkpoint table; the pin write that runs before every drain bound its value as a string rather than a real array, so the check rejected it and the run bailed before importing anything. The bug was invisible on the embedded engine (its driver parses the value either way) and only bit managed Postgres.

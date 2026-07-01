@@ -21,6 +21,38 @@ ship-stage pre-landing review; neither blocks the wave.
   syncing." Where: `src/core/db-lock.ts`, `src/commands/doctor.ts`,
   `src/commands/status.ts`.
 
+## meeting-sync follow-ups (filed v0.44.1.0)
+
+Deferred from the Fireflies/Granola meeting-sync migration (ship-stage
+pre-landing review CLEARED). Core shipped: deterministic Phase 1 collect +
+Phase 2 propagation/verify, Minion `meeting-sync` handler, CLI wiring. All
+edge cases below; none block the wave and none affect the tested happy path.
+
+- [ ] **P2 — Guard `--force` against clobbering completed meetings.**
+  `syncMeetings` bypasses `meetingExists` entirely under `--force` and rewrites
+  fresh `pending_propagation` markdown over the target path, so a `--force`
+  backfill can reset an already-`ingestion_status: complete`, agent-reviewed
+  meeting (wiping its Propagation section) back to pending. Recoverable by
+  re-propagating, but surprising. Fix: under `--force`, skip (or warn on) files
+  whose frontmatter is `ingestion_status: complete`. Where:
+  `src/core/meeting-sync.ts` (`syncMeetings`, ~L129/L340).
+- [ ] **P3 — Namespace the meeting path by provider/id to avoid slug collisions.**
+  `meetingMarkdownRelativePath` derives the filename from `date + title` only, so
+  two distinct meetings (different `source_id`) sharing a same-day title slug map
+  to the same path; the second is silently counted `skipped` and never written.
+  Fix: append a short provider-id suffix on collision. Where:
+  `src/core/meeting-sync.ts` (`meetingMarkdownRelativePath`, ~L330).
+- [ ] **P3 — Namespace the action-items page slug by full meeting slug.**
+  Phase 2 builds `tasks/${meeting.slug.split('/').pop()}-action-items` from the
+  basename only, so two meetings with the same basename in different dirs merge
+  their action items onto one task page. Fix: include the full meeting slug (or a
+  hash) in the tasks-page slug. Where: `src/core/meeting-propagation.ts` (~L485).
+- [ ] **P3 — Add a DATABASE_URL-gated Postgres parity test for meeting-sync
+  propagation.** The propagate/verify tests run on PGLite only, which masks the
+  JSONB double-encode class per repo invariant. The reviewed code passes
+  frontmatter/context as raw objects (correct), but no e2e parity test pins it.
+  Add one under `test/e2e/`. Where: `test/e2e/`.
+
 ## Pace Mode follow-ups (filed v0.42.49.0)
 
 Deferred from the paced-backfill wave (CEO + eng review CLEARED). Core shipped:
