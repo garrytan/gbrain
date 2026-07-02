@@ -19,9 +19,10 @@
  */
 import { describe, expect, test, beforeAll, afterAll } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { walkDir } from '../src/core/brain-writer.ts';
+import { scanBrainSources, walkDir } from '../src/core/brain-writer.ts';
 import { collectFiles } from '../src/commands/frontmatter.ts';
 
 let root: string;
@@ -146,5 +147,48 @@ describe('collectFiles (frontmatter.ts) — descent-time pruning parity', () => 
     const target = join(root, 'people', 'alice.md');
     const files = collectFiles(target);
     expect(files).toEqual([target]);
+  });
+});
+
+describe('frontmatter walkers — git-visible file parity', () => {
+  test('collectFiles respects .git/info/exclude like sync/import', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'frontmatter-git-visible-'));
+    try {
+      execFileSync('git', ['init'], { cwd: repo, stdio: 'ignore' });
+      mkdirSync(join(repo, 'people'), { recursive: true });
+      mkdirSync(join(repo, 'local-skills'), { recursive: true });
+      writeFileSync(join(repo, '.git', 'info', 'exclude'), 'local-skills/\n');
+      writeFileSync(join(repo, 'people', 'alice.md'), '---\ntitle: Alice\n---\n\nbody\n');
+      writeFileSync(join(repo, 'local-skills', 'SKILL.md'), '---\nname: bad\n# malformed frontmatter\n');
+
+      const files = collectFiles(repo).map((f) => f.replace(repo + '/', ''));
+      expect(files).toContain('people/alice.md');
+      expect(files).not.toContain('local-skills/SKILL.md');
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('scanBrainSources ignores git-excluded malformed markdown', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'frontmatter-audit-git-visible-'));
+    try {
+      execFileSync('git', ['init'], { cwd: repo, stdio: 'ignore' });
+      mkdirSync(join(repo, 'people'), { recursive: true });
+      mkdirSync(join(repo, 'local-skills'), { recursive: true });
+      writeFileSync(join(repo, '.git', 'info', 'exclude'), 'local-skills/\n');
+      writeFileSync(join(repo, 'people', 'alice.md'), '---\ntitle: Alice\n---\n\nbody\n');
+      writeFileSync(join(repo, 'local-skills', 'SKILL.md'), '---\nname: bad\n# malformed frontmatter\n');
+
+      const engine = {
+        executeRaw: async () => [{ id: 'repo', local_path: repo }],
+      } as any;
+      const report = await scanBrainSources(engine, { sourceId: 'repo' });
+
+      expect(report.total).toBe(0);
+      expect(report.per_source[0].files_scanned).toBe(1);
+      expect(report.per_source[0].sample).toEqual([]);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });

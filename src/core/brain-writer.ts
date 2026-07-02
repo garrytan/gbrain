@@ -22,6 +22,7 @@ import { join, relative, resolve, dirname, basename, isAbsolute } from 'path';
 import type { BrainEngine } from './engine.ts';
 import type { ProgressReporter } from './progress.ts';
 import { gbrainPath } from './config.ts';
+import { collectGitVisibleFiles } from './git-visible-files.ts';
 import {
   parseMarkdown,
   type ParseValidationCode,
@@ -579,7 +580,7 @@ function scanOneSource(
   let ignoredMissingOpen = 0;
   let interrupted = false;
 
-  walkDir(rootResolved, (absPath) => {
+  const visitFile = (absPath: string): boolean | void => {
     // Per-file deadline + abort gate. Deadline is the load-bearing
     // wall-clock bound (sync I/O blocks the event loop so timer-based
     // AbortSignal.timeout can't fire mid-walk — codex C1).
@@ -625,7 +626,17 @@ function scanOneSource(
       opts.onProgress.tick(50);
     }
     return true;
-  }, opts.visitDir);
+  };
+
+  const gitFiles = collectGitVisibleFiles(rootResolved, (rel) => isSyncable(rel, { strategy: 'markdown' }));
+  if (gitFiles) {
+    if (opts.visitDir) opts.visitDir(rootResolved);
+    for (const absPath of gitFiles) {
+      if (visitFile(absPath) === false) break;
+    }
+  } else {
+    walkDir(rootResolved, visitFile, opts.visitDir);
+  }
 
   if (opts.onProgress) {
     opts.onProgress.heartbeat(`scanned ${scanned} pages in ${sourceId}`);
