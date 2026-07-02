@@ -23,6 +23,7 @@ import {
   addAliasToType,
   addLinkTypeToPack,
   addPrefixToType,
+  BUNDLED_PACK_NAMES,
   addTypeToPack,
   invalidatePackCache,
   loadActivePack,
@@ -179,7 +180,7 @@ async function runActive(_args: string[]): Promise<void> {
 }
 
 function runList(_args: string[]): void {
-  const bundled = ['gbrain-base', 'gbrain-recommended'];
+  const bundled = [...BUNDLED_PACK_NAMES];
   const installedDir = gbrainPath('schema-packs');
   const installed: string[] = [];
   if (existsSync(installedDir)) {
@@ -366,12 +367,12 @@ function runUse(args: string[]): void {
 }
 
 function packPathByName(name: string): string | null {
-  if (name === 'gbrain-base') {
+  if (BUNDLED_PACK_NAMES.has(name)) {
     // Resolve bundled YAML — try a few locations.
     const here = dirname(new URL(import.meta.url).pathname);
     const candidates = [
-      join(here, '..', 'core', 'schema-pack', 'base', 'gbrain-base.yaml'),
-      join(here, '..', '..', 'src', 'core', 'schema-pack', 'base', 'gbrain-base.yaml'),
+      join(here, '..', 'core', 'schema-pack', 'base', `${name}.yaml`),
+      join(here, '..', '..', 'src', 'core', 'schema-pack', 'base', `${name}.yaml`),
     ];
     for (const c of candidates) {
       if (existsSync(c)) return c;
