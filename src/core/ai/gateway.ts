@@ -2354,7 +2354,7 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
               ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(b.output) }
               : (typeof b.output === 'string'
                 ? { type: 'text' as const, value: b.output }
-                : { type: 'json' as const, value: (b.output ?? null) as never }),
+                : { type: 'json' as const, value: JSON.parse(JSON.stringify(b.output ?? null)) as never }),
           })),
       };
     }

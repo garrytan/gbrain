@@ -60,6 +60,35 @@ describe('toModelMessages — v6 ModelMessage shape', () => {
     ]);
   });
 
+  test('Date in tool-result json output serializes to ISO string (Postgres timestamps, #2433)', () => {
+    const msgs: ChatMessage[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'c1',
+            toolName: 'brain_list_pages',
+            output: { rows: [{ updated_at: new Date('2026-06-26T06:56:59.000Z') }] },
+          },
+        ],
+      },
+    ];
+    expect(toModelMessages(msgs)).toEqual([
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'c1',
+            toolName: 'brain_list_pages',
+            output: { type: 'json', value: { rows: [{ updated_at: '2026-06-26T06:56:59.000Z' }] } },
+          },
+        ],
+      },
+    ]);
+  });
+
   test('string tool-result output becomes {type:text,value}', () => {
     const msgs: ChatMessage[] = [
       {
