@@ -152,6 +152,9 @@ export interface ProposeTakesResult {
   cache_hits: number;
   cache_misses: number;
   proposals_inserted: number;
+  /** Pages whose extraction returned no proposals, recorded as sentinel cache
+   *  rows so they are not re-extracted until their content changes. */
+  empty_results_cached: number;
   budget_exhausted: boolean;
   warnings: string[];
 }
@@ -314,6 +317,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       cache_hits: 0,
       cache_misses: 0,
       proposals_inserted: 0,
+      empty_results_cached: 0,
       budget_exhausted: false,
       warnings: [],
     };
@@ -386,6 +390,49 @@ class ProposeTakesPhase extends BaseCyclePhase {
         continue;
       }
 
+      // When the extractor proposes NOTHING, still record the
+      // (source_id, page_slug, content_hash, prompt_version) tuple as a
+      // sentinel row (kind='empty_result', terminal status) so the
+      // idempotency check above treats this page as processed until its
+      // content actually changes.
+      //
+      // Without this, empty-result pages never enter take_proposals, so they
+      // re-qualify as cache misses on every cycle and the phase re-pays the
+      // LLM call for the same unchanged content on every autopilot tick,
+      // forever. On a ~42K-page production brain this produced 57,885
+      // re-extraction calls over 11 days (~95-call batches every ~5 min)
+      // with zero takes to show for it.
+      //
+      // The sentinel is safe: nothing reads take_proposals except this
+      // phase's own idempotency check (and kind='empty_result' is distinct
+      // from every real proposal kind, so any future reader can filter it).
+      if (proposals.length === 0) {
+        await engine.executeRaw(
+          `INSERT INTO take_proposals
+             (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
+              claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+           ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING`,
+          [
+            sourceId,
+            page.slug,
+            ch,
+            promptVersion,
+            proposalRunId,
+            '', // claim_text — empty marker, not a real proposal
+            'empty_result', // kind — distinct from fact/take/bet/hunch
+            'system', // holder
+            0, // weight
+            null, // domain
+            JSON.stringify(existingTakes),
+            opts.model ?? 'claude-sonnet-4-6',
+            'superseded', // terminal status — never surfaces as pending review
+          ],
+        );
+        result.empty_results_cached += 1;
+        continue;
+      }
+
       // Write proposals to take_proposals. Each row is a separate INSERT
       // because the composite idempotency key is on the per-page tuple — a
       // bulk UPSERT would collapse a same-page-multi-claim run into one row.
@@ -446,7 +493,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
     });
 
     return {
-      summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals (run ${proposalRunId})`,
+      summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals, ${result.empty_results_cached} empty results cached (run ${proposalRunId})`,
       details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion },
       status: result.budget_exhausted ? 'warn' : 'ok',
     };
