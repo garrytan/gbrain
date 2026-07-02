@@ -107,6 +107,46 @@ describe('toModelMessages — v6 ModelMessage shape', () => {
     ]);
   });
 
+  // Regression: a reasoning model (e.g. DeepSeek v4) can emit a text part whose
+  // `text` is undefined/null. AI SDK v6 rejects it ("messages do not match the
+  // ModelMessage[] schema"), failing the whole turn. toModelMessages must drop
+  // such parts (mirroring the replay path), so the bug shows up inline but a
+  // resumed run — rebuilt via adaptContentBlocksToChatBlocks — recovers.
+  test('non-string text block is dropped (v6 rejects undefined/null text)', () => {
+    const msgs: ChatMessage[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: undefined as unknown as string },
+          { type: 'tool-call', toolCallId: 'c1', toolName: 'search', input: {} },
+        ],
+      },
+    ];
+    expect(toModelMessages(msgs)).toEqual([
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'search', input: {} }] },
+    ]);
+  });
+
+  test('valid text alongside a non-string text block is kept; null text dropped', () => {
+    const msgs: ChatMessage[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'real answer' },
+          { type: 'text', text: null as unknown as string },
+        ],
+      },
+    ];
+    expect(toModelMessages(msgs)).toEqual([
+      { role: 'assistant', content: [{ type: 'text', text: 'real answer' }] },
+    ]);
+  });
+
+  test('empty-string text is kept (valid for v6)', () => {
+    const msgs: ChatMessage[] = [{ role: 'assistant', content: [{ type: 'text', text: '' }] }];
+    expect(toModelMessages(msgs)).toEqual([{ role: 'assistant', content: [{ type: 'text', text: '' }] }]);
+  });
+
   test('full multi-turn conversation: user → assistant(tool-call) → tool(result)', () => {
     const msgs: ChatMessage[] = [
       { role: 'user', content: 'find widget' },

@@ -2360,11 +2360,20 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
     }
     return {
       role: m.role,
-      content: blocks.map((b) => {
-        if (b.type === 'text') return { type: 'text' as const, text: b.text };
-        if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, input: b.input };
-        return b;
-      }),
+      content: blocks
+        // Drop text blocks whose `text` is not a string. AI SDK v6 rejects a
+        // text part with undefined/null text ("messages do not match the
+        // ModelMessage[] schema"), failing the whole turn. A reasoning model
+        // (e.g. DeepSeek v4) can emit such a part; the type says `text: string`
+        // but the value arrives from the provider at runtime. Mirrors the
+        // replay path (adaptContentBlocksToChatBlocks), which also drops it —
+        // the reason a job could fail inline yet recover on resume.
+        .filter((b) => b.type !== 'text' || typeof b.text === 'string')
+        .map((b) => {
+          if (b.type === 'text') return { type: 'text' as const, text: b.text };
+          if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, input: b.input };
+          return b;
+        }),
     };
   });
 }
