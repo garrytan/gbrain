@@ -119,6 +119,20 @@ function warnOnce(key: string, msg: string): void {
   // eslint-disable-next-line no-console
   console.warn(msg);
 }
+
+/**
+ * DB-only fallback is a degraded path. For MCP-originated facts, keep it
+ * from recreating the legacy guard shape (`row_num IS NULL AND
+ * entity_slug IS NOT NULL`) by dropping the entity link when the fact could
+ * not be written to a markdown fence. The fact remains queryable by recency
+ * / session / text, but it will not halt the deterministic extract_facts
+ * reconciliation cycle.
+ */
+function legacyDbOnlyEntitySlug(ctx: FactsBackstopCtx, resolvedSlug: string | null): string | null {
+  if (ctx.source === 'mcp:extract_facts' || ctx.source === 'mcp:put_page') return null;
+  return resolvedSlug;
+}
+
 /** Test-only: reset the once-per-process warning memo. */
 export function __resetBackstopWarningsForTests(): void {
   _warnedKeys.clear();
@@ -275,7 +289,12 @@ async function runPipeline(
  *
  * Facts with no resolved entity_slug structurally can't be fenced (no
  * entity page to fence them on), so they take the same legacy DB-only
- * fallback regardless of local_path.
+ * fallback regardless of local_path. Fallback-slugified entity guesses
+ * from MCP surfaces are deliberately treated as unresolved: writing them
+ * as entity-linked DB-only rows recreates the v0.31 guard shape
+ * (row_num NULL + entity_slug NOT NULL) and can halt the extract_facts
+ * cycle. Only exact/fuzzy/prefix-resolved canonical entities are allowed
+ * onto the fence path.
  */
 async function runPipelineWithBody(
   input: { turnText: string; isDreamGenerated: boolean },
@@ -283,7 +302,7 @@ async function runPipelineWithBody(
   abortSignal?: AbortSignal,
 ): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[] }> {
   const { extractFactsFromTurn } = await import('./extract.ts');
-  const { resolveEntitySlug } = await import('../entities/resolve.ts');
+  const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
   const { cosineSimilarity } = await import('./classify.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
 
@@ -324,8 +343,11 @@ async function runPipelineWithBody(
     // D4: notability filter applied post-extraction, pre-insert.
     if (filter === 'high-only' && f.notability !== 'high') continue;
 
-    const resolvedSlug = f.entity_slug
-      ? await resolveEntitySlug(ctx.engine, ctx.sourceId, f.entity_slug)
+    const resolved = f.entity_slug
+      ? await resolveEntitySlugWithSource(ctx.engine, ctx.sourceId, f.entity_slug)
+      : null;
+    const resolvedSlug = resolved && resolved.source !== 'fallback_slugify'
+      ? resolved.slug
       : null;
 
     // Dedup against DB candidates (correct per Codex Q7: fence rows
@@ -402,7 +424,7 @@ async function runPipelineWithBody(
     const newFact: NewFact = {
       fact: f.fact,
       kind: f.kind,
-      entity_slug: resolvedSlug,
+      entity_slug: legacyDbOnlyEntitySlug(ctx, resolvedSlug),
       visibility,
       notability: f.notability,
       source: f.source,
@@ -459,13 +481,14 @@ async function runPipelineWithBody(
       // v0.34.5: writeFactsToFence refused to spawn a phantom
       // unprefixed entity page (e.g. `jared.md` at brain root).
       // Route these facts to the legacy DB-only path so they
-      // aren't dropped — the slug stays attached but no markdown
-      // file is created.
+      // aren't dropped. MCP-originated facts deliberately lose the
+      // entity link on this degraded path so they cannot recreate the
+      // legacy extract_facts guard shape; non-MCP callers keep the slug.
       for (const { f } of group) {
         const newFact: NewFact = {
           fact: f.fact,
           kind: f.kind,
-          entity_slug: slug,
+          entity_slug: legacyDbOnlyEntitySlug(ctx, slug),
           visibility,
           notability: f.notability,
           source: f.source,
