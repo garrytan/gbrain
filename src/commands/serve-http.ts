@@ -90,6 +90,24 @@ export function resolveBootstrapToken(
   return { kind: 'ok', token: trimmed, fromEnv: true };
 }
 
+export type OAuthTokenRateLimitConfig = {
+  windowMs: number;
+  max: number;
+};
+
+function parsePositiveIntEnv(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function resolveOAuthTokenRateLimit(env: NodeJS.ProcessEnv = process.env): OAuthTokenRateLimitConfig {
+  return {
+    windowMs: parsePositiveIntEnv(env.GBRAIN_OAUTH_TOKEN_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
+    max: parsePositiveIntEnv(env.GBRAIN_OAUTH_TOKEN_RATE_LIMIT_MAX, 50),
+  };
+}
+
 export type ProbeHealthResult =
   | { ok: true; status: 200; body: { status: 'ok'; version: string; engine: string; [k: string]: unknown } }
   | { ok: false; status: 503; body: { error: 'service_unavailable'; error_description: string } };
@@ -597,12 +615,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Custom client_credentials handler (before mcpAuthRouter)
   // SDK's token handler only supports authorization_code and refresh_token
   // ---------------------------------------------------------------------------
+  const oauthTokenRateLimit = resolveOAuthTokenRateLimit();
   const ccRateLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 50,
+    windowMs: oauthTokenRateLimit.windowMs,
+    max: oauthTokenRateLimit.max,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { error: 'too_many_requests', error_description: 'Rate limit exceeded. Try again in 15 minutes.' },
+    message: { error: 'too_many_requests', error_description: 'Rate limit exceeded. Try again later.' },
   });
 
   // Magic-link rate limiter: 10 requests/min/IP. The bootstrap token is
