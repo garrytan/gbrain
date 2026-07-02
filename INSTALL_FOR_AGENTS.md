@@ -50,7 +50,9 @@ export OPENAI_API_KEY=sk-...          # fallback for vector search; also used fo
 export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality via query expansion
 ```
 
-Save to shell profile or `.env`. Keys are picked up by `gbrain config set` automatically
+Save to shell profile (e.g. `~/.profile` or `~/.zshrc`). If running gbrain via systemd 
+(e.g. `autopilot --install` or MCP serve), use `~/.profile` — `.env` files and `.bashrc` 
+are not sourced by systemd services.Keys are picked up by `gbrain config set` automatically
 or can be stored in `~/.gbrain/config.json` (file plane). Without any embedding provider,
 keyword search still works. Without Anthropic, search works but skips query expansion.
 
