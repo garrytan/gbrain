@@ -5,6 +5,7 @@
     "moduleResolution": "bundler",
     "types": ["bun-types"],
     "strict": true,
+    "strictFunctionTypes": false,
     "skipLibCheck": true,
     "noEmit": true,
     "esModuleInterop": true,

@@ -14,7 +14,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
-import { PGVECTOR_HNSW_VECTOR_MAX_DIMS } from './vector-index.ts';
+import { PGVECTOR_HNSW_VECTOR_MAX_DIMS, hnswMaxDimsForType } from './vector-index.ts';
 import { gbrainPath } from './config.ts';
 import { resolveRecipe } from './ai/model-resolver.ts';
 import type { Recipe } from './ai/types.ts';
@@ -576,6 +576,17 @@ export function buildFactsAlterRecipe(
   const opclass = columnType === 'halfvec' ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
   const targetType = columnType === 'halfvec' ? `halfvec(${configuredDims})` : `vector(${configuredDims})`;
   const dimsChanged = columnDims !== configuredDims;
+  const hnswMaxDims = hnswMaxDimsForType(columnType);
+  const indexLines = configuredDims <= hnswMaxDims
+    ? [
+        `CREATE INDEX idx_facts_embedding_hnsw`,
+        `  ON facts USING hnsw (embedding ${opclass})`,
+        `  WHERE embedding IS NOT NULL AND expired_at IS NULL;`,
+      ]
+    : [
+        `-- Skip reindex. ${columnType}(${configuredDims}) exceeds pgvector's HNSW cap of ${hnswMaxDims};`,
+        `-- fact similarity falls back to exact scans.`,
+      ];
   return [
     `-- ALTER ${columnType}(${columnDims}) → ${columnType}(${configuredDims}) on indexed column.`,
     `-- HOLD a maintenance window: this rewrites every row's embedding.`,
@@ -596,9 +607,7 @@ export function buildFactsAlterRecipe(
       : []),
     `ALTER TABLE facts ALTER COLUMN embedding TYPE ${targetType}`,
     `  USING embedding::${targetType};`,
-    `CREATE INDEX idx_facts_embedding_hnsw`,
-    `  ON facts USING hnsw (embedding ${opclass})`,
-    `  WHERE embedding IS NOT NULL AND expired_at IS NULL;`,
+    ...indexLines,
   ].join('\n');
 }
 

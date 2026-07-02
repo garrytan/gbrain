@@ -22,7 +22,6 @@ import { buildReflexAddition, warmReflex, type ResolveEntitiesFn as ReflexResolv
 interface AgentMessage {
   role: string;
   content: string | unknown;
-  [key: string]: unknown;
 }
 
 interface ContextEngineInfo {
@@ -51,7 +50,7 @@ interface IngestResult {
 
 export interface ContextEngine {
   readonly info: ContextEngineInfo;
-  ingest(params: { sessionId: string; message: AgentMessage; isHeartbeat?: boolean }): Promise<IngestResult>;
+  ingest(params: { sessionId: string; sessionKey?: string; message: AgentMessage; isHeartbeat?: boolean }): Promise<IngestResult>;
   assemble(params: {
     sessionId: string;
     sessionKey?: string;
