@@ -154,6 +154,30 @@ d('v0.28 takes engine — Postgres', () => {
     const stale = await engine.listStaleTakes();
     expect(stale.length).toBe(count);
     expect(stale[0]).toHaveProperty('take_id');
+    expect(stale[0]).toHaveProperty('source_id');
+
+    const defaultCount = await engine.countStaleTakes({ sourceId: 'default' });
+    expect(defaultCount).toBe(count);
+    const missingSource = await engine.listStaleTakes({ sourceId: 'missing-source' });
+    expect(missingSource).toHaveLength(0);
+  });
+
+  test('setTakeEmbedding clears one stale take on real Postgres', async () => {
+    const engine = getEngine();
+    const before = await engine.countStaleTakes();
+    const [row] = await engine.listStaleTakes({ batchSize: 1 });
+    expect(row).toBeTruthy();
+
+    const embedding = new Float32Array(1536);
+    embedding[0] = 1;
+    embedding[1] = 0.5;
+    const updated = await engine.setTakeEmbedding(row.take_id, embedding);
+    expect(updated).toBe(true);
+
+    const after = await engine.countStaleTakes();
+    expect(after).toBe(before - 1);
+    const embeddings = await engine.getTakeEmbeddings([row.take_id]);
+    expect(embeddings.get(row.take_id)?.[0]).toBe(1);
   });
 });
 

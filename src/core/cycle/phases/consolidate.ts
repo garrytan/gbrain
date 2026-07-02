@@ -26,6 +26,7 @@ import type { BrainEngine, FactRow } from '../../engine.ts';
 import type { PhaseResult } from '../../cycle.ts';
 import { cosineSimilarity } from '../../facts/classify.ts';
 import { isAborted } from '../../abort-check.ts';
+import { slugify } from '../../entities/resolve.ts';
 
 export interface ConsolidatePhaseOpts {
   dryRun?: boolean;
@@ -43,6 +44,8 @@ export interface ConsolidatePhaseOpts {
   minFactsPerBucket?: number;
   /** Minimum age (ms) of the OLDEST fact in a bucket before consolidation. Default 24h. */
   minOldestAgeMs?: number;
+  /** Minimum fuzzy entity-page resolution score. Default 0.55; DB config can override. */
+  fuzzyResolveMinScore?: number;
 }
 
 export async function runPhaseConsolidate(
@@ -53,11 +56,26 @@ export async function runPhaseConsolidate(
   const threshold = opts.clusterThreshold ?? 0.85;
   const minPerBucket = opts.minFactsPerBucket ?? 3;
   const minOldestAgeMs = opts.minOldestAgeMs ?? 24 * 60 * 60 * 1000;
+  const fuzzyResolveMinScore = opts.fuzzyResolveMinScore
+    ?? await readConfigNumber(engine, 'cycle.consolidate.fuzzy_resolve_min_score', 0.55);
 
   let factsConsolidated = 0;
   let takesWritten = 0;
   let bucketsProcessed = 0;
   let bucketsSkipped = 0;
+  let bucketsMissingPage = 0;
+  const resolvedBy = {
+    exact: 0,
+    title: 0,
+    suffix: 0,
+    fuzzy: 0,
+  };
+  const fuzzyResolutionSamples: Array<{
+    source_id: string;
+    entity_slug: string;
+    page_slug: string;
+    score: number;
+  }> = [];
 
   // Pull every (source_id, entity_slug) bucket of unconsolidated facts.
   // Uses the partial idx_facts_unconsolidated index.
@@ -122,13 +140,36 @@ export async function runPhaseConsolidate(
     bucketsProcessed += 1;
     const clusters = clusterFacts(unconsolidated, threshold);
 
-    // Resolve entity_slug → page_id. If page missing in this source, skip.
-    const pageRows = await engine.executeRaw<{ id: number }>(
-      `SELECT id FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`,
-      [b.source_id, b.entity_slug],
+    // Resolve entity_slug → page_id. Extractors can leave display-name-shaped
+    // values ("Alice Example") in older facts, so accept exact slug first and
+    // then entity-page title / slugified forms. If no entity page exists in
+    // this source, skip; consolidate never auto-creates pages.
+    const page = await resolveEntityPageForConsolidate(
+      engine,
+      b.source_id,
+      b.entity_slug,
+      fuzzyResolveMinScore,
     );
-    if (pageRows.length === 0) continue;
-    const pageId = pageRows[0].id;
+    if (!page) {
+      bucketsMissingPage += 1;
+      continue;
+    }
+    resolvedBy[page.method] += 1;
+    if (page.method === 'fuzzy') {
+      const score = page.score ?? 0;
+      if (fuzzyResolutionSamples.length < 25) {
+        fuzzyResolutionSamples.push({
+          source_id: b.source_id,
+          entity_slug: b.entity_slug,
+          page_slug: page.slug,
+          score,
+        });
+      }
+      process.stderr.write(
+        `[consolidate] fuzzy_entity_resolution source=${b.source_id} entity_slug=${JSON.stringify(b.entity_slug)} page_slug=${JSON.stringify(page.slug)} score=${score.toFixed(3)} threshold=${fuzzyResolveMinScore}\n`,
+      );
+    }
+    const pageId = page.id;
 
     // Existing row_num max for this page → start appending after it.
     const rowMaxRows = await engine.executeRaw<{ max: number }>(
@@ -256,16 +297,128 @@ export async function runPhaseConsolidate(
     status: factsConsolidated > 0 ? 'ok' : 'ok',
     duration_ms: 0,
     summary: dryRun
-      ? `(dry-run) would promote ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets`
-      : `promoted ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets`,
+      ? `(dry-run) would promote ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets; resolved: ${resolvedBy.exact} exact / ${resolvedBy.title} title / ${resolvedBy.suffix} suffix / ${resolvedBy.fuzzy} fuzzy`
+      : `promoted ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets; resolved: ${resolvedBy.exact} exact / ${resolvedBy.title} title / ${resolvedBy.suffix} suffix / ${resolvedBy.fuzzy} fuzzy`,
     details: {
       dryRun,
       facts_consolidated: factsConsolidated,
       takes_written: takesWritten,
       buckets_processed: bucketsProcessed,
       buckets_skipped: bucketsSkipped,
+      buckets_missing_page: bucketsMissingPage,
+      resolved_by: resolvedBy,
+      fuzzy_resolve_min_score: fuzzyResolveMinScore,
+      fuzzy_resolution_samples: fuzzyResolutionSamples,
     },
   };
+}
+
+const CONSOLIDATE_ENTITY_TYPES = ['person', 'company', 'concept', 'organization'] as const;
+type ConsolidateEntityResolutionMethod = 'exact' | 'title' | 'suffix' | 'fuzzy';
+type ConsolidateEntityResolution = {
+  id: number;
+  slug: string;
+  method: ConsolidateEntityResolutionMethod;
+  score?: number;
+};
+
+async function resolveEntityPageForConsolidate(
+  engine: BrainEngine,
+  sourceId: string,
+  entitySlugOrName: string,
+  fuzzyMinScore: number,
+): Promise<ConsolidateEntityResolution | null> {
+  const raw = entitySlugOrName.trim();
+  if (!raw) return null;
+  const token = slugify(raw);
+  const candidates = Array.from(new Set([
+    raw,
+    token,
+    `people/${token}`,
+    `companies/${token}`,
+    `concepts/${token}`,
+    `wiki/people/${token}`,
+    `wiki/companies/${token}`,
+    `wiki/concepts/${token}`,
+    `wiki/organizations/${token}`,
+  ].filter(Boolean)));
+
+  const direct = await engine.executeRaw<{ id: number; slug: string }>(
+    `SELECT id, slug
+       FROM pages
+      WHERE source_id = $1
+        AND deleted_at IS NULL
+        AND slug = ANY($2::text[])
+      ORDER BY CASE WHEN slug = $3 THEN 0 ELSE 1 END, slug ASC
+      LIMIT 1`,
+    [sourceId, candidates, raw],
+  );
+  if (direct.length > 0) return { id: direct[0].id, slug: direct[0].slug, method: 'exact' };
+
+  const byTitle = await engine.executeRaw<{ id: number; slug: string }>(
+    `SELECT id, slug
+       FROM pages
+      WHERE source_id = $1
+        AND deleted_at IS NULL
+        AND type = ANY($3::text[])
+        AND lower(title) = lower($2)
+      ORDER BY slug ASC
+      LIMIT 1`,
+    [sourceId, raw, [...CONSOLIDATE_ENTITY_TYPES]],
+  );
+  if (byTitle.length > 0) return { id: byTitle[0].id, slug: byTitle[0].slug, method: 'title' };
+
+  const suffixes = [`%/${token}`];
+  const bySuffix = await engine.executeRaw<{ id: number; slug: string }>(
+    `SELECT id, slug
+       FROM pages
+      WHERE source_id = $1
+        AND deleted_at IS NULL
+        AND type = ANY($3::text[])
+        AND slug LIKE ANY($2::text[])
+      ORDER BY slug ASC
+      LIMIT 1`,
+    [sourceId, suffixes, [...CONSOLIDATE_ENTITY_TYPES]],
+  );
+  if (bySuffix.length > 0) return { id: bySuffix[0].id, slug: bySuffix[0].slug, method: 'suffix' };
+
+  try {
+    const fuzzy = await engine.executeRaw<{ id: number; slug: string; score: number }>(
+      `SELECT id, slug,
+              GREATEST(similarity(lower(title), lower($2)), similarity(slug, $4)) AS score
+         FROM pages
+        WHERE source_id = $1
+          AND deleted_at IS NULL
+          AND type = ANY($3::text[])
+          AND (lower(title) % lower($2) OR slug ILIKE '%' || $4 || '%')
+        ORDER BY score DESC, slug ASC
+        LIMIT 1`,
+      [sourceId, raw, [...CONSOLIDATE_ENTITY_TYPES], token],
+    );
+    if (fuzzy.length > 0 && fuzzy[0].score >= fuzzyMinScore) {
+      return { id: fuzzy[0].id, slug: fuzzy[0].slug, method: 'fuzzy', score: fuzzy[0].score };
+    }
+  } catch {
+    // pg_trgm may be unavailable on some PGLite/Postgres builds; exact paths above
+    // are sufficient for deterministic operation.
+  }
+
+  return null;
+}
+
+async function readConfigNumber(
+  engine: BrainEngine,
+  key: string,
+  fallback: number,
+): Promise<number> {
+  try {
+    const raw = await engine.getConfig(key);
+    if (raw == null || raw.trim() === '') return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 /**

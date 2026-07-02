@@ -322,9 +322,16 @@ export interface TakeHit {
 /** v0.28 stale-takes row (mirrors StaleChunkRow shape). Embedding column intentionally omitted. */
 export interface StaleTakeRow {
   take_id: number;
+  source_id: string;
   page_slug: string;
   row_num: number;
   claim: string;
+}
+
+export interface StaleTakesOpts {
+  sourceId?: string;
+  batchSize?: number;
+  afterTakeId?: number;
 }
 
 /** Resolution metadata for resolveTake. */
@@ -1449,10 +1456,13 @@ export interface BrainEngine {
   getTakeEmbeddings(ids: number[]): Promise<Map<number, Float32Array>>;
 
   /** Pre-flight count for `gbrain embed --stale`. WHERE active AND embedding IS NULL. */
-  countStaleTakes(): Promise<number>;
+  countStaleTakes(opts?: { sourceId?: string }): Promise<number>;
 
   /** List stale takes (no embedding column in payload — same pattern as listStaleChunks). */
-  listStaleTakes(): Promise<StaleTakeRow[]>;
+  listStaleTakes(opts?: StaleTakesOpts): Promise<StaleTakeRow[]>;
+
+  /** Write one take embedding produced from the take's bare claim text. */
+  setTakeEmbedding(takeId: number, embedding: Float32Array): Promise<boolean>;
 
   /**
    * Update a take's mutable fields. May NOT change claim/kind/holder per the
