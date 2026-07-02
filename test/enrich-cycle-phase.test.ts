@@ -8,7 +8,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
-import { runPhaseEnrichThin } from '../src/core/cycle/enrich-thin.ts';
+import { classifyEnrichThinOutcome, runPhaseEnrichThin } from '../src/core/cycle/enrich-thin.ts';
 
 let engine: PGLiteEngine;
 
@@ -53,6 +53,8 @@ describe('runPhaseEnrichThin', () => {
     const perSource = r.details.per_source as Record<string, { pages_enriched: number; candidates_considered: number }>;
     expect(perSource['default'].pages_enriched).toBe(0);
     expect(perSource['default'].candidates_considered).toBe(0);
+    expect(r.details.result_status).toBe('no_candidates');
+    expect(r.details.budget_exhausted).toBe(false);
   });
 
   test('enabled + dry-run respects max_pages_per_tick cap', async () => {
@@ -96,5 +98,43 @@ describe('runPhaseEnrichThin', () => {
     expect(r.status).toBe('ok');
     expect(r.details.max_cost_usd).toBe(0.5);
     expect(r.details.max_total_cost_usd).toBe(5.0); // brain-wide default unchanged
+  });
+
+  test('zero budget cap is the only zero-spend budget_exhausted path', async () => {
+    await engine.setConfig('cycle.enrich_thin.enabled', 'true');
+    await engine.setConfig('cycle.enrich_thin.max_total_cost_usd', '0');
+    const r = await runPhaseEnrichThin(engine, { dryRun: true });
+    expect(r.status).toBe('skipped');
+    expect(r.details.result_status).toBe('zero_budget_cap');
+    expect(r.details.budget_exhausted).toBe(true);
+    expect(r.details.spent_usd).toBe(0);
+  });
+
+  test('outcome classifier separates blocked budget from real exhaustion', () => {
+    expect(classifyEnrichThinOutcome({
+      sourcesCount: 1,
+      candidatesConsidered: 2,
+      pagesEnriched: 0,
+      pagesSkippedInsufficient: 0,
+      anyBudgetFlag: true,
+      anyError: false,
+      skippedByBrainWideWalltime: 0,
+      spentUsd: 0,
+      maxCostUsd: 0.01,
+      maxTotalCostUsd: 1,
+    })).toEqual({ result_status: 'budget_blocked', budget_exhausted: false });
+
+    expect(classifyEnrichThinOutcome({
+      sourcesCount: 1,
+      candidatesConsidered: 2,
+      pagesEnriched: 1,
+      pagesSkippedInsufficient: 0,
+      anyBudgetFlag: true,
+      anyError: false,
+      skippedByBrainWideWalltime: 0,
+      spentUsd: 0.02,
+      maxCostUsd: 0.01,
+      maxTotalCostUsd: 1,
+    })).toEqual({ result_status: 'budget_exhausted', budget_exhausted: true });
   });
 });
