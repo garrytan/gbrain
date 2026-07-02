@@ -200,6 +200,16 @@ describe('shouldExclude — orphan filter regression (preserve curation)', () =>
     expect(shouldExclude('extracts/2026-06-12/takes.proposed/host/propose-x/round-single')).toBe(true);
   });
 
+  test('inbox intake-tray pages are excluded (same rationale as daily)', () => {
+    expect(shouldExclude('inbox/some-renewal-notice-2026-06-22')).toBe(true);
+  });
+
+  test('root schema and log pages are excluded', () => {
+    expect(shouldExclude('schema')).toBe(true);
+    expect(shouldExclude('log')).toBe(true);
+    expect(shouldExclude('concepts/schema-design')).toBe(false);
+  });
+
   test('deny-prefixes are excluded', () => {
     expect(shouldExclude('templates/meeting')).toBe(true);
     expect(shouldExclude('dashboards/_index')).toBe(true);

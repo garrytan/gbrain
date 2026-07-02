@@ -31,8 +31,9 @@ export const AUTO_SUFFIX_PATTERNS = ['/_index', '/log', '/readme'];
  * Page slugs that are pseudo-pages by convention.
  * `readme` / `index` — root-level folder descriptors, same rationale as
  * the `/readme` suffix and the existing `_index` pseudo-page.
+ * `schema` — written by the schema pack on init; `log` — the root brain log.
  */
-export const PSEUDO_SLUGS = new Set(['_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude', 'readme', 'index']);
+export const PSEUDO_SLUGS = new Set(['_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude', 'readme', 'index', 'schema', 'log']);
 
 /** Slug segment that marks raw sources */
 export const RAW_SEGMENT = '/raw/';
@@ -74,6 +75,10 @@ export const FIRST_SEGMENT_EXCLUSIONS = new Set([
   'entities',
   'daily',
   'extracts',
+  // 'inbox' — GTD-style intake tray: dated collector records in transit
+  // (email digests, alerts) awaiting triage; nothing links INTO an inbox
+  // item, same rationale as 'daily'.
+  'inbox',
 ]);
 
 /**
