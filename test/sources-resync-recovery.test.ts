@@ -10,7 +10,7 @@
 
 import { test, expect, describe, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { mkdirSync, writeFileSync, rmSync, chmodSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, relative, resolve, isAbsolute } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { addSource, recloneIfMissing } from '../src/core/sources-ops.ts';
@@ -282,6 +282,30 @@ describe('performSync re-clone branch (driven by sync.ts:320 logic)', () => {
       );
       expect(existsSync(userTree)).toBe(true);
       expect(existsSync(sentinel)).toBe(true);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// repo-path.ts invariant: a relative --clone-dir must be stored absolute
+// ---------------------------------------------------------------------------
+
+describe('addSource --clone-dir normalization', () => {
+  test('a relative --clone-dir is resolved against cwd before clone + insert', async () => {
+    await withEnv({ GBRAIN_HOME, PATH: fakePath() }, async () => {
+      // Express a sandboxed tmp target RELATIVE to the test cwd so the
+      // resolved clone still lands inside FAKE_GIT_DIR, never the repo tree.
+      const absTarget = join(FAKE_GIT_DIR, 'clone-rel-target');
+      const relTarget = relative(process.cwd(), absTarget);
+      expect(isAbsolute(relTarget)).toBe(false);
+
+      const row = await addSource(engine, {
+        id: 'clone-rel',
+        remoteUrl: 'https://github.com/example/repo',
+        cloneDir: relTarget,
+      });
+      expect(row.local_path).toBe(resolve(absTarget));
+      expect(isAbsolute(row.local_path!)).toBe(true);
     });
   });
 });

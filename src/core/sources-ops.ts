@@ -358,7 +358,10 @@ export async function addSource(
   // sync resolve it against whatever cwd the process happens to have.
   let finalPath = opts.localPath ? resolvePath(opts.localPath) : null;
   if (parsedUrl) {
-    finalPath = opts.cloneDir ?? defaultCloneDir(opts.id);
+    // --clone-dir is user input like --path: resolve at ingress so the clone
+    // lands (and is stored) absolute. defaultCloneDir is $GBRAIN_HOME-based,
+    // already absolute.
+    finalPath = opts.cloneDir ? resolvePath(opts.cloneDir) : defaultCloneDir(opts.id);
   }
   if (finalPath) {
     const others = await engine.executeRaw<{ id: string; local_path: string }>(
