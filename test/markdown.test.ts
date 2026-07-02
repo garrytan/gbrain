@@ -88,6 +88,31 @@ Content
     expect(parsed.slug).toBe('concepts/do-things-that-dont-scale');
   });
 
+  test('prefers body H1 over inferred filename when frontmatter title is missing', () => {
+    const md = `---
+type: person
+---
+# Alice Example
+
+Contact notes.
+`;
+    const parsed = parseMarkdown(md, 'contacts/contact-20170928-5-alice-example.md');
+    expect(parsed.title).toBe('Alice Example');
+  });
+
+  test('frontmatter title still wins over body H1', () => {
+    const md = `---
+type: person
+title: A. Example
+---
+# Alice Example
+
+Contact notes.
+`;
+    const parsed = parseMarkdown(md, 'contacts/contact-20170928-5-alice-example.md');
+    expect(parsed.title).toBe('A. Example');
+  });
+
   // v0.20: BrainBench / native inbox-chat-calendar Page types. These 5 directory
   // heuristics exercise PageType 'email | slack | calendar-event | note | meeting'
   // which were added for amara-life-v1 ingest but are useful for any gbrain user
