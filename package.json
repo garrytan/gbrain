@@ -80,7 +80,7 @@
     "check:fixture-privacy": "scripts/check-fixture-privacy.sh",
     "check:conversation-parser": "bun src/cli.ts eval conversation-parser test/fixtures/conversation-formats/all.jsonl --no-llm",
     "check:source-scope-onboard": "scripts/check-source-scope-onboard.sh",
-    "postinstall": "node -e \"const{spawnSync}=require('child_process');const probe=spawnSync('gbrain',['--version'],{stdio:'ignore',shell:process.platform==='win32'});if(probe.status===0){const r=spawnSync('gbrain',['apply-migrations','--yes','--non-interactive'],{stdio:'inherit',shell:process.platform==='win32'});process.exit(r.status||0)}else{process.stderr.write('[gbrain] postinstall skipped. If installed via bun install -g github:...: run `gbrain doctor` and `gbrain apply-migrations --yes` manually. See https://github.com/garrytan/gbrain/issues/218\\n')}\"",
+    "postinstall": "bun run scripts/postinstall.ts",
     "prepublish:clawhub": "bun run build:all",
     "publish:clawhub": "clawhub package publish . --family bundle-plugin"
   },
