@@ -4069,8 +4069,8 @@ export function buildRetrievalReflexCheck(skillsDir: string | null): Check {
     if (!enabled) {
       return {
         name,
-        status: 'warn',
-        message: 'retrieval reflex disabled (config/env) — entity pointer layer off',
+        status: 'ok',
+        message: 'retrieval reflex intentionally disabled (config/env) — entity pointer layer off',
         details: { enabled: false, engine: engineKind, policy_skill_installed: skillInstalled },
       };
     }

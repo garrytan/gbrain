@@ -9,12 +9,12 @@ import { buildRetrievalReflexCheck } from '../src/commands/doctor.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 describe('buildRetrievalReflexCheck', () => {
-  test('disabled via env → warn, names the right check', async () => {
+  test('disabled via env → ok intentional-off, names the right check', async () => {
     await withEnv({ GBRAIN_RETRIEVAL_REFLEX: 'false' }, async () => {
       const c = buildRetrievalReflexCheck(null);
       expect(c.name).toBe('retrieval_reflex_health');
-      expect(c.status).toBe('warn');
-      expect(c.message).toContain('disabled');
+      expect(c.status).toBe('ok');
+      expect(c.message).toContain('intentionally disabled');
       expect((c.details as any)?.enabled).toBe(false);
     });
   });
