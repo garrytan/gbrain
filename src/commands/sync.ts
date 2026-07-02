@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, statSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { join, relative } from 'path';
+import { join, relative, isAbsolute } from 'path';
+import { resolveRepoArg, requireAbsoluteStoredPath } from '../core/repo-path.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { DELETE_BATCH_SIZE } from '../core/engine-constants.ts';
 import { importFile } from '../core/import-file.ts';
@@ -969,6 +970,10 @@ async function writeSyncAnchor(
   // the legacy 2-column write; `null` clears the column (git unavailable).
   newestContentEpochMs?: number | null,
 ): Promise<void> {
+  // repo-path.ts invariant: storage never holds a relative repo path. All
+  // current callers pass the already-resolved phase value; this keeps the
+  // guarantee local for future call sites.
+  if (which === 'repo_path') value = resolveRepoArg(value);
   if (sourceId) {
     const col = which === 'repo_path' ? 'local_path' : 'last_commit';
     // last_sync_at bookmarked on every last_commit advance.
@@ -1468,8 +1473,21 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // report names WHICH phase spun. Doesn't fix #1342 but converts
   // "hung with no output" into actionable diagnostic data.
   serr(`[gbrain phase] sync.resolve_repo`);
-  // Resolve repo path
-  const repoPath = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
+  // Resolve repo path. A caller-supplied path is resolved against cwd (it is
+  // this invocation's intent); a STORED anchor must already be absolute —
+  // resolving a relative anchor against whatever cwd this process happens to
+  // have is the wrong-tree footgun (see core/repo-path.ts).
+  const cliRepoPath = opts.repoPath ? resolveRepoArg(opts.repoPath) : null;
+  const storedRepoPath = cliRepoPath
+    ? null
+    : await readSyncAnchor(engine, opts.sourceId, 'repo_path');
+  if (storedRepoPath) {
+    requireAbsoluteStoredPath(
+      storedRepoPath,
+      opts.sourceId ? `sources.local_path for "${opts.sourceId}"` : 'config sync.repo_path',
+    );
+  }
+  const repoPath = cliRepoPath ?? storedRepoPath;
   if (!repoPath) {
     const hint = opts.sourceId
       ? `Source "${opts.sourceId}" has no local_path. Run: gbrain sources add ${opts.sourceId} --path <path>`
@@ -3348,7 +3366,11 @@ See also:
     return;
   }
 
-  const repoPath = args.find((a, i) => args[i - 1] === '--repo') || undefined;
+  const repoArgRaw = args.find((a, i) => args[i - 1] === '--repo');
+  // Resolve at ingress (repo-path.ts invariant): the cwd at the moment the
+  // user typed --repo is intent; everything downstream (anchors, wrapper
+  // scripts) must only ever see the absolute form.
+  const repoPath = repoArgRaw ? resolveRepoArg(repoArgRaw) : undefined;
   const watch = args.includes('--watch');
   const intervalStr = args.find((a, i) => args[i - 1] === '--interval');
   const interval = intervalStr ? parseInt(intervalStr, 10) : 60;
@@ -3578,11 +3600,30 @@ See also:
     // own "do work?" gate (sync.ts:1057+1075) + doctor's sync_freshness.
     // Both columns predate v0.41 (writeSyncAnchor / writeChunkerVersion); no
     // schema migration needed.
-    const sources = await engine.executeRaw<{ id: string; name: string; local_path: string | null; config: Record<string, unknown>; last_commit: string | null; chunker_version: string | null }>(
+    const allSources = await engine.executeRaw<{ id: string; name: string; local_path: string | null; config: Record<string, unknown>; last_commit: string | null; chunker_version: string | null }>(
       `SELECT id, name, local_path, config, last_commit, chunker_version FROM sources WHERE local_path IS NOT NULL`,
     );
-    if (!sources || sources.length === 0) {
+    if (!allSources || allSources.length === 0) {
       console.log('No sources with local_path configured. Use `gbrain sources add <id> --path <path>` first.');
+      return;
+    }
+
+    // repo-path.ts invariant: a legacy relative local_path must reach neither
+    // the cost estimator nor the fan-out — runOne passes local_path as
+    // opts.repoPath, which performSync treats as caller intent and would
+    // resolve against THIS process's cwd (the wrong-tree footgun). Migration
+    // 120 clears such rows; this guard covers a brain that hasn't migrated
+    // yet. Exclude loudly, keep the remaining sources best-effort.
+    const sources = allSources.filter((s) => {
+      if (!s.local_path || isAbsolute(s.local_path)) return true;
+      console.error(
+        `[${s.id}] skipped: sources.local_path "${s.local_path}" is relative. ` +
+        `Fix once: gbrain sync --source ${s.id} --repo <absolute-path>`,
+      );
+      return false;
+    });
+    if (sources.length === 0) {
+      console.error('All sources were skipped (relative local_path). Nothing to sync.');
       return;
     }
 
@@ -4146,7 +4187,9 @@ export async function syncOneSource(
   const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
   const log = `\n--- Syncing source: ${src.name} ---\n`;
   const repoOpts: SyncOpts = {
-    repoPath: src.local_path!,
+    // src is a db row: a stored local_path is refused when relative rather
+    // than forwarded as caller intent (repo-path.ts invariant).
+    repoPath: requireAbsoluteStoredPath(src.local_path!, `sources.local_path for "${src.id}"`),
     dryRun: shared.dryRun,
     full: shared.full,
     noPull: shared.noPull,

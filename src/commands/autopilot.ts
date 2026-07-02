@@ -38,6 +38,24 @@ import { logSelfUpgrade } from '../core/audit/self-upgrade-audit.ts';
 import { detectInstallMethod } from './upgrade.ts';
 import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
+import { resolveRepoArg, requireAbsoluteStoredPath } from '../core/repo-path.ts';
+
+/**
+ * Shared --repo resolution for the run loop and --install. A typed --repo is
+ * resolved against cwd at ingress; a config-sourced value must already be
+ * absolute (repo-path.ts invariant) — --install bakes it verbatim into the
+ * wrapper script, so a relative value here would freeze the cwd bug into
+ * launchd/cron.
+ */
+async function resolveAutopilotRepoPath(
+  engine: BrainEngine,
+  args: string[],
+): Promise<string | null> {
+  const arg = parseArg(args, '--repo');
+  if (arg) return resolveRepoArg(arg);
+  const stored = await engine.getConfig('sync.repo_path');
+  return stored ? requireAbsoluteStoredPath(stored, 'config sync.repo_path') : null;
+}
 
 /**
  * v0.37.7.0 #1162 — classify autopilot reconnect-loop errors.
@@ -331,7 +349,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     return;
   }
 
-  const repoPath = parseArg(args, '--repo') || await engine.getConfig('sync.repo_path');
+  const repoPath = await resolveAutopilotRepoPath(engine, args);
   const baseInterval = parseInt(parseArg(args, '--interval') || '300', 10);
   const jsonMode = args.includes('--json');
   const forceInline = args.includes('--inline');
@@ -1142,7 +1160,7 @@ exec '${safeGbrainPath}' autopilot --repo '${safeRepoPath}'
 }
 
 async function installDaemon(engine: BrainEngine, args: string[]) {
-  const repoPath = parseArg(args, '--repo') || await engine.getConfig('sync.repo_path');
+  const repoPath = await resolveAutopilotRepoPath(engine, args);
   if (!repoPath) {
     console.error('No repo path. Use --repo or run gbrain sync --repo first.');
     process.exit(1);

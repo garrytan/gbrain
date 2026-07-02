@@ -10,6 +10,7 @@ import { WORKER_EXIT_RSS_WATCHDOG } from '../core/minions/worker-exit-codes.ts';
 import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
 import type { PaceKeyOverrides } from '../core/pace-mode.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
+import { requireAbsoluteStoredPath } from '../core/repo-path.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { parseNiceValue, applyNiceness, getEffectiveNiceness, formatNice } from '../core/minions/niceness.ts';
 
@@ -1322,7 +1323,12 @@ export async function registerBuiltinHandlers(
   const quiet = opts?.quiet === true;
   worker.register('sync', async (job) => {
     const { performSync } = await import('./sync.ts');
-    const repoPath = typeof job.data.repoPath === 'string' ? job.data.repoPath : undefined;
+    // repo-path.ts invariant: job payloads are storage — a relative repoPath
+    // enqueued by an older binary would otherwise resolve against the WORKER
+    // daemon's cwd. Fail the job loudly instead.
+    const repoPath = typeof job.data.repoPath === 'string'
+      ? requireAbsoluteStoredPath(job.data.repoPath, 'job.data.repoPath')
+      : undefined;
     const noPull = !!job.data.noPull;
     // noEmbed defaults to true (embed is a separate job — submit `embed --stale`
     // after sync, OR run via the autopilot cycle which has its own embed phase).
