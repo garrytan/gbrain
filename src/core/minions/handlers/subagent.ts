@@ -875,16 +875,30 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       // circuit silently breaks and the tool re-executes. Pinned by
       // test/e2e/subagent-crash-replay-multi-provider.test.ts.
       const candidateId = randomUUIDv7();
-      const rows = await engine.executeRaw<{ gbrain_tool_use_id: string }>(
-        `INSERT INTO subagent_tool_executions
-           (job_id, message_idx, tool_use_id, tool_name, input, status, schema_version, ordinal, gbrain_tool_use_id, provider_id)
-         VALUES ($1, $2, $3, $4, $5::text::jsonb, 'pending', 2, $6, $7, $8)
-         ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
-           SET status = subagent_tool_executions.status
-         RETURNING gbrain_tool_use_id::text AS gbrain_tool_use_id`,
+      const rows = await engine.executeRaw<{ stable_key: string }>(
+        `WITH existing AS (
+           SELECT COALESCE(gbrain_tool_use_id::text, 'legacy:' || job_id::text || ':' || message_idx::text || ':' || tool_use_id || ':' || tool_name) AS stable_key
+             FROM subagent_tool_executions
+            WHERE job_id = $1
+              AND ((message_idx = $2 AND ordinal = $6) OR tool_use_id = $3)
+            ORDER BY CASE WHEN message_idx = $2 AND ordinal = $6 THEN 0 ELSE 1 END, id
+            LIMIT 1
+         ), inserted AS (
+           INSERT INTO subagent_tool_executions
+             (job_id, message_idx, tool_use_id, tool_name, input, status, schema_version, ordinal, gbrain_tool_use_id, provider_id)
+           SELECT $1, $2, $3, $4, $5::text::jsonb, 'pending', 2, $6, $7, $8
+            WHERE NOT EXISTS (SELECT 1 FROM existing)
+           ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
+             SET status = subagent_tool_executions.status
+           RETURNING gbrain_tool_use_id::text AS stable_key
+         )
+         SELECT stable_key FROM existing
+         UNION ALL
+         SELECT stable_key FROM inserted
+         LIMIT 1`,
         [ctx.id, messageIdx, providerToolCallId, toolName, JSON.stringify(input ?? null), ordinal, candidateId, recipeIdFromModel(model)],
       );
-      const gbrainToolUseId = rows[0]?.gbrain_tool_use_id ?? candidateId;
+      const gbrainToolUseId = rows[0]?.stable_key ?? candidateId;
       heartbeat('tool_called', { turn_idx: turnIdx, tool_name: toolName });
       return { gbrainToolUseId };
     },
@@ -903,6 +917,18 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
          WHERE gbrain_tool_use_id::text = $2`,
         [errorMsg, gbrainToolUseId],
       );
+    },
+    onToolResultsTurn: async (_turnIdx, messageIdx, blocks) => {
+      await persistMessage(engine, ctx.id, {
+        message_idx: messageIdx,
+        role: 'user',
+        content_blocks: blocks as unknown as ContentBlock[],
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cache_read: null,
+        tokens_cache_create: null,
+        model: null,
+      });
     },
     onHeartbeat: heartbeat,
   });
