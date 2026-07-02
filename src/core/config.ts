@@ -262,6 +262,13 @@ export interface GBrainConfig {
       verdict_model?: string;
       max_prompt_tokens?: number;
       max_chunks_per_transcript?: number;
+      /**
+       * #1879 — when true (default), the oversize_after_split skip in the
+       * synthesize phase persists to `dream_verdicts` so subsequent runs
+       * short-circuit on the cached verdict instead of re-chunking and
+       * burning per-chunk subagent timeouts every cycle.
+       */
+      persist_oversize_skip?: boolean;
     };
     patterns?: {
       lookback_days?: number;
@@ -749,6 +756,7 @@ export async function loadConfigWithEngine(
   const dbVerdictModel = await dbStr('dream.synthesize.verdict_model');
   const dbMaxPromptTokens = await dbInt('dream.synthesize.max_prompt_tokens');
   const dbMaxChunksPerTranscript = await dbInt('dream.synthesize.max_chunks_per_transcript');
+  const dbPersistOversizeSkip = await dbBool('dream.synthesize.persist_oversize_skip');
   const dbLookbackDays = await dbInt('dream.patterns.lookback_days');
   const dbMinEvidence = await dbInt('dream.patterns.min_evidence');
 
@@ -772,6 +780,9 @@ export async function loadConfigWithEngine(
   }
   if (mergedSynth.max_chunks_per_transcript === undefined && dbMaxChunksPerTranscript !== undefined) {
     mergedSynth.max_chunks_per_transcript = dbMaxChunksPerTranscript;
+  }
+  if (mergedSynth.persist_oversize_skip === undefined && dbPersistOversizeSkip !== undefined) {
+    mergedSynth.persist_oversize_skip = dbPersistOversizeSkip;
   }
   if (mergedPatterns.lookback_days === undefined && dbLookbackDays !== undefined) {
     mergedPatterns.lookback_days = dbLookbackDays;
@@ -877,6 +888,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.synthesize.verdict_model',
   'dream.synthesize.max_prompt_tokens',
   'dream.synthesize.max_chunks_per_transcript',
+  'dream.synthesize.persist_oversize_skip',
   'dream.patterns.lookback_days',
   'dream.patterns.min_evidence',
   // Emotional weight (v0.29)

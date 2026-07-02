@@ -431,19 +431,32 @@ export async function runPhaseSynthesize(
 
       const chunks = splitTranscriptByBudget(t.content, t.contentHash, maxCharsPerChunk);
 
-      // D5 cap hit: log + skip; do NOT write to dream_verdicts. Closes the
-      // poison-pill class — next cycle re-attempts under whatever budget
-      // is then current.
+      // D5 cap hit: log + skip. #1879: under `persistOversizeSkip` (default
+      // true), also write the skip to `dream_verdicts` so subsequent cycles
+      // short-circuit on the cached verdict instead of re-chunking the same
+      // oversize transcript and burning per-chunk subagent timeouts on every
+      // run. The content_hash key means an edited transcript gets a fresh
+      // verdict; operators can opt out with
+      // `dream.synthesize.persist_oversize_skip=false`.
       if (chunks.length > config.maxChunksPerTranscript) {
+        const reason = `oversize_after_split: ${chunks.length}/${config.maxChunksPerTranscript}`;
         process.stderr.write(
           `[dream] transcript ${t.basename} produced ${chunks.length} chunks at ` +
           `${maxCharsPerChunk}-char budget (cap=${config.maxChunksPerTranscript}); skipping. ` +
           `Increase dream.synthesize.max_chunks_per_transcript or use a larger-context model.\n`,
         );
-        skipReports.push({
-          filePath: t.filePath,
-          reason: `oversize_after_split: ${chunks.length}/${config.maxChunksPerTranscript}`,
-        });
+        if (config.persistOversizeSkip) {
+          await engine.putDreamVerdict(t.filePath, t.contentHash, {
+            worth_processing: false,
+            reasons: [reason],
+          });
+          process.stderr.write(
+            `[dream] persisted oversize skip to dream_verdicts (content_hash=${t.contentHash.slice(0, 12)}); ` +
+            `set dream.synthesize.persist_oversize_skip=false to re-evaluate every cycle, or ` +
+            `edit the transcript (changes content_hash) to retry.\n`,
+          );
+        }
+        skipReports.push({ filePath: t.filePath, reason });
         continue;
       }
 
@@ -588,11 +601,27 @@ interface SynthConfig {
   maxPromptTokens: number | null;
   /**
    * D5/D10: Cap on chunks produced from a single transcript. On cap hit, the
-   * transcript is logged + skipped (NOT cached in dream_verdicts — closes the
-   * cache-poisoning class). Operator override:
+   * transcript is logged + skipped. Operator override:
    * `dream.synthesize.max_chunks_per_transcript`.
+   *
+   * #1879 — when the cap fires, also write a `worth_processing: false` row
+   * to `dream_verdicts` under `persistOversizeSkip` (default true) so the
+   * NEXT cycle short-circuits on the cached verdict instead of re-chunking
+   * the same oversize transcript and burning subagent timeouts on every
+   * run. The content_hash key means an edited transcript gets a fresh
+   * verdict. Operators who want the legacy "no cache write" behavior
+   * (re-evaluate every cycle under a possibly-different budget) can set
+   * `dream.synthesize.persist_oversize_skip=false`.
    */
   maxChunksPerTranscript: number;
+  /**
+   * #1879 — when true (default), the oversize_after_split skip persists a
+   * `worth_processing: false` row to `dream_verdicts`. Subsequent runs hit
+   * the verdict cache for the same `(file_path, content_hash)` and skip
+   * before chunking, so a 5MB transcript can't burn cost every night.
+   * Operator override: `dream.synthesize.persist_oversize_skip`.
+   */
+  persistOversizeSkip: boolean;
 }
 
 async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
@@ -621,6 +650,10 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
   const cooldownHoursStr = await engine.getConfig('dream.synthesize.cooldown_hours');
   const maxPromptTokensStr = await engine.getConfig('dream.synthesize.max_prompt_tokens');
   const maxChunksStr = await engine.getConfig('dream.synthesize.max_chunks_per_transcript');
+  // #1879: default true — cost protection wins by default. Explicit
+  // 'false' restores the pre-fix re-evaluate-every-cycle behavior.
+  const persistOversizeSkipStr = await engine.getConfig('dream.synthesize.persist_oversize_skip');
+  const persistOversizeSkip = persistOversizeSkipStr !== 'false';
 
   let excludePatterns: string[] = ['medical', 'therapy'];
   if (excludeStr) {
@@ -658,6 +691,7 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     cooldownHours: cooldownHoursStr ? Math.max(0, parseInt(cooldownHoursStr, 10) || 12) : 12,
     maxPromptTokens,
     maxChunksPerTranscript,
+    persistOversizeSkip,
   };
 }
 

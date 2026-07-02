@@ -114,7 +114,14 @@ function corpusPath(corpusDir: string, basename: string): string {
 }
 
 describe('E2E synthesize chunking — D5 cap hit', () => {
-  test('chunks > max_chunks_per_transcript → skipped with no jobs and no verdict-cache write', async () => {
+  // #1879: under the new default (`dream.synthesize.persist_oversize_skip`
+  // = true), the oversize_after_split skip persists a
+  // `worth_processing: false` row to `dream_verdicts`, so the NEXT cycle
+  // hits the cache and skips before chunking + per-chunk subagent timeouts.
+  // The reporter's repro: a 5MB transcript times out every night, paying
+  // for the ingested input each time, because the same (file_path,
+  // content_hash) was retried unbounded.
+  test('chunks > max_chunks_per_transcript → skipped + skip persisted to dream_verdicts (#1879)', async () => {
     const rig = await setupRig();
     try {
       // Tiny chunk budget (forces N chunks) + tiny cap (forces cap hit).
@@ -131,7 +138,7 @@ describe('E2E synthesize chunking — D5 cap hit', () => {
       const filePath = corpusPath(rig.corpusDir, basename);
       const content = 'fat transcript line\n'.repeat(75_000); // ~1.5M chars
       writeFileSync(filePath, content);
-      await seedVerdict(rig.engine, filePath, content);
+      const contentHash = await seedVerdict(rig.engine, filePath, content);
 
       await withoutAnthropicKey(async () => {
         const result = await runPhaseSynthesize(rig.engine, {
@@ -156,16 +163,131 @@ describe('E2E synthesize chunking — D5 cap hit', () => {
       );
       expect(Number(jobs[0].cnt)).toBe(0);
 
-      // D5: dream_verdicts NOT written for the cap-hit path.
-      // Verify by re-reading the verdict — our seeded row is the ONLY entry.
-      const verdicts = await rig.engine.executeRaw<{ cnt: string | number }>(
-        `SELECT count(*) AS cnt FROM dream_verdicts`,
-      );
-      expect(Number(verdicts[0].cnt)).toBe(1); // only the seed; no cap-hit row added
+      // #1879: the seeded `worth_processing: true` verdict is OVERWRITTEN
+      // by the oversize_after_split persist (same (file_path, content_hash)
+      // key → upsert). The verdict row flips so the next cycle short-
+      // circuits before chunking. Reasons surface the cap-hit so an
+      // operator inspecting the table can see why.
+      const verdict = await rig.engine.getDreamVerdict(filePath, contentHash);
+      expect(verdict).not.toBeNull();
+      expect(verdict!.worth_processing).toBe(false);
+      expect(verdict!.reasons.some(r => /oversize_after_split/.test(r))).toBe(true);
     } finally {
       await rig.cleanup();
     }
   }, 30_000);
+
+  // #1879 escape hatch: operators who prefer the pre-fix "re-evaluate on
+  // every cycle under a possibly-different budget" behavior set the flag
+  // to false. Pin that path so a future change doesn't silently drop it.
+  test('persist_oversize_skip=false: legacy behavior — skip NOT cached so next cycle re-evaluates', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+      await rig.engine.setConfig('dream.synthesize.max_prompt_tokens', '100000');
+      await rig.engine.setConfig('dream.synthesize.max_chunks_per_transcript', '2');
+      // Opt out: keep the legacy "no cache write" behavior.
+      await rig.engine.setConfig('dream.synthesize.persist_oversize_skip', 'false');
+
+      const basename = '2026-05-08-fat-transcript-optout.txt';
+      const filePath = corpusPath(rig.corpusDir, basename);
+      const content = 'fat transcript line\n'.repeat(75_000);
+      writeFileSync(filePath, content);
+      const contentHash = await seedVerdict(rig.engine, filePath, content);
+
+      await withoutAnthropicKey(async () => {
+        const result = await runPhaseSynthesize(rig.engine, {
+          brainDir: rig.brainDir,
+          dryRun: false,
+        });
+        expect(result.status).toBe('ok');
+        const details = result.details as {
+          skips: Array<{ filePath: string; reason: string }>;
+        };
+        expect(details.skips[0].reason).toMatch(/oversize_after_split/);
+      });
+
+      // Verdict cache untouched — the original `worth_processing: true`
+      // seed survives, so a re-run under a different budget can still
+      // attempt synthesis (the poison-pill protection the original
+      // comment cited).
+      const verdict = await rig.engine.getDreamVerdict(filePath, contentHash);
+      expect(verdict).not.toBeNull();
+      expect(verdict!.worth_processing).toBe(true);
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  // #1879 follow-through: after the persist, a SUBSEQUENT cycle short-
+  // circuits at the verdict-cache check (line ~333 in synthesize.ts) —
+  // the transcript is never chunked or dispatched, and zero subagent jobs
+  // get submitted. This is the actual cost-savings path the issue asks
+  // for.
+  test('after persist, the next cycle short-circuits on cached verdict (no chunking, no jobs)', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+      await rig.engine.setConfig('dream.synthesize.max_prompt_tokens', '100000');
+      await rig.engine.setConfig('dream.synthesize.max_chunks_per_transcript', '2');
+      // persist defaults to true.
+
+      const basename = '2026-05-08-fat-transcript-twice.txt';
+      const filePath = corpusPath(rig.corpusDir, basename);
+      const content = 'fat transcript line\n'.repeat(75_000);
+      writeFileSync(filePath, content);
+      await seedVerdict(rig.engine, filePath, content);
+
+      // First run: persist fires.
+      await withoutAnthropicKey(async () => {
+        await runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: false });
+      });
+
+      // Second run: cooldown is a separate timestamp from the verdict cache.
+      // To force a fresh evaluation cycle, clear the cooldown timestamp the
+      // first run wrote. (`cooldown_hours = 0` is rejected by the config
+      // parser's `|| 12` fallback; clearing the timestamp is the working
+      // bypass.)
+      await rig.engine.executeRaw(
+        `DELETE FROM config WHERE key = 'dream.synthesize.last_completion_ts'`,
+      );
+
+      await withoutAnthropicKey(async () => {
+        const result = await runPhaseSynthesize(rig.engine, {
+          brainDir: rig.brainDir,
+          dryRun: false,
+        });
+        expect(result.status).toBe('ok');
+        // Phase early-returns on `worthProcessing.length === 0` (every
+        // transcript ruled out by cached verdict), so the result.details
+        // shape here is the "all transcripts skipped by significance
+        // filter" branch: { transcripts_discovered, transcripts_processed,
+        // pages_written, verdicts }. No `children_submitted` field — we
+        // never reached the fan-out site.
+        const details = result.details as {
+          transcripts_processed: number;
+          pages_written: number;
+          verdicts?: Array<{ filePath: string; worth: boolean; cached: boolean }>;
+        };
+        expect(details.transcripts_processed).toBe(0);
+        expect(details.pages_written).toBe(0);
+        const cachedNegative = (details.verdicts ?? []).find(v => v.filePath === filePath);
+        expect(cachedNegative).toBeDefined();
+        expect(cachedNegative!.worth).toBe(false);
+        expect(cachedNegative!.cached).toBe(true);
+      });
+
+      // No subagent jobs submitted across both runs.
+      const jobs = await rig.engine.executeRaw<{ cnt: string | number }>(
+        `SELECT count(*) AS cnt FROM minion_jobs WHERE name = 'subagent'`,
+      );
+      expect(Number(jobs[0].cnt)).toBe(0);
+    } finally {
+      await rig.cleanup();
+    }
+  }, 45_000);
 });
 
 describe('E2E synthesize chunking — D8 legacy single-chunk migration', () => {
