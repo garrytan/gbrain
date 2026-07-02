@@ -9,6 +9,8 @@ import type { Recipe } from '../types.ts';
 import { openai } from './openai.ts';
 import { google } from './google.ts';
 import { anthropic } from './anthropic.ts';
+import { mlxEmbedding } from './mlx-embedding.ts';
+import { mlxGemma4 } from './mlx-gemma4.ts';
 import { ollama } from './ollama.ts';
 import { openrouter } from './openrouter.ts';
 import { voyage } from './voyage.ts';
@@ -28,6 +30,8 @@ const ALL: Recipe[] = [
   openai,
   google,
   anthropic,
+  mlxEmbedding,
+  mlxGemma4,
   ollama,
   openrouter,
   voyage,
