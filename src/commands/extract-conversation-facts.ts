@@ -186,6 +186,19 @@ export interface ConversationSegment {
 }
 
 /**
+ * The `valid_from` to stamp on facts extracted from a segment: the date the
+ * claim was made (the segment's own timestamp), so find_trajectory orders on
+ * "when it happened" rather than "when extracted". Returns `undefined` for an
+ * unparseable date or the 1970 epoch fallback parseConversation emits when a
+ * page carries no date at all — letting insertFacts keep its now() default.
+ */
+export function segmentValidFrom(endIso: string): Date | undefined {
+  const d = new Date(endIso);
+  if (Number.isNaN(d.getTime()) || d.getUTCFullYear() <= 1971) return undefined;
+  return d;
+}
+
+/**
  * Core function opts. Strict — `sourceId` is always required (Eng-v2 A1).
  * Multi-source iteration is the caller's job.
  */
@@ -756,6 +769,10 @@ async function processPage(
     state.result.facts_extracted += extracted.length;
 
     if (!state.dryRun && extracted.length > 0) {
+      // Anchor each fact at WHEN IT WAS SAID — the segment's own date — not the
+      // extraction time (see segmentValidFrom).
+      const segValidFrom = segmentValidFrom(seg.endIso);
+
       // Eng-v2 C1 / E11: page-global row_num. Each fact in this batch gets
       // a unique row_num within (source_id, source_markdown_slug); the
       // accumulator increments across the segment loop.
@@ -765,6 +782,7 @@ async function processPage(
         source_markdown_slug: page.slug,
         source: PER_SEGMENT_SOURCE_PREFIX,
         source_session: sessionId,
+        valid_from: segValidFrom,
         context:
           fact.context ?? `from ${page.slug} segment ${seg.startIso}..${seg.endIso}`,
       }));

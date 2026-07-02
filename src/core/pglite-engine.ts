@@ -18,6 +18,7 @@ import type {
 } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { withRetry, BULK_RETRY_OPTS, resolveBulkRetryOpts, computeNextDelay, type BatchAuditSite } from './retry.ts';
+import { factsWorldOnly } from './facts/reader-trust.ts';
 import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatchExhausted } from './audit/batch-retry-audit.ts';
 import { runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
@@ -3853,7 +3854,7 @@ export class PGLiteEngine implements BrainEngine {
     const useArray = Array.isArray(opts.sourceIds) && opts.sourceIds.length > 0;
     const sourceIds = useArray ? opts.sourceIds! : null;
     const sourceId = opts.sourceId ?? 'default';
-    const remoteFilter = opts.remote === true;
+    const remoteFilter = factsWorldOnly(opts);
 
     // Build SQL dynamically. PGLite uses $N positional params; we
     // assemble the WHERE clauses + params array in tandem to keep them
