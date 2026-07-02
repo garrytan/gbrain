@@ -70,7 +70,7 @@ export async function setupDocling(onLog: (l: string) => void = () => {}): Promi
  * Best-effort: returns false (caller surfaces a clear error) if it can't start.
  */
 export async function ensureSidecarUp(
-  opts: { url: string; python?: string | null; env?: Record<string, string> },
+  opts: { url: string; python?: string | null; env?: Record<string, string>; waitMs?: number },
   onLog: (l: string) => void = () => {},
 ): Promise<boolean> {
   if (await sidecarHealthy(opts.url, 3_000)) return true;
@@ -87,10 +87,20 @@ export async function ensureSidecarUp(
     ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', String(port), '--workers', '1'],
     { cwd: sidecarDir(), detached: true, stdio: 'ignore', env: { ...process.env, ...(opts.env ?? {}) } },
   );
+  // A spawn failure (EACCES, broken interpreter) emits 'error'; with no
+  // listener that is an unhandled event that crashes the importing process —
+  // the exact hiccup this module promises never to crash on. Record it and
+  // short-circuit the health poll instead of waiting out the deadline.
+  let spawnError: string | null = null;
+  child.on('error', (e) => { spawnError = String(e); });
   child.unref(); // survive CLI exit; the warm server is reused by later imports
 
-  const deadline = Date.now() + 180_000;
+  const deadline = Date.now() + (opts.waitMs ?? 180_000);
   while (Date.now() < deadline) {
+    if (spawnError) {
+      onLog(`Docling sidecar spawn failed: ${spawnError}. Run: gbrain ingest setup-docling`);
+      return false;
+    }
     if (await sidecarHealthy(opts.url, 3_000)) return true;
     await new Promise((r) => setTimeout(r, 2_000));
   }
