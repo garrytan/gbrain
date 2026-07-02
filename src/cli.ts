@@ -235,6 +235,17 @@ async function main() {
     command = 'query';
   }
 
+  // Local patch 2026-06-11 — mark one-shot CLI processes so the facts
+  // backstop routes absorb work to the durable jobs worker instead of the
+  // in-process queue that the exit teardown drains-then-aborts after ~1-2s
+  // (the `pipeline_error: [chat(...)] The operation was aborted.` class in
+  // ingest_log). Daemons keep the in-process queue: their event loop
+  // outlives the work. See src/core/facts/cli-process-mode.ts.
+  if (!['serve', 'jobs', 'autopilot'].includes(command)) {
+    const { markShortLivedCliProcess } = await import('./core/facts/cli-process-mode.ts');
+    markShortLivedCliProcess();
+  }
+
   // T5 — `gbrain search modes|stats|tune` is the read-only config dashboard,
   // NOT a free-text search for the literal word "modes". Free-text
   // `gbrain search "<query>"` falls through to the cheap-hybrid `search` op
