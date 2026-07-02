@@ -1,5 +1,21 @@
 # TODOS
 
+## BrainBench follow-ups (filed v0.44.0.0, Cathedral 2)
+
+Deferred from the BrainBench wave (eng-reviewed; plan + GSTACK REVIEW REPORT at
+`~/.claude/plans/system-instruction-you-are-working-bright-firefly.md`).
+
+- [ ] **`--live` agent-in-the-loop know-to-ask.** Replay fixtures with a real model deciding whether to issue retrieval calls; grade the agent, not just the deterministic reflex. Pre-registered in `docs/eval/BRAINBENCH.md` (the v1 metric grades the injection decision, which IS the shipped mechanism). Needs: seeded N-repeat methodology for model stochasticity + budget rails. Priority: P2.
+- [ ] **Intrusion-budget gating calibration.** `avg_injected_tokens` is reported, non-gating (decision 18) — a wrong threshold is worse than none. After a few weeks of scoreboard data across PRs, pick calibrated per-seam thresholds and promote it to a gated metric. Priority: P2.
+- [ ] **Flip contract adapters to production when real integrations land.** `adapters/claude-code.ts` exports the UserPromptSubmit hook wire types; the real hook swaps the in-process transport for an exec of the hook script and flips `seam: 'contract'` → `'production'` with continuous bench numbers. Same for codex fragments. This is the integration PR's checklist item — without it the seam disclosure goes stale. Priority: P1 (attached to the harness-integration PR, not standalone).
+- [ ] **Cathedral 1 conformance-kit fixture import.** The memory-verbs conformance scenarios convert to BrainBench fixtures via the published `evals/brainbench/schema/fixture.schema.json` once `garrytan/cathedral-1` merges ("conformance tests double as BrainBench seed fixtures", decision log 2026-06-12). Free corpus growth from already-reviewed scenarios. Blocked by: cathedral-1 on master. Priority: P2.
+- [ ] **Live-embeddings fidelity mode (`--embeddings`).** Hermetic CI grades the keyword/alias arms only (disclosed); an opt-in mode seeding real embeddings would grade write-back/continuity retrieval through the vector path. Same budget rails as `--llm`. Priority: P3.
+- [ ] **Community fixture intake + competitor adapters.** The TD1 remainder after the generated corpus absorbed in-PR growth: an `external-authors/`-style intake path for contributed fixtures (validator + privacy guard already gate them) and adapters for non-gbrain memory systems against the published schemas, enabling true head-to-head rows in the gbrain-evals scorecard. Priority: P3.
+- [ ] **JSON-Schema ↔ validator parity test.** `evals/brainbench/schema/*.schema.json` is the foreign-runner contract but only existence/parse is pinned — the schemas could drift from `fixtures.ts`'s validator silently. Needs a JSON-schema validator dep (ajv) or a hand-rolled subset checker; deferred to avoid a new dependency mid-wave. Priority: P3.
+- [ ] **`eval compare` markdown rendering for `mode: 'n/a'` rows.** EvalRunRecord v3 records brainbench under 'n/a'; the markdown renderer iterates SEARCH_MODES only, so those rows surface in `--json` output but not the mode table (documented in the v3 docstring). Add an un-grouped section to `renderMarkdown`. Priority: P3.
+- [ ] **Periodic re-baselining (the ratchet doesn't auto-tighten).** Improvements aren't banked into master's baseline until a PR updates it, so a regression back to a stale baseline level passes. Documented as an accepted residual in `docs/eval/BRAINBENCH.md`; the fix is an operator habit or a scheduled job that re-runs `--update-baseline` after metric-improving merges. Priority: P3.
+
+- [ ] **Hermetic-ize the 7 env-sensitive LLM-availability tests.** `test/think-gateway-adapter.test.ts`, `test/conversation-parser/llm-base.test.ts`/`llm-fallback.test.ts`, `test/doctor-ze-checks.test.ts` assert behavior "when ANTHROPIC_API_KEY is unset" by reading the live process env — they fail on any dev shell that exports provider keys (verified failing on clean master in such a shell; green in keyless CI). Stub/save-restore the env per test so local runs match CI. Priority: P2.
 ## reliability fix-wave follow-ups (filed v0.42.52.0)
 
 Deferred from the autopilot/supervisor + sync/status/minion reliability wave

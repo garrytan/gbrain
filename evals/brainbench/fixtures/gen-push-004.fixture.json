@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-push-004",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "push",
+  "seed_pages": [
+    {
+      "slug": "people/verity-thornquist",
+      "content": "---\ntitle: Verity Thornquist\ntype: person\naliases: [verity]\nsummary: Founder of Fernwheel.\n---\n\nVerity Thornquist is the founder of Fernwheel. Verity flagged churn as the top risk in the latest update.\n"
+    },
+    {
+      "slug": "people/hamish-ashgrove",
+      "content": "---\ntitle: Hamish Ashgrove\ntype: person\naliases: [hamish]\nsummary: Founder of Honeyspire Works.\n---\n\nHamish Ashgrove is the founder of Honeyspire Works. Hamish pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "companies/fernwheel",
+      "content": "---\ntitle: Fernwheel\ntype: company\nsummary: Seed-stage company. Founded by Verity Thornquist.\n---\n\nFernwheel is a seed-stage company. Founded by Verity Thornquist. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "funds/cinderpath-capital",
+      "content": "---\ntitle: Cinderpath Capital\ntype: org\nsummary: Early-stage fund that co-invests on seed rounds.\n---\n\nCinderpath Capital is an early-stage fund that co-invests on seed rounds.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Draft a memo for the partner meeting: Verity Thornquist and Hamish Ashgrove both want Cinderpath Capital in the Fernwheel round."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Drafting now."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Make the memo lead with traction, then risks, then the ask."
+    }
+  ]
+}

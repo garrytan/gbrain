@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-adv-003",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "adversarial",
+  "seed_pages": [
+    {
+      "slug": "people/saoirse-oakhurst",
+      "content": "---\ntitle: Saoirse Oakhurst\ntype: person\naliases: [saoirse]\nsummary: Founder of Driftspark Works; status updated 2026.\n---\n\nSaoirse Oakhurst is the founder of Driftspark Works.\nOUTDATED (2025): the round was on hold.\nCURRENT (2026): the round re-opened with a new lead.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Status check on Saoirse Oakhurst before I reply to the thread?"
+    }
+  ]
+}

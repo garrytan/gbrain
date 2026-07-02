@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-005",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/yuki-quincewood",
+      "content": "---\ntitle: Yuki Quincewood\ntype: person\naliases: [yuki]\nsummary: Founder of Orchardbyte Labs.\n---\n\nYuki Quincewood is the founder of Orchardbyte Labs. Yuki raised concerns about gross margin at the last board sync.\n"
+    },
+    {
+      "slug": "companies/orchardbyte-labs",
+      "content": "---\ntitle: Orchardbyte Labs\ntype: company\nsummary: Seed-stage company. Founded by Yuki Quincewood.\n---\n\nOrchardbyte Labs is a seed-stage company. Founded by Yuki Quincewood. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Orchardbyte Labs call with Yuki Quincewood.",
+      "ts": "2026-10-16T13:27:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2026-10-16T13:28:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "I committed to sending Yuki the diligence checklist by Friday.",
+      "ts": "2026-10-16T14:14:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "Yuki said Orchardbyte Labs hit their growth target a month early. Ahead of plan.",
+      "ts": "2026-10-16T14:15:00Z"
+    }
+  ]
+}

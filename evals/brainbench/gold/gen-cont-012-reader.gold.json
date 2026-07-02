@@ -1,0 +1,26 @@
+{
+  "fixture_id": "gen-cont-012-reader",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/tidecraft-systems"
+      ]
+    }
+  },
+  "continuity": {
+    "pair_id": "gen-cont-012",
+    "decisions": [
+      {
+        "decision_id": "d1",
+        "expected_slugs": [
+          "companies/tidecraft-systems"
+        ],
+        "match_keywords": [
+          "wait",
+          "Tidecraft Systems"
+        ]
+      }
+    ]
+  }
+}

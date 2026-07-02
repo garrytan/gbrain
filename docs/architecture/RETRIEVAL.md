@@ -21,7 +21,7 @@ Vector search alone underdelivers on real personal-knowledge queries. This doc e
 
 ## The benchmark
 
-BrainBench (corpus + harness in the sibling [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo) measures retrieval P@5, R@5, MRR, nDCG@5 on a 240-page Opus-generated rich-prose corpus.
+BrainBench (corpus + harness in the sibling [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo) measures retrieval P@5, R@5, MRR, nDCG@5 on a 240-page Opus-generated rich-prose corpus. (This is the retrieval-ranking benchmark; the in-repo `gbrain eval brainbench` suite — [`docs/eval/BRAINBENCH.md`](../eval/BRAINBENCH.md) — gates the memory behaviors *above* retrieval: unprompted context push, write-back fidelity, cross-session continuity.)
 
 | Strategy | P@5 | R@5 | Notes |
 |---|---|---|---|

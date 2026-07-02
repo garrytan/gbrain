@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-neg-004",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "kta-neg",
+  "seed_pages": [
+    {
+      "slug": "people/ronan-pellwarden",
+      "content": "---\ntitle: Ronan Pellwarden\ntype: person\naliases: [ronan]\nsummary: Founder of Saplingrove Works.\n---\n\nRonan Pellwarden is the founder of Saplingrove Works. Ronan is exploring a pivot toward the enterprise segment.\n"
+    },
+    {
+      "slug": "companies/saplingrove-works",
+      "content": "---\ntitle: Saplingrove Works\ntype: company\nsummary: Seed-stage company. Founded by Ronan Pellwarden.\n---\n\nSaplingrove Works is a seed-stage company. Founded by Ronan Pellwarden. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What time is it in Tokyo right now?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "By the way, someone named Rafael Yarrowgate emailed about partnerships. Never heard of them."
+    }
+  ]
+}

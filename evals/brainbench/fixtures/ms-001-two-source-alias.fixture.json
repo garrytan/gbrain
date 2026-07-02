@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "fixture_id": "ms-001-two-source-alias",
+  "suites": ["know-to-ask", "push"],
+  "category": "multi-source",
+  "sources": ["teambrain"],
+  "active_source": "default",
+  "seed_pages": [
+    {
+      "slug": "people/alice-example",
+      "content": "---\ntitle: Alice Example\ntype: person\naliases: [alice]\nsummary: Founder of Widget Co (personal notes).\n---\n\nAlice Example is the founder of Widget Co. Personal-brain notes.\n"
+    },
+    {
+      "slug": "people/alice-example",
+      "source_id": "teambrain",
+      "content": "---\ntitle: Alice Example\ntype: person\naliases: [alice]\nsummary: Candidate profile in the team brain.\n---\n\nAlice Example, candidate profile. TEAM BRAIN copy — must never surface in the personal source's reflex.\n"
+    },
+    {
+      "slug": "companies/acme-example",
+      "source_id": "teambrain",
+      "content": "---\ntitle: Acme Example\ntype: company\nsummary: Team-brain-only company page.\n---\n\nAcme Example exists ONLY in the team brain.\n"
+    }
+  ],
+  "turns": [
+    { "turn_id": 1, "role": "user", "text": "What do I know about Alice Example?" },
+    { "turn_id": 2, "role": "user", "text": "Anything on Acme Example in here?" }
+  ]
+}

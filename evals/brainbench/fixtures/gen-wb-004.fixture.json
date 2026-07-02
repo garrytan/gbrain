@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-004",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/dmitri-brackenbury",
+      "content": "---\ntitle: Dmitri Brackenbury\ntype: person\naliases: [dmitri]\nsummary: Founder of Windrose.\n---\n\nDmitri Brackenbury is the founder of Windrose. Dmitri shipped the v2 launch two weeks ahead of plan.\n"
+    },
+    {
+      "slug": "companies/windrose",
+      "content": "---\ntitle: Windrose\ntype: company\nsummary: Seed-stage company. Founded by Dmitri Brackenbury.\n---\n\nWindrose is a seed-stage company. Founded by Dmitri Brackenbury. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Windrose call with Dmitri Brackenbury.",
+      "ts": "2026-04-15T16:34:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2026-04-15T16:35:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Dmitri prefers async updates over standing calls. Noted for next time.",
+      "ts": "2026-04-15T17:21:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "I committed to sending Dmitri the diligence checklist by Friday.",
+      "ts": "2026-04-15T17:22:00Z"
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Dmitri said Windrose hit their growth target a month early. Ahead of plan.",
+      "ts": "2026-04-15T17:23:00Z"
+    }
+  ]
+}

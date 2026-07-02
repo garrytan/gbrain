@@ -1,0 +1,20 @@
+{
+  "fixture_id": "gen-cont-006-writer",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "wait on Inkwhale Co",
+          "fact": "Decided to wait on the Inkwhale Co round until next quarter's numbers",
+          "entity_slug": "companies/inkwhale-co",
+          "match_keywords": [
+            "wait",
+            "Inkwhale Co"
+          ],
+          "kind": "commitment"
+        }
+      ]
+    }
+  }
+}

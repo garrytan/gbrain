@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-cont-003-writer",
+  "suites": [
+    "write-back",
+    "continuity"
+  ],
+  "category": "continuity",
+  "seed_pages": [
+    {
+      "slug": "companies/umbergale-labs",
+      "content": "---\ntitle: Umbergale Labs\ntype: company\nsummary: Seed-stage company. Founded by Stellan Frostholm.\n---\n\nUmbergale Labs is a seed-stage company. Founded by Stellan Frostholm. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "people/stellan-frostholm",
+      "content": "---\ntitle: Stellan Frostholm\ntype: person\naliases: [stellan]\nsummary: Founder of Umbergale Labs.\n---\n\nStellan Frostholm is the founder of Umbergale Labs. Stellan wants a technical co-founder intro before committing.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Partner meeting wrapped on the Umbergale Labs round.",
+      "ts": "2025-04-14T15:18:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "What was the call?",
+      "ts": "2025-04-14T15:19:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "We decided to wait on the Umbergale Labs round. We want next quarter's numbers first. Logging it now.",
+      "ts": "2025-04-14T15:20:00Z"
+    }
+  ],
+  "continuity": {
+    "pair_id": "gen-cont-003",
+    "pair_role": "writer"
+  }
+}

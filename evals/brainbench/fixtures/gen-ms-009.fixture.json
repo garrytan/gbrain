@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-ms-009",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "multi-source",
+  "sources": [
+    "teambrain"
+  ],
+  "active_source": "default",
+  "seed_pages": [
+    {
+      "slug": "people/beatrix-larkmoor",
+      "content": "---\ntitle: Beatrix Larkmoor\ntype: person\naliases: [beatrix]\nsummary: Founder of Marblepond Labs.\n---\n\nBeatrix Larkmoor is the founder of Marblepond Labs. Beatrix shipped the v2 launch two weeks ahead of plan.\n"
+    },
+    {
+      "slug": "people/beatrix-larkmoor",
+      "content": "---\ntitle: Beatrix Larkmoor\ntype: person\naliases: [beatrix]\nsummary: Founder of Marblepond Labs.\n---\n\nBeatrix Larkmoor is the founder of Marblepond Labs. Beatrix raised concerns about gross margin at the last board sync.\n",
+      "source_id": "teambrain"
+    },
+    {
+      "slug": "companies/glintworks-co",
+      "content": "---\ntitle: Glintworks Co\ntype: company\nsummary: Seed-stage company.\n---\n\nGlintworks Co is a seed-stage company. The seed conversation started in 2025.\n",
+      "source_id": "teambrain"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What do I have on Beatrix Larkmoor?"
+    },
+    {
+      "turn_id": 2,
+      "role": "user",
+      "text": "Anything on Glintworks Co in here?"
+    }
+  ],
+  "holdout": true
+}

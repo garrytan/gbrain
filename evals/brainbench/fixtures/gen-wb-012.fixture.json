@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-012",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/anouk-mirelez",
+      "content": "---\ntitle: Anouk Mirelez\ntype: person\naliases: [anouk]\nsummary: Founder of Junipergrid Labs.\n---\n\nAnouk Mirelez is the founder of Junipergrid Labs. Anouk pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "companies/junipergrid-labs",
+      "content": "---\ntitle: Junipergrid Labs\ntype: company\nsummary: Seed-stage company. Founded by Anouk Mirelez.\n---\n\nJunipergrid Labs is a seed-stage company. Founded by Anouk Mirelez. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Junipergrid Labs call with Anouk Mirelez.",
+      "ts": "2026-05-03T10:24:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2026-05-03T10:25:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Anouk is worried the Junipergrid Labs pricing model undercuts their gross margin. Real concern for the round.",
+      "ts": "2026-05-03T11:11:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "I committed to sending Anouk the diligence checklist by Friday.",
+      "ts": "2026-05-03T11:12:00Z"
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Anouk prefers async updates over standing calls. Noted for next time.",
+      "ts": "2026-05-03T11:13:00Z"
+    }
+  ]
+}

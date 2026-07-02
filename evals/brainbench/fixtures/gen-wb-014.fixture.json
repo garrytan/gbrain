@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-014",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/ingrid-stargazer",
+      "content": "---\ntitle: Ingrid Stargazer\ntype: person\naliases: [ingrid]\nsummary: Founder of Quartzbloom Systems.\n---\n\nIngrid Stargazer is the founder of Quartzbloom Systems. Ingrid raised concerns about gross margin at the last board sync.\n"
+    },
+    {
+      "slug": "companies/quartzbloom-systems",
+      "content": "---\ntitle: Quartzbloom Systems\ntype: company\nsummary: Seed-stage company. Founded by Ingrid Stargazer.\n---\n\nQuartzbloom Systems is a seed-stage company. Founded by Ingrid Stargazer. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Quartzbloom Systems call with Ingrid Stargazer.",
+      "ts": "2025-05-07T16:29:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2025-05-07T16:30:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "I committed to sending Ingrid the diligence checklist by Friday.",
+      "ts": "2025-05-07T17:16:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "Ingrid said Quartzbloom Systems hit their growth target a month early. Ahead of plan.",
+      "ts": "2025-05-07T17:17:00Z"
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Ingrid prefers async updates over standing calls. Noted for next time.",
+      "ts": "2025-05-07T17:18:00Z"
+    }
+  ]
+}

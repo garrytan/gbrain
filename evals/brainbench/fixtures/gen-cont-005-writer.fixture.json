@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-cont-005-writer",
+  "suites": [
+    "write-back",
+    "continuity"
+  ],
+  "category": "continuity",
+  "seed_pages": [
+    {
+      "slug": "companies/tidecraft-systems",
+      "content": "---\ntitle: Tidecraft Systems\ntype: company\nsummary: Seed-stage company. Founded by Calliope Saltmarsh.\n---\n\nTidecraft Systems is a seed-stage company. Founded by Calliope Saltmarsh. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "people/calliope-saltmarsh",
+      "content": "---\ntitle: Calliope Saltmarsh\ntype: person\naliases: [calliope]\nsummary: Founder of Tidecraft Systems.\n---\n\nCalliope Saltmarsh is the founder of Tidecraft Systems. Calliope shipped the v2 launch two weeks ahead of plan.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Partner meeting wrapped on the Tidecraft Systems round.",
+      "ts": "2026-10-19T09:29:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "What was the call?",
+      "ts": "2026-10-19T09:30:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "We decided to lead the Tidecraft Systems round. Standard terms, clean round. Logging it now.",
+      "ts": "2026-10-19T09:31:00Z"
+    }
+  ],
+  "continuity": {
+    "pair_id": "gen-cont-005",
+    "pair_role": "writer"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-adv-001",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "adversarial",
+  "seed_pages": [
+    {
+      "slug": "people/noor-wrenhaven",
+      "content": "---\ntitle: Noor Wrenhaven\ntype: person\naliases: [noor]\nsummary: Founder of Windrose.\n---\n\nNoor Wrenhaven is the founder of Windrose. Noor raised concerns about gross margin at the last board sync.\n"
+    },
+    {
+      "slug": "companies/windrose",
+      "content": "---\ntitle: Windrose\ntype: company\nsummary: Seed-stage company. Founded by Noor Wrenhaven.\n---\n\nWindrose is a seed-stage company. Founded by Noor Wrenhaven. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Catch me up on Noor Wrenhaven."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Pulled the page up."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Ok. And does Noor Wrenhaven have board consent lined up?"
+    }
+  ]
+}

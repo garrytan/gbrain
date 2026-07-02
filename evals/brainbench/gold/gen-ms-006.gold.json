@@ -1,0 +1,14 @@
+{
+  "fixture_id": "gen-ms-006",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/emrys-galewright"
+      ]
+    },
+    "2": {
+      "should_retrieve": false
+    }
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/garrytan/gbrain/evals/brainbench/schema/gold.schema.json",
+  "title": "BrainBench sealed gold (schema_version 1)",
+  "description": "Sealed gold annotations for one fixture — lives in the gold dir, joined by fixture_id, never visible to adapters.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["fixture_id", "turns"],
+  "properties": {
+    "fixture_id": { "type": "string" },
+    "turns": {
+      "type": "object",
+      "description": "Keyed by String(turn_id). Turns without an entry carry no gold.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["should_retrieve"],
+        "properties": {
+          "should_retrieve": { "type": "boolean" },
+          "gold_slugs": { "type": "array", "items": { "type": "string" } },
+          "acceptable_slugs": { "type": "array", "items": { "type": "string" } },
+          "gold_facts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["gist", "fact", "entity_slug", "match_keywords"],
+              "properties": {
+                "gist": { "type": "string" },
+                "fact": { "type": "string" },
+                "entity_slug": { "type": ["string", "null"] },
+                "match_keywords": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+                "kind": { "enum": ["event", "preference", "commitment", "belief", "fact"] }
+              }
+            }
+          }
+        }
+      }
+    },
+    "continuity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pair_id", "decisions"],
+      "properties": {
+        "pair_id": { "type": "string" },
+        "decisions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["decision_id", "expected_slugs", "match_keywords"],
+            "properties": {
+              "decision_id": { "type": "string" },
+              "expected_slugs": { "type": "array", "items": { "type": "string" } },
+              "match_keywords": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    }
+  }
+}

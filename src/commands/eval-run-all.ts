@@ -131,11 +131,20 @@ function printHelp(): void {
 }
 
 export interface EvalRunRecord {
-  schema_version: 2;
+  /**
+   * v3 (BrainBench wave, decision 16): `mode` widened to `SearchMode | 'n/a'`
+   * for search-mode-independent suites — brainbench runs once per sweep and
+   * records 'n/a' instead of fabricating a mode. v2 records (mode always a
+   * SearchMode) parse fine under v3 readers. NOTE: eval-compare's markdown
+   * renderer iterates SEARCH_MODES only, so 'n/a' rows surface in its --json
+   * `records` output, not the mode table (review finding; markdown surfacing
+   * is a follow-up).
+   */
+  schema_version: 3;
   run_id: string;
   ran_at: string;
   suite: ValidSuite;
-  mode: SearchMode;
+  mode: SearchMode | 'n/a';
   commit: string;
   seed: number;
   limit?: number;
@@ -314,11 +323,45 @@ export async function runEvalRunAll(_engine: BrainEngine | null, args: string[])
   // manually with the documented --mode flags and uses persistRunRecord
   // to log each completion. The methodology doc names this explicitly.
   for (const suite of opts.suites) {
+    // BrainBench is search-mode-independent (decision 16): run ONCE per
+    // sweep, in-process, recorded under mode 'n/a' — never multiplied by
+    // modes. The other suites keep the documented operator-runs-CLI stub.
+    if (suite === 'brainbench') {
+      const startedAt = Date.now();
+      const runId = `${commit}-brainbench-na-${opts.seed}`;
+      const { runBrainBenchCore } = await import('./eval-brainbench.ts');
+      const core = await runBrainBenchCore();
+      const record: EvalRunRecord = {
+        schema_version: 3,
+        run_id: runId,
+        ran_at: new Date().toISOString(),
+        suite: 'brainbench',
+        mode: 'n/a',
+        commit,
+        seed: opts.seed,
+        limit: opts.limit,
+        params: {
+          budget_usd_retrieval: opts.budgetUsdRetrieval,
+          budget_usd_answer: opts.budgetUsdAnswer,
+          parallel: opts.parallel,
+          fixtures_hash: core.fixtures_hash,
+          cells: core.cells,
+        },
+        status: core.status,
+        duration_ms: Date.now() - startedAt,
+      };
+      if (core.error) record.error = core.error;
+      persistRunRecord(repoRoot, record, opts.outputDir);
+      if (!opts.jsonOutput) {
+        process.stderr.write(`[eval run-all] ${runId}: ${record.status}\n`);
+      }
+      continue;
+    }
     for (const mode of opts.modes) {
       const startedAt = Date.now();
       const runId = `${commit}-${suite}-${mode}-${opts.seed}`;
       const record: EvalRunRecord = {
-        schema_version: 2,
+        schema_version: 3,
         run_id: runId,
         ran_at: new Date().toISOString(),
         suite: suite as ValidSuite,

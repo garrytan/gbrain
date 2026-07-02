@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-cont-004-reader",
+  "suites": [
+    "continuity"
+  ],
+  "category": "continuity",
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Where did we land on Junipergrid Labs?"
+    }
+  ],
+  "continuity": {
+    "pair_id": "gen-cont-004",
+    "pair_role": "reader"
+  }
+}

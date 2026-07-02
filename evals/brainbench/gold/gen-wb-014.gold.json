@@ -1,0 +1,49 @@
+{
+  "fixture_id": "gen-wb-014",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "diligence checklist / Friday",
+          "fact": "Committed to sending Ingrid Stargazer the diligence checklist by Friday",
+          "entity_slug": "people/ingrid-stargazer",
+          "match_keywords": [
+            "diligence checklist",
+            "Friday"
+          ],
+          "kind": "commitment"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "growth target / Quartzbloom Systems",
+          "fact": "Ingrid Stargazer reported Quartzbloom Systems hit its growth target a month early",
+          "entity_slug": "people/ingrid-stargazer",
+          "match_keywords": [
+            "growth target",
+            "Quartzbloom Systems"
+          ],
+          "kind": "fact"
+        }
+      ]
+    },
+    "5": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "async updates",
+          "fact": "Ingrid Stargazer prefers async updates over standing calls",
+          "entity_slug": "people/ingrid-stargazer",
+          "match_keywords": [
+            "async updates"
+          ],
+          "kind": "preference"
+        }
+      ]
+    }
+  }
+}

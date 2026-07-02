@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "fixture_id": "kta-001-deal-recall",
+  "suites": ["know-to-ask", "push"],
+  "category": "kta-pos",
+  "seed_pages": [
+    {
+      "slug": "people/alice-example",
+      "content": "---\ntitle: Alice Example\ntype: person\naliases: [alice]\nsummary: Founder of Widget Co; met at the spring demo day.\n---\n\nAlice Example is the founder of Widget Co. She raised concerns about pricing during the 2026-Q1 diligence call.\n"
+    },
+    {
+      "slug": "companies/widget-co",
+      "content": "---\ntitle: Widget Co\ntype: company\nsummary: Seed-stage widget marketplace founded by Alice Example.\n---\n\nWidget Co is a seed-stage widget marketplace. Alice Example is the founder. The seed round discussion started in 2026-Q1.\n"
+    },
+    {
+      "slug": "people/charlie-example",
+      "content": "---\ntitle: Charlie Example\ntype: person\nsummary: Angel investor introduced by Alice.\n---\n\nCharlie Example is an angel investor who co-invests with fund-a.\n"
+    }
+  ],
+  "turns": [
+    { "turn_id": 1, "role": "user", "text": "What did Alice Example say about the Widget Co deal?" },
+    { "turn_id": 2, "role": "assistant", "text": "She raised pricing concerns during the Q1 diligence call." },
+    { "turn_id": 3, "role": "user", "text": "Thanks, that helps a lot." },
+    { "turn_id": 4, "role": "user", "text": "Can you draft an intro email to Charlie Example about it?" }
+  ]
+}

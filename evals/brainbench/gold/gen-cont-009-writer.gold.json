@@ -1,0 +1,20 @@
+{
+  "fixture_id": "gen-cont-009-writer",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "wait on Umbergale Labs",
+          "fact": "Decided to wait on the Umbergale Labs round until next quarter's numbers",
+          "entity_slug": "companies/umbergale-labs",
+          "match_keywords": [
+            "wait",
+            "Umbergale Labs"
+          ],
+          "kind": "commitment"
+        }
+      ]
+    }
+  }
+}

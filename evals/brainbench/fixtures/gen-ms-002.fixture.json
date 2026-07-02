@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-ms-002",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "multi-source",
+  "sources": [
+    "teambrain"
+  ],
+  "active_source": "default",
+  "seed_pages": [
+    {
+      "slug": "people/cosmo-hollybrook",
+      "content": "---\ntitle: Cosmo Hollybrook\ntype: person\naliases: [cosmo]\nsummary: Founder of Skylarkift.\n---\n\nCosmo Hollybrook is the founder of Skylarkift. Cosmo flagged churn as the top risk in the latest update.\n"
+    },
+    {
+      "slug": "people/cosmo-hollybrook",
+      "content": "---\ntitle: Cosmo Hollybrook\ntype: person\naliases: [cosmo]\nsummary: Founder of Skylarkift.\n---\n\nCosmo Hollybrook is the founder of Skylarkift. Cosmo flagged churn as the top risk in the latest update.\n",
+      "source_id": "teambrain"
+    },
+    {
+      "slug": "companies/inkwhale-co",
+      "content": "---\ntitle: Inkwhale Co\ntype: company\nsummary: Seed-stage company.\n---\n\nInkwhale Co is a seed-stage company. The seed conversation started in 2025.\n",
+      "source_id": "teambrain"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What do I have on Cosmo Hollybrook?"
+    },
+    {
+      "turn_id": 2,
+      "role": "user",
+      "text": "Anything on Inkwhale Co in here?"
+    }
+  ],
+  "holdout": true
+}

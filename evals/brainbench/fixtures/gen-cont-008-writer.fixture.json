@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-cont-008-writer",
+  "suites": [
+    "write-back",
+    "continuity"
+  ],
+  "category": "continuity",
+  "seed_pages": [
+    {
+      "slug": "companies/saplingrove-works",
+      "content": "---\ntitle: Saplingrove Works\ntype: company\nsummary: Seed-stage company. Founded by Ronan Pellwarden.\n---\n\nSaplingrove Works is a seed-stage company. Founded by Ronan Pellwarden. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "people/ronan-pellwarden",
+      "content": "---\ntitle: Ronan Pellwarden\ntype: person\naliases: [ronan]\nsummary: Founder of Saplingrove Works.\n---\n\nRonan Pellwarden is the founder of Saplingrove Works. Ronan flagged churn as the top risk in the latest update.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Partner meeting wrapped on the Saplingrove Works round.",
+      "ts": "2026-12-08T16:23:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "What was the call?",
+      "ts": "2026-12-08T16:24:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "We decided to lead the Saplingrove Works round. Standard terms, clean round. Logging it now.",
+      "ts": "2026-12-08T16:25:00Z"
+    }
+  ],
+  "continuity": {
+    "pair_id": "gen-cont-008",
+    "pair_role": "writer"
+  }
+}

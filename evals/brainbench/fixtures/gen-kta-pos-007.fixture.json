@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-kta-pos-007",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "kta-pos",
+  "seed_pages": [
+    {
+      "slug": "people/leander-crestfallow",
+      "content": "---\ntitle: Leander Crestfallow\ntype: person\naliases: [leander]\nsummary: Founder of Junipergrid Labs.\n---\n\nLeander Crestfallow is the founder of Junipergrid Labs. Leander shipped the v2 launch two weeks ahead of plan.\n"
+    },
+    {
+      "slug": "companies/junipergrid-labs",
+      "content": "---\ntitle: Junipergrid Labs\ntype: company\nsummary: Seed-stage company. Founded by Leander Crestfallow.\n---\n\nJunipergrid Labs is a seed-stage company. Founded by Leander Crestfallow. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Can you pull up my notes on Junipergrid Labs before the call?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Great, thanks. That covers it."
+    }
+  ],
+  "holdout": true
+}

@@ -89,6 +89,35 @@ while IFS= read -r file; do
   fi
 done < <(find "$CORPUS_DIR" -name '*.md' -type f 2>/dev/null)
 
+# ---------------------------------------------------------------------------
+# BrainBench corpus (evals/brainbench/) — same privacy posture, JSON shape.
+# The corpus is GENERATED whole-cloth (evals/brainbench/generator/gen.ts,
+# curated synthetic name pools, PRNG scenarios), so string-level checks are a
+# backstop for hand-authored spike fixtures + future contributions. The
+# scenario-privacy rule (no real deal shapes / timelines, even anonymized)
+# lives in evals/brainbench/README.md and is review-enforced.
+# ---------------------------------------------------------------------------
+# Env override exists for the negative-path test (test/eval-brainbench-e2e.test.ts)
+# — production callers never set it.
+BB_DIR="${BRAINBENCH_PRIVACY_DIR:-evals/brainbench}"
+if [ -d "$BB_DIR/fixtures" ]; then
+  echo "[corpus-privacy] checking brainbench fixtures for explicit dollar amounts..."
+  while IFS= read -r match; do
+    if [ -n "$match" ]; then
+      echo "  VIOLATION: explicit dollar amount in $match"
+      VIOLATIONS=$((VIOLATIONS + 1))
+    fi
+  done < <(grep -rEn '\$[0-9]+(\.[0-9]+)?[MBKkmb]\b' "$BB_DIR/fixtures" "$BB_DIR/gold" --include='*.json' 2>/dev/null || true)
+
+  echo "[corpus-privacy] checking brainbench fixtures for out-of-range years..."
+  while IFS= read -r match; do
+    if [ -n "$match" ]; then
+      echo "  VIOLATION: out-of-range year in $match (fixtures use 2024-2026)"
+      VIOLATIONS=$((VIOLATIONS + 1))
+    fi
+  done < <(grep -rEn '\b(201[0-9]|202[0-3]|202[7-9]|20[3-9][0-9])\b' "$BB_DIR/fixtures" "$BB_DIR/gold" --include='*.json' 2>/dev/null || true)
+fi
+
 if [ "$VIOLATIONS" -gt 0 ]; then
   echo ""
   echo "❌ $VIOLATIONS privacy violation(s) found in $CORPUS_DIR."

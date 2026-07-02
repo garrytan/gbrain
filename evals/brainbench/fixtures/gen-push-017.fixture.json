@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-push-017",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "push",
+  "seed_pages": [
+    {
+      "slug": "people/jorin-silverthorne",
+      "content": "---\ntitle: Jorin Silverthorne\ntype: person\naliases: [jorin]\nsummary: Founder of Lumenforge Systems.\n---\n\nJorin Silverthorne is the founder of Lumenforge Systems. Jorin raised concerns about gross margin at the last board sync.\n"
+    },
+    {
+      "slug": "people/freya-emberlyn",
+      "content": "---\ntitle: Freya Emberlyn\ntype: person\naliases: [freya]\nsummary: Founder of Russetvane Systems.\n---\n\nFreya Emberlyn is the founder of Russetvane Systems. Freya flagged churn as the top risk in the latest update.\n"
+    },
+    {
+      "slug": "companies/lumenforge-systems",
+      "content": "---\ntitle: Lumenforge Systems\ntype: company\nsummary: Seed-stage company. Founded by Jorin Silverthorne.\n---\n\nLumenforge Systems is a seed-stage company. Founded by Jorin Silverthorne. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "funds/larchgate-ventures",
+      "content": "---\ntitle: Larchgate Ventures\ntype: org\nsummary: Early-stage fund that co-invests on seed rounds.\n---\n\nLarchgate Ventures is an early-stage fund that co-invests on seed rounds.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Draft a memo for the partner meeting: Jorin Silverthorne and Freya Emberlyn both want Larchgate Ventures in the Lumenforge Systems round."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Drafting now."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Make the memo lead with traction, then risks, then the ask."
+    }
+  ]
+}

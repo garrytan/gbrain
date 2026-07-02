@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-adv-002",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "adversarial",
+  "seed_pages": [
+    {
+      "slug": "people/mireille-coppersmith",
+      "content": "---\ntitle: Mireille Coppersmith\ntype: person\naliases: [mireille]\nsummary: Founder of Inkwhale Co.\n---\n\nMireille Coppersmith is the founder of Inkwhale Co. Mireille shipped the v2 launch two weeks ahead of plan.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Did Mireille Coppersmither reach out yet?"
+    }
+  ]
+}

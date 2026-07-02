@@ -69,6 +69,8 @@ import type { Page } from '../core/types.ts';
 import {
   extractFactsFromTurn,
   isFactsExtractionEnabled,
+  type ExtractInput,
+  type ExtractedFact,
 } from '../core/facts/extract.ts';
 import { isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
 import { BudgetTracker, BudgetExhausted } from '../core/budget/budget-tracker.ts';
@@ -238,6 +240,14 @@ export interface ExtractConversationFactsCoreOpts {
    * if you need exact-ceiling compliance.
    */
   workers?: number;
+  /**
+   * Injectable per-segment extractor (BrainBench decision 15). Default:
+   * `extractFactsFromTurn` (the LLM path). The bench's deterministic CI mode
+   * injects a gold-facts extractor here so segmentation → insertFacts →
+   * dedup → provenance all execute THIS production pipeline with zero LLM
+   * calls. Leaving it unset preserves current behavior exactly.
+   */
+  extractor?: (input: ExtractInput) => Promise<ExtractedFact[]>;
 }
 
 export interface ExtractConversationFactsResult {
@@ -625,6 +635,8 @@ interface ExtractCoreState {
   segmentLimit: number;
   types: AllowedType[];
   signal: AbortSignal | undefined;
+  /** Per-segment extractor — `extractFactsFromTurn` unless injected (decision 15). */
+  extractor: (input: ExtractInput) => Promise<ExtractedFact[]>;
   /**
    * v0.41.15.0 (D11): shared per-(sourceId, slug) checkpoint map mutated
    * in place from processPage callers. Map.set is atomic in JS's single-
@@ -732,9 +744,9 @@ async function processPage(
     const text = renderSegmentForExtraction(page.title || page.slug, seg);
     const sessionId = `${PER_SEGMENT_SOURCE_PREFIX}:${page.slug}`;
 
-    let extracted: Awaited<ReturnType<typeof extractFactsFromTurn>> = [];
+    let extracted: ExtractedFact[] = [];
     try {
-      extracted = await extractFactsFromTurn({
+      extracted = await state.extractor({
         turnText: text,
         sessionId,
         source: PER_SEGMENT_SOURCE_PREFIX,
@@ -929,6 +941,7 @@ export async function runExtractConversationFactsCore(
     segmentLimit,
     types,
     signal,
+    extractor: opts.extractor ?? extractFactsFromTurn,
     cpMap: new Map(),
   };
 

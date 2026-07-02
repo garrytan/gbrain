@@ -1,0 +1,19 @@
+{
+  "fixture_id": "gen-push-016",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/bastian-rookswood",
+        "people/tamsin-windermoor",
+        "funds/cinderpath-capital"
+      ],
+      "acceptable_slugs": [
+        "companies/skylarkift"
+      ]
+    },
+    "3": {
+      "should_retrieve": false
+    }
+  }
+}

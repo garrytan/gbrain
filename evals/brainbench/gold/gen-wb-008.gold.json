@@ -1,0 +1,49 @@
+{
+  "fixture_id": "gen-wb-008",
+  "turns": {
+    "3": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "async updates",
+          "fact": "Alarico Marrowfield prefers async updates over standing calls",
+          "entity_slug": "people/alarico-marrowfield",
+          "match_keywords": [
+            "async updates"
+          ],
+          "kind": "preference"
+        }
+      ]
+    },
+    "4": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "pricing / Lumenforge Systems",
+          "fact": "Alarico Marrowfield is worried the Lumenforge Systems pricing model undercuts gross margin (round concern)",
+          "entity_slug": "people/alarico-marrowfield",
+          "match_keywords": [
+            "pricing",
+            "Lumenforge Systems"
+          ],
+          "kind": "belief"
+        }
+      ]
+    },
+    "5": {
+      "should_retrieve": false,
+      "gold_facts": [
+        {
+          "gist": "growth target / Lumenforge Systems",
+          "fact": "Alarico Marrowfield reported Lumenforge Systems hit its growth target a month early",
+          "entity_slug": "people/alarico-marrowfield",
+          "match_keywords": [
+            "growth target",
+            "Lumenforge Systems"
+          ],
+          "kind": "fact"
+        }
+      ]
+    }
+  }
+}

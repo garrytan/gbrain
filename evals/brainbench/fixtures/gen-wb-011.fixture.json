@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-011",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/devran-tidewell",
+      "content": "---\ntitle: Devran Tidewell\ntype: person\naliases: [devran]\nsummary: Founder of Bramblevolt Co.\n---\n\nDevran Tidewell is the founder of Bramblevolt Co. Devran raised concerns about gross margin at the last board sync.\n"
+    },
+    {
+      "slug": "companies/bramblevolt-co",
+      "content": "---\ntitle: Bramblevolt Co\ntype: company\nsummary: Seed-stage company. Founded by Devran Tidewell.\n---\n\nBramblevolt Co is a seed-stage company. Founded by Devran Tidewell. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Bramblevolt Co call with Devran Tidewell.",
+      "ts": "2025-02-01T14:13:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2025-02-01T14:14:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Devran is worried the Bramblevolt Co pricing model undercuts their gross margin. Real concern for the round.",
+      "ts": "2025-02-01T15:00:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "I committed to sending Devran the diligence checklist by Friday.",
+      "ts": "2025-02-01T15:01:00Z"
+    }
+  ]
+}

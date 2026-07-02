@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-017",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/oskar-pemberlake",
+      "content": "---\ntitle: Oskar Pemberlake\ntype: person\naliases: [oskar]\nsummary: Founder of Frostpetal Systems.\n---\n\nOskar Pemberlake is the founder of Frostpetal Systems. Oskar shipped the v2 launch two weeks ahead of plan.\n"
+    },
+    {
+      "slug": "companies/frostpetal-systems",
+      "content": "---\ntitle: Frostpetal Systems\ntype: company\nsummary: Seed-stage company. Founded by Oskar Pemberlake.\n---\n\nFrostpetal Systems is a seed-stage company. Founded by Oskar Pemberlake. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Frostpetal Systems call with Oskar Pemberlake.",
+      "ts": "2025-03-22T10:32:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2025-03-22T10:33:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Oskar prefers async updates over standing calls. Noted for next time.",
+      "ts": "2025-03-22T11:19:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "Oskar said Frostpetal Systems hit their growth target a month early. Ahead of plan.",
+      "ts": "2025-03-22T11:20:00Z"
+    }
+  ],
+  "holdout": true
+}

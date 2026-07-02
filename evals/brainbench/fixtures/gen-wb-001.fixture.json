@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-wb-001",
+  "suites": [
+    "write-back"
+  ],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/vada-tavenner",
+      "content": "---\ntitle: Vada Tavenner\ntype: person\naliases: [vada]\nsummary: Founder of Tidecraft Systems.\n---\n\nVada Tavenner is the founder of Tidecraft Systems. Vada is exploring a pivot toward the enterprise segment.\n"
+    },
+    {
+      "slug": "companies/tidecraft-systems",
+      "content": "---\ntitle: Tidecraft Systems\ntype: company\nsummary: Seed-stage company. Founded by Vada Tavenner.\n---\n\nTidecraft Systems is a seed-stage company. Founded by Vada Tavenner. The seed conversation started in 2025.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Just wrapped the Tidecraft Systems call with Vada Tavenner.",
+      "ts": "2026-07-03T15:33:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "How did it go?",
+      "ts": "2026-07-03T15:34:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Vada said Tidecraft Systems hit their growth target a month early. Ahead of plan.",
+      "ts": "2026-07-03T16:20:00Z"
+    },
+    {
+      "turn_id": 4,
+      "role": "user",
+      "text": "Vada prefers async updates over standing calls. Noted for next time.",
+      "ts": "2026-07-03T16:21:00Z"
+    }
+  ]
+}

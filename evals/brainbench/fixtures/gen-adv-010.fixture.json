@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-adv-010",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "adversarial",
+  "seed_pages": [
+    {
+      "slug": "people/anneke-veldenmere",
+      "content": "---\ntitle: Anneke Veldenmere\ntype: person\naliases: [anneke]\nsummary: Founder of Marblepond Labs.\n---\n\nAnneke Veldenmere is the founder of Marblepond Labs. Anneke pushed back on the proposed valuation during diligence.\n"
+    },
+    {
+      "slug": "people/anneke-ashgrove",
+      "content": "---\ntitle: Anneke Ashgrove\ntype: person\naliases: [anneke]\nsummary: Founder of Honeyspire Works.\n---\n\nAnneke Ashgrove is the founder of Honeyspire Works. Anneke shipped the v2 launch two weeks ahead of plan.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Ping Anneke about the offsite agenda."
+    },
+    {
+      "turn_id": 2,
+      "role": "user",
+      "text": "Sorry — I meant Anneke Veldenmere, the Marblepond Labs founder."
+    }
+  ]
+}

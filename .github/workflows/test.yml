@@ -160,6 +160,40 @@ jobs:
       - run: bun install
       - run: bun test test/eval-longmemeval-e2e.slow.test.ts --timeout=60000
 
+  brainbench:
+    # BrainBench memory-conformance gate (Cathedral 2). Hermetic: in-memory
+    # PGLite, zero API keys, ~15s for the full 141-fixture × 3-harness run.
+    # Governance (decision 4): compares HEAD's run against MAIN's committed
+    # baseline via `git show origin/master:evals/brainbench/baselines/main.json`
+    # — a PR cannot rewrite the thing it's compared against. Exit 1 blocks the
+    # merge until the regression is fixed or blessed (justification in the
+    # updated baseline / fixture diff in corpus-bless mode).
+    needs: cache-check
+    if: needs.cache-check.outputs.hit != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10  # ~15s hermetic run; matches the per-job-timeout hardening (#2254)
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0  # the gate needs origin/master's baseline
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - run: bun install
+      - run: bash scripts/ci-brainbench-gate.sh
+        env:
+          BRAINBENCH_OUT: ${{ runner.temp }}/brainbench-result.json
+      - name: BrainBench delta → step summary
+        if: always()
+        run: |
+          if [ -f "${{ runner.temp }}/brainbench-result.json" ]; then
+            bun scripts/render-brainbench-delta.ts "${{ runner.temp }}/brainbench-result.json" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   slow-entity-resolve-perf:
     # Dedicated runner for the entity-resolve perf test (~159s, single perf
     # describe with one test that builds 5000+ pages and asserts the NEW
@@ -233,7 +267,7 @@ jobs:
   # entry written when tests hadn't actually passed).
   # ──────────────────────────────────────────────────────────────────────
   cache-write:
-    needs: [cache-check, gitleaks, verify, serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, test]
+    needs: [cache-check, gitleaks, verify, serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, brainbench, test]
     if: success() && needs.cache-check.outputs.hit != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -256,7 +290,7 @@ jobs:
   # Branch protection (when configured) gates on this single job name.
   # ──────────────────────────────────────────────────────────────────────
   test-status:
-    needs: [cache-check, gitleaks, verify, serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, test]
+    needs: [cache-check, gitleaks, verify, serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, brainbench, test]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -269,15 +303,16 @@ jobs:
           SERIAL="${{ needs.serial-tests.result }}"
           SLOW_EVAL="${{ needs.slow-eval-longmemeval.result }}"
           SLOW_PERF="${{ needs.slow-entity-resolve-perf.result }}"
+          BRAINBENCH="${{ needs.brainbench.result }}"
           TEST="${{ needs.test.result }}"
           echo "cache-check.hit=$HIT"
-          echo "gitleaks=$GITLEAKS  verify=$VERIFY  serial-tests=$SERIAL  slow-eval-longmemeval=$SLOW_EVAL  slow-entity-resolve-perf=$SLOW_PERF  test=$TEST"
+          echo "gitleaks=$GITLEAKS  verify=$VERIFY  serial-tests=$SERIAL  slow-eval-longmemeval=$SLOW_EVAL  slow-entity-resolve-perf=$SLOW_PERF  brainbench=$BRAINBENCH  test=$TEST"
           if [ "$HIT" = "true" ]; then
             echo "✓ cache HIT for hash ${{ needs.cache-check.outputs.hash }} — CI green"
             exit 0
           fi
           # Cache miss: every gated job must have succeeded.
-          for r in "$GITLEAKS" "$VERIFY" "$SERIAL" "$SLOW_EVAL" "$SLOW_PERF" "$TEST"; do
+          for r in "$GITLEAKS" "$VERIFY" "$SERIAL" "$SLOW_EVAL" "$SLOW_PERF" "$BRAINBENCH" "$TEST"; do
             if [ "$r" != "success" ]; then
               echo "✗ gated job did not succeed (got $r) — CI fail"
               exit 1

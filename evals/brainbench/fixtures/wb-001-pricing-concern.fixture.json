@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "fixture_id": "wb-001-pricing-concern",
+  "suites": ["write-back"],
+  "category": "write-back",
+  "seed_pages": [
+    {
+      "slug": "people/alice-example",
+      "content": "---\ntitle: Alice Example\ntype: person\naliases: [alice]\nsummary: Founder of Widget Co.\n---\n\nAlice Example is the founder of Widget Co.\n"
+    }
+  ],
+  "turns": [
+    { "turn_id": 1, "role": "user", "ts": "2026-03-02T17:00:00Z", "text": "Just got off the diligence call with Alice Example." },
+    { "turn_id": 2, "role": "assistant", "ts": "2026-03-02T17:00:30Z", "text": "How did it go?" },
+    { "turn_id": 3, "role": "user", "ts": "2026-03-02T17:01:00Z", "text": "She is worried the widget-co pricing model undercuts their gross margin. Big concern for the seed round." },
+    { "turn_id": 4, "role": "user", "ts": "2026-03-02T17:02:00Z", "text": "Also she said their MRR hit $X last month, ahead of plan. I committed to sending her the diligence checklist by Friday." }
+  ]
+}

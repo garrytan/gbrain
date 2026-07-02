@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-cont-014-writer",
+  "suites": [
+    "write-back",
+    "continuity"
+  ],
+  "category": "continuity",
+  "seed_pages": [
+    {
+      "slug": "companies/kelpforge",
+      "content": "---\ntitle: Kelpforge\ntype: company\nsummary: Seed-stage company. Founded by Soren Hartwhistle.\n---\n\nKelpforge is a seed-stage company. Founded by Soren Hartwhistle. The seed conversation started in 2025.\n"
+    },
+    {
+      "slug": "people/soren-hartwhistle",
+      "content": "---\ntitle: Soren Hartwhistle\ntype: person\naliases: [soren]\nsummary: Founder of Kelpforge.\n---\n\nSoren Hartwhistle is the founder of Kelpforge. Soren pushed back on the proposed valuation during diligence.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Partner meeting wrapped on the Kelpforge round.",
+      "ts": "2026-01-14T14:38:00Z"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "What was the call?",
+      "ts": "2026-01-14T14:39:00Z"
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "We decided to lead the Kelpforge round. Standard terms, clean round. Logging it now.",
+      "ts": "2026-01-14T14:40:00Z"
+    }
+  ],
+  "continuity": {
+    "pair_id": "gen-cont-014",
+    "pair_role": "writer"
+  }
+}

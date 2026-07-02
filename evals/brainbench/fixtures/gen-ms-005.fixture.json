@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-ms-005",
+  "suites": [
+    "know-to-ask",
+    "push"
+  ],
+  "category": "multi-source",
+  "sources": [
+    "teambrain"
+  ],
+  "active_source": "default",
+  "seed_pages": [
+    {
+      "slug": "people/kenji-briarcliffe",
+      "content": "---\ntitle: Kenji Briarcliffe\ntype: person\naliases: [kenji]\nsummary: Founder of Skylarkift.\n---\n\nKenji Briarcliffe is the founder of Skylarkift. Kenji raised concerns about gross margin at the last board sync.\n"
+    },
+    {
+      "slug": "people/kenji-briarcliffe",
+      "content": "---\ntitle: Kenji Briarcliffe\ntype: person\naliases: [kenji]\nsummary: Founder of Skylarkift.\n---\n\nKenji Briarcliffe is the founder of Skylarkift. Kenji wants a technical co-founder intro before committing.\n",
+      "source_id": "teambrain"
+    },
+    {
+      "slug": "companies/inkwhale-co",
+      "content": "---\ntitle: Inkwhale Co\ntype: company\nsummary: Seed-stage company.\n---\n\nInkwhale Co is a seed-stage company. The seed conversation started in 2025.\n",
+      "source_id": "teambrain"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What do I have on Kenji Briarcliffe?"
+    },
+    {
+      "turn_id": 2,
+      "role": "user",
+      "text": "Anything on Inkwhale Co in here?"
+    }
+  ]
+}
