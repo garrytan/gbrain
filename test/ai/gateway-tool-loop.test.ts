@@ -253,6 +253,89 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     expect(result.totalTurns).toBeGreaterThanOrEqual(3);
   });
 
+  it('persists the tool-result user turn so resume rebuilds a balanced history (#2256)', async () => {
+    // Two tool rounds, then a final text turn — models a non-Anthropic provider.
+    let turn = 0;
+    __setChatTransportForTests(async () => {
+      turn++;
+      if (turn <= 2) {
+        return {
+          text: '',
+          blocks: [
+            { type: 'tool-call', toolCallId: `tc${turn}`, toolName: 'search', input: { n: turn } },
+          ] as ChatBlock[],
+          stopReason: 'tool_calls',
+          usage: { input_tokens: 2, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'deepseek:deepseek-chat',
+          providerId: 'deepseek',
+        };
+      }
+      return {
+        text: 'done',
+        blocks: [{ type: 'text', text: 'done' }] as ChatBlock[],
+        stopReason: 'end',
+        usage: { input_tokens: 2, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'deepseek:deepseek-chat',
+        providerId: 'deepseek',
+      };
+    });
+
+    // Record exactly what the subagent handler persists to subagent_messages.
+    const persisted: Array<{ idx: number; role: 'assistant' | 'user'; blocks: ChatBlock[] }> = [];
+    let toolResultCalls = 0;
+
+    await toolLoop({
+      initialMessages: [{ role: 'user', content: 'find things' }],
+      tools: [{ name: 'search', description: 's', inputSchema: { type: 'object' } }],
+      toolHandlers: new Map([['search', {
+        idempotent: true,
+        async execute(input) { return { hit: (input as { n: number }).n }; },
+      }]]),
+      onAssistantTurn: async (_turnIdx, messageIdx, blocks) => {
+        persisted.push({ idx: messageIdx, role: 'assistant', blocks });
+      },
+      onToolResultMessage: async (_turnIdx, messageIdx, blocks) => {
+        toolResultCalls++;
+        persisted.push({ idx: messageIdx, role: 'user', blocks });
+      },
+      onToolCallStart: async (turnIdx, _msgIdx, ordinal) => ({ gbrainToolUseId: `gb-${turnIdx}-${ordinal}` }),
+    });
+
+    // Fires once per tool round (two rounds here) — never silently dropped.
+    expect(toolResultCalls).toBe(2);
+
+    // message_idx is contiguous and interleaved: assistant, user, assistant, user, assistant.
+    persisted.sort((a, b) => a.idx - b.idx);
+    expect(persisted.map((m) => m.idx)).toEqual([0, 1, 2, 3, 4]);
+    expect(persisted.map((m) => m.role)).toEqual(['assistant', 'user', 'assistant', 'user', 'assistant']);
+
+    // Rebuild the conversation exactly as loadPriorMessages would (ordered by
+    // message_idx, all roles) and assert it is BALANCED: every assistant turn
+    // carrying tool-call blocks is immediately followed by a turn carrying the
+    // matching tool-result blocks. This is the property the next chat() requires;
+    // before this fix only assistant turns were persisted, so resume rebuilt an
+    // unbalanced history that the provider rejected ("Tool results are missing").
+    const priorMessages = persisted.map((m) => ({ role: m.role, content: m.blocks }));
+    for (let i = 0; i < priorMessages.length; i++) {
+      const content = priorMessages[i].content;
+      const toolCalls = content.filter(
+        (b): b is Extract<ChatBlock, { type: 'tool-call' }> => b.type === 'tool-call',
+      );
+      if (priorMessages[i].role === 'assistant' && toolCalls.length > 0) {
+        const next = priorMessages[i + 1];
+        expect(next).toBeDefined();
+        const resultIds = new Set(
+          next!.content
+            .filter((b): b is Extract<ChatBlock, { type: 'tool-result' }> => b.type === 'tool-result')
+            .map((b) => b.toolCallId),
+        );
+        for (const call of toolCalls) {
+          expect(resultIds.has(call.toolCallId)).toBe(true);
+        }
+      }
+    }
+  });
+
   it('returns refusal reason without dispatching tools when stopReason=refusal', async () => {
     __setChatTransportForTests(async () => ({
       text: 'I cannot help with that',

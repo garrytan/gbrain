@@ -107,6 +107,37 @@ describe('toModelMessages — v6 ModelMessage shape', () => {
     ]);
   });
 
+  test('Date in tool-result output is JSON-safe — no Date instance survives (#2273)', () => {
+    // A tool returning a Postgres row leaks a JS Date in its output. AI SDK v6's
+    // Zod JSONValue validation rejects a raw Date instance, so the json arm must
+    // round-trip it to an ISO string before handing it to the SDK.
+    const ts = new Date('2026-04-03T12:34:56.000Z');
+    const msgs: ChatMessage[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'tool-result', toolCallId: 'c1', toolName: 'get_row', output: { created_at: ts, nested: { updated_at: ts } } },
+        ],
+      },
+    ];
+    const value = (toModelMessages(msgs)[0] as any).content[0].output.value;
+    expect((toModelMessages(msgs)[0] as any).content[0].output.type).toBe('json');
+    expect(value.created_at).toBe('2026-04-03T12:34:56.000Z');
+    expect(value.nested.updated_at).toBe('2026-04-03T12:34:56.000Z');
+    expect(value.created_at instanceof Date).toBe(false);
+    expect(value).toEqual(JSON.parse(JSON.stringify({ created_at: ts, nested: { updated_at: ts } })));
+  });
+
+  test('a bare Date tool-result output serializes to its ISO string', () => {
+    const ts = new Date('2026-01-15T00:00:00.000Z');
+    const msgs: ChatMessage[] = [
+      { role: 'user', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 't', output: ts }] },
+    ];
+    expect(toModelMessages(msgs)).toEqual([
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 't', output: { type: 'json', value: '2026-01-15T00:00:00.000Z' } }] },
+    ]);
+  });
+
   test('full multi-turn conversation: user → assistant(tool-call) → tool(result)', () => {
     const msgs: ChatMessage[] = [
       { role: 'user', content: 'find widget' },
