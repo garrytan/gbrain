@@ -168,6 +168,15 @@ export interface CodeChunkOptions {
   largeChunkThresholdTokens?: number;
   fallbackChunkSizeWords?: number;
   fallbackOverlapWords?: number;
+  /**
+   * Hard upper bound (estimated tokens) on any single emitted chunk. A node
+   * the AST splitter can't break up (a giant object/array literal, a single
+   * huge assignment, a massive template literal) would otherwise be emitted
+   * whole and rejected by the embedder ("input exceeds context length").
+   * Chunks over this budget are recursively re-split. Default 2000 fits the
+   * smallest common embedder context (e.g. nomic-embed-text, 2048).
+   */
+  maxChunkTokens?: number;
 }
 
 /**
@@ -549,6 +558,7 @@ export function parseWithTimeout(
 }
 
 const DEFAULT_CHUNKER_TIMEOUT_MS = 30_000;
+const DEFAULT_MAX_CHUNK_TOKENS = 2000;
 
 function resolveChunkerTimeoutMs(): number {
   const raw = process.env.GBRAIN_CHUNKER_TIMEOUT_MS;
@@ -706,9 +716,9 @@ export async function chunkCodeTextFull(
     }
 
     if (chunks.length === 0) {
-      return { chunks: fallbackChunks(source, filePath, language, opts), edges: rawEdges };
+      return { chunks: capOversizedChunks(fallbackChunks(source, filePath, language, opts), filePath, language, opts), edges: rawEdges };
     }
-    return { chunks: mergeSmallSiblings(chunks, chunkTarget), edges: rawEdges };
+    return { chunks: capOversizedChunks(mergeSmallSiblings(chunks, chunkTarget), filePath, language, opts), edges: rawEdges };
   } catch {
     return { chunks: fallbackChunks(source, filePath, language, opts), edges: [] };
   } finally {
@@ -812,6 +822,73 @@ function buildMergedChunk(group: CodeChunk[], index: number): CodeChunk {
       parentSymbolPath: [],
     },
   };
+}
+
+/**
+ * Final safety net: guarantee no emitted chunk exceeds the embedder's context
+ * budget. tree-sitter splitting (splitLargeNode) can only break up a node that
+ * exposes a `body` with >= 2 named children. A node without one — a giant
+ * object/array literal, a single huge assignment, a massive template literal —
+ * is emitted whole, producing a chunk far larger than the embedder accepts.
+ * The embedder then rejects it ("input exceeds context length") and the chunk
+ * is never embedded. Recursively re-split any over-budget chunk; fall back to a
+ * hard character split for pathological no-whitespace content (e.g. a minified
+ * one-liner) where word/line splitting can't get under budget.
+ */
+function capOversizedChunks(
+  chunks: CodeChunk[],
+  filePath: string,
+  language: SupportedCodeLanguage,
+  opts: CodeChunkOptions,
+): CodeChunk[] {
+  const cap = opts.maxChunkTokens ?? DEFAULT_MAX_CHUNK_TOKENS;
+  if (!chunks.some((c) => estimateTokens(c.text) > cap)) return chunks;
+  const out: CodeChunk[] = [];
+  for (const c of chunks) {
+    if (estimateTokens(c.text) <= cap) {
+      out.push({ ...c, index: out.length });
+      continue;
+    }
+    // Strip the structured header ("[Lang] path:N-M symbol\n\n") so the splitter
+    // works on the raw body; buildChunk re-adds a header to each piece.
+    const body = c.text.replace(/^\[[^\]]+\] [^\n]+\n\n/, '');
+    for (const piece of splitToTokenBudget(body, cap, opts)) {
+      if (!piece.trim()) continue;
+      out.push(buildChunk({
+        body: piece,
+        filePath,
+        language,
+        symbolName: c.metadata.symbolName,
+        symbolType: c.metadata.symbolType,
+        startLine: c.metadata.startLine,
+        endLine: c.metadata.endLine,
+        index: out.length,
+        parentSymbolPath: c.metadata.parentSymbolPath,
+      }));
+    }
+  }
+  return out;
+}
+
+/** Split `text` into pieces each estimated <= cap tokens. Word/line-aware
+ *  (recursiveChunk) first; a hard character split is the last resort for
+ *  content with no whitespace to break on. */
+function splitToTokenBudget(text: string, cap: number, opts: CodeChunkOptions): string[] {
+  const out: string[] = [];
+  const pieces = recursiveChunk(text, {
+    chunkSize: opts.fallbackChunkSizeWords ?? 300,
+    chunkOverlap: opts.fallbackOverlapWords ?? 50,
+  }).map((p) => p.text);
+  for (const piece of pieces) {
+    if (estimateTokens(piece) <= cap) {
+      out.push(piece);
+      continue;
+    }
+    // ~3.5 chars/token is a conservative cl100k estimate for source text.
+    const charBudget = Math.max(1, Math.floor(cap * 3.5));
+    for (let i = 0; i < piece.length; i += charBudget) out.push(piece.slice(i, i + charBudget));
+  }
+  return out;
 }
 
 // ---------- Internals ----------
