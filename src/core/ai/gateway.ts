@@ -2627,6 +2627,22 @@ async function classifyGatewayGuardrail(input: {
   }
 }
 
+export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, any> | undefined {
+  if (!tools || tools.length === 0) return undefined;
+  return tools.reduce((acc, t) => {
+    acc[t.name] = {
+      description: t.description,
+      // AI SDK v6 requires a Schema (carrying the schema symbol), not a plain
+      // `{jsonSchema}` object — the bare object makes asSchema() treat it as a
+      // thunk and call schema(), throwing "schema is not a function". Wrap the
+      // raw JSON Schema with the SDK's jsonSchema() helper so tool calls work
+      // through the real toolLoop (skillopt rollouts + subagent jobs).
+      inputSchema: jsonSchema(t.inputSchema as any),
+    };
+    return acc;
+  }, {} as Record<string, any>);
+}
+
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const tracker = __budgetStore.getStore() ?? null;
   const modelStrEarly = opts.model ?? getChatModel();
@@ -2714,21 +2730,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;
   const useCache = !!opts.cacheSystem && supportsCache;
 
-  // Build messages. Anthropic prompt-cache markers ride on system + last tool
-  // via providerOptions; the AI SDK accepts the system as a string for
-  // generateText, so cache markers go through providerOptions.anthropic.
-  const tools = (opts.tools ?? []).reduce((acc, t) => {
-    acc[t.name] = {
-      description: t.description,
-      // AI SDK v6 requires a Schema (carrying the schema symbol), not a plain
-      // `{jsonSchema}` object — the bare object makes asSchema() treat it as a
-      // thunk and call schema(), throwing "schema is not a function". Wrap the
-      // raw JSON Schema with the SDK's jsonSchema() helper so tool calls work
-      // through the real toolLoop (skillopt rollouts + subagent jobs).
-      inputSchema: jsonSchema(t.inputSchema as any),
-    };
-    return acc;
-  }, {} as Record<string, any>);
+  const tools = toAISDKTools(opts.tools);
 
   const providerOptions: Record<string, any> = {};
   if (useCache) {
