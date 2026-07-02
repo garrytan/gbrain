@@ -4,6 +4,8 @@ about: Something isn't working
 labels: bug
 ---
 
+For non-project correspondence, including legal/IP/attribution or partnership topics, see [SUPPORT.md](https://github.com/garrytan/gbrain/blob/master/SUPPORT.md) instead of opening a public issue.
+
 **What happened?**
 
 
