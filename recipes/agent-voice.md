@@ -132,7 +132,7 @@ Reference code ships intentionally minimal. Before public deployment:
 
 - **Twilio signature validation** on `/voice` — currently absent; add `X-Twilio-Signature` header validation.
 - **Rate limiting** on `/session` and `/tool` — currently absent.
-- **CORS allowlist** — currently `*`; restrict to your deployed origins.
+- **CORS allowlist** — set `AGENT_VOICE_CORS_ORIGIN=https://your.app` (comma-separated) to permit cross-origin browser clients. Default is deny — same-origin still works.
 - **Auth on /tool** — voice-side tool calls currently trust the in-process connection; if you expose `/tool` publicly, gate it behind a session token.
 - **HTTPS** — required for browser mic access in production. Use ngrok / Caddy / Cloudflare Tunnel.
 - **Twilio fallback URL** — `/fallback` is a TwiML stub; wire to your operator's cell for crash recovery.
