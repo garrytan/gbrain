@@ -40,6 +40,25 @@ export const litellmProxy: Recipe = {
       // mismatched-dim responses pre-storage).
       supports_multimodal: true,
     },
+    // Local fork patch (realpan, 2026-06-09): add chat touchpoint so gbrain can
+    // route think / chat through any LiteLLM-proxied provider. Mirror the
+    // embedding setup:
+    //   - user_provided_models: true (LiteLLM knows its own model catalog)
+    //   - supports_subagent_loop: false (cross-crash replay safety not validated)
+    //   - max_context_tokens: 128000 (reasonable default for proxied chat models)
+    // Models known via LiteLLM include: kimi-coding, minimax-m3,
+    // moonshot-v1-32k, deepseek-chat, etc.
+    chat: {
+      models: [],
+      user_provided_models: true,
+      supports_tools: true,
+      supports_subagent_loop: false,
+      supports_prompt_cache: false,
+      max_context_tokens: 128000,
+      cost_per_1m_input_usd: undefined,
+      cost_per_1m_output_usd: undefined,
+      price_last_verified: '2026-06-09',
+    },
   },
   setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',
 };
