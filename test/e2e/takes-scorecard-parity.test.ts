@@ -2,8 +2,9 @@
  * v0.30.0 (Slice A1) E2E: scorecard + calibration parity between Postgres
  * and PGLite. Same fixture, same query, same numbers.
  *
- * Seeds 4 binary bets + 1 partial bet into both engines (mirrors the
- * `takes-resolution.test.ts` 4-bet hand-calc reference: Brier=0.205).
+ * Seeds 4 binary bets + 1 partial bet plus resolved non-bet controls into
+ * both engines (mirrors the `takes-resolution.test.ts` 4-bet hand-calc
+ * reference: Brier=0.205).
  * Asserts getScorecard returns byte-identical numeric output and
  * getCalibrationCurve emits the same buckets.
  *
@@ -31,7 +32,8 @@ interface FixtureBet {
   claim: string;
   holder: string;
   weight: number;
-  resolveAs?: 'correct' | 'incorrect' | 'partial';
+  kind?: string;
+  resolveAs?: 'correct' | 'incorrect' | 'partial' | 'unresolvable';
 }
 
 // Same fixture used by takes-resolution.test.ts hand-calc.
@@ -44,6 +46,12 @@ const FIXTURE_BETS: FixtureBet[] = [
   { rowNum: 4, claim: 'b4', holder: 'garry',       weight: 0.4, resolveAs: 'incorrect' },
   { rowNum: 5, claim: 'b5', holder: 'garry',       weight: 0.5, resolveAs: 'partial' },
   { rowNum: 6, claim: 'h1', holder: 'harj-taggar', weight: 0.8, resolveAs: 'correct' },
+  // Resolved non-bets are deliberate contamination controls. None may affect
+  // scorecard totals, outcome counts, rates, Brier, or calibration buckets.
+  { rowNum: 7, claim: 'take-correct', holder: 'garry', weight: 0.1, kind: 'take', resolveAs: 'correct' },
+  { rowNum: 8, claim: 'forecast-incorrect', holder: 'garry', weight: 0.9, kind: 'forecast', resolveAs: 'incorrect' },
+  { rowNum: 9, claim: 'hunch-partial', holder: 'garry', weight: 0.5, kind: 'hunch', resolveAs: 'partial' },
+  { rowNum: 10, claim: 'fact-unresolvable', holder: 'garry', weight: 0.8, kind: 'fact', resolveAs: 'unresolvable' },
 ];
 
 const SCORECARD_PAGE = 'companies/scorecard-parity-fixture';
@@ -59,7 +67,7 @@ async function seedFixture(engine: BrainEngine): Promise<number> {
       page_id: page.id,
       row_num: b.rowNum,
       claim: b.claim,
-      kind: 'bet' as const,
+      kind: b.kind ?? 'bet',
       holder: b.holder,
       weight: b.weight,
     })),
@@ -137,6 +145,8 @@ d('v0.30.0 e2e: scorecard parity (PG vs PGLite)', () => {
     // Also: partial_rate = 1/5 = 0.2 (4 binary + 1 partial = 5 resolved garry rows).
     expect(pgCard.partial_rate).toBeCloseTo(0.2, 6);
     expect(pgliteCard.partial_rate).toBeCloseTo(0.2, 6);
+    expect(pgCard.unresolvable_count).toBe(0);
+    expect(pgliteCard.unresolvable_count).toBe(0);
   });
 
   test('PRIVACY: allow-list ["garry"] gives same totals on both engines AND excludes harj', async () => {

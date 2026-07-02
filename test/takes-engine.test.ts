@@ -267,6 +267,40 @@ describe('v0.30.0 getScorecard', () => {
     expect(card.brier).toBeCloseTo(0.205, 4);
   });
 
+  test('resolved non-bets contribute zero to every scorecard and calibration field', async () => {
+    const p = await engine.putPage('companies/scorecard-non-bet-controls', {
+      title: 'Scorecard non-bet controls',
+      type: 'company' as const,
+      compiled_truth: '## Takes\n',
+    });
+    await engine.addTakesBatch([
+      { page_id: p.id, row_num: 1, claim: 'scored bet', kind: 'bet', holder: 'garry', weight: 0.8 },
+      { page_id: p.id, row_num: 2, claim: 'resolved forecast', kind: 'forecast', holder: 'garry', weight: 0.1 },
+      { page_id: p.id, row_num: 3, claim: 'resolved take', kind: 'take', holder: 'garry', weight: 0.9 },
+      { page_id: p.id, row_num: 4, claim: 'partial hunch', kind: 'hunch', holder: 'garry', weight: 0.5 },
+      { page_id: p.id, row_num: 5, claim: 'unresolvable fact', kind: 'fact', holder: 'garry', weight: 0.7 },
+    ]);
+    await engine.resolveTake(p.id, 1, { quality: 'correct', resolvedBy: 'garry' });
+    await engine.resolveTake(p.id, 2, { quality: 'correct', resolvedBy: 'garry' });
+    await engine.resolveTake(p.id, 3, { quality: 'incorrect', resolvedBy: 'garry' });
+    await engine.resolveTake(p.id, 4, { quality: 'partial', resolvedBy: 'garry' });
+    await engine.resolveTake(p.id, 5, { quality: 'unresolvable', resolvedBy: 'garry' });
+
+    const opts = { holder: 'garry', domainPrefix: 'companies/scorecard-non-bet-controls' };
+    const card = await engine.getScorecard(opts, undefined);
+    expect(card.total_bets).toBe(1);
+    expect(card.resolved).toBe(1);
+    expect(card.correct).toBe(1);
+    expect(card.incorrect).toBe(0);
+    expect(card.partial).toBe(0);
+    expect(card.unresolvable_count).toBe(0);
+    expect(card.brier).toBeCloseTo(0.04, 6);
+
+    const curve = await engine.getCalibrationCurve({ holder: 'garry' }, undefined);
+    const controlBucket = curve.find(b => b.bucket_lo <= 0.1 && b.bucket_hi > 0.1);
+    expect(controlBucket).toBeUndefined();
+  });
+
   test('PRIVACY: SQL allow-list filter — hidden-holder rows contribute zero', async () => {
     // Add a take from a different holder (e.g., harj). The scorecard with
     // allow-list ['garry'] must NOT count that take in any aggregate.
