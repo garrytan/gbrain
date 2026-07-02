@@ -1402,10 +1402,20 @@ export interface BrainStats {
 
 export interface BrainHealth {
   page_count: number;
+  /**
+   * Pages inside the linkable scope (src/core/linkable-scope.ts) — the
+   * pages expected to participate in the curated link graph. Excludes
+   * archive (raw/), generated, and daily-log pages; the same scope the
+   * orphans audit uses. Denominator for the no-orphans and
+   * timeline-coverage score components.
+   */
+  linkable_page_count: number;
   embed_coverage: number;
   stale_pages: number;
   /**
-   * Islanded pages — zero inbound AND zero outbound links. A hub page
+   * Islanded pages — zero inbound AND zero outbound links, counted over
+   * LINKABLE pages only (the same scope as the `gbrain orphans` audit, so
+   * doctor cannot report two contradictory orphan numbers). A hub page
    * that has references out but no back-references is NOT an orphan under
    * this definition (it's working as intended as an index). The metric
    * aims at "pages I forgot to connect to anything", not the stricter

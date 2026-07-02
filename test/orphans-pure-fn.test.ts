@@ -171,6 +171,45 @@ describe('shouldExclude — orphan filter regression (preserve curation)', () =>
     expect(shouldExclude('media/x/raw/post')).toBe(true);
   });
 
+  test('leading raw/ segment is excluded (same archive convention)', () => {
+    expect(shouldExclude('raw/whatsapp/2025-01/chat-log')).toBe(true);
+    expect(shouldExclude('raw/transcripts/meeting')).toBe(true);
+    // 'rawhide/...' must NOT match — prefix is 'raw/', not 'raw'.
+    expect(shouldExclude('rawhide/notes')).toBe(false);
+  });
+
+  test('daily-log pages are excluded (calendar/email integrations write these)', () => {
+    expect(shouldExclude('daily/calendar/2025/2025-01-01')).toBe(true);
+    expect(shouldExclude('daily/x/2025-06-13')).toBe(true);
+  });
+
+  test('outputs/ plural prefix is excluded like output/', () => {
+    expect(shouldExclude('outputs/render-batch-3')).toBe(true);
+  });
+
+  test('readme folder descriptors are excluded at any depth', () => {
+    expect(shouldExclude('readme')).toBe(true);
+    expect(shouldExclude('index')).toBe(true);
+    expect(shouldExclude('projects/readme')).toBe(true);
+    expect(shouldExclude('media/readme')).toBe(true);
+    // A page merely mentioning readme in its name is NOT excluded.
+    expect(shouldExclude('concepts/readme-driven-development')).toBe(false);
+  });
+
+  test('machine-generated extracts pages are excluded', () => {
+    expect(shouldExclude('extracts/2026-06-12/takes.proposed/host/propose-x/round-single')).toBe(true);
+  });
+
+  test('inbox intake-tray pages are excluded (same rationale as daily)', () => {
+    expect(shouldExclude('inbox/some-renewal-notice-2026-06-22')).toBe(true);
+  });
+
+  test('root schema and log pages are excluded', () => {
+    expect(shouldExclude('schema')).toBe(true);
+    expect(shouldExclude('log')).toBe(true);
+    expect(shouldExclude('concepts/schema-design')).toBe(false);
+  });
+
   test('deny-prefixes are excluded', () => {
     expect(shouldExclude('templates/meeting')).toBe(true);
     expect(shouldExclude('dashboards/_index')).toBe(true);
