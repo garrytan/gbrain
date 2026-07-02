@@ -6,6 +6,8 @@
  * sessions edit a stale tree. The moment gbrain is given a PAT + a GitHub URL
  * for a brain repo, `hardenBrainRepo` makes durability work, idempotently:
  *
+ *   0. set `rebase.autoStash` so `git pull --rebase` tolerates uncommitted
+ *      write-throughs (otherwise the first unstaged page wedges every commit-push)
  *   1. pull current state (divergence-safe rebase; skip-on-dirty)
  *   2. repo-scoped credential wiring (reuse an existing helper if present)
  *   3. LOCAL untracked post-commit hook (best-effort background auto-push)
@@ -609,6 +611,17 @@ export async function hardenBrainRepo(opts: HardenOpts): Promise<DurabilityRepor
   const log = (l: string) => opts.logger?.(redact(l));
 
   if (!isGitRepo(repoPath)) throw new Error(`not a git repo: ${repoPath}`);
+
+  // Make `git pull --rebase` tolerate uncommitted write-throughs. `gbrain capture`
+  // writes the DB row + clone .md but does NOT commit (the writer is meant to run
+  // scripts/brain-commit-push.sh). Concurrent captures and the autopilot/dream-cycle
+  // passes therefore leave uncommitted tracked pages in the working tree. The committed
+  // helper (and the durability rules) start with `git pull --rebase`, which HARD-FAILS
+  // on any unstaged tracked change ("cannot pull with rebase: You have unstaged
+  // changes") — so the first stuck file wedges every subsequent commit-push and pages
+  // stop reaching the remote. `rebase.autoStash` makes that pull stash→rebase→reapply
+  // instead of failing. Idempotent; repo-scoped (local config only).
+  if (!dryRun) { try { gitConfigSet(repoPath, 'rebase.autoStash', 'true'); } catch { /* non-fatal */ } }
 
   const branch = opts.branch || detectDefaultBranch(repoPath);
   const steps: DurabilityStep[] = [];
