@@ -163,7 +163,7 @@ describe('v0.41 T9 R-GATE: pre-existing 17 core phases always run', () => {
   });
 
   test('calibration_profile dispatch does NOT consult packDeclaresPhase', () => {
-    // Pre-existing v0.36.1.0 phase; always-on.
+    // Pre-existing v0.36.1.0 phase; now config-gated default-off, but not pack-gated.
     const cpBlockStart = cycleTsSrc.indexOf("phases.includes('calibration_profile')");
     expect(cpBlockStart).toBeGreaterThan(-1);
     // Window of 1500 chars covers the dispatch.

@@ -145,6 +145,8 @@ export interface ProposeTakesOpts extends BasePhaseOpts {
   model?: string;
   /** Skip pages that already have a complete takes fence. Default: true. */
   skipPagesWithFence?: boolean;
+  /** Abort after this many consecutive empty/failed extractor results. Default: config or 3. */
+  maxConsecutiveEmptyOrFailed?: number;
 }
 
 export interface ProposeTakesResult {
@@ -153,7 +155,14 @@ export interface ProposeTakesResult {
   cache_misses: number;
   proposals_inserted: number;
   budget_exhausted: boolean;
+  aborted: boolean;
+  abort_reason?: string;
   warnings: string[];
+}
+
+function parsePositiveInt(raw: unknown, fallback: number): number {
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
 /**
@@ -300,13 +309,18 @@ class ProposeTakesPhase extends BaseCyclePhase {
   protected async process(
     engine: BrainEngine,
     scope: ScopedReadOpts,
-    _ctx: OperationContext,
+    ctx: OperationContext,
     opts: ProposeTakesOpts,
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
     const extractor = opts.extractor ?? defaultExtractor;
     const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
+    const rawConsecutiveLimit = ctx.engine.getConfig
+      ? await ctx.engine.getConfig('cycle.propose_takes.max_consecutive_empty_or_failed').catch(() => null)
+      : null;
+    const maxConsecutiveEmptyOrFailed = opts.maxConsecutiveEmptyOrFailed
+      ?? parsePositiveInt(rawConsecutiveLimit, 3);
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
     const result: ProposeTakesResult = {
@@ -315,8 +329,10 @@ class ProposeTakesPhase extends BaseCyclePhase {
       cache_misses: 0,
       proposals_inserted: 0,
       budget_exhausted: false,
+      aborted: false,
       warnings: [],
     };
+    let consecutiveEmptyOrFailed = 0;
 
     // Load pages eligible for proposal. Source-scoped per BaseCyclePhase.
     const pageFilters: PageFilters = {
@@ -383,8 +399,31 @@ class ProposeTakesPhase extends BaseCyclePhase {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         result.warnings.push(`extractor failed on ${page.slug}: ${msg}`);
+        consecutiveEmptyOrFailed += 1;
+        if (consecutiveEmptyOrFailed >= maxConsecutiveEmptyOrFailed) {
+          result.aborted = true;
+          result.abort_reason = `consecutive_empty_or_failed_extractor_results:${consecutiveEmptyOrFailed}`;
+          result.warnings.push(
+            `aborted propose_takes after ${consecutiveEmptyOrFailed} consecutive empty/failed extractor results`,
+          );
+          break;
+        }
         continue;
       }
+
+      if (proposals.length === 0) {
+        consecutiveEmptyOrFailed += 1;
+        if (consecutiveEmptyOrFailed >= maxConsecutiveEmptyOrFailed) {
+          result.aborted = true;
+          result.abort_reason = `consecutive_empty_or_failed_extractor_results:${consecutiveEmptyOrFailed}`;
+          result.warnings.push(
+            `aborted propose_takes after ${consecutiveEmptyOrFailed} consecutive empty/failed extractor results`,
+          );
+          break;
+        }
+        continue;
+      }
+      consecutiveEmptyOrFailed = 0;
 
       // Write proposals to take_proposals. Each row is a separate INSERT
       // because the composite idempotency key is on the per-page tuple — a
@@ -442,13 +481,22 @@ class ProposeTakesPhase extends BaseCyclePhase {
       kind: 'takes.proposed',
       source_id: sourceIdForReceipt,
       round_completed_delta: result.budget_exhausted ? 0 : 1,
-      halt_delta: result.budget_exhausted ? 1 : 0,
+      halt_delta: result.budget_exhausted || result.aborted ? 1 : 0,
     });
 
+    const status: PhaseStatus = result.budget_exhausted || (result.aborted && result.proposals_inserted > 0)
+      ? 'warn'
+      : result.aborted
+        ? 'skipped'
+        : 'ok';
+    const summary = result.aborted
+      ? `propose_takes: aborted after ${result.pages_scanned} pages (${result.abort_reason})`
+      : `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals (run ${proposalRunId})`;
+
     return {
-      summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals (run ${proposalRunId})`,
-      details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion },
-      status: result.budget_exhausted ? 'warn' : 'ok',
+      summary,
+      details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion, max_consecutive_empty_or_failed: maxConsecutiveEmptyOrFailed },
+      status,
     };
   }
 }

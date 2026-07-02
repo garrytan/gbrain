@@ -137,17 +137,38 @@ export abstract class BaseCyclePhase {
 
   /**
    * Resolve the budget cap from config (or default). Override is the explicit
-   * value passed via opts.budgetUsd. Otherwise: config[budgetUsdKey] → default.
+   * value passed via opts.budgetUsd. Otherwise: engine.getConfig(budgetUsdKey)
+   * (DB/config-plane overlay) → ctx.config legacy/file snapshot → default.
    */
-  private resolveBudgetUsd(ctx: OperationContext, opts: BasePhaseOpts): number {
+  private async resolveBudgetUsd(ctx: OperationContext, opts: BasePhaseOpts): Promise<number> {
     if (typeof opts.budgetUsd === 'number') return opts.budgetUsd;
-    const raw = (ctx.config as unknown as Record<string, unknown>)[this.budgetUsdKey];
-    if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) return raw;
-    if (typeof raw === 'string') {
+    const parse = (raw: unknown): number | null => {
+      if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+      if (typeof raw !== 'string') return null;
       const parsed = Number.parseFloat(raw);
-      if (Number.isFinite(parsed) && parsed >= 0) return parsed;
-    }
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const dbRaw = ctx.engine.getConfig
+      ? await ctx.engine.getConfig(this.budgetUsdKey).catch(() => null)
+      : null;
+    const dbParsed = parse(dbRaw);
+    if (dbParsed !== null) return dbParsed;
+    const fileRaw = (ctx.config as unknown as Record<string, unknown>)[this.budgetUsdKey];
+    const fileParsed = parse(fileRaw);
+    if (fileParsed !== null) return fileParsed;
     return this.budgetUsdDefault;
+  }
+
+  private async resolveEnabled(ctx: OperationContext): Promise<boolean> {
+    const key = `cycle.${this.name}.enabled`;
+    const raw = ctx.engine.getConfig
+      ? await ctx.engine.getConfig(key).catch(() => null)
+      : null;
+    const v = raw?.trim().toLowerCase();
+    if (v == null || ['false', '0', 'no', 'off', ''].includes(v)) {
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -161,9 +182,25 @@ export abstract class BaseCyclePhase {
     // to thread this would have been the v0.34.1 leak class. Now structural.
     const scope = sourceScopeOpts(ctx);
 
+    if (['propose_takes', 'grade_takes', 'calibration_profile'].includes(this.name)) {
+      const enabled = await this.resolveEnabled(ctx);
+      if (!enabled) {
+        return {
+          phase: this.name,
+          status: 'skipped',
+          duration_ms: Date.now() - t0,
+          summary: `cycle.${this.name}.enabled=false (default OFF)`,
+          details: {
+            reason: 'disabled',
+            enable_hint: `gbrain config set cycle.${this.name}.enabled true`,
+          },
+        };
+      }
+    }
+
     // Budget meter construction. The default path reads config; tests inject.
     if (!opts.meter) {
-      const budgetUsd = this.resolveBudgetUsd(ctx, opts);
+      const budgetUsd = await this.resolveBudgetUsd(ctx, opts);
       this.meter = new BudgetMeter({ budgetUsd, phase: this.name });
     } else {
       this.meter = opts.meter;
