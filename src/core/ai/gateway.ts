@@ -2491,6 +2491,15 @@ async function resolveChatProvider(modelStr: string): Promise<{ model: any; reci
 }
 
 function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig): any {
+  if (recipe.id === 'openai-codex') {
+    const compat = applyOpenAICompatConfig(recipe, cfg);
+    return createOpenAI({
+      apiKey: 'codex-oauth',
+      baseURL: compat.baseURL,
+      ...(compat.fetch ? { fetch: compat.fetch } : {}),
+    }).responses(modelId);
+  }
+
   switch (recipe.implementation) {
     case 'native-openai': {
       const apiKey = cfg.env.OPENAI_API_KEY;
@@ -2731,6 +2740,16 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   }, {} as Record<string, any>);
 
   const providerOptions: Record<string, any> = {};
+  if (recipe.id === 'openai-codex') {
+    // The OpenAI Responses API defaults to stored/stateful response items.
+    // GBrain's toolLoop is deliberately stateless and re-sends the full
+    // assistant tool-call + tool-result history every turn. Keeping Responses
+    // storage on can make the provider expect out-of-band tool outputs for a
+    // prior stored response and reject the next turn with "Tool results are
+    // missing...". Codex OAuth runs through Responses, so pin it to stateless
+    // calls while preserving normal OpenAI/Anthropic behavior.
+    providerOptions.openai = { store: false };
+  }
   if (useCache) {
     providerOptions.anthropic = { cacheControl: { type: 'ephemeral' } };
   }
