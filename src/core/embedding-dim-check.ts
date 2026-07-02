@@ -19,6 +19,7 @@ import { gbrainPath } from './config.ts';
 import { resolveRecipe } from './ai/model-resolver.ts';
 import type { Recipe } from './ai/types.ts';
 import { AIConfigError } from './ai/errors.ts';
+import { embeddingProviderContract } from './ai/embedding-provider-contract.ts';
 import {
   supportsVoyageOutputDimension,
   isValidVoyageOutputDim,
@@ -449,6 +450,19 @@ function isCustomDimValidForProvider(
       error:
         `OpenAI ${modelId} accepts dimensions 1..${maxDim}, got ${requestedDims}.`,
     };
+  }
+
+  // User-provided model recipes (litellm, llama-server) intentionally ship
+  // without a static model list or native width. For these providers the
+  // explicit --embedding-dimensions value is the schema contract, not a
+  // Matryoshka/custom-width request. Positive integer and pgvector max guards
+  // have already run in validateDimAgainstTouchpoint().
+  const embeddingTouchpoint = recipe.touchpoints.embedding;
+  if (
+    embeddingTouchpoint &&
+    embeddingProviderContract(recipe, modelId, embeddingTouchpoint).userProvidedModels
+  ) {
+    return { valid: true, error: '' };
   }
 
   // Tier 3: provider not known to support custom dims at all.

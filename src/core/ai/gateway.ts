@@ -46,6 +46,7 @@ import type {
   TouchpointKind,
 } from './types.ts';
 import { resolveRecipe, assertTouchpoint, parseModelId } from './model-resolver.ts';
+import { embeddingProviderContract } from './embedding-provider-contract.ts';
 import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
@@ -704,20 +705,21 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
     };
   }
 
-  // Openai-compat recipes with empty models list require a user-provided model.
-  const isUserProvided = (tp as any).user_provided_models === true;
-  if (
-    Array.isArray(tp.models) &&
-    tp.models.length === 0 &&
-    (recipe.id === 'litellm' || isUserProvided)
-  ) {
-    return {
-      ok: false,
-      reason: 'user_provided_model_unset',
-      model: modelStr,
-      provider: parsed.providerId,
-      recipeId: recipe.id,
-    };
+  // User-provided embedding recipes with empty model lists require the
+  // configured model to be registered in _extendedModels; this mirrors the
+  // real assertTouchpoint() path used by embed calls.
+  const contract = embeddingProviderContract(recipe, parsed.modelId, tp);
+  if (contract.requiresConfiguredUserModel) {
+    const extended = getExtendedModelsForProvider(parsed.providerId);
+    if (!extended || !extended.has(parsed.modelId)) {
+      return {
+        ok: false,
+        reason: 'user_provided_model_unset',
+        model: modelStr,
+        provider: parsed.providerId,
+        recipeId: recipe.id,
+      };
+    }
   }
 
   const required = recipe.auth_env?.required ?? [];
