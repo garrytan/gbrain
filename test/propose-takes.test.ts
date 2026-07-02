@@ -39,12 +39,17 @@ interface CapturedSql {
 function buildMockEngine(opts: {
   pages: Page[];
   existingProposals?: Set<string>; // composite-key strings already in take_proposals
+  config?: Record<string, string>;
 }): { engine: BrainEngine; captured: CapturedSql[] } {
   const captured: CapturedSql[] = [];
   const existing = opts.existingProposals ?? new Set<string>();
+  const config = opts.config ?? {};
 
   const engine = {
     kind: 'pglite',
+    async getConfig(key: string) {
+      return config[key] ?? null;
+    },
     async listPages() {
       return opts.pages;
     },
@@ -263,6 +268,27 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(inserts[0]!.params[5]).toBe('Marketplaces with cold-start liquidity win'); // claim_text
     expect(inserts[0]!.params[6]).toBe('bet'); // kind
     expect(inserts[0]!.params[9]).toBe('market'); // domain
+  });
+
+  test('routes model through models.tier.propose_takes with reasoning-tier fallback', async () => {
+    const pages = [buildPage({ slug: 'wiki/concepts/network-effects', body: 'Marketplaces with cold-start liquidity always win.' })];
+    const { engine, captured } = buildMockEngine({
+      pages,
+      config: { 'models.tier.reasoning': 'openrouter:private/gemma4-31b' },
+    });
+    let seenModel: string | undefined;
+    const extractor: ProposeTakesExtractor = async input => {
+      seenModel = input.modelHint;
+      return [
+        { claim_text: 'Marketplaces with cold-start liquidity win', kind: 'bet', holder: 'brain', weight: 0.7, domain: 'market' },
+      ];
+    };
+
+    await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect(seenModel).toBe('openrouter:private/gemma4-31b');
+    const insert = captured.find(c => c.sql.includes('INSERT INTO take_proposals'));
+    expect(insert!.params[11]).toBe('openrouter:private/gemma4-31b');
   });
 
   test('cache hit: page already in take_proposals is skipped', async () => {

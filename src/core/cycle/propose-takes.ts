@@ -43,6 +43,7 @@ import { chat as gatewayChat } from '../ai/gateway.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { GBrainError } from '../types.ts';
+import { resolveCalibrationCycleModel } from './model-routing.ts';
 import type { Page, PageFilters } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -307,6 +308,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
+    const modelId = await resolveCalibrationCycleModel(engine, 'propose_takes', opts.model);
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
     const result: ProposeTakesResult = {
@@ -359,7 +361,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
 
       // Budget pre-check before the LLM call. Estimate: ~1500 input tokens + 500 output.
       const budget = this.checkBudget({
-        modelId: opts.model ?? 'claude-sonnet-4-6',
+        modelId,
         estimatedInputTokens: 1500,
         maxOutputTokens: 500,
       });
@@ -378,7 +380,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           pagePath: page.slug,
           pageBody: body,
           existingTakes,
-          modelHint: opts.model,
+          modelHint: modelId,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -408,7 +410,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
             p.weight,
             p.domain ?? null,
             JSON.stringify(existingTakes),
-            opts.model ?? 'claude-sonnet-4-6',
+            modelId,
           ],
         );
         result.proposals_inserted += 1;

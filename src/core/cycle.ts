@@ -2029,7 +2029,9 @@ export async function runCycle(
           checkAborted(opts.signal);
           progress.start('cycle.propose_takes');
           const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined }) as Promise<PhaseResult>);
+          const { resolveCalibrationCycleModel } = await import('./cycle/model-routing.ts');
+          const model = await resolveCalibrationCycleModel(engine, 'propose_takes');
+          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined, model }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
@@ -2040,7 +2042,9 @@ export async function runCycle(
           checkAborted(opts.signal);
           progress.start('cycle.grade_takes');
           const { runPhaseGradeTakes } = await import('./cycle/grade-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, {}) as Promise<PhaseResult>);
+          const { resolveCalibrationCycleModel } = await import('./cycle/model-routing.ts');
+          const model = await resolveCalibrationCycleModel(engine, 'grade_takes');
+          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, { model }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
@@ -2051,7 +2055,9 @@ export async function runCycle(
           checkAborted(opts.signal);
           progress.start('cycle.calibration_profile');
           const { runPhaseCalibrationProfile } = await import('./cycle/calibration-profile.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseCalibrationProfile(calibrationCtx, {}) as Promise<PhaseResult>);
+          const { resolveCalibrationCycleModel } = await import('./cycle/model-routing.ts');
+          const model = await resolveCalibrationCycleModel(engine, 'calibration_profile');
+          const { result, duration_ms } = await timePhase(() => runPhaseCalibrationProfile(calibrationCtx, { model }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();

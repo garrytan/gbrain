@@ -30,13 +30,17 @@ interface CapturedSql {
   params: unknown[];
 }
 
-function buildMockEngine(opts: { scorecard: TakesScorecard }): {
+function buildMockEngine(opts: { scorecard: TakesScorecard; config?: Record<string, string> }): {
   engine: BrainEngine;
   captured: CapturedSql[];
 } {
   const captured: CapturedSql[] = [];
+  const config = opts.config ?? {};
   const engine = {
     kind: 'pglite',
+    async getConfig(key: string) {
+      return config[key] ?? null;
+    },
     async getScorecard() {
       return opts.scorecard;
     },
@@ -237,6 +241,40 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     expect(insert!.params[9]).toBe(true); // voice_gate_passed
     expect(insert!.params[10]).toBe(1); // voice_gate_attempts
     expect(insert!.params[11]).toEqual(['over-confident-geography']); // active_bias_tags
+  });
+
+  test('routes profile generation, voice gate, and bias tags through models.tier.calibration_profile with reasoning fallback', async () => {
+    const { engine, captured } = buildMockEngine({
+      scorecard: ENOUGH_RESOLVED_SCORECARD,
+      config: { 'models.tier.reasoning': 'openrouter:private/gemma4-31b' },
+    });
+    let patternModel: string | undefined;
+    let voiceGateModel: string | undefined;
+    let biasTagsModel: string | undefined;
+    const patternsGenerator: PatternStatementsGenerator = async input => {
+      patternModel = input.modelHint;
+      return ['You called early-stage tactics well — 8 of 10 held up.'];
+    };
+    const biasTagsGenerator: BiasTagsGenerator = async (_patterns, opts) => {
+      biasTagsModel = opts?.modelHint;
+      return ['over-confident-geography'];
+    };
+    const voiceGateJudge: VoiceGateJudge = async input => {
+      voiceGateModel = input.modelHint;
+      return { verdict: 'conversational', reason: 'fine' };
+    };
+
+    await runPhaseCalibrationProfile(buildCtx(engine), {
+      patternsGenerator,
+      biasTagsGenerator,
+      voiceGateJudge,
+    });
+
+    expect(patternModel).toBe('openrouter:private/gemma4-31b');
+    expect(voiceGateModel).toBe('openrouter:private/gemma4-31b');
+    expect(biasTagsModel).toBe('openrouter:private/gemma4-31b');
+    const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
+    expect(insert!.params[12]).toBe('openrouter:private/gemma4-31b');
   });
 
   test('voice gate rejects both attempts → template fallback written, voice_gate_passed=false', async () => {
