@@ -5,6 +5,7 @@ import { marked } from 'marked';
 import type { BrainEngine, FileSpec } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
+import { chunkChineseText } from './chunkers/chinese-semantic.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
@@ -89,6 +90,25 @@ const FENCE_TAG_TO_PSEUDO_PATH: Record<string, string> = {
   yaml: 'fence.yaml', yml: 'fence.yaml',
   toml: 'fence.toml',
 };
+
+// v0.42.53 + local-fork: Chinese-aware chunking routing.
+// When text is predominantly CJK (>20% CJK chars among non-whitespace),
+// route to the Chinese semantic chunker which splits on Chinese sentence
+// boundaries (。！？) and short clauses (，；：) instead of English word
+// counts. Falls back to the standard recursive chunker otherwise.
+const CJK_RANGE = /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/g;
+function isChineseContent(text: string): boolean {
+  const stripped = text.replace(/\s+/g, '');
+  if (stripped.length === 0) return false;
+  const cjkCount = (stripped.match(CJK_RANGE) || []).length;
+  return cjkCount / stripped.length > 0.2;
+}
+function chunkTextSmart(text: string): { text: string; index: number }[] {
+  if (isChineseContent(text)) {
+    return chunkChineseText(text).map((c, i) => ({ text: c.text, index: i }));
+  }
+  return chunkText(text);
+}
 
 function fenceTagToPseudoPath(lang: string | undefined): string | null {
   if (!lang) return null;
@@ -670,12 +690,12 @@ export async function importFromContent(
   const embedSkipped = isEmbedSkipped(parsed.frontmatter) || isQuarantined(parsed.frontmatter);
   if (!embedSkipped) {
     if (parsed.compiled_truth.trim()) {
-      for (const c of chunkText(parsed.compiled_truth)) {
+      for (const c of chunkTextSmart(parsed.compiled_truth)) {
         chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
       }
     }
     if (parsed.timeline?.trim()) {
-      for (const c of chunkText(parsed.timeline)) {
+      for (const c of chunkTextSmart(parsed.timeline)) {
         chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'timeline' });
       }
     }
