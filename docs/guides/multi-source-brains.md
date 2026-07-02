@@ -109,6 +109,25 @@ behave exactly as before — every page appears in search.
 
 Flip later with `gbrain sources federate <id>` / `unfederate <id>`.
 
+## Autopilot cycle flag
+
+Every source row also stores `config.autopilot_cycle: boolean` in its JSONB
+config, controlling whether autopilot manages the source.
+
+| Value | Meaning |
+|-------|---------|
+| unset (default) / `true` | Source participates in the autopilot knowledge cycle: per-source sync + extract + full cycle. |
+| `false` | Source is excluded from autopilot — skipped at every per-source dispatch site and by the matching doctor freshness checks. |
+
+The use case is a source kept current by a dedicated external sync pipeline
+(say `my-code-repo`, re-synced by its own CI) rather than autopilot's
+per-source loop. Opting it out stops the two pipelines from racing the same
+source while leaving search, federation, and manual `gbrain sync <id>`
+untouched.
+
+Flip later with `gbrain sources no-cycle <id>` (opt out) / `cycle <id>`
+(re-enable, the default — clears the flag).
+
 ## Commands
 
 Full subcommand reference:
@@ -126,6 +145,8 @@ gbrain sources attach <id>     Write .gbrain-source in CWD (like kubectl context
 gbrain sources detach          Remove .gbrain-source from CWD.
 gbrain sources federate <id>
 gbrain sources unfederate <id>
+gbrain sources no-cycle <id>   Exclude a source from the autopilot knowledge cycle.
+gbrain sources cycle <id>      Re-enable the autopilot cycle (the default).
 ```
 
 ## Citation format for agents

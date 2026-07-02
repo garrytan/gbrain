@@ -2282,9 +2282,15 @@ export async function checkSourceRoutingHealth(engine: BrainEngine): Promise<Che
  */
 export async function checkFederationHealth(engine: BrainEngine): Promise<Check> {
   try {
-    const { loadAllSources } = await import('../core/sources-load.ts');
+    const { loadAllSources, isAutopilotCycleEnabled } = await import('../core/sources-load.ts');
     const { computeAllSourceMetrics } = await import('../core/source-health.ts');
-    const sources = await loadAllSources(engine, { includeArchived: false });
+    // Operator opt-out: drop sources with config.autopilot_cycle === false from
+    // the per-source health evaluation (same spirit as excluding archived). An
+    // excluded source's sync lag / embed coverage stop advancing once autopilot
+    // stops cycling it, so it must not FAIL/warn here or emit a "run gbrain sync"
+    // remediation it can't act on.
+    const sources = (await loadAllSources(engine, { includeArchived: false }))
+      .filter((s) => isAutopilotCycleEnabled(s.config));
     if (sources.length <= 1) {
       return {
         name: 'federation_health',
@@ -3400,6 +3406,7 @@ export async function checkSyncFreshness(
   opts?: { nowMs?: number; localOnly?: boolean },
 ): Promise<Check> {
   try {
+    const { isAutopilotCycleEnabled } = await import('../core/sources-load.ts');
     // v0.41.27.0: SELECT widens to carry last_commit + chunker_version so
     // the git short-circuit gate (below) can compare against what
     // `gbrain sync`'s up-to-date predicate at sync.ts:1057+1075 checks.
@@ -3413,13 +3420,23 @@ export async function checkSyncFreshness(
       last_commit: string | null;
       chunker_version: string | null;
       newest_content_at: Date | null;
+      config: Record<string, unknown> | string | null;
     }>(
       // v0.41.32.0: newest_content_at feeds the REMOTE (non-localOnly) lag so
       // doctorReportRemote never shells out to git on a DB-supplied local_path.
-      `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at FROM sources WHERE local_path IS NOT NULL`,
+      // `config` carries the operator autopilot_cycle opt-out (read below).
+      `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at, config FROM sources WHERE local_path IS NOT NULL`,
     );
 
-    if (sources.length === 0) {
+    // Operator opt-out: a source with config.autopilot_cycle === false has its
+    // last_sync_at frozen by design (autopilot stops syncing it). Drop it from
+    // the per-source staleness evaluation entirely — like the archived filter —
+    // so it can't FAIL sync_freshness or emit a "run gbrain sync" remediation.
+    // Dropping it up front also keeps the 3-bucket count invariant
+    // (unchanged + synced_recently + stale === sources.length) intact.
+    const cycledSources = sources.filter((s) => isAutopilotCycleEnabled(s.config));
+
+    if (cycledSources.length === 0) {
       return {
         name: 'sync_freshness',
         status: 'ok',
@@ -3501,7 +3518,7 @@ export async function checkSyncFreshness(
       /* db-lock unavailable — skip in-progress detection, staleness stands. */
     }
 
-    for (const source of sources) {
+    for (const source of cycledSources) {
       // Embed source.id in user-visible messages so `gbrain sync --source <id>`
       // matches what the user copy-pastes. Show display name in parens when set.
       const display = source.name && source.name !== source.id
@@ -3625,11 +3642,11 @@ export async function checkSyncFreshness(
     // v0.41.27.0: D2 ok-message reshape. Three branches surface what the
     // git short-circuit actually did so operators understand "unchanged
     // since last sync" vs "synced recently".
-    if (unchanged_count === sources.length) {
+    if (unchanged_count === cycledSources.length) {
       return {
         name: 'sync_freshness',
         status: 'ok',
-        message: `All ${sources.length} federated source(s) up to date (no new commits since last sync)${inProgressNote}`,
+        message: `All ${cycledSources.length} federated source(s) up to date (no new commits since last sync)${inProgressNote}`,
         details,
       };
     }
@@ -3637,14 +3654,14 @@ export async function checkSyncFreshness(
       return {
         name: 'sync_freshness',
         status: 'ok',
-        message: `${sources.length} federated source(s): ${synced_recently_count} synced recently, ${unchanged_count} unchanged since last sync${inProgressNote}`,
+        message: `${cycledSources.length} federated source(s): ${synced_recently_count} synced recently, ${unchanged_count} unchanged since last sync${inProgressNote}`,
         details,
       };
     }
     return {
       name: 'sync_freshness',
       status: 'ok',
-      message: `All ${sources.length} federated source(s) synced recently${inProgressNote}`,
+      message: `All ${cycledSources.length} federated source(s) synced recently${inProgressNote}`,
       details,
     };
   } catch (e) {
@@ -3790,6 +3807,7 @@ export async function checkCycleFreshness(
   opts?: { nowMs?: number },
 ): Promise<Check> {
   try {
+    const { isAutopilotCycleEnabled } = await import('../core/sources-load.ts');
     const sources = await engine.listAllSources({ localPathOnly: true });
     if (sources.length === 0) {
       return {
@@ -3813,6 +3831,14 @@ export async function checkCycleFreshness(
       const display = source.name && source.name !== source.id
         ? `'${source.id}' (${source.name})`
         : `'${source.id}'`;
+      // Operator opt-out: a source with config.autopilot_cycle === false is
+      // excluded from the autopilot knowledge cycle, so its last_full_cycle_at
+      // intentionally stops advancing. Skip it from the staleness evaluation
+      // (like the archived short-circuit) so it can't FAIL the check or emit a
+      // misleading "run gbrain dream" remediation.
+      if (!isAutopilotCycleEnabled(source.config)) {
+        continue;
+      }
       const raw = source.config?.last_full_cycle_at;
       if (typeof raw !== 'string') {
         issues.push(`Source ${display} has never completed a full cycle`);

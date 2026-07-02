@@ -29,10 +29,15 @@ beforeEach(async () => {
 const NOW = Date.parse('2026-05-22T12:00:00.000Z');
 const agoH = (h: number) => new Date(NOW - h * 3600_000).toISOString();
 
-async function seed(id: string, lastFullCycleAt?: string, opts: { local_path?: string | null } = {}): Promise<void> {
-  const config = lastFullCycleAt
-    ? JSON.stringify({ last_full_cycle_at: lastFullCycleAt })
-    : '{}';
+async function seed(
+  id: string,
+  lastFullCycleAt?: string,
+  opts: { local_path?: string | null; autopilotCycle?: boolean } = {},
+): Promise<void> {
+  const configObj: Record<string, unknown> = {};
+  if (lastFullCycleAt) configObj.last_full_cycle_at = lastFullCycleAt;
+  if (opts.autopilotCycle !== undefined) configObj.autopilot_cycle = opts.autopilotCycle;
+  const config = JSON.stringify(configObj);
   const localPath = opts.local_path === undefined ? `/tmp/${id}` : opts.local_path;
   await engine.executeRaw(
     `INSERT INTO sources (id, name, local_path, config, archived, created_at)
@@ -111,6 +116,28 @@ describe('doctor checkCycleFreshness', () => {
     const result = await checkCycleFreshness(engine, { nowMs: NOW });
     expect(result.status).toBe('warn');
     expect(result.message).toMatch(/unparseable/);
+  });
+
+  test('cycle-excluded source (config.autopilot_cycle === false) does NOT fail', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    // Stale by every threshold (72h > 24h fail) AND never updated since the
+    // operator opted it out — would normally FAIL + emit a "gbrain dream"
+    // remediation. The opt-out must suppress both.
+    await seed('opted-out', agoH(72), { autopilotCycle: false });
+    const result = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(result.status).toBe('ok');
+    expect(result.message).not.toMatch(/gbrain dream --source/);
+    expect(result.message).not.toMatch(/opted-out/);
+  });
+
+  test('cycle-excluded source does not mask a real fail from an included source', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('opted-out', agoH(72), { autopilotCycle: false }); // excluded → ignored
+    await seed('stale', agoH(72));                                 // included → fail
+    const result = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(result.status).toBe('fail');
+    expect(result.message).toMatch(/stale/);
+    expect(result.message).not.toMatch(/opted-out/);
   });
 
   test('local_path NULL sources are filtered (codex P1-4 parity)', async () => {

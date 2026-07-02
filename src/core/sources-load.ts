@@ -61,6 +61,21 @@ export function isSourceFederated(config: unknown): boolean {
 }
 
 /**
+ * Whether a source participates in the autopilot knowledge cycle.
+ *
+ * Operators can opt a source OUT by setting `config.autopilot_cycle = false`
+ * (e.g. a code repository kept current by a dedicated external sync pipeline
+ * rather than autopilot's per-source sync + extract + full cycle). Excluded
+ * sources are skipped at every per-source dispatch site (fan-out cycle,
+ * freshness-sync, atom auto-drain) and by doctor's per-source cycle/sync
+ * freshness checks. Enabled-by-default: only the literal boolean `false`
+ * opts out, so missing/true/null all keep cycling.
+ */
+export function isAutopilotCycleEnabled(config: unknown): boolean {
+  return parseSourceConfig(config).autopilot_cycle !== false;
+}
+
+/**
  * Enumerate every source. Order: 'default' first, then alphabetical by id.
  *
  * Caller filters in-process when the predicate is cheap (federatedOnly,

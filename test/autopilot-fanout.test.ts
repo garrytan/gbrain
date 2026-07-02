@@ -128,6 +128,23 @@ describe('selectSourcesForDispatch', () => {
     expect(result.skippedFresh).toEqual([]);
     expect(result.skippedCap).toEqual([]);
   });
+
+  test('config.autopilot_cycle === false excludes a source even when stale', () => {
+    // `disabled` is never-cycled (maximally stale) but opted out of the cycle.
+    const disabled = src('disabled', null, { autopilot_cycle: false });
+    const result = selectSourcesForDispatch([disabled, src('a'), fresh('b', 5)], 10, NOW);
+    expect(result.dispatch.map(s => s.id)).toEqual(['a']);
+    expect(result.skippedCycleDisabled.map(s => s.id)).toEqual(['disabled']);
+    expect(result.skippedFresh.map(s => s.id)).toEqual(['b']);
+  });
+
+  test('config.autopilot_cycle !== false (true / unset) still participates', () => {
+    const enabled = src('enabled', null, { autopilot_cycle: true });
+    const unset = src('unset'); // no autopilot_cycle key
+    const result = selectSourcesForDispatch([enabled, unset], 10, NOW);
+    expect(result.dispatch.map(s => s.id).sort()).toEqual(['enabled', 'unset']);
+    expect(result.skippedCycleDisabled).toEqual([]);
+  });
 });
 
 describe('resolveFanoutMax', () => {
