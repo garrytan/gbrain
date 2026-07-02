@@ -11,6 +11,7 @@
 import { readFileSync, writeFileSync, renameSync, chmodSync, mkdtempSync, rmSync, existsSync, mkdirSync, appendFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { configDir } from './config.ts';
 
 function home(): string {
   // `os.homedir()` in Bun caches its initial value and ignores later
@@ -26,23 +27,18 @@ function home(): string {
 }
 
 /**
- * GBRAIN_HOME-aware override for the .gbrain directory. When the env var
- * is set, this returns it directly (so the directory is GBRAIN_HOME itself,
- * matching the convention `src/core/config.ts:gbrainPath` enforces).
- * When unset, falls back to `<home>/.gbrain` so legacy callers and the
- * doctor's filesystem-only checks keep working.
- *
- * Without this, `~/.gbrain/migrations/completed.jsonl` is the only path
- * doctor reads on filesystem checks — the test isolation contract that
- * `gbrainPath()` provides for everywhere else doesn't extend here.
+ * GBRAIN_HOME-aware override for the .gbrain directory. Delegates to
+ * `configDir()` so the GBRAIN_HOME contract is defined in exactly one
+ * place — pre-this-fix, this helper diverged from `configDir()` by
+ * returning `GBRAIN_HOME` directly instead of `GBRAIN_HOME/.gbrain`,
+ * which meant `~/.gbrain/migrations/completed.jsonl` (read by doctor)
+ * and `~/.gbrain/config.json` (read by loadConfig) lived in different
+ * directories whenever a test or operator set GBRAIN_HOME. The
+ * documented convention is "GBRAIN_HOME is a parent dir; we append
+ * `.gbrain`" — see configDir() docstring in src/core/config.ts.
  */
 function gbrainDir(): string {
-  const override = process.env.GBRAIN_HOME;
-  if (override) {
-    const trimmed = override.trim();
-    if (trimmed) return trimmed;
-  }
-  return join(home(), '.gbrain');
+  return configDir();
 }
 
 export type MinionMode = 'always' | 'pain_triggered' | 'off';
