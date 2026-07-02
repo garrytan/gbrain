@@ -343,3 +343,47 @@ describe('issue #1939 — non-string frontmatter coercion', () => {
     expect(parsed.title).toBe('A Normal Title');
   });
 });
+
+// issue #2446 — when frontmatter has no `title:`, prefer the body's first H1
+// over the slug/filename-humanized fallback. Slug-based imports (contacts,
+// calendar) carry a correct `# Heading` but no frontmatter title; humanizing
+// the slug leaks date/id tokens and loses casing (`Defalco` vs `DeFalco`).
+describe('issue #2446 — body H1 fallback for missing frontmatter title', () => {
+  test('no frontmatter title uses the body H1, not the slug-humanized junk', () => {
+    const md = '---\ntype: person\n---\n\n# John DeFalco\n\nNotes about John.\n';
+    const parsed = parseMarkdown(md, 'people/contact-20170928-5-john-defalco.md');
+    expect(parsed.title).toBe('John DeFalco');
+    // The slug-derived junk title must NOT win.
+    expect(parsed.title).not.toBe('Contact 20170928 5 John Defalco');
+  });
+
+  test('no frontmatter title and no H1 falls back to the inferred slug title', () => {
+    const md = '---\ntype: note\n---\n\njust body prose, no heading\n';
+    const parsed = parseMarkdown(md, 'people/alice-example.md');
+    expect(parsed.title).toBe('Alice Example');
+  });
+
+  test('frontmatter title wins over a body H1 (no regression)', () => {
+    const md = '---\ntitle: Frontmatter Wins\n---\n\n# Body Heading\n\nbody\n';
+    const parsed = parseMarkdown(md, 'people/some-slug.md');
+    expect(parsed.title).toBe('Frontmatter Wins');
+  });
+
+  test('h2 is not treated as the title; first real H1 is used', () => {
+    const md = '---\ntype: note\n---\n\n## Subsection First\n\n# The Real Title\n\nbody\n';
+    const parsed = parseMarkdown(md, 'notes/x.md');
+    expect(parsed.title).toBe('The Real Title');
+  });
+
+  test('a # inside a fenced code block is not mistaken for the title', () => {
+    const md = '---\ntype: note\n---\n\n```sh\n# this is a shell comment, not a heading\n```\n\n# Actual Heading\n';
+    const parsed = parseMarkdown(md, 'notes/x.md');
+    expect(parsed.title).toBe('Actual Heading');
+  });
+
+  test('trailing closing hashes are stripped from the H1', () => {
+    const md = '---\ntype: note\n---\n\n# Closed ATX Heading #\n\nbody\n';
+    const parsed = parseMarkdown(md, 'notes/x.md');
+    expect(parsed.title).toBe('Closed ATX Heading');
+  });
+});
