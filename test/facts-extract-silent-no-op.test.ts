@@ -97,6 +97,19 @@ describe('facts extract — silent-no-op regression (v0.31.6 bug class)', () => 
     expect(facts).toEqual([]);
   });
 
+  test('facts model override availability is independent of the global chat model', () => {
+    // A brain can leave the global chat model on Sonnet while routing only
+    // facts extraction through an OpenAI-compatible/private endpoint. The
+    // extractor must probe the effective facts model, not the global chat model.
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      base_urls: { openrouter: 'http://127.0.0.1:8806/v1' },
+      env: { OPENROUTER_API_KEY: 'unused' },
+    });
+    expect(isAvailable('chat')).toBe(false);
+    expect(isAvailable('chat', 'openrouter:private/gemma4-31b')).toBe(true);
+  });
+
   test('extractFactsFromTurn USES the chat transport when available — does NOT silently return []', async () => {
     // The smoking-gun test: when chat IS available, extract MUST actually call
     // the chat transport. If it silently returns [] without calling chat, the

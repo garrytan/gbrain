@@ -31,6 +31,8 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  /** OpenRouter API key. Used by daemon/launchd paths that cannot inherit shell env. */
+  openrouter_api_key?: string;
   /**
    * ZeroEntropy API key. v0.37 fix wave (CDX2-5+6): ZE became the default
    * embedding + reranker provider in v0.36 but lacked a file-plane config
@@ -525,6 +527,7 @@ export function loadConfig(): GBrainConfig | null {
     ...(dbUrl ? { database_path: undefined } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
     ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
+    ...(process.env.OPENROUTER_API_KEY ? { openrouter_api_key: process.env.OPENROUTER_API_KEY } : {}),
     ...(process.env.ZEROENTROPY_API_KEY ? { zeroentropy_api_key: process.env.ZEROENTROPY_API_KEY } : {}),
     ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
     ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
@@ -608,7 +611,10 @@ export function loadConfig(): GBrainConfig | null {
  * size the schema and must be stable across engine connect.
  */
 export async function loadConfigWithEngine(
-  engine: { getConfig(key: string): Promise<string | null | undefined> },
+  engine: {
+    getConfig(key: string): Promise<string | null | undefined>;
+    listConfigKeys?(prefix?: string): Promise<string[]>;
+  },
   base?: GBrainConfig | null,
 ): Promise<GBrainConfig | null> {
   // Codex /ship finding #3: when there's no file config AND no env DB URL,
@@ -656,11 +662,37 @@ export async function loadConfigWithEngine(
   // first use so a malformed DB row doesn't kill engine connect.
   const dbEmbeddingColumns = await dbStr('embedding_columns');
   const dbSearchEmbeddingColumn = await dbStr('search_embedding_column');
+  const dbProviderBaseUrls: Record<string, string> = {};
+  if (typeof engine.listConfigKeys === 'function') {
+    try {
+      const keys = await engine.listConfigKeys('provider_base_urls.');
+      for (const key of keys) {
+        const provider = key.slice('provider_base_urls.'.length).trim();
+        if (!provider) continue;
+        const value = await dbStr(key);
+        if (value !== undefined && value.trim()) dbProviderBaseUrls[provider] = value.trim();
+      }
+    } catch {
+      // Older/minimal engine shims in tests may not support prefix listing.
+      // Ignore and preserve file/env config behavior.
+    }
+  }
 
   // DB applies only when env did NOT win. Env presence is detected by the
   // sync loadConfig() already setting the field. For each flag, prefer the
   // existing fileConfig value when defined; otherwise fall through to DB.
   const merged: GBrainConfig = { ...fileConfig };
+  if (Object.keys(dbProviderBaseUrls).length > 0) {
+    // Per-provider base URLs are runtime routing knobs and `gbrain config set
+    // provider_base_urls.<id> ...` advertises DB-plane support via
+    // KNOWN_CONFIG_KEY_PREFIXES. Merge them here so the gateway sees the
+    // configured local/private proxy after engine connect. File-plane config
+    // still wins over DB values per the documented precedence.
+    merged.provider_base_urls = {
+      ...dbProviderBaseUrls,
+      ...(merged.provider_base_urls ?? {}),
+    };
+  }
   if (merged.embedding_multimodal === undefined && dbMultimodal !== undefined) {
     merged.embedding_multimodal = dbMultimodal;
   }
@@ -815,6 +847,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'database_path',
   'openai_api_key',
   'anthropic_api_key',
+  'openrouter_api_key',
   'embedding_model',
   'embedding_dimensions',
   'embedding_disabled',
