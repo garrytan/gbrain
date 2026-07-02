@@ -1094,6 +1094,8 @@ export async function extractFrontmatterLinks(
 export interface TimelineCandidate {
   /** ISO date YYYY-MM-DD. */
   date: string;
+  /** Optional provenance/source label parsed before a spaced dash. */
+  source?: string;
   /** First-line summary. */
   summary: string;
   /** Optional detail (subsequent lines until next entry/heading). */
@@ -1125,7 +1127,10 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
       continue;
     }
     const date = m[1];
-    const summary = m[2].trim();
+    const rawSummary = m[2].trim();
+    const sourceMatch = /^(.+?)\s+[—–-]\s+(.+)$/.exec(rawSummary);
+    const source = sourceMatch?.[1].trim() ?? '';
+    const summary = sourceMatch?.[2].trim() ?? rawSummary;
     if (!isValidDate(date) || summary.length === 0) {
       i++;
       continue;
@@ -1153,7 +1158,7 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
       }
       break;
     }
-    result.push({ date, summary, detail: detailLines.join(' ').trim() });
+    result.push({ date, ...(source ? { source } : {}), summary, detail: detailLines.join(' ').trim() });
     i = j;
   }
   return result;
