@@ -86,6 +86,29 @@ export async function startMcpServer(engine: BrainEngine) {
         // client's 250ms budget abandoned was never injected, and counting it
         // would corrupt the volunteered-vs-used precision stats (red-team).
         (block) => logDeliveredReflexPointers(engine, block.pointers),
+        async (req) => {
+          const op = operations.find(o => o.name === 'put_page');
+          if (!op) throw new Error('put_page operation missing');
+          const params = {
+            slug: req.slug,
+            content: req.content,
+            source_kind: req.sourceKind ?? 'capture-cli',
+            source_uri: req.sourceUri ?? 'auto-capture-judge',
+            ingested_via: req.ingestedVia ?? 'capture-judge',
+          };
+          const validationError = validateParams(op, params);
+          if (validationError) throw new Error(validationError);
+          const ctx = buildOperationContext(engine, params, {
+            remote: false,
+            logger: {
+              info: (msg: string) => { process.stderr.write(`[capture-ipc] ${msg}\n`); },
+              warn: (msg: string) => { process.stderr.write(`[capture-ipc] WARN: ${msg}\n`); },
+              error: (msg: string) => { process.stderr.write(`[capture-ipc] ERROR: ${msg}\n`); },
+            },
+            sourceId: req.sourceId || defaultSource,
+          });
+          return op.handler(ctx, params) as Promise<Record<string, unknown>>;
+        },
       );
     }
   } catch {

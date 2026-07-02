@@ -4,8 +4,9 @@
  * Coverage:
  *  - Recipe registered with expected shape
  *  - default auth: MINIMAX_API_KEY → "Bearer <key>"; missing → AIConfigError
- *  - dimsProviderOptions threads `type: 'db'` for embo-01 (the asymmetric
- *    retrieval field default) — pins the v1 indexing-only behavior
+ *  - dimsProviderOptions threads `input_type` for embo-01 so the gateway's
+ *    minimaxCompatFetch maps it to MiniMax's asymmetric `type: db|query` wire field
+ *  - chat touchpoint declares MiniMax-M3 / M2.7 (OpenAI-compatible chat)
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -35,6 +36,15 @@ describe('recipe: minimax', () => {
     expect(r.touchpoints.embedding!.max_batch_tokens).toBe(4096);
   });
 
+  test('chat touchpoint declares MiniMax-M3 / M2.7 with tool support', () => {
+    const r = getRecipe('minimax')!;
+    expect(r.touchpoints.chat).toBeDefined();
+    expect(r.touchpoints.chat!.models).toEqual(['MiniMax-M3', 'MiniMax-M2.7']);
+    expect(r.touchpoints.chat!.supports_tools).toBe(true);
+    expect(r.touchpoints.chat!.supports_prompt_cache).toBe(false);
+    expect(r.touchpoints.chat!.max_context_tokens).toBe(800000);
+  });
+
   test('default auth: MINIMAX_API_KEY set → "Bearer <key>"', () => {
     const r = getRecipe('minimax')!;
     const auth = defaultResolveAuth(r, { MINIMAX_API_KEY: 'fake-mm-key' }, 'embedding');
@@ -47,9 +57,19 @@ describe('recipe: minimax', () => {
     expect(() => defaultResolveAuth(r, {}, 'embedding')).toThrow(AIConfigError);
   });
 
-  test('dimsProviderOptions threads type:db for embo-01', () => {
-    const opts = dimsProviderOptions('openai-compatible', 'embo-01', 1536);
-    expect(opts).toEqual({ openaiCompatible: { type: 'db' } });
+  test('dimsProviderOptions threads input_type for embo-01 (asymmetric)', () => {
+    // Default (no inputType threaded) → document-side, preserving the legacy
+    // symmetric `type:'db'` semantics once minimaxCompatFetch maps it.
+    expect(dimsProviderOptions('openai-compatible', 'embo-01', 1536)).toEqual({
+      openaiCompatible: { input_type: 'document' },
+    });
+    // Query-side: embedQuery() threads 'query' → wire type:'query'.
+    expect(dimsProviderOptions('openai-compatible', 'embo-01', 1536, 'query')).toEqual({
+      openaiCompatible: { input_type: 'query' },
+    });
+    expect(dimsProviderOptions('openai-compatible', 'embo-01', 1536, 'document')).toEqual({
+      openaiCompatible: { input_type: 'document' },
+    });
   });
 
   test('dimsProviderOptions returns undefined for non-MiniMax openai-compat models', () => {

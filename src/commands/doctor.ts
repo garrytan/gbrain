@@ -4123,8 +4123,13 @@ export function buildRetrievalReflexCheck(skillsDir: string | null): Check {
       viablePathVisible = true;
     } else if (engineKind === 'pglite' && cfg?.database_path) {
       const socket = resolveSocketPath(cfg.database_path);
-      viablePathVisible = existsSync(socket);
-      pathDesc = viablePathVisible ? 'pglite via serve IPC' : 'pglite — serve IPC socket not present';
+      if (process.platform === 'win32') {
+        viablePathVisible = false;
+        pathDesc = 'pglite via Windows named pipe (presence not filesystem-visible)';
+      } else {
+        viablePathVisible = existsSync(socket);
+        pathDesc = viablePathVisible ? 'pglite via serve IPC' : 'pglite — serve IPC socket not present';
+      }
     } else {
       pathDesc = `engine ${engineKind}`;
       viablePathVisible = false;

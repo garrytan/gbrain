@@ -286,7 +286,7 @@ describe('runPhaseGradeTakes — phase integration', () => {
       return { verdict: 'correct', confidence: 0.9, reasoning: 'x' };
     };
     const evidenceRetriever: EvidenceRetrieverFn = async () => 'mock evidence body';
-    const result = await runPhaseGradeTakes(buildCtx(engine), { judge, evidenceRetriever });
+    const result = await runPhaseGradeTakes(buildCtx(engine), { judge, evidenceRetriever, model: 'claude-sonnet-4-6' });
     expect(judgeCalls).toBe(0);
     const details = result.details as Record<string, unknown>;
     expect(details.cache_hits).toBe(1);
