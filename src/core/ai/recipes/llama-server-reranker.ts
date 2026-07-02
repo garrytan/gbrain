@@ -62,11 +62,11 @@ export const llamaServerReranker: Recipe = {
       // own but the pre-flight guard is a defensive ceiling.
       max_payload_bytes: 5_000_000,
       // Leaf-only path. `base_url_default` already provides the `/v1`
-      // prefix; the gateway concatenates the two to call `…/v1/rerank`.
+      // prefix; the gateway concatenates the two to call `…/v1/reranks`.
       // llama-server also serves `/reranking`, `/v1/reranking`, and bare
-      // `/rerank` aliases — we pin the OpenAI-style `/rerank` path under
-      // the existing `/v1` prefix.
-      path: '/rerank',
+      // `/rerank` aliases; DashScope uses `/reranks` (plural). We pin the
+      // plural form for maximum compatibility (llama-server accepts both).
+      path: '/reranks',
       // CPU-only first-call warmup on a 4B cross-encoder can take 8-15s.
       // The default 5s in gateway.ts:DEFAULT_RERANK_TIMEOUT_MS would
       // fail-open silently. Caller's `input.timeoutMs` and the

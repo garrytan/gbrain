@@ -40,6 +40,14 @@ export interface EmbeddingTouchpoint {
    */
   max_batch_tokens?: number;
   /**
+   * Maximum number of input texts per embedding request for providers that
+   * cap batch COUNT (not just token budget). E.g. DashScope's OpenAI-compat
+   * /embeddings endpoint rejects batches with more than 10 inputs. When set,
+   * the gateway further splits each token-budget batch into sub-batches of
+   * at most this many inputs. When unset, only the token budget applies.
+   */
+  max_batch_inputs?: number;
+  /**
    * Expected character density for this provider's tokenizer (chars per
    * token). OpenAI tiktoken averages ~4 on English text; Voyage averages
    * ~1 on mixed content (code/JSON/CJK). Defaults to 4 if omitted.
