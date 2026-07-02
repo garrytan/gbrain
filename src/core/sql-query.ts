@@ -79,15 +79,22 @@ function assertSqlValue(value: unknown): asserts value is SqlValue {
  * auth/admin surface that a focused helper preserves the contract without
  * forcing every call site to remember which positions hold JSONB.
  *
- * Why this is safe vs the v0.12.0 double-encode bug: the bug was specific
- * to postgres.js's template-tag auto-stringify path interacting with
- * sql.json() — not to positional binding through `unsafe()`. JS objects
- * passed as positional params reach the wire protocol with the correct
- * type oid (jsonb when cast in the SQL string), so there is no double-
- * encode. The CI guard (scripts/check-jsonb-pattern.sh) doesn't fire
- * because the source pattern is a method call (`executeRawJsonb(...)`),
- * not the banned literal-template-tag interpolation pattern with
- * JSON.stringify cast to jsonb.
+ * Why this is safe vs the double-encode bug: this helper binds a JS **object**
+ * (not a pre-stringified string) to each `$N::jsonb` position. postgres.js
+ * `unsafe()` and PGLite both serialize a JS object to the jsonb wire type
+ * correctly, so there is no double-encode.
+ *
+ * IMPORTANT (the #2339 distinction): positional binding is NOT universally safe.
+ * Binding `JSON.stringify(x)` (a **string**) to a `$N::jsonb` position via
+ * `unsafe()`/`executeRawDirect` DOES double-encode — the text→jsonb cast wraps
+ * the already-JSON string into a jsonb *string scalar* (PGLite hides it; real
+ * Postgres exposes it, and it broke every sync in #2339). The fixes are: pass a
+ * raw object (this helper), or cast through `$N::text::jsonb` so the string is
+ * parsed, never `$N::jsonb` + JSON.stringify. The legacy grep guard
+ * (scripts/check-jsonb-pattern.sh) only caught the template-tag form; the
+ * positional `$N::jsonb` + JSON.stringify form is caught by the AST guard
+ * scripts/check-jsonb-params.mjs. This helper's `executeRawJsonb(...)` method-call
+ * shape trips neither guard because it passes objects, which is correct.
  *
  * Usage:
  *   await executeRawJsonb(

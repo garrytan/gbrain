@@ -2,6 +2,21 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.53.0] - 2026-06-23
+
+**`gbrain sync` works again on managed Postgres brains: the durable-checkpoint pin write was encoding its value the wrong way, so every multi-source sync aborted at the very first checkpoint. Fixed, plus a repo-wide sweep of the same JSONB footgun and a new CI guard so it can't come back.** A recent release added a structural check on the sync checkpoint table; the pin write that runs before every drain bound its value as a string rather than a real array, so the check rejected it and the run bailed before importing anything. The bug was invisible on the embedded engine (its driver parses the value either way) and only bit managed Postgres.
+
+### Fixed
+- **Multi-source sync no longer aborts at the first checkpoint.** The sync-target pin write now binds its value so Postgres stores a genuine JSONB array instead of a double-encoded string scalar. A dedicated Postgres CI job exercises this on a real database, because the embedded test engine masks the failure — which is exactly why it shipped.
+- **The same JSONB double-encode footgun is swept across the codebase.** Every raw write that serialized a value into a JSONB column the bug-prone way is corrected to the safe form (search cache, source config, calibration profiles, subagent tool records, eval receipts, code-intel cache, symbol resolver, and others). Readers were already defensive, so existing rows self-heal as each is rewritten.
+- **`gbrain eval suspected-contradictions` no longer crashes on an exact-alias query.** An alias-matched result was missing its page id, which aborted the whole probe on Postgres; the id is now carried through, with a finite-id filter as a defensive backstop.
+
+### Added
+- **A CI guard for the positional JSONB double-encode pattern.** The existing guard caught only the template-string spelling; a new static check (`scripts/check-jsonb-params.mjs`) catches the positional-parameter form — the one behind this wave — across the codebase, with its own self-test. The embedded engine's native path is intentionally not flagged, since the bug can't occur there.
+
+### To take advantage of v0.42.53.0
+`gbrain upgrade`. Multi-source Postgres brains that had stopped syncing resume on the next `gbrain sync` — no migration, no manual step. Rows written in the double-encoded form before the fix self-heal as each is rewritten; re-running the affected write (or a sync) repairs them eagerly if you'd rather not wait.
+
 ## [0.42.52.0] - 2026-06-18
 
 **Autopilot stops manufacturing dead jobs and wedging its own queue, plus four operational rough edges get fixed: minion attempt-accounting, `agent run` flag parsing, honest `sources status`, and a budgeted `gbrain status`.** On a multi-source Postgres brain, autopilot could fan out a continuous stream of dead `autopilot-cycle` jobs while the supervisor periodically wedged the very queue it exists to keep alive. The root cause was one disease with several interacting parts; this wave addresses all of them, then cleans up four smaller reliability bugs found alongside.

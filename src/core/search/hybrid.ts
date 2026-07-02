@@ -647,6 +647,11 @@ export async function applyAliasHop(
     if (!page) continue;
     injectScore += 1e-6;
     out.push({
+      // #2339-sibling: include page_id. The `as SearchResult` cast hid its
+      // absence, so any consumer reading page_id off an alias-injected result got
+      // undefined — e.g. listActiveTakesForPages bound undefined/NaN into
+      // ANY($1::int[]) and crashed the contradiction probe on real Postgres.
+      page_id: page.id,
       slug: page.slug,
       title: page.title,
       type: page.type,

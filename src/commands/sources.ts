@@ -692,7 +692,7 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
   const config = parseConfig(src.config);
   config.federated = value;
   await engine.executeRaw(
-    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
     [JSON.stringify(config), id],
   );
   console.log(`Source "${id}" is now ${value ? 'federated (appears in cross-source default search)' : 'isolated (only searched when explicitly named)'}.`);
@@ -879,7 +879,7 @@ async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void>
   cfg.webhook_secret = secret;
   cfg.github_repo = githubRepo;
   await engine.executeRaw(
-    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
     [JSON.stringify(cfg), id],
   );
 
@@ -935,7 +935,7 @@ async function runWebhookRotate(engine: BrainEngine, args: string[]): Promise<vo
   const cfg = parseConfig(src.config);
   cfg.webhook_secret = secret;
   await engine.executeRaw(
-    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
     [JSON.stringify(cfg), id],
   );
   console.log(`New webhook secret for source "${id}":`);
@@ -959,7 +959,7 @@ async function runWebhookClear(engine: BrainEngine, args: string[]): Promise<voi
   delete cfg.webhook_secret;
   delete cfg.github_repo;
   await engine.executeRaw(
-    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
     [JSON.stringify(cfg), id],
   );
   console.log(`Webhook configuration cleared for source "${id}".`);
@@ -984,7 +984,7 @@ async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<vo
   if (setArg) {
     cfg.tracked_branch = setArg;
     await engine.executeRaw(
-      `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+      `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
       [JSON.stringify(cfg), id],
     );
     console.log(`Tracked branch for source "${id}" set to "${setArg}".`);
@@ -1000,7 +1000,7 @@ async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<vo
       const branch = execFileSync('git', ['-C', src.local_path, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
       cfg.tracked_branch = branch;
       await engine.executeRaw(
-        `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+        `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
         [JSON.stringify(cfg), id],
       );
       console.log(`Detected branch "${branch}" for source "${id}"; persisted to config.tracked_branch.`);
