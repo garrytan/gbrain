@@ -24,10 +24,13 @@ import {
   parseJudgeOutput,
   evidenceSignature,
   takeIsOldEnough,
+  defaultEvidenceRetriever,
+  formatGradeEvidenceFromResults,
   GRADE_TAKES_PROMPT_VERSION,
   type JudgeFn,
   type EvidenceRetrieverFn,
 } from '../src/core/cycle/grade-takes.ts';
+import type { SearchResult } from '../src/core/types.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine, Take, TakeResolution } from '../src/core/engine.ts';
 
@@ -111,6 +114,9 @@ function buildCtx(engine: BrainEngine): OperationContext {
     sourceId: 'default',
   };
 }
+
+const citedEvidence: EvidenceRetrieverFn = async () =>
+  'Source: wiki/outcome-note (2024-01-02)\nRank: 1\nSnippet: The outcome is now known from a later cited page.';
 
 // ─── parseJudgeOutput ───────────────────────────────────────────────
 
@@ -199,6 +205,43 @@ describe('takeIsOldEnough', () => {
   });
 });
 
+describe('formatGradeEvidenceFromResults', () => {
+  test('keeps cited snippets newer than the take date and drops older hits', () => {
+    const take = buildTake({ id: 1, sinceDate: '2024-01-01' });
+    const evidence = formatGradeEvidenceFromResults(take, [
+      {
+        slug: 'wiki/older',
+        page_id: 10,
+        title: 'Older',
+        type: 'note',
+        chunk_text: 'Older context should not grade the outcome.',
+        chunk_source: 'compiled_truth',
+        chunk_id: 100,
+        chunk_index: 0,
+        effective_date: '2023-12-31',
+        score: 0.9,
+        stale: false,
+      } as SearchResult,
+      {
+        slug: 'wiki/newer',
+        page_id: 11,
+        title: 'Newer',
+        type: 'note',
+        chunk_text: 'Newer cited context can support the verdict.',
+        chunk_source: 'compiled_truth',
+        chunk_id: 101,
+        chunk_index: 0,
+        effective_date: '2024-02-01',
+        score: 0.8,
+        stale: false,
+      } as SearchResult,
+    ]);
+    expect(evidence).toContain('Source: wiki/newer (2024-02-01)');
+    expect(evidence).toContain('Snippet: Newer cited context');
+    expect(evidence).not.toContain('wiki/older');
+  });
+});
+
 // ─── Phase integration ──────────────────────────────────────────────
 
 describe('runPhaseGradeTakes — phase integration', () => {
@@ -206,7 +249,7 @@ describe('runPhaseGradeTakes — phase integration', () => {
     const takes = [buildTake({ id: 1, sinceDate: '2023-01-01' })];
     const { engine, captured, resolves } = buildMockEngine({ takes });
     const judge: JudgeFn = async () => ({ verdict: 'correct', confidence: 0.98, reasoning: 'evidence held' });
-    const evidenceRetriever: EvidenceRetrieverFn = async () => 'mock evidence body';
+    const evidenceRetriever = citedEvidence;
 
     const result = await runPhaseGradeTakes(buildCtx(engine), { judge, evidenceRetriever });
 
@@ -228,7 +271,7 @@ describe('runPhaseGradeTakes — phase integration', () => {
     const takes = [buildTake({ id: 1, sinceDate: '2023-01-01' })];
     const { engine, resolves } = buildMockEngine({ takes });
     const judge: JudgeFn = async () => ({ verdict: 'correct', confidence: 1.0, reasoning: 'certain' });
-    const result = await runPhaseGradeTakes(buildCtx(engine), { judge });
+    const result = await runPhaseGradeTakes(buildCtx(engine), { judge, evidenceRetriever: citedEvidence });
     const details = result.details as Record<string, unknown>;
     expect(details.auto_resolve).toBe(false);
     expect(details.auto_applied).toBe(0);
@@ -241,6 +284,7 @@ describe('runPhaseGradeTakes — phase integration', () => {
     const judge: JudgeFn = async () => ({ verdict: 'incorrect', confidence: 0.96, reasoning: 'contradicted' });
     const result = await runPhaseGradeTakes(buildCtx(engine), {
       judge,
+      evidenceRetriever: citedEvidence,
       autoResolve: true,
       autoResolveThreshold: 0.95,
     });
@@ -257,6 +301,7 @@ describe('runPhaseGradeTakes — phase integration', () => {
     const judge: JudgeFn = async () => ({ verdict: 'correct', confidence: 0.85, reasoning: 'leaning yes' });
     const result = await runPhaseGradeTakes(buildCtx(engine), {
       judge,
+      evidenceRetriever: citedEvidence,
       autoResolve: true,
       autoResolveThreshold: 0.95,
     });
@@ -271,7 +316,12 @@ describe('runPhaseGradeTakes — phase integration', () => {
     const takes = [buildTake({ id: 1, sinceDate: '2023-01-01' })];
     const { engine, resolves } = buildMockEngine({ takes });
     const judge: JudgeFn = async () => ({ verdict: 'unresolvable', confidence: 1.0, reasoning: 'no evidence yet' });
-    await runPhaseGradeTakes(buildCtx(engine), { judge, autoResolve: true, autoResolveThreshold: 0.95 });
+    await runPhaseGradeTakes(buildCtx(engine), {
+      judge,
+      evidenceRetriever: citedEvidence,
+      autoResolve: true,
+      autoResolveThreshold: 0.95,
+    });
     expect(resolves).toHaveLength(0);
   });
 
@@ -320,11 +370,56 @@ describe('runPhaseGradeTakes — phase integration', () => {
       if (calls === 1) throw new Error('judge timeout');
       return { verdict: 'correct', confidence: 0.9, reasoning: 'second succeeded' };
     };
-    const result = await runPhaseGradeTakes(buildCtx(engine), { judge });
+    const result = await runPhaseGradeTakes(buildCtx(engine), { judge, evidenceRetriever: citedEvidence });
     expect(result.status).toBe('ok');
     const details = result.details as Record<string, unknown>;
     expect(details.verdicts_written).toBe(1);
     expect((details.warnings as string[]).length).toBeGreaterThan(0);
     expect((details.warnings as string[])[0]).toContain('judge timeout');
+  });
+
+  test('placeholder evidence records unresolvable before any judge call', async () => {
+    const takes = [buildTake({ id: 1, sinceDate: '2023-01-01' })];
+    const { engine, captured } = buildMockEngine({ takes });
+    let judgeCalls = 0;
+    const judge: JudgeFn = async () => {
+      judgeCalls++;
+      return { verdict: 'correct', confidence: 1, reasoning: 'should not run' };
+    };
+
+    const result = await runPhaseGradeTakes(buildCtx(engine), {
+      judge,
+      evidenceRetriever: defaultEvidenceRetriever,
+    });
+
+    expect(judgeCalls).toBe(0);
+    const details = result.details as Record<string, unknown>;
+    expect(details.evidence_unavailable).toBe(1);
+    expect(details.verdicts_written).toBe(1);
+    const insert = captured.find(c => c.sql.includes('INSERT INTO take_grade_cache'));
+    expect(insert!.params[4]).toBe('unresolvable');
+    expect(insert!.params[5]).toBe(0);
+    expect(insert!.params[6]).toBe(false);
+  });
+
+  test('sparse real retriever output records unresolvable before any judge call', async () => {
+    const takes = [buildTake({ id: 1, sinceDate: '2023-01-01' })];
+    const { engine } = buildMockEngine({ takes });
+    let judgeCalls = 0;
+    const judge: JudgeFn = async () => {
+      judgeCalls++;
+      return { verdict: 'correct', confidence: 1, reasoning: 'should not run' };
+    };
+    const sparseEvidence: EvidenceRetrieverFn = async () => '[grade evidence unavailable: no cited pages newer than take date]';
+
+    const result = await runPhaseGradeTakes(buildCtx(engine), {
+      judge,
+      evidenceRetriever: sparseEvidence,
+    });
+
+    expect(judgeCalls).toBe(0);
+    const details = result.details as Record<string, unknown>;
+    expect(details.evidence_unavailable).toBe(1);
+    expect(details.verdicts_written).toBe(1);
   });
 });

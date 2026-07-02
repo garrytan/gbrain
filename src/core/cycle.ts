@@ -2040,7 +2040,31 @@ export async function runCycle(
           checkAborted(opts.signal);
           progress.start('cycle.grade_takes');
           const { runPhaseGradeTakes } = await import('./cycle/grade-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, {}) as Promise<PhaseResult>);
+          const configValue = async (key: string): Promise<string | null> => {
+            const value = await engine.getConfig(key);
+            return value === undefined ? null : value;
+          };
+          const configBool = async (key: string, fallback: boolean): Promise<boolean> => {
+            const raw = await configValue(key);
+            if (raw === null) return fallback;
+            const normalized = raw.trim().toLowerCase();
+            if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+            if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+            return fallback;
+          };
+          const configNumber = async (key: string, fallback: number): Promise<number> => {
+            const raw = await configValue(key);
+            if (raw === null) return fallback;
+            const n = Number(raw);
+            return Number.isFinite(n) ? n : fallback;
+          };
+          const gradeTakesConfig = {
+            autoResolve: await configBool('cycle.grade_takes.auto_resolve.enabled', false),
+            autoResolveThreshold: await configNumber('cycle.grade_takes.auto_resolve.threshold', 0.95),
+            minAgeMonths: await configNumber('cycle.grade_takes.min_age_months', 0),
+            takeLimit: await configNumber('cycle.grade_takes.take_limit', 50),
+          };
+          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, gradeTakesConfig) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();

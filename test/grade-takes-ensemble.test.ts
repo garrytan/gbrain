@@ -101,6 +101,9 @@ function buildCtx(engine: BrainEngine): OperationContext {
   };
 }
 
+const citedEvidence: EvidenceRetrieverFn = async () =>
+  'Source: wiki/outcome-note (2024-01-02)\nRank: 1\nSnippet: Later cited evidence supports grading this take.';
+
 // ─── aggregateEnsemble (pure) ───────────────────────────────────────
 
 describe('aggregateEnsemble', () => {
@@ -186,6 +189,7 @@ describe('runPhaseGradeTakes ensemble — when does the tiebreaker fire?', () =>
     };
     const result = await runPhaseGradeTakes(buildCtx(engine), {
       judge,
+      evidenceRetriever: citedEvidence,
       useEnsemble: false,
       ensembleJudges: [
         { modelId: 'a', fn: ensembleFn },
@@ -208,6 +212,7 @@ describe('runPhaseGradeTakes ensemble — when does the tiebreaker fire?', () =>
     };
     const result = await runPhaseGradeTakes(buildCtx(engine), {
       judge,
+      evidenceRetriever: citedEvidence,
       useEnsemble: true,
       ensembleJudges: [
         { modelId: 'openai:gpt-4o', fn: ensembleFn },
@@ -231,6 +236,7 @@ describe('runPhaseGradeTakes ensemble — when does the tiebreaker fire?', () =>
     };
     await runPhaseGradeTakes(buildCtx(engine), {
       judge,
+      evidenceRetriever: citedEvidence,
       useEnsemble: true,
       ensembleJudges: [{ modelId: 'a', fn: ensembleFn }, { modelId: 'b', fn: ensembleFn }, { modelId: 'c', fn: ensembleFn }],
     });
@@ -248,6 +254,7 @@ describe('runPhaseGradeTakes ensemble — when does the tiebreaker fire?', () =>
     };
     await runPhaseGradeTakes(buildCtx(engine), {
       judge,
+      evidenceRetriever: citedEvidence,
       useEnsemble: true,
       ensembleJudges: [{ modelId: 'a', fn: ensembleFn }, { modelId: 'b', fn: ensembleFn }, { modelId: 'c', fn: ensembleFn }],
     });
@@ -265,6 +272,7 @@ describe('runPhaseGradeTakes ensemble — when does the tiebreaker fire?', () =>
     };
     await runPhaseGradeTakes(buildCtx(engine), {
       judge,
+      evidenceRetriever: citedEvidence,
       useEnsemble: true,
       ensembleJudges: [{ modelId: 'a', fn: ensembleFn }, { modelId: 'b', fn: ensembleFn }, { modelId: 'c', fn: ensembleFn }],
     });
@@ -285,6 +293,7 @@ describe('runPhaseGradeTakes ensemble — auto-apply rules', () => {
 
     await runPhaseGradeTakes(buildCtx(engine), {
       judge,
+      evidenceRetriever: citedEvidence,
       useEnsemble: true,
       ensembleJudges: [
         { modelId: 'openai:gpt-4o', fn: eA },
@@ -312,6 +321,7 @@ describe('runPhaseGradeTakes ensemble — auto-apply rules', () => {
 
     await runPhaseGradeTakes(buildCtx(engine), {
       judge,
+      evidenceRetriever: citedEvidence,
       useEnsemble: true,
       ensembleJudges: [
         { modelId: 'a', fn: eA },
@@ -338,6 +348,7 @@ describe('runPhaseGradeTakes ensemble — auto-apply rules', () => {
 
     await runPhaseGradeTakes(buildCtx(engine), {
       judge,
+      evidenceRetriever: citedEvidence,
       useEnsemble: true,
       ensembleJudges: [
         { modelId: 'a', fn: eA },
@@ -362,6 +373,7 @@ describe('runPhaseGradeTakes ensemble — auto-apply rules', () => {
 
     await runPhaseGradeTakes(buildCtx(engine), {
       judge,
+      evidenceRetriever: citedEvidence,
       useEnsemble: true,
       ensembleJudges: [
         { modelId: 'a', fn: eA },
@@ -381,6 +393,7 @@ describe('runPhaseGradeTakes ensemble — auto-apply rules', () => {
     const judge: JudgeFn = async () => ({ verdict: 'correct', confidence: 0.7, reasoning: 'borderline' });
     await runPhaseGradeTakes(buildCtx(engine), {
       judge,
+      evidenceRetriever: citedEvidence,
       useEnsemble: true,
       ensembleJudges: [],
     });

@@ -20,15 +20,11 @@
  *   flag because relaxing after data accumulates silently shifts which
  *   historical resolutions count as auto-applied.
  *
- * Evidence retrieval status (v0.36.1.0 ship state):
- *   The default evidence retriever returns an "evidence-retrieval not yet
- *   wired" placeholder. Most verdicts produced by the stub-judge against
- *   the stub-evidence will be 'unresolvable'. Real retrieval (hybrid search
- *   over pages newer than the take's since_date, optionally augmented by a
- *   gateway web-search recipe in v0.37+) lands as a follow-up. The phase
- *   ships now so the wiring is real and the cache table accumulates
- *   verdicts even if early ones are conservative; operators get the
- *   end-to-end loop running ahead of the tuned-prompt arrival.
+ * Evidence retrieval status:
+ *   The default production path uses hybrid search over pages newer than the
+ *   take's since_date. The old placeholder retriever remains exported as a
+ *   test/back-compat seam, but placeholder or uncited evidence is converted
+ *   to an unresolvable cache row before any judge budget is spent.
  *
  * Test seam: opts.judge + opts.evidenceRetriever are injected so the
  * phase runs hermetically in unit tests.
@@ -41,15 +37,17 @@ import { GBrainError } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine, Take, TakeResolution } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
+import type { SearchResult } from '../types.ts';
+import { hybridSearchCached } from '../search/hybrid.ts';
 
 /**
  * Bump when the judge prompt or the JSON output shape changes. Old verdicts
  * stay valid (composite cache key includes prompt_version); new runs re-spend
  * LLM tokens.
  */
-export const GRADE_TAKES_PROMPT_VERSION = 'v0.36.1.0-stub';
+export const GRADE_TAKES_PROMPT_VERSION = 'v0.36.1.1-hybrid-evidence';
 
-export const GRADE_TAKE_PROMPT = `[v0.36.1.0-stub] You are grading a single forecasting take. The author
+export const GRADE_TAKE_PROMPT = `[v0.36.1.1-hybrid-evidence] You are grading a single forecasting take. The author
 made this claim on the given date. Based on the evidence provided, did the
 claim turn out to be:
 - correct        (the world plays out as predicted)
@@ -173,7 +171,7 @@ export function aggregateEnsemble(
 }
 
 /** Evidence retriever signature — injected for tests. */
-export type EvidenceRetrieverFn = (take: Take, scope: ScopedReadOpts) => Promise<string>;
+export type EvidenceRetrieverFn = (take: Take, scope: ScopedReadOpts, engine: BrainEngine) => Promise<string>;
 
 export interface GradeTakesOpts extends BasePhaseOpts {
   /** Minimum age in months before a take is eligible for grading. Default 6. */
@@ -251,6 +249,8 @@ export interface GradeTakesResult {
   ensemble_invoked: number;
   /** E2 ensemble (T5): count of takes where ensemble produced 3/3 unanimous. */
   ensemble_unanimous: number;
+  /** Count of takes skipped before judge because evidence was placeholder or too sparse. */
+  evidence_unavailable: number;
 }
 
 /**
@@ -260,6 +260,55 @@ export interface GradeTakesResult {
  */
 export function evidenceSignature(evidence: string, judgeModelId: string): string {
   return createHash('sha256').update(judgeModelId + '|' + evidence).digest('hex');
+}
+
+const PLACEHOLDER_EVIDENCE_MARKER = '[evidence retrieval not yet wired';
+const UNAVAILABLE_EVIDENCE_MARKER = '[grade evidence unavailable';
+
+export function evidenceIsPlaceholder(evidence: string): boolean {
+  return evidence.includes(PLACEHOLDER_EVIDENCE_MARKER);
+}
+
+export function evidenceHasCitedSnippets(evidence: string): boolean {
+  return /^Source: .+/m.test(evidence) && /^Snippet: .+/m.test(evidence);
+}
+
+function normalizeDateOnly(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const normalized = raw.length === 7 ? `${raw}-15` : raw;
+  const date = new Date(normalized);
+  if (!Number.isFinite(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+function truncateEvidenceSnippet(text: string, maxChars = 800): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars - 3)}...`;
+}
+
+export function formatGradeEvidenceFromResults(take: Take, results: SearchResult[]): string {
+  const since = normalizeDateOnly(take.since_date);
+  const usable = results
+    .filter((result) => {
+      const resultDate = normalizeDateOnly(result.effective_date ?? null);
+      if (!resultDate || !result.chunk_text?.trim()) return false;
+      return since ? resultDate > since : true;
+    })
+    .slice(0, 6);
+
+  if (usable.length === 0) {
+    return `${UNAVAILABLE_EVIDENCE_MARKER}: no cited pages newer than take date]`;
+  }
+
+  return usable.map((result, idx) => {
+    const date = normalizeDateOnly(result.effective_date ?? null);
+    return [
+      `Source: ${result.slug}${date ? ` (${date})` : ''}`,
+      `Rank: ${idx + 1}`,
+      `Snippet: ${truncateEvidenceSnippet(result.chunk_text ?? '')}`,
+    ].join('\n');
+  }).join('\n\n');
 }
 
 /**
@@ -302,6 +351,25 @@ Take claim text (the only "evidence" available pre-T-retrieval-impl):
   ${take.claim}
 Made on: ${take.since_date ?? 'unknown'}
 `;
+}
+
+export async function hybridEvidenceRetriever(
+  take: Take,
+  scope: ScopedReadOpts,
+  engine: BrainEngine,
+): Promise<string> {
+  const since = normalizeDateOnly(take.since_date);
+  const results = await hybridSearchCached(engine, take.claim, {
+    limit: 12,
+    tokenBudget: 4_000,
+    useCache: true,
+    expansion: true,
+    detail: 'medium',
+    ...(scope.sourceIds && scope.sourceIds.length > 0 ? { sourceIds: scope.sourceIds } : {}),
+    ...(scope.sourceId ? { sourceId: scope.sourceId } : {}),
+    ...(since ? { since } : {}),
+  });
+  return formatGradeEvidenceFromResults(take, results);
 }
 
 /**
@@ -367,6 +435,35 @@ function verdictToResolution(verdict: JudgeVerdict, resolvedByLabel: string): Ta
   };
 }
 
+async function insertGradeCache(
+  engine: BrainEngine,
+  input: {
+    takeId: number;
+    promptVersion: string;
+    judgeModelId: string;
+    evidenceSignature: string;
+    verdict: JudgeVerdict['verdict'];
+    confidence: number;
+    applied: boolean;
+  },
+): Promise<void> {
+  await engine.executeRaw(
+    `INSERT INTO take_grade_cache
+       (take_id, prompt_version, judge_model_id, evidence_signature, verdict, confidence, applied)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (take_id, prompt_version, judge_model_id, evidence_signature) DO NOTHING`,
+    [
+      input.takeId,
+      input.promptVersion,
+      input.judgeModelId,
+      input.evidenceSignature,
+      input.verdict,
+      input.confidence,
+      input.applied,
+    ],
+  );
+}
+
 class GradeTakesPhase extends BaseCyclePhase {
   readonly name = 'grade_takes' as CyclePhase;
   protected readonly budgetUsdKey = 'cycle.grade_takes.budget_usd';
@@ -388,7 +485,7 @@ class GradeTakesPhase extends BaseCyclePhase {
     opts: GradeTakesOpts,
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
     const judge = opts.judge ?? defaultJudge;
-    const evidenceRetriever = opts.evidenceRetriever ?? defaultEvidenceRetriever;
+    const evidenceRetriever = opts.evidenceRetriever ?? hybridEvidenceRetriever;
     const promptVersion = opts.promptVersion ?? GRADE_TAKES_PROMPT_VERSION;
     const minAgeMonths = opts.minAgeMonths ?? 6;
     const takeLimit = opts.takeLimit ?? 50;
@@ -411,6 +508,7 @@ class GradeTakesPhase extends BaseCyclePhase {
       warnings: [],
       ensemble_invoked: 0,
       ensemble_unanimous: 0,
+      evidence_unavailable: 0,
     };
 
     // Load unresolved active takes, oldest-first.
@@ -436,7 +534,7 @@ class GradeTakesPhase extends BaseCyclePhase {
       }
 
       // Retrieve evidence first — the signature depends on it.
-      const evidence = await evidenceRetriever(take, scope);
+      const evidence = await evidenceRetriever(take, scope, engine);
       const sig = evidenceSignature(evidence, judgeModelId);
 
       // Idempotency: skip when (take_id, prompt_version, judge_model_id, evidence_signature) exists.
@@ -448,6 +546,25 @@ class GradeTakesPhase extends BaseCyclePhase {
       );
       if (cached.length > 0) {
         result.cache_hits += 1;
+        continue;
+      }
+
+      if (evidenceIsPlaceholder(evidence) || !evidenceHasCitedSnippets(evidence)) {
+        const reason = evidenceIsPlaceholder(evidence)
+          ? 'placeholder evidence retriever is not allowed to spend judge budget'
+          : 'insufficient cited evidence for judge';
+        result.evidence_unavailable += 1;
+        result.warnings.push(`take ${take.id}: ${reason}; recorded unresolvable without judge call`);
+        await insertGradeCache(engine, {
+          takeId: take.id,
+          promptVersion,
+          judgeModelId,
+          evidenceSignature: sig,
+          verdict: 'unresolvable',
+          confidence: 0,
+          applied: false,
+        });
+        result.verdicts_written += 1;
         continue;
       }
 
@@ -541,13 +658,15 @@ class GradeTakesPhase extends BaseCyclePhase {
 
       // Write the verdict to the cache. Idempotency conflict means another
       // run beat us to it; either way the row exists with consistent state.
-      await engine.executeRaw(
-        `INSERT INTO take_grade_cache
-           (take_id, prompt_version, judge_model_id, evidence_signature, verdict, confidence, applied)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (take_id, prompt_version, judge_model_id, evidence_signature) DO NOTHING`,
-        [take.id, promptVersion, recordedJudgeModelId, recordedSig, recordedVerdict.verdict, recordedVerdict.confidence, shouldApply],
-      );
+      await insertGradeCache(engine, {
+        takeId: take.id,
+        promptVersion,
+        judgeModelId: recordedJudgeModelId,
+        evidenceSignature: recordedSig,
+        verdict: recordedVerdict.verdict,
+        confidence: recordedVerdict.confidence,
+        applied: shouldApply,
+      });
       result.verdicts_written += 1;
 
       // Apply to canonical takes if eligible.
@@ -626,4 +745,8 @@ export const __testing = {
   takeIsOldEnough,
   verdictToResolution,
   aggregateEnsemble,
+  evidenceIsPlaceholder,
+  evidenceHasCitedSnippets,
+  formatGradeEvidenceFromResults,
+  hybridEvidenceRetriever,
 };
