@@ -16,6 +16,7 @@
 import type { BrainEngine } from './engine.ts';
 import type { TakeBatchInput, TakeKind } from './engine.ts';
 import { chat, isAvailable } from './ai/gateway.ts';
+import { getFactsExtractionModel } from './facts/extract.ts';
 
 export const ALLOWED_PAGE_TYPES = [
   'concept', 'atom', 'lore', 'briefing', 'writing', 'originals',
@@ -126,6 +127,7 @@ export async function extractTakesFromPages(
   const dryRun = opts.dryRun ?? false;
   const maxPages = opts.maxPages ?? 50;
   const holder = opts.holder ?? 'system';
+  const model = opts.model ?? await getFactsExtractionModel(engine);
   const sourceFilter = opts.sourceIdFilter ? `AND source_id = $1` : '';
   const params = opts.sourceIdFilter ? [opts.sourceIdFilter] : [];
 
@@ -174,7 +176,7 @@ export async function extractTakesFromPages(
     let response: { text: string };
     try {
       response = await chat({
-        model: opts.model ?? 'anthropic:claude-haiku-4-5',
+        model,
         system: CLASSIFIER_SYSTEM,
         messages: [
           {

@@ -836,6 +836,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'sync',
   'sync.repo_path',
   'sync.last_commit',
+  'schema_pack',
   // DB-plane (v0.32.3 search modes + related)
   'search.mode',
   'search.cache.enabled',
@@ -944,6 +945,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'mcp.',               // mcp.publish_skills, mcp.skills_dir (PR1 skill catalog)
   'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
   'self_upgrade.',      // v0.42 self-upgrade (mode, quiet_hours, state)
+  'think.',             // think.excerpt_length, think.trajectory_enabled, etc.
 ];
 
 export function saveConfig(config: GBrainConfig): void {

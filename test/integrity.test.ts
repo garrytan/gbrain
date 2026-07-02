@@ -201,6 +201,13 @@ describe('scanIntegrity', () => {
       timeline: '',
       frontmatter: { validate: false },
     });
+    await engine.putPage('conversations/transcript', {
+      type: 'conversation',
+      title: 'Transcript',
+      compiled_truth: 'Hermes said in the tweet that a workflow exists.',
+      timeline: '',
+      frontmatter: { tags: ['hermes-transcript'] },
+    });
   }, 60_000);
 
   afterAll(async () => {
@@ -221,6 +228,12 @@ describe('scanIntegrity', () => {
     const res = await scanIntegrity(engine);
     const slugs = res.bareHits.map(h => h.slug);
     expect(slugs).not.toContain('people/legacy');
+  });
+
+  test('skips raw conversation transcript pages', async () => {
+    const res = await scanIntegrity(engine);
+    const slugs = res.bareHits.map(h => h.slug);
+    expect(slugs).not.toContain('conversations/transcript');
   });
 
   test('honors limit', async () => {

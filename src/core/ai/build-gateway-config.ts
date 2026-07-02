@@ -28,6 +28,11 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   const envFromConfig: Record<string, string> = {};
   if (c.openai_api_key) envFromConfig.OPENAI_API_KEY = c.openai_api_key;
   if (c.anthropic_api_key) envFromConfig.ANTHROPIC_API_KEY = c.anthropic_api_key;
+  // v0.42 local fix: DeepSeek chat models are valid recipes, but this seam
+  // previously never folded `deepseek_api_key` from ~/.gbrain/config.json into
+  // DEEPSEEK_API_KEY. That made `models.chat=deepseek:*` fail as "Chat gateway
+  // unavailable" unless the parent process happened to export the env var.
+  if (c.deepseek_api_key) envFromConfig.DEEPSEEK_API_KEY = c.deepseek_api_key;
   // v0.37 fix wave (CDX2-5+6): ZE became the default provider in v0.36 but
   // the env-mapping at this seam never picked it up. `gbrain config set
   // zeroentropy_api_key X` wrote DB plane (ignored by gateway). The file-

@@ -696,7 +696,30 @@ async function processPage(
   }
   const segments = splitIntoSegments(messages, { sinceIso });
   if (segments.length === 0) {
-    state.result.pages_skipped++;
+    // No parseable messages is still a completed extraction outcome. Without a
+    // terminal audit row, doctor counts these pages forever even though there is
+    // no segment to extract. Delete prior partial rows first, then write the
+    // terminal marker at row 0 so replay safety + doctor agree.
+    if (!state.dryRun) {
+      const cleaned = await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug);
+      if (cleaned > 0) {
+        state.result.orphan_facts_cleaned += cleaned;
+        process.stderr.write(
+          `[extract-conversation-facts] cleaned ${cleaned} orphan fact(s) for ${page.slug} from prior partial run\n`,
+        );
+      }
+      try {
+        await writeTerminalAuditRow(state.engine, state.sourceId, page.slug, 0);
+      } catch (err) {
+        if (isAbortError(err)) throw err;
+        process.stderr.write(
+          `[extract-conversation-facts] ${page.slug} terminal audit write failed: ${(err as Error).message}\n`,
+        );
+        state.result.pages_skipped++;
+        return { newEndIso: null };
+      }
+    }
+    state.result.pages_processed++;
     return { newEndIso: null };
   }
 

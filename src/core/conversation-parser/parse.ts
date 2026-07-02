@@ -518,7 +518,17 @@ export function parseConversation(
   // below the 5% floor we stay no_match instead of returning a
   // 1-message false positive. Real transcript pages typically score
   // 0.5+ and sail through.
-  if (top.score < SCORING_MIN_ACCEPTANCE) {
+  //
+  // Exception: explicitly tagged Hermes transcript backfills can be low-density
+  // after splitting because assistant turns contain long prose/code blocks while
+  // only speaker-header lines anchor messages. Those pages are already declared
+  // as transcript material in frontmatter, so accepting a low-density match does
+  // not weaken the false-positive guard for ordinary notes.
+  const fm = opts.page?.frontmatter as Record<string, unknown> | undefined;
+  const tags = Array.isArray(fm?.tags) ? fm.tags.map((t) => String(t)) : [];
+  const isExplicitTranscriptBackfill =
+    fm?.source === 'cli' || tags.includes('hermes-transcript') || typeof fm?.parent_transcript === 'string';
+  if (top.score < SCORING_MIN_ACCEPTANCE && !isExplicitTranscriptBackfill) {
     return {
       messages: [],
       phase: 'no_match',

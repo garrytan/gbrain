@@ -273,7 +273,10 @@ export async function runThink(
   });
 
   // Render evidence blocks for the prompt
-  const pagesBlock = renderPagesBlock(gather.pages);
+  const excerptLen = typeof engine.getConfig === 'function'
+    ? (Number(await engine.getConfig('think.excerpt_length')) || 3000)
+    : 3000;
+  const pagesBlock = renderPagesBlock(gather.pages, excerptLen);
   const takesForPrompt = gather.takes.map(takesHitToTakeForPrompt);
   const { rendered: takesBlock, sanitizedCount } = renderTakesBlock(takesForPrompt);
   if (sanitizedCount > 0) {

@@ -146,6 +146,27 @@ export function findExternalLinks(compiledTruth: string, slug: string): External
   return hits;
 }
 
+function isIntegrityEnforcedPage(page: { slug: string; type?: string | null; frontmatter?: unknown }): boolean {
+  const fm = (page.frontmatter ?? {}) as Record<string, unknown>;
+  if (fm.validate === false) return false;
+
+  // Conversation/transcript pages are raw evidence logs. They often quote a user
+  // or assistant saying "in the tweet" without intending to assert a knowledge
+  // claim that needs citation repair. Enforcing bare-tweet integrity there turns
+  // archived chat text into false health damage. Keep integrity enforcement on
+  // curated knowledge pages; skip raw transcript namespaces/types.
+  const type = typeof page.type === 'string' ? page.type : '';
+  const tags = Array.isArray(fm.tags) ? fm.tags.map(String) : [];
+  return !(
+    page.slug.startsWith('conversations/') ||
+    type === 'conversation' ||
+    type === 'slack' ||
+    type === 'email' ||
+    type === 'meeting' ||
+    tags.includes('hermes-transcript')
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Progress tracking
 // ---------------------------------------------------------------------------
@@ -332,8 +353,9 @@ export async function scanIntegrity(
     if (pagesScanned >= limit) break;
     const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
-    // Skip grandfathered pages (opted out of brain-integrity enforcement)
-    if ((page.frontmatter as Record<string, unknown> | undefined)?.validate === false) continue;
+    // Skip pages outside integrity enforcement (grandfathered pages and raw
+    // transcript/conversation evidence logs).
+    if (!isIntegrityEnforcedPage({ slug, type: page.type, frontmatter: page.frontmatter })) continue;
     pagesScanned++;
     bareHits.push(...findBareTweetHits(page.compiled_truth, slug));
     externalHits.push(...findExternalLinks(page.compiled_truth, slug));
@@ -370,7 +392,7 @@ async function scanIntegrityBatch(
   // listAllPageRefs() walk: integrity violations in non-default-source pages
   // get reported instead of silently shadowed by their default-source twin.
   const rows = await sql`
-    SELECT slug, compiled_truth, frontmatter
+    SELECT slug, type, compiled_truth, frontmatter
     FROM pages
     WHERE 1=1 ${typeCondition} ${validateCondition}
     ORDER BY source_id, slug
@@ -382,6 +404,7 @@ async function scanIntegrityBatch(
 
   for (const row of rows) {
     const slug = row.slug as string;
+    if (!isIntegrityEnforcedPage({ slug, type: row.type as string | null, frontmatter: row.frontmatter })) continue;
     const compiledTruth = row.compiled_truth as string;
     bareHits.push(...findBareTweetHits(compiledTruth, slug));
     externalHits.push(...findExternalLinks(compiledTruth, slug));

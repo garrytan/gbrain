@@ -113,12 +113,20 @@ export async function runExtractFacts(
   };
 
   // ── Empty-fence guard (Codex R2-#7) ────────────────────────────
-  // Pre-check: if any legacy fact rows exist (row_num NULL but
-  // entity_slug NOT NULL), refuse to run the destructive
-  // reconciliation pass. The v0_32_2 orchestrator must complete
-  // first.
+  // Pre-check: if any fence-owned legacy fact rows exist (row_num NULL but
+  // entity_slug NOT NULL), refuse to run the destructive reconciliation pass.
+  //
+  // Conversation-facts rows (source LIKE 'cli:%') are deliberately NOT
+  // fence-owned: the reconcile loop below excludes them from deleteFactsForPage
+  // because no `## Facts` fence can recreate them. Therefore they must not
+  // trip this legacy-fence guard either. Otherwise valid conversation facts
+  // with NULL row_num permanently block extract_facts after v0_32_2 backfill.
   const legacy = await engine.executeRaw<{ n: string }>(
-    `SELECT COUNT(*) AS n FROM facts WHERE row_num IS NULL AND entity_slug IS NOT NULL`,
+    `SELECT COUNT(*) AS n
+       FROM facts
+      WHERE row_num IS NULL
+        AND entity_slug IS NOT NULL
+        AND source NOT LIKE 'cli:%'`,
   );
   const legacyCount = parseInt(legacy[0]?.n ?? '0', 10);
   result.legacyRowsPending = legacyCount;
