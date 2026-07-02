@@ -17,7 +17,7 @@
  * Stub MessagesClient lives in test/helpers/longmemeval-stub.ts.
  */
 
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, afterEach } from 'bun:test';
 import { mkdtempSync, readFileSync, existsSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -26,6 +26,7 @@ import type { LongMemEvalQuestion } from '../src/eval/longmemeval/adapter.ts';
 import { createBenchmarkBrain } from '../src/eval/longmemeval/harness.ts';
 import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { makeStubClient } from './helpers/longmemeval-stub.ts';
+import { __setChatTransportForTests, resetGateway, type ChatResult } from '../src/core/ai/gateway.ts';
 
 const FIXTURE_PATH = join(import.meta.dir, 'fixtures', 'longmemeval-mini.jsonl');
 
@@ -42,11 +43,62 @@ afterAll(async () => {
   if (sharedEngine) await sharedEngine.disconnect();
 });
 
+afterEach(() => {
+  __setChatTransportForTests(null);
+  resetGateway();
+});
+
+function gatewayResult(text: string, model: string): ChatResult {
+  return {
+    text,
+    blocks: [{ type: 'text', text }],
+    stopReason: 'end',
+    usage: {
+      input_tokens: 1,
+      output_tokens: 1,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+    },
+    model,
+    providerId: model.split(':')[0] ?? 'anthropic',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 8. end-to-end with stubbed LLM
 // ---------------------------------------------------------------------------
 
 describe('runEvalLongMemEval: end-to-end with stubbed LLM', () => {
+  test('default answer-gen + extractor route provider-prefixed models through gateway', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'lme-gateway-'));
+    const outPath = join(tmp, 'hypothesis.jsonl');
+    const seenModels: string[] = [];
+    try {
+      __setChatTransportForTests(async (opts) => {
+        const model = opts.model ?? '';
+        seenModels.push(model);
+        if (opts.system?.includes('You extract typed claims')) {
+          return gatewayResult('[]', model);
+        }
+        return gatewayResult('gateway-answer', model);
+      });
+
+      await runEvalLongMemEval(
+        [FIXTURE_PATH, '--keyword-only', '--limit', '1', '--output', outPath, '--top-k', '3', '--model', 'sonnet'],
+        { engine: sharedEngine },
+      );
+
+      expect(seenModels).toContain('anthropic:claude-sonnet-4-6');
+      expect(seenModels).toContain('anthropic:claude-haiku-4-5-20251001');
+      const rows = readFileSync(outPath, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+      expect(rows.length).toBe(1);
+      expect(rows[0].hypothesis).toContain('gateway-answer');
+      expect(rows[0].error).toBeUndefined();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   test('5-question fixture produces 5 valid JSONL lines via --output', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'lme-test-'));
     const outPath = join(tmp, 'hypothesis.jsonl');

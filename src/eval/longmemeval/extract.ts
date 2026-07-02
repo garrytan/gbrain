@@ -44,11 +44,12 @@ import type { BrainEngine, NewFact } from '../../core/engine.ts';
  * fallback chain here:
  *   1. Strip markdown fences if present, then JSON.parse.
  *   2. Find the first `[...]` substring and JSON.parse that.
- * Throws when neither path produces a valid array — caller treats
- * throw as "fail open, 0 facts for this session."
+ * Returns null when neither path produces a valid array — caller treats
+ * null as "fail open, 0 facts for this session" while surfacing the
+ * extractor failure in benchmark telemetry.
  */
-function parseExtractedJsonArray(raw: string): unknown[] {
-  if (typeof raw !== 'string' || !raw.trim()) return [];
+function parseExtractedJsonArray(raw: string): unknown[] | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
   // Strip ```json ... ``` fences if present.
   const fenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)```/i);
   const cleaned = (fenceMatch ? fenceMatch[1] : raw).trim();
@@ -69,7 +70,7 @@ function parseExtractedJsonArray(raw: string): unknown[] {
       // fall through
     }
   }
-  return [];
+  return null;
 }
 
 /** v0.40.2.0 wire shape for the extractor's per-session Haiku output. */
@@ -265,9 +266,10 @@ async function callExtractor(
   }
   const block = response.content.find(b => b.type === 'text');
   const text = block && 'text' in block ? block.text : '';
-  if (!text) return [];
+  if (!text) return null;
 
   const parsed = parseExtractedJsonArray(text);
+  if (parsed === null) return null;
   if (parsed.length === 0) return [];
   const claims: ExtractedClaim[] = [];
   for (const item of parsed) {
@@ -293,6 +295,8 @@ export interface ExtractResult {
   parsed: number;
   /** Whether this session's claims came from cache (hit) or LLM (miss). */
   cacheHit: boolean;
+  /** Non-empty when the extractor failed before producing a parseable response. */
+  error?: string;
 }
 
 export async function extractAndInsertClaims(opts: {
@@ -322,7 +326,11 @@ export async function extractAndInsertClaims(opts: {
     }
   }
 
-  if (!claims || claims.length === 0) {
+  if (!claims) {
+    return { inserted: 0, parsed: 0, cacheHit, error: 'extractor_failed' };
+  }
+
+  if (claims.length === 0) {
     return { inserted: 0, parsed: 0, cacheHit };
   }
 
