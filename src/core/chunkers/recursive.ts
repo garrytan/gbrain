@@ -72,7 +72,7 @@ import { stripFactsFence } from '../facts-fence.ts';
 export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   const chunkSize = opts?.chunkSize || 300;
   const chunkOverlap = opts?.chunkOverlap || 50;
-  const maxChars = opts?.maxChars || 6000;
+  const maxChars = opts?.maxChars || 1800;
 
   if (!text || text.trim().length === 0) return [];
 

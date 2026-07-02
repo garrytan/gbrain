@@ -299,6 +299,73 @@ function monthNameToIndex(name: string): number {
   return MONTHS_SHORT.indexOf(name.toLowerCase().slice(0, 3));
 }
 
+const GBRAIN_ROLE_HEADING_RE = /^###[ \t]+(User|Assistant|System|Tool)\s*$/;
+
+function countGbrainRoleHeadingBlocks(lines: readonly string[]): number {
+  let inFence = false;
+  let seenHeading = false;
+  let currentHasText = false;
+  let blocks = 0;
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    const fence = /^```/.test(line);
+    if (!inFence && GBRAIN_ROLE_HEADING_RE.test(line)) {
+      if (seenHeading && currentHasText) blocks += 1;
+      seenHeading = true;
+      currentHasText = false;
+      continue;
+    }
+    if (seenHeading && line.length > 0) currentHasText = true;
+    if (fence) inFence = !inFence;
+  }
+
+  if (seenHeading && currentHasText) blocks += 1;
+  return blocks;
+}
+
+function applyGbrainRoleHeadingPattern(
+  body: string,
+  dateCtx: DateContext,
+): MatchedMessage[] {
+  const out: MatchedMessage[] = [];
+  const lines = body.split(/\r?\n/);
+  let inFence = false;
+  let currentSpeaker: string | null = null;
+  let currentLines: string[] = [];
+
+  const flush = () => {
+    if (!currentSpeaker) return;
+    const text = currentLines.join('\n').trim();
+    if (text.length > 0) {
+      out.push({
+        speaker: currentSpeaker,
+        timestamp: `${dateCtx.fallbackDate}T00:00:00Z`,
+        text,
+      });
+    }
+  };
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    const fence = /^```/.test(trimmed);
+    const heading = !inFence ? GBRAIN_ROLE_HEADING_RE.exec(trimmed) : null;
+    if (heading) {
+      flush();
+      currentSpeaker = heading[1];
+      currentLines = [];
+      continue;
+    }
+    if (currentSpeaker) {
+      currentLines.push(rawLine);
+    }
+    if (fence) inFence = !inFence;
+  }
+  flush();
+
+  return out;
+}
+
 /**
  * Apply ONE pattern to the full body. Returns the matched messages
  * with their ISO timestamps. Handles multi-line continuations per D5.
@@ -319,6 +386,9 @@ export function applyPattern(
   dateCtx: DateContext,
 ): MatchedMessage[] {
   if (!body) return [];
+  if (entry.id === 'gbrain-role-heading') {
+    return applyGbrainRoleHeadingPattern(body, dateCtx);
+  }
   const out: MatchedMessage[] = [];
   const lines = body.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
@@ -388,6 +458,9 @@ function scoreFromLines(
   entry: PatternEntry,
 ): number {
   if (lines.length === 0) return 0;
+  if (entry.id === 'gbrain-role-heading') {
+    return countGbrainRoleHeadingBlocks(lines) >= 2 ? 1 : 0;
+  }
   let anchored = 0;
   for (const line of lines) {
     if (entry.quick_reject && !entry.quick_reject.test(line)) continue;

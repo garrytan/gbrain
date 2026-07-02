@@ -19,9 +19,6 @@ describe('repairJsonb — PGLite short-circuit', () => {
     });
     expect(result.engine).toBe('pglite');
     expect(result.total_repaired).toBe(0);
-    // All 5 columns reported: pages.frontmatter, raw_data.data,
-    // ingest_log.pages_updated, files.metadata, page_versions.frontmatter.
-    expect(result.per_target.length).toBe(5);
     for (const t of result.per_target) {
       expect(t.rows_repaired).toBe(0);
     }
@@ -29,9 +26,14 @@ describe('repairJsonb — PGLite short-circuit', () => {
     expect(tables).toEqual([
       'files.metadata',
       'ingest_log.pages_updated',
+      'op_checkpoints.completed_keys',
       'page_versions.frontmatter',
       'pages.frontmatter',
       'raw_data.data',
+      'sources.config',
+      'subagent_messages.content_blocks',
+      'subagent_tool_executions.input',
+      'subagent_tool_executions.output',
     ]);
   });
 });

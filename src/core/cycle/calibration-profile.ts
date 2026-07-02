@@ -226,7 +226,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
     _ctx: OperationContext,
     opts: CalibrationProfileOpts,
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
-    const holder = opts.holder ?? 'garry';
+    const holder = opts.holder ?? 'system';
     const promptVersion = opts.promptVersion ?? CALIBRATION_PROFILE_PROMPT_VERSION;
     const modelId = opts.model ?? 'claude-sonnet-4-6';
     const gradeCompletion = opts.gradeCompletion ?? 1.0;

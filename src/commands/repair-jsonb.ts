@@ -47,6 +47,11 @@ const TARGETS: RepairTarget[] = [
   { table: 'ingest_log',     column: 'pages_updated',  keyCol: 'source_ref' },
   { table: 'files',          column: 'metadata',       keyCol: 'storage_path' },
   { table: 'page_versions',  column: 'frontmatter',    keyCol: 'snapshot_at' },
+  { table: 'op_checkpoints', column: 'completed_keys',  keyCol: 'op' },
+  { table: 'subagent_tool_executions', column: 'input',          keyCol: 'tool_use_id' },
+  { table: 'subagent_tool_executions', column: 'output',         keyCol: 'tool_use_id' },
+  { table: 'subagent_messages',        column: 'content_blocks', keyCol: 'message_idx' },
+  { table: 'sources',                  column: 'config',         keyCol: 'id' },
 ];
 
 export interface RepairResult {

@@ -746,12 +746,12 @@ function emptyAgg(): EnrichResult {
 }
 
 function addInto(agg: EnrichResult, r: EnrichResult): void {
-  agg.candidates_considered += r.candidates_considered;
-  agg.pages_enriched += r.pages_enriched;
-  agg.pages_skipped_insufficient += r.pages_skipped_insufficient;
-  agg.pages_skipped_lock += r.pages_skipped_lock;
-  agg.pages_skipped_disappeared += r.pages_skipped_disappeared;
-  agg.pages_failed += r.pages_failed;
+  agg.candidates_considered += r.candidates_considered ?? 0;
+  agg.pages_enriched += r.pages_enriched ?? 0;
+  agg.pages_skipped_insufficient += r.pages_skipped_insufficient ?? 0;
+  agg.pages_skipped_lock += r.pages_skipped_lock ?? 0;
+  agg.pages_skipped_disappeared += r.pages_skipped_disappeared ?? 0;
+  agg.pages_failed += r.pages_failed ?? 0;
   agg.would_enrich = (agg.would_enrich ?? 0) + (r.would_enrich ?? 0);
 }
 

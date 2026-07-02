@@ -1364,7 +1364,11 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
-  const truncated = texts.map(t => (t ?? '').slice(0, MAX_CHARS));
+  const maxCharsForProvider =
+    recipe.id === 'ollama'
+      ? parseInt(process.env.GBRAIN_OLLAMA_EMBED_MAX_CHARS || '1400', 10)
+      : MAX_CHARS;
+  const truncated = texts.map(t => (t ?? '').slice(0, maxCharsForProvider));
 
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the

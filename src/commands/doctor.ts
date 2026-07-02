@@ -5952,7 +5952,7 @@ export async function buildChecks(
   // 10. JSONB integrity (v0.12.3 reliability wave).
   // v0.12.0's JSON.stringify()::jsonb pattern stored JSONB string literals
   // instead of objects on real Postgres. PGLite masked this; Supabase did not.
-  // Scan 5 known write sites for rows whose top-level jsonb_typeof is
+  // Scan 10 known write sites for rows whose top-level jsonb_typeof is
   // 'string'. `page_versions.frontmatter` added in v0.15.2 so doctor's
   // surface matches `repair-jsonb` (the previous 4-target scan missed a
   // repair target, per #254/Codex review).
@@ -5965,6 +5965,11 @@ export async function buildChecks(
       { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
       { table: 'files',         col: 'metadata',       expected: 'object' },
       { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
+      { table: 'op_checkpoints', col: 'completed_keys',  expected: 'array'  },
+      { table: 'subagent_tool_executions', col: 'input',          expected: 'object' },
+      { table: 'subagent_tool_executions', col: 'output',         expected: 'object' },
+      { table: 'subagent_messages',        col: 'content_blocks', expected: 'array'  },
+      { table: 'sources',                  col: 'config',         expected: 'object' },
     ];
     let totalBad = 0;
     const breakdown: string[] = [];

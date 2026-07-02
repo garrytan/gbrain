@@ -24,6 +24,7 @@ import { azureOpenAI } from './azure-openai.ts';
 import { zeroentropyai } from './zeroentropyai.ts';
 import { llamaServerReranker } from './llama-server-reranker.ts';
 
+import { beellama } from './beellama.ts';
 const ALL: Recipe[] = [
   openai,
   google,
@@ -42,6 +43,7 @@ const ALL: Recipe[] = [
   zhipu,
   azureOpenAI,
   zeroentropyai,
+  beellama,
 ];
 
 /** Map from `provider:id` key to recipe. */

@@ -125,7 +125,12 @@ export async function runPhaseSkillopt(opts: SkilloptPhaseOpts): Promise<Skillop
     const effectiveCap = Math.min(perSkillCap, remaining);
 
     try {
-      const split = parseSplit('4:1:5');
+      // Adaptive split (local patch 2026-06-22): 4:1:5 needs >=50 tasks/benchmark
+      // for D_sel>=5; no shipped benchmark meets that -> fall back to 1:1:1 for small
+      // benchmarks (>=15 tasks). <15-task skills stay skipped by the D_sel floor.
+      const _benchTasks = fs.readFileSync(c.benchmarkPath, 'utf8')
+        .split('\n').filter((l) => { const t = l.trim(); if (!t) return false; try { JSON.parse(t); return true; } catch { return false; } }).length;
+      const split = parseSplit(_benchTasks >= 50 ? '4:1:5' : '1:1:1');
       const skillOptOpts: SkillOptOpts = {
         engine,
         skillName: c.name,
