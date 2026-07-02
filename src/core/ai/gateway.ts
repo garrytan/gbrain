@@ -2909,6 +2909,16 @@ export interface ToolLoopOpts {
   onToolCallComplete?: (gbrainToolUseId: string, output: unknown) => Promise<void>;
   onToolCallFailed?: (gbrainToolUseId: string, error: string) => Promise<void>;
 
+  /**
+   * Persist the synthesized tool-result user turn AFTER every tool in the turn
+   * settles. Without it the assistant tool-call turn is persisted (onAssistantTurn)
+   * but its results are not, so crash-replay rebuilds an unbalanced conversation
+   * (assistant tool-calls with no matching tool-results) and the next chat()
+   * dispatch throws "Tool results are missing". Mirrors the legacy Anthropic
+   * path's user-turn persist in subagent.ts.
+   */
+  onToolResultTurn?: (turnIdx: number, messageIdx: number, blocks: ChatBlock[]) => Promise<void>;
+
   /** Optional per-call heartbeat for observability. */
   onHeartbeat?: (event: string, data: Record<string, unknown>) => void;
 }
@@ -3131,9 +3141,12 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
 
     if (stopReason === 'aborted') break;
 
-    // Feed all tool results back as a single user message.
+    // Feed all tool results back as a single user message. Persist it BEFORE
+    // the next dispatch so crash-replay rebuilds a balanced conversation —
+    // without this, resume sends assistant tool-calls with no matching
+    // tool-results and chat() throws "Tool results are missing".
     const userMessageIdx = messageIdx++;
-    void userMessageIdx;
+    await opts.onToolResultTurn?.(turnIdx, userMessageIdx, toolResultBlocks);
     messages.push({ role: 'user', content: toolResultBlocks });
 
     turnIdx++;
