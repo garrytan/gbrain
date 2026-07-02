@@ -202,6 +202,60 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     expect(result.finalText).toBe('fin');
   });
 
+  it('reconciles a replayed parallel assistant tool-call turn before the next model call', async () => {
+    let chatCalls = 0;
+    __setChatTransportForTests(async (opts) => {
+      chatCalls++;
+      expect(opts.messages).toHaveLength(3);
+      expect(opts.messages[0]).toEqual({ role: 'user', content: 'run both' });
+      expect(opts.messages[1].role).toBe('assistant');
+      expect(opts.messages[2].role).toBe('user');
+      const toolResultBlocks = opts.messages[2].content as ChatBlock[];
+      expect(toolResultBlocks).toEqual([
+        { type: 'tool-result', toolCallId: 'tc-a', toolName: 'search', output: { a: 1 } },
+        { type: 'tool-result', toolCallId: 'tc-b', toolName: 'search', output: { b: 2 } },
+      ]);
+      return {
+        text: 'fin',
+        blocks: [{ type: 'text', text: 'fin' }] as ChatBlock[],
+        stopReason: 'end',
+        usage: { input_tokens: 3, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-sonnet-4-6',
+        providerId: 'anthropic',
+      };
+    });
+
+    let executed = 0;
+    const result = await toolLoop({
+      initialMessages: [],
+      tools: [{ name: 'search', description: 'search', inputSchema: { type: 'object' } }],
+      toolHandlers: new Map([['search', { idempotent: false, async execute() { executed++; return 'fresh'; } }]]),
+      onToolCallStart: async (_turnIdx, _messageIdx, ordinal) => ({ gbrainToolUseId: ordinal === 0 ? 'gb-a' : 'gb-b' }),
+      replayState: {
+        priorMessages: [
+          { role: 'user', content: 'run both' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'tool-call', toolCallId: 'tc-a', toolName: 'search', input: { q: 'a' } },
+              { type: 'tool-call', toolCallId: 'tc-b', toolName: 'search', input: { q: 'b' } },
+            ] as ChatBlock[],
+          },
+        ],
+        priorTools: new Map([
+          ['gb-a', { status: 'complete' as const, output: { a: 1 } }],
+          ['gb-b', { status: 'complete' as const, output: { b: 2 } }],
+        ]),
+        nextTurnIdx: 1,
+        nextMessageIdx: 2,
+      },
+    });
+
+    expect(chatCalls).toBe(1);
+    expect(executed).toBe(0);
+    expect(result.finalText).toBe('fin');
+  });
+
   it('refuses replay of non-idempotent pending tool with unrecoverable error', async () => {
     __setChatTransportForTests(async () => ({
       text: '',

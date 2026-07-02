@@ -2697,6 +2697,7 @@ async function checkEmbeddingEnvOverride(engine: BrainEngine): Promise<Check> {
 export async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
   try {
     const { classifyCapabilities } = await import('../core/ai/capabilities.ts');
+    const explicitSubagent = await engine.getConfig('models.subagent');
     const tierSubagent = await engine.getConfig('models.tier.subagent');
     const modelsDefault = await engine.getConfig('models.default');
 
@@ -2731,13 +2732,16 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
             `${source} is "${resolved}" — provider does not support prompt caching. ` +
             `The subagent loop runs hot (cost scales linearly with conversation length). ` +
             `For lower cost on long loops, use an Anthropic model: ` +
-            `\`gbrain config set models.tier.subagent anthropic:claude-sonnet-4-6\`.`,
+            `\`gbrain config set models.subagent anthropic:claude-sonnet-4-6\`.`,
         };
       }
       return null;
     };
 
-    if (tierSubagent) {
+    if (explicitSubagent) {
+      const issue = explain(explicitSubagent, 'models.subagent');
+      if (issue) return issue;
+    } else if (tierSubagent) {
       const issue = explain(tierSubagent, 'models.tier.subagent');
       if (issue) return issue;
     } else if (modelsDefault) {
@@ -2775,9 +2779,11 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
     return {
       name: 'subagent_capability',
       status: 'ok',
-      message: tierSubagent
-        ? `Subagent tier resolves to "${tierSubagent}" with full tool-loop capability`
-        : `Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability`,
+      message: explicitSubagent
+        ? `Subagent model resolves to "${explicitSubagent}" with full tool-loop capability`
+        : tierSubagent
+          ? `Subagent tier resolves to "${tierSubagent}" with full tool-loop capability`
+          : `Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability`,
     };
   } catch (e) {
     return {
