@@ -171,6 +171,22 @@ describe('shouldExclude — orphan filter regression (preserve curation)', () =>
     expect(shouldExclude('media/x/raw/post')).toBe(true);
   });
 
+  test('leading raw/ segment is excluded (same archive convention)', () => {
+    expect(shouldExclude('raw/whatsapp/2025-01/chat-log')).toBe(true);
+    expect(shouldExclude('raw/transcripts/meeting')).toBe(true);
+    // 'rawhide/...' must NOT match — prefix is 'raw/', not 'raw'.
+    expect(shouldExclude('rawhide/notes')).toBe(false);
+  });
+
+  test('daily-log pages are excluded (calendar/email integrations write these)', () => {
+    expect(shouldExclude('daily/calendar/2025/2025-01-01')).toBe(true);
+    expect(shouldExclude('daily/x/2025-06-13')).toBe(true);
+  });
+
+  test('outputs/ plural prefix is excluded like output/', () => {
+    expect(shouldExclude('outputs/render-batch-3')).toBe(true);
+  });
+
   test('deny-prefixes are excluded', () => {
     expect(shouldExclude('templates/meeting')).toBe(true);
     expect(shouldExclude('dashboards/_index')).toBe(true);
