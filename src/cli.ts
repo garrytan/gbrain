@@ -440,9 +440,10 @@ async function main() {
     }
     // ENG-2 (renderer parity by data shape): JSON-round-trip the local-engine
     // path's return value so renderers see the same shape they'd see on the
-    // routed path. Date → ISO string; bigint → string (postgres.js shape);
-    // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
-    const result = JSON.parse(JSON.stringify(rawResult));
+    // routed path. Date → ISO string; bigint → string (postgres.js shape, via
+    // bigintReplacer — a bare stringify THROWS on bigint, #2450); Buffer →
+    // object. Microsecond-cost; eliminates a whole drift bug class.
+    const result = normalizeLocalResult(rawResult);
     const output = formatResult(op.name, result);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
@@ -816,6 +817,24 @@ async function makeContext(engine: BrainEngine, params: Record<string, unknown>)
   };
 }
 
+// JSON.stringify replacer that survives a `bigint` anywhere in the tree.
+// Mirrors the postgres.js wire shape (int8 → string), which is exactly what
+// the ENG-2 renderer-parity comment promises: a bare JSON.stringify THROWS on
+// bigint, so the "bigint → string" parity was never actually achieved.
+// Stringify (never Number()) so a BIGSERIAL key past MAX_SAFE_INTEGER keeps
+// full precision and matches the routed-path shape. (#2450)
+export function bigintReplacer(_key: string, value: unknown): unknown {
+  return typeof value === 'bigint' ? value.toString() : value;
+}
+
+// ENG-2 renderer parity: round-trip a local-engine op's return value so
+// renderers see the same shape the routed path produces. Bigint-safe via
+// bigintReplacer. Exported for tests (same import-safety contract as
+// cliAliases/formatResult). (#2450)
+export function normalizeLocalResult(rawResult: unknown): unknown {
+  return JSON.parse(JSON.stringify(rawResult, bigintReplacer));
+}
+
 // Exported for tests (same import-safety contract as cliAliases/printOpHelp).
 export function formatResult(opName: string, result: unknown): string {
   switch (opName) {
@@ -939,7 +958,9 @@ export function formatResult(opName: string, result: unknown): string {
       ).join('\n') + '\n';
     }
     default:
-      return JSON.stringify(result, null, 2) + '\n';
+      // bigintReplacer keeps this fallback renderer crash-proof even if a
+      // future caller hands it a not-yet-normalized result. (#2450)
+      return JSON.stringify(result, bigintReplacer, 2) + '\n';
   }
 }
 

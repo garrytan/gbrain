@@ -51,6 +51,70 @@ describe('CLI structure', () => {
   });
 });
 
+// #2450 — the local-engine output normalizer (cli.ts:445) used a bare
+// JSON.stringify with no replacer. A bigint anywhere in an op's return value
+// (e.g. a BIGSERIAL primary key read back by the Postgres engine) made
+// JSON.stringify THROW "Do not know how to serialize a BigInt", crashing the
+// command before any renderer ran. normalizeLocalResult now stringifies via
+// bigintReplacer (bigint → string, postgres.js wire shape).
+describe('BigInt-safe output normalization (#2450)', () => {
+  test('bare JSON.stringify throws on a bigint (the pre-fix crash)', () => {
+    // Pins the exact failure the fix removes: without a replacer this throws.
+    // (Bun: "JSON.stringify cannot serialize BigInt."; Node: "Do not know how
+    // to serialize a BigInt" — match the shared word either way.)
+    expect(() => JSON.stringify({ id: 9999999999999999999n })).toThrow(
+      /serialize BigInt|serialize a BigInt/i,
+    );
+  });
+
+  test('normalizeLocalResult does NOT throw on a bigint result', async () => {
+    const { normalizeLocalResult } = await import('../src/cli.ts');
+    // BIGSERIAL primary key shape that crashed get_calibration_profile.
+    const rawResult = { id: 42n, holder: 'h', nested: { count: 7n } };
+    expect(() => normalizeLocalResult(rawResult)).not.toThrow();
+  });
+
+  test('normalizeLocalResult serializes bigint → string (postgres.js shape)', async () => {
+    const { normalizeLocalResult } = await import('../src/cli.ts');
+    const out = normalizeLocalResult({
+      id: 42n,
+      nested: { count: 7n },
+      arr: [1n, 2n],
+      str: 'unchanged',
+      num: 3,
+    }) as Record<string, unknown>;
+    expect(out.id).toBe('42');
+    expect((out.nested as Record<string, unknown>).count).toBe('7');
+    expect(out.arr).toEqual(['1', '2']);
+    // Non-bigint values pass through untouched.
+    expect(out.str).toBe('unchanged');
+    expect(out.num).toBe(3);
+  });
+
+  test('bigint past Number.MAX_SAFE_INTEGER keeps full precision as a string', async () => {
+    const { normalizeLocalResult } = await import('../src/cli.ts');
+    // A BIGSERIAL beyond 2^53 would lose precision via Number(); the string
+    // form preserves every digit and matches the routed-path wire shape.
+    const big = 9007199254740993n; // MAX_SAFE_INTEGER + 2
+    const out = normalizeLocalResult({ id: big }) as Record<string, unknown>;
+    expect(out.id).toBe('9007199254740993');
+  });
+
+  test("formatResult's default renderer is bigint-safe", async () => {
+    const { formatResult } = await import('../src/cli.ts');
+    // An op with no custom case falls through to the JSON.stringify default.
+    expect(() => formatResult('__no_such_op__', { id: 5n })).not.toThrow();
+    expect(formatResult('__no_such_op__', { id: 5n })).toContain('"5"');
+  });
+
+  test('cli.ts no longer uses a replacer-less stringify on the normalize path', () => {
+    // Structural guard: the bare `JSON.parse(JSON.stringify(rawResult))` that
+    // threw must be gone, replaced by the bigint-safe normalizeLocalResult.
+    expect(cliSource).toContain('normalizeLocalResult(rawResult)');
+    expect(cliSource).not.toContain('JSON.parse(JSON.stringify(rawResult))');
+  });
+});
+
 describe('CLI version', () => {
   test('VERSION matches package.json', async () => {
     const { VERSION } = await import('../src/version.ts');
