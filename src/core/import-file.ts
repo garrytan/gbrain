@@ -115,6 +115,17 @@ async function extractFencedChunks(
   startChunkIndex: number,
 ): Promise<ChunkInput[]> {
   const out: ChunkInput[] = [];
+  // Fast path: most pages (prose, tables, converted docs) contain no code
+  // fence at all, so there is nothing for this function to extract. marked's
+  // lexer still allocates transient memory proportional to page size on every
+  // call — a ~2MB table-heavy page spikes ~110MB of heap just to produce zero
+  // fenced chunks. During bulk import those per-page spikes stack on top of
+  // accumulated chunk/embedding memory and can OOM the worker, and the
+  // try/catch below cannot rescue an OOM (it is process death, not a throw).
+  // Skip the lexer entirely when no fence marker (``` or ~~~) is present.
+  // The `\r` in the line-start class mirrors marked's own `\r\n|\r → \n`
+  // normalization, so CR/CRLF-only documents don't lose a real fence.
+  if (!/(^|[\r\n])[ \t]{0,3}(```|~~~)/.test(markdown)) return out;
   let tokens: ReturnType<typeof marked.lexer>;
   try {
     tokens = marked.lexer(markdown);
