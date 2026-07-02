@@ -1665,12 +1665,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     }
   }
 
-  // Get current HEAD
+  // Get current HEAD.
+  // When the repo has no commits yet (fresh `git init` before first commit),
+  // performFullSync already handles a blank headCommit by walking the filesystem
+  // directly — no need to throw and block the entire sync phase.
   let headCommit: string;
   try {
     headCommit = git(repoPath, ['rev-parse', 'HEAD']);
   } catch {
-    throw new Error(`No commits in repo ${repoPath}. Make at least one commit before syncing.`);
+    headCommit = '';
   }
 
   // #1970: bookmark reachability. The ONLY thing that should force a full
