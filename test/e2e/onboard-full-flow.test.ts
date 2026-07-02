@@ -72,20 +72,20 @@ describe('onboard E2E — runAllOnboardChecks', () => {
     ]);
   });
 
-  test('empty brain: stale/link/timeline ok, takes_count warns (0 takes)', async () => {
+  test('empty brain: stale/link/timeline ok, takes_count ok when bootstrap is disabled', async () => {
     const results = await runAllOnboardChecks(engine);
     const byName = Object.fromEntries(results.map((r) => [r.check.name, r.check.status]));
     expect(byName.embed_staleness).toBe('ok');
     expect(byName.entity_link_coverage).toBe('ok');
     expect(byName.timeline_coverage).toBe('ok');
-    expect(byName.takes_count).toBe('warn'); // 0 takes is a warn
+    expect(byName.takes_count).toBe('ok');
   });
 
   test('empty brain remediations: takes_count gated, pack_upgrade_available may surface', async () => {
     const results = await runAllOnboardChecks(engine);
     const total = results.reduce((s, r) => s + r.remediations.length, 0);
-    // takes_count warns but does NOT emit a remediation (takes.bootstrap_enabled
-    // defaults to false — A12 two-gate consent).
+    // takes_count stays ok and emits no remediation while
+    // takes.bootstrap_enabled defaults to false (A12 two-gate consent).
     // v0.42 (T13): pack_upgrade_available CAN emit a manual_only remediation
     // when gbrain-base@1.x is active and gbrain-base-v2 is declared as the
     // successor (the unify-types Minion handler). Allow 0-1 remediations

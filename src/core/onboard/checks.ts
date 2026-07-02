@@ -337,7 +337,8 @@ export async function checkTakesCount(
         status: 'remediable',
       }));
     } else {
-      message = '0 takes (takes.bootstrap_enabled is false; opt in to enable)';
+      status = 'ok';
+      message = '0 takes (bootstrap disabled by config; opt in with takes.bootstrap_enabled=true)';
     }
   } else {
     message = `${takesCount} takes (calibration usable; >100 ideal)`;

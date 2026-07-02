@@ -79,6 +79,7 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.GBRAIN_EMBED_CONCURRENCY;
   delete process.env.GBRAIN_EMBED_TIME_BUDGET_MS;
+  delete process.env.GBRAIN_EMBED_RECHUNK_MAX_CHARS;
 });
 
 describe('runEmbed --all (parallel)', () => {
@@ -223,6 +224,53 @@ describe('runEmbed --all (parallel)', () => {
     await runEmbed(engine, ['--stale']);
 
     // Only the stale page triggers an embedBatch call.
+    expect(totalEmbedCalls).toBe(1);
+  });
+
+  test('re-chunks oversized stale rows before embedding', async () => {
+    process.env.GBRAIN_EMBED_CONCURRENCY = '1';
+    process.env.GBRAIN_EMBED_RECHUNK_MAX_CHARS = '40';
+
+    const slug = 'oversized';
+    let chunksBySlug = new Map<string, any[]>([
+      [slug, [{
+        chunk_index: 0,
+        chunk_text: 'x'.repeat(120),
+        chunk_source: 'compiled_truth',
+        embedded_at: null,
+        token_count: 120,
+      }]],
+    ]);
+
+    const upserts: any[][] = [];
+    embedBatchBehavior = async (texts: string[]) => {
+      expect(texts.every(t => t.length <= 40)).toBe(true);
+      return texts.map(() => new Float32Array(1536));
+    };
+
+    const engine = mockEngine({
+      countStaleChunks: async () => 1,
+      listStaleChunks: async () => [{
+        slug,
+        chunk_index: 0,
+        chunk_text: 'x'.repeat(120),
+        chunk_source: 'compiled_truth' as const,
+        model: null,
+        token_count: 120,
+        source_id: 'default',
+        page_id: 1,
+      }],
+      getPage: async () => ({ slug, compiled_truth: 'x'.repeat(120), timeline: '' }),
+      getChunks: async () => chunksBySlug.get(slug) || [],
+      upsertChunks: async (_slug: string, inputs: any[]) => {
+        upserts.push(inputs);
+        chunksBySlug = new Map([[slug, inputs.map(i => ({ ...i, embedded_at: null }))]]);
+      },
+    });
+
+    await runEmbed(engine, ['--stale']);
+
+    expect(upserts.length).toBeGreaterThanOrEqual(2);
     expect(totalEmbedCalls).toBe(1);
   });
 });
