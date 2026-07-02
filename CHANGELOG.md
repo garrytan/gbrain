@@ -12,6 +12,25 @@ All notable changes to GBrain will be documented in this file.
 
 ### To take advantage of v0.42.56.0
 `gbrain upgrade`. No migration. New corruption is prevented going forward. A brain already corrupted by a prior concurrent open cannot be repaired in place; the upgraded error message walks you through `gbrain reinit-pglite` or restoring a backup.
+## [0.42.55.0] - 2026-06-24
+
+**A security-hardening pass: routing dotfiles, the skills directory, page slugs, and large-file transcription are confined against multi-user-host and untrusted-input edge cases; dynamic OAuth client registration defaults to a consent-bearing grant; and a schema-lint migration brings existing brains to the fresh-install posture.** Several of these close community-reported gaps. Fresh installs were already covered; existing brains are brought to the same bar automatically on upgrade. If `gbrain doctor` flags anything afterward, its message names the object and the exact fix.
+
+### Fixed
+- **Walk-up routing dotfiles are trust-gated.** On a shared multi-user host, a `.gbrain-source` / `.gbrain-mount` found by the ancestor-directory walk is accepted only when it's owned by you (or root) and is neither a symlink nor world-writable — otherwise it's skipped, fail-closed. The working-directory match that routes by registered path now resolves symlinks on both sides, so a redirected directory can't misattribute your source or brain. (#418, contributed by @garagon)
+- **The skills directory is confined to its workspace.** Every skills-dir resolution tier now requires the resolved directory to stay within the declared workspace, so a redirected `skills` entry can't point the loader outside it. (#419, contributed by @garagon)
+- **Page slugs reject unsafe characters at the write boundary.** The shared slug validator now rejects control bytes, bidirectional/RTL overrides, backslashes, and URL-encoded path separators on top of the existing traversal check, and the file-write path confirms the target stays inside the source's working tree. Ordinary slugs — including non-Latin and CJK — are unaffected.
+- **Large-file transcription no longer builds shell command strings.** The segmentation path invokes `ffprobe`/`ffmpeg` with argument arrays and removes its temp directory through the filesystem API, so a media path is never parsed by a shell. (#245, contributed by @aliceagent)
+- **Superuser-connected fresh installs no longer abort during migration.** The RLS preflight in the schema migrations recognizes superuser and inherited-role privileges, not just the role's own flag. (#1385)
+
+### Changed
+- **Dynamic client registration defaults to the consent-bearing grant.** With Dynamic Client Registration enabled, a self-registered client now defaults to `authorization_code` (which goes through the approval screen) instead of `client_credentials`. Operators who need the machine-to-machine grant opt in with the new `--enable-dcr-insecure` flag, and a startup warning prints whenever registration is open. Registering clients via the CLI or admin API is unchanged. (#1353)
+
+### Added
+- **Migration v120 — schema-lint hardening.** Brings existing brains to the fresh-install posture: the `page_links` view runs with the caller's privileges on Postgres, and the gbrain-owned trigger/event functions pin their schema search path on both engines. A new CI guard keeps new trigger functions from regressing. (#1647, #171)
+
+### To take advantage of v0.42.55.0
+`gbrain upgrade`, then `gbrain apply-migrations --yes` (or any command that opens the brain) to pick up migration v120 — no manual step, all on by default. Fresh installs already carry every change. The hardening applies automatically; `--enable-dcr-insecure` is the explicit escape hatch if you genuinely need the machine-to-machine OAuth grant.
 
 ## [0.42.53.0] - 2026-06-23
 

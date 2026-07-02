@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS pages (
 -- bookmark gate fires for any cache row stored before the new page existed.
 -- UPDATE: bumps only when content columns IS DISTINCT FROM (allow-list of
 -- 10 widened per D6) so read-time mutations don't invalidate every cache.
-CREATE OR REPLACE FUNCTION bump_page_generation_fn() RETURNS trigger AS $func$
+CREATE OR REPLACE FUNCTION bump_page_generation_fn() RETURNS trigger SET search_path = pg_catalog, public AS $func$
 BEGIN
   IF (TG_OP = 'INSERT') THEN
     NEW.generation := COALESCE((SELECT MAX(generation) FROM pages), 0) + 1;
@@ -179,7 +179,7 @@ SELECT setval('page_generation_clock_seq', GREATEST(
   COALESCE((SELECT MAX(generation) FROM pages), 0)
 ));
 
-CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger AS $func$
+CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger SET search_path = pg_catalog, public AS $func$
 BEGIN
   PERFORM nextval('page_generation_clock_seq');
   RETURN NULL;
@@ -1016,7 +1016,7 @@ ALTER TABLE pages ADD COLUMN IF NOT EXISTS search_vector tsvector;
 
 CREATE INDEX IF NOT EXISTS idx_pages_search ON pages USING GIN(search_vector);
 
-CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger SET search_path = pg_catalog, public AS $$
 DECLARE
   timeline_text TEXT;
 BEGIN

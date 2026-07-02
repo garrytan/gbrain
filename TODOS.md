@@ -78,17 +78,23 @@ job) and sync. See CLAUDE.md "Pace Mode".
   `get_timeline` through the federated source scope and taught the engine methods to honor
   `sourceIds[]`. The adversarial review (Codex + Claude) flagged sibling read ops in the
   SAME class that still use scalar-only `ctx.sourceId ? {sourceId} : {}` and never thread
-  `ctx.auth.allowedSources`: `get_chunks`, `get_raw_data`, `get_versions`, and `resolve_slugs`
-  (the standalone op — `resolve_slugs` passes NO scope at all). A remote federated client
-  (grant set, dispatch-default `ctx.sourceId='default'`) reads these against `default` or
-  unscoped, not its grant.
+  `ctx.auth.allowedSources`: `get_chunks`, `get_raw_data`, `get_versions`, `resolve_slugs`
+  (the standalone op — `resolve_slugs` passes NO scope at all), plus (per the v0.42.55.0
+  eng-review codex pass) `takes_search` (`operations.ts:1727` — holder-allowlist only, no
+  `sourceScopeOpts`) and `code_def` (`operations.ts:4155` — brain-wide raw SQL over
+  `content_chunks`; confirm whether brain-wide is intentional before scoping). A remote
+  federated client (grant set, dispatch-default `ctx.sourceId='default'`) reads these against
+  `default` or unscoped, not its grant.
   - **Why:** same cross-source correctness/isolation class #2200 targets; a federated client
-    can't read chunks/raw-data/versions for an authorized non-default source, and `resolve_slugs`
-    can fuzzy-resolve across all sources.
+    can't read chunks/raw-data/versions for an authorized non-default source, `resolve_slugs`
+    can fuzzy-resolve across all sources, and `takes_search`/`code_def` query without the grant.
+    The #2399 close-list deliberately did NOT blanket-close #1371/#2200 because of these residual
+    surfaces — close those issues only after this TODO lands.
   - **How to start:** mirror the #2200 pattern — route each handler through `sourceScopeOpts(ctx)`
     (or `linkReadScopeOpts` if a far endpoint exists), add `sourceIds?: string[]` to the engine
-    methods (`getChunks` / `getRawData` / `getVersions` / `resolveSlugs`) with `source_id = ANY($::text[])`
-    precedence, and add federated/isolation tests + engine-parity arms.
+    methods (`getChunks` / `getRawData` / `getVersions` / `resolveSlugs` / the takes-search +
+    code-def queries) with `source_id = ANY($::text[])` precedence, and add federated/isolation
+    tests + engine-parity arms.
   - **Depends on:** nothing; #2200 established the pattern and the `linkReadScopeOpts` helper.
 
 ## Spend-controls wave follow-ups (filed v0.42.45.0, #2139)
