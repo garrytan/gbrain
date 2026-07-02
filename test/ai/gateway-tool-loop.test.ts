@@ -94,9 +94,9 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     expect(result.totalUsage.output_tokens).toBe(9); // 4 + 5
   });
 
-  it('captures persistence callbacks in order: assistant → tool start → tool complete', async () => {
+  it('captures persistence callbacks in order: assistant → tool start → tool complete → tool results', async () => {
     let turn = 0;
-    __setChatTransportForTests(async () => {
+    __setChatTransportForTests(async (opts) => {
       turn++;
       if (turn === 1) {
         return {
@@ -110,6 +110,10 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
           providerId: 'anthropic',
         };
       }
+      expect(opts.messages.at(-1)).toEqual({
+        role: 'user',
+        content: [{ type: 'tool-result', toolCallId: 'tc1', toolName: 'echo', output: { msg: 'hi' } }],
+      });
       return {
         text: 'done',
         blocks: [{ type: 'text', text: 'done' }] as ChatBlock[],
@@ -139,15 +143,20 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
       onToolCallComplete: async (gbrainToolUseId, _output) => {
         events.push(`onToolCallComplete(${gbrainToolUseId})`);
       },
+      onToolResults: async (messageIdx, blocks) => {
+        events.push(`onToolResults(${messageIdx}, ${JSON.stringify(blocks)})`);
+      },
     });
 
     // Write-ordering invariant: assistant persisted BEFORE pending tool row;
-    // pending row persisted BEFORE execute; execute BEFORE complete.
+    // pending row persisted BEFORE execute; execute BEFORE complete; the
+    // synthesized user tool-result turn is persisted BEFORE the next chat call.
     expect(events[0]).toBe('onAssistantTurn(0)');
     expect(events[1]).toMatch(/onToolCallStart\(turn=0, ordinal=0, name=echo/);
     expect(events[2]).toMatch(/execute/);
     expect(events[3]).toMatch(/onToolCallComplete\(gb-0-0\)/);
-    expect(events[4]).toBe('onAssistantTurn(1)'); // final assistant turn
+    expect(events[4]).toMatch(/onToolResults\(1,/);
+    expect(events[5]).toBe('onAssistantTurn(1)'); // final assistant turn
   });
 
   it('replay short-circuits a complete prior tool execution', async () => {

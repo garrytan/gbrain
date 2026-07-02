@@ -784,6 +784,11 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     role: m.role as 'user' | 'assistant',
     content: adaptContentBlocksToChatBlocks(m.content_blocks),
   }));
+  // If a previous worker crashed after settling tool executions but before
+  // persisting the synthesized user tool-result turn, repair the transcript
+  // before the next provider call. Providers like DeepSeek reject assistant
+  // tool-call history without the following tool-result message.
+  await repairDanglingToolResultTurn(engine, ctx.id, priorMessages, priorChatMessages, priorTools);
 
   // Initial seed message if no prior state.
   const initialMessages: ChatMessage[] = priorChatMessages.length === 0
@@ -904,6 +909,18 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
         [errorMsg, gbrainToolUseId],
       );
     },
+    onToolResults: async (messageIdx, blocks) => {
+      await persistMessage(engine, ctx.id, {
+        message_idx: messageIdx,
+        role: 'user',
+        content_blocks: blocks as unknown as ContentBlock[],
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cache_read: null,
+        tokens_cache_create: null,
+        model: null,
+      });
+    },
     onHeartbeat: heartbeat,
   });
 
@@ -1016,9 +1033,79 @@ function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
 
 interface PriorToolV2Row {
   stableKey: string;
+  messageIdx: number;
+  providerToolUseId: string;
+  toolName: string;
+  ordinal: number | null;
   status: 'pending' | 'complete' | 'failed';
   output: unknown;
   error: string | null;
+}
+
+async function repairDanglingToolResultTurn(
+  engine: BrainEngine,
+  jobId: number,
+  priorMessages: PersistedMessage[],
+  priorChatMessages: ChatMessage[],
+  priorTools: PriorToolV2Row[],
+): Promise<void> {
+  const lastPersisted = priorMessages.at(-1);
+  const lastChat = priorChatMessages.at(-1);
+  if (!lastPersisted || lastPersisted.role !== 'assistant' || !lastChat || lastChat.role !== 'assistant') return;
+  if (!Array.isArray(lastChat.content)) return;
+
+  const toolCalls = lastChat.content.filter(
+    (b): b is { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown } =>
+      b.type === 'tool-call',
+  );
+  if (toolCalls.length === 0) return;
+
+  const toolResultBlocks: ChatBlock[] = [];
+  for (let callIdx = 0; callIdx < toolCalls.length; callIdx++) {
+    const call = toolCalls[callIdx];
+    const priorTool = priorTools.find((tool) => (
+      tool.messageIdx === lastPersisted.message_idx
+      && (
+        (tool.ordinal !== null && tool.ordinal === callIdx)
+        || (tool.providerToolUseId === call.toolCallId && tool.toolName === call.toolName)
+      )
+    ));
+    if (!priorTool || priorTool.status === 'pending') {
+      throw new Error(
+        `cannot repair replay transcript: missing settled result for tool "${call.toolName}" at message_idx=${lastPersisted.message_idx} ordinal=${callIdx}`,
+      );
+    }
+    toolResultBlocks.push({
+      type: 'tool-result',
+      toolCallId: call.toolCallId,
+      toolName: call.toolName,
+      output: priorTool.status === 'failed' ? (priorTool.error ?? 'tool failed') : priorTool.output,
+      ...(priorTool.status === 'failed' ? { isError: true } : {}),
+    });
+  }
+
+  const nextMessageIdx = Math.max(...priorMessages.map((m) => m.message_idx)) + 1;
+  await persistMessage(engine, jobId, {
+    message_idx: nextMessageIdx,
+    role: 'user',
+    content_blocks: toolResultBlocks as unknown as ContentBlock[],
+    tokens_in: null,
+    tokens_out: null,
+    tokens_cache_read: null,
+    tokens_cache_create: null,
+    model: null,
+  });
+  priorMessages.push({
+    message_idx: nextMessageIdx,
+    role: 'user',
+    content_blocks: toolResultBlocks as unknown as ContentBlock[],
+    tokens_in: null,
+    tokens_out: null,
+    tokens_cache_read: null,
+    tokens_cache_create: null,
+    model: null,
+  });
+  priorChatMessages.push({ role: 'user', content: toolResultBlocks });
 }
 
 /**
@@ -1051,6 +1138,10 @@ async function loadPriorToolsV2(engine: BrainEngine, jobId: number): Promise<Pri
       : `legacy:${jobId}:${r.message_idx}:${r.tool_use_id}:${r.tool_name}`;
     return {
       stableKey,
+      messageIdx: r.message_idx as number,
+      providerToolUseId: r.tool_use_id as string,
+      toolName: r.tool_name as string,
+      ordinal: (r.ordinal as number | null) ?? null,
       status: r.status as 'pending' | 'complete' | 'failed',
       output: r.output,
       error: (r.error as string | null) ?? null,

@@ -296,8 +296,14 @@ describe('SIGKILL crash-replay reconciliation across provider matrix (v0.38 LOAD
       // Stub the SECOND turn — replay should NOT call gateway.chat() for
       // turn 1 (the tool dispatch already happened pre-crash). It should
       // immediately re-feed the tool_result and ask the LLM for the final
-      // text answer.
-      __setChatTransportForTests(async () => provider.finalResponse);
+      // text answer. The stub validates the repaired provider-facing history.
+      __setChatTransportForTests(async (opts) => {
+        const last = opts.messages.at(-1);
+        expect(last?.role).toBe('user');
+        expect(JSON.stringify(last?.content)).toContain('tool-result');
+        expect(JSON.stringify(last?.content)).toContain('provider-tc-v2-crashed');
+        return provider.finalResponse;
+      });
 
       const executions: Array<{ name: string; input: unknown }> = [];
       const tools = makeStubTools(executions);

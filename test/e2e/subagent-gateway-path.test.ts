@@ -253,6 +253,25 @@ describe('runSubagentViaGateway (v0.38 Slice 1 — full handler path through gat
     expect(String(toolRows[0].gbrain_tool_use_id)).toMatch(/^[0-9a-f-]{36}$/); // UUID v7
     expect(toolRows[0].tool_use_id).toBe('provider-tc-1'); // provider id preserved
 
+    // Verify synthesized tool-result turn is persisted between the assistant
+    // tool-call turn and the final assistant turn. This is the #1886 invariant:
+    // replay must not reconstruct an assistant tool call with no following result.
+    const messages = await engine.executeRaw<Record<string, unknown>>(
+      `SELECT message_idx, role, content_blocks
+         FROM subagent_messages
+        WHERE job_id = $1
+        ORDER BY message_idx`,
+      [jobId],
+    );
+    expect(messages.map((m) => [m.message_idx, m.role])).toEqual([
+      [0, 'user'],
+      [1, 'assistant'],
+      [2, 'user'],
+      [3, 'assistant'],
+    ]);
+    expect(JSON.stringify(messages[2].content_blocks)).toContain('tool-result');
+    expect(JSON.stringify(messages[2].content_blocks)).toContain('provider-tc-1');
+
     // Token accumulation across both turns.
     expect(result.tokens.in).toBe(45); // 20 + 25
     expect(result.tokens.out).toBe(12); // 8 + 4
