@@ -1987,10 +1987,32 @@ export async function runCycle(
       } else {
         progress.start('cycle.consolidate');
         const { runPhaseConsolidate } = await import('./cycle/phases/consolidate.ts');
+        // Consolidate gates are config-tunable (DB plane). Unset keys keep the
+        // built-in defaults (0.85 cluster / 3 facts / 24h age), so behavior is
+        // unchanged unless an operator opts in. Federated multi-source brains
+        // (entity pages in one source, facts in others) or short-lived source
+        // corpora often need a lower cluster threshold and/or age gate than the
+        // single-personal-brain defaults assume.
+        const consolidateNum = async (key: string): Promise<number | undefined> => {
+          try {
+            const raw = await engine.getConfig(key);
+            if (raw === null || raw === undefined) return undefined;
+            const n = Number(raw);
+            return Number.isFinite(n) ? n : undefined;
+          } catch {
+            return undefined;
+          }
+        };
+        const clusterThreshold = await consolidateNum('consolidate.cluster_threshold');
+        const minFactsPerBucket = await consolidateNum('consolidate.min_facts_per_bucket');
+        const minOldestAgeHours = await consolidateNum('consolidate.min_oldest_age_hours');
         const { result, duration_ms } = await timePhase(() => runPhaseConsolidate(engine, {
           dryRun,
           yieldDuringPhase: opts.yieldDuringPhase,
           signal: opts.signal,
+          ...(clusterThreshold !== undefined ? { clusterThreshold } : {}),
+          ...(minFactsPerBucket !== undefined ? { minFactsPerBucket } : {}),
+          ...(minOldestAgeHours !== undefined ? { minOldestAgeMs: minOldestAgeHours * 3_600_000 } : {}),
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
