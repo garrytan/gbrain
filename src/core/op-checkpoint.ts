@@ -180,25 +180,20 @@ export async function recordCompleted(
   // extract-conversation-facts serialize a MUTABLE map through here and rely on
   // stale keys being REMOVED; an append would make them unremovable. The full
   // set lands in the parent `completed_keys` JSONB column via a single UPSERT.
-  // #2339: bind through `$3::text::jsonb`, NOT `$3::jsonb`. Under postgres.js
-  // `.unsafe(sql, params)` (executeRawDirect's path) a JS string bound to a
-  // `$N::jsonb` param double-encodes — the text→jsonb cast wraps the already-JSON
-  // string into a jsonb *string scalar*, which fails the v119
-  // `op_checkpoints_completed_keys_array CHECK (jsonb_typeof = 'array')` and aborts
-  // every sync on real Postgres (PGLite parses it silently, which hid the bug).
-  // Casting through `text` first binds it as a plain text param so the text→jsonb
-  // cast parses it into a genuine jsonb array. This is the positional-param form of
-  // the CLAUDE.md double-encode trap (the grep guard only caught the template form).
-  // Sync uses `appendCompleted` (below, `unnest($3::text[])`) instead, never this.
+  // `completed_keys` must remain a JSONB array: native Postgres/postgres.js
+  // unsafe/direct binding can turn a JSON-stringified array plus `$3::jsonb`
+  // into a JSONB string. Binding the sorted JS string[] as text[] and converting
+  // server-side with to_jsonb() preserves the array shape while keeping
+  // replace/upsert semantics and deterministic ordering unchanged.
   const sorted = [...keys].sort();
   return durableWrite(engine, key, 'write', () =>
     engine.executeRawDirect(
       `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-       VALUES ($1, $2, $3::text::jsonb, now())
+       VALUES ($1, $2, to_jsonb($3::text[]), now())
        ON CONFLICT (op, fingerprint) DO UPDATE
          SET completed_keys = EXCLUDED.completed_keys,
              updated_at     = now()`,
-      [key.op, key.fingerprint, JSON.stringify(sorted)],
+      [key.op, key.fingerprint, sorted],
     ));
 }
 
