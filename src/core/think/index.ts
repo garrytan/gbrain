@@ -26,7 +26,7 @@ import { resolveCitations, type ParsedCitation } from './cite-render.ts';
 import { resolveModel } from '../model-config.ts';
 import { chat as gatewayChat, probeChatModel, type ChatResult } from '../ai/gateway.ts';
 import { AIConfigError } from '../ai/errors.ts';
-import { normalizeModelId } from '../model-id.ts';
+import { normalizeModelId, splitProviderModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
@@ -439,7 +439,9 @@ export async function runThink(
     // Closes #952 (think over MCP returns "no LLM available").
     const client = opts.client ?? await tryBuildGatewayClient(modelUsed, { explicitModel: opts.modelExplicit });
     if (!client) {
-      warnings.push('NO_ANTHROPIC_API_KEY');
+      // Warnings about API keys are now handled per-provider in gateway
+      const providerId = splitProviderModelId(modelUsed).provider;
+      if (providerId === 'anthropic') warnings.push('NO_ANTHROPIC_API_KEY');
       // Degrade gracefully: return the gather without synthesis. Better than throwing.
       return {
         question: opts.question,
@@ -748,7 +750,7 @@ function buildGracefulMessage(modelStr: string): {
     type: 'message',
     role: 'assistant',
     model: modelStr,
-    content: [{ type: 'text', text: '(no LLM available — set anthropic_api_key via gbrain config or ANTHROPIC_API_KEY env)' }],
+    content: [{ type: 'text', text: '(no LLM available — set chat_model, expansion_model, or anthropic_api_key via gbrain config)' }],
     usage: { input_tokens: 0, output_tokens: 0 },
     stop_reason: 'end_turn',
   };

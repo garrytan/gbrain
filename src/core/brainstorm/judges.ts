@@ -361,6 +361,11 @@ function isAxisScoreInRange(n: unknown): n is number {
 function validateIdeaShape(raw: unknown): { id: string; scores: JudgeAxisScores; note: string } | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const r = raw as Record<string, unknown>;
+  // Some models (e.g. Kimi K2) return numeric ids instead of string ids like "Idea 01".
+  // Coerce to string for compatibility.
+  if (typeof r.id === 'number') {
+    r.id = 'Idea ' + String(r.id).padStart(2, '0');
+  }
   if (typeof r.id !== 'string') return null;
   const note = typeof r.note === 'string' ? r.note : '';
   const s = r.scores;
