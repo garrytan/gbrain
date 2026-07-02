@@ -47,6 +47,7 @@ import {
 } from '../core/schema-pack/index.ts';
 import type { SchemaPackManifest, PackPrimitive } from '../core/schema-pack/manifest-v1.ts';
 import { PACK_PRIMITIVES } from '../core/schema-pack/manifest-v1.ts';
+import { bundledPackPath, BUNDLED_PACK_LIST } from '../core/schema-pack/bundled-packs.ts';
 import { gbrainPath, loadConfig, configPath } from '../core/config.ts';
 
 export async function runSchema(args: string[]): Promise<void> {
@@ -179,7 +180,7 @@ async function runActive(_args: string[]): Promise<void> {
 }
 
 function runList(_args: string[]): void {
-  const bundled = ['gbrain-base', 'gbrain-recommended'];
+  const bundled = [...BUNDLED_PACK_LIST];
   const installedDir = gbrainPath('schema-packs');
   const installed: string[] = [];
   if (existsSync(installedDir)) {
@@ -366,18 +367,13 @@ function runUse(args: string[]): void {
 }
 
 function packPathByName(name: string): string | null {
-  if (name === 'gbrain-base') {
-    // Resolve bundled YAML — try a few locations.
-    const here = dirname(new URL(import.meta.url).pathname);
-    const candidates = [
-      join(here, '..', 'core', 'schema-pack', 'base', 'gbrain-base.yaml'),
-      join(here, '..', '..', 'src', 'core', 'schema-pack', 'base', 'gbrain-base.yaml'),
-    ];
-    for (const c of candidates) {
-      if (existsSync(c)) return c;
-    }
-    return null;
-  }
+  // v0.42.52 — route ALL bundled packs (not just gbrain-base) through the
+  // central embedded registry so `gbrain schema show|validate|use|fork
+  // <bundled>` works in the compiled binary. Previously only gbrain-base
+  // was handled here (via on-disk import.meta.url, broken under --compile)
+  // and the other six bundled packs were unreachable from the CLI.
+  const embedded = bundledPackPath(name);
+  if (embedded) return embedded;
   const baseDir = gbrainPath('schema-packs', name);
   for (const c of ['pack.yaml', 'pack.yml', 'pack.json']) {
     const candidate = join(baseDir, c);

@@ -335,7 +335,11 @@ async function fetchRowsLocal(
     });
   }
   if (flags.entity) {
-    const slug = (await resolveEntitySlug(engine, sourceId, flags.entity)) ?? flags.entity;
+    // v0.42.52 — null resolution means `flags.entity` is not a real entity
+    // (e.g. the literal "null"); return no facts instead of querying the raw
+    // string and surfacing legacy orphan rows.
+    const slug = await resolveEntitySlug(engine, sourceId, flags.entity);
+    if (slug === null) return [];
     return engine.listFactsByEntity(sourceId, slug, {
       activeOnly: !flags.includeExpired,
       limit: flags.limit,

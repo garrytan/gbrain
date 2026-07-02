@@ -165,6 +165,27 @@ describe('runFactsBackstop — mode: inline', () => {
     }
   });
 
+  // v0.42.52 Layer 1a — a model that emits the literal string "null" as the
+  // entity must NOT produce a `null`-slug orphan: the fact is KEPT (inserted)
+  // but UNBOUND (entity_slug IS NULL), routed through the legacy DB-only
+  // bucket — never dropped.
+  test('entity "null" stays unbound (entity_slug NULL), fact still inserted', async () => {
+    const sessionId = 'null-entity-session-' + Math.random().toString(36).slice(2, 9);
+    chatStub([{ fact: 'unbound-null-entity-fact', kind: 'fact', notability: 'medium', entity: 'null' }]);
+    const r = await runFactsBackstop(
+      meetingPage(),
+      makeCtx({ mode: 'inline', sessionId }),
+    );
+    expect(r.mode).toBe('inline');
+    if (r.mode === 'inline') {
+      expect(r.inserted).toBe(1); // kept, not dropped
+      const rows = await engine.listFactsBySession('default', sessionId);
+      const ours = rows.find(x => x.id === r.fact_ids[0]);
+      expect(ours).toBeDefined();
+      expect(ours?.entity_slug == null).toBe(true); // unbound, NOT literal "null"
+    }
+  });
+
   test('aborted before LLM call → zero counts, no throw', async () => {
     chatStub([]);
     const ac = new AbortController();

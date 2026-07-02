@@ -144,8 +144,9 @@ the signal for which to promote.
 
 ### Phase 4 — Apply (mutate the pack)
 
-If the active pack is bundled (`gbrain-base` or `gbrain-recommended`),
-fork it first:
+If the active pack is bundled (any of the 7 read-only packs: `gbrain-base`,
+`gbrain-base-v2`, `gbrain-recommended`, `gbrain-creator`, `gbrain-investor`,
+`gbrain-engineer`, `gbrain-everything`), fork it first:
 
 ```
 gbrain schema fork gbrain-base mine
@@ -251,7 +252,7 @@ loadActivePack — v0.40.6.0 closed the cross-process invalidation gap).
 
 ## Anti-Patterns
 
-- **Don't mutate `gbrain-base` or `gbrain-recommended`.** Fork first (`gbrain schema fork gbrain-base mine`). These are bundled packs; edits would be lost on upgrade. The mutation primitives refuse with `PACK_READONLY`.
+- **Don't mutate a bundled pack.** All 7 are read-only (`gbrain-base`, `gbrain-base-v2`, `gbrain-recommended`, `gbrain-creator`, `gbrain-investor`, `gbrain-engineer`, `gbrain-everything`). Fork first (`gbrain schema fork gbrain-base mine`). Edits would be lost on upgrade; the mutation primitives refuse with `PACK_READONLY`.
 - **Don't add a type for a directory you imported once for triage.** Pack types are permanent decisions; one-time imports are not. See `skills/conventions/schema-evolution.md` for the <20-pages-don't-pack-codify heuristic.
 - **Don't add `--expert` to a type with no `path_prefixes`.** The `expert_routing_without_prefix` lint warns about this — expert-routed types with no prefix never match a put_page inference, so `whoknows` silently never surfaces them.
 - **Don't promote a `schema suggest` candidate without verifying the prefix matches real content.** Run `lint --with-db` before `add-type` to catch prefix collisions pre-write.

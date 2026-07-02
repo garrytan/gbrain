@@ -819,18 +819,40 @@ const put_page: Operation = {
     // page_types. Best-effort: pack load failure falls back to legacy inferType
     // (parity gate preserved). Federated-read closure correction is T19's scope.
     let activePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined;
-    try {
-      const { loadActivePack } = await import('./schema-pack/load-active.ts');
+    {
+      const { loadActivePack, resolveActivePackNameOnly } = await import('./schema-pack/load-active.ts');
       const { loadConfig } = await import('./config.ts');
-      const resolved = await loadActivePack({
-        cfg: loadConfig(),
-        remote: ctx.remote === false ? false : true,
-        sourceId: ctx.sourceId,
-      });
-      activePack = { page_types: resolved.manifest.page_types };
-    } catch {
-      // Pack load failed; fall through to legacy inferType behavior.
-      activePack = undefined;
+      const cfg = loadConfig();
+      const packRemote = ctx.remote === false ? false : true;
+      const resolution = resolveActivePackNameOnly({ cfg, remote: packRemote, sourceId: ctx.sourceId });
+      try {
+        const resolved = await loadActivePack({ cfg, remote: packRemote, sourceId: ctx.sourceId });
+        activePack = { page_types: resolved.manifest.page_types };
+      } catch (e) {
+        // v0.42.52 FAIL-CLOSED. A *configured* pack (resolved from anything
+        // but the built-in `default` tier) that won't load must NOT silently
+        // degrade to hardcoded prefixes + skipped type validation — that is
+        // exactly how the 32-vs-15 type sprawl + bad slugs accumulated. Refuse
+        // the write loudly so the pack-load breakage is fixed, not papered over.
+        if (resolution.source !== 'default') {
+          throw new Error(
+            `[schema] configured schema pack \`${resolution.pack_name}\` (source: ${resolution.source}) ` +
+            `failed to load: ${(e as Error).message}. Refusing put_page rather than writing with ` +
+            `degraded type validation. Fix the pack (\`gbrain schema active\`) or unset the override.`,
+          );
+        }
+        // Default pack (gbrain-base) failed to load. Post-v0.42.52 this means
+        // the embedded-pack assets regressed (the bundled YAML isn't in the
+        // binary) — loud-warn and degrade ONLY for the default so a brain with
+        // no configured pack still writes. The functional guard
+        // (scripts/check-packs-embedded.sh) exists to catch this in CI.
+        console.error(
+          `[schema] WARNING: default schema pack \`${resolution.pack_name}\` failed to load: ` +
+          `${(e as Error).message}. Type validation is DISABLED for this write — this indicates a ` +
+          `broken build (bundled packs not embedded). Run \`scripts/check-packs-embedded.sh\`.`,
+        );
+        activePack = undefined;
+      }
     }
     const result = await importFromContent(ctx.engine, slug, p.content as string, {
       noEmbed,
@@ -3958,8 +3980,12 @@ const recall: Operation = {
       rows = await ctx.engine.listSupersessions(sourceId, { since: since ?? undefined, limit });
     } else if (typeof p.entity === 'string' && p.entity.length > 0) {
       const { resolveEntitySlug } = await import('./entities/resolve.ts');
-      const slug = (await resolveEntitySlug(ctx.engine, sourceId, p.entity)) ?? p.entity;
-      rows = await ctx.engine.listFactsByEntity(sourceId, slug, {
+      // v0.42.52 — a null resolution means `p.entity` is not a real entity
+      // binding (e.g. the literal "null"). Return no facts rather than
+      // falling back to the raw string, which would surface legacy
+      // `entity_slug` orphan rows as if they were valid results.
+      const slug = await resolveEntitySlug(ctx.engine, sourceId, p.entity);
+      rows = slug === null ? [] : await ctx.engine.listFactsByEntity(sourceId, slug, {
         activeOnly: !includeExpired,
         limit,
         visibility,
@@ -4516,7 +4542,11 @@ const list_schema_packs: Operation = {
     const { existsSync, readdirSync } = await import('node:fs');
     const { join } = await import('node:path');
     const { gbrainPath } = await import('./config.ts');
-    const bundled = ['gbrain-base', 'gbrain-recommended'];
+    // v0.42.52 — enumerate from the central embedded registry (all 7),
+    // not a hardcoded 2-element list that hid creator/investor/engineer/
+    // everything/base-v2 from MCP callers (e.g. brain-taxonomist).
+    const { BUNDLED_PACK_LIST } = await import('./schema-pack/bundled-packs.ts');
+    const bundled = [...BUNDLED_PACK_LIST];
     const installedDir = gbrainPath('schema-packs');
     const installed: string[] = [];
     if (existsSync(installedDir)) {
@@ -4565,11 +4595,17 @@ const schema_lint: Operation = {
       // Locate by name without trust-gating per-call schema_pack opt
       // (that's a separate axis — this is just file lookup).
       const packName = p.pack as string;
-      const candidates = ['pack.yaml', 'pack.yml', 'pack.json'];
-      let path: string | null = null;
-      for (const c of candidates) {
-        const candidate = join(gbrainPath('schema-packs', packName), c);
-        if (existsSync(candidate)) { path = candidate; break; }
+      // v0.42.52 — check the embedded bundled registry FIRST so
+      // `schema_lint({pack:"gbrain-base"})` (and the other 6 bundled packs)
+      // works over MCP; previously this only scanned ~/.gbrain/schema-packs
+      // and returned pack_not_found for every bundled pack.
+      const { bundledPackPath } = await import('./schema-pack/bundled-packs.ts');
+      let path: string | null = bundledPackPath(packName);
+      if (!path) {
+        for (const c of ['pack.yaml', 'pack.yml', 'pack.json']) {
+          const candidate = join(gbrainPath('schema-packs', packName), c);
+          if (existsSync(candidate)) { path = candidate; break; }
+        }
       }
       if (!path) return { error: 'pack_not_found', pack: packName };
       const { loadPackFromFile: loader } = await import('./schema-pack/loader.ts');

@@ -44,6 +44,7 @@ CHECKS=(
   "check:progress"
   "check:test-isolation"
   "check:wasm"
+  "check:packs"
   "check:admin-build"
   "check:admin-scope-drift"
   "check:cli-exec"

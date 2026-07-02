@@ -28,6 +28,7 @@ import { resolveModel } from '../model-config.ts';
 import { normalizeModelId } from '../model-id.ts';
 import type { BrainEngine, NewFact, FactKind } from '../engine.ts';
 import { normalizeMetricLabel } from './extract-from-fence.ts';
+import { isNonEntityToken } from '../entities/resolve.ts';
 
 /**
  * v0.31 (D15): kill-switch for fact extraction.
@@ -286,6 +287,21 @@ export function parseExtractorJson(raw: string): RawExtracted[] | null {
   return null;
 }
 
+/**
+ * v0.42.52 Layer 1a — coerce a model-emitted `entity` field to a real
+ * binding or JSON null. A model that returns the literal STRING "null" (or
+ * "none", whitespace, etc.) must NOT seed a `null`-slug orphan downstream —
+ * map all non-entity tokens to actual null so the fact stays unbound. Uses
+ * the same NON_ENTITY_TOKENS set as the resolveEntitySlug floor (one source
+ * of truth).
+ */
+function normalizeExtractedEntity(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const t = raw.trim();
+  if (!t || isNonEntityToken(t)) return null;
+  return t;
+}
+
 function tryArrayShape(s: string): RawExtracted[] | null {
   try {
     const parsed = JSON.parse(s) as unknown;
@@ -300,7 +316,7 @@ function tryArrayShape(s: string): RawExtracted[] | null {
       out.push({
         fact: o.fact,
         kind: o.kind,
-        entity: typeof o.entity === 'string' ? o.entity : null,
+        entity: normalizeExtractedEntity(o.entity),
         confidence: typeof o.confidence === 'number' ? o.confidence : 1.0,
         notability: typeof o.notability === 'string' ? o.notability : undefined,
         // v0.35.4 (D-CDX-2) — typed-claim fields. Strict shape: metric/unit/period

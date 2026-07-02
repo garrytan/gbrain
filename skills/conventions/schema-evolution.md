@@ -89,7 +89,7 @@ imports under `meetings/` infer `meeting` type via the pack.
   `expert_routing_without_prefix` lint rule warns about this exact
   shape: an expert-routed type with no prefix never matches a put_page
   inference, so `whoknows` silently never surfaces it.
-- **Don't mutate `gbrain-base` or `gbrain-recommended`.** Fork first.
+- **Don't mutate a bundled pack** (all 7 are read-only: `gbrain-base`, `gbrain-base-v2`, `gbrain-recommended`, `gbrain-creator`, `gbrain-investor`, `gbrain-engineer`, `gbrain-everything`). Fork first.
 
 ## When to remove a type
 

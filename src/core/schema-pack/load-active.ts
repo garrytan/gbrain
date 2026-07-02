@@ -22,12 +22,12 @@
 // writing to `~/.gbrain/schema-packs/`.
 
 import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import type { GBrainConfig } from '../config.ts';
 import { gbrainPath } from '../config.ts';
 import type { SchemaPackManifest } from './manifest-v1.ts';
 import { loadPackFromFile } from './loader.ts';
+import { bundledPackPath } from './bundled-packs.ts';
 import {
   resolveActivePackName,
   resolvePack,
@@ -92,39 +92,16 @@ export function _resetPackLocatorForTests(): void {
  * throwing UnknownPackError with a paste-ready install hint.
  */
 function defaultPackLocator(name: string): string | null {
-  // v0.39 T8 — bundled packs registry. gbrain-base + gbrain-recommended
-  // ship in src/core/schema-pack/base/. Add a new entry here to bundle
-  // additional canonical packs.
-  //
-  // v0.41 T4 — lens packs join the bundle: creator (atoms + concepts +
-  // extract_atoms/synthesize_concepts phases), investor (theses + bet
-  // resolution + 3 calibration domains), engineer (gstack-learnings bridge
-  // + 3 calibration domains), everything (meta-pack stacking all three
-  // via extends + borrow_from). Each ships as a real YAML at base/<name>.yaml.
-  const BUNDLED: ReadonlyArray<string> = [
-    'gbrain-base',
-    'gbrain-recommended',
-    'gbrain-creator',
-    'gbrain-investor',
-    'gbrain-engineer',
-    'gbrain-everything',
-    // v0.42 type-unification: 15-type canonical successor to gbrain-base.
-    // Ships as install default (Lane E T17) + via gbrain onboard pack
-    // upgrade flow (the unify-types Minion handler).
-    'gbrain-base-v2',
-  ];
-  if (BUNDLED.includes(name)) {
-    // Resolve bundled YAML relative to this source file. Works in both
-    // direct-bun execution and bun --compile binaries.
-    const here = dirname(fileURLToPath(import.meta.url));
-    const bundledPath = join(here, 'base', `${name}.yaml`);
-    if (existsSync(bundledPath)) return bundledPath;
-    // Repo-root fallback for tests running from a worktree where the
-    // module path doesn't resolve to the source tree.
-    const repoRootFallback = join(here, '..', '..', '..', 'src', 'core', 'schema-pack', 'base', `${name}.yaml`);
-    if (existsSync(repoRootFallback)) return repoRootFallback;
-    return null;
-  }
+  // v0.42.52 — bundled packs are EMBEDDED as Bun file assets and routed
+  // through the central registry (bundled-packs.ts). The embedded import
+  // evaluates to a path that is readable in BOTH `bun run` and
+  // `bun build --compile` binaries — fixing the silent compile bug where
+  // the old `fileURLToPath(import.meta.url)` + existsSync locator returned
+  // null inside `/$bunfs/root` (YAML not on disk) and took the whole pack
+  // resolution down (active pack `extends: gbrain-base`). Add a new bundled
+  // pack by editing the registry, not here.
+  const embedded = bundledPackPath(name);
+  if (embedded) return embedded;
   // User-installed pack at ~/.gbrain/schema-packs/<name>/pack.{yaml,json}
   const baseDir = gbrainPath('schema-packs', name);
   const candidates = ['pack.yaml', 'pack.yml', 'pack.json'];
