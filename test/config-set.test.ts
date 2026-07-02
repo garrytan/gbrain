@@ -38,6 +38,12 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('embed.backfill_max_usd');
   });
 
+  test('contains cycle_freshness cadence keys (nightly dashboard tuning)', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('doctor.cycle_freshness.warn_hours');
+    expect(KNOWN_CONFIG_KEYS).toContain('doctor.cycle_freshness.fail_hours');
+    expect(KNOWN_CONFIG_KEYS).toContain('doctor.cycle_freshness.source_allowlist');
+  });
+
   test('no duplicate entries', () => {
     const set = new Set(KNOWN_CONFIG_KEYS);
     expect(set.size).toBe(KNOWN_CONFIG_KEYS.length);
