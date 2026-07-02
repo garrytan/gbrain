@@ -37,6 +37,7 @@
 import { createHash } from 'node:crypto';
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
+import { resolveModel } from '../model-config.ts';
 import { GBrainError } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine, Take, TakeResolution } from '../engine.ts';
@@ -395,7 +396,15 @@ class GradeTakesPhase extends BaseCyclePhase {
     const autoResolve = opts.autoResolve ?? false; // D17 default OFF
     const autoResolveThreshold = opts.autoResolveThreshold ?? 0.95; // D12 conservative
     const resolvedByLabel = opts.resolvedByLabel ?? 'gbrain:grade_takes';
-    const judgeModelId = opts.model ?? 'claude-sonnet-4-6';
+    // Resolve model via the gateway tier resolver so non-Anthropic stacks
+    // (ollama, openrouter, litellm, openai-compat) work without
+    // ANTHROPIC_API_KEY. Falls through opts.model → config key →
+    // models.tier.reasoning → TIER_DEFAULTS.reasoning.
+    const judgeModelId = opts.model ?? await resolveModel(engine, {
+      configKey: 'models.dream.grade_takes',
+      tier: 'reasoning',
+      fallback: 'claude-sonnet-4-6',
+    });
 
     const useEnsemble = opts.useEnsemble ?? false;
     const ensembleThreshold = opts.ensembleThreshold ?? 0.85;
@@ -468,7 +477,7 @@ class GradeTakesPhase extends BaseCyclePhase {
       // Call the single-model judge. Errors on a single take log warning + continue.
       let verdict: JudgeVerdict;
       try {
-        verdict = await judge({ take, evidence, modelHint: opts.model });
+        verdict = await judge({ take, evidence, modelHint: judgeModelId });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         result.warnings.push(`judge failed on take ${take.id}: ${msg}`);

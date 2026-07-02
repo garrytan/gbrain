@@ -42,6 +42,7 @@ import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-
 import { chat as gatewayChat } from '../ai/gateway.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { resolveModel } from '../model-config.ts';
 import { GBrainError } from '../types.ts';
 import type { Page, PageFilters } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
@@ -309,6 +310,16 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
+    // Resolve model via the gateway tier resolver so non-Anthropic stacks
+    // (ollama, openrouter, litellm, openai-compat) work without
+    // ANTHROPIC_API_KEY. Falls through opts.model → config key →
+    // models.tier.reasoning → TIER_DEFAULTS.reasoning.
+    const resolvedModel = opts.model ?? await resolveModel(engine, {
+      configKey: 'models.dream.propose_takes',
+      tier: 'reasoning',
+      fallback: 'claude-sonnet-4-6',
+    });
+
     const result: ProposeTakesResult = {
       pages_scanned: 0,
       cache_hits: 0,
@@ -359,7 +370,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
 
       // Budget pre-check before the LLM call. Estimate: ~1500 input tokens + 500 output.
       const budget = this.checkBudget({
-        modelId: opts.model ?? 'claude-sonnet-4-6',
+        modelId: resolvedModel,
         estimatedInputTokens: 1500,
         maxOutputTokens: 500,
       });
@@ -378,7 +389,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           pagePath: page.slug,
           pageBody: body,
           existingTakes,
-          modelHint: opts.model,
+          modelHint: resolvedModel,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -408,7 +419,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
             p.weight,
             p.domain ?? null,
             JSON.stringify(existingTakes),
-            opts.model ?? 'claude-sonnet-4-6',
+            resolvedModel,
           ],
         );
         result.proposals_inserted += 1;

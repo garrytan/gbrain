@@ -27,6 +27,7 @@
 
 import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
+import { resolveModel } from '../model-config.ts';
 import { gateVoice, type VoiceGateGenerator, type VoiceGateJudge } from '../calibration/voice-gate.ts';
 import { patternStatementTemplate, type PatternStatementSlots } from '../calibration/templates.ts';
 // v0.41 T10 — domain widening. The aggregator module resolves the active
@@ -228,7 +229,15 @@ class CalibrationProfilePhase extends BaseCyclePhase {
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
     const holder = opts.holder ?? 'garry';
     const promptVersion = opts.promptVersion ?? CALIBRATION_PROFILE_PROMPT_VERSION;
-    const modelId = opts.model ?? 'claude-sonnet-4-6';
+    // Resolve model via the gateway tier resolver so non-Anthropic stacks
+    // (ollama, openrouter, litellm, openai-compat) work without
+    // ANTHROPIC_API_KEY. Falls through opts.model → config key →
+    // models.tier.reasoning → TIER_DEFAULTS.reasoning.
+    const modelId = opts.model ?? await resolveModel(engine, {
+      configKey: 'models.dream.calibration_profile',
+      tier: 'reasoning',
+      fallback: 'claude-sonnet-4-6',
+    });
     const gradeCompletion = opts.gradeCompletion ?? 1.0;
     const patternsGenerator = opts.patternsGenerator ?? defaultPatternsGenerator;
     const biasTagsGenerator = opts.biasTagsGenerator ?? defaultBiasTagsGenerator;
