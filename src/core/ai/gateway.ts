@@ -24,6 +24,10 @@
 import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { listRecipes } from './recipes/index.ts';
+import {
+  OPENROUTER_ANTHROPIC_CACHE_SENTINEL,
+  openrouterRequiresExplicitPromptCache,
+} from './recipes/openrouter.ts';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAnthropic } from '@ai-sdk/anthropic';
@@ -377,7 +381,7 @@ export function applyOpenAICompatConfig(
   cfg: AIGatewayConfig,
 ): { baseURL: string; fetch?: typeof fetch } {
   if (recipe.resolveOpenAICompatConfig) {
-    return recipe.resolveOpenAICompatConfig(cfg.env);
+    return recipe.resolveOpenAICompatConfig(cfg.env, cfg.base_urls?.[recipe.id]);
   }
   const baseURL = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
   if (!baseURL) {
@@ -2476,6 +2480,12 @@ export function probeChatModel(modelStr: string): ChatModelProbe {
   return { ok: true };
 }
 
+function chatSupportsPromptCache(recipe: Recipe, modelId: string): boolean {
+  const support = recipe.touchpoints.chat?.supports_prompt_cache;
+  if (typeof support === 'function') return support(modelId);
+  return support === true;
+}
+
 async function resolveChatProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
@@ -2711,7 +2721,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const modelStr = modelStrEarly;
   const { model, recipe, modelId } = await resolveChatProvider(modelStr);
 
-  const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;
+  const supportsCache = chatSupportsPromptCache(recipe, modelId);
   const useCache = !!opts.cacheSystem && supportsCache;
 
   // Build messages. Anthropic prompt-cache markers ride on system + last tool
@@ -2731,7 +2741,13 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   }, {} as Record<string, any>);
 
   const providerOptions: Record<string, any> = {};
-  if (useCache) {
+  if (useCache && recipe.id === 'openrouter' && openrouterRequiresExplicitPromptCache(modelId)) {
+    // OpenRouter's OpenAI-compatible adapter only accepts OpenAI-shaped
+    // providerOptions. Send a private marker through a supported OpenAI field;
+    // the OpenRouter fetch shim converts it to top-level `cache_control` and
+    // strips the marker before the request leaves the process.
+    providerOptions.openai = { promptCacheKey: OPENROUTER_ANTHROPIC_CACHE_SENTINEL };
+  } else if (useCache && recipe.id !== 'openrouter') {
     providerOptions.anthropic = { cacheControl: { type: 'ephemeral' } };
   }
 
@@ -2799,8 +2815,24 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     const providerMetadata = (result as any).providerMetadata as Record<string, any> | undefined;
     const anthropicCache = providerMetadata?.anthropic ?? {};
 
-    const inTok = Number(usage.inputTokens ?? usage.promptTokens ?? 0);
-    const outTok = Number(usage.outputTokens ?? usage.completionTokens ?? 0);
+    const inputUsage = (usage as any).inputTokens;
+    const outputUsage = (usage as any).outputTokens;
+    const inTok = Number(
+      typeof inputUsage === 'object' && inputUsage !== null
+        ? inputUsage.total
+        : inputUsage ?? (usage as any).promptTokens ?? 0,
+    );
+    const outTok = Number(
+      typeof outputUsage === 'object' && outputUsage !== null
+        ? outputUsage.total
+        : outputUsage ?? (usage as any).completionTokens ?? 0,
+    );
+    const openaiCacheRead = typeof inputUsage === 'object' && inputUsage !== null
+      ? Number(inputUsage.cacheRead ?? 0)
+      : 0;
+    const openaiCacheWrite = typeof inputUsage === 'object' && inputUsage !== null
+      ? Number(inputUsage.cacheWrite ?? 0)
+      : 0;
     _recordBudget(`${recipe.id}:${modelId}`, inTok, outTok);
 
     return {
@@ -2810,8 +2842,8 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       usage: {
         input_tokens: inTok,
         output_tokens: outTok,
-        cache_read_tokens: Number(anthropicCache.cacheReadInputTokens ?? anthropicCache.cache_read_input_tokens ?? 0),
-        cache_creation_tokens: Number(anthropicCache.cacheCreationInputTokens ?? anthropicCache.cache_creation_input_tokens ?? 0),
+        cache_read_tokens: Number(anthropicCache.cacheReadInputTokens ?? anthropicCache.cache_read_input_tokens ?? openaiCacheRead),
+        cache_creation_tokens: Number(anthropicCache.cacheCreationInputTokens ?? anthropicCache.cache_creation_input_tokens ?? openaiCacheWrite),
       },
       model: `${recipe.id}:${modelId}`,
       providerId: recipe.id,

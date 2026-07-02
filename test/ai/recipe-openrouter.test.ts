@@ -11,6 +11,12 @@
 
 import { describe, expect, test } from 'bun:test';
 import { getRecipe } from '../../src/core/ai/recipes/index.ts';
+import {
+  OPENROUTER_ANTHROPIC_CACHE_SENTINEL,
+  openrouterCompatFetch,
+  openrouterRequiresExplicitPromptCache,
+  openrouterSupportsPromptCache,
+} from '../../src/core/ai/recipes/openrouter.ts';
 import { defaultResolveAuth } from '../../src/core/ai/gateway.ts';
 import { assertTouchpoint } from '../../src/core/ai/model-resolver.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
@@ -134,5 +140,68 @@ describe('recipe: openrouter', () => {
     expect(r.setup_hint).toContain('OPENROUTER_BASE_URL');
     expect(r.setup_hint).toContain('OPENROUTER_REFERER');
     expect(r.setup_hint).toContain('OPENROUTER_TITLE');
+  });
+
+  test('12. prompt cache capability is selective for OpenRouter model families', () => {
+    expect(openrouterSupportsPromptCache('openai/gpt-5.2')).toBe(true);
+    expect(openrouterSupportsPromptCache('openai/gpt-5.2-chat')).toBe(true);
+    expect(openrouterSupportsPromptCache('openai/o4-mini')).toBe(true);
+    expect(openrouterSupportsPromptCache('openai/text-embedding-3-small')).toBe(false);
+    expect(openrouterSupportsPromptCache('anthropic/claude-sonnet-4.6')).toBe(true);
+    expect(openrouterSupportsPromptCache('anthropic/claude-opus-4.7')).toBe(true);
+    expect(openrouterSupportsPromptCache('deepseek/deepseek-chat')).toBe(false);
+    expect(openrouterSupportsPromptCache('google/gemini-3-flash-preview')).toBe(false);
+  });
+
+  test('13. only Anthropic Claude routes require explicit OpenRouter cache_control', () => {
+    expect(openrouterRequiresExplicitPromptCache('anthropic/claude-sonnet-4.6')).toBe(true);
+    expect(openrouterRequiresExplicitPromptCache('openai/gpt-5.2')).toBe(false);
+    expect(openrouterRequiresExplicitPromptCache('deepseek/deepseek-chat')).toBe(false);
+  });
+
+  test('14. resolveOpenAICompatConfig keeps base URL overrides and installs cache fetch shim', () => {
+    const r = getRecipe('openrouter')!;
+    const compat = r.resolveOpenAICompatConfig!({ OPENROUTER_BASE_URL: 'https://env.example/v1' }, 'https://cfg.example/v1');
+    expect(compat.baseURL).toBe('https://cfg.example/v1');
+    expect(compat.fetch).toBe(openrouterCompatFetch);
+  });
+
+  test('15. fetch shim rewrites Anthropic cache sentinel to top-level cache_control only', async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ input, init });
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+
+    try {
+      await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify({
+          model: 'anthropic/claude-sonnet-4.6',
+          prompt_cache_key: OPENROUTER_ANTHROPIC_CACHE_SENTINEL,
+          messages: [{ role: 'user', content: 'hello' }],
+        }),
+      });
+
+      const rewritten = JSON.parse(calls[0].init!.body as string);
+      expect(rewritten.prompt_cache_key).toBeUndefined();
+      expect(rewritten.cache_control).toEqual({ type: 'ephemeral' });
+
+      await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify({
+          model: 'openai/gpt-5.2',
+          prompt_cache_key: OPENROUTER_ANTHROPIC_CACHE_SENTINEL,
+          messages: [{ role: 'user', content: 'hello' }],
+        }),
+      });
+
+      const untouched = JSON.parse(calls[1].init!.body as string);
+      expect(untouched.prompt_cache_key).toBe(OPENROUTER_ANTHROPIC_CACHE_SENTINEL);
+      expect(untouched.cache_control).toBeUndefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

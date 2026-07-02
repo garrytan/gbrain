@@ -88,9 +88,13 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
   // boundary; this function returns capabilities for whatever the user asked
   // for, on the assumption it'll be validated elsewhere.
 
+  const supportsPromptCache = chat.supports_prompt_cache;
+
   return {
     supportsToolCalling: chat.supports_tools === true,
-    supportsPromptCaching: chat.supports_prompt_cache === true,
+    supportsPromptCaching: typeof supportsPromptCache === 'function'
+      ? supportsPromptCache(parsed.modelId)
+      : supportsPromptCache === true,
     // No recipe exposes parallel-tools-specifically yet; gate on supports_tools.
     // Subsequent waves can split this into its own recipe field if a provider
     // ever supports tools without parallel dispatch.
