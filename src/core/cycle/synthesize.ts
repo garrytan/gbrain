@@ -405,8 +405,14 @@ export async function runPhaseSynthesize(
 
     const queue = new MinionQueue(engine);
     const childIds: number[] = [];
-    /** Map child job_id → chunk metadata for D6 orchestrator-side slug rewrite. */
-    const chunkInfo = new Map<number, { idx: number; hash6: string }>();
+    /**
+     * Map child job_id → transcript metadata. Drives D6 orchestrator-side slug
+     * rewrite for chunked transcripts AND the deterministic frontmatter the
+     * dual-write builds at reverse-render time. Populated for every child
+     * (single-chunk children carry chunkTotal=1; chunked children carry
+     * idx/total per chunk).
+     */
+    const childMeta = new Map<number, ChildMeta>();
     /** Skip reasons for the cycle report (D5 cap hits, D8 legacy-key skips). */
     const skipReports: Array<{ filePath: string; reason: string }> = [];
 
@@ -487,26 +493,74 @@ export async function runPhaseSynthesize(
           { allowProtectedSubmit: true },
         );
         childIds.push(child.id);
-        if (isChunked) {
-          chunkInfo.set(child.id, { idx: i, hash6 });
-        }
+        childMeta.set(child.id, {
+          idx: i,
+          hash6,
+          chunkTotal: chunks.length,
+          transcriptSource: t.transcriptSource,
+          transcriptId: stripContentVersionSuffix(t.basename),
+          inferredDate: t.inferredDate,
+        });
       }
     }
 
     // Wait for every child to reach a terminal state. Tick yieldDuringPhase
     // every 5 min so the cycle lock TTL refreshes.
+    //
+    // Verbose progress is emitted to stderr (so `--json` mode still gets a
+    // clean stdout). Without this, an operator running the CLI in a tmux
+    // pane sees nothing between `[cycle.synthesize] start` and the final
+    // JSON payload — for a 50-subagent chunk that can be 15-25 minutes of
+    // silence, which makes it hard to tell a slow chunk apart from a stuck
+    // one. The per-child poll runs serially in childIds order, so emissions
+    // bunch when several children finish during a long wait on an earlier
+    // sibling; a background heartbeat fills the gap with queue snapshots.
+    process.stderr.write(`[dream:sync] orchestrator waiting on ${childIds.length} subagent(s)\n`);
+
+    const phaseStartMs = Date.now();
+    const heartbeat = setInterval(() => {
+      // Best-effort: query the queue for a fresh snapshot, no throw.
+      engine.executeRaw<{ status: string; n: string }>(
+        `SELECT status, COUNT(*)::text AS n
+           FROM minion_jobs
+          WHERE id = ANY($1::bigint[])
+          GROUP BY status`,
+        [childIds],
+      ).then((rows) => {
+        const c: Record<string, number> = { waiting: 0, active: 0, completed: 0, dead: 0, cancelled: 0, failed: 0 };
+        for (const r of rows) {
+          c[r.status] = parseInt(r.n, 10);
+        }
+        const elapsed = Math.round((Date.now() - phaseStartMs) / 1000);
+        process.stderr.write(
+          `[dream:sync] heartbeat (${elapsed}s) waiting=${c.waiting} active=${c.active} ` +
+          `completed=${c.completed} dead=${c.dead} cancelled=${c.cancelled} failed=${c.failed}\n`,
+        );
+      }).catch(() => { /* best-effort, never throw from heartbeat */ });
+    }, 20_000);
+
     const childOutcomes: Array<{ jobId: number; status: string }> = [];
     for (const jobId of childIds) {
+      const startWait = Date.now();
       try {
         const job = await waitForCompletion(queue, jobId, {
           timeoutMs: 35 * 60 * 1000,
           pollMs: 5 * 1000,
         });
         childOutcomes.push({ jobId, status: job.status });
+        const dur = Math.round((Date.now() - startWait) / 1000);
+        process.stderr.write(
+          `[dream:sync] subagent ${childOutcomes.length}/${childIds.length} ${job.status} ` +
+          `(job=${jobId} duration=${dur}s)\n`,
+        );
       } catch (e) {
         if (e instanceof TimeoutError) {
           childOutcomes.push({ jobId, status: 'timeout' });
+          process.stderr.write(
+            `[dream:sync] subagent ${childOutcomes.length}/${childIds.length} TIMEOUT (job=${jobId})\n`,
+          );
         } else {
+          clearInterval(heartbeat);
           throw e;
         }
       }
@@ -516,6 +570,8 @@ export async function runPhaseSynthesize(
       }
     }
 
+    clearInterval(heartbeat);
+
     // Collect slugs from put_page tool executions across the children
     // (codex finding #2: deterministic provenance, NOT pages.updated_at).
     // D6 orchestrator slug rewrite: chunkInfo drives post-hoc rewrite of
@@ -523,10 +579,27 @@ export async function runPhaseSynthesize(
     // even if Sonnet drops the chunk suffix.
     // v0.32.8: refs carry source_id so reverseWriteRefs picks the correct
     // (source, slug) row (currently always 'default' from subagent put_page).
-    const writtenRefs = await collectChildPutPageSlugs(engine, childIds, chunkInfo);
+    const writtenRefs = await collectChildPutPageSlugs(engine, childIds, childMeta);
+    process.stderr.write(
+      `[dream:sync] all subagents settled; dual-writing ${writtenRefs.length} page(s) to disk\n`,
+    );
 
-    // Dual-write: reverse-render each DB row → markdown file.
-    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs);
+    // Dual-write: reverse-render each DB row → markdown file, with the
+    // orchestrator-computed deterministic frontmatter merged in (date,
+    // effective_date, transcript_source, transcript_id, transcript_hash,
+    // chunk, dream_generated, dream_cycle_date). Subagent retains
+    // authority over title and tags; everything else is computed.
+    const cycleDate = today();
+    const reverseWriteCount = await reverseWriteRefs(
+      engine,
+      opts.brainDir,
+      writtenRefs,
+      childMeta,
+      cycleDate,
+    );
+    process.stderr.write(
+      `[dream:sync] dual-write complete (${reverseWriteCount} disk page(s))\n`,
+    );
 
     // Summary index page (deterministic; orchestrator-written via direct
     // engine.putPage so no allow-list path needed).
@@ -651,11 +724,17 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     enabled,
     corpusDir: corpusDir ?? null,
     meetingTranscriptsDir: meetingTranscriptsDir ?? null,
-    minChars: minCharsStr ? Math.max(0, parseInt(minCharsStr, 10) || 2000) : 2000,
+    minChars: (() => {
+      const parsed = parseInt(minCharsStr ?? '', 10);
+      return Number.isFinite(parsed) ? Math.max(0, parsed) : 2000;
+    })(),
     excludePatterns,
     model,
     verdictModel,
-    cooldownHours: cooldownHoursStr ? Math.max(0, parseInt(cooldownHoursStr, 10) || 12) : 12,
+    cooldownHours: (() => {
+      const parsed = parseInt(cooldownHoursStr ?? '', 10);
+      return Number.isFinite(parsed) ? Math.max(0, parsed) : 12;
+    })(),
     maxPromptTokens,
     maxChunksPerTranscript,
   };
@@ -1010,8 +1089,8 @@ function sanitizeForSlug(s: string): string {
 async function collectChildPutPageSlugs(
   engine: BrainEngine,
   childIds: number[],
-  chunkInfo: Map<number, { idx: number; hash6: string }>,
-): Promise<Array<{ slug: string; source_id: string }>> {
+  childMeta: Map<number, ChildMeta>,
+): Promise<Array<{ slug: string; source_id: string; jobId: number }>> {
   if (childIds.length === 0) return [];
   // Raw fetch — NO SELECT DISTINCT. Preserves per-child slug duplicates so
   // the orchestrator sees what each child wrote. COALESCE handles both
@@ -1024,6 +1103,10 @@ async function collectChildPutPageSlugs(
   // product behavior. Threading the source_id through reverseWriteRefs
   // guarantees getPage targets the correct (source, slug) row instead of
   // the first DB match.
+  //
+  // Also threads job_id so reverseWriteRefs can pair each slug back to the
+  // childMeta entry that produced it, which drives the deterministic
+  // frontmatter the dual-write injects on top of the subagent's row.
   const rows = await engine.executeRaw<{ job_id: number; slug: string }>(
     `SELECT job_id,
             COALESCE(input->>'slug', (input #>> '{}')::jsonb->>'slug') AS slug
@@ -1033,13 +1116,24 @@ async function collectChildPutPageSlugs(
         AND status = 'complete'`,
     [childIds],
   );
-  const rewritten = new Set<string>();
+  const rewritten = new Map<string, number>();
   for (const r of rows) {
     if (typeof r.slug !== 'string' || r.slug.length === 0) continue;
-    const ci = chunkInfo.get(r.job_id);
-    rewritten.add(ci ? rewriteChunkedSlug(r.slug, ci.hash6, ci.idx) : r.slug);
+    // postgres.js returns `job_id` as bigint; coerce to Number so the
+    // childMeta keys (set from queue.add's number-typed child.id) actually
+    // hit. Without this the chunk-slug rewrite never fires and the
+    // reverseWriteRefs caller can't pair slugs back to their transcript
+    // metadata.
+    const jobIdNum = Number(r.job_id);
+    const meta = childMeta.get(jobIdNum);
+    const finalSlug = meta && meta.chunkTotal > 1
+      ? rewriteChunkedSlug(r.slug, meta.hash6, meta.idx)
+      : r.slug;
+    if (!rewritten.has(finalSlug)) rewritten.set(finalSlug, jobIdNum);
   }
-  return Array.from(rewritten).sort().map(slug => ({ slug, source_id: 'default' }));
+  return [...rewritten.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([slug, jobId]) => ({ slug, source_id: 'default', jobId }));
 }
 
 /**
@@ -1073,17 +1167,59 @@ async function hasLegacySingleChunkCompletion(
 async function reverseWriteRefs(
   engine: BrainEngine,
   brainDir: string,
-  refs: Array<{ slug: string; source_id: string }>,
+  refs: Array<{ slug: string; source_id: string; jobId: number }>,
+  childMeta: Map<number, ChildMeta>,
+  cycleDate: string,
 ): Promise<number> {
   let count = 0;
-  for (const { slug, source_id } of refs) {
+  for (const { slug, source_id, jobId } of refs) {
     // v0.32.8 F6: validate source_id is filesystem-safe before any join().
     validateSourceId(source_id);
     const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
     const tags = await engine.getTags(slug, { sourceId: source_id });
+    // postgres.js returns `job_id` as bigint while child.id from queue.add is
+    // number, so a bare childMeta.get(jobId) miss-matches on type. Coerce to
+    // Number at both lookup sites (here and in collectChildPutPageSlugs) so
+    // the orchestrator's per-child metadata reaches reverseWriteRefs.
+    const meta = childMeta.get(Number(jobId));
+    const overrides = meta ? buildDeterministicFrontmatter(meta, cycleDate) : {};
+
+    // Mirror the deterministic overrides into the DB row so the source-of-
+    // truth Page row matches what lands on disk. Without this the search
+    // index, the doctor `effective_date_health` check, and any consumer
+    // that queries frontmatter directly would see the subagent's drift
+    // (transcript_hash_suffix vs transcript_hash, missing effective_date,
+    // etc.) even though the markdown looks right.
+    if (meta) {
+      try {
+        const mergedFrontmatter = {
+          ...(page.frontmatter ?? {}),
+          ...overrides,
+        };
+        await engine.putPage(
+          slug,
+          {
+            type: page.type,
+            title: page.title,
+            compiled_truth: page.compiled_truth ?? '',
+            timeline: page.timeline ?? '',
+            frontmatter: mergedFrontmatter,
+            content_hash: page.content_hash,
+          },
+          { sourceId: source_id },
+        );
+        page.frontmatter = mergedFrontmatter;
+      } catch (e) {
+        // Non-fatal: disk write still runs with overrides applied via
+        // serializePageToMarkdown so the user-visible markdown stays right.
+        const msg = e instanceof Error ? e.message : String(e);
+        process.stderr.write(`[dream] frontmatter persist ${slug}@${source_id} failed: ${msg}\n`);
+      }
+    }
+
     try {
-      const md = renderPageToMarkdown(page, tags);
+      const md = renderPageToMarkdown(page, tags, overrides);
       // v0.32.8 F6: non-default sources land at brainDir/.sources/<id>/<slug>.md
       // so same-slug-different-source pages don't collide. Default-source
       // pages stay at brainDir/<slug>.md so single-source brains see no change.
@@ -1103,6 +1239,63 @@ async function reverseWriteRefs(
 }
 
 /**
+ * Per-child orchestrator state. Drives D6 chunked-slug rewrite (idx + hash6
+ * for chunked transcripts) AND the deterministic-frontmatter overrides the
+ * dual-write builds at reverse-render time. Populated for every child, not
+ * just chunked ones, so reverseWriteRefs always has a complete record.
+ */
+interface ChildMeta {
+  idx: number;
+  hash6: string;
+  chunkTotal: number;
+  transcriptSource: string | null;
+  transcriptId: string;
+  inferredDate: string | null;
+}
+
+/**
+ * Strip the content-version suffix that claude-code-archive appends when a
+ * conversation is edited (`<uuid>--<contentHash>.md`). The session UUID is the
+ * stable transcript identifier; the suffix changes when the file content
+ * changes. Used to populate `transcript_id` in frontmatter so edits of the
+ * same session collapse to the same identifier instead of inflating to one id
+ * per edit.
+ */
+function stripContentVersionSuffix(basename: string): string {
+  return basename.replace(/--[a-f0-9]+$/i, '');
+}
+
+/**
+ * Compute the deterministic frontmatter overrides for one synthesized page.
+ * Every field here is owned by the orchestrator — the subagent's choice for
+ * any of these is discarded. The subagent retains authority over `title` and
+ * `tags` (those flow through unchanged).
+ */
+function buildDeterministicFrontmatter(
+  meta: ChildMeta,
+  cycleDate: string,
+): Record<string, unknown> {
+  const overrides: Record<string, unknown> = {
+    dream_generated: true,
+    dream_cycle_date: cycleDate,
+    transcript_id: meta.transcriptId,
+    transcript_hash: meta.hash6,
+  };
+  if (meta.transcriptSource) {
+    overrides.transcript_source = meta.transcriptSource;
+  }
+  if (meta.chunkTotal > 1) {
+    overrides.chunk = `${meta.idx + 1}/${meta.chunkTotal}`;
+  }
+  if (meta.inferredDate) {
+    const iso = `${meta.inferredDate}T00:00:00.000Z`;
+    overrides.date = iso;
+    overrides.effective_date = iso;
+  }
+  return overrides;
+}
+
+/**
  * Render a Page to markdown, stamping the dream-output identity marker into
  * frontmatter. This stamp is the explicit identity surface checked by
  * `isDreamOutput` in transcript-discovery.ts. Stamping at render time covers
@@ -1110,17 +1303,22 @@ async function reverseWriteRefs(
  * one funnel; the prior content-pattern guard could miss real output because
  * `serializeMarkdown` does not embed the page slug in the body.
  */
-export function renderPageToMarkdown(page: Page, tags: string[]): string {
-  // v0.38 DRY: the dream-output identity stamp (dream_generated +
-  // dream_cycle_date) is the ONLY thing that differs from the v0.38
-  // put_page write-through renderer. Both call the shared
-  // serializePageToMarkdown helper in markdown.ts; this wrapper passes
-  // the dream-specific overrides. Future markdown-shape changes happen
-  // in one place.
+export function renderPageToMarkdown(
+  page: Page,
+  tags: string[],
+  extraOverrides: Record<string, unknown> = {},
+): string {
+  // The dream-output identity stamp (dream_generated + dream_cycle_date)
+  // belongs on every reverse-rendered page; `extraOverrides` carries the
+  // per-page deterministic frontmatter the orchestrator computes (date,
+  // effective_date, transcript_source, transcript_id, transcript_hash,
+  // chunk). Anything in extraOverrides for the two identity fields wins
+  // because the spread runs after the stamp.
   return serializePageToMarkdown(page, tags, {
     frontmatterOverrides: {
       dream_generated: true,
       dream_cycle_date: today(),
+      ...extraOverrides,
     },
   });
 }

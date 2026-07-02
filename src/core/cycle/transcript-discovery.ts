@@ -10,7 +10,7 @@
  */
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, basename, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { pruneDir } from '../sync.ts';
 
@@ -25,6 +25,15 @@ export interface DiscoveredTranscript {
   basename: string;
   /** Inferred date if the basename matches `YYYY-MM-DD...` (or null). */
   inferredDate: string | null;
+  /**
+   * Transcript source archive name, derived from the path's grandparent
+   * directory (the immediate parent of the date directory). For the
+   * canonical layout `<corpus>/<source>/<date>/<id>.md` this yields the
+   * source-name segment — e.g. `claude-code` for the claude-code-archive
+   * output, `meetings` for meeting recordings, etc. Null when the file
+   * does not live under a `<source>/<date>/` pair (ad-hoc inputs).
+   */
+  transcriptSource: string | null;
 }
 
 export interface DiscoverOpts {
@@ -161,6 +170,23 @@ function matchesAnyExclude(text: string, patterns: RegExp[]): boolean {
   return false;
 }
 
+/**
+ * Derive the archive source name from a transcript path. Returns the basename
+ * of the directory two levels above the file when that directory looks like a
+ * source-name slug (one or more segments separated by hyphens, all lowercase
+ * alphanumeric); otherwise null. This pins the canonical claude-code-archive
+ * layout `<corpus>/<source>/<date>/<id>.md` (-> source) without claiming a
+ * source for ad-hoc inputs that don't match.
+ */
+function deriveTranscriptSource(filePath: string): string | null {
+  const parentName = basename(dirname(filePath));
+  if (!/^\d{4}-\d{2}-\d{2}/.test(parentName)) return null;
+  const grandparentName = basename(dirname(dirname(filePath)));
+  if (!grandparentName) return null;
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(grandparentName)) return null;
+  return grandparentName;
+}
+
 function listTextFiles(dir: string): string[] {
   // Recursive walk with descent-time pruning (closes codex C12/C13 spec gap).
   // Accepts BOTH .txt and .md per transcript-discovery's domain rules — does
@@ -247,6 +273,7 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
         content,
         basename: baseName,
         inferredDate,
+        transcriptSource: deriveTranscriptSource(filePath),
       });
     }
   }
@@ -291,5 +318,6 @@ export function readSingleTranscript(
     content,
     basename: baseName,
     inferredDate: dateMatch ? dateMatch[1] : null,
+    transcriptSource: deriveTranscriptSource(filePath),
   };
 }
