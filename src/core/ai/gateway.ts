@@ -2908,6 +2908,14 @@ export interface ToolLoopOpts {
   ) => Promise<{ gbrainToolUseId: string }>;
   onToolCallComplete?: (gbrainToolUseId: string, output: unknown) => Promise<void>;
   onToolCallFailed?: (gbrainToolUseId: string, error: string) => Promise<void>;
+  /**
+   * Persist the synthesized tool-result user turn BEFORE it is appended to the
+   * in-memory conversation (write-before-side-effect, like onAssistantTurn). So
+   * a crash after the assistant turn but before the next LLM call reloads a
+   * well-formed [assistant(tool_calls), user(tool_results)] pair on replay —
+   * non-Anthropic providers reject a dangling assistant tool-call turn.
+   */
+  onUserTurn?: (turnIdx: number, messageIdx: number, blocks: ChatBlock[]) => Promise<void>;
 
   /** Optional per-call heartbeat for observability. */
   onHeartbeat?: (event: string, data: Record<string, unknown>) => void;
@@ -3131,9 +3139,11 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
 
     if (stopReason === 'aborted') break;
 
-    // Feed all tool results back as a single user message.
+    // Feed all tool results back as a single user message. Persist BEFORE the
+    // in-memory push (write-before-side-effect, D11) so a crash here reloads a
+    // well-formed conversation on the next replay.
     const userMessageIdx = messageIdx++;
-    void userMessageIdx;
+    await opts.onUserTurn?.(turnIdx, userMessageIdx, toolResultBlocks);
     messages.push({ role: 'user', content: toolResultBlocks });
 
     turnIdx++;

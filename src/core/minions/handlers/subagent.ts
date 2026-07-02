@@ -806,6 +806,106 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     nextMessageIdx = 1;
   }
 
+  // ── Replay reconciliation (gateway path) ────────────────
+  //
+  // Mirror of the legacy reconciler (inline loop ~334). If the last persisted
+  // message is an assistant turn carrying tool-call blocks with NO tool-result
+  // user turn after it, the prior run crashed mid-dispatch (e.g. a stalled
+  // synthesize job re-claimed after the 30-min timeout). Finish those tools now
+  // and persist the synthesized user turn so the gateway loop's first chat()
+  // sees a complete conversation. Without this, non-Anthropic providers
+  // (DeepSeek) reject the dangling tool_calls with "Tool result is missing for
+  // tool call X" → permanent dead-letter.
+  //
+  // Keyed by PROVIDER tool_use_id: the persisted assistant tool-call block's
+  // toolCallId is the provider id, and subagent_tool_executions.tool_use_id
+  // stores that same provider id. (The live short-circuit inside toolLoop keys
+  // by gbrain_tool_use_id, but those ids aren't visible here pre-loop; the
+  // provider id is the key available on both sides.)
+  const priorToolsByProviderId = new Map<string, { status: 'pending' | 'complete' | 'failed'; output?: unknown; error?: string }>();
+  for (const row of priorTools) {
+    priorToolsByProviderId.set(row.toolUseId, {
+      status: row.status,
+      output: row.output,
+      error: row.error ?? undefined,
+    });
+  }
+  const lastRaw = priorMessages[priorMessages.length - 1];
+  const lastChat = priorChatMessages[priorChatMessages.length - 1];
+  if (lastRaw && lastChat && lastChat.role === 'assistant' && Array.isArray(lastChat.content)) {
+    const danglingToolCalls = lastChat.content.filter(
+      (b): b is Extract<ChatBlock, { type: 'tool-call' }> => b.type === 'tool-call',
+    );
+    // Only reconcile a dangling tool-call turn. An assistant turn with NO
+    // tool-calls is a terminal end_turn; the existing flow handles it.
+    if (danglingToolCalls.length > 0) {
+      const assistantMsgIdx = lastRaw.message_idx;
+      const toolResultBlocks: ChatBlock[] = [];
+      for (const call of danglingToolCalls) {
+        const prior = priorToolsByProviderId.get(call.toolCallId);
+        if (prior?.status === 'complete') {
+          toolResultBlocks.push({
+            type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName,
+            output: prior.output, isError: false,
+          });
+          continue;
+        }
+        if (prior?.status === 'failed') {
+          toolResultBlocks.push({
+            type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName,
+            output: prior.error ?? 'tool failed', isError: true,
+          });
+          continue;
+        }
+        // pending or no row yet — try to dispatch.
+        const toolDef = toolDefs.find(t => t.name === call.toolName);
+        if (!toolDef) {
+          await persistToolExecFailed(
+            engine, ctx.id, assistantMsgIdx, call.toolCallId, call.toolName, call.input,
+            `tool "${call.toolName}" is not in the registry for this subagent`,
+          );
+          toolResultBlocks.push({
+            type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName,
+            output: `tool "${call.toolName}" is not available`, isError: true,
+          });
+          continue;
+        }
+        if (prior?.status === 'pending' && !toolDef.idempotent) {
+          throw new Error(`non-idempotent tool "${call.toolName}" pending on resume; cannot safely re-run`);
+        }
+        await persistToolExecPending(engine, ctx.id, assistantMsgIdx, call.toolCallId, call.toolName, call.input);
+        try {
+          const output = await toolDef.execute(call.input, {
+            engine, jobId: ctx.id, remote: true, signal: ctx.signal,
+          });
+          await persistToolExecComplete(engine, ctx.id, call.toolCallId, output);
+          toolResultBlocks.push({
+            type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output,
+          });
+        } catch (e) {
+          const errText = e instanceof Error ? (e.stack ?? e.message) : String(e);
+          await persistToolExecFailed(engine, ctx.id, assistantMsgIdx, call.toolCallId, call.toolName, call.input, errText);
+          toolResultBlocks.push({
+            type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName,
+            output: errText, isError: true,
+          });
+        }
+      }
+      // Persist the reconciled user turn so the next resume picks up here
+      // (last becomes this user message, not the dangling assistant — no
+      // double-reconcile) and replayState.priorMessages carries a complete
+      // conversation into toolLoop's first chat().
+      const reconciledIdx = nextMessageIdx++;
+      await persistMessage(engine, ctx.id, {
+        message_idx: reconciledIdx,
+        role: 'user',
+        content_blocks: toolResultBlocks as unknown as ContentBlock[],
+        tokens_in: null, tokens_out: null, tokens_cache_read: null, tokens_cache_create: null, model: null,
+      });
+      priorChatMessages.push({ role: 'user', content: toolResultBlocks });
+    }
+  }
+
   // Capability detection drives cache_control injection.
   const verdict = classifyCapabilities(model);
   const cacheSystem = verdict === 'ok' || verdict === 'degraded:no_parallel';
@@ -863,6 +963,23 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
         cache_read: usage.cache_read_tokens,
       });
       heartbeat('llm_call_completed', { turn_idx: turnIdx, tokens: usage });
+    },
+    onUserTurn: async (_turnIdx, messageIdx, blocks) => {
+      // Persist the synthesized tool-result user turn (write-ordering parity
+      // with the legacy loop's subagent.ts ~692). Durably recording it is what
+      // lets a stalled-then-resumed multi-turn job reload a well-formed
+      // [assistant(tool_calls), user(tool_results)] pair instead of a dangling
+      // tool-call turn that non-Anthropic providers dead-letter.
+      await persistMessage(engine, ctx.id, {
+        message_idx: messageIdx,
+        role: 'user',
+        content_blocks: blocks as unknown as ContentBlock[],
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cache_read: null,
+        tokens_cache_create: null,
+        model: null,
+      });
     },
     onToolCallStart: async (turnIdx, messageIdx, ordinal, toolName, input, providerToolCallId) => {
       // CRITICAL — read back the canonical gbrain_tool_use_id from RETURNING,
@@ -1016,6 +1133,9 @@ function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
 
 interface PriorToolV2Row {
   stableKey: string;
+  /** Provider-supplied tool_use_id — the key persisted assistant tool-call
+   *  blocks carry, used by the gateway-path replay reconciler. */
+  toolUseId: string;
   status: 'pending' | 'complete' | 'failed';
   output: unknown;
   error: string | null;
@@ -1051,6 +1171,7 @@ async function loadPriorToolsV2(engine: BrainEngine, jobId: number): Promise<Pri
       : `legacy:${jobId}:${r.message_idx}:${r.tool_use_id}:${r.tool_name}`;
     return {
       stableKey,
+      toolUseId: r.tool_use_id as string,
       status: r.status as 'pending' | 'complete' | 'failed',
       output: r.output,
       error: (r.error as string | null) ?? null,
