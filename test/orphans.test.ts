@@ -1,6 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import {
   shouldExclude,
+  shouldExcludePage,
+  isGeneratedAtomPage,
   deriveDomain,
   formatOrphansText,
   findOrphans,
@@ -95,6 +97,34 @@ describe('shouldExclude', () => {
   test('does NOT exclude a page ending with log-like text that is not /log', () => {
     expect(shouldExclude('devlog')).toBe(false);
     expect(shouldExclude('changelog')).toBe(false);
+  });
+});
+
+describe('generated atom orphan exclusion', () => {
+  test('excludes generated atom leaves by default', () => {
+    const page = {
+      slug: 'atoms/2026-06-14/example',
+      type: 'atom',
+      frontmatter: {
+        source_hash: 'abc123abc123abc1',
+        source_slug: 'meeting/source',
+        extracted_by: 'extract_atoms',
+      },
+    };
+
+    expect(isGeneratedAtomPage(page)).toBe(true);
+    expect(shouldExcludePage(page)).toBe(true);
+  });
+
+  test('does not exclude user-authored atom pages without extraction metadata', () => {
+    const page = {
+      slug: 'atoms/manual/example',
+      type: 'atom',
+      frontmatter: {},
+    };
+
+    expect(isGeneratedAtomPage(page)).toBe(false);
+    expect(shouldExcludePage(page)).toBe(false);
   });
 });
 
@@ -268,6 +298,30 @@ describe('findOrphans (engine-injected)', () => {
 
     const slugs = result.orphans.map(o => o.slug).sort();
     expect(slugs).toContain('_atlas');
+  });
+
+  test('generated atom leaves are excluded by default but included with includePseudo', async () => {
+    await engine.putPage('atoms/2026-06-14/extracted', {
+      type: 'atom',
+      title: 'Extracted atom',
+      compiled_truth: 'generated atom body',
+      timeline: '',
+      frontmatter: {
+        source_hash: 'abc123abc123abc1',
+        source_slug: 'meeting/source',
+        extracted_by: 'extract_atoms',
+      },
+    });
+
+    const defaultResult = await findOrphans(engine);
+    expect(defaultResult.orphans.map(o => o.slug)).not.toContain('atoms/2026-06-14/extracted');
+    expect(defaultResult.total_pages).toBe(1);
+    expect(defaultResult.total_linkable).toBe(0);
+    expect(defaultResult.excluded).toBe(1);
+
+    const includePseudo = await findOrphans(engine, { includePseudo: true });
+    expect(includePseudo.orphans.map(o => o.slug)).toContain('atoms/2026-06-14/extracted');
+    expect(includePseudo.total_linkable).toBe(1);
   });
 
   test('queryOrphanPages delegates to the passed engine (no global db)', async () => {

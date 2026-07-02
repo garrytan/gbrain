@@ -24,6 +24,15 @@ export interface OrphanPage {
   domain: string;
 }
 
+export interface OrphanCandidatePage {
+  slug: string;
+  title: string;
+  domain: string | null;
+  source_id?: string;
+  type?: string | null;
+  frontmatter?: Record<string, unknown> | null;
+}
+
 export interface OrphanResult {
   orphans: OrphanPage[];
   total_orphans: number;
@@ -85,6 +94,31 @@ export function shouldExclude(slug: string): boolean {
   return false;
 }
 
+export function isGeneratedAtomPage(page: {
+  type?: string | null;
+  frontmatter?: Record<string, unknown> | null;
+}): boolean {
+  if (page.type !== 'atom') return false;
+  const fm = page.frontmatter;
+  if (!fm || typeof fm !== 'object') return false;
+
+  const hasSourceHash =
+    typeof fm.source_hash === 'string' && fm.source_hash.trim().length > 0;
+  const hasExtractionOrigin =
+    (typeof fm.source_slug === 'string' && fm.source_slug.trim().length > 0) ||
+    (typeof fm.source_path === 'string' && fm.source_path.trim().length > 0) ||
+    (typeof fm.extracted_by === 'string' && fm.extracted_by.trim().length > 0);
+  return hasSourceHash && hasExtractionOrigin;
+}
+
+export function shouldExcludePage(page: {
+  slug: string;
+  type?: string | null;
+  frontmatter?: Record<string, unknown> | null;
+}): boolean {
+  return shouldExclude(page.slug) || isGeneratedAtomPage(page);
+}
+
 /**
  * Derive domain from frontmatter or first slug segment.
  */
@@ -107,7 +141,7 @@ export function deriveDomain(frontmatterDomain: string | null | undefined, slug:
  */
 export async function queryOrphanPages(
   engine: BrainEngine,
-): Promise<{ slug: string; title: string; domain: string | null }[]> {
+): Promise<OrphanCandidatePage[]> {
   return engine.findOrphanPages();
 }
 
@@ -145,7 +179,7 @@ export async function findOrphans(
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('orphans.scan');
   const stopHb = startHeartbeat(progress, 'scanning pages for missing inbound links…');
-  let allOrphans: { slug: string; title: string; domain: string | null }[];
+  let allOrphans: OrphanCandidatePage[];
   let total: number;
   let excludedAll: number;
   try {
@@ -169,14 +203,18 @@ export async function findOrphans(
       liveParams.push(sourceId);
       scopeClause = ` AND source_id = $${liveParams.length}`;
     }
-    const liveRows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages WHERE deleted_at IS NULL${scopeClause}`,
+    const liveRows = await engine.executeRaw<{
+      slug: string;
+      type: string | null;
+      frontmatter: Record<string, unknown> | null;
+    }>(
+      `SELECT slug, type, frontmatter FROM pages WHERE deleted_at IS NULL${scopeClause}`,
       liveParams,
     );
     total = liveRows.length;
     excludedAll = includePseudo
       ? 0
-      : liveRows.reduce((n, r) => n + (shouldExclude(r.slug) ? 1 : 0), 0);
+      : liveRows.reduce((n, r) => n + (shouldExcludePage(r) ? 1 : 0), 0);
   } finally {
     stopHb();
     progress.finish();
@@ -184,7 +222,7 @@ export async function findOrphans(
 
   const filtered = includePseudo
     ? allOrphans
-    : allOrphans.filter(row => !shouldExclude(row.slug));
+    : allOrphans.filter(row => !shouldExcludePage(row));
 
   const orphans: OrphanPage[] = filtered.map(row => ({
     slug: row.slug,

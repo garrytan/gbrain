@@ -127,6 +127,44 @@ describe('runDoctor — orphan_ratio check (local surface, D5)', () => {
     expect(check!.message).toMatch(/orphan ratio/i);
   });
 
+  test('generated atom leaves do not inflate orphan_ratio', async () => {
+    for (let i = 0; i < 100; i++) {
+      await engine.putPage(`companies/linked-${i}`, {
+        type: 'company', title: `Linked ${i}`, compiled_truth: 'b', timeline: '', frontmatter: {},
+      });
+    }
+    await engine.putPage('writing/index', {
+      type: 'note', title: 'Index', compiled_truth: 'index', timeline: '', frontmatter: {},
+    });
+    const links = [];
+    for (let i = 0; i < 100; i++) {
+      links.push({
+        from_slug: 'writing/index',
+        to_slug: `companies/linked-${i}`,
+        link_type: 'mentions', link_source: 'markdown', context: '',
+      });
+    }
+    await engine.addLinksBatch(links);
+    for (let i = 0; i < 200; i++) {
+      await engine.putPage(`atoms/2026-06-14/generated-${i}`, {
+        type: 'atom',
+        title: `Generated ${i}`,
+        compiled_truth: 'generated atom body',
+        timeline: '',
+        frontmatter: {
+          source_hash: `hash-${i}`,
+          source_slug: 'meeting/source',
+          extracted_by: 'extract_atoms',
+        },
+      });
+    }
+
+    const report = await runDoctorJson();
+    const check = findCheck(report, 'orphan_ratio');
+    expect(check!.status).toBe('ok');
+    expect(check!.message).toContain('(1/101 linkable pages)');
+  });
+
   test('high orphan ratio (>0.5, <=0.8) → warn with fix-hint', async () => {
     for (let i = 0; i < 100; i++) {
       await engine.putPage(`companies/co-${i}`, {

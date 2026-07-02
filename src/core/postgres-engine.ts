@@ -3277,7 +3277,14 @@ export class PostgresEngine implements BrainEngine {
   async findOrphanPages(opts?: {
     sourceId?: string;
     sourceIds?: string[];
-  }): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
+  }): Promise<Array<{
+    slug: string;
+    title: string;
+    domain: string | null;
+    source_id: string;
+    type: string | null;
+    frontmatter: Record<string, unknown> | null;
+  }>> {
     const sql = this.sql;
     // Soft-delete filter on BOTH sides:
     //   - candidate: p.deleted_at IS NULL — soft-deleted pages aren't orphan candidates
@@ -3300,7 +3307,10 @@ export class PostgresEngine implements BrainEngine {
       SELECT
         p.slug,
         COALESCE(p.title, p.slug) AS title,
-        p.frontmatter->>'domain' AS domain
+        p.frontmatter->>'domain' AS domain,
+        p.source_id,
+        p.type,
+        p.frontmatter
       FROM pages p
       WHERE p.deleted_at IS NULL
         ${sourceFilter}
@@ -3313,7 +3323,14 @@ export class PostgresEngine implements BrainEngine {
         )
       ORDER BY p.slug
     `;
-    return rows as unknown as Array<{ slug: string; title: string; domain: string | null }>;
+    return rows as unknown as Array<{
+      slug: string;
+      title: string;
+      domain: string | null;
+      source_id: string;
+      type: string | null;
+      frontmatter: Record<string, unknown> | null;
+    }>;
   }
 
   // Tags

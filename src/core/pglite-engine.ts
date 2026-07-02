@@ -3198,7 +3198,14 @@ export class PGLiteEngine implements BrainEngine {
   async findOrphanPages(opts?: {
     sourceId?: string;
     sourceIds?: string[];
-  }): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
+  }): Promise<Array<{
+    slug: string;
+    title: string;
+    domain: string | null;
+    source_id: string;
+    type: string | null;
+    frontmatter: Record<string, unknown> | null;
+  }>> {
     // Soft-delete filter on BOTH sides:
     //   - candidate: p.deleted_at IS NULL — soft-deleted pages aren't orphan candidates
     //   - link source: src.deleted_at IS NULL — links FROM soft-deleted pages don't count as inbound
@@ -3223,7 +3230,10 @@ export class PGLiteEngine implements BrainEngine {
       `SELECT
          p.slug,
          COALESCE(p.title, p.slug) AS title,
-         p.frontmatter->>'domain' AS domain
+         p.frontmatter->>'domain' AS domain,
+         p.source_id,
+         p.type,
+         p.frontmatter
        FROM pages p
        WHERE p.deleted_at IS NULL
          ${sourceFilter}
@@ -3237,7 +3247,14 @@ export class PGLiteEngine implements BrainEngine {
        ORDER BY p.slug`,
       params
     );
-    return rows as Array<{ slug: string; title: string; domain: string | null }>;
+    return rows as Array<{
+      slug: string;
+      title: string;
+      domain: string | null;
+      source_id: string;
+      type: string | null;
+      frontmatter: Record<string, unknown> | null;
+    }>;
   }
 
   // Tags
