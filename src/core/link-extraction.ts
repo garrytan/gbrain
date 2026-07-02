@@ -653,6 +653,17 @@ const FOUNDED_RE = /\b(?:founded|co-?founded|started the company|incorporated|fo
 //     "security advisor to|at", "product advisor to|at", "industry advisor".
 const ADVISES_RE = /\b(?:advises|advised|advisor (?:to|at|for|of)|advisory (?:board|role|position|capacity|engagement|partnership|contract|relationship|work)|board advisor|on .{0,20} advisory board|joined .{0,20} advisory board|in an? advisory (?:capacity|role|position)|as an? (?:advisor|security advisor|technical advisor|strategic advisor|industry advisor|product advisor|board advisor|senior advisor)|(?:strategic|technical|security|product|industry|senior|board) advisor (?:to|at|for|of)|consults for|consulting role (?:at|with))\b/i;
 
+// Chinese link type patterns for CJK entity mentions.
+// NOTE: These patterns are Chinese-only (zh). Japanese and Korean link
+// type extraction is not yet implemented. Entity NAME extraction in
+// by-mention.ts covers all three scripts (CJK = Chinese/Japanese/Korean)
+// via Unicode-aware tokenization.
+const ZH_FOUNDED_RE = /(?:创立|创办|成立|创建|建立|开创|发起)(?:了|的)/;
+const ZH_INVESTED_RE = /(?:投资|入股|融资|注资|参股)(?:了|的|了?于)/;
+const ZH_ADVISES_RE = /(?:顾问|咨询|指导)(?:了|的)?/;
+const ZH_WORKS_AT_RE = /(?:任职|就职|担任|供职|在.{0,10}(?:工作|上班|负责))(?:于|在|的)?/;
+const ZH_CITED_RE = /(?:引用|援引|提到|提及|转述|摘录)(?:了|的|自)?/;
+
 // Page-role detection: if the source page describes a partner/investor at
 // page level, that's a strong prior for outbound company refs being
 // invested_in even when per-edge context lacks explicit investment verbs.
@@ -706,6 +717,12 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
   if (INVESTED_RE.test(context)) return 'invested_in';
   if (ADVISES_RE.test(context)) return 'advises';
   if (WORKS_AT_RE.test(context)) return 'works_at';
+  // Chinese link type patterns
+  if (ZH_FOUNDED_RE.test(context)) return 'founded';
+  if (ZH_INVESTED_RE.test(context)) return 'invested_in';
+  if (ZH_ADVISES_RE.test(context)) return 'advises';
+  if (ZH_WORKS_AT_RE.test(context)) return 'works_at';
+  if (ZH_CITED_RE.test(context)) return 'cited';
   // Page-role prior: only fires for person -> company links. Concept pages
   // about VC topics naturally contain "venture capital" in their text, but
   // their company refs are mentions, not investments. Partner pages mentioning
@@ -1103,6 +1120,7 @@ export interface TimelineCandidate {
 // Match: `- **YYYY-MM-DD** | summary` or `- **YYYY-MM-DD** -- summary`
 // or `- **YYYY-MM-DD** - summary` or just `**YYYY-MM-DD** | summary`.
 const TIMELINE_LINE_RE = /^\s*-?\s*\*\*(\d{4}-\d{2}-\d{2})\*\*\s*[|\-–—]+\s*(.+?)\s*$/;
+const TIMELINE_LINE_RE_CN = /^\s*-?\s*(?:\*\*)?(\d{4})[年\-](\d{1,2})[月\-](\d{1,2})[日]?(?:\*\*)?\s*[|\-–—]+\s*(.+?)\s*$/;
 
 /**
  * Parse timeline entries from content. Looks at:
@@ -1119,17 +1137,26 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
 
   let i = 0;
   while (i < lines.length) {
-    const m = TIMELINE_LINE_RE.exec(lines[i]);
-    if (!m) {
-      i++;
-      continue;
+    // Try English format first, then Chinese
+    let m = TIMELINE_LINE_RE.exec(lines[i]);
+    let date: string;
+    let summary: string;
+    if (m) {
+      date = m[1];
+      summary = m[2].trim();
+    } else {
+      const cm = TIMELINE_LINE_RE_CN.exec(lines[i]);
+      if (!cm) { i++; continue; }
+      // Normalize Chinese date to YYYY-MM-DD
+      const y = cm[1];
+      const mo = cm[2].padStart(2, '0');
+      const d = cm[3].padStart(2, '0');
+      date = `${y}-${mo}-${d}`;
+      summary = cm[4].trim();
+      m = cm as any;  // for the isNaN check below
     }
-    const date = m[1];
-    const summary = m[2].trim();
-    if (!isValidDate(date) || summary.length === 0) {
-      i++;
-      continue;
-    }
+    if (!isValidDate(date) || summary.length === 0) { i++; continue; }
+
 
     // Collect optional detail lines (indented, until next date or heading).
     const detailLines: string[] = [];
