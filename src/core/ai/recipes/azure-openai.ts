@@ -1,7 +1,43 @@
 import type { Recipe } from '../types.ts';
 import { AIConfigError } from '../errors.ts';
+import { execSync } from 'node:child_process';
 
 const DEFAULT_API_VERSION = '2024-10-21'; // stable Azure OpenAI version as of 2026-05
+
+// Entra (keyless) auth support. Subscriptions that enforce disableLocalAuth via
+// Azure Policy reject api-key auth, so when no AZURE_OPENAI_API_KEY is present
+// (or AZURE_OPENAI_USE_ENTRA=1) we mint a short-lived AAD bearer token via the
+// Azure CLI and cache it. resolveAuth is synchronous, so execSync is the seam.
+// The caller needs `az login` + the "Cognitive Services OpenAI User" role.
+let _entraToken: { token: string; fetchedAt: number } | null = null;
+const ENTRA_TOKEN_TTL_MS = 45 * 60 * 1000; // refresh well before the ~60-90min expiry
+
+function fetchEntraToken(): string {
+  const now = Date.now();
+  if (_entraToken && now - _entraToken.fetchedAt < ENTRA_TOKEN_TTL_MS) {
+    return _entraToken.token;
+  }
+  let token = '';
+  try {
+    token = execSync(
+      'az account get-access-token --resource https://cognitiveservices.azure.com --query accessToken -o tsv',
+      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30_000 },
+    ).trim();
+  } catch {
+    throw new AIConfigError(
+      'Azure OpenAI (Entra/keyless): could not get an access token via `az account get-access-token`.',
+      'Run `az login` and ensure your identity has the "Cognitive Services OpenAI User" role on the resource.',
+    );
+  }
+  if (!token) {
+    throw new AIConfigError(
+      'Azure OpenAI (Entra/keyless): `az account get-access-token` returned an empty token.',
+      'Run `az login` and verify the active subscription owns the Azure OpenAI resource.',
+    );
+  }
+  _entraToken = { token, fetchedAt: now };
+  return token;
+}
 
 /**
  * Azure OpenAI. The first recipe in v0.32 to exercise both seams:
@@ -30,11 +66,13 @@ export const azureOpenAI: Recipe = {
   // base_url_default omitted: Azure URLs are env-templated only.
   auth_env: {
     required: [
-      'AZURE_OPENAI_API_KEY',
       'AZURE_OPENAI_ENDPOINT',
       'AZURE_OPENAI_DEPLOYMENT',
     ],
-    optional: ['AZURE_OPENAI_API_VERSION'],
+    // AZURE_OPENAI_API_KEY optional: when absent (or AZURE_OPENAI_USE_ENTRA=1)
+    // the recipe uses a refreshing Entra/AAD bearer token via the Azure CLI,
+    // required on subscriptions that enforce disableLocalAuth (keyless).
+    optional: ['AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_USE_ENTRA', 'AZURE_OPENAI_API_VERSION'],
     setup_url:
       'https://learn.microsoft.com/en-us/azure/ai-services/openai/quickstart',
   },
@@ -54,17 +92,19 @@ export const azureOpenAI: Recipe = {
     },
   },
   resolveAuth(env) {
-    const key = env.AZURE_OPENAI_API_KEY;
-    if (!key) {
-      throw new AIConfigError(
-        `Azure OpenAI requires AZURE_OPENAI_API_KEY.`,
-        'Get a key from your Azure portal: https://learn.microsoft.com/en-us/azure/ai-services/openai/quickstart',
-      );
+    // Entra/keyless mode: no api-key (disableLocalAuth) or opt-in via
+    // AZURE_OPENAI_USE_ENTRA=1. Mint a refreshing AAD bearer token. Returning
+    // an `Authorization: Bearer …` pair makes the gateway use the SDK's native
+    // bearer path (it strips the prefix and re-adds it), so no double-auth.
+    const useEntra =
+      env.AZURE_OPENAI_USE_ENTRA === '1' || !env.AZURE_OPENAI_API_KEY;
+    if (useEntra) {
+      return { headerName: 'Authorization', token: `Bearer ${fetchEntraToken()}` };
     }
-    // Azure uses `api-key:` (no Bearer); the unified seam routes this
+    // Key mode: Azure uses `api-key:` (no Bearer); the unified seam routes this
     // through `headers` instead of the SDK's apiKey field to avoid any
     // double-auth Authorization header sneaking in.
-    return { headerName: 'api-key', token: key };
+    return { headerName: 'api-key', token: env.AZURE_OPENAI_API_KEY };
   },
   resolveOpenAICompatConfig(env) {
     const endpoint = env.AZURE_OPENAI_ENDPOINT?.replace(/\/+$/, '');
