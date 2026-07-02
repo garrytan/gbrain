@@ -9,24 +9,27 @@
 //   4. Write each atom via engine.putPage(slug, page, {sourceId})
 //      with sourceId threaded so federated brains route correctly.
 //
-// Idempotency (D1 from /plan-eng-review):
-//   Each atom carries frontmatter.source_hash (16-char sha256 prefix).
-//   Before processing a transcript/page, query "any atom with this
-//   source_hash exists in this source?". If yes, skip. Closes both:
-//     - PR #1414's primary concern (page-side re-extraction)
-//     - Pre-existing v0.41.2.0 transcript-side date-stamp duplicate bug
-//       (atom slugs are `atoms/YYYY-MM-DD/<title>`, so re-discovered
-//       transcripts on day N+1 used to write second atoms; now skipped).
+// Idempotency (per-atom, via deterministic slug):
+//   Each atom's slug is `atoms/<source-date>/<stem>-<title-hash>` — built from
+//   the SOURCE date (the transcript's own date / the page slug), NOT the run
+//   date, plus a 6-char hash of the title. Re-extracting the same atom resolves
+//   to the SAME slug, so engine.putPage upserts in place instead of minting a
+//   duplicate. This closes three bugs in one scheme:
+//     - PR #1414's page-side re-extraction.
+//     - The cross-day transcript duplicate: append-only transcripts grow daily,
+//       so a run-date prefix (`atoms/<today>/…`) used to re-mint the same atom
+//       under a new date every day. A source-date prefix is stable, so it now
+//       upserts.
+//     - The "trailing-dash twin": the stem routes through slugifySegment (the
+//       FS-import normalizer) and re-strips a trailing dash after the 60-char
+//       truncation, so the two write paths can no longer disagree on `…would`
+//       vs `…would-` and persist the same atom twice.
 //
-// Known limitation (D9 #2 — documented, not blocking):
-//   If extraction writes atom 1 of 3 then atom 2 throws, source_hash
-//   filter sees atom 1 exists and skips on next discovery. Atoms 2+3
-//   stay missing until content_hash changes. Acceptable for v0.41.2.1:
-//     - Haiku call failure is rare; network/budget failures rarer.
-//     - Content edits trigger natural re-extract via new content_hash.
-//     - The original incident (duplicate atoms) is fully closed.
-//   Per-atom idempotency via deterministic slug is v0.42+ TODO
-//   (see TODOS.md).
+//   The source_hash batch check (atomsExistingForHashes) is retained ONLY as a
+//   cost fast-path — it skips re-running Haiku on a transcript whose whole-file
+//   hash is unchanged. On append-only sources that hash changes daily so the
+//   fast-path won't skip, but the deterministic slug makes the re-run upsert
+//   rather than duplicate, so correctness no longer depends on it.
 //
 // Config:
 //   Reads dream.synthesize.session_corpus_dir + meeting_transcripts_dir
@@ -51,6 +54,8 @@ import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { createHash } from 'crypto';
+import { slugifySegment } from '../sync.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
 
@@ -517,7 +522,8 @@ export async function runPhaseExtractAtoms(
 
       if (!opts.dryRun) {
         for (const atom of atoms) {
-          const slug = `atoms/${todayDate()}/${slugify(atom.title)}`;
+          const srcRef = item.kind === 'transcript' ? item.filePath : item.slug;
+          const slug = atomSlug(atom.title, srcRef);
           const originFrontmatter =
             item.kind === 'transcript'
               ? { source_path: item.filePath }
@@ -691,12 +697,40 @@ function todayDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function slugify(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .trim()
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .slice(0, 60);
+/**
+ * Canonical slug stem for an atom title. Routes through slugifySegment (the
+ * same normalizer the FS-import path uses) and RE-STRIPS a trailing dash after
+ * the 60-char truncation — the cut can land on a hyphen and re-introduce one.
+ * Two writers disagreeing on that trailing dash (`…would` vs `…would-`) was the
+ * "trailing-dash twin" duplicate bug.
+ */
+function atomSlugStem(title: string): string {
+  return slugifySegment(title).slice(0, 60).replace(/-+$/g, '') || 'untitled';
+}
+
+/**
+ * Pull a YYYY-MM-DD date from a source reference — a transcript file path like
+ * `…/2026-06-11-telegram.md`, or a dated page slug. Checks the basename first
+ * to avoid matching a date in a parent directory. Falls back to the run date
+ * only when the source carries no date, so dated sources are fully deterministic.
+ */
+function sourceDate(ref: string): string {
+  const base = ref.split('/').pop() ?? ref;
+  const m = base.match(/(\d{4}-\d{2}-\d{2})/) ?? ref.match(/(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : todayDate();
+}
+
+/**
+ * Deterministic per-atom slug: `atoms/<source-date>/<stem>-<title-hash>`.
+ * - Date comes from the SOURCE, not the run date, so re-extracting an
+ *   append-only transcript on a later day yields the SAME slug → putPage
+ *   upserts instead of minting a cross-day duplicate.
+ * - The 6-char title hash keeps two distinct atoms whose titles share the
+ *   first 60 chars on separate slugs, so a deterministic slug never silently
+ *   clobbers a *different* atom. Hash is over the title only (not body) so an
+ *   LLM rewording the body on re-extraction still upserts rather than dupes.
+ */
+function atomSlug(title: string, srcRef: string): string {
+  const hash = createHash('sha256').update(title).digest('hex').slice(0, 6);
+  return `atoms/${sourceDate(srcRef)}/${atomSlugStem(title)}-${hash}`;
 }
