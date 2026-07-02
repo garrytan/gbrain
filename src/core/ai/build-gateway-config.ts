@@ -34,6 +34,11 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // plane field now exists (GBrainConfig type) and gets mapped here, so
   // setting it via `~/.gbrain/config.json` propagates into the gateway.
   if (c.zeroentropy_api_key) envFromConfig.ZEROENTROPY_API_KEY = c.zeroentropy_api_key;
+  // Bedrock: region + optional explicit credentials (IAM role fallback when keys absent).
+  if (c.aws_region) envFromConfig.AWS_REGION = c.aws_region;
+  if (c.aws_access_key_id) envFromConfig.AWS_ACCESS_KEY_ID = c.aws_access_key_id;
+  if (c.aws_secret_access_key) envFromConfig.AWS_SECRET_ACCESS_KEY = c.aws_secret_access_key;
+  if (c.aws_session_token) envFromConfig.AWS_SESSION_TOKEN = c.aws_session_token;
 
   // v0.32 codex finding #4+#5 fix: thread local-server _BASE_URL env vars
   // into base_urls so the gateway hits the user's configured port. Without

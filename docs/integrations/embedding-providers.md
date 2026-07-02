@@ -32,6 +32,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `minimax` | `MINIMAX_API_KEY` | 1536 | 0.07 | no | no |
 | `dashscope` | `DASHSCOPE_API_KEY` | 1024 | varies | no | no |
 | `zhipu` | `ZHIPUAI_API_KEY` | 1024 | varies | no | no |
+| `bedrock` | `AWS_REGION` (+ optional key vars or IAM role) | 1536 | 0.02 | no | no |
 | `ollama` | (none — runs locally) | 768 | 0 | yes | no |
 | `llama-server` | (none — runs locally) | user-set | 0 | yes | no |
 | `litellm` | `LITELLM_API_KEY` (optional) | user-set | varies | yes (proxy) | no |

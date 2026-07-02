@@ -27,6 +27,7 @@ import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
 
@@ -387,6 +388,18 @@ export function applyOpenAICompatConfig(
     );
   }
   return { baseURL };
+}
+
+/** Build a Bedrock client config from gateway env. */
+function buildBedrockClientConfig(cfg: AIGatewayConfig): { region: string; accessKeyId?: string; secretAccessKey?: string; sessionToken?: string } {
+  const region = cfg.env.AWS_REGION ?? '';
+  if (!cfg.env.AWS_ACCESS_KEY_ID) return { region };
+  return {
+    region,
+    accessKeyId: cfg.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: cfg.env.AWS_SECRET_ACCESS_KEY ?? '',
+    ...(cfg.env.AWS_SESSION_TOKEN ? { sessionToken: cfg.env.AWS_SESSION_TOKEN } : {}),
+  };
 }
 
 /** Configure the gateway. Called by cli.ts#connectEngine. Clears cached models. */
@@ -1221,6 +1234,14 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       throw new AIConfigError(
         `Anthropic has no embedding model. Use openai or google for embeddings.`,
       );
+    case 'native-bedrock': {
+      if (!cfg.env.AWS_REGION) throw new AIConfigError(
+        'Bedrock embedding requires AWS_REGION.',
+        recipe.setup_hint,
+      );
+      const bedrockClient = createAmazonBedrock(buildBedrockClientConfig(cfg));
+      return bedrockClient.textEmbeddingModel(modelId);
+    }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'embedding');
@@ -2135,6 +2156,11 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       if (!apiKey) throw new AIConfigError(`Anthropic expansion requires ANTHROPIC_API_KEY.`, recipe.setup_hint);
       return createAnthropic({ apiKey }).languageModel(modelId);
     }
+    case 'native-bedrock': {
+      if (!cfg.env.AWS_REGION) throw new AIConfigError('Bedrock expansion requires AWS_REGION.', recipe.setup_hint);
+      const bedrockClient = createAmazonBedrock(buildBedrockClientConfig(cfg));
+      return bedrockClient(modelId);
+    }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'expansion');
@@ -2506,6 +2532,11 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
       const apiKey = cfg.env.ANTHROPIC_API_KEY;
       if (!apiKey) throw new AIConfigError(`Anthropic chat requires ANTHROPIC_API_KEY.`, recipe.setup_hint);
       return createAnthropic({ apiKey }).languageModel(modelId);
+    }
+    case 'native-bedrock': {
+      if (!cfg.env.AWS_REGION) throw new AIConfigError('Bedrock chat requires AWS_REGION.', recipe.setup_hint);
+      const bedrockClient = createAmazonBedrock(buildBedrockClientConfig(cfg));
+      return bedrockClient(modelId);
     }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
@@ -3324,6 +3355,30 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
       // BudgetExhausted (TX1) suppressed; surfaces on next reserve().
     }
   };
+  // Bedrock reranking uses the AI SDK path instead of the raw HTTP transport below.
+  if (recipe.implementation === 'native-bedrock') {
+    try {
+      if (!cfg.env.AWS_REGION) throw new RerankError('Bedrock rerank requires AWS_REGION.', 'unknown');
+      const bedrockClient = createAmazonBedrock(buildBedrockClientConfig(cfg));
+      const rerankModel = (bedrockClient as any).reranking(parsed.modelId);
+      const result = await rerankModel.doRerank({
+        query: input.query,
+        documents: input.documents,
+        topN: input.topN,
+        abortSignal: ctrl.signal,
+      });
+      clearTimeout(t);
+      _rerankRecord();
+      return result.rerankings.map((r: any) => ({ index: r.index, relevanceScore: r.relevanceScore }));
+    } catch (err) {
+      clearTimeout(t);
+      _rerankRecord();
+      if (err instanceof RerankError) throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new RerankError(`rerank (bedrock): ${msg}`, 'network');
+    }
+  }
+
   try {
     const transport: RerankTransport = _rerankTransport ?? ((u, init) => fetch(u, init));
     const resp = await transport(url, {
