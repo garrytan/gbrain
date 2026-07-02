@@ -382,6 +382,47 @@ describe("DRY detection — checkResolvable", () => {
   });
 });
 
+describe("CRLF frontmatter — checkResolvable", () => {
+  let dir: string;
+  afterEachCleanup(() => dir && rmSync(dir, { recursive: true, force: true }));
+
+  test("extracts triggers from Windows CRLF skill frontmatter", () => {
+    dir = mkdtempSync(join(tmpdir(), "gbrain-crlf-"));
+    writeFileSync(
+      join(dir, "RESOLVER.md"),
+      '## Test\n| Trigger | Skill |\n|-----|-----|\n| "one" | `skills/one/SKILL.md` |\n| "two" | `skills/two/SKILL.md` |\n',
+    );
+    writeFileSync(
+      join(dir, "manifest.json"),
+      JSON.stringify({
+        skills: [
+          { name: "one", path: "one/SKILL.md" },
+          { name: "two", path: "two/SKILL.md" },
+        ],
+      }, null, 2),
+    );
+    for (const name of ["one", "two"]) {
+      mkdirSync(join(dir, name), { recursive: true });
+      writeFileSync(
+        join(dir, name, "SKILL.md"),
+        [
+          "---",
+          `name: ${name}`,
+          "description: test",
+          "triggers:",
+          "  - shared windows trigger",
+          "---",
+          `# ${name}`,
+        ].join(String.fromCharCode(13, 10)),
+      );
+    }
+
+    const report = checkResolvable(dir);
+    expect(report.issues.filter(i => i.type === "mece_gap")).toEqual([]);
+    expect(report.issues.filter(i => i.type === "mece_overlap")).toHaveLength(1);
+  });
+});
+
 describe("v0.22.4 regression — actual repo skills/ has 0 errors", () => {
   test("repo skills/ pass check-resolvable cleanly (zero errors AND zero warnings)", () => {
     // The v0.22.4 (Part A) contract was zero warnings AND zero errors.
