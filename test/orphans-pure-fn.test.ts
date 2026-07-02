@@ -187,6 +187,19 @@ describe('shouldExclude — orphan filter regression (preserve curation)', () =>
     expect(shouldExclude('outputs/render-batch-3')).toBe(true);
   });
 
+  test('readme folder descriptors are excluded at any depth', () => {
+    expect(shouldExclude('readme')).toBe(true);
+    expect(shouldExclude('index')).toBe(true);
+    expect(shouldExclude('projects/readme')).toBe(true);
+    expect(shouldExclude('media/readme')).toBe(true);
+    // A page merely mentioning readme in its name is NOT excluded.
+    expect(shouldExclude('concepts/readme-driven-development')).toBe(false);
+  });
+
+  test('machine-generated extracts pages are excluded', () => {
+    expect(shouldExclude('extracts/2026-06-12/takes.proposed/host/propose-x/round-single')).toBe(true);
+  });
+
   test('deny-prefixes are excluded', () => {
     expect(shouldExclude('templates/meeting')).toBe(true);
     expect(shouldExclude('dashboards/_index')).toBe(true);

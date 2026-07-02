@@ -20,11 +20,19 @@
  * evaluation paths cannot drift.
  */
 
-/** Slug suffixes that are always auto-generated root files */
-export const AUTO_SUFFIX_PATTERNS = ['/_index', '/log'];
+/**
+ * Slug suffixes that are always auto-generated root files.
+ * `/readme` — a README is a folder descriptor, not a knowledge node;
+ * nothing is expected to wikilink to it.
+ */
+export const AUTO_SUFFIX_PATTERNS = ['/_index', '/log', '/readme'];
 
-/** Page slugs that are pseudo-pages by convention */
-export const PSEUDO_SLUGS = new Set(['_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude']);
+/**
+ * Page slugs that are pseudo-pages by convention.
+ * `readme` / `index` — root-level folder descriptors, same rationale as
+ * the `/readme` suffix and the existing `_index` pseudo-page.
+ */
+export const PSEUDO_SLUGS = new Set(['_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude', 'readme', 'index']);
 
 /** Slug segment that marks raw sources */
 export const RAW_SEGMENT = '/raw/';
@@ -54,6 +62,10 @@ export const DENY_PREFIXES = [
  * the pages gbrain's own calendar/email integrations write under
  * `daily/...`) link OUT to the graph; nothing is expected to link back to
  * a dated log page.
+ *
+ * `extracts` — machine-generated takes/extraction pages gbrain's own
+ * pipelines write (e.g. `extracts/<date>/takes.proposed/...`); they exist
+ * only in the DB and are not curated content.
  */
 export const FIRST_SEGMENT_EXCLUSIONS = new Set([
   'scratch',
@@ -61,6 +73,7 @@ export const FIRST_SEGMENT_EXCLUSIONS = new Set([
   'catalog',
   'entities',
   'daily',
+  'extracts',
 ]);
 
 /**
