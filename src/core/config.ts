@@ -860,6 +860,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.tier.subagent',
   'models.aliases',
   'models.dream.synthesize',
+  'models.dream.extract_atoms',
+  'cycle.extract_atoms.budget_usd',
   'models.dream.patterns',
   'models.dream.synthesize_verdict',
   'models.drift',
