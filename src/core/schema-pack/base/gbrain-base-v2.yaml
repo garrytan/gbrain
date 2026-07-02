@@ -37,6 +37,16 @@ takes_kinds:
   - bet
   - hunch
 
+# v0.42.x (#1678 structural fix): gbrain-base-v2 is the canonical
+# production taxonomy for brains that already carry atom/source/media
+# primitives. Declaring extract_atoms here lets routine dream/autopilot
+# cycles drain the page backlog instead of requiring an out-of-band drain
+# forever. Keep synthesize_concepts opt-in via creator/everything packs for
+# now: it is a costlier aggregation phase and is not required to prevent the
+# atom-extraction backlog from growing.
+phases:
+  - extract_atoms
+
 migration_from:
   pack: gbrain-base
   version: "1.x"

@@ -1768,8 +1768,8 @@ export async function runCycle(
     // declaration. When the active pack does NOT declare extract_atoms
     // (e.g. user is on gbrain-base or gbrain-investor), this phase is a
     // no-op with reason='not_in_active_pack'. When the pack does declare
-    // it (gbrain-creator, gbrain-everything), dispatches to the
-    // extract-atoms.ts module (real body in T5; stub for now).
+    // it (gbrain-creator, gbrain-everything, or gbrain-base-v2 after the
+    // #1678 backlog fix), dispatches to the extract-atoms.ts module.
     //
     // borrow_from does NOT borrow phases — each pack declares phase
     // participation explicitly. The packDeclaresPhase helper walks the
