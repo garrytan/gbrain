@@ -552,7 +552,7 @@ export async function extractPageLinks(
   // path needed `resolveBasenameMatches` on the real resolver.
   let fmUnresolved: UnresolvedFrontmatterRef[] = [];
   if (!opts.skipFrontmatter) {
-    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver);
+    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver, opts.globalBasename);
     candidates.push(...fm.candidates);
     fmUnresolved = fm.unresolved;
   }
@@ -1023,11 +1023,24 @@ export interface FrontmatterExtractResult {
  * Arrays of objects: uses the `name` or `slug` property (codex tension 6.3).
  * Non-string / non-object entries: silently skipped (log-only).
  */
+/**
+ * Unwrap an Obsidian-style `[[wikilink]]` frontmatter value to its bare link
+ * target: drops the surrounding brackets, any `|alias`, and `#heading` /
+ * `^block` suffixes. Non-bracketed values pass through unchanged. Used to feed
+ * the basename index when global_basename is on (see extractFrontmatterLinks).
+ */
+function unwrapWikilink(value: string): string {
+  const match = /^\s*\[\[(.+?)\]\]\s*$/.exec(value);
+  if (!match) return value;
+  return match[1].split('|')[0].split('#')[0].split('^')[0].trim();
+}
+
 export async function extractFrontmatterLinks(
   slug: string,
   pageType: PageType,
   frontmatter: Record<string, unknown>,
   resolver: SlugResolver,
+  globalBasename = false,
 ): Promise<FrontmatterExtractResult> {
   const candidates: LinkCandidate[] = [];
   const unresolved: UnresolvedFrontmatterRef[] = [];
@@ -1060,7 +1073,23 @@ export async function extractFrontmatterLinks(
         }
         if (!name) continue;   // skip numbers, nulls, malformed objects
 
-        const resolved = await resolver.resolve(name, mapping.dirHint);
+        let resolved = await resolver.resolve(name, mapping.dirHint);
+        if (!resolved && globalBasename && typeof resolver.resolveBasenameMatches === 'function') {
+          // Issue #972 follow-up: extend global_basename resolution to
+          // frontmatter link fields. resolve() can't reach a bare-title
+          // wikilink value (e.g. `sources: "[[2025-12-25_mentor-extraction]]"`)
+          // — it has no '/', so the slug-direct getPage is skipped, and the
+          // field's dirHint may name folders that don't exist in this brain,
+          // so the dir-scoped exact + fuzzy steps miss too. When
+          // link_resolution.global_basename is on, fall back to the SAME
+          // basename index the body bare-wikilink pass uses, after unwrapping
+          // the brackets. Unique-match-only: ambiguous basenames (e.g. archive
+          // duplicates, generic hubs like `_index`) stay unresolved rather than
+          // create a wrong edge.
+          const matches = (await resolver.resolveBasenameMatches(unwrapWikilink(name)))
+            .filter((s) => s !== slug);
+          if (matches.length === 1) resolved = matches[0];
+        }
         if (!resolved) {
           unresolved.push({ field, name });
           continue;
