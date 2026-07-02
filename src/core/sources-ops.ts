@@ -127,9 +127,10 @@ export interface SourceStatus {
   last_commit: string | null;
   archived: boolean;
   /**
-   * Discriminated union from validateRepoState. 'not-applicable' if the
-   * source has no local_path (pure DB source). Lets a remote MCP caller
-   * diagnose "is the clone OK?" without SSH access to the brain host.
+   * Discriminated union from validateRepoState for gbrain-managed remote
+   * clones. 'not-applicable' for pure DB and user-supplied local-path sources
+   * (remote_url absent): those paths are not auto-managed clones, so a missing
+   * origin remote must not be reported as a corrupted clone.
    */
   clone_state: RepoState | 'not-applicable';
 }
@@ -710,8 +711,8 @@ export async function getSourceStatus(
 
   const remoteUrl = getRemoteUrl(src.config);
   let cloneState: SourceStatus['clone_state'] = 'not-applicable';
-  if (src.local_path) {
-    cloneState = validateRepoState(src.local_path, remoteUrl ?? undefined);
+  if (src.local_path && remoteUrl) {
+    cloneState = validateRepoState(src.local_path, remoteUrl);
   }
 
   return {
