@@ -1042,7 +1042,29 @@ export async function hybridSearch(
   // provider (Voyage, ZE) works fine.
   const { isAvailable } = await import('../ai/gateway.ts');
   const providerProbe = resolvedCol.embeddingModel || undefined;
-  if (!isAvailable('embedding', providerProbe)) {
+  // Image/both/unified routing embeds via the MULTIMODAL provider, not the
+  // text provider — so a multimodal-only install (text provider absent) must
+  // still reach the multimodal branch below. Probe the multimodal provider
+  // explicitly and only short-circuit when neither the text provider nor (for
+  // multimodal-routed queries) the multimodal provider is reachable. Without
+  // this guard a multimodal-only install would fall to keyword-only here and
+  // never run the image/unified vector path.
+  const multimodalProviderProbe =
+    cfgForColumn?.embedding_multimodal_model ?? 'voyage:voyage-multimodal-3';
+  // The LLM intent tie-break (below) can escalate a regex-'text' query to
+  // 'image'/'both'; account for that possibility so an ambiguous query on a
+  // multimodal-only install still reaches the multimodal branch.
+  const mayEscalateToMultimodal =
+    earlyModality === 'text' &&
+    resolvedMode.cross_modal_llm_intent &&
+    isAmbiguousModalityQuery(query);
+  const willTryMultimodal =
+    (resolvedMode.unified_multimodal === true ||
+      earlyModality === 'image' ||
+      earlyModality === 'both' ||
+      mayEscalateToMultimodal) &&
+    isAvailable('embedding', multimodalProviderProbe);
+  if (!isAvailable('embedding', providerProbe) && !willTryMultimodal) {
     // v0.43 — fuse the relational arm with keyword so typed-edge answers
     // survive on the no-embedding-provider path (the relational win is most
     // valuable exactly when vector is unavailable).
@@ -1172,7 +1194,10 @@ export async function hybridSearch(
   if (unifiedRouting) {
     try {
       const { isAvailable: aiIsAvailable, embedQueryMultimodal } = await import('../ai/gateway.ts');
-      if (!aiIsAvailable('embedding')) {
+      // Probe the MULTIMODAL provider, not the global default — on a
+      // multimodal-only install the global default (text) is absent but the
+      // multimodal provider is configured, and unified routing embeds via it.
+      if (!aiIsAvailable('embedding', multimodalProviderProbe)) {
         throw new Error('gateway not configured for embedding — unified multimodal would also fail');
       }
       const unifiedEmbedding = await embedQueryMultimodal(query);
@@ -1207,7 +1232,10 @@ export async function hybridSearch(
     // OR the embed throws, log a structured warning and fall through to text.
     try {
       const { isAvailable: aiIsAvailable, embedQueryMultimodal } = await import('../ai/gateway.ts');
-      if (!aiIsAvailable('embedding')) {
+      // Probe the MULTIMODAL provider, not the global default — the image side
+      // embeds via the multimodal model, which may be configured even when the
+      // text/global-default embedding provider is absent (multimodal-only).
+      if (!aiIsAvailable('embedding', multimodalProviderProbe)) {
         throw new Error('gateway not configured for embedding — multimodal would also fail');
       }
       const imageEmbedding = await embedQueryMultimodal(query);
