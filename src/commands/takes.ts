@@ -28,6 +28,11 @@ import {
   type ParsedTake,
 } from '../core/takes-fence.ts';
 import { withPageLock } from '../core/page-lock.ts';
+import {
+  acceptTakeProposal,
+  listTakeProposals,
+  rejectTakeProposal,
+} from '../core/take-proposals.ts';
 
 // --- Helpers ---
 
@@ -167,6 +172,81 @@ async function cmdSearch(engine: BrainEngine, args: string[]): Promise<void> {
     const score = Number(h.score).toFixed(2);
     console.log(`${h.page_slug}#${h.row_num} [${h.kind} • ${h.holder} • w=${Number(h.weight).toFixed(2)} • s=${score}]\n  ${h.claim}\n`);
   }
+}
+
+async function cmdPropose(engine: BrainEngine, args: string[]): Promise<void> {
+  const sub = args[0];
+  const rest = args.slice(1);
+  const json = flagPresent(rest, '--json') || flagPresent(args, '--json');
+  if (!sub || sub === 'list') {
+    const status = flagValue(rest, '--status') as 'pending' | 'accepted' | 'rejected' | 'superseded' | undefined;
+    const limit = parseInt(flagValue(rest, '--limit') ?? '30', 10);
+    const offset = parseInt(flagValue(rest, '--offset') ?? '0', 10);
+    const rows = await listTakeProposals(engine, { status: status ?? 'pending', limit, offset });
+    if (json) {
+      console.log(JSON.stringify(rows, null, 2));
+      return;
+    }
+    if (rows.length === 0) {
+      console.log(`No ${status ?? 'pending'} take proposals.`);
+      return;
+    }
+    for (const row of rows) {
+      const date = row.effective_date ? row.effective_date.slice(0, 10) : '';
+      const dateSource = row.effective_date_source ? ` ${row.effective_date_source}` : '';
+      const brier = row.predicted_brier === null || row.predicted_brier === undefined
+        ? ''
+        : ` • brier=${row.predicted_brier.toFixed(3)}`;
+      console.log(
+        `#${row.id} [${row.kind} • ${row.holder} • w=${Number(row.weight).toFixed(2)}${date ? ` • ${date}${dateSource}` : ''}${brier}]\n` +
+        `  ${row.page_slug}\n` +
+        `  ${row.claim_text}\n`,
+      );
+    }
+    return;
+  }
+
+  if (sub === 'accept') {
+    const id = parseInt(rest[0] ?? flagValue(rest, '--id') ?? '', 10);
+    if (!Number.isFinite(id)) {
+      console.error('Usage: gbrain takes propose accept <proposal_id> [--by <actor>] [--dir <path>] [--json]');
+      process.exit(1);
+    }
+    const result = await acceptTakeProposal(engine, id, {
+      actedBy: flagValue(rest, '--by') ?? 'gbrain-cli',
+      brainDir: flagValue(rest, '--dir'),
+    });
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    const since = result.since_date ? ` since=${result.since_date}` : ' since=(unset: no real claim-date)';
+    const suffix = result.idempotent ? ' (already accepted)' : '';
+    console.log(`Accepted proposal #${result.proposal_id} → ${result.page_slug}#${result.row_num}${since}${suffix}.`);
+    return;
+  }
+
+  if (sub === 'reject') {
+    const id = parseInt(rest[0] ?? flagValue(rest, '--id') ?? '', 10);
+    if (!Number.isFinite(id)) {
+      console.error('Usage: gbrain takes propose reject <proposal_id> [--reason "..."] [--by <actor>] [--json]');
+      process.exit(1);
+    }
+    const result = await rejectTakeProposal(engine, id, {
+      actedBy: flagValue(rest, '--by') ?? 'gbrain-cli',
+      reason: flagValue(rest, '--reason'),
+    });
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    const suffix = result.idempotent ? ' (already rejected)' : '';
+    console.log(`Rejected proposal #${result.proposal_id}${suffix}.`);
+    return;
+  }
+
+  console.error(`Unknown takes propose subcommand: ${sub}`);
+  process.exit(1);
 }
 
 async function cmdAdd(engine: BrainEngine, args: string[]): Promise<void> {
@@ -536,6 +616,12 @@ Subcommands:
                                           List takes for a page
   takes search "<query>" [--limit N] [--json]
                                           Keyword search across all takes
+  takes propose list [--status pending] [--limit N] [--offset N] [--json]
+                                          Review pending take proposals
+  takes propose accept <proposal_id> [--by <actor>] [--json]
+                                          Promote a reviewed proposal into the page's takes fence
+  takes propose reject <proposal_id> [--reason "..."] [--by <actor>] [--json]
+                                          Reject a proposal so it is not re-proposed
   takes add <slug> --claim "..." --kind <fact|take|bet|hunch> --who <holder>
                    [--weight 0.5] [--source "..."] [--since YYYY-MM]
                                           Append a take (markdown + DB)
@@ -564,6 +650,7 @@ Common flags:
 
   switch (sub) {
     case 'search':      return cmdSearch(engine, rest);
+    case 'propose':     return cmdPropose(engine, rest);
     case 'add':         return cmdAdd(engine, rest);
     case 'update':      return cmdUpdate(engine, rest);
     case 'supersede':   return cmdSupersede(engine, rest);
