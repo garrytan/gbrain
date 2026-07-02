@@ -352,8 +352,11 @@ export async function addSource(
     }
   }
 
-  // Overlap check for any local path (existing behavior).
-  let finalPath = opts.localPath ?? null;
+  // Overlap check for any local path (existing behavior). Resolve to absolute
+  // first (repo-path.ts invariant): a relative local_path both defeats the
+  // string-prefix overlap check below and, once stored, makes every later
+  // sync resolve it against whatever cwd the process happens to have.
+  let finalPath = opts.localPath ? resolvePath(opts.localPath) : null;
   if (parsedUrl) {
     finalPath = opts.cloneDir ?? defaultCloneDir(opts.id);
   }

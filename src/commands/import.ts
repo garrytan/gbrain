@@ -1,6 +1,7 @@
 import { readdirSync, lstatSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
+import { resolveRepoArg } from '../core/repo-path.ts';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
@@ -461,7 +462,10 @@ export async function runImport(
       );
     }
     await engine.setConfig('sync.last_run', new Date().toISOString());
-    await engine.setConfig('sync.repo_path', dir);
+    // repo-path.ts invariant: never persist a relative repo path. This write
+    // is how `gbrain import .` used to seed the anchor that a later bare
+    // `gbrain sync` from the wrong cwd resolved into a foreign tree.
+    await engine.setConfig('sync.repo_path', resolveRepoArg(dir));
   }
 
   return { imported, skipped, errors, chunksCreated, failures };
