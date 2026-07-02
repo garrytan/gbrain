@@ -1971,6 +1971,145 @@ into one committed wave with a target version.
   `src/commands/sync.ts:buildDetachedWorkingTreeManifest` +
   `buildSyncManifest`.
 
+### D4 — v0.41 production-audit follow-ups
+
+Source: `docs/audits/v041-production-upgrade-audit.md` (snapshot v0.41.2.0,
+revalidated against v0.41.7.0 on 2026-05-25). Filed via `/plan-eng-review` +
+`/codex` consult on PR #1448; design choices captured in
+`~/.claude/plans/system-instruction-you-are-working-composed-valley.md`.
+
+### v0.41.x+: Dream cycle reconnect-between-phases — design needed before implementation
+
+**What:** `gbrain dream` on Supabase pooler (port 6543) loses its DB connection
+during long filesystem-scanning phases (extract on a 16K-page brain). The
+pooler evicts idle backends when no queries run; subsequent DB-dependent phases
+fail with `No database connection: connect() has not been called.` On a real
+production upgrade audit this killed 13 of 16 phases (see
+`docs/audits/v041-production-upgrade-audit.md`).
+
+**Why:** Operators on managed Postgres (Supabase, Neon, etc.) with transaction
+poolers can't run the dream cycle to completion on large brains. The reconnect
+infrastructure exists (`PostgresEngine.reconnect()` at
+`src/core/postgres-engine.ts:4137`, supervisor-driven 3-strikes path) — the
+gap is that `src/core/cycle.ts` doesn't call it between phases, and
+`src/commands/extract.ts:535-540` catches batch errors as "rows lost" without
+retrying with a fresh connection.
+
+**Design space — choose one before implementing:**
+This is NOT a 30-min fix. There are at least 4 viable designs, each with
+different complexity and failure modes:
+
+1. **Phase-boundary health-check ping.** Cheap probe between every phase;
+   reconnect if probe fails. Simple but doesn't help mid-phase drops.
+2. **Reconnect-on-specific-connection-errors only.** Tag the SQLSTATE values
+   that indicate idle eviction (vs real network partition) and reconnect only
+   on those. Tightest blast radius but needs careful classifier work.
+3. **Direct connection (port 5432) for maintenance.** Bypass the pooler
+   entirely for the dream cycle. Solves the symptom completely but introduces
+   a connection-string distinction that the operator + worker setup must honor.
+4. **Bounded batch-write retry with backoff.** Inside the catch at
+   `extract.ts:535-540`, retry the batch insert with a fresh connection after
+   exponential backoff. Doesn't help non-batch phases.
+
+The right answer probably combines (3) for the dream cycle specifically with
+some flavor of (1) or (2) as defense-in-depth. Filing as TODO so the design
+work isn't lost; recommend writing a real design doc before implementation.
+
+**Idempotency requirement (must be spelled out in the design doc):**
+- `addLinksBatch` / `addTimelineEntriesBatch` use `ON CONFLICT DO NOTHING`,
+  so re-running a successful batch after a network round-trip drop is safe
+  for the inserted rows.
+- BUT the retry path must correctly count what landed before the drop vs
+  what landed on retry. Without this, the operator sees inflated `created`
+  counters AND can't tell whether a partial commit happened mid-batch (vs a
+  full failure followed by a full retry).
+- Non-batch phases (synthesize, patterns, consolidate) have their own
+  idempotency stories (idempotency keys, dream_verdicts cache) — the design
+  doc should audit each phase's retry-safety separately, not assume
+  ON CONFLICT semantics extend everywhere.
+
+**Pros:** Closes the "can't run dream cycle on managed Postgres at scale" class.
+Reuses existing `reconnect()` primitive in design option (1) or (2).
+**Cons:** Real architecture work; idempotency audit per phase; connection-
+classifier complexity for option (2); operator setup distinction for option (3).
+**Context:** Verified true at HEAD (v0.41.7.0); audit at
+`docs/audits/v041-production-upgrade-audit.md` has the full repro on a Supabase
+brain. Related TODO: `extract.ts N+1 reads over Supabase pooler` (same Supabase
+pooler topology theme; different bug class — read-side N+1 vs write-side
+reconnect).
+**Depends on:** Design doc that picks among the 4 options + audits per-phase
+retry idempotency.
+
+### v0.41.x+: Doctor [SUGGEST] tier — framework design
+
+**What:** Add a `[SUGGEST]` severity tier to `gbrain doctor` alongside the
+existing ok/warn/fail tiers. SUGGEST is the surface for optional feature
+activation hints (vs warn/fail which signal that something is broken). This
+TODO covers the framework only — the initial suggestion list is filed
+separately (see next TODO).
+
+**Why:** After a multi-minor upgrade (e.g. v0.29 → v0.41), an operator gets
+automatic schema migrations but no guidance on new config knobs available.
+Doctor is already where operators look for "is my brain healthy" — a fourth
+tier makes it the natural surface for upgrade advice without requiring a
+separate `--changelog` or `--post-upgrade` command.
+
+**Design questions to resolve in implementation:**
+- **Taxonomy:** Where does SUGGEST sit relative to ok/warn/fail? Always
+  printed, or hidden unless `--include-suggest`?
+- **JSON shape:** New `severity: "suggest"` enum value, or a sibling
+  `suggestions: []` array on the existing envelope?
+- **Suppression model:** Per-suggestion suppress knob (in
+  `~/.gbrain/config.json`)? Time-based snooze? Project-level vs user-level?
+- **Scoring:** Does SUGGEST count toward `brain_score`? Recommend NO —
+  suggestions are aspirational; counting them toward score punishes operators
+  for not adopting every optional feature.
+- **Boundary with warn/fail:** A suggestion that "your worker isn't running"
+  is actually an operational warning, not optional advice. The framework needs
+  a clear rule for what qualifies as SUGGEST vs WARN. Recommend: SUGGEST is
+  for "your brain works but you could opt into feature X"; WARN is for "your
+  brain works less well than it should because Y."
+
+**Pros:** One mechanism covers every "feature exists but isn't activated"
+case. Composes with existing doctor JSON envelope. Operators already run
+doctor.
+**Cons:** Risk of noise if the SUGGEST tier conflates with WARN; needs
+explicit boundary rule. Per-suggestion suppression complexity.
+**Context:** Audit at `docs/audits/v041-production-upgrade-audit.md`
+enumerates the first candidates. Related: existing TODO `doctor advisory`
+references for extension-docs (currently ~lines 395, 981; can compose with
+this framework).
+**Depends on:** Nothing.
+
+### v0.41.x+: Doctor [SUGGEST] tier — initial suggestion list (blocked by framework TODO)
+
+**What:** Once the [SUGGEST] tier framework lands (see preceding TODO), wire
+these initial suggestions into doctor:
+1. `calibration_domains not declared — per-topic accuracy tracking available`
+   (hint: `gbrain schema add-domain` once that command exists; today:
+   hand-edit pack YAML).
+2. `nightly quality probe disabled — gbrain config set autopilot.nightly_quality_probe.enabled true (~$10/mo)`
+   — but ONLY suggest this in environments where the operator has explicitly
+   opted into spend prompts (cost-protective default).
+3. `no eval baseline published — run gbrain bench publish to protect search quality`.
+4. `custom pack missing phases field — consider adding extract_atoms, synthesize_concepts`.
+
+**Deliberately NOT in this list:**
+- `no worker running but N jobs waiting` — this belongs in `queue_health`
+  warn/fail tier (already filed as `B7 minion_workers heartbeat table for
+  queue_health doctor`), not SUGGEST. It's an operational failure, not
+  optional advice. Codex correctly flagged this as type-confusion in the
+  original audit recommendation during plan review.
+
+**Pros:** Concrete starter set for the framework; each suggestion solves a
+real discoverability gap surfaced by the v0.41 production audit.
+**Cons:** Each suggestion needs the right activation gate (e.g. nightly
+probe needs spend-opt-in detection) — list looks small but each item has
+its own config-state-check complexity.
+**Context:** Audit at `docs/audits/v041-production-upgrade-audit.md`.
+**Depends on:** `v0.41.x+: Doctor [SUGGEST] tier — framework design`
+(preceding TODO).
+
 ### Verified-missing items — filed into TODOS (P2 unless noted)
 
 Each grep-verified absent before being claimed missing. Priority per the
