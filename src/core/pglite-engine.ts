@@ -150,6 +150,14 @@ export function computeSnapshotSchemaHash(
  * `macos-26-3` — the pre-existing #223 hint signature (early macOS
  *   26.3 builds shipped a broken WASM runtime).
  *
+ * `windows-path-shell` — issue #2008 shape: PowerShell / NativeCommandError
+ *   wrapped around PGLite-looking red herrings when a Windows profile or
+ *   install path contains shell-special characters such as apostrophes.
+ *
+ * `windows-pglite-unknown` — Windows PGLite/WASM failures without shell/path
+ *   evidence. Still avoids the macOS #223 fallback, but does not prescribe
+ *   the #2008 path workaround.
+ *
  * `unknown` — falls through to a generic hint that still names the
  *   doctor command and the most-common-cause link.
  *
@@ -158,10 +166,21 @@ export function computeSnapshotSchemaHash(
  * errors). Match the literal `$$bunfs` marker OR ENOENT+pglite.data
  * co-occurrence.
  */
-export type PgliteInitFailure = 'bunfs' | 'macos-26-3' | 'unknown';
+export type PgliteInitFailure = 'bunfs' | 'macos-26-3' | 'windows-path-shell' | 'windows-pglite-unknown' | 'unknown';
 
-export function classifyPgliteInitError(message: string): PgliteInitFailure {
+export function classifyPgliteInitError(
+  message: string,
+  platform: NodeJS.Platform = process.platform,
+): PgliteInitFailure {
   if (/\$\$bunfs|ENOENT[\s\S]*pglite\.data/i.test(message)) return 'bunfs';
+  if (platform === 'win32') {
+    const hasShellEvidence = /NativeCommandError|FullyQualifiedErrorId\s*:\s*NativeCommandError|At line:\d+ char:\d+|CategoryInfo\s*:|PowerShell/i.test(message);
+    const hasWindowsApostrophePath = /[A-Z]:\\[^\n\r]*'[^\n\r]*/i.test(message);
+    if (hasShellEvidence && hasWindowsApostrophePath) return 'windows-path-shell';
+    if (/abort.*runtime|wasm.*runtime|Aborted\(\)|Cannot find module ['"]?@electric-sql\/pglite/i.test(message)) {
+      return 'windows-pglite-unknown';
+    }
+  }
   if (/abort.*runtime|macos.*26\.3|wasm.*runtime/i.test(message)) {
     return 'macos-26-3';
   }
@@ -187,6 +206,24 @@ export function buildPgliteInitErrorMessage(
       hint =
         '  This is most commonly the macOS 26.3 WASM bug:\n' +
         '  https://github.com/garrytan/gbrain/issues/223';
+      break;
+    case 'windows-path-shell':
+      hint =
+        '  This looks like a Windows shell/path quoting failure before PGLite starts.\n' +
+        '  If your Windows username or install path contains an apostrophe or\n' +
+        '  another shell-special character, PowerShell can corrupt the migration\n' +
+        '  command and surface NativeCommandError, missing-module, or WASM errors\n' +
+        '  as red herrings. Move the install/brain to a quote-safe path such as\n' +
+        '  C:\\gbrain, then rerun `gbrain apply-migrations --yes`.\n' +
+        '  See https://github.com/garrytan/gbrain/issues/2008';
+      break;
+    case 'windows-pglite-unknown':
+      hint =
+        '  This is a Windows PGLite/WASM initialization failure, but it does not\n' +
+        '  include the PowerShell / NativeCommandError path-corruption signature\n' +
+        '  from issue #2008. Run `gbrain doctor`, then rerun\n' +
+        '  `gbrain apply-migrations --yes --non-interactive` from a fresh shell.\n' +
+        '  If it repeats, paste the full original error into a new issue.';
       break;
     case 'unknown':
     default:
