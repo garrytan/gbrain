@@ -31,6 +31,10 @@ import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
 import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult } from './core/mcp-client.ts';
+import { detectLocalDaemon, probeLocalDaemonHealth, readLocalDaemonToken, callLocalDaemonTool } from './core/local-daemon.ts';
+import type { LocalDaemonInfo } from './core/local-daemon.ts';
+import { extractResultText, isAuthErrorMessage } from './core/connect-probe.ts';
+import { gbrainPath } from './core/config.ts';
 import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
 import { VERSION } from './version.ts';
 
@@ -354,6 +358,21 @@ async function main() {
     return;
   }
 
+  // Local-daemon fallback: on a PGLite install, a live `gbrain serve --http`
+  // (launchd/systemd) holds the single-writer lock — connectEngine() below
+  // could only poll the lock for 30s and die with "Timed out waiting for
+  // PGLite lock". The lock file names the holder and its port; route shared
+  // ops to that daemon over loopback HTTP instead. localOnly ops fall
+  // through: the server hides them, and the existing lock-timeout message
+  // already names the daemon pid to stop.
+  if (!op.localOnly && cfgPre?.engine === 'pglite' && cfgPre.database_path) {
+    const daemon = detectLocalDaemon(cfgPre.database_path);
+    if (daemon && await probeLocalDaemonHealth(daemon.port)) {
+      await runLocalDaemonRouted(op, params, daemon, cliOpts);
+      return;
+    }
+  }
+
   // Local engine path (unchanged behavior for local installs).
   const engine = await connectEngine();
   // #2084: the teardown contract (bounded drain of every background-work sink,
@@ -578,6 +597,74 @@ async function runThinClientRouted(
     // exit 1 — but this should never happen post-CDX-4.
     console.error(e instanceof Error ? e.message : String(e));
     process.off('SIGINT', onSigint);
+    process.exit(1);
+  } finally {
+    process.off('SIGINT', onSigint);
+  }
+}
+
+/**
+ * Local-daemon fallback dispatcher — the loopback sibling of
+ * runThinClientRouted. Called from main() when a live `gbrain serve --http`
+ * holds the PGLite lock (see src/core/local-daemon.ts for detection).
+ * Timeout policy matches the thin client (ENG-4): --timeout=Ns wins;
+ * otherwise 180s for `think`, 30s for everything else. Results render
+ * through the SAME unpackToolResult + formatResult pair as both other
+ * paths — renderer parity by data shape.
+ */
+async function runLocalDaemonRouted(
+  op: Operation,
+  params: Record<string, unknown>,
+  daemon: LocalDaemonInfo,
+  cliOpts: CliOptions,
+): Promise<void> {
+  const defaultTimeoutMs = op.name === 'think' ? 180_000 : 30_000;
+  const timeoutMs = cliOpts.timeoutMs ?? defaultTimeoutMs;
+
+  const token = readLocalDaemonToken();
+  if (!token) {
+    console.error(`gbrain serve (pid ${daemon.pid}) holds the PGLite lock; routing this command through it needs a bearer token.`);
+    console.error(`Set GBRAIN_REMOTE_TOKEN or write one to ${gbrainPath('agents.token')} (mint on this host: gbrain auth create cli).`);
+    console.error('Or stop the daemon and re-run.');
+    process.exit(1);
+  }
+
+  const sigintController = new AbortController();
+  const onSigint = () => sigintController.abort(new Error('SIGINT'));
+  process.on('SIGINT', onSigint);
+
+  // Observability sibling of the thin-client banner, same suppression rules
+  // (--quiet, non-TTY, GBRAIN_NO_BANNER=1). No identity fetch — same host,
+  // same version, zero extra round-trips.
+  if (!bannerSuppressed(cliOpts)) {
+    process.stderr.write(`[local-daemon → 127.0.0.1:${daemon.port} · pid ${daemon.pid}]\n`);
+  }
+
+  try {
+    const raw = await callLocalDaemonTool(daemon.port, token, op.name, params, {
+      timeoutMs,
+      signal: sigintController.signal,
+    });
+    if (raw.isError) {
+      const msg = extractResultText(raw.content) || 'unknown tool error';
+      if (isAuthErrorMessage(msg)) {
+        console.error(`Local daemon rejected the bearer token (GBRAIN_REMOTE_TOKEN / ${gbrainPath('agents.token')}).`);
+        console.error('Re-mint on this host: gbrain auth create cli');
+      } else {
+        console.error(msg);
+      }
+      process.exit(1);
+    }
+    const result = unpackToolResult(raw);
+    const output = formatResult(op.name, result);
+    if (output) process.stdout.write(output);
+  } catch (e: unknown) {
+    if (sigintController.signal.aborted) {
+      process.off('SIGINT', onSigint);
+      process.exit(130);
+    }
+    console.error(`Local daemon call failed: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`The daemon (pid ${daemon.pid}) holds the PGLite lock, so the local engine path would only time out. Stop the daemon or retry.`);
     process.exit(1);
   } finally {
     process.off('SIGINT', onSigint);
