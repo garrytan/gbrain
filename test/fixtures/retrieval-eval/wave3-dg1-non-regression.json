@@ -1,0 +1,90 @@
+{
+  "artifact_id": "wave3-dg1-non-regression",
+  "artifact_kind": "ev1_live_retrieval_non_regression",
+  "spec_path": "docs/designs/2026-07-03-mbrain-improvement-spec.md",
+  "gate": "EV-1",
+  "evaluated_change": "RQ-7 retrieval_governed_probe_hybrid default-on",
+  "evaluated_at_utc": "2026-07-03T19:42:50Z",
+  "fixture_id": "retrieval-eval-basic",
+  "fixture_path": "test/fixtures/retrieval-eval/basic.jsonl",
+  "config": {
+    "retrieval.governed_probe_hybrid": true,
+    "retrieval_eval.answer_grounding": false,
+    "engine": "sqlite",
+    "embedding_provider": "none"
+  },
+  "thresholds": {
+    "top1_match_rate": 1,
+    "recall_at_10": 1
+  },
+  "status": "passed",
+  "metrics": {
+    "case_count": 3,
+    "top1_match_rate": 1,
+    "recall_at_10": 1,
+    "precision_at_k": 0.1,
+    "mrr": 1
+  },
+  "per_route": {
+    "precision_lookup": {
+      "case_count": 2,
+      "top1_match_rate": 1,
+      "recall_at_10": 1,
+      "precision_at_k": 0.1,
+      "mrr": 1
+    },
+    "broad_synthesis": {
+      "case_count": 1,
+      "top1_match_rate": 1,
+      "recall_at_10": 1,
+      "precision_at_k": 0.1,
+      "mrr": 1
+    }
+  },
+  "cases": [
+    {
+      "id": "hybrid-search-precision",
+      "route": "precision_lookup",
+      "query": "hybrid search retrieval method",
+      "status": "passed",
+      "gold_slugs": ["concepts/hybrid-search"],
+      "candidate_slugs": ["concepts/hybrid-search"],
+      "top1_slug": "concepts/hybrid-search",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.1,
+      "mrr": 1
+    },
+    {
+      "id": "korean-rebellion-prefix",
+      "route": "precision_lookup",
+      "query": "레벨리온 아키텍처",
+      "status": "passed",
+      "gold_slugs": ["concepts/rebellion-architecture"],
+      "candidate_slugs": ["concepts/rebellion-architecture"],
+      "top1_slug": "concepts/rebellion-architecture",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.1,
+      "mrr": 1
+    },
+    {
+      "id": "compiled-truth-synthesis",
+      "route": "broad_synthesis",
+      "query": "compiled truth timeline evidence",
+      "status": "passed",
+      "gold_slugs": ["concepts/compiled-truth"],
+      "candidate_slugs": [
+        "concepts/compiled-truth",
+        "concepts/hybrid-search",
+        "concepts/rebellion-architecture"
+      ],
+      "top1_slug": "concepts/compiled-truth",
+      "top1_match": true,
+      "recall_at_10": 1,
+      "precision_at_k": 0.1,
+      "mrr": 1
+    }
+  ],
+  "failures": []
+}

@@ -118,6 +118,29 @@ describe('config loading', () => {
     expect(loadConfig()?.retrieval_governed_probe_hybrid).toBe(true);
   });
 
+  test('defaults governed probe hybrid on after retrieval eval non-regression gate', async () => {
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: '~/.mbrain/brain.db',
+    });
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    expect(loadConfig()?.retrieval_governed_probe_hybrid).toBe(true);
+  });
+
+  test('allows governed probe hybrid to be explicitly disabled', async () => {
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: '~/.mbrain/brain.db',
+      retrieval: {
+        governed_probe_hybrid: false,
+      },
+    });
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    expect(loadConfig()?.retrieval_governed_probe_hybrid).toBe(false);
+  });
+
   test('loads contextual chunk embedding flag from the documented nested retrieval config', async () => {
     writeUserConfig({
       engine: 'sqlite',

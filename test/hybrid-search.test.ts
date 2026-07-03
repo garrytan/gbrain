@@ -176,6 +176,58 @@ describe('hybridSearch', () => {
     ]);
   });
 
+  test('collapses vector expansion variants by max rank instead of summing repeated hits', async () => {
+    setEmbeddingProviderForTests({
+      capability: {
+        available: true,
+        mode: 'local',
+        implementation: 'test-local',
+        model: 'test-local-v1',
+        dimensions: 3,
+      },
+      embedBatch: async (texts: string[]) => texts.map((_, index) => new Float32Array([index + 1, 0, 0])),
+    });
+
+    let vectorCall = 0;
+    const engine = {
+      searchKeyword: async () => [],
+      searchVector: async () => {
+        const call = vectorCall;
+        vectorCall += 1;
+        return [
+          makeResult({
+            slug: `concepts/vector-top-${call}`,
+            page_id: 300 + call,
+            title: `Vector Top ${call}`,
+            chunk_text: `top semantic variant ${call}`,
+            score: 0.7,
+          }),
+          makeResult({
+            slug: 'concepts/repeated-vector',
+            page_id: 399,
+            title: 'Repeated Vector',
+            chunk_text: 'same semantic neighbor repeated in every expansion',
+            score: 0.9,
+          }),
+        ];
+      },
+    } as Pick<BrainEngine, 'searchKeyword' | 'searchVector'> as BrainEngine;
+
+    const results = await hybridSearch(engine, 'semantic route', {
+      limit: 5,
+      expansion: true,
+      expandFn: async () => ['semantic route variant a', 'semantic route variant b'],
+    });
+
+    const slugs = results.map((entry) => entry.slug);
+    expect(vectorCall).toBe(3);
+    expect(slugs.slice(0, 3)).toEqual([
+      'concepts/vector-top-0',
+      'concepts/vector-top-1',
+      'concepts/vector-top-2',
+    ]);
+  });
+
   test('does not let a lower-ranked high-confidence vector neighbor outrank the top keyword-only result', async () => {
     setEmbeddingProviderForTests({
       capability: {
