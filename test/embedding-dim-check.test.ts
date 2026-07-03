@@ -310,6 +310,44 @@ describe('resolveSchemaEmbeddingDim', () => {
       expect(got.model).toBe('openai:text-embedding-3-large');
     }
   });
+
+  // user-provided-model recipes (llama-server, litellm) — default_dims is 0
+  // (sentinel for "user must supply dimensions"). Any positive integer must
+  // be accepted because the recipe has no opinion on the model's native size.
+
+  test('llama-server with explicit dims accepted (user-provided model)', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:bge-m3-mlx-fp16',
+      embedding_dimensions: 1024,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) {
+      expect(got.dim).toBe(1024);
+      expect(got.model).toBe('llama-server:bge-m3-mlx-fp16');
+      expect(got.provider).toBe('llama-server');
+    }
+  });
+
+  test('litellm with explicit dims accepted (user-provided model)', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'litellm:my-embedding-model',
+      embedding_dimensions: 768,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) {
+      expect(got.dim).toBe(768);
+      expect(got.model).toBe('litellm:my-embedding-model');
+      expect(got.provider).toBe('litellm');
+    }
+  });
+
+  test('llama-server without explicit dims rejected (default_dims=0 is not valid)', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:some-model',
+    });
+    expect(got.ok).toBe(false);
+    if (!got.ok) expect(got.error).toMatch(/positive integer/);
+  });
 });
 
 describe('resolveSchemaMultimodalDim', () => {

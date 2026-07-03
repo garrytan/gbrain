@@ -118,6 +118,27 @@ describe('validateEmbeddingCreds', () => {
       expect(e.diagnosis.reason).toBe('no_gateway_config');
     }
   });
+
+  // user-provided-model recipes (llama-server, litellm) with a model name
+  // configured must pass preflight — no API key required for local providers.
+
+  test('passes for llama-server with model name configured (no API key needed)', () => {
+    configureGateway(baseConfig({
+      embedding_model: 'llama-server:bge-m3-mlx-fp16',
+      embedding_dimensions: 1024,
+      env: {},
+    }));
+    expect(() => validateEmbeddingCreds()).not.toThrow();
+  });
+
+  test('passes for litellm with model name configured (no API key needed)', () => {
+    configureGateway(baseConfig({
+      embedding_model: 'litellm:my-embedding-model',
+      embedding_dimensions: 768,
+      env: {},
+    }));
+    expect(() => validateEmbeddingCreds()).not.toThrow();
+  });
 });
 
 describe('formatEmbeddingCredsError', () => {
