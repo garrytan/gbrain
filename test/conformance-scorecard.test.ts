@@ -7,6 +7,7 @@ import {
   buildOperationGoldenManifest,
   formatConformanceScorecardSummary,
   retrievalQualityScorecardInputFromGateReport,
+  retrievalQualityScorecardInputFromLiveEvalReport,
 } from '../src/core/services/operation-conformance-service.ts';
 
 describe('conformance scorecard', () => {
@@ -58,5 +59,36 @@ describe('conformance scorecard', () => {
     expect(summary).toContain('operation_catalog_integrity: pass');
     expect(summary).toContain('retrieval_quality: pass');
     expect(summary).toContain('hard_failures: none');
+  });
+
+  test('accepts live retrieval eval metrics as the retrieval quality scorecard source', () => {
+    const manifest = buildOperationGoldenManifest({
+      operations,
+      cliCatalog: getCliCommandCatalog(),
+    });
+    const scorecard = buildConformanceScorecard({
+      manifest,
+      operationsByName,
+      retrievalQuality: retrievalQualityScorecardInputFromLiveEvalReport({
+        fixture_id: 'retrieval-eval-basic',
+        status: 'passed',
+        thresholds: { top1_match_rate: 0.8, recall_at_10: 0.9 },
+        case_count: 2,
+        top1_match_rate: 1,
+        recall_at_10: 1,
+        precision_at_k: 0.5,
+        mrr: 1,
+        latency_ms_avg: 12,
+        retrieved_token_count_total: 80,
+        per_route: {},
+        cases: [],
+        failures: [],
+        judge: { enabled: false, model_id: null, prompt_version: null },
+      }),
+    });
+
+    const replayDimension = scorecard.dimensions.find((dimension) => dimension.id === 'replay_evaluation');
+    expect(scorecard.status).toBe('pass');
+    expect(replayDimension?.notes).toContain('live retrieval eval executed');
   });
 });

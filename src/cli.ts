@@ -118,6 +118,7 @@ const MEMORY_REPORT_CLI_SPEC: Operation = {
     scope_id: { type: 'string', description: 'Scope to report (default: workspace:default)' },
     limit: { type: 'number', description: 'Maximum mutation and candidate rows to inspect (default: 100)' },
     now: { type: 'string', description: 'Override report generation timestamp as an ISO string' },
+    type: { type: 'string', description: 'Optional focused report type: retrieval-trajectory-score' },
   },
   handler: noopHandler,
   cliHints: { name: 'memory-report' },
@@ -125,12 +126,16 @@ const MEMORY_REPORT_CLI_SPEC: Operation = {
 
 const EVAL_CLI_SPEC: Operation = {
   name: 'eval',
-  description: 'Run context retrieval eval fixtures, compare eval reports, or record trace-linked corrections.',
+  description: 'Run context or live retrieval eval fixtures, compare eval reports, or record trace-linked corrections.',
   params: {
-    domain: { type: 'string', description: 'Eval domain: context or correction' },
+    domain: { type: 'string', description: 'Eval domain: context, retrieval, or correction' },
     action: { type: 'string', description: 'Eval subcommand, such as correction record' },
-    fixture: { type: 'string', description: 'Context eval fixture JSON path' },
+    fixture: { type: 'string', description: 'Context eval JSON or retrieval eval JSONL/JSON fixture path' },
     compare: { type: 'boolean', description: 'Compare two eval report JSON files' },
+    judge: { type: 'boolean', description: 'Enable answer-correctness judging for retrieval eval' },
+    judge_model: { type: 'string', description: 'Pinned judge model id for retrieval eval --judge' },
+    judge_prompt_version: { type: 'string', description: 'Pinned judge prompt version for retrieval eval --judge' },
+    judge_runner: { type: 'string', description: 'Restricted runner for retrieval eval --judge: codex or claude_code' },
     trace_id: { type: 'string', description: 'Trace id for correction records' },
     case_id: { type: 'string', description: 'Eval case id for correction records' },
     reason: { type: 'string', description: 'Correction reason or summary' },
@@ -795,7 +800,11 @@ AGENT MEMORY LOOP
   read-context --selectors <json>    Read canonical evidence selected by retrieve-context
   route-memory-writeback             Route durable writes before canonical mutation
   memory-report [--json] [--save]    Show or save the review surface for memory debt
+  memory-report --type retrieval-trajectory-score
+                                    Show EV-2 trajectory score only
   eval context --fixture <file>       Persist a context eval fixture run
+  eval retrieval --fixture <file>     Run live retrieval recall/precision fixtures
+                                    --judge requires retrieval_eval.answer_grounding=true
 
 PAGES
   get <slug>                         Read a page

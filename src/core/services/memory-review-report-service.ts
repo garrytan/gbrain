@@ -271,6 +271,18 @@ export interface ReportContextEvalRun {
   created_at: string;
 }
 
+export interface ReportRetrievalTrajectoryScore {
+  trace_count: number;
+  average_j: number;
+  average_groundedness: number | null;
+  average_redundancy: number;
+  average_cost: number;
+  average_elapsed_ms: number | null;
+  retrieved_token_count_total: number;
+  groundedness_status: 'available' | 'unavailable_without_gold';
+  latest_trace_id: string | null;
+}
+
 export interface ReportSkillSurfaceSummary {
   resource_count: number;
   manifest_hash: string;
@@ -316,6 +328,7 @@ export interface MemoryReviewReportInput {
   recurring_retrieval_gaps?: ReportRecurringRetrievalGap[];
   page_health_queue?: ReportPageHealthItem[];
   data_integrity_errors?: ReportDataIntegrityError[];
+  retrieval_trajectory_score?: ReportRetrievalTrajectoryScore | null;
 }
 
 export interface SourceIngestSummary {
@@ -420,6 +433,7 @@ export interface MemoryReviewReport {
     source_health: ReportSource[];
     connector_health: ReportConnectorHealth[];
     context_eval_runs: ReportContextEvalRun[];
+    retrieval_trajectory_score: ReportRetrievalTrajectoryScore | null;
     skill_surface?: ReportSkillSurfaceSummary;
     safety_states: ReportSafetyState[];
     maintenance_health: MaintenanceHealthSummary;
@@ -456,6 +470,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
     ),
   );
   const contextEvalRuns = redactReportValues(input.context_eval_runs ?? []);
+  const retrievalTrajectoryScore = input.retrieval_trajectory_score ?? null;
   const candidateAgeEscalations = redactReportValues(input.candidate_age_escalations ?? []);
   const recurringRetrievalGaps = redactReportValues(input.recurring_retrieval_gaps ?? []);
   const pageHealthQueue = redactReportValues(input.page_health_queue ?? []);
@@ -540,6 +555,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
       source_health: sources,
       connector_health: connectorHealth,
       context_eval_runs: contextEvalRuns,
+      retrieval_trajectory_score: retrievalTrajectoryScore,
       ...(input.skill_surface ? { skill_surface: input.skill_surface } : {}),
       safety_states: safetyStates,
       maintenance_health: {
@@ -627,6 +643,13 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
       for (const run of failedEvalRuns) {
         lines.push(`- ${run.status} ${run.fixture_id} (${run.id}): failed ${run.failed}/${run.total}, pass_rate ${run.pass_rate.toFixed(2)}`);
       }
+    }
+
+    if (report.sections.retrieval_trajectory_score && report.sections.retrieval_trajectory_score.trace_count > 0) {
+      const score = report.sections.retrieval_trajectory_score;
+      lines.push('', 'Retrieval Trajectory Score');
+      lines.push(`- J ${score.average_j.toFixed(3)} over ${score.trace_count} traces | cost ${score.average_cost.toFixed(3)} | redundancy ${score.average_redundancy.toFixed(3)} | groundedness ${score.average_groundedness === null ? score.groundedness_status : score.average_groundedness.toFixed(3)}`);
+      lines.push(`- latency_avg ${score.average_elapsed_ms === null ? 'n/a' : score.average_elapsed_ms.toFixed(0)}ms | retrieved_tokens ${score.retrieved_token_count_total} | latest ${score.latest_trace_id ?? 'n/a'}`);
     }
 
 	    if (report.sections.write_sessions.length > 0) {
@@ -1326,6 +1349,7 @@ function isEmptyReport(report: MemoryReviewReport): boolean {
     && report.sections.recurring_retrieval_gaps.length === 0
     && report.sections.page_health_queue.length === 0
     && report.sections.data_integrity_errors.length === 0
+    && (report.sections.retrieval_trajectory_score?.trace_count ?? 0) === 0
     && !hasMaintenanceHealthSignals(report.sections.maintenance_health);
 }
 

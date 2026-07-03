@@ -38,6 +38,7 @@ export interface MBrainConfig {
   retrieval_governed_probe_hybrid?: boolean;
   retrieval_contextual_chunk_embeddings?: boolean;
   retrieval_usage_aware_ranking?: boolean;
+  retrieval_eval_answer_grounding?: boolean;
   maintenance_governed_recompile_enabled?: boolean;
   retrieval_source_rank_rules?: RetrievalSourceRankRuleConfig[];
 }
@@ -65,9 +66,13 @@ export interface MBrainConfigInput {
     usage_aware_ranking?: boolean;
     source_rank_rules?: RetrievalSourceRankRuleConfig[];
   };
+  retrieval_eval?: {
+    answer_grounding?: boolean;
+  };
   retrieval_governed_probe_hybrid?: boolean;
   retrieval_contextual_chunk_embeddings?: boolean;
   retrieval_usage_aware_ranking?: boolean;
+  retrieval_eval_answer_grounding?: boolean;
   maintenance_governed_recompile_enabled?: boolean;
   retrieval_source_rank_rules?: RetrievalSourceRankRuleConfig[];
 }
@@ -161,6 +166,9 @@ export function resolveConfig(input: MBrainConfigInput): MBrainConfig {
       ?? false,
     retrieval_usage_aware_ranking: input.retrieval_usage_aware_ranking
       ?? input.retrieval?.usage_aware_ranking
+      ?? false,
+    retrieval_eval_answer_grounding: input.retrieval_eval_answer_grounding
+      ?? input.retrieval_eval?.answer_grounding
       ?? false,
     maintenance_governed_recompile_enabled: input.maintenance_governed_recompile_enabled
       ?? input.maintenance?.governed_recompile_enabled

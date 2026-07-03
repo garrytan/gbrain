@@ -18,6 +18,7 @@ import {
   type ReportQuarantinedSource,
   type ReportRecurringRetrievalGap,
   type ReportReviewItem,
+  type ReportRetrievalTrajectoryScore,
   type ReportRunnerJob,
   type ReportSecretDetection,
   type ReportSource,
@@ -25,6 +26,10 @@ import {
 } from '../core/services/memory-review-report-service.ts';
 import { createHash } from 'crypto';
 import { saveBrainReport } from './report.ts';
+import {
+  scoreRetrievalTrajectory,
+  summarizeRetrievalTrajectoryScores,
+} from '../core/evaluation/retrieval-trajectory-score.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type {
   CanonicalTargetProposalStatus,
@@ -64,14 +69,17 @@ export async function runMemoryReport(engine: BrainEngine, args: string[]): Prom
   const scopeId = valueAfter(args, '--scope-id') ?? DEFAULT_SCOPE_ID;
   const limit = parsePositiveInt(valueAfter(args, '--limit')) ?? DEFAULT_LIMIT;
   const now = valueAfter(args, '--now') ?? new Date().toISOString();
+  const reportType = valueAfter(args, '--type');
   const reportDir = args.includes('--report-dir') ? requiredValueAfter(args, '--report-dir') : '.';
   const report = buildMemoryReviewReport(await collectMemoryReportInput(engine, scopeId, limit, now));
-  const formatted = formatMemoryReviewReport(report);
+  const formatted = reportType === undefined
+    ? formatMemoryReviewReport(report)
+    : formatTypedMemoryReport(reportType, report);
   const savedReportPath = args.includes('--save')
     ? saveBrainReport({
       brainDir: reportDir,
-      type: 'memory-review-report',
-      title: 'Memory Review Report',
+      type: reportType === undefined ? 'memory-review-report' : `memory-${reportType}`,
+      title: reportType === undefined ? 'Memory Review Report' : `Memory ${reportType}`,
       content: formatted,
       now: new Date(now),
     })
@@ -84,6 +92,34 @@ export async function runMemoryReport(engine: BrainEngine, args: string[]): Prom
 
   console.log(formatted);
   if (savedReportPath) console.log(`Saved report: ${savedReportPath}`);
+}
+
+function formatTypedMemoryReport(reportType: string, report: ReturnType<typeof buildMemoryReviewReport>): string {
+  if (reportType !== 'retrieval-trajectory-score') {
+    throw new Error(`Unsupported memory report type: ${reportType}`);
+  }
+  const score = report.sections.retrieval_trajectory_score;
+  const lines = [
+    'Retrieval Trajectory Score',
+    `Scope: ${report.scope_id}`,
+    `Generated: ${report.generated_at}`,
+  ];
+  if (!score || score.trace_count === 0) {
+    lines.push('', 'No retrieval traces in the scoring window.');
+    return lines.join('\n');
+  }
+  lines.push(
+    '',
+    `J: ${score.average_j.toFixed(3)}`,
+    `traces: ${score.trace_count}`,
+    `cost: ${score.average_cost.toFixed(3)}`,
+    `redundancy: ${score.average_redundancy.toFixed(3)}`,
+    `groundedness: ${score.average_groundedness === null ? score.groundedness_status : score.average_groundedness.toFixed(3)}`,
+    `latency_avg_ms: ${score.average_elapsed_ms === null ? 'n/a' : score.average_elapsed_ms.toFixed(0)}`,
+    `retrieved_tokens: ${score.retrieved_token_count_total}`,
+    `latest_trace_id: ${score.latest_trace_id ?? 'n/a'}`,
+  );
+  return lines.join('\n');
 }
 
 export async function saveMemoryReviewReport(engine: BrainEngine, input: {
@@ -165,6 +201,7 @@ export async function collectMemoryReportInput(
     canonicalTargetProposals,
     writeSessions,
     contextEvalRuns,
+    retrievalTrajectoryScore,
     recurringRetrievalGaps,
     pageHealthQueue,
   ] = await Promise.all([
@@ -187,6 +224,7 @@ export async function collectMemoryReportInput(
     collectCanonicalTargetProposals(engine, scopeId, limit),
     collectMemoryWriteSessions(engine, scopeId, limit),
     collectContextEvalRuns(engine, limit),
+    collectRetrievalTrajectoryScore(engine, generatedAt, limit),
     collectRecurringRetrievalGaps(engine, generatedAt, limit),
     collectPageHealthQueue(engine, generatedAt, limit),
   ]);
@@ -243,6 +281,7 @@ export async function collectMemoryReportInput(
     }),
     negative_memory_projections: negativeMemoryProjections,
     context_eval_runs: contextEvalRuns,
+    retrieval_trajectory_score: retrievalTrajectoryScore,
     skill_surface: collectSkillSurfaceSummary(),
     candidate_age_escalations: collectCandidateAgeEscalations(candidates, generatedAt),
     recurring_retrieval_gaps: recurringRetrievalGaps,
@@ -538,6 +577,63 @@ async function collectContextEvalRuns(
     pass_rate: typeof run.metrics.pass_rate === 'number' ? run.metrics.pass_rate : 0,
     created_at: run.created_at.toISOString(),
   }));
+}
+
+async function collectRetrievalTrajectoryScore(
+  engine: BrainEngine,
+  generatedAt: string,
+  limit: number,
+): Promise<ReportRetrievalTrajectoryScore | null> {
+  if (typeof (engine as Partial<BrainEngine>).listRetrievalTracesByWindow !== 'function') {
+    return null;
+  }
+  const until = new Date(generatedAt);
+  if (!Number.isFinite(until.getTime())) return null;
+  const since = new Date(until.getTime() - (7 * 24 * 60 * 60 * 1000));
+  try {
+    const traces = await engine.listRetrievalTracesByWindow({
+      since,
+      until,
+      limit,
+      offset: 0,
+    });
+    if (traces.length === 0) return null;
+    const scores = await Promise.all(traces.map(async (trace) =>
+      scoreRetrievalTrajectory(trace, {
+        evidence_texts: await retrievalTraceEvidenceTexts(engine, trace),
+      })));
+    return summarizeRetrievalTrajectoryScores(scores);
+  } catch {
+    return null;
+  }
+}
+
+async function retrievalTraceEvidenceTexts(
+  engine: BrainEngine,
+  trace: RetrievalTrace,
+): Promise<string[]> {
+  const slugs = [...new Set(trace.source_refs
+    .map(slugFromRetrievalTraceSourceRef)
+    .filter((slug): slug is string => Boolean(slug)))];
+  const pages = await Promise.all(slugs.map(async (slug) => {
+    try {
+      return await engine.getPage(slug);
+    } catch {
+      return null;
+    }
+  }));
+  return pages
+    .map(pageEvidenceText)
+    .filter((text): text is string => Boolean(text));
+}
+
+function pageEvidenceText(page: Page | null): string | null {
+  if (!page) return null;
+  const text = [page.compiled_truth, page.timeline]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join('\n\n');
+  return text.length > 0 ? text : null;
 }
 
 async function collectCanonicalTargetProposals(

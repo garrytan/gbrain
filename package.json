@@ -79,6 +79,7 @@
   "bench:phase8-acceptance": "bun run ./scripts/bench/phase8-acceptance-pack.ts",
   "bench:phase9-acceptance": "bun run ./scripts/bench/phase9-acceptance-pack.ts",
   "bench:phase13-replay": "bun test test/memory-replay-service.test.ts",
+  "eval:retrieval": "bun run src/cli.ts eval retrieval --fixture test/fixtures/retrieval-eval/basic.jsonl --json",
   "bench:phase2-workspace-system-card": "bun run ./scripts/bench/phase2-workspace-system-card.ts",
   "bench:phase2-workspace-project-card": "bun run ./scripts/bench/phase2-workspace-project-card.ts",
   "bench:phase2-workspace-orientation-bundle": "bun run ./scripts/bench/phase2-workspace-orientation-bundle.ts",

@@ -144,6 +144,19 @@ describe('config loading', () => {
     expect(loadConfig()?.retrieval_usage_aware_ranking).toBe(true);
   });
 
+  test('loads retrieval eval answer grounding flag from the documented nested retrieval_eval config', async () => {
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: '~/.mbrain/brain.db',
+      retrieval_eval: {
+        answer_grounding: true,
+      },
+    });
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    expect(loadConfig()?.retrieval_eval_answer_grounding).toBe(true);
+  });
+
   test('loads governed recompile flag from the documented nested maintenance config', async () => {
     writeUserConfig({
       engine: 'sqlite',

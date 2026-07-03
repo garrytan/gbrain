@@ -94,6 +94,67 @@ describe('eval CLI runner', () => {
     expect(output.delta).toMatchObject({ total: 0, passed: 1, failed: -1, pass_rate: 0.5 });
   });
 
+  test('compares retrieval metric deltas in eval reports', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-eval-retrieval-compare-'));
+    tempPaths.push(dir);
+    const basePath = join(dir, 'base.json');
+    const headPath = join(dir, 'head.json');
+    writeFileSync(basePath, JSON.stringify({ metrics: { total: 2, passed: 1, failed: 1, recall_at_10: 0.5, precision_at_k: 0.25, mrr: 0.5, judge_score: 0.4 } }));
+    writeFileSync(headPath, JSON.stringify({ metrics: { total: 2, passed: 2, failed: 0, recall_at_10: 1, precision_at_k: 0.5, mrr: 1, judge_score: 0.9 } }));
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (line?: unknown) => { logs.push(String(line)); };
+    try {
+      await runEval(fakeEvalEngine(), ['context', '--compare', basePath, headPath, '--json']);
+    } finally {
+      console.log = originalLog;
+    }
+
+    const output = JSON.parse(logs.join('\n'));
+    expect(output.delta).toMatchObject({
+      recall_at_10: 0.5,
+      precision_at_k: 0.25,
+      mrr: 0.5,
+      judge_score: 0.5,
+    });
+  });
+
+  test('requires retrieval eval answer grounding config before running a judge', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-eval-retrieval-judge-gate-'));
+    tempPaths.push(dir);
+    const fixturePath = join(dir, 'retrieval.jsonl');
+    const configPath = join(dir, 'config.json');
+    writeFileSync(configPath, JSON.stringify({
+      engine: 'sqlite',
+      database_path: join(dir, 'brain.db'),
+    }));
+    writeFileSync(fixturePath, [
+      JSON.stringify({
+        id: 'hybrid-search-live',
+        route: 'precision_lookup',
+        query: 'hybrid search retrieval',
+        gold_slugs: ['concepts/hybrid-search'],
+      }),
+    ].join('\n'));
+    const previousConfigPath = process.env.MBRAIN_CONFIG_PATH;
+    process.env.MBRAIN_CONFIG_PATH = configPath;
+    try {
+      await expect(runEval(fakeEvalEngine(), [
+        'retrieval',
+        '--fixture',
+        fixturePath,
+        '--judge',
+        '--judge-model',
+        'judge-model',
+        '--judge-prompt-version',
+        'v1',
+      ])).rejects.toThrow('retrieval_eval.answer_grounding=true');
+    } finally {
+      if (previousConfigPath === undefined) delete process.env.MBRAIN_CONFIG_PATH;
+      else process.env.MBRAIN_CONFIG_PATH = previousConfigPath;
+    }
+  });
+
   test('does not default missing fixture outcomes to pass', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-eval-missing-outcome-'));
     tempPaths.push(dir);
@@ -162,6 +223,63 @@ describe('eval CLI runner', () => {
       expect(output.run.status).toBe('passed');
       expect(typeof output.assertions[0].retrieval_trace_id).toBe('string');
       expect(output.assertions[0].actual.trace_ids).toHaveLength(2);
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('retrieval fixtures persist live recall metrics and per-case assertions', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-eval-retrieval-'));
+    tempPaths.push(dir);
+    const fixturePath = join(dir, 'retrieval.jsonl');
+    const dbPath = join(dir, 'brain.db');
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: dbPath });
+    await engine.initSchema();
+    try {
+      await importFromContent(engine, 'concepts/hybrid-search', [
+        '---',
+        'type: concept',
+        'title: Hybrid Search',
+        '---',
+        '# Compiled Truth',
+        'Hybrid search combines keyword retrieval and vector retrieval for robust recall.',
+        '[Source: User, direct message, 2026-07-03 12:00 KST]',
+      ].join('\n'), { path: 'concepts/hybrid-search.md' });
+      writeFileSync(fixturePath, [
+        JSON.stringify({
+          id: 'hybrid-search-live',
+          route: 'precision_lookup',
+          query: 'hybrid search retrieval',
+          gold_slugs: ['concepts/hybrid-search'],
+          gold_answer: 'Hybrid search combines keyword and vector retrieval.',
+        }),
+      ].join('\n'));
+
+      const logs: string[] = [];
+      const originalLog = console.log;
+      console.log = (line?: unknown) => { logs.push(String(line)); };
+      try {
+        await runEval(engine, ['retrieval', '--fixture', fixturePath, '--json']);
+      } finally {
+        console.log = originalLog;
+      }
+
+      const output = JSON.parse(logs.join('\n'));
+      expect(output.run.fixture_id).toBe('retrieval');
+      expect(output.run.status).toBe('passed');
+      expect(output.run.metrics).toMatchObject({
+        total: 1,
+        passed: 1,
+        failed: 0,
+        recall_at_10: 1,
+        top1_match_rate: 1,
+      });
+      expect(output.retrieval_quality.per_route.precision_lookup.case_count).toBe(1);
+      expect(output.assertions[0]).toMatchObject({
+        assertion_kind: 'live_retrieval_quality',
+        passed: true,
+      });
     } finally {
       await engine.disconnect();
     }

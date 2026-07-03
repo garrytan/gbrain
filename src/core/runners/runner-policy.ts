@@ -20,6 +20,7 @@ export const RUNNER_TASK_TYPES = [
   'source_summary',
   'daily_report',
   'candidate_promotion_review',
+  'retrieval_answer_judge',
 ] as const;
 
 export type RunnerTaskType = typeof RUNNER_TASK_TYPES[number];
@@ -133,6 +134,7 @@ const TASK_TOOL_ALLOWLIST: Record<RunnerTaskType, AllowedRunnerToolName[]> = {
   candidate_promotion_review: [
     'emit_promotion_verdict',
   ],
+  retrieval_answer_judge: [],
 };
 
 const REMOTE_RAW_ACCESS_ALLOWED_POLICIES = new Set([

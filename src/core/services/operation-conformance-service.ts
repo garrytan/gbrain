@@ -11,6 +11,7 @@ import {
   type ParamDef,
 } from '../operations.ts';
 import type { RetrievalQualityGateReport } from '../evaluation/retrieval-quality-gate.ts';
+import type { RetrievalEvalReport } from '../evaluation/retrieval-eval.ts';
 
 export const OPERATION_GOLDEN_MANIFEST_SCHEMA_VERSION = 2;
 
@@ -188,6 +189,7 @@ export const REQUIRED_MUTATION_ALIASES = {
 
 export type RetrievalQualityScorecardInput = {
   status: 'pass' | 'fail' | 'skip';
+  source?: 'qrels_gate' | 'live_retrieval_eval';
   thresholds: {
     top1_match_rate: number;
     recall_at_10: number;
@@ -419,9 +421,10 @@ export function buildConformanceScorecard(input: {
   const memoryVerbFailures = validateMemoryVerbMatrix(input.operationsByName);
   const authorityFailures = validateMemoryAuthorityGates(input.operationsByName);
   const mutationFailures = validateMutationNameAlignment(input.operationsByName);
+  const retrievalQualitySource = input.retrievalQuality.source ?? 'qrels_gate';
   const replayNotes = input.retrievalQuality.status === 'skip'
-    ? ['source-aware retrieval qrels gate skipped']
-    : ['source-aware retrieval qrels gate executed'];
+    ? [`${formatRetrievalQualitySource(retrievalQualitySource)} skipped`]
+    : [`${formatRetrievalQualitySource(retrievalQualitySource)} executed`];
   const retrievalFailures = input.retrievalQuality.status === 'fail'
     ? input.retrievalQuality.failures.map(failure => `retrieval_quality:${failure}`)
     : [];
@@ -482,6 +485,7 @@ export function retrievalQualityScorecardInputFromGateReport(
 ): RetrievalQualityScorecardInput {
   return {
     status: report.status === 'passed' ? 'pass' : 'fail',
+    source: 'qrels_gate',
     thresholds: report.thresholds,
     metrics: {
       top1_match_rate: report.top1_match_rate,
@@ -489,6 +493,27 @@ export function retrievalQualityScorecardInputFromGateReport(
     },
     failures: report.failures.map(failure => `${failure.id}:${failure.reason_codes.join('+')}`),
   };
+}
+
+export function retrievalQualityScorecardInputFromLiveEvalReport(
+  report: RetrievalEvalReport,
+): RetrievalQualityScorecardInput {
+  return {
+    status: report.status === 'passed' ? 'pass' : 'fail',
+    source: 'live_retrieval_eval',
+    thresholds: report.thresholds,
+    metrics: {
+      top1_match_rate: report.top1_match_rate,
+      recall_at_10: report.recall_at_10,
+    },
+    failures: report.failures.map(failure => `${failure.id}:${failure.reason_codes.join('+')}`),
+  };
+}
+
+function formatRetrievalQualitySource(source: RetrievalQualityScorecardInput['source']): string {
+  return source === 'live_retrieval_eval'
+    ? 'live retrieval eval'
+    : 'source-aware retrieval qrels gate';
 }
 
 function normalizeCliCommands(cliCatalog: CliCommandCatalog): OperationManifestCliCommand[] {

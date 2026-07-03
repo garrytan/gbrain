@@ -1,0 +1,3 @@
+{"id":"hybrid-search-precision","route":"precision_lookup","query":"hybrid search retrieval method","gold_slugs":["concepts/hybrid-search"],"gold_answer":"Hybrid search combines keyword and vector retrieval.","precision_k":10}
+{"id":"korean-rebellion-prefix","route":"precision_lookup","query":"레벨리온 아키텍처","gold_slugs":["concepts/rebellion-architecture"],"gold_answer":"레벨리온 아키텍처는 한국어 검색 fixture이다.","precision_k":10}
+{"id":"compiled-truth-synthesis","route":"broad_synthesis","query":"compiled truth timeline evidence","gold_slugs":["concepts/compiled-truth"],"gold_answer":"Compiled truth distills timeline evidence.","precision_k":10}

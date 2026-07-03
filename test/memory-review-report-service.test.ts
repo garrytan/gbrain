@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { collectMemoryReportInput, runMemoryReport } from '../src/commands/memory-report.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { importFromContent } from '../src/core/import-file.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
@@ -2213,6 +2214,93 @@ describe('memory review report service', () => {
     expect(formatted).toContain('failed 1/3');
     expect(formatted).toContain('Skill Surface');
     expect(formatted).toContain('Docs resources: 7');
+  });
+
+  test('renders retrieval trajectory score without affecting report health', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+      retrieval_trajectory_score: {
+        trace_count: 2,
+        average_j: -0.08,
+        average_groundedness: null,
+        average_redundancy: 0.1,
+        average_cost: 0.5,
+        average_elapsed_ms: 125,
+        retrieved_token_count_total: 220,
+        groundedness_status: 'unavailable_without_gold',
+        latest_trace_id: 'trace-latest',
+      },
+    });
+
+    const formatted = formatMemoryReviewReport(report);
+    expect(report.health).toEqual({ status: 'ok', reasons: [] });
+    expect(formatted).toContain('Retrieval Trajectory Score');
+    expect(formatted).toContain('J -0.080 over 2 traces');
+    expect(formatted).toContain('groundedness unavailable_without_gold');
+    expect(formatted).toContain('retrieved_tokens 220');
+  });
+
+  test('memory-report --type retrieval-trajectory-score renders only the EV-2 scorecard', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-report-trajectory-'));
+    tempPaths.push(dir);
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+    await engine.initSchema();
+    try {
+      await importFromContent(engine, 'concepts/hybrid-search', [
+        '---',
+        'type: concept',
+        'title: Hybrid Search',
+        '---',
+        '# Compiled Truth',
+        'Identical canonical evidence for redundancy scoring.',
+        '[Source: User, direct message, 2026-07-03 12:00 KST]',
+      ].join('\n'), { path: 'concepts/hybrid-search.md' });
+      await importFromContent(engine, 'concepts/compiled-truth', [
+        '---',
+        'type: concept',
+        'title: Compiled Truth',
+        '---',
+        '# Compiled Truth',
+        'Identical canonical evidence for redundancy scoring.',
+        '[Source: User, direct message, 2026-07-03 12:00 KST]',
+      ].join('\n'), { path: 'concepts/compiled-truth.md' });
+      await engine.putRetrievalTrace({
+        id: 'trace-trajectory',
+        scope: 'work',
+        route: ['retrieve_context', 'read_context'],
+        source_refs: [
+          'compiled_truth:workspace:default:concepts/hybrid-search',
+          'compiled_truth:workspace:default:concepts/compiled-truth',
+        ],
+        outcome: 'answer_ready:true',
+        elapsed_ms: 125,
+        retrieved_token_count: 42,
+      });
+      const logs: string[] = [];
+      const originalLog = console.log;
+      console.log = (line?: unknown) => { logs.push(String(line)); };
+      try {
+        await runMemoryReport(engine, [
+          '--type',
+          'retrieval-trajectory-score',
+          '--now',
+          new Date().toISOString(),
+        ]);
+      } finally {
+        console.log = originalLog;
+      }
+
+      const output = logs.join('\n');
+      expect(output).toContain('Retrieval Trajectory Score');
+      expect(output).toContain('trace-trajectory');
+      expect(output).toContain('redundancy: 1.000');
+      expect(output).toContain('retrieved_tokens: 42');
+      expect(output).not.toContain('Memory Review Report');
+    } finally {
+      await engine.disconnect();
+    }
   });
 
   test('renders candidate age escalations and data integrity errors', () => {
