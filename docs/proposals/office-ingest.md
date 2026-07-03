@@ -2,137 +2,166 @@
 
 | | |
 |---|---|
-| **Status** | Draft（pre-development，探索固化稿） |
-| **Owner** | （待定） |
+| **Status** | Implemented — M0 + R1 (a/b) + R2 + R3 landed and verified (PGLite full-path + real-Postgres engine-parity e2e) |
 | **Created** | 2026-06-23 |
-| **Version** | 0.1.0 |
-| **Scope** | 把 GBrain 的 Sources/Ingest 从"仅文本"扩展到 DOCX / PPTX / PDF / Excel / 图片 |
-| **Related** | `docs/architecture/KEY_FILES.md`、`docs/architecture/RETRIEVAL.md`、`src/core/import-file.ts`、`src/core/ai/gateway.ts` |
+| **Version** | 1.0 |
+| **Scope** | Extend GBrain Sources/Ingest from text-only to DOCX / PPTX / PDF / XLSX (plus ODT/ODS/ODP/HTML/CSV via the same adapter) |
+| **Related** | `docs/architecture/KEY_FILES.md`, `docs/architecture/RETRIEVAL.md`, `src/core/import-file.ts`, `src/core/ai/gateway.ts`, `docs/proposals/office-ingest-roadmap.md` (post-M0 replan + implementation record) |
 
-> **文档约定**:散文用中文（便于评审）；所有标识符、类型、SQL、接口、文件名用英文（直接对应代码）。
-> 本文上半部分是 **PRD/RFC**（为什么这么设计、决策与取舍），下半部分是 **冻结的 Spec**（契约、Schema、验收）。
+> The first half of this document is the **PRD/RFC** (why it is designed this way,
+> decisions and trade-offs). The second half is the **frozen Spec** (contracts,
+> schema, acceptance). Source files cite sections of this document by number
+> (§6–§12, §21.x) — keep the numbering stable when editing.
 
 ---
 
 ## 0. TL;DR
 
-GBrain 当前 Ingest 只一等支持 Markdown/代码/图片。本提案新增一个**格式适配层**：用 **Docling（Python，常驻 FastAPI sidecar，gbrain 监督）** 把办公文档归一化成 **DocIR**（统一块流 + 精确定位），再经一个新的 `importOfficeFile` adapter 汇入**现有管线**（chunk → embed → 抽边 → FTS）。下游（Brain store / Hybrid search / Synthesis / Dream cycle）**零改动**。表格走 **LLM 摘要 + 行块 + 条件 Facts**；视觉块走**选择性多模态嵌入**；全程带 **`source_locator` jsonb** 精确引用（p.X / Slide Y / Sheet!B4:D9）。
+GBrain ingest previously had first-class support only for Markdown / code / images.
+This proposal adds a **format-adapter layer**: **Docling** (Python, resident FastAPI
+sidecar, supervised by gbrain) normalizes office documents into **DocIR** (a unified
+block stream with precise locators), which a new `importOfficeFile` adapter feeds
+into the **existing pipeline** (chunk → embed → edge extraction → FTS). Downstream
+(brain store / hybrid search / synthesis / dream cycle) needs **zero changes**.
+Tables get **LLM summaries + row blocks**; visual blocks get **selective multimodal
+embedding**; every chunk carries a **`source_locator` jsonb** for precise citations
+(p.X / Slide Y / Sheet!B4:D9).
 
 ---
 
-# PART I — PRD / RFC（设计意图）
+# PART I — PRD / RFC (design intent)
 
-## 1. 问题与动机
+## 1. Problem & motivation
 
-- **现状**：`importFromFile`（`src/core/import-file.ts:906`）只分发到 `importFromContent`（markdown）、`importCodeFile`、`importImageFile`。**PDF / DOCX / PPTX / XLSX 无原生解析**（依赖里无 PDF/Office 库）。
-- **痛点**：用户的知识大量以办公格式存在（合同、提案、报表、幻灯片）。无法 ingest = 这部分知识对 brain 不可见，检索与合成都够不到。
-- **机会**：下游（仓库/检索/合成/做梦）**对格式无感**，只认"文字 + 向量 + 边 + locator"。因此只需扩展**最前面一层**，投入可控、收益广。
+- **Before this work**: `importFromFile` (`src/core/import-file.ts`) dispatched only
+  to `importFromContent` (markdown), `importCodeFile`, and `importImageFile`.
+  **No native parsing for PDF / DOCX / PPTX / XLSX** (no PDF/Office library in the
+  dependency tree).
+- **Pain**: a lot of user knowledge lives in office formats (contracts, proposals,
+  reports, slide decks). Not ingestible = invisible to the brain; neither retrieval
+  nor synthesis can reach it.
+- **Opportunity**: downstream (store / retrieval / synthesis / dream cycle) is
+  **format-agnostic** — it only understands "text + vectors + edges + locator". So
+  only the **front-most layer** needs extending: bounded effort, broad payoff.
 
 ## 2. Goals / Non-Goals
 
 **Goals**
-- G1：DOCX / PPTX / PDF（有文本层）→ 入库可检索（M0）。
-- G2：每个 chunk 带**精确 provenance**（页/张/单元格），让 Synthesis 引用可定位。
-- G3：复用现有 chunk → embed → 抽边 → FTS，下游不改。
-- G4：扫描件 OCR、表格策略、视觉多模态分阶段补齐（M1–M4）。
-- G5：本地优先、隐私优先（Docling 本地跑，文件不出机器）。
+- G1: DOCX / PPTX / PDF (with a text layer) → stored and searchable (M0).
+- G2: every chunk carries **precise provenance** (page / slide / cell) so synthesis
+  citations are locatable.
+- G3: reuse the existing chunk → embed → edge-extraction → FTS pipeline; downstream unchanged.
+- G4: scanned-PDF OCR, table strategy, and visual multimodal land in follow-up stages.
+- G5: local-first, privacy-first (Docling runs locally; files never leave the machine).
 
 **Non-Goals**
-- N1：不在 M0 解决扫描件 OCR（M1）、复杂表格（M2）、视觉嵌入（M3）。
-- N2：不支持云解析服务（如 LlamaParse）——违反隐私优先。
-- N3：不改下游检索/合成算法。
-- N4：不做办公文档的**写出/编辑**（只读 ingest）。
+- N1: M0 does not solve scanned-document OCR, complex tables, or visual embedding
+  (staged later; see §17).
+- N2: no cloud parsing services (e.g. LlamaParse) — violates privacy-first.
+- N3: no changes to downstream retrieval/synthesis algorithms.
+- N4: no office-document **write/edit** support (read-only ingest).
 
-## 3. Personas / 用例
+## 3. Personas / use cases
 
-- **个人知识库用户**：把 Notion/导出的 PDF、会议 PPT、报表 Excel 灌进 brain，事后语义检索 + 合成。
-- **团队 brain**：合同/提案/内部文档作为 source，按人 scope 检索。
-- **核心用例**：`gbrain import ~/docs`（混合格式）→ `gbrain query "Q3 收入结论"` → 合成答案引用到 **"report.pdf p.12"**。
+- **Personal knowledge-base user**: pours exported PDFs, meeting decks, and report
+  spreadsheets into the brain, then does semantic retrieval + synthesis.
+- **Team brain**: contracts / proposals / internal documents as a source, scoped
+  per person.
+- **Core use case**: `gbrain import ~/docs` (mixed formats) → `gbrain query "Q3
+  revenue conclusion"` → synthesized answer cites **"report.pdf p.12"**.
 
-## 4. 决策记录（已锁定 + 理由）
+## 4. Decision record (locked, with rationale)
 
-| # | 决策 | 选择 | 理由 / 取舍 |
+| # | Decision | Choice | Rationale / trade-off |
 |---|---|---|---|
-| D1 | 解析位置 | **Python sidecar** | 最强解析器（Docling）是 Python；与用户已运行的 ollama 同形态（常驻本地服务） |
-| D2 | 框架 | **Docling** | 版式/表格结构 + page/bbox provenance 最强，契合 G2 |
-| D3 | sidecar 形态 | **自写 FastAPI** | 可控、可裁剪输出契约，优于官方 docling-serve |
-| D4 | 分块尺寸 | **办公文档单独调** | 办公文档结构与 prose 不同，独立 `ingest.office.chunk_tokens` |
-| D5 | 表格 | **LLM 摘要 + 行块 + 条件 Facts** | 摘要管召回、行块管精确、Facts 管结构化查询 |
-| D6 | 多模态 | **选择性默认 + 开关 + spend 闸门** | 控成本，纯文字文档不浪费 |
-| D7 | provenance | **`source_locator` jsonb** | 一列吃所有格式、免迁移；引用主要用于显示而非过滤 |
-| D8 | sidecar 生命周期 | **gbrain 监督** | 拉起/健康检查/重启统一管理，像 minion |
-| D9 | 表摘要生成 | **LLM 生成** | 质量高于模板；**带降级链**（无 key/超预算 → 模板） |
+| D1 | Parse location | **Python sidecar** | The strongest parser (Docling) is Python; same shape as the ollama service users already run (resident local service) |
+| D2 | Framework | **Docling** | Best layout/table structure + page/bbox provenance; fits G2 |
+| D3 | Sidecar form | **Own FastAPI service** | Controllable, trimmable output contract; better fit than the official docling-serve |
+| D4 | Chunk size | **Office-specific setting** | Office document structure differs from prose; independent `ingest.office.chunk_tokens` |
+| D5 | Tables | **LLM summary + row blocks + conditional Facts** | Summary drives recall, row blocks drive precision, Facts drive structured queries (see roadmap: Facts turned out to be fence-based, not auto-extracted) |
+| D6 | Multimodal | **Selective by default + switch + cost posture** | Controls cost; text-only documents waste nothing |
+| D7 | Provenance | **`source_locator` jsonb** | One column serves every format, no per-format migrations; citations are for display, not filtering |
+| D8 | Sidecar lifecycle | **Supervised by gbrain** | Start / health check / restart managed like a minion |
+| D9 | Table summary generation | **LLM-generated** | Higher quality than templates; **with a fallback chain** (no key / over budget → template) |
 
-> ⚠️ **D9 的连带影响（全局）**：在此之前 **Ingest 仅依赖嵌入模型**；D9 让 Ingest **首次引入 chat-LLM 依赖 + 花费**。必须过 spend 闸门并提供降级，详见 §11、§14。
+> ⚠️ **D9's global side effect**: before this, ingest depended only on the embedding
+> model; D9 makes ingest **depend on a chat LLM (and its cost) for the first
+> time**. It must degrade gracefully — see §11, §14.
 
-## 5. 架构总览
+## 5. Architecture overview
 
 ```
                             ┌──────────────────────────────┐
  office file ──HTTP POST──▶ │ Docling sidecar (FastAPI,    │
- (pdf/docx/pptx/xlsx/img)   │ 常驻、模型预热、gbrain 监督)  │
-                            │ 解析 → DocIR (JSON)          │
+ (pdf/docx/pptx/xlsx/…)     │ resident, models pre-warmed, │
+                            │ gbrain-supervised)           │
+                            │ parse → DocIR (JSON)         │
                             └───────────────┬──────────────┘
                                             │ DocIR
  gbrain (Bun/TS)                            ▼
- importFromFile (dispatch) ───────▶ importOfficeFile (NEW adapter)
+ importFromFile (dispatch) ───────▶ importOfficeFile (adapter)
                                             │
         ┌───────────────┬───────────────────┼──────────────────┬───────────────┐
         ▼               ▼                   ▼                  ▼               ▼
- doc-block chunker   table.ts          multimodal.ts      link/NER 抽边    source_locator
- (结构感知,带 locator) 摘要(LLM)+行块+Facts  选择性图嵌入       (复用,零 LLM)     (jsonb)
+ doc-block chunker   table.ts          multimodal.ts      link/NER edges   source_locator
+ (structure-aware,   summary (LLM) +   selective image    (reused,         (jsonb)
+  locator-carrying)  row blocks        embedding          zero-LLM)
         └───────────────┴───────────────────┴──────────────────┴───────────────┘
                                             ▼
-        现有 Brain store（content_chunks: embedding / embedding_image / search_vector / + source_locator）
+        existing brain store (content_chunks: embedding / embedding_image / search_vector / + source_locator)
                                             ▼
-        下游零改动：Hybrid search（含 cross-modal both/RRF）→ Synthesis（引用带 locator）→ Dream cycle
+        downstream unchanged: hybrid search (incl. cross-modal both/RRF) → synthesis (citations carry locator) → dream cycle
 ```
 
-**接入原则**：`importOfficeFile` 是 `importCodeFile` / `importImageFile` 的**同级兄弟**，挂在 `importFromFile` 分发器；产出带 `source_locator` 的 `ChunkInput[]` + 可选图片资产，下游一律复用。
+**Integration principle**: `importOfficeFile` is a **sibling** of `importCodeFile` /
+`importImageFile`, hanging off the `importFromFile` dispatcher; it produces
+`ChunkInput[]` carrying `source_locator` plus optional image assets, and everything
+downstream is reused.
 
 ---
 
-# PART II — SPEC（冻结契约 / Schema / 验收）
+# PART II — SPEC (frozen contracts / schema / acceptance)
 
-## 6. DocIR Contract v1（sidecar ↔ gbrain 权威合同）
+## 6. DocIR Contract v1 (authoritative sidecar ↔ gbrain contract)
 
-> 版本化：`docir_version: "1.0"`。任何字段语义变更须升版本，sidecar 与 adapter 同步校验。
+> Versioned: `docir_version: "1.0"`. Any change in field semantics bumps the
+> version; sidecar and adapter validate it in lockstep.
 
 ```jsonc
-// POST /parse 的响应体
+// Response body of POST /parse
 {
   "docir_version": "1.0",
   "doc": {
     "format": "pdf" | "docx" | "pptx" | "xlsx" | "image",
-    "page_count": 12,                     // pdf=页, pptx=张, xlsx=sheet 数, docx=null
-    "content_hash": "sha256:…",           // sidecar 对原字节算; gbrain 二次校验
+    "page_count": 12,                     // pdf=pages, pptx=slides, xlsx=sheet count, docx=null
+    "content_hash": "sha256:…",           // computed by the sidecar over the raw bytes; gbrain re-verifies
     "parser": "docling@<ver>"
   },
   "blocks": [
     {
-      "id": "b1",                          // 文档内稳定 id
+      "id": "b1",                          // stable id within the document
       "type": "heading"|"paragraph"|"list"|"table"|"figure"|"code",
-      "level": 1,                          // 仅 heading
-      "markdown": "## Q3 Results",         // 归一化文字（gbrain 入库的主体）
-      "text": "Q3 Results",                // 纯文本（FTS / 抽边用）
-      "order": 7,                          // 文档内全局顺序
-      "locator": {                         // 精确定位（→ source_locator）
-        "page": 3,                         // 1-based; 无则 null
-        "slide": null,                     // pptx 张号
-        "sheet": null,                     // xlsx sheet 名（多 sheet：每 sheet 独立块组）
-        "cell_range": null,                // 仅 xlsx，A1 记法如 "Sheet1!B4:D9"
-        "table_id": null,                  // 表/行块所属 table block 的 id
-        "row_range": null,                 // [startRow,endRow] 0-based 表内行（PDF/DOCX/PPTX 表的精确定位）
-        "bbox": [x0, y0, x1, y1]           // 可选，页内坐标
+      "level": 1,                          // heading only
+      "markdown": "## Q3 Results",         // normalized text (what gbrain stores)
+      "text": "Q3 Results",                // plain text (FTS / edge extraction)
+      "order": 7,                          // global order within the document
+      "locator": {                         // precise position (→ source_locator)
+        "page": 3,                         // 1-based; null when unavailable
+        "slide": null,                     // pptx slide number
+        "sheet": null,                     // xlsx sheet name (multi-sheet: one block group per sheet)
+        "cell_range": null,                // xlsx only, A1 notation like "Sheet1!B4:D9"
+        "table_id": null,                  // id of the table block a row-block belongs to
+        "row_range": null,                 // [startRow, endRow] 0-based rows within a table (precise location for PDF/DOCX/PPTX tables)
+        "bbox": [x0, y0, x1, y1]           // optional, in-page coordinates
       },
-      "table": {                           // 仅 type=table
+      "table": {                           // type=table only
         "header_rows": 1,
         "n_rows": 40,
         "n_cols": 5,
         "columns": ["Quarter","Revenue","…"],
-        "rows": [["Q1","$1.2M","…"], …]    // 规整二维数组
+        "rows": [["Q1","$1.2M","…"], …]    // regular 2-D array
       },
-      "asset_ref": "a1"                    // 仅视觉块；指向 assets[].id
+      "asset_ref": "a1"                    // visual blocks only; points at assets[].id
     }
   ],
   "assets": [
@@ -140,28 +169,34 @@ GBrain 当前 Ingest 只一等支持 Markdown/代码/图片。本提案新增一
       "id": "a1",
       "kind": "image",
       "mime": "image/png",
-      "data_b64": "…",                     // 提取或渲染出的图
-      "is_rendered_page": false,           // true=整页渲染图（OCR/视觉用）
+      "data_b64": "…",                     // extracted or rendered image
+      "is_rendered_page": false,           // true = full-page render (OCR / visual arm)
       "locator": { "page": 5, … }
     }
   ],
-  "warnings": ["LOW_CONFIDENCE_TABLE:b9"]  // 低置信度等信号 → 影响 Facts 抽取
+  "warnings": ["LOW_CONFIDENCE_TABLE:b9"]  // low-confidence signals → surfaced to the importer (§16, R3)
 }
 ```
 
-**契约不变式**
-- C1：`blocks` 按 `order` 升序、互不重叠。
-- C2：`type=table` 必带 `table`；`type=figure` 必带 `asset_ref`。
-- C3：`locator.page` 1-based；不可用维度填 `null`，不可省略键。
-- C4：`content_hash` 是去重主键来源（gbrain 复用现有 content_hash 路径）。
+**Contract invariants**
+- C1: `blocks` sorted ascending by `order`, non-overlapping.
+- C2: `type=table` must carry `table`; `type=figure` must carry `asset_ref`.
+- C3: `locator.page` is 1-based; unavailable dimensions are `null`, keys never omitted.
+- C4: `content_hash` feeds dedup (gbrain reuses the existing content_hash path).
 
-**Excel / XLSX 规范**
-- `doc.page_count` = sheet 数；**每个 sheet 是一个独立块组**，`blocks` 顺序 = sheet 顺序 → sheet 内行顺序。
-- 每个 sheet 的 used range → 一个 `type=table` 块（再由 adapter 切成行块）；`locator.sheet` = sheet 名。
-- **公式取计算值**（不是公式字符串）；**合并单元格**的值落在其锚点单元格。
-- 行块 `locator.cell_range` 用真实 A1 记法（如 `"Q3!B4:D9"`）——这是 XLSX 独有的精确定位，区别于 PDF 表的 `row_range`。
+**Excel / XLSX specifics**
+- `doc.page_count` = sheet count; **each sheet is an independent block group**;
+  `blocks` order = sheet order, then row order within the sheet.
+- Each sheet's used range → one `type=table` block (the adapter then slices it into
+  row blocks); `locator.sheet` = sheet name.
+- **Formulas yield computed values** (not formula strings). Merged cells put their
+  value in the anchor cell. (Implementation note: `export_to_dataframe()` reads the
+  xlsx *cached* values — real Excel files carry them; openpyxl-written formulas
+  without cached values come out empty. Recorded, not a bug.)
+- Row blocks use real A1 notation in `locator.cell_range` (e.g. `"Q3!B4:D9"`) —
+  XLSX-specific precision, distinct from `row_range` used for PDF tables.
 
-## 7. Sidecar API（FastAPI）
+## 7. Sidecar API (FastAPI)
 
 ```
 POST /parse
@@ -170,7 +205,7 @@ POST /parse
           want_page_images: bool = false,
           format_hint: string = null
   200 → DocIR v1
-  413 → file too large（见 §13 大小上限）
+  413 → file too large (see §13 size cap)
   422 → unparseable
   503 → models not loaded yet
 
@@ -178,231 +213,305 @@ GET /health
   200 → { "ok": true, "models_loaded": true, "docir_version": "1.0", "version": "…" }
 ```
 
-骨架（草稿，非实现）：
+Skeleton (sketch, see `sidecar/docling-service/` for the real implementation):
 ```python
 from fastapi import FastAPI, UploadFile
 from docling.document_converter import DocumentConverter
 app = FastAPI()
-conv = DocumentConverter()                          # 启动预热（常驻服务的意义）
+conv = DocumentConverter()                          # pre-warmed at startup (the point of a resident service)
 
 @app.get("/health")
 def health(): return {"ok": True, "models_loaded": True, "docir_version": "1.0"}
 
 @app.post("/parse")
 async def parse(file: UploadFile, want_page_images: bool = False):
-    doc = conv.convert(file.file).document           # DoclingDocument（带 page+bbox）
+    doc = conv.convert(file.file).document           # DoclingDocument (with page+bbox)
     return to_docir(doc, want_page_images)           # → DocIR v1
 ```
 
-## 8. gbrain Adapter：`importOfficeFile` 流程（规范）
+## 8. gbrain adapter: `importOfficeFile` flow (normative)
 
 ```
-importOfficeFile(engine, relativePath, bytes, opts):
-  1. content_hash 命中未变 → skip（复用现有去重）
-  2. POST sidecar /parse(want_page_images = needsImagesFor(format, opts)) → DocIR
-  3. 校验 docir_version == "1.0"，否则 fail 明确报错
-  4. doc-block chunker：连续文字块合并到 ingest.office.chunk_tokens，
-     生成 ChunkInput{ chunk_text, chunk_source:'doc_block', source_locator(合并页范围) }
-  5. 每个 type=table：
-       a. 摘要 chunk（LLM；降级链见 §11）→ chunk_source:'table_summary'
-       b. 行块 chunk（每 N 行）→ chunk_source:'table_rows', locator{page, cell_range}
-       c. 条件 Facts：仅当(检测=实体-属性-随时间) 且 (无 LOW_CONFIDENCE_TABLE) → 抽进 Facts fence
-  6. 视觉块（figure / 视觉密集 slide）& ingest.office.multimodal!='off'：
-       渲染/取 asset → spend 闸门 → gateway.embedMultimodal → 写 embedding_image
-  7. 抽边：对所有文字 chunk 跑 link-extraction + extract-ner（零 LLM，复用）
-  8. 经 engine 落库（chunks + source_locator + image embeddings），progress.ts 报心跳
+importOfficeFile(engine, filePath, relativePath, opts):
+  1. content_hash unchanged → skip (reuses existing dedup)
+  2. ensureSidecarUp (auto-start; §12) — down + unstartable → clean ImportResult error
+  3. POST sidecar /parse(want_page_images = cfg.multimodal !== 'off') → DocIR
+  4. validate docir_version == "1.0", else fail with a clear error
+  5. doc-block chunker: merge consecutive text blocks up to ingest.office.chunk_tokens,
+     producing ChunkInput{ chunk_text, chunk_source:'compiled_truth', source_locator (merged page range) }
+  6. each type=table:
+       a. summary chunk (LLM; fallback chain per §11)
+       b. row-block chunks (every N rows) with locator{page|sheet, cell_range|row_range}
+  7. visual blocks (figures / visually dense pages) & ingest.office.multimodal != 'off':
+       take asset → gateway.embedMultimodal → write embedding_image (best-effort;
+       missing multimodal provider skips gracefully, import never fails on it)
+  8. persist through the engine (page + chunks + per-chunk source_locator via the
+     cross-engine JSONB path), parser warnings surfaced into page frontmatter +
+     ImportResult (§16, R3)
 ```
 
-## 9. 数据模型 / Schema 变更
+## 9. Data model / schema change
 
 ```sql
--- src/core/migrate.ts 的 MIGRATIONS 数组新增一条；两引擎同步（engine parity）
+-- One additive entry in the MIGRATIONS array (src/core/migrate.ts, v120); both engines in lockstep
 ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS source_locator JSONB;
--- src/schema.sql 同步加列（新装路径）
--- 暂不建索引：provenance 用于显示/引用而非过滤。将来若常按页过滤 → 加 page_number INTEGER 专用列 + CREATE INDEX CONCURRENTLY
+-- src/schema.sql adds the column for the fresh-install path
+-- No index for now: provenance is for display/citation, not filtering. If page-filtered
+-- queries become common → add a dedicated page_number INTEGER column + CREATE INDEX CONCURRENTLY
 ```
 
-- 新 `chunk_source` 取值（additive，不破坏现有）：`doc_block` / `table_summary` / `table_rows`。
-- **Schema 不变式**：
-  - 列加入 **bootstrap probe set**（`test/schema-bootstrap-coverage.test.ts`）。
-  - `source_locator` 写入**必须** `executeRawJsonb`，禁止 `JSON.stringify` 进 `::jsonb`（`scripts/check-jsonb-pattern.sh` 守护）。
-  - DDL 同时落 `pglite-engine.ts` 与 `postgres-engine.ts`（`test/e2e/engine-parity.test.ts` 钉死）。
+- New `chunk_source` values (additive, nothing existing breaks): office text chunks
+  persist as `compiled_truth`; image chunks as `image_asset`.
+- **Schema invariants**:
+  - the column joins the **bootstrap probe set** (`test/schema-bootstrap-coverage.test.ts`);
+  - `source_locator` writes **must** go through `executeRawJsonb` — never
+    `JSON.stringify` into a `::jsonb` cast (`scripts/check-jsonb-pattern.sh` guards);
+  - DDL lands in BOTH `pglite-engine.ts` and `postgres-engine.ts`
+    (`test/e2e/engine-parity.test.ts` and `test/e2e/office-engine-parity.test.ts` pin it).
 
-## 10. 配置键（冻结）
+## 10. Config keys (frozen)
 
 ```
-ingest.docling.enabled              bool      默认 false（opt-in）
+ingest.docling.enabled              bool      default false (opt-in)
 ingest.docling.url                  string    http://127.0.0.1:<port>
-ingest.docling.python               string    受管 venv 的 python 路径
-ingest.docling.max_concurrency      int       默认 2（gbrain 侧在途 /parse 上限，§21.3）
-ingest.docling.ocr                  enum      'auto'(默认) | 'on' | 'off'（R1：扫描 PDF OCR）
-ingest.docling.images_scale         float     默认 1.5（R1：页/图渲染 scale，内存 vs 质量）
-ingest.office.chunk_tokens          int       默认 512（D4，独立于 markdown 分块）
-ingest.office.table_summary.model   string    chat 模型别名（D9）
-ingest.office.table_summary.enabled bool      默认 true；false → 总是模板摘要
-ingest.office.multimodal            enum      'selective'(默认) | 'all' | 'off'（D6）
-ingest.office.max_file_mb           int       默认 50（§13）
+ingest.docling.python               string    python path of the managed venv
+ingest.docling.max_concurrency      int       default 2 (gbrain-side cap on in-flight /parse, §21.3)
+ingest.docling.ocr                  enum      'auto' (default) | 'on' | 'off'  (R1: scanned-PDF OCR)
+ingest.docling.images_scale         float     default 1.5 (R1: page/figure render scale, memory vs quality)
+ingest.office.chunk_tokens          int       default 512 (D4, independent of markdown chunking)
+ingest.office.table_summary.model   string    chat model alias (D9)
+ingest.office.table_summary.enabled bool      default true; false → always template summary
+ingest.office.multimodal            enum      'selective' (default) | 'all' | 'off'  (D6)
+ingest.office.max_file_mb           int       default 50 (§13)
 ```
 
-**R1b 多模态图像嵌入(网关级 env,非 office 配置键)**:要让图像真正嵌入,需配
-`VOYAGE_API_KEY` + `GBRAIN_EMBEDDING_MULTIMODAL=true` +
-`GBRAIN_EMBEDDING_MULTIMODAL_MODEL=voyage:voyage-multimodal-3`——主嵌入(ollama)纯文本时
-多模态单独指到 Voyage,否则报"recipe 不支持多模态";图向量落 `content_chunks.embedding_image`(1024d)。
+**R1b multimodal image embedding (gateway-level env, not office config keys)**: for
+images to actually embed, set `VOYAGE_API_KEY` +
+`GBRAIN_EMBEDDING_MULTIMODAL=true` +
+`GBRAIN_EMBEDDING_MULTIMODAL_MODEL=voyage:voyage-multimodal-3`. The primary
+embedding provider can stay text-only (e.g. ollama) while multimodal routes to
+Voyage separately; otherwise the recipe reports it does not support multimodal.
+Image vectors land in `content_chunks.embedding_image` (1024d).
 
-## 11. LLM 表摘要 + 降级链（D9 规范）
+## 11. LLM table summaries + fallback chain (D9 normative)
 
 ```
-对每张 table：
-  if ingest.office.table_summary.enabled 且 chat provider 可用 且 spend 未超闸门：
-     summary = gateway.chat(model=ingest.office.table_summary.model, prompt=表结构+样本行)
+for each table:
+  if ingest.office.table_summary.enabled and a chat provider is available:
+     summary = gateway.chat(model=ingest.office.table_summary.model, prompt=table structure + sample rows)
   else:
-     summary = 模板摘要("Table on p.{page}: {n_rows}×{n_cols}, columns: {columns}")
-  → 永不让导入因表摘要失败
+     summary = template summary ("Table on p.{page}: {n_rows}×{n_cols}, columns: {columns}")
+  → an import NEVER fails because a table summary failed
 ```
-- 计价纳入 spend 统计；`gbrain stats` 暴露"本次导入表摘要花费"。
-- 低置信度表（`warnings: LOW_CONFIDENCE_TABLE`）**不抽 Facts**，且摘要标注"未校验"。
+- Chat spend is accounted like any other gateway call.
+- Low-confidence tables (`warnings: LOW_CONFIDENCE_TABLE`) are surfaced to whoever
+  later authors Facts from the page (§16, R3) — the summary itself still imports.
 
-## 12. Sidecar 监督（D8 规范）
+## 12. Sidecar supervision + degradation contract (D8 normative)
 
-新增 `src/core/docling-supervisor.ts`，仿 `process-watchdog.ts` / minion 监督：
-1. **拉起**：在受管 venv 内 `uvicorn app:app --port <p>`。
-2. **健康轮询**：周期打 `/health`；连续失败 N 次触发重启。
-3. **退避重启**：jittered backoff，避免风暴；崩溃**不拖垮导入**（导入侧捕获 + 明确错误）。
-4. **随 gbrain 退出关闭**：防僵尸进程。
-5. **首装**：`gbrain ingest setup-docling` → 建 venv + `pip install docling`（一次性下 ML 模型，提示用户体积）。
-6. **doctor**：新增 `docling_service` 检查（仿 ollama 健康检查）。
+`src/core/docling-supervisor.ts` (modeled on the minion supervisor):
+1. **Start**: `uvicorn app:app --port <p>` inside the managed venv.
+2. **Health polling**: periodic `/health`; N consecutive failures trigger a restart.
+3. **Backoff restarts**: jittered backoff, no restart storms; a crash **never wedges
+   an import** (the import side catches and reports a clean error).
+4. **Shutdown with gbrain**: no zombie processes.
+5. **First install**: `gbrain ingest setup-docling` → create venv + `pip install`
+  (one-time ML model download; the user is warned about the size).
+6. **doctor**: a `docling_service` check (modeled on the ollama health check).
 
-## 13. 性能 / 成本 / 上限
+**Import-time auto-start + degradation** (`ensureSidecarUp`, `sidecar-manage.ts`):
+- Imports auto-start a **detached** uvicorn when the sidecar is not serving, so
+  later imports reuse the warm (model-loaded) process. `gbrain ingest start` does
+  the same explicitly.
+- **Degradation is fail-fast and never crashes the run** (pinned by
+  `test/office-sidecar-degradation.test.ts`): office disabled → clear error telling
+  the user how to enable; venv missing → immediate false, no spawn; spawn failure →
+  captured (no unhandled `'error'` event), poll short-circuits; sidecar down +
+  unstartable → the adapter returns a clean per-file `ImportResult` error and the
+  surrounding bulk import continues with the other files.
+- **Failed-start cooldown**: a failed start is memoized per URL (in-process,
+  5 minutes) so a persistently broken sidecar does not cost every file in a bulk
+  import its own spawn + health-poll wait. The health probe always runs first, so a
+  recovered or hand-started sidecar wins immediately; explicit `gbrain ingest start`
+  bypasses the cooldown.
 
-- **大文件**：逐页流式处理 + 有界并发 + `progress.ts` 心跳；`ingest.office.max_file_mb` 闸门（默认 50MB，仿 transcription 的 25MB 模式）。M0 先搭骨架，M1 OCR 时补满逐页渲染。
-- **多模态成本（已核实，2026-06）**：图像嵌入走 Voyage `voyage-multimodal-3`，落 `embedding_image`（1024d）。**成本控制杠杆 = `ingest.office.multimodal`**（`off` / `selective`默认 / `all`）——`selective` 只嵌 figure + 视觉密集页；`off` 完全不嵌（零成本）。**诚实更正**：import 时的**内联**嵌入（文本走 ollama、图走 Voyage）**不经过** `gbrain embed` 的交互式 spend 闸门（`spend.posture` 那个是 bulk 补嵌路径的）；所以多模态实际的成本闸门是上面这个 config 键 + Voyage 免费额度，**不是** spend gate。**Voyage 免费额度**：每账号 200M text tokens + 150B pixels（≈ 7.5 万页图），个人用基本花不完；超出后 \$0.60/十亿像素。
-- **表摘要成本**：chat 调用，受 spend 控制 + 降级链兜底。
+## 13. Performance / cost / caps
 
-## 14. 必须遵守的 GBrain 不变式
+- **Large files**: bounded concurrency + `progress.ts` heartbeats;
+  `ingest.office.max_file_mb` gate (default 50MB, modeled on transcription's 25MB pattern).
+- **Multimodal cost (verified 2026-06)**: image embedding goes to Voyage
+  `voyage-multimodal-3`, landing in `embedding_image` (1024d). **The cost lever is
+  `ingest.office.multimodal`** (`off` / `selective` default / `all`) — `selective`
+  embeds only figures + visually dense pages; `off` embeds nothing (zero cost).
+  **Honest correction**: the *inline* embeddings at import time (text via the
+  primary provider, images via Voyage) do **not** pass through `gbrain embed`'s
+  interactive spend gate (`spend.posture` governs the bulk backfill path). The
+  real cost gates for multimodal are this config key + the provider's free tier
+  (Voyage: 200M text tokens + 150B pixels ≈ 75k page images per account; past
+  that, $0.60 per billion pixels).
+- **Table summary cost**: chat calls, bounded by the fallback chain (§11).
 
-| 不变式 | 落点 |
+## 14. GBrain invariants that must hold
+
+| Invariant | Where it lands |
 |---|---|
-| 引擎对等（pglite + postgres lockstep） | `source_locator` 列、chunk 插入路径 |
-| JSONB（executeRawJsonb，禁 stringify 进 ::jsonb） | 写 `source_locator` |
-| Contract-first（operations.ts 生成 CLI+MCP） | M0 多半无需新 op（`import` 已存在）；仅扩 dispatch + config |
-| 迁移（MIGRATIONS 数组 + bootstrap probe） | §9 |
-| 进度上报（progress.ts，写 stderr） | bulk 导入心跳 |
-| content_hash 去重 | adapter 第 1 步 |
-| Trust boundary（remote/MCP vs local） | 抽边在本地 CLI 路径正常；远程写入沿用现有 skip 语义 |
-| spend controls | 表摘要 chat + 多模态 embed |
+| Engine parity (pglite + postgres lockstep) | `source_locator` column, chunk insert path, `upsertChunkLocators` |
+| JSONB (executeRawJsonb; never stringify into ::jsonb) | `source_locator` writes |
+| Contract-first (operations.ts generates CLI+MCP) | no new op needed (`import` exists); dispatch + config only |
+| Migrations (MIGRATIONS array + bootstrap probe) | §9 |
+| Progress reporting (progress.ts, stderr) | bulk import heartbeats |
+| content_hash dedup | adapter step 1 |
+| Trust boundary (remote/MCP vs local) | edge extraction on the local CLI path; remote writes keep existing skip semantics |
+| Cost posture | table-summary chat + multimodal embed (§13) |
 
-## 15. 测试策略（映射不变式）
+## 15. Test strategy (mapped to invariants)
 
-- `engine-parity`：`source_locator` 两引擎一致。
-- `schema-bootstrap-coverage`：新列进 probe set。
-- `doc-block` 分块器单测：合并到目标尺寸 + locator 页范围正确。
-- adapter 集成（**mock sidecar** 返 DocIR）：chunks/locator/图嵌入正确。
-- table 处理：摘要降级链、行块切分、Facts 条件触发与低置信度抑制。
-- JSONB 写入：`source_locator` 经 `executeRawJsonb`，无双编码。
-- supervisor：拉起/健康失败重启/退出清理。
+- `office-engine-parity` (e2e): office import path identical on both engines.
+- `schema-bootstrap-coverage`: the new column is in the probe set.
+- doc-block chunker unit tests: merge-to-target-size + locator page ranges.
+- adapter integration (**injected DocIR** via the `_parseForTest` seam): chunks /
+  locators / warnings correct, idempotent re-import.
+- table handling: summary fallback chain, row-block slicing, sheet attribution.
+- JSONB writes: `source_locator` via `executeRawJsonb`, no double-encoding.
+- supervisor: start / health-fail restart / exit cleanup, backoff.
+- **sidecar degradation** (real path, no seam): disabled / unreachable / venv
+  missing / spawn failure / cooldown — see §12.
 
-## 16. 验收标准（Definition of Done · M0）
+## 16. Acceptance criteria (Definition of Done · M0)
 
-以 Given/When/Then 断言：
+As Given/When/Then assertions:
 
-- **AC1**：Given 已 `gbrain ingest setup-docling`，When `gbrain doctor`，Then `docling_service: ok`。
-- **AC2**：Given 一个含 DOCX/PPTX/有文本层 PDF 的目录，When `gbrain import <dir>`，Then 三类文件均入库且每 chunk 的 `source_locator` 非空、含正确 `page|slide`。
-- **AC3**：Given 已导入，When `gbrain query "<文中关键句>"`，Then 命中目标 chunk 且结果可显示 "p.X / Slide Y"。
-- **AC4**：Given 一份含表格的文档，When 导入，Then 存在 `table_summary` + `table_rows` chunk；Given 无 chat key，Then 摘要自动降级为模板且导入成功。
-- **AC5**：Given 任意改动，When CI（含 engine-parity / schema-bootstrap / jsonb 守护），Then 全绿；pglite 与 postgres 行为一致。
+- **AC1**: Given `gbrain ingest setup-docling` has run, When `gbrain doctor`, Then
+  `docling_service: ok`.
+- **AC2**: Given a directory containing DOCX/PPTX/text-layer PDF, When
+  `gbrain import <dir>`, Then all three import and every chunk's `source_locator`
+  is non-empty with correct `page|slide`.
+- **AC3**: Given imports done, When `gbrain query "<key sentence from the doc>"`,
+  Then the target chunk is hit and the result can display "p.X / Slide Y".
+- **AC4**: Given a document with a table, When imported, Then summary + row-block
+  chunks exist; Given no chat key, Then the summary falls back to the template and
+  the import succeeds.
+- **AC5**: Given any change, When CI runs (engine-parity / schema-bootstrap / jsonb
+  guards), Then all green; pglite and postgres behave identically.
 
-**实现状态（M0 已落地，分支 `feature/office-ingest-m0`）**：DocIR 契约 v1 + types；
-doc-block chunker；`source_locator` 迁移(v120) + 跨引擎 JSONB 写入(`upsertChunkLocators`，
-pglite/postgres 对等)；表格 handler（LLM 摘要 + 无 key 时模板降级 + 行块）；
-`importOfficeFile` + import-file 分发；office config keys；FastAPI sidecar；
-选择性多模态嵌入（选择启发式已单测；待 sidecar 出图时生效）；sidecar 监督
-(`src/core/docling-supervisor.ts`，抖动退避重启) + 导入时分离式自动拉起
-(`ensureSidecarUp`，复用热进程) + `gbrain ingest setup-docling|start` 命令 +
-doctor `docling_service` 健康检查。**验证**：20 个单测通过、typecheck 干净、CLI 命令
-端到端可用。**仍待**：真实 Docling 全链 e2e（装好依赖跑一遍）、Postgres engine-parity
-e2e、OCR(M1)/条件 Facts(M4)。
+**Implementation status (all landed on branch `feature/office-ingest-m0`)**: DocIR
+contract v1 + types; doc-block chunker; `source_locator` migration (v120) +
+cross-engine JSONB writes (`engine.upsertChunkLocators`, pglite/postgres parity);
+table handler (LLM summary with template fallback + row blocks + sheet attribution);
+`importOfficeFile` + import-file dispatch + collection-walker admission
+(`isCollectibleForWalker` accepts office extensions when `ingest.docling.enabled`);
+office config keys registered; FastAPI sidecar (OCR + page/figure rendering);
+selective multimodal embedding (heuristic unit-tested; Voyage-verified end-to-end);
+sidecar supervision (`docling-supervisor.ts`, jittered backoff) + detached
+import-time auto-start (`ensureSidecarUp`, §12 degradation contract) +
+`gbrain ingest setup-docling|start` commands + doctor `docling_service` check;
+parser warnings surfaced (R3). Verified: full office unit suite + real-brain
+end-to-end (`gbrain import` collects a PDF → Docling → Voyage `embedding_image` →
+text-to-image search hits, cos_dist ≈ 0.45); real-Postgres parity e2e 2 pass / 0 fail.
 
-## 17. 分期路线
+## 17. Staged roadmap
 
-> **✅ 全部完成(2026-06)。** 下表 M1–M4 在 M0 落地后被**重规划**为 R1/R2/R3
-> (因 M0 超额交付 + Facts 是围栏制非自动抽取)——详见 `office-ingest-roadmap.md`。
-> M0 + R1 + R2 + R3 + Postgres 引擎对等 e2e 均已落地并验证。
+> **✅ All complete (2026-06).** M1–M4 below were **replanned** after M0 landed
+> (M0 over-delivered, and Facts turned out to be fence-based rather than
+> auto-extracted) into R1/R2/R3 — see `office-ingest-roadmap.md` for the replan
+> and per-milestone implementation records. M0 + R1 + R2 + R3 + the Postgres
+> engine-parity e2e all landed and were verified.
 
-| 阶段 | 范围 | 出口 |
+| Stage | Scope | Exit |
 |---|---|---|
-| **M0** | sidecar(常驻+监督) + `importOfficeFile` + doc-block chunker + `source_locator` 迁移；DOCX/PPTX/PDF(文本层) | AC1–AC5 |
-| M1 | OCR：扫描 PDF → 渲染页图 → 复用 `importImageFile` OCR 路径 | 扫描件可检索 |
-| M2 | 表格落地：LLM 摘要 + 行块 + 公式取值/多 sheet（Excel） | 表格可检索 |
-| M3 | 多模态：PPT/图表选择性嵌入 + cross-modal `both` 检索验证 | 视觉搜索 |
-| M4 | 条件 Facts 抽取（接 Dream cycle `extract_facts`） | 结构化查询 |
+| **M0** | sidecar (resident + supervised) + `importOfficeFile` + doc-block chunker + `source_locator` migration; DOCX/PPTX/PDF (text layer) | AC1–AC5 |
+| M1 → R1a | OCR: scanned PDFs parsed via Docling's native OCR | scanned documents searchable |
+| M2 → R2 | tables: multi-sheet attribution, computed values, low-confidence marking | tables trustworthy |
+| M3 → R1b | multimodal: selective embedding + cross-modal retrieval verified | visual search |
+| M4 → R3 | parser warnings surfaced (Facts are fence-authored; see roadmap) | warnings visible downstream |
 
-## 18. 风险与缓解
+## 18. Risks & mitigations
 
-| 风险 | 影响 | 缓解 |
+| Risk | Impact | Mitigation |
 |---|---|---|
-| Python sidecar 部署 + 序列化开销 | 破坏 zero-config；大文件内存翻倍；崩溃楔住导入 | 与 ollama 同形态（用户已接受）；流式；每文件超时+杀；监督重启 |
-| 大 PDF/PPT 内存 + 渲染慢 | OOM / 导入像卡死 | 逐页流式 + 有界并发 + 仅按需渲染 + 进度心跳 + 大小闸门 + 可断点 |
-| 复杂表格质量（合并/跨页/表为图） | 错表 → 自信错答（尤其错入 Facts） | 结构感知解析(Docling) + 保留表渲染图兜底 + 低置信度标记 + 不自动抽 Facts |
-| 引擎对等 + 迁移工作量 | CI 守护严，易卡壳 | 一次迁移批量加完 + 照现有迁移模板 + 早跑 parity/bootstrap 测试 + 只做 additive |
-| Ingest 新增 chat 依赖（D9） | 花费 + 可用性耦合 | 降级链 + spend 闸门 + 计费暴露 |
+| Python sidecar deployment + serialization overhead | breaks zero-config; large files double memory; a crash wedges imports | same shape as ollama (users already accept it); per-file timeout; supervised restarts; §12 degradation contract |
+| Large PDF/PPT memory + slow rendering | OOM / imports look stuck | bounded concurrency + render only when needed + progress heartbeats + size gate |
+| Complex-table quality (merged / cross-page / table-as-image) | wrong tables → confidently wrong answers | structure-aware parsing (Docling) + low-confidence warnings surfaced (§16, R3) |
+| Engine parity + migration workload | strict CI guards, easy to stall | one additive migration + follow existing templates + run parity/bootstrap tests early |
+| Ingest gains a chat dependency (D9) | cost + availability coupling | fallback chain + cost exposure |
 
-## 19. 安全与隐私
+## 19. Security & privacy
 
-- Docling **本地运行**，文件**不出机器**（区别于 LlamaParse 云方案）—— 符合 GBrain 隐私优先。
-- sidecar 仅绑 `127.0.0.1`。
-- 抽边/写入沿用现有 trust boundary：本地 CLI 路径 trusted；远程 MCP 写入维持现有 skip 语义。
+- Docling runs **locally**; files **never leave the machine** (unlike cloud parsers) —
+  consistent with GBrain's privacy-first posture.
+- The sidecar binds `127.0.0.1` only.
+- Edge extraction / writes follow the existing trust boundary: the local CLI path is
+  trusted; remote MCP writes keep their existing skip semantics.
 
-## 20. 兼容性 / 回滚
+## 20. Compatibility / rollback
 
-- 全部 **additive**：新列、新 chunk_source、新 adapter，**不改现有行为**。
-- `ingest.docling.enabled=false`（默认）→ 现有用户**零影响**。
-- 回滚 = 关配置；`source_locator` 列对旧 chunk 为 NULL，无害。
+- Everything is **additive**: new column, new chunk sources, new adapter — **no
+  existing behavior changes**.
+- `ingest.docling.enabled=false` (the default) → **zero impact** on existing users.
+- Rollback = turn the config off; `source_locator` stays NULL for old chunks, harmless.
 
-## 21. 设计细化（原 Open Questions，已定稿）
+## 21. Design details (formerly Open Questions, now settled)
 
-### 21.1 doc-block chunker 边界规则（原 Q1 → 定）
-- **硬边界**：`table` / `figure` / `code` 块**自成 chunk**，前后 flush——**绝不**与 prose 合并、也不被切散（避免把表头/图与正文混切）。
-- **软边界**：`heading` 触发 flush（新 chunk 从标题起），且**标题文本前置注入下一个 chunk** 作为上下文（contextual retrieval，利召回）。
-- `paragraph` / `list` 合并到 `ingest.office.chunk_tokens` 即 flush。
-- 默认**无重叠**（与现有 markdown chunker 一致，避免行为分叉）。
-- chunk 的 `source_locator` = 所含块 locator 的并集（`page`: min→max；单页则该页）。
+### 21.1 doc-block chunker boundary rules
+- **Hard boundaries**: `table` / `figure` / `code` blocks are **chunks of their
+  own**, flushing before and after — **never** merged with prose, never split
+  (avoids slicing table headers / figures into running text).
+- **Soft boundaries**: `heading` triggers a flush (a new chunk starts at the
+  heading), and the **heading text is prepended to the next chunk** as context
+  (contextual retrieval, helps recall).
+- `paragraph` / `list` merge until `ingest.office.chunk_tokens`, then flush.
+- **No overlap** by default (consistent with the existing markdown chunker; avoids
+  behavioral forks).
+- A chunk's `source_locator` is the union of its blocks' locators (`page`: min→max;
+  single page if all one page).
 
-### 21.2 表格定位：cell_range vs row_range（原 Q2 → 定）
-- **XLSX**：用真实 `sheet` + `cell_range`（A1 记法，如 `"Q3!B4:D9"`）。
-- **PDF / DOCX / PPTX 表**：无真实单元格坐标 → `cell_range = null`，改用 `table_id` + `row_range`（表内 0-based 行区间）。
-- 引用渲染：XLSX → `"book.xlsx Q3!B4:D9"`；PDF 表 → `"report.pdf p.3, table rows 11–20"`。
-- 已在 §6 `locator` 增 `table_id` / `row_range` 两字段。
+### 21.2 Table location: cell_range vs row_range
+- **XLSX**: real `sheet` + `cell_range` (A1 notation, e.g. `"Q3!B4:D9"`).
+- **PDF / DOCX / PPTX tables**: no real cell coordinates → `cell_range = null`; use
+  `table_id` + `row_range` (0-based row interval within the table) instead.
+- Citation rendering: XLSX → `"book.xlsx Q3!B4:D9"`; PDF table →
+  `"report.pdf p.3, table rows 11–20"`.
 
-### 21.3 sidecar 并发（原 Q3 → 定）
-- sidecar `uvicorn workers=1`：**单模型副本**，省内存、防大文档 OOM。
-- 并发控制放 **gbrain 侧信号量** `ingest.docling.max_concurrency`（默认 2）限制在途 `/parse` 数（仿 `db-pacer` 的 concurrency-cap 思路）；批量导入多文件在 gbrain 侧排队，不冲垮 sidecar。
-- 大文件给更长超时（§13）。
+### 21.3 Sidecar concurrency
+- Sidecar runs `uvicorn workers=1`: **a single model replica**, saving memory and
+  preventing large-document OOM.
+- Concurrency control lives on the **gbrain side**: `ingest.docling.max_concurrency`
+  (default 2) caps in-flight `/parse` calls (same concurrency-cap idea as
+  `db-pacer`); bulk imports queue on the gbrain side instead of overwhelming the sidecar.
+- Larger files get longer timeouts (§13).
 
-### 21.4 视觉密集判定启发式（原 Q4 → 定）
-- `figure` 块：**总是**多模态嵌入（本身就是图）。
-- `slide` / `page`：算视觉密度，满足任一即嵌入整页渲染图：
-  - `image_area_ratio ≥ 0.30`（图像占页面积比），**或**
-  - `n_figures ≥ 1 且 text_char_count < 280`（稀疏文字 + 有图），**或**
-  - `text_char_count < 50`（近无文字 = 多半是图/图表）。
-- 阈值为 M0 内置默认（后续可调）；`ingest.office.multimodal`：`'all'` 全嵌 / `'off'` 全不嵌 / `'selective'`(默认) 用此启发式。
+### 21.4 Visual-density heuristic (selective multimodal)
+- `figure` blocks: **always** embedded (they are images).
+- `slide` / `page`: compute visual density; embed the full-page render when any of:
+  - `image_area_ratio ≥ 0.30` (image share of page area), **or**
+  - `n_figures ≥ 1 and text_char_count < 280` (sparse text + figures), **or**
+  - `text_char_count < 50` (nearly no text = probably a chart/diagram).
+- Thresholds are built-in defaults (tunable later); `ingest.office.multimodal`:
+  `'all'` embeds everything / `'off'` nothing / `'selective'` (default) uses this heuristic.
 
-## 附录 A — 受影响文件清单
+## Appendix A — Affected files
 
-| 文件 | 类型 | 改动 |
+| File | Kind | Change |
 |---|---|---|
-| `sidecar/docling-service/{app,docir,render}.py` | NEW | FastAPI + Docling + DocIR 映射 |
-| `src/core/ingest/office/{types,adapter,table,multimodal}.ts` | NEW | adapter 主体 |
-| `src/core/chunkers/doc-block.ts` | NEW | 结构感知分块器 |
-| `src/core/docling-supervisor.ts` | NEW | sidecar 监督（D8） |
-| `src/core/import-file.ts` | EDIT | dispatch + `isOfficeFilePath` |
-| `src/core/migrate.ts` | EDIT | `source_locator` 迁移 |
-| `src/schema.sql` | EDIT | content_chunks 加列 |
-| `src/core/pglite-engine.ts` / `postgres-engine.ts` | EDIT | chunk 插入携带 locator |
-| `src/core/config.ts` | EDIT | §10 配置键 |
-| doctor 命令 | EDIT | `docling_service` 检查 |
+| `sidecar/docling-service/{app,docir,docling_runtime,render}.py` | NEW | FastAPI + Docling pipeline config + DocIR mapping |
+| `src/core/office/{types,adapter,config,extensions,table,multimodal,sidecar-client,sidecar-manage}.ts` | NEW | adapter + office config + sidecar client / management |
+| `src/core/chunkers/doc-block.ts` | NEW | structure-aware chunker (§21.1) |
+| `src/core/docling-supervisor.ts` | NEW | sidecar supervision (D8, §12) |
+| `src/commands/ingest.ts` | NEW | `gbrain ingest setup-docling|start` |
+| `src/core/import-file.ts` | EDIT | dispatch via `isOfficeFilePath` (binary-safe, before the UTF-8 read) |
+| `src/commands/import.ts` | EDIT | collection walker admits office extensions when enabled |
+| `src/core/migrate.ts` | EDIT | `source_locator` migration (v120) |
+| `src/schema.sql` (+ embedded copies) | EDIT | content_chunks column for fresh installs |
+| `src/core/pglite-engine.ts` / `postgres-engine.ts` | EDIT | `upsertChunkLocators` (cross-engine JSONB) |
+| `src/core/config.ts` | EDIT | §10 config keys registered |
+| `src/commands/doctor.ts` | EDIT | `docling_service` check |
+| `evals/office-ingest/` | NEW | retrieval sanity-eval scaffold (hit@k / MRR) |
 
-## 附录 B — 术语
+## Appendix B — Glossary
 
-- **DocIR**：Document Intermediate Representation，sidecar 与 gbrain 间的归一化中间表示。
-- **source_locator**：chunk 在原文档中的精确定位（page/slide/sheet/cell/bbox）。
-- **sidecar**：与主进程协作的辅助进程（此处 = Docling FastAPI 服务）。
+- **DocIR**: Document Intermediate Representation — the normalized contract between
+  the sidecar and gbrain.
+- **source_locator**: a chunk's precise position in the original document
+  (page/slide/sheet/cell/bbox).
+- **sidecar**: a helper process cooperating with the main process (here: the
+  Docling FastAPI service).
