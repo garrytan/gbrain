@@ -69,6 +69,9 @@ import type {
   ProfileMemoryEntry, ProfileMemoryEntryInput, ProfileMemoryFilters,
   RawData,
   RetrievalTrace, RetrievalTraceInput, RetrievalTraceWindowFilters,
+  WatchedQuestion, WatchedQuestionFilters, WatchedQuestionInput,
+  WatchedQuestionRun, WatchedQuestionRunFilters, WatchedQuestionRunInput,
+  WatchedQuestionSnapshotPatch,
   TaskAttempt, TaskAttemptInput,
   TaskDecision, TaskDecisionInput,
   TaskThread, TaskThreadFilters, TaskThreadInput, TaskThreadPatch,
@@ -125,6 +128,8 @@ import {
   rowToSearchResult,
   rowToProfileMemoryEntry,
   rowToRetrievalTrace,
+  rowToWatchedQuestion,
+  rowToWatchedQuestionRun,
   rowToTaskAttempt,
   rowToTaskDecision,
   rowToTaskThread,
@@ -1288,6 +1293,182 @@ export abstract class PgEngineBase {
       params,
     );
     return (rows as Record<string, unknown>[]).map(rowToRetrievalTrace);
+  }
+
+  async upsertWatchedQuestion(input: WatchedQuestionInput): Promise<WatchedQuestion> {
+    const id = input.id ?? crypto.randomUUID();
+    const timestamp = toNullableIso(input.now) ?? new Date().toISOString();
+    const question = input.question.trim();
+    if (!question) throw new Error('watched question must not be empty');
+    const current = await this.getWatchedQuestion(id);
+    const resetSnapshot = current !== null && (
+      current.scope_id !== input.scope_id
+      || current.question !== question
+      || (current.requested_scope ?? null) !== (input.requested_scope ?? null)
+    );
+    const { rows } = await this.queryable.query(
+      `INSERT INTO watched_questions (
+        id, scope_id, question, requested_scope, enabled, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (id) DO UPDATE SET
+        scope_id = EXCLUDED.scope_id,
+        question = EXCLUDED.question,
+        requested_scope = EXCLUDED.requested_scope,
+        enabled = EXCLUDED.enabled,
+        latest_fingerprint = CASE WHEN $8 THEN NULL ELSE watched_questions.latest_fingerprint END,
+        latest_required_reads = CASE WHEN $8 THEN '[]'::jsonb ELSE watched_questions.latest_required_reads END,
+        latest_probe_at = CASE WHEN $8 THEN NULL ELSE watched_questions.latest_probe_at END,
+        updated_at = EXCLUDED.updated_at
+      RETURNING *`,
+      [
+        id,
+        input.scope_id,
+        question,
+        input.requested_scope ?? null,
+        input.enabled !== false,
+        timestamp,
+        timestamp,
+        resetSnapshot,
+      ],
+    );
+    return rowToWatchedQuestion(rows[0] as Record<string, unknown>);
+  }
+
+  async getWatchedQuestion(id: string): Promise<WatchedQuestion | null> {
+    const { rows } = await this.queryable.query(
+      `SELECT * FROM watched_questions WHERE id = $1`,
+      [id],
+    );
+    const [row] = rows as Record<string, unknown>[];
+    return row ? rowToWatchedQuestion(row) : null;
+  }
+
+  async listWatchedQuestions(filters: WatchedQuestionFilters = {}): Promise<WatchedQuestion[]> {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (filters.scope_id) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (typeof filters.enabled === 'boolean') {
+      params.push(filters.enabled);
+      clauses.push(`enabled = $${params.length}`);
+    }
+    params.push(filters.limit ?? 100);
+    params.push(filters.offset ?? 0);
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const { rows } = await this.queryable.query(
+      `SELECT *
+       FROM watched_questions
+       ${where}
+       ORDER BY updated_at DESC, id DESC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToWatchedQuestion);
+  }
+
+  async setWatchedQuestionEnabled(id: string, enabled: boolean, now?: Date | string): Promise<WatchedQuestion> {
+    const timestamp = toNullableIso(now) ?? new Date().toISOString();
+    const { rows } = await this.queryable.query(
+      `UPDATE watched_questions
+       SET enabled = $1, updated_at = $2
+       WHERE id = $3
+       RETURNING *`,
+      [enabled, timestamp, id],
+    );
+    const [row] = rows as Record<string, unknown>[];
+    if (!row) throw new Error(`Watched question not found: ${id}`);
+    return rowToWatchedQuestion(row);
+  }
+
+  async updateWatchedQuestionSnapshot(id: string, patch: WatchedQuestionSnapshotPatch): Promise<WatchedQuestion> {
+    const timestamp = toNullableIso(patch.updated_at) ?? new Date().toISOString();
+    const { rows } = await this.queryable.query(
+      `UPDATE watched_questions
+       SET latest_fingerprint = $1,
+           latest_required_reads = $2::jsonb,
+           latest_probe_at = $3,
+           updated_at = $4
+       WHERE id = $5
+       RETURNING *`,
+      [
+        patch.latest_fingerprint,
+        JSON.stringify(patch.latest_required_reads),
+        toNullableIso(patch.latest_probe_at),
+        timestamp,
+        id,
+      ],
+    );
+    const [row] = rows as Record<string, unknown>[];
+    if (!row) throw new Error(`Watched question not found: ${id}`);
+    return rowToWatchedQuestion(row);
+  }
+
+  async recordWatchedQuestionRun(input: WatchedQuestionRunInput): Promise<WatchedQuestionRun> {
+    const id = input.id ?? crypto.randomUUID();
+    const createdAt = toNullableIso(input.created_at) ?? new Date().toISOString();
+    const { rows } = await this.queryable.query(
+      `INSERT INTO watched_question_runs (
+        id, question_id, scope_id, question, changed, previous_fingerprint,
+        current_fingerprint, previous_required_reads, current_required_reads, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10)
+      RETURNING *`,
+      [
+        id,
+        input.question_id,
+        input.scope_id,
+        input.question,
+        input.changed,
+        input.previous_fingerprint ?? null,
+        input.current_fingerprint,
+        JSON.stringify(input.previous_required_reads ?? []),
+        JSON.stringify(input.current_required_reads ?? []),
+        createdAt,
+      ],
+    );
+    return rowToWatchedQuestionRun(rows[0] as Record<string, unknown>);
+  }
+
+  async listWatchedQuestionRuns(filters: WatchedQuestionRunFilters = {}): Promise<WatchedQuestionRun[]> {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (filters.scope_id) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (filters.question_id) {
+      params.push(filters.question_id);
+      clauses.push(`question_id = $${params.length}`);
+    }
+    if (typeof filters.changed === 'boolean') {
+      params.push(filters.changed);
+      clauses.push(`changed = $${params.length}`);
+    }
+    const since = toNullableIso(filters.since);
+    if (since) {
+      params.push(since);
+      clauses.push(`created_at >= $${params.length}`);
+    }
+    const until = toNullableIso(filters.until);
+    if (until) {
+      params.push(until);
+      clauses.push(`created_at < $${params.length}`);
+    }
+    params.push(filters.limit ?? 100);
+    params.push(filters.offset ?? 0);
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const { rows } = await this.queryable.query(
+      `SELECT *
+       FROM watched_question_runs
+       ${where}
+       ORDER BY created_at DESC, id DESC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToWatchedQuestionRun);
   }
 
   async putContextEvalRun(input: ContextEvalRunInput): Promise<ContextEvalRun> {

@@ -22,3 +22,4 @@ export * from './types/memory-why.ts';
 export * from './types/episode-capture.ts';
 export * from './types/graph-frontier.ts';
 export * from './types/context-eval.ts';
+export * from './types/watched-question.ts';

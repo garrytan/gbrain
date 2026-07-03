@@ -174,6 +174,18 @@ export interface DreamCycleRunDeps {
       summary_lines?: string[];
     }>;
   };
+  watchedQuestions?: {
+    run(input: {
+      scope_id: string;
+      now: string;
+      limit?: number;
+    }): Promise<{
+      probed: number;
+      changed: number;
+      initialized: number;
+      skipped: number;
+    }>;
+  };
 }
 
 export type DreamCyclePhaseHandler = (
@@ -702,6 +714,14 @@ async function runDailyReportPhase(
   context: DreamCyclePhaseContext,
   deps: DreamCycleRunDeps,
 ): Promise<Partial<DreamCyclePhaseResult>> {
+  const shouldProbeWatchedQuestions = context.input.dry_run === false && context.input.write_candidates === true;
+  const watched = shouldProbeWatchedQuestions
+    ? await deps.watchedQuestions?.run({
+      scope_id: context.input.scope_id,
+      now: context.input.now,
+      limit: context.input.limit,
+    })
+    : undefined;
   const saved = await deps.memoryReport?.save({
     scope_id: context.input.scope_id,
     now: context.input.now,
@@ -712,6 +732,12 @@ async function runDailyReportPhase(
   }
   const counts = {
     saved_reports: 1,
+    ...(watched ? {
+      watched_questions_probed: watched.probed,
+      watched_questions_changed: watched.changed,
+      watched_questions_initialized: watched.initialized,
+      watched_questions_skipped: watched.skipped,
+    } : {}),
     ...(saved.counts ?? {}),
   };
   const hasActionableWork = hasActionablePhaseWork(context.registry.family, counts);

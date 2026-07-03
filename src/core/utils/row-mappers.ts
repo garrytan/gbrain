@@ -42,6 +42,9 @@ import type {
   TaskDecision,
   TaskThread,
   TaskWorkingSet,
+  WatchedQuestion,
+  WatchedQuestionReadSnapshot,
+  WatchedQuestionRun,
 } from '../types.ts';
 
 export function rowToPage(row: Record<string, unknown>): Page {
@@ -892,6 +895,50 @@ export function rowToContextEvalCorrection(row: Record<string, unknown>): Contex
     metadata: parseJsonObject(row.metadata),
     created_at: new Date(String(row.created_at)),
   };
+}
+
+export function rowToWatchedQuestion(row: Record<string, unknown>): WatchedQuestion {
+  return {
+    id: String(row.id),
+    scope_id: String(row.scope_id),
+    question: String(row.question),
+    requested_scope: row.requested_scope == null ? null : row.requested_scope as WatchedQuestion['requested_scope'],
+    enabled: typeof row.enabled === 'boolean' ? row.enabled : Boolean(Number(row.enabled)),
+    latest_fingerprint: row.latest_fingerprint == null ? null : String(row.latest_fingerprint),
+    latest_required_reads: parseWatchedQuestionReadSnapshots(row.latest_required_reads),
+    latest_probe_at: row.latest_probe_at == null ? null : new Date(String(row.latest_probe_at)),
+    created_at: new Date(String(row.created_at)),
+    updated_at: new Date(String(row.updated_at)),
+  };
+}
+
+export function rowToWatchedQuestionRun(row: Record<string, unknown>): WatchedQuestionRun {
+  return {
+    id: String(row.id),
+    question_id: String(row.question_id),
+    scope_id: String(row.scope_id),
+    question: String(row.question),
+    changed: typeof row.changed === 'boolean' ? row.changed : Boolean(Number(row.changed)),
+    previous_fingerprint: row.previous_fingerprint == null ? null : String(row.previous_fingerprint),
+    current_fingerprint: String(row.current_fingerprint),
+    previous_required_reads: parseWatchedQuestionReadSnapshots(row.previous_required_reads),
+    current_required_reads: parseWatchedQuestionReadSnapshots(row.current_required_reads),
+    created_at: new Date(String(row.created_at)),
+  };
+}
+
+function parseWatchedQuestionReadSnapshots(value: unknown): WatchedQuestionReadSnapshot[] {
+  if (!value) return [];
+  const raw = typeof value === 'string'
+    ? JSON.parse(value) as Array<Record<string, unknown>>
+    : value as Array<Record<string, unknown>>;
+  return raw.map((entry) => ({
+    ...(typeof entry.selector_id === 'string' ? { selector_id: entry.selector_id } : {}),
+    slug: String(entry.slug ?? ''),
+    content_hash: String(entry.content_hash ?? ''),
+    ...(typeof entry.line_start === 'number' ? { line_start: entry.line_start } : {}),
+    ...(typeof entry.line_end === 'number' ? { line_end: entry.line_end } : {}),
+  })).filter((entry) => entry.slug.length > 0);
 }
 
 function normalizeMemoryMutationSourceRefs(value: unknown): string[] {

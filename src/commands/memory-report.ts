@@ -23,6 +23,7 @@ import {
   type ReportSecretDetection,
   type ReportSource,
   type ReportSourceItem,
+  type ReportWatchedQuestionChange,
 } from '../core/services/memory-review-report-service.ts';
 import { createHash } from 'crypto';
 import { saveBrainReport } from './report.ts';
@@ -204,6 +205,7 @@ export async function collectMemoryReportInput(
     retrievalTrajectoryScore,
     recurringRetrievalGaps,
     pageHealthQueue,
+    watchedQuestionChanges,
   ] = await Promise.all([
     engine.listMemoryMutationEvents({ scope_id: scopeId, limit, offset: 0 }),
     engine.listMemoryCandidateEntries({ scope_id: scopeId, limit, offset: 0 }),
@@ -227,6 +229,7 @@ export async function collectMemoryReportInput(
     collectRetrievalTrajectoryScore(engine, generatedAt, limit),
     collectRecurringRetrievalGaps(engine, generatedAt, limit),
     collectPageHealthQueue(engine, generatedAt, limit),
+    collectWatchedQuestionChanges(engine, scopeId, generatedAt, limit),
   ]);
   const [
     canonicalHandoffCandidateState,
@@ -284,8 +287,10 @@ export async function collectMemoryReportInput(
     retrieval_trajectory_score: retrievalTrajectoryScore,
     skill_surface: collectSkillSurfaceSummary(),
     candidate_age_escalations: collectCandidateAgeEscalations(candidates, generatedAt),
+    promoted_candidate_refutations: collectPromotedCandidateRefutations(candidates),
     recurring_retrieval_gaps: recurringRetrievalGaps,
     page_health_queue: pageHealthQueue,
+    watched_question_changes: watchedQuestionChanges,
     data_integrity_errors: dataIntegrityErrors,
   };
   } finally {
@@ -319,6 +324,30 @@ function collectCandidateAgeEscalations(
       if (b.age_days !== a.age_days) return b.age_days - a.age_days;
       return a.id.localeCompare(b.id);
     });
+}
+
+function collectPromotedCandidateRefutations(
+  candidates: MemoryCandidateEntry[],
+): NonNullable<MemoryReviewReportInput['promoted_candidate_refutations']> {
+  return candidates
+    .filter((candidate) => candidate.status === 'promoted' && candidate.verification_status === 'refuted')
+    .map((candidate) => ({
+      id: candidate.id,
+      target_object_type: candidate.target_object_type,
+      target_object_id: candidate.target_object_id,
+      verification_evidence: candidate.verification_evidence ?? 'Promoted candidate was refuted after promotion.',
+      verification_source_refs: candidate.verification_source_refs,
+      next_action: buildPromotedRefutationNextAction(candidate),
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function buildPromotedRefutationNextAction(candidate: MemoryCandidateEntry): string {
+  const target = candidate.target_object_id;
+  if (candidate.target_object_type === 'curated_note' && target) {
+    return `why ${target}; review canonical_handoff_entries for ${candidate.id}; update or supersede the canonical page line`;
+  }
+  return `review canonical_handoff_entries for ${candidate.id}; update or supersede the canonical target`;
 }
 
 async function collectRecurringRetrievalGaps(
@@ -547,6 +576,52 @@ function slugFromRetrievalTraceSourceRef(sourceRef: string): string | undefined 
     return parts.slice(3, -2).join(':');
   }
   return undefined;
+}
+
+async function collectWatchedQuestionChanges(
+  engine: BrainEngine,
+  scopeId: string,
+  generatedAt: string,
+  limit: number,
+): Promise<ReportWatchedQuestionChange[]> {
+  if (typeof (engine as Partial<BrainEngine>).listWatchedQuestionRuns !== 'function') {
+    return [];
+  }
+  const until = new Date(generatedAt);
+  if (!Number.isFinite(until.getTime())) return [];
+  const since = new Date(until.getTime() - 7 * 24 * 60 * 60 * 1000);
+  try {
+    const runs = await engine.listWatchedQuestionRuns({
+      scope_id: scopeId,
+      changed: true,
+      since,
+      until,
+      limit,
+      offset: 0,
+    });
+    return runs.map((run) => ({
+      id: run.id,
+      question_id: run.question_id,
+      question: run.question,
+      changed_at: run.created_at.toISOString(),
+      previous_required_reads: run.previous_required_reads.map(reportWatchedRead),
+      current_required_reads: run.current_required_reads.map(reportWatchedRead),
+      next_action: `Review watched question ${run.question_id} and read current evidence before acting.`,
+    }));
+  } catch (error) {
+    activeReportDataIntegrityErrors?.push({
+      query: 'watched_question_runs',
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+}
+
+function reportWatchedRead(read: { slug: string; content_hash: string }): { slug: string; content_hash: string } {
+  return {
+    slug: read.slug,
+    content_hash: read.content_hash,
+  };
 }
 
 function collectSkillSurfaceSummary() {

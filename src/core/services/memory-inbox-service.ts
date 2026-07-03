@@ -267,10 +267,12 @@ export async function verifyMemoryCandidateEntry(
       );
     }
 
-    if (entry.status !== 'captured' && entry.status !== 'candidate' && entry.status !== 'staged_for_review') {
+    const canVerifyActive = entry.status === 'captured' || entry.status === 'candidate' || entry.status === 'staged_for_review';
+    const canRefutePromoted = entry.status === 'promoted' && input.verification_status === 'refuted';
+    if (!canVerifyActive && !canRefutePromoted) {
       throw new MemoryInboxServiceError(
         'invalid_status_transition',
-        `Cannot verify memory candidate in terminal status ${entry.status}; only active candidates may be verified.`,
+        `Cannot verify memory candidate in terminal status ${entry.status}; only active candidates may be verified, except promoted candidates may be refuted with evidence.`,
       );
     }
 

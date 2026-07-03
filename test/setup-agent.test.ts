@@ -90,6 +90,29 @@ async function runInstalledHook(
   };
 }
 
+async function runInstalledCodexHook(
+  payload: string,
+  options: { env?: Record<string, string>; cwd?: string } = {},
+) {
+  const hookPath = join(tempHome, '.codex', 'scripts', 'hooks', 'stop-mbrain-capture.sh');
+  const proc = spawnSync('bash', [hookPath], {
+    cwd: options.cwd ?? repoRoot,
+    env: {
+      HOME: tempHome,
+      PATH: `${tempBin}:${process.env.PATH ?? ''}`,
+      ...(options.env ?? {}),
+    },
+    input: payload,
+    encoding: 'utf-8',
+  });
+
+  return {
+    stdout: proc.stdout,
+    stderr: proc.stderr,
+    exitCode: proc.status,
+  };
+}
+
 beforeEach(() => {
   tempHome = mkdtempSync(join(tmpdir(), 'mbrain-setup-agent-'));
   tempBin = join(tempHome, 'bin');
@@ -147,6 +170,26 @@ describe('setup-agent', () => {
     // Budget raised from 720 to accommodate the D1 (put_page CAS) and D2 (promotion ≠
     // retrievable) governance contract notes; the rules stay deliberately compact.
     expect(wordCount).toBeLessThan(820);
+  });
+
+  test('setup-agent --print generic emits client-agnostic MCP and candidate-only capture config', async () => {
+    const result = await runSetupAgent(['--print', 'generic']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe('');
+
+    const config = JSON.parse(result.stdout);
+    expect(config.mcpServers.mbrain).toEqual({
+      command: 'mbrain',
+      args: ['serve', '--tier', 'core'],
+    });
+    expect(config.hooks.stop.command).toContain('stop-mbrain-capture.sh');
+    expect(config.capture).toMatchObject({
+      command: 'mbrain agent-session capture',
+      write_mode: 'candidate_only',
+      apply: true,
+    });
+    expect(JSON.stringify(config)).not.toContain('direct_personal_when_allowed');
   });
 
   test('setup-agent --print ignores stale cwd-local rule files', async () => {
@@ -238,6 +281,65 @@ describe('setup-agent', () => {
     expect(agentsMd).toContain('automatic canonical writeback exists');
     expect(agentsMd).toContain('assertion pipeline');
     expect(agentsMd).toContain('daily memory report is the primary review surface');
+  });
+
+  test('setup-agent --codex installs a candidate-only Codex stop-hook adapter', async () => {
+    mkdirSync(join(tempHome, '.codex'), { recursive: true });
+
+    const result = await runSetupAgent(['--codex', '--skip-mcp']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toContain('Codex MBrain hooks');
+
+    const hookPath = join(tempHome, '.codex', 'scripts', 'hooks', 'stop-mbrain-capture.sh');
+    expect(existsSync(hookPath)).toBe(true);
+    const hook = readFileSync(hookPath, 'utf-8');
+    expect(hook).toContain('agent-session capture');
+    expect(hook).toContain('--write-mode candidate_only');
+    expect(hook).not.toContain('direct_personal_when_allowed');
+  });
+
+  test('installed Codex stop-hook adapter backgrounds candidate-only session capture', async () => {
+    mkdirSync(join(tempHome, '.codex'), { recursive: true });
+    const result = await runSetupAgent(['--codex', '--skip-mcp']);
+    expect(result.exitCode).toBe(0);
+
+    const transcriptPath = join(tempHome, 'codex-transcript.jsonl');
+    writeFileSync(transcriptPath, '{"role":"user","content":"remember this codex note"}\n', 'utf-8');
+
+    const invocationLog = join(tempHome, 'mbrain-codex-capture-invocations.log');
+    writeFileSync(
+      join(tempBin, 'mbrain'),
+      `#!/bin/sh\necho "$@" >> "${invocationLog}"\nexit 0\n`,
+      'utf-8',
+    );
+    Bun.spawnSync(['chmod', '+x', join(tempBin, 'mbrain')]);
+
+    const hook = await runInstalledCodexHook(JSON.stringify({
+      session_id: 'codex-session-1',
+      transcript_path: transcriptPath,
+    }));
+
+    expect(hook.exitCode).toBe(0);
+    expect(hook.stdout).toBe('');
+
+    let invocations = '';
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (existsSync(invocationLog)) {
+        invocations = readFileSync(invocationLog, 'utf-8');
+        if (invocations.includes('agent-session')) break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(invocations).toContain('agent-session capture');
+    expect(invocations).toContain(`--transcript-path ${transcriptPath}`);
+    expect(invocations).toContain('--session-id codex-session-1');
+    expect(invocations).toContain('--apply --write-mode candidate_only');
+
+    const log = readFileSync(join(tempHome, '.codex', 'logs', 'mbrain-stop-hook.log'), 'utf-8');
+    expect(log).toContain('capture');
+    expect(log).toContain('backgrounded');
   });
 
   test('setup-agent --codex replaces previous same-file rules when rules version changes', async () => {

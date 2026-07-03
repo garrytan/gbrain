@@ -195,3 +195,35 @@ test('verified procedure candidates can promote end-to-end', async () => {
     expect(promoted.verification_status).toBe('verified');
   });
 });
+
+test('verify service allows refuting a promoted candidate after canonical handoff', async () => {
+  await withEngine('promoted-refuted', async (engine) => {
+    await seedCandidate(engine, 'candidate-promoted-refute', 'captured');
+    await advanceMemoryCandidateStatus(engine, { id: 'candidate-promoted-refute', next_status: 'candidate' });
+    await advanceMemoryCandidateStatus(engine, { id: 'candidate-promoted-refute', next_status: 'staged_for_review' });
+    await verifyMemoryCandidateEntry(engine, {
+      id: 'candidate-promoted-refute',
+      verification_status: 'verified',
+      verification_method: 'source_recheck',
+      verification_evidence: 'Source initially appeared to support the claim.',
+    });
+    const promoted = await promoteMemoryCandidateEntry(engine, {
+      id: 'candidate-promoted-refute',
+      review_reason: 'Initial evidence supported promotion.',
+    });
+    expect(promoted.status).toBe('promoted');
+
+    const refuted = await verifyMemoryCandidateEntry(engine, {
+      id: 'candidate-promoted-refute',
+      verification_status: 'refuted',
+      verification_method: 'source_recheck',
+      verification_evidence: 'A later source recheck found the promoted claim was false; review the canonical page and handoff.',
+      verification_source_refs: ['source-recheck:2026-07-03'],
+    });
+
+    expect(refuted.status).toBe('promoted');
+    expect(refuted.verification_status).toBe('refuted');
+    expect(refuted.verification_evidence).toContain('canonical page and handoff');
+    expect(refuted.verification_source_refs).toEqual(['source-recheck:2026-07-03']);
+  });
+});

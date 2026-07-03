@@ -13,6 +13,7 @@ import {
   CLAUDE_MBRAIN_SESSIONSTART_HOOK,
   CLAUDE_MBRAIN_SKIP_DIRS,
   CLAUDE_MBRAIN_STOP_HOOK,
+  CODEX_MBRAIN_STOP_HOOK,
 } from './setup-agent-hook-assets.ts';
 import {
   formatSetupAgentTrustUxReport,
@@ -32,12 +33,14 @@ interface DetectedClient {
 
 type ClaudeMcpScope = 'user' | 'local';
 type SetupAgentRunMode = 'preview' | 'diff' | 'apply' | 'uninstall';
-type SetupAgentApplyResult = { client: string; mcp: string; rules: string; mcp_scope?: ClaudeMcpScope };
+type SetupAgentPrintTarget = 'rules' | 'generic';
+type SetupAgentApplyResult = { client: string; mcp: string; rules: string; mcp_scope?: ClaudeMcpScope; codex_stop_hook?: string };
 type SetupAgentUninstallResult = {
   client: string;
   mcp: string;
   rules: string;
   mcp_scope?: ClaudeMcpScope;
+  codex_stop_hook?: string;
   claude_stop_hook?: string;
   claude_prompt_hook?: string;
   claude_sessionstart_hook?: string;
@@ -51,7 +54,12 @@ export async function runSetupAgent(args: string[]) {
   const home = process.env.HOME || process.env.USERPROFILE || '';
   const forceClaudeOnly = args.includes('--claude');
   const forceCodexOnly = args.includes('--codex');
-  const printOnly = args.includes('--print');
+  const printParse = parseSetupAgentPrintTarget(args);
+  if ('error' in printParse) {
+    console.error(printParse.error);
+    process.exit(1);
+  }
+  const printTarget = printParse.target;
   const jsonOutput = args.includes('--json');
   const skipMcp = args.includes('--skip-mcp');
   const skipAutopilot = args.includes('--no-autopilot');
@@ -75,8 +83,8 @@ export async function runSetupAgent(args: string[]) {
     process.exit(1);
   }
 
-  if (printOnly) {
-    console.log(formatRulesBlock(rulesContent));
+  if (printTarget) {
+    console.log(printTarget === 'generic' ? formatGenericSetupConfig() : formatRulesBlock(rulesContent));
     return;
   }
 
@@ -137,12 +145,18 @@ export async function runSetupAgent(args: string[]) {
               claude_legacy_hooks_content: readOptionalFile(join(client.configDir, 'hooks', 'hooks.json')),
             }
           : {}),
+        ...(client.name === 'codex'
+          ? {
+              codex_stop_hook_content: readOptionalFile(join(client.configDir, 'scripts', 'hooks', 'stop-mbrain-capture.sh')),
+            }
+          : {}),
       })),
       expected_claude_stop_hook: CLAUDE_MBRAIN_STOP_HOOK,
       expected_claude_prompt_hook: CLAUDE_MBRAIN_PROMPT_HOOK,
       expected_claude_sessionstart_hook: CLAUDE_MBRAIN_SESSIONSTART_HOOK,
       expected_claude_relevance_lib: CLAUDE_MBRAIN_RELEVANCE_LIB,
       expected_claude_skip_dirs: CLAUDE_MBRAIN_SKIP_DIRS,
+      expected_codex_stop_hook: CODEX_MBRAIN_STOP_HOOK,
     });
 
     const autopilotPlan = skipAutopilot ? null : planAutopilotSchedule();
@@ -177,12 +191,16 @@ export async function runSetupAgent(args: string[]) {
       const claudeStatus = client.name === 'claude'
         ? uninstallClaudeHooks(client.configDir)
         : {};
+      const codexStatus = client.name === 'codex'
+        ? uninstallCodexHooks(client.configDir)
+        : {};
 
       return {
         client: client.name,
         mcp: mcpStatus,
         rules: rulesStatus,
         ...(client.name === 'claude' ? { mcp_scope: claudeMcpScope, ...claudeStatus } : {}),
+        ...(client.name === 'codex' ? codexStatus : {}),
       };
     });
 
@@ -225,6 +243,9 @@ export async function runSetupAgent(args: string[]) {
           console.log(`    Claude settings hook: ${r.claude_settings_hook}`);
           console.log(`    Claude legacy hook: ${r.claude_legacy_hook}`);
         }
+        if (r.client === 'codex') {
+          console.log(`    Codex stop hook: ${r.codex_stop_hook}`);
+        }
       }
       if (warnings.length > 0) {
         console.log('\nWarnings:');
@@ -252,12 +273,16 @@ export async function runSetupAgent(args: string[]) {
     if (client.name === 'claude') {
       installClaudeHooks(client.configDir);
     }
+    const codexStopHookStatus = client.name === 'codex'
+      ? installCodexHooks(client.configDir)
+      : undefined;
 
     results.push({
       client: client.name,
       mcp: mcpStatus,
       rules: rulesStatus,
       ...(client.name === 'claude' ? { mcp_scope: claudeMcpScope } : {}),
+      ...(client.name === 'codex' ? { codex_stop_hook: codexStopHookStatus } : {}),
     });
   }
 
@@ -281,6 +306,7 @@ export async function runSetupAgent(args: string[]) {
       mutating: true,
       compatibility_alias: modeParse.compatibilityAlias,
       changed: results.some((r) => r.mcp === 'registered' || r.rules === 'injected' || r.rules === 'updated')
+        || results.some((r) => r.codex_stop_hook === 'installed' || r.codex_stop_hook === 'updated')
         || autopilotResult.status === 'installed',
       managed_only: true,
       autopilot: autopilotResult,
@@ -302,6 +328,10 @@ export async function runSetupAgent(args: string[]) {
         console.log(`    [=] Claude MCP scope: ${r.mcp_scope}`);
       }
       console.log(`    [${rulesIcon}] Rules: ${r.rules}`);
+      if (r.client === 'codex') {
+        const hookIcon = r.codex_stop_hook === 'installed' || r.codex_stop_hook === 'updated' ? '+' : '=';
+        console.log(`    [${hookIcon}] Codex stop hook: ${r.codex_stop_hook}`);
+      }
     }
     if (autopilotResult.status === 'installed') {
       console.log(`\n  [+] Autopilot schedule: ${autopilotResult.mode} installed (${autopilotResult.target}) — daily candidate-only dream cycle at 03:00.`);
@@ -321,6 +351,13 @@ export async function runSetupAgent(args: string[]) {
       console.log('  Disable for a session: MBRAIN_PROMPT_HOOK=0 (prompt note) or MBRAIN_STOP_HOOK=0 (stop check)');
       console.log('  Skip directories: add absolute paths to ~/.claude/mbrain-skip-dirs');
     }
+    const configuredCodex = results.some(r => r.client === 'codex');
+    if (configuredCodex) {
+      console.log('\nCodex MBrain hooks:');
+      console.log('  The stop-hook adapter captures Codex session transcripts as Memory Inbox candidates only.');
+      console.log('  Wire the command from setup-agent --print generic into clients that support stop hooks.');
+      console.log('  Disable for a session: MBRAIN_CODEX_STOP_HOOK=0');
+    }
     console.log('\nDone. Start a new session in your AI client to activate the rules.');
     console.log('Full reference: use the get_skillpack MCP tool inside your AI client.');
   }
@@ -337,6 +374,24 @@ function parseSetupAgentRunMode(args: string[]): { mode: SetupAgentRunMode; comp
   if (flag === '--apply') return { mode: 'apply', compatibilityAlias: false };
   if (flag === '--uninstall') return { mode: 'uninstall', compatibilityAlias: false };
   return { mode: 'apply', compatibilityAlias: true };
+}
+
+function parseSetupAgentPrintTarget(args: string[]): { target?: SetupAgentPrintTarget } | { error: string } {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--print') {
+      const next = args[i + 1];
+      if (!next || next.startsWith('--')) return { target: 'rules' };
+      if (next === 'rules' || next === 'generic') return { target: next };
+      return { error: '--print target must be "rules" or "generic"' };
+    }
+    if (arg.startsWith('--print=')) {
+      const value = arg.slice('--print='.length);
+      if (value === 'rules' || value === 'generic') return { target: value };
+      return { error: '--print target must be "rules" or "generic"' };
+    }
+  }
+  return {};
 }
 
 function parseClaudeMcpScope(args: string[]): { scope: ClaudeMcpScope } | { error: string } {
@@ -577,6 +632,24 @@ function uninstallClaudeHooks(claudeDir: string): Omit<SetupAgentUninstallResult
   };
 }
 
+function installCodexHooks(codexDir: string): string {
+  const stopHookPath = join(codexDir, 'scripts', 'hooks', 'stop-mbrain-capture.sh');
+  const current = readOptionalFile(stopHookPath);
+  const status = current === null ? 'installed' : current === CODEX_MBRAIN_STOP_HOOK ? 'up_to_date' : 'updated';
+  if (status !== 'up_to_date') {
+    atomicWrite(stopHookPath, CODEX_MBRAIN_STOP_HOOK);
+  }
+  chmodSync(stopHookPath, 0o755);
+  return status;
+}
+
+function uninstallCodexHooks(codexDir: string): Pick<SetupAgentUninstallResult, 'codex_stop_hook'> {
+  const stopHookPath = join(codexDir, 'scripts', 'hooks', 'stop-mbrain-capture.sh');
+  return {
+    codex_stop_hook: removeManagedFile(stopHookPath, CODEX_MBRAIN_STOP_HOOK),
+  };
+}
+
 function removeManagedFile(path: string, expectedContent: string): string {
   if (!existsSync(path)) return 'absent';
   const content = readFileSync(path, 'utf-8');
@@ -766,6 +839,33 @@ function parseJsonOrEmpty(path: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function formatGenericSetupConfig(): string {
+  return JSON.stringify({
+    mcpServers: {
+      mbrain: {
+        command: 'mbrain',
+        args: ['serve', '--tier', 'core'],
+      },
+    },
+    hooks: {
+      stop: {
+        command: 'bash "$HOME/.codex/scripts/hooks/stop-mbrain-capture.sh"',
+        env: {
+          MBRAIN_CODEX_STOP_HOOK_MODE: 'capture',
+        },
+      },
+    },
+    capture: {
+      command: 'mbrain agent-session capture',
+      transcript_path_arg: '--transcript-path',
+      session_id_arg: '--session-id',
+      apply: true,
+      write_mode: 'candidate_only',
+      authority: 'Memory Inbox candidates only; no direct canonical write authority.',
+    },
+  }, null, 2);
 }
 
 function formatRulesBlock(rulesContent: string): string {

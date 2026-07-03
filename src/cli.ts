@@ -66,9 +66,9 @@ const DOCTOR_CLI_SPEC: Operation = {
 
 const MIGRATE_CLI_SPEC: Operation = {
   name: 'migrate',
-  description: 'Prepare Markdown-first migration into the Postgres target runtime; legacy PGLite DB-copy remains an explicit escape hatch.',
+  description: 'Prepare Markdown-first migration into Postgres or SQLite; legacy PGLite DB-copy remains an explicit escape hatch.',
   params: {
-    to: { type: 'string', required: true, description: 'Target runtime: postgres or supabase; pglite is legacy-only' },
+    to: { type: 'string', required: true, description: 'Target runtime: postgres|supabase|sqlite; pglite is legacy-only' },
     url: { type: 'string', description: 'Postgres connection string for target initialization guidance' },
     path: { type: 'string', description: 'Legacy PGLite target path' },
     force: { type: 'boolean', description: 'Allow wiping a legacy PGLite target after backup preflight' },
@@ -783,9 +783,9 @@ USAGE
 SETUP
   init [--local|--pglite|--supabase|--url <conn>]
                                     Create target Postgres brain; legacy SQLite/PGLite only by explicit flag
-  setup-agent [--preview|--diff|--apply|--uninstall] [--claude|--codex] [--scope user|local]
+  setup-agent [--preview|--diff|--apply|--uninstall] [--claude|--codex] [--scope user|local] [--print [rules|generic]]
                                     Register MCP, inject rules, install Claude prompt/stop hooks
-  migrate --to <postgres|supabase>   Prepare Markdown-first migration into the Postgres target runtime
+  migrate --to <postgres|supabase|sqlite>   Prepare Markdown-first migration into Postgres or SQLite
   upgrade                            Self-update
   check-update [--json]              Check for new versions
   doctor [--json] [--agent] [--explain]

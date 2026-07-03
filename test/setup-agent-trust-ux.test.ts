@@ -71,6 +71,7 @@ function expectNoSetupSideEffects() {
   expect(existsSync(join(tempHome, '.claude', 'settings.json'))).toBe(false);
   expect(existsSync(join(tempHome, '.claude', 'scripts', 'hooks', 'stop-mbrain-check.sh'))).toBe(false);
   expect(existsSync(join(tempHome, '.claude', 'scripts', 'hooks', 'prompt-mbrain-context.sh'))).toBe(false);
+  expect(existsSync(join(tempHome, '.codex', 'scripts', 'hooks', 'stop-mbrain-capture.sh'))).toBe(false);
   expect(existsSync(join(tempHome, '.claude', 'CLAUDE.md.mbrain.tmp'))).toBe(false);
   expect(existsSync(join(tempHome, '.codex', 'AGENTS.md.mbrain.tmp'))).toBe(false);
   expect(existsSync(join(tempHome, 'claude-mcp-add.log'))).toBe(false);
