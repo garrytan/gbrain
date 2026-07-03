@@ -54,6 +54,31 @@ describe('#1433 — isSyncable / unsyncableReason are duals of one classifier', 
     expect([...SYNC_SKIP_FILES]).toEqual(['schema.md', 'index.md', 'log.md', 'README.md']);
   });
 
+  // Office admission mirrors the collection walker (isCollectibleForWalker):
+  // markdown + auto strategies admit office files when office ingest is on;
+  // the code strategy never does. Without officeOn an edited office file
+  // classifies 'strategy'-unsyncable, and the incremental cleanup loop
+  // (commands/sync.ts) would DELETE its previously-imported page.
+  test('office files: admitted under markdown + auto when officeOn, never under code', () => {
+    for (const p of ['docs/report.pdf', 'decks/q3.pptx', 'books/data.xlsx', 'notes/memo.docx']) {
+      expect(isSyncable(p, { officeOn: true })).toBe(true); // default strategy = markdown
+      expect(isSyncable(p, { strategy: 'auto', officeOn: true })).toBe(true);
+      expect(isSyncable(p, { strategy: 'code', officeOn: true })).toBe(false);
+      expect(unsyncableReason(p, { officeOn: true })).toBeNull();
+    }
+  });
+
+  test('office files: rejected as strategy when officeOn is false or omitted (default-off preserved)', () => {
+    expect(isSyncable('docs/report.pdf')).toBe(false);
+    expect(unsyncableReason('docs/report.pdf')).toBe('strategy');
+    expect(isSyncable('docs/report.pdf', { officeOn: false })).toBe(false);
+  });
+
+  test('office admission still respects pruned dirs and glob filters', () => {
+    expect(unsyncableReason('node_modules/x/report.pdf', { officeOn: true })).toBe('pruned-dir');
+    expect(unsyncableReason('docs/report.pdf', { officeOn: true, exclude: ['docs/**'] })).toBe('exclude-glob-hit');
+  });
+
   test('isSyncable(p) === (unsyncableReason(p) === null) — duality holds for all canonical cases', () => {
     for (const c of cases) {
       expect(isSyncable(c.path)).toBe(unsyncableReason(c.path) === null);

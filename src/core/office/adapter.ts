@@ -188,6 +188,10 @@ export async function importOfficeFile(
         title,
         compiled_truth: body,
         timeline: '',
+        // Same repo-relative form the other importers store, so sync's
+        // delete/rename lookup and the full-sync reconcile resolve this page
+        // by source_path instead of guessing a slug from the path.
+        source_path: relativePath,
         frontmatter: {
           source: 'office',
           format: docir.doc.format,

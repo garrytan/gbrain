@@ -5,6 +5,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { DELETE_BATCH_SIZE } from '../core/engine-constants.ts';
 import { importFile } from '../core/import-file.ts';
 import { collectSyncableFiles } from './import.ts';
+import { resolveOfficeConfig } from '../core/office/config.ts';
 import { createInterface } from 'readline';
 import {
   isSyncable,
@@ -1835,8 +1836,11 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   }
   const manifest = delta.manifest;
 
-  // Filter to syncable files (strategy-aware)
-  const syncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
+  // Filter to syncable files (strategy-aware). officeOn mirrors the collection
+  // walker: without it an edited office file classifies 'strategy'-unsyncable
+  // and the cleanup loop below would DELETE its previously-imported page.
+  const officeOn = (await resolveOfficeConfig(engine)).enabled;
+  const syncOpts = { strategy: opts.strategy, officeOn };
   // #1970 (F-C): a rename whose DESTINATION is unsyncable drops out of BOTH
   // `renamed` (only `r.to` is kept below) AND `deleted` (git emits it as `R`,
   // not `D`), leaving the OLD page stale. Fold the source side into the delete
@@ -2964,8 +2968,9 @@ async function performFullSync(
   // default-markdown `isSyncable(rel)`, so `gbrain sync --strategy
   // code --dry-run` always reported zero files even when ~1500 code
   // files were waiting.
+  const officeOn = (await resolveOfficeConfig(engine)).enabled;
   if (opts.dryRun) {
-    const allFiles = collectSyncableFiles(repoPath, { strategy: opts.strategy ?? 'markdown' });
+    const allFiles = collectSyncableFiles(repoPath, { strategy: opts.strategy ?? 'markdown', officeOn });
     slog(
       `Full-sync dry run (strategy=${opts.strategy ?? 'markdown'}): ` +
       `${allFiles.length} file(s) would be imported ` +
@@ -3104,13 +3109,16 @@ async function performFullSync(
   let reconciledDeletes = 0;
   if (opts.sourceId) {
     const sid = opts.sourceId;
-    const reconcileSyncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
+    // officeOn keeps office pages out of the stale set symmetrically: the
+    // `current` enumeration admits office files exactly when isSyncable does,
+    // so an office page is swept only when its backing file is genuinely gone.
+    const reconcileSyncOpts = { strategy: opts.strategy, officeOn };
     // collectSyncableFiles returns ABSOLUTE paths; source_path is stored
     // repo-relative (importFile uses `relative(dir, filePath)`), so relativize
     // to the same form before membership-testing — otherwise every page looks
     // stale and the reconcile would wrongly delete live pages.
     const current = new Set(
-      collectSyncableFiles(repoPath, { strategy: opts.strategy ?? 'markdown' })
+      collectSyncableFiles(repoPath, { strategy: opts.strategy ?? 'markdown', officeOn })
         .map(abs => relative(repoPath, abs)),
     );
     const rows = await engine.executeRaw<{ slug: string; source_path: string | null }>(

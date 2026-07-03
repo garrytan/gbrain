@@ -69,6 +69,15 @@ test('imports an office file end-to-end: chunks persisted + searchable', async (
   const located = chunks.find((c) => c.source_locator && (c.source_locator as { page?: number }).page === 3);
   expect(located).toBeTruthy();
 
+  // source_path stored repo-relative (same form as other importers) so sync's
+  // delete/rename lookup + full-sync reconcile resolve office pages robustly.
+  // (Raw query: getPage's SELECT list doesn't project source_path.)
+  const spRows = await engine.executeRaw<{ source_path: string | null }>(
+    'SELECT source_path FROM pages WHERE slug = $1',
+    [result.slug],
+  );
+  expect(spRows[0]?.source_path).toBe('report.docx');
+
   // table summary chunk present (template path — no chat model configured in test).
   expect(allText).toContain('columns: Quarter, Revenue');
 });

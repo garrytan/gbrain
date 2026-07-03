@@ -12,6 +12,9 @@
  */
 
 import { CJK_SLUG_CHARS } from './cjk.ts';
+// Dependency-light office predicate (extensions only, no adapter graph) so the
+// sync classifier can admit office files without importing the Docling stack.
+import { isOfficeFilePath } from './office/extensions.ts';
 // v0.37.7.0 #1169 submodule-detection helpers. Bottom-of-file already
 // aliases existsSync as `_existsSync` for other purposes; the top-of-file
 // import keeps the pruneDir helper's deps near its callsite.
@@ -37,6 +40,15 @@ interface SyncableOptions {
   strategy?: SyncStrategy;
   include?: string[];
   exclude?: string[];
+  /**
+   * Office-ingest enabled (`ingest.docling.enabled`, resolved by the caller —
+   * this module stays engine-free). When true, office extensions are admitted
+   * under the markdown + auto strategies, mirroring the collection walker
+   * (`isCollectibleForWalker` in commands/import.ts). Without it, an edited
+   * office file classifies as 'strategy'-unsyncable and the incremental
+   * cleanup loop would DELETE its previously-imported page.
+   */
+  officeOn?: boolean;
 }
 
 // v0.19.0 shipped a 9-extension allowlist (ts/tsx/js/jsx/mjs/cjs/py/rb/go). The
@@ -178,14 +190,18 @@ function isMultimodalEnabled(): boolean {
   return process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
 }
 
-function isAllowedByStrategy(path: string, strategy: SyncStrategy): boolean {
-  if (strategy === 'markdown') return isMarkdownFilePath(path);
+function isAllowedByStrategy(path: string, strategy: SyncStrategy, officeOn = false): boolean {
+  // Office admission mirrors isCollectibleForWalker (commands/import.ts):
+  // markdown + auto strategies take office files when office ingest is on;
+  // the code strategy never does.
+  if (strategy === 'markdown') return isMarkdownFilePath(path) || (officeOn && isOfficeFilePath(path));
   if (strategy === 'code') return isCodeFilePath(path);
   // 'auto' / default: markdown + code, plus images when multimodal is on.
   return (
     isMarkdownFilePath(path) ||
     isCodeFilePath(path) ||
-    (isMultimodalEnabled() && isImageFilePath(path))
+    (isMultimodalEnabled() && isImageFilePath(path)) ||
+    (officeOn && isOfficeFilePath(path))
   );
 }
 
@@ -341,7 +357,7 @@ export const SYNC_SKIP_FILES = ['schema.md', 'index.md', 'log.md', 'README.md'] 
 function classifySync(path: string, opts: SyncableOptions = {}): SyncableReason | null {
   const strategy = opts.strategy || 'markdown';
 
-  if (!isAllowedByStrategy(path, strategy)) return 'strategy';
+  if (!isAllowedByStrategy(path, strategy, opts.officeOn ?? false)) return 'strategy';
 
   // Skip every path segment that pruneDir would block walkers from descending
   // into. Catches hidden dirs (`.git`, `.obsidian`), `.raw/` sidecars,
