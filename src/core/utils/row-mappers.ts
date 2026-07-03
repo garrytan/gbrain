@@ -46,6 +46,7 @@ import type {
   WatchedQuestionReadSnapshot,
   WatchedQuestionRun,
 } from '../types.ts';
+import { decodeJsonColumn } from '../storage/json-column.ts';
 
 export function rowToPage(row: Record<string, unknown>): Page {
   const updatedAt = new Date(row.updated_at as string);
@@ -57,7 +58,7 @@ export function rowToPage(row: Record<string, unknown>): Page {
     title: row.title as string,
     compiled_truth: row.compiled_truth as string,
     timeline: row.timeline as string,
-    frontmatter: (typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter) as Record<string, unknown>,
+    frontmatter: parseJsonObject(row.frontmatter),
     content_hash: row.content_hash as string | undefined,
     created_at: createdAt,
     updated_at: updatedAt,
@@ -967,9 +968,7 @@ function normalizeRequiredMemoryMutationString(field: string, value: unknown): s
 }
 
 function parseJsonObject(value: unknown): Record<string, unknown> {
-  if (!value) return {};
-  if (typeof value === 'string') return JSON.parse(value) as Record<string, unknown>;
-  return value as Record<string, unknown>;
+  return decodeJsonColumn<Record<string, unknown>>(value, {});
 }
 
 function parseNullableJsonObject(value: unknown): Record<string, unknown> | null {
@@ -978,22 +977,15 @@ function parseNullableJsonObject(value: unknown): Record<string, unknown> | null
 }
 
 function parseNullableJsonValue(value: unknown): unknown | null {
-  if (value == null) return null;
-  if (typeof value === 'string') return JSON.parse(value) as unknown;
-  return value;
+  return decodeJsonColumn<unknown | null>(value, null);
 }
 
 function parseJsonStringArray(value: unknown): string[] {
-  if (!value) return [];
-  if (typeof value === 'string') return JSON.parse(value) as string[];
-  return value as string[];
+  return decodeJsonColumn<string[]>(value, []);
 }
 
 function parseNoteManifestHeadings(value: unknown): NoteManifestHeading[] {
-  if (!value) return [];
-  const headings = typeof value === 'string'
-    ? JSON.parse(value) as Array<Record<string, unknown>>
-    : value as Array<Record<string, unknown>>;
+  const headings = decodeJsonColumn<Array<Record<string, unknown>>>(value, []);
   return headings.map((heading) => ({
     slug: String(heading.slug ?? ''),
     text: String(heading.text ?? ''),

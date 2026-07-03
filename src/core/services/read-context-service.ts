@@ -28,6 +28,12 @@ import {
   mergeSourceRefs,
 } from './corpus-lane-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
+import {
+  charBudgetForTokens,
+  clipToBudget,
+  estimateTokens,
+  projectionCharLimit,
+} from './read-context-budget-service.ts';
 import { normalizeRetrievalSelector, retrievalSelectorId } from './retrieval-selector-service.ts';
 import { retrieveContext, type RetrieveContextDependencies } from './retrieve-context-service.ts';
 import { evaluateScopeGate } from './scope-gate-service.ts';
@@ -36,9 +42,6 @@ import { pathToSlug } from '../sync.ts';
 
 const DEFAULT_TOKEN_BUDGET = 900;
 const DEFAULT_MAX_SELECTORS = 3;
-const CHARS_PER_TOKEN_ESTIMATE = 4;
-const CJK_CHAR_TOKEN_WEIGHT = 2;
-const NON_CJK_CHAR_TOKEN_WEIGHT = 1;
 const TIMELINE_ENTRY_LOOKUP_PAGE_SIZE = 100;
 const SOURCE_REF_LOOKUP_BATCH_SIZE = 5000;
 type ReadSelectorOptions = {
@@ -539,7 +542,7 @@ async function readProjectedPageWithTimeline(
     return readProjectedPageField(engine, selector, options, 'compiled_truth');
   }
 
-  const charBudget = Math.max(1, options.token_budget * CHARS_PER_TOKEN_ESTIMATE);
+  const charBudget = charBudgetForTokens(options.token_budget);
   const projection = await engine.getPageProjection(selector.slug, {
     windows: {
       compiled_truth: { char_start: 0, char_limit: charBudget },
@@ -558,7 +561,9 @@ async function readProjectedPageWithTimeline(
     selectorWithCurrentContentHash(selector, projection.content_hash),
   );
   const sourceRefs: string[] = [];
-  let text = compiledWindow.text.trim();
+  const compiledText = compiledWindow.text.trim();
+  const clippedCompiled = clipToBudget(compiledText, options.token_budget);
+  let text = clippedCompiled.text;
   if (options.include_source_refs && text) {
     sourceRefs.push(...mergeSourceRefs(
       extractSourceRefs(text),
@@ -566,26 +571,31 @@ async function readProjectedPageWithTimeline(
     ));
   }
 
-  let continuation = compiledWindow.has_more
+  let continuation = clippedCompiled.consumed_chars < scalarLength(compiledText)
+    ? pageFieldContinuationSelector(normalizedSelector, 'compiled_truth', clippedCompiled.consumed_chars)
+    : compiledWindow.has_more
     ? pageFieldContinuationSelector(normalizedSelector, 'compiled_truth', compiledWindow.next_char_start)
     : undefined;
 
   if (!continuation) {
     const separator = text ? '\n\n---\n\n' : '';
-    const remainingChars = charBudget - scalarLength(text) - scalarLength(separator);
     const timelineWindow = projection.content_windows.timeline;
     if (timelineWindow && timelineWindow.total_chars > 0) {
-      if (remainingChars <= 0) {
+      const timelineText = timelineWindow.text.trim();
+      const candidateText = `${text}${separator}${timelineText}`;
+      const clippedCandidate = clipToBudget(candidateText, options.token_budget);
+      const timelineStart = scalarLength(text) + scalarLength(separator);
+      const consumedTimelineChars = Math.max(0, clippedCandidate.consumed_chars - timelineStart);
+      if (consumedTimelineChars <= 0) {
         continuation = pageFieldContinuationSelector(normalizedSelector, 'timeline_range', 0);
       } else {
-        const timelineText = sliceScalars(timelineWindow.text, 0, remainingChars).trim();
-        const returnedTimelineChars = scalarLength(timelineText);
-        if (timelineText) {
-          text = `${text}${separator}${timelineText}`;
-          if (options.include_source_refs) sourceRefs.push(...extractSourceRefs(timelineText));
+        text = clippedCandidate.text;
+        const clippedTimelineText = sliceScalars(text, timelineStart, scalarLength(text));
+        if (options.include_source_refs && clippedTimelineText) {
+          sourceRefs.push(...extractSourceRefs(clippedTimelineText));
         }
-        if (returnedTimelineChars < timelineWindow.total_chars) {
-          continuation = pageFieldContinuationSelector(normalizedSelector, 'timeline_range', returnedTimelineChars);
+        if (consumedTimelineChars < scalarLength(timelineText) || timelineWindow.has_more) {
+          continuation = pageFieldContinuationSelector(normalizedSelector, 'timeline_range', consumedTimelineChars);
         }
       }
     }
@@ -1134,52 +1144,6 @@ function buildEvidenceClaim(read: CanonicalContextRead): ContextEvidenceClaim {
     default:
       return { selector_id: selectorId, claim_kind: 'compiled_truth', source_refs: read.source_refs };
   }
-}
-
-function estimateTokens(text: string): number {
-  return Math.max(1, Math.ceil(tokenWeightUnits(text) / CHARS_PER_TOKEN_ESTIMATE));
-}
-
-function clipToBudget(text: string, tokenBudget: number): { text: string; consumed_chars: number } {
-  const maxUnits = Math.max(1, tokenBudget * CHARS_PER_TOKEN_ESTIMATE);
-  const textLength = scalarLength(text);
-  if (tokenWeightUnits(text) <= maxUnits) return { text, consumed_chars: textLength };
-  const clipped = sliceScalars(text, 0, scalarCountWithinTokenUnits(text, maxUnits));
-  return { text: clipped, consumed_chars: scalarLength(clipped) };
-}
-
-function projectionCharLimit(selector: RetrievalSelector, tokenBudget: number): number {
-  const charStart = selector.char_start ?? 0;
-  const budgetLimit = Math.max(1, tokenBudget * CHARS_PER_TOKEN_ESTIMATE);
-  if (selector.char_end !== undefined) {
-    return Math.max(1, Math.min(selector.char_end - charStart, budgetLimit));
-  }
-  return budgetLimit;
-}
-
-function tokenWeightUnits(text: string): number {
-  let units = 0;
-  for (const char of text) {
-    units += isCjkScalar(char) ? CJK_CHAR_TOKEN_WEIGHT : NON_CJK_CHAR_TOKEN_WEIGHT;
-  }
-  return units;
-}
-
-function scalarCountWithinTokenUnits(text: string, maxUnits: number): number {
-  let units = 0;
-  let count = 0;
-  for (const char of text) {
-    const weight = isCjkScalar(char) ? CJK_CHAR_TOKEN_WEIGHT : NON_CJK_CHAR_TOKEN_WEIGHT;
-    if (count > 0 && units + weight > maxUnits) break;
-    if (count === 0 && weight > maxUnits) return 1;
-    units += weight;
-    count += 1;
-  }
-  return count;
-}
-
-function isCjkScalar(char: string): boolean {
-  return /[\p{Script=Han}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(char);
 }
 
 function selectorWithCurrentContentHash(selector: RetrievalSelector, contentHash: string | undefined): RetrievalSelector {

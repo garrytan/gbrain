@@ -3,9 +3,17 @@ import {
   getConnectorDefinition,
 } from '../core/connectors/connector-registry.ts';
 import {
+  loadLocalFileConnectorItems,
+  resolveLocalFileConnectorTarget,
+  type LocalFileConnectorId,
+  type LocalFileConnectorLoad,
+  type LocalFileConnectorTarget,
+} from '../core/connectors/local-file-connectors.ts';
+import {
   loadMeetingTranscriptFilesystemItems,
   resolveMeetingTranscriptFilesystemTarget,
   type MeetingTranscriptFilesystemLoad,
+  type MeetingTranscriptFilesystemTarget,
 } from '../core/connectors/meeting-transcripts-filesystem.ts';
 import { loadConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -13,6 +21,11 @@ import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
 import { operationsByName, type OperationContext } from '../core/operations.ts';
 
 const MEETING_TRANSCRIPTS_CONNECTOR_ID = 'meeting_transcripts';
+const LOCAL_FILE_CONNECTOR_IDS = new Set<string>([
+  MEETING_TRANSCRIPTS_CONNECTOR_ID,
+  'chat_exports',
+  'browser_bookmarks',
+]);
 let lastConnectorSyncTimestampMs = 0;
 
 export async function runConnectors(
@@ -53,7 +66,7 @@ export async function runConnectors(
     if (!engine) {
       throw new Error('mbrain connectors sync requires a configured brain engine');
     }
-    const result = await syncMeetingTranscripts(engine, args.slice(1));
+    const result = await syncLocalConnector(engine, args.slice(1));
     console.log(JSON.stringify(result, null, 2));
     return;
   }
@@ -68,21 +81,26 @@ USAGE
   mbrain connectors list
   mbrain connectors show <connector-id>
   mbrain connectors sync meeting_transcripts --path <file-or-directory> [--dry-run]
+  mbrain connectors sync chat_exports --path <file-or-directory> [--dry-run]
+  mbrain connectors sync browser_bookmarks --path <file-or-directory> [--dry-run]
 `);
 }
 
-interface MeetingTranscriptSyncResult {
-  connector_id: 'meeting_transcripts';
+interface LocalConnectorSyncResult {
+  connector_id: 'meeting_transcripts' | LocalFileConnectorId;
   source_id: string | null;
   dry_run: boolean;
-  source_scope: MeetingTranscriptFilesystemLoad['source_scope'];
+  source_scope: MeetingTranscriptFilesystemLoad['source_scope'] | LocalFileConnectorLoad['source_scope'];
   path_display: string;
   planned: number;
   persisted: number;
   skipped_unchanged: number;
   deleted_archived: number;
-  skipped_files: MeetingTranscriptFilesystemLoad['skipped_files'];
+  skipped_files: MeetingTranscriptFilesystemLoad['skipped_files'] | LocalFileConnectorLoad['skipped_files'];
 }
+
+type LoadedLocalConnector = MeetingTranscriptFilesystemLoad | LocalFileConnectorLoad;
+type LocalConnectorTarget = MeetingTranscriptFilesystemTarget | LocalFileConnectorTarget;
 
 type QueryableEngine = BrainEngine & {
   database?: {
@@ -94,39 +112,39 @@ type QueryableEngine = BrainEngine & {
   sql?: { unsafe(sql: string, params?: unknown[]): Promise<Record<string, unknown>[]> };
 };
 
-async function syncMeetingTranscripts(
+async function syncLocalConnector(
   engine: BrainEngine,
   args: string[],
-): Promise<MeetingTranscriptSyncResult> {
+): Promise<LocalConnectorSyncResult> {
   const connectorId = args[0];
   if (!connectorId) {
-    throw new Error('Usage: mbrain connectors sync meeting_transcripts --path <file-or-directory>');
+    throw new Error('Usage: mbrain connectors sync <connector-id> --path <file-or-directory>');
   }
   getConnectorDefinition(connectorId);
-  if (connectorId !== MEETING_TRANSCRIPTS_CONNECTOR_ID) {
-    throw new Error('connectors sync only supports meeting_transcripts');
+  if (!LOCAL_FILE_CONNECTOR_IDS.has(connectorId)) {
+    throw new Error('connectors sync only supports meeting_transcripts, chat_exports, and browser_bookmarks');
   }
 
   const path = readFlag(args, '--path');
   if (!path) {
-    throw new Error('Usage: mbrain connectors sync meeting_transcripts --path <file-or-directory>');
+    throw new Error(`Usage: mbrain connectors sync ${connectorId} --path <file-or-directory>`);
   }
   const dryRun = hasFlag(args, '--dry-run');
   const syncStartedAt = nextConnectorSyncTimestamp();
-  const target = resolveMeetingTranscriptFilesystemTarget(path);
-  const blockingSource = await findBlockingMeetingTranscriptSource(engine, target.source_locator);
+  const target = resolveConnectorTarget(connectorId, path);
+  const blockingSource = await findBlockingConnectorSource(engine, connectorId, target.source_locator);
   if (blockingSource) {
     throw new Error(connectorSourceBlockReason(blockingSource.source) ?? 'source policy prevents connector sync');
   }
-  const existing = await findExactMeetingTranscriptSource(engine, target.source_locator);
+  const existing = await findExactConnectorSource(engine, connectorId, target.source_locator);
   let sourceId: string | null = existing?.source.id ?? null;
 
-  let loaded: MeetingTranscriptFilesystemLoad;
+  let loaded: LoadedLocalConnector;
   try {
-    loaded = loadMeetingTranscriptFilesystemItems({ path });
+    loaded = loadConnectorItems(connectorId, path);
   } catch (error) {
     if (!dryRun && sourceId) {
-      await recordConnectorFailure(engine, sourceId, error);
+      await recordConnectorFailure(engine, sourceId, connectorId, error);
     }
     throw error;
   }
@@ -137,7 +155,7 @@ async function syncMeetingTranscripts(
 
   if (!dryRun && !sourceId) {
     const registered = await operationsByName.register_connector_source.handler(ctx(engine), {
-      connector_id: MEETING_TRANSCRIPTS_CONNECTOR_ID,
+      connector_id: connectorId,
       display_name: loaded.display_name,
       account_locator: loaded.account_locator,
       consent_state: 'granted',
@@ -152,7 +170,7 @@ async function syncMeetingTranscripts(
   }
 
   if (dryRun && sourceId) {
-    deletedArchived = await archiveMissingMeetingTranscriptItems(engine, sourceId, loaded, true, syncStartedAt);
+    deletedArchived = await archiveMissingConnectorItems(engine, sourceId, connectorId, loaded, true, syncStartedAt);
   }
 
   if (!dryRun && sourceId) {
@@ -160,7 +178,7 @@ async function syncMeetingTranscripts(
       for (const item of loaded.items) {
         const ingested = await operationsByName.ingest_connector_item.handler(ctx(engine), {
           source_id: sourceId,
-          connector_id: MEETING_TRANSCRIPTS_CONNECTOR_ID,
+          connector_id: connectorId,
           external_id: item.external_id,
           locator: item.locator ?? null,
           title: item.title,
@@ -168,7 +186,7 @@ async function syncMeetingTranscripts(
           source_created_at: item.created_at ?? null,
           source_updated_at: item.updated_at ?? null,
           metadata_json: item.metadata_json,
-          parser_version: 'meeting-transcripts-filesystem:v1',
+          parser_version: parserVersionForConnector(connectorId),
           now: syncStartedAt,
         }) as any;
         if (ingested.status === 'skipped') {
@@ -178,10 +196,10 @@ async function syncMeetingTranscripts(
         }
       }
       const syncFinishedAt = nextConnectorSyncTimestamp();
-      deletedArchived = await archiveMissingMeetingTranscriptItems(engine, sourceId, loaded, false, syncFinishedAt);
+      deletedArchived = await archiveMissingConnectorItems(engine, sourceId, connectorId, loaded, false, syncFinishedAt);
       await operationsByName.record_connector_sync_success.handler(ctx(engine), {
         source_id: sourceId,
-        connector_id: MEETING_TRANSCRIPTS_CONNECTOR_ID,
+        connector_id: connectorId,
         cursor_json: {
           source_scope: loaded.source_scope,
           source_locator: loaded.source_locator,
@@ -199,13 +217,13 @@ async function syncMeetingTranscripts(
         },
       });
     } catch (error) {
-      await recordConnectorFailure(engine, sourceId, error);
+      await recordConnectorFailure(engine, sourceId, connectorId, error);
       throw error;
     }
   }
 
   return {
-    connector_id: MEETING_TRANSCRIPTS_CONNECTOR_ID,
+    connector_id: connectorId as LocalConnectorSyncResult['connector_id'],
     source_id: sourceId,
     dry_run: dryRun,
     source_scope: loaded.source_scope,
@@ -218,10 +236,33 @@ async function syncMeetingTranscripts(
   };
 }
 
-async function archiveMissingMeetingTranscriptItems(
+function resolveConnectorTarget(connectorId: string, path: string): LocalConnectorTarget {
+  if (connectorId === MEETING_TRANSCRIPTS_CONNECTOR_ID) {
+    return resolveMeetingTranscriptFilesystemTarget(path);
+  }
+  return resolveLocalFileConnectorTarget(connectorId as LocalFileConnectorId, path);
+}
+
+function loadConnectorItems(connectorId: string, path: string): LoadedLocalConnector {
+  if (connectorId === MEETING_TRANSCRIPTS_CONNECTOR_ID) {
+    return loadMeetingTranscriptFilesystemItems({ path });
+  }
+  return loadLocalFileConnectorItems({
+    connector_id: connectorId as LocalFileConnectorId,
+    path,
+  });
+}
+
+function parserVersionForConnector(connectorId: string): string {
+  if (connectorId === MEETING_TRANSCRIPTS_CONNECTOR_ID) return 'meeting-transcripts-filesystem:v1';
+  return `${connectorId}-filesystem:v1`;
+}
+
+async function archiveMissingConnectorItems(
   engine: BrainEngine,
   sourceId: string,
-  loaded: MeetingTranscriptFilesystemLoad,
+  connectorId: string,
+  loaded: LoadedLocalConnector,
   dryRun: boolean,
   syncTimestamp: string,
 ): Promise<number> {
@@ -235,7 +276,7 @@ async function archiveMissingMeetingTranscriptItems(
     if (presentExternalIds.has(externalId)) continue;
     const deletion = await operationsByName.record_connector_item_deletion.handler(ctx(engine, dryRun), {
       source_id: sourceId,
-      connector_id: MEETING_TRANSCRIPTS_CONNECTOR_ID,
+      connector_id: connectorId,
       external_id: externalId,
       deleted_at: syncTimestamp,
       now: syncTimestamp,
@@ -274,12 +315,13 @@ async function listPersistedSourceItemExternalIds(
   return rows.map((row) => String(row.external_id));
 }
 
-async function findBlockingMeetingTranscriptSource(
+async function findBlockingConnectorSource(
   engine: BrainEngine,
+  connectorId: string,
   locator: string,
 ): Promise<any | null> {
   const listed = await operationsByName.list_sources.handler(ctx(engine), {
-    connector_id: MEETING_TRANSCRIPTS_CONNECTOR_ID,
+    connector_id: connectorId,
     locator_overlap: locator,
     blocked_for_ingest: true,
     limit: 1,
@@ -287,12 +329,13 @@ async function findBlockingMeetingTranscriptSource(
   return listed.sources[0] ?? null;
 }
 
-async function findExactMeetingTranscriptSource(
+async function findExactConnectorSource(
   engine: BrainEngine,
+  connectorId: string,
   locator: string,
 ): Promise<any | null> {
   const listed = await operationsByName.list_sources.handler(ctx(engine), {
-    connector_id: MEETING_TRANSCRIPTS_CONNECTOR_ID,
+    connector_id: connectorId,
     locator,
     limit: 1,
   }) as any;
@@ -312,11 +355,12 @@ function connectorSourceBlockReason(source: any): string | null {
 async function recordConnectorFailure(
   engine: BrainEngine,
   sourceId: string,
+  connectorId: string,
   error: unknown,
 ): Promise<void> {
   await operationsByName.record_connector_failure.handler(ctx(engine), {
     source_id: sourceId,
-    connector_id: MEETING_TRANSCRIPTS_CONNECTOR_ID,
+    connector_id: connectorId,
     error_message: error instanceof Error ? error.message : String(error),
   });
 }

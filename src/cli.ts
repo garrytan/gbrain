@@ -162,6 +162,17 @@ const SERVE_CLI_SPEC: Operation = {
   cliHints: { name: 'serve' },
 };
 
+const REVIEW_CLI_SPEC: Operation = {
+  name: 'review',
+  description: 'Run a local web triage UI for pending Memory Inbox candidates.',
+  params: {
+    host: { type: 'string', description: 'HTTP host to bind (default: 127.0.0.1)' },
+    port: { type: 'number', description: 'HTTP port to bind (default: 8791)' },
+  },
+  handler: noopHandler,
+  cliHints: { name: 'review' },
+};
+
 const AUTH_CLI_SPEC: Operation = {
   name: 'auth',
   description: 'Create, list, revoke, or smoke-test remote MCP bearer tokens.',
@@ -295,6 +306,7 @@ const SYNC_CLI_SPEC: Operation = {
 const CLI_ONLY_SPECS: Partial<Record<string, Operation>> = {
   auth: AUTH_CLI_SPEC,
   serve: SERVE_CLI_SPEC,
+  review: REVIEW_CLI_SPEC,
   embed: EMBED_CLI_SPEC,
   doctor: DOCTOR_CLI_SPEC,
   migrate: MIGRATE_CLI_SPEC,
@@ -350,6 +362,7 @@ const DIRECT_ENGINE_COMMANDS: Record<string, CliEngineLoader> = {
   'auto-promote': async () => (await import('./commands/auto-promote.ts')).runAutoPromoteCommand,
   'agent-session': async () => (await import('./commands/agent-session.ts')).runAgentSession,
   connectors: async () => (await import('./commands/connectors.ts')).runConnectors,
+  review: async () => (await import('./commands/review.ts')).runReview,
   migrate: async () => (await import('./commands/migrate-engine.ts')).runMigrateEngine,
   subbrain: async () => (await import('./commands/subbrain.ts')).runSubbrain,
 };

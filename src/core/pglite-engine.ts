@@ -3,7 +3,12 @@ import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import type { BrainEngine } from './engine.ts';
 import { PgEngineBase, type PgQueryable } from './pg-engine-base.ts';
-import { freshSchemaMigrationSql, LATEST_VERSION, runMigrations, shouldSilenceMigrationLogs } from './migrate.ts';
+import {
+  freshSchemaMigrationSql,
+  LATEST_VERSION,
+  runMigrations,
+  shouldSilenceMigrationLogs,
+} from './migrate.ts';
 import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import { assertPgVectorEmbeddingDimensions } from './pgvector-dimensions.ts';

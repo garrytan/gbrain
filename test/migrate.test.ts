@@ -2,7 +2,7 @@ import { setDefaultTimeout, afterEach, beforeEach, describe, test, expect } from
 import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { LATEST_VERSION } from '../src/core/migrate.ts';
+import { LATEST_VERSION, MIGRATION_SQUASH_BASELINE_VERSION } from '../src/core/migrate.ts';
 
 setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 20_000));
 
@@ -159,6 +159,46 @@ describe('migrate', () => {
 
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS memory_mutation_events');
     expect(sql).not.toContain('CREATE TABLE IF NOT EXISTS access_tokens');
+  });
+
+  test('migration squash baseline is fixed at the DG-4 v48 baseline', async () => {
+    const { freshSchemaMigrationSql } = await import('../src/core/migrate.ts');
+    const sql = freshSchemaMigrationSql(MIGRATION_SQUASH_BASELINE_VERSION);
+
+    expect(MIGRATION_SQUASH_BASELINE_VERSION).toBe(48);
+    expect(sql).not.toContain('auto_promote_verdict_cache');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS scope_id');
+  });
+
+  test('PGLite embedded schema only claims the v48 squash when required pre-baseline tables are embedded', async () => {
+    const { freshSchemaMigrationSql } = await import('../src/core/migrate.ts');
+    const pgliteEngineSource = readFileSync(
+      new URL('../src/core/pglite-engine.ts', import.meta.url),
+      'utf-8',
+    );
+    const pgliteSchema = readFileSync(
+      new URL('../src/core/pglite-schema.ts', import.meta.url),
+      'utf-8',
+    );
+    const requiredPreBaselineTables = [
+      'profile_memory_entries',
+      'personal_episode_entries',
+      'memory_candidate_status_events',
+      'memory_mutation_events',
+      'forgetting_events',
+    ];
+
+    if (pgliteEngineSource.includes('PGLITE_EMBEDDED_SCHEMA_VERSION = MIGRATION_SQUASH_BASELINE_VERSION')) {
+      for (const table of requiredPreBaselineTables) {
+        expect(pgliteSchema).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
+      }
+    } else {
+      expect(pgliteEngineSource).toContain('PGLITE_EMBEDDED_SCHEMA_VERSION = 12');
+      const postEmbeddedMigrationSql = freshSchemaMigrationSql(12);
+      for (const table of requiredPreBaselineTables) {
+        expect(postEmbeddedMigrationSql).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
+      }
+    }
   });
 
   test('postgres baseline schema uses qwen3-friendly dimensions and defaults', () => {

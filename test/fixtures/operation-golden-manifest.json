@@ -5,7 +5,7 @@
     "operation_count": 188,
     "mcp_operation_count": 188,
     "cli_shared_count": 176,
-    "cli_direct_count": 25,
+    "cli_direct_count": 26,
     "cli_only_count": 6,
     "not_cli_count": 2,
     "mutating_count": 81,
@@ -761,6 +761,12 @@
       "command": "revert",
       "mode": "cli_shared",
       "operation_name": "revert_version"
+    },
+    {
+      "command": "review",
+      "mode": "cli_direct_engine",
+      "operation_spec_name": "review",
+      "reason": "direct_engine_command"
     },
     {
       "command": "review-duplicate-memory",

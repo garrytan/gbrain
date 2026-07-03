@@ -3713,6 +3713,8 @@ export const LATEST_VERSION = MIGRATIONS.length > 0
   ? MIGRATIONS[MIGRATIONS.length - 1].version
   : 1;
 
+export const MIGRATION_SQUASH_BASELINE_VERSION = 48;
+
 export function freshSchemaMigrationSql(afterVersion = 1): string {
   return MIGRATIONS
     .filter(migration => migration.version > afterVersion)

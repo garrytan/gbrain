@@ -24,7 +24,9 @@ import { createMemoryControlPlaneOperations } from './operations-memory-control-
 import { createMemoryInboxOperations, DEFAULT_MEMORY_INBOX_SCOPE_ID } from './operations-memory-inbox.ts';
 import { createMemoryMutationLedgerOperations } from './operations-memory-mutation-ledger.ts';
 import { createMemoryWritebackRouterOperations } from './operations-memory-writeback-router.ts';
+import { createNoteManifestOperations } from './operations-note-manifest.ts';
 import { createSourceRegistryOperations } from './operations-source-registry.ts';
+import { createTaskOperations } from './operations-tasks.ts';
 import { expandQuery } from './search/expansion.ts';
 import { governedProbeHybridEnabled, hybridProbeSearch } from './search/governed-probe.ts';
 import { hybridSearchWithMeta } from './search/hybrid.ts';
@@ -54,7 +56,7 @@ import { recordMemoryMutationEvent } from './services/memory-mutation-ledger-ser
 import { classifyMemoryScenario } from './services/memory-scenario-classifier-service.ts';
 import { getMixedScopeBridge } from './services/mixed-scope-bridge-service.ts';
 import { getMixedScopeDisclosure } from './services/mixed-scope-disclosure-service.ts';
-import { DEFAULT_NOTE_MANIFEST_SCOPE_ID, NOTE_MANIFEST_EXTRACTOR_VERSION, rebuildNoteManifestEntries } from './services/note-manifest-service.ts';
+import { DEFAULT_NOTE_MANIFEST_SCOPE_ID, NOTE_MANIFEST_EXTRACTOR_VERSION } from './services/note-manifest-service.ts';
 import { rebuildNoteSectionEntries } from './services/note-section-service.ts';
 import { findStructuralPath, getStructuralNeighbors, type StructuralNodeId } from './services/note-structural-graph-service.ts';
 import { DEFAULT_PERSONAL_EPISODE_SCOPE_ID, getPersonalEpisodeLookupRoute } from './services/personal-episode-lookup-route-service.ts';
@@ -70,8 +72,6 @@ import { selectRetrievalRoute, type RetrievalRouteSelectorDependencies } from '.
 import { buildProductionGraphFrontierInput, retrieveContext, type RetrieveContextDependencies } from './services/retrieve-context-service.ts';
 import { planScenarioMemoryRequest } from './services/scenario-memory-request-planner-service.ts';
 import { evaluateScopeGate } from './services/scope-gate-service.ts';
-import { buildTaskResumeCard } from './services/task-memory-service.ts';
-import { runWatchedQuestionProbes } from './services/watched-question-service.ts';
 import { getWorkspaceCorpusCard } from './services/workspace-corpus-card-service.ts';
 import { getWorkspaceOrientationBundle } from './services/workspace-orientation-bundle-service.ts';
 import { getWorkspaceProjectCard } from './services/workspace-project-card-service.ts';
@@ -317,6 +317,39 @@ export interface Operation {
     hidden?: boolean;
     aliases?: Record<string, string>;
   };
+}
+
+type ParamValueForDefinition<Def extends ParamDef> =
+  Def['type'] extends readonly ParamType[]
+    ? unknown
+    : Def['type'] extends 'string'
+      ? string
+      : Def['type'] extends 'number'
+        ? number
+        : Def['type'] extends 'boolean'
+          ? boolean
+          : Def['type'] extends 'array'
+            ? unknown[]
+            : Def['type'] extends 'object'
+              ? Record<string, unknown>
+              : unknown;
+
+export type OperationParamsFor<Params extends Record<string, ParamDef>> = {
+  [Key in keyof Params as Params[Key]['required'] extends true ? Key : never]: ParamValueForDefinition<Params[Key]>;
+} & {
+  [Key in keyof Params as Params[Key]['required'] extends true ? never : Key]?: ParamValueForDefinition<Params[Key]>;
+};
+
+export type TypedOperation<Params extends Record<string, ParamDef>> =
+  Omit<Operation, 'params' | 'handler'> & {
+    params: Params;
+    handler: (ctx: OperationContext, params: OperationParamsFor<Params>) => Promise<unknown>;
+  };
+
+export function defineOperation<Params extends Record<string, ParamDef>>(
+  operation: TypedOperation<Params>,
+): Operation {
+  return operation as Operation;
 }
 
 export function getOperationCapabilityRequirements(operation: Operation): OperationCapability[] {
@@ -2183,14 +2216,6 @@ function parseCodeClaimParamItem(value: unknown, key: string): CodeClaim {
     ...(typeof claim.source_ref === 'string' && claim.source_ref.trim().length > 0 ? { source_ref: claim.source_ref } : {}),
     ...(typeof claim.symbol_id === 'string' && claim.symbol_id.trim().length > 0 ? { symbol_id: claim.symbol_id } : {}),
   };
-}
-
-async function requireTaskThread(engine: BrainEngine, taskId: string) {
-  const thread = await engine.getTaskThread(taskId);
-  if (!thread) {
-    throw new OperationError('task_not_found', `Task thread not found: ${taskId}`, 'Check the task id or create the task first.');
-  }
-  return thread;
 }
 
 const runtimeImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<any>;
@@ -5057,6 +5082,10 @@ const memoryControlPlaneOperations = createMemoryControlPlaneOperations({
   OperationError,
 });
 
+const noteManifestOperations = createNoteManifestOperations({ OperationError });
+
+const taskOperations = createTaskOperations({ OperationError });
+
 const sourceRegistryOperations = createSourceRegistryOperations({
   OperationError,
 });
@@ -5640,259 +5669,7 @@ const write_personal_episode_entry: Operation = {
   cliHints: { name: 'personal-episode-write' },
 };
 
-// --- Operational Memory ---
-
-const list_tasks: Operation = {
-  name: 'list_tasks',
-  description: 'List task threads from canonical operational memory.',
-  params: {
-    scope: {
-      type: 'string',
-      description: 'Filter by task scope',
-      enum: ['work', 'personal', 'mixed'],
-    },
-    status: {
-      type: 'string',
-      description: 'Filter by task status',
-      enum: ['active', 'paused', 'blocked', 'completed', 'abandoned'],
-    },
-    limit: { type: 'number', description: 'Max results (default 20)' },
-  },
-  handler: async (ctx, p) => {
-    return ctx.engine.listTaskThreads({
-      scope: p.scope as any,
-      status: p.status as any,
-      limit: (p.limit as number) ?? 20,
-    });
-  },
-  cliHints: { name: 'task-list', aliases: { n: 'limit' } },
-};
-
-const start_task: Operation = {
-  name: 'start_task',
-  description: 'Create a new operational-memory task thread.',
-  params: {
-    title: { type: 'string', required: true, description: 'Task title' },
-    goal: { type: 'string', description: 'Task goal' },
-    scope: {
-      type: 'string',
-      description: 'Task scope',
-      default: 'work',
-      enum: ['work', 'personal', 'mixed'],
-    },
-  },
-  mutating: true,
-  handler: async (ctx, p) => {
-    const id = crypto.randomUUID();
-    if (ctx.dryRun) {
-      return {
-        dry_run: true,
-        action: 'start_task',
-        id,
-        title: p.title,
-        scope: p.scope ?? 'work',
-      };
-    }
-
-    return ctx.engine.transaction(async (tx) => {
-      await tx.createTaskThread({
-        id,
-        scope: String(p.scope ?? 'work') as any,
-        title: String(p.title),
-        goal: String(p.goal ?? ''),
-        status: 'active',
-        repo_path: process.cwd(),
-        branch_name: null,
-        current_summary: '',
-      });
-
-      await tx.upsertTaskWorkingSet({
-        task_id: id,
-        active_paths: [],
-        active_symbols: [],
-        blockers: [],
-        open_questions: [],
-        next_steps: [],
-        verification_notes: [],
-        last_verified_at: null,
-      });
-
-      return tx.getTaskThread(id);
-    });
-  },
-  cliHints: { name: 'task-start' },
-};
-
-const update_task: Operation = {
-  name: 'update_task',
-  description: 'Update canonical task-thread state for an existing task.',
-  params: {
-    task_id: { type: 'string', required: true, description: 'Task thread id' },
-    title: { type: 'string', description: 'Updated task title' },
-    goal: { type: 'string', description: 'Updated task goal' },
-    status: {
-      type: 'string',
-      description: 'Updated task status',
-      enum: ['active', 'paused', 'blocked', 'completed', 'abandoned'],
-    },
-    current_summary: { type: 'string', description: 'Updated task summary' },
-  },
-  mutating: true,
-  handler: async (ctx, p) => {
-    const taskId = String(p.task_id);
-    const patch = Object.fromEntries(
-      Object.entries({
-        title: p.title,
-        goal: p.goal,
-        status: p.status,
-        current_summary: p.current_summary,
-      }).filter(([, value]) => value !== undefined),
-    );
-
-    if (Object.keys(patch).length === 0) {
-      throw new OperationError('invalid_params', 'update_task requires at least one patch field.');
-    }
-
-    if (ctx.dryRun) {
-      return { dry_run: true, action: 'update_task', task_id: taskId, patch };
-    }
-
-    await requireTaskThread(ctx.engine, taskId);
-    const updated = await ctx.engine.updateTaskThread(taskId, patch as any);
-    return {
-      ...updated,
-      working_set_stale: true,
-      next_action: `Run refresh_task_working_set for ${taskId} if task scope, files, blockers, or next steps changed.`,
-    };
-  },
-  cliHints: { name: 'task-update', positional: ['task_id'] },
-};
-
-const resume_task: Operation = {
-  name: 'resume_task',
-  description: 'Resume an operational-memory task thread from canonical task state.',
-  params: {
-    task_id: { type: 'string', required: true, description: 'Task thread id' },
-  },
-  handler: async (ctx, p) => {
-    return buildTaskResumeCard(ctx.engine, p.task_id as string);
-  },
-  cliHints: { name: 'task-resume', positional: ['task_id'] },
-};
-
-const get_task_working_set: Operation = {
-  name: 'get_task_working_set',
-  description: 'Get the canonical task thread and working-set state for one task.',
-  params: {
-    task_id: { type: 'string', required: true, description: 'Task thread id' },
-  },
-  handler: async (ctx, p) => {
-    const thread = await requireTaskThread(ctx.engine, String(p.task_id));
-    const workingSet = await ctx.engine.getTaskWorkingSet(String(p.task_id));
-    return {
-      thread,
-      working_set: workingSet,
-    };
-  },
-  cliHints: { name: 'task-show', positional: ['task_id'] },
-};
-
-const get_note_manifest_entry: Operation = {
-  name: 'get_note_manifest_entry',
-  description: 'Read one derived note-manifest entry by slug for structural inspection.',
-  params: {
-    slug: {
-      type: 'string',
-      required: true,
-      description: 'Canonical page slug',
-    },
-    scope_id: {
-      type: 'string',
-      description: 'Manifest scope id (default: workspace:default)',
-    },
-  },
-  handler: async (ctx, p) => {
-    const scopeId = String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID);
-    const entry = await ctx.engine.getNoteManifestEntry(scopeId, String(p.slug));
-    if (!entry) {
-      throw new OperationError(
-        'page_not_found',
-        `Note manifest entry not found: ${String(p.slug)}`,
-        'Run manifest-rebuild for the slug, or verify the page exists.',
-      );
-    }
-    return entry;
-  },
-  cliHints: { name: 'manifest-get', positional: ['slug'] },
-};
-
-const list_note_manifest_entries: Operation = {
-  name: 'list_note_manifest_entries',
-  description: 'List derived note-manifest entries for structural inspection.',
-  params: {
-    scope_id: {
-      type: 'string',
-      description: 'Manifest scope id (default: workspace:default)',
-    },
-    slug: { type: 'string', description: 'Filter to a single slug' },
-    limit: { type: 'number', description: 'Max results (default 20)' },
-  },
-  handler: async (ctx, p) => {
-    return ctx.engine.listNoteManifestEntries({
-      scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
-      slug: p.slug as string | undefined,
-      limit: (p.limit as number) ?? 20,
-    });
-  },
-  cliHints: { name: 'manifest-list', aliases: { n: 'limit' } },
-};
-
-const rebuild_note_manifest: Operation = {
-  name: 'rebuild_note_manifest',
-  description: 'Rebuild derived note-manifest entries from canonical page state.',
-  params: {
-    slug: {
-      type: 'string',
-      description: 'Optional slug to rebuild a single entry',
-    },
-    scope_id: {
-      type: 'string',
-      description: 'Manifest scope id (default: workspace:default)',
-    },
-  },
-  mutating: true,
-  handler: async (ctx, p) => {
-    const scopeId = String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID);
-    const slug = p.slug as string | undefined;
-
-    if (ctx.dryRun) {
-      return {
-        dry_run: true,
-        action: 'rebuild_note_manifest',
-        scope_id: scopeId,
-        slug: slug ?? null,
-      };
-    }
-
-    try {
-      const entries = await rebuildNoteManifestEntries(ctx.engine, {
-        scope_id: scopeId,
-        slug,
-      });
-      return {
-        scope_id: scopeId,
-        rebuilt: entries.length,
-        slugs: entries.map((entry) => entry.slug),
-      };
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith('Page not found:')) {
-        throw new OperationError('page_not_found', error.message, 'Check the slug or omit it to rebuild all entries.');
-      }
-      throw error;
-    }
-  },
-  cliHints: { name: 'manifest-rebuild' },
-};
+// --- Note sections ---
 
 const get_note_section_entry: Operation = {
   name: 'get_note_section_entry',
@@ -7742,389 +7519,6 @@ const get_workspace_corpus_card: Operation = {
   cliHints: { name: 'workspace-corpus-card' },
 };
 
-const record_retrieval_trace: Operation = {
-  name: 'record_retrieval_trace',
-  description: 'Record a retrieval trace for a task-scoped operational-memory flow.',
-  params: {
-    task_id: { type: 'string', required: true, description: 'Task thread id' },
-    outcome: {
-      type: 'string',
-      required: true,
-      description: 'Trace outcome summary',
-    },
-    route: {
-      type: ['array', 'string'],
-      items: { type: 'string' },
-      description: 'Ordered retrieval route',
-    },
-    source_refs: {
-      type: ['array', 'string'],
-      items: { type: 'string' },
-      description: 'Source references consulted',
-    },
-    derived_consulted: {
-      type: ['array', 'string'],
-      items: { type: 'string' },
-      description: 'Derived artifacts consulted separately from canonical source refs',
-    },
-    verification: {
-      type: ['array', 'string'],
-      items: { type: 'string' },
-      description: 'Verification steps performed',
-    },
-    write_outcome: {
-      type: 'string',
-      enum: [...RETRIEVAL_TRACE_WRITE_OUTCOMES],
-      description: 'Structured write outcome for the trace',
-    },
-    selected_intent: {
-      type: 'string',
-      enum: [...RETRIEVAL_ROUTE_INTENTS],
-      description: 'Structured retrieval intent selected for the trace',
-    },
-    scope_gate_policy: {
-      type: 'string',
-      enum: [...SCOPE_GATE_POLICIES],
-      description: 'Structured scope gate policy, when evaluated',
-    },
-    scope_gate_reason: {
-      type: 'string',
-      description: 'Structured scope gate reason, when evaluated',
-    },
-  },
-  mutating: true,
-  handler: async (ctx, p) => {
-    const taskId = String(p.task_id);
-    const route = parseStringListParam(p.route, 'route') ?? [];
-    const sourceRefs = parseStringListParam(p.source_refs, 'source_refs') ?? [];
-    const derivedConsulted = parseStringListParam(p.derived_consulted, 'derived_consulted') ?? [];
-    const verification = parseStringListParam(p.verification, 'verification') ?? [];
-    const writeOutcome = parseEnumParam(p.write_outcome, 'write_outcome', RETRIEVAL_TRACE_WRITE_OUTCOMES);
-    const selectedIntent = parseEnumParam(p.selected_intent, 'selected_intent', RETRIEVAL_ROUTE_INTENTS);
-    const scopeGatePolicy = parseEnumParam(p.scope_gate_policy, 'scope_gate_policy', SCOPE_GATE_POLICIES);
-    const scopeGateReason = typeof p.scope_gate_reason === 'string' ? p.scope_gate_reason : undefined;
-
-    if (ctx.dryRun) {
-      return {
-        dry_run: true,
-        action: 'record_retrieval_trace',
-        task_id: taskId,
-        outcome: String(p.outcome),
-        route,
-        source_refs: sourceRefs,
-        derived_consulted: derivedConsulted,
-        verification,
-        write_outcome: writeOutcome,
-        selected_intent: selectedIntent,
-        scope_gate_policy: scopeGatePolicy,
-        scope_gate_reason: scopeGateReason,
-      };
-    }
-
-    const thread = await requireTaskThread(ctx.engine, taskId);
-    return ctx.engine.putRetrievalTrace({
-      id: crypto.randomUUID(),
-      task_id: taskId,
-      scope: thread.scope,
-      route,
-      source_refs: sourceRefs,
-      derived_consulted: derivedConsulted,
-      verification,
-      write_outcome: writeOutcome,
-      selected_intent: selectedIntent,
-      scope_gate_policy: scopeGatePolicy,
-      scope_gate_reason: scopeGateReason ?? null,
-      outcome: String(p.outcome),
-    });
-  },
-  cliHints: { name: 'task-trace', positional: ['task_id'] },
-};
-
-const list_task_traces: Operation = {
-  name: 'list_task_traces',
-  description: 'List retrieval traces for one task thread.',
-  params: {
-    task_id: { type: 'string', required: true, description: 'Task thread id' },
-    limit: { type: 'number', description: 'Max results (default 10)' },
-  },
-  handler: async (ctx, p) => {
-    const taskId = String(p.task_id);
-    await requireTaskThread(ctx.engine, taskId);
-    return ctx.engine.listRetrievalTraces(taskId, {
-      limit: (p.limit as number) ?? 10,
-    });
-  },
-  cliHints: {
-    name: 'task-traces',
-    positional: ['task_id'],
-    aliases: { n: 'limit' },
-  },
-};
-
-const watch_question: Operation = {
-  name: 'watch_question',
-  description: 'Pin a retrieval question so the nightly Dream report can diff required reads and content hashes.',
-  params: {
-    question: { type: 'string', required: true, description: 'Question to probe repeatedly' },
-    id: { type: 'string', description: 'Optional stable watched question id' },
-    scope_id: { type: 'string', description: 'Scope id (default: workspace:default)' },
-    requested_scope: requestedScopeParam('Optional access scope for the watched retrieval probe.'),
-    enabled: { type: 'boolean', description: 'Whether the watched question is active (default true)' },
-  },
-  mutating: true,
-  handler: async (ctx, p) => {
-    const question = String(p.question ?? '').trim();
-    if (!question) throw new OperationError('invalid_params', 'question is required.');
-    const input = {
-      ...(typeof p.id === 'string' ? { id: p.id } : {}),
-      scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
-      question,
-      requested_scope: parseRequestedScopeParam(p.requested_scope) ?? null,
-      enabled: p.enabled === false ? false : true,
-    };
-    if (ctx.dryRun) return { dry_run: true, action: 'watch_question', ...input };
-    return ctx.engine.upsertWatchedQuestion(input);
-  },
-  cliHints: { name: 'watch-question', positional: ['question'], aliases: { scope: 'requested_scope' } },
-};
-
-const list_watched_questions: Operation = {
-  name: 'list_watched_questions',
-  description: 'List pinned watched questions and their latest probe state.',
-  params: {
-    scope_id: { type: 'string', description: 'Scope id filter' },
-    enabled: { type: 'boolean', description: 'Enabled-state filter' },
-    limit: { type: 'number', description: 'Max results (default 100)' },
-    offset: { type: 'number', description: 'Pagination offset' },
-  },
-  handler: async (ctx, p) => ctx.engine.listWatchedQuestions({
-    scope_id: typeof p.scope_id === 'string' ? p.scope_id : undefined,
-    enabled: typeof p.enabled === 'boolean' ? p.enabled : undefined,
-    limit: parsePositiveIntegerParam(p.limit, 'limit'),
-    offset: parseNonNegativeIntegerParam(p.offset, 'offset'),
-  }),
-  cliHints: { name: 'watched-questions', aliases: { n: 'limit' } },
-};
-
-const unwatch_question: Operation = {
-  name: 'unwatch_question',
-  description: 'Disable a watched question without deleting its probe history.',
-  params: {
-    id: { type: 'string', required: true, description: 'Watched question id' },
-  },
-  mutating: true,
-  handler: async (ctx, p) => {
-    const id = String(p.id ?? '').trim();
-    if (!id) throw new OperationError('invalid_params', 'id is required.');
-    if (ctx.dryRun) return { dry_run: true, action: 'unwatch_question', id, enabled: false };
-    return ctx.engine.setWatchedQuestionEnabled(id, false);
-  },
-  cliHints: { name: 'unwatch-question', positional: ['id'] },
-};
-
-const run_watched_questions: Operation = {
-  name: 'run_watched_questions',
-  description: 'Run deterministic watched-question retrieval probes and record required-read diffs for the daily report.',
-  params: {
-    scope_id: { type: 'string', description: 'Scope id (default: workspace:default)' },
-    now: { type: 'string', description: 'Optional ISO timestamp for deterministic runs' },
-    limit: { type: 'number', description: 'Max watched questions to probe' },
-  },
-  mutating: true,
-  handler: async (ctx, p) => runWatchedQuestionProbes(ctx.engine, {
-    scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
-    now: typeof p.now === 'string' ? p.now : undefined,
-    limit: parsePositiveIntegerParam(p.limit, 'limit'),
-  }),
-  cliHints: { name: 'watched-questions-run', aliases: { n: 'limit' } },
-};
-
-const list_task_attempts: Operation = {
-  name: 'list_task_attempts',
-  description: 'List recorded attempts for one task thread.',
-  params: {
-    task_id: { type: 'string', required: true, description: 'Task thread id' },
-    limit: { type: 'number', description: 'Max results (default 10)' },
-  },
-  handler: async (ctx, p) => {
-    const taskId = String(p.task_id);
-    await requireTaskThread(ctx.engine, taskId);
-    return ctx.engine.listTaskAttempts(taskId, {
-      limit: (p.limit as number) ?? 10,
-    });
-  },
-  cliHints: {
-    name: 'task-attempts',
-    positional: ['task_id'],
-    aliases: { n: 'limit' },
-  },
-};
-
-const list_task_decisions: Operation = {
-  name: 'list_task_decisions',
-  description: 'List recorded decisions for one task thread.',
-  params: {
-    task_id: { type: 'string', required: true, description: 'Task thread id' },
-    limit: { type: 'number', description: 'Max results (default 10)' },
-  },
-  handler: async (ctx, p) => {
-    const taskId = String(p.task_id);
-    await requireTaskThread(ctx.engine, taskId);
-    return ctx.engine.listTaskDecisions(taskId, {
-      limit: (p.limit as number) ?? 10,
-    });
-  },
-  cliHints: {
-    name: 'task-decisions',
-    positional: ['task_id'],
-    aliases: { n: 'limit' },
-  },
-};
-
-const refresh_task_working_set: Operation = {
-  name: 'refresh_task_working_set',
-  description: 'Refresh a task working set snapshot and advance its verification timestamp.',
-  params: {
-    task_id: { type: 'string', required: true, description: 'Task thread id' },
-    active_paths: {
-      type: ['array', 'string'],
-      items: { type: 'string' },
-      description: 'Active file paths',
-    },
-    active_symbols: {
-      type: ['array', 'string'],
-      items: { type: 'string' },
-      description: 'Active symbols',
-    },
-    blockers: {
-      type: ['array', 'string'],
-      items: { type: 'string' },
-      description: 'Current blockers',
-    },
-    open_questions: {
-      type: ['array', 'string'],
-      items: { type: 'string' },
-      description: 'Open questions',
-    },
-    next_steps: {
-      type: ['array', 'string'],
-      items: { type: 'string' },
-      description: 'Next steps',
-    },
-    verification_notes: {
-      type: ['array', 'string'],
-      items: { type: 'string' },
-      description: 'Verification notes',
-    },
-    last_verified_at: {
-      type: 'string',
-      description: 'Override verification timestamp (ISO datetime)',
-    },
-  },
-  mutating: true,
-  handler: async (ctx, p) => {
-    const taskId = String(p.task_id);
-    if (ctx.dryRun) {
-      return {
-        dry_run: true,
-        action: 'refresh_task_working_set',
-        task_id: taskId,
-      };
-    }
-
-    await requireTaskThread(ctx.engine, taskId);
-    const existing = await ctx.engine.getTaskWorkingSet(taskId);
-    return ctx.engine.upsertTaskWorkingSet({
-      task_id: taskId,
-      active_paths: parseStringListParam(p.active_paths, 'active_paths') ?? existing?.active_paths ?? [],
-      active_symbols: parseStringListParam(p.active_symbols, 'active_symbols') ?? existing?.active_symbols ?? [],
-      blockers: parseStringListParam(p.blockers, 'blockers') ?? existing?.blockers ?? [],
-      open_questions: parseStringListParam(p.open_questions, 'open_questions') ?? existing?.open_questions ?? [],
-      next_steps: parseStringListParam(p.next_steps, 'next_steps') ?? existing?.next_steps ?? [],
-      verification_notes: parseStringListParam(p.verification_notes, 'verification_notes') ?? existing?.verification_notes ?? [],
-      last_verified_at: parseOptionalDateParam(p.last_verified_at, 'last_verified_at') ?? new Date(),
-    });
-  },
-  cliHints: { name: 'task-working-set', positional: ['task_id'] },
-};
-
-const record_attempt: Operation = {
-  name: 'record_attempt',
-  description: 'Record a task attempt outcome for repeated-work prevention.',
-  params: {
-    task_id: { type: 'string', required: true, description: 'Task thread id' },
-    summary: { type: 'string', required: true, description: 'Attempt summary' },
-    outcome: {
-      type: 'string',
-      required: true,
-      description: 'Attempt outcome',
-      enum: ['failed', 'partial', 'succeeded', 'abandoned'],
-    },
-  },
-  mutating: true,
-  handler: async (ctx, p) => {
-    if (ctx.dryRun) {
-      return {
-        dry_run: true,
-        action: 'record_attempt',
-        task_id: p.task_id,
-        summary: p.summary,
-      };
-    }
-
-    await requireTaskThread(ctx.engine, String(p.task_id));
-    return ctx.engine.recordTaskAttempt({
-      id: crypto.randomUUID(),
-      task_id: String(p.task_id),
-      summary: String(p.summary),
-      outcome: String(p.outcome) as any,
-      applicability_context: {},
-      evidence: [],
-    });
-  },
-  cliHints: { name: 'task-attempt' },
-};
-
-const record_decision: Operation = {
-  name: 'record_decision',
-  description: 'Record a task decision and rationale.',
-  params: {
-    task_id: { type: 'string', required: true, description: 'Task thread id' },
-    summary: {
-      type: 'string',
-      required: true,
-      description: 'Decision summary',
-    },
-    rationale: {
-      type: 'string',
-      required: true,
-      description: 'Decision rationale',
-    },
-  },
-  mutating: true,
-  handler: async (ctx, p) => {
-    if (ctx.dryRun) {
-      return {
-        dry_run: true,
-        action: 'record_decision',
-        task_id: p.task_id,
-        summary: p.summary,
-      };
-    }
-
-    await requireTaskThread(ctx.engine, String(p.task_id));
-    return ctx.engine.recordTaskDecision({
-      id: crypto.randomUUID(),
-      task_id: String(p.task_id),
-      summary: String(p.summary),
-      rationale: String(p.rationale),
-      consequences: [],
-      validity_context: {},
-    });
-  },
-  cliHints: { name: 'task-decision' },
-};
-
 // --- Ingest Log ---
 
 const log_ingest: Operation = {
@@ -8529,9 +7923,7 @@ export const operations: Operation[] = [
   delete_personal_episode_entry,
   write_personal_episode_entry,
   // Note manifest
-  get_note_manifest_entry,
-  list_note_manifest_entries,
-  rebuild_note_manifest,
+  ...noteManifestOperations,
   // Note sections
   get_note_section_entry,
   list_note_section_entries,
@@ -8579,22 +7971,7 @@ export const operations: Operation[] = [
   get_atlas_orientation_card,
   get_atlas_orientation_bundle,
   // Operational memory
-  list_tasks,
-  start_task,
-  update_task,
-  resume_task,
-  get_task_working_set,
-  record_retrieval_trace,
-  list_task_traces,
-  watch_question,
-  list_watched_questions,
-  unwatch_question,
-  run_watched_questions,
-  list_task_attempts,
-  list_task_decisions,
-  refresh_task_working_set,
-  record_attempt,
-  record_decision,
+  ...taskOperations,
   ...brainLoopAuditOperations,
   ...memoryMutationLedgerOperations,
   ...memoryControlPlaneOperations,

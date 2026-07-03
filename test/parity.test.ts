@@ -433,6 +433,116 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
       }
     }
   });
+
+  test('derived jobs and derived index state round-trip across engines', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-pglite-derived-jobs-'));
+    const sqlite = new SQLiteEngine();
+    const pglite = new PGLiteEngine();
+
+    try {
+      await sqlite.connect({ engine: 'sqlite', database_path: join(root, 'brain.db') });
+      await sqlite.initSchema();
+      await pglite.connect({ engine: 'pglite', database_path: join(root, 'brain.pglite') });
+      await pglite.initSchema();
+
+      await seedDerivedJobParityFixture(sqlite);
+      await seedDerivedJobParityFixture(pglite);
+
+      const sqliteSnapshot = await collectDerivedJobParitySnapshot(sqlite);
+      const pgliteSnapshot = await collectDerivedJobParitySnapshot(pglite);
+
+      expect(sqliteSnapshot).toEqual({
+        jobs: [
+          {
+            slug: 'concepts/derived-parity',
+            artifact_kind: 'note_manifest',
+            status: 'pending',
+            target_content_hash: 'derived-hash-1',
+            manifest_path: 'concepts/derived-parity.md',
+            derived_parameters: {
+              derived_schema_version: 'page-derived-v1',
+              extractor_version: 'phase2-structural-v1',
+              manifest_path: 'concepts/derived-parity.md',
+            },
+          },
+        ],
+        state: {
+          slug: 'concepts/derived-parity',
+          artifact_kind: 'note_manifest',
+          status: 'pending',
+          target_content_hash: 'derived-hash-1',
+        },
+      });
+      expect(pgliteSnapshot).toEqual(sqliteSnapshot);
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      for (const engine of [sqlite, pglite]) {
+        try {
+          await engine.disconnect();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      try {
+        rmSync(root, { recursive: true, force: true });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, 'Failed to clean up derived-job parity fixtures');
+      }
+    }
+  });
+
+  test('slug rename preserves content and retargets links across engines', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-pglite-slug-rename-'));
+    const sqlite = new SQLiteEngine();
+    const pglite = new PGLiteEngine();
+
+    try {
+      await sqlite.connect({ engine: 'sqlite', database_path: join(root, 'brain.db') });
+      await sqlite.initSchema();
+      await pglite.connect({ engine: 'pglite', database_path: join(root, 'brain.pglite') });
+      await pglite.initSchema();
+
+      await seedSlugRenameParityFixture(sqlite);
+      await seedSlugRenameParityFixture(pglite);
+
+      const sqliteSnapshot = await collectSlugRenameParitySnapshot(sqlite);
+      const pgliteSnapshot = await collectSlugRenameParitySnapshot(pglite);
+
+      expect(sqliteSnapshot).toEqual({
+        oldPage: null,
+        newTitle: 'Rename Source',
+        linksBySlug: {
+          'concepts/rename-new': ['concepts/rename-new->concepts/rename-target:mentions:source to target'],
+          'concepts/rename-target': ['concepts/rename-target->concepts/rename-new:mentions:target to source'],
+        },
+        backlinksBySlug: {
+          'concepts/rename-new': ['concepts/rename-target->concepts/rename-new:mentions:target to source'],
+          'concepts/rename-target': ['concepts/rename-new->concepts/rename-target:mentions:source to target'],
+        },
+      });
+      expect(pgliteSnapshot).toEqual(sqliteSnapshot);
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      for (const engine of [sqlite, pglite]) {
+        try {
+          await engine.disconnect();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      try {
+        rmSync(root, { recursive: true, force: true });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, 'Failed to clean up slug-rename parity fixtures');
+      }
+    }
+  });
 });
 
 type ListAndLinkEngine = Pick<
@@ -443,6 +553,16 @@ type ListAndLinkEngine = Pick<
 type GraphTraversalEngine = Pick<SQLiteEngine, 'putPage' | 'addLink' | 'traverseGraph'>;
 
 type StoredChunkSearchEngine = Pick<SQLiteEngine, 'putPage' | 'upsertChunks' | 'searchKeyword'>;
+
+type DerivedJobParityEngine = Pick<
+  SQLiteEngine,
+  'putPage' | 'enqueueDerivedJob' | 'listDerivedJobs' | 'getDerivedIndexState'
+>;
+
+type SlugRenameParityEngine = Pick<
+  SQLiteEngine,
+  'putPage' | 'addLink' | 'updateSlug' | 'rewriteLinks' | 'getPage' | 'getLinksForSlugs' | 'getBacklinksForSlugs'
+>;
 
 async function seedListAndLinkFixture(engine: ListAndLinkEngine): Promise<void> {
   await engine.putPage('concepts/parity-alpha', {
@@ -556,6 +676,83 @@ async function seedStoredChunkSearchFixture(engine: StoredChunkSearchEngine): Pr
       token_count: 8,
     },
   ]);
+}
+
+async function seedDerivedJobParityFixture(engine: DerivedJobParityEngine): Promise<void> {
+  const slug = 'concepts/derived-parity';
+  await engine.putPage(slug, {
+    type: 'concept',
+    title: 'Derived Parity',
+    compiled_truth: 'Derived job parity page.',
+    content_hash: 'derived-hash-1',
+  });
+  await engine.enqueueDerivedJob({
+    scope_id: 'workspace:default',
+    slug,
+    artifact_kind: 'note_manifest',
+    target_content_hash: 'derived-hash-1',
+    manifest_path: `${slug}.md`,
+    derived_parameters: {
+      derived_schema_version: 'page-derived-v1',
+      extractor_version: 'phase2-structural-v1',
+      manifest_path: `${slug}.md`,
+    },
+  });
+}
+
+async function collectDerivedJobParitySnapshot(engine: DerivedJobParityEngine) {
+  const jobs = await engine.listDerivedJobs({
+    scope_id: 'workspace:default',
+    slug: 'concepts/derived-parity',
+    artifact_kind: 'note_manifest',
+  });
+  const state = await engine.getDerivedIndexState('workspace:default', 'concepts/derived-parity', 'note_manifest');
+  return {
+    jobs: jobs.map((job) => ({
+      slug: job.slug,
+      artifact_kind: job.artifact_kind,
+      status: job.status,
+      target_content_hash: job.target_content_hash,
+      manifest_path: job.manifest_path,
+      derived_parameters: job.derived_parameters,
+    })),
+    state: state
+      ? {
+          slug: state.slug,
+          artifact_kind: state.artifact_kind,
+          status: state.status,
+          target_content_hash: state.target_content_hash,
+        }
+      : null,
+  };
+}
+
+async function seedSlugRenameParityFixture(engine: SlugRenameParityEngine): Promise<void> {
+  await engine.putPage('concepts/rename-old', {
+    type: 'concept',
+    title: 'Rename Source',
+    compiled_truth: 'Rename source page.',
+  });
+  await engine.putPage('concepts/rename-target', {
+    type: 'concept',
+    title: 'Rename Target',
+    compiled_truth: 'Rename target page.',
+  });
+  await engine.addLink('concepts/rename-old', 'concepts/rename-target', 'source to target', 'mentions');
+  await engine.addLink('concepts/rename-target', 'concepts/rename-old', 'target to source', 'mentions');
+  await engine.updateSlug('concepts/rename-old', 'concepts/rename-new');
+  await engine.rewriteLinks('concepts/rename-old', 'concepts/rename-new');
+}
+
+async function collectSlugRenameParitySnapshot(engine: SlugRenameParityEngine) {
+  const linksBySlug = await engine.getLinksForSlugs(['concepts/rename-new', 'concepts/rename-target']);
+  const backlinksBySlug = await engine.getBacklinksForSlugs(['concepts/rename-new', 'concepts/rename-target']);
+  return {
+    oldPage: await engine.getPage('concepts/rename-old'),
+    newTitle: (await engine.getPage('concepts/rename-new'))?.title ?? null,
+    linksBySlug: normalizeLinkMap(linksBySlug),
+    backlinksBySlug: normalizeLinkMap(backlinksBySlug),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────

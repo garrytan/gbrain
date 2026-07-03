@@ -35,6 +35,11 @@ import { getBroadSynthesisRoute, type BroadSynthesisCandidateSearch } from './br
 import { planAssertionGraphFrontier } from './assertion-frontier-retrieval-service.ts';
 import { classifyMemoryScenario } from './memory-scenario-classifier-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
+import {
+  candidateLimitForTokenBudget,
+  requiredReadLimitForTokenBudget,
+  shouldIncludeOrientationForTokenBudget,
+} from './retrieve-context-budget-service.ts';
 import { rankSearchResults, sourceRankCandidateLimit, sourceRankFactor } from '../search/source-ranking.ts';
 import {
   corpusLaneFromSourceRefs,
@@ -234,10 +239,6 @@ function dedupeGraphFrontierEdges(edges: GraphFrontierEdge[]): GraphFrontierEdge
 }
 
 const DEFAULT_CANDIDATE_LIMIT = 5;
-const DEFAULT_READ_CONTEXT_MAX_SELECTORS = 3;
-const TOKEN_BUDGET_CANDIDATE_DIVISOR = 600;
-const TOKEN_BUDGET_READ_DIVISOR = 1200;
-const TOKEN_BUDGET_ORIENTATION_FLOOR = 2000;
 const READ_PLAN_MAX_DEPTH = 1;
 const CANDIDATE_SELECTOR_BATCH_SIZE = 10;
 const MAX_CANDIDATE_QUERY_VARIANTS = 8;
@@ -286,25 +287,6 @@ const QUERY_TOKEN_STOPWORDS = new Set([
   'with',
 ]);
 
-function candidateLimitForTokenBudget(requestedLimit: number, tokenBudget: number | undefined): number {
-  if (tokenBudget === undefined) return requestedLimit;
-  return Math.min(requestedLimit, Math.max(3, Math.floor(tokenBudget / TOKEN_BUDGET_CANDIDATE_DIVISOR)));
-}
-
-function requiredReadLimitForTokenBudget(candidateLimit: number, tokenBudget: number | undefined): number {
-  if (tokenBudget === undefined) return Math.min(candidateLimit, DEFAULT_READ_CONTEXT_MAX_SELECTORS);
-  return Math.min(
-    candidateLimit,
-    DEFAULT_READ_CONTEXT_MAX_SELECTORS,
-    Math.max(1, Math.floor(tokenBudget / TOKEN_BUDGET_READ_DIVISOR)),
-  );
-}
-
-function shouldIncludeOrientation(input: RetrieveContextInput): boolean {
-  if (input.include_orientation === false) return false;
-  return input.token_budget === undefined || input.token_budget >= TOKEN_BUDGET_ORIENTATION_FLOOR;
-}
-
 export async function retrieveContext(
   engine: BrainEngine,
   input: RetrieveContextInput,
@@ -316,7 +298,7 @@ export async function retrieveContext(
   if (input.token_budget !== undefined) assertPositiveInteger(input.token_budget, 'token_budget');
   const limit = candidateLimitForTokenBudget(requestedLimit, input.token_budget);
   const requiredReadLimit = requiredReadLimitForTokenBudget(limit, input.token_budget);
-  const includeOrientation = shouldIncludeOrientation(input);
+  const includeOrientation = shouldIncludeOrientationForTokenBudget(input.token_budget, input.include_orientation !== false);
 
   const requestId = crypto.randomUUID();
   const classification = classifyMemoryScenario(input);

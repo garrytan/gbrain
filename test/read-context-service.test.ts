@@ -487,6 +487,35 @@ describe('read context service', () => {
     });
   });
 
+  test('page include_timeline clips CJK compiled truth before returning timeline continuations', async () => {
+    await withEngine('page-include-timeline-cjk-budget', async (engine) => {
+      await importFromContent(engine, 'concepts/page-timeline-cjk-budget', [
+        '---',
+        'type: concept',
+        'title: Page Timeline CJK Budget',
+        '---',
+        '가나다라',
+        '',
+        '---',
+        '',
+        '타임라인 근거도 예산 안에서만 읽어야 한다.',
+      ].join('\n'), { path: 'concepts/page-timeline-cjk-budget.md' });
+
+      const result = await readContext(engine, {
+        selectors: [{ kind: 'page', slug: 'concepts/page-timeline-cjk-budget' }],
+        include_timeline: 'include',
+        token_budget: 1,
+      });
+
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(result.canonical_reads[0]!.text).toBe('가나');
+      expect(result.canonical_reads[0]!.token_estimate).toBeLessThanOrEqual(1);
+      expect(result.continuations).toHaveLength(1);
+      expect(result.continuations[0]!.kind).toBe('compiled_truth');
+      expect(result.continuations[0]!.char_start).toBe(2);
+    });
+  });
+
   test('page include_timeline does not mix snapshots across field windows', async () => {
     await withEngine('page-include-timeline-single-snapshot', async (engine) => {
       await importFromContent(engine, 'concepts/page-snapshot-context', [

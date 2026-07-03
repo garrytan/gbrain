@@ -70,6 +70,131 @@ async function captureJsonLog(run: () => Promise<void>): Promise<any> {
 }
 
 describe('connectors sync command', () => {
+  test('syncs local chat exports through raw ingest without canonical writes', async () => {
+    const harness = await createSqliteHarness('chat-exports-sync');
+    const exportDir = makeTempDir('mbrain-chat-exports-command-');
+    try {
+      writeFileSync(join(exportDir, 'chat.json'), JSON.stringify({
+        title: 'Runtime notes',
+        messages: [
+          { role: 'user', content: 'Remember the runtime migration follow-up.' },
+          { role: 'assistant', content: 'Noted for the raw ingest ladder.' },
+        ],
+      }));
+
+      const output = await captureJsonLog(() => runConnectors(harness.engine, [
+        'sync',
+        'chat_exports',
+        '--path',
+        exportDir,
+      ]));
+
+      expect(output).toMatchObject({
+        connector_id: 'chat_exports',
+        dry_run: false,
+        source_scope: 'directory',
+        planned: 1,
+        persisted: 1,
+        skipped_unchanged: 0,
+      });
+
+      const listed = await operationsByName.list_sources.handler(harness.ctx(), {
+        connector_id: 'chat_exports',
+      }) as any;
+      expect(listed.sources).toHaveLength(1);
+      expect(listed.sources[0].source).toMatchObject({
+        kind: 'chat_export',
+        connector_id: 'chat_exports',
+        consent_state: 'granted',
+      });
+
+      const items = await operationsByName.list_source_items.handler(harness.ctx(), {
+        source_id: listed.sources[0].source.id,
+        include_chunks: true,
+      }) as any;
+      expect(items.items).toHaveLength(1);
+      expect(items.items[0]).toMatchObject({
+        external_id: 'chat.json',
+        title: 'Runtime notes',
+        metadata_json: {
+          connector_id: 'chat_exports',
+          relative_path: 'chat.json',
+          message_count: 2,
+        },
+      });
+      expect(items.items[0].chunks[0]).toMatchObject({
+        prompt_injection_risk: 'none',
+        secret_risk: 'none',
+      });
+      expect((harness.engine as any).database.query('SELECT COUNT(*) AS count FROM pages').get().count).toBe(0);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('syncs local browser bookmarks through raw ingest without canonical writes', async () => {
+    const harness = await createSqliteHarness('browser-bookmarks-sync');
+    const bookmarksDir = makeTempDir('mbrain-browser-bookmarks-command-');
+    try {
+      writeFileSync(join(bookmarksDir, 'bookmarks.json'), JSON.stringify({
+        roots: {
+          bookmark_bar: {
+            children: [{
+              type: 'url',
+              name: 'MBrain Runtime',
+              url: 'https://example.com/runtime',
+              date_added: '13380163200000000',
+            }],
+          },
+        },
+      }));
+
+      const output = await captureJsonLog(() => runConnectors(harness.engine, [
+        'sync',
+        'browser_bookmarks',
+        '--path',
+        bookmarksDir,
+      ]));
+
+      expect(output).toMatchObject({
+        connector_id: 'browser_bookmarks',
+        dry_run: false,
+        source_scope: 'directory',
+        planned: 1,
+        persisted: 1,
+        skipped_unchanged: 0,
+      });
+
+      const listed = await operationsByName.list_sources.handler(harness.ctx(), {
+        connector_id: 'browser_bookmarks',
+      }) as any;
+      expect(listed.sources).toHaveLength(1);
+      expect(listed.sources[0].source).toMatchObject({
+        kind: 'bookmark',
+        connector_id: 'browser_bookmarks',
+        consent_state: 'granted',
+      });
+
+      const items = await operationsByName.list_source_items.handler(harness.ctx(), {
+        source_id: listed.sources[0].source.id,
+        include_chunks: true,
+      }) as any;
+      expect(items.items).toHaveLength(1);
+      expect(items.items[0]).toMatchObject({
+        external_id: 'bookmarks.json#https://example.com/runtime',
+        title: 'MBrain Runtime',
+        locator: 'https://example.com/runtime',
+        metadata_json: {
+          connector_id: 'browser_bookmarks',
+          relative_path: 'bookmarks.json',
+        },
+      });
+      expect((harness.engine as any).database.query('SELECT COUNT(*) AS count FROM pages').get().count).toBe(0);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   test('syncs local meeting transcripts into source registry raw ingest without canonical writes', async () => {
     const harness = await createSqliteHarness('sync');
     const transcriptDir = makeTempDir('mbrain-meeting-transcripts-command-');
