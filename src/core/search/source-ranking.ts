@@ -5,6 +5,8 @@ type SourceRankRule = {
   factor: number;
 };
 
+export type SourceRankRuleInput = SourceRankRule;
+
 const SOURCE_RANK_RULES: SourceRankRule[] = [
   { prefix: 'originals/', factor: 1.5 },
   { prefix: 'brain/originals/', factor: 1.5 },
@@ -50,9 +52,19 @@ function normalizeSlug(slug: string): string {
   return slug.replace(/^\/+/, '').toLowerCase();
 }
 
-export function sourceRankFactor(slug: string): number {
+function normalizeRules(rules?: readonly SourceRankRuleInput[]): SourceRankRule[] {
+  return (rules && rules.length > 0 ? rules : SOURCE_RANK_RULES)
+    .filter((rule) => rule.prefix.trim().length > 0 && Number.isFinite(rule.factor) && rule.factor > 0)
+    .map((rule) => ({
+      prefix: normalizeSlug(rule.prefix),
+      factor: rule.factor,
+    }))
+    .sort((a, b) => b.prefix.length - a.prefix.length);
+}
+
+export function sourceRankFactor(slug: string, rules?: readonly SourceRankRuleInput[]): number {
   const normalized = normalizeSlug(slug);
-  const rule = SOURCE_RANK_RULES.find((candidate) => normalized.startsWith(candidate.prefix));
+  const rule = normalizeRules(rules).find((candidate) => normalized.startsWith(candidate.prefix));
   return rule?.factor ?? 1;
 }
 
@@ -64,16 +76,22 @@ function chunkSourceRankFactor(result: SearchResult): number {
       return 1.02;
     case 'timeline':
       return 0.95;
+    default:
+      return 1;
   }
 }
 
-export function rankSearchResults(results: SearchResult[], limit?: number): SearchResult[] {
+export function rankSearchResults(
+  results: SearchResult[],
+  limit?: number,
+  rules?: readonly SourceRankRuleInput[],
+): SearchResult[] {
   const ranked = results
     .map((result, index) => {
       return {
         result,
-        sourceFactor: sourceRankFactor(result.slug) * chunkSourceRankFactor(result),
-        rankedScore: sourceRankedScore(result),
+        sourceFactor: sourceRankFactor(result.slug, rules) * chunkSourceRankFactor(result),
+        rankedScore: sourceRankedScore(result, rules),
         originalScore: result.score,
         index,
       };
@@ -82,6 +100,9 @@ export function rankSearchResults(results: SearchResult[], limit?: number): Sear
       if (b.rankedScore !== a.rankedScore) return b.rankedScore - a.rankedScore;
       if (b.sourceFactor !== a.sourceFactor) return b.sourceFactor - a.sourceFactor;
       if (b.originalScore !== a.originalScore) return b.originalScore - a.originalScore;
+      const leftUpdatedAt = a.result.updated_at?.getTime() ?? 0;
+      const rightUpdatedAt = b.result.updated_at?.getTime() ?? 0;
+      if (rightUpdatedAt !== leftUpdatedAt) return rightUpdatedAt - leftUpdatedAt;
       return a.index - b.index;
     })
     .map(({ result }) => result);
@@ -89,8 +110,12 @@ export function rankSearchResults(results: SearchResult[], limit?: number): Sear
   return typeof limit === 'number' ? ranked.slice(0, limit) : ranked;
 }
 
-export function sourceRankedScore(result: SearchResult): number {
-  return result.score * sourceRankFactor(result.slug) * chunkSourceRankFactor(result);
+export function sourceRankedScore(
+  result: SearchResult,
+  rules?: readonly SourceRankRuleInput[],
+): number {
+  const supersessionFactor = result.superseded_by ? 0.5 : 1;
+  return result.score * sourceRankFactor(result.slug, rules) * chunkSourceRankFactor(result) * supersessionFactor;
 }
 
 export function sourceRankCandidateLimit(limit: number): number {

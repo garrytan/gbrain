@@ -19,6 +19,8 @@ export interface ChunkInput {
   chunk_index: number;
   chunk_text: string;
   chunk_source: ChunkSource;
+  embed_context?: string;
+  embedding_input_version?: string;
   embedding?: Float32Array;
   clear_embedding?: boolean;
   model?: string;
@@ -37,6 +39,8 @@ export interface SearchResult {
   chunk_content_hash?: string | null;
   score: number;
   stale: boolean;
+  updated_at?: Date;
+  superseded_by?: string | null;
   derived_artifact_kind?: DerivedArtifactKind;
   derived_status?: DerivedIndexStatus;
   derived_target_content_hash?: string | null;
@@ -48,6 +52,8 @@ export interface SearchOpts {
   limit?: number;
   type?: PageType;
   exclude_slugs?: string[];
+  updated_after?: Date | string;
+  updated_before?: Date | string;
 }
 
 // Links

@@ -440,8 +440,8 @@ function claudeMcpGetOutputMatchesScope(output: string, scope: ClaudeMcpScope): 
 
 function registerMcp(client: 'claude' | 'codex', opts: { claudeScope: ClaudeMcpScope }): string {
   const cmd = client === 'claude'
-    ? `claude mcp add -s ${opts.claudeScope} mbrain -- mbrain serve`
-    : 'codex mcp add mbrain -- mbrain serve';
+    ? `claude mcp add -s ${opts.claudeScope} mbrain -- mbrain serve --tier core`
+    : 'codex mcp add mbrain -- mbrain serve --tier core';
 
   try {
     execSync(cmd, { encoding: 'utf-8', timeout: 15000, stdio: 'pipe' });

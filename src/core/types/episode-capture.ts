@@ -101,6 +101,7 @@ export interface InboxLead {
 export interface InboxLeadInput {
   candidates: MemoryCandidateEntry[];
   canonical_handoff_candidate_ids?: string[];
+  completed_canonical_handoff_candidate_ids?: string[];
   now?: Date | string;
   include_audit?: boolean;
 }
@@ -115,6 +116,7 @@ export interface InboxLeadResult {
 export interface CandidateDebtInput {
   candidates: MemoryCandidateEntry[];
   canonical_handoff_candidate_ids?: string[];
+  completed_canonical_handoff_candidate_ids?: string[];
   canonical_target_proposals?: Array<Pick<
     CanonicalTargetProposalEntry,
     'source_candidate_id' | 'linked_candidate_ids' | 'status'

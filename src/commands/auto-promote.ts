@@ -152,6 +152,7 @@ export function createAutoPromoteDreamDependency(engine: BrainEngine) {
       max_runner_calls?: number;
       time_budget_ms?: number;
       exclude_candidate_ids?: string[];
+      signal?: AbortSignal;
     }) => {
       const base = normalizeAutoPromoteConfig(loadConfig()?.auto_promote as Partial<AutoPromoteConfig> | undefined);
       const config: AutoPromoteConfig = { ...base, dry_run: input.dry_run !== false };
@@ -172,6 +173,7 @@ export function createAutoPromoteDreamDependency(engine: BrainEngine) {
         max_runner_calls: input.max_runner_calls,
         time_budget_ms: input.time_budget_ms,
         exclude_candidate_ids: input.exclude_candidate_ids,
+        signal: input.signal,
         ...(input.limit !== undefined ? { limit: input.limit } : {}),
       });
       return { counts: result.counts };

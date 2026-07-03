@@ -117,6 +117,64 @@ describe('config loading', () => {
     const { loadConfig } = await import('../src/core/config.ts');
     expect(loadConfig()?.retrieval_governed_probe_hybrid).toBe(true);
   });
+
+  test('loads contextual chunk embedding flag from the documented nested retrieval config', async () => {
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: '~/.mbrain/brain.db',
+      retrieval: {
+        contextual_chunk_embeddings: true,
+      },
+    });
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    expect(loadConfig()?.retrieval_contextual_chunk_embeddings).toBe(true);
+  });
+
+  test('loads usage-aware ranking flag from the documented nested retrieval config', async () => {
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: '~/.mbrain/brain.db',
+      retrieval: {
+        usage_aware_ranking: true,
+      },
+    });
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    expect(loadConfig()?.retrieval_usage_aware_ranking).toBe(true);
+  });
+
+  test('loads governed recompile flag from the documented nested maintenance config', async () => {
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: '~/.mbrain/brain.db',
+      maintenance: {
+        governed_recompile_enabled: true,
+      },
+    });
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    expect(loadConfig()?.maintenance_governed_recompile_enabled).toBe(true);
+  });
+
+  test('loads source rank rules from nested retrieval config', async () => {
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: '~/.mbrain/brain.db',
+      retrieval: {
+        source_rank_rules: [
+          { prefix: 'office/personal/', factor: 1.45 },
+          { prefix: 'office/', factor: 1.05 },
+        ],
+      },
+    });
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    expect(loadConfig()?.retrieval_source_rank_rules).toEqual([
+      { prefix: 'office/personal/', factor: 1.45 },
+      { prefix: 'office/', factor: 1.05 },
+    ]);
+  });
 });
 
 describe('redactUrl', () => {

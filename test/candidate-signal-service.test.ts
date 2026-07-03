@@ -42,7 +42,7 @@ function makeCandidate(
   };
 }
 
-function makeHandoff(candidateId: string): CanonicalHandoffEntry {
+function makeHandoff(candidateId: string, overrides: Partial<CanonicalHandoffEntry> = {}): CanonicalHandoffEntry {
   return {
     id: `handoff-${candidateId}`,
     scope_id: 'workspace:default',
@@ -53,8 +53,12 @@ function makeHandoff(candidateId: string): CanonicalHandoffEntry {
     reviewed_at: new Date('2026-05-16T03:05:00.000Z'),
     review_reason: 'Canonical handoff recorded.',
     interaction_id: null,
+    completed_at: new Date('2026-05-16T03:06:00.000Z'),
+    completion_kind: 'manual',
+    completion_ref: 'systems/mbrain',
     created_at: new Date('2026-05-16T03:05:00.000Z'),
     updated_at: new Date('2026-05-16T03:05:00.000Z'),
+    ...overrides,
   };
 }
 
@@ -614,6 +618,36 @@ describe('candidate signal service ranking and hints', () => {
     expect(signals['missing-provenance-pressure']!.candidate_governance_metadata?.pressure.reasons).toContain('missing_provenance');
     expect(signals['missing-provenance-pressure']!.review_priority_hint).toBe('reject_missing_provenance');
     expect(signals['below-recurrence-threshold']!.pressure_reasons).not.toContain('high_recurrence');
+  });
+
+  test('promoted candidates with incomplete handoffs remain canonicalization debt in signals', async () => {
+    const result = await buildCandidateSignals(fakeEngine([
+      makeCandidate('promoted-incomplete-handoff', {
+        status: 'promoted',
+        proposed_content: 'Candidate promoted-incomplete-handoff proposes a retrieval direction change.',
+      }),
+    ], [
+      makeHandoff('promoted-incomplete-handoff', {
+        completed_at: null,
+        completion_kind: null,
+        completion_ref: null,
+      }),
+    ]), {
+      query: 'retrieval direction',
+      scenario: 'knowledge_qa',
+      requested_scope: 'work',
+      required_reads: [requiredRead],
+      canonical_candidates: [],
+      known_subjects: [],
+      limit: 10,
+    });
+
+    const signal = result.candidate_signals.find(entry => entry.candidate_id === 'promoted-incomplete-handoff');
+    expect(signal?.candidate_governance_metadata?.target_binding).toMatchObject({
+      state: 'promoted_handoff_incomplete',
+      handoff_present: true,
+    });
+    expect(signal?.pressure_reasons).toContain('promoted_handoff_incomplete');
   });
 
   test('verified candidate metadata stays non-authoritative answer guidance', async () => {

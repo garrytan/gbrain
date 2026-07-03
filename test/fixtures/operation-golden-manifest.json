@@ -2,14 +2,14 @@
   "schema_version": 2,
   "generated_from": "live_operation_registry",
   "summary": {
-    "operation_count": 180,
-    "mcp_operation_count": 180,
-    "cli_shared_count": 168,
-    "cli_direct_count": 24,
+    "operation_count": 183,
+    "mcp_operation_count": 183,
+    "cli_shared_count": 171,
+    "cli_direct_count": 25,
     "cli_only_count": 6,
     "not_cli_count": 2,
-    "mutating_count": 76,
-    "read_only_count": 104
+    "mutating_count": 78,
+    "read_only_count": 105
   },
   "cli_commands": [
     {
@@ -104,6 +104,12 @@
       "operation_name": "audit_brain_loop"
     },
     {
+      "command": "auth",
+      "mode": "cli_direct_no_engine",
+      "operation_spec_name": "auth",
+      "reason": "direct_no_engine_command"
+    },
+    {
       "command": "auto-promote",
       "mode": "cli_direct_engine",
       "operation_spec_name": "auto-promote",
@@ -165,6 +171,11 @@
       "command": "classify-memory-scenario",
       "mode": "cli_shared",
       "operation_name": "classify_memory_scenario"
+    },
+    {
+      "command": "compile-debt",
+      "mode": "cli_shared",
+      "operation_name": "list_compile_debt"
     },
     {
       "command": "complete-canonical-target-proposal-binding",
@@ -263,6 +274,11 @@
       "command": "files",
       "mode": "cli_direct_engine",
       "reason": "direct_engine_command"
+    },
+    {
+      "command": "finalize-memory-candidate",
+      "mode": "cli_shared",
+      "operation_name": "finalize_memory_candidate"
     },
     {
       "command": "get",
@@ -645,6 +661,11 @@
       "command": "proof-agent",
       "mode": "cli_shared",
       "operation_name": "proof_agent_memory"
+    },
+    {
+      "command": "propose-compile-debt-patches",
+      "mode": "cli_shared",
+      "operation_name": "propose_compile_debt_patches"
     },
     {
       "command": "publish",
@@ -2620,7 +2641,7 @@
     },
     {
       "name": "build_context_atlas",
-      "description": "Build or rebuild the persisted workspace atlas registry entry.",
+      "description": "Build or rebuild the persisted workspace atlas registry entry. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
       "mutating": true,
       "capability_required": [],
       "capability_visibility": {
@@ -5694,6 +5715,247 @@
       "mutation_aliases": []
     },
     {
+      "name": "finalize_memory_candidate",
+      "description": "Composite memory-candidate finalizer. Resumes verify, staging, preflight, promotion, optional patch apply, and optional sync while stopping at the first defer or deny.",
+      "mutating": true,
+      "capability_required": [],
+      "capability_visibility": {
+        "requirements": []
+      },
+      "params": {
+        "actor": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Actor applying an approved patch candidate"
+        },
+        "apply_patch": {
+          "type": [
+            "boolean"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Apply approved memory patch candidates when possible (default true)"
+        },
+        "id": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Memory candidate id"
+        },
+        "interaction_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional retrieval trace id for lifecycle event attribution"
+        },
+        "override_duplicate": {
+          "type": [
+            "boolean"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Explicitly override a likely-duplicate promotion deferral"
+        },
+        "realm_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Active memory realm id attached read-write for patch apply"
+        },
+        "retry_on_stale": {
+          "type": [
+            "boolean"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Retry promotion once when duplicate review freshness changes"
+        },
+        "review_reason": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional review reason applied to lifecycle steps"
+        },
+        "reviewed_at": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional ISO timestamp for review/apply metadata"
+        },
+        "risk_acknowledged": {
+          "type": [
+            "boolean"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Required true when applying high or critical risk patch candidates"
+        },
+        "session_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Active applying memory session id for patch apply"
+        },
+        "source_refs": {
+          "type": [
+            "array"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Required provenance strings when applying an approved patch candidate",
+          "items": {
+            "type": [
+              "string"
+            ],
+            "required": false,
+            "nullable": false
+          }
+        },
+        "sync": {
+          "type": [
+            "boolean"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Run sync_brain with no_pull/no_embed after a page patch is materialized (default false)"
+        },
+        "verification_evidence": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "What was checked and what the check showed; required when verification_status is provided."
+        },
+        "verification_method": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "How the standard candidate was checked against ground truth.",
+          "enum": [
+            "command_execution",
+            "db_query",
+            "file_inspection",
+            "source_recheck",
+            "user_confirmation",
+            "external_lookup"
+          ]
+        },
+        "verification_source_refs": {
+          "type": [
+            "array"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional provenance strings for the verification itself.",
+          "items": {
+            "type": [
+              "string"
+            ],
+            "required": false,
+            "nullable": false
+          }
+        },
+        "verification_status": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional verification outcome for standard candidates; required before promotion unless already verified.",
+          "enum": [
+            "verified",
+            "refuted"
+          ]
+        },
+        "verified_at": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional ISO timestamp for verification metadata"
+        }
+      },
+      "cli_exposure": {
+        "mode": "cli_shared",
+        "command": "finalize-memory-candidate"
+      },
+      "mcp": {
+        "read_only": false,
+        "destructive": false,
+        "open_world": false,
+        "required_params": [
+          "id"
+        ]
+      },
+      "surface_profile": {
+        "effective_tier": "extended",
+        "required_capabilities": [
+          "canonical_write"
+        ],
+        "capability_classification": "explicit",
+        "visible_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "callable_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "forbidden_profiles": [],
+        "decisions": {
+          "stdio": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_local": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "edge_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          }
+        }
+      },
+      "compact_schema_hash": "8904720184cd3fc38d04f7b89885599afcf9ddbb30a9a456f5f7b70fac7e6f31",
+      "full_schema_hash": "a96a089a077706c66478af217ac27c3dea68cd2cb0670bdf94f97dc7e85419e1",
+      "memory_verb_families": [
+        "candidate_lifecycle"
+      ],
+      "mutation_aliases": []
+    },
+    {
       "name": "find_context_map_path",
       "description": "Find a bounded structural path inside one persisted context map.",
       "mutating": false,
@@ -5911,7 +6173,7 @@
     },
     {
       "name": "get_atlas_orientation_bundle",
-      "description": "Render a compact atlas bundle from atlas report and atlas orientation card.",
+      "description": "Render a compact atlas bundle from atlas report and atlas orientation card. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -6016,7 +6278,7 @@
     },
     {
       "name": "get_atlas_orientation_card",
-      "description": "Render a compact orientation card from atlas selection and the workspace corpus card.",
+      "description": "Render a compact orientation card from atlas selection and the workspace corpus card. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -6376,7 +6638,7 @@
     },
     {
       "name": "get_context_atlas_entry",
-      "description": "Get one persisted atlas registry entry by id.",
+      "description": "Get one persisted atlas registry entry by id. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -6451,7 +6713,7 @@
     },
     {
       "name": "get_context_atlas_overview",
-      "description": "Render a compact overview artifact for a persisted atlas entry.",
+      "description": "Render a compact overview artifact for a persisted atlas entry. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -6556,7 +6818,7 @@
     },
     {
       "name": "get_context_atlas_report",
-      "description": "Render a compact human-readable report for a persisted atlas entry.",
+      "description": "Render a compact human-readable report for a persisted atlas entry. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -10191,8 +10453,81 @@
       "mutation_aliases": []
     },
     {
+      "name": "list_compile_debt",
+      "description": "List pages whose timeline evidence is newer than compiled truth, ranked by entry count and age.",
+      "mutating": false,
+      "capability_required": [],
+      "capability_visibility": {
+        "requirements": []
+      },
+      "params": {
+        "limit": {
+          "type": [
+            "number"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Maximum debt rows to return (default: 20)"
+        }
+      },
+      "cli_exposure": {
+        "mode": "cli_shared",
+        "command": "compile-debt"
+      },
+      "mcp": {
+        "read_only": true,
+        "destructive": false,
+        "open_world": false,
+        "required_params": []
+      },
+      "surface_profile": {
+        "effective_tier": "extended",
+        "required_capabilities": [],
+        "capability_classification": "implicit_read_only",
+        "visible_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "callable_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "forbidden_profiles": [],
+        "decisions": {
+          "stdio": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_local": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "edge_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          }
+        }
+      },
+      "compact_schema_hash": "cec7cfac8076ca551da3112de9fef1c3b7bbde218111a1844cbdba21b280220a",
+      "full_schema_hash": "8b2228731668d905b300f870f7844fa56f8c3b21b919af37c545994963f3489f",
+      "memory_verb_families": [],
+      "mutation_aliases": []
+    },
+    {
       "name": "list_context_atlas_entries",
-      "description": "List persisted atlas registry entries.",
+      "description": "List persisted atlas registry entries. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -13542,6 +13877,14 @@
           "required": true,
           "nullable": false,
           "description": "Memory candidate id"
+        },
+        "override_duplicate": {
+          "type": [
+            "boolean"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Allow promotion even when duplicate review reports a likely duplicate; duplicate review evidence remains in the preflight result"
         }
       },
       "cli_exposure": {
@@ -13596,8 +13939,8 @@
           }
         }
       },
-      "compact_schema_hash": "3797626bd17e346de1adbbe242cd2c4e41a5956ccf7424c65cf45e2bbef10c81",
-      "full_schema_hash": "0de87b89f40563f99049d0f7cc47173b0439d4d54cb40d7007bd882cf1ddaffc",
+      "compact_schema_hash": "2ef6363640413363d07cefdbc510a63dd5460ce6797978b4ee97757a117f67ed",
+      "full_schema_hash": "93cad56845dd437f7aa62f8422a04e5bbfa7af34a065453901461556b12cd1e3",
       "memory_verb_families": [
         "candidate_lifecycle"
       ],
@@ -14435,7 +14778,7 @@
     },
     {
       "name": "promote_memory_candidate_entry",
-      "description": "Promote one staged memory-inbox candidate after deterministic promotion preflight passes.",
+      "description": "Promote one staged and verified memory-inbox candidate after deterministic promotion preflight passes; verification is mandatory.",
       "mutating": true,
       "capability_required": [],
       "capability_visibility": {
@@ -14457,6 +14800,14 @@
           "required": false,
           "nullable": false,
           "description": "Optional retrieval trace id for lifecycle event attribution"
+        },
+        "override_duplicate": {
+          "type": [
+            "boolean"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Explicitly override a likely-duplicate promotion deferral while preserving duplicate review evidence"
         },
         "retry_on_stale": {
           "type": [
@@ -14537,8 +14888,8 @@
           }
         }
       },
-      "compact_schema_hash": "04d1315c7588135dbebafaab246750852fc7894daa6acf3ec8b40cf1e30ce2f5",
-      "full_schema_hash": "e1106166621bf84db18e652771a65e786f5d1da65533a46d6c49daad54d6aaf0",
+      "compact_schema_hash": "73ffdae79c009f35d67e1eac43b9801e361f9ea0093f108871cb05b2385e4108",
+      "full_schema_hash": "adc6f597d3281b49ec1d9d6dbb1177fff975cf014df099c1e2d55e75bde3a406",
       "memory_verb_families": [
         "candidate_lifecycle"
       ],
@@ -14615,6 +14966,123 @@
       "compact_schema_hash": "657537cd2bbc68c9a59ffb07923553fb93d95cffc3c7f51f6d0334c425da98fd",
       "full_schema_hash": "a9de8501319b5e75083a4d6b1cbff6fe143979dbc22225e0fac0387f3695ec37",
       "memory_verb_families": [],
+      "mutation_aliases": []
+    },
+    {
+      "name": "propose_compile_debt_patches",
+      "description": "Preview or stage governed patch candidates for pages whose timeline evidence is newer than compiled truth.",
+      "mutating": true,
+      "capability_required": [],
+      "capability_visibility": {
+        "requirements": []
+      },
+      "params": {
+        "actor": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Actor proposing patch candidates; required when apply=true"
+        },
+        "apply": {
+          "type": [
+            "boolean"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Stage patch candidates. Requires maintenance.governed_recompile_enabled=true."
+        },
+        "limit": {
+          "type": [
+            "number"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Maximum compile-debt pages to inspect (default 5)"
+        },
+        "realm_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Active memory realm id attached read-write to the session; required when apply=true"
+        },
+        "scope_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Memory candidate scope id (default: workspace:default)"
+        },
+        "session_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Active originating memory session id; required when apply=true"
+        }
+      },
+      "cli_exposure": {
+        "mode": "cli_shared",
+        "command": "propose-compile-debt-patches"
+      },
+      "mcp": {
+        "read_only": false,
+        "destructive": false,
+        "open_world": false,
+        "required_params": []
+      },
+      "surface_profile": {
+        "effective_tier": "extended",
+        "required_capabilities": [
+          "canonical_write"
+        ],
+        "capability_classification": "explicit",
+        "visible_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "callable_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "forbidden_profiles": [],
+        "decisions": {
+          "stdio": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_local": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "edge_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          }
+        }
+      },
+      "compact_schema_hash": "ff61821e083e23a3fe465e706cd5481bd0af4e64dec71c5705c055bbc7feb606",
+      "full_schema_hash": "14fcda641316aa9922ce21c8612bc218735fb469d1bcafbf550b9097a5f5905d",
+      "memory_verb_families": [
+        "patch_governed_mutation"
+      ],
       "mutation_aliases": []
     },
     {
@@ -15049,6 +15517,22 @@
           ],
           "required": true,
           "nullable": false
+        },
+        "updated_after": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Only return pages updated at or after this ISO datetime"
+        },
+        "updated_before": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Only return pages updated at or before this ISO datetime"
         }
       },
       "cli_exposure": {
@@ -15103,8 +15587,8 @@
           }
         }
       },
-      "compact_schema_hash": "097294ffa0ecd4479048c780202b4cb6852ef16f1ee2e20eaf75ef80776075e2",
-      "full_schema_hash": "9959c8ea1ec0277e796ba58b590ae235dde866d7629f331462d985f2daa67f23",
+      "compact_schema_hash": "71a36fa00d6fb30466572f383ec8d922c362d58b6c516dbf324b2c773b45e1c6",
+      "full_schema_hash": "b0f064bf71a68bdd4ebcb14582cdf023138998263808f004064cba9153b31663",
       "memory_verb_families": [
         "discover_search"
       ],
@@ -15516,7 +16000,7 @@
           ],
           "required": false,
           "nullable": false,
-          "description": "Persist a retrieval trace for this canonical read"
+          "description": "Persist a retrieval trace for this canonical read. Defaults to true; pass false to opt out."
         },
         "probe_context": {
           "type": [
@@ -15646,7 +16130,7 @@
         }
       },
       "compact_schema_hash": "a22610e2dd40f3d9413a3f6d8e39a930912f39dd49a48d46271418d9977b89f2",
-      "full_schema_hash": "7a397bf88f5b0434860254dea2f4d6ef852f969ff82ef07c1aab1089cd8f09ff",
+      "full_schema_hash": "2c828a31aeadf8e15e277e012d27ffc8f6498289d51d9516d5911bf118ec4e8d",
       "memory_verb_families": [
         "read_evidence"
       ],
@@ -19049,7 +19533,7 @@
           ],
           "required": false,
           "nullable": false,
-          "description": "Persist a retrieval trace for this probe"
+          "description": "Persist a retrieval trace for this probe. Defaults to true; pass false to opt out."
         },
         "query": {
           "type": [
@@ -19130,7 +19614,7 @@
           ],
           "required": false,
           "nullable": false,
-          "description": "Approximate probe output token budget"
+          "description": "Approximate probe output token budget. Shrinks candidates by budget/600, required reads by budget/1200, and drops derived orientation below 2000 tokens."
         }
       },
       "cli_exposure": {
@@ -19184,7 +19668,7 @@
         }
       },
       "compact_schema_hash": "5c3e563e5a247f1f004785ac42dc81ca13d33892f7db2069f216e0366be237be",
-      "full_schema_hash": "c57ad833a0b3fbb7625e2f86ca3c85ed7c64305491470e664b5f8cd6b86b849b",
+      "full_schema_hash": "b8854160b0e1d48243b4b254ec85e33b8c5f1f35e6cf7cd6caeb8c3a57a1374d",
       "memory_verb_families": [
         "discover_search"
       ],
@@ -20012,7 +20496,7 @@
           ],
           "required": false,
           "nullable": false,
-          "description": "Create the routed memory candidate when the route decision allows it"
+          "description": "Apply the routed action. Defaults to true for create_candidate routes and false for canonical/defer routes."
         },
         "candidate_type": {
           "type": [
@@ -20250,7 +20734,7 @@
         }
       },
       "compact_schema_hash": "a9636c16c09156444b6760a8ea798df7e8dbb7dfaae3b9c6d3076cbf33fe8d3d",
-      "full_schema_hash": "3d27f0dc8c3367f036baa2fee3542b6157b61f2c498b6677b5db090df7332891",
+      "full_schema_hash": "b33b14c15d6f98a8a3dd8295b4ea5b7f7640d8ddfe62c39a8b90573cad63dacf",
       "memory_verb_families": [
         "route_writeback"
       ],
@@ -20394,6 +20878,22 @@
           ],
           "required": true,
           "nullable": false
+        },
+        "updated_after": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Only return pages updated at or after this ISO datetime"
+        },
+        "updated_before": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Only return pages updated at or before this ISO datetime"
         }
       },
       "cli_exposure": {
@@ -20448,8 +20948,8 @@
           }
         }
       },
-      "compact_schema_hash": "b49001470a44e0df913ae4ddf5d9d57b079f844bb4f92a09566fce17e5858e00",
-      "full_schema_hash": "976065628c50d943002137827a76fe90aba5f46aea63790614ce74d3bdc3ea2b",
+      "compact_schema_hash": "89ff094a9cc62bb53b394718d50f0dcce65deaadc930114c0e806d31953bcf62",
+      "full_schema_hash": "60d65c76fe3b93f769a436adceafeada2ca2c78b2742ae8eeaaffff6bbb1a298",
       "memory_verb_families": [
         "discover_search"
       ],
@@ -20558,7 +21058,7 @@
     },
     {
       "name": "select_context_atlas_entry",
-      "description": "Select the best persisted atlas registry entry for a scope.",
+      "description": "Select the best persisted atlas registry entry for a scope. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {

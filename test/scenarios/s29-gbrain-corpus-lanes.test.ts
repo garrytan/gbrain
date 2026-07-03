@@ -219,7 +219,9 @@ describe('S29 - gbrain corpus lanes', () => {
         }) as {
           decision: string;
           intended_operation: string;
+          applied: boolean;
           candidate_input?: { source_refs: string[] };
+          created_candidate?: { source_refs: string[] };
           canonical_write_requirements?: unknown;
           writeback_governance_metadata?: {
             route_decision: string;
@@ -239,9 +241,15 @@ describe('S29 - gbrain corpus lanes', () => {
         const laneCorpusRefCount = laneWriteback.writeback_governance_metadata?.provenance.corpus_lane_refs_count;
         expect(laneWriteback.writeback_governance_metadata).toMatchObject({
           route_decision: 'create_candidate',
-          apply_mode: 'plan_only',
+          apply_mode: 'candidate_created',
           provenance: { corpus_lane_refs_count: expect.any(Number) },
         });
+        expect(laneWriteback.applied).toBe(true);
+        expect(laneWriteback.created_candidate?.source_refs).toEqual(expect.arrayContaining([
+          `corpus_lane:${lane.lane_id}`,
+          `source_record:${lane.source_record}`,
+          `import_origin:${lane.import_origin}`,
+        ]));
         expect(typeof laneCorpusRefCount).toBe('number');
         expect(laneCorpusRefCount).toBeGreaterThan(0);
       }

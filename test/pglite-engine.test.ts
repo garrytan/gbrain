@@ -7,6 +7,7 @@
 import { setDefaultTimeout, describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { buildPageChunks, importFromContent } from '../src/core/import-file.ts';
 import { LATEST_VERSION, runMigrations } from '../src/core/migrate.ts';
+import { operationsByName } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { PageInput, ChunkInput } from '../src/core/types.ts';
@@ -112,6 +113,23 @@ describe('PGLiteEngine: Pages', () => {
     expect(fetched!.content_hash).toBeTruthy();
   });
 
+  test('searchKeyword finds imported pages by frontmatter aliases and tags', async () => {
+    await importFromContent(engine, 'systems/rebellion', [
+      '---',
+      'type: system',
+      'title: 레벨리온',
+      'aliases:',
+      '  - Rebellion',
+      'tags:',
+      '  - memory-runtime',
+      '---',
+      'Korean-titled system page.',
+    ].join('\n'), { path: 'systems/rebellion.md' });
+
+    expect((await engine.searchKeyword('Rebellion')).map((result) => result.slug)).toContain('systems/rebellion');
+    expect((await engine.searchKeyword('memory-runtime')).map((result) => result.slug)).toContain('systems/rebellion');
+  });
+
   test('putPage upserts on conflict', async () => {
     await engine.putPage('test/upsert', testPage);
     const updated = await engine.putPage('test/upsert', {
@@ -123,6 +141,71 @@ describe('PGLiteEngine: Pages', () => {
     const all = await engine.listPages();
     const matches = all.filter(p => p.slug === 'test/upsert');
     expect(matches.length).toBe(1);
+  });
+
+  test('putPage tracks compiled truth and timeline zone timestamps separately', async () => {
+    const first = await engine.putPage('systems/compile-debt', {
+      ...testPage,
+      type: 'system',
+      title: 'Compile Debt',
+      compiled_truth: 'Current compiled truth.',
+      timeline: '- **2024-06-01** | First timeline entry.',
+    });
+    await Bun.sleep(5);
+
+    const timelineOnly = await engine.putPage('systems/compile-debt', {
+      ...testPage,
+      type: 'system',
+      title: 'Compile Debt',
+      compiled_truth: 'Current compiled truth.',
+      timeline: '- **2024-06-01** | First timeline entry.\n- **2024-06-02** | New timeline evidence.',
+    });
+
+    expect(timelineOnly.compiled_truth_changed_at.getTime()).toBe(first.compiled_truth_changed_at.getTime());
+    expect(timelineOnly.timeline_changed_at.getTime()).toBeGreaterThan(first.timeline_changed_at.getTime());
+
+    await Bun.sleep(5);
+    const compiledUpdate = await engine.putPage('systems/compile-debt', {
+      ...testPage,
+      type: 'system',
+      title: 'Compile Debt',
+      compiled_truth: 'Current compiled truth includes the new evidence.',
+      timeline: timelineOnly.timeline,
+    });
+    expect(compiledUpdate.compiled_truth_changed_at.getTime()).toBeGreaterThan(timelineOnly.compiled_truth_changed_at.getTime());
+    expect(compiledUpdate.timeline_changed_at.getTime()).toBe(timelineOnly.timeline_changed_at.getTime());
+  });
+
+  test('addTimelineEntry advances timeline zone and surfaces compile debt', async () => {
+    const first = await engine.putPage('systems/structured-timeline-debt', {
+      ...testPage,
+      type: 'system',
+      title: 'Structured Timeline Debt',
+      compiled_truth: 'Current compiled truth.',
+      timeline: '',
+    });
+    await Bun.sleep(5);
+
+    await engine.addTimelineEntry('systems/structured-timeline-debt', {
+      date: '2024-06-01',
+      summary: 'New structured evidence',
+      detail: 'Structured timeline evidence not yet compiled.',
+    });
+
+    const updated = await engine.getPage('systems/structured-timeline-debt');
+    expect(updated?.compiled_truth_changed_at.getTime()).toBe(first.compiled_truth_changed_at.getTime());
+    expect(updated?.timeline_changed_at.getTime()).toBeGreaterThan(first.timeline_changed_at.getTime());
+    expect((await engine.getHealth()).stale_pages).toBeGreaterThanOrEqual(1);
+    const debt = await operationsByName.list_compile_debt.handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, { limit: 5 }) as Array<{ slug: string; uncompiled_timeline_entries: number }>;
+    expect(debt).toContainEqual(expect.objectContaining({
+      slug: 'systems/structured-timeline-debt',
+      uncompiled_timeline_entries: 1,
+    }));
   });
 
   test('getPage returns null for missing slug', async () => {
@@ -226,6 +309,21 @@ describe('PGLiteEngine: Search', () => {
     // Verify the PL/pgSQL trigger fires and search_vector is populated
     const results = await engine.searchKeyword('enterprise automation');
     expect(results.length).toBeGreaterThan(0);
+  });
+
+  test('searchKeyword matches CJK prefix tokens with particle suffixes', async () => {
+    await engine.putPage('concepts/rebellion-cjk', {
+      type: 'concept',
+      title: '레벨리온',
+      compiled_truth: '레벨리온은 한국어 검색 품질을 검증한다.',
+    });
+    await engine.upsertChunks('concepts/rebellion-cjk', [
+      { chunk_index: 0, chunk_text: '레벨리온은 한국어 검색 품질을 검증한다.', chunk_source: 'compiled_truth' },
+    ]);
+
+    const results = await engine.searchKeyword('레벨리온', { limit: 5 });
+
+    expect(results.map((entry) => entry.slug)).toContain('concepts/rebellion-cjk');
   });
 
   test('searchVector returns empty when no embeddings', async () => {

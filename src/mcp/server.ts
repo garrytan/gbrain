@@ -808,8 +808,11 @@ function byteLength(text: string): number {
   return utf8ByteLength(text);
 }
 
-export async function startMcpServer(engine: BrainEngine | Promise<BrainEngine>) {
-  const { server, toolExecutionLimiter, enginePromise } = createMcpServer(engine);
+export async function startMcpServer(
+  engine: BrainEngine | Promise<BrainEngine>,
+  options: Pick<CreateMcpServerOptions, 'toolTier'> = {},
+) {
+  const { server, toolExecutionLimiter, enginePromise } = createMcpServer(engine, options);
   const transport = new BudgetedStdioServerTransport();
   await server.connect(transport);
   let derivedWorker: DerivedWorkerController | undefined;

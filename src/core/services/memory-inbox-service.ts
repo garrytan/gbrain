@@ -110,7 +110,9 @@ export async function preflightPromoteMemoryCandidate(
   const denyReasons: MemoryCandidatePromotionPreflightReason[] = [];
   const deferReasons: MemoryCandidatePromotionPreflightReason[] = [];
 
-  if (entry.status !== 'staged_for_review') {
+  const activeStatusAllowed = input.allow_active_status === true
+    && (entry.status === 'captured' || entry.status === 'candidate');
+  if (entry.status !== 'staged_for_review' && !activeStatusAllowed) {
     denyReasons.push('candidate_not_staged_for_review');
   }
   if (!hasUsableProvenance(entry)) {
@@ -134,6 +136,10 @@ export async function preflightPromoteMemoryCandidate(
   if (requiresRevalidation(entry)) {
     deferReasons.push('candidate_requires_revalidation');
   }
+  const contradictions = await engine.listMemoryCandidateContradictionEntriesForCandidateIds([entry.id]);
+  if (contradictions.some((contradiction) => contradiction.outcome === 'unresolved')) {
+    deferReasons.push('candidate_open_contradiction');
+  }
 
   const duplicateReview = summarizeDuplicateReviewForPreflight(await reviewDuplicateMemory(engine, {
     scope_id: entry.scope_id,
@@ -148,7 +154,7 @@ export async function preflightPromoteMemoryCandidate(
     include_candidates: true,
     limit: 5,
   }));
-  if (duplicateReview.decision === 'likely_duplicate') {
+  if (duplicateReview.decision === 'likely_duplicate' && input.override_duplicate !== true) {
     deferReasons.push('candidate_possible_duplicate');
   }
 
@@ -173,6 +179,9 @@ export async function preflightPromoteMemoryCandidate(
       `Promotion preflight decision: ${decision}.`,
       `Candidate ${entry.id} targets ${entry.target_object_type ?? 'none'}/${entry.target_object_id ?? 'none'}.`,
       `Duplicate review decision: ${duplicateReview.decision}.`,
+      ...(duplicateReview.decision === 'likely_duplicate' && input.override_duplicate === true
+        ? ['Duplicate review override: explicit override_duplicate accepted.']
+        : []),
       reasonSummaryLine,
       ...individualReasonSummaryLines,
     ],
@@ -498,6 +507,8 @@ function formatReasonLabel(reason: MemoryCandidatePromotionPreflightReason): str
       return 'candidate verification refuted the claim';
     case 'candidate_possible_duplicate':
       return 'possible duplicate';
+    case 'candidate_open_contradiction':
+      return 'candidate has an unresolved contradiction';
     case 'candidate_ready_for_promotion':
       return 'candidate is ready for promotion';
   }

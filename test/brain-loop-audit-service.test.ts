@@ -44,6 +44,8 @@ function makeTrace(id: string, taskId: string | null = null): RetrievalTrace {
     scope_gate_policy: null,
     scope_gate_reason: null,
     outcome: 'test trace',
+    elapsed_ms: 0,
+    retrieved_token_count: 0,
     created_at: new Date(),
   };
 }

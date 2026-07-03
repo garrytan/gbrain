@@ -21,7 +21,7 @@ claude mcp add mbrain -t http \
 ```
 
 Replace `YOUR-DOMAIN` with your ngrok domain and `YOUR_TOKEN` with a token
-from `bun run src/commands/auth.ts create "claude-code"`.
+from `mbrain auth create "claude-code"`.
 
 ## Verify
 

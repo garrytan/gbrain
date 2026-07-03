@@ -28,9 +28,10 @@ function buildAtlasReport(overview: ContextAtlasOverviewArtifact): ContextAtlasR
     `Atlas freshness is ${entry.freshness}.`,
     `Budget hint is ${entry.budget_hint}.`,
     `Recommended reads available: ${recommended_reads.length}.`,
+    'Context Atlas is deprecated; use context maps and graph frontier planning for new retrieval orientation.',
     entry.freshness === 'stale'
       ? 'Rebuild the linked context map and atlas before trusting routing output.'
-      : 'This atlas is safe to use for orientation under the current scope.',
+      : 'Fresh Atlas entries remain legacy orientation artifacts.',
   ];
 
   return {

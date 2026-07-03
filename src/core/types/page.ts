@@ -52,6 +52,8 @@ export interface Page {
   content_hash?: string;
   created_at: Date;
   updated_at: Date;
+  compiled_truth_changed_at: Date;
+  timeline_changed_at: Date;
 }
 
 export interface PageInput {

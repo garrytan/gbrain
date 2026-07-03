@@ -92,6 +92,9 @@ for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
       });
       expect(created?.candidate_id).toBe(candidateId);
       expect(created?.source_refs).toEqual(['User, direct message, 2026-04-24 7:00 AM KST']);
+      expect(created?.completed_at).toBeNull();
+      expect(created?.completion_kind).toBeNull();
+      expect(created?.completion_ref).toBeNull();
 
       expect(await harness.engine.createCanonicalHandoffEntry({
         id: `${handoffId}:duplicate`,
@@ -105,6 +108,15 @@ for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
       const loaded = await harness.engine.getCanonicalHandoffEntry(handoffId);
       expect(loaded?.target_object_type).toBe('curated_note');
       expect(loaded?.source_refs).toEqual(['User, direct message, 2026-04-24 7:00 AM KST']);
+      const completed = await harness.engine.completeCanonicalHandoffEntry({
+        id: handoffId,
+        completed_at: '2026-04-24T01:00:00.000Z',
+        completion_kind: 'patch_applied',
+        completion_ref: 'patch:candidate',
+      });
+      expect(completed?.completed_at?.toISOString()).toBe('2026-04-24T01:00:00.000Z');
+      expect(completed?.completion_kind).toBe('patch_applied');
+      expect(completed?.completion_ref).toBe('patch:candidate');
 
       const scoped = await harness.engine.listCanonicalHandoffEntries({
         scope_id: scopeId,
@@ -125,6 +137,8 @@ for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
 
       const reopenedLoaded = await reopened.getCanonicalHandoffEntry(handoffId);
       expect(reopenedLoaded?.candidate_id).toBe(candidateId);
+      expect(reopenedLoaded?.completion_kind).toBe('patch_applied');
+      expect(reopenedLoaded?.completion_ref).toBe('patch:candidate');
       const reopenedScoped = await reopened.listCanonicalHandoffEntries({
         scope_id: scopeId,
         limit: 10,
@@ -172,6 +186,14 @@ if (databaseUrl) {
       });
       expect(created?.id).toBe(handoffId);
       expect(created?.source_refs).toEqual(['User, direct message, 2026-04-24 7:00 AM KST']);
+      expect(created?.completed_at).toBeNull();
+      const completed = await engine.completeCanonicalHandoffEntry({
+        id: handoffId,
+        completed_at: '2026-04-24T01:00:00.000Z',
+        completion_kind: 'page_written',
+        completion_ref: 'people/postgres-canonical-handoff',
+      });
+      expect(completed?.completion_kind).toBe('page_written');
 
       const listed = await engine.listCanonicalHandoffEntries({
         scope_id: scopeId,

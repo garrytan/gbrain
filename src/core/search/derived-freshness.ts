@@ -27,11 +27,17 @@ export async function appendPendingDerivedSearchResults(
       });
       if (states.length === 0) break;
 
-      for (const state of states) {
-        if (seen.has(state.slug) || excluded.has(state.slug)) continue;
-        const projection = await engine.getPageProjection(state.slug, {
+      const eligibleStates = states.filter((state) => (
+        !seen.has(state.slug) && !excluded.has(state.slug)
+      ));
+      const projections = await Promise.all(eligibleStates.map(async (state) => ({
+        state,
+        projection: await engine.getPageProjection(state.slug, {
           windows: { compiled_truth: { char_start: 0, char_limit: 320 } },
-        });
+        }),
+      })));
+
+      for (const { state, projection } of projections) {
         if (!projection) continue;
         if (opts?.type && projection.type !== opts.type) continue;
 

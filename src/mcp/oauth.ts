@@ -215,7 +215,10 @@ async function handleAuthorize(request: Request, state: McpOAuthState): Promise<
   if (!validation.ok) return validation.response;
 
   if (request.method === 'GET') {
-    return renderApprovalForm(params);
+    return renderApprovalForm(params, {
+      client: validation.client,
+      redirectUri: validation.redirectUri,
+    });
   }
 
   const approvalToken = stringValue(params.approval_token);
@@ -419,21 +422,30 @@ async function validateAuthorizationRequest(
   };
 }
 
-function renderApprovalForm(params: Record<string, unknown>): Response {
+function renderApprovalForm(
+  params: Record<string, unknown>,
+  context: { client: OAuthClientRecord; redirectUri: string },
+): Response {
   const scopes = parseScope(stringValue(params.scope));
   const scopeItems = scopes
-    .map(scope => `<li><code>${escapeHtml(scope)}</code>${scope === 'canonical_write' || scope === 'raw_source' ? ' <strong>privileged</strong>' : ''}</li>`)
+    .map(scope => `<li><code>${escapeHtml(scope)}</code>${scope === 'canonical_write' || scope === 'raw_source' ? ' <strong>privileged</strong>' : ''}<br><span>${escapeHtml(describeOAuthScope(scope))}</span></li>`)
     .join('\n');
   const hidden = Object.entries(params)
     .filter(([key]) => key !== 'approval_token')
     .map(([key, value]) => `<input type="hidden" name="${escapeHtml(key)}" value="${escapeHtml(String(value ?? ''))}">`)
     .join('\n');
+  const redirectOrigin = new URL(context.redirectUri).origin;
   return new Response(`<!doctype html>
 <html>
   <head><meta charset="utf-8"><title>Authorize MBrain MCP</title></head>
   <body>
     <main>
       <h1>Authorize MBrain MCP</h1>
+      <section aria-label="Client details">
+        <strong>New OAuth client</strong>
+        <p>Client: <code>${escapeHtml(context.client.client_name)}</code></p>
+        <p>Redirect origin: <code>${escapeHtml(redirectOrigin)}</code></p>
+      </section>
       <p>Requested scopes:</p>
       <ul>
         ${scopeItems}
@@ -451,6 +463,19 @@ function renderApprovalForm(params: Record<string, unknown>): Response {
       'Content-Type': 'text/html; charset=utf-8',
     },
   });
+}
+
+function describeOAuthScope(scope: string): string {
+  switch (scope) {
+    case 'mcp':
+      return 'Full compiled-brain read through normal MCP tools; does not grant raw source access or canonical writes.';
+    case 'canonical_write':
+      return 'Privileged canonical memory mutation scope, including remote put_page when governance requirements are met.';
+    case 'raw_source':
+      return 'Privileged access to raw source material outside the compiled-brain evidence boundary.';
+    default:
+      return 'Unknown or unsupported scope.';
+  }
 }
 
 async function readOAuthBody(request: Request): Promise<Record<string, unknown>> {

@@ -34,8 +34,10 @@ test('memory inbox operations can be built from a dedicated domain module', () =
     'review_duplicate_memory',
     'create_memory_candidate_entry',
     'create_memory_patch_candidate',
+    'propose_compile_debt_patches',
     'review_memory_patch_candidate',
     'apply_memory_patch_candidate',
+    'finalize_memory_candidate',
     'rank_memory_candidate_entries',
     'capture_map_derived_candidates',
     'list_memory_candidate_review_backlog',
@@ -56,8 +58,10 @@ test('memory inbox operations can be built from a dedicated domain module', () =
 test('memory inbox operations are registered with CLI hints', () => {
   const create = operations.find((operation) => operation.name === 'create_memory_candidate_entry');
   const createPatch = operations.find((operation) => operation.name === 'create_memory_patch_candidate');
+  const proposeCompileDebtPatches = operations.find((operation) => operation.name === 'propose_compile_debt_patches');
   const reviewPatch = operations.find((operation) => operation.name === 'review_memory_patch_candidate');
   const applyPatch = operations.find((operation) => operation.name === 'apply_memory_patch_candidate');
+  const finalize = operations.find((operation) => operation.name === 'finalize_memory_candidate');
   const get = operations.find((operation) => operation.name === 'get_memory_candidate_entry');
   const list = operations.find((operation) => operation.name === 'list_memory_candidate_entries');
   const listStatusEvents = operations.find((operation) => operation.name === 'list_memory_candidate_status_events');
@@ -81,8 +85,10 @@ test('memory inbox operations are registered with CLI hints', () => {
 
   expect(create?.cliHints?.name).toBe('create-memory-candidate');
   expect(createPatch?.cliHints?.name).toBe('create-memory-patch-candidate');
+  expect(proposeCompileDebtPatches?.cliHints?.name).toBe('propose-compile-debt-patches');
   expect(reviewPatch?.cliHints?.name).toBe('review-memory-patch-candidate');
   expect(applyPatch?.cliHints?.name).toBe('apply-memory-patch-candidate');
+  expect(finalize?.cliHints?.name).toBe('finalize-memory-candidate');
   expect(get?.cliHints?.name).toBe('get-memory-candidate');
   expect(list?.cliHints?.name).toBe('list-memory-candidates');
   expect(listStatusEvents?.cliHints?.name).toBe('list-memory-candidate-status-events');
@@ -127,6 +133,10 @@ test('memory inbox operations are registered with CLI hints', () => {
   expect(reviewPatch?.params.risk_acknowledged?.type).toBe('boolean');
   expect(applyPatch?.params.candidate_id?.type).toBe('string');
   expect(applyPatch?.params.risk_acknowledged?.type).toBe('boolean');
+  expect(finalize?.params.id?.type).toBe('string');
+  expect(finalize?.params.verification_method?.enum).toContain('source_recheck');
+  expect(finalize?.params.apply_patch?.type).toBe('boolean');
+  expect(finalize?.params.sync?.type).toBe('boolean');
   expect(list?.params.status?.enum).toEqual(['captured', 'candidate', 'staged_for_review', 'rejected', 'promoted', 'superseded']);
   expect(list?.params.patch_operation_state?.enum).toContain('approved_for_apply');
   expect(list?.params.patch_target_kind?.enum).toContain('page');
@@ -296,6 +306,99 @@ test('create_memory_patch_candidate stages a normal inbox candidate and records 
       status: 'candidate',
       source_refs: ['User, direct message, 2026-04-26 11:00 AM KST'],
     })).rejects.toThrow(/status is managed/);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('propose_compile_debt_patches previews and flag-gates governed patch candidate creation', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-compile-debt-patch-op-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+  const proposePatches = operations.find((operation) => operation.name === 'propose_compile_debt_patches');
+
+  if (!proposePatches) {
+    throw new Error('propose_compile_debt_patches operation is missing');
+  }
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+    await engine.upsertMemoryRealm({
+      id: 'realm:compile-debt',
+      name: 'Compile debt realm',
+      scope: 'work',
+      default_access: 'read_write',
+    });
+    await engine.createMemorySession({
+      id: 'session:compile-debt',
+      actor_ref: 'agent:compile-debt',
+    });
+    await engine.attachMemoryRealmToSession({
+      session_id: 'session:compile-debt',
+      realm_id: 'realm:compile-debt',
+      access: 'read_write',
+    });
+    await engine.putPage('systems/compile-debt', {
+      type: 'system',
+      title: 'Compile Debt',
+      compiled_truth: 'Original compiled truth. [Source: User, direct message, 2026-07-03 09:00 KST]',
+      timeline: '',
+      frontmatter: {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await engine.putPage('systems/compile-debt', {
+      type: 'system',
+      title: 'Compile Debt',
+      compiled_truth: 'Original compiled truth. [Source: User, direct message, 2026-07-03 09:00 KST]',
+      timeline: '- **2026-07-03** | New timeline fact. [Source: User, direct message, 2026-07-03 10:00 KST]',
+      frontmatter: {},
+    });
+
+    const baseCtx = {
+      engine,
+      config: { maintenance_governed_recompile_enabled: false } as any,
+      logger: console,
+      dryRun: false,
+    };
+    const preview = await proposePatches.handler(baseCtx, { limit: 5 }) as any;
+    expect(preview.applied).toBe(false);
+    expect(preview.proposals[0]).toMatchObject({
+      slug: 'systems/compile-debt',
+      patch_body: {
+        compiled_truth: expect.stringContaining('Pending Compile-Debt Review'),
+      },
+    });
+
+    await expect(proposePatches.handler(baseCtx, {
+      apply: true,
+      session_id: 'session:compile-debt',
+      realm_id: 'realm:compile-debt',
+      actor: 'agent:compile-debt',
+    })).rejects.toThrow(/governed_recompile_enabled/);
+
+    const applied = await proposePatches.handler({
+      ...baseCtx,
+      config: { maintenance_governed_recompile_enabled: true } as any,
+    }, {
+      apply: true,
+      session_id: 'session:compile-debt',
+      realm_id: 'realm:compile-debt',
+      actor: 'agent:compile-debt',
+    }) as any;
+
+    expect(applied.applied).toBe(true);
+    expect(applied.created).toHaveLength(1);
+    const candidates = await engine.listMemoryCandidateEntries({
+      patch_target_kind: 'page',
+      patch_target_id: 'systems/compile-debt',
+      patch_operation_state: 'proposed',
+      limit: 10,
+      offset: 0,
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.proposed_content).toContain('compile-debt patch');
   } finally {
     await engine.disconnect();
     rmSync(dir, { recursive: true, force: true });
@@ -2396,6 +2499,19 @@ test('memory inbox promotion operation promotes staged candidates and rejects bl
       message: 'retry_on_stale must be a boolean',
     });
 
+    await expect(promote.handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, {
+      id: 'candidate-promote',
+      override_duplicate: 'true',
+    })).rejects.toMatchObject({
+      code: 'invalid_params',
+      message: 'override_duplicate must be a boolean',
+    });
+
     await create.handler({
       engine,
       config: {} as any,
@@ -2454,6 +2570,208 @@ test('memory inbox promotion operation promotes staged candidates and rejects bl
     })).rejects.toMatchObject({
       code: 'invalid_params',
     });
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('finalize_memory_candidate verifies, stages, promotes, and resumes standard candidates', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-inbox-finalize-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+  const create = operations.find((operation) => operation.name === 'create_memory_candidate_entry');
+  const finalize = operations.find((operation) => operation.name === 'finalize_memory_candidate');
+
+  if (!create || !finalize) {
+    throw new Error('memory inbox create/finalize operations are missing');
+  }
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+    const ctx = { engine, config: {} as any, logger: console, dryRun: false };
+
+    await create.handler(ctx, {
+      id: 'candidate-finalize',
+      candidate_type: 'fact',
+      proposed_content: 'Composite finalize should complete the candidate lifecycle.',
+      source_ref: 'User, direct message, 2026-04-24 09:00 AM KST',
+      target_object_type: 'curated_note',
+      target_object_id: 'concepts/finalize-memory-candidate',
+    });
+
+    const result = await finalize.handler(ctx, {
+      id: 'candidate-finalize',
+      verification_status: 'verified',
+      verification_method: 'source_recheck',
+      verification_evidence: 'Checked the source ref before finalization.',
+      verification_source_refs: ['Source: memory inbox finalize fixture'],
+      review_reason: 'Composite finalize promotion.',
+      interaction_id: ' trace-finalize ',
+    }) as any;
+
+    expect(result.status).toBe('promoted');
+    expect(result.candidate.status).toBe('promoted');
+    expect(result.canonical_write_pending).toBe(true);
+    expect(result.ledger.map((step: any) => [step.step, step.status])).toEqual([
+      ['verify', 'applied'],
+      ['advance_to_candidate', 'applied'],
+      ['advance_to_staged', 'applied'],
+      ['preflight', 'allowed'],
+      ['promote', 'applied'],
+      ['patch_apply', 'skipped'],
+      ['sync', 'skipped'],
+    ]);
+
+    const resumed = await finalize.handler(ctx, {
+      id: 'candidate-finalize',
+      verification_status: 'verified',
+      verification_method: 'source_recheck',
+      verification_evidence: 'Checked the source ref before finalization.',
+      verification_source_refs: ['Source: memory inbox finalize fixture'],
+    }) as any;
+
+    expect(resumed.status).toBe('promoted');
+    expect(resumed.ledger.map((step: any) => [step.step, step.status])).toEqual([
+      ['verify', 'already_done'],
+      ['advance_to_candidate', 'already_done'],
+      ['advance_to_staged', 'already_done'],
+      ['preflight', 'skipped'],
+      ['promote', 'already_done'],
+      ['patch_apply', 'skipped'],
+      ['sync', 'skipped'],
+    ]);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('finalize_memory_candidate stops at the first defer when verification input is missing', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-inbox-finalize-defer-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+  const create = operations.find((operation) => operation.name === 'create_memory_candidate_entry');
+  const finalize = operations.find((operation) => operation.name === 'finalize_memory_candidate');
+
+  if (!create || !finalize) {
+    throw new Error('memory inbox create/finalize operations are missing');
+  }
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+    const ctx = { engine, config: {} as any, logger: console, dryRun: false };
+
+    await create.handler(ctx, {
+      id: 'candidate-finalize-defer',
+      candidate_type: 'fact',
+      proposed_content: 'Composite finalize should not guess verification evidence.',
+      source_ref: 'User, direct message, 2026-04-24 09:10 AM KST',
+      target_object_type: 'curated_note',
+      target_object_id: 'concepts/finalize-memory-candidate',
+    });
+
+    const result = await finalize.handler(ctx, {
+      id: 'candidate-finalize-defer',
+    }) as any;
+
+    expect(result.status).toBe('deferred');
+    expect(result.ledger).toEqual([
+      {
+        step: 'verify',
+        status: 'deferred',
+        reason: 'verification_required',
+      },
+    ]);
+    const candidate = await engine.getMemoryCandidateEntry('candidate-finalize-defer');
+    expect(candidate?.status).toBe('captured');
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('finalize_memory_candidate applies approved page patch candidates through the existing apply path', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-inbox-finalize-patch-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+  const createPatch = operations.find((operation) => operation.name === 'create_memory_patch_candidate');
+  const reviewPatch = operations.find((operation) => operation.name === 'review_memory_patch_candidate');
+  const finalize = operations.find((operation) => operation.name === 'finalize_memory_candidate');
+
+  if (!createPatch || !reviewPatch || !finalize) {
+    throw new Error('memory patch create/review/finalize operations are missing');
+  }
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+    await engine.upsertMemoryRealm({
+      id: 'realm:finalize-patch',
+      name: 'Finalize patch realm',
+      scope: 'work',
+      default_access: 'read_write',
+    });
+    await engine.createMemorySession({
+      id: 'session:finalize-patch',
+      actor_ref: 'agent:finalize-patch',
+    });
+    await engine.attachMemoryRealmToSession({
+      session_id: 'session:finalize-patch',
+      realm_id: 'realm:finalize-patch',
+      access: 'read_write',
+    });
+    const ctx = { engine, config: {} as any, logger: console, dryRun: false };
+
+    await createPatch.handler(ctx, {
+      id: 'patch-candidate-finalize',
+      session_id: 'session:finalize-patch',
+      realm_id: 'realm:finalize-patch',
+      actor: 'agent:finalize-patch',
+      target_kind: 'page',
+      target_id: 'concepts/finalize-patch-target',
+      base_target_snapshot_hash: null,
+      patch_body: {
+        type: 'concept',
+        title: 'Finalize Patch Target',
+        compiled_truth: 'Composite finalize created this page. [Source: User, direct message, 2026-04-24 09:20 AM KST]',
+        timeline: '- **2026-04-24** | Composite finalize applied the patch. [Source: User, direct message, 2026-04-24 09:20 AM KST]',
+      },
+      patch_format: 'merge_patch',
+      source_refs: ['User, direct message, 2026-04-24 09:20 AM KST'],
+    });
+    await reviewPatch.handler(ctx, {
+      candidate_id: 'patch-candidate-finalize',
+      session_id: 'session:finalize-patch',
+      realm_id: 'realm:finalize-patch',
+      actor: 'agent:finalize-patch',
+      decision: 'approve',
+      source_refs: ['User, direct message, 2026-04-24 09:20 AM KST'],
+    });
+
+    const result = await finalize.handler(ctx, {
+      id: 'patch-candidate-finalize',
+      session_id: 'session:finalize-patch',
+      realm_id: 'realm:finalize-patch',
+      actor: 'agent:finalize-patch',
+      source_refs: ['User, direct message, 2026-04-24 09:20 AM KST'],
+    }) as any;
+
+    expect(result.status).toBe('applied');
+    expect(result.candidate.status).toBe('promoted');
+    expect(result.ledger.map((step: any) => [step.step, step.status])).toEqual([
+      ['verify', 'skipped'],
+      ['advance_to_candidate', 'already_done'],
+      ['advance_to_staged', 'already_done'],
+      ['preflight', 'skipped'],
+      ['promote', 'skipped'],
+      ['patch_apply', 'applied'],
+      ['sync', 'skipped'],
+    ]);
+    const page = await engine.getPage('concepts/finalize-patch-target');
+    expect(page?.compiled_truth).toContain('Composite finalize created this page.');
   } finally {
     await engine.disconnect();
     rmSync(dir, { recursive: true, force: true });

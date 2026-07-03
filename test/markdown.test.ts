@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { parseMarkdown, serializeMarkdown, splitBody } from '../src/core/markdown.ts';
+import { buildFrontmatterSearchText, parseMarkdown, serializeMarkdown, splitBody } from '../src/core/markdown.ts';
 
 describe('Markdown Parser', () => {
   test('parses frontmatter + compiled_truth + timeline', () => {
@@ -48,6 +48,17 @@ title: Empty Page
     const parsed = parseMarkdown(md);
     expect(parsed.compiled_truth).toBe('');
     expect(parsed.timeline).toBe('');
+  });
+
+  test('builds searchable alias and tag frontmatter text', () => {
+    const text = buildFrontmatterSearchText({
+      aliases: ['Rebellion'],
+      tags: ['memory-runtime'],
+    }, ['nightly-report']);
+
+    expect(text).toContain('alias Rebellion');
+    expect(text).toContain('tag memory-runtime');
+    expect(text).toContain('tag nightly-report');
   });
 
   test('removes type, title, tags from frontmatter object', () => {

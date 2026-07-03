@@ -3,6 +3,7 @@ import type {AutoPromoteVerdictKey,
   BrainHealth,
   BrainStats,
   CanonicalHandoffEntry,
+  CanonicalHandoffCompletionPatch,
   CanonicalHandoffEntryInput,
   CanonicalHandoffFilters,
   CanonicalTargetProposalDraftPatch,
@@ -248,6 +249,7 @@ export interface MemoryGovernanceStore {
   getMemoryCandidateContradictionEntry(id: string): Promise<MemoryCandidateContradictionEntry | null>;
   listMemoryCandidateContradictionEntriesForCandidateIds(candidateIds: string[]): Promise<MemoryCandidateContradictionEntry[]>;
   createCanonicalHandoffEntry(input: CanonicalHandoffEntryInput): Promise<CanonicalHandoffEntry | null>;
+  completeCanonicalHandoffEntry(input: CanonicalHandoffCompletionPatch): Promise<CanonicalHandoffEntry | null>;
   getCanonicalHandoffEntry(id: string): Promise<CanonicalHandoffEntry | null>;
   listCanonicalHandoffEntries(filters?: CanonicalHandoffFilters): Promise<CanonicalHandoffEntry[]>;
   listCanonicalHandoffEntriesByInteractionIds(interactionIds: string[]): Promise<CanonicalHandoffEntry[]>;

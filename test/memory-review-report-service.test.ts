@@ -933,6 +933,9 @@ describe('memory review report service', () => {
           reviewed_at: timestamp,
           review_reason: 'Canonical handoff recorded.',
           interaction_id: null,
+          completed_at: timestamp,
+          completion_kind: 'patch_applied',
+          completion_ref: 'patch:promoted-with-handoff',
           created_at: timestamp,
           updated_at: timestamp,
         }];
@@ -953,6 +956,70 @@ describe('memory review report service', () => {
     const formatted = formatMemoryReviewReport(buildMemoryReviewReport(input));
     expect(formatted).toContain('No reportable memory exceptions.');
     expect(formatted).not.toContain('Maintenance Health');
+  });
+
+  test('candidate debt counts promoted handoffs without completed materialization', async () => {
+    const timestamp = new Date(now);
+    const promotedCandidate: MemoryCandidateEntry = {
+      id: 'candidate:promoted-incomplete-handoff',
+      scope_id: 'workspace:default',
+      candidate_type: 'fact',
+      proposed_content: 'Promoted candidate with an incomplete canonical handoff.',
+      source_refs: ['Source: incomplete handoff test'],
+      generated_by: 'agent',
+      extraction_kind: 'extracted',
+      confidence_score: 0.8,
+      importance_score: 0.6,
+      recurrence_score: 0.1,
+      sensitivity: 'work',
+      status: 'promoted',
+      target_object_type: 'curated_note',
+      target_object_id: 'people/ada',
+      reviewed_at: timestamp,
+      review_reason: 'Promoted for incomplete handoff test.',
+      verification_status: 'unverified',
+      verification_method: null,
+      verification_evidence: null,
+      verification_source_refs: [],
+      verified_at: null,
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+    const engine = {
+      listMemoryMutationEvents: async () => [],
+      listMemoryCandidateEntries: async () => [promotedCandidate],
+      listCanonicalHandoffEntries: async (filters?: { candidate_id?: string }) => {
+        if (filters?.candidate_id !== promotedCandidate.id) return [];
+        return [{
+          id: 'handoff:promoted-incomplete',
+          scope_id: 'workspace:default',
+          candidate_id: promotedCandidate.id,
+          target_object_type: 'curated_note',
+          target_object_id: 'people/ada',
+          source_refs: promotedCandidate.source_refs,
+          reviewed_at: timestamp,
+          review_reason: 'Canonical handoff recorded but patch did not apply.',
+          interaction_id: null,
+          completed_at: null,
+          completion_kind: null,
+          completion_ref: null,
+          created_at: timestamp,
+          updated_at: timestamp,
+        }];
+      },
+    } as unknown as BrainEngine;
+
+    const input = await collectMemoryReportInput(engine, 'workspace:default', 1, now);
+
+    expect(input.candidate_debt).toMatchObject({
+      visible_candidate_count: 1,
+      stale_promoted_without_handoff_count: 1,
+      unresolved_exposed_count: 0,
+    });
+
+    const formatted = formatMemoryReviewReport(buildMemoryReviewReport(input));
+    expect(formatted).toContain('Promoted without canonical page');
+    expect(formatted).toContain('promoted without handoff 1');
   });
 
   test('collectMemoryReportInput collects open and expired write sessions for daily review', async () => {
@@ -2146,6 +2213,167 @@ describe('memory review report service', () => {
     expect(formatted).toContain('failed 1/3');
     expect(formatted).toContain('Skill Surface');
     expect(formatted).toContain('Docs resources: 7');
+  });
+
+  test('renders candidate age escalations and data integrity errors', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+      candidate_age_escalations: [
+        {
+          id: 'candidate:old',
+          status: 'candidate',
+          age_days: 31,
+          bucket: '30d',
+          next_action: 'verify_memory_candidate_entry candidate:old',
+        },
+      ],
+      data_integrity_errors: [
+        {
+          query: 'canonical_projection_targets',
+          message: 'relation canonical_projection_targets does not exist',
+        },
+      ],
+    });
+
+    expect(report.health.status).toBe('fail');
+    expect(report.health.reasons).toContain('1 report data integrity errors');
+
+    const formatted = formatMemoryReviewReport(report);
+    expect(formatted).toContain('Candidate Age Escalations');
+    expect(formatted).toContain('30d candidate:old (candidate, 31d): verify_memory_candidate_entry candidate:old');
+    expect(formatted).toContain('Data Integrity');
+    expect(formatted).toContain('canonical_projection_targets: relation canonical_projection_targets does not exist');
+  });
+
+  test('renders recurring retrieval gaps from answer readiness traces as warning-only report debt', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+      recurring_retrieval_gaps: [
+        {
+          id: 'retrieval-gap:missing-selector',
+          reason: 'no canonical reads returned',
+          count: 3,
+          sample_trace_ids: ['trace:latest', 'trace:older'],
+          latest_at: '2026-07-03T12:00:00.000Z',
+          next_action: 'Review recurring read_context gap "no canonical reads returned" and add canonical coverage.',
+        },
+      ],
+    });
+
+    expect(report.summary.recurring_retrieval_gaps).toBe(1);
+    expect(report.health.status).toBe('warn');
+    expect(report.health.reasons).toContain('1 recurring retrieval gaps');
+    const formatted = formatMemoryReviewReport(report);
+    expect(formatted).toContain('Recurring Retrieval Gaps');
+    expect(formatted).toContain('no canonical reads returned: 3 traces');
+    expect(formatted).toContain('samples:trace:latest, trace:older');
+  });
+
+  test('renders bottom page health queue with next actions', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+      page_health_queue: [
+        {
+          slug: 'systems/page-needs-attention',
+          title: 'Page Needs Attention',
+          score: 45,
+          issues: ['compile_debt', 'missing_embeddings:2/3', 'source_coverage_missing'],
+          next_action: 'Create a governed patch candidate to recompile timeline updates into systems/page-needs-attention.',
+        },
+      ],
+    });
+
+    expect(report.summary.page_health_attention).toBe(1);
+    expect(report.health.status).toBe('warn');
+    expect(report.health.reasons).toContain('1 pages need attention');
+    const formatted = formatMemoryReviewReport(report);
+    expect(formatted).toContain('Page Health Queue');
+    expect(formatted).toContain('45/100 systems/page-needs-attention');
+    expect(formatted).toContain('compile_debt, missing_embeddings:2/3, source_coverage_missing');
+  });
+
+  test('collects recurring retrieval gaps from answer_ready false traces', async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), 'mbrain-recurring-gap-report-'));
+    tempPaths.push(dbDir);
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: join(dbDir, 'brain.db') });
+    await engine.initSchema();
+    try {
+      await engine.putRetrievalTrace({
+        id: 'trace:gap:one',
+        scope: 'work',
+        route: ['read_context'],
+        verification: ['answer_ready:not_ready', 'unsupported:no canonical reads returned'],
+        outcome: 'read_context could not return complete answer-ready evidence',
+      });
+      await engine.putRetrievalTrace({
+        id: 'trace:gap:two',
+        scope: 'work',
+        route: ['read_context'],
+        verification: ['answer_ready:not_ready', 'unsupported:no canonical reads returned'],
+        outcome: 'read_context could not return complete answer-ready evidence',
+      });
+
+      const input = await collectMemoryReportInput(
+        engine,
+        'workspace:default',
+        100,
+        new Date(Date.now() + 1_000).toISOString(),
+      );
+
+      expect(input.recurring_retrieval_gaps).toEqual([
+        expect.objectContaining({
+          reason: 'no canonical reads returned',
+          count: 2,
+          sample_trace_ids: expect.arrayContaining(['trace:gap:one', 'trace:gap:two']),
+        }),
+      ]);
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('collects page health queue from runtime page signals', async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), 'mbrain-page-health-report-'));
+    tempPaths.push(dbDir);
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: join(dbDir, 'brain.db') });
+    await engine.initSchema();
+    try {
+      await engine.putPage('systems/page-health', {
+        type: 'system',
+        title: 'Page Health',
+        compiled_truth: 'Compiled truth without source citation.',
+        timeline: '- **2026-07-03** | Newer timeline evidence.',
+        frontmatter: {},
+      });
+      await engine.upsertChunks('systems/page-health', [
+        {
+          chunk_index: 0,
+          chunk_text: 'Compiled truth without source citation.',
+          chunk_source: 'compiled_truth',
+        },
+      ]);
+
+      const input = await collectMemoryReportInput(
+        engine,
+        'workspace:default',
+        100,
+        new Date(Date.now() + 1_000).toISOString(),
+      );
+
+      expect(input.page_health_queue).toEqual([
+        expect.objectContaining({
+          slug: 'systems/page-health',
+          issues: expect.arrayContaining(['missing_embeddings:1/1', 'source_coverage_missing']),
+        }),
+      ]);
+    } finally {
+      await engine.disconnect();
+    }
   });
 });
 

@@ -51,6 +51,20 @@ describe('candidate resolution state service', () => {
     expect(result.pressure_reasons).toContain('stale_promoted_without_handoff');
   });
 
+  test('keeps promoted candidates with incomplete handoffs in unwritten debt', () => {
+    const result = classifyCandidateResolutionState({
+      candidate: { ...baseCandidate, status: 'promoted' },
+      has_canonical_handoff: true,
+      has_completed_canonical_handoff: false,
+      canonical_target_proposal: null,
+    });
+
+    expect(result.state).toBe('promoted_handoff_incomplete');
+    expect(result.counts_as_unresolved_exposed).toBe(false);
+    expect(result.counts_as_promoted_without_handoff).toBe(true);
+    expect(result.pressure_reasons).toContain('promoted_handoff_incomplete');
+  });
+
   test('classifies proposed canonical target proposals as proposal pending', () => {
     const result = classifyCandidateResolutionState({
       candidate: baseCandidate,

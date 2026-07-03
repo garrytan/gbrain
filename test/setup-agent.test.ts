@@ -292,12 +292,12 @@ describe('setup-agent', () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe('');
     expect(readFileSync(join(tempHome, 'claude-mcp-add.log'), 'utf-8'))
-      .toBe('mcp add -s user mbrain -- mbrain serve\n');
+      .toBe('mcp add -s user mbrain -- mbrain serve --tier core\n');
     expect(result.stdout).toContain('Claude MCP scope: user');
   });
 
   test('setup-agent does not treat project-local Claude MCP as user-scope registration', async () => {
-    writeFileSync(join(tempHome, 'claude-mcp-list.txt'), 'mbrain: mbrain serve - connected\n', 'utf-8');
+    writeFileSync(join(tempHome, 'claude-mcp-list.txt'), 'mbrain: mbrain serve --tier core - connected\n', 'utf-8');
     writeFileSync(
       join(tempHome, 'claude-mcp-get.txt'),
       [
@@ -305,7 +305,7 @@ describe('setup-agent', () => {
         '  Scope: Local config (private to you in this project)',
         '  Type: stdio',
         '  Command: mbrain',
-        '  Args: serve',
+        '  Args: serve --tier core',
       ].join('\n'),
       'utf-8',
     );
@@ -315,11 +315,11 @@ describe('setup-agent', () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe('');
     expect(readFileSync(join(tempHome, 'claude-mcp-add.log'), 'utf-8'))
-      .toBe('mcp add -s user mbrain -- mbrain serve\n');
+      .toBe('mcp add -s user mbrain -- mbrain serve --tier core\n');
   });
 
   test('setup-agent does not treat user-scope Claude MCP as local registration', async () => {
-    writeFileSync(join(tempHome, 'claude-mcp-list.txt'), 'mbrain: mbrain serve - connected\n', 'utf-8');
+    writeFileSync(join(tempHome, 'claude-mcp-list.txt'), 'mbrain: mbrain serve --tier core - connected\n', 'utf-8');
     writeFileSync(
       join(tempHome, 'claude-mcp-get.txt'),
       [
@@ -327,7 +327,7 @@ describe('setup-agent', () => {
         '  Scope: User config',
         '  Type: stdio',
         '  Command: mbrain',
-        '  Args: serve',
+        '  Args: serve --tier core',
       ].join('\n'),
       'utf-8',
     );
@@ -337,7 +337,7 @@ describe('setup-agent', () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe('');
     expect(readFileSync(join(tempHome, 'claude-mcp-add.log'), 'utf-8'))
-      .toBe('mcp add -s local mbrain -- mbrain serve\n');
+      .toBe('mcp add -s local mbrain -- mbrain serve --tier core\n');
   });
 
   test('setup-agent supports explicit project-local Claude MCP scope', async () => {
@@ -346,7 +346,7 @@ describe('setup-agent', () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe('');
     expect(readFileSync(join(tempHome, 'claude-mcp-add.log'), 'utf-8'))
-      .toBe('mcp add -s local mbrain -- mbrain serve\n');
+      .toBe('mcp add -s local mbrain -- mbrain serve --tier core\n');
     expect(result.stdout).toContain('Claude MCP scope: local');
   });
 

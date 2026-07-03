@@ -215,6 +215,39 @@ test('promotion service fails closed for likely duplicate candidates', async () 
   });
 });
 
+test('promotion service accepts explicit duplicate override while preserving review evidence', async () => {
+  await withEngine('mbrain-duplicate-preflight-promote-override-', async (engine) => {
+    await engine.putPage('concepts/existing-rollout', {
+      type: 'concept',
+      title: 'Existing Rollout',
+      compiled_truth: 'Existing rollout atlas keeps staged verification notes with rollback owner evidence.',
+      frontmatter: {
+        source_refs: ['User, direct message, 2026-05-09 10:00 KST'],
+      },
+    });
+    await seedCandidate(engine, 'incoming-promotion-duplicate-override');
+
+    const preflight = await preflightPromoteMemoryCandidate(engine, {
+      id: 'incoming-promotion-duplicate-override',
+      override_duplicate: true,
+    });
+
+    expect(preflight.decision).toBe('allow');
+    expect(preflight.reasons).toEqual(['candidate_ready_for_promotion']);
+    expect(preflight.duplicate_review.decision).toBe('likely_duplicate');
+    expect(preflight.summary_lines).toContain('Duplicate review override: explicit override_duplicate accepted.');
+
+    const promoted = await promoteMemoryCandidateEntry(engine, {
+      id: 'incoming-promotion-duplicate-override',
+      review_reason: 'Reviewer accepted duplicate override for supersession.',
+      override_duplicate: true,
+    });
+
+    expect(promoted.status).toBe('promoted');
+    expect(promoted.review_reason).toBe('Reviewer accepted duplicate override for supersession.');
+  });
+});
+
 test('promotion service fails closed when duplicate review inputs change before promotion', async () => {
   await withEngine('mbrain-duplicate-preflight-stale-', async (engine) => {
     await seedCandidate(engine, 'incoming-stale-preflight', {
@@ -338,7 +371,9 @@ test('promote-memory-candidate CLI help exposes retry-on-stale', () => {
   });
 
   expect(proc.exitCode).toBe(0);
-  expect(new TextDecoder().decode(proc.stdout)).toContain('--retry-on-stale');
+  const stdout = new TextDecoder().decode(proc.stdout);
+  expect(stdout).toContain('--retry-on-stale');
+  expect(stdout).toContain('--override-duplicate');
 });
 
 test('promotion preflight allow path includes no-match duplicate review', async () => {

@@ -38,7 +38,7 @@ available in local mode versus what must fail with honest guidance.
 - `src/core/storage.ts` — Pluggable storage interface (S3, Supabase Storage, local)
 - `src/core/supabase-admin.ts` — Supabase admin API (project discovery, pgvector check)
 - `src/core/file-resolver.ts` — MIME detection, content hashing for file uploads
-- `src/core/chunkers/` — 3-tier chunking (recursive, semantic, LLM-guided)
+- `src/core/chunkers/` — Shared import chunking utilities; the active default path is recursive/Qwen3-token chunking
 - `src/core/search/` — Hybrid search: vector + keyword + RRF + heuristic/local query expansion + dedup
 - `src/core/embedding.ts` — Embedding pipeline orchestration
 - `src/mcp/server.ts` — MCP stdio server (generated from operations)
@@ -46,7 +46,7 @@ available in local mode versus what must fail with honest guidance.
 - `src/edge-entry.ts` — Curated bundle entry point for Edge Function (excludes fs-dependent modules)
 - `src/commands/auth.ts` — Standalone token management (create/list/revoke/test)
 - `src/commands/setup-agent.ts` — Auto-detect Claude Code/Codex, register MCP, inject agent rules
-- `src/commands/setup-agent-autopilot.ts` — OS-scheduler registration (launchd/cron) for the daily candidate-only dream cycle, installed by `setup-agent --apply` (skip with `--no-autopilot`)
+- `src/commands/setup-agent-autopilot.ts` — OS-scheduler registration (launchd/cron) for the daily dream cycle, including the memory review report phase, installed by `setup-agent --apply` (skip with `--no-autopilot`)
 - `docs/MBRAIN_AGENT_RULES.md` — Compact behavioral rules for AI agents (injected by setup-agent)
 - `docs/MCP_INSTRUCTIONS.md` — Documentation copy of the `MCP_INSTRUCTIONS` constant returned by the server in `InitializeResult` (runtime source: `src/core/operations.ts`)
 - `skills/codemap-ingest/SKILL.md` — Technical knowledge map workflow for system pages + codemap-backed concepts
@@ -75,7 +75,7 @@ Run `mbrain --help` or `mbrain --tools-json` for full command reference. For loc
 
 Deterministic brain-quality tools (no LLM calls, no DB connection, engine-agnostic): `mbrain publish` renders a brain page as a self-contained HTML (optionally AES-256-GCM encrypted behind a password), `mbrain check-backlinks check|fix` enforces the Iron Law of Back-Linking across a brain directory, `mbrain lint` flags LLM preambles, broken frontmatter, and placeholder dates (use `--fix` to auto-clean), and `mbrain report --type <name>` saves a timestamped report into `brain/reports/{type}/YYYY-MM-DD-HHMM.md`.
 
-`mbrain auto-promote --digest` saves a dry-run/apply digest report (promotable counts, exclusions grouped by reason) into `brain/reports/auto-promote-digest/` via `saveBrainReport` from `src/commands/report.ts`. `mbrain auto-promote` runs a judge-only LLM verdict on eligible Memory Inbox candidates and, when confidence is high enough, the deterministic gate advances/promotes the inbox rows, records canonical handoff rows, and writes page-backed canonical notes through the existing `put_page` governance path (default dry-run; pass `--apply` to mutate). The command is config-gated (`auto_promote.enabled`, default off), excludes open contradictions by default, and rechecks target content hashes before canonical page writes. Candidates carry a verification record (`verify_memory_candidate_entry` / `mbrain verify-memory-candidate`): refuted candidates are excluded from auto-promotion and denied at promotion preflight, verified candidates clear the revalidation defer and upgrade risky (inferred/ambiguous) extraction to the canonical-eligible lane, and `auto_promote.eligibility.require_verification` (default off) restricts the canonical lane to verified candidates only. A dream phase `auto_promote` (order 15) also exists in the dream cycle and is wired into `mbrain dream` / autopilot dream runs when local runner use is explicitly allowed.
+`mbrain auto-promote --digest` saves a dry-run/apply digest report (promotable counts, exclusions grouped by reason) into `brain/reports/auto-promote-digest/` via `saveBrainReport` from `src/commands/report.ts`. `mbrain auto-promote` runs a judge-only LLM verdict on eligible Memory Inbox candidates and, when confidence is high enough, the deterministic gate advances/promotes the inbox rows, records canonical handoff rows, and writes page-backed canonical notes through the existing `put_page` governance path (default dry-run; pass `--apply` to mutate). The command is config-gated (`auto_promote.enabled`, default off), excludes open contradictions by default, and rechecks target content hashes before canonical page writes. Candidates carry a verification record (`verify_memory_candidate_entry` / `mbrain verify-memory-candidate`): refuted candidates are excluded from auto-promotion and denied at promotion preflight, verified candidates clear the revalidation defer and upgrade risky (inferred/ambiguous) extraction to the canonical-eligible lane, and `auto_promote.eligibility.require_verification` (default on) restricts the canonical lane to verified candidates unless explicitly opted out. A dream phase `auto_promote` (order 15) also exists in the dream cycle and is wired into `mbrain dream` / autopilot dream runs when local runner use is explicitly allowed.
 
 ## Testing
 

@@ -30,7 +30,7 @@ import {
 import type {
   AutoPromoteVerdictKey, AutoPromoteVerdictRow,
   BrainHealth, BrainStats,
-  CanonicalHandoffEntry, CanonicalHandoffEntryInput, CanonicalHandoffFilters,
+  CanonicalHandoffEntry, CanonicalHandoffCompletionPatch, CanonicalHandoffEntryInput, CanonicalHandoffFilters,
   CanonicalTargetProposalDraftPatch,
   CanonicalTargetProposalEntry, CanonicalTargetProposalEntryInput, CanonicalTargetProposalFilters,
   CanonicalTargetProposalStatusEvent, CanonicalTargetProposalStatusEventFilters,
@@ -182,7 +182,8 @@ export abstract class PgEngineBase {
   // Pages CRUD
   async getPage(slug: string): Promise<Page | null> {
     const { rows } = await this.queryable.query(
-      `SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at
+      `SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at,
+              compiled_truth_changed_at, timeline_changed_at
        FROM pages WHERE slug = $1`,
       [slug]
     );
@@ -281,7 +282,8 @@ export abstract class PgEngineBase {
 
   async getPageForUpdate(slug: string): Promise<Page | null> {
     const { rows } = await this.queryable.query(
-      `SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at
+      `SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at,
+              compiled_truth_changed_at, timeline_changed_at
        FROM pages WHERE slug = $1
        FOR UPDATE`,
       [slug]
@@ -294,11 +296,26 @@ export abstract class PgEngineBase {
     slug = validateSlug(slug);
     const hash = page.content_hash || contentHash(page.compiled_truth, page.timeline || '');
     const frontmatter = page.frontmatter || {};
-    const searchText = buildFrontmatterSearchText(frontmatter);
+    const existing = await this.getPage(slug);
+    const existingTags = await this.getTags(slug);
+    const searchText = buildFrontmatterSearchText(frontmatter, existingTags);
+    const timestamp = new Date().toISOString();
+    const nextTimeline = page.timeline || '';
+    const existingCompiledTruthChangedAt = existing?.compiled_truth_changed_at?.toISOString() ?? existing?.updated_at.toISOString();
+    const existingTimelineChangedAt = existing?.timeline_changed_at?.toISOString() ?? existing?.updated_at.toISOString();
+    const compiledTruthChangedAt = existing && existing.compiled_truth === page.compiled_truth
+      ? existingCompiledTruthChangedAt ?? timestamp
+      : timestamp;
+    const timelineChangedAt = existing && existing.timeline === nextTimeline
+      ? existingTimelineChangedAt ?? timestamp
+      : timestamp;
 
     const { rows } = await this.queryable.query(
-      `INSERT INTO pages (slug, type, title, compiled_truth, timeline, search_text, frontmatter, content_hash, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, now())
+      `INSERT INTO pages (
+         slug, type, title, compiled_truth, timeline, search_text, frontmatter, content_hash,
+         updated_at, compiled_truth_changed_at, timeline_changed_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11)
        ON CONFLICT (slug) DO UPDATE SET
          type = EXCLUDED.type,
          title = EXCLUDED.title,
@@ -307,9 +324,24 @@ export abstract class PgEngineBase {
          search_text = EXCLUDED.search_text,
          frontmatter = EXCLUDED.frontmatter,
          content_hash = EXCLUDED.content_hash,
-         updated_at = now()
-       RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at`,
-      [slug, page.type, page.title, page.compiled_truth, page.timeline || '', searchText, JSON.stringify(frontmatter), hash]
+         updated_at = EXCLUDED.updated_at,
+         compiled_truth_changed_at = EXCLUDED.compiled_truth_changed_at,
+         timeline_changed_at = EXCLUDED.timeline_changed_at
+       RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at,
+                 compiled_truth_changed_at, timeline_changed_at`,
+      [
+        slug,
+        page.type,
+        page.title,
+        page.compiled_truth,
+        nextTimeline,
+        searchText,
+        JSON.stringify(frontmatter),
+        hash,
+        timestamp,
+        compiledTruthChangedAt,
+        timelineChangedAt,
+      ]
     );
     return rowToPage(rows[0] as Record<string, unknown>);
   }
@@ -681,6 +713,7 @@ export abstract class PgEngineBase {
        ON CONFLICT (page_id, tag) DO NOTHING`,
       [slug, tag]
     );
+    await this.refreshPageSearchText(slug);
   }
 
   async removeTag(slug: string, tag: string): Promise<void> {
@@ -690,6 +723,7 @@ export abstract class PgEngineBase {
          AND tag = $2`,
       [slug, tag]
     );
+    await this.refreshPageSearchText(slug);
   }
 
   async getTags(slug: string): Promise<string[]> {
@@ -702,13 +736,43 @@ export abstract class PgEngineBase {
     return (rows as { tag: string }[]).map(r => r.tag);
   }
 
+  private async refreshPageSearchText(slug: string): Promise<void> {
+    const { rows } = await this.queryable.query(
+      `SELECT frontmatter FROM pages WHERE slug = $1`,
+      [slug],
+    );
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) return;
+    const frontmatter = (
+      row.frontmatter && typeof row.frontmatter === 'object' && !Array.isArray(row.frontmatter)
+    )
+      ? row.frontmatter as Record<string, unknown>
+      : typeof row.frontmatter === 'string' && row.frontmatter.length > 0
+        ? JSON.parse(row.frontmatter) as Record<string, unknown>
+        : {};
+    const tags = await this.getTags(slug);
+    const searchText = buildFrontmatterSearchText(frontmatter, tags);
+    await this.queryable.query(
+      `UPDATE pages SET search_text = $2 WHERE slug = $1`,
+      [slug, searchText],
+    );
+  }
+
   // Timeline
   async addTimelineEntry(slug: string, entry: TimelineInput): Promise<void> {
+    const timestamp = new Date().toISOString();
     await this.queryable.query(
-      `INSERT INTO timeline_entries (page_id, date, source, summary, detail)
-       SELECT id, $2::date, $3, $4, $5
-       FROM pages WHERE slug = $1`,
-      [slug, entry.date, entry.source || '', entry.summary, entry.detail || '']
+      `WITH inserted AS (
+         INSERT INTO timeline_entries (page_id, date, source, summary, detail, created_at)
+         SELECT id, $2::date, $3, $4, $5, $6::timestamptz
+         FROM pages WHERE slug = $1
+         RETURNING page_id
+       )
+       UPDATE pages
+       SET updated_at = $6::timestamptz,
+           timeline_changed_at = $6::timestamptz
+       WHERE id IN (SELECT page_id FROM inserted)`,
+      [slug, entry.date, entry.source || '', entry.summary, entry.detail || '', timestamp]
     );
   }
 
@@ -839,7 +903,7 @@ export abstract class PgEngineBase {
           ? JSON.parse(version.frontmatter) as Record<string, unknown>
           : {};
       const tags = await txEngine.getTags(normalizedSlug);
-      const searchText = buildFrontmatterSearchText(frontmatter);
+      const searchText = buildFrontmatterSearchText(frontmatter, tags);
       const hash = importContentHash({
         title: version.title as string,
         type: version.type as PageType,
@@ -906,7 +970,7 @@ export abstract class PgEngineBase {
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
         (SELECT count(*) FROM pages p
-         WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
+         WHERE p.timeline_changed_at > p.compiled_truth_changed_at
         ) as stale_pages,
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
@@ -1143,10 +1207,12 @@ export abstract class PgEngineBase {
     const { rows } = await this.queryable.query(
       `INSERT INTO retrieval_traces (
         id, task_id, scope, route, source_refs, derived_consulted, verification,
-        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome
-      ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12)
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason,
+        elapsed_ms, retrieved_token_count, outcome
+      ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13, $14)
       RETURNING id, task_id, scope, route, source_refs, derived_consulted, verification,
-        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at`,
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason,
+        elapsed_ms, retrieved_token_count, outcome, created_at`,
       [
         input.id,
         input.task_id ?? null,
@@ -1159,6 +1225,8 @@ export abstract class PgEngineBase {
         input.selected_intent ?? null,
         input.scope_gate_policy ?? null,
         input.scope_gate_reason ?? null,
+        input.elapsed_ms ?? null,
+        input.retrieved_token_count ?? null,
         input.outcome,
       ],
     );
@@ -1168,7 +1236,8 @@ export abstract class PgEngineBase {
   async getRetrievalTrace(id: string): Promise<RetrievalTrace | null> {
     const { rows } = await this.queryable.query(
       `SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,
-        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason,
+        elapsed_ms, retrieved_token_count, outcome, created_at
        FROM retrieval_traces
        WHERE id = $1`,
       [id],
@@ -1180,7 +1249,8 @@ export abstract class PgEngineBase {
   async listRetrievalTraces(taskId: string, opts?: { limit?: number }): Promise<RetrievalTrace[]> {
     const { rows } = await this.queryable.query(
       `SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,
-        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason,
+        elapsed_ms, retrieved_token_count, outcome, created_at
        FROM retrieval_traces
        WHERE task_id = $1
        ORDER BY created_at DESC, id DESC
@@ -1207,7 +1277,8 @@ export abstract class PgEngineBase {
     params.push(filters.offset ?? 0);
     const { rows } = await this.queryable.query(
       `SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,
-        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason,
+        elapsed_ms, retrieved_token_count, outcome, created_at
        FROM retrieval_traces
        WHERE ${clauses.join(' AND ')}
        ORDER BY created_at DESC, id DESC
@@ -3097,7 +3168,8 @@ export abstract class PgEngineBase {
         AND target_object_id = $5
       ON CONFLICT DO NOTHING
       RETURNING id, scope_id, candidate_id, target_object_type, target_object_id, source_refs,
-                reviewed_at, review_reason, interaction_id, created_at, updated_at`,
+                reviewed_at, review_reason, interaction_id, completed_at, completion_kind, completion_ref,
+                created_at, updated_at`,
       [
         input.id,
         input.scope_id,
@@ -3115,10 +3187,40 @@ export abstract class PgEngineBase {
     return rowToCanonicalHandoffEntry(rows[0] as Record<string, unknown>);
   }
 
+  async completeCanonicalHandoffEntry(
+    input: CanonicalHandoffCompletionPatch,
+  ): Promise<CanonicalHandoffEntry | null> {
+    const completedAt = input.completed_at instanceof Date
+      ? input.completed_at.toISOString()
+      : input.completed_at ?? new Date().toISOString();
+    const { rows } = await this.queryable.query(
+      `UPDATE canonical_handoff_entries
+       SET completed_at = $2,
+           completion_kind = $3,
+           completion_ref = $4,
+           updated_at = now()
+       WHERE id = $1
+       RETURNING id, scope_id, candidate_id, target_object_type, target_object_id, source_refs,
+                 reviewed_at, review_reason, interaction_id, completed_at, completion_kind, completion_ref,
+                 created_at, updated_at`,
+      [
+        input.id,
+        completedAt,
+        input.completion_kind,
+        input.completion_ref ?? null,
+      ],
+    );
+    if (rows.length === 0) {
+      return null;
+    }
+    return rowToCanonicalHandoffEntry(rows[0] as Record<string, unknown>);
+  }
+
   async getCanonicalHandoffEntry(id: string): Promise<CanonicalHandoffEntry | null> {
     const { rows } = await this.queryable.query(
       `SELECT id, scope_id, candidate_id, target_object_type, target_object_id, source_refs,
-              reviewed_at, review_reason, interaction_id, created_at, updated_at
+              reviewed_at, review_reason, interaction_id, completed_at, completion_kind, completion_ref,
+              created_at, updated_at
        FROM canonical_handoff_entries
        WHERE id = $1`,
       [id],
@@ -3153,7 +3255,8 @@ export abstract class PgEngineBase {
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
     const { rows } = await this.queryable.query(
       `SELECT id, scope_id, candidate_id, target_object_type, target_object_id, source_refs,
-              reviewed_at, review_reason, interaction_id, created_at, updated_at
+              reviewed_at, review_reason, interaction_id, completed_at, completion_kind, completion_ref,
+              created_at, updated_at
        FROM canonical_handoff_entries
        ${whereClause}
        ORDER BY created_at DESC, id ASC
@@ -3174,7 +3277,8 @@ export abstract class PgEngineBase {
       const placeholders = chunk.map((_, index) => `$${index + 1}`).join(', ');
       const { rows } = await this.queryable.query(
         `SELECT id, scope_id, candidate_id, target_object_type, target_object_id, source_refs,
-                reviewed_at, review_reason, interaction_id, created_at, updated_at
+                reviewed_at, review_reason, interaction_id, completed_at, completion_kind, completion_ref,
+                created_at, updated_at
          FROM canonical_handoff_entries
          WHERE interaction_id IN (${placeholders})
          ORDER BY created_at DESC, id ASC`,
@@ -4682,7 +4786,14 @@ export abstract class PgEngineBase {
   async searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
     const limit = opts?.limit || 20;
     const params: unknown[] = [query];
+    const cjkPrefixQuery = cjkTsPrefixQuery(query);
+    let cjkPrefixParam = '';
     let filterSql = '';
+
+    if (cjkPrefixQuery) {
+      params.push(cjkPrefixQuery);
+      cjkPrefixParam = `$${params.length}`;
+    }
 
     if (opts?.type) {
       params.push(opts.type);
@@ -4693,6 +4804,29 @@ export abstract class PgEngineBase {
       params.push(opts.exclude_slugs.map((slug) => validateSlug(slug)));
       filterSql += ` AND p.slug != ALL($${params.length}::text[])`;
     }
+    filterSql += pgSearchTemporalFilter(opts, params, 'p');
+
+    params.push(limit);
+    const limitParam = `$${params.length}`;
+    const cjkPageText = "coalesce(p.search_text, '') || ' ' || coalesce(p.compiled_truth, '') || ' ' || coalesce(p.timeline, '')";
+    const cjkWhereSql = cjkPrefixQuery
+      ? ` OR to_tsvector('simple', ${cjkPageText}) @@ to_tsquery('simple', ${cjkPrefixParam})`
+      : '';
+    const cjkFrontmatterScoreSql = cjkPrefixQuery
+      ? `ts_rank(to_tsvector('simple', coalesce(p.search_text, '')), to_tsquery('simple', ${cjkPrefixParam}))`
+      : '0';
+    const cjkCompiledScoreSql = cjkPrefixQuery
+      ? `ts_rank(to_tsvector('simple', coalesce(p.compiled_truth, '')), to_tsquery('simple', ${cjkPrefixParam}))`
+      : '0';
+    const cjkTimelineScoreSql = cjkPrefixQuery
+      ? `ts_rank(to_tsvector('simple', coalesce(p.timeline, '')), to_tsquery('simple', ${cjkPrefixParam}))`
+      : '0';
+    const cjkPageScoreSql = cjkPrefixQuery
+      ? `ts_rank(to_tsvector('simple', ${cjkPageText}), to_tsquery('simple', ${cjkPrefixParam}))`
+      : '0';
+    const cjkChunkScoreSql = cjkPrefixQuery
+      ? `coalesce(ts_rank(to_tsvector('simple', coalesce(cc.chunk_text, '')), to_tsquery('simple', ${cjkPrefixParam})), 0)`
+      : '0';
 
     return this.withSearchTimeout(async (q) => {
       const { rows } = await q.query(
@@ -4706,16 +4840,28 @@ export abstract class PgEngineBase {
           p.id AS page_id,
           p.title,
           p.type,
+          p.updated_at,
+          NULLIF(p.frontmatter->>'superseded_by', '') AS superseded_by,
           p.compiled_truth,
           p.timeline,
           p.search_text,
-          ts_rank(to_tsvector('english', coalesce(p.search_text, '')), websearch_to_tsquery('english', $1)) AS frontmatter_score,
-          ts_rank(to_tsvector('english', coalesce(p.compiled_truth, '')), websearch_to_tsquery('english', $1)) AS compiled_score,
-          ts_rank(to_tsvector('english', coalesce(p.timeline, '')), websearch_to_tsquery('english', $1)) AS timeline_score,
-          ts_rank(p.search_vector, websearch_to_tsquery('english', $1)) AS page_score,
-          CASE WHEN p.updated_at < (
-            SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-          ) THEN true ELSE false END AS stale,
+          GREATEST(
+            ts_rank(to_tsvector('english', coalesce(p.search_text, '')), websearch_to_tsquery('english', $1)),
+            ${cjkFrontmatterScoreSql}
+          ) AS frontmatter_score,
+          GREATEST(
+            ts_rank(to_tsvector('english', coalesce(p.compiled_truth, '')), websearch_to_tsquery('english', $1)),
+            ${cjkCompiledScoreSql}
+          ) AS compiled_score,
+          GREATEST(
+            ts_rank(to_tsvector('english', coalesce(p.timeline, '')), websearch_to_tsquery('english', $1)),
+            ${cjkTimelineScoreSql}
+          ) AS timeline_score,
+          GREATEST(
+            ts_rank(p.search_vector, websearch_to_tsquery('english', $1)),
+            ${cjkPageScoreSql}
+          ) AS page_score,
+          CASE WHEN p.timeline_changed_at > p.compiled_truth_changed_at THEN true ELSE false END AS stale,
           dis.artifact_kind AS derived_artifact_kind,
           dis.status AS derived_status,
           dis.target_content_hash AS derived_target_content_hash,
@@ -4725,10 +4871,13 @@ export abstract class PgEngineBase {
           ON dis.scope_id = 'workspace:default'
          AND dis.slug = p.slug
          AND dis.artifact_kind = 'page_chunks'
-        WHERE p.search_vector @@ websearch_to_tsquery('english', $1)${filterSql}
-      )
+        WHERE (p.search_vector @@ websearch_to_tsquery('english', $1)${cjkWhereSql})${filterSql}
+      ),
+      selected AS (
       SELECT DISTINCT ON (ranked.slug)
         ranked.slug, ranked.page_id, ranked.title, ranked.type,
+        ranked.updated_at,
+        ranked.superseded_by,
         CASE
           WHEN ranked.chunk_score > 0
             AND ranked.chunk_source = ranked.selected_source THEN ranked.chunk_text
@@ -4772,22 +4921,23 @@ export abstract class PgEngineBase {
             cc.chunk_source,
             cc.chunk_index,
             cc.chunk_content_hash,
-            coalesce(ts_rank(to_tsvector('english', coalesce(cc.chunk_text, '')), websearch_to_tsquery('english', $1)), 0) AS chunk_score
+            GREATEST(
+              coalesce(ts_rank(to_tsvector('english', coalesce(cc.chunk_text, '')), websearch_to_tsquery('english', $1)), 0),
+              ${cjkChunkScoreSql}
+            ) AS chunk_score
           FROM pm
           LEFT JOIN content_chunks cc ON cc.page_id = pm.page_id
         ) scored
       ) ranked
-      ORDER BY ranked.slug, GREATEST(ranked.frontmatter_score, ranked.compiled_score, ranked.timeline_score, ranked.chunk_score) DESC, ranked.page_score DESC, (ranked.chunk_score > 0 AND ranked.chunk_source = ranked.selected_source) DESC, ranked.chunk_index ASC`,
+      ORDER BY ranked.slug, GREATEST(ranked.frontmatter_score, ranked.compiled_score, ranked.timeline_score, ranked.chunk_score) DESC, ranked.page_score DESC, (ranked.chunk_score > 0 AND ranked.chunk_source = ranked.selected_source) DESC, ranked.chunk_index ASC
+      )
+      SELECT * FROM selected
+      ORDER BY score DESC, updated_at DESC
+      LIMIT ${limitParam}`,
       params
       );
 
-      // Re-sort by score (DISTINCT ON requires ORDER BY slug first) and apply limit
-      const sorted = (rows as Record<string, unknown>[]).sort(
-        (a: any, b: any) => b.score - a.score
-      );
-      sorted.splice(limit);
-
-      return sorted.map((row) => rowToSearchResult(row, query));
+      return (rows as Record<string, unknown>[]).map((row) => rowToSearchResult(row, query));
     });
   }
 
@@ -4807,6 +4957,7 @@ export abstract class PgEngineBase {
       params.push(opts.exclude_slugs.map((slug) => validateSlug(slug)));
       filterSql += ` AND p.slug != ALL($${params.length}::text[])`;
     }
+    filterSql += pgSearchTemporalFilter(opts, params, 'p');
 
     params.push(limit);
 
@@ -4814,15 +4965,15 @@ export abstract class PgEngineBase {
       const { rows } = await q.query(
         `SELECT
           p.slug, p.id as page_id, p.title, p.type,
+          p.updated_at,
+          NULLIF(p.frontmatter->>'superseded_by', '') AS superseded_by,
           cc.chunk_text, cc.chunk_source, cc.chunk_index, cc.chunk_content_hash,
           1 - (cc.embedding <=> $1::vector) AS score,
-          CASE WHEN p.updated_at < (
-            SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-          ) THEN true ELSE false END AS stale
+          CASE WHEN p.timeline_changed_at > p.compiled_truth_changed_at THEN true ELSE false END AS stale
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         WHERE cc.embedding IS NOT NULL${filterSql}
-        ORDER BY cc.embedding <=> $1::vector
+        ORDER BY score DESC, p.updated_at DESC
         LIMIT $${params.length}`,
         params
       );
@@ -4841,6 +4992,36 @@ export abstract class PgEngineBase {
 
 function vectorLiteral(embedding: Float32Array): string {
   return `[${Array.from(embedding).join(',')}]`;
+}
+
+function cjkTsPrefixQuery(query: string): string | null {
+  const tokens = Array.from(query.matchAll(/[\p{Script=Han}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}][\p{Script=Han}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}\p{N}]*/gu))
+    .map((match) => match[0])
+    .filter((token) => token.length > 0);
+  if (tokens.length === 0) return null;
+  return Array.from(new Set(tokens)).map((token) => `${token}:*`).join(' | ');
+}
+
+function pgSearchTemporalFilter(opts: SearchOpts | undefined, params: unknown[], alias: string): string {
+  let sql = '';
+  const updatedAfter = searchDateParam(opts?.updated_after);
+  if (updatedAfter) {
+    params.push(updatedAfter);
+    sql += ` AND ${alias}.updated_at >= $${params.length}::timestamptz`;
+  }
+  const updatedBefore = searchDateParam(opts?.updated_before);
+  if (updatedBefore) {
+    params.push(updatedBefore);
+    sql += ` AND ${alias}.updated_at <= $${params.length}::timestamptz`;
+  }
+  return sql;
+}
+
+function searchDateParam(value: Date | string | undefined): string | null {
+  if (value == null) return null;
+  if (value instanceof Date) return value.toISOString();
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
 const INTERACTION_ID_LOOKUP_BATCH_SIZE = 500;

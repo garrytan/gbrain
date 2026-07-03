@@ -535,6 +535,9 @@ const MIGRATIONS: Migration[] = [
         source_refs JSONB NOT NULL DEFAULT '[]',
         reviewed_at TIMESTAMPTZ,
         review_reason TEXT,
+        completed_at TIMESTAMPTZ,
+        completion_kind TEXT CHECK (completion_kind IS NULL OR completion_kind IN ('patch_applied', 'page_written', 'manual')),
+        completion_ref TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
@@ -3496,6 +3499,8 @@ const MIGRATIONS: Migration[] = [
               selected_intent TEXT,
               scope_gate_policy TEXT,
               scope_gate_reason TEXT,
+              elapsed_ms INTEGER,
+              retrieved_token_count INTEGER,
               outcome TEXT NOT NULL DEFAULT '',
               created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             );
@@ -3512,6 +3517,8 @@ const MIGRATIONS: Migration[] = [
               selected_intent TEXT,
               scope_gate_policy TEXT,
               scope_gate_reason TEXT,
+              elapsed_ms INTEGER,
+              retrieved_token_count INTEGER,
               outcome TEXT NOT NULL DEFAULT '',
               created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             );
@@ -3577,6 +3584,90 @@ const MIGRATIONS: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_context_eval_corrections_trace_created
         ON context_eval_corrections(trace_id, created_at DESC);
+    `,
+  },
+  {
+    version: 61,
+    name: 'retrieval_trace_metrics',
+    sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('retrieval_traces') IS NOT NULL THEN
+          ALTER TABLE retrieval_traces
+            ADD COLUMN IF NOT EXISTS elapsed_ms INTEGER;
+          ALTER TABLE retrieval_traces
+            ADD COLUMN IF NOT EXISTS retrieved_token_count INTEGER;
+        END IF;
+      END
+      $$;
+    `,
+  },
+  {
+    version: 62,
+    name: 'canonical_handoff_completion',
+    sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('canonical_handoff_entries') IS NOT NULL THEN
+          ALTER TABLE canonical_handoff_entries
+            ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+          ALTER TABLE canonical_handoff_entries
+            ADD COLUMN IF NOT EXISTS completion_kind TEXT;
+          ALTER TABLE canonical_handoff_entries
+            ADD COLUMN IF NOT EXISTS completion_ref TEXT;
+        END IF;
+      END
+      $$;
+    `,
+  },
+  {
+    version: 63,
+    name: 'page_zone_timestamps',
+    sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('pages') IS NOT NULL THEN
+          ALTER TABLE pages
+            ADD COLUMN IF NOT EXISTS compiled_truth_changed_at TIMESTAMPTZ;
+          ALTER TABLE pages
+            ADD COLUMN IF NOT EXISTS timeline_changed_at TIMESTAMPTZ;
+
+          IF to_regclass('timeline_entries') IS NOT NULL THEN
+            UPDATE pages
+            SET compiled_truth_changed_at = COALESCE(compiled_truth_changed_at, updated_at, created_at, now()),
+                timeline_changed_at = COALESCE(
+                  timeline_changed_at,
+                  GREATEST(
+                    COALESCE(updated_at, created_at, now()),
+                    COALESCE(
+                      (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = pages.id),
+                      updated_at,
+                      created_at,
+                      now()
+                    )
+                  )
+                )
+            WHERE compiled_truth_changed_at IS NULL
+               OR timeline_changed_at IS NULL;
+          ELSE
+            UPDATE pages
+            SET compiled_truth_changed_at = COALESCE(compiled_truth_changed_at, updated_at, created_at, now()),
+                timeline_changed_at = COALESCE(timeline_changed_at, updated_at, created_at, now())
+            WHERE compiled_truth_changed_at IS NULL
+               OR timeline_changed_at IS NULL;
+          END IF;
+
+          ALTER TABLE pages
+            ALTER COLUMN compiled_truth_changed_at SET NOT NULL;
+          ALTER TABLE pages
+            ALTER COLUMN compiled_truth_changed_at SET DEFAULT now();
+          ALTER TABLE pages
+            ALTER COLUMN timeline_changed_at SET NOT NULL;
+          ALTER TABLE pages
+            ALTER COLUMN timeline_changed_at SET DEFAULT now();
+        END IF;
+      END
+      $$;
     `,
   },
 ];

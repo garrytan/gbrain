@@ -2,9 +2,9 @@ import type { BrainEngine } from '../engine.ts';
 import type { MemoryCandidateEntry, Page, PageType } from '../types.ts';
 import type { PromotionDecision, PromotionVerdict } from './verdict.ts';
 import type { AutoPromoteConfig } from './config.ts';
-import { advanceMemoryCandidateStatus } from '../services/memory-inbox-service.ts';
+import { advanceMemoryCandidateStatus, preflightPromoteMemoryCandidate } from '../services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../services/memory-inbox-promotion-service.ts';
-import { recordCanonicalHandoff } from '../services/canonical-handoff-service.ts';
+import { completeCanonicalHandoff, recordCanonicalHandoff } from '../services/canonical-handoff-service.ts';
 import { operationsByName, type OperationContext } from '../operations.ts';
 import type { MBrainConfig } from '../config.ts';
 
@@ -117,6 +117,19 @@ export async function runPromoteGate(input: PromoteGateInput): Promise<PromoteGa
     }
 
     try {
+      const preflight = await preflightPromoteMemoryCandidate(input.engine, {
+        id: candidate.id,
+        allow_active_status: true,
+      });
+      if (preflight.decision !== 'allow') {
+        const reason = preflight.reasons[0] ?? `preflight_${preflight.decision}`;
+        result.skipped.push({ id: candidate.id, reason });
+        result.audit.push(buildAuditEntry(input, v, candidate, {
+          gate_skip_reason: reason,
+          canonical_write_result: 'skipped',
+        }));
+        continue;
+      }
       await advanceToStaged(input.engine, candidate, input.now, input.actor);
       await promoteMemoryCandidateEntry(input.engine, {
         id: candidate.id,
@@ -241,6 +254,12 @@ async function canonicalizePromotedCandidate(
       reviewed_at: input.now,
       review_reason: `auto_promote applied approved canonical patch (${input.actor})`,
       source_refs: sourceRefs,
+    });
+    await completeCanonicalHandoff(input.engine, {
+      id: handoff.handoff.id,
+      completed_at: input.now,
+      completion_kind: 'patch_applied',
+      completion_ref: createPatchResult.id,
     });
     return { handoff: true, write_slug: targetSlug, patch_candidate_id: createPatchResult.id };
   } catch (error) {

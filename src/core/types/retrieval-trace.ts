@@ -13,6 +13,8 @@ export interface RetrievalTrace {
   selected_intent: RetrievalRouteIntent | null;
   scope_gate_policy: ScopeGatePolicy | null;
   scope_gate_reason: string | null;
+  elapsed_ms: number | null;
+  retrieved_token_count: number | null;
   outcome: string;
   created_at: Date;
 }
@@ -31,6 +33,8 @@ export interface RetrievalTraceInput {
   selected_intent?: RetrievalRouteIntent | null;
   scope_gate_policy?: ScopeGatePolicy | null;
   scope_gate_reason?: string | null;
+  elapsed_ms?: number | null;
+  retrieved_token_count?: number | null;
   outcome: string;
 }
 

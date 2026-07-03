@@ -460,6 +460,40 @@ test('memory inbox service defers promotion preflight for unverified staged cand
   }
 });
 
+test('memory inbox service defers promotion preflight for unresolved contradictions', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-inbox-service-preflight-contradiction-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+    await seedCandidate(engine, 'candidate-contradiction-a', 'staged_for_review');
+    await seedCandidate(engine, 'candidate-contradiction-b', 'staged_for_review');
+    await verifyCandidate(engine, 'candidate-contradiction-a');
+    await verifyCandidate(engine, 'candidate-contradiction-b');
+    await engine.createMemoryCandidateContradictionEntry({
+      id: 'contradiction-open',
+      scope_id: 'workspace:default',
+      candidate_id: 'candidate-contradiction-a',
+      challenged_candidate_id: 'candidate-contradiction-b',
+      outcome: 'unresolved',
+      supersession_entry_id: null,
+      reviewed_at: '2026-07-03T00:00:00.000Z',
+      review_reason: 'Fixture keeps the contradiction open.',
+    });
+
+    const result = await preflightPromoteMemoryCandidate(engine, { id: 'candidate-contradiction-a' });
+
+    expect(result.decision).toBe('defer');
+    expect(result.reasons).toContain('candidate_open_contradiction');
+    expect(result.summary_lines).toContain('Reasons: candidate has an unresolved contradiction.');
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('memory inbox service denies promotion preflight without provenance', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-inbox-service-preflight-provenance-'));
   const databasePath = join(dir, 'brain.db');

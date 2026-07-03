@@ -45,6 +45,8 @@ import type {
 } from '../types.ts';
 
 export function rowToPage(row: Record<string, unknown>): Page {
+  const updatedAt = new Date(row.updated_at as string);
+  const createdAt = new Date(row.created_at as string);
   return {
     id: row.id as number,
     slug: row.slug as string,
@@ -54,8 +56,14 @@ export function rowToPage(row: Record<string, unknown>): Page {
     timeline: row.timeline as string,
     frontmatter: (typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter) as Record<string, unknown>,
     content_hash: row.content_hash as string | undefined,
-    created_at: new Date(row.created_at as string),
-    updated_at: new Date(row.updated_at as string),
+    created_at: createdAt,
+    updated_at: updatedAt,
+    compiled_truth_changed_at: row.compiled_truth_changed_at
+      ? new Date(row.compiled_truth_changed_at as string)
+      : updatedAt,
+    timeline_changed_at: row.timeline_changed_at
+      ? new Date(row.timeline_changed_at as string)
+      : updatedAt,
   };
 }
 
@@ -122,6 +130,8 @@ export function rowToSearchResult(row: Record<string, unknown>, query?: string):
     chunk_content_hash: nullableString(row.chunk_content_hash),
     score: Number(row.score),
     stale: Boolean(row.stale),
+    updated_at: row.updated_at == null ? undefined : new Date(String(row.updated_at)),
+    superseded_by: nullableString(row.superseded_by),
     ...searchResultDerivedFields(row),
   };
 }
@@ -753,6 +763,9 @@ export function rowToCanonicalHandoffEntry(
     reviewed_at: row.reviewed_at ? new Date(row.reviewed_at as string) : null,
     review_reason: (row.review_reason as string | null) ?? null,
     interaction_id: row.interaction_id == null ? null : String(row.interaction_id),
+    completed_at: row.completed_at ? new Date(row.completed_at as string) : null,
+    completion_kind: (row.completion_kind as CanonicalHandoffEntry['completion_kind']) ?? null,
+    completion_ref: (row.completion_ref as string | null) ?? null,
     created_at: new Date(row.created_at as string),
     updated_at: new Date(row.updated_at as string),
   };
@@ -824,6 +837,8 @@ export function rowToRetrievalTrace(row: Record<string, unknown>): RetrievalTrac
     selected_intent: (row.selected_intent as RetrievalTrace['selected_intent'] | null) ?? null,
     scope_gate_policy: (row.scope_gate_policy as RetrievalTrace['scope_gate_policy'] | null) ?? null,
     scope_gate_reason: (row.scope_gate_reason as string | null) ?? null,
+    elapsed_ms: row.elapsed_ms == null ? null : Number(row.elapsed_ms),
+    retrieved_token_count: row.retrieved_token_count == null ? null : Number(row.retrieved_token_count),
     outcome: (row.outcome as string | null) ?? '',
     created_at: new Date(row.created_at as string),
   };

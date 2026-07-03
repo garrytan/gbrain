@@ -405,6 +405,29 @@ describe('read context service', () => {
     });
   });
 
+  test('estimates CJK-heavy reads with a tighter character budget', async () => {
+    await withEngine('cjk-token-estimate', async (engine) => {
+      await importFromContent(engine, 'concepts/cjk-budget', [
+        '---',
+        'type: concept',
+        'title: CJK Budget',
+        '---',
+        '# Compiled Truth',
+        '레벨리온은한국어검색을검증한다',
+        '[Source: User, direct message, 2026-07-03 09:00 KST]',
+      ].join('\n'), { path: 'concepts/cjk-budget.md' });
+
+      const result = await readContext(engine, {
+        selectors: [{ kind: 'compiled_truth', slug: 'concepts/cjk-budget' }],
+        token_budget: 8,
+      });
+
+      expect(Array.from(result.canonical_reads[0]!.text).length).toBeLessThanOrEqual(24);
+      expect(result.canonical_reads[0]!.token_estimate).toBeLessThanOrEqual(8);
+      expect(result.canonical_reads[0]!.has_more).toBe(true);
+    });
+  });
+
   test('reads page with included timeline without materializing the full page', async () => {
     await withEngine('page-include-timeline-projection', async (engine) => {
       await importFromContent(engine, 'concepts/page-projection-context', [
@@ -1682,6 +1705,35 @@ describe('read context service', () => {
 
       const traces = await engine.listRetrievalTraces('task-read-trace', { limit: 5 });
       expect(traces.map((trace) => trace.id)).toContain(result.trace!.id);
+    });
+  });
+
+  test('persists read_context traces by default with timing and token metrics', async () => {
+    await withEngine('persist-trace-default', async (engine) => {
+      await importFromContent(engine, 'concepts/retrieval', [
+        '---',
+        'type: concept',
+        'title: Retrieval',
+        '---',
+        '# Compiled Truth',
+        'Read context should persist trace metrics by default.',
+        '[Source: User, direct message, 2026-07-03 09:00 KST]',
+      ].join('\n'), { path: 'concepts/retrieval.md' });
+
+      const defaultResult = await readContext(engine, {
+        selectors: [{ kind: 'compiled_truth', slug: 'concepts/retrieval' }],
+        token_budget: 400,
+      });
+      const optOutResult = await readContext(engine, {
+        selectors: [{ kind: 'compiled_truth', slug: 'concepts/retrieval' }],
+        token_budget: 400,
+        persist_trace: false,
+      });
+
+      expect(defaultResult.trace?.route).toEqual(['read_context']);
+      expect(defaultResult.trace?.elapsed_ms).toEqual(expect.any(Number));
+      expect(defaultResult.trace?.retrieved_token_count).toBeGreaterThan(0);
+      expect(optOutResult.trace).toBeUndefined();
     });
   });
 

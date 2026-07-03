@@ -129,8 +129,36 @@ describe('runPromoteGate', () => {
       expect(page?.compiled_truth).toContain('[Source: User, direct message, 2026-04-22 3:01 PM KST]');
       const handoffs = await engine.listCanonicalHandoffEntries({ candidate_id: candidate.id });
       expect(handoffs).toHaveLength(1);
+      expect(handoffs[0]!.completed_at?.toISOString()).toBe('2026-06-01T00:00:00.000Z');
+      expect(handoffs[0]!.completion_kind).toBe('patch_applied');
+      expect(handoffs[0]!.completion_ref).toBe(`auto-promote-patch:${candidate.id}`);
       const events = await engine.listMemoryMutationEvents({ operation: 'apply_memory_patch_candidate', target_id: 'concepts/acme' });
       expect(events.some((event) => event.source_refs.includes(`canonical_handoff:${handoffs[0]!.id}`))).toBe(true);
+    });
+  });
+  it('preflights unverified candidates before staging them for promotion', async () => {
+    await withEngine(async (engine) => {
+      const cfg = { ...defaultAutoPromoteConfig(), dry_run: false };
+      const candidate = await seedEligibleCandidate(engine, 'unverified-candidate', {
+        status: 'candidate',
+        verification_status: 'unverified',
+      });
+
+      const res = await runPromoteGate({
+        engine,
+        verdicts: [{ candidate_id: candidate.id, decision: 'promote' as const, confidence: 0.95, reasoning: 'ok', source_refs: [] }],
+        candidates: [candidate],
+        config: cfg,
+        now: '2026-06-01T00:00:00Z',
+        actor: 'mbrain:auto_promote',
+        canonical_write_candidate_ids: new Set([candidate.id]),
+      });
+
+      expect(res.promoted).toEqual([]);
+      expect(res.skipped).toContainEqual({ id: candidate.id, reason: 'candidate_requires_verification' });
+      expect((await engine.getMemoryCandidateEntry(candidate.id))?.status).toBe('candidate');
+      const events = await engine.listMemoryCandidateStatusEvents({ candidate_id: candidate.id });
+      expect(events.filter((event) => event.event_kind === 'advanced')).toHaveLength(0);
     });
   });
   it('preserves existing canonical page tags when applying an auto-promote patch', async () => {

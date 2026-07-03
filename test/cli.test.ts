@@ -276,7 +276,7 @@ describe('CLI source shape', () => {
     expect(getHttpOAuthServeStartupErrors({
       oauth: true,
       publicBaseUrl: undefined,
-      oauthApprovalToken: 'owner-secret',
+      oauthApprovalToken: 'owner-secret-long',
       oauthSigningSecret: 'test-signing-secret',
     })).toEqual([
       'OAuth requires --public-url or MBRAIN_HTTP_PUBLIC_URL when OAuth is enabled.',
@@ -285,9 +285,37 @@ describe('CLI source shape', () => {
     expect(getHttpOAuthServeStartupErrors({
       oauth: true,
       publicBaseUrl: 'https://brain.example.com',
-      oauthApprovalToken: 'owner-secret',
+      oauthApprovalToken: 'owner-secret-long',
       oauthSigningSecret: 'test-signing-secret',
     })).toEqual([]);
+  });
+
+  test('serve refuses OAuth startup when approval token is too short', async () => {
+    const { getHttpOAuthServeStartupErrors } = await import('../src/commands/serve.ts');
+
+    expect(getHttpOAuthServeStartupErrors({
+      oauth: true,
+      publicBaseUrl: 'https://brain.example.com',
+      oauthApprovalToken: 'short',
+      oauthSigningSecret: 'test-signing-secret',
+    })).toEqual([
+      'OAuth approval token must be at least 16 characters.',
+    ]);
+
+    expect(getHttpOAuthServeStartupErrors({
+      oauth: true,
+      publicBaseUrl: 'https://brain.example.com',
+      oauthApprovalToken: 'sixteen-chars-ok',
+      oauthSigningSecret: 'test-signing-secret',
+    })).toEqual([]);
+  });
+
+  test('auth command is exposed as an installed CLI verb', () => {
+    expect(cliSource).toContain("'auth': async () => (await import('./commands/auth.ts')).runAuth");
+    expect(cliSource).toContain('auth <create|list|revoke|test>');
+
+    const noEngineBlock = cliSource.match(/const DIRECT_NO_ENGINE_COMMANDS:.*?= \{(.*?)\};/s)?.[1] ?? '';
+    expect(noEngineBlock).toContain('auth');
   });
 
   test('init guidance keeps pgvector troubleshooting backend-neutral', () => {
@@ -741,6 +769,7 @@ describe('CLI dispatch integration', () => {
     expect(stdout).toContain('--port');
     expect(stdout).toContain('--oauth');
     expect(stdout).toContain('--public-url');
+    expect(stdout).toContain('--tier');
     expect(stderr).toBe('');
     expect(exitCode).toBe(0);
   });

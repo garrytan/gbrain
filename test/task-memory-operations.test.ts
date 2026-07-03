@@ -184,6 +184,8 @@ test('update_task forwards the allowed patch fields to canonical task state', as
   }]);
   expect((result as any).status).toBe('blocked');
   expect((result as any).current_summary).toBe('Waiting on review feedback');
+  expect((result as any).working_set_stale).toBe(true);
+  expect((result as any).next_action).toContain('refresh_task_working_set');
 });
 
 test('update_task rejects unknown task ids with a stable error', async () => {

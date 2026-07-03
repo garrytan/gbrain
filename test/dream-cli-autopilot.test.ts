@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
@@ -218,6 +218,7 @@ describe('dream CLI and autopilot integration', () => {
     await withSQLiteEngine(async (engine, paths) => {
       const originalConfigDir = process.env.MBRAIN_CONFIG_DIR;
       const originalConfigPath = process.env.MBRAIN_CONFIG_PATH;
+      const originalCwd = process.cwd();
       process.env.MBRAIN_CONFIG_DIR = paths.configDir;
       delete process.env.MBRAIN_CONFIG_PATH;
       try {
@@ -234,9 +235,11 @@ describe('dream CLI and autopilot integration', () => {
         }, null, 2));
 
         const { runAutopilot } = await importFreshAutopilotCommand();
+        process.chdir(paths.rootDir);
         const { stdout } = await captureConsole(() => runAutopilot([
           'run-once',
         ], { engine }));
+        process.chdir(originalCwd);
         const result = JSON.parse(stdout);
 
         expect(result.status).not.toBe('failed');
@@ -246,7 +249,14 @@ describe('dream CLI and autopilot integration', () => {
         });
         expect(result.dream_result.guardrails.replay_canary.reason_codes).toContain('proof_agent_memory_passed');
         expect(result.dream_result.phases.length).toBeGreaterThan(0);
+        const dailyReportPhase = result.dream_result.phases.find((phase: any) => phase.family === 'daily_report');
+        expect(dailyReportPhase).toMatchObject({
+          counts: { saved_reports: 1 },
+        });
+        const reportPath = dailyReportPhase.source_ids[0];
+        expect(existsSync(reportPath) || existsSync(join(paths.rootDir, reportPath))).toBe(true);
       } finally {
+        process.chdir(originalCwd);
         if (originalConfigDir === undefined) delete process.env.MBRAIN_CONFIG_DIR;
         else process.env.MBRAIN_CONFIG_DIR = originalConfigDir;
         if (originalConfigPath === undefined) delete process.env.MBRAIN_CONFIG_PATH;

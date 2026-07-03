@@ -127,6 +127,7 @@ import type {
   MemoryCandidateVerificationPatch,
   MemoryCandidateStatusPatch,
   CanonicalHandoffEntry,
+  CanonicalHandoffCompletionPatch,
   CanonicalHandoffEntryInput,
   CanonicalHandoffFilters,
   ProfileMemoryEntry,
@@ -216,7 +217,9 @@ CREATE TABLE IF NOT EXISTS pages (
   page_embedding BLOB,
   content_hash TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  compiled_truth_changed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  timeline_changed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 
@@ -387,6 +390,8 @@ CREATE TABLE IF NOT EXISTS retrieval_traces (
   selected_intent TEXT,
   scope_gate_policy TEXT,
   scope_gate_reason TEXT,
+  elapsed_ms INTEGER,
+  retrieved_token_count INTEGER,
   outcome TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -931,6 +936,7 @@ export class SQLiteEngine implements BrainEngine {
     this.ensureMemoryWriteSessionSchema();
     this.ensureNoteManifestResolverMetadataSchema();
     this.ensureContextEvalLedgerSchema();
+    this.ensureRetrievalTraceMetricsSchema();
     this.backfillMissingPageEmbeddingsFromChunks();
 
     // Rebuild FTS index after schema migration. On a fresh database at baseline
@@ -1023,7 +1029,8 @@ export class SQLiteEngine implements BrainEngine {
 
   async getPage(slug: string): Promise<Page | null> {
     const row = this.database.query(`
-      SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at
+      SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at,
+             compiled_truth_changed_at, timeline_changed_at
       FROM pages
       WHERE slug = ?
     `).get(validateSlug(slug)) as Record<string, unknown> | null;
@@ -1143,11 +1150,25 @@ export class SQLiteEngine implements BrainEngine {
     const hash = page.content_hash || contentHash(page.compiled_truth, page.timeline || '');
     const frontmatterObject = page.frontmatter || {};
     const frontmatter = JSON.stringify(frontmatterObject);
-    const searchText = buildFrontmatterSearchText(frontmatterObject);
+    const existing = await this.getPage(normalizedSlug);
+    const existingTags = await this.getTags(normalizedSlug);
+    const searchText = buildFrontmatterSearchText(frontmatterObject, existingTags);
+    const nextTimeline = page.timeline || '';
+    const existingCompiledTruthChangedAt = existing?.compiled_truth_changed_at?.toISOString() ?? existing?.updated_at.toISOString();
+    const existingTimelineChangedAt = existing?.timeline_changed_at?.toISOString() ?? existing?.updated_at.toISOString();
+    const compiledTruthChangedAt = existing && existing.compiled_truth === page.compiled_truth
+      ? existingCompiledTruthChangedAt ?? now
+      : now;
+    const timelineChangedAt = existing && existing.timeline === nextTimeline
+      ? existingTimelineChangedAt ?? now
+      : now;
 
     this.database.run(`
-      INSERT INTO pages (slug, type, title, compiled_truth, timeline, search_text, frontmatter, content_hash, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO pages (
+        slug, type, title, compiled_truth, timeline, search_text, frontmatter, content_hash,
+        created_at, updated_at, compiled_truth_changed_at, timeline_changed_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(slug) DO UPDATE SET
         type = excluded.type,
         title = excluded.title,
@@ -1156,18 +1177,22 @@ export class SQLiteEngine implements BrainEngine {
         search_text = excluded.search_text,
         frontmatter = excluded.frontmatter,
         content_hash = excluded.content_hash,
-        updated_at = excluded.updated_at
+        updated_at = excluded.updated_at,
+        compiled_truth_changed_at = excluded.compiled_truth_changed_at,
+        timeline_changed_at = excluded.timeline_changed_at
     `, [
       normalizedSlug,
       page.type,
       page.title,
       page.compiled_truth,
-      page.timeline || '',
+      nextTimeline,
       searchText,
       frontmatter,
       hash,
       now,
       now,
+      compiledTruthChangedAt,
+      timelineChangedAt,
     ]);
 
     return this.requirePage(normalizedSlug);
@@ -1260,6 +1285,8 @@ export class SQLiteEngine implements BrainEngine {
         p.slug,
         p.title,
         p.type,
+        p.updated_at,
+        NULLIF(json_extract(p.frontmatter, '$.superseded_by'), '') AS superseded_by,
         p.compiled_truth,
         p.timeline,
         p.search_text,
@@ -1268,10 +1295,7 @@ export class SQLiteEngine implements BrainEngine {
         dis.target_content_hash AS derived_target_content_hash,
         dis.indexed_content_hash AS derived_indexed_content_hash,
         bm25(pages_fts, 8.0, 3.0, 2.0, 2.5) AS rank,
-        CASE WHEN EXISTS (
-          SELECT 1 FROM timeline_entries te
-          WHERE te.page_id = p.id AND p.updated_at < te.created_at
-        ) THEN 1 ELSE 0 END AS stale
+        CASE WHEN p.timeline_changed_at > p.compiled_truth_changed_at THEN 1 ELSE 0 END AS stale
       FROM pages_fts
       JOIN pages p ON p.id = pages_fts.rowid
       LEFT JOIN derived_index_state dis
@@ -1290,8 +1314,9 @@ export class SQLiteEngine implements BrainEngine {
       sql += ` AND p.slug NOT IN (${opts.exclude_slugs.map(() => '?').join(', ')})`;
       params.push(...opts.exclude_slugs.map(slug => validateSlug(slug)));
     }
+    sql += sqliteSearchTemporalFilter(opts, params, 'p');
 
-    sql += ` ORDER BY rank ASC LIMIT ?
+    sql += ` ORDER BY rank ASC, p.updated_at DESC LIMIT ?
       )
       SELECT
         matched_pages.*,
@@ -1301,7 +1326,7 @@ export class SQLiteEngine implements BrainEngine {
         cc.chunk_content_hash AS stored_chunk_content_hash
       FROM matched_pages
       LEFT JOIN content_chunks cc ON cc.page_id = matched_pages.page_id
-      ORDER BY matched_pages.rank ASC, cc.chunk_index ASC`;
+      ORDER BY matched_pages.rank ASC, matched_pages.updated_at DESC, cc.chunk_index ASC`;
     params.push(limit);
 
     try {
@@ -1600,12 +1625,14 @@ export class SQLiteEngine implements BrainEngine {
     const pageId = this.getPageId(slug);
     if (pageId === null) return;
     this.database.run(`INSERT OR IGNORE INTO tags (page_id, tag) VALUES (?, ?)`, [pageId, tag]);
+    this.refreshPageSearchText(pageId);
   }
 
   async removeTag(slug: string, tag: string): Promise<void> {
     const pageId = this.getPageId(slug);
     if (pageId === null) return;
     this.database.run(`DELETE FROM tags WHERE page_id = ? AND tag = ?`, [pageId, tag]);
+    this.refreshPageSearchText(pageId);
   }
 
   async getTags(slug: string): Promise<string[]> {
@@ -1615,13 +1642,28 @@ export class SQLiteEngine implements BrainEngine {
     return rows.map(row => row.tag);
   }
 
+  private refreshPageSearchText(pageId: number): void {
+    const row = this.database.query(`SELECT frontmatter FROM pages WHERE id = ?`).get(pageId) as Record<string, unknown> | null;
+    if (!row) return;
+    const tags = (this.database.query(`SELECT tag FROM tags WHERE page_id = ? ORDER BY tag`).all(pageId) as { tag: string }[])
+      .map((entry) => entry.tag);
+    const searchText = buildFrontmatterSearchText(parseJsonObject(row.frontmatter), tags);
+    this.database.run(`UPDATE pages SET search_text = ? WHERE id = ?`, [searchText, pageId]);
+  }
+
   async addTimelineEntry(slug: string, entry: TimelineInput): Promise<void> {
     const pageId = this.getPageId(slug);
     if (pageId === null) return;
+    const timestamp = nowIso();
     this.database.run(`
       INSERT INTO timeline_entries (page_id, date, source, summary, detail, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
-    `, [pageId, entry.date, entry.source || '', entry.summary, entry.detail || '', nowIso()]);
+    `, [pageId, entry.date, entry.source || '', entry.summary, entry.detail || '', timestamp]);
+    this.database.run(`
+      UPDATE pages
+      SET updated_at = ?, timeline_changed_at = ?
+      WHERE id = ?
+    `, [timestamp, timestamp, pageId]);
   }
 
   async getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]> {
@@ -1723,7 +1765,7 @@ export class SQLiteEngine implements BrainEngine {
     if (!row) return;
     const frontmatter = parseJsonObject(row.frontmatter);
     const tags = await this.getTags(normalizedSlug);
-    const searchText = buildFrontmatterSearchText(frontmatter);
+    const searchText = buildFrontmatterSearchText(frontmatter, tags);
     const hash = importContentHash({
       title: String(row.title),
       type: String(row.type) as PageType,
@@ -1784,10 +1826,7 @@ export class SQLiteEngine implements BrainEngine {
         (SELECT count(*) FROM pages) AS page_count,
         (SELECT count(*) FROM content_chunks) AS chunk_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL) AS embedded_count,
-        (SELECT count(*) FROM pages p WHERE EXISTS (
-          SELECT 1 FROM timeline_entries te
-          WHERE te.page_id = p.id AND p.updated_at < te.created_at
-        )) AS stale_pages,
+        (SELECT count(*) FROM pages p WHERE p.timeline_changed_at > p.compiled_truth_changed_at) AS stale_pages,
         (SELECT count(*) FROM pages p WHERE NOT EXISTS (
           SELECT 1 FROM links l WHERE l.to_page_id = p.id
         )) AS orphan_pages,
@@ -2045,8 +2084,9 @@ export class SQLiteEngine implements BrainEngine {
     this.database.run(`
       INSERT INTO retrieval_traces (
         id, task_id, scope, route, source_refs, derived_consulted, verification,
-        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason,
+        elapsed_ms, retrieved_token_count, outcome, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       input.id,
       input.task_id ?? null,
@@ -2059,13 +2099,16 @@ export class SQLiteEngine implements BrainEngine {
       input.selected_intent ?? null,
       input.scope_gate_policy ?? null,
       input.scope_gate_reason ?? null,
+      input.elapsed_ms ?? null,
+      input.retrieved_token_count ?? null,
       input.outcome,
       timestamp,
     ]);
 
     const row = this.database.query(`
       SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,
-        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason,
+        elapsed_ms, retrieved_token_count, outcome, created_at
       FROM retrieval_traces
       WHERE id = ?
     `).get(input.id) as Record<string, unknown> | null;
@@ -2076,7 +2119,8 @@ export class SQLiteEngine implements BrainEngine {
   async getRetrievalTrace(id: string): Promise<RetrievalTrace | null> {
     const row = this.database.query(`
       SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,
-        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason,
+        elapsed_ms, retrieved_token_count, outcome, created_at
       FROM retrieval_traces
       WHERE id = ?
     `).get(id) as Record<string, unknown> | null;
@@ -2086,7 +2130,8 @@ export class SQLiteEngine implements BrainEngine {
   async listRetrievalTraces(taskId: string, opts?: { limit?: number }): Promise<RetrievalTrace[]> {
     const rows = this.database.query(`
       SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,
-        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason,
+        elapsed_ms, retrieved_token_count, outcome, created_at
       FROM retrieval_traces
       WHERE task_id = ?
       ORDER BY created_at DESC, id DESC
@@ -2114,7 +2159,8 @@ export class SQLiteEngine implements BrainEngine {
     params.push(filters.limit ?? 500, filters.offset ?? 0);
     const rows = this.database.query(`
       SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,
-        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason,
+        elapsed_ms, retrieved_token_count, outcome, created_at
       FROM retrieval_traces
       WHERE ${clauses.join(' AND ')}
       ORDER BY created_at DESC, id DESC
@@ -4475,7 +4521,8 @@ export class SQLiteEngine implements BrainEngine {
 
     const row = this.database.query(`
       SELECT id, scope_id, candidate_id, target_object_type, target_object_id, source_refs,
-             reviewed_at, review_reason, interaction_id, created_at, updated_at
+             reviewed_at, review_reason, interaction_id, completed_at, completion_kind, completion_ref,
+             created_at, updated_at
       FROM canonical_handoff_entries
       WHERE id = ?
     `).get(input.id) as Record<string, unknown> | null;
@@ -4485,10 +4532,33 @@ export class SQLiteEngine implements BrainEngine {
     return rowToCanonicalHandoffEntry(row);
   }
 
+  async completeCanonicalHandoffEntry(
+    input: CanonicalHandoffCompletionPatch,
+  ): Promise<CanonicalHandoffEntry | null> {
+    const timestamp = nowIso();
+    const completedAt = toNullableIso(input.completed_at) ?? timestamp;
+    this.database.run(`
+      UPDATE canonical_handoff_entries
+      SET completed_at = ?,
+          completion_kind = ?,
+          completion_ref = ?,
+          updated_at = ?
+      WHERE id = ?
+    `, [
+      completedAt,
+      input.completion_kind,
+      input.completion_ref ?? null,
+      timestamp,
+      input.id,
+    ]);
+    return this.getCanonicalHandoffEntry(input.id);
+  }
+
   async getCanonicalHandoffEntry(id: string): Promise<CanonicalHandoffEntry | null> {
     const row = this.database.query(`
       SELECT id, scope_id, candidate_id, target_object_type, target_object_id, source_refs,
-             reviewed_at, review_reason, interaction_id, created_at, updated_at
+             reviewed_at, review_reason, interaction_id, completed_at, completion_kind, completion_ref,
+             created_at, updated_at
       FROM canonical_handoff_entries
       WHERE id = ?
     `).get(id) as Record<string, unknown> | null;
@@ -4518,7 +4588,8 @@ export class SQLiteEngine implements BrainEngine {
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = this.database.query(`
       SELECT id, scope_id, candidate_id, target_object_type, target_object_id, source_refs,
-             reviewed_at, review_reason, interaction_id, created_at, updated_at
+             reviewed_at, review_reason, interaction_id, completed_at, completion_kind, completion_ref,
+             created_at, updated_at
       FROM canonical_handoff_entries
       ${whereClause}
       ORDER BY created_at DESC, id ASC
@@ -4537,7 +4608,8 @@ export class SQLiteEngine implements BrainEngine {
       const placeholders = chunk.map(() => '?').join(', ');
       const rows = this.database.query(`
         SELECT id, scope_id, candidate_id, target_object_type, target_object_id, source_refs,
-               reviewed_at, review_reason, interaction_id, created_at, updated_at
+               reviewed_at, review_reason, interaction_id, completed_at, completion_kind, completion_ref,
+               created_at, updated_at
         FROM canonical_handoff_entries
         WHERE interaction_id IN (${placeholders})
         ORDER BY created_at DESC, id ASC
@@ -5999,6 +6071,9 @@ export class SQLiteEngine implements BrainEngine {
               target_object_id TEXT,
               reviewed_at TEXT,
               review_reason TEXT,
+              completed_at TEXT,
+              completion_kind TEXT CHECK (completion_kind IS NULL OR completion_kind IN ('patch_applied', 'page_written', 'manual')),
+              completion_ref TEXT,
               created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
               updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
@@ -6299,6 +6374,15 @@ export class SQLiteEngine implements BrainEngine {
           break;
         case 60:
           this.ensureContextEvalLedgerSchema();
+          break;
+        case 61:
+          this.ensureRetrievalTraceMetricsSchema();
+          break;
+        case 62:
+          this.ensureCanonicalHandoffCompletionSchema();
+          break;
+        case 63:
+          this.ensurePageZoneTimestampSchema();
           break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
@@ -8671,6 +8755,63 @@ export class SQLiteEngine implements BrainEngine {
     `);
   }
 
+  private ensureRetrievalTraceMetricsSchema(): void {
+    if (!this.sqliteTableExists('retrieval_traces')) return;
+    const columns = this.database.query(`PRAGMA table_info(retrieval_traces)`).all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has('elapsed_ms')) {
+      this.database.exec(`ALTER TABLE retrieval_traces ADD COLUMN elapsed_ms INTEGER;`);
+    }
+    if (!names.has('retrieved_token_count')) {
+      this.database.exec(`ALTER TABLE retrieval_traces ADD COLUMN retrieved_token_count INTEGER;`);
+    }
+  }
+
+  private ensureCanonicalHandoffCompletionSchema(): void {
+    if (!this.sqliteTableExists('canonical_handoff_entries')) return;
+    const columns = this.database.query(`PRAGMA table_info(canonical_handoff_entries)`).all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has('completed_at')) {
+      this.database.exec(`ALTER TABLE canonical_handoff_entries ADD COLUMN completed_at TEXT;`);
+    }
+    if (!names.has('completion_kind')) {
+      this.database.exec(`ALTER TABLE canonical_handoff_entries ADD COLUMN completion_kind TEXT;`);
+    }
+    if (!names.has('completion_ref')) {
+      this.database.exec(`ALTER TABLE canonical_handoff_entries ADD COLUMN completion_ref TEXT;`);
+    }
+  }
+
+  private ensurePageZoneTimestampSchema(): void {
+    if (!this.sqliteTableExists('pages')) return;
+    const columns = this.database.query(`PRAGMA table_info(pages)`).all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has('compiled_truth_changed_at')) {
+      this.database.exec(`ALTER TABLE pages ADD COLUMN compiled_truth_changed_at TEXT;`);
+    }
+    if (!names.has('timeline_changed_at')) {
+      this.database.exec(`ALTER TABLE pages ADD COLUMN timeline_changed_at TEXT;`);
+    }
+    this.database.exec(`
+      UPDATE pages
+      SET compiled_truth_changed_at = COALESCE(compiled_truth_changed_at, updated_at, created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+          timeline_changed_at = COALESCE(
+            timeline_changed_at,
+            max(
+              COALESCE(updated_at, created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              COALESCE(
+                (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = pages.id),
+                updated_at,
+                created_at,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              )
+            )
+          )
+      WHERE compiled_truth_changed_at IS NULL
+         OR timeline_changed_at IS NULL;
+    `);
+  }
+
   private backfillRetrievalTraceFidelityFields(): void {
     this.database.exec(`
       UPDATE retrieval_traces
@@ -9243,6 +9384,7 @@ export class SQLiteEngine implements BrainEngine {
       sql += ` AND p.slug NOT IN (${opts.exclude_slugs.map(() => '?').join(', ')})`;
       params.push(...opts.exclude_slugs.map(slug => validateSlug(slug)));
     }
+    sql += sqliteSearchTemporalFilter(opts, params, 'p');
 
     const rows = this.database.query(sql).all(...sqliteBindings(params)) as Record<string, unknown>[];
     if (rows.length === 0) return [];
@@ -9285,6 +9427,7 @@ export class SQLiteEngine implements BrainEngine {
       sql += ` AND p.slug NOT IN (${opts.exclude_slugs.map(() => '?').join(', ')})`;
       params.push(...opts.exclude_slugs.map(slug => validateSlug(slug)));
     }
+    sql += sqliteSearchTemporalFilter(opts, params, 'p');
 
     const rows = this.database.query(sql).all(...sqliteBindings(params)) as Record<string, unknown>[];
     const shortlist = new Set(shortlistedPageIds ?? []);
@@ -9320,15 +9463,14 @@ export class SQLiteEngine implements BrainEngine {
         p.slug,
         p.title,
         p.type,
+        p.updated_at,
+        NULLIF(json_extract(p.frontmatter, '$.superseded_by'), '') AS superseded_by,
         cc.chunk_text,
         cc.chunk_source,
         cc.chunk_index,
         cc.chunk_content_hash,
         cc.embedding,
-        CASE WHEN EXISTS (
-          SELECT 1 FROM timeline_entries te
-          WHERE te.page_id = p.id AND p.updated_at < te.created_at
-        ) THEN 1 ELSE 0 END AS stale
+        CASE WHEN p.timeline_changed_at > p.compiled_truth_changed_at THEN 1 ELSE 0 END AS stale
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
       WHERE cc.id IN (${chunkIds.map(() => '?').join(', ')})
@@ -9574,6 +9716,8 @@ function blobToFloat32(value: unknown): Float32Array | null {
 }
 
 function rowToPage(row: Record<string, unknown>): Page {
+  const updatedAt = new Date(String(row.updated_at));
+  const createdAt = new Date(String(row.created_at));
   return {
     id: Number(row.id),
     slug: String(row.slug),
@@ -9583,8 +9727,14 @@ function rowToPage(row: Record<string, unknown>): Page {
     timeline: String(row.timeline),
     frontmatter: parseJsonObject(row.frontmatter),
     content_hash: row.content_hash ? String(row.content_hash) : undefined,
-    created_at: new Date(String(row.created_at)),
-    updated_at: new Date(String(row.updated_at)),
+    created_at: createdAt,
+    updated_at: updatedAt,
+    compiled_truth_changed_at: row.compiled_truth_changed_at
+      ? new Date(String(row.compiled_truth_changed_at))
+      : updatedAt,
+    timeline_changed_at: row.timeline_changed_at
+      ? new Date(String(row.timeline_changed_at))
+      : updatedAt,
   };
 }
 
@@ -9719,6 +9869,8 @@ function rowToRetrievalTrace(row: Record<string, unknown>): RetrievalTrace {
     selected_intent: (row.selected_intent as RetrievalTrace['selected_intent'] | null) ?? null,
     scope_gate_policy: (row.scope_gate_policy as RetrievalTrace['scope_gate_policy'] | null) ?? null,
     scope_gate_reason: row.scope_gate_reason == null ? null : String(row.scope_gate_reason),
+    elapsed_ms: row.elapsed_ms == null ? null : Number(row.elapsed_ms),
+    retrieved_token_count: row.retrieved_token_count == null ? null : Number(row.retrieved_token_count),
     outcome: String(row.outcome ?? ''),
     created_at: new Date(String(row.created_at)),
   };
@@ -10108,6 +10260,8 @@ function rowToSearchResult(row: Record<string, unknown>, query: string): SearchR
     chunk_content_hash: hasStoredChunkMatch ? nullableString(row.stored_chunk_content_hash) : null,
     score: Math.max(0, -rawRank),
     stale: Boolean(row.stale),
+    updated_at: row.updated_at == null ? undefined : new Date(String(row.updated_at)),
+    superseded_by: nullableString(row.superseded_by),
     ...searchResultDerivedFields(row),
   };
 }
@@ -10123,8 +10277,32 @@ function rowToLocalVectorCandidate(row: Record<string, unknown>) {
     chunk_index: nullableNumber(row.chunk_index),
     chunk_content_hash: nullableString(row.chunk_content_hash),
     stale: Boolean(row.stale),
+    updated_at: row.updated_at == null ? undefined : new Date(String(row.updated_at)),
+    superseded_by: nullableString(row.superseded_by),
     embedding: blobToFloat32(row.embedding),
   };
+}
+
+function sqliteSearchTemporalFilter(opts: SearchOpts | undefined, params: unknown[], alias: string): string {
+  let sql = '';
+  const updatedAfter = searchDateParam(opts?.updated_after);
+  if (updatedAfter) {
+    sql += ` AND ${alias}.updated_at >= ?`;
+    params.push(updatedAfter);
+  }
+  const updatedBefore = searchDateParam(opts?.updated_before);
+  if (updatedBefore) {
+    sql += ` AND ${alias}.updated_at <= ?`;
+    params.push(updatedBefore);
+  }
+  return sql;
+}
+
+function searchDateParam(value: Date | string | undefined): string | null {
+  if (value == null) return null;
+  if (value instanceof Date) return value.toISOString();
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
 function nullableNumber(value: unknown): number | null {
@@ -10144,7 +10322,7 @@ function extractSearchTerms(query: string): string[] {
     .map(term => term.replace(/["']/g, '').trim())
     .flatMap((term) => {
       const aliases = expandTechnicalAliases(term);
-      const normalized = term.split(/[^A-Za-z0-9]+/).filter(Boolean);
+      const normalized = term.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
       const filteredNormalized = aliases.length > 0
         ? normalized.filter(piece => piece.length > 1)
         : normalized;

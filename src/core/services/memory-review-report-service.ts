@@ -94,6 +94,36 @@ export interface ReportReviewItem {
   severity: 'low' | 'medium' | 'high';
 }
 
+export interface ReportCandidateAgeEscalation {
+  id: string;
+  status: string;
+  age_days: number;
+  bucket: '7d' | '30d';
+  next_action: string;
+}
+
+export interface ReportDataIntegrityError {
+  query: string;
+  message: string;
+}
+
+export interface ReportRecurringRetrievalGap {
+  id: string;
+  reason: string;
+  count: number;
+  sample_trace_ids: string[];
+  latest_at: string;
+  next_action: string;
+}
+
+export interface ReportPageHealthItem {
+  slug: string;
+  title: string;
+  score: number;
+  issues: string[];
+  next_action: string;
+}
+
 export interface ReportCanonicalTargetProposal {
   id: string;
   source_candidate_id: string;
@@ -282,6 +312,10 @@ export interface MemoryReviewReportInput {
   negative_memory_projections?: NegativeMemoryProjection[];
   context_eval_runs?: ReportContextEvalRun[];
   skill_surface?: ReportSkillSurfaceSummary;
+  candidate_age_escalations?: ReportCandidateAgeEscalation[];
+  recurring_retrieval_gaps?: ReportRecurringRetrievalGap[];
+  page_health_queue?: ReportPageHealthItem[];
+  data_integrity_errors?: ReportDataIntegrityError[];
 }
 
 export interface SourceIngestSummary {
@@ -341,6 +375,9 @@ export interface MemoryReviewReportSummary {
   open_write_sessions: number;
   expired_write_sessions: number;
   failed_context_eval_runs: number;
+  recurring_retrieval_gaps: number;
+  page_health_attention: number;
+  data_integrity_errors: number;
 }
 
 export interface ProjectionFreshnessSummary {
@@ -387,6 +424,10 @@ export interface MemoryReviewReport {
     safety_states: ReportSafetyState[];
     maintenance_health: MaintenanceHealthSummary;
     coverage_gaps: ReportCoverageGap[];
+    candidate_age_escalations: ReportCandidateAgeEscalation[];
+    recurring_retrieval_gaps: ReportRecurringRetrievalGap[];
+    page_health_queue: ReportPageHealthItem[];
+    data_integrity_errors: ReportDataIntegrityError[];
   };
   actions: MemoryReportAction[];
   auto_promote_summary?: AutoPromoteReportSummary;
@@ -415,6 +456,10 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
     ),
   );
   const contextEvalRuns = redactReportValues(input.context_eval_runs ?? []);
+  const candidateAgeEscalations = redactReportValues(input.candidate_age_escalations ?? []);
+  const recurringRetrievalGaps = redactReportValues(input.recurring_retrieval_gaps ?? []);
+  const pageHealthQueue = redactReportValues(input.page_health_queue ?? []);
+  const dataIntegrityErrors = redactReportValues(input.data_integrity_errors ?? []);
 
   const failedRunnerJobs = runnerJobs.filter((job) => job.status === 'failed' || job.status === 'degraded');
   const failedMaintenanceJobs = jobs.filter((job) => job.status === 'failed' || job.status === 'dead');
@@ -466,6 +511,9 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
     open_write_sessions: writeSessions.filter((session) => session.status === 'open').length,
     expired_write_sessions: writeSessions.filter((session) => session.status === 'expired').length,
     failed_context_eval_runs: contextEvalRuns.filter((run) => run.status === 'failed' || run.status === 'error').length,
+    recurring_retrieval_gaps: recurringRetrievalGaps.length,
+    page_health_attention: pageHealthQueue.length,
+    data_integrity_errors: dataIntegrityErrors.length,
   };
 
   return {
@@ -499,6 +547,10 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
         projection_freshness: projectionFreshness,
       },
       coverage_gaps: coverageGaps,
+      candidate_age_escalations: candidateAgeEscalations,
+      recurring_retrieval_gaps: recurringRetrievalGaps,
+      page_health_queue: pageHealthQueue,
+      data_integrity_errors: dataIntegrityErrors,
     },
     actions: buildReportActions({
       scopeId: input.scope_id,
@@ -616,6 +668,27 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
     lines.push(`- Projection freshness: pending ${projectionFreshness.pending_reconcile_count} | failed ${projectionFreshness.failed_count} | conflict ${projectionFreshness.conflict_count} | stale ${projectionFreshness.stale_count}`);
   }
 
+  if (report.sections.candidate_age_escalations.length > 0) {
+    lines.push('', 'Candidate Age Escalations');
+    for (const candidate of report.sections.candidate_age_escalations) {
+      lines.push(`- ${candidate.bucket} ${candidate.id} (${candidate.status}, ${candidate.age_days}d): ${candidate.next_action}`);
+    }
+  }
+
+  if (report.sections.recurring_retrieval_gaps.length > 0) {
+    lines.push('', 'Recurring Retrieval Gaps');
+    for (const gap of report.sections.recurring_retrieval_gaps) {
+      lines.push(`- ${gap.reason}: ${gap.count} traces | latest:${gap.latest_at} | samples:${gap.sample_trace_ids.join(', ')} | next:${redactSecrets(gap.next_action)}`);
+    }
+  }
+
+  if (report.sections.page_health_queue.length > 0) {
+    lines.push('', 'Page Health Queue');
+    for (const page of report.sections.page_health_queue) {
+      lines.push(`- ${page.score}/100 ${page.slug} (${redactSecrets(page.title)}): ${page.issues.join(', ')} | next:${redactSecrets(page.next_action)}`);
+    }
+  }
+
   if (hasSafetyStateSignals(report.sections.safety_states)) {
     lines.push('', 'Safety States (report-only)');
     for (const state of report.sections.safety_states.filter((entry) => entry.status === 'warn' && entry.count > 0)) {
@@ -628,6 +701,14 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
     lines.push('', 'Auto-promotion (non-blocking)');
     lines.push(`- Inbox-promoted: ${s.auto_promoted} | canonical handoffs: ${s.canonical_handoffs ?? 0} | canonical writes: ${s.canonical_writes ?? 0} | escalated: ${s.escalated} | deferred: ${s.deferred} | excluded: ${s.excluded}`);
     lines.push('- Review any promoted-without-write or skipped canonicalization items before they become stale.');
+  }
+
+  if (report.sections.data_integrity_errors.length > 0) {
+    lines.push('', 'Data Integrity');
+    lines.push(`- Report query errors: ${report.sections.data_integrity_errors.length}`);
+    for (const error of report.sections.data_integrity_errors) {
+      lines.push(`- ${error.query}: ${redactSecrets(error.message)}`);
+    }
   }
 
   return lines.join('\n');
@@ -747,9 +828,12 @@ function buildReportHealth(summary: MemoryReviewReportSummary): MemoryReviewRepo
   if (summary.coverage_gaps > 0) reasons.push(`${summary.coverage_gaps} coverage gaps`);
   if (summary.open_write_sessions > 0) reasons.push(`${summary.open_write_sessions} open write sessions`);
   if (summary.expired_write_sessions > 0) reasons.push(`${summary.expired_write_sessions} expired write sessions`);
+  if (summary.recurring_retrieval_gaps > 0) reasons.push(`${summary.recurring_retrieval_gaps} recurring retrieval gaps`);
+  if (summary.page_health_attention > 0) reasons.push(`${summary.page_health_attention} pages need attention`);
+  if (summary.data_integrity_errors > 0) reasons.push(`${summary.data_integrity_errors} report data integrity errors`);
 
   return {
-    status: reasons.length === 0 ? 'ok' : summary.failed_jobs > 0 || summary.reconciliation_failures > 0 ? 'fail' : 'warn',
+    status: reasons.length === 0 ? 'ok' : summary.failed_jobs > 0 || summary.reconciliation_failures > 0 || summary.data_integrity_errors > 0 ? 'fail' : 'warn',
     reasons,
   };
 }
@@ -1238,6 +1322,10 @@ function governedAction(
 function isEmptyReport(report: MemoryReviewReport): boolean {
   return Object.values(report.summary).every((count) => count === 0)
     && report.sections.canonical_target_proposals.length === 0
+    && report.sections.candidate_age_escalations.length === 0
+    && report.sections.recurring_retrieval_gaps.length === 0
+    && report.sections.page_health_queue.length === 0
+    && report.sections.data_integrity_errors.length === 0
     && !hasMaintenanceHealthSignals(report.sections.maintenance_health);
 }
 

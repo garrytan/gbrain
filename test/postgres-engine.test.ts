@@ -183,6 +183,7 @@ describe('PostgresEngine search wiring', () => {
       'keyword',
       'person',
       ['people/alice'],
+      20,
     ]);
     expect((calls[4] as Extract<SqlCall, { kind: 'tag' }>).text).toContain(
       "set_config('statement_timeout', <??>, false)",

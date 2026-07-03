@@ -6,6 +6,7 @@ import type {
 } from './maintenance-runtime-service.ts';
 import { runDreamCycleMaintenance } from './dream-cycle-maintenance-service.ts';
 import type { LifecycleForgettingService } from './lifecycle-forgetting-service.ts';
+import { sweepExpiredWriteSessionFallbacks } from './expired-write-session-fallback-service.ts';
 
 export type DreamCyclePhaseFamily =
   | 'source_status'
@@ -26,6 +27,7 @@ export type DreamCyclePhaseFamily =
 
 export type DreamCyclePhaseStatus = 'ok' | 'warn' | 'failed' | 'skipped';
 export type DreamCycleSkipReason = 'phase_not_available' | 'runner_unavailable';
+const DEFAULT_PHASE_TIMEOUT_MS = 10 * 60 * 1000;
 
 export interface DreamCyclePhaseRegistryEntry {
   order: number;
@@ -40,6 +42,7 @@ export interface DreamCyclePhaseResult {
   owner_phase: string;
   status: DreamCyclePhaseStatus;
   duration_ms: number;
+  timed_out: boolean;
   counts: Record<string, number>;
   source_ids: string[];
   assertion_ids: string[];
@@ -64,7 +67,9 @@ export interface DreamCycleRunInput {
   limit?: number;
   max_runner_calls?: number;
   time_budget_ms?: number;
+  phase_timeout_ms?: number;
   max_candidates_per_cycle?: number;
+  report_dir?: string;
   allow_llm?: boolean;
   allow_local_runner?: boolean;
   trigger?: 'cli' | 'autopilot' | 'job' | 'manual';
@@ -145,6 +150,7 @@ export interface DreamCycleRunDeps {
       max_runner_calls?: number;
       time_budget_ms?: number;
       exclude_candidate_ids?: string[];
+      signal?: AbortSignal;
     }): Promise<{ counts: Record<string, number> }>;
   };
   replayCanary?: {
@@ -156,6 +162,17 @@ export interface DreamCycleRunDeps {
       apply_auto_promote: boolean;
       allow_canonical_page_writes: boolean;
     }): Promise<DreamReplayCanaryResult>;
+  };
+  memoryReport?: {
+    save(input: {
+      scope_id: string;
+      now: string;
+      limit?: number;
+    }): Promise<{
+      path: string;
+      counts?: Record<string, number>;
+      summary_lines?: string[];
+    }>;
   };
 }
 
@@ -174,9 +191,11 @@ export interface DreamCyclePhaseContext {
     limit?: number;
     max_runner_calls?: number;
     time_budget_ms?: number;
+    phase_timeout_ms: number;
     max_candidates_per_cycle?: number;
     allow_llm: boolean;
     allow_local_runner: boolean;
+    signal?: AbortSignal;
   };
   registry: DreamCyclePhaseRegistryEntry;
   cycle: DreamCyclePhaseCycleState;
@@ -292,7 +311,12 @@ async function runPhase(
   }
 
   try {
-    return phaseResult(registry, await handler({ engine, input, registry, cycle }), started);
+    const patch = await withPhaseTimeout(
+      (signal) => handler({ engine, input: { ...input, signal }, registry, cycle }),
+      input.phase_timeout_ms,
+      registry.family,
+    );
+    return phaseResult(registry, patch, started);
   } catch (error) {
     return phaseResult(registry, {
       status: 'failed',
@@ -303,10 +327,46 @@ async function runPhase(
   }
 }
 
+async function withPhaseTimeout(
+  runWork: (signal: AbortSignal) => Promise<Partial<Omit<DreamCyclePhaseResult, 'family' | 'owner_phase' | 'duration_ms'>>>,
+  timeoutMs: number,
+  family: DreamCyclePhaseFamily,
+): Promise<Partial<Omit<DreamCyclePhaseResult, 'family' | 'owner_phase' | 'duration_ms'>>> {
+  const abortController = new AbortController();
+  const work = runWork(abortController.signal);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return work;
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<Partial<Omit<DreamCyclePhaseResult, 'family' | 'owner_phase' | 'duration_ms'>>>((resolve) => {
+        timer = setTimeout(() => {
+          abortController.abort();
+          resolve({
+            status: 'failed',
+            timed_out: true,
+            errors: [`Dream cycle phase ${family} timed out after ${timeoutMs}ms.`],
+            next_recommended_action: 'Inspect the timed-out phase and retry after clearing stuck work.',
+            llm_or_runner_used: false,
+          });
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function defaultPhaseHandler(
   registry: DreamCyclePhaseRegistryEntry,
   deps: DreamCycleRunDeps,
 ): DreamCyclePhaseHandler | undefined {
+  if (registry.family === 'daily_report' && deps.memoryReport) {
+    return (context) => runDailyReportPhase(context, deps);
+  }
   if (registry.family === 'consolidation') return runConsolidationPhase;
   if (registry.family === 'forgetting_review') {
     return (context) => runForgettingReviewPhase(context, deps);
@@ -487,7 +547,10 @@ function hasActionablePhaseWork(
     case 'daily_report':
       return (counts.failed_jobs ?? 0) > 0
         || (counts.failed_runner_jobs ?? 0) > 0
-        || (counts.stuck_active_jobs ?? 0) > 0;
+        || (counts.stuck_active_jobs ?? 0) > 0
+        || (counts.review_items ?? 0) > 0
+        || (counts.open_conflicts ?? 0) > 0
+        || (counts.incomplete_handoffs ?? 0) > 0;
     case 'consolidation':
     case 'forgetting_review':
     case 'auto_promote':
@@ -542,22 +605,124 @@ async function runConsolidationPhase(
   for (const candidateId of report.suggestions.flatMap((suggestion) => suggestion.candidate_id ?? [])) {
     context.cycle.dream_generated_candidate_ids.add(candidateId);
   }
+  const writeSessionFallbacks = context.input.dry_run || !context.input.write_candidates
+    ? { swept: [], skipped: [] }
+    : await sweepExpiredWriteSessionFallbacks(context.engine, {
+      scope_id: context.input.scope_id,
+      now: context.input.now,
+      limit: context.input.limit,
+    });
+  for (const fallback of writeSessionFallbacks.swept) {
+    context.cycle.dream_generated_candidate_ids.add(fallback.candidate_id);
+  }
+  const duplicatePageSuggestions = await findDuplicatePageSuggestions(context.engine, context.input.limit);
+  const hasActionableWork = report.suggestions.length > 0
+    || writeSessionFallbacks.swept.length > 0
+    || duplicatePageSuggestions.length > 0;
   return {
-    status: report.suggestions.length > 0 ? 'warn' : 'ok',
+    status: hasActionableWork ? 'warn' : 'ok',
     counts: {
       suggestions: report.suggestions.length,
       stale_derived_artifacts: report.derived_freshness_report.stale_count,
+      expired_write_session_fallbacks: writeSessionFallbacks.swept.length,
+      expired_write_session_fallback_skips: writeSessionFallbacks.skipped.length,
+      duplicate_page_suggestions: duplicatePageSuggestions.length,
     },
+    source_ids: duplicatePageSuggestions.map((suggestion) => `duplicate_page:${suggestion.primary_slug}:${suggestion.duplicate_slug}`),
     projection_ids: report.derived_freshness_report.artifacts.map((artifact) => artifact.id),
     policy_denials: report.apply_control_plane.allowed_without_control_plane ? [] : [{
       code: 'canonical_write_control_plane_required',
       message: 'Dream consolidation cannot mutate canonical memory outside policy.',
     }],
-    next_recommended_action: report.suggestions.length > 0
-      ? 'Review dream-cycle candidates before applying governed changes.'
+    next_recommended_action: report.suggestions.length > 0 || duplicatePageSuggestions.length > 0
+      ? 'Review dream-cycle candidates and duplicate page suggestions before applying governed changes.'
       : null,
     canonical_mutations: 0,
     llm_or_runner_used: false,
+  };
+}
+
+async function findDuplicatePageSuggestions(
+  engine: BrainEngine,
+  limit = 20,
+): Promise<Array<{ primary_slug: string; duplicate_slug: string; title: string; reason: string }>> {
+  if (typeof engine.listPages !== 'function') return [];
+  const pages = await engine.listPages({ limit: 1000, offset: 0 });
+  const byTitle = new Map<string, typeof pages>();
+  for (const page of pages) {
+    const title = normalizeDuplicateTitle(page.title);
+    if (!title) continue;
+    const group = byTitle.get(title) ?? [];
+    group.push(page);
+    byTitle.set(title, group);
+  }
+
+  const suggestions: Array<{ primary_slug: string; duplicate_slug: string; title: string; reason: string }> = [];
+  for (const group of byTitle.values()) {
+    if (group.length < 2) continue;
+    const sorted = [...group].sort((left, right) => left.slug.localeCompare(right.slug));
+    for (let i = 0; i < sorted.length; i += 1) {
+      for (let j = i + 1; j < sorted.length; j += 1) {
+        const left = sorted[i]!;
+        const right = sorted[j]!;
+        if (!isCrossPrefixDuplicatePair(left.slug, right.slug)) continue;
+        suggestions.push({
+          primary_slug: left.slug,
+          duplicate_slug: right.slug,
+          title: left.title,
+          reason: 'matching_title_across_prefixes',
+        });
+        if (suggestions.length >= limit) return suggestions;
+      }
+    }
+  }
+  return suggestions;
+}
+
+function normalizeDuplicateTitle(title: string): string {
+  return title.trim().toLocaleLowerCase();
+}
+
+function isCrossPrefixDuplicatePair(leftSlug: string, rightSlug: string): boolean {
+  const left = normalizeDuplicateSlug(leftSlug);
+  const right = normalizeDuplicateSlug(rightSlug);
+  if (left === right) return false;
+  const leftPrefix = left.split('/')[0] ?? '';
+  const rightPrefix = right.split('/')[0] ?? '';
+  return leftPrefix !== rightPrefix
+    || left.endsWith(`/${right}`)
+    || right.endsWith(`/${left}`);
+}
+
+function normalizeDuplicateSlug(slug: string): string {
+  return slug.replace(/\.md$/i, '').replace(/^\/+|\/+$/g, '').toLocaleLowerCase();
+}
+
+async function runDailyReportPhase(
+  context: DreamCyclePhaseContext,
+  deps: DreamCycleRunDeps,
+): Promise<Partial<DreamCyclePhaseResult>> {
+  const saved = await deps.memoryReport?.save({
+    scope_id: context.input.scope_id,
+    now: context.input.now,
+    limit: context.input.limit,
+  });
+  if (!saved) {
+    return runImplementedReadOnlyPhase(context);
+  }
+  const counts = {
+    saved_reports: 1,
+    ...(saved.counts ?? {}),
+  };
+  const hasActionableWork = hasActionablePhaseWork(context.registry.family, counts);
+  return {
+    status: hasActionableWork ? 'warn' : 'ok',
+    counts,
+    source_ids: [saved.path],
+    next_recommended_action: `Open daily memory report: ${saved.path}`,
+    canonical_mutations: 0,
+    llm_or_runner_used: false,
+    errors: [],
   };
 }
 
@@ -642,6 +807,7 @@ async function runAutoPromotePhase(
     max_runner_calls: context.input.max_runner_calls,
     time_budget_ms: context.input.time_budget_ms,
     exclude_candidate_ids: [...context.cycle.dream_generated_candidate_ids].sort(),
+    signal: context.input.signal,
   });
   const counts = result.counts ?? {};
   const hasActionableWork = Object.values(counts).some((count) => count > 0);
@@ -806,11 +972,18 @@ function normalizeRunInput(input: DreamCycleRunInput): DreamCyclePhaseContext['i
     limit: input.limit,
     max_runner_calls: input.max_runner_calls,
     time_budget_ms: input.time_budget_ms,
+    phase_timeout_ms: normalizePositiveInteger(input.phase_timeout_ms, DEFAULT_PHASE_TIMEOUT_MS),
     max_candidates_per_cycle: input.max_candidates_per_cycle,
     allow_llm: input.allow_llm === true,
     allow_local_runner: input.allow_local_runner === true,
     trigger: input.trigger ?? 'manual',
   };
+}
+
+function normalizePositiveInteger(value: number | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return Math.floor(value);
 }
 
 function isStrictIsoDateTime(value: unknown): value is string {
@@ -1030,6 +1203,7 @@ function phaseResult(
     owner_phase: registry.owner_phase,
     status: patch.status ?? 'ok',
     duration_ms: Math.max(0, Date.now() - started),
+    timed_out: patch.timed_out ?? false,
     counts: patch.counts ?? {},
     source_ids: patch.source_ids ?? [],
     assertion_ids: patch.assertion_ids ?? [],

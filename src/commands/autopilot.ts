@@ -11,6 +11,7 @@ import { runDreamCycle, type DreamCycleRunInput, type DreamCycleRunResult } from
 import { parseDreamArgs } from './dream.ts';
 import type { AutopilotMode } from '../core/maintenance/autopilot.ts';
 import { createAutoPromoteDreamDependency } from './auto-promote.ts';
+import { saveMemoryReviewReport } from './memory-report.ts';
 
 export interface RunAutopilotDeps {
   service?: AutopilotService;
@@ -109,11 +110,19 @@ export async function runAutopilot(args: string[], deps: RunAutopilotDeps = {}):
         dreamRunner: async (input) => deps.dreamRunner
           ? deps.dreamRunner(input)
           : runDreamCycle(engine, input, {
-            ...(runtime ? { runtime } : {}),
-            lifecycleForgetting: maybeCreateLifecycleForgettingServiceForEngine(engine, () => input.now ?? new Date().toISOString()),
-            autoPromote: createAutoPromoteDreamDependency(engine),
-            replayCanary: createProofAgentDreamReplayCanary(),
-          }),
+              ...(runtime ? { runtime } : {}),
+              lifecycleForgetting: maybeCreateLifecycleForgettingServiceForEngine(engine, () => input.now ?? new Date().toISOString()),
+              autoPromote: createAutoPromoteDreamDependency(engine),
+              replayCanary: createProofAgentDreamReplayCanary(),
+              ...((currentCommand !== 'dream' || input.report_dir !== undefined) ? {
+                memoryReport: {
+                  save: (reportInput) => saveMemoryReviewReport(engine, {
+                    ...reportInput,
+                    report_dir: input.report_dir ?? '.',
+                  }),
+                },
+              } : {}),
+            }),
       } : {}),
     });
   }

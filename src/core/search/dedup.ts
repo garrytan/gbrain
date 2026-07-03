@@ -79,18 +79,24 @@ function dedupBySource(
  */
 function dedupByTextSimilarity(results: SearchResult[], threshold: number): SearchResult[] {
   const kept: SearchResult[] = [];
+  const fingerprints = new Map<SearchResult, TextSimilarityTerms>();
 
   for (const r of results) {
-    const rWords = new Set(r.chunk_text.toLowerCase().split(/\s+/));
+    const rTerms = textSimilarityTerms(r.chunk_text);
+    fingerprints.set(r, rTerms);
     let tooSimilar = false;
 
     for (const k of kept) {
-      const kWords = new Set(k.chunk_text.toLowerCase().split(/\s+/));
-      const intersection = new Set([...rWords].filter(w => kWords.has(w)));
-      const union = new Set([...rWords, ...kWords]);
+      const kTerms = fingerprints.get(k) ?? textSimilarityTerms(k.chunk_text);
+      fingerprints.set(k, kTerms);
+      const intersection = new Set([...rTerms.terms].filter(w => kTerms.terms.has(w)));
+      const union = new Set([...rTerms.terms, ...kTerms.terms]);
       const jaccard = intersection.size / union.size;
+      const similarityThreshold = rTerms.kind === 'cjk' || kTerms.kind === 'cjk'
+        ? Math.min(threshold, 0.8)
+        : threshold;
 
-      if (jaccard > threshold) {
+      if (jaccard > similarityThreshold) {
         tooSimilar = true;
         break;
       }
@@ -102,6 +108,41 @@ function dedupByTextSimilarity(results: SearchResult[], threshold: number): Sear
   }
 
   return kept;
+}
+
+interface TextSimilarityTerms {
+  kind: 'cjk' | 'word';
+  terms: Set<string>;
+}
+
+function textSimilarityTerms(text: string): TextSimilarityTerms {
+  return isCjkHeavy(text)
+    ? { kind: 'cjk', terms: cjkCharacterBigrams(text) }
+    : { kind: 'word', terms: whitespaceTerms(text) };
+}
+
+function whitespaceTerms(text: string): Set<string> {
+  return new Set(text.toLowerCase().split(/\s+/).filter(Boolean));
+}
+
+function isCjkHeavy(text: string): boolean {
+  const cjk = Array.from(text.matchAll(/[\p{Script=Han}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}]/gu)).length;
+  if (cjk < 3) return false;
+  const lettersAndNumbers = Array.from(text.matchAll(/[\p{L}\p{N}]/gu)).length;
+  return lettersAndNumbers === 0 ? false : cjk / lettersAndNumbers >= 0.3;
+}
+
+function cjkCharacterBigrams(text: string): Set<string> {
+  const normalized = Array.from(text.toLowerCase())
+    .filter((char) => /[\p{L}\p{N}]/u.test(char))
+    .join('');
+  const chars = Array.from(normalized);
+  if (chars.length <= 1) return new Set(chars);
+  const bigrams = new Set<string>();
+  for (let index = 0; index < chars.length - 1; index += 1) {
+    bigrams.add(`${chars[index]}${chars[index + 1]}`);
+  }
+  return bigrams;
 }
 
 /**

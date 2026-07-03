@@ -320,6 +320,25 @@ describe('embedding queue', () => {
 
     expect(fake.batches).toEqual([['document body']]);
   });
+
+  test('uses contextual chunk input and versions the stored model tag', async () => {
+    const fake = createFakeProvider({ model: 'qwen3-embedding:0.6b' });
+    const queue = createEmbeddingQueue({ provider: fake.provider, autoFlush: false });
+
+    const submitted = queue.submit([{
+      ...chunkInput(0, 'document body'),
+      embed_context: 'Page title: Context Page\nPage slug: concepts/context-page\nChunk source: compiled_truth',
+      embedding_input_version: 'contextual-v1',
+    }]);
+    await queue.flush();
+    const result = await submitted;
+
+    expect(fake.batches).toEqual([[
+      'Page title: Context Page\nPage slug: concepts/context-page\nChunk source: compiled_truth\n\ndocument body',
+    ]]);
+    expect(result.chunks[0]?.chunk_text).toBe('document body');
+    expect(result.chunks[0]?.model).toBe('qwen3-embedding:0.6b#contextual-v1');
+  });
 });
 
 describe('runEmbed queue integration', () => {
@@ -1077,6 +1096,7 @@ function createMemoryEngine(
 }
 
 function page(slug: string, title: string, compiledTruth: string): Page {
+  const timestamp = new Date('2026-01-01T00:00:00Z');
   return {
     id: Math.abs(hashString(slug)),
     slug,
@@ -1085,8 +1105,10 @@ function page(slug: string, title: string, compiledTruth: string): Page {
     compiled_truth: compiledTruth,
     timeline: '',
     frontmatter: {},
-    created_at: new Date('2026-01-01T00:00:00Z'),
-    updated_at: new Date('2026-01-01T00:00:00Z'),
+    created_at: timestamp,
+    updated_at: timestamp,
+    compiled_truth_changed_at: timestamp,
+    timeline_changed_at: timestamp,
   };
 }
 

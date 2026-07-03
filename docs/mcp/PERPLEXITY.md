@@ -10,7 +10,7 @@ Perplexity Computer supports remote MCP servers with bearer token authentication
    - **URL:** `https://YOUR-DOMAIN.ngrok.app/mcp`
    - **Authentication:** API Key / Bearer Token
    - **Token:** your MBrain access token
-     (create one with `bun run src/commands/auth.ts create "perplexity"`)
+     (create one with `mbrain auth create "perplexity"`)
 4. Save
 
 Replace `YOUR-DOMAIN` with your ngrok domain (see

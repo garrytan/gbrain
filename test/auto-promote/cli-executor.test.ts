@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'bun:test';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { createCliRunnerExecutor } from '../../src/core/auto-promote/cli-executor.ts';
 
 const runnerCandidate = (kind: string) => ({
@@ -48,5 +51,35 @@ describe('createCliRunnerExecutor', () => {
     const exec = createCliRunnerExecutor({ runCommand: async () => ({ code: 1, stdout: '', stderr: 'boom' }) });
     const res = await exec({ runner: runnerCandidate('codex'), task_type: 'candidate_promotion_review', source_scope: {}, prompt: 'P', input: '', tool_policy: { status: 'allowed' } as any, allowed_tools: [] as any });
     expect(res.status).toBe('failed');
+  });
+
+  it('aborts and kills the spawned CLI process before the inner timeout', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-cli-executor-abort-'));
+    const originalPath = process.env.PATH;
+    const commandPath = join(dir, 'codex');
+    writeFileSync(commandPath, '#!/bin/sh\ntrap "exit 143" TERM\nwhile true; do sleep 1; done\n');
+    chmodSync(commandPath, 0o755);
+    process.env.PATH = `${dir}:${originalPath ?? ''}`;
+    const controller = new AbortController();
+    const started = Date.now();
+    try {
+      const exec = createCliRunnerExecutor({ timeoutMs: 5_000 });
+      setTimeout(() => controller.abort(), 50);
+      const res = await exec({
+        runner: runnerCandidate('codex'),
+        task_type: 'candidate_promotion_review',
+        source_scope: {},
+        prompt: 'P',
+        input: '',
+        tool_policy: { status: 'allowed' } as any,
+        allowed_tools: [] as any,
+        signal: controller.signal,
+      });
+      expect(res.status).toBe('failed');
+      expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -8,6 +8,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { operationsByName, parseOpArgs, type OperationContext } from '../src/core/operations.ts';
 import { readCandidateContext } from '../src/core/services/inbox-lead-service.ts';
 import { buildMemoryReviewReport } from '../src/core/services/memory-review-report-service.ts';
+import { sweepExpiredWriteSessionFallbacks } from '../src/core/services/expired-write-session-fallback-service.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 const sourceRefs = ['Source: User, direct message, 2026-05-10 12:00 KST'];
@@ -92,11 +93,37 @@ describe('memory writeback router operation', () => {
       source_refs: sourceRefs,
       target_object_type: 'curated_note',
       target_object_id: 'systems/mbrain',
+      apply: false,
     })) as any;
 
     expect(result.decision).toBe('create_candidate');
     expect(result.applied).toBe(false);
     expect(result.created_candidate).toBeUndefined();
+  });
+
+  test('create_candidate routes apply by default instead of returning an unapplied plan', async () => {
+    await withEngine(async (engine) => {
+      const result = (await operationsByName.route_memory_writeback.handler(ctx(engine), {
+        content: 'The router should persist candidate-worthy claims by default.',
+        evidence_kind: 'agent_inferred',
+        source_refs: sourceRefs,
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/mbrain',
+      })) as any;
+
+      expect(result.decision).toBe('create_candidate');
+      expect(result.applied).toBe(true);
+      expect(result.writeback_governance_metadata).toMatchObject({
+        apply_mode: 'candidate_created',
+      });
+      expect(result.created_candidate).toMatchObject({
+        proposed_content: 'The router should persist candidate-worthy claims by default.',
+        status: 'candidate',
+      });
+
+      const candidates = await engine.listMemoryCandidateEntries({ limit: 10 });
+      expect(candidates.map((candidate) => candidate.id)).toContain(result.created_candidate.id);
+    });
   });
 
   test('accepts source_refs as a CLI JSON array string', async () => {
@@ -113,6 +140,7 @@ describe('memory writeback router operation', () => {
       content: 'The router should accept source_refs from CLI JSON strings.',
       evidence_kind: 'direct_user_statement',
       source_refs: JSON.stringify(sourceRefs),
+      apply: false,
     })) as any;
 
     expect(result.decision).toBe('create_candidate');
@@ -182,6 +210,60 @@ describe('memory writeback router operation', () => {
         scope_id: 'workspace:default',
       });
       expect(sessions[0].expires_at).toBeInstanceOf(Date);
+    });
+  });
+
+  test('expired canonical write sessions fall back to a captured candidate once', async () => {
+    await withEngine(async (engine) => {
+      const result = (await operationsByName.route_memory_writeback.handler(ctx(engine), {
+        content: 'The user stated that expired write sessions should become reviewable candidates.',
+        evidence_kind: 'direct_user_statement',
+        source_refs: sourceRefs,
+        allow_canonical_write: true,
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/mbrain',
+        target_snapshot_hash: currentHash,
+        sensitivity: 'work',
+        confidence_score: 0.91,
+        importance_score: 0.82,
+        apply: true,
+      })) as any;
+
+      const session = await (engine as any).getMemoryWriteSession(result.write_session_id);
+      const sweep = await sweepExpiredWriteSessionFallbacks(engine, {
+        scope_id: 'workspace:default',
+        now: new Date(session.expires_at.getTime() + 1),
+      });
+
+      expect(sweep.swept).toEqual([
+        expect.objectContaining({
+          session_id: result.write_session_id,
+          target_slug: 'systems/mbrain',
+        }),
+      ]);
+      const candidate = await engine.getMemoryCandidateEntry(sweep.swept[0]!.candidate_id);
+      expect(candidate).toMatchObject({
+        status: 'captured',
+        proposed_content: 'The user stated that expired write sessions should become reviewable candidates.',
+        review_reason: 'expired_write_session_fallback',
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/mbrain',
+        confidence_score: 0.91,
+        importance_score: 0.82,
+      });
+      expect(candidate?.source_refs).toEqual(expect.arrayContaining([
+        sourceRefs[0],
+        `memory_write_session:${result.write_session_id}`,
+      ]));
+      const consumed = await (engine as any).getMemoryWriteSession(result.write_session_id);
+      expect(consumed.status).toBe('expired');
+      expect(consumed.status_reason).toBe('expired_write_session_fallback');
+
+      const secondSweep = await sweepExpiredWriteSessionFallbacks(engine, {
+        scope_id: 'workspace:default',
+        now: new Date(session.expires_at.getTime() + 2),
+      });
+      expect(secondSweep.swept).toEqual([]);
     });
   });
 
@@ -436,6 +518,7 @@ describe('memory writeback router operation', () => {
         source_record: 'source-record:meeting-42',
         import_origin: 'imports/meeting-42.md',
       },
+      apply: false,
     })) as any;
 
     expect(result.decision).toBe('create_candidate');
@@ -572,6 +655,45 @@ describe('memory writeback router operation', () => {
       ).rejects.toThrow('duplicate review failed');
 
       expect(await engine.listMemoryCandidateEntries({ limit: 10 })).toEqual([]);
+    });
+  });
+
+  test('apply true annotates likely duplicate candidates instead of creating a blind twin', async () => {
+    await withEngine(async (engine) => {
+      await engine.createMemoryCandidateEntry({
+        id: 'candidate-existing-duplicate-signal',
+        scope_id: 'workspace:default',
+        candidate_type: 'fact',
+        proposed_content: 'Duplicate-aware routing keeps likely duplicate memory candidates reviewable.',
+        source_refs: sourceRefs,
+        generated_by: 'manual',
+        extraction_kind: 'manual',
+        confidence_score: 0.9,
+        importance_score: 0.6,
+        recurrence_score: 0.1,
+        sensitivity: 'work',
+        status: 'candidate',
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/other-memory',
+      });
+
+      const result = (await operationsByName.route_memory_writeback.handler(ctx(engine), {
+        content: 'Duplicate-aware routing keeps likely duplicate memory candidates reviewable.',
+        evidence_kind: 'agent_inferred',
+        source_refs: sourceRefs,
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/mbrain',
+        apply: true,
+      })) as any;
+
+      expect(result.decision).toBe('create_candidate');
+      expect(result.duplicate_review.decision).toBe('likely_duplicate');
+      expect(result.duplicate_annotation).toEqual({
+        duplicate_of_candidate_id: 'candidate-existing-duplicate-signal',
+      });
+      expect(result.created_candidate.review_reason).toContain(
+        'duplicate_of_candidate_id:candidate-existing-duplicate-signal',
+      );
     });
   });
 

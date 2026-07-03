@@ -8,7 +8,6 @@
  * URL:    https://<project>.supabase.co/functions/v1/mbrain-mcp/mcp
  */
 import { Hono } from 'hono';
-import { cors } from 'hono/cors';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -57,6 +56,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // Database connection (lazy, one per isolate)
 let engine: PostgresEngine | null = null;
 let sql: ReturnType<typeof postgres> | null = null;
+const MAX_MCP_EDGE_BODY_BYTES = 1_048_576;
 
 function getDbUrl(): string {
   // @ts-ignore: Deno env
@@ -71,6 +71,93 @@ function getOpenAiKey(): string {
 function getRemoteToolTierSelection(): string | null {
   // @ts-ignore: Deno env
   return Deno.env.get('MBRAIN_MCP_TOOL_TIER') || null;
+}
+
+function getEdgeAllowedOrigins(): string[] {
+  // @ts-ignore: Deno env
+  const raw = Deno.env.get('MBRAIN_HTTP_ALLOWED_ORIGINS') || '';
+  const origins = new Set<string>();
+  for (const entry of raw.split(',')) {
+    const trimmed = entry.trim().replace(/\/+$/, '');
+    if (!trimmed || trimmed.toLowerCase() === 'null') continue;
+    try {
+      origins.add(new URL(trimmed).origin);
+    } catch {
+      // Ignore malformed CORS entries; browsers simply receive no CORS header.
+    }
+  }
+  return [...origins];
+}
+
+function edgeCorsHeadersFor(request: Request): Record<string, string> {
+  const origin = request.headers.get('Origin');
+  const allowedOrigins = getEdgeAllowedOrigins();
+  if (!origin || allowedOrigins.length === 0 || !allowedOrigins.includes(origin)) return {};
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Vary': 'Origin',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID',
+    'Access-Control-Expose-Headers': 'Mcp-Session-Id',
+  };
+}
+
+type BoundedEdgeRequest =
+  | { ok: true; request: Request }
+  | { ok: false; body: Record<string, unknown> };
+
+async function boundEdgeMcpRequestBody(request: Request): Promise<BoundedEdgeRequest> {
+  const contentLength = request.headers.get('content-length');
+  if (contentLength) {
+    const bodyBytes = Number(contentLength);
+    if (Number.isFinite(bodyBytes) && bodyBytes > MAX_MCP_EDGE_BODY_BYTES) {
+      return edgeRequestTooLarge();
+    }
+  }
+  if (request.method !== 'POST' || !request.body) {
+    return { ok: true, request };
+  }
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > MAX_MCP_EDGE_BODY_BYTES) {
+      await reader.cancel();
+      return edgeRequestTooLarge();
+    }
+    chunks.push(value);
+  }
+
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return {
+    ok: true,
+    request: new Request(request.url, {
+      method: request.method,
+      headers: new Headers(request.headers),
+      body,
+      signal: request.signal,
+    }),
+  };
+}
+
+function edgeRequestTooLarge(): BoundedEdgeRequest {
+  return {
+    ok: false,
+    body: {
+      error: 'request_too_large',
+      message: `MCP Edge request bodies must be ${MAX_MCP_EDGE_BODY_BYTES} bytes or smaller.`,
+    },
+  };
 }
 
 function getEdgeSurfaceProfile() {
@@ -423,12 +510,16 @@ function createMcpServer(eng: PostgresEngine, tokenScopes: string[] = [], authPr
 // Hono app — routes: /mcp (MCP transport), /health (monitoring)
 const app = new Hono().basePath('/mbrain-mcp');
 
-app.use('/*', cors({
-  origin: '*',
-  allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id', 'Mcp-Protocol-Version', 'Last-Event-ID'],
-  exposeHeaders: ['Mcp-Session-Id'],
-}));
+app.use('/*', async (c, next) => {
+  const corsHeaders = edgeCorsHeadersFor(c.req.raw);
+  if (c.req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+  await next();
+  for (const [key, value] of Object.entries(corsHeaders)) {
+    c.res.headers.set(key, value);
+  }
+});
 
 // Health check
 app.get('/health', async (c) => {
@@ -474,8 +565,16 @@ app.get('/health', async (c) => {
 
 // MCP endpoint
 app.all('/mcp', async (c) => {
+  const boundedRequest = await boundEdgeMcpRequestBody(c.req.raw);
+  if (!boundedRequest.ok) {
+    return c.json(boundedRequest.body, 413);
+  }
+  const request = boundedRequest.request;
+  const operationRequest = request.clone();
+  const classificationRequest = request.clone();
+
   // Auth check
-  const auth = await authenticateToken(c.req.header('Authorization') || null);
+  const auth = await authenticateToken(request.headers.get('Authorization') || null);
   if (!auth.valid) {
     return new Response(auth.error, {
       status: auth.status || 401,
@@ -493,7 +592,7 @@ app.all('/mcp', async (c) => {
     edge: true,
   });
   const server = createMcpServer(eng, auth.scopes ?? [], authPrincipal);
-  const operation = await inferMcpOperation(c.req.raw);
+  const operation = await inferMcpOperation(operationRequest);
 
   const transport = new WebStandardStreamableHTTPServerTransport({
     // Stateless mode — no sessions needed for single-user personal brain
@@ -502,11 +601,11 @@ app.all('/mcp', async (c) => {
   await server.connect(transport);
 
   try {
-    const response = await transport.handleRequest(c.req.raw);
+    const response = await transport.handleRequest(request);
 
     // Log the request (await to ensure it completes before isolate dies)
     const latency = Date.now() - startTime;
-    const responseClassification = await classifyMcpResponse(c.req.raw, response);
+    const responseClassification = await classifyMcpResponse(classificationRequest, response);
     await logRequest(auth.name || 'unknown', operation, latency, responseClassification.status, {
       surfaceProfile: 'edge_remote',
       authPrincipal,

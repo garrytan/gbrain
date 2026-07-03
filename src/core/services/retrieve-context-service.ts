@@ -70,6 +70,18 @@ interface CandidateSearchPoolResult {
   successful_queries: number;
 }
 
+interface RetrievalUsageStats {
+  bySlug: Map<string, {
+    count: number;
+    latestAt: Date;
+  }>;
+}
+
+interface TaskAffinityContext {
+  taskId: string;
+  haystack: string;
+}
+
 export type RetrieveContextCandidateSignalBuilder = (
   engine: BrainEngine,
   input: BuildCandidateSignalsInput,
@@ -108,10 +120,121 @@ export interface RetrieveContextDependencies {
   candidateSignalBuilder?: RetrieveContextCandidateSignalBuilder;
   graphFrontierInputBuilder?: RetrieveContextGraphFrontierInputBuilder;
   graphFrontierPlanner?: RetrieveContextGraphFrontierPlanner;
+  usageAwareRanking?: boolean;
+  usageWindowDays?: number;
+}
+
+export async function buildProductionGraphFrontierInput(
+  input: RetrieveContextGraphFrontierBuildInput,
+): Promise<RetrieveContextGraphFrontierBuildResult> {
+  const scopeId = input.required_reads.find((selector) => selector.scope_id)?.scope_id
+    ?? (input.scope_gate?.resolved_scope === 'personal' ? 'personal:default' : DEFAULT_NOTE_MANIFEST_SCOPE_ID);
+  const policyVersion = DEFAULT_GRAPH_FRONTIER_POLICY_VERSION;
+  const seedSlugs = uniqueSlugs(input.candidates
+    .map((candidate) => candidate.read_selector.slug ?? candidate.canonical_target.slug)
+    .filter((slug): slug is string => Boolean(slug)))
+    .slice(0, LINKED_CANDIDATE_SEED_LIMIT);
+  if (seedSlugs.length === 0) {
+    return { scope_id: scopeId, policy_version: policyVersion, seed_node_ids: [], nodes: [], edges: [] };
+  }
+
+  const allSlugs = new Set(seedSlugs);
+  const edges: GraphFrontierEdge[] = [];
+  let frontier = seedSlugs;
+  for (let depth = 0; depth < 2 && frontier.length > 0; depth += 1) {
+    const manifests = await loadManifestEntriesBySlug(input.engine, frontier);
+    const explicitLinks = await explicitLinkedSlugsBySeed(input.engine, frontier);
+    const next = new Set<string>();
+    for (const slug of frontier) {
+      const manifest = manifests.get(slugLookupKey(slug));
+      const explicit = explicitLinks.get(slug);
+      const linked = uniqueSlugs([
+        ...(manifest?.outgoing_wikilinks ?? []),
+        ...(explicit?.outgoing ?? []),
+        ...(explicit?.incoming ?? []),
+      ]).slice(0, 8);
+      for (const target of linked) {
+        edges.push(graphFrontierEdge('supports', slug, target, scopeId, policyVersion, `link:${slug}->${target}`));
+        if (!allSlugs.has(target)) next.add(target);
+        allSlugs.add(target);
+      }
+      const supersededBy = typeof manifest?.frontmatter.superseded_by === 'string'
+        ? manifest.frontmatter.superseded_by.trim()
+        : '';
+      if (supersededBy) {
+        edges.push(graphFrontierEdge('supersedes', slug, supersededBy, scopeId, policyVersion, `supersedes:${slug}->${supersededBy}`));
+        if (!allSlugs.has(supersededBy)) next.add(supersededBy);
+        allSlugs.add(supersededBy);
+      }
+    }
+    frontier = [...next].slice(0, LINKED_CANDIDATE_SEED_LIMIT * 8);
+  }
+
+  const manifests = await loadManifestEntriesBySlug(input.engine, [...allSlugs]);
+  const nodes: GraphFrontierNode[] = [...manifests.values()].map((manifest) => ({
+    id: graphFrontierNodeId(manifest.slug),
+    scope_id: scopeId,
+    policy_version: policyVersion,
+    selector: normalizeRetrievalSelector({
+      kind: 'compiled_truth',
+      scope_id: scopeId,
+      slug: manifest.slug,
+      path: manifest.path,
+      freshness: 'unknown',
+    }),
+  }));
+  const existingNodeIds = new Set(nodes.map((node) => node.id));
+
+  return {
+    scope_id: scopeId,
+    policy_version: policyVersion,
+    seed_node_ids: seedSlugs.map(graphFrontierNodeId).filter((id) => existingNodeIds.has(id)),
+    nodes,
+    edges: dedupeGraphFrontierEdges(edges).filter((edge) =>
+      existingNodeIds.has(edge.from_node_id) && existingNodeIds.has(edge.to_node_id)
+    ),
+  };
+}
+
+function graphFrontierNodeId(slug: string): string {
+  return `page:${slug}`;
+}
+
+function graphFrontierEdge(
+  edgeType: GraphFrontierEdge['edge_type'],
+  fromSlug: string,
+  toSlug: string,
+  scopeId: string,
+  policyVersion: string,
+  idPrefix: string,
+): GraphFrontierEdge {
+  return {
+    id: `${idPrefix}`,
+    edge_type: edgeType,
+    from_node_id: graphFrontierNodeId(fromSlug),
+    to_node_id: graphFrontierNodeId(toSlug),
+    scope_id: scopeId,
+    policy_version: policyVersion,
+  };
+}
+
+function dedupeGraphFrontierEdges(edges: GraphFrontierEdge[]): GraphFrontierEdge[] {
+  const seen = new Set<string>();
+  const result: GraphFrontierEdge[] = [];
+  for (const edge of edges) {
+    const key = `${edge.edge_type}:${edge.from_node_id}:${edge.to_node_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(edge);
+  }
+  return result.sort((left, right) => left.id.localeCompare(right.id));
 }
 
 const DEFAULT_CANDIDATE_LIMIT = 5;
 const DEFAULT_READ_CONTEXT_MAX_SELECTORS = 3;
+const TOKEN_BUDGET_CANDIDATE_DIVISOR = 600;
+const TOKEN_BUDGET_READ_DIVISOR = 1200;
+const TOKEN_BUDGET_ORIENTATION_FLOOR = 2000;
 const READ_PLAN_MAX_DEPTH = 1;
 const CANDIDATE_SELECTOR_BATCH_SIZE = 10;
 const MAX_CANDIDATE_QUERY_VARIANTS = 8;
@@ -126,6 +249,8 @@ const SECTION_SELECTOR_LOOKUP_LIMIT = 50;
 // manifest scan so a large brain cannot turn one retrieval into a full-table
 // sweep. Targets with fewer backlinks inside the cap simply get fewer.
 const MANIFEST_LINK_SCAN_MAX_ROWS = 5_000;
+const ALIAS_RESOLUTION_MANIFEST_LIMIT = 500;
+const DEFAULT_USAGE_RANKING_WINDOW_DAYS = 90;
 const SEARCH_HIT_CONTEXT_CHARS = 40;
 const SEARCH_CHUNK_WARNING = 'Search/query chunks are candidate pointers; call read_context before answering factual questions.';
 const DEFAULT_GRAPH_FRONTIER_POLICY_VERSION = 'policy:v1';
@@ -158,15 +283,37 @@ const QUERY_TOKEN_STOPWORDS = new Set([
   'with',
 ]);
 
+function candidateLimitForTokenBudget(requestedLimit: number, tokenBudget: number | undefined): number {
+  if (tokenBudget === undefined) return requestedLimit;
+  return Math.min(requestedLimit, Math.max(3, Math.floor(tokenBudget / TOKEN_BUDGET_CANDIDATE_DIVISOR)));
+}
+
+function requiredReadLimitForTokenBudget(candidateLimit: number, tokenBudget: number | undefined): number {
+  if (tokenBudget === undefined) return Math.min(candidateLimit, DEFAULT_READ_CONTEXT_MAX_SELECTORS);
+  return Math.min(
+    candidateLimit,
+    DEFAULT_READ_CONTEXT_MAX_SELECTORS,
+    Math.max(1, Math.floor(tokenBudget / TOKEN_BUDGET_READ_DIVISOR)),
+  );
+}
+
+function shouldIncludeOrientation(input: RetrieveContextInput): boolean {
+  if (input.include_orientation === false) return false;
+  return input.token_budget === undefined || input.token_budget >= TOKEN_BUDGET_ORIENTATION_FLOOR;
+}
+
 export async function retrieveContext(
   engine: BrainEngine,
   input: RetrieveContextInput,
   dependencies: RetrieveContextDependencies = {},
 ): Promise<RetrieveContextResult> {
-  const limit = input.limit ?? DEFAULT_CANDIDATE_LIMIT;
-  const requiredReadLimit = Math.min(limit, DEFAULT_READ_CONTEXT_MAX_SELECTORS);
-  assertPositiveInteger(limit, 'limit');
+  const startedAtMs = Date.now();
+  const requestedLimit = input.limit ?? DEFAULT_CANDIDATE_LIMIT;
+  assertPositiveInteger(requestedLimit, 'limit');
   if (input.token_budget !== undefined) assertPositiveInteger(input.token_budget, 'token_budget');
+  const limit = candidateLimitForTokenBudget(requestedLimit, input.token_budget);
+  const requiredReadLimit = requiredReadLimitForTokenBudget(limit, input.token_budget);
+  const includeOrientation = shouldIncludeOrientation(input);
 
   const requestId = crypto.randomUUID();
   const classification = classifyMemoryScenario(input);
@@ -179,6 +326,7 @@ export async function retrieveContext(
       engine,
       blockedByScopeGate(requestId, classification.scenario, scopeGate),
       input,
+      startedAtMs,
     );
   }
 
@@ -222,57 +370,21 @@ export async function retrieveContext(
       orientation,
       ...candidateSignals,
       warnings: ['Exact selector supplied; call read_context for canonical evidence.'],
-    }, input);
+    }, input, startedAtMs);
   }
 
-  if (input.task_id) {
-    const selector = normalizeRetrievalSelector({
+  const taskWorkingSetSelector = input.task_id
+    ? normalizeRetrievalSelector({
       kind: 'task_working_set',
       scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
       object_id: input.task_id,
       freshness: 'current',
-    });
-    const candidates = [candidateFromSelector(selector, 1)];
-    const requiredReads = [selector];
-    const orientation = emptyOrientation();
-    const candidateSignals = await buildRetrieveContextCandidateSignals(
-      candidateSignalBuilder,
-      engine,
-      input,
-      classification.scenario,
-      requiredReads,
-      candidates,
-      limit,
-    );
-    const createSafety = buildCreateSafety(candidates, requiredReads, { selector_existence_verified: false });
-    const decoratedCandidates = withCandidateResultMetadata(candidates, createSafety);
-
-    return maybePersistRetrieveTrace(engine, {
-      request_id: requestId,
-      scenario: classification.scenario,
-      scope_gate: scopeGate,
-      route: null,
-      answerability: {
-        answerable_from_probe: false,
-        allowed_probe_answer_kind: 'none',
-        must_read_context: true,
-        reason_codes: ['task_continuation_requires_task_state'],
-      },
-      candidates: decoratedCandidates,
-      required_reads: requiredReads,
-      create_safety: createSafety,
-      read_plan: buildReadPlan({
-        candidates: decoratedCandidates,
-        required_reads: requiredReads,
-        orientation,
-        candidate_signals: candidateSignals,
-        required_read_limit: requiredReadLimit,
-      }),
-      orientation,
-      ...candidateSignals,
-      warnings: ['Task continuation must read task state before raw files or graph orientation.'],
-    }, input);
-  }
+    })
+    : null;
+  const taskCandidate = taskWorkingSetSelector ? candidateFromSelector(taskWorkingSetSelector, 1) : null;
+  const taskAffinity = input.task_id
+    ? await buildTaskAffinityContext(engine, input.task_id)
+    : undefined;
 
   const query = input.query?.trim() ?? '';
   const searchLimit = query.length > 0 ? sourceRankCandidateLimit(limit) : 0;
@@ -282,21 +394,34 @@ export async function retrieveContext(
   // results, so both run concurrently.
   const [candidatePool, orientation] = await Promise.all([
     query.length > 0
-      ? searchCandidatePool(candidateSearch, query, searchLimit)
+      ? searchCandidatePool(engine, candidateSearch, query, searchLimit, input.known_subjects)
       : Promise.resolve(emptyCandidateSearchPool()),
-    input.include_orientation === false || query.length === 0
+    !includeOrientation || query.length === 0
       ? Promise.resolve(emptyOrientation())
       : buildOrientation(engine, query, limit, dependencies.broadSynthesisCandidateSearch),
   ]);
   const searchResults = rankSearchResults(candidatePool.results);
-  const candidates = await groupCandidatesByCanonicalPage(engine, searchResults, limit, query, scopeGate);
+  const candidates = await groupCandidatesByCanonicalPage(
+    engine,
+    searchResults,
+    limit,
+    query,
+    scopeGate,
+    repoBasename(input.repo_path),
+    dependencies,
+    taskAffinity,
+  );
+  const combinedCandidates = taskCandidate
+    ? [taskCandidate, ...candidates]
+    : candidates;
   const baseRequiredReads = dedupeSelectorsByEvidence([
+    ...(taskWorkingSetSelector ? [taskWorkingSetSelector] : []),
     ...candidates.map((candidate) => candidate.read_selector),
   ].filter((selector) => selectorAllowedByRetrieveScope(selector, scopeGate))).slice(0, requiredReadLimit);
   const graphAugmentation = await maybeAugmentRequiredReadsWithGraphFrontier(engine, input, dependencies, {
     query,
     limit,
-    candidates,
+    candidates: combinedCandidates,
     required_reads: baseRequiredReads,
     orientation,
     scope_gate: scopeGate,
@@ -309,7 +434,7 @@ export async function retrieveContext(
     input,
     classification.scenario,
     requiredReads,
-    candidates,
+    combinedCandidates,
     limit,
   );
 
@@ -321,7 +446,7 @@ export async function retrieveContext(
     canonical_probe_completed: query.length > 0 && !backendGapReason,
   });
   const graphFrontierUsed = graphAugmentation.orientation.derived_consulted.includes('graph_frontier');
-  const decoratedCandidates = withCandidateResultMetadata(candidates, createSafety, {
+  const decoratedCandidates = withCandidateResultMetadata(combinedCandidates, createSafety, {
     backend_gap: backendGap,
     graph_frontier_authority: graphFrontierUsed ? 'selector_planning_only' : undefined,
   });
@@ -354,6 +479,7 @@ export async function retrieveContext(
       ...candidateSearchWarnings(candidatePool),
       ...(searchResults.length > 0 ? [SEARCH_CHUNK_WARNING] : []),
       ...graphAugmentation.warnings,
+      ...(taskWorkingSetSelector ? ['Task continuation includes task working set and normal search; read task state before acting on raw files.'] : []),
       ...(requiredReads.length === 0 && candidateSignals.candidate_signals.length > 0
         ? ['No canonical read candidate was found; non-canonical Memory Inbox candidate signals are available.']
         : []),
@@ -361,7 +487,7 @@ export async function retrieveContext(
         ? ['No canonical read candidate was found.']
         : []),
     ],
-  }, input);
+  }, input, startedAtMs);
 }
 
 async function maybeAugmentRequiredReadsWithGraphFrontier(
@@ -604,11 +730,13 @@ function broadRetrievalReasonCodes(
 }
 
 async function searchCandidatePool(
+  engine: BrainEngine,
   candidateSearch: RetrieveContextCandidateSearch,
   query: string,
   limit: number,
+  knownSubjects?: RetrieveContextInput['known_subjects'],
 ): Promise<CandidateSearchPoolResult> {
-  const queries = candidateSearchQueries(query);
+  const queries = await candidateSearchQueries(engine, query, knownSubjects);
   const settled = await Promise.allSettled(
     queries.map((candidateQuery) => candidateSearch(candidateQuery, { limit })),
   );
@@ -688,7 +816,11 @@ function errorMessage(error: unknown): string {
     : String(error);
 }
 
-function candidateSearchQueries(query: string): string[] {
+async function candidateSearchQueries(
+  engine: BrainEngine,
+  query: string,
+  knownSubjects?: RetrieveContextInput['known_subjects'],
+): Promise<string[]> {
   const variants: string[] = [];
   const addVariant = (variant: string) => {
     const normalized = variant.trim();
@@ -707,8 +839,64 @@ function candidateSearchQueries(query: string): string[] {
     }
     if (variants.length >= MAX_CANDIDATE_QUERY_VARIANTS) break;
   }
+  for (const subject of (knownSubjects ?? []).slice(0, 3)) {
+    addVariant(knownSubjectRef(subject));
+  }
+
+  for (const variant of await deterministicAliasQueryVariants(engine, query)) {
+    addVariant(variant);
+    if (variants.length >= MAX_CANDIDATE_QUERY_VARIANTS) break;
+  }
 
   return variants;
+}
+
+async function deterministicAliasQueryVariants(engine: BrainEngine, query: string): Promise<string[]> {
+  if (typeof engine.listNoteManifestEntries !== 'function') return [];
+  const normalizedQuery = normalizeText(query);
+  if (!normalizedQuery) return [];
+  const queryTokens = new Set(tokenizeForSectionRank(query));
+  try {
+    const manifests = await engine.listNoteManifestEntries({
+      scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+      limit: ALIAS_RESOLUTION_MANIFEST_LIMIT,
+      offset: 0,
+    });
+    const variants: string[] = [];
+    const addVariant = (value: string | undefined) => {
+      const normalized = value?.trim();
+      if (!normalized) return;
+      if (variants.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) return;
+      variants.push(normalized);
+    };
+
+    for (const manifest of manifests) {
+      const aliases = uniqueStrings([
+        ...manifest.aliases,
+        ...(typeof manifest.frontmatter.alias === 'string' ? [manifest.frontmatter.alias] : []),
+      ]);
+      if (!aliases.some((alias) => aliasMatchesQuery(alias, normalizedQuery, queryTokens))) continue;
+      addVariant(manifest.title);
+      addVariant(manifest.slug);
+      for (const alias of aliases) addVariant(alias);
+      if (variants.length >= MAX_CANDIDATE_QUERY_VARIANTS) break;
+    }
+    return variants;
+  } catch {
+    return [];
+  }
+}
+
+function aliasMatchesQuery(alias: string, normalizedQuery: string, queryTokens: Set<string>): boolean {
+  const normalizedAlias = normalizeText(alias);
+  if (!normalizedAlias) return false;
+  if (queryTokens.has(normalizedAlias)) return true;
+  if (normalizedAlias.length <= 3) return normalizedQuery === normalizedAlias;
+  return normalizedQuery.includes(normalizedAlias);
+}
+
+function knownSubjectRef(subject: string | { ref: string }): string {
+  return typeof subject === 'string' ? subject : subject.ref;
 }
 
 function fuseCandidateSearchResults(resultLists: SearchResult[][]): SearchResult[] {
@@ -766,6 +954,9 @@ async function groupCandidatesByCanonicalPage(
   limit: number,
   query: string,
   scopeGate: ScopeGateDecisionResult | undefined,
+  repoContext?: string,
+  dependencies: RetrieveContextDependencies = {},
+  taskAffinity?: TaskAffinityContext,
 ): Promise<RetrieveContextCandidate[]> {
   const resultsBySlug = new Map<string, SearchResult[]>();
   const firstRankBySlug = new Map<string, number>();
@@ -805,11 +996,17 @@ async function groupCandidatesByCanonicalPage(
         query,
         manifestBySlug.get(slugLookupKey(group.slug)),
         sectionsBySlug.get(slugLookupKey(group.slug)) ?? [],
+        repoContext,
       )));
     resolvedCandidates.push(...resolved);
   }
 
-  const rankedBaseCandidates = rankResolvedCandidates(resolvedCandidates, query);
+  const usageStats = await loadRetrievalUsageStatsForRanking(engine, dependencies);
+  const usageDecoratedCandidates = applyUsageSignalsToCandidates(
+    applyTaskAffinitySignalsToCandidates(resolvedCandidates, taskAffinity),
+    usageStats,
+  );
+  const rankedBaseCandidates = rankResolvedCandidates(usageDecoratedCandidates, query, usageStats);
   const linkedCandidates = await linkedCandidatesForResolvedCandidates(
     engine,
     rankedBaseCandidates,
@@ -818,7 +1015,14 @@ async function groupCandidatesByCanonicalPage(
     scopeGate,
     manifestBySlug,
   );
-  const rankedCandidates = rankResolvedCandidates([...rankedBaseCandidates, ...linkedCandidates], query);
+  const rankedCandidates = rankResolvedCandidates(
+    applyUsageSignalsToCandidates(
+      applyTaskAffinitySignalsToCandidates([...rankedBaseCandidates, ...linkedCandidates], taskAffinity),
+      usageStats,
+    ),
+    query,
+    usageStats,
+  );
   const candidates: RetrieveContextCandidate[] = [];
   const seenCanonicalEvidence = new Set<string>();
   for (const candidate of rankedCandidates) {
@@ -844,13 +1048,14 @@ async function groupCandidatesByCanonicalPage(
 function rankResolvedCandidates(
   candidates: RetrieveContextCandidate[],
   query: string,
+  usageStats?: RetrievalUsageStats,
 ): RetrieveContextCandidate[] {
   const queryTokens = tokenizeForSectionRank(query);
   return candidates
     .map((candidate, index) => ({
       candidate,
       index,
-      score: scoreResolvedCandidate(candidate, queryTokens),
+      score: scoreResolvedCandidate(candidate, queryTokens, usageStats),
     }))
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
@@ -859,7 +1064,11 @@ function rankResolvedCandidates(
     .map((entry) => entry.candidate);
 }
 
-function scoreResolvedCandidate(candidate: RetrieveContextCandidate, queryTokens: string[]): number {
+function scoreResolvedCandidate(
+  candidate: RetrieveContextCandidate,
+  queryTokens: string[],
+  usageStats?: RetrievalUsageStats,
+): number {
   const title = normalizeText(candidate.canonical_target.title ?? '');
   const path = normalizeText(candidate.canonical_target.path ?? '');
   const sectionId = normalizeText(candidate.canonical_target.section_id ?? '');
@@ -883,9 +1092,170 @@ function scoreResolvedCandidate(candidate: RetrieveContextCandidate, queryTokens
   score += coveredTokens.length * 4;
   if (queryTokens.length > 0 && coveredTokens.length === queryTokens.length) score += 12;
   if (candidate.why_matched.some((reason) => reason.startsWith('linked from '))) score += 18;
+  if (candidate.why_matched.some((reason) => reason.startsWith('repo_path matched '))) score += 10;
+  if (candidate.why_matched.some((reason) => reason.startsWith('task_id affinity matched '))) score += 8;
+  score += usageRankBonus(candidate, usageStats);
   if (candidate.read_selector.freshness === 'stale') score -= 8;
 
   return score;
+}
+
+async function buildTaskAffinityContext(
+  engine: BrainEngine,
+  taskId: string,
+): Promise<TaskAffinityContext | undefined> {
+  try {
+    const [thread, workingSet, attempts, decisions] = await Promise.all([
+      engine.getTaskThread(taskId).catch(() => null),
+      engine.getTaskWorkingSet(taskId).catch(() => null),
+      engine.listTaskAttempts(taskId, { limit: 20 }).catch(() => []),
+      engine.listTaskDecisions(taskId, { limit: 20 }).catch(() => []),
+    ]);
+    const parts = [
+      thread?.title,
+      thread?.goal,
+      thread?.repo_path ?? undefined,
+      thread?.branch_name ?? undefined,
+      thread?.current_summary,
+      ...(workingSet?.active_paths ?? []),
+      ...(workingSet?.active_symbols ?? []),
+      ...(workingSet?.blockers ?? []),
+      ...(workingSet?.open_questions ?? []),
+      ...(workingSet?.next_steps ?? []),
+      ...(workingSet?.verification_notes ?? []),
+      ...attempts.flatMap((attempt) => [
+        attempt.summary,
+        ...attempt.evidence,
+        JSON.stringify(attempt.applicability_context ?? {}),
+      ]),
+      ...decisions.flatMap((decision) => [
+        decision.summary,
+        decision.rationale,
+        ...decision.consequences,
+        JSON.stringify(decision.validity_context ?? {}),
+      ]),
+    ];
+    const haystack = normalizeText(parts.filter((part): part is string => Boolean(part && part.trim())).join('\n'));
+    return haystack ? { taskId, haystack } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function applyTaskAffinitySignalsToCandidates(
+  candidates: RetrieveContextCandidate[],
+  taskAffinity?: TaskAffinityContext,
+): RetrieveContextCandidate[] {
+  if (!taskAffinity) return candidates;
+  return candidates.map((candidate) => {
+    if (!candidateMatchesTaskAffinity(candidate, taskAffinity)) return candidate;
+    const reason = `task_id affinity matched ${taskAffinity.taskId}`;
+    if (candidate.why_matched.includes(reason)) return candidate;
+    return {
+      ...candidate,
+      why_matched: [...candidate.why_matched, reason],
+    };
+  });
+}
+
+function candidateMatchesTaskAffinity(
+  candidate: RetrieveContextCandidate,
+  taskAffinity: TaskAffinityContext,
+): boolean {
+  const values = [
+    candidate.canonical_target.slug,
+    candidate.canonical_target.title,
+    candidate.canonical_target.path,
+    candidate.read_selector.slug,
+    candidate.read_selector.path,
+    ...candidate.matched_chunks.flatMap((chunk) => [chunk.slug, chunk.title]),
+  ];
+  return values.some((value) => {
+    const normalized = normalizeText(value ?? '');
+    return normalized.length > 0 && taskAffinity.haystack.includes(normalized);
+  });
+}
+
+async function loadRetrievalUsageStatsForRanking(
+  engine: BrainEngine,
+  dependencies: RetrieveContextDependencies,
+): Promise<RetrievalUsageStats | undefined> {
+  if (!dependencies.usageAwareRanking || typeof engine.listRetrievalTracesByWindow !== 'function') {
+    return undefined;
+  }
+
+  const until = new Date();
+  const since = new Date(until.getTime() - (dependencies.usageWindowDays ?? DEFAULT_USAGE_RANKING_WINDOW_DAYS) * 24 * 60 * 60 * 1000);
+  const traces = await engine.listRetrievalTracesByWindow({
+    since,
+    until,
+    limit: 1_000,
+  });
+  const bySlug = new Map<string, { count: number; latestAt: Date }>();
+
+  for (const trace of traces) {
+    const traceSlugs = uniqueStrings(trace.source_refs
+      .map(slugFromRetrievalTraceSourceRef)
+      .filter((slug): slug is string => Boolean(slug)));
+    for (const slug of traceSlugs) {
+      const current = bySlug.get(slug);
+      if (!current) {
+        bySlug.set(slug, { count: 1, latestAt: trace.created_at });
+        continue;
+      }
+      current.count += 1;
+      if (trace.created_at > current.latestAt) current.latestAt = trace.created_at;
+    }
+  }
+
+  return { bySlug };
+}
+
+function applyUsageSignalsToCandidates(
+  candidates: RetrieveContextCandidate[],
+  usageStats?: RetrievalUsageStats,
+): RetrieveContextCandidate[] {
+  if (!usageStats) return candidates;
+  return candidates.map((candidate) => {
+    const slug = candidate.canonical_target.slug ?? candidate.read_selector.slug;
+    if (!slug) return candidate;
+    const usage = usageStats.bySlug.get(slug);
+    const reason = usage
+      ? `usage-aware ranking: ${usage.count} recent retrieval trace${usage.count === 1 ? '' : 's'}`
+      : 'cold page: no recent retrieval trace usage';
+    if (candidate.why_matched.includes(reason)) return candidate;
+    return {
+      ...candidate,
+      why_matched: [...candidate.why_matched, reason],
+    };
+  });
+}
+
+function usageRankBonus(candidate: RetrieveContextCandidate, usageStats?: RetrievalUsageStats): number {
+  if (!usageStats) return 0;
+  const slug = candidate.canonical_target.slug ?? candidate.read_selector.slug;
+  if (!slug) return 0;
+  const usage = usageStats.bySlug.get(slug);
+  if (!usage) return 0;
+  const ageDays = Math.max(0, (Date.now() - usage.latestAt.getTime()) / (24 * 60 * 60 * 1000));
+  const recencyBonus = ageDays <= 7 ? 4 : ageDays <= 30 ? 2 : 0;
+  return Math.min(12, usage.count * 3) + recencyBonus;
+}
+
+function slugFromRetrievalTraceSourceRef(sourceRef: string): string | undefined {
+  const ref = sourceRef.split('@chars:')[0]!;
+  const parts = ref.split(':');
+  const kind = parts[0];
+  if (
+    (kind === 'page' || kind === 'compiled_truth' || kind === 'frontmatter' || kind === 'timeline_range')
+    && parts.length >= 4
+  ) {
+    return parts.slice(3).join(':');
+  }
+  if (kind === 'line_span' && parts.length >= 6) {
+    return parts.slice(3, -2).join(':');
+  }
+  return undefined;
 }
 
 async function resolveCandidateGroup(
@@ -894,6 +1264,7 @@ async function resolveCandidateGroup(
   query: string,
   manifest?: NoteManifestEntry,
   sections?: NoteSectionEntry[],
+  repoContext?: string,
 ): Promise<RetrieveContextCandidate> {
   const readResult = bestTimelineSearchResult(group.results) ?? group.top;
   const selector = await bestReadSelectorForSearchResult(engine, readResult, query, sections, manifest?.content_hash);
@@ -906,6 +1277,11 @@ async function resolveCandidateGroup(
   const readSelector = corpusLane
     ? normalizeRetrievalSelector({ ...selector, corpus_lane: corpusLane })
     : selector;
+
+  const whyMatched = [`matched ${group.results.length} search chunk${group.results.length === 1 ? '' : 's'}`];
+  if (repoContext && candidateMatchesRepoContext(group.slug, manifest, repoContext)) {
+    whyMatched.push(`repo_path matched ${repoContext}`);
+  }
 
   return {
     candidate_id: `candidate:${group.slug}`,
@@ -920,7 +1296,7 @@ async function resolveCandidateGroup(
       ...(corpusLane ? { corpus_lane: corpusLane } : {}),
     },
     matched_chunks: group.results.map((result) => toMatchedChunk(result, corpusLane)),
-    why_matched: [`matched ${group.results.length} search chunk${group.results.length === 1 ? '' : 's'}`],
+    why_matched: whyMatched,
     activation: group.top.stale ? 'verify_first' : 'candidate_only',
     read_priority: 0,
     read_selector: readSelector,
@@ -1216,6 +1592,38 @@ function mapLinksBySeed(
 
 function slugLookupKey(slug: string): string {
   return slug.toLowerCase();
+}
+
+function repoBasename(repoPath: string | null | undefined): string | undefined {
+  const normalized = repoPath?.trim().replace(/[\\/]+$/, '');
+  if (!normalized) return undefined;
+  return normalized.split(/[\\/]/).filter(Boolean).pop()?.toLowerCase();
+}
+
+function candidateMatchesRepoContext(
+  slug: string,
+  manifest: NoteManifestEntry | undefined,
+  repoContext: string,
+): boolean {
+  const frontmatter = manifest?.frontmatter ?? {};
+  const repoValues = [
+    stringFrontmatterValue(frontmatter.repo),
+    stringFrontmatterValue(frontmatter.repo_path),
+  ].filter((value): value is string => Boolean(value));
+  if (repoValues.some((value) => repoBasename(value) === repoContext || value.toLowerCase() === repoContext)) {
+    return true;
+  }
+
+  const slugSegments = slugLookupKey(slug).split(/[/.]/).filter(Boolean);
+  const systemsOrProjectsIndex = slugSegments.findIndex((segment) => (
+    segment === 'systems' || segment === 'projects'
+  ));
+  if (systemsOrProjectsIndex < 0) return false;
+  return slugSegments.slice(systemsOrProjectsIndex + 1).some((segment) => segment === repoContext);
+}
+
+function stringFrontmatterValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 function uniqueSlugs(slugs: string[]): string[] {
@@ -1891,11 +2299,14 @@ async function maybePersistRetrieveTrace(
   engine: BrainEngine,
   result: RetrieveContextResult,
   input: RetrieveContextInput,
+  startedAtMs: number,
 ): Promise<RetrieveContextResult> {
-  if (!input.persist_trace) return attachPushContextEnvelope(withRetrieveTrustFooter(result), input);
+  if (input.persist_trace === false || typeof engine.putRetrievalTrace !== 'function') {
+    return attachPushContextEnvelope(withRetrieveTrustFooter(result), input);
+  }
   const resultWithTrace = {
     ...result,
-    trace: await persistRetrieveTrace(engine, result, input),
+    trace: await persistRetrieveTrace(engine, result, input, startedAtMs),
   };
   return attachPushContextEnvelope(withRetrieveTrustFooter(resultWithTrace), input);
 }
@@ -1990,6 +2401,7 @@ async function persistRetrieveTrace(
   engine: BrainEngine,
   result: RetrieveContextResult,
   input: RetrieveContextInput,
+  startedAtMs: number,
 ): Promise<RetrievalTrace> {
   const thread = input.task_id ? await engine.getTaskThread(input.task_id) : null;
   const scope: ScopeGateScope = result.scope_gate?.resolved_scope ?? thread?.scope ?? 'unknown';
@@ -2018,6 +2430,8 @@ async function persistRetrieveTrace(
     selected_intent: intentFromScenario(result.scenario),
     scope_gate_policy: result.scope_gate?.policy ?? null,
     scope_gate_reason: result.scope_gate?.decision_reason ?? null,
+    elapsed_ms: Math.max(0, Date.now() - startedAtMs),
+    retrieved_token_count: 0,
     outcome: result.required_reads.length > 0
       ? 'retrieve_context selected canonical read candidates'
       : 'retrieve_context found no canonical read candidates',

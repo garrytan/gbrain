@@ -77,6 +77,13 @@ export async function embedQuery(text: string, options: EmbeddingRuntimeOptions 
   return results[0];
 }
 
+export async function embedQueries(
+  texts: string[],
+  options: EmbeddingRuntimeOptions = {},
+): Promise<Float32Array[]> {
+  return embedBatchForKind(texts, 'query', options);
+}
+
 export async function embedBatch(
   texts: string[],
   options: EmbeddingRuntimeOptions = {},
@@ -152,7 +159,7 @@ export async function embedChunks(
   }
 
   const embeddings = await embedBatch(
-    chunks.map(chunk => chunk.chunk_text),
+    chunks.map(chunk => buildChunkEmbeddingInput(chunk)),
     { ...options, provider },
   );
 
@@ -162,10 +169,25 @@ export async function embedChunks(
     chunks: chunks.map((chunk, index) => ({
       ...chunk,
       embedding: embeddings[index],
-      model: provider.capability.model ?? chunk.model,
+      model: resolveChunkEmbeddingModel(chunk, provider),
       token_count: chunk.token_count ?? estimateTokenCount(chunk.chunk_text),
     })),
   };
+}
+
+export function buildChunkEmbeddingInput(chunk: Pick<ChunkInput, 'chunk_text' | 'embed_context'>): string {
+  const context = chunk.embed_context?.trim();
+  if (!context) return chunk.chunk_text;
+  return `${context}\n\n${chunk.chunk_text}`;
+}
+
+export function resolveChunkEmbeddingModel(
+  chunk: Pick<ChunkInput, 'model' | 'embedding_input_version'>,
+  provider: ResolvedEmbeddingProvider,
+): string | undefined {
+  const model = provider.capability.model ?? chunk.model;
+  if (!chunk.embedding_input_version) return model;
+  return `${model ?? DEFAULT_LOCAL_EMBEDDING_MODEL}#${chunk.embedding_input_version}`;
 }
 
 export { estimateTokenCount };

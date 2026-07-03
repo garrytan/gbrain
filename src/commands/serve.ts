@@ -17,6 +17,7 @@ export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args:
   const oauthApprovalToken = process.env.MBRAIN_OAUTH_APPROVAL_TOKEN ?? process.env.MBRAIN_HTTP_OAUTH_PIN;
   const oauthSigningSecret = process.env.MBRAIN_OAUTH_SIGNING_SECRET;
   const oauthAllowedScopes = parseCsvFlag(args, '--oauth-allowed-scopes') ?? parseCsv(process.env.MBRAIN_OAUTH_ALLOWED_SCOPES);
+  const toolTier = parseStringFlag(args, '--tier') ?? process.env.MBRAIN_MCP_TOOL_TIER;
 
   if (http) {
     const oauthStartupErrors = getHttpOAuthServeStartupErrors({
@@ -47,6 +48,7 @@ export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args:
         signingSecret: oauthSigningSecret,
         allowedScopes: oauthAllowedScopes,
       } : undefined,
+      toolTier,
     });
     console.error(`Starting MBrain MCP server (HTTP) on http://${server.hostname}:${server.port}`);
     console.error(allowedOrigins.length > 0
@@ -60,7 +62,7 @@ export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args:
   }
 
   console.error('Starting MBrain MCP server (stdio)...');
-  await startMcpServer(engine);
+  await startMcpServer(engine, { toolTier });
 }
 
 export interface HttpOAuthServeStartupOptions {
@@ -69,6 +71,8 @@ export interface HttpOAuthServeStartupOptions {
   oauthApprovalToken?: string;
   oauthSigningSecret?: string;
 }
+
+const MIN_OAUTH_APPROVAL_TOKEN_LENGTH = 16;
 
 export function getHttpOAuthServeStartupErrors(options: HttpOAuthServeStartupOptions): string[] {
   if (!options.oauth) return [];
@@ -81,6 +85,13 @@ export function getHttpOAuthServeStartupErrors(options: HttpOAuthServeStartupOpt
   }
   if (!options.publicBaseUrl?.trim()) {
     errors.push('OAuth requires --public-url or MBRAIN_HTTP_PUBLIC_URL when OAuth is enabled.');
+  }
+  if (
+    options.oauthApprovalToken
+    && options.oauthSigningSecret
+    && options.oauthApprovalToken.length < MIN_OAUTH_APPROVAL_TOKEN_LENGTH
+  ) {
+    errors.push(`OAuth approval token must be at least ${MIN_OAUTH_APPROVAL_TOKEN_LENGTH} characters.`);
   }
   return errors;
 }

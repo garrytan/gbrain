@@ -37,6 +37,8 @@ import { pathToSlug } from '../sync.ts';
 const DEFAULT_TOKEN_BUDGET = 900;
 const DEFAULT_MAX_SELECTORS = 3;
 const CHARS_PER_TOKEN_ESTIMATE = 4;
+const CJK_CHAR_TOKEN_WEIGHT = 2;
+const NON_CJK_CHAR_TOKEN_WEIGHT = 1;
 const TIMELINE_ENTRY_LOOKUP_PAGE_SIZE = 100;
 const SOURCE_REF_LOOKUP_BATCH_SIZE = 5000;
 type ReadSelectorOptions = {
@@ -64,6 +66,7 @@ export async function readContext(
   input: ReadContextInput,
   dependencies: RetrieveContextDependencies = {},
 ): Promise<ReadContextResult> {
+  const startedAtMs = Date.now();
   const maxSelectors = input.max_selectors ?? DEFAULT_MAX_SELECTORS;
   assertPositiveInteger(maxSelectors, 'max_selectors');
   if (input.token_budget !== undefined) assertPositiveInteger(input.token_budget, 'token_budget');
@@ -71,14 +74,14 @@ export async function readContext(
   const warnings: string[] = [];
   const autoResolved = await resolveReadSelectors(engine, input, maxSelectors, warnings, dependencies);
   if (autoResolved.blocked) {
-    return maybePersistReadTrace(engine, autoResolved.blocked, input);
+    return maybePersistReadTrace(engine, autoResolved.blocked, input, startedAtMs);
   }
 
   const normalizedSelectors = autoResolved.selectors
     .map((selector) => normalizeRetrievalSelector(selector));
   const scopeGate = await maybeEvaluateReadScopeGate(engine, input, normalizedSelectors, autoResolved.scope_gate);
   if (scopeGate && scopeGate.policy !== 'allow') {
-    return maybePersistReadTrace(engine, blockedByScopeGate(scopeGate, normalizedSelectors), input);
+    return maybePersistReadTrace(engine, blockedByScopeGate(scopeGate, normalizedSelectors), input, startedAtMs);
   }
 
   const selectors = normalizedSelectors.slice(0, maxSelectors);
@@ -155,7 +158,7 @@ export async function readContext(
     unread_required: unreadRequired,
     continuations,
     scope_gate: scopeGate,
-  }, input);
+  }, input, startedAtMs);
 }
 
 async function readSelector(
@@ -1134,14 +1137,15 @@ function buildEvidenceClaim(read: CanonicalContextRead): ContextEvidenceClaim {
 }
 
 function estimateTokens(text: string): number {
-  return Math.max(1, Math.ceil(scalarLength(text) / CHARS_PER_TOKEN_ESTIMATE));
+  return Math.max(1, Math.ceil(tokenWeightUnits(text) / CHARS_PER_TOKEN_ESTIMATE));
 }
 
 function clipToBudget(text: string, tokenBudget: number): { text: string; consumed_chars: number } {
-  const maxChars = Math.max(1, tokenBudget * CHARS_PER_TOKEN_ESTIMATE);
+  const maxUnits = Math.max(1, tokenBudget * CHARS_PER_TOKEN_ESTIMATE);
   const textLength = scalarLength(text);
-  if (textLength <= maxChars) return { text, consumed_chars: textLength };
-  return { text: sliceScalars(text, 0, maxChars), consumed_chars: maxChars };
+  if (tokenWeightUnits(text) <= maxUnits) return { text, consumed_chars: textLength };
+  const clipped = sliceScalars(text, 0, scalarCountWithinTokenUnits(text, maxUnits));
+  return { text: clipped, consumed_chars: scalarLength(clipped) };
 }
 
 function projectionCharLimit(selector: RetrievalSelector, tokenBudget: number): number {
@@ -1151,6 +1155,31 @@ function projectionCharLimit(selector: RetrievalSelector, tokenBudget: number): 
     return Math.max(1, Math.min(selector.char_end - charStart, budgetLimit));
   }
   return budgetLimit;
+}
+
+function tokenWeightUnits(text: string): number {
+  let units = 0;
+  for (const char of text) {
+    units += isCjkScalar(char) ? CJK_CHAR_TOKEN_WEIGHT : NON_CJK_CHAR_TOKEN_WEIGHT;
+  }
+  return units;
+}
+
+function scalarCountWithinTokenUnits(text: string, maxUnits: number): number {
+  let units = 0;
+  let count = 0;
+  for (const char of text) {
+    const weight = isCjkScalar(char) ? CJK_CHAR_TOKEN_WEIGHT : NON_CJK_CHAR_TOKEN_WEIGHT;
+    if (count > 0 && units + weight > maxUnits) break;
+    if (count === 0 && weight > maxUnits) return 1;
+    units += weight;
+    count += 1;
+  }
+  return count;
+}
+
+function isCjkScalar(char: string): boolean {
+  return /[\p{Script=Han}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(char);
 }
 
 function selectorWithCurrentContentHash(selector: RetrievalSelector, contentHash: string | undefined): RetrievalSelector {
@@ -1467,11 +1496,14 @@ async function maybePersistReadTrace(
   engine: BrainEngine,
   result: ReadContextResult,
   input: ReadContextInput,
+  startedAtMs: number,
 ): Promise<ReadContextResult> {
-  if (!input.persist_trace) return withReadTrustFooter(result, input);
+  if (input.persist_trace === false || typeof engine.putRetrievalTrace !== 'function') {
+    return withReadTrustFooter(result, input);
+  }
   const resultWithTrace = {
     ...result,
-    trace: await persistReadTrace(engine, result, input),
+    trace: await persistReadTrace(engine, result, input, startedAtMs),
   };
   return withReadTrustFooter(resultWithTrace, input);
 }
@@ -1581,6 +1613,7 @@ async function persistReadTrace(
   engine: BrainEngine,
   result: ReadContextResult,
   input: ReadContextInput,
+  startedAtMs: number,
 ): Promise<RetrievalTrace> {
   const thread = input.task_id ? await engine.getTaskThread(input.task_id) : null;
   const scope: ScopeGateScope = result.scope_gate?.resolved_scope ?? thread?.scope ?? 'unknown';
@@ -1602,6 +1635,8 @@ async function persistReadTrace(
     selected_intent: intentFromReads(result.canonical_reads.map((read) => read.selector)),
     scope_gate_policy: result.scope_gate?.policy ?? null,
     scope_gate_reason: result.scope_gate?.decision_reason ?? null,
+    elapsed_ms: Math.max(0, Date.now() - startedAtMs),
+    retrieved_token_count: result.canonical_reads.reduce((total, read) => total + read.token_estimate, 0),
     outcome: result.answer_ready.ready
       ? 'read_context returned canonical evidence'
       : 'read_context could not return complete answer-ready evidence',

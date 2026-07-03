@@ -151,9 +151,24 @@ const SERVE_CLI_SPEC: Operation = {
     oauth: { type: 'boolean', description: 'Enable OAuth 2.1/DCR routes for ChatGPT-style MCP clients' },
     public_url: { type: 'string', description: 'Public base URL for OAuth metadata when serving behind a tunnel' },
     oauth_allowed_scopes: { type: 'string', description: 'Comma/space-separated OAuth scopes to allow (default: mcp)' },
+    tier: { type: 'string', description: 'Tool tier to expose: core, extended, or all (default: core)' },
   },
   handler: noopHandler,
   cliHints: { name: 'serve' },
+};
+
+const AUTH_CLI_SPEC: Operation = {
+  name: 'auth',
+  description: 'Create, list, revoke, or smoke-test remote MCP bearer tokens.',
+  params: {
+    action: { type: 'string', description: 'Action: create, list, revoke, or test', enum: ['create', 'list', 'revoke', 'test'] },
+    name: { type: 'string', description: 'Token name for create/revoke' },
+    url: { type: 'string', description: 'Remote MCP URL for test' },
+    token: { type: 'string', description: 'Bearer token for test' },
+    scope: { type: 'string', description: 'Token scope; may be repeated by the command parser' },
+  },
+  handler: noopHandler,
+  cliHints: { name: 'auth', positional: ['action', 'name'] },
 };
 
 const DREAM_CLI_SPEC: Operation = {
@@ -170,7 +185,9 @@ const DREAM_CLI_SPEC: Operation = {
     limit: { type: 'number', description: 'Maximum items per phase family' },
     max_runner_calls: { type: 'number', description: 'Maximum runner calls for auto-promote review' },
     time_budget_ms: { type: 'number', description: 'Maximum auto-promote runner time budget in milliseconds' },
+    phase_timeout_ms: { type: 'number', description: 'Maximum milliseconds per Dream phase before it is marked timed out' },
     max_candidates_per_cycle: { type: 'number', description: 'Maximum auto-promote candidates per Dream cycle' },
+    report_dir: { type: 'string', description: 'Brain directory for saving the daily memory report phase output' },
     allow_llm: { type: 'boolean', description: 'Allow budgeted LLM use when a phase supports it' },
     allow_local_runner: { type: 'boolean', description: 'Allow local runner-backed phase work' },
   },
@@ -271,6 +288,7 @@ const SYNC_CLI_SPEC: Operation = {
 };
 
 const CLI_ONLY_SPECS: Partial<Record<string, Operation>> = {
+  auth: AUTH_CLI_SPEC,
   serve: SERVE_CLI_SPEC,
   embed: EMBED_CLI_SPEC,
   doctor: DOCTOR_CLI_SPEC,
@@ -295,6 +313,7 @@ const DIRECT_NO_ENGINE_COMMANDS: Record<string, CliNoEngineLoader> = {
   report: async () => (await import('./commands/report.ts')).runReport,
   canonicalize: async () => (await import('./commands/canonicalize.ts')).runCanonicalize,
   'canonicalize-code': async () => (await import('./commands/canonicalize.ts')).runCanonicalizeCode,
+  'auth': async () => (await import('./commands/auth.ts')).runAuth,
 };
 
 const CLI_NO_ENGINE_COMMANDS: Record<string, CliNoEngineLoader> = {
@@ -768,6 +787,7 @@ SETUP
                                     Health check (engine, schema, embeddings, local/managed capabilities)
   integrations [subcommand]          Manage integration recipes
   connectors [list|show|sync]        Inspect or sync personal data connector sources
+  auth <create|list|revoke|test>     Manage remote MCP bearer tokens
   agent-session preview|capture      Preview or capture a JSON agent-session envelope file
 
 AGENT MEMORY LOOP
@@ -846,7 +866,7 @@ ADMIN
   autopilot <enable|disable|start|stop|status|install|uninstall|logs|config|run-once|dream>
                                     Manage scheduled maintenance autopilot
   subbrain <add|list|remove>          Manage registered git-backed sub-brains
-  serve [--http] [--host H] [--port P] [--oauth] [--oauth-allowed-scopes S]
+  serve [--http] [--host H] [--port P] [--oauth] [--oauth-allowed-scopes S] [--tier core|extended|all]
                                     MCP server (stdio or Streamable HTTP)
   call <tool> '<json>'               Raw tool invocation
   version                            Version info

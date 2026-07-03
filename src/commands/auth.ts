@@ -1,22 +1,17 @@
 #!/usr/bin/env bun
 /**
- * MBrain token management — standalone script, no mbrain CLI dependency.
+ * MBrain token management.
  *
  * Usage:
- *   DATABASE_URL=... bun run src/commands/auth.ts create "claude-desktop" --scope canonical_write
- *   DATABASE_URL=... bun run src/commands/auth.ts list
- *   DATABASE_URL=... bun run src/commands/auth.ts revoke "claude-desktop"
- *   DATABASE_URL=... bun run src/commands/auth.ts test <url> --token <token>
+ *   DATABASE_URL=... mbrain auth create "claude-desktop" --scope canonical_write
+ *   DATABASE_URL=... mbrain auth list
+ *   DATABASE_URL=... mbrain auth revoke "claude-desktop"
+ *   mbrain auth test <url> --token <token>
  */
 import postgres from 'postgres';
 import { createHash, randomBytes } from 'crypto';
 
 const MANUAL_TOKEN_SCOPES = new Set(['mcp', 'canonical_write', 'raw_source']);
-const DATABASE_URL = process.env.DATABASE_URL || process.env.MBRAIN_DATABASE_URL;
-if (!DATABASE_URL && process.argv[2] !== 'test') {
-  console.error('Set DATABASE_URL or MBRAIN_DATABASE_URL environment variable.');
-  process.exit(1);
-}
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -26,9 +21,18 @@ function generateToken(): string {
   return 'mbrain_' + randomBytes(32).toString('hex');
 }
 
+function requireDatabaseUrl(): string {
+  const databaseUrl = process.env.DATABASE_URL || process.env.MBRAIN_DATABASE_URL;
+  if (!databaseUrl) {
+    console.error('Set DATABASE_URL or MBRAIN_DATABASE_URL environment variable.');
+    process.exit(1);
+  }
+  return databaseUrl;
+}
+
 async function create(name: string, scopes: string[] = ['mcp']) {
-  if (!name) { console.error('Usage: auth create <name>'); process.exit(1); }
-  const sql = postgres(DATABASE_URL!);
+  if (!name) { console.error('Usage: mbrain auth create <name>'); process.exit(1); }
+  const sql = postgres(requireDatabaseUrl());
   const token = generateToken();
   const hash = hashToken(token);
 
@@ -41,7 +45,7 @@ async function create(name: string, scopes: string[] = ['mcp']) {
     console.log(`  ${token}\n`);
     console.log(`Scopes: ${scopes.join(', ')}`);
     console.log('Save this token — it will not be shown again.');
-    console.log(`Revoke with: bun run src/commands/auth.ts revoke "${name}"`);
+    console.log(`Revoke with: mbrain auth revoke "${name}"`);
   } catch (e: any) {
     if (e.code === '23505') {
       console.error(`A token named "${name}" already exists. Revoke it first or use a different name.`);
@@ -55,7 +59,7 @@ async function create(name: string, scopes: string[] = ['mcp']) {
 }
 
 async function list() {
-  const sql = postgres(DATABASE_URL!);
+  const sql = postgres(requireDatabaseUrl());
   try {
     const rows = await sql`
       SELECT name, created_at, last_used_at, revoked_at, scopes
@@ -63,7 +67,7 @@ async function list() {
       ORDER BY created_at DESC
     `;
     if (rows.length === 0) {
-      console.log('No tokens found. Create one: bun run src/commands/auth.ts create "my-client"');
+      console.log('No tokens found. Create one: mbrain auth create "my-client"');
       return;
     }
     console.log('Name                  Created              Last Used            Status   Scopes');
@@ -82,8 +86,8 @@ async function list() {
 }
 
 async function revoke(name: string) {
-  if (!name) { console.error('Usage: auth revoke <name>'); process.exit(1); }
-  const sql = postgres(DATABASE_URL!);
+  if (!name) { console.error('Usage: mbrain auth revoke <name>'); process.exit(1); }
+  const sql = postgres(requireDatabaseUrl());
   try {
     const result = await sql`
       UPDATE access_tokens SET revoked_at = now()
@@ -101,7 +105,7 @@ async function revoke(name: string) {
 
 async function test(url: string, token: string) {
   if (!url || !token) {
-    console.error('Usage: auth test <url> --token <token>');
+    console.error('Usage: mbrain auth test <url> --token <token>');
     process.exit(1);
   }
 
@@ -252,30 +256,36 @@ function parseScopeList(raw: string): string[] {
   return raw.split(/[,\s]+/).map(entry => entry.trim()).filter(Boolean);
 }
 
-const [cmd, ...args] = process.argv.slice(2);
-switch (cmd) {
-  case 'create': {
-    const parsed = parseCreateArgs(args);
-    await create(parsed.name, parsed.scopes);
-    break;
-  }
-  case 'list': await list(); break;
-  case 'revoke': await revoke(args[0]); break;
-  case 'test': {
-    const tokenIdx = args.indexOf('--token');
-    const url = args.find(a => !a.startsWith('--') && a !== args[tokenIdx + 1]);
-    const token = tokenIdx >= 0 ? args[tokenIdx + 1] : '';
-    await test(url || '', token || '');
-    break;
-  }
-  default:
-    console.log(`MBrain Token Management
+export async function runAuth(argv: string[] = process.argv.slice(2)) {
+  const [cmd, ...args] = argv;
+  switch (cmd) {
+    case 'create': {
+      const parsed = parseCreateArgs(args);
+      await create(parsed.name, parsed.scopes);
+      break;
+    }
+    case 'list': await list(); break;
+    case 'revoke': await revoke(args[0]); break;
+    case 'test': {
+      const tokenIdx = args.indexOf('--token');
+      const url = args.find(a => !a.startsWith('--') && a !== args[tokenIdx + 1]);
+      const token = tokenIdx >= 0 ? args[tokenIdx + 1] : '';
+      await test(url || '', token || '');
+      break;
+    }
+    default:
+      console.log(`MBrain Token Management
 
 Usage:
-  bun run src/commands/auth.ts create <name> [--scope canonical_write] [--scope raw_source]
-                                                    Create a new access token
-  bun run src/commands/auth.ts list               List all tokens
-  bun run src/commands/auth.ts revoke <name>       Revoke a token
-  bun run src/commands/auth.ts test <url> --token <token>  Smoke test a remote MCP server
+  mbrain auth create <name> [--scope canonical_write] [--scope raw_source]
+                                          Create a new access token
+  mbrain auth list                        List all tokens
+  mbrain auth revoke <name>               Revoke a token
+  mbrain auth test <url> --token <token>  Smoke test a remote MCP server
 `);
+  }
+}
+
+if (import.meta.main) {
+  await runAuth();
 }

@@ -1,6 +1,7 @@
 import { setDefaultTimeout, afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { importFromContent } from '../src/core/import-file.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { appendPendingDerivedSearchResults } from '../src/core/search/derived-freshness.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 // PGLite schema initialization can exceed the default timeout on macOS release runners.
@@ -88,6 +89,69 @@ describe('search derived freshness semantics', () => {
   beforeEach(async () => {
     await clearEngine(pglite);
     await clearEngine(sqlite);
+  });
+
+  test('fallback projection lookups for pending derived states run concurrently per page', async () => {
+    let activeProjectionCalls = 0;
+    let maxActiveProjectionCalls = 0;
+    const seenFilters: Array<{ status: string; offset: number }> = [];
+
+    const results = await appendPendingDerivedSearchResults({
+      listDerivedIndexStates: async (filters: any) => {
+        seenFilters.push({ status: filters.status, offset: filters.offset ?? 0 });
+        if (filters.status !== 'pending' || (filters.offset ?? 0) > 0) return [];
+        return [
+          {
+            id: 'state-a',
+            scope_id: 'workspace:default',
+            slug: 'concepts/pending-a',
+            artifact_kind: 'page_chunks',
+            status: 'pending',
+            extractor_version: 'test-extractor',
+            derived_schema_version: 'test-schema',
+            target_content_hash: 'hash-a',
+            indexed_content_hash: null,
+            last_error: null,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+          {
+            id: 'state-b',
+            scope_id: 'workspace:default',
+            slug: 'concepts/pending-b',
+            artifact_kind: 'page_chunks',
+            status: 'pending',
+            extractor_version: 'test-extractor',
+            derived_schema_version: 'test-schema',
+            target_content_hash: 'hash-b',
+            indexed_content_hash: null,
+            last_error: null,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        ];
+      },
+      getPageProjection: async (slug: string) => {
+        activeProjectionCalls += 1;
+        maxActiveProjectionCalls = Math.max(maxActiveProjectionCalls, activeProjectionCalls);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        activeProjectionCalls -= 1;
+        return {
+          id: slug === 'concepts/pending-a' ? 101 : 102,
+          slug,
+          title: slug,
+          type: 'concept',
+          content_hash: `${slug}:hash`,
+          content_windows: {
+            compiled_truth: { text: `${slug} canonical fallback`, char_start: 0, char_end: 32, has_more: false },
+          },
+        } as any;
+      },
+    }, [], { limit: 2 });
+
+    expect(results.map((result) => result.slug)).toEqual(['concepts/pending-a', 'concepts/pending-b']);
+    expect(maxActiveProjectionCalls).toBe(2);
+    expect(seenFilters).toContainEqual({ status: 'pending', offset: 0 });
   });
 
   test('PGLite keyword search returns canonical page-level matches while page chunks are pending', async () => {

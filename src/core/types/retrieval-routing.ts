@@ -527,6 +527,7 @@ export type CandidateSignalPressureReason =
   | 'missing_provenance'
   | 'missing_target'
   | 'stale_promoted_without_handoff'
+  | 'promoted_handoff_incomplete'
   | 'unresolved_exposed_candidate'
   | 'canonical_target_proposal_hard_blocked'
   | 'high_recurrence';
@@ -557,6 +558,7 @@ export type CandidateTargetBindingState =
   | 'proposal_bound'
   | 'hard_blocked_by_proposal'
   | 'promoted_without_handoff'
+  | 'promoted_handoff_incomplete'
   | 'promoted_with_handoff'
   | 'terminal'
   | 'redacted';

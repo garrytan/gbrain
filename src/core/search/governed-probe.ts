@@ -41,5 +41,6 @@ export function hybridProbeSearch(
     ...opts,
     expansion: true,
     expandFn: (variant) => expandQuery(variant, { config: config ?? undefined }),
+    sourceRankRules: config?.retrieval_source_rank_rules,
   });
 }

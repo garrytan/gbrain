@@ -48,6 +48,7 @@ import { getStructuralContextMapReport } from './services/context-map-report-ser
 import { buildStructuralContextMapEntry, getStructuralContextMapEntry, listStructuralContextMapEntries } from './services/context-map-service.ts';
 import { CORPUS_LANE_ARTIFACT_KINDS } from './services/corpus-lane-service.ts';
 import { assertMemoryWriteAllowed, MemoryAccessPolicyError } from './services/memory-access-policy-service.ts';
+import { reviewDuplicateMemory } from './services/duplicate-memory-review-service.ts';
 import { selectActivationPolicy } from './services/memory-activation-policy-service.ts';
 import { recordMemoryMutationEvent } from './services/memory-mutation-ledger-service.ts';
 import { classifyMemoryScenario } from './services/memory-scenario-classifier-service.ts';
@@ -65,7 +66,7 @@ import { runProofAgentMemory } from './services/proof-agent-service.ts';
 import { readContext } from './services/read-context-service.ts';
 import { planRetrievalRequest } from './services/retrieval-request-planner-service.ts';
 import { selectRetrievalRoute, type RetrievalRouteSelectorDependencies } from './services/retrieval-route-selector-service.ts';
-import { retrieveContext, type RetrieveContextDependencies } from './services/retrieve-context-service.ts';
+import { buildProductionGraphFrontierInput, retrieveContext, type RetrieveContextDependencies } from './services/retrieve-context-service.ts';
 import { planScenarioMemoryRequest } from './services/scenario-memory-request-planner-service.ts';
 import { evaluateScopeGate } from './services/scope-gate-service.ts';
 import { buildTaskResumeCard } from './services/task-memory-service.ts';
@@ -3382,6 +3383,39 @@ function putPageOperationResult(result: { slug: string; status: string; chunks: 
   };
 }
 
+async function putPageDuplicateWarning(
+  engine: BrainEngine,
+  slug: string,
+  content: string,
+): Promise<Array<{ slug: string; score: number; reasons: string[] }>> {
+  if (await engine.getPage(slug)) return [];
+  const parsed = parseMarkdown(content, `${slug}.md`);
+  const firstCompiledLine = parsed.compiled_truth
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0) ?? '';
+  const review = await reviewDuplicateMemory(engine, {
+    scope_id: 'workspace:default',
+    subject_kind: 'page',
+    subject_id: slug,
+    content: `${parsed.title}\n${firstCompiledLine}`.trim(),
+    source_refs: [],
+    candidate_type: 'note_update',
+    target_object_type: 'curated_note',
+    target_object_id: slug,
+    include_pages: true,
+    include_candidates: false,
+    limit: 5,
+  });
+  return review.matches
+    .filter((match) => match.kind === 'page' && match.id !== slug && match.score >= review.thresholds.possible_duplicate)
+    .map((match) => ({
+      slug: match.id,
+      score: match.score,
+      reasons: match.reasons,
+    }));
+}
+
 type PutPageImportResult = Awaited<ReturnType<typeof importFromContent>>;
 type PutPageTransactionOutcome =
   | { kind: 'result'; result: PutPageImportResult }
@@ -3487,6 +3521,7 @@ const put_page: Operation = {
     assertWritableSlugQuality(slug);
     if (!adminPutPageBypass) assertPutPageRouteFirstPrecondition(p);
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug };
+    const possibleDuplicateOf = await putPageDuplicateWarning(ctx.engine, slug, content);
     const memorySessionId = optionalPutPageString('memory_session_id', p.memory_session_id) ?? null;
     const writeSessionId = optionalPutPageString('write_session_id', p.write_session_id) ?? null;
     if (writeSessionId) {
@@ -3811,7 +3846,10 @@ const put_page: Operation = {
     if (outcome.kind === 'invalid') {
       throw outcome.error;
     }
-    return putPageOperationResult(outcome.result);
+    return {
+      ...putPageOperationResult(outcome.result),
+      ...(possibleDuplicateOf.length > 0 ? { possible_duplicate_of: possibleDuplicateOf } : {}),
+    };
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
@@ -3900,14 +3938,21 @@ const search: Operation = {
   params: {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
+    updated_after: { type: 'string', description: 'Only return pages updated at or after this ISO datetime' },
+    updated_before: { type: 'string', description: 'Only return pages updated at or before this ISO datetime' },
   },
   handler: async (ctx, p) => {
     const limit = (p.limit as number) ?? 20;
+    const updatedAfter = parseOptionalDateParam(p.updated_after, 'updated_after');
+    const updatedBefore = parseOptionalDateParam(p.updated_before, 'updated_before');
     return rankSearchResults(
       await ctx.engine.searchKeyword(p.query as string, {
         limit: sourceRankCandidateLimit(limit),
+        updated_after: updatedAfter,
+        updated_before: updatedBefore,
       }),
       limit,
+      ctx.config.retrieval_source_rank_rules,
     );
   },
   cliHints: { name: 'search', positional: ['query'] },
@@ -3920,6 +3965,8 @@ const query: Operation = {
   params: {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
+    updated_after: { type: 'string', description: 'Only return pages updated at or after this ISO datetime' },
+    updated_before: { type: 'string', description: 'Only return pages updated at or before this ISO datetime' },
     expand: {
       type: 'boolean',
       description: 'Enable multi-query expansion (default: true)',
@@ -3927,13 +3974,33 @@ const query: Operation = {
   },
   handler: async (ctx, p) => {
     const expand = p.expand !== false;
-    const { results, expansion_failed } = await hybridSearchWithMeta(ctx.engine, p.query as string, {
+    const updatedAfter = parseOptionalDateParam(p.updated_after, 'updated_after');
+    const updatedBefore = parseOptionalDateParam(p.updated_before, 'updated_before');
+    const {
+      results,
+      expansion_failed,
+      vector_failed,
+      vector_skipped,
+      embedding_coverage_warning,
+    } = await hybridSearchWithMeta(ctx.engine, p.query as string, {
       limit: (p.limit as number) ?? 20,
+      updated_after: updatedAfter,
+      updated_before: updatedBefore,
       expansion: expand,
       expandFn: expand ? (query) => expandQuery(query, { config: ctx.config }) : undefined,
+      sourceRankRules: ctx.config.retrieval_source_rank_rules,
     });
     if (expansion_failed) {
       ctx.logger.warn('query expansion failed; results reflect the original query only');
+    }
+    if (vector_failed) {
+      ctx.logger.warn('query vector leg failed; results reflect keyword and surviving vector results only');
+    }
+    if (vector_skipped) {
+      ctx.logger.warn('query vector leg skipped; no embedding provider is available');
+    }
+    if (embedding_coverage_warning) {
+      ctx.logger.warn(embedding_coverage_warning);
     }
     return results;
   },
@@ -4161,6 +4228,26 @@ const get_health: Operation = {
   cliHints: { name: 'health' },
 };
 
+const list_compile_debt: Operation = {
+  name: 'list_compile_debt',
+  description: 'List pages whose timeline evidence is newer than compiled truth, ranked by entry count and age.',
+  params: {
+    limit: { type: 'number', description: 'Maximum debt rows to return (default: 20)' },
+  },
+  handler: async (ctx, p) => {
+    const limit = typeof p.limit === 'number' && Number.isFinite(p.limit)
+      ? Math.max(1, Math.min(100, Math.floor(p.limit)))
+      : 20;
+    const pages = await ctx.engine.listPages({ limit: 1000, offset: 0 });
+    const debtRows = await Promise.all(pages.map((page) => compileDebtForPage(ctx.engine, page)));
+    return debtRows
+      .filter((entry) => entry.uncompiled_timeline_entries > 0)
+      .sort((left, right) => right.debt_score - left.debt_score || left.slug.localeCompare(right.slug))
+      .slice(0, limit);
+  },
+  cliHints: { name: 'compile-debt' },
+};
+
 const get_versions: Operation = {
   name: 'get_versions',
   description: 'Page version history',
@@ -4172,6 +4259,50 @@ const get_versions: Operation = {
   },
   cliHints: { name: 'history', positional: ['slug'] },
 };
+
+async function compileDebtForPage(engine: BrainEngine, page: Page) {
+  const hasCompileDebt = page.timeline_changed_at.getTime() > page.compiled_truth_changed_at.getTime();
+  const timelineEntries = hasCompileDebt ? timelineEntryDates(page.timeline) : [];
+  const structuredTimelineCount = hasCompileDebt && timelineEntries.length === 0
+    ? await getStructuredTimelineCount(engine, page.slug)
+    : 0;
+  const uncompiledTimelineEntries = timelineEntries.length || structuredTimelineCount || (hasCompileDebt ? 1 : 0);
+  const oldestUncompiled = timelineEntries
+    .map((date) => date.getTime())
+    .sort((left, right) => left - right)[0];
+  const ageSource = oldestUncompiled ?? (hasCompileDebt ? page.timeline_changed_at.getTime() : undefined);
+  const ageDays = ageSource === undefined
+    ? 0
+    : Math.max(0, (Date.now() - ageSource) / (24 * 60 * 60 * 1000));
+  return {
+    slug: page.slug,
+    title: page.title,
+    compiled_truth_changed_at: page.compiled_truth_changed_at.toISOString(),
+    timeline_changed_at: page.timeline_changed_at.toISOString(),
+    uncompiled_timeline_entries: uncompiledTimelineEntries,
+    oldest_uncompiled_timeline_at: oldestUncompiled === undefined ? null : new Date(oldestUncompiled).toISOString(),
+    debt_score: Math.round((uncompiledTimelineEntries * (1 + ageDays)) * 100) / 100,
+  };
+}
+
+async function getStructuredTimelineCount(engine: BrainEngine, slug: string): Promise<number> {
+  try {
+    return (await engine.getTimeline(slug, { limit: 1000, offset: 0 })).length;
+  } catch {
+    return 0;
+  }
+}
+
+function timelineEntryDates(timeline: string): Date[] {
+  const dates: Date[] = [];
+  for (const line of timeline.split(/\r?\n/)) {
+    const match = /^\s*-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*/.exec(line);
+    if (!match) continue;
+    const date = new Date(`${match[1]}T00:00:00.000Z`);
+    if (!Number.isNaN(date.getTime())) dates.push(date);
+  }
+  return dates;
+}
 
 const revert_version: Operation = {
   name: 'revert_version',
@@ -4807,6 +4938,7 @@ const delete_personal_episode_entry: Operation = {
 const memoryInboxOperations = createMemoryInboxOperations({
   defaultScopeId: DEFAULT_MEMORY_INBOX_SCOPE_ID,
   OperationError,
+  syncBrainHandler: sync_brain.handler,
 });
 
 const memoryWritebackRouterOperations = createMemoryWritebackRouterOperations({
@@ -5533,7 +5665,12 @@ const update_task: Operation = {
     }
 
     await requireTaskThread(ctx.engine, taskId);
-    return ctx.engine.updateTaskThread(taskId, patch as any);
+    const updated = await ctx.engine.updateTaskThread(taskId, patch as any);
+    return {
+      ...updated,
+      working_set_stale: true,
+      next_action: `Run refresh_task_working_set for ${taskId} if task scope, files, blockers, or next steps changed.`,
+    };
   },
   cliHints: { name: 'task-update', positional: ['task_id'] },
 };
@@ -5903,9 +6040,16 @@ const list_context_map_entries: Operation = {
   cliHints: { name: 'map-list', aliases: { n: 'limit' } },
 };
 
+const CONTEXT_ATLAS_DEPRECATION_NOTICE =
+  'Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.';
+
+function contextAtlasDescription(description: string): string {
+  return `${description} ${CONTEXT_ATLAS_DEPRECATION_NOTICE}`;
+}
+
 const build_context_atlas: Operation = {
   name: 'build_context_atlas',
-  description: 'Build or rebuild the persisted workspace atlas registry entry.',
+  description: contextAtlasDescription('Build or rebuild the persisted workspace atlas registry entry.'),
   params: {
     scope_id: {
       type: 'string',
@@ -5929,7 +6073,7 @@ const build_context_atlas: Operation = {
 
 const get_context_atlas_entry: Operation = {
   name: 'get_context_atlas_entry',
-  description: 'Get one persisted atlas registry entry by id.',
+  description: contextAtlasDescription('Get one persisted atlas registry entry by id.'),
   params: {
     id: { type: 'string', required: true, description: 'Atlas entry id' },
   },
@@ -5945,7 +6089,7 @@ const get_context_atlas_entry: Operation = {
 
 const list_context_atlas_entries: Operation = {
   name: 'list_context_atlas_entries',
-  description: 'List persisted atlas registry entries.',
+  description: contextAtlasDescription('List persisted atlas registry entries.'),
   params: {
     scope_id: {
       type: 'string',
@@ -5966,7 +6110,7 @@ const list_context_atlas_entries: Operation = {
 
 const select_context_atlas_entry: Operation = {
   name: 'select_context_atlas_entry',
-  description: 'Select the best persisted atlas registry entry for a scope.',
+  description: contextAtlasDescription('Select the best persisted atlas registry entry for a scope.'),
   params: {
     scope_id: {
       type: 'string',
@@ -5995,7 +6139,7 @@ const select_context_atlas_entry: Operation = {
 
 const get_context_atlas_overview: Operation = {
   name: 'get_context_atlas_overview',
-  description: 'Render a compact overview artifact for a persisted atlas entry.',
+  description: contextAtlasDescription('Render a compact overview artifact for a persisted atlas entry.'),
   params: {
     atlas_id: {
       type: 'string',
@@ -6032,7 +6176,7 @@ const get_context_atlas_overview: Operation = {
 
 const get_context_atlas_report: Operation = {
   name: 'get_context_atlas_report',
-  description: 'Render a compact human-readable report for a persisted atlas entry.',
+  description: contextAtlasDescription('Render a compact human-readable report for a persisted atlas entry.'),
   params: {
     atlas_id: {
       type: 'string',
@@ -6069,7 +6213,7 @@ const get_context_atlas_report: Operation = {
 
 const get_atlas_orientation_card: Operation = {
   name: 'get_atlas_orientation_card',
-  description: 'Render a compact orientation card from atlas selection and the workspace corpus card.',
+  description: contextAtlasDescription('Render a compact orientation card from atlas selection and the workspace corpus card.'),
   params: {
     atlas_id: {
       type: 'string',
@@ -6106,7 +6250,7 @@ const get_atlas_orientation_card: Operation = {
 
 const get_atlas_orientation_bundle: Operation = {
   name: 'get_atlas_orientation_bundle',
-  description: 'Render a compact atlas bundle from atlas report and atlas orientation card.',
+  description: contextAtlasDescription('Render a compact atlas bundle from atlas report and atlas orientation card.'),
   params: {
     atlas_id: {
       type: 'string',
@@ -6990,9 +7134,16 @@ const plan_retrieval_request: Operation = {
 // governed probe so retrieve_context / read_context auto-reads match the lower-authority
 // `query` op's recall. Returns no override (keyword-only default) when disabled or absent.
 function governedProbeRetrieveDependencies(ctx: OperationContext): RetrieveContextDependencies {
-  if (!governedProbeHybridEnabled(ctx.config)) return {};
+  const dependencies: RetrieveContextDependencies = {
+    graphFrontierInputBuilder: buildProductionGraphFrontierInput,
+  };
+  if (ctx.config.retrieval_usage_aware_ranking === true) {
+    dependencies.usageAwareRanking = true;
+  }
+  if (!governedProbeHybridEnabled(ctx.config)) return dependencies;
   const broadSynthesis = governedProbeBroadSynthesisDependencies(ctx);
   return {
+    ...dependencies,
     candidateSearch: (query, options) =>
       hybridProbeSearch(ctx.engine, ctx.config, query, {
         limit: options.limit,
@@ -7052,7 +7203,7 @@ const retrieve_context: Operation = {
     limit: { type: 'number', description: 'Candidate and required-read limit' },
     token_budget: {
       type: 'number',
-      description: 'Approximate probe output token budget',
+      description: 'Approximate probe output token budget. Shrinks candidates by budget/600, required reads by budget/1200, and drops derived orientation below 2000 tokens.',
     },
     include_orientation: {
       type: 'boolean',
@@ -7068,7 +7219,7 @@ const retrieve_context: Operation = {
     },
     persist_trace: {
       type: 'boolean',
-      description: 'Persist a retrieval trace for this probe',
+      description: 'Persist a retrieval trace for this probe. Defaults to true; pass false to opt out.',
     },
   },
   mutating: false,
@@ -7089,7 +7240,7 @@ const retrieve_context: Operation = {
           include_orientation: typeof p.include_orientation === 'boolean' ? p.include_orientation : undefined,
           include_push_context: p.include_push_context === true,
           graph_frontier: parseRetrieveContextGraphFrontierParam(p.graph_frontier, 'graph_frontier'),
-          persist_trace: p.persist_trace === true,
+          persist_trace: typeof p.persist_trace === 'boolean' ? p.persist_trace : undefined,
         },
         governedProbeRetrieveDependencies(ctx),
       ),
@@ -7138,7 +7289,7 @@ const read_context: Operation = {
     },
     persist_trace: {
       type: 'boolean',
-      description: 'Persist a retrieval trace for this canonical read',
+      description: 'Persist a retrieval trace for this canonical read. Defaults to true; pass false to opt out.',
     },
     task_id: { type: 'string', description: 'Optional active task id' },
     requested_scope: requestedScopeParam('Optional access scope override for scope-gate enforcement. Use query for topical retrieval details.'),
@@ -7160,7 +7311,7 @@ const read_context: Operation = {
           max_selectors: parsePositiveIntegerParam(p.max_selectors, 'max_selectors'),
           include_timeline: parseIncludeTimelineParam(p.include_timeline),
           include_source_refs: typeof p.include_source_refs === 'boolean' ? p.include_source_refs : undefined,
-          persist_trace: p.persist_trace === true,
+          persist_trace: typeof p.persist_trace === 'boolean' ? p.persist_trace : undefined,
           task_id: parseOptionalStringParam(p.task_id, 'task_id') ?? null,
           requested_scope: parseRequestedScopeParam(p.requested_scope),
           probe_context: parseReadContextProbeContextParam(p.probe_context, 'probe_context'),
@@ -8165,6 +8316,7 @@ export const operations: Operation[] = [
   // Admin
   get_stats,
   get_health,
+  list_compile_debt,
   get_versions,
   revert_version,
   // Sync

@@ -173,8 +173,15 @@ function extractTags(frontmatter: Record<string, unknown>): string[] {
   return [];
 }
 
-export function buildFrontmatterSearchText(frontmatter: Record<string, unknown>): string {
+export function buildFrontmatterSearchText(frontmatter: Record<string, unknown>, tags: string[] = []): string {
   const lines: string[] = [];
+
+  for (const alias of searchValues(frontmatter.aliases, frontmatter.alias)) {
+    lines.push(joinSearchParts(['alias', expandSearchableText(alias)]));
+  }
+  for (const tag of searchValues(frontmatter.tags, tags)) {
+    lines.push(joinSearchParts(['tag', expandSearchableText(tag)]));
+  }
 
   appendField(lines, 'repo', frontmatter.repo);
   appendField(lines, 'language', frontmatter.language);
@@ -255,6 +262,20 @@ function appendField(lines: string[], label: string, value: unknown) {
   if (Array.isArray(value) && value.length > 0) {
     lines.push(joinSearchParts([label, ...value.map((item) => expandSearchableText(String(item)))]));
   }
+}
+
+function searchValues(...values: unknown[]): string[] {
+  const output: string[] = [];
+  for (const value of values) {
+    if (typeof value === 'string') {
+      output.push(...value.split(',').map((item) => item.trim()).filter(Boolean));
+      continue;
+    }
+    if (Array.isArray(value)) {
+      output.push(...value.map((item) => String(item).trim()).filter(Boolean));
+    }
+  }
+  return Array.from(new Set(output));
 }
 
 function asArrayOfRecords(value: unknown): Array<Record<string, unknown>> {

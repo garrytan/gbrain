@@ -29,6 +29,7 @@ const MAX_MCP_HTTP_BODY_BYTES = 1_048_576;
 const MAX_PENDING_OAUTH_DCR_CLIENTS = 128;
 const PENDING_OAUTH_DCR_CLIENT_TTL_SECONDS = 60 * 60;
 const OAUTH_AUTHORIZATION_CODE_RETENTION_SECONDS = 60 * 60;
+const MCP_ENDPOINT_RATE_LIMIT = { capacity: 60, windowMs: 60_000, maxKeys: 4_096 };
 
 export interface McpHttpAuthSuccess {
   ok: true;
@@ -61,6 +62,7 @@ export interface McpHttpHandlerOptions {
   allowedOrigins?: string[];
   surfaceProfile?: Extract<McpSurfaceProfileName, 'http_local' | 'http_remote'>;
   toolTier?: string;
+  mcpRateLimit?: { capacity: number; windowMs: number; maxKeys: number };
 }
 
 export interface McpHttpRequestLogEntry {
@@ -83,12 +85,13 @@ export function createMcpHttpHandler(
   options: McpHttpHandlerOptions,
 ): (request: Request, clientIp?: string | null) => Promise<Response> {
   const enginePromise = Promise.resolve(options.engine);
-  const authenticate = options.authenticate ?? ((request: Request) => authenticateMcpHttpRequest(options.config, request));
+  const authenticate = options.authenticate ?? ((request: Request) => authenticateMcpHttpRequest(options.config, request, enginePromise));
   const toolExecutionLimiter = createMcpToolExecutionLimiter();
   const oauthState = options.oauth?.enabled
     ? createMcpOAuthState(options.oauth, options.oauthStore ?? createMcpOAuthStore(options.config))
     : null;
   const oauthRateLimiter = createFixedWindowRateLimiter(OAUTH_ENDPOINT_RATE_LIMIT);
+  const mcpRateLimiter = createFixedWindowRateLimiter(options.mcpRateLimit ?? MCP_ENDPOINT_RATE_LIMIT);
 
   return async function handleMcpHttpRequest(request: Request, clientIp?: string | null): Promise<Response> {
     const cors = corsHeadersFor(request, options.allowedOrigins);
@@ -135,6 +138,14 @@ export function createMcpHttpHandler(
     }
     request = boundedRequest.request;
 
+    if (!mcpRateLimiter.allow(clientIp ?? 'global')) {
+      return jsonResponse(
+        { error: 'rate_limited', error_description: 'too many MCP requests; retry later' },
+        429,
+        { 'Retry-After': '60' },
+      );
+    }
+
     const auth = await authenticate(request);
     if (!auth.ok) {
       const headers = auth.status === 401 && options.oauth?.enabled
@@ -173,7 +184,7 @@ export function createMcpHttpHandler(
     try {
       const response = await transport.handleRequest(request);
       const responseClassification = await classifyMcpHttpResponse(request, response);
-      await logRequest(options, {
+      await logRequest(options, enginePromise, {
         tokenName: auth.tokenName,
         operation,
         latencyMs: Date.now() - startTime,
@@ -185,7 +196,7 @@ export function createMcpHttpHandler(
       });
       return response;
     } catch (error) {
-      await logRequest(options, {
+      await logRequest(options, enginePromise, {
         tokenName: auth.tokenName,
         operation,
         latencyMs: Date.now() - startTime,
@@ -306,9 +317,20 @@ export function startMcpHttpServer(options: StartMcpHttpServerOptions): ReturnTy
   return server;
 }
 
+async function getSharedPostgresSql(
+  config: MBrainConfig,
+  enginePromise?: Promise<BrainEngine>,
+): Promise<ReturnType<typeof postgres> | null> {
+  if (config.engine !== 'postgres' || !enginePromise) return null;
+  const engine = await enginePromise;
+  const sql = (engine as { sql?: unknown }).sql;
+  return typeof sql === 'function' ? sql as ReturnType<typeof postgres> : null;
+}
+
 async function authenticateMcpHttpRequest(
   config: MBrainConfig,
   request: Request,
+  enginePromise?: Promise<BrainEngine>,
 ): Promise<McpHttpAuthResult> {
   const authHeader = request.headers.get('Authorization');
   const token = parseBearerToken(authHeader);
@@ -327,14 +349,15 @@ async function authenticateMcpHttpRequest(
   const tokenHash = createHash('sha256').update(token).digest('hex');
 
   try {
-    const row = await findAccessToken(config, tokenHash);
+    const sharedSql = await getSharedPostgresSql(config, enginePromise);
+    const row = await findAccessToken(config, tokenHash, sharedSql);
     if (!row) {
       return {
         ok: false,
         status: 401,
         body: {
           error: 'invalid_token',
-          message: "Token not recognized. Run 'bun run src/commands/auth.ts create <name>' to create one.",
+          message: "Token not recognized. Run 'mbrain auth create <name>' to create one.",
           docs: 'docs/mcp/DEPLOY.md#troubleshooting',
         },
       };
@@ -378,7 +401,7 @@ async function authenticateMcpHttpRequest(
     const tokenName = row.name.length > 0
       ? row.name
       : 'unknown';
-    await markAccessTokenUsed(config, tokenHash);
+    await markAccessTokenUsed(config, tokenHash, sharedSql);
     return { ok: true, tokenId: row.id, tokenName, scopes: row.scopes };
   } catch {
     return {
@@ -396,11 +419,12 @@ async function authenticateMcpHttpRequest(
 async function findAccessToken(
   config: MBrainConfig,
   tokenHash: string,
+  sharedSql?: ReturnType<typeof postgres> | null,
 ): Promise<{ id?: string; name: string; revoked_at: unknown; scopes: string[] } | null> {
   switch (config.engine) {
     case 'postgres': {
       if (!config.database_url) throw new Error('Missing database_url');
-      const sql = postgres(config.database_url, { max: 1 });
+      const sql = sharedSql ?? postgres(config.database_url, { max: 1 });
       try {
         const rows = await sql`
           SELECT id, name, revoked_at, scopes FROM access_tokens
@@ -414,7 +438,7 @@ async function findAccessToken(
           scopes: parseAccessTokenScopes(row.scopes),
         } : null;
       } finally {
-        await sql.end();
+        if (!sharedSql) await sql.end();
       }
     }
     case 'sqlite': {
@@ -526,15 +550,19 @@ function oauthBindingScope(binding: string): string {
   return `oauth_binding:${binding}`;
 }
 
-async function markAccessTokenUsed(config: MBrainConfig, tokenHash: string): Promise<void> {
+async function markAccessTokenUsed(
+  config: MBrainConfig,
+  tokenHash: string,
+  sharedSql?: ReturnType<typeof postgres> | null,
+): Promise<void> {
   switch (config.engine) {
     case 'postgres': {
       if (!config.database_url) throw new Error('Missing database_url');
-      const sql = postgres(config.database_url, { max: 1 });
+      const sql = sharedSql ?? postgres(config.database_url, { max: 1 });
       try {
         await sql`UPDATE access_tokens SET last_used_at = now() WHERE token_hash = ${tokenHash}`;
       } finally {
-        await sql.end();
+        if (!sharedSql) await sql.end();
       }
       return;
     }
@@ -634,28 +662,36 @@ function parseBearerToken(authHeader: string | null): string | null {
   return match?.[1]?.trim() || null;
 }
 
-async function logRequest(options: McpHttpHandlerOptions, entry: McpHttpRequestLogEntry): Promise<void> {
+async function logRequest(
+  options: McpHttpHandlerOptions,
+  enginePromise: Promise<BrainEngine>,
+  entry: McpHttpRequestLogEntry,
+): Promise<void> {
   try {
     if (options.logRequest) {
       await options.logRequest(entry);
       return;
     }
-    await logMcpHttpRequest(options.config, entry);
+    await logMcpHttpRequest(options.config, entry, await getSharedPostgresSql(options.config, enginePromise));
   } catch {
     process.stderr.write('[warn] failed to log MCP HTTP request\n');
   }
 }
 
-async function logMcpHttpRequest(config: MBrainConfig, entry: McpHttpRequestLogEntry): Promise<void> {
+async function logMcpHttpRequest(
+  config: MBrainConfig,
+  entry: McpHttpRequestLogEntry,
+  sharedSql?: ReturnType<typeof postgres> | null,
+): Promise<void> {
   const authPrincipalJson = serializeAuthPrincipal(entry.authPrincipal);
   switch (config.engine) {
     case 'postgres': {
       if (!config.database_url) throw new Error('Missing database_url');
-      const sql = postgres(config.database_url, { max: 1 });
+      const sql = sharedSql ?? postgres(config.database_url, { max: 1 });
       try {
         await insertMcpHttpRequestLogPostgres(sql, entry, authPrincipalJson);
       } finally {
-        await sql.end();
+        if (!sharedSql) await sql.end();
       }
       return;
     }

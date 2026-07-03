@@ -48,6 +48,11 @@ const AUDIT_CAP = 20;
 const DEFAULT_WORKSPACE_CANDIDATE_SCOPE_ID = 'workspace:default';
 const DEFAULT_PERSONAL_CANDIDATE_SCOPE_ID = 'personal:default';
 
+interface CandidateHandoffState {
+  has_handoff: boolean;
+  has_completed_handoff: boolean;
+}
+
 export function emptyCandidateSignalResult(
   mode: CandidateSignalPolicyMode = 'normal',
   reason_codes: string[] = ['no_candidate_signal_scan'],
@@ -107,9 +112,9 @@ export async function buildCandidateSignals(
     allCandidates.push(...candidates);
   }
 
-  const candidatesWithHandoff = await findPromotedCandidatesWithHandoff(engine, allCandidates, scopeId);
+  const handoffStateByCandidateId = await findPromotedCandidateHandoffStates(engine, allCandidates, scopeId);
   const policyCandidates = allCandidates.filter(candidate => candidateAllowedInPolicy(candidate, policy.mode));
-  const matched = policyCandidates.filter(candidate => candidateMatchesInput(candidate, input, policy.mode, candidatesWithHandoff));
+  const matched = policyCandidates.filter(candidate => candidateMatchesInput(candidate, input, policy.mode));
   const scopeSuppressed = matched.filter(candidate => !candidateAllowedByScope(candidate, input.requested_scope, scopeId, policy.mode));
   const visibleMatched = matched.filter(candidate => candidateAllowedByScope(candidate, input.requested_scope, scopeId, policy.mode));
   if (policy.mode === 'strict') {
@@ -130,7 +135,7 @@ export async function buildCandidateSignals(
     .map(candidate => buildSignal(
       candidate,
       input,
-      candidatesWithHandoff.has(candidate.id),
+      handoffStateByCandidateId.get(candidate.id) ?? { has_handoff: false, has_completed_handoff: false },
       proposalsByCandidateId.get(candidate.id) ?? null,
       governanceProposalsByCandidateId.get(candidate.id) ?? proposalsByCandidateId.get(candidate.id) ?? null,
     ))
@@ -194,7 +199,6 @@ function candidateMatchesInput(
   candidate: MemoryCandidateEntry,
   input: BuildCandidateSignalsInput,
   mode: CandidateSignalPolicyMode,
-  candidatesWithHandoff: Set<string>,
 ): boolean {
   const targets = new Set([
     ...input.required_reads.map(read => read.slug).filter((value): value is string => Boolean(value)),
@@ -211,17 +215,19 @@ function candidateMatchesInput(
 function buildSignal(
   candidate: MemoryCandidateEntry,
   input: BuildCandidateSignalsInput,
-  hasCanonicalHandoff: boolean,
+  handoffState: CandidateHandoffState,
   canonicalTargetProposal: CanonicalTargetProposalEntry | null,
   governanceCanonicalTargetProposal: CanonicalTargetProposalEntry | null,
 ): CandidateSignal {
+  const hasCanonicalHandoff = handoffState.has_handoff;
+  const hasCompletedCanonicalHandoff = handoffState.has_completed_handoff;
   const sameTarget = Boolean(candidate.target_object_id && input.required_reads.some(read =>
     read.slug === candidate.target_object_id || read.object_id === candidate.target_object_id,
   ));
   const overlap = tokenOverlap(input.query ?? '', candidate.proposed_content);
   const hasProvenance = candidate.source_refs.some(ref => ref.trim().length > 0);
   const hasTarget = Boolean(candidate.target_object_type && candidate.target_object_id?.trim());
-  const pressure = buildPressure(candidate, hasProvenance, hasTarget, hasCanonicalHandoff, canonicalTargetProposal);
+  const pressure = buildPressure(candidate, hasProvenance, hasTarget, hasCanonicalHandoff, hasCompletedCanonicalHandoff, canonicalTargetProposal);
   const score = roundScore(
     (sameTarget ? 1 : 0)
     + Math.min(0.35, overlap)
@@ -259,6 +265,7 @@ function buildSignal(
       candidate,
       why_not_answer_ground: candidateWhyNotAnswerGround(candidate, 'candidate_signal_is_non_canonical'),
       has_canonical_handoff: hasCanonicalHandoff,
+      has_completed_canonical_handoff: hasCompletedCanonicalHandoff,
       canonical_target_proposal: governanceCanonicalTargetProposal,
       pressure_score: pressure.pressure_score,
       pressure_reasons: pressure.pressure_reasons,
@@ -271,6 +278,7 @@ export function buildCandidateGovernanceMetadata(input: {
   candidate: MemoryCandidateEntry;
   why_not_answer_ground: string[];
   has_canonical_handoff?: boolean;
+  has_completed_canonical_handoff?: boolean;
   canonical_target_proposal?: CanonicalTargetProposalEntry | null;
   pressure_score?: number;
   pressure_reasons?: CandidateSignal['pressure_reasons'];
@@ -281,6 +289,7 @@ export function buildCandidateGovernanceMetadata(input: {
   const resolution = classifyCandidateResolutionState({
     candidate: input.candidate,
     has_canonical_handoff: hasCanonicalHandoff,
+    has_completed_canonical_handoff: input.has_completed_canonical_handoff,
     canonical_target_proposal: canonicalTargetProposal,
   });
   return {
@@ -335,6 +344,8 @@ function targetBindingState(
       return 'terminal';
     case 'promoted_with_handoff':
       return 'promoted_with_handoff';
+    case 'promoted_handoff_incomplete':
+      return 'promoted_handoff_incomplete';
     case 'promoted_without_handoff':
       return 'promoted_without_handoff';
     case 'proposal_pending':
@@ -418,12 +429,14 @@ function buildPressure(
   hasProvenance: boolean,
   hasTarget: boolean,
   hasCanonicalHandoff: boolean,
+  hasCompletedCanonicalHandoff: boolean,
   canonicalTargetProposal: CanonicalTargetProposalEntry | null,
 ): Pick<CandidateSignal, 'pressure_score' | 'pressure_reasons' | 'review_priority_hint'> {
   const pressureReasons: CandidateSignal['pressure_reasons'] = [];
   const resolution = classifyCandidateResolutionState({
     candidate,
     has_canonical_handoff: hasCanonicalHandoff,
+    has_completed_canonical_handoff: hasCompletedCanonicalHandoff,
     canonical_target_proposal: canonicalTargetProposal,
   });
   if (resolution.state === 'hard_blocked_by_proposal') {
@@ -440,6 +453,9 @@ function buildPressure(
   if (!hasTarget) pressureReasons.push('missing_target');
   if (candidate.status === 'promoted' && !hasCanonicalHandoff) {
     pressureReasons.push('stale_promoted_without_handoff');
+  }
+  if (candidate.status === 'promoted' && hasCanonicalHandoff && !hasCompletedCanonicalHandoff) {
+    pressureReasons.push('promoted_handoff_incomplete');
   }
   if (candidate.status === 'captured' || candidate.status === 'candidate' || candidate.status === 'staged_for_review') {
     pressureReasons.push('unresolved_exposed_candidate');
@@ -564,23 +580,28 @@ function knownSubjectOverlap(
   return normalizedSubjects.some(subject => candidateTokens.has(subject));
 }
 
-async function findPromotedCandidatesWithHandoff(
+async function findPromotedCandidateHandoffStates(
   engine: CandidateSignalEngine,
   candidates: MemoryCandidateEntry[],
   scopeId: string,
-): Promise<Set<string>> {
+): Promise<Map<string, CandidateHandoffState>> {
   const promotedIds = candidates
     .filter(candidate => candidate.status === 'promoted')
     .map(candidate => candidate.id);
-  const output = new Set<string>();
+  const output = new Map<string, CandidateHandoffState>();
   for (const candidateId of promotedIds) {
     const handoffs = await engine.listCanonicalHandoffEntries({
       scope_id: scopeId,
       candidate_id: candidateId,
-      limit: 1,
+      limit: 10,
       offset: 0,
     });
-    if (handoffs.length > 0) output.add(candidateId);
+    if (handoffs.length > 0) {
+      output.set(candidateId, {
+        has_handoff: true,
+        has_completed_handoff: handoffs.some((handoff) => handoff.completed_at !== null),
+      });
+    }
   }
   return output;
 }

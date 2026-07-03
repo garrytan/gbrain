@@ -378,4 +378,65 @@ describe('hybridSearchWithMeta expansion failure flag (C-20)', () => {
     const { expansion_failed } = await hybridSearchWithMeta(keywordOnlyEngine(), 'context', {});
     expect(expansion_failed).toBe(false);
   });
+
+  test('flags vector_skipped when the embedding provider is unavailable', async () => {
+    setEmbeddingProviderForTests(disabledProvider as any);
+
+    const { results, vector_failed, vector_skipped } = await hybridSearchWithMeta(keywordOnlyEngine(), 'context', {});
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(vector_failed).toBe(false);
+    expect(vector_skipped).toBe(true);
+  });
+
+  test('flags vector_failed when embedding fails after provider resolution', async () => {
+    setEmbeddingProviderForTests({
+      capability: {
+        available: true,
+        mode: 'local',
+        implementation: 'test-local',
+        model: 'test-local-v1',
+        dimensions: 3,
+      },
+      embedBatch: async () => {
+        throw new Error('embedding service unavailable');
+      },
+    });
+
+    const { results, vector_failed, vector_skipped } = await hybridSearchWithMeta(keywordOnlyEngine(), 'context', {});
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(vector_failed).toBe(true);
+    expect(vector_skipped).toBe(false);
+  });
+
+  test('surfaces embedding coverage warnings when semantic search has missing chunks', async () => {
+    setEmbeddingProviderForTests({
+      capability: {
+        available: true,
+        mode: 'local',
+        implementation: 'test-local',
+        model: 'test-local-v1',
+        dimensions: 3,
+      },
+      embedBatch: async () => [new Float32Array([1, 0, 0])],
+    });
+
+    const engine = {
+      searchKeyword: async () => [makeResult()],
+      searchVector: async () => [],
+      getHealth: async () => ({
+        page_count: 1,
+        embed_coverage: 0.5,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 2,
+      }),
+    } as Pick<BrainEngine, 'searchKeyword' | 'searchVector' | 'getHealth'> as BrainEngine;
+
+    const { embedding_coverage_warning } = await hybridSearchWithMeta(engine, 'context', {});
+
+    expect(embedding_coverage_warning).toContain('2 chunks are missing embeddings');
+  });
 });

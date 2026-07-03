@@ -23,6 +23,8 @@ export function searchLocalVectors(
         chunk_index: candidate.chunk_index,
         chunk_content_hash: candidate.chunk_content_hash,
         stale: candidate.stale,
+        updated_at: candidate.updated_at,
+        superseded_by: candidate.superseded_by,
         score,
       }];
     })

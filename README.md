@@ -591,7 +591,7 @@ ngrok http 8787
 The HTTP server exposes `/mcp` and `/health`, requires
 `Authorization: Bearer <token>` for MCP requests, and uses the same operation
 catalog, response guards, and concurrency limits as stdio. Create tokens with
-`DATABASE_URL=... bun run src/commands/auth.ts create "<client-name>"` against
+`DATABASE_URL=... mbrain auth create "<client-name>"` against
 the same Postgres brain.
 
 For ChatGPT-style OAuth clients, enable the opt-in OAuth 2.1/DCR routes and set

@@ -8,6 +8,7 @@ import {
 } from './derived-jobs.ts';
 import { buildFrontmatterSearchText, parseMarkdown } from './markdown.ts';
 import { chunkText, type ChunkOptions } from './chunkers/recursive.ts';
+import { loadConfig } from './config.ts';
 import { estimateTokenCount } from './embedding.ts';
 import { defaultPageChunkOptions, resolvePageChunkOptions } from './page-chunk-options.ts';
 import {
@@ -46,6 +47,7 @@ export interface RefreshDerivedStorageOptions {
 }
 
 const PAGE_CHUNKS_EXTRACTOR_VERSION = 'qwen3-token-recursive-chunks-v1';
+const CONTEXTUAL_CHUNK_EMBEDDING_VERSION = 'contextual-v1';
 const PAGE_DERIVED_EXTRACTOR_VERSIONS: Record<DerivedArtifactKind, string> = {
   page_chunks: PAGE_CHUNKS_EXTRACTOR_VERSION,
   note_manifest: NOTE_MANIFEST_EXTRACTOR_VERSION,
@@ -138,10 +140,23 @@ export async function importFromContent(
     return { slug, status: 'skipped', chunks: 0, content_hash: hash };
   }
 
-  const chunkOptions = await resolvePageChunkOptions(engine);
+  const [chunkOptions, embeddingContextOptions] = await Promise.all([
+    resolvePageChunkOptions(engine),
+    resolvePageChunkEmbeddingContextOptions(engine, {
+      slug,
+      title: parsed.title,
+    }),
+  ]);
   const chunks = deferDerived
     ? []
-    : buildPageChunks(parsed.compiled_truth, parsed.timeline, parsed.frontmatter, chunkOptions);
+    : buildPageChunks(
+      parsed.compiled_truth,
+      parsed.timeline,
+      parsed.frontmatter,
+      chunkOptions,
+      parsed.tags,
+      embeddingContextOptions,
+    );
 
   // Transaction wraps all DB writes
   await engine.transaction(async (tx) => {
@@ -321,11 +336,17 @@ async function replacePageDerivedStorage(
   signal?: AbortSignal,
 ): Promise<number> {
   assertDerivedRefreshNotAborted(signal);
+  const [chunkOptions, embeddingContextOptions] = await Promise.all([
+    resolvePageChunkOptions(engine),
+    resolvePageChunkEmbeddingContextOptions(engine, page),
+  ]);
   const resolvedChunks = chunks ?? buildPageChunks(
     page.compiled_truth,
     page.timeline,
     page.frontmatter,
-    await resolvePageChunkOptions(engine),
+    chunkOptions,
+    tags,
+    embeddingContextOptions,
   );
   await engine.upsertChunks(page.slug, resolvedChunks);
   assertDerivedRefreshNotAborted(signal);
@@ -631,42 +652,115 @@ export function buildPageChunks(
   timeline: string,
   frontmatter?: Record<string, unknown>,
   options: ChunkOptions = defaultPageChunkOptions(),
+  tags: string[] = [],
+  embeddingContextOptions?: PageChunkEmbeddingContextOptions,
 ): ChunkInput[] {
   const chunks: ChunkInput[] = [];
 
   if (compiledTruth.trim()) {
     for (const chunk of chunkText(compiledTruth, options)) {
-      chunks.push({
+      chunks.push(withChunkEmbeddingContext({
         chunk_index: chunks.length,
         chunk_text: chunk.text,
         chunk_source: 'compiled_truth',
         token_count: chunk.token_count ?? estimateTokenCount(chunk.text),
-      });
+      }, embeddingContextOptions));
     }
   }
 
   if (timeline.trim()) {
     for (const chunk of chunkText(timeline, options)) {
-      chunks.push({
+      chunks.push(withChunkEmbeddingContext({
         chunk_index: chunks.length,
         chunk_text: chunk.text,
         chunk_source: 'timeline',
         token_count: chunk.token_count ?? estimateTokenCount(chunk.text),
-      });
+      }, embeddingContextOptions));
     }
   }
 
-  const searchText = frontmatter ? buildFrontmatterSearchText(frontmatter) : '';
+  const searchText = frontmatter ? buildFrontmatterSearchText(frontmatter, tags) : '';
   if (searchText) {
     for (const chunk of chunkText(searchText, options)) {
-      chunks.push({
+      chunks.push(withChunkEmbeddingContext({
         chunk_index: chunks.length,
         chunk_text: chunk.text,
         chunk_source: 'frontmatter',
         token_count: chunk.token_count ?? estimateTokenCount(chunk.text),
-      });
+      }, embeddingContextOptions));
     }
   }
 
   return chunks;
+}
+
+export interface PageChunkEmbeddingContextOptions {
+  enabled?: boolean;
+  slug?: string;
+  title?: string;
+}
+
+async function resolvePageChunkEmbeddingContextOptions(
+  engine: Partial<Pick<BrainEngine, 'getConfig'>>,
+  page: Pick<Page, 'slug' | 'title'>,
+): Promise<PageChunkEmbeddingContextOptions | undefined> {
+  const enabled = await resolveContextualChunkEmbeddingEnabled(engine);
+  if (!enabled) return undefined;
+  return {
+    enabled: true,
+    slug: page.slug,
+    title: page.title,
+  };
+}
+
+async function resolveContextualChunkEmbeddingEnabled(
+  engine: Partial<Pick<BrainEngine, 'getConfig'>>,
+): Promise<boolean> {
+  if (typeof engine.getConfig === 'function') {
+    const stored = parseBooleanConfigValue(
+      await engine.getConfig('retrieval_contextual_chunk_embeddings')
+        ?? await engine.getConfig('retrieval.contextual_chunk_embeddings')
+        ?? await engine.getConfig('contextual_chunk_embeddings'),
+    );
+    if (stored !== undefined) return stored;
+  }
+
+  try {
+    return loadConfig()?.retrieval_contextual_chunk_embeddings === true;
+  } catch {
+    return false;
+  }
+}
+
+function parseBooleanConfigValue(value: string | null): boolean | undefined {
+  if (value === null) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return undefined;
+}
+
+function withChunkEmbeddingContext(
+  chunk: ChunkInput,
+  options: PageChunkEmbeddingContextOptions | undefined,
+): ChunkInput {
+  if (!options?.enabled) return chunk;
+  const context = buildChunkEmbeddingContext(chunk.chunk_source, options);
+  if (!context) return chunk;
+  return {
+    ...chunk,
+    embed_context: context,
+    embedding_input_version: CONTEXTUAL_CHUNK_EMBEDDING_VERSION,
+  };
+}
+
+function buildChunkEmbeddingContext(
+  chunkSource: ChunkInput['chunk_source'],
+  options: PageChunkEmbeddingContextOptions,
+): string | undefined {
+  const lines: string[] = [];
+  if (options.title?.trim()) lines.push(`Page title: ${options.title.trim()}`);
+  if (options.slug?.trim()) lines.push(`Page slug: ${options.slug.trim()}`);
+  lines.push(`Chunk source: ${chunkSource}`);
+  return lines.join('\n');
 }

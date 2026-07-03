@@ -42,6 +42,7 @@ export function buildInboxLeads(input: InboxLeadInput): InboxLeadResult {
 
 export function computeCandidateDebtMetrics(input: CandidateDebtInput): CandidateDebtMetrics {
   const handoffIds = new Set(input.canonical_handoff_candidate_ids ?? []);
+  const completedHandoffIds = new Set(input.completed_canonical_handoff_candidate_ids ?? input.canonical_handoff_candidate_ids ?? []);
   const proposalsByCandidateId = activeProposalByCandidateId(input.canonical_target_proposals ?? []);
   const visibleCandidates = input.candidates.filter((candidate) => candidate.sensitivity !== 'secret');
   const reviewLatencies = visibleCandidates
@@ -57,13 +58,20 @@ export function computeCandidateDebtMetrics(input: CandidateDebtInput): Candidat
     missing_provenance_count: visibleCandidates.filter((candidate) =>
       !candidate.source_refs.some((sourceRef) => sourceRef.trim().length > 0)
     ).length,
-    stale_promoted_without_handoff_count: visibleCandidates.filter((candidate) =>
-      candidate.status === 'promoted' && !handoffIds.has(candidate.id)
-    ).length,
+    stale_promoted_without_handoff_count: visibleCandidates.filter((candidate) => {
+      const resolution = classifyCandidateResolutionState({
+        candidate,
+        has_canonical_handoff: handoffIds.has(candidate.id),
+        has_completed_canonical_handoff: handoffIds.has(candidate.id) ? completedHandoffIds.has(candidate.id) : undefined,
+        canonical_target_proposal: proposalsByCandidateId.get(candidate.id) ?? null,
+      });
+      return resolution.counts_as_promoted_without_handoff;
+    }).length,
     unresolved_exposed_count: visibleCandidates.filter((candidate) => {
       const resolution = classifyCandidateResolutionState({
         candidate,
         has_canonical_handoff: handoffIds.has(candidate.id),
+        has_completed_canonical_handoff: handoffIds.has(candidate.id) ? completedHandoffIds.has(candidate.id) : undefined,
         canonical_target_proposal: proposalsByCandidateId.get(candidate.id) ?? null,
       });
       return resolution.counts_as_unresolved_exposed;
@@ -72,6 +80,7 @@ export function computeCandidateDebtMetrics(input: CandidateDebtInput): Candidat
       const resolution = classifyCandidateResolutionState({
         candidate,
         has_canonical_handoff: handoffIds.has(candidate.id),
+        has_completed_canonical_handoff: handoffIds.has(candidate.id) ? completedHandoffIds.has(candidate.id) : undefined,
         canonical_target_proposal: proposalsByCandidateId.get(candidate.id) ?? null,
       });
       return resolution.counts_as_hard_blocked_by_proposal;

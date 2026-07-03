@@ -8,6 +8,7 @@ import {
   type DreamCycleRunResult,
 } from '../core/services/dream-cycle-runner-service.ts';
 import { createAutoPromoteDreamDependency } from './auto-promote.ts';
+import { saveMemoryReviewReport } from './memory-report.ts';
 
 const STRICT_ISO_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|([+-])(\d{2}):(\d{2}))$/;
 
@@ -32,6 +33,14 @@ export async function runDream(
         lifecycleForgetting: maybeCreateLifecycleForgettingServiceForEngine(engine, () => input.now ?? new Date().toISOString()),
         autoPromote: createAutoPromoteDreamDependency(engine),
         replayCanary: createProofAgentDreamReplayCanary(),
+        ...(input.report_dir ? {
+          memoryReport: {
+            save: (reportInput) => saveMemoryReviewReport(engine, {
+              ...reportInput,
+              report_dir: input.report_dir!,
+            }),
+          },
+        } : {}),
       });
   console.log(JSON.stringify(result, null, 2));
 }
@@ -46,6 +55,7 @@ export function parseDreamArgs(
   const limit = readNumberFlag(args, '--limit');
   const maxRunnerCalls = readNumberFlag(args, '--max-runner-calls');
   const timeBudgetMs = readNumberFlag(args, '--time-budget-ms');
+  const phaseTimeoutMs = readNumberFlag(args, '--phase-timeout-ms');
   const maxCandidatesPerCycle = readNumberFlag(args, '--max-candidates-per-cycle');
   const now = readFlag(args, '--now');
   return {
@@ -61,7 +71,9 @@ export function parseDreamArgs(
     ...(limit !== undefined ? { limit } : {}),
     ...(maxRunnerCalls !== undefined ? { max_runner_calls: maxRunnerCalls } : {}),
     ...(timeBudgetMs !== undefined ? { time_budget_ms: timeBudgetMs } : {}),
+    ...(phaseTimeoutMs !== undefined ? { phase_timeout_ms: phaseTimeoutMs } : {}),
     ...(maxCandidatesPerCycle !== undefined ? { max_candidates_per_cycle: maxCandidatesPerCycle } : {}),
+    ...(readFlag(args, '--report-dir') !== undefined ? { report_dir: readFlag(args, '--report-dir') } : {}),
   };
 }
 
@@ -120,8 +132,9 @@ USAGE
   mbrain dream [--dry-run|--apply] [--write-candidates]
                [--scope-id SCOPE] [--now ISO] [--limit N]
                [--apply-auto-promote] [--allow-canonical-page-writes]
-               [--max-runner-calls N] [--time-budget-ms MS]
+               [--max-runner-calls N] [--time-budget-ms MS] [--phase-timeout-ms MS]
                [--max-candidates-per-cycle N]
+               [--report-dir BRAIN_DIR]
                [--allow-llm] [--allow-local-runner]
 `);
 }

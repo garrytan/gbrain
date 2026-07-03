@@ -45,7 +45,7 @@ test('context-atlas report service renders deterministic fresh report lines', as
     expect(result.selection_reason).toBe('selected_fresh_match');
     expect(result.report?.report_kind).toBe('structural');
     expect(result.report?.summary_lines).toContain('Atlas freshness is fresh.');
-    expect(result.report?.summary_lines).toContain('This atlas is safe to use for orientation under the current scope.');
+    expect(result.report?.summary_lines).toContain('Context Atlas is deprecated; use context maps and graph frontier planning for new retrieval orientation.');
     expect(result.report?.recommended_reads[0]?.page_slug).toBe('concepts/note-manifest');
   } finally {
     await engine.disconnect();
@@ -100,6 +100,7 @@ test('context-atlas report service renders deterministic stale warnings for dire
     expect(result.report?.freshness).toBe('stale');
     expect(result.report?.summary_lines).toContain('Atlas freshness is stale.');
     expect(result.report?.summary_lines).toContain('Rebuild the linked context map and atlas before trusting routing output.');
+    expect(result.report?.summary_lines).toContain('Context Atlas is deprecated; use context maps and graph frontier planning for new retrieval orientation.');
   } finally {
     await engine.disconnect();
     rmSync(dir, { recursive: true, force: true });

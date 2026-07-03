@@ -25,6 +25,7 @@ export interface RunAutoPromoteInput {
   max_runner_calls?: number;
   time_budget_ms?: number;
   exclude_candidate_ids?: string[];
+  signal?: AbortSignal;
 }
 export interface TargetContextSnapshot {
   text: string;
@@ -374,6 +375,7 @@ async function judge(
       tool_policy: toolPolicy,
       allowed_tools: ['emit_promotion_verdict'],
       model: _model,
+      signal: input.signal,
     });
     if (exec.status !== 'succeeded') continue;
     const parsed = parsePromotionVerdict(exec.output, c.id);

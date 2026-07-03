@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS pages (
   page_embedding vector(1024),
   content_hash  TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  compiled_truth_changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  timeline_changed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
@@ -1050,6 +1052,8 @@ CREATE TABLE IF NOT EXISTS retrieval_traces (
   selected_intent TEXT,
   scope_gate_policy TEXT,
   scope_gate_reason TEXT,
+  elapsed_ms INTEGER,
+  retrieved_token_count INTEGER,
   outcome      TEXT NOT NULL DEFAULT '',
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );

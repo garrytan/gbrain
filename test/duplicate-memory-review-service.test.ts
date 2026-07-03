@@ -585,6 +585,7 @@ test('preflight summary keeps only compact duplicate fields', async () => {
 });
 
 function makePage(slug: string, title: string, compiledTruth: string): Page {
+  const timestamp = new Date('2026-05-09T00:00:00.000Z');
   return {
     id: 0,
     slug,
@@ -593,7 +594,9 @@ function makePage(slug: string, title: string, compiledTruth: string): Page {
     compiled_truth: compiledTruth,
     timeline: '',
     frontmatter: {},
-    created_at: new Date('2026-05-09T00:00:00.000Z'),
-    updated_at: new Date('2026-05-09T00:00:00.000Z'),
+    created_at: timestamp,
+    updated_at: timestamp,
+    compiled_truth_changed_at: timestamp,
+    timeline_changed_at: timestamp,
   };
 }

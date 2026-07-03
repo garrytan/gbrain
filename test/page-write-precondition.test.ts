@@ -116,6 +116,49 @@ async function createWriteSession(
 }
 
 describe('put_page content hash preconditions and mutation ledger', () => {
+  test('new page writes return non-blocking duplicate warnings', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const putPage = getOperation('put_page');
+      await putPage.handler(ctx, {
+        slug: 'systems/mbrain-agentic-canonical-retrieval',
+        expected_content_hash: null,
+        content: pageContent(
+          'MBrain Agentic Canonical Retrieval',
+          'MBrain agentic canonical retrieval uses governed memory writes. [Source: Page write precondition fixture, 2026-04-25 12:00 PM KST]',
+          '- **2026-04-25** | Seed page.',
+        ),
+      });
+
+      const duplicateResult = await putPage.handler(ctx, {
+        slug: 'office/systems/mbrain-agentic-canonical-retrieval',
+        expected_content_hash: null,
+        content: pageContent(
+          'MBrain Agentic Canonical Retrieval',
+          'MBrain agentic canonical retrieval uses governed memory writes. [Source: Page write precondition fixture, 2026-04-25 12:00 PM KST]',
+          '- **2026-04-26** | Duplicate candidate.',
+        ),
+      }) as any;
+      expect(duplicateResult.possible_duplicate_of).toEqual([
+        expect.objectContaining({
+          slug: 'systems/mbrain-agentic-canonical-retrieval',
+          score: expect.any(Number),
+        }),
+      ]);
+
+      const existingDuplicate = await ctx.engine.getPage('office/systems/mbrain-agentic-canonical-retrieval');
+      const updateResult = await putPage.handler(ctx, {
+        slug: 'office/systems/mbrain-agentic-canonical-retrieval',
+        expected_content_hash: existingDuplicate?.content_hash,
+        content: pageContent(
+          'MBrain Agentic Canonical Retrieval',
+          'MBrain agentic canonical retrieval uses governed memory writes and update checks. [Source: Page write precondition fixture, 2026-04-25 12:00 PM KST]',
+          '- **2026-04-27** | Existing-slug update.',
+        ),
+      }) as any;
+      expect(updateResult.possible_duplicate_of).toBeUndefined();
+    });
+  });
+
   test('invalid expected_content_hash rejects before mutation or ledger recording', async () => {
     await withSqliteEngine(async (ctx) => {
       const put = getOperation('put_page');

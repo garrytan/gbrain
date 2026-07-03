@@ -593,6 +593,47 @@ describe('dream cycle phase runner', () => {
     }
   });
 
+  test('default consolidation flags cross-prefix duplicate page titles', async () => {
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: ':memory:' });
+    await engine.initSchema();
+    try {
+      await engine.putPage('systems/mbrain-agentic-canonical-retrieval.md', {
+        type: 'system',
+        title: 'MBrain Agentic Canonical Retrieval',
+        compiled_truth: 'Canonical retrieval system.',
+        timeline: '',
+        frontmatter: {},
+      });
+      await engine.putPage('office/systems/mbrain-agentic-canonical-retrieval.md', {
+        type: 'system',
+        title: 'MBrain Agentic Canonical Retrieval',
+        compiled_truth: 'Duplicate office-prefixed retrieval system.',
+        timeline: '',
+        frontmatter: {},
+      });
+
+      const result = await runDreamCycle(engine, {
+        scope_id: 'workspace:default',
+        now: '2026-06-06T00:00:00.000Z',
+        dry_run: true,
+        limit: 10,
+      });
+
+      expect(result.phases.find((phase) => phase.family === 'consolidation')).toMatchObject({
+        status: 'warn',
+        counts: {
+          duplicate_page_suggestions: 1,
+        },
+        source_ids: [
+          'duplicate_page:office/systems/mbrain-agentic-canonical-retrieval.md:systems/mbrain-agentic-canonical-retrieval.md',
+        ],
+      });
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
   test('dry-run suppresses apply and canonical permissions for programmatic callers', async () => {
     const calls: any[] = [];
     await runDreamCycle(stubEngine(), {
@@ -791,6 +832,74 @@ describe('dream cycle phase runner', () => {
       skip_reason: 'runner_unavailable',
       next_recommended_action: 'Enable local runner policy before claim extraction.',
       llm_or_runner_used: false,
+    });
+  });
+
+  test('phase timeout marks the phase failed and lets the run return', async () => {
+    let observedAbort = false;
+    const result = await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-05-21T10:00:00.000Z',
+      dry_run: true,
+      phase_timeout_ms: 25,
+    }, {
+      phaseHandlers: {
+        source_status: async (context) => {
+          context.input.signal?.addEventListener('abort', () => {
+            observedAbort = true;
+          }, { once: true });
+          return new Promise(() => undefined);
+        },
+      },
+    });
+
+    expect(result.phases.find((phase) => phase.family === 'source_status')).toMatchObject({
+      status: 'failed',
+      timed_out: true,
+      next_recommended_action: 'Inspect the timed-out phase and retry after clearing stuck work.',
+    });
+    expect(observedAbort).toBe(true);
+    expect(result.phases.find((phase) => phase.family === 'daily_report')).toBeDefined();
+  });
+
+  test('daily report phase can persist the memory review report through injected deps', async () => {
+    const saves: any[] = [];
+    const result = await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-05-21T10:00:00.000Z',
+      dry_run: true,
+    }, {
+      memoryReport: {
+        save: async (input) => {
+          saves.push(input);
+          return {
+            path: '/tmp/brain/reports/memory-review-report/2026-05-21-1000.md',
+            counts: {
+              review_items: 2,
+              open_conflicts: 1,
+              incomplete_handoffs: 1,
+              failed_jobs: 0,
+            },
+          };
+        },
+      },
+    });
+
+    expect(saves).toEqual([{
+      scope_id: 'workspace:default',
+      now: '2026-05-21T10:00:00.000Z',
+      limit: undefined,
+    }]);
+    expect(result.phases.find((phase) => phase.family === 'daily_report')).toMatchObject({
+      status: 'warn',
+      counts: {
+        saved_reports: 1,
+        review_items: 2,
+        open_conflicts: 1,
+        incomplete_handoffs: 1,
+      },
+      source_ids: ['/tmp/brain/reports/memory-review-report/2026-05-21-1000.md'],
+      next_recommended_action: 'Open daily memory report: /tmp/brain/reports/memory-review-report/2026-05-21-1000.md',
     });
   });
 

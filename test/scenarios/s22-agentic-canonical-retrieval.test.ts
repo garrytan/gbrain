@@ -195,7 +195,7 @@ describe('S22 — agentic canonical retrieval transcript', () => {
       expect(retrieve.required_reads).toHaveLength(1);
       expect(retrieve.required_reads[0]!.kind).toBe('task_working_set');
       expect(retrieve.warnings).toContain(
-        'Task continuation must read task state before raw files or graph orientation.',
+        'Task continuation includes task working set and normal search; read task state before acting on raw files.',
       );
 
       const read = await operationsByName.read_context.handler(opContext(handle.engine), {

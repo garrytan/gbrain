@@ -229,7 +229,7 @@ describe('S28 - gbrain memory authority', () => {
     }
   });
 
-  test('replays writeback authority guards without new storage', async () => {
+  test('replays writeback authority guards through governed candidate storage', async () => {
     const handle = await allocateSqliteBrain('s28-writeback-authority');
 
     try {
@@ -301,8 +301,10 @@ describe('S28 - gbrain memory authority', () => {
       }) as {
         decision: string;
         intended_operation: string;
+        applied: boolean;
         reasons: string[];
         candidate_input?: { candidate_type: string; status: string };
+        created_candidate?: { candidate_type: string; status: string };
         writeback_governance_metadata?: {
           route_decision: string;
           apply_mode: string;
@@ -319,8 +321,13 @@ describe('S28 - gbrain memory authority', () => {
       });
       expect(contradiction.writeback_governance_metadata).toMatchObject({
         route_decision: expectedContradiction.expected_decision,
-        apply_mode: 'plan_only',
-        candidate_only_reason: expect.any(String),
+        apply_mode: 'candidate_created',
+        candidate_only_reason: expectedContradiction.expected_reason,
+      });
+      expect(contradiction.applied).toBe(true);
+      expect(contradiction.created_candidate).toMatchObject({
+        candidate_type: 'note_update',
+        status: 'captured',
       });
 
       const taskMechanics = await operationsByName.route_memory_writeback.handler(ctx, {

@@ -9,7 +9,7 @@ export type RunCommand = (
   cmd: string,
   args: string[],
   input: string,
-  opts: { timeoutMs: number },
+  opts: { timeoutMs: number; signal?: AbortSignal },
 ) => Promise<RunCommandResult>;
 
 export interface CliRunnerExecutorOptions {
@@ -27,7 +27,7 @@ export function createCliRunnerExecutor(options: CliRunnerExecutorOptions = {}):
       return fail('runner_unavailable', `no CLI mapping for runner ${req.runner.kind}`);
     }
     try {
-      const out = await runCommand(argv.cmd, argv.args, argv.input, { timeoutMs });
+      const out = await runCommand(argv.cmd, argv.args, argv.input, { timeoutMs, signal: req.signal });
       if (out.code !== 0) {
         return fail('runner_unavailable', out.stderr.slice(0, 500) || `exit ${out.code}`);
       }
@@ -60,7 +60,11 @@ function fail(failureClass: RestrictedRunnerExecutorResult['failure_class'], out
 
 const defaultRunCommand: RunCommand = async (cmd, args, input, opts) => {
   const proc = Bun.spawn([cmd, ...args], { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe', env: safeEnv() });
-  const timer = setTimeout(() => { try { proc.kill(); } catch { /* already exited */ } }, opts.timeoutMs);
+  const kill = () => { try { proc.kill(); } catch { /* already exited */ } };
+  const abort = () => kill();
+  if (opts.signal?.aborted) kill();
+  opts.signal?.addEventListener('abort', abort, { once: true });
+  const timer = setTimeout(kill, opts.timeoutMs);
   try {
     await writeStdin(proc.stdin, input);
     const stdout = await new Response(proc.stdout).text();
@@ -69,6 +73,7 @@ const defaultRunCommand: RunCommand = async (cmd, args, input, opts) => {
     return { code, stdout, stderr };
   } finally {
     clearTimeout(timer);
+    opts.signal?.removeEventListener('abort', abort);
   }
 };
 

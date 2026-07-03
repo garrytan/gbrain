@@ -259,6 +259,44 @@ describe('MCP HTTP transport', () => {
     expect(response.status).toBe(200);
   });
 
+  test('default Postgres bearer auth reuses the engine SQL pool for auth, last-use, and logging', async () => {
+    const token = 'mbrain_postgres_shared_pool_token';
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const queries: string[] = [];
+    const sql = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const text = strings.join('?');
+      queries.push(text);
+      if (text.includes('SELECT id, name, revoked_at, scopes FROM access_tokens')) {
+        expect(values[0]).toBe(tokenHash);
+        return [{ id: 'token-pg-1', name: 'pg-client', revoked_at: null, scopes: ['mcp'] }];
+      }
+      return [];
+    }) as any;
+    const engine = {
+      ...createStatsEngine(),
+      sql,
+    } as BrainEngine & { sql: typeof sql };
+    const handler = createMcpHttpHandler({
+      engine,
+      config: resolveConfig({ engine: 'postgres', database_url: 'postgres://unused.invalid/mbrain' }),
+    });
+
+    const response = await handler(new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', params: {}, id: 1 }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(queries.filter((query) => query.includes('SELECT id, name, revoked_at, scopes FROM access_tokens'))).toHaveLength(1);
+    expect(queries.filter((query) => query.includes('UPDATE access_tokens SET last_used_at'))).toHaveLength(1);
+    expect(queries.filter((query) => query.includes('INSERT INTO mcp_request_log'))).toHaveLength(1);
+  });
+
   test('manual tokens named with oauth prefix are not classified as OAuth clients without OAuth scopes', async () => {
     const { db, dbPath } = createSqliteTokenDb();
     const token = 'mbrain_manual_oauth_prefix_token';
@@ -996,8 +1034,10 @@ describe('MCP HTTP transport', () => {
     expect(approval.status).toBe(200);
     const html = await approval.text();
     expect(html).toContain('Requested scopes');
+    expect(html).toContain('Full compiled-brain read through normal MCP tools');
     expect(html).toContain('canonical_write');
     expect(html).toContain('privileged');
+    expect(html).toContain('Privileged canonical memory mutation scope');
 
     params.set('approval_token', 'owner-secret');
     const authorize = await handler(new Request('http://localhost/oauth/authorize', {
@@ -1028,6 +1068,51 @@ describe('MCP HTTP transport', () => {
     const scopes = JSON.parse(row.scopes);
     expect(scopes).toContain('canonical_write');
     expect(scopes).toContain(`oauth_client_id:${client.client_id}`);
+  });
+
+  test('OAuth approval page identifies the requesting client and redirect origin safely', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+      },
+    });
+    const redirectUri = 'https://evil.example/oauth/callback';
+    const register = await handler(new Request('http://localhost/oauth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_name: '<img src=x onerror=alert(1)> Research Client',
+        redirect_uris: [redirectUri],
+        token_endpoint_auth_method: 'none',
+      }),
+    }));
+    expect(register.status).toBe(201);
+    const client = await register.json() as { client_id: string };
+    const verifier = 'test-verifier-abcdefghijklmnopqrstuvwxyz0123456789';
+    const challenge = sha256('sha256').update(verifier).digest('base64url');
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: client.client_id,
+      redirect_uri: redirectUri,
+      scope: 'mcp',
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+    });
+
+    const approval = await handler(new Request(`http://localhost/oauth/authorize?${params}`));
+    expect(approval.status).toBe(200);
+    const html = await approval.text();
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt; Research Client');
+    expect(html).not.toContain('<img src=x onerror=alert(1)>');
+    expect(html).toContain('https://evil.example');
+    expect(html).toContain('New OAuth client');
   });
 
   test('OAuth authorization code exchange mints an MCP bearer token with PKCE', async () => {
@@ -1879,6 +1964,38 @@ describe('MCP HTTP security hardening', () => {
       );
       expect(metadata.status).toBe(200);
     }
+  });
+
+  test('rate limits /mcp requests per client address before authentication', async () => {
+    let authCalls = 0;
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      authenticate: async () => {
+        authCalls += 1;
+        return { ok: false, status: 401, body: { error: 'invalid_token' } };
+      },
+      logRequest: async () => {},
+      mcpRateLimit: { capacity: 2, windowMs: 60_000, maxKeys: 16 },
+    });
+
+    const fire = (ip: string) => handler(new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer bogus',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', params: {}, id: 1 }),
+    }), ip);
+
+    expect((await fire('203.0.113.9')).status).toBe(401);
+    expect((await fire('203.0.113.9')).status).toBe(401);
+    const limited = await fire('203.0.113.9');
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toMatchObject({ error: 'rate_limited' });
+    expect(authCalls).toBe(2);
+
+    expect((await fire('203.0.113.10')).status).toBe(401);
   });
 
   test('fixed-window rate limiter refills after the window elapses', () => {

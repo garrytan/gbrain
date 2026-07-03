@@ -13,6 +13,11 @@ export type EngineType = 'postgres' | 'sqlite' | 'pglite';
 export type EmbeddingProvider = 'none' | 'local';
 export type QueryRewriteProvider = 'none' | 'heuristic' | 'local_llm';
 
+export interface RetrievalSourceRankRuleConfig {
+  prefix: string;
+  factor: number;
+}
+
 export interface MBrainConfig {
   engine: EngineType;
   database_url?: string;
@@ -26,8 +31,15 @@ export interface MBrainConfig {
   anthropic_api_key?: string;
   storage?: StorageConfig;
   autopilot?: Record<string, unknown>;
+  maintenance?: {
+    governed_recompile_enabled?: boolean;
+  };
   auto_promote?: Record<string, unknown>;
   retrieval_governed_probe_hybrid?: boolean;
+  retrieval_contextual_chunk_embeddings?: boolean;
+  retrieval_usage_aware_ranking?: boolean;
+  maintenance_governed_recompile_enabled?: boolean;
+  retrieval_source_rank_rules?: RetrievalSourceRankRuleConfig[];
 }
 
 export interface MBrainConfigInput {
@@ -43,11 +55,21 @@ export interface MBrainConfigInput {
   anthropic_api_key?: string;
   storage?: StorageConfig;
   autopilot?: Record<string, unknown>;
+  maintenance?: {
+    governed_recompile_enabled?: boolean;
+  };
   auto_promote?: Record<string, unknown>;
   retrieval?: {
     governed_probe_hybrid?: boolean;
+    contextual_chunk_embeddings?: boolean;
+    usage_aware_ranking?: boolean;
+    source_rank_rules?: RetrievalSourceRankRuleConfig[];
   };
   retrieval_governed_probe_hybrid?: boolean;
+  retrieval_contextual_chunk_embeddings?: boolean;
+  retrieval_usage_aware_ranking?: boolean;
+  maintenance_governed_recompile_enabled?: boolean;
+  retrieval_source_rank_rules?: RetrievalSourceRankRuleConfig[];
 }
 
 const VALID_ENGINES = new Set<EngineType>(['postgres', 'sqlite', 'pglite']);
@@ -134,10 +156,55 @@ export function resolveConfig(input: MBrainConfigInput): MBrainConfig {
     retrieval_governed_probe_hybrid: input.retrieval_governed_probe_hybrid
       ?? input.retrieval?.governed_probe_hybrid
       ?? false,
+    retrieval_contextual_chunk_embeddings: input.retrieval_contextual_chunk_embeddings
+      ?? input.retrieval?.contextual_chunk_embeddings
+      ?? false,
+    retrieval_usage_aware_ranking: input.retrieval_usage_aware_ranking
+      ?? input.retrieval?.usage_aware_ranking
+      ?? false,
+    maintenance_governed_recompile_enabled: input.maintenance_governed_recompile_enabled
+      ?? input.maintenance?.governed_recompile_enabled
+      ?? false,
+    retrieval_source_rank_rules: normalizeRetrievalSourceRankRules(
+      input.retrieval_source_rank_rules ?? input.retrieval?.source_rank_rules,
+    ),
   };
 
   validateResolvedConfig(resolved);
   return resolved;
+}
+
+function normalizeRetrievalSourceRankRules(
+  rules: RetrievalSourceRankRuleConfig[] | undefined,
+): RetrievalSourceRankRuleConfig[] | undefined {
+  if (rules === undefined) return undefined;
+  if (!Array.isArray(rules)) {
+    throw new MBrainError(
+      'Invalid retrieval source rank rules',
+      'retrieval.source_rank_rules must be an array',
+      'Use entries like {"prefix":"office/personal/","factor":1.2}',
+    );
+  }
+  return rules.map((rule, index) => {
+    if (!rule || typeof rule.prefix !== 'string' || rule.prefix.trim().length === 0) {
+      throw new MBrainError(
+        'Invalid retrieval source rank rule',
+        `retrieval.source_rank_rules[${index}].prefix must be a non-empty string`,
+        'Use entries like {"prefix":"office/personal/","factor":1.2}',
+      );
+    }
+    if (typeof rule.factor !== 'number' || !Number.isFinite(rule.factor) || rule.factor <= 0) {
+      throw new MBrainError(
+        'Invalid retrieval source rank rule',
+        `retrieval.source_rank_rules[${index}].factor must be a positive number`,
+        'Use entries like {"prefix":"office/personal/","factor":1.2}',
+      );
+    }
+    return {
+      prefix: rule.prefix.trim(),
+      factor: rule.factor,
+    };
+  });
 }
 
 export function validateResolvedConfig(config: MBrainConfig): void {

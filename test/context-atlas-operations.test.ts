@@ -18,6 +18,26 @@ test('context-atlas operations are registered with CLI hints', () => {
   expect(select?.cliHints?.name).toBe('atlas-select');
 });
 
+test('context-atlas operation family is explicitly deprecated in favor of context maps and graph frontier', () => {
+  const atlasOperationNames = [
+    'build_context_atlas',
+    'get_context_atlas_entry',
+    'list_context_atlas_entries',
+    'select_context_atlas_entry',
+    'get_context_atlas_overview',
+    'get_context_atlas_report',
+    'get_atlas_orientation_card',
+    'get_atlas_orientation_bundle',
+  ];
+
+  for (const name of atlasOperationNames) {
+    const operation = operations.find((candidate) => candidate.name === name);
+    expect(operation?.description).toContain('Deprecated');
+    expect(operation?.description).toContain('context maps');
+    expect(operation?.description).toContain('graph frontier');
+  }
+});
+
 test('context-atlas operations expose freshness-aware reads', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-context-atlas-op-'));
   const databasePath = join(dir, 'brain.db');

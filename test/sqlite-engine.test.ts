@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { buildPageChunks, importFromContent } from '../src/core/import-file.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
+import { operationsByName } from '../src/core/operations.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import type { ChunkInput, PageInput } from '../src/core/types.ts';
 import { importContentHash } from '../src/core/utils.ts';
@@ -421,6 +422,23 @@ describe('SQLiteEngine', () => {
 
     await engine.removeTag('people/alice.md', 'operator');
     expect(await engine.getTags('people/alice.md')).toEqual(['founder']);
+  });
+
+  test('searchKeyword finds imported pages by frontmatter aliases and tags', async () => {
+    await importFromContent(engine, 'systems/rebellion', [
+      '---',
+      'type: system',
+      'title: 레벨리온',
+      'aliases:',
+      '  - Rebellion',
+      'tags:',
+      '  - memory-runtime',
+      '---',
+      'Korean-titled system page.',
+    ].join('\n'), { path: 'systems/rebellion.md' });
+
+    expect((await engine.searchKeyword('Rebellion')).map((result) => result.slug)).toContain('systems/rebellion');
+    expect((await engine.searchKeyword('memory-runtime')).map((result) => result.slug)).toContain('systems/rebellion');
   });
 
   test('supports timeline entries, versions, raw data, ingest log, and vector placeholder behavior', async () => {
@@ -919,6 +937,141 @@ Original symbol map.
 
     expect(await engine.searchKeyword('keyword', { type: 'project' })).toEqual([]);
     expect(await engine.searchKeyword('keyword', { type: 'person', exclude_slugs: ['people/alice.md'] })).toEqual([]);
+  });
+
+  test('searchKeyword honors temporal filters and annotates superseded pages', async () => {
+    await putPage('concepts/old-memory.md', {
+      type: 'concept',
+      title: 'Old Memory',
+      compiled_truth: 'Shared temporal retrieval keyword.',
+      frontmatter: { superseded_by: 'concepts/new-memory.md' },
+    });
+    await putPage('concepts/new-memory.md', {
+      type: 'concept',
+      title: 'New Memory',
+      compiled_truth: 'Shared temporal retrieval keyword.',
+    });
+
+    const db = (engine as any).database as Database;
+    db.run(`UPDATE pages SET updated_at = ? WHERE slug = ?`, ['2025-01-01T00:00:00.000Z', 'concepts/old-memory.md']);
+    db.run(`UPDATE pages SET updated_at = ? WHERE slug = ?`, ['2026-01-01T00:00:00.000Z', 'concepts/new-memory.md']);
+
+    const recent = await engine.searchKeyword('temporal retrieval', {
+      updated_after: '2025-06-01T00:00:00Z',
+    });
+    expect(recent.map(result => result.slug)).toEqual(['concepts/new-memory.md']);
+
+    const old = await engine.searchKeyword('temporal retrieval', {
+      updated_before: '2025-06-01T00:00:00Z',
+    });
+    expect(old.map(result => result.slug)).toEqual(['concepts/old-memory.md']);
+    expect(old[0]?.superseded_by).toBe('concepts/new-memory.md');
+    expect(old[0]?.updated_at?.toISOString()).toBe('2025-01-01T00:00:00.000Z');
+  });
+
+  test('searchKeyword keeps Korean terms in pure and mixed-language queries', async () => {
+    await putPage('systems/rebellion.md', {
+      type: 'system',
+      title: '레벨리온',
+      compiled_truth: '레벨리온은 한국어 검색 아키텍처를 검증하는 시스템이다.',
+      timeline: '2026: Korean retrieval test fixture',
+    });
+    await putPage('systems/vector.md', {
+      type: 'system',
+      title: 'Vector Engine',
+      compiled_truth: 'The vector engine shares 아키텍처 notes with retrieval.',
+      timeline: '',
+    });
+    await putPage('systems/vector-english-only.md', {
+      type: 'system',
+      title: 'Vector English Only',
+      compiled_truth: 'The vector engine has no Korean architecture term.',
+      timeline: '',
+    });
+
+    expect((await engine.searchKeyword('레벨리온')).map(result => result.slug)).toEqual(['systems/rebellion.md']);
+    expect((await engine.searchKeyword('레벨리온 아키텍처')).map(result => result.slug)).toContain('systems/rebellion.md');
+    expect((await engine.searchKeyword('vector 아키텍처')).map(result => result.slug)).toEqual([
+      'systems/vector.md',
+    ]);
+  });
+
+  test('tracks compiled truth and timeline zone timestamps separately', async () => {
+    const first = await putPage('systems/compile-debt.md', {
+      type: 'system',
+      title: 'Compile Debt',
+      compiled_truth: 'Current compiled truth.',
+      timeline: '- **2024-06-01** | First timeline entry.',
+    });
+    await Bun.sleep(5);
+
+    const timelineOnly = await putPage('systems/compile-debt.md', {
+      type: 'system',
+      title: 'Compile Debt',
+      compiled_truth: 'Current compiled truth.',
+      timeline: '- **2024-06-01** | First timeline entry.\n- **2024-06-02** | New timeline evidence.',
+    });
+
+    expect(timelineOnly.compiled_truth_changed_at.getTime()).toBe(first.compiled_truth_changed_at.getTime());
+    expect(timelineOnly.timeline_changed_at.getTime()).toBeGreaterThan(first.timeline_changed_at.getTime());
+    const debt = await operationsByName.list_compile_debt.handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, { limit: 5 }) as Array<{ slug: string; uncompiled_timeline_entries: number }>;
+    expect(debt).toContainEqual(expect.objectContaining({
+      slug: 'systems/compile-debt.md',
+      uncompiled_timeline_entries: 2,
+    }));
+
+    await Bun.sleep(5);
+    const compiledUpdate = await putPage('systems/compile-debt.md', {
+      type: 'system',
+      title: 'Compile Debt',
+      compiled_truth: 'Current compiled truth includes the new evidence.',
+      timeline: timelineOnly.timeline,
+    });
+    expect(compiledUpdate.compiled_truth_changed_at.getTime()).toBeGreaterThan(timelineOnly.compiled_truth_changed_at.getTime());
+    expect(compiledUpdate.timeline_changed_at.getTime()).toBe(timelineOnly.timeline_changed_at.getTime());
+    const resolvedDebt = await operationsByName.list_compile_debt.handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, { limit: 5 }) as Array<{ slug: string }>;
+    expect(resolvedDebt.map(entry => entry.slug)).not.toContain('systems/compile-debt.md');
+  });
+
+  test('addTimelineEntry advances timeline zone and surfaces compile debt', async () => {
+    const first = await putPage('systems/structured-timeline-debt.md', {
+      type: 'system',
+      title: 'Structured Timeline Debt',
+      compiled_truth: 'Current compiled truth.',
+      timeline: '',
+    });
+    await Bun.sleep(5);
+
+    await engine.addTimelineEntry('systems/structured-timeline-debt.md', {
+      date: '2024-06-01',
+      summary: 'New structured evidence',
+      detail: 'Structured timeline evidence not yet compiled.',
+    });
+
+    const updated = await engine.getPage('systems/structured-timeline-debt.md');
+    expect(updated?.compiled_truth_changed_at.getTime()).toBe(first.compiled_truth_changed_at.getTime());
+    expect(updated?.timeline_changed_at.getTime()).toBeGreaterThan(first.timeline_changed_at.getTime());
+    expect((await engine.getHealth()).stale_pages).toBeGreaterThanOrEqual(1);
+    const debt = await operationsByName.list_compile_debt.handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, { limit: 5 }) as Array<{ slug: string; uncompiled_timeline_entries: number }>;
+    expect(debt).toContainEqual(expect.objectContaining({
+      slug: 'systems/structured-timeline-debt.md',
+      uncompiled_timeline_entries: 1,
+    }));
   });
 
   test('searchKeyword rethrows SQLite FTS schema errors instead of returning no results', async () => {

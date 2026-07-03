@@ -7,7 +7,7 @@ import { readContext } from '../src/core/services/read-context-service.ts';
 import { buildStructuralContextMapEntry } from '../src/core/services/context-map-service.ts';
 import { getBroadSynthesisRoute } from '../src/core/services/broad-synthesis-route-service.ts';
 import { planAssertionGraphFrontier } from '../src/core/services/assertion-frontier-retrieval-service.ts';
-import { retrieveContext } from '../src/core/services/retrieve-context-service.ts';
+import { buildProductionGraphFrontierInput, retrieveContext } from '../src/core/services/retrieve-context-service.ts';
 import { retrievalSelectorId } from '../src/core/services/retrieval-selector-service.ts';
 import { sourceRankCandidateLimit } from '../src/core/search/source-ranking.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
@@ -127,32 +127,58 @@ describe('retrieve context service', () => {
     });
   });
 
-  test('turns task ids into task working-set required reads before file or graph context', async () => {
+  test('task_id keeps task working-set reads while unioning normal search candidates', async () => {
     await withEngine('task', async (engine) => {
+      await engine.createTaskThread({
+        id: 'task-agentic-retrieval',
+        scope: 'work',
+        title: 'Agentic retrieval',
+        status: 'active',
+        current_summary: 'Working on concepts/task-context for retrieval.',
+      });
+      await importFromContent(engine, 'concepts/task-context', [
+        '---',
+        'type: concept',
+        'title: Task Context',
+        '---',
+        '# Compiled Truth',
+        'Task context retrieval candidate. [Source: User, direct message, 2026-07-03 09:00 KST]',
+      ].join('\n'), { path: 'concepts/task-context.md' });
+
       const result = await retrieveContext(engine, {
         query: 'continue the implementation task',
         task_id: 'task-agentic-retrieval',
       }, {
-        candidateSearch: async () => {
-          throw new Error('task continuation retrieval must not search');
-        },
+        candidateSearch: async () => [{
+          slug: 'concepts/task-context',
+          page_id: 1,
+          title: 'Task Context',
+          type: 'concept',
+          chunk_text: 'Task context retrieval candidate.',
+          chunk_source: 'compiled_truth',
+          score: 10,
+          stale: false,
+        }],
       });
 
       expect(result.answerability.answerable_from_probe).toBe(false);
       expect(result.answerability.must_read_context).toBe(true);
-      expect(result.required_reads).toHaveLength(1);
       expect(result.required_reads[0]!.selector_id).toBe(
         'task_working_set:workspace:default:task-agentic-retrieval',
       );
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('concepts/task-context');
       expect(result.candidates[0]!.read_selector.selector_id).toBe(result.required_reads[0]!.selector_id);
+      expect(result.candidates.map((candidate) => candidate.read_selector.slug)).toContain('concepts/task-context');
+      expect(result.candidates.find((candidate) => candidate.read_selector.slug === 'concepts/task-context')?.why_matched)
+        .toContain('task_id affinity matched task-agentic-retrieval');
       expect(result.create_safety).toMatchObject({
-        status: 'unknown',
-        matched_candidate_ids: [result.candidates[0]!.candidate_id],
+        status: 'exists',
+        matched_candidate_ids: expect.arrayContaining(['candidate:concepts/task-context']),
         write_permission_granted: false,
       });
-      expect(result.create_safety?.reasons).toContain('selector_existence_not_verified');
+      expect(result.create_safety?.reasons).toContain('canonical_candidate_exists');
       expect(result.warnings).toContain(
-        'Task continuation must read task state before raw files or graph orientation.',
+        'Task continuation includes task working set and normal search; read task state before acting on raw files.',
       );
     });
   });
@@ -256,6 +282,253 @@ describe('retrieve context service', () => {
         write_permission_granted: false,
       });
       expect(result.create_safety?.reasons).toContain('no_canonical_or_candidate_overlap_in_probe');
+    });
+  });
+
+  test('token_budget shrinks candidate and required-read counts and drops orientation', async () => {
+    await withEngine('token-budget', async (engine) => {
+      for (const slug of ['concepts/budget-a', 'concepts/budget-b', 'concepts/budget-c', 'concepts/budget-d']) {
+        await importFromContent(engine, slug, [
+          '---',
+          'type: concept',
+          `title: ${slug}`,
+          '---',
+          '# Compiled Truth',
+          `${slug} matches compact retrieval budget.`,
+        ].join('\n'), { path: `${slug}.md` });
+      }
+
+      const seenLimits: number[] = [];
+      const result = await retrieveContext(engine, {
+        query: 'compact retrieval budget',
+        include_orientation: true,
+        limit: 8,
+        token_budget: 900,
+      }, {
+        candidateSearch: async (_query, options) => {
+          seenLimits.push(options.limit);
+          return ['concepts/budget-a', 'concepts/budget-b', 'concepts/budget-c', 'concepts/budget-d'].map((slug, index) => ({
+            slug,
+            page_id: index + 1,
+            title: slug,
+            type: 'concept',
+            chunk_text: `${slug} matches compact retrieval budget.`,
+            chunk_source: 'compiled_truth',
+            score: 10 - index,
+            stale: false,
+          }));
+        },
+        broadSynthesisCandidateSearch: async () => {
+          throw new Error('orientation should be omitted under a tiny token budget');
+        },
+      });
+
+      expect(new Set(seenLimits)).toEqual(new Set([sourceRankCandidateLimit(3)]));
+      expect(result.candidates).toHaveLength(3);
+      expect(result.required_reads).toHaveLength(1);
+      expect(result.orientation).toMatchObject({
+        derived_consulted: [],
+        recommended_reads: [],
+      });
+    });
+  });
+
+  test('known_subjects add bounded candidate search variants', async () => {
+    await withEngine('known-subject-variants', async (engine) => {
+      const seenQueries: string[] = [];
+      await retrieveContext(engine, {
+        query: 'memory',
+        include_orientation: false,
+        known_subjects: [
+          'systems/mbrain',
+          { ref: '레벨리온', kind: 'system' },
+          'ignored-third',
+          'ignored-fourth',
+        ],
+      }, {
+        candidateSearch: async (query) => {
+          seenQueries.push(query);
+          return [];
+        },
+      });
+
+      expect(seenQueries).toEqual([
+        'memory',
+        'systems/mbrain',
+        '레벨리온',
+        'ignored-third',
+      ]);
+    });
+  });
+
+  test('manifest aliases add deterministic candidate search variants', async () => {
+    await withEngine('alias-query-variants', async (engine) => {
+      await importFromContent(engine, 'companies/rebellion-ai', [
+        '---',
+        'type: company',
+        'title: Rebellion AI',
+        'aliases: [RBL, 리벨리온]',
+        '---',
+        '# Compiled Truth',
+        'Rebellion AI builds AI accelerators.',
+      ].join('\n'), { path: 'companies/rebellion-ai.md' });
+
+      const seenQueries: string[] = [];
+      await retrieveContext(engine, {
+        query: 'RBL roadmap',
+        include_orientation: false,
+      }, {
+        candidateSearch: async (query) => {
+          seenQueries.push(query);
+          return [];
+        },
+      });
+
+      expect(seenQueries).toContain('Rebellion AI');
+      expect(seenQueries).toContain('companies/rebellion-ai');
+      expect(seenQueries.indexOf('Rebellion AI')).toBeGreaterThan(seenQueries.indexOf('RBL roadmap'));
+    });
+  });
+
+  test('repo_path biases tied candidates toward matching repo frontmatter', async () => {
+    await withEngine('repo-path-bias', async (engine) => {
+      await importFromContent(engine, 'systems/other-apollo', [
+        '---',
+        'type: system',
+        'title: Apollo Other',
+        'repo: other',
+        '---',
+        '# Compiled Truth',
+        'Apollo retrieval notes.',
+      ].join('\n'), { path: 'systems/other-apollo.md' });
+      await importFromContent(engine, 'systems/mbrain-apollo', [
+        '---',
+        'type: system',
+        'title: Apollo MBrain',
+        'repo: mbrain',
+        '---',
+        '# Compiled Truth',
+        'Apollo retrieval notes.',
+      ].join('\n'), { path: 'systems/mbrain-apollo.md' });
+      const searchResults: SearchResult[] = [
+        {
+          slug: 'systems/other-apollo',
+          page_id: 1,
+          title: 'Apollo Other',
+          type: 'system',
+          chunk_text: 'Apollo retrieval notes.',
+          chunk_source: 'compiled_truth',
+          score: 1,
+          stale: false,
+        },
+        {
+          slug: 'systems/mbrain-apollo',
+          page_id: 2,
+          title: 'Apollo MBrain',
+          type: 'system',
+          chunk_text: 'Apollo retrieval notes.',
+          chunk_source: 'compiled_truth',
+          score: 1,
+          stale: false,
+        },
+      ];
+
+      const withoutRepo = await retrieveContext(engine, {
+        query: 'apollo',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async () => searchResults,
+      });
+      const withRepo = await retrieveContext(engine, {
+        query: 'apollo',
+        include_orientation: false,
+        limit: 2,
+        repo_path: '/Users/meghendra/Work/mbrain',
+      }, {
+        candidateSearch: async () => searchResults,
+      });
+
+      expect(withoutRepo.candidates.map(candidate => candidate.read_selector.slug)).toEqual([
+        'systems/other-apollo',
+        'systems/mbrain-apollo',
+      ]);
+      expect(withRepo.candidates.map(candidate => candidate.read_selector.slug)).toEqual([
+        'systems/mbrain-apollo',
+        'systems/other-apollo',
+      ]);
+      expect(withRepo.candidates[0]!.why_matched).toContain('repo_path matched mbrain');
+    });
+  });
+
+  test('can boost recently used pages and annotate cold candidates when usage-aware ranking is enabled', async () => {
+    await withEngine('usage-aware-ranking', async (engine) => {
+      await importFromContent(engine, 'systems/cold-apollo', [
+        '---',
+        'type: system',
+        'title: Cold Apollo',
+        '---',
+        '# Compiled Truth',
+        'Apollo retrieval notes.',
+      ].join('\n'), { path: 'systems/cold-apollo.md' });
+      await importFromContent(engine, 'systems/hot-apollo', [
+        '---',
+        'type: system',
+        'title: Hot Apollo',
+        '---',
+        '# Compiled Truth',
+        'Apollo retrieval notes.',
+      ].join('\n'), { path: 'systems/hot-apollo.md' });
+      await engine.putRetrievalTrace({
+        id: 'trace-hot-apollo',
+        scope: 'work',
+        route: ['read_context'],
+        source_refs: [
+          retrievalSelectorId({ kind: 'compiled_truth', scope_id: 'workspace:default', slug: 'systems/hot-apollo' }),
+        ],
+        verification: ['answer_ready:ready'],
+        outcome: 'read_context returned canonical evidence',
+      });
+
+      const searchResults: SearchResult[] = [
+        {
+          slug: 'systems/cold-apollo',
+          page_id: 1,
+          title: 'Cold Apollo',
+          type: 'system',
+          chunk_text: 'Apollo retrieval notes.',
+          chunk_source: 'compiled_truth',
+          score: 1,
+          stale: false,
+        },
+        {
+          slug: 'systems/hot-apollo',
+          page_id: 2,
+          title: 'Hot Apollo',
+          type: 'system',
+          chunk_text: 'Apollo retrieval notes.',
+          chunk_source: 'compiled_truth',
+          score: 1,
+          stale: false,
+        },
+      ];
+
+      const result = await retrieveContext(engine, {
+        query: 'apollo',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async () => searchResults,
+        usageAwareRanking: true,
+      });
+
+      expect(result.candidates.map(candidate => candidate.read_selector.slug)).toEqual([
+        'systems/hot-apollo',
+        'systems/cold-apollo',
+      ]);
+      expect(result.candidates[0]!.why_matched).toContain('usage-aware ranking: 1 recent retrieval trace');
+      expect(result.candidates[1]!.why_matched).toContain('cold page: no recent retrieval trace usage');
+      expect(result.candidates[1]!.evidence_metadata?.rank_reason).toContain('cold page: no recent retrieval trace usage');
     });
   });
 
@@ -456,6 +729,57 @@ describe('retrieve context service', () => {
       expect(result.trace?.verification).toContain('graph_frontier_paths_considered:1');
       expect(result.trace?.verification).toContain('graph_frontier_authority:selector_planning_only');
       expect(result.trace?.source_refs.join('\n')).not.toContain('edge:seed-target');
+    });
+  });
+
+  test('production graph frontier builder uses manifest wikilinks as planning-only edges', async () => {
+    await withEngine('graph-frontier-production-builder', async (engine) => {
+      await importFromContent(engine, 'systems/seed', [
+        '---',
+        'type: system',
+        'title: Seed System',
+        '---',
+        '# Seed System',
+        'Seed system links to [[concepts/graph-target]]. [Source: User, direct message, 2026-07-03 09:00 KST]',
+      ].join('\n'), { path: 'systems/seed.md' });
+      await importFromContent(engine, 'concepts/graph-target', [
+        '---',
+        'type: concept',
+        'title: Graph Target',
+        '---',
+        '# Graph Target',
+        'Graph frontier target is canonical. [Source: User, direct message, 2026-07-03 09:10 KST]',
+      ].join('\n'), { path: 'concepts/graph-target.md' });
+
+      const result = await retrieveContext(engine, {
+        query: 'seed graph frontier',
+        include_orientation: false,
+        limit: 3,
+        graph_frontier: {
+          enabled: true,
+          max_depth: 1,
+          fanout_cap: 5,
+        },
+      }, {
+        candidateSearch: async () => [{
+          slug: 'systems/seed',
+          page_id: 1,
+          title: 'Seed System',
+          type: 'system',
+          chunk_text: 'Seed system links to graph target.',
+          chunk_source: 'compiled_truth',
+          score: 10,
+          stale: false,
+        }],
+        graphFrontierInputBuilder: buildProductionGraphFrontierInput,
+      });
+
+      expect(result.required_reads.map((selector) => selector.slug)).toEqual([
+        'systems/seed',
+        'concepts/graph-target',
+      ]);
+      expect(result.orientation.derived_consulted).toContain('graph_frontier');
+      expect(result.warnings).not.toContain('Graph frontier enabled but no seed nodes were available.');
     });
   });
 
@@ -1985,6 +2309,29 @@ describe('retrieve context service', () => {
     });
   });
 
+  test('persists retrieve_context traces by default and supports explicit opt-out', async () => {
+    await withEngine('persist-trace-default', async (engine) => {
+      const defaultResult = await retrieveContext(engine, {
+        query: 'default trace',
+        include_orientation: false,
+      }, {
+        candidateSearch: async () => [],
+      });
+      const optOutResult = await retrieveContext(engine, {
+        query: 'default trace',
+        include_orientation: false,
+        persist_trace: false,
+      }, {
+        candidateSearch: async () => [],
+      });
+
+      expect(defaultResult.trace?.route).toEqual(['retrieve_context']);
+      expect(defaultResult.trace?.elapsed_ms).toEqual(expect.any(Number));
+      expect(defaultResult.trace?.retrieved_token_count).toBe(0);
+      expect(optOutResult.trace).toBeUndefined();
+    });
+  });
+
   test('persisted retrieve_context trace records candidate signal exposure outside canonical source refs', async () => {
     await withEngine('candidate-signal-trace', async (engine) => {
       const result = await retrieveContext(engine, {
@@ -2362,8 +2709,8 @@ describe('manifest backlink scan bounding', () => {
       });
 
       expect(result.required_reads.length).toBeGreaterThan(0);
-      // 5,000-row cap at 500 rows per batch.
-      expect(scanCalls).toBeLessThanOrEqual(10);
+      // 5,000-row backlink cap at 500 rows per batch, plus one bounded alias-resolution scan.
+      expect(scanCalls).toBeLessThanOrEqual(11);
       expect(scanCalls).toBeGreaterThan(0);
     });
   });

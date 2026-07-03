@@ -1,6 +1,8 @@
 import {
   assertEmbeddingBatchDimensions,
+  buildChunkEmbeddingInput,
   estimateTokenCount,
+  resolveChunkEmbeddingModel,
   type EmbeddedChunkBatch,
   type EmbeddingBatchProgress,
 } from './embedding.ts';
@@ -157,7 +159,7 @@ export function createEmbeddingQueue(options: EmbeddingQueueOptions): EmbeddingQ
   async function runBatch(batch: QueuedChunk[]): Promise<void> {
     try {
       const embeddings = await provider.embedBatch(
-        batch.map(entry => prepareEmbeddingInput(entry.chunk.chunk_text, provider)),
+        batch.map(entry => prepareEmbeddingInput(buildChunkEmbeddingInput(entry.chunk), provider)),
       );
       if (embeddings.length !== batch.length) {
         throw new Error('Embedding provider returned an unexpected result count');
@@ -172,7 +174,7 @@ export function createEmbeddingQueue(options: EmbeddingQueueOptions): EmbeddingQ
         submission.updates[entry.submissionIndex] = {
           ...entry.chunk,
           embedding: embeddings[index],
-          model: provider.capability.model ?? entry.chunk.model,
+          model: resolveChunkEmbeddingModel(entry.chunk, provider),
           token_count: entry.chunk.token_count ?? estimateTokenCount(entry.chunk.chunk_text),
         };
         submission.remaining -= 1;

@@ -8,9 +8,14 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, SearchOpts } from '../types.ts';
-import { embedQuery, getEmbeddingProvider } from '../embedding.ts';
+import { embedQueries, getEmbeddingProvider } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
-import { rankSearchResults, sourceRankCandidateLimit, sourceRankedScore } from './source-ranking.ts';
+import {
+  rankSearchResults,
+  sourceRankCandidateLimit,
+  sourceRankedScore,
+  type SourceRankRuleInput,
+} from './source-ranking.ts';
 
 const RRF_K = 60;
 const SEMANTIC_RERANK_WEIGHT = 0.01;
@@ -23,12 +28,19 @@ interface RrfInputList {
 export interface HybridSearchOpts extends SearchOpts {
   expansion?: boolean;
   expandFn?: (query: string) => Promise<string[]>;
+  sourceRankRules?: readonly SourceRankRuleInput[];
 }
 
 export interface HybridSearchMetaResult {
   results: SearchResult[];
   /** True when query expansion was requested but failed and the original query was used alone. */
   expansion_failed: boolean;
+  /** True when the vector leg was attempted but embedding or vector search failed. */
+  vector_failed: boolean;
+  /** True when the vector leg was skipped because no embedding provider is available. */
+  vector_skipped: boolean;
+  /** Warning when semantic search is available but stored chunk embeddings are incomplete. */
+  embedding_coverage_warning?: string;
 }
 
 export async function hybridSearch(
@@ -46,9 +58,13 @@ export async function hybridSearchWithMeta(
   opts?: HybridSearchOpts,
 ): Promise<HybridSearchMetaResult> {
   const limit = opts?.limit || 20;
+  const sourceRankRules = opts?.sourceRankRules;
   const candidateLimit = sourceRankCandidateLimit(limit);
   const keywordPromise = engine.searchKeyword(query, { ...opts, limit: candidateLimit });
   let expansionFailed = false;
+  let vectorFailed = false;
+  let vectorSkipped = false;
+  let embeddingCoverageWarning: string | undefined;
 
   // The vector leg (expansion -> embedding -> vector search) only depends on
   // the query string, so it runs concurrently with the keyword search.
@@ -67,23 +83,32 @@ export async function hybridSearchWithMeta(
 
     const provider = getEmbeddingProvider();
     if (!provider.capability.available) {
+      vectorSkipped = true;
       return [];
     }
+    embeddingCoverageWarning = await getEmbeddingCoverageWarning(engine);
 
-    const embeddingSettled = await Promise.allSettled(
-      queries.map(q => embedQuery(q, { provider })),
-    );
-    const embeddings = embeddingSettled.flatMap((result) => (
-      result.status === 'fulfilled' ? [result.value] : []
-    ));
-
-    if (embeddings.length === 0) {
-      return [];
+    let embeddings: Float32Array[];
+    try {
+      embeddings = await embedQueries(queries, { provider });
+    } catch {
+      vectorFailed = true;
+      if (queries.length <= 1) {
+        return [];
+      }
+      try {
+        embeddings = await embedQueries([query], { provider });
+      } catch {
+        return [];
+      }
     }
 
     const vectorSettled = await Promise.allSettled(
       embeddings.map(emb => engine.searchVector(emb, { ...opts, limit: candidateLimit })),
     );
+    if (vectorSettled.some((result) => result.status === 'rejected')) {
+      vectorFailed = true;
+    }
     return vectorSettled.flatMap((result) => (
       result.status === 'fulfilled' ? [result.value] : []
     ));
@@ -93,8 +118,11 @@ export async function hybridSearchWithMeta(
 
   if (vectorLists.length === 0 || vectorLists.every(list => list.length === 0)) {
     return {
-      results: dedupAndRankSearchResults(keywordResults, limit),
+      results: dedupAndRankSearchResults(keywordResults, limit, sourceRankRules),
       expansion_failed: expansionFailed,
+      vector_failed: vectorFailed,
+      vector_skipped: vectorSkipped,
+      ...(embeddingCoverageWarning ? { embedding_coverage_warning: embeddingCoverageWarning } : {}),
     };
   }
 
@@ -107,13 +135,35 @@ export async function hybridSearchWithMeta(
 
   // Dedup
   return {
-    results: dedupAndRankSearchResults(fused, limit),
+    results: dedupAndRankSearchResults(fused, limit, sourceRankRules),
     expansion_failed: expansionFailed,
+    vector_failed: vectorFailed,
+    vector_skipped: vectorSkipped,
+    ...(embeddingCoverageWarning ? { embedding_coverage_warning: embeddingCoverageWarning } : {}),
   };
 }
 
-function dedupAndRankSearchResults(results: SearchResult[], limit: number): SearchResult[] {
-  return rankSearchResults(dedupResults(results, { score: sourceRankedScore }), limit);
+async function getEmbeddingCoverageWarning(engine: BrainEngine): Promise<string | undefined> {
+  try {
+    const health = await engine.getHealth();
+    if (health.missing_embeddings <= 0) return undefined;
+    const coveragePct = Math.round(health.embed_coverage * 100);
+    return `${health.missing_embeddings} chunks are missing embeddings; vector search may have recall gaps (coverage ${coveragePct}%). Run: mbrain embed --stale`;
+  } catch {
+    return undefined;
+  }
+}
+
+function dedupAndRankSearchResults(
+  results: SearchResult[],
+  limit: number,
+  rules?: readonly SourceRankRuleInput[],
+): SearchResult[] {
+  return rankSearchResults(
+    dedupResults(results, { score: (result) => sourceRankedScore(result, rules) }),
+    limit,
+    rules,
+  );
 }
 
 function dedupeQueryVariants(queries: string[]): string[] {

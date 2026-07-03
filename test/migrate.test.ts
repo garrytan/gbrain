@@ -343,6 +343,8 @@ describe('migrate', () => {
     expect(migrateSource).toContain('vector(1024)');
     expect(migrateSource).toContain("'chunk_size_tokens', '768'");
     expect(migrateSource).toContain("'chunk_overlap_tokens', '128'");
+    expect(migrateSource).toContain('page_zone_timestamps');
+    expect(migrateSource).toContain('SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = pages.id');
   });
 
   test('runMigrateEngine preserves page embeddings when migrating sqlite to pglite', async () => {

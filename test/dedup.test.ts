@@ -103,4 +103,35 @@ describe('dedupResults', () => {
     expect(results[3]?.chunk_source).toBe('compiled_truth');
     expect(results[3]?.slug).toBe('people/alice');
   });
+
+  test('deduplicates CJK-heavy near duplicates with character bigrams', () => {
+    const results = dedupResults([
+      result({
+        slug: 'concepts/rebellion-a',
+        page_id: 10,
+        title: 'Rebellion A',
+        chunk_text: '레벨리온은 한국어 검색 품질을 검증한다.',
+        score: 1,
+      }),
+      result({
+        slug: 'concepts/rebellion-b',
+        page_id: 11,
+        title: 'Rebellion B',
+        chunk_text: '레벨리온 한국어 검색 품질을 검증한다.',
+        score: 0.95,
+      }),
+      result({
+        slug: 'concepts/other',
+        page_id: 12,
+        title: 'Other',
+        chunk_text: 'Completely different retrieval evidence.',
+        score: 0.7,
+      }),
+    ]);
+
+    expect(results.map((entry) => entry.slug)).toEqual([
+      'concepts/rebellion-a',
+      'concepts/other',
+    ]);
+  });
 });

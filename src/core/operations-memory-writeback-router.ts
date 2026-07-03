@@ -4,7 +4,10 @@ import type { Operation } from './operations.ts';
 import { MEMORY_WRITEBACK_EVIDENCE_KINDS, routeMemoryWriteback } from './services/memory-writeback-router-service.ts';
 import { CORPUS_LANE_ARTIFACT_KINDS, corpusLaneProvenanceSourceRefs, mergeSourceRefs } from './services/corpus-lane-service.ts';
 import { createMemoryCandidateEntryWithStatusEvent } from './services/memory-inbox-service.ts';
-import { reviewDuplicateMemory } from './services/duplicate-memory-review-service.ts';
+import {
+  reviewDuplicateMemory,
+  type DuplicateMemoryReviewResult,
+} from './services/duplicate-memory-review-service.ts';
 import type {
   CorpusLaneMetadata,
   MemoryCandidateGeneratedBy,
@@ -69,6 +72,30 @@ function writeSessionAuthPrincipalMetadata(principal: OperationAuthPrincipal | u
 
 function invalidParams(deps: { OperationError: OperationErrorCtor }, message: string): Error {
   return new deps.OperationError('invalid_params', message);
+}
+
+function duplicateAnnotationForReview(review: DuplicateMemoryReviewResult): Record<string, string> | undefined {
+  if (review.decision !== 'likely_duplicate') return undefined;
+  const match = review.decision_match ?? review.matches[0];
+  if (!match) return undefined;
+  if (match.kind === 'memory_candidate') {
+    return { duplicate_of_candidate_id: match.id };
+  }
+  return { duplicate_of_page_slug: match.id };
+}
+
+function appendDuplicateAnnotationReason(
+  reviewReason: string | null | undefined,
+  annotation: Record<string, string> | undefined,
+): string | null | undefined {
+  if (!annotation) return reviewReason;
+  const [key, value] = Object.entries(annotation)[0] ?? [];
+  if (!key || !value) return reviewReason;
+  const suffix = `${key}:${value}`;
+  if (reviewReason && reviewReason.includes(suffix)) return reviewReason;
+  return reviewReason && reviewReason.trim().length > 0
+    ? `${reviewReason}; ${suffix}`
+    : suffix;
 }
 
 function requireString(deps: { OperationError: OperationErrorCtor }, field: string, value: unknown): string {
@@ -298,7 +325,7 @@ export function createMemoryWritebackRouterOperations(deps: { defaultScopeId: st
       },
       apply: {
         type: 'boolean',
-        description: 'Create the routed memory candidate when the route decision allows it',
+        description: 'Apply the routed action. Defaults to true for create_candidate routes and false for canonical/defer routes.',
       },
       dry_run: {
         type: 'boolean',
@@ -325,7 +352,9 @@ export function createMemoryWritebackRouterOperations(deps: { defaultScopeId: st
         };
       }
 
-      if (input.apply === true && routed.decision === 'canonical_write_allowed' && routed.canonical_write_requirements) {
+      const effectiveApply = input.apply ?? (routed.decision === 'create_candidate');
+
+      if (effectiveApply === true && routed.decision === 'canonical_write_allowed' && routed.canonical_write_requirements) {
         const routeDecisionId = `route-memory-writeback:${randomUUID()}`;
         const writeSessionId = `memory-write-session:${randomUUID()}`;
         const authPrincipal = writeSessionAuthPrincipalMetadata(ctx.auth_principal);
@@ -345,6 +374,12 @@ export function createMemoryWritebackRouterOperations(deps: { defaultScopeId: st
           governance_metadata: {
             ...(routed.writeback_governance_metadata ?? {}),
             interaction_id: input.interaction_id ?? null,
+            normalized_signal: routed.normalized_signal,
+            input_scores: {
+              confidence_score: input.confidence_score ?? null,
+              importance_score: input.importance_score ?? null,
+              recurrence_score: input.recurrence_score ?? null,
+            },
             routed_content: input.content.trim(),
             routed_content_hash: routedContentHash(input.content),
             ...(authPrincipal ? { auth_principal: authPrincipal } : {}),
@@ -366,7 +401,7 @@ export function createMemoryWritebackRouterOperations(deps: { defaultScopeId: st
         };
       }
 
-      if (input.apply === true && routed.decision === 'defer') {
+      if (effectiveApply === true && routed.decision === 'defer') {
         const candidateInput = deferredRouteCandidateInput(input, routed);
         const duplicateReview = await reviewDuplicateMemory(ctx.engine, {
           scope_id: candidateInput.scope_id,
@@ -381,18 +416,26 @@ export function createMemoryWritebackRouterOperations(deps: { defaultScopeId: st
           include_candidates: true,
           limit: 5,
         });
-        const created = await createMemoryCandidateEntryWithStatusEvent(ctx.engine, candidateInput);
+        const duplicateAnnotation = duplicateAnnotationForReview(duplicateReview);
+        const annotatedCandidateInput = duplicateAnnotation
+          ? {
+              ...candidateInput,
+              review_reason: appendDuplicateAnnotationReason(candidateInput.review_reason, duplicateAnnotation),
+            }
+          : candidateInput;
+        const created = await createMemoryCandidateEntryWithStatusEvent(ctx.engine, annotatedCandidateInput);
 
         return {
           ...withWritebackApplyMode(routed, 'deferred_candidate_created'),
           applied: true,
-          candidate_input: candidateInput,
+          candidate_input: annotatedCandidateInput,
           created_candidate: created,
           duplicate_review: duplicateReview,
+          ...(duplicateAnnotation ? { duplicate_annotation: duplicateAnnotation } : {}),
         };
       }
 
-      if (input.apply !== true || routed.decision !== 'create_candidate' || !routed.candidate_input) {
+      if (effectiveApply !== true || routed.decision !== 'create_candidate' || !routed.candidate_input) {
         return routed;
       }
 
@@ -410,17 +453,25 @@ export function createMemoryWritebackRouterOperations(deps: { defaultScopeId: st
         target_object_type: candidateInput.target_object_type ?? undefined,
         target_object_id: candidateInput.target_object_id ?? undefined,
         include_pages: true,
-        include_candidates: true,
-        limit: 5,
-      });
-      const created = await createMemoryCandidateEntryWithStatusEvent(ctx.engine, candidateInput);
+          include_candidates: true,
+          limit: 5,
+        });
+      const duplicateAnnotation = duplicateAnnotationForReview(duplicateReview);
+      const annotatedCandidateInput = duplicateAnnotation
+        ? {
+            ...candidateInput,
+            review_reason: appendDuplicateAnnotationReason(candidateInput.review_reason, duplicateAnnotation),
+          }
+        : candidateInput;
+      const created = await createMemoryCandidateEntryWithStatusEvent(ctx.engine, annotatedCandidateInput);
 
       return {
         ...withWritebackApplyMode(routed, 'candidate_created'),
         applied: true,
-        candidate_input: candidateInput,
+        candidate_input: annotatedCandidateInput,
         created_candidate: created,
         duplicate_review: duplicateReview,
+        ...(duplicateAnnotation ? { duplicate_annotation: duplicateAnnotation } : {}),
       };
     },
     cliHints: { name: 'route-memory-writeback' },

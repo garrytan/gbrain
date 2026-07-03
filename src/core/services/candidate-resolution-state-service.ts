@@ -8,6 +8,7 @@ import type {
 export type CandidateResolutionState =
   | 'terminal'
   | 'promoted_with_handoff'
+  | 'promoted_handoff_incomplete'
   | 'promoted_without_handoff'
   | 'proposal_pending'
   | 'binding_pending'
@@ -18,6 +19,7 @@ export type CandidateResolutionState =
 export type CandidateResolutionPressureReason =
   | 'missing_provenance'
   | 'stale_promoted_without_handoff'
+  | 'promoted_handoff_incomplete'
   | 'unresolved_exposed_candidate'
   | 'canonical_target_proposal_pending'
   | 'canonical_target_binding_pending'
@@ -39,6 +41,7 @@ export interface CandidateResolutionProposal {
 export interface CandidateResolutionStateInput {
   candidate: Pick<MemoryCandidateEntry, 'status' | 'source_refs'> | CandidateResolutionCandidate;
   has_canonical_handoff: boolean;
+  has_completed_canonical_handoff?: boolean;
   canonical_target_proposal?: Pick<CanonicalTargetProposalEntry, 'status' | 'status_reason'> | CandidateResolutionProposal | null;
 }
 
@@ -63,6 +66,15 @@ export function classifyCandidateResolutionState(
 
   if (TERMINAL_CANDIDATE_STATUSES.has(input.candidate.status)) {
     return result('terminal', false, false, false, pressureReasons);
+  }
+
+  if (
+    input.candidate.status === 'promoted'
+    && input.has_canonical_handoff
+    && input.has_completed_canonical_handoff === false
+  ) {
+    pressureReasons.push('promoted_handoff_incomplete');
+    return result('promoted_handoff_incomplete', false, true, false, pressureReasons);
   }
 
   if (input.has_canonical_handoff) {

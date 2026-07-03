@@ -7,12 +7,16 @@ import {
   type ReportCanonicalMemory,
   type ReportConnectorHealth,
   type ReportContextEvalRun,
+  type ReportCandidateAgeEscalation,
+  type ReportDataIntegrityError,
   type ReportExtractedClaim,
   type ReportLifecycleState,
   type ReportMaintenanceJob,
+  type ReportPageHealthItem,
   type ReportPolicyDenial,
   type ReportProjectionTarget,
   type ReportQuarantinedSource,
+  type ReportRecurringRetrievalGap,
   type ReportReviewItem,
   type ReportRunnerJob,
   type ReportSecretDetection,
@@ -29,12 +33,15 @@ import type {
   CanonicalTargetProposalEntry,
   MemoryCandidateEntry,
   MemoryMutationEvent,
+  Page,
+  RetrievalTrace,
   MemoryWriteSession,
 } from '../core/types.ts';
 import { createLifecycleForgettingStoreForEngine } from '../core/maintenance/lifecycle-forgetting.ts';
 import { computeCandidateDebtMetrics } from '../core/services/inbox-lead-service.ts';
 import { buildNegativeMemoryProjections } from '../core/services/negative-memory-projection-service.ts';
 import { buildSkillSurfaceManifest } from '../core/services/skill-surface-manifest-service.ts';
+import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from '../core/services/note-manifest-service.ts';
 
 const DEFAULT_SCOPE_ID = 'workspace:default';
 const DEFAULT_LIMIT = 100;
@@ -46,6 +53,7 @@ const CANDIDATE_DEBT_PROPOSAL_STATUSES: CanonicalTargetProposalStatus[] = [
   'bound',
   'blocked',
 ];
+let activeReportDataIntegrityErrors: ReportDataIntegrityError[] | null = null;
 
 export async function runMemoryReport(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
@@ -78,6 +86,38 @@ export async function runMemoryReport(engine: BrainEngine, args: string[]): Prom
   if (savedReportPath) console.log(`Saved report: ${savedReportPath}`);
 }
 
+export async function saveMemoryReviewReport(engine: BrainEngine, input: {
+  scope_id: string;
+  now: string;
+  limit?: number;
+  report_dir: string;
+}): Promise<{ path: string; counts: Record<string, number>; summary_lines: string[] }> {
+  const report = buildMemoryReviewReport(await collectMemoryReportInput(
+    engine,
+    input.scope_id,
+    input.limit ?? DEFAULT_LIMIT,
+    input.now,
+  ));
+  const formatted = formatMemoryReviewReport(report);
+  const path = saveBrainReport({
+    brainDir: input.report_dir,
+    type: 'memory-review-report',
+    title: 'Memory Review Report',
+    content: formatted,
+    now: new Date(input.now),
+  });
+  return {
+    path,
+    counts: {
+      review_items: report.summary.review_items,
+      open_conflicts: report.summary.conflicts,
+      incomplete_handoffs: report.summary.candidate_promoted_without_handoff,
+      failed_jobs: report.summary.failed_jobs,
+    },
+    summary_lines: report.health.reasons,
+  };
+}
+
 function valueAfter(args: string[], flag: string): string | undefined {
   const inlinePrefix = `${flag}=`;
   const inline = args.find((arg) => arg.startsWith(inlinePrefix));
@@ -101,6 +141,10 @@ export async function collectMemoryReportInput(
   limit: number,
   generatedAt: string = new Date().toISOString(),
 ): Promise<MemoryReviewReportInput> {
+  const previousDataIntegrityErrors = activeReportDataIntegrityErrors;
+  const dataIntegrityErrors: ReportDataIntegrityError[] = [];
+  activeReportDataIntegrityErrors = dataIntegrityErrors;
+  try {
   const [
     mutationEvents,
     candidates,
@@ -121,6 +165,8 @@ export async function collectMemoryReportInput(
     canonicalTargetProposals,
     writeSessions,
     contextEvalRuns,
+    recurringRetrievalGaps,
+    pageHealthQueue,
   ] = await Promise.all([
     engine.listMemoryMutationEvents({ scope_id: scopeId, limit, offset: 0 }),
     engine.listMemoryCandidateEntries({ scope_id: scopeId, limit, offset: 0 }),
@@ -141,12 +187,14 @@ export async function collectMemoryReportInput(
     collectCanonicalTargetProposals(engine, scopeId, limit),
     collectMemoryWriteSessions(engine, scopeId, limit),
     collectContextEvalRuns(engine, limit),
+    collectRecurringRetrievalGaps(engine, generatedAt, limit),
+    collectPageHealthQueue(engine, generatedAt, limit),
   ]);
   const [
-    canonicalHandoffCandidateIds,
+    canonicalHandoffCandidateState,
     candidateDebtCanonicalTargetProposals,
   ] = await Promise.all([
-    collectCanonicalHandoffCandidateIds(engine, scopeId, candidates),
+    collectCanonicalHandoffCandidateState(engine, scopeId, candidates),
     collectCandidateDebtCanonicalTargetProposals(engine, scopeId),
   ]);
   const negativeMemoryProjections = [
@@ -189,13 +237,277 @@ export async function collectMemoryReportInput(
     connector_health: connectorHealth,
     candidate_debt: computeCandidateDebtMetrics({
       candidates,
-      canonical_handoff_candidate_ids: canonicalHandoffCandidateIds,
+      canonical_handoff_candidate_ids: canonicalHandoffCandidateState.handoff_candidate_ids,
+      completed_canonical_handoff_candidate_ids: canonicalHandoffCandidateState.completed_handoff_candidate_ids,
       canonical_target_proposals: candidateDebtCanonicalTargetProposals,
     }),
     negative_memory_projections: negativeMemoryProjections,
     context_eval_runs: contextEvalRuns,
     skill_surface: collectSkillSurfaceSummary(),
+    candidate_age_escalations: collectCandidateAgeEscalations(candidates, generatedAt),
+    recurring_retrieval_gaps: recurringRetrievalGaps,
+    page_health_queue: pageHealthQueue,
+    data_integrity_errors: dataIntegrityErrors,
   };
+  } finally {
+    activeReportDataIntegrityErrors = previousDataIntegrityErrors;
+  }
+}
+
+function collectCandidateAgeEscalations(
+  candidates: MemoryCandidateEntry[],
+  generatedAt: string,
+): ReportCandidateAgeEscalation[] {
+  const nowMs = new Date(generatedAt).getTime();
+  if (!Number.isFinite(nowMs)) return [];
+  return candidates
+    .filter((candidate) => (
+      candidate.verification_status === 'unverified'
+      && (candidate.status === 'captured' || candidate.status === 'candidate' || candidate.status === 'staged_for_review')
+    ))
+    .map((candidate) => {
+      const ageDays = Math.floor((nowMs - candidate.created_at.getTime()) / 86_400_000);
+      return {
+        id: candidate.id,
+        status: candidate.status,
+        age_days: ageDays,
+        bucket: ageDays >= 30 ? '30d' as const : '7d' as const,
+        next_action: `verify_memory_candidate_entry ${candidate.id}`,
+      };
+    })
+    .filter((candidate) => candidate.age_days >= 7)
+    .sort((a, b) => {
+      if (b.age_days !== a.age_days) return b.age_days - a.age_days;
+      return a.id.localeCompare(b.id);
+    });
+}
+
+async function collectRecurringRetrievalGaps(
+  engine: BrainEngine,
+  generatedAt: string,
+  limit: number,
+): Promise<ReportRecurringRetrievalGap[]> {
+  if (typeof engine.listRetrievalTracesByWindow !== 'function') return [];
+  const until = new Date(generatedAt);
+  const since = new Date(until.getTime() - 7 * 24 * 60 * 60 * 1000);
+  try {
+    const traces = await engine.listRetrievalTracesByWindow({
+      since,
+      until,
+      limit: Math.max(limit, 100),
+    });
+    return summarizeRecurringRetrievalGaps(traces, limit);
+  } catch (error) {
+    activeReportDataIntegrityErrors?.push({
+      query: 'retrieval_traces',
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+}
+
+function summarizeRecurringRetrievalGaps(
+  traces: RetrievalTrace[],
+  limit: number,
+): ReportRecurringRetrievalGap[] {
+  const groups = new Map<string, RetrievalTrace[]>();
+  for (const trace of traces) {
+    if (!trace.verification.includes('answer_ready:not_ready')) continue;
+    const reasons = trace.verification
+      .filter((item) => item.startsWith('unsupported:'))
+      .map((item) => item.slice('unsupported:'.length))
+      .filter((reason) => reason.length > 0);
+    for (const reason of reasons.length > 0 ? reasons : ['answer_ready_not_ready']) {
+      const existing = groups.get(reason) ?? [];
+      existing.push(trace);
+      groups.set(reason, existing);
+    }
+  }
+
+  return [...groups.entries()]
+    .filter(([, group]) => group.length >= 2)
+    .map(([reason, group]) => {
+      const sorted = [...group].sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+      return {
+        id: `retrieval-gap:${stableIdFragment(reason)}`,
+        reason,
+        count: group.length,
+        sample_trace_ids: sorted.slice(0, 3).map((trace) => trace.id),
+        latest_at: sorted[0]?.created_at.toISOString() ?? new Date(0).toISOString(),
+        next_action: `Review recurring read_context gap "${reason}" and add or repair canonical coverage before relying on probe-only answers.`,
+      };
+    })
+    .sort((a, b) => b.count - a.count || b.latest_at.localeCompare(a.latest_at) || a.reason.localeCompare(b.reason))
+    .slice(0, Math.min(10, Math.max(1, limit)));
+}
+
+function stableIdFragment(value: string): string {
+  return createHash('sha1').update(value).digest('hex').slice(0, 10);
+}
+
+async function collectPageHealthQueue(
+  engine: BrainEngine,
+  generatedAt: string,
+  limit: number,
+): Promise<ReportPageHealthItem[]> {
+  if (typeof engine.listPages !== 'function' || typeof engine.getChunks !== 'function') return [];
+  try {
+    const pages = await engine.listPages({ limit: Math.max(limit, 100), offset: 0 });
+    const titleCounts = new Map<string, number>();
+    for (const page of pages) {
+      const key = normalizeReportKey(page.title);
+      if (!key) continue;
+      titleCounts.set(key, (titleCounts.get(key) ?? 0) + 1);
+    }
+    const recentlyUsedSlugs = await collectRecentlyUsedPageSlugs(engine, generatedAt);
+    const usageAvailable = recentlyUsedSlugs.size > 0;
+    const items = await Promise.all(pages.map((page) =>
+      buildPageHealthItem(engine, page, titleCounts, recentlyUsedSlugs, usageAvailable)
+    ));
+    return items
+      .filter((item): item is ReportPageHealthItem => item !== null)
+      .sort((a, b) => a.score - b.score || a.slug.localeCompare(b.slug))
+      .slice(0, Math.min(10, Math.max(1, limit)));
+  } catch (error) {
+    activeReportDataIntegrityErrors?.push({
+      query: 'page_health_queue',
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+}
+
+async function buildPageHealthItem(
+  engine: BrainEngine,
+  page: Page,
+  titleCounts: Map<string, number>,
+  recentlyUsedSlugs: Set<string>,
+  usageAvailable: boolean,
+): Promise<ReportPageHealthItem | null> {
+  let score = 100;
+  const issues: string[] = [];
+  const addIssue = (issue: string, penalty: number) => {
+    issues.push(issue);
+    score -= penalty;
+  };
+
+  if (page.timeline_changed_at.getTime() > page.compiled_truth_changed_at.getTime()) {
+    addIssue('compile_debt', 25);
+  }
+
+  const chunks = await engine.getChunks(page.slug);
+  const missingEmbeddings = chunks.filter((chunk) => !chunk.embedded_at).length;
+  if (chunks.length > 0 && missingEmbeddings > 0) {
+    addIssue(`missing_embeddings:${missingEmbeddings}/${chunks.length}`, 20);
+  }
+
+  if (!/\[Source:/i.test(`${page.compiled_truth}\n${page.timeline}`)) {
+    addIssue('source_coverage_missing', 15);
+  }
+
+  const titleKey = normalizeReportKey(page.title);
+  if (titleKey && (titleCounts.get(titleKey) ?? 0) > 1) {
+    addIssue('duplicate_title', 15);
+  }
+
+  const deadLinks = await countDeadManifestLinks(engine, page.slug);
+  if (deadLinks > 0) {
+    addIssue(`dead_wikilinks:${deadLinks}`, 15);
+  }
+
+  const lineCount = `${page.compiled_truth}\n${page.timeline}`.split('\n').length;
+  if (lineCount > 800) {
+    addIssue(`oversized:${lineCount}_lines`, 10);
+  }
+
+  const supersededBy = typeof page.frontmatter.superseded_by === 'string'
+    ? page.frontmatter.superseded_by.trim()
+    : '';
+  if (supersededBy) {
+    addIssue(`superseded_by:${supersededBy}`, 10);
+  }
+
+  if (usageAvailable && !recentlyUsedSlugs.has(page.slug)) {
+    addIssue('cold_usage', 5);
+  }
+
+  if (issues.length === 0) return null;
+  return {
+    slug: page.slug,
+    title: page.title,
+    score: Math.max(0, score),
+    issues,
+    next_action: nextPageHealthAction(page.slug, issues),
+  };
+}
+
+async function collectRecentlyUsedPageSlugs(
+  engine: BrainEngine,
+  generatedAt: string,
+): Promise<Set<string>> {
+  const until = new Date(generatedAt);
+  const since = new Date(until.getTime() - 90 * 24 * 60 * 60 * 1000);
+  try {
+    const traces = await engine.listRetrievalTracesByWindow({ since, until, limit: 1_000 });
+    return new Set(traces.flatMap((trace) =>
+      trace.source_refs
+        .map(slugFromRetrievalTraceSourceRef)
+        .filter((slug): slug is string => Boolean(slug))
+    ));
+  } catch {
+    return new Set();
+  }
+}
+
+async function countDeadManifestLinks(engine: BrainEngine, slug: string): Promise<number> {
+  try {
+    const manifest = await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, slug);
+    if (!manifest || manifest.outgoing_wikilinks.length === 0) return 0;
+    const targets = [...new Set(manifest.outgoing_wikilinks)].filter((target) => target !== slug).slice(0, 50);
+    const checks = await Promise.all(targets.map(async (target) => {
+      try {
+        return (await engine.getPage(target)) ? 0 : 1;
+      } catch {
+        return 0;
+      }
+    }));
+    return checks.reduce<number>((total, count) => total + count, 0);
+  } catch {
+    return 0;
+  }
+}
+
+function nextPageHealthAction(slug: string, issues: string[]): string {
+  const first = issues[0] ?? '';
+  if (first === 'compile_debt') return `Create a governed patch candidate to recompile timeline updates into ${slug}.`;
+  if (first.startsWith('missing_embeddings:')) return `Run mbrain embed --stale for ${slug}.`;
+  if (first === 'source_coverage_missing') return `Add source citations or mark unsupported claims in ${slug}.`;
+  if (first === 'duplicate_title') return `Review duplicate-title pages and merge or supersede ${slug}.`;
+  if (first.startsWith('dead_wikilinks:')) return `Repair or remove dead wikilinks in ${slug}.`;
+  if (first.startsWith('oversized:')) return `Split or summarize ${slug} below the 800-line guideline.`;
+  if (first.startsWith('superseded_by:')) return `Confirm retrieval demotion and backlink validation for ${slug}.`;
+  if (first === 'cold_usage') return `Review whether ${slug} should stay active, be archived, or be linked from current work.`;
+  return `Review page health signals for ${slug}.`;
+}
+
+function normalizeReportKey(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function slugFromRetrievalTraceSourceRef(sourceRef: string): string | undefined {
+  const ref = sourceRef.split('@chars:')[0]!;
+  const parts = ref.split(':');
+  const kind = parts[0];
+  if (
+    (kind === 'page' || kind === 'compiled_truth' || kind === 'frontmatter' || kind === 'timeline_range')
+    && parts.length >= 4
+  ) {
+    return parts.slice(3).join(':');
+  }
+  if (kind === 'line_span' && parts.length >= 6) {
+    return parts.slice(3, -2).join(':');
+  }
+  return undefined;
 }
 
 function collectSkillSurfaceSummary() {
@@ -347,12 +659,18 @@ function memoryWriteSessionToReportSession(
   };
 }
 
-async function collectCanonicalHandoffCandidateIds(
+interface CanonicalHandoffCandidateState {
+  handoff_candidate_ids: string[];
+  completed_handoff_candidate_ids: string[];
+}
+
+async function collectCanonicalHandoffCandidateState(
   engine: BrainEngine,
   scopeId: string,
   candidates: MemoryCandidateEntry[],
-): Promise<string[]> {
+): Promise<CanonicalHandoffCandidateState> {
   const ids = new Set<string>();
+  const completedIds = new Set<string>();
   await Promise.all(candidates
     .filter((candidate) => candidate.status === 'promoted')
     .map(async (candidate) => {
@@ -363,8 +681,12 @@ async function collectCanonicalHandoffCandidateIds(
         offset: 0,
       });
       if (handoffs.length > 0) ids.add(candidate.id);
+      if (handoffs.some((handoff) => handoff.completed_at !== null)) completedIds.add(candidate.id);
     }));
-  return [...ids];
+  return {
+    handoff_candidate_ids: [...ids],
+    completed_handoff_candidate_ids: [...completedIds],
+  };
 }
 
 function memoryMutationToCanonicalMemory(event: MemoryMutationEvent): ReportCanonicalMemory[] {
@@ -755,7 +1077,7 @@ async function collectRunnerJobs(engine: BrainEngine, limit: number): Promise<Re
       FROM runner_jobs
       ORDER BY updated_at DESC, id ASC
       LIMIT $1
-    `),
+    `, { optional_missing_table: true }),
     queryRows(engine, `
     SELECT id, name, status, failure_class, payload_json, result_json
     FROM memory_jobs
@@ -928,6 +1250,7 @@ async function queryRows(
   sqliteSql: string,
   params: unknown[],
   postgresSql = sqliteSql,
+  options: { optional_missing_table?: boolean } = {},
 ): Promise<Record<string, unknown>[]> {
   try {
     const candidate = engine as BrainEngine & {
@@ -944,10 +1267,28 @@ async function queryRows(
     if (candidate.sql?.unsafe) {
       return await candidate.sql.unsafe(postgresSql, params);
     }
-  } catch {
+  } catch (error) {
+    if (options.optional_missing_table === true && isMissingTableError(error)) {
+      return [];
+    }
+    activeReportDataIntegrityErrors?.push({
+      query: reportQueryLabel(postgresSql),
+      message: error instanceof Error ? error.message : String(error),
+    });
     return [];
   }
   return [];
+}
+
+function reportQueryLabel(sql: string): string {
+  const normalized = sql.trim().replace(/\s+/g, ' ');
+  const match = normalized.match(/\bFROM\s+([a-zA-Z0-9_]+)/i);
+  return match?.[1] ?? normalized.slice(0, 80);
+}
+
+function isMissingTableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /no such table|does not exist|undefined_table/i.test(message);
 }
 
 function projectionStatus(value: unknown): ReportProjectionTarget['status'] {

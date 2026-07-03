@@ -18,6 +18,7 @@ export interface PromoteMemoryCandidateEntryInput {
   review_reason?: string | null;
   interaction_id?: string | null;
   retry_on_stale?: boolean;
+  override_duplicate?: boolean;
 }
 
 export async function promoteMemoryCandidateEntry(
@@ -61,7 +62,10 @@ async function promoteMemoryCandidateEntryOnce(
   const freshnessBefore = await getDuplicateMemoryReviewFreshness(engine, {
     scope_id: currentEntry.scope_id,
   });
-  const preflight = await preflightPromoteMemoryCandidate(engine, { id: input.id });
+  const preflight = await preflightPromoteMemoryCandidate(engine, {
+    id: input.id,
+    override_duplicate: input.override_duplicate === true,
+  });
   if (preflight.decision !== 'allow') {
     throw new MemoryInboxServiceError(
       'promotion_preflight_failed',

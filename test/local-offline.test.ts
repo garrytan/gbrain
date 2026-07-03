@@ -1234,6 +1234,24 @@ printf '%s\\n' "$@" > "${capturePath}"
     expect(provider.batches).toEqual([['document body']]);
   });
 
+  test('embedChunks uses contextual chunk input without changing stored chunk text', async () => {
+    const provider = createCapturingProvider('qwen3-embedding:0.6b');
+
+    const result = await embedChunks([{
+      chunk_index: 0,
+      chunk_text: 'document body',
+      chunk_source: 'compiled_truth',
+      embed_context: 'Page title: Context Page\nPage slug: concepts/context-page\nChunk source: compiled_truth',
+      embedding_input_version: 'contextual-v1',
+    }], { provider: provider.provider });
+
+    expect(provider.batches).toEqual([[
+      'Page title: Context Page\nPage slug: concepts/context-page\nChunk source: compiled_truth\n\ndocument body',
+    ]]);
+    expect(result.chunks[0]?.chunk_text).toBe('document body');
+    expect(result.chunks[0]?.model).toBe('qwen3-embedding:0.6b#contextual-v1');
+  });
+
   test('embedChunks rejects provider vectors that do not match declared dimensions', async () => {
     await expect(embedChunks([{
       chunk_index: 0,
@@ -1612,6 +1630,23 @@ Updated chunk content for the same page.
     expect(after).toHaveLength(1);
     expect(after[0]?.embedded_at).toBeInstanceOf(Date);
     expect(after[0]?.model).toBe('test-local-v1');
+  });
+
+  test('buildPageChunks can attach page identity for contextual embeddings', async () => {
+    const chunks = buildPageChunks(
+      'Compiled truth body.',
+      '',
+      {},
+      undefined,
+      [],
+      { enabled: true, slug: 'concepts/context-page', title: 'Context Page' },
+    );
+
+    expect(chunks[0]?.chunk_text).toBe('Compiled truth body.');
+    expect(chunks[0]?.embed_context).toBe(
+      'Page title: Context Page\nPage slug: concepts/context-page\nChunk source: compiled_truth',
+    );
+    expect(chunks[0]?.embedding_input_version).toBe('contextual-v1');
   });
 
   test('stale-only embedding reports the active page and provider batch progress', async () => {

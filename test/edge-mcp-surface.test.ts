@@ -32,11 +32,26 @@ describe('Supabase Edge MCP surface', () => {
     expect(source).toContain("error: 'token_expired'");
     expect(source).toContain('createTokenAuthPrincipal');
     expect(source).toContain('auth_principal: authPrincipal');
-    expect(source).toContain('const operation = await inferMcpOperation(c.req.raw)');
-    expect(source).toContain('const responseClassification = await classifyMcpResponse(c.req.raw, response)');
+    expect(source).toContain('const operationRequest = request.clone()');
+    expect(source).toContain('const classificationRequest = request.clone()');
+    expect(source).toContain('const operation = await inferMcpOperation(operationRequest)');
+    expect(source).toContain('const responseClassification = await classifyMcpResponse(classificationRequest, response)');
     expect(source).toContain('error_code, error_reason, surface_profile, auth_principal_json');
     expect(source).toContain('ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS auth_principal_json TEXT');
     expect(source).toContain("surfaceProfile: 'edge_remote'");
+  });
+
+  test('edge transport mirrors HTTP CORS allowlist and body-size cap', () => {
+    const source = readFileSync(new URL('../supabase/functions/mbrain-mcp/index.ts', import.meta.url), 'utf-8');
+
+    expect(source).toContain('MAX_MCP_EDGE_BODY_BYTES = 1_048_576');
+    expect(source).toContain("Deno.env.get('MBRAIN_HTTP_ALLOWED_ORIGINS')");
+    expect(source).toContain('edgeCorsHeadersFor(c.req.raw)');
+    expect(source).toContain("Access-Control-Allow-Origin': origin");
+    expect(source).not.toContain("origin: '*'");
+    expect(source).toContain('boundEdgeMcpRequestBody(c.req.raw)');
+    expect(source).toContain("error: 'request_too_large'");
+    expect(source).toContain('return c.json(boundedRequest.body, 413)');
   });
 
   test('committed edge bundle contains the current source-registry/governance surface', () => {

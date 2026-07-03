@@ -506,6 +506,7 @@ export type MemoryCandidatePromotionPreflightReason =
   | 'candidate_requires_revalidation'
   | 'candidate_refuted'
   | 'candidate_possible_duplicate'
+  | 'candidate_open_contradiction'
   | 'candidate_ready_for_promotion';
 
 export interface MemoryCandidateEntry {
@@ -850,6 +851,8 @@ export interface MemoryCandidatePatchOperationStatePatch {
 
 export interface MemoryCandidatePromotionPreflightInput {
   id: string;
+  allow_active_status?: boolean;
+  override_duplicate?: boolean;
 }
 
 export type MemoryCandidateDuplicateReviewDecision =
@@ -932,6 +935,8 @@ export interface MemoryCandidateContradictionEntryInput {
   interaction_id?: string | null;
 }
 
+export type CanonicalHandoffCompletionKind = 'patch_applied' | 'page_written' | 'manual';
+
 export interface CanonicalHandoffEntry {
   id: string;
   scope_id: string;
@@ -942,6 +947,9 @@ export interface CanonicalHandoffEntry {
   reviewed_at: Date | null;
   review_reason: string | null;
   interaction_id: string | null;
+  completed_at: Date | null;
+  completion_kind: CanonicalHandoffCompletionKind | null;
+  completion_ref: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -956,6 +964,13 @@ export interface CanonicalHandoffEntryInput {
   reviewed_at?: Date | string | null;
   review_reason?: string | null;
   interaction_id?: string | null;
+}
+
+export interface CanonicalHandoffCompletionPatch {
+  id: string;
+  completed_at?: Date | string | null;
+  completion_kind: CanonicalHandoffCompletionKind;
+  completion_ref?: string | null;
 }
 
 export interface CanonicalHandoffFilters {

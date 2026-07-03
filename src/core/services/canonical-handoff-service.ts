@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type {
   CanonicalHandoffEntry,
+  CanonicalHandoffCompletionKind,
   CanonicalHandoffTargetObjectType,
   MemoryCandidateEntry,
 } from '../types.ts';
@@ -18,6 +19,13 @@ export interface RecordCanonicalHandoffInput {
 export interface RecordCanonicalHandoffResult {
   candidate: MemoryCandidateEntry;
   handoff: CanonicalHandoffEntry;
+}
+
+export interface CompleteCanonicalHandoffInput {
+  id: string;
+  completed_at?: Date | string | null;
+  completion_kind: CanonicalHandoffCompletionKind;
+  completion_ref?: string | null;
 }
 
 export async function recordCanonicalHandoff(
@@ -69,6 +77,34 @@ export async function recordCanonicalHandoff(
   return { candidate, handoff };
 }
 
+export async function completeCanonicalHandoff(
+  engine: BrainEngine,
+  input: CompleteCanonicalHandoffInput,
+): Promise<CanonicalHandoffEntry> {
+  if (!isCanonicalHandoffCompletionKind(input.completion_kind)) {
+    throw new MemoryInboxServiceError(
+      'invalid_status_transition',
+      `Unsupported canonical handoff completion kind: ${input.completion_kind}`,
+    );
+  }
+  const completedAt = input.completed_at == null
+    ? new Date()
+    : normalizeReviewedAt(input.completed_at);
+  const handoff = await engine.completeCanonicalHandoffEntry({
+    id: input.id,
+    completed_at: completedAt,
+    completion_kind: input.completion_kind,
+    completion_ref: input.completion_ref ?? null,
+  });
+  if (!handoff) {
+    throw new MemoryInboxServiceError(
+      'memory_candidate_not_found',
+      `Canonical handoff not found: ${input.id}`,
+    );
+  }
+  return handoff;
+}
+
 function getCanonicalHandoffTargetObjectType(
   candidate: MemoryCandidateEntry,
 ): CanonicalHandoffTargetObjectType | null {
@@ -82,6 +118,10 @@ function getCanonicalHandoffTargetObjectType(
     case null:
       return null;
   }
+}
+
+function isCanonicalHandoffCompletionKind(value: string): value is CanonicalHandoffCompletionKind {
+  return value === 'patch_applied' || value === 'page_written' || value === 'manual';
 }
 
 function normalizeReviewedAt(value: Date | string | null | undefined): Date | string | null | undefined {

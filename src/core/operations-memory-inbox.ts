@@ -1,4 +1,4 @@
-import type { Operation } from './operations.ts';
+import type { Operation, OperationContext } from './operations.ts';
 import type { BrainEngine } from './engine.ts';
 import { importFromContent } from './import-file.ts';
 import { parseMarkdown, serializeMarkdown } from './markdown.ts';
@@ -804,6 +804,8 @@ function materializeMissingPageMergePatch(
       frontmatter: {},
       created_at: now,
       updated_at: now,
+      compiled_truth_changed_at: now,
+      timeline_changed_at: now,
     },
     [],
     patchBody,
@@ -985,10 +987,45 @@ function isValidIsoDatetime(value: string): boolean {
   return true;
 }
 
+type FinalizeMemoryCandidateStepStatus = 'applied' | 'allowed' | 'already_done' | 'blocked' | 'deferred' | 'skipped';
+
+type FinalizeMemoryCandidateStep = {
+  step: string;
+  status: FinalizeMemoryCandidateStepStatus;
+  reason?: string;
+};
+
+function isPatchMemoryCandidate(
+  candidate: MemoryCandidateEntry,
+): boolean {
+  return Boolean(
+    candidate.patch_target_kind
+    && candidate.patch_target_id
+    && candidate.patch_format
+    && candidate.patch_operation_state
+    && candidate.patch_body != null,
+  );
+}
+
+function finalizeMemoryCandidateResult(
+  status: 'applied' | 'blocked' | 'deferred' | 'promoted',
+  candidate: MemoryCandidateEntry,
+  ledger: FinalizeMemoryCandidateStep[],
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    status,
+    candidate,
+    ledger,
+    ...extra,
+  };
+}
+
 export function createMemoryInboxOperations(
   deps: {
     defaultScopeId: string;
     OperationError: OperationErrorCtor;
+    syncBrainHandler?: Operation['handler'];
   },
 ): Operation[] {
   const get_memory_candidate_entry: Operation = {
@@ -1478,6 +1515,97 @@ export function createMemoryInboxOperations(
       return outcome;
     },
     cliHints: { name: 'create-memory-patch-candidate' },
+  };
+
+  const propose_compile_debt_patches: Operation = {
+    name: 'propose_compile_debt_patches',
+    description: 'Preview or stage governed patch candidates for pages whose timeline evidence is newer than compiled truth.',
+    params: {
+      limit: { type: 'number', description: 'Maximum compile-debt pages to inspect (default 5)' },
+      apply: { type: 'boolean', description: 'Stage patch candidates. Requires maintenance.governed_recompile_enabled=true.' },
+      session_id: { type: 'string', description: 'Active originating memory session id; required when apply=true' },
+      realm_id: { type: 'string', description: 'Active memory realm id attached read-write to the session; required when apply=true' },
+      actor: { type: 'string', description: 'Actor proposing patch candidates; required when apply=true' },
+      scope_id: { type: 'string', description: `Memory candidate scope id (default: ${deps.defaultScopeId})` },
+    },
+    mutating: true,
+    handler: async (ctx, p) => {
+      const limit = Math.max(1, Math.min(25, normalizeLimit(deps, p.limit ?? 5)));
+      const apply = normalizeOptionalBoolean(deps, 'apply', p.apply) === true;
+      if (apply && ctx.config?.maintenance_governed_recompile_enabled !== true) {
+        throw invalidParams(deps, 'maintenance.governed_recompile_enabled must be true before staging compile-debt patch candidates');
+      }
+      const pages = await ctx.engine.listPages({ limit: 1_000, offset: 0 });
+      const proposals = pages
+        .filter((page) => page.timeline_changed_at.getTime() > page.compiled_truth_changed_at.getTime())
+        .map((page) => buildCompileDebtPatchProposal(page, String(p.scope_id ?? deps.defaultScopeId)))
+        .sort((left, right) => right.debt_score - left.debt_score || left.slug.localeCompare(right.slug))
+        .slice(0, limit);
+
+      if (!apply || proposals.length === 0) {
+        return {
+          applied: false,
+          proposals,
+          next_action: proposals.length > 0
+            ? 'Set maintenance.governed_recompile_enabled=true and rerun with apply=true to stage reviewable patch candidates.'
+            : 'No compile-debt pages found.',
+        };
+      }
+
+      const sessionId = normalizeOptionalNonEmptyString(deps, 'session_id', p.session_id);
+      const realmId = normalizeOptionalNonEmptyString(deps, 'realm_id', p.realm_id);
+      const actor = normalizeOptionalNonEmptyString(deps, 'actor', p.actor);
+      if (!sessionId || !realmId || !actor) {
+        throw invalidParams(deps, 'session_id, realm_id, and actor are required when apply=true');
+      }
+
+      const created: unknown[] = [];
+      const skippedExisting: string[] = [];
+      for (const proposal of proposals) {
+        const existing = await ctx.engine.listMemoryCandidateEntries({
+          scope_id: proposal.scope_id,
+          patch_target_kind: 'page',
+          patch_target_id: proposal.slug,
+          patch_operation_state: 'proposed',
+          limit: 1,
+          offset: 0,
+        });
+        if (existing.length > 0) {
+          skippedExisting.push(proposal.slug);
+          continue;
+        }
+        created.push(await create_memory_patch_candidate.handler(ctx, {
+          id: proposal.candidate_id,
+          session_id: sessionId,
+          realm_id: realmId,
+          actor,
+          scope_id: proposal.scope_id,
+          target_kind: 'page',
+          target_id: proposal.slug,
+          base_target_snapshot_hash: proposal.base_target_snapshot_hash,
+          patch_body: proposal.patch_body,
+          patch_format: 'merge_patch',
+          risk_class: 'medium',
+          provenance_summary: proposal.provenance_summary,
+          proposed_content: proposal.proposed_content,
+          source_refs: proposal.source_refs,
+          generated_by: 'agent',
+          extraction_kind: 'inferred',
+          confidence_score: 0.6,
+          importance_score: 0.65,
+          recurrence_score: Math.min(1, proposal.uncompiled_timeline_entries / 10),
+          sensitivity: 'work',
+        }));
+      }
+
+      return {
+        applied: true,
+        proposals,
+        created,
+        skipped_existing: skippedExisting,
+      };
+    },
+    cliHints: { name: 'propose-compile-debt-patches' },
   };
 
   const review_memory_patch_candidate: Operation = {
@@ -2079,6 +2207,285 @@ export function createMemoryInboxOperations(
     cliHints: { name: 'apply-memory-patch-candidate' },
   };
 
+  const finalize_memory_candidate: Operation = {
+    name: 'finalize_memory_candidate',
+    description: 'Composite memory-candidate finalizer. Resumes verify, staging, preflight, promotion, optional patch apply, and optional sync while stopping at the first defer or deny.',
+    params: {
+      id: { type: 'string', required: true, description: 'Memory candidate id' },
+      verification_status: {
+        type: 'string',
+        description: 'Optional verification outcome for standard candidates; required before promotion unless already verified.',
+        enum: [...MEMORY_CANDIDATE_VERIFICATION_STATUS_VALUES],
+      },
+      verification_method: {
+        type: 'string',
+        description: 'How the standard candidate was checked against ground truth.',
+        enum: [...MEMORY_CANDIDATE_VERIFICATION_METHODS],
+      },
+      verification_evidence: {
+        type: 'string',
+        description: 'What was checked and what the check showed; required when verification_status is provided.',
+      },
+      verification_source_refs: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Optional provenance strings for the verification itself.',
+      },
+      verified_at: { type: 'string', description: 'Optional ISO timestamp for verification metadata' },
+      reviewed_at: { type: 'string', description: 'Optional ISO timestamp for review/apply metadata' },
+      review_reason: { type: 'string', description: 'Optional review reason applied to lifecycle steps' },
+      interaction_id: { type: 'string', description: 'Optional retrieval trace id for lifecycle event attribution' },
+      retry_on_stale: { type: 'boolean', description: 'Retry promotion once when duplicate review freshness changes' },
+      override_duplicate: { type: 'boolean', description: 'Explicitly override a likely-duplicate promotion deferral' },
+      apply_patch: { type: 'boolean', description: 'Apply approved memory patch candidates when possible (default true)' },
+      session_id: { type: 'string', description: 'Active applying memory session id for patch apply' },
+      realm_id: { type: 'string', description: 'Active memory realm id attached read-write for patch apply' },
+      actor: { type: 'string', description: 'Actor applying an approved patch candidate' },
+      risk_acknowledged: { type: 'boolean', description: 'Required true when applying high or critical risk patch candidates' },
+      source_refs: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Required provenance strings when applying an approved patch candidate',
+      },
+      sync: { type: 'boolean', description: 'Run sync_brain with no_pull/no_embed after a page patch is materialized (default false)' },
+    },
+    mutating: true,
+    handler: async (ctx, p) => {
+      const id = normalizeOptionalNonEmptyString(deps, 'id', p.id);
+      if (!id) {
+        throw invalidParams(deps, 'id is required');
+      }
+      const applyPatch = normalizeOptionalBoolean(deps, 'apply_patch', p.apply_patch) !== false;
+      const syncRequested = normalizeOptionalBoolean(deps, 'sync', p.sync) === true;
+      const retryOnStale = normalizeOptionalBoolean(deps, 'retry_on_stale', p.retry_on_stale) === true;
+      const overrideDuplicate = normalizeOptionalBoolean(deps, 'override_duplicate', p.override_duplicate) === true;
+      const interactionId = normalizeOptionalNonEmptyString(deps, 'interaction_id', p.interaction_id);
+      const reviewedAt = normalizeOptionalIsoTimestamp(deps, 'reviewed_at', p.reviewed_at);
+      const verifiedAt = normalizeOptionalIsoTimestamp(deps, 'verified_at', p.verified_at);
+      const reviewReason = normalizeOptionalNonEmptyString(deps, 'review_reason', p.review_reason);
+      const verificationStatus = optionalEnumValue(deps, 'verification_status', p.verification_status, MEMORY_CANDIDATE_VERIFICATION_STATUS_VALUES);
+      const verificationMethod = optionalEnumValue(deps, 'verification_method', p.verification_method, MEMORY_CANDIDATE_VERIFICATION_METHODS);
+      const verificationEvidence = normalizeOptionalNonEmptyString(deps, 'verification_evidence', p.verification_evidence);
+      const verificationSourceRefs = normalizeOptionalStringArray(deps, 'verification_source_refs', p.verification_source_refs);
+      const ledger: FinalizeMemoryCandidateStep[] = [];
+
+      if (ctx.dryRun) {
+        return {
+          dry_run: true,
+          action: 'finalize_memory_candidate',
+          id,
+          apply_patch: applyPatch,
+          sync: syncRequested,
+        };
+      }
+
+      let candidate = await ctx.engine.getMemoryCandidateEntry(id);
+      if (!candidate) {
+        throw new deps.OperationError('memory_candidate_not_found', `Memory candidate not found: ${id}`);
+      }
+      const patchCandidate = isPatchMemoryCandidate(candidate);
+      let pageMaterialized = false;
+
+      const appendSyncStep = async (status: 'applied' | 'promoted'): Promise<Record<string, unknown>> => {
+        if (!syncRequested) {
+          ledger.push({ step: 'sync', status: 'skipped', reason: 'sync_not_requested' });
+          return finalizeMemoryCandidateResult(status, candidate as MemoryCandidateEntry, ledger, status === 'promoted'
+            ? {
+              canonical_write_pending: true,
+              canonical_write_hint:
+                'Promotion flips status only; the candidate is not yet retrievable markdown. Create, review, and apply a memory patch candidate, or route a put_page write through route_memory_writeback, to write the canonical page.',
+            }
+            : {});
+        }
+        if (!pageMaterialized) {
+          ledger.push({ step: 'sync', status: 'skipped', reason: 'no_page_materialized' });
+          return finalizeMemoryCandidateResult(status, candidate as MemoryCandidateEntry, ledger, status === 'promoted'
+            ? {
+              canonical_write_pending: true,
+              canonical_write_hint:
+                'Promotion flips status only; the candidate is not yet retrievable markdown. Create, review, and apply a memory patch candidate, or route a put_page write through route_memory_writeback, to write the canonical page.',
+            }
+            : {});
+        }
+        if (ctx.auth_principal?.surface_profile === 'edge_remote' || ctx.auth_principal?.principal_type === 'edge_token') {
+          ledger.push({ step: 'sync', status: 'deferred', reason: 'sync_unavailable_on_edge' });
+          return finalizeMemoryCandidateResult('deferred', candidate as MemoryCandidateEntry, ledger);
+        }
+        if (!deps.syncBrainHandler) {
+          ledger.push({ step: 'sync', status: 'deferred', reason: 'sync_unavailable' });
+          return finalizeMemoryCandidateResult('deferred', candidate as MemoryCandidateEntry, ledger);
+        }
+        try {
+          const syncResult = await deps.syncBrainHandler(ctx, {
+            no_pull: true,
+            no_embed: true,
+          });
+          ledger.push({ step: 'sync', status: 'applied' });
+          return finalizeMemoryCandidateResult(status, candidate as MemoryCandidateEntry, ledger, { sync_result: syncResult });
+        } catch (error) {
+          ledger.push({ step: 'sync', status: 'blocked', reason: error instanceof Error ? error.message : String(error) });
+          return finalizeMemoryCandidateResult('blocked', candidate as MemoryCandidateEntry, ledger);
+        }
+      };
+
+      if (patchCandidate) {
+        ledger.push(candidate.verification_status === 'verified'
+          ? { step: 'verify', status: 'already_done' }
+          : { step: 'verify', status: 'skipped', reason: 'patch_apply_verifies_after_write' });
+      } else if (candidate.verification_status === 'verified') {
+        ledger.push({ step: 'verify', status: 'already_done' });
+      } else if (candidate.verification_status === 'refuted') {
+        ledger.push({ step: 'verify', status: 'blocked', reason: 'candidate_refuted' });
+        return finalizeMemoryCandidateResult('blocked', candidate, ledger);
+      } else {
+        if (!verificationStatus || !verificationMethod || !verificationEvidence) {
+          ledger.push({ step: 'verify', status: 'deferred', reason: 'verification_required' });
+          return finalizeMemoryCandidateResult('deferred', candidate, ledger);
+        }
+        candidate = await verifyMemoryCandidateEntry(ctx.engine, {
+          id,
+          verification_status: verificationStatus,
+          verification_method: verificationMethod,
+          verification_evidence: verificationEvidence,
+          verification_source_refs: verificationSourceRefs,
+          verified_at: verifiedAt,
+        });
+        ledger.push({ step: 'verify', status: 'applied' });
+        if (candidate.verification_status === 'refuted') {
+          ledger.push({ step: 'preflight', status: 'blocked', reason: 'candidate_refuted' });
+          return finalizeMemoryCandidateResult('blocked', candidate, ledger);
+        }
+      }
+
+      if (candidate.status === 'captured') {
+        candidate = await advanceMemoryCandidateStatus(ctx.engine, {
+          id,
+          next_status: 'candidate',
+          reviewed_at: reviewedAt,
+          review_reason: reviewReason,
+          interaction_id: interactionId,
+        });
+        ledger.push({ step: 'advance_to_candidate', status: 'applied' });
+      } else if (candidate.status === 'candidate' || candidate.status === 'staged_for_review' || candidate.status === 'promoted') {
+        ledger.push({ step: 'advance_to_candidate', status: 'already_done' });
+      } else {
+        ledger.push({ step: 'advance_to_candidate', status: 'blocked', reason: `terminal_status:${candidate.status}` });
+        return finalizeMemoryCandidateResult('blocked', candidate, ledger);
+      }
+
+      if (candidate.status === 'candidate') {
+        candidate = await advanceMemoryCandidateStatus(ctx.engine, {
+          id,
+          next_status: 'staged_for_review',
+          reviewed_at: reviewedAt,
+          review_reason: reviewReason,
+          interaction_id: interactionId,
+        });
+        ledger.push({ step: 'advance_to_staged', status: 'applied' });
+      } else if (candidate.status === 'staged_for_review' || candidate.status === 'promoted') {
+        ledger.push({ step: 'advance_to_staged', status: 'already_done' });
+      } else {
+        ledger.push({ step: 'advance_to_staged', status: 'blocked', reason: `terminal_status:${candidate.status}` });
+        return finalizeMemoryCandidateResult('blocked', candidate, ledger);
+      }
+
+      if (patchCandidate) {
+        ledger.push({ step: 'preflight', status: 'skipped', reason: 'patch_apply_rechecks_target' });
+        ledger.push({ step: 'promote', status: 'skipped', reason: 'patch_apply_promotes_after_write' });
+        if (candidate.status === 'promoted' && candidate.patch_operation_state === 'applied') {
+          ledger.push({ step: 'patch_apply', status: 'already_done' });
+          return appendSyncStep('applied');
+        }
+        if (!applyPatch) {
+          ledger.push({ step: 'patch_apply', status: 'deferred', reason: 'apply_patch_false' });
+          return finalizeMemoryCandidateResult('deferred', candidate, ledger);
+        }
+        if (candidate.patch_operation_state !== 'approved_for_apply') {
+          ledger.push({ step: 'patch_apply', status: 'deferred', reason: 'patch_candidate_not_approved' });
+          return finalizeMemoryCandidateResult('deferred', candidate, ledger);
+        }
+        const sessionId = normalizeOptionalNonEmptyString(deps, 'session_id', p.session_id);
+        const realmId = normalizeOptionalNonEmptyString(deps, 'realm_id', p.realm_id);
+        const actor = normalizeOptionalNonEmptyString(deps, 'actor', p.actor);
+        const sourceRefs = normalizeSourceRefs(deps, p);
+        if (!sessionId || !realmId || !actor) {
+          ledger.push({ step: 'patch_apply', status: 'deferred', reason: 'patch_apply_requires_session_realm_actor' });
+          return finalizeMemoryCandidateResult('deferred', candidate, ledger);
+        }
+        if (sourceRefs.length === 0) {
+          ledger.push({ step: 'patch_apply', status: 'deferred', reason: 'patch_apply_requires_source_refs' });
+          return finalizeMemoryCandidateResult('deferred', candidate, ledger);
+        }
+        try {
+          const applied = await apply_memory_patch_candidate.handler(ctx, {
+            candidate_id: id,
+            session_id: sessionId,
+            realm_id: realmId,
+            actor,
+            reviewed_at: reviewedAt,
+            review_reason: reviewReason ?? undefined,
+            risk_acknowledged: normalizeOptionalBoolean(deps, 'risk_acknowledged', p.risk_acknowledged) === true,
+            source_refs: sourceRefs,
+          }) as { status?: string; candidate?: MemoryCandidateEntry };
+          if (applied.candidate) {
+            candidate = applied.candidate;
+          } else {
+            const refreshed = await ctx.engine.getMemoryCandidateEntry(id);
+            if (refreshed) candidate = refreshed;
+          }
+          pageMaterialized = applied.status === 'applied';
+          ledger.push({ step: 'patch_apply', status: pageMaterialized ? 'applied' : 'blocked', reason: pageMaterialized ? undefined : 'patch_apply_did_not_apply' });
+          if (!pageMaterialized) {
+            return finalizeMemoryCandidateResult('blocked', candidate, ledger);
+          }
+          return appendSyncStep('applied');
+        } catch (error) {
+          ledger.push({ step: 'patch_apply', status: 'blocked', reason: error instanceof Error ? error.message : String(error) });
+          return finalizeMemoryCandidateResult('blocked', candidate, ledger);
+        }
+      }
+
+      if (candidate.status === 'promoted') {
+        ledger.push({ step: 'preflight', status: 'skipped', reason: 'already_promoted' });
+        ledger.push({ step: 'promote', status: 'already_done' });
+        ledger.push({ step: 'patch_apply', status: 'skipped', reason: 'no_patch_candidate' });
+        return appendSyncStep('promoted');
+      }
+
+      if (candidate.status !== 'staged_for_review') {
+        ledger.push({ step: 'preflight', status: 'blocked', reason: `candidate_not_staged:${candidate.status}` });
+        return finalizeMemoryCandidateResult('blocked', candidate, ledger);
+      }
+
+      const preflight = await preflightPromoteMemoryCandidate(ctx.engine, {
+        id,
+        override_duplicate: overrideDuplicate,
+      });
+      if (preflight.decision !== 'allow') {
+        ledger.push({
+          step: 'preflight',
+          status: preflight.decision === 'deny' ? 'blocked' : 'deferred',
+          reason: preflight.reasons.join(',') || preflight.decision,
+        });
+        return finalizeMemoryCandidateResult(preflight.decision === 'deny' ? 'blocked' : 'deferred', candidate, ledger, { preflight });
+      }
+      ledger.push({ step: 'preflight', status: 'allowed' });
+
+      candidate = await promoteMemoryCandidateEntry(ctx.engine, {
+        id,
+        reviewed_at: reviewedAt,
+        review_reason: reviewReason,
+        interaction_id: interactionId,
+        retry_on_stale: retryOnStale,
+        override_duplicate: overrideDuplicate,
+      });
+      ledger.push({ step: 'promote', status: 'applied' });
+      ledger.push({ step: 'patch_apply', status: 'skipped', reason: 'no_patch_candidate' });
+      return appendSyncStep('promoted');
+    },
+    cliHints: { name: 'finalize-memory-candidate' },
+  };
+
   const rank_memory_candidate_entries: Operation = {
     name: 'rank_memory_candidate_entries',
     description: 'Rank memory-inbox candidates deterministically for review ordering without mutating inbox state.',
@@ -2473,14 +2880,17 @@ export function createMemoryInboxOperations(
     description: 'Run the deterministic governance preflight for promoting one staged memory candidate.',
     params: {
       id: { type: 'string', required: true, description: 'Memory candidate id' },
+      override_duplicate: { type: 'boolean', description: 'Allow promotion even when duplicate review reports a likely duplicate; duplicate review evidence remains in the preflight result' },
     },
     handler: async (ctx, p) => {
       if (typeof p.id !== 'string' || p.id.trim().length === 0) {
         throw invalidParams(deps, 'id must be a non-empty string');
       }
+      const overrideDuplicate = normalizeOptionalBoolean(deps, 'override_duplicate', p.override_duplicate) === true;
       try {
         return await preflightPromoteMemoryCandidate(ctx.engine, {
           id: p.id,
+          override_duplicate: overrideDuplicate,
         });
       } catch (error) {
         if (error instanceof MemoryInboxServiceError) {
@@ -2497,13 +2907,14 @@ export function createMemoryInboxOperations(
 
   const promote_memory_candidate_entry: Operation = {
     name: 'promote_memory_candidate_entry',
-    description: 'Promote one staged memory-inbox candidate after deterministic promotion preflight passes.',
+    description: 'Promote one staged and verified memory-inbox candidate after deterministic promotion preflight passes; verification is mandatory.',
     params: {
       id: { type: 'string', required: true, description: 'Memory candidate id' },
       reviewed_at: { type: 'string', description: 'Optional ISO timestamp for promotion metadata' },
       review_reason: { type: 'string', description: 'Optional promotion reason for auditability' },
       interaction_id: { type: 'string', description: 'Optional retrieval trace id for lifecycle event attribution' },
       retry_on_stale: { type: 'boolean', description: 'Retry once when duplicate review freshness changes before promotion' },
+      override_duplicate: { type: 'boolean', description: 'Explicitly override a likely-duplicate promotion deferral while preserving duplicate review evidence' },
     },
     mutating: true,
     handler: async (ctx, p) => {
@@ -2518,12 +2929,14 @@ export function createMemoryInboxOperations(
       }
       const interactionId = normalizeOptionalNonEmptyString(deps, 'interaction_id', p.interaction_id);
       const retryOnStale = normalizeOptionalBoolean(deps, 'retry_on_stale', p.retry_on_stale) === true;
+      const overrideDuplicate = normalizeOptionalBoolean(deps, 'override_duplicate', p.override_duplicate) === true;
       if (ctx.dryRun) {
         return {
           dry_run: true,
           action: 'promote_memory_candidate_entry',
           id: p.id,
           review_reason: typeof p.review_reason === 'string' ? p.review_reason : null,
+          override_duplicate: overrideDuplicate,
         };
       }
 
@@ -2534,6 +2947,7 @@ export function createMemoryInboxOperations(
           review_reason: typeof p.review_reason === 'string' ? p.review_reason : undefined,
           interaction_id: interactionId,
           retry_on_stale: retryOnStale,
+          override_duplicate: overrideDuplicate,
         });
         // Promotion only flips the candidate's status — it does NOT write retrievable
         // markdown. Surface that explicitly so a governed candidate lifecycle does not
@@ -2724,8 +3138,10 @@ export function createMemoryInboxOperations(
     review_duplicate_memory,
     create_memory_candidate_entry,
     create_memory_patch_candidate,
+    propose_compile_debt_patches,
     review_memory_patch_candidate,
     apply_memory_patch_candidate,
+    finalize_memory_candidate,
     rank_memory_candidate_entries,
     capture_map_derived_candidates,
     list_memory_candidate_review_backlog,
@@ -2759,4 +3175,71 @@ async function listAllRankableMemoryCandidates(
       return candidates;
     }
   }
+}
+
+function buildCompileDebtPatchProposal(page: Page, scopeId: string) {
+  const timelineDates = timelineEntryDates(page.timeline);
+  const uncompiledTimelineEntries = timelineDates.length || 1;
+  const oldest = timelineDates
+    .map((date) => date.getTime())
+    .sort((left, right) => left - right)[0] ?? page.timeline_changed_at.getTime();
+  const ageDays = Math.max(0, (Date.now() - oldest) / 86_400_000);
+  const sourceRefs = extractSourceRefsFromText(page.timeline);
+  const baseHash = page.content_hash ?? importContentHash({
+    title: page.title,
+    type: page.type,
+    compiled_truth: page.compiled_truth,
+    timeline: page.timeline,
+    frontmatter: page.frontmatter,
+  });
+  const candidateId = `compile-debt-patch:${contentHash(page.slug, baseHash).slice(0, 16)}`;
+  const compiledTruth = [
+    page.compiled_truth.trim(),
+    '',
+    '## Pending Compile-Debt Review',
+    '',
+    'The following timeline evidence is newer than the current compiled truth and should be reviewed before applying.',
+    '',
+    page.timeline.trim(),
+  ].filter((part) => part.length > 0).join('\n');
+
+  return {
+    candidate_id: candidateId,
+    scope_id: scopeId,
+    slug: page.slug,
+    title: page.title,
+    uncompiled_timeline_entries: uncompiledTimelineEntries,
+    debt_score: Math.round((uncompiledTimelineEntries * (1 + ageDays)) * 100) / 100,
+    base_target_snapshot_hash: baseHash,
+    patch_body: {
+      compiled_truth: compiledTruth,
+    },
+    proposed_content: `Reviewable compile-debt patch for ${page.slug}: ${uncompiledTimelineEntries} newer timeline entr${uncompiledTimelineEntries === 1 ? 'y' : 'ies'}.`,
+    provenance_summary: `Generated from compile-debt detection for ${page.slug}; reviewer must confirm timeline evidence before apply.`,
+    source_refs: sourceRefs.length > 0
+      ? sourceRefs
+      : [`compile_debt:${page.slug}:${page.timeline_changed_at.toISOString()}`],
+  };
+}
+
+function timelineEntryDates(timeline: string): Date[] {
+  const dates: Date[] = [];
+  const pattern = /^\s*-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*/gm;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(timeline)) !== null) {
+    const parsed = new Date(`${match[1]}T00:00:00.000Z`);
+    if (!Number.isNaN(parsed.getTime())) dates.push(parsed);
+  }
+  return dates;
+}
+
+function extractSourceRefsFromText(text: string): string[] {
+  const refs = new Set<string>();
+  const pattern = /\[Source:\s*([^\]]+)\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    const ref = match[1]?.trim();
+    if (ref) refs.add(`Source: ${ref}`);
+  }
+  return [...refs];
 }
