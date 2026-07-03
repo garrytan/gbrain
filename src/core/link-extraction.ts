@@ -542,8 +542,9 @@ export async function extractPageLinks(
     });
   }
 
-  // 3. Frontmatter-derived edges (v0.13). Includes the legacy `source:`
-  // field along with the full field map. Caller can suppress via
+  // 3. Frontmatter-derived edges (v0.13) from the field map. Connector
+  // provenance keys (source/scope/origin — see CONNECTOR_METADATA_KEYS)
+  // are excluded inside extractFrontmatterLinks. Caller can suppress via
   // `opts.skipFrontmatter` — used by `extractLinksFromDB` to keep
   // `--include-frontmatter` off semantics while still passing a real
   // resolver (needed for `resolveBasenameMatches` in global-basename
@@ -792,9 +793,33 @@ export const FRONTMATTER_LINK_MAP: FrontmatterFieldMapping[] = [
   { fields: ['attendees'], pageType: 'meeting', type: 'attended', direction: 'incoming', dirHint: 'people' },
   // Any page type
   { fields: ['sources'], type: 'discussed_in', direction: 'incoming', dirHint: ['source', 'media'] },
-  { fields: ['source'], type: 'source', direction: 'outgoing', dirHint: '' /* already slug-shaped */ },
   { fields: ['related', 'see_also'], type: 'related_to', direction: 'outgoing', dirHint: '' },
 ];
+
+/**
+ * Connector-metadata frontmatter keys that MUST NOT produce graph edges.
+ *
+ * Connectors (Salesforce/Paligo/Responsive ingest) stamp provenance fields
+ * like `source: company`, `scope: ...`, `origin: ...` onto every page's
+ * frontmatter. These are ingest bookkeeping, NOT editorial references. The
+ * old generic `{ fields: ['source'], type: 'source', ... }` mapping turned
+ * every one of them into a fuzzy pg_trgm title-resolved edge — in production
+ * this collapsed 40,310 pages onto a single page titled "Company name"
+ * (source: company → resolves to the highest-trigram-scoring title).
+ *
+ * `extractFrontmatterLinks` skips these keys entirely BEFORE consulting the
+ * field map, so no FRONTMATTER_LINK_MAP entry (or future pack-authored one)
+ * can reintroduce the junk edges. The plural `sources:` field is editorial
+ * (an author-curated list of source pages → `discussed_in`) and is NOT in
+ * this set. Slug-shaped provenance can still be recovered from the pages
+ * table's `source` column; it does not need to live in the link graph.
+ */
+export const CONNECTOR_METADATA_KEYS = new Set<string>([
+  'source',
+  'scope',
+  'origin',
+  'origin_source',
+]);
 
 // ─── Slug resolver ──────────────────────────────────────────────
 
@@ -1035,6 +1060,11 @@ export async function extractFrontmatterLinks(
   for (const mapping of FRONTMATTER_LINK_MAP) {
     if (mapping.pageType && mapping.pageType !== pageType) continue;
     for (const field of mapping.fields) {
+      // Connector-stamped provenance keys (source/scope/origin/...) are ingest
+      // bookkeeping, not editorial references — never turn them into edges.
+      // Guard here (not just via the map) so a future pack-authored mapping
+      // for these keys cannot reintroduce the junk-edge storm.
+      if (CONNECTOR_METADATA_KEYS.has(field)) continue;
       const value = frontmatter[field];
       if (value == null) continue;
       const entries = Array.isArray(value) ? value : [value];

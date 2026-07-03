@@ -9,6 +9,7 @@ import {
   parseTimelineEntries,
   isAutoLinkEnabled,
   FRONTMATTER_LINK_MAP,
+  CONNECTOR_METADATA_KEYS,
   type SlugResolver,
 } from '../src/core/link-extraction.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -261,13 +262,16 @@ describe('extractPageLinks', () => {
     expect(aliceLinks.length).toBe(1);
   });
 
-  test('extracts frontmatter source as source-type link', async () => {
+  test('connector-stamped frontmatter source: produces NO edge', async () => {
+    // Regression: connectors stamp `source: company` on every ingested page.
+    // The old generic mapping turned each into a fuzzy title-resolved 'source'
+    // edge (40,310 junk edges to one page in prod). It must be suppressed even
+    // with a resolver that would happily resolve the value.
     const { candidates } = await extractPageLinks(
       'docs/x', 'Some content.', { source: 'meetings/2026-01-15' }, 'person', allowAllResolver,
     );
-    const sourceLink = candidates.find(c => c.linkType === 'source');
-    expect(sourceLink).toBeDefined();
-    expect(sourceLink!.targetSlug).toBe('meetings/2026-01-15');
+    expect(candidates.find(c => c.linkType === 'source')).toBeUndefined();
+    expect(candidates.find(c => c.originField === 'source')).toBeUndefined();
   });
 
   test('extracts bare slug references in text', async () => {
@@ -425,13 +429,13 @@ describe('extractPageLinks', () => {
   });
 
   test('opts.skipFrontmatter suppresses the frontmatter pass', async () => {
-    // Real resolver shape that WOULD resolve frontmatter source: too,
+    // Real resolver that WOULD resolve the editorial `related:` field,
     // but skipFrontmatter blocks the path entirely.
     const resolver: SlugResolver = {
       resolve: async (name) =>
-        name === 'meetings/2026-01-15' ? 'meetings/2026-01-15' : null,
+        name === 'docs/other' ? 'docs/other' : null,
     };
-    const fm = { source: 'meetings/2026-01-15' };
+    const fm = { related: 'docs/other' };
     const withFm = await extractPageLinks(
       'docs/x', 'plain content', fm, 'person', resolver,
       { skipFrontmatter: false },
@@ -440,8 +444,8 @@ describe('extractPageLinks', () => {
       'docs/x', 'plain content', fm, 'person', resolver,
       { skipFrontmatter: true },
     );
-    expect(withFm.candidates.find(c => c.linkType === 'source')).toBeDefined();
-    expect(withoutFm.candidates.find(c => c.linkType === 'source')).toBeUndefined();
+    expect(withFm.candidates.find(c => c.linkType === 'related_to')).toBeDefined();
+    expect(withoutFm.candidates.find(c => c.linkType === 'related_to')).toBeUndefined();
     // Issue #972 (codex P2e): skipFrontmatter must return an empty unresolved
     // list (the pass is skipped entirely), never undefined.
     expect(withoutFm.unresolved).toEqual([]);
@@ -890,14 +894,28 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
     }
   });
 
-  test('source field → outgoing source edge', async () => {
+  test('connector-metadata keys (source/scope/origin/origin_source) produce NO edges', async () => {
+    // These are ingest-stamped provenance, not editorial references. A resolver
+    // that WOULD resolve every value must still yield zero candidates.
+    for (const key of CONNECTOR_METADATA_KEYS) {
+      const { candidates, unresolved } = await extractFrontmatterLinks(
+        'people/pedro', 'person' as never, { [key]: 'meetings/2026-04-03' }, resolver,
+      );
+      expect(candidates).toHaveLength(0);
+      expect(unresolved).toHaveLength(0);
+    }
+  });
+
+  test('editorial plural `sources:` field STILL produces discussed_in edges', async () => {
+    // Guard the guard: the exclusion set must not swallow the curated `sources`
+    // list. Only the singular connector `source` is suppressed.
     const { candidates } = await extractFrontmatterLinks(
-      'people/pedro', 'person' as never, { source: 'meetings/2026-04-03' }, resolver,
+      'people/pedro', 'person' as never, { sources: ['meetings/2026-04-03'] }, resolver,
     );
-    const src = candidates.find(c => c.linkType === 'source');
-    expect(src).toBeDefined();
-    expect(src!.fromSlug).toBe('people/pedro');
-    expect(src!.targetSlug).toBe('meetings/2026-04-03');
+    const disc = candidates.find(c => c.linkType === 'discussed_in');
+    expect(disc).toBeDefined();
+    expect(disc!.targetSlug).toBe('people/pedro'); // incoming
+    expect(disc!.fromSlug).toBe('meetings/2026-04-03');
   });
 
   test('unresolvable name goes to unresolved list, not candidates', async () => {

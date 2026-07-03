@@ -93,6 +93,16 @@ function logError(phase: string, e: unknown) {
 }
 
 /**
+ * v0.41 freshness guard: source ids already logged as skipped for an
+ * absent/externally-synced local_path. The freshness loop runs every tick;
+ * without this a source cloned on another pod (e.g. a personal source synced
+ * from a laptop) would emit one skip line per source per tick forever. We log
+ * ONCE per source per process, then stay silent. Cleared implicitly on daemon
+ * restart, which is when a local_path could newly appear.
+ */
+const freshnessSkipLogged = new Set<string>();
+
+/**
  * Resolve the gbrain CLI entrypoint for spawning the worker child.
  *
  * A .ts source path is never a valid spawn target — spawning it fails with
@@ -648,12 +658,31 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         try {
           const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
           if (await isFederatedV2Enabled(engine)) {
-            const { loadAllSources } = await import('../core/sources-load.ts');
+            const { loadAllSources, parseSourceConfig } = await import('../core/sources-load.ts');
             const sources = await loadAllSources(engine);
             const intervalMs = baseInterval * 1000;
             const now = Date.now();
             for (const src of sources) {
               if (!src.local_path) continue;
+              // A source's clone lives on the pod that owns it. On any OTHER pod
+              // (or when the source is synced externally, e.g. a laptop pushing
+              // to git) local_path names a path that doesn't exist here, so the
+              // sync job can only fail — ~288 dead jobs/day in prod for source
+              // bart-allan. Skip when the path is absent on THIS pod or the
+              // source is flagged config.externally_synced. Log once per source
+              // (freshnessSkipLogged) so the daemon doesn't spam per tick.
+              const cfg = parseSourceConfig(src.config);
+              const externallySynced = cfg.externally_synced === true;
+              if (externallySynced || !existsSync(src.local_path)) {
+                if (!freshnessSkipLogged.has(src.id)) {
+                  freshnessSkipLogged.add(src.id);
+                  const reason = externallySynced ? 'externally_synced' : 'local_path absent on this pod';
+                  const detail = { event: 'freshness_skip', source_id: src.id, reason, local_path: src.local_path };
+                  if (jsonMode) process.stderr.write(JSON.stringify(detail) + '\n');
+                  else console.log(`[dispatch] skip freshness sync (${src.id}; ${reason}: ${src.local_path})`);
+                }
+                continue;
+              }
               const lastSyncMs = src.last_sync_at ? new Date(src.last_sync_at).getTime() : 0;
               const ageMs = now - lastSyncMs;
               if (ageMs < intervalMs) continue; // fresh enough
