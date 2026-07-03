@@ -3486,17 +3486,8 @@ export async function checkSyncFreshness(
     let liveSyncSnap: (sourceId: string) => Promise<{ holder_pid: number; holder_host: string } | null> =
       async () => null;
     try {
-      const { inspectLock, syncLockId } = await import('../core/db-lock.ts');
-      liveSyncSnap = async (sourceId: string) => {
-        try {
-          const snap = await inspectLock(engine, syncLockId(sourceId));
-          return snap && !snap.ttl_expired
-            ? { holder_pid: snap.holder_pid, holder_host: snap.holder_host }
-            : null;
-        } catch {
-          return null;
-        }
-      };
+      const { liveSyncStatus } = await import('../core/db-lock.ts');
+      liveSyncSnap = (sourceId: string) => liveSyncStatus(engine, sourceId);
     } catch {
       /* db-lock unavailable — skip in-progress detection, staleness stands. */
     }
