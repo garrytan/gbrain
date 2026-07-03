@@ -11,21 +11,25 @@
  *   4. ensureSidecarUp venv missing   → false fast (no spawn, no health-poll wait)
  *   5. ensureSidecarUp spawn failure  → false via the 'error' handler (no unhandled
  *      'error' crash, no waiting out the full health-poll deadline)
+ *   6. already-healthy sidecar        → true, without needing a venv
+ *   7. failed-start cooldown          → a failed start is NOT re-attempted per file
+ *      (fail-fast within the window); expiry re-allows a real attempt
  *
  * No HTTP sidecar, no embedding provider, no lock on the user's brain: the
- * "sidecar" is a freshly-freed localhost port with nothing listening, and the
- * configured python paths are deliberately invalid so auto-start can't spawn
- * anything real.
+ * "sidecar" is a freshly-freed localhost port with nothing listening (or a
+ * stub /health server for the happy path), and the configured python paths
+ * are deliberately invalid so auto-start can't spawn anything real.
  */
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importOfficeFile } from '../src/core/office/adapter.ts';
 import { importFromFile } from '../src/core/import-file.ts';
-import { ensureSidecarUp } from '../src/core/office/sidecar-manage.ts';
+import { ensureSidecarUp, _resetSidecarStartCooldownForTest } from '../src/core/office/sidecar-manage.ts';
 
 let engine: PGLiteEngine;
 let dir: string;
@@ -46,10 +50,10 @@ async function freeLocalPort(): Promise<number> {
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
-  await engine.initSchema();
+  await engine.initSchema(); // ~5s cold: needs more than the 5s default hook timeout
   dir = mkdtempSync(join(tmpdir(), 'office-degrade-'));
   deadUrl = `http://127.0.0.1:${await freeLocalPort()}`;
-});
+}, 30_000);
 
 afterAll(async () => {
   try { await engine.disconnect(); } catch { /* best effort */ }
@@ -117,6 +121,7 @@ test('ensureSidecarUp: missing venv python returns false fast without spawning',
 }, 15_000);
 
 test('ensureSidecarUp: spawn failure resolves false — no unhandled error crash, no full deadline wait', async () => {
+  _resetSidecarStartCooldownForTest();
   // An existing but non-executable "python": spawn emits 'error' on every
   // platform (EACCES on POSIX, UNKNOWN/EINVAL on Windows). Before the error
   // handler landed, this crashed the process via the unhandled 'error' event.
@@ -128,3 +133,66 @@ test('ensureSidecarUp: spawn failure resolves false — no unhandled error crash
   expect(up).toBe(false);
   expect(Date.now() - t0).toBeLessThan(20_000);
 }, 30_000);
+
+test('an already-healthy sidecar returns true immediately — no venv required', async () => {
+  _resetSidecarStartCooldownForTest();
+  const srv = createHttpServer((_req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ ok: true }));
+  });
+  await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
+  const port = (srv.address() as { port: number }).port;
+  try {
+    // python deliberately nonexistent: the health probe must win before any
+    // venv check — a hand-started or external sidecar needs no local install.
+    const up = await ensureSidecarUp(
+      { url: `http://127.0.0.1:${port}`, python: join(dir, 'no-such-python') },
+      () => {},
+    );
+    expect(up).toBe(true);
+  } finally {
+    await new Promise<void>((resolve) => srv.close(() => resolve()));
+  }
+});
+
+test('failed-start cooldown: the next call fails fast without re-spawning', async () => {
+  _resetSidecarStartCooldownForTest();
+  const fakePy = join(dir, 'not-python-cooldown.txt');
+  writeFileSync(fakePy, 'nope\n');
+
+  // First attempt: real spawn failure → records the cooldown.
+  const first = await ensureSidecarUp({ url: deadUrl, python: fakePy, waitMs: 12_000 }, () => {});
+  expect(first).toBe(false);
+
+  // Second attempt inside the window: memo short-circuits before any spawn.
+  const logs: string[] = [];
+  const t0 = Date.now();
+  const second = await ensureSidecarUp({ url: deadUrl, python: fakePy, waitMs: 12_000 }, (l) => logs.push(l));
+  expect(second).toBe(false);
+  expect(logs.some((l) => l.includes('not retrying'))).toBe(true);
+  expect(logs.some((l) => l.includes('spawn failed'))).toBe(false); // no second spawn cycle
+  expect(Date.now() - t0).toBeLessThan(6_000); // health probe only — not spawn + poll
+}, 40_000);
+
+test('failed-start cooldown: expiry re-allows a real start attempt', async () => {
+  _resetSidecarStartCooldownForTest();
+  const fakePy = join(dir, 'not-python-expiry.txt');
+  writeFileSync(fakePy, 'nope\n');
+
+  const first = await ensureSidecarUp(
+    { url: deadUrl, python: fakePy, waitMs: 10_000, startCooldownMs: 1 },
+    () => {},
+  );
+  expect(first).toBe(false);
+
+  // Cooldown of 1ms has lapsed by now: the retry goes through a real spawn
+  // cycle again (observed via its spawn-failed log, not the cooldown log).
+  const logs: string[] = [];
+  const second = await ensureSidecarUp(
+    { url: deadUrl, python: fakePy, waitMs: 10_000, startCooldownMs: 1 },
+    (l) => logs.push(l),
+  );
+  expect(second).toBe(false);
+  expect(logs.some((l) => l.includes('not retrying'))).toBe(false);
+  expect(logs.some((l) => l.includes('spawn failed'))).toBe(true);
+}, 40_000);

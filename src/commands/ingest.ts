@@ -24,7 +24,8 @@ export async function runIngest(args: string[]): Promise<void> {
 
   if (sub === 'start') {
     const { ensureSidecarUp } = await import('../core/office/sidecar-manage.ts');
-    const ok = await ensureSidecarUp({ url: 'http://127.0.0.1:8765' }, (l) => console.error(l));
+    // Explicit user retry: bypass the failed-start cooldown.
+    const ok = await ensureSidecarUp({ url: 'http://127.0.0.1:8765', startCooldownMs: 0 }, (l) => console.error(l));
     console.log(ok ? '✓ Docling sidecar healthy on :8765.' : '✗ could not start the sidecar — run `gbrain ingest setup-docling` first.');
     if (!ok) process.exit(1);
     return;

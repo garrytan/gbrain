@@ -69,17 +69,58 @@ export async function setupDocling(onLog: (l: string) => void = () => {}): Promi
  * imports reuse the warm (model-loaded) server — and wait until /health is ok.
  * Best-effort: returns false (caller surfaces a clear error) if it can't start.
  */
+/**
+ * In-process memo of failed start attempts, per sidecar URL. A sidecar that
+ * persistently refuses to come up (broken venv deps, port conflict) must not
+ * cost every office file in a bulk import its own spawn + health-poll wait:
+ * within the cooldown, ensureSidecarUp fails fast right after the health
+ * probe. The health probe always runs first, so a sidecar that recovers (or
+ * is started by hand) wins immediately and clears the memo.
+ */
+const START_COOLDOWN_MS = 5 * 60_000;
+const startFailureAt = new Map<string, number>();
+
+/** Test seam: forget recorded start failures. */
+export function _resetSidecarStartCooldownForTest(): void {
+  startFailureAt.clear();
+}
+
 export async function ensureSidecarUp(
-  opts: { url: string; python?: string | null; env?: Record<string, string>; waitMs?: number },
+  opts: {
+    url: string;
+    python?: string | null;
+    env?: Record<string, string>;
+    waitMs?: number;
+    /** 0 disables the failed-start cooldown (explicit `gbrain ingest start`). */
+    startCooldownMs?: number;
+  },
   onLog: (l: string) => void = () => {},
 ): Promise<boolean> {
-  if (await sidecarHealthy(opts.url, 3_000)) return true;
+  if (await sidecarHealthy(opts.url, 3_000)) {
+    startFailureAt.delete(opts.url);
+    return true;
+  }
 
   const py = opts.python || venvPython();
   if (!existsSync(py)) {
     onLog(`Docling venv not found (${py}). Run: gbrain ingest setup-docling`);
     return false;
   }
+
+  const cooldownMs = opts.startCooldownMs ?? START_COOLDOWN_MS;
+  const failedAt = startFailureAt.get(opts.url);
+  if (failedAt !== undefined) {
+    const leftMs = failedAt + cooldownMs - Date.now();
+    if (leftMs > 0) {
+      onLog(
+        `Docling sidecar start failed ${Math.round((Date.now() - failedAt) / 1000)}s ago; ` +
+        `not retrying for ${Math.ceil(leftMs / 1000)}s. Run: gbrain ingest start (or setup-docling)`,
+      );
+      return false;
+    }
+    startFailureAt.delete(opts.url);
+  }
+
   const port = portFromUrl(opts.url);
   onLog(`starting Docling sidecar on :${port} (first start loads ML models, may take a minute) …`);
   const child = spawn(
@@ -98,12 +139,17 @@ export async function ensureSidecarUp(
   const deadline = Date.now() + (opts.waitMs ?? 180_000);
   while (Date.now() < deadline) {
     if (spawnError) {
+      startFailureAt.set(opts.url, Date.now());
       onLog(`Docling sidecar spawn failed: ${spawnError}. Run: gbrain ingest setup-docling`);
       return false;
     }
-    if (await sidecarHealthy(opts.url, 3_000)) return true;
+    if (await sidecarHealthy(opts.url, 3_000)) {
+      startFailureAt.delete(opts.url);
+      return true;
+    }
     await new Promise((r) => setTimeout(r, 2_000));
   }
+  startFailureAt.set(opts.url, Date.now());
   onLog('Docling sidecar did not become healthy in time.');
   return false;
 }

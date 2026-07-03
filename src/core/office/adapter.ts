@@ -90,9 +90,12 @@ export async function importOfficeFile(
   // Auto-start the Docling sidecar if it isn't already serving (best-effort;
   // spawns a detached uvicorn that later imports reuse). Skipped in tests.
   // Pipeline config (OCR + render scale) is passed as env at spawn time.
+  // A false return means down + unstartable (venv missing, spawn failure, or
+  // the failed-start cooldown) — a /parse attempt is doomed, so fail here with
+  // the actionable message instead of a raw connection error.
   if (!opts._parseForTest) {
     const { ensureSidecarUp } = await import('./sidecar-manage.ts');
-    await ensureSidecarUp(
+    const up = await ensureSidecarUp(
       {
         url: cfg.url,
         python: cfg.python,
@@ -103,6 +106,14 @@ export async function importOfficeFile(
       },
       (l) => console.error(`[docling] ${l}`),
     );
+    if (!up) {
+      return {
+        slug,
+        status: 'error',
+        chunks: 0,
+        error: 'docling sidecar: not running and auto-start failed — run `gbrain ingest start` (or `gbrain ingest setup-docling` if never installed)',
+      };
+    }
   }
 
   // Parse via the Docling sidecar (or the test seam).

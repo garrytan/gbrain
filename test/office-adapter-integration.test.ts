@@ -21,9 +21,9 @@ let dir: string;
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
-  await engine.initSchema();
+  await engine.initSchema(); // ~5s cold: needs more than the 5s default hook timeout
   dir = mkdtempSync(join(tmpdir(), 'office-it-'));
-});
+}, 30_000);
 
 afterAll(async () => {
   try { await engine.disconnect(); } catch { /* best effort */ }
