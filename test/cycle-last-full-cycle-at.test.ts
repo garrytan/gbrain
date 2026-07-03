@@ -4,7 +4,7 @@
  * was unspecified pre-PR).
  *
  * Conditions for write:
- *   - opts.sourceId is set (legacy callers without sourceId skip the write)
+ *   - opts.sourceId is set OR brainDir resolves to a sources.local_path row
  *   - engine is non-null (no-DB path skips)
  *   - status is 'ok' | 'clean' | 'partial' (failed/skipped don't mark fresh)
  *   - dryRun is false
@@ -48,12 +48,12 @@ beforeEach(async () => {
   gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-cycle-lfca-home-'));
 });
 
-async function seedSource(id: string): Promise<void> {
+async function seedSource(id: string, localPath = brainDir): Promise<void> {
   await engine.executeRaw(
     `INSERT INTO sources (id, name, local_path, config, archived, created_at)
      VALUES ($1, $2, $3, '{}'::jsonb, false, NOW())
      ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
-    [id, id, brainDir],
+    [id, id, localPath],
   );
 }
 
@@ -90,16 +90,28 @@ describe('runCycle last_full_cycle_at exit hook', () => {
     });
   });
 
-  test('legacy caller (no sourceId) does NOT write any source timestamp', async () => {
+  test('caller without sourceId writes timestamp when brainDir resolves to a source', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       await seedSource('default-like');
-      // No sourceId passed; should remain untouched.
+      // No sourceId passed; runCycle should derive the source from brainDir.
       await runCycle(engine, {
         brainDir,
         phases: ['lint'],
       });
-      // No per-source write happens; default source's config stays empty.
       const after = await readLastFullCycleAt('default-like');
+      expect(after).not.toBeNull();
+    });
+  });
+
+  test('caller without sourceId and without path-derived source skips the write', async () => {
+    await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
+      const unrelatedDir = mkdtempSync(join(tmpdir(), 'gbrain-cycle-lfca-other-'));
+      await seedSource('unmatched', unrelatedDir);
+      await runCycle(engine, {
+        brainDir,
+        phases: ['lint'],
+      });
+      const after = await readLastFullCycleAt('unmatched');
       expect(after).toBeNull();
     });
   });

@@ -319,9 +319,9 @@ Options:
 
   --source <id>       Scope the cycle to one source so doctor's
                       cycle_freshness check sees a fresh stamp on
-                      completion. Without this, gbrain dream's
-                      timestamp never lands and federated brains
-                      see "stale cycle" forever.
+                      completion. When omitted, gbrain derives the
+                      source from --dir / configured checkout when
+                      it matches sources.local_path.
   --source-id <id>    Alias for --source. Matches the v0.37.7.0+
                       naming used by import/extract/graph-query.
 

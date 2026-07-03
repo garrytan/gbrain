@@ -12,7 +12,8 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "*/plugin-sdk": ["test/plugin-sdk-compat.d.ts"]
     }
   },
   "include": ["src", "test"]
