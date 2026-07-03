@@ -19476,6 +19476,14 @@
         "requirements": []
       },
       "params": {
+        "auto_route": {
+          "type": [
+            "boolean"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Auto-apply the classified retrieval route. Defaults to true; pass false to keep route null."
+        },
         "graph_frontier": {
           "type": [
             "boolean",
@@ -19667,8 +19675,8 @@
           }
         }
       },
-      "compact_schema_hash": "5c3e563e5a247f1f004785ac42dc81ca13d33892f7db2069f216e0366be237be",
-      "full_schema_hash": "b8854160b0e1d48243b4b254ec85e33b8c5f1f35e6cf7cd6caeb8c3a57a1374d",
+      "compact_schema_hash": "2b996e0cfd466a08ab05bba8b551286bf5b981c2402c56e2b6183aa28478a3bd",
+      "full_schema_hash": "3f3497ff2cf83869e8e43ca7ea1eb3174a4badce0bd66930601a9a25c13c4fed",
       "memory_verb_families": [
         "discover_search"
       ],

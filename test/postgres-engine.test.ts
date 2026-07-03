@@ -282,11 +282,25 @@ describe('PostgresEngine search wiring', () => {
     expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
       'AND p.slug != ALL($3::text[])',
     );
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
+      'page_shortlist AS',
+    );
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
+      'p.page_embedding <=> $1::vector',
+    );
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
+      'shortlisted_chunks AS',
+    );
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
+      'omitted_chunks AS',
+    );
     expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain('LIMIT $4');
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain('LIMIT $5');
     expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).values).toEqual([
       pgVectorLiteral(query),
       'project',
       ['projects/apollo'],
+      56,
       7,
     ]);
     expect((calls[4] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(

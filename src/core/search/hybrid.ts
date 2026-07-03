@@ -187,30 +187,45 @@ function dedupeQueryVariants(queries: string[]): string[] {
  * Each result gets score = sum(1 / (K + rank)) across all lists it appears in.
  */
 function rrfFusion(lists: RrfInputList[]): SearchResult[] {
-  const scores = new Map<string, { result: SearchResult; rrfScore: number; bestVectorScore: number | null }>();
+  const scores = new Map<string, {
+    result: SearchResult;
+    keywordRrfScore: number;
+    semanticRrfScore: number;
+    bestVectorScore: number | null;
+  }>();
 
   for (const list of lists) {
     for (let rank = 0; rank < list.results.length; rank++) {
       const r = list.results[rank];
       const key = rrfResultKey(r);
       const existing = scores.get(key);
-      const rrfScore = 1 / (RRF_K + rank);
+      const rrfScore = 1 / (RRF_K + rank + 1);
       const vectorScore = list.semantic ? boundedVectorScore(r.score) : null;
 
       if (existing) {
-        existing.rrfScore += rrfScore;
+        if (list.semantic) {
+          existing.semanticRrfScore = Math.max(existing.semanticRrfScore, rrfScore);
+        } else {
+          existing.keywordRrfScore += rrfScore;
+        }
         if (vectorScore !== null) {
           existing.bestVectorScore = Math.max(existing.bestVectorScore ?? 0, vectorScore);
         }
       } else {
-        scores.set(key, { result: r, rrfScore, bestVectorScore: vectorScore });
+        scores.set(key, {
+          result: r,
+          keywordRrfScore: list.semantic ? 0 : rrfScore,
+          semanticRrfScore: list.semantic ? rrfScore : 0,
+          bestVectorScore: vectorScore,
+        });
       }
     }
   }
 
   // Sort by fused score descending
   return Array.from(scores.values())
-    .map(({ result, rrfScore, bestVectorScore }) => {
+    .map(({ result, keywordRrfScore, semanticRrfScore, bestVectorScore }) => {
+      const rrfScore = keywordRrfScore + semanticRrfScore;
       const semanticBoost = ((bestVectorScore ?? 0) * SEMANTIC_RERANK_WEIGHT) / RRF_K;
       return { result, score: rrfScore + semanticBoost };
     })

@@ -1007,6 +1007,58 @@ describe('retrieve context service', () => {
     });
   });
 
+  test('normalizes candidate base scores so backend scale does not swamp textual relevance', async () => {
+    await withEngine('score-normalization', async (engine) => {
+      await importFromContent(engine, 'systems/noisy-runtime', [
+        '---',
+        'type: system',
+        'title: Noisy Runtime',
+        '---',
+        '# Noisy Runtime',
+        'This page mentions runtime operations without the routing model.',
+      ].join('\n'), { path: 'systems/noisy-runtime.md' });
+      await importFromContent(engine, 'concepts/queue', [
+        '---',
+        'type: concept',
+        'title: Queue',
+        '---',
+        '# Queue',
+        'Queue assigns runtime requests to worker lanes.',
+      ].join('\n'), { path: 'concepts/queue.md' });
+
+      const result = await retrieveContext(engine, {
+        query: 'queue',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async () => [
+          {
+            slug: 'systems/noisy-runtime',
+            page_id: 1,
+            title: 'Noisy Runtime',
+            type: 'system',
+            chunk_text: 'runtime operations overview',
+            chunk_source: 'compiled_truth',
+            score: 15,
+            stale: false,
+          },
+          {
+            slug: 'concepts/queue',
+            page_id: 2,
+            title: 'Queue',
+            type: 'concept',
+            chunk_text: 'Queue assigns runtime requests to worker lanes.',
+            chunk_source: 'compiled_truth',
+            score: 0.01,
+            stale: false,
+          },
+        ],
+      });
+
+      expect(result.required_reads[0]!.slug).toBe('concepts/queue');
+    });
+  });
+
   test('recalls candidates from query variants when the full query is over-constrained', async () => {
     await withEngine('query-variant-recall', async (engine) => {
       await importFromContent(engine, 'concepts/queue-routing', [
@@ -2477,7 +2529,7 @@ describe('retrieve context service', () => {
     });
   });
 
-  test('uses context maps as orientation without making route reads the evidence boundary', async () => {
+  test('promotes context-map recommended reads into required_reads when candidate search misses', async () => {
     await withEngine('orientation', async (engine) => {
       await importFromContent(engine, 'systems/mbrain', [
         '---',
@@ -2508,16 +2560,25 @@ describe('retrieve context service', () => {
       expect(result.answerability.answerable_from_probe).toBe(false);
       expect(result.orientation.derived_consulted.some((ref) => ref.startsWith('context_map:'))).toBe(true);
       expect(result.orientation.recommended_reads.length).toBeGreaterThan(0);
-      expect(result.required_reads).toEqual([]);
-      expect(result.read_plan.selected_selectors).toEqual([]);
-      expect(result.read_plan.gap_reasons).toContain('orientation_reads_deferred');
+      expect(result.required_reads.length).toBeGreaterThan(0);
+      const orientationReadSlugs = result.orientation.recommended_reads
+        .map((selector) => selector.slug)
+        .filter((slug): slug is string => Boolean(slug));
+      expect(result.required_reads.map((selector) => selector.slug))
+        .toEqual(expect.arrayContaining(
+          orientationReadSlugs.slice(0, result.required_reads.length),
+        ));
+      expect(result.read_plan.selected_selectors).toEqual(
+        result.required_reads.map((selector) => retrievalSelectorId(selector)),
+      );
+      expect(result.read_plan.gap_reasons).not.toContain('no_canonical_read_candidates');
       expect(result.read_plan.next_actions).toContain(
-        'Broad-synthesis route contributes orientation reads only; read_plan.selected_selector_snapshots remains the evidence boundary.',
+        'Context-map recommended reads were considered for required_reads; selected_selector_snapshots still require read_context before factual claims.',
       );
     });
   });
 
-  test('documents broad-synthesis orientation as separate from retrieve_context evidence ranking', async () => {
+  test('lets broad-synthesis recommended reads compete with retrieve_context evidence ranking', async () => {
     await withEngine('broad-synthesis-orientation-contract', async (engine) => {
       await importFromContent(engine, 'concepts/canonical-memory', [
         '---',
@@ -2567,12 +2628,62 @@ describe('retrieve context service', () => {
       expect(result.required_reads.map((selector) => selector.slug))
         .toContain('concepts/canonical-memory');
       expect(result.required_reads.map((selector) => selector.slug))
-        .not.toContain('systems/derived-memory-map');
+        .toContain('systems/derived-memory-map');
       expect(result.read_plan.selected_selectors.some((selectorId) =>
-        selectorId.includes('systems/derived-memory-map'))).toBe(false);
+        selectorId.includes('systems/derived-memory-map'))).toBe(true);
       expect(result.read_plan.next_actions).toContain(
-        'Broad-synthesis route contributes orientation reads only; read_plan.selected_selector_snapshots remains the evidence boundary.',
+        'Context-map recommended reads were considered for required_reads; selected_selector_snapshots still require read_context before factual claims.',
       );
+    });
+  });
+
+  test('auto-applies a broad-synthesis route and supports explicit opt-out', async () => {
+    await withEngine('auto-route-broad-synthesis', async (engine) => {
+      await importFromContent(engine, 'concepts/canonical-memory', [
+        '---',
+        'type: concept',
+        'title: Canonical Memory',
+        '---',
+        '# Compiled Truth',
+        'Canonical Memory is the curated source of truth for broad synthesis.',
+        '[Source: User, direct message, 2026-05-07 09:20 KST]',
+      ].join('\n'), { path: 'concepts/canonical-memory.md' });
+      await importFromContent(engine, 'systems/derived-memory-map', [
+        '---',
+        'type: system',
+        'title: Canonical Memory System',
+        '---',
+        '# Overview',
+        'The derived map discusses Canonical Memory for broad orientation.',
+        '[Source: User, direct message, 2026-05-07 09:21 KST]',
+      ].join('\n'), { path: 'systems/derived-memory-map.md' });
+      await buildStructuralContextMapEntry(engine);
+
+      const result = await retrieveContext(engine, {
+        query: 'Canonical Memory',
+        include_orientation: true,
+      }, {
+        candidateSearch: async () => [],
+      });
+
+      expect(result.route?.selected_intent).toBe('broad_synthesis');
+      expect(result.route?.route?.route_kind).toBe('broad_synthesis');
+      const route = result.route?.route;
+      if (route?.route_kind !== 'broad_synthesis') {
+        throw new Error('Expected broad_synthesis auto route');
+      }
+      expect(route.payload.recommended_reads.map((read) => read.page_slug))
+        .toContain('systems/derived-memory-map');
+
+      const disabled = await retrieveContext(engine, {
+        query: 'Canonical Memory',
+        include_orientation: true,
+        auto_route: false,
+      }, {
+        candidateSearch: async () => [],
+      });
+
+      expect(disabled.route).toBeNull();
     });
   });
 

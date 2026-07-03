@@ -133,6 +133,7 @@ import {
 } from './utils.ts';
 import { ensurePageChunks } from './page-chunks.ts';
 import { appendPendingDerivedSearchResults } from './search/derived-freshness.ts';
+import { localVectorPageCandidateLimit } from './search/vector-prefilter.ts';
 import { DEFAULT_LOCAL_EMBEDDING_MODEL } from './embedding/provider.ts';
 import { assertPgVectorEmbeddingDimensions } from './pgvector-dimensions.ts';
 
@@ -4959,22 +4960,68 @@ export abstract class PgEngineBase {
     }
     filterSql += pgSearchTemporalFilter(opts, params, 'p');
 
+    params.push(localVectorPageCandidateLimit(limit));
+    const pageCandidateLimitParam = `$${params.length}`;
     params.push(limit);
+    const chunkLimitParam = `$${params.length}`;
 
     return this.withSearchTimeout(async (q) => {
       const { rows } = await q.query(
-        `SELECT
+        `WITH page_shortlist AS (
+          SELECT
+            p.id AS page_id,
+            1 - (p.page_embedding <=> $1::vector) AS page_score,
+            p.updated_at
+          FROM pages p
+          WHERE p.page_embedding IS NOT NULL
+            AND EXISTS (
+              SELECT 1
+              FROM content_chunks cc
+              WHERE cc.page_id = p.id
+                AND cc.embedding IS NOT NULL
+            )${filterSql}
+          ORDER BY page_score DESC, p.updated_at DESC
+          LIMIT ${pageCandidateLimitParam}
+        ),
+        shortlisted_chunks AS (
+          SELECT cc.id AS chunk_id
+          FROM content_chunks cc
+          JOIN page_shortlist ps ON ps.page_id = cc.page_id
+          WHERE cc.embedding IS NOT NULL
+        ),
+        omitted_chunks AS (
+          SELECT ranked_omitted.chunk_id
+          FROM (
+            SELECT
+              cc.id AS chunk_id,
+              1 - (cc.embedding <=> $1::vector) AS score,
+              p.updated_at
+            FROM content_chunks cc
+            JOIN pages p ON p.id = cc.page_id
+            LEFT JOIN page_shortlist ps ON ps.page_id = p.id
+            WHERE cc.embedding IS NOT NULL
+              AND ps.page_id IS NULL${filterSql}
+            ORDER BY score DESC, p.updated_at DESC
+            LIMIT ${chunkLimitParam}
+          ) ranked_omitted
+        ),
+        vector_candidates AS (
+          SELECT chunk_id FROM shortlisted_chunks
+          UNION
+          SELECT chunk_id FROM omitted_chunks
+        )
+        SELECT
           p.slug, p.id as page_id, p.title, p.type,
           p.updated_at,
           NULLIF(p.frontmatter->>'superseded_by', '') AS superseded_by,
           cc.chunk_text, cc.chunk_source, cc.chunk_index, cc.chunk_content_hash,
           1 - (cc.embedding <=> $1::vector) AS score,
           CASE WHEN p.timeline_changed_at > p.compiled_truth_changed_at THEN true ELSE false END AS stale
-        FROM content_chunks cc
+        FROM vector_candidates vc
+        JOIN content_chunks cc ON cc.id = vc.chunk_id
         JOIN pages p ON p.id = cc.page_id
-        WHERE cc.embedding IS NOT NULL${filterSql}
         ORDER BY score DESC, p.updated_at DESC
-        LIMIT $${params.length}`,
+        LIMIT ${chunkLimitParam}`,
         params
       );
 

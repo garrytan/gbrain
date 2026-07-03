@@ -157,10 +157,12 @@ export function resolveConfig(input: MBrainConfigInput): MBrainConfig {
     // auto-reads / broad-synthesis) runs the full hybrid candidate search by parity
     // with the lower-authority `query` op. Default off: the keyword-only probe is the
     // documented baseline, so offline / no-provider installs stay byte-for-byte
-    // unchanged (Invariant 8). Flip on once the recall eval gate is green in the field.
+    // unchanged (Invariant 8). Wave-2 live retrieval eval is now the regression
+    // gate, so the governed probe defaults to parity with `query`; callers can
+    // still opt out with retrieval.governed_probe_hybrid=false.
     retrieval_governed_probe_hybrid: input.retrieval_governed_probe_hybrid
       ?? input.retrieval?.governed_probe_hybrid
-      ?? false,
+      ?? true,
     retrieval_contextual_chunk_embeddings: input.retrieval_contextual_chunk_embeddings
       ?? input.retrieval?.contextual_chunk_embeddings
       ?? false,

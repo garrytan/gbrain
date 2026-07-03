@@ -446,6 +446,7 @@ export interface RetrievalMatchedChunk {
   type: PageType;
   chunk_source: ChunkSource;
   score: number;
+  search_rank_score?: number;
   stale: boolean;
   corpus_lane?: CorpusLaneMetadata;
 }
@@ -761,6 +762,7 @@ export interface RetrieveContextInput extends MemoryScenarioClassifierInput {
   token_budget?: number;
   include_orientation?: boolean;
   include_push_context?: boolean;
+  auto_route?: boolean;
   graph_frontier?: RetrieveContextGraphFrontierOptions;
   persist_trace?: boolean;
 }

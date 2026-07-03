@@ -13,15 +13,23 @@ export interface LocalChunkVectorCandidate {
 const PAGE_PREFILTER_MULTIPLIER = 8;
 const MIN_PAGE_CANDIDATES = 25;
 
+export function localVectorPageCandidateLimit(resultLimit: number): number {
+  return Math.max(resultLimit * PAGE_PREFILTER_MULTIPLIER, MIN_PAGE_CANDIDATES);
+}
+
+export function localVectorPageShortlistSize(candidateCount: number, resultLimit: number): number {
+  return Math.min(
+    candidateCount,
+    localVectorPageCandidateLimit(resultLimit),
+  );
+}
+
 export function selectLocalVectorPageIds(
   queryEmbedding: Float32Array,
   candidates: LocalPageVectorCandidate[],
   resultLimit: number,
 ): number[] {
-  const shortlistSize = Math.min(
-    candidates.length,
-    Math.max(resultLimit * PAGE_PREFILTER_MULTIPLIER, MIN_PAGE_CANDIDATES),
-  );
+  const shortlistSize = localVectorPageShortlistSize(candidates.length, resultLimit);
 
   return candidates
     .flatMap((candidate) => {

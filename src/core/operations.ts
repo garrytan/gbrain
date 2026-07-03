@@ -7213,6 +7213,10 @@ const retrieve_context: Operation = {
       type: 'boolean',
       description: 'Include a bounded selector-first push_context envelope; it contains no raw memory text and requires read_context before factual use.',
     },
+    auto_route: {
+      type: 'boolean',
+      description: 'Auto-apply the classified retrieval route. Defaults to true; pass false to keep route null.',
+    },
     graph_frontier: {
       type: ['object', 'string', 'boolean'],
       description: 'Explicit graph frontier selector planning flag. Default is off; graph paths are explanation-only.',
@@ -7239,6 +7243,7 @@ const retrieve_context: Operation = {
           token_budget: parsePositiveIntegerParam(p.token_budget, 'token_budget'),
           include_orientation: typeof p.include_orientation === 'boolean' ? p.include_orientation : undefined,
           include_push_context: p.include_push_context === true,
+          auto_route: typeof p.auto_route === 'boolean' ? p.auto_route : undefined,
           graph_frontier: parseRetrieveContextGraphFrontierParam(p.graph_frontier, 'graph_frontier'),
           persist_trace: typeof p.persist_trace === 'boolean' ? p.persist_trace : undefined,
         },

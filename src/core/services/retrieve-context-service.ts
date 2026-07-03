@@ -21,6 +21,8 @@ import type {
   RetrieveContextResult,
   RetrievalMatchedChunk,
   RetrievalRouteIntent,
+  RetrievalRouteSelectorInput,
+  RetrievalRouteSelectorResult,
   RetrievalTrace,
   RetrievalSelector,
   ScopeGateDecisionResult,
@@ -47,6 +49,7 @@ import {
 } from './retrieval-selector-service.ts';
 import { evaluateScopeGate } from './scope-gate-service.ts';
 import { buildSelectorFirstPushContextEnvelope } from './selector-first-push-context-service.ts';
+import { selectRetrievalRoute } from './retrieval-route-selector-service.ts';
 
 export type RetrieveContextCandidateSearch = (
   query: string,
@@ -414,10 +417,13 @@ export async function retrieveContext(
   const combinedCandidates = taskCandidate
     ? [taskCandidate, ...candidates]
     : candidates;
-  const baseRequiredReads = dedupeSelectorsByEvidence([
-    ...(taskWorkingSetSelector ? [taskWorkingSetSelector] : []),
-    ...candidates.map((candidate) => candidate.read_selector),
-  ].filter((selector) => selectorAllowedByRetrieveScope(selector, scopeGate))).slice(0, requiredReadLimit);
+  const baseRequiredReads = selectRequiredReadSelectors({
+    taskWorkingSetSelector,
+    candidates,
+    orientation,
+    scopeGate,
+    requiredReadLimit,
+  });
   const graphAugmentation = await maybeAugmentRequiredReadsWithGraphFrontier(engine, input, dependencies, {
     query,
     limit,
@@ -450,11 +456,18 @@ export async function retrieveContext(
     backend_gap: backendGap,
     graph_frontier_authority: graphFrontierUsed ? 'selector_planning_only' : undefined,
   });
+  const route = await maybeSelectAutoRoute(engine, input, {
+    scenario: classification.scenario,
+    query,
+    limit,
+    scopeGate,
+    dependencies,
+  });
   return maybePersistRetrieveTrace(engine, {
     request_id: requestId,
     scenario: classification.scenario,
     scope_gate: scopeGate,
-    route: null,
+    route,
     answerability: {
       answerable_from_probe: false,
       allowed_probe_answer_kind: 'none',
@@ -488,6 +501,129 @@ export async function retrieveContext(
         : []),
     ],
   }, input, startedAtMs);
+}
+
+async function maybeSelectAutoRoute(
+  engine: BrainEngine,
+  input: RetrieveContextInput,
+  context: {
+    scenario: MemoryScenario;
+    query: string;
+    limit: number;
+    scopeGate?: ScopeGateDecisionResult;
+    dependencies: RetrieveContextDependencies;
+  },
+): Promise<RetrievalRouteSelectorResult | null> {
+  if (input.auto_route === false) return null;
+  const routeInput = buildAutoRouteInput(input, context);
+  if (!routeInput) return null;
+  return selectRetrievalRoute(engine, routeInput, {
+    ...(context.dependencies.broadSynthesisCandidateSearch
+      ? { broadSynthesis: { candidateSearch: context.dependencies.broadSynthesisCandidateSearch } }
+      : {}),
+  });
+}
+
+function buildAutoRouteInput(
+  input: RetrieveContextInput,
+  context: {
+    scenario: MemoryScenario;
+    query: string;
+    limit: number;
+    scopeGate?: ScopeGateDecisionResult;
+  },
+): RetrievalRouteSelectorInput | null {
+  if (context.query.length === 0 && !input.task_id) return null;
+  const intent = intentFromScenario(context.scenario);
+  if (intent === 'task_resume' && !input.task_id) {
+    return {
+      intent: 'broad_synthesis',
+      query: context.query,
+      limit: context.limit,
+      requested_scope: normalizedRouteScope(input.requested_scope ?? context.scopeGate?.resolved_scope),
+      persist_trace: false,
+    };
+  }
+  if (intent === 'personal_profile_lookup') {
+    const subject = firstKnownSubjectRef(input.known_subjects) ?? context.query;
+    if (!subject.trim()) return null;
+    return {
+      intent,
+      query: context.query,
+      subject,
+      limit: context.limit,
+      requested_scope: normalizedRouteScope(input.requested_scope ?? 'personal'),
+      persist_trace: false,
+    };
+  }
+  if (intent === 'mixed_scope_bridge') {
+    return {
+      intent,
+      query: context.query,
+      limit: context.limit,
+      requested_scope: normalizedRouteScope(input.requested_scope ?? context.scopeGate?.resolved_scope),
+      subject: firstKnownSubjectRef(input.known_subjects),
+      persist_trace: false,
+    };
+  }
+  return {
+    intent,
+    task_id: input.task_id,
+    query: context.query,
+    limit: context.limit,
+    requested_scope: normalizedRouteScope(input.requested_scope ?? context.scopeGate?.resolved_scope),
+    persist_trace: false,
+  };
+}
+
+function firstKnownSubjectRef(subjects: RetrieveContextInput['known_subjects']): string | undefined {
+  for (const subject of subjects ?? []) {
+    if (typeof subject === 'string') {
+      const value = subject.trim();
+      if (value.length > 0) return value;
+      continue;
+    }
+    const value = subject.ref.trim();
+    if (value.length > 0) return value;
+  }
+  return undefined;
+}
+
+function normalizedRouteScope(scope: ScopeGateScope | undefined): RetrievalRouteSelectorInput['requested_scope'] {
+  return scope === 'work' || scope === 'personal' || scope === 'mixed' ? scope : undefined;
+}
+
+function selectRequiredReadSelectors(input: {
+  taskWorkingSetSelector: RetrievalSelector | null;
+  candidates: RetrieveContextCandidate[];
+  orientation: RetrieveContextOrientation;
+  scopeGate?: ScopeGateDecisionResult;
+  requiredReadLimit: number;
+}): RetrievalSelector[] {
+  const pinnedSelectors = input.taskWorkingSetSelector
+    ? [input.taskWorkingSetSelector]
+    : [];
+  const candidateSelectors = input.candidates.map((candidate) => candidate.read_selector);
+  const orientationSelectors = input.orientation.recommended_reads;
+  return dedupeSelectorsByEvidence([
+    ...pinnedSelectors,
+    ...interleaveSelectors(candidateSelectors, orientationSelectors),
+  ].filter((selector) => selectorAllowedByRetrieveScope(selector, input.scopeGate))).slice(0, input.requiredReadLimit);
+}
+
+function interleaveSelectors(
+  primarySelectors: RetrievalSelector[],
+  secondarySelectors: RetrievalSelector[],
+): RetrievalSelector[] {
+  const selectors: RetrievalSelector[] = [];
+  const maxLength = Math.max(primarySelectors.length, secondarySelectors.length);
+  for (let index = 0; index < maxLength; index += 1) {
+    const primary = primarySelectors[index];
+    if (primary) selectors.push(primary);
+    const secondary = secondarySelectors[index];
+    if (secondary) selectors.push(secondary);
+  }
+  return selectors;
 }
 
 async function maybeAugmentRequiredReadsWithGraphFrontier(
@@ -997,6 +1133,7 @@ async function groupCandidatesByCanonicalPage(
         manifestBySlug.get(slugLookupKey(group.slug)),
         sectionsBySlug.get(slugLookupKey(group.slug)) ?? [],
         repoContext,
+        normalizedSearchRankScore(group.rank),
       )));
     resolvedCandidates.push(...resolved);
   }
@@ -1076,7 +1213,7 @@ function scoreResolvedCandidate(
   const matchedChunkText = normalizeText(candidate.matched_chunks
     .map((chunk) => `${chunk.title} ${chunk.slug}`)
     .join(' '));
-  let score = Math.max(0, ...candidate.matched_chunks.map((chunk) => chunk.score)) * 100;
+  let score = Math.max(0, ...candidate.matched_chunks.map(normalizedMatchedChunkScore)) * 100;
   score *= sourceRankFactor(candidate.canonical_target.slug ?? candidate.read_selector.slug ?? '');
 
   for (let index = 0; index < queryTokens.length; index += 1) {
@@ -1260,11 +1397,12 @@ function slugFromRetrievalTraceSourceRef(sourceRef: string): string | undefined 
 
 async function resolveCandidateGroup(
   engine: BrainEngine,
-  group: { slug: string; results: SearchResult[]; top: SearchResult },
+  group: { slug: string; results: SearchResult[]; top: SearchResult; rank: number },
   query: string,
   manifest?: NoteManifestEntry,
   sections?: NoteSectionEntry[],
   repoContext?: string,
+  searchRankScore?: number,
 ): Promise<RetrieveContextCandidate> {
   const readResult = bestTimelineSearchResult(group.results) ?? group.top;
   const selector = await bestReadSelectorForSearchResult(engine, readResult, query, sections, manifest?.content_hash);
@@ -1295,7 +1433,7 @@ async function resolveCandidateGroup(
       scope_id: readSelector.scope_id,
       ...(corpusLane ? { corpus_lane: corpusLane } : {}),
     },
-    matched_chunks: group.results.map((result) => toMatchedChunk(result, corpusLane)),
+    matched_chunks: group.results.map((result) => toMatchedChunk(result, corpusLane, searchRankScore)),
     why_matched: whyMatched,
     activation: group.top.stale ? 'verify_first' : 'candidate_only',
     read_priority: 0,
@@ -2132,6 +2270,7 @@ function buildReadPlan(input: {
     .map((candidate) => candidate.candidate_id);
   const deferredOrientationReads = input.orientation.recommended_reads
     .filter((selector) => !selectedEvidence.has(selectorEvidencePlanKey(selector)));
+  const hasOrientationReads = input.orientation.recommended_reads.length > 0;
   const gapReasons: RetrieveContextReadPlan['gap_reasons'] = [];
 
   if (input.required_reads.length === 0) {
@@ -2161,6 +2300,7 @@ function buildReadPlan(input: {
     next_actions: readPlanNextActions(
       selectedSelectors,
       deferredCandidateIds,
+      hasOrientationReads,
       deferredOrientationReads.length > 0,
       input.candidate_signals,
       input.backend_gap_reason,
@@ -2177,6 +2317,7 @@ function readPlanNextActions(
   selectedSelectors: string[],
   deferredCandidateIds: string[],
   hasOrientationReads: boolean,
+  hasDeferredOrientationReads: boolean,
   candidateSignals: CandidateSignalResult,
   backendGapReason?: CandidateSearchBackendGap,
 ): string[] {
@@ -2190,7 +2331,10 @@ function readPlanNextActions(
     actions.push('If read_context reports gaps, rerun retrieve_context with a narrower query or higher limit.');
   }
   if (hasOrientationReads) {
-    actions.push('Broad-synthesis route contributes orientation reads only; read_plan.selected_selector_snapshots remains the evidence boundary.');
+    actions.push('Context-map recommended reads were considered for required_reads; selected_selector_snapshots still require read_context before factual claims.');
+  }
+  if (hasDeferredOrientationReads) {
+    actions.push('Some context-map recommended reads were deferred by the read budget; narrow the query or raise the limit if synthesis coverage is incomplete.');
   }
   if (candidateSignals.candidate_signals.length > 0) {
     actions.push('Inspect candidate_signals separately; they are non-canonical and not answer evidence.');
@@ -2201,7 +2345,23 @@ function readPlanNextActions(
   return actions;
 }
 
-function toMatchedChunk(result: SearchResult, corpusLane?: RetrievalMatchedChunk['corpus_lane']): RetrievalMatchedChunk {
+function normalizedMatchedChunkScore(chunk: RetrievalMatchedChunk): number {
+  if (typeof chunk.search_rank_score === 'number' && Number.isFinite(chunk.search_rank_score)) {
+    return Math.max(0, Math.min(1, chunk.search_rank_score));
+  }
+  return Math.max(0, Math.min(1, chunk.score));
+}
+
+function normalizedSearchRankScore(rank: number): number {
+  if (!Number.isFinite(rank) || rank < 0) return 0;
+  return 1 / (rank + 10);
+}
+
+function toMatchedChunk(
+  result: SearchResult,
+  corpusLane?: RetrievalMatchedChunk['corpus_lane'],
+  searchRankScore?: number,
+): RetrievalMatchedChunk {
   return {
     slug: result.slug,
     page_id: result.page_id,
@@ -2209,6 +2369,7 @@ function toMatchedChunk(result: SearchResult, corpusLane?: RetrievalMatchedChunk
     type: result.type,
     chunk_source: result.chunk_source,
     score: result.score,
+    ...(searchRankScore !== undefined ? { search_rank_score: searchRankScore } : {}),
     stale: result.stale,
     ...(corpusLane ? { corpus_lane: corpusLane } : {}),
   };
