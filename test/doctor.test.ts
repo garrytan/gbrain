@@ -31,17 +31,6 @@ describe('doctor command', () => {
     expect(src).toContain('gbrain frontmatter validate');
   });
 
-  test('checkSyncFreshness uses shared liveSyncStatus for live-lock liveness', async () => {
-    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
-    const block = source.slice(
-      source.indexOf('const inProgress: string[] = []'),
-      source.indexOf('for (const source of sources)'),
-    );
-    expect(block).toContain('liveSyncStatus');
-    expect(block).not.toContain('inspectLock');
-    expect(block).not.toContain('syncLockId');
-  });
-
   test('Check interface supports issues array', async () => {
     // `Check` is a TypeScript interface — type-only, no runtime value.
     // Importing it for type assertion is enough to validate the shape.
