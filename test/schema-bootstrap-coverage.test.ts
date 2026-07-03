@@ -168,6 +168,13 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // SCHEMA_SQL replay creates the index. Powers `gbrain extract --stale` + the
   // `links_extraction_lag` doctor check.
   { kind: 'column', table: 'pages', column: 'links_extracted_at' },
+  // v0.42.x (v121) — forward-referenced by `CREATE INDEX idx_timeline_event_page
+  // ON timeline_entries(event_page_id)` and the partial UNIQUE
+  // `idx_timeline_event_dedup ON timeline_entries(event_page_id, date)`.
+  // Pre-v121 brains have timeline_entries without this column; bootstrap adds it
+  // before SCHEMA_SQL replay creates the indexes. Powers the event→timeline
+  // projection (a type:event page projects one dated row keyed to event_page_id).
+  { kind: 'column', table: 'timeline_entries', column: 'event_page_id' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -253,6 +260,14 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       ALTER TABLE pages DROP COLUMN IF EXISTS generation;
       ALTER TABLE pages DROP COLUMN IF EXISTS contextual_retrieval_mode;
       ALTER TABLE pages DROP COLUMN IF EXISTS corpus_generation;
+
+      -- v121 event_page_id strip: drop the indexes + FK first, then the column,
+      -- so the brain looks like it pre-dates the timeline projection pointer and
+      -- applyForwardReferenceBootstrap has to re-add it.
+      DROP INDEX IF EXISTS idx_timeline_event_page;
+      DROP INDEX IF EXISTS idx_timeline_event_dedup;
+      ALTER TABLE timeline_entries DROP CONSTRAINT IF EXISTS timeline_entries_event_page_id_fkey;
+      ALTER TABLE timeline_entries DROP COLUMN IF EXISTS event_page_id;
     `);
 
     // Note: we don't strip sources.archived* here because they're inline in the
@@ -325,6 +340,13 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       ALTER TABLE pages DROP COLUMN IF EXISTS import_filename;
       ALTER TABLE pages DROP COLUMN IF EXISTS salience_touched_at;
       ALTER TABLE pages DROP COLUMN IF EXISTS emotional_weight;
+
+      -- v121: strip event_page_id + its indexes/FK so the SCHEMA_SQL replay
+      -- below would crash on idx_timeline_event_page without the bootstrap.
+      DROP INDEX IF EXISTS idx_timeline_event_page;
+      DROP INDEX IF EXISTS idx_timeline_event_dedup;
+      ALTER TABLE timeline_entries DROP CONSTRAINT IF EXISTS timeline_entries_event_page_id_fkey;
+      ALTER TABLE timeline_entries DROP COLUMN IF EXISTS event_page_id;
     `);
 
     // Bootstrap, then schema replay. Either step crashing fails the test.
