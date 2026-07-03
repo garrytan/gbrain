@@ -41,6 +41,18 @@ export interface GBrainConfig {
    * merge → buildGatewayConfig env dict → recipe reads ZEROENTROPY_API_KEY.
    */
   zeroentropy_api_key?: string;
+  /**
+   * OpenRouter API key. OpenRouter's recipe reads OPENROUTER_API_KEY from the
+   * gateway env at auth-resolve time. `loadConfig` folds the file-plane value
+   * into the config object via the env overlay, and `buildGatewayConfig` maps
+   * it into the gateway env dict. Without this seam, users who set
+   * openrouter_api_key in ~/.gbrain/config.json (rather than exporting it as a
+   * real OS env var) find it silently dropped — the OpenRouter recipe's
+   * `auth_env.required: ['OPENROUTER_API_KEY']` check never sees the key, and
+   * chat-based operations (takes extract, propose_takes) fail with "chat
+   * gateway unavailable (no API key configured)".
+   */
+  openrouter_api_key?: string;
   /** AI gateway config (v0.14+). v0.36+ default: "zeroentropyai:zembed-1" / 1280 / "anthropic:claude-haiku-4-5-20251001". */
   embedding_model?: string;
   embedding_dimensions?: number;
@@ -526,6 +538,7 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
     ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
     ...(process.env.ZEROENTROPY_API_KEY ? { zeroentropy_api_key: process.env.ZEROENTROPY_API_KEY } : {}),
+    ...(process.env.OPENROUTER_API_KEY ? { openrouter_api_key: process.env.OPENROUTER_API_KEY } : {}),
     ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
     ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
     ...(process.env.GBRAIN_EXPANSION_MODEL ? { expansion_model: process.env.GBRAIN_EXPANSION_MODEL } : {}),
@@ -815,6 +828,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'database_path',
   'openai_api_key',
   'anthropic_api_key',
+  'zeroentropy_api_key',
+  'openrouter_api_key',
   'embedding_model',
   'embedding_dimensions',
   'embedding_disabled',

@@ -9,7 +9,7 @@
  * import it from `../../src/cli.ts`.
  *
  * The single ownership site for: (a) folding file-plane API keys
- * (openai/anthropic/zeroentropy) into the gateway env, and (b) threading
+ * (openai/anthropic/zeroentropy/openrouter) into the gateway env, and (b) threading
  * local-server `*_BASE_URL` env vars into base_urls. Both matter for the
  * init-time embedding-key probe — without (a) it would false-warn on
  * config.json-keyed users, and without (b) a live probe could hit the wrong
@@ -34,6 +34,13 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // plane field now exists (GBrainConfig type) and gets mapped here, so
   // setting it via `~/.gbrain/config.json` propagates into the gateway.
   if (c.zeroentropy_api_key) envFromConfig.ZEROENTROPY_API_KEY = c.zeroentropy_api_key;
+  // openrouter_api_key: OpenRouter recipe declares OPENROUTER_API_KEY as a
+  // required auth_env var. Without this mapping, users who set the key in
+  // ~/.gbrain/config.json find it silently dropped — the recipe's
+  // defaultResolveAuth reads cfg.env[required[0]] which resolves to undefined,
+  // and the gateway skips the recipe with "missing_env". Process env still
+  // wins via the ...process.env spread below.
+  if (c.openrouter_api_key) envFromConfig.OPENROUTER_API_KEY = c.openrouter_api_key;
 
   // v0.32 codex finding #4+#5 fix: thread local-server _BASE_URL env vars
   // into base_urls so the gateway hits the user's configured port. Without
