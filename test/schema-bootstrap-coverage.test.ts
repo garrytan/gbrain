@@ -730,6 +730,17 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // brains is invisible to them). Migration is column-only, no FK,
   // no index — bootstrap probe would be pure overhead.
   'facts.event_type',
+  // v0.42.56.0 (migration v122, #2390) — Life Chronicle ontology columns.
+  // Same precedent as facts.claim_metric et al: the `facts` table itself is
+  // migration-created (absent from PGLITE_SCHEMA_SQL), so no schema-blob
+  // forward reference can exist; the partial indexes (idx_facts_dimension,
+  // idx_facts_ontology_dedup) live INSIDE the same v122 migration. Every
+  // reader filters `dimension IS NOT NULL`, so NULL on old brains is
+  // invisible. Column-only, no bootstrap probe needed.
+  'facts.dimension',
+  'facts.value',
+  'facts.value_hash',
+  'facts.dim_status',
   // v0.39.1.0 (migration v88) — schema-pack provenance per-source captured as
   // inline canonical closure snapshot on every eval_candidates row. NULL by
   // default; no index in PGLITE_SCHEMA_SQL references it. Migration handles

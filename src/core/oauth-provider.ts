@@ -22,7 +22,7 @@ import type {
 import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { AuthInfo as SdkAuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import { InvalidTokenError, InvalidClientMetadataError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
 import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
@@ -183,6 +183,16 @@ interface GBrainOAuthProviderOptions {
    * before mcpAuthRouter ran).
    */
   dcrDisabled?: boolean;
+  /**
+   * Allow the consent-bypassing `client_credentials` grant on the unauthenticated
+   * Dynamic Client Registration path. Default false (#1353): a self-registered
+   * DCR client defaults to `authorization_code` (which goes through /authorize
+   * consent), and an explicit `client_credentials` request is rejected. Operators
+   * who genuinely need machine-to-machine DCR clients opt in via
+   * `--enable-dcr-insecure`. Manual CLI / admin registration is unaffected
+   * (operator-trusted, registers grants directly).
+   */
+  allowClientCredentialsDcr?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +200,7 @@ interface GBrainOAuthProviderOptions {
 // ---------------------------------------------------------------------------
 
 class GBrainClientsStore implements OAuthRegisteredClientsStore {
-  constructor(private sql: SqlQuery) {}
+  constructor(private sql: SqlQuery, private allowClientCredentialsDcr = false) {}
 
   async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
     const rows = await this.sql`
@@ -243,6 +253,24 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     // registration entry points share one allow-list.
     const authMethod = validateTokenEndpointAuthMethod(client.token_endpoint_auth_method);
 
+    // v0.42 (#1353): the DCR path is the unauthenticated network entry point.
+    // `client_credentials` skips /authorize consent entirely, so a self-
+    // registered DCR client must NOT get it by default. Default the grant to
+    // `authorization_code` (the consent-bearing flow) when unspecified, and
+    // reject an explicit `client_credentials` request unless the operator opted
+    // in via `--enable-dcr-insecure`. Manual CLI/admin registration bypasses
+    // this store method, so operators can still mint machine clients directly.
+    const grantTypes = (client.grant_types && client.grant_types.length > 0)
+      ? client.grant_types
+      : ['authorization_code'];
+    if (!this.allowClientCredentialsDcr && grantTypes.includes('client_credentials')) {
+      throw new InvalidClientMetadataError(
+        'client_credentials grant is not permitted via dynamic client registration; ' +
+        'restart the server with --enable-dcr-insecure to allow it, or register the ' +
+        'client via the gbrain CLI / admin API.',
+      );
+    }
+
     const clientId = generateToken('gbrain_cl_');
     // v0.34.1 (#909): RFC 7591 §2 — clients that authenticate at the token
     // endpoint via PKCE alone declare `token_endpoint_auth_method: "none"`.
@@ -273,7 +301,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                     client_id_issued_at, source_id, federated_read)
         VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                 ${pgArray((client.redirect_uris || []).map(String))},
-                ${pgArray(client.grant_types || ['client_credentials'])},
+                ${pgArray(grantTypes)},
                 ${client.scope || ''}, ${authMethod},
                 ${now}, ${'default'}, ${pgArray(['default'])})
       `;
@@ -286,7 +314,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                         client_id_issued_at, source_id)
             VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                     ${pgArray((client.redirect_uris || []).map(String))},
-                    ${pgArray(client.grant_types || ['client_credentials'])},
+                    ${pgArray(grantTypes)},
                     ${client.scope || ''}, ${authMethod},
                     ${now}, ${'default'})
           `;
@@ -298,7 +326,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                           client_id_issued_at)
               VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                       ${pgArray((client.redirect_uris || []).map(String))},
-                      ${pgArray(client.grant_types || ['client_credentials'])},
+                      ${pgArray(grantTypes)},
                       ${client.scope || ''}, ${authMethod},
                       ${now})
             `;
@@ -313,7 +341,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                       client_id_issued_at)
           VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                   ${pgArray((client.redirect_uris || []).map(String))},
-                  ${pgArray(client.grant_types || ['client_credentials'])},
+                  ${pgArray(grantTypes)},
                   ${client.scope || ''}, ${authMethod},
                   ${now})
         `;
@@ -350,7 +378,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
   constructor(options: GBrainOAuthProviderOptions) {
     this.sql = options.sql;
-    this._clientsStore = new GBrainClientsStore(this.sql);
+    this._clientsStore = new GBrainClientsStore(this.sql, options.allowClientCredentialsDcr === true);
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;

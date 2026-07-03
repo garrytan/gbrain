@@ -87,6 +87,18 @@ and the DCR `POST /register` path. Pre-v0.41.3 the CLI hard-coded
 operators to UPDATE `oauth_clients` rows by hand to make claude.ai work
 without `--enable-dcr`. That footgun is gone.
 
+### DCR consent default (v0.42.55+)
+
+The "disable `client_credentials`, only allow `authorization_code`" guidance
+above is now the built-in default for the DCR path, not just advice for custom
+wrappers. With `--enable-dcr` on, a self-registered client defaults to the
+`authorization_code` (browser-approval) grant, and an explicit
+`client_credentials` request is rejected with `invalid_client_metadata`.
+Operators who genuinely need the machine-to-machine grant on the registration
+endpoint opt in with `--enable-dcr-insecure` (which implies `--enable-dcr`); a
+startup WARNING prints whenever DCR is enabled, and a second when the insecure
+grant is allowed. Pre-registering clients via the CLI / admin API is unchanged.
+
 ### Token Management
 
 ```bash

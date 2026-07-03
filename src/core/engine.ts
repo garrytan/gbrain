@@ -4,6 +4,9 @@ import type {
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath, RelationalFanoutRow, RelationalFanoutOpts,
   TimelineEntry, TimelineInput, TimelineOpts,
+  ChronicleTimelineRow, ChronicleTimelineOpts, LastSeenResult,
+  OntologyObservationInput, OntologyMergeResult, OntologyValue, OntologyDimensionStat,
+  OntologyConflict, OntologyReadOpts,
   RawData,
   PageVersion,
   BrainStats, BrainHealth,
@@ -1381,6 +1384,42 @@ export interface BrainEngine {
    */
   addTimelineEntriesBatch(entries: TimelineBatchInput[], opts?: BatchOpts): Promise<number>;
   getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]>;
+
+  // v0.42.x — Life Chronicle (#2390) timeline reads. All filter the depth page
+  // (and any event page) on deleted_at IS NULL, order by COALESCE(event
+  // effective_date, date), and honor source scope (sourceIds[] > sourceId).
+  /** Events/timeline rows on a given day (or its ISO week when opts.week). */
+  getTimelineForDate(date: string, opts?: ChronicleTimelineOpts): Promise<ChronicleTimelineRow[]>;
+  /** Events/timeline rows on or after `date`, optionally filtered by event.kind. */
+  getSince(date: string, opts?: ChronicleTimelineOpts): Promise<ChronicleTimelineRow[]>;
+  /** "On this day" — events from the same month-day in PRIOR years (default: today). */
+  getOnThisDay(opts?: { date?: string; limit?: number; sourceId?: string; sourceIds?: string[] }): Promise<ChronicleTimelineRow[]>;
+  /** Most recent date an entity appears (its own page or an event's `who`). */
+  getLastSeen(entitySlug: string, opts?: { asof?: string; sourceId?: string; sourceIds?: string[] }): Promise<LastSeenResult>;
+  /**
+   * Upsert the date-index projection row for an event page: page_id = depth
+   * page, event_page_id = event page, keyed (event_page_id, date). Re-extraction
+   * with a changed summary UPDATEs (no duplicate). Returns projected=false when
+   * either slug is missing in the source. Idempotent.
+   */
+  upsertEventProjection(opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string }): Promise<{ projected: boolean }>;
+
+  // v0.42.x — Life Chronicle (#2390) per-entity ontology (rides `facts`).
+  /**
+   * Record one ontology observation (entity has dimension=value). Idempotent on
+   * the deterministic dedup key (source_id, entity_slug, dimension, value_hash,
+   * source_markdown_slug). A new value forward-supersedes the prior open row
+   * (expired_at + superseded_by); the same value corroborates; a backdated
+   * conflicting value is inserted WITHOUT rewriting the prior (surfaced by
+   * findOntologyConflicts). Never throws on dup — returns action 'noop'.
+   */
+  mergeOntologyFact(obs: OntologyObservationInput): Promise<OntologyMergeResult>;
+  /** Current resolved ontology for an entity at `asof` (default now). */
+  getOntology(entitySlug: string, opts?: OntologyReadOpts): Promise<OntologyValue[]>;
+  /** Meta-ontology: which dimensions exist across the brain, and how widely. */
+  discoverOntologyDimensions(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<OntologyDimensionStat[]>;
+  /** Dimensions with ≥2 distinct current-open values from ≥2 provenances. */
+  findOntologyConflicts(opts?: { sourceId?: string; sourceIds?: string[]; minConfidence?: number }): Promise<OntologyConflict[]>;
 
   // Raw data
   /**

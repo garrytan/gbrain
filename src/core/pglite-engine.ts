@@ -30,6 +30,9 @@ import type {
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
+  ChronicleTimelineRow, ChronicleTimelineOpts, LastSeenResult,
+  OntologyObservationInput, OntologyMergeResult, OntologyValue, OntologyDimensionStat,
+  OntologyConflict, OntologyReadOpts,
   RawData,
   PageVersion,
   BrainStats, BrainHealth,
@@ -48,6 +51,7 @@ import { normalizeWeightForStorage } from './takes-fence.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { sanitizeForJsonb, buildLinkRows, buildTimelineRows, buildTakeRows } from './batch-rows.ts';
 import { GBrainError, PAGE_SORT_SQL, ENRICH_ORDER_SQL } from './types.ts';
+import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
@@ -3374,6 +3378,269 @@ export class PGLiteEngine implements BrainEngine {
       params
     );
     return result.rows as unknown as TimelineEntry[];
+  }
+
+  // ── v0.42.x Life Chronicle (#2390) timeline reads ───────────────────────
+  // Same result contract as the Postgres engine (parity is on results, not the
+  // builder idiom): JOIN depth page (deleted_at IS NULL), LEFT JOIN event page,
+  // hide soft-deleted event projections, order by COALESCE(event effective_date,
+  // date). Source scope: federated sourceIds[] > scalar sourceId > unscoped.
+  private pushChronicleSource(where: string[], params: unknown[], opts?: { sourceId?: string; sourceIds?: string[] }): void {
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      where.push(`p.source_id = ANY($${params.length}::text[])`);
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      where.push(`p.source_id = $${params.length}`);
+    }
+  }
+
+  private static CHRONICLE_SELECT = `
+    SELECT te.date::text AS date, te.summary, te.detail, te.source,
+           te.page_id, p.slug AS page_slug,
+           te.event_page_id, ep.slug AS event_slug,
+           ep.effective_date::text AS effective_date,
+           ep.frontmatter->'event'->>'kind' AS kind
+    FROM timeline_entries te
+    JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL
+    LEFT JOIN pages ep ON ep.id = te.event_page_id`;
+
+  async getTimelineForDate(date: string, opts?: ChronicleTimelineOpts): Promise<ChronicleTimelineRow[]> {
+    const limit = opts?.limit ?? 200;
+    const params: unknown[] = [date];
+    const lower = opts?.week ? `date_trunc('week', $1::date)::date` : `$1::date`;
+    const upper = opts?.week ? `(date_trunc('week', $1::date) + interval '6 days')::date` : `$1::date`;
+    const where: string[] = [
+      `te.date >= ${lower}`,
+      `te.date <= ${upper}`,
+      `(te.event_page_id IS NULL OR ep.deleted_at IS NULL)`,
+    ];
+    this.pushChronicleSource(where, params, opts);
+    params.push(limit);
+    const result = await this.db.query(
+      `${PGLiteEngine.CHRONICLE_SELECT}
+       WHERE ${where.join(' AND ')}
+       ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) ASC, te.id ASC
+       LIMIT $${params.length}`,
+      params,
+    );
+    return result.rows as unknown as ChronicleTimelineRow[];
+  }
+
+  async getSince(date: string, opts?: ChronicleTimelineOpts): Promise<ChronicleTimelineRow[]> {
+    const limit = opts?.limit ?? 200;
+    const params: unknown[] = [date];
+    const where: string[] = [
+      `te.date >= $1::date`,
+      `(te.event_page_id IS NULL OR ep.deleted_at IS NULL)`,
+    ];
+    if (opts?.kind) {
+      params.push(opts.kind);
+      where.push(`ep.frontmatter->'event'->>'kind' = $${params.length}`);
+    }
+    this.pushChronicleSource(where, params, opts);
+    params.push(limit);
+    const result = await this.db.query(
+      `${PGLiteEngine.CHRONICLE_SELECT}
+       WHERE ${where.join(' AND ')}
+       ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) ASC, te.id ASC
+       LIMIT $${params.length}`,
+      params,
+    );
+    return result.rows as unknown as ChronicleTimelineRow[];
+  }
+
+  async getOnThisDay(opts?: { date?: string; limit?: number; sourceId?: string; sourceIds?: string[] }): Promise<ChronicleTimelineRow[]> {
+    const limit = opts?.limit ?? 50;
+    const params: unknown[] = [];
+    let target: string;
+    if (opts?.date) { params.push(opts.date); target = `$${params.length}::date`; }
+    else { target = `current_date`; }
+    const where: string[] = [
+      `EXTRACT(MONTH FROM te.date) = EXTRACT(MONTH FROM ${target})`,
+      `EXTRACT(DAY FROM te.date) = EXTRACT(DAY FROM ${target})`,
+      `te.date < ${target}`,
+      `(te.event_page_id IS NULL OR ep.deleted_at IS NULL)`,
+    ];
+    this.pushChronicleSource(where, params, opts);
+    params.push(limit);
+    const result = await this.db.query(
+      `${PGLiteEngine.CHRONICLE_SELECT}
+       WHERE ${where.join(' AND ')}
+       ORDER BY te.date DESC, te.id ASC
+       LIMIT $${params.length}`,
+      params,
+    );
+    return result.rows as unknown as ChronicleTimelineRow[];
+  }
+
+  async getLastSeen(entitySlug: string, opts?: { asof?: string; sourceId?: string; sourceIds?: string[] }): Promise<LastSeenResult> {
+    const params: unknown[] = [entitySlug, `%${entitySlug}%`];
+    const where: string[] = [
+      `(te.event_page_id IS NULL OR ep.deleted_at IS NULL)`,
+      `(p.slug = $1 OR (ep.id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(
+            CASE WHEN jsonb_typeof(ep.frontmatter->'event'->'who') = 'array'
+                 THEN ep.frontmatter->'event'->'who' ELSE '[]'::jsonb END
+          ) AS w(name) WHERE w.name = $1 OR w.name LIKE $2)))`,
+    ];
+    this.pushChronicleSource(where, params, opts);
+    const result = await this.db.query(
+      `SELECT te.date::text AS last_date, ep.slug AS last_event_slug
+       FROM timeline_entries te
+       JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL
+       LEFT JOIN pages ep ON ep.id = te.event_page_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) DESC, te.id DESC
+       LIMIT 1`,
+      params,
+    );
+    const row = result.rows[0] as { last_date?: string; last_event_slug?: string } | undefined;
+    return finalizeLastSeen(entitySlug, row?.last_date ?? null, row?.last_event_slug ?? null, opts?.asof);
+  }
+
+  async upsertEventProjection(opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string }): Promise<{ projected: boolean }> {
+    const sourceId = opts.sourceId ?? 'default';
+    const r = await this.db.query(
+      `INSERT INTO timeline_entries (page_id, date, source, summary, detail, event_page_id)
+       SELECT dp.id, $1::date, $2, $3, $4, ep.id
+       FROM pages dp, pages ep
+       WHERE dp.slug = $5 AND dp.source_id = $6 AND ep.slug = $7 AND ep.source_id = $6
+       ON CONFLICT (event_page_id, date) WHERE event_page_id IS NOT NULL
+       DO UPDATE SET summary = EXCLUDED.summary, detail = EXCLUDED.detail,
+                     page_id = EXCLUDED.page_id, source = EXCLUDED.source
+       RETURNING id`,
+      [opts.date, 'life-chronicle:event:' + opts.eventSlug, opts.summary, opts.detail ?? '', opts.depthSlug, sourceId, opts.eventSlug],
+    );
+    return { projected: r.rows.length > 0 };
+  }
+
+  async mergeOntologyFact(obs: OntologyObservationInput): Promise<OntologyMergeResult> {
+    const sourceId = obs.sourceId ?? 'default';
+    const { valueHash, normalizeDimension, isNovelDimension } = await import('./chronicle/ontology.ts');
+    const dimension = normalizeDimension(obs.dimension);
+    const vh = valueHash(obs.value);
+    const conf = obs.confidence ?? 0.7;
+    const status = obs.status ?? (isNovelDimension(dimension) ? 'quarantined' : 'active');
+    const visibility = obs.visibility ?? 'private';
+    const validFrom = obs.validFrom ?? null;
+    const validUntil = obs.validTo ?? null;
+    const factText = `${dimension}: ${obs.value}`;
+
+    // "current open" = open-ended (valid_until IS NULL) + not retracted.
+    const cur = await this.db.query(
+      `SELECT id, value_hash, valid_from FROM facts
+        WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND expired_at IS NULL AND valid_until IS NULL
+          AND (dim_status IS NULL OR dim_status = 'active')
+        ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1`,
+      [sourceId, obs.entitySlug, dimension],
+    );
+    const current = cur.rows[0] as { id: number; value_hash: string; valid_from: string | null } | undefined;
+
+    if (current && current.value_hash === vh) {
+      const ins = await this.db.query(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status,
+                            confidence, source, source_markdown_slug, valid_from, valid_until, expired_at, consolidated_into)
+         VALUES ($1,$2,$3,'fact',$4,$5,$6,$7,$8,$9,$10,$10,COALESCE($11::timestamptz, now()),$12, now(), $13)
+         ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug) WHERE dimension IS NOT NULL
+         DO NOTHING RETURNING id`,
+        [sourceId, obs.entitySlug, factText, visibility, dimension, obs.value, vh, status, conf, obs.source, validFrom, validUntil, current.id],
+      );
+      return ins.rows.length
+        ? { action: 'corroborated', factId: Number((ins.rows[0] as { id: number }).id), supersededId: null }
+        : { action: 'noop', factId: null, supersededId: null };
+    }
+
+    const ins = await this.db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status,
+                          confidence, source, source_markdown_slug, valid_from, valid_until)
+       VALUES ($1,$2,$3,'fact',$4,$5,$6,$7,$8,$9,$10,$10,COALESCE($11::timestamptz, now()),$12)
+       ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug) WHERE dimension IS NOT NULL
+       DO NOTHING RETURNING id`,
+      [sourceId, obs.entitySlug, factText, visibility, dimension, obs.value, vh, status, conf, obs.source, validFrom, validUntil],
+    );
+    if (!ins.rows.length) return { action: 'noop', factId: null, supersededId: null };
+    const newId = Number((ins.rows[0] as { id: number }).id);
+
+    let supersededId: number | null = null;
+    if (current && status === 'active') {
+      const forward = validFrom == null || current.valid_from == null
+        || new Date(validFrom).getTime() >= new Date(current.valid_from).getTime();
+      if (forward) {
+        await this.db.query(
+          `UPDATE facts SET valid_until = COALESCE($1::timestamptz, now()), superseded_by = $2 WHERE id = $3 AND valid_until IS NULL`,
+          [validFrom, newId, current.id],
+        );
+        supersededId = current.id;
+      }
+    }
+    return { action: supersededId ? 'superseded_prior' : 'inserted', factId: newId, supersededId };
+  }
+
+  async getOntology(entitySlug: string, opts?: OntologyReadOpts): Promise<OntologyValue[]> {
+    const minConf = opts?.minConfidence ?? 0;
+    const includeQ = opts?.includeQuarantined ?? false;
+    const asof = opts?.asof ?? null;
+    const params: unknown[] = [entitySlug, asof, minConf, includeQ];
+    let scope: string;
+    if (opts?.sourceIds && opts.sourceIds.length) { params.push(opts.sourceIds); scope = `AND source_id = ANY($${params.length})`; }
+    else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
+    const r = await this.db.query(
+      `SELECT DISTINCT ON (dimension) dimension, value, confidence,
+         source_markdown_slug AS source, valid_from, valid_until AS valid_to,
+         COALESCE(dim_status,'active') AS status, id AS fact_id
+       FROM facts
+       WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL ${scope}
+         AND COALESCE(valid_from,'-infinity'::timestamptz) <= COALESCE($2::timestamptz, now())
+         AND COALESCE(valid_until,'infinity'::timestamptz) > COALESCE($2::timestamptz, now())
+         AND confidence >= $3
+         AND ($4::boolean OR dim_status IS NULL OR dim_status = 'active')
+       ORDER BY dimension, valid_from DESC NULLS LAST, confidence DESC, id DESC`,
+      params,
+    );
+    return r.rows.map((row) => ({ ...(row as OntologyValue), confidence: Number((row as { confidence: number }).confidence), fact_id: Number((row as { fact_id: number }).fact_id) }));
+  }
+
+  async discoverOntologyDimensions(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<OntologyDimensionStat[]> {
+    const params: unknown[] = [];
+    let scope: string;
+    if (opts?.sourceIds && opts.sourceIds.length) { params.push(opts.sourceIds); scope = `AND source_id = ANY($${params.length})`; }
+    else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
+    const r = await this.db.query(
+      `SELECT dimension, count(DISTINCT entity_slug)::int AS entities, count(*)::int AS observations
+       FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL ${scope}
+       GROUP BY dimension ORDER BY entities DESC, dimension`,
+      params,
+    );
+    return r.rows.map((row) => {
+      const x = row as { dimension: string; entities: number; observations: number };
+      return { dimension: x.dimension, entities: Number(x.entities), observations: Number(x.observations) };
+    });
+  }
+
+  async findOntologyConflicts(opts?: { sourceId?: string; sourceIds?: string[]; minConfidence?: number }): Promise<OntologyConflict[]> {
+    const minConf = opts?.minConfidence ?? 0;
+    const params: unknown[] = [minConf];
+    let scope: string;
+    if (opts?.sourceIds && opts.sourceIds.length) { params.push(opts.sourceIds); scope = `AND source_id = ANY($${params.length})`; }
+    else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
+    const r = await this.db.query(
+      `WITH cur AS (
+         SELECT entity_slug, dimension, value, source_markdown_slug AS source, confidence, id AS fact_id
+         FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL
+           AND (dim_status IS NULL OR dim_status = 'active') AND confidence >= $1 ${scope}
+       )
+       SELECT entity_slug, dimension,
+              json_agg(json_build_object('value', value, 'source', source, 'confidence', confidence, 'fact_id', fact_id)) AS values
+       FROM cur GROUP BY entity_slug, dimension
+       HAVING count(DISTINCT value) >= 2 AND count(DISTINCT source) >= 2
+       ORDER BY entity_slug, dimension`,
+      params,
+    );
+    return r.rows.map((row) => {
+      const x = row as { entity_slug: string; dimension: string; values: OntologyConflict['values'] };
+      return { entity_slug: x.entity_slug, dimension: x.dimension, values: typeof x.values === 'string' ? JSON.parse(x.values) : x.values };
+    });
   }
 
   // Raw data
