@@ -84,4 +84,13 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
       },
     );
   });
+
+  test('opencode_api_key maps to OPENCODE_API_KEY for OpenCode Zen', async () => {
+    await withEnv({ OPENCODE_API_KEY: undefined }, async () => {
+      const cfg = buildGatewayConfig({
+        opencode_api_key: 'sk-opencode-test',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.OPENCODE_API_KEY).toBe('sk-opencode-test');
+    });
+  });
 });

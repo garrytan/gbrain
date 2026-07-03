@@ -31,6 +31,8 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  /** OpenCode Zen API key for opencode:<model> chat routing. */
+  opencode_api_key?: string;
   /**
    * ZeroEntropy API key. v0.37 fix wave (CDX2-5+6): ZE became the default
    * embedding + reranker provider in v0.36 but lacked a file-plane config

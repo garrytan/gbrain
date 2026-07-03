@@ -7,6 +7,7 @@
 
 import type { Recipe } from '../types.ts';
 import { openai } from './openai.ts';
+import { opencode } from './opencode.ts';
 import { google } from './google.ts';
 import { anthropic } from './anthropic.ts';
 import { ollama } from './ollama.ts';
@@ -26,6 +27,7 @@ import { llamaServerReranker } from './llama-server-reranker.ts';
 
 const ALL: Recipe[] = [
   openai,
+  opencode,
   google,
   anthropic,
   ollama,

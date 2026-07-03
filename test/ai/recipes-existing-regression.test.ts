@@ -39,6 +39,7 @@ describe('IRON RULE: existing 9 recipes survive the v0.32 resolveAuth refactor',
       'litellm',
       'ollama',
       'openai',
+      'opencode',
       'together',
       'voyage',
     ]) {
@@ -335,4 +336,3 @@ describe('default_headers / resolveDefaultHeaders contract (v0.37.2.0)', () => {
     expect(e.headers).toEqual({ 'X-Static': 'static-val' });
   });
 });
-
