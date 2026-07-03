@@ -1,0 +1,42 @@
+{
+  "memvelope": "envelope-v0",
+  "meta": {
+    "source_provider": "chatgpt",
+    "conversation_count": 1,
+    "message_count": 4
+  },
+  "conversations": [
+    {
+      "id": "c-3f9a2b",
+      "title": "Onboarding Checklist Draft",
+      "created_at": "2025-11-02T14:22:51.000Z",
+      "updated_at": "2025-11-02T14:31:12.000Z",
+      "messages": [
+        {
+          "id": "m1",
+          "role": "user",
+          "ts": "2025-11-02T14:22:51.000Z",
+          "text": "alice-example is drafting acme-example's widget-co onboarding checklist and wants a concise first pass."
+        },
+        {
+          "id": "m2",
+          "role": "assistant",
+          "ts": "2025-11-02T14:24:03.000Z",
+          "text": "Start with account setup, workspace access, sample widget review, and a first-week check-in with the acme-example owner."
+        },
+        {
+          "id": "m3",
+          "role": "user",
+          "ts": "2025-11-02T14:28:19.000Z",
+          "text": "Add a note that bob-example should compare fund-a and fund-b reporting needs before the kickoff."
+        },
+        {
+          "id": "m4",
+          "role": "assistant",
+          "ts": "2025-11-02T14:31:12.000Z",
+          "text": "Include a pre-kickoff step for bob-example to list fund-a and fund-b reporting questions, then confirm owners with charlie-example."
+        }
+      ]
+    }
+  ]
+}
