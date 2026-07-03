@@ -20,7 +20,7 @@
 
 api_version: gbrain-schema-pack-v1
 name: gbrain-bravura
-version: 1.0.0
+version: 1.1.0
 gbrain_min_version: 0.39.0
 extends: gbrain-recommended
 description: "Bravura Security unified company brain. Spans support (cases, patterns, KB), internal knowledge (concepts, processes, products, people, teams), and sales (deals, RFPs — stubbed). Two-layer compiled-truth pages authored by the nightly enrich agent from raw inbox signals; reference content (Paligo / Confluence-KB / SF-KB / Responsive) ingested DB-direct."
@@ -48,9 +48,10 @@ page_types:
     aliases: []
     # Compiled-truth account profile; durable facts (environment, contract,
     # product footprint) flow from its cases, not from re-extracting the
-    # synthesized page. Surfaces in find_experts only for internal people.
+    # synthesized page. expert_routing: true so find_experts surfaces the
+    # customer stub when querying by account context.
     extractable: false
-    expert_routing: false
+    expert_routing: true
 
   - name: team
     primitive: entity
@@ -128,6 +129,42 @@ page_types:
     path_prefixes:
       - sales/rfp/
       - rfp/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+  # ---- Connector reference types (v1.1 — adopt what connectors actually stamp) ----
+  # These three types are stamped by brain-ingest transformers and land in the
+  # company source under the origin-namespaced slug prefixes shown below.
+  # They are retrieval-only (extractable: false) — high-volume reference material;
+  # fact extraction deferred to avoid cost/noise. They are NOT curated dream-authored
+  # pages — that role belongs to kb_article (kb/) for the authoritative layer.
+
+  - name: responsive_qa
+    # Responsive.io Q&A pairs. Slug prefix: responsive/<qa-id>.
+    primitive: media
+    path_prefixes:
+      - responsive/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+  - name: documentation
+    # Paligo DocBook topics. Transformer stamps type=documentation; origin=paligo.
+    # Slug prefix: paligo/<topic-id>-s<chunk>.
+    primitive: media
+    path_prefixes:
+      - paligo/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+  - name: knowledge_article
+    # Salesforce Knowledge articles (Knowledge__kav). Origin=salesforce-kb.
+    # Slug prefix: salesforce-kb/kav-<article-number>.
+    primitive: media
+    path_prefixes:
+      - salesforce-kb/
     aliases: []
     extractable: false
     expert_routing: false
@@ -243,3 +280,29 @@ filing_rules:
     examples:
       - sales/rfp/acme-security-questionnaire-2026
     description: "STUB (sales slice). Security questionnaires / RFP responses from Responsive. Populated when the sales slice is built."
+
+# v1.1 — mapping_rules for unify-types normalization pass.
+# These retype rules let 'gbrain schema apply-mutations' recognize the 11,664
+# existing pages stamped by connectors and normalize them to the pack-known types
+# declared above. Each rule is a no-op retype (from_type == to_type) whose real
+# effect is to confirm the type as pack-known and optionally stamp a subtype_field
+# for provenance. Run 'gbrain schema apply-mutations' once after the v1.1 image
+# deploys to retype existing pages.
+mapping_rules:
+  - kind: retype
+    from_type: responsive_qa
+    to_type: responsive_qa
+    subtype_field: origin
+    subtype: responsive
+
+  - kind: retype
+    from_type: documentation
+    to_type: documentation
+    subtype_field: origin
+    subtype: paligo
+
+  - kind: retype
+    from_type: knowledge_article
+    to_type: knowledge_article
+    subtype_field: origin
+    subtype: salesforce-kb
