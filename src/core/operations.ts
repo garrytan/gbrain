@@ -61,6 +61,7 @@ import { DEFAULT_PERSONAL_EPISODE_SCOPE_ID, getPersonalEpisodeLookupRoute } from
 import { previewPersonalExport } from './services/personal-export-visibility-service.ts';
 import { DEFAULT_PROFILE_MEMORY_SCOPE_ID, getPersonalProfileLookupRoute } from './services/personal-profile-lookup-route-service.ts';
 import { selectPersonalWriteTarget } from './services/personal-write-target-service.ts';
+import { buildPageProvenanceView } from './services/page-provenance-service.ts';
 import { getPrecisionLookupRoute } from './services/precision-lookup-route-service.ts';
 import { runProofAgentMemory } from './services/proof-agent-service.ts';
 import { readContext } from './services/read-context-service.ts';
@@ -70,6 +71,7 @@ import { buildProductionGraphFrontierInput, retrieveContext, type RetrieveContex
 import { planScenarioMemoryRequest } from './services/scenario-memory-request-planner-service.ts';
 import { evaluateScopeGate } from './services/scope-gate-service.ts';
 import { buildTaskResumeCard } from './services/task-memory-service.ts';
+import { runWatchedQuestionProbes } from './services/watched-question-service.ts';
 import { getWorkspaceCorpusCard } from './services/workspace-corpus-card-service.ts';
 import { getWorkspaceOrientationBundle } from './services/workspace-orientation-bundle-service.ts';
 import { getWorkspaceProjectCard } from './services/workspace-project-card-service.ts';
@@ -629,6 +631,17 @@ export function formatOpHelp(op: Pick<Operation, 'name' | 'description' | 'param
   return lines.join('\n') + '\n';
 }
 
+function formatProvenanceDate(value: unknown): string {
+  if (!value) return 'unknown';
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+}
+
+function formatProvenanceList(items: any[] | undefined, format: (item: any) => string): string[] {
+  if (!Array.isArray(items) || items.length === 0) return ['- none'];
+  return items.map(format);
+}
+
 export function formatResult(opName: string, result: unknown, params: Record<string, unknown> = {}): string {
   switch (opName) {
     case 'get_page': {
@@ -641,6 +654,61 @@ export function formatResult(opName: string, result: unknown, params: Record<str
         title: r.title,
         tags: r.tags || [],
       });
+    }
+    case 'explain_page_provenance': {
+      const r = result as any;
+      if (r.error === 'ambiguous_slug') {
+        return `Ambiguous slug. Did you mean:\n${r.candidates.map((c: string) => `  ${c}`).join('\n')}\n`;
+      }
+
+      const lines = [
+        `Why: ${r.resolved_slug}`,
+        `Title: ${r.page?.title ?? 'unknown'}`,
+        `Type: ${r.page?.type ?? 'unknown'}`,
+        `Updated: ${formatProvenanceDate(r.page?.updated_at)}`,
+        `Content hash: ${r.page?.content_hash ?? 'unknown'}`,
+        '',
+        'Citations',
+        ...formatProvenanceList(r.citations, (citation) => `- ${citation}`),
+        '',
+        'Version History',
+        ...formatProvenanceList(r.version_history, (version) => {
+          const id = version.id ?? '?';
+          const at = formatProvenanceDate(version.created_at ?? version.snapshot_at);
+          const hash = version.content_hash ? ` ${version.content_hash}` : '';
+          return `- ${id} ${at}${hash}`;
+        }),
+        '',
+        'Timeline',
+        ...formatProvenanceList(r.timeline_entries, (entry) => {
+          const summary = entry.summary ?? entry.content ?? entry.detail ?? '';
+          return `- ${entry.date ?? formatProvenanceDate(entry.created_at)} ${summary}`.trimEnd();
+        }),
+        '',
+        'Ingest Log',
+        ...formatProvenanceList(r.ingest_log, (entry) => `- ${formatProvenanceDate(entry.created_at)} ${entry.source_type}:${entry.source_ref} ${entry.summary}`),
+        '',
+        'Memory Candidate Trail',
+        ...formatProvenanceList(
+          r.candidate_trail,
+          (entry) => `- ${entry.id} ${entry.status}/${entry.verification_status} ${entry.review_reason ?? entry.proposed_content ?? ''}`.trimEnd(),
+        ),
+        '',
+        'Canonical Handoffs',
+        ...formatProvenanceList(
+          r.canonical_handoffs,
+          (entry) => `- ${entry.id} ${entry.candidate_id} ${entry.completion_kind ?? 'pending'} ${entry.completion_ref ?? entry.target_object_id ?? ''}`.trimEnd(),
+        ),
+        '',
+        'Backlinks',
+        ...formatProvenanceList(r.backlinks, (link) => {
+          const from = link.from_slug ?? link.from ?? 'unknown';
+          const type = link.link_type ?? 'link';
+          return `- ${from} ${type} ${link.context ?? ''}`.trimEnd();
+        }),
+      ];
+
+      return `${lines.join('\n')}\n`;
     }
     case 'list_pages': {
       const pages = result as any[];
@@ -2316,6 +2384,31 @@ const get_page: Operation = {
     });
   },
   cliHints: { name: 'get', positional: ['slug'] },
+};
+
+const explain_page_provenance: Operation = {
+  name: 'explain_page_provenance',
+  description: 'Explain why a page exists by collecting its citations, version history, ingest log, candidate trail, canonical handoffs, and backlinks.',
+  params: {
+    slug: { type: 'string', required: true, description: 'Page slug or unique slug fragment' },
+    limit: { type: 'number', description: 'Max rows per provenance section (default 20)' },
+  },
+  handler: async (ctx, p) => {
+    const slug = String(p.slug ?? '').trim();
+    if (!slug) throw new OperationError('invalid_params', 'slug is required.');
+    try {
+      return await buildPageProvenanceView(ctx.engine, {
+        slug,
+        limit: parsePositiveIntegerParam(p.limit, 'limit'),
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('Page not found:')) {
+        throw new OperationError('page_not_found', error.message, 'Check the slug or use a more specific slug fragment');
+      }
+      throw error;
+    }
+  },
+  cliHints: { name: 'why', positional: ['slug'], aliases: { n: 'limit' } },
 };
 
 function parseNonNegativeIntegerParam(value: unknown, name: string): number | undefined {
@@ -7768,6 +7861,84 @@ const list_task_traces: Operation = {
   },
 };
 
+const watch_question: Operation = {
+  name: 'watch_question',
+  description: 'Pin a retrieval question so the nightly Dream report can diff required reads and content hashes.',
+  params: {
+    question: { type: 'string', required: true, description: 'Question to probe repeatedly' },
+    id: { type: 'string', description: 'Optional stable watched question id' },
+    scope_id: { type: 'string', description: 'Scope id (default: workspace:default)' },
+    requested_scope: requestedScopeParam('Optional access scope for the watched retrieval probe.'),
+    enabled: { type: 'boolean', description: 'Whether the watched question is active (default true)' },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    const question = String(p.question ?? '').trim();
+    if (!question) throw new OperationError('invalid_params', 'question is required.');
+    const input = {
+      ...(typeof p.id === 'string' ? { id: p.id } : {}),
+      scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
+      question,
+      requested_scope: parseRequestedScopeParam(p.requested_scope) ?? null,
+      enabled: p.enabled === false ? false : true,
+    };
+    if (ctx.dryRun) return { dry_run: true, action: 'watch_question', ...input };
+    return ctx.engine.upsertWatchedQuestion(input);
+  },
+  cliHints: { name: 'watch-question', positional: ['question'], aliases: { scope: 'requested_scope' } },
+};
+
+const list_watched_questions: Operation = {
+  name: 'list_watched_questions',
+  description: 'List pinned watched questions and their latest probe state.',
+  params: {
+    scope_id: { type: 'string', description: 'Scope id filter' },
+    enabled: { type: 'boolean', description: 'Enabled-state filter' },
+    limit: { type: 'number', description: 'Max results (default 100)' },
+    offset: { type: 'number', description: 'Pagination offset' },
+  },
+  handler: async (ctx, p) => ctx.engine.listWatchedQuestions({
+    scope_id: typeof p.scope_id === 'string' ? p.scope_id : undefined,
+    enabled: typeof p.enabled === 'boolean' ? p.enabled : undefined,
+    limit: parsePositiveIntegerParam(p.limit, 'limit'),
+    offset: parseNonNegativeIntegerParam(p.offset, 'offset'),
+  }),
+  cliHints: { name: 'watched-questions', aliases: { n: 'limit' } },
+};
+
+const unwatch_question: Operation = {
+  name: 'unwatch_question',
+  description: 'Disable a watched question without deleting its probe history.',
+  params: {
+    id: { type: 'string', required: true, description: 'Watched question id' },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    const id = String(p.id ?? '').trim();
+    if (!id) throw new OperationError('invalid_params', 'id is required.');
+    if (ctx.dryRun) return { dry_run: true, action: 'unwatch_question', id, enabled: false };
+    return ctx.engine.setWatchedQuestionEnabled(id, false);
+  },
+  cliHints: { name: 'unwatch-question', positional: ['id'] },
+};
+
+const run_watched_questions: Operation = {
+  name: 'run_watched_questions',
+  description: 'Run deterministic watched-question retrieval probes and record required-read diffs for the daily report.',
+  params: {
+    scope_id: { type: 'string', description: 'Scope id (default: workspace:default)' },
+    now: { type: 'string', description: 'Optional ISO timestamp for deterministic runs' },
+    limit: { type: 'number', description: 'Max watched questions to probe' },
+  },
+  mutating: true,
+  handler: async (ctx, p) => runWatchedQuestionProbes(ctx.engine, {
+    scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
+    now: typeof p.now === 'string' ? p.now : undefined,
+    limit: parsePositiveIntegerParam(p.limit, 'limit'),
+  }),
+  cliHints: { name: 'watched-questions-run', aliases: { n: 'limit' } },
+};
+
 const list_task_attempts: Operation = {
   name: 'list_task_attempts',
   description: 'List recorded attempts for one task thread.',
@@ -8298,6 +8469,7 @@ function parseSkillpackSectionHeader(line: string): { num: number; title: string
 export const operations: Operation[] = [
   // Page CRUD
   get_page,
+  explain_page_provenance,
   put_page,
   admin_put_page,
   delete_page,
@@ -8414,6 +8586,10 @@ export const operations: Operation[] = [
   get_task_working_set,
   record_retrieval_trace,
   list_task_traces,
+  watch_question,
+  list_watched_questions,
+  unwatch_question,
+  run_watched_questions,
   list_task_attempts,
   list_task_decisions,
   refresh_task_working_set,

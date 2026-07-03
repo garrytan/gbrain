@@ -31,6 +31,7 @@ export interface SetupAgentPlanningClient {
   claude_skip_dirs_content?: string | null;
   claude_settings_content?: string | null;
   claude_legacy_hooks_content?: string | null;
+  codex_stop_hook_content?: string | null;
 }
 
 export interface SetupAgentPlanningInput {
@@ -46,6 +47,7 @@ export interface SetupAgentPlanningInput {
   expected_claude_sessionstart_hook: string;
   expected_claude_relevance_lib: string;
   expected_claude_skip_dirs: string;
+  expected_codex_stop_hook: string;
 }
 
 export function planSetupAgentTrustUx(input: SetupAgentPlanningInput): SetupAgentTrustUxReport {
@@ -188,6 +190,19 @@ function planClientActions(
     );
   }
 
+  if (client.client === 'codex') {
+    actions.push(
+      buildAction({
+        client: client.client,
+        target_kind: 'codex_stop_hook',
+        target_path: join(client.config_dir, 'scripts', 'hooks', 'stop-mbrain-capture.sh'),
+        status: codexStopHookStatus(client, input),
+        effects: ['reads_user_config', 'filesystem_write', 'chmod'],
+        reason_codes: managedFileReasonCodes(client.codex_stop_hook_content ?? null, input.expected_codex_stop_hook, 'codex_stop_hook'),
+      }),
+    );
+  }
+
   return actions;
 }
 
@@ -326,6 +341,13 @@ function claudeSessionStartHookReasonCodes(
     ...claudeSettingsReasonCodes(client.claude_settings_content ?? null, 'SessionStart', 'sessionstart:mbrain-activation', CLAUDE_SESSIONSTART_HOOK_COMMAND, 'claude_sessionstart_hook'),
   ];
   return [...new Set(reasons)];
+}
+
+function codexStopHookStatus(
+  client: SetupAgentPlanningClient,
+  input: SetupAgentPlanningInput,
+): SetupAgentActionStatus {
+  return managedFileStatus(client.codex_stop_hook_content ?? null, input.expected_codex_stop_hook);
 }
 
 function managedFileStatus(content: string | null, expected: string): SetupAgentActionStatus {

@@ -2,14 +2,14 @@
   "schema_version": 2,
   "generated_from": "live_operation_registry",
   "summary": {
-    "operation_count": 183,
-    "mcp_operation_count": 183,
-    "cli_shared_count": 171,
+    "operation_count": 188,
+    "mcp_operation_count": 188,
+    "cli_shared_count": 176,
     "cli_direct_count": 25,
     "cli_only_count": 6,
     "not_cli_count": 2,
-    "mutating_count": 78,
-    "read_only_count": 105
+    "mutating_count": 81,
+    "read_only_count": 107
   },
   "cli_commands": [
     {
@@ -1006,6 +1006,11 @@
       "operation_name": "remove_tag"
     },
     {
+      "command": "unwatch-question",
+      "mode": "cli_shared",
+      "operation_name": "unwatch_question"
+    },
+    {
       "command": "upgrade",
       "mode": "cli_only",
       "reason": "process_or_shell_bound"
@@ -1014,6 +1019,26 @@
       "command": "verify-memory-candidate",
       "mode": "cli_shared",
       "operation_name": "verify_memory_candidate_entry"
+    },
+    {
+      "command": "watch-question",
+      "mode": "cli_shared",
+      "operation_name": "watch_question"
+    },
+    {
+      "command": "watched-questions",
+      "mode": "cli_shared",
+      "operation_name": "list_watched_questions"
+    },
+    {
+      "command": "watched-questions-run",
+      "mode": "cli_shared",
+      "operation_name": "run_watched_questions"
+    },
+    {
+      "command": "why",
+      "mode": "cli_shared",
+      "operation_name": "explain_page_provenance"
     },
     {
       "command": "workspace-corpus-card",
@@ -5455,6 +5480,89 @@
       },
       "compact_schema_hash": "74f63bc55c1a75da22cd167a00523985267759c64d93894dcfaaa236d1f46926",
       "full_schema_hash": "b8741025846f910fd9c71638f5e5a027dd8297944c4750964fc088e5c0ecfb3b",
+      "memory_verb_families": [],
+      "mutation_aliases": []
+    },
+    {
+      "name": "explain_page_provenance",
+      "description": "Explain why a page exists by collecting its citations, version history, ingest log, candidate trail, canonical handoffs, and backlinks.",
+      "mutating": false,
+      "capability_required": [],
+      "capability_visibility": {
+        "requirements": []
+      },
+      "params": {
+        "limit": {
+          "type": [
+            "number"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Max rows per provenance section (default 20)"
+        },
+        "slug": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Page slug or unique slug fragment"
+        }
+      },
+      "cli_exposure": {
+        "mode": "cli_shared",
+        "command": "why"
+      },
+      "mcp": {
+        "read_only": true,
+        "destructive": false,
+        "open_world": false,
+        "required_params": [
+          "slug"
+        ]
+      },
+      "surface_profile": {
+        "effective_tier": "extended",
+        "required_capabilities": [],
+        "capability_classification": "implicit_read_only",
+        "visible_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "callable_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "forbidden_profiles": [],
+        "decisions": {
+          "stdio": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_local": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "edge_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          }
+        }
+      },
+      "compact_schema_hash": "f399e1fb37a8fd60217b57b549643f027d8a70facb6d19d0b7afe518593fa9b5",
+      "full_schema_hash": "99b333cf72f9c8793a56b2d31fecdf229c1b7a2cab3c336936bc31b7ed234243",
       "memory_verb_families": [],
       "mutation_aliases": []
     },
@@ -13015,6 +13123,103 @@
       },
       "compact_schema_hash": "d4d087915e702d1356d0b5d50b54e1dbaf350c447e1892d322198d2e25c2efee",
       "full_schema_hash": "e1cfdc1561b92508b78743e5f226957c4e3ee2986858dc33d1c8ddd7077361f2",
+      "memory_verb_families": [],
+      "mutation_aliases": []
+    },
+    {
+      "name": "list_watched_questions",
+      "description": "List pinned watched questions and their latest probe state.",
+      "mutating": false,
+      "capability_required": [],
+      "capability_visibility": {
+        "requirements": []
+      },
+      "params": {
+        "enabled": {
+          "type": [
+            "boolean"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Enabled-state filter"
+        },
+        "limit": {
+          "type": [
+            "number"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Max results (default 100)"
+        },
+        "offset": {
+          "type": [
+            "number"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Pagination offset"
+        },
+        "scope_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Scope id filter"
+        }
+      },
+      "cli_exposure": {
+        "mode": "cli_shared",
+        "command": "watched-questions"
+      },
+      "mcp": {
+        "read_only": true,
+        "destructive": false,
+        "open_world": false,
+        "required_params": []
+      },
+      "surface_profile": {
+        "effective_tier": "extended",
+        "required_capabilities": [],
+        "capability_classification": "implicit_read_only",
+        "visible_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "callable_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "forbidden_profiles": [],
+        "decisions": {
+          "stdio": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_local": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "edge_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          }
+        }
+      },
+      "compact_schema_hash": "5185bc6dae88dba461dd904d6afe7af777152eb690b13e7e207cc78e5d09458d",
+      "full_schema_hash": "f53bbaec1640ee7168b77ba539a8e5bf6e716c5e40195600c39e6e29083488f3",
       "memory_verb_families": [],
       "mutation_aliases": []
     },
@@ -20864,6 +21069,97 @@
       "mutation_aliases": []
     },
     {
+      "name": "run_watched_questions",
+      "description": "Run deterministic watched-question retrieval probes and record required-read diffs for the daily report.",
+      "mutating": true,
+      "capability_required": [],
+      "capability_visibility": {
+        "requirements": []
+      },
+      "params": {
+        "limit": {
+          "type": [
+            "number"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Max watched questions to probe"
+        },
+        "now": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional ISO timestamp for deterministic runs"
+        },
+        "scope_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Scope id (default: workspace:default)"
+        }
+      },
+      "cli_exposure": {
+        "mode": "cli_shared",
+        "command": "watched-questions-run"
+      },
+      "mcp": {
+        "read_only": false,
+        "destructive": false,
+        "open_world": false,
+        "required_params": []
+      },
+      "surface_profile": {
+        "effective_tier": "extended",
+        "required_capabilities": [
+          "canonical_write"
+        ],
+        "capability_classification": "explicit",
+        "visible_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "callable_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "forbidden_profiles": [],
+        "decisions": {
+          "stdio": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_local": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "edge_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          }
+        }
+      },
+      "compact_schema_hash": "6d886fa508fd955292628473830f2d4f85761f401760ccbe193b271e2bdeb2a8",
+      "full_schema_hash": "c51de4e6d0d46e62bc6fa641b53368e545feb92d9b6299f512583237c56fda16",
+      "memory_verb_families": [],
+      "mutation_aliases": []
+    },
+    {
       "name": "search",
       "description": "Keyword candidate discovery across MBrain. Use for exact names, slugs, dates, and terms; chunks are not answer evidence. For factual answers, call retrieve_context or read_context to load canonical evidence.",
       "mutating": false,
@@ -21946,6 +22242,83 @@
       "mutation_aliases": []
     },
     {
+      "name": "unwatch_question",
+      "description": "Disable a watched question without deleting its probe history.",
+      "mutating": true,
+      "capability_required": [],
+      "capability_visibility": {
+        "requirements": []
+      },
+      "params": {
+        "id": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Watched question id"
+        }
+      },
+      "cli_exposure": {
+        "mode": "cli_shared",
+        "command": "unwatch-question"
+      },
+      "mcp": {
+        "read_only": false,
+        "destructive": false,
+        "open_world": false,
+        "required_params": [
+          "id"
+        ]
+      },
+      "surface_profile": {
+        "effective_tier": "extended",
+        "required_capabilities": [
+          "canonical_write"
+        ],
+        "capability_classification": "explicit",
+        "visible_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "callable_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "forbidden_profiles": [],
+        "decisions": {
+          "stdio": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_local": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "edge_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          }
+        }
+      },
+      "compact_schema_hash": "3797626bd17e346de1adbbe242cd2c4e41a5956ccf7424c65cf45e2bbef10c81",
+      "full_schema_hash": "31c6a8e169845434e543c08ff86d56ee6fa5b40a08159bf99d3f8001d5bf0678",
+      "memory_verb_families": [],
+      "mutation_aliases": []
+    },
+    {
       "name": "update_task",
       "description": "Update canonical task-thread state for an existing task.",
       "mutating": true,
@@ -22416,7 +22789,7 @@
     },
     {
       "name": "verify_memory_candidate_entry",
-      "description": "Record a verification outcome (checked fact or refuted claim) with evidence on one active memory-inbox candidate.",
+      "description": "Record a verification outcome with evidence on one active memory-inbox candidate; promoted candidates may only be updated to refuted for post-promotion correction review.",
       "mutating": true,
       "capability_required": [],
       "capability_visibility": {
@@ -22553,6 +22926,122 @@
       "memory_verb_families": [
         "candidate_lifecycle"
       ],
+      "mutation_aliases": []
+    },
+    {
+      "name": "watch_question",
+      "description": "Pin a retrieval question so the nightly Dream report can diff required reads and content hashes.",
+      "mutating": true,
+      "capability_required": [],
+      "capability_visibility": {
+        "requirements": []
+      },
+      "params": {
+        "enabled": {
+          "type": [
+            "boolean"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Whether the watched question is active (default true)"
+        },
+        "id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional stable watched question id"
+        },
+        "question": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Question to probe repeatedly"
+        },
+        "requested_scope": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional access scope for the watched retrieval probe.",
+          "compact_description": true,
+          "enum": [
+            "work",
+            "personal",
+            "mixed"
+          ],
+          "enum_error_hint": "requested_scope is the access scope; put retrieval details in query."
+        },
+        "scope_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Scope id (default: workspace:default)"
+        }
+      },
+      "cli_exposure": {
+        "mode": "cli_shared",
+        "command": "watch-question"
+      },
+      "mcp": {
+        "read_only": false,
+        "destructive": false,
+        "open_world": false,
+        "required_params": [
+          "question"
+        ]
+      },
+      "surface_profile": {
+        "effective_tier": "extended",
+        "required_capabilities": [
+          "canonical_write"
+        ],
+        "capability_classification": "explicit",
+        "visible_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "callable_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "forbidden_profiles": [],
+        "decisions": {
+          "stdio": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_local": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "edge_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          }
+        }
+      },
+      "compact_schema_hash": "2daaf9db909d87066d0e9c163f748e395311bb54ba93c86b6764295e315832f1",
+      "full_schema_hash": "55c488dc09a8f7bdc8e13fe5e41ec4c406789a7c5f883e61ed6ddee9e5654219",
+      "memory_verb_families": [],
       "mutation_aliases": []
     },
     {

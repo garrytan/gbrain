@@ -9,6 +9,7 @@ import {
 } from '../core/services/dream-cycle-runner-service.ts';
 import { createAutoPromoteDreamDependency } from './auto-promote.ts';
 import { saveMemoryReviewReport } from './memory-report.ts';
+import { runWatchedQuestionProbes } from '../core/services/watched-question-service.ts';
 
 const STRICT_ISO_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|([+-])(\d{2}):(\d{2}))$/;
 
@@ -33,6 +34,9 @@ export async function runDream(
         lifecycleForgetting: maybeCreateLifecycleForgettingServiceForEngine(engine, () => input.now ?? new Date().toISOString()),
         autoPromote: createAutoPromoteDreamDependency(engine),
         replayCanary: createProofAgentDreamReplayCanary(),
+        watchedQuestions: {
+          run: (watchedInput) => runWatchedQuestionProbes(engine, watchedInput),
+        },
         ...(input.report_dir ? {
           memoryReport: {
             save: (reportInput) => saveMemoryReviewReport(engine, {

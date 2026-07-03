@@ -183,6 +183,78 @@ log_line "silent" "$SESSION_ID" "non-blocking-default"
 exit 0
 `;
 
+export const CODEX_MBRAIN_STOP_HOOK = `#!/bin/bash
+set -u
+
+LOG_FILE="\${MBRAIN_CODEX_STOP_HOOK_LOG:-$HOME/.codex/logs/mbrain-stop-hook.log}"
+
+log_line() {
+  local decision="$1"
+  local session_id="$2"
+  local reason="\${3:-}"
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+  printf '%s %s %s %s\\n' "$ts" "$session_id" "$decision" "$reason" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+json_field() {
+  local raw="$1"
+  local key="$2"
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s' "$raw" | jq -r "try .\\"$key\\" // empty" 2>/dev/null && return 0
+  fi
+  printf '%s' "$raw" | sed -nE 's/.*"'"$key"'":[[:space:]]*"([^"]*)".*/\\1/p' | head -n 1
+}
+
+RAW_INPUT="$(cat)"
+SESSION_ID="\${MBRAIN_CODEX_SESSION_ID:-$(json_field "$RAW_INPUT" session_id)}"
+SESSION_ID="\${SESSION_ID:-unknown}"
+SESSION_ID="\${SESSION_ID%%$'\\n'*}"
+TRANSCRIPT_PATH="\${MBRAIN_CODEX_TRANSCRIPT_PATH:-$(json_field "$RAW_INPUT" transcript_path)}"
+if [ -z "$TRANSCRIPT_PATH" ]; then
+  TRANSCRIPT_PATH="$(json_field "$RAW_INPUT" transcriptPath)"
+fi
+
+if [ "\${MBRAIN_CODEX_STOP_HOOK:-1}" = "0" ]; then
+  log_line "skip" "$SESSION_ID" "kill-switch"
+  exit 0
+fi
+
+MODE="\${MBRAIN_CODEX_STOP_HOOK_MODE:-capture}"
+if [ "$MODE" != "capture" ]; then
+  log_line "skip" "$SESSION_ID" "mode=$MODE"
+  exit 0
+fi
+
+if ! command -v mbrain >/dev/null 2>&1; then
+  log_line "capture-skip" "$SESSION_ID" "mbrain-missing"
+  exit 0
+fi
+
+if [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; then
+  log_line "capture-skip" "$SESSION_ID" "transcript-missing"
+  exit 0
+fi
+
+FILE_SIZE="$(stat -f%z "$TRANSCRIPT_PATH" 2>/dev/null || stat -c%s "$TRANSCRIPT_PATH" 2>/dev/null || echo 0)"
+if [ "$FILE_SIZE" -gt 52428800 ]; then
+  log_line "capture-skip" "$SESSION_ID" "transcript-too-large size=$FILE_SIZE"
+  exit 0
+fi
+
+CAPTURE_LOG="\${MBRAIN_CODEX_CAPTURE_LOG:-$HOME/.codex/logs/mbrain-session-capture.log}"
+mkdir -p "$(dirname "$CAPTURE_LOG")" 2>/dev/null || true
+# Candidate-only: this adapter never grants direct canonical write authority.
+nohup mbrain agent-session capture \\
+  --transcript-path "$TRANSCRIPT_PATH" \\
+  --session-id "$SESSION_ID" \\
+  --apply --write-mode candidate_only \\
+  >> "$CAPTURE_LOG" 2>&1 &
+log_line "capture" "$SESSION_ID" "backgrounded pid=$!"
+exit 0
+`;
+
 export const CLAUDE_MBRAIN_PROMPT_HOOK = `#!/bin/bash
 set -u
 

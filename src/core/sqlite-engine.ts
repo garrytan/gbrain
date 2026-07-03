@@ -43,6 +43,8 @@ import {
   compareNoteSectionEntries,
   rowToCanonicalTargetProposalEntry,
   rowToCanonicalTargetProposalStatusEvent,
+  rowToWatchedQuestion,
+  rowToWatchedQuestionRun,
 } from './utils/row-mappers.ts';
 import type {
   AutoPromoteVerdictKey,
@@ -148,6 +150,13 @@ import type {
   RetrievalTrace,
   RetrievalTraceInput,
   RetrievalTraceWindowFilters,
+  WatchedQuestion,
+  WatchedQuestionFilters,
+  WatchedQuestionInput,
+  WatchedQuestionRun,
+  WatchedQuestionRunFilters,
+  WatchedQuestionRunInput,
+  WatchedQuestionSnapshotPatch,
   TaskAttempt,
   TaskAttemptInput,
   TaskDecision,
@@ -396,6 +405,38 @@ CREATE TABLE IF NOT EXISTS retrieval_traces (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_retrieval_traces_task_created ON retrieval_traces(task_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS watched_questions (
+  id TEXT PRIMARY KEY,
+  scope_id TEXT NOT NULL,
+  question TEXT NOT NULL,
+  requested_scope TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  latest_fingerprint TEXT,
+  latest_required_reads TEXT NOT NULL DEFAULT '[]',
+  latest_probe_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_watched_questions_scope_enabled
+  ON watched_questions(scope_id, enabled, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS watched_question_runs (
+  id TEXT PRIMARY KEY,
+  question_id TEXT NOT NULL REFERENCES watched_questions(id) ON DELETE CASCADE,
+  scope_id TEXT NOT NULL,
+  question TEXT NOT NULL,
+  changed INTEGER NOT NULL DEFAULT 0,
+  previous_fingerprint TEXT,
+  current_fingerprint TEXT NOT NULL,
+  previous_required_reads TEXT NOT NULL DEFAULT '[]',
+  current_required_reads TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_watched_question_runs_scope_created
+  ON watched_question_runs(scope_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_watched_question_runs_question_created
+  ON watched_question_runs(question_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS context_eval_runs (
   id TEXT PRIMARY KEY,
@@ -937,6 +978,7 @@ export class SQLiteEngine implements BrainEngine {
     this.ensureNoteManifestResolverMetadataSchema();
     this.ensureContextEvalLedgerSchema();
     this.ensureRetrievalTraceMetricsSchema();
+    this.ensureWatchedQuestionSchema();
     this.backfillMissingPageEmbeddingsFromChunks();
 
     // Rebuild FTS index after schema migration. On a fresh database at baseline
@@ -2167,6 +2209,179 @@ export class SQLiteEngine implements BrainEngine {
       LIMIT ? OFFSET ?
     `).all(...sqliteBindings(params)) as Record<string, unknown>[];
     return rows.map(rowToRetrievalTrace);
+  }
+
+  async upsertWatchedQuestion(input: WatchedQuestionInput): Promise<WatchedQuestion> {
+    const id = input.id ?? crypto.randomUUID();
+    const timestamp = toNullableIso(input.now) ?? nowIso();
+    const question = input.question.trim();
+    if (!question) throw new Error('watched question must not be empty');
+    const current = await this.getWatchedQuestion(id);
+    const resetSnapshot = current !== null && (
+      current.scope_id !== input.scope_id
+      || current.question !== question
+      || (current.requested_scope ?? null) !== (input.requested_scope ?? null)
+    );
+    this.database.run(`
+      INSERT INTO watched_questions (
+        id, scope_id, question, requested_scope, enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        scope_id = excluded.scope_id,
+        question = excluded.question,
+        requested_scope = excluded.requested_scope,
+        enabled = excluded.enabled,
+        latest_fingerprint = CASE WHEN ? THEN NULL ELSE latest_fingerprint END,
+        latest_required_reads = CASE WHEN ? THEN ? ELSE latest_required_reads END,
+        latest_probe_at = CASE WHEN ? THEN NULL ELSE latest_probe_at END,
+        updated_at = excluded.updated_at
+    `, sqliteBindings([
+      id,
+      input.scope_id,
+      question,
+      input.requested_scope ?? null,
+      input.enabled === false ? 0 : 1,
+      timestamp,
+      timestamp,
+      resetSnapshot ? 1 : 0,
+      resetSnapshot ? 1 : 0,
+      '[]',
+      resetSnapshot ? 1 : 0,
+    ]));
+    const stored = await this.getWatchedQuestion(id);
+    if (!stored) throw new Error(`Watched question not found after upsert: ${id}`);
+    return stored;
+  }
+
+  async getWatchedQuestion(id: string): Promise<WatchedQuestion | null> {
+    const row = this.database.query(`
+      SELECT *
+      FROM watched_questions
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    return row ? rowToWatchedQuestion(row) : null;
+  }
+
+  async listWatchedQuestions(filters: WatchedQuestionFilters = {}): Promise<WatchedQuestion[]> {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (filters.scope_id) {
+      clauses.push('scope_id = ?');
+      params.push(filters.scope_id);
+    }
+    if (typeof filters.enabled === 'boolean') {
+      clauses.push('enabled = ?');
+      params.push(filters.enabled ? 1 : 0);
+    }
+    params.push(filters.limit ?? 100, filters.offset ?? 0);
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT *
+      FROM watched_questions
+      ${where}
+      ORDER BY updated_at DESC, id DESC
+      LIMIT ? OFFSET ?
+    `).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    return rows.map(rowToWatchedQuestion);
+  }
+
+  async setWatchedQuestionEnabled(id: string, enabled: boolean, now?: Date | string): Promise<WatchedQuestion> {
+    const timestamp = toNullableIso(now) ?? nowIso();
+    this.database.run(`
+      UPDATE watched_questions
+      SET enabled = ?, updated_at = ?
+      WHERE id = ?
+    `, sqliteBindings([enabled ? 1 : 0, timestamp, id]));
+    const stored = await this.getWatchedQuestion(id);
+    if (!stored) throw new Error(`Watched question not found: ${id}`);
+    return stored;
+  }
+
+  async updateWatchedQuestionSnapshot(id: string, patch: WatchedQuestionSnapshotPatch): Promise<WatchedQuestion> {
+    const timestamp = toNullableIso(patch.updated_at) ?? nowIso();
+    this.database.run(`
+      UPDATE watched_questions
+      SET latest_fingerprint = ?,
+          latest_required_reads = ?,
+          latest_probe_at = ?,
+          updated_at = ?
+      WHERE id = ?
+    `, sqliteBindings([
+      patch.latest_fingerprint,
+      JSON.stringify(patch.latest_required_reads),
+      toNullableIso(patch.latest_probe_at),
+      timestamp,
+      id,
+    ]));
+    const stored = await this.getWatchedQuestion(id);
+    if (!stored) throw new Error(`Watched question not found: ${id}`);
+    return stored;
+  }
+
+  async recordWatchedQuestionRun(input: WatchedQuestionRunInput): Promise<WatchedQuestionRun> {
+    const id = input.id ?? crypto.randomUUID();
+    const createdAt = toNullableIso(input.created_at) ?? nowIso();
+    this.database.run(`
+      INSERT INTO watched_question_runs (
+        id, question_id, scope_id, question, changed, previous_fingerprint,
+        current_fingerprint, previous_required_reads, current_required_reads, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, sqliteBindings([
+      id,
+      input.question_id,
+      input.scope_id,
+      input.question,
+      input.changed ? 1 : 0,
+      input.previous_fingerprint ?? null,
+      input.current_fingerprint,
+      JSON.stringify(input.previous_required_reads ?? []),
+      JSON.stringify(input.current_required_reads ?? []),
+      createdAt,
+    ]));
+    const row = this.database.query(`
+      SELECT *
+      FROM watched_question_runs
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    if (!row) throw new Error(`Watched question run not found after insert: ${id}`);
+    return rowToWatchedQuestionRun(row);
+  }
+
+  async listWatchedQuestionRuns(filters: WatchedQuestionRunFilters = {}): Promise<WatchedQuestionRun[]> {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (filters.scope_id) {
+      clauses.push('scope_id = ?');
+      params.push(filters.scope_id);
+    }
+    if (filters.question_id) {
+      clauses.push('question_id = ?');
+      params.push(filters.question_id);
+    }
+    if (typeof filters.changed === 'boolean') {
+      clauses.push('changed = ?');
+      params.push(filters.changed ? 1 : 0);
+    }
+    const since = toNullableIso(filters.since);
+    if (since) {
+      clauses.push('created_at >= ?');
+      params.push(since);
+    }
+    const until = toNullableIso(filters.until);
+    if (until) {
+      clauses.push('created_at < ?');
+      params.push(until);
+    }
+    params.push(filters.limit ?? 100, filters.offset ?? 0);
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT *
+      FROM watched_question_runs
+      ${where}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ? OFFSET ?
+    `).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    return rows.map(rowToWatchedQuestionRun);
   }
 
   async putContextEvalRun(input: ContextEvalRunInput): Promise<ContextEvalRun> {
@@ -6384,6 +6599,9 @@ export class SQLiteEngine implements BrainEngine {
         case 63:
           this.ensurePageZoneTimestampSchema();
           break;
+        case 64:
+          this.ensureWatchedQuestionSchema();
+          break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
       }
@@ -8765,6 +8983,42 @@ export class SQLiteEngine implements BrainEngine {
     if (!names.has('retrieved_token_count')) {
       this.database.exec(`ALTER TABLE retrieval_traces ADD COLUMN retrieved_token_count INTEGER;`);
     }
+  }
+
+  private ensureWatchedQuestionSchema(): void {
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS watched_questions (
+        id TEXT PRIMARY KEY,
+        scope_id TEXT NOT NULL,
+        question TEXT NOT NULL,
+        requested_scope TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        latest_fingerprint TEXT,
+        latest_required_reads TEXT NOT NULL DEFAULT '[]',
+        latest_probe_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_watched_questions_scope_enabled
+        ON watched_questions(scope_id, enabled, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS watched_question_runs (
+        id TEXT PRIMARY KEY,
+        question_id TEXT NOT NULL REFERENCES watched_questions(id) ON DELETE CASCADE,
+        scope_id TEXT NOT NULL,
+        question TEXT NOT NULL,
+        changed INTEGER NOT NULL DEFAULT 0,
+        previous_fingerprint TEXT,
+        current_fingerprint TEXT NOT NULL,
+        previous_required_reads TEXT NOT NULL DEFAULT '[]',
+        current_required_reads TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_watched_question_runs_scope_created
+        ON watched_question_runs(scope_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_watched_question_runs_question_created
+        ON watched_question_runs(question_id, created_at DESC);
+    `);
   }
 
   private ensureCanonicalHandoffCompletionSchema(): void {

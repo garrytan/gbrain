@@ -102,6 +102,15 @@ export interface ReportCandidateAgeEscalation {
   next_action: string;
 }
 
+export interface ReportPromotedCandidateRefutation {
+  id: string;
+  target_object_type: string | null;
+  target_object_id: string | null;
+  verification_evidence: string;
+  verification_source_refs: string[];
+  next_action: string;
+}
+
 export interface ReportDataIntegrityError {
   query: string;
   message: string;
@@ -121,6 +130,16 @@ export interface ReportPageHealthItem {
   title: string;
   score: number;
   issues: string[];
+  next_action: string;
+}
+
+export interface ReportWatchedQuestionChange {
+  id: string;
+  question_id: string;
+  question: string;
+  changed_at: string;
+  previous_required_reads: Array<{ slug: string; content_hash: string }>;
+  current_required_reads: Array<{ slug: string; content_hash: string }>;
   next_action: string;
 }
 
@@ -325,8 +344,10 @@ export interface MemoryReviewReportInput {
   context_eval_runs?: ReportContextEvalRun[];
   skill_surface?: ReportSkillSurfaceSummary;
   candidate_age_escalations?: ReportCandidateAgeEscalation[];
+  promoted_candidate_refutations?: ReportPromotedCandidateRefutation[];
   recurring_retrieval_gaps?: ReportRecurringRetrievalGap[];
   page_health_queue?: ReportPageHealthItem[];
+  watched_question_changes?: ReportWatchedQuestionChange[];
   data_integrity_errors?: ReportDataIntegrityError[];
   retrieval_trajectory_score?: ReportRetrievalTrajectoryScore | null;
 }
@@ -390,6 +411,8 @@ export interface MemoryReviewReportSummary {
   failed_context_eval_runs: number;
   recurring_retrieval_gaps: number;
   page_health_attention: number;
+  watched_question_changes: number;
+  promoted_candidate_refutations: number;
   data_integrity_errors: number;
 }
 
@@ -439,8 +462,10 @@ export interface MemoryReviewReport {
     maintenance_health: MaintenanceHealthSummary;
     coverage_gaps: ReportCoverageGap[];
     candidate_age_escalations: ReportCandidateAgeEscalation[];
+    promoted_candidate_refutations: ReportPromotedCandidateRefutation[];
     recurring_retrieval_gaps: ReportRecurringRetrievalGap[];
     page_health_queue: ReportPageHealthItem[];
+    watched_question_changes: ReportWatchedQuestionChange[];
     data_integrity_errors: ReportDataIntegrityError[];
   };
   actions: MemoryReportAction[];
@@ -472,8 +497,10 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
   const contextEvalRuns = redactReportValues(input.context_eval_runs ?? []);
   const retrievalTrajectoryScore = input.retrieval_trajectory_score ?? null;
   const candidateAgeEscalations = redactReportValues(input.candidate_age_escalations ?? []);
+  const promotedCandidateRefutations = redactReportValues(input.promoted_candidate_refutations ?? []);
   const recurringRetrievalGaps = redactReportValues(input.recurring_retrieval_gaps ?? []);
   const pageHealthQueue = redactReportValues(input.page_health_queue ?? []);
+  const watchedQuestionChanges = redactReportValues(input.watched_question_changes ?? []);
   const dataIntegrityErrors = redactReportValues(input.data_integrity_errors ?? []);
 
   const failedRunnerJobs = runnerJobs.filter((job) => job.status === 'failed' || job.status === 'degraded');
@@ -528,6 +555,8 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
     failed_context_eval_runs: contextEvalRuns.filter((run) => run.status === 'failed' || run.status === 'error').length,
     recurring_retrieval_gaps: recurringRetrievalGaps.length,
     page_health_attention: pageHealthQueue.length,
+    watched_question_changes: watchedQuestionChanges.length,
+    promoted_candidate_refutations: promotedCandidateRefutations.length,
     data_integrity_errors: dataIntegrityErrors.length,
   };
 
@@ -564,8 +593,10 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
       },
       coverage_gaps: coverageGaps,
       candidate_age_escalations: candidateAgeEscalations,
+      promoted_candidate_refutations: promotedCandidateRefutations,
       recurring_retrieval_gaps: recurringRetrievalGaps,
       page_health_queue: pageHealthQueue,
+      watched_question_changes: watchedQuestionChanges,
       data_integrity_errors: dataIntegrityErrors,
     },
     actions: buildReportActions({
@@ -698,6 +729,13 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
     }
   }
 
+  if (report.sections.promoted_candidate_refutations.length > 0) {
+    lines.push('', 'Promoted Candidate Refutations');
+    for (const candidate of report.sections.promoted_candidate_refutations) {
+      lines.push(`- ${candidate.id} -> ${candidate.target_object_id ?? 'unbound'} (${candidate.target_object_type ?? 'unknown'}): ${redactSecrets(candidate.verification_evidence)} | next:${redactSecrets(candidate.next_action)}`);
+    }
+  }
+
   if (report.sections.recurring_retrieval_gaps.length > 0) {
     lines.push('', 'Recurring Retrieval Gaps');
     for (const gap of report.sections.recurring_retrieval_gaps) {
@@ -709,6 +747,16 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
     lines.push('', 'Page Health Queue');
     for (const page of report.sections.page_health_queue) {
       lines.push(`- ${page.score}/100 ${page.slug} (${redactSecrets(page.title)}): ${page.issues.join(', ')} | next:${redactSecrets(page.next_action)}`);
+    }
+  }
+
+  if (report.sections.watched_question_changes.length > 0) {
+    lines.push('', 'Watched Question Changes');
+    for (const change of report.sections.watched_question_changes) {
+      const current = change.current_required_reads
+        .map((read) => `${read.slug}@${read.content_hash || 'unknown'}`)
+        .join(', ');
+      lines.push(`- ${redactSecrets(change.question)} (${change.question_id}) changed:${change.changed_at} | reads:${current} | next:${redactSecrets(change.next_action)}`);
     }
   }
 
@@ -853,6 +901,8 @@ function buildReportHealth(summary: MemoryReviewReportSummary): MemoryReviewRepo
   if (summary.expired_write_sessions > 0) reasons.push(`${summary.expired_write_sessions} expired write sessions`);
   if (summary.recurring_retrieval_gaps > 0) reasons.push(`${summary.recurring_retrieval_gaps} recurring retrieval gaps`);
   if (summary.page_health_attention > 0) reasons.push(`${summary.page_health_attention} pages need attention`);
+  if (summary.watched_question_changes > 0) reasons.push(`${summary.watched_question_changes} watched question changes`);
+  if (summary.promoted_candidate_refutations > 0) reasons.push(`${summary.promoted_candidate_refutations} promoted candidate refutations`);
   if (summary.data_integrity_errors > 0) reasons.push(`${summary.data_integrity_errors} report data integrity errors`);
 
   return {
@@ -1346,8 +1396,10 @@ function isEmptyReport(report: MemoryReviewReport): boolean {
   return Object.values(report.summary).every((count) => count === 0)
     && report.sections.canonical_target_proposals.length === 0
     && report.sections.candidate_age_escalations.length === 0
+    && report.sections.promoted_candidate_refutations.length === 0
     && report.sections.recurring_retrieval_gaps.length === 0
     && report.sections.page_health_queue.length === 0
+    && report.sections.watched_question_changes.length === 0
     && report.sections.data_integrity_errors.length === 0
     && (report.sections.retrieval_trajectory_score?.trace_count ?? 0) === 0
     && !hasMaintenanceHealthSignals(report.sections.maintenance_health);

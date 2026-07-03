@@ -4,6 +4,7 @@
  * Usage:
  *   mbrain migrate --to postgres [--url <connection_string>]  # Markdown-first guide, no DB page copy
  *   mbrain migrate --to supabase [--url <connection_string>]  # Markdown-first guide, no DB page copy
+ *   mbrain migrate --to sqlite                                # Markdown-first reverse migration guide, no DB row copy
  *   mbrain migrate --to pglite [--path <db_path>]             # legacy test/escape hatch DB copy
  */
 
@@ -16,14 +17,14 @@ import { join } from 'path';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from 'fs';
 
 interface MigrateOpts {
-  targetEngine: 'postgres' | 'pglite';
+  targetEngine: 'postgres' | 'sqlite' | 'pglite';
   targetUrl?: string;
   targetPath?: string;
   force: boolean;
 }
 
 export interface PostgresRuntimeMigrationGuideInput {
-  target: 'postgres' | 'supabase' | 'pglite';
+  target: 'postgres' | 'supabase' | 'sqlite' | 'pglite';
   source: string;
   sourcePageCount: number;
   migratedPageCount: number;
@@ -34,13 +35,13 @@ export interface PostgresRuntimeMigrationGuideInput {
 function parseArgs(args: string[]): MigrateOpts {
   const toIdx = args.indexOf('--to');
   if (toIdx === -1 || !args[toIdx + 1]) {
-    throw new Error('Usage: mbrain migrate --to <postgres|supabase> [--url <url>] [--force] (legacy: --to pglite --path <path>)');
+    throw new Error('Usage: mbrain migrate --to <postgres|supabase|sqlite> [--url <url>] [--force] (legacy: --to pglite --path <path>)');
   }
 
   const targetRaw = args[toIdx + 1];
-  const targetEngine = targetRaw === 'supabase' ? 'postgres' : targetRaw as 'postgres' | 'pglite';
-  if (targetEngine !== 'postgres' && targetEngine !== 'pglite') {
-    throw new Error(`Unknown target engine: "${targetRaw}". Use: postgres or supabase (legacy: pglite)`);
+  const targetEngine = targetRaw === 'supabase' ? 'postgres' : targetRaw as 'postgres' | 'sqlite' | 'pglite';
+  if (targetEngine !== 'postgres' && targetEngine !== 'sqlite' && targetEngine !== 'pglite') {
+    throw new Error(`Unknown target engine: "${targetRaw}". Use: postgres, supabase, or sqlite (legacy: pglite)`);
   }
 
   const urlIdx = args.indexOf('--url');
@@ -109,22 +110,28 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     force: opts.force,
   }));
 
-  if (opts.targetEngine === 'postgres') {
+  if (opts.targetEngine === 'postgres' || opts.targetEngine === 'sqlite') {
     const sourceStats = typeof (sourceEngine as Partial<BrainEngine>).getStats === 'function'
       ? await sourceEngine.getStats().catch(() => null)
       : null;
     const legacyDbOnlyRecords = await countLegacyDbOnlyRecordsForReview(sourceEngine);
     console.log(formatPostgresRuntimeMigrationGuide({
-      target: 'postgres',
+      target: opts.targetEngine,
       source: config.engine,
       sourcePageCount: sourceStats?.page_count ?? 0,
       migratedPageCount: 0,
       contentHashMismatches: 0,
       legacyDbOnlyRecords,
     }));
-    console.error('Postgres target migration is Markdown-first and reconciler-gated.');
-    console.error('This command does not copy legacy DB pages directly into the Postgres target.');
-    console.error('Run Markdown source ingest/sync, projection reconciler, eval/replay smoke, and doctor before switching config.');
+    if (opts.targetEngine === 'postgres') {
+      console.error('Postgres target migration is Markdown-first and reconciler-gated.');
+      console.error('This command does not copy legacy DB pages directly into the Postgres target.');
+      console.error('Run Markdown source ingest/sync, projection reconciler, eval/replay smoke, and doctor before switching config.');
+    } else {
+      console.error('SQLite reverse migration is Markdown-first and git-shared-brain gated.');
+      console.error('This command does not copy Postgres runtime rows directly into SQLite.');
+      console.error('Run sync --ff-only, initialize local SQLite, import Markdown, and verify content hashes before switching config.');
+    }
     console.error('Legacy DB-only state remains manual-review material, not automatic canonical memory.');
     process.exit(1);
   }
@@ -358,7 +365,36 @@ export function formatPostgresRuntimeMigrationGuide(input: PostgresRuntimeMigrat
       : `Content hash mismatches: ${input.contentHashMismatches}`;
   const title = input.target === 'pglite'
     ? 'Legacy DB Copy Migration Checklist'
-    : 'Postgres Runtime Migration Checklist';
+    : input.target === 'sqlite'
+      ? 'SQLite Re-import Migration Runbook'
+      : 'Postgres Runtime Migration Checklist';
+  const directCopyLine = input.target === 'sqlite'
+    ? 'Do not DB-copy Postgres runtime rows into SQLite; reverse migration is a Markdown re-import.'
+    : 'Direct legacy DB page copy is not a Postgres activation path.';
+  const nextSteps = input.target === 'sqlite'
+    ? [
+      '1. Back up the current brain repo and Postgres database before migration mutations.',
+      '2. On the source machine, converge the shared Markdown brain: mbrain sync --ff-only.',
+      '3. Push/pull the git-shared-brain repository on the target machine before importing.',
+      '4. Initialize local SQLite: mbrain init --local --non-interactive.',
+      '5. Import the shared Markdown brain: mbrain import <git-shared-brain> --no-embed.',
+      '6. Inspect imported page content and content-hash guards before accepting local drift repair.',
+      '7. Keep DB-only runtime records manual-review material; do not promote them by direct DB row copy.',
+      '8. Run doctor after migration checks: mbrain doctor --json.',
+    ]
+    : [
+      '1. Back up the current brain repo and source database before cleanup.',
+      '2. Export current Markdown brain: mbrain export --dir <backup/markdown-export>.',
+      '3. Initialize Postgres: mbrain init --profile homebrew-postgres --non-interactive or mbrain init --url <connection_string> --non-interactive.',
+      '4. Import exported Markdown through source ingest: mbrain import <backup/markdown-export> --no-embed.',
+      '5. Manually review legacy DB-only candidates, profile memory, tasks, sessions, and mutation records before deciding what to import.',
+      '6. No one-shot assertion rebuild command exists yet; keep DB-only claims manual until a governed rebuild command lands.',
+      '7. Inspect imported page content before accepting drift repair: mbrain call get_page \'{"slug":"<slug>","content_char_limit":200}\'.',
+      '8. Run the real Postgres confidence smoke against a disposable target: DATABASE_URL=<connection_string> bun run smoke:postgres-runtime.',
+      '9. Run deterministic eval/replay smoke when debugging the smoke gate directly: bun run test:phase13.',
+      '10. Run doctor after migration checks when debugging the smoke gate directly: mbrain doctor --json.',
+      '11. Enable autopilot through onboarding when the doctor report is clean.',
+    ];
   return [
     '',
     title,
@@ -368,25 +404,15 @@ export function formatPostgresRuntimeMigrationGuide(input: PostgresRuntimeMigrat
     countLine,
     hashLine,
     `legacy DB-only records require manual review: ${input.legacyDbOnlyRecords}`,
-    'Direct legacy DB page copy is not a Postgres activation path.',
+    directCopyLine,
     '',
     'Next steps:',
-    '1. Back up the current brain repo and source database before cleanup.',
-    '2. Export current Markdown brain: mbrain export --dir <backup/markdown-export>.',
-    '3. Initialize Postgres: mbrain init --profile homebrew-postgres --non-interactive or mbrain init --url <connection_string> --non-interactive.',
-    '4. Import exported Markdown through source ingest: mbrain import <backup/markdown-export> --no-embed.',
-    '5. Manually review legacy DB-only candidates, profile memory, tasks, sessions, and mutation records before deciding what to import.',
-    '6. No one-shot assertion rebuild command exists yet; keep DB-only claims manual until a governed rebuild command lands.',
-    '7. Inspect imported page content before accepting drift repair: mbrain call get_page \'{"slug":"<slug>","content_char_limit":200}\'.',
-    '8. Run the real Postgres confidence smoke against a disposable target: DATABASE_URL=<connection_string> bun run smoke:postgres-runtime.',
-    '9. Run deterministic eval/replay smoke when debugging the smoke gate directly: bun run test:phase13.',
-    '10. Run doctor after migration checks when debugging the smoke gate directly: mbrain doctor --json.',
-    '11. Enable autopilot through onboarding when the doctor report is clean.',
+    ...nextSteps,
   ].join('\n');
 }
 
 function formatPostgresRuntimeMigrationPreflight(input: {
-  target: 'postgres' | 'pglite';
+  target: 'postgres' | 'sqlite' | 'pglite';
   source: string;
   force: boolean;
 }): string {
@@ -395,10 +421,14 @@ function formatPostgresRuntimeMigrationPreflight(input: {
     : 'No target wipe requested.';
   const targetBoundary = input.target === 'postgres'
     ? 'For the Postgres target runtime, migrate canonical Markdown through source ingest/sync and projection reconciler.'
-    : 'The PGLite path is a legacy DB-copy test/escape hatch, not a Postgres activation path.';
+    : input.target === 'sqlite'
+      ? 'For the SQLite reverse path, migrate canonical Markdown through a git-shared-brain checkout and re-import locally.'
+      : 'The PGLite path is a legacy DB-copy test/escape hatch, not a Postgres activation path.';
   const configBoundary = input.target === 'postgres'
     ? 'Do not switch config until projection reconciliation, eval/replay smoke, and doctor pass.'
-    : 'Use this legacy path only when you intentionally want a PGLite compatibility target.';
+    : input.target === 'sqlite'
+      ? 'Do not switch config until sync --ff-only, Markdown import, content-hash guards, and doctor pass.'
+      : 'Use this legacy path only when you intentionally want a PGLite compatibility target.';
   return [
     '',
     'Preflight safety checklist',

@@ -216,6 +216,38 @@ CREATE TABLE IF NOT EXISTS retrieval_traces (
 
 CREATE INDEX IF NOT EXISTS idx_retrieval_traces_task_created ON retrieval_traces(task_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS watched_questions (
+  id                    TEXT PRIMARY KEY,
+  scope_id              TEXT NOT NULL,
+  question              TEXT NOT NULL,
+  requested_scope       TEXT,
+  enabled               BOOLEAN NOT NULL DEFAULT TRUE,
+  latest_fingerprint    TEXT,
+  latest_required_reads JSONB NOT NULL DEFAULT '[]',
+  latest_probe_at       TIMESTAMPTZ,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_watched_questions_scope_enabled
+  ON watched_questions(scope_id, enabled, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS watched_question_runs (
+  id                      TEXT PRIMARY KEY,
+  question_id             TEXT NOT NULL REFERENCES watched_questions(id) ON DELETE CASCADE,
+  scope_id                TEXT NOT NULL,
+  question                TEXT NOT NULL,
+  changed                 BOOLEAN NOT NULL DEFAULT FALSE,
+  previous_fingerprint    TEXT,
+  current_fingerprint     TEXT NOT NULL,
+  previous_required_reads JSONB NOT NULL DEFAULT '[]',
+  current_required_reads  JSONB NOT NULL DEFAULT '[]',
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_watched_question_runs_scope_created
+  ON watched_question_runs(scope_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_watched_question_runs_question_created
+  ON watched_question_runs(question_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS context_eval_runs (
   id                  TEXT PRIMARY KEY,
   fixture_id          TEXT NOT NULL,

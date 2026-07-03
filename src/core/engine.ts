@@ -110,6 +110,13 @@ import type {AutoPromoteVerdictKey,
   TaskWorkingSet,
   TaskWorkingSetInput,
   TimelineEntry, TimelineInput, TimelineOpts,
+  WatchedQuestion,
+  WatchedQuestionFilters,
+  WatchedQuestionInput,
+  WatchedQuestionRun,
+  WatchedQuestionRunFilters,
+  WatchedQuestionRunInput,
+  WatchedQuestionSnapshotPatch,
 } from './types.ts';
 
 // BrainEngine is composed from focused capability interfaces below. The
@@ -206,6 +213,13 @@ export interface OperationalMemoryStore {
   getRetrievalTrace(id: string): Promise<RetrievalTrace | null>;
   listRetrievalTraces(taskId: string, opts?: { limit?: number }): Promise<RetrievalTrace[]>;
   listRetrievalTracesByWindow(filters: RetrievalTraceWindowFilters): Promise<RetrievalTrace[]>;
+  upsertWatchedQuestion(input: WatchedQuestionInput): Promise<WatchedQuestion>;
+  getWatchedQuestion(id: string): Promise<WatchedQuestion | null>;
+  listWatchedQuestions(filters?: WatchedQuestionFilters): Promise<WatchedQuestion[]>;
+  setWatchedQuestionEnabled(id: string, enabled: boolean, now?: Date | string): Promise<WatchedQuestion>;
+  updateWatchedQuestionSnapshot(id: string, patch: WatchedQuestionSnapshotPatch): Promise<WatchedQuestion>;
+  recordWatchedQuestionRun(input: WatchedQuestionRunInput): Promise<WatchedQuestionRun>;
+  listWatchedQuestionRuns(filters?: WatchedQuestionRunFilters): Promise<WatchedQuestionRun[]>;
   putContextEvalRun(input: ContextEvalRunInput): Promise<ContextEvalRun>;
   getContextEvalRun(id: string): Promise<ContextEvalRun | null>;
   listContextEvalRuns(filters?: ContextEvalRunFilters): Promise<ContextEvalRun[]>;

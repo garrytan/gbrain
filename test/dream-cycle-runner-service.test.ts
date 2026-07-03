@@ -903,6 +903,83 @@ describe('dream cycle phase runner', () => {
     });
   });
 
+  test('daily report phase runs watched question probes before saving the report', async () => {
+    const calls: string[] = [];
+    const runtime = createMaintenanceRuntimeService({ now: () => '2026-05-21T10:00:00.000Z' });
+    const result = await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-05-21T10:00:00.000Z',
+      dry_run: false,
+      write_candidates: true,
+      limit: 7,
+    }, {
+      watchedQuestions: {
+        run: async (input) => {
+          calls.push(`watched:${input.scope_id}:${input.limit}`);
+          return { probed: 2, changed: 1, initialized: 1, skipped: 0, runs: [] };
+        },
+      },
+      memoryReport: {
+        save: async (input) => {
+          calls.push(`report:${input.scope_id}:${input.limit}`);
+          return {
+            path: '/tmp/brain/reports/memory-review-report/2026-05-21-1000.md',
+            counts: {},
+          };
+        },
+      },
+      runtime,
+      replayCanary: passingReplayCanary(),
+    });
+
+    expect(calls).toEqual([
+      'watched:workspace:default:7',
+      'report:workspace:default:7',
+    ]);
+    expect(result.phases.find((phase) => phase.family === 'daily_report')).toMatchObject({
+      counts: {
+        saved_reports: 1,
+        watched_questions_probed: 2,
+        watched_questions_changed: 1,
+        watched_questions_initialized: 1,
+      },
+    });
+  });
+
+  test('daily report dry-run skips watched question probes before saving the report', async () => {
+    const calls: string[] = [];
+    const result = await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-05-21T10:00:00.000Z',
+      dry_run: true,
+      limit: 7,
+    }, {
+      watchedQuestions: {
+        run: async (input) => {
+          calls.push(`watched:${input.scope_id}:${input.limit}`);
+          return { probed: 2, changed: 1, initialized: 1, skipped: 0, runs: [] };
+        },
+      },
+      memoryReport: {
+        save: async (input) => {
+          calls.push(`report:${input.scope_id}:${input.limit}`);
+          return {
+            path: '/tmp/brain/reports/memory-review-report/2026-05-21-1000.md',
+            counts: {},
+          };
+        },
+      },
+    });
+
+    expect(calls).toEqual(['report:workspace:default:7']);
+    expect(result.phases.find((phase) => phase.family === 'daily_report')).toMatchObject({
+      counts: {
+        saved_reports: 1,
+      },
+    });
+    expect(result.phases.find((phase) => phase.family === 'daily_report')?.counts).not.toHaveProperty('watched_questions_probed');
+  });
+
   test('forgetting review uses lifecycle service for report and purge planning', async () => {
     const calls: string[] = [];
     const lifecycleForgetting = {

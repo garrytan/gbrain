@@ -2760,7 +2760,7 @@ export function createMemoryInboxOperations(
 
   const verify_memory_candidate_entry: Operation = {
     name: 'verify_memory_candidate_entry',
-    description: 'Record a verification outcome (checked fact or refuted claim) with evidence on one active memory-inbox candidate.',
+    description: 'Record a verification outcome with evidence on one active memory-inbox candidate; promoted candidates may only be updated to refuted for post-promotion correction review.',
     params: {
       id: { type: 'string', required: true, description: 'Memory candidate id' },
       verification_status: {

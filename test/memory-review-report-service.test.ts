@@ -33,6 +33,31 @@ describe('memory review report service', () => {
     }
   });
 
+  test('renders promoted candidate refutations as page and handoff review work', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+      promoted_candidate_refutations: [
+        {
+          id: 'candidate:promoted-refuted',
+          target_object_type: 'curated_note',
+          target_object_id: 'systems/retrieval',
+          verification_evidence: 'Source recheck contradicted the promoted claim.',
+          verification_source_refs: ['source-recheck:2026-07-03'],
+          next_action: 'why systems/retrieval; review canonical_handoff_entries for candidate:promoted-refuted',
+        },
+      ],
+    });
+
+    expect(report.summary.promoted_candidate_refutations).toBe(1);
+    expect(report.sections.promoted_candidate_refutations).toHaveLength(1);
+
+    const formatted = formatMemoryReviewReport(report);
+    expect(formatted).toContain('Promoted Candidate Refutations');
+    expect(formatted).toContain('candidate:promoted-refuted -> systems/retrieval');
+    expect(formatted).toContain('review canonical_handoff_entries');
+  });
+
   test('summarizes automatic memory changes, exceptions, operational health, and report actions', () => {
     const report = buildMemoryReviewReport({
       scope_id: 'workspace:default',
@@ -2381,6 +2406,32 @@ describe('memory review report service', () => {
     expect(formatted).toContain('Page Health Queue');
     expect(formatted).toContain('45/100 systems/page-needs-attention');
     expect(formatted).toContain('compile_debt, missing_embeddings:2/3, source_coverage_missing');
+  });
+
+  test('renders watched question changes from nightly probe diffs', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+      watched_question_changes: [
+        {
+          id: 'watch-run:retrieval',
+          question_id: 'watch:retrieval',
+          question: 'What changed about retrieval?',
+          changed_at: '2026-05-22T11:00:00.000Z',
+          previous_required_reads: [{ slug: 'systems/retrieval', content_hash: 'hash:v1' }],
+          current_required_reads: [{ slug: 'systems/retrieval', content_hash: 'hash:v2' }],
+          next_action: 'Review watched question watch:retrieval and read current evidence before acting.',
+        },
+      ],
+    });
+
+    expect(report.summary.watched_question_changes).toBe(1);
+    expect(report.health.status).toBe('warn');
+    expect(report.health.reasons).toContain('1 watched question changes');
+    const formatted = formatMemoryReviewReport(report);
+    expect(formatted).toContain('Watched Question Changes');
+    expect(formatted).toContain('What changed about retrieval?');
+    expect(formatted).toContain('systems/retrieval@hash:v2');
   });
 
   test('collects recurring retrieval gaps from answer_ready false traces', async () => {

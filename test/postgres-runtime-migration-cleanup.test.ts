@@ -61,8 +61,8 @@ describe('postgres runtime migration cleanup', () => {
 
     expect(cliSource).toContain('Create target Postgres brain');
     expect(cliSource).toContain('legacy SQLite/PGLite only by explicit flag');
-    expect(cliSource).toContain('migrate --to <postgres|supabase>');
-    expect(cliSource).toContain('Prepare Markdown-first migration into the Postgres target runtime');
+    expect(cliSource).toContain('migrate --to <postgres|supabase|sqlite>');
+    expect(cliSource).toContain('Prepare Markdown-first migration into Postgres or SQLite');
     expect(cliSource).not.toContain('Create brain (SQLite local, PGLite, or managed Postgres)');
     expect(cliSource).not.toContain('migrate --to <supabase|pglite>');
     expect(cliSource).not.toContain('Move legacy data into the Postgres target runtime');
@@ -118,6 +118,27 @@ describe('postgres runtime migration cleanup', () => {
     expect(migrateSource).toContain('Postgres target migration is Markdown-first and reconciler-gated');
   });
 
+  test('migrate --to sqlite emits a two-machine Markdown re-import runbook', async () => {
+    const migrate = await import('../src/commands/migrate-engine.ts');
+
+    const guide = migrate.formatPostgresRuntimeMigrationGuide({
+      target: 'sqlite',
+      source: 'postgres',
+      sourcePageCount: 8,
+      migratedPageCount: 0,
+      contentHashMismatches: 0,
+      legacyDbOnlyRecords: 2,
+    });
+
+    expect(guide).toContain('SQLite Re-import Migration Runbook');
+    expect(guide).toContain('Target engine: sqlite');
+    expect(guide).toContain('mbrain sync --ff-only');
+    expect(guide).toContain('mbrain init --local --non-interactive');
+    expect(guide).toContain('mbrain import <git-shared-brain>');
+    expect(guide).toContain('content-hash guards');
+    expect(guide).toContain('Do not DB-copy Postgres runtime rows into SQLite');
+  });
+
   test('Phase 14 exposes a no-provider-key real Postgres confidence smoke', () => {
     const pkg = JSON.parse(readRepoFile('package.json')) as { scripts: Record<string, string> };
     const smoke = readRepoFile('scripts/smoke-test-postgres-runtime.ts');
@@ -146,7 +167,8 @@ describe('postgres runtime migration cleanup', () => {
       expect(migrate.exitCode).toBe(0);
       expect(migrate.stderr).toBe('');
       expect(migrate.stdout).toContain('Usage: mbrain migrate');
-      expect(migrate.stdout).toContain('Markdown-first migration into the Postgres target runtime');
+      expect(migrate.stdout).toContain('Markdown-first migration into Postgres or SQLite');
+      expect(migrate.stdout).toContain('postgres|supabase|sqlite');
       expect(migrate.stdout).toContain('--to');
       expect(migrate.stdout).toContain('--url');
       expect(migrate.stdout).toContain('--path');
