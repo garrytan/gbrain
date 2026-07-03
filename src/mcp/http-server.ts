@@ -5,7 +5,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import type { BrainEngine } from '../core/engine.ts';
 import type { MBrainConfig } from '../core/config.ts';
 import type { Operation } from '../core/operations.ts';
-import { createTokenAuthPrincipal, serializeAuthPrincipal, type OperationAuthPrincipal } from '../core/auth-principal.ts';
+import { createLocalAuthPrincipal, createTokenAuthPrincipal, serializeAuthPrincipal, type OperationAuthPrincipal } from '../core/auth-principal.ts';
 import { createMcpServer, createMcpToolExecutionLimiter } from './server.ts';
 import {
   surfaceTokenCapabilitiesFromScopes,
@@ -60,9 +60,12 @@ export interface McpHttpHandlerOptions {
    * browsers are denied by default instead of the previous wildcard.
    */
   allowedOrigins?: string[];
-  surfaceProfile?: Extract<McpSurfaceProfileName, 'http_local' | 'http_remote'>;
+  surfaceProfile?: Extract<McpSurfaceProfileName, 'http_local' | 'review_local' | 'http_remote'>;
   toolTier?: string;
   mcpRateLimit?: { capacity: number; windowMs: number; maxKeys: number };
+  reviewRoutes?: {
+    handle(request: Request): Promise<Response | null>;
+  };
 }
 
 export interface McpHttpRequestLogEntry {
@@ -126,6 +129,21 @@ export function createMcpHttpHandler(
 
     if (url.pathname === '/health') {
       return handleHealth(enginePromise);
+    }
+
+    if (options.surfaceProfile === 'review_local' && options.reviewRoutes) {
+      const boundedRequest = await boundHttpRequestBody(request);
+      if (!boundedRequest.ok) {
+        const response = jsonResponse(boundedRequest.body, 413);
+        await logReviewRouteRequest(options, enginePromise, request, response, Date.now());
+        return response;
+      }
+      const startTime = Date.now();
+      const reviewResponse = await options.reviewRoutes.handle(boundedRequest.request);
+      if (reviewResponse) {
+        await logReviewRouteRequest(options, enginePromise, boundedRequest.request, reviewResponse, startTime);
+        return reviewResponse;
+      }
     }
 
     if (url.pathname !== '/mcp') {
@@ -224,6 +242,53 @@ async function inferMcpHttpOperation(request: Request): Promise<string> {
   } catch {
     return 'mcp_request';
   }
+}
+
+async function logReviewRouteRequest(
+  options: McpHttpHandlerOptions,
+  enginePromise: Promise<BrainEngine>,
+  request: Request,
+  response: Response,
+  startTime: number,
+): Promise<void> {
+  if (!options.logRequest && !canPersistMcpRequestLog(options.config)) return;
+  await logRequest(options, enginePromise, {
+    tokenName: 'review_local',
+    operation: inferReviewRouteOperation(request),
+    latencyMs: Date.now() - startTime,
+    status: response.status >= 400 ? 'error' : 'success',
+    ...(response.status >= 400 ? { errorCode: `http_${response.status}` } : {}),
+    surfaceProfile: 'review_local',
+    authPrincipal: createLocalAuthPrincipal('review_local', {
+      principalType: 'local_mcp',
+      principalId: 'review_local',
+      principalName: 'mbrain review',
+      actorType: 'mcp',
+      actorId: 'mbrain-review-ui',
+    }),
+  });
+}
+
+function canPersistMcpRequestLog(config: MBrainConfig): boolean {
+  switch (config.engine) {
+    case 'postgres':
+      return Boolean(config.database_url);
+    case 'sqlite':
+      return Boolean(config.database_path);
+    case 'pglite':
+      return false;
+  }
+}
+
+function inferReviewRouteOperation(request: Request): string {
+  const url = new URL(request.url);
+  if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/api/candidates')) {
+    return 'review.list_memory_candidate_entries';
+  }
+  if (request.method === 'POST' && /^\/(?:api\/)?candidates\/[^/]+\/(?:verify|refute)$/.test(url.pathname)) {
+    return 'review.verify_memory_candidate_entry';
+  }
+  return `review.${request.method.toLowerCase()}`;
 }
 
 type McpHttpResponseClassification = {

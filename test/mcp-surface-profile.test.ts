@@ -11,6 +11,35 @@ function operation(name: string) {
 }
 
 describe('MCP surface profiles', () => {
+  test('review_local profile exposes the local HTTP review surface', () => {
+    expect(MCP_SURFACE_PROFILE_NAMES).toContain('review_local');
+
+    const profile = resolveMcpSurfaceProfile('review_local');
+    expect(profile).toMatchObject({
+      name: 'review_local',
+      timeoutClass: 'http_request',
+      corsPolicy: 'configured_origins',
+      bodySizePolicy: 'http_1mb',
+      requestLogPolicy: 'mcp_request_log',
+    });
+
+    const verifyCandidate = operation('verify_memory_candidate_entry');
+    expect(isToolVisibleInSurfaceProfile(verifyCandidate, profile)).toBe(true);
+    expect(() =>
+      assertToolCallableInSurfaceProfile(verifyCandidate, profile, {
+        tokenCapabilities: surfaceTokenCapabilitiesFromScopes(['mcp', 'canonical_write']),
+      }),
+    ).not.toThrow();
+
+    const putPage = operation('put_page');
+    expect(isToolVisibleInSurfaceProfile(putPage, profile)).toBe(false);
+    const putPageDecision = getMcpSurfaceDecision(putPage, profile, {
+      tokenCapabilities: surfaceTokenCapabilitiesFromScopes(['mcp', 'canonical_write']),
+    });
+    expect(putPageDecision.callable).toBe(false);
+    expect(putPageDecision.denial_reasons).toContain('surface_operation_not_allowed');
+  });
+
   test('remote HTTP hides and denies exact-name admin repair writes', () => {
     const profile = resolveMcpSurfaceProfile('http_remote', {
       toolTierSelection: 'all',

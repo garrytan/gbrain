@@ -1,7 +1,7 @@
 import { OperationError, type Operation } from '../core/operations.ts';
 import { effectiveToolTier, resolveAllowedTiers, type ToolTier } from './tool-tiers.ts';
 
-export type McpSurfaceProfileName = 'stdio' | 'http_local' | 'http_remote' | 'edge_remote';
+export type McpSurfaceProfileName = 'stdio' | 'http_local' | 'review_local' | 'http_remote' | 'edge_remote';
 export type McpSurfaceCapability = 'raw_source' | 'canonical_write';
 export type McpSurfaceTimeoutClass = 'interactive' | 'http_request' | 'edge_request';
 export type McpSurfaceCorsPolicy = 'none' | 'configured_origins' | 'edge_cors';
@@ -12,6 +12,7 @@ export type McpSurfaceProfileDefinition = {
   name: McpSurfaceProfileName;
   description: string;
   defaultTierSelection: string;
+  allowedOperationNames?: readonly string[];
   forbiddenOperationNames: readonly string[];
   allowedCapabilities: readonly McpSurfaceCapability[];
   timeoutClass: McpSurfaceTimeoutClass;
@@ -44,11 +45,19 @@ export type OperationSurfaceProfileExposure = {
   decisions: Record<McpSurfaceProfileName, Pick<McpSurfaceDecision, 'visible' | 'callable' | 'denial_reasons'>>;
 };
 
-export const MCP_SURFACE_PROFILE_NAMES = ['stdio', 'http_local', 'http_remote', 'edge_remote'] as const satisfies readonly McpSurfaceProfileName[];
+export const MCP_SURFACE_PROFILE_NAMES = ['stdio', 'http_local', 'review_local', 'http_remote', 'edge_remote'] as const satisfies readonly McpSurfaceProfileName[];
 
 const REMOTE_FORBIDDEN_OPERATION_NAMES = ['admin_put_page', 'file_upload', 'get_raw_data'] as const;
 
 const EDGE_FORBIDDEN_OPERATION_NAMES = [...REMOTE_FORBIDDEN_OPERATION_NAMES, 'sync_brain', 'get_skillpack'] as const;
+
+const REVIEW_LOCAL_OPERATION_NAMES = [
+  'get_memory_candidate_entry',
+  'list_memory_candidate_entries',
+  'read_candidate_context',
+  'reject_memory_candidate_entry',
+  'verify_memory_candidate_entry',
+] as const;
 
 const CANONICAL_WRITE_MUTATING_OPERATIONS = [
   'add_link',
@@ -174,6 +183,18 @@ export const MCP_SURFACE_PROFILES: Record<McpSurfaceProfileName, McpSurfaceProfi
     bodySizePolicy: 'http_1mb',
     requestLogPolicy: 'mcp_request_log',
   },
+  review_local: {
+    name: 'review_local',
+    description: 'Built-in local HTTP review surface for Memory Inbox triage.',
+    defaultTierSelection: 'default',
+    allowedOperationNames: REVIEW_LOCAL_OPERATION_NAMES,
+    forbiddenOperationNames: REMOTE_FORBIDDEN_OPERATION_NAMES,
+    allowedCapabilities: ['canonical_write', 'raw_source'],
+    timeoutClass: 'http_request',
+    corsPolicy: 'configured_origins',
+    bodySizePolicy: 'http_1mb',
+    requestLogPolicy: 'mcp_request_log',
+  },
   http_remote: {
     name: 'http_remote',
     description: 'Built-in HTTP MCP surface when exposed to remote clients.',
@@ -265,7 +286,9 @@ export function findMcpSurfaceProfileClassificationFailures(operations: readonly
 }
 
 export function isToolVisibleInSurfaceProfile(operation: Operation, profile: ResolvedMcpSurfaceProfile): boolean {
-  return !profile.forbiddenOperationNames.includes(operation.name) && profile.visibleTiers.has(effectiveToolTier(operation));
+  return isOperationAllowedByProfile(operation, profile)
+    && !profile.forbiddenOperationNames.includes(operation.name)
+    && profile.visibleTiers.has(effectiveToolTier(operation));
 }
 
 export function getMcpSurfaceDecision(operation: Operation, profile: ResolvedMcpSurfaceProfile, options: { tokenCapabilities?: ReadonlySet<McpSurfaceCapability> } = {}): McpSurfaceDecision {
@@ -273,6 +296,9 @@ export function getMcpSurfaceDecision(operation: Operation, profile: ResolvedMcp
   const required_capabilities = requiredSurfaceCapabilitiesForOperation(operation);
   const denial_reasons: string[] = [];
 
+  if (!isOperationAllowedByProfile(operation, profile)) {
+    denial_reasons.push('surface_operation_not_allowed');
+  }
   if (profile.forbiddenOperationNames.includes(operation.name)) {
     denial_reasons.push('forbidden_operation');
   }
@@ -300,6 +326,10 @@ export function getMcpSurfaceDecision(operation: Operation, profile: ResolvedMcp
     required_capabilities,
     denial_reasons: denial_reasons.sort(),
   };
+}
+
+function isOperationAllowedByProfile(operation: Operation, profile: ResolvedMcpSurfaceProfile): boolean {
+  return profile.allowedOperationNames === undefined || profile.allowedOperationNames.includes(operation.name);
 }
 
 export function assertToolCallableInSurfaceProfile(operation: Operation, profile: ResolvedMcpSurfaceProfile, options: { tokenCapabilities?: ReadonlySet<McpSurfaceCapability> } = {}): void {

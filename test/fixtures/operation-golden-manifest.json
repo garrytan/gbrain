@@ -1151,6 +1151,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -1234,6 +1241,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -1340,6 +1354,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -1503,6 +1524,7 @@
         "callable_profiles": [],
         "forbidden_profiles": [
           "http_local",
+          "review_local",
           "http_remote",
           "edge_remote"
         ],
@@ -1519,6 +1541,15 @@
             "callable": false,
             "denial_reasons": [
               "forbidden_operation",
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "forbidden_operation",
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -1641,6 +1672,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -1782,6 +1820,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -1877,6 +1923,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -2042,6 +2096,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -2138,6 +2200,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -2226,6 +2296,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -2338,6 +2415,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -2455,6 +2540,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -2653,6 +2746,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -2727,6 +2827,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -2803,6 +2910,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -2877,6 +2991,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -3055,6 +3177,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -3149,6 +3279,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -3289,6 +3426,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -3374,6 +3518,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -3521,6 +3673,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -3650,6 +3810,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -3926,6 +4094,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -4248,6 +4423,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -4369,6 +4552,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -4485,6 +4676,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -4568,6 +4767,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -4643,6 +4849,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -4720,6 +4933,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -4799,6 +5019,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -4989,6 +5216,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -5164,6 +5399,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -5306,6 +5549,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -5383,6 +5633,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -5465,6 +5723,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -5555,6 +5821,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -5632,6 +5905,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -5705,6 +5985,7 @@
         ],
         "forbidden_profiles": [
           "http_local",
+          "review_local",
           "http_remote",
           "edge_remote"
         ],
@@ -5719,6 +6000,14 @@
             "callable": false,
             "denial_reasons": [
               "forbidden_operation"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "forbidden_operation",
+              "surface_operation_not_allowed"
             ]
           },
           "http_remote": {
@@ -5810,6 +6099,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -6050,6 +6346,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -6168,6 +6471,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -6267,6 +6577,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -6373,6 +6690,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -6478,6 +6802,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -6551,6 +6882,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -6659,6 +6997,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -6732,6 +7077,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -6807,6 +7159,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -6913,6 +7272,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -7018,6 +7384,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -7092,6 +7465,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -7192,6 +7572,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -7281,6 +7668,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -7344,6 +7738,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -7417,6 +7818,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -7501,6 +7909,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -7579,6 +7995,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -7633,12 +8056,14 @@
         "visible_profiles": [
           "stdio",
           "http_local",
+          "review_local",
           "http_remote",
           "edge_remote"
         ],
         "callable_profiles": [
           "stdio",
           "http_local",
+          "review_local",
           "http_remote",
           "edge_remote"
         ],
@@ -7650,6 +8075,11 @@
             "denial_reasons": []
           },
           "http_local": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "review_local": {
             "visible": true,
             "callable": true,
             "denial_reasons": []
@@ -7732,6 +8162,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -7803,6 +8241,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -7878,6 +8324,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -7947,6 +8401,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -8137,6 +8599,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -8320,6 +8789,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -8403,6 +8879,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -8485,6 +8968,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -8576,6 +9066,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -8700,6 +9197,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -8776,6 +9280,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -8899,6 +9410,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -9021,6 +9539,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -9126,6 +9651,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -9201,6 +9733,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -9265,6 +9804,7 @@
         "callable_profiles": [],
         "forbidden_profiles": [
           "http_local",
+          "review_local",
           "http_remote",
           "edge_remote"
         ],
@@ -9281,6 +9821,15 @@
             "callable": false,
             "denial_reasons": [
               "forbidden_operation",
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "forbidden_operation",
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -9367,6 +9916,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -9440,6 +9996,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -9507,6 +10071,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -9581,6 +10152,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -9657,6 +10235,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -9731,6 +10316,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -9804,6 +10396,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -9894,6 +10493,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -9982,6 +10588,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -10072,6 +10685,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -10160,6 +10780,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -10315,6 +10942,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -10421,6 +11056,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -10545,6 +11188,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -10621,6 +11272,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -10711,6 +11369,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -10799,6 +11464,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -10962,12 +11634,14 @@
         "visible_profiles": [
           "stdio",
           "http_local",
+          "review_local",
           "http_remote",
           "edge_remote"
         ],
         "callable_profiles": [
           "stdio",
           "http_local",
+          "review_local",
           "http_remote",
           "edge_remote"
         ],
@@ -10979,6 +11653,11 @@
             "denial_reasons": []
           },
           "http_local": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "review_local": {
             "visible": true,
             "callable": true,
             "denial_reasons": []
@@ -11122,6 +11801,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -11257,6 +11943,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -11484,6 +12177,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -11582,6 +12283,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -11684,6 +12393,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -11774,6 +12491,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -11905,6 +12630,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -11998,6 +12731,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -12089,6 +12829,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -12177,6 +12924,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -12293,6 +13047,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -12405,6 +13166,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -12519,6 +13287,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -12603,6 +13378,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -12761,6 +13544,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -12848,6 +13639,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -12931,6 +13729,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -13013,6 +13818,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -13115,6 +13927,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -13211,6 +14030,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -13319,6 +14145,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -13412,6 +14245,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -13533,6 +14374,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -13637,6 +14486,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -13896,6 +14753,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -14053,6 +14917,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -14137,6 +15008,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -14293,6 +15171,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -14394,6 +15280,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -14581,6 +15474,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -14775,6 +15676,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -14966,6 +15875,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -15087,6 +16004,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -15161,6 +16085,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -15276,6 +16207,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -15397,6 +16335,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -15586,6 +16532,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -15673,6 +16626,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -15786,6 +16747,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -15894,6 +16862,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -16032,6 +17007,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -16121,12 +17103,14 @@
         "visible_profiles": [
           "stdio",
           "http_local",
+          "review_local",
           "http_remote",
           "edge_remote"
         ],
         "callable_profiles": [
           "stdio",
           "http_local",
+          "review_local",
           "http_remote",
           "edge_remote"
         ],
@@ -16138,6 +17122,11 @@
             "denial_reasons": []
           },
           "http_local": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "review_local": {
             "visible": true,
             "callable": true,
             "denial_reasons": []
@@ -16328,6 +17317,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -16413,6 +17409,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -16495,6 +17498,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -16597,6 +17607,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -16689,6 +17706,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -16790,6 +17815,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -16900,6 +17933,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -17036,6 +18077,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -17134,6 +18183,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -17460,6 +18516,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -17618,6 +18682,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -17825,6 +18896,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -18006,6 +19084,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -18155,6 +19240,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -18349,6 +19442,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -18483,6 +19584,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -18568,12 +19677,14 @@
         "visible_profiles": [
           "stdio",
           "http_local",
+          "review_local",
           "http_remote",
           "edge_remote"
         ],
         "callable_profiles": [
           "stdio",
           "http_local",
+          "review_local",
           "http_remote",
           "edge_remote"
         ],
@@ -18585,6 +19696,11 @@
             "denial_reasons": []
           },
           "http_local": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "review_local": {
             "visible": true,
             "callable": true,
             "denial_reasons": []
@@ -18683,6 +19799,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -18773,6 +19897,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -18856,6 +19987,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -19026,6 +20164,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -19123,6 +20269,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -19256,6 +20410,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -19331,6 +20492,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -19462,6 +20630,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -19578,6 +20754,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -19656,6 +20840,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -19874,6 +21065,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -19986,6 +21184,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -20069,6 +21274,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -20312,6 +21524,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -20411,6 +21630,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -20569,6 +21796,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -20668,6 +21903,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -20940,6 +22183,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -21051,6 +22301,14 @@
               "tier_not_callable"
             ]
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
           "http_remote": {
             "visible": false,
             "callable": false,
@@ -21147,6 +22405,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -21245,6 +22510,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -21347,6 +22619,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -21445,6 +22724,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -21563,6 +22849,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -21810,6 +23103,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -21910,6 +23210,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -22020,6 +23327,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -22146,6 +23460,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -22230,6 +23551,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -22306,6 +23634,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -22422,6 +23757,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -22595,6 +23937,14 @@
             "visible": false,
             "callable": false,
             "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
               "tier_not_callable"
             ]
           },
@@ -22773,6 +24123,13 @@
             "callable": true,
             "denial_reasons": []
           },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
           "http_remote": {
             "visible": true,
             "callable": true,
@@ -22894,12 +24251,14 @@
         "visible_profiles": [
           "stdio",
           "http_local",
+          "review_local",
           "http_remote",
           "edge_remote"
         ],
         "callable_profiles": [
           "stdio",
           "http_local",
+          "review_local",
           "http_remote",
           "edge_remote"
         ],
@@ -22911,6 +24270,11 @@
             "denial_reasons": []
           },
           "http_local": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "review_local": {
             "visible": true,
             "callable": true,
             "denial_reasons": []
@@ -23032,6 +24396,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -23208,6 +24579,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,
@@ -23402,6 +24780,13 @@
             "visible": true,
             "callable": true,
             "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
           },
           "http_remote": {
             "visible": true,

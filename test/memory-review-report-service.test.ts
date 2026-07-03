@@ -2291,7 +2291,7 @@ describe('memory review report service', () => {
         'Identical canonical evidence for redundancy scoring.',
         '[Source: User, direct message, 2026-07-03 12:00 KST]',
       ].join('\n'), { path: 'concepts/compiled-truth.md' });
-      await engine.putRetrievalTrace({
+      const trace = await engine.putRetrievalTrace({
         id: 'trace-trajectory',
         scope: 'work',
         route: ['retrieve_context', 'read_context'],
@@ -2303,6 +2303,7 @@ describe('memory review report service', () => {
         elapsed_ms: 125,
         retrieved_token_count: 42,
       });
+      const reportNow = new Date(trace.created_at.getTime() + 1_000).toISOString();
       const logs: string[] = [];
       const originalLog = console.log;
       console.log = (line?: unknown) => { logs.push(String(line)); };
@@ -2311,7 +2312,7 @@ describe('memory review report service', () => {
           '--type',
           'retrieval-trajectory-score',
           '--now',
-          new Date().toISOString(),
+          reportNow,
         ]);
       } finally {
         console.log = originalLog;

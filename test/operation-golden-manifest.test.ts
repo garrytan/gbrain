@@ -57,10 +57,11 @@ describe('operation golden manifest', () => {
       visible_profiles: ['stdio', 'http_local', 'http_remote', 'edge_remote'],
       callable_profiles: ['stdio', 'http_local', 'http_remote', 'edge_remote'],
     });
+    expect(putPage?.surface_profile.decisions.review_local.denial_reasons).toEqual(['surface_operation_not_allowed']);
     expect(putPage?.full_schema_hash).toMatch(/^[a-f0-9]{64}$/);
 
     const adminPutPage = manifest.operations.find((entry) => entry.name === 'admin_put_page');
-    expect(adminPutPage?.surface_profile.forbidden_profiles).toEqual(['http_local', 'http_remote', 'edge_remote']);
+    expect(adminPutPage?.surface_profile.forbidden_profiles).toEqual(['http_local', 'review_local', 'http_remote', 'edge_remote']);
     expect(adminPutPage?.surface_profile.decisions.http_remote.denial_reasons).toContain('forbidden_operation');
 
     const deletePage = manifest.operations.find((entry) => entry.name === 'delete_page');

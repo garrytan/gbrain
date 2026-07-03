@@ -2,6 +2,7 @@ import { loadConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
 import { operationsByName, type OperationContext } from '../core/operations.ts';
+import { startMcpHttpServer } from '../mcp/http-server.ts';
 
 export interface ReviewServerOptions {
   engine: BrainEngine;
@@ -17,10 +18,15 @@ export interface ReviewServerHandle {
 export function startReviewServer(options: ReviewServerOptions): ReviewServerHandle {
   const host = options.host ?? '127.0.0.1';
   const port = options.port ?? 8791;
-  const server = Bun.serve({
-    hostname: host,
+  const server = startMcpHttpServer({
+    engine: options.engine,
+    config: loadConfig() ?? DEFAULT_RUNTIME_CONFIG,
+    host,
     port,
-    fetch: (request) => handleReviewRequest(options.engine, request),
+    surfaceProfile: 'review_local',
+    reviewRoutes: {
+      handle: (request) => handleReviewRoute(options.engine, request),
+    },
   });
   return {
     url: `http://${server.hostname}:${server.port}`,
@@ -46,7 +52,7 @@ export async function runReview(engine: BrainEngine, args: string[]): Promise<vo
   });
 }
 
-async function handleReviewRequest(engine: BrainEngine, request: Request): Promise<Response> {
+async function handleReviewRoute(engine: BrainEngine, request: Request): Promise<Response | null> {
   const url = new URL(request.url);
   try {
     if (request.method === 'GET' && url.pathname === '/') {
@@ -87,7 +93,7 @@ async function handleReviewRequest(engine: BrainEngine, request: Request): Promi
       });
       return json({ candidate });
     }
-    return json({ error: 'not_found' }, 404);
+    return null;
   } catch (error) {
     return json({
       error: error instanceof Error ? error.name : 'Error',
@@ -125,11 +131,20 @@ function renderReviewPage(candidates: Record<string, unknown>[]): string {
     const id = String(candidate.id ?? '');
     const content = String(candidate.proposed_content ?? '');
     const target = `${candidate.target_object_type ?? 'unknown'}:${candidate.target_object_id ?? 'unbound'}`;
+    const sourceRefs = stringList(candidate.source_refs).join(', ') || 'none';
+    const generatedBy = String(candidate.generated_by ?? 'unknown');
+    const confidence = formatScore(candidate.confidence_score);
+    const verificationEvidence = optionalString(candidate.verification_evidence);
+    const reviewReason = optionalString(candidate.review_reason);
     return [
       '<article class="candidate">',
       `<h2>${escapeHtml(id)}</h2>`,
       `<p>${escapeHtml(content)}</p>`,
       `<p class="meta">${escapeHtml(target)}</p>`,
+      `<p class="evidence">sources: ${escapeHtml(sourceRefs)}</p>`,
+      `<p class="meta">generated_by: ${escapeHtml(generatedBy)} · confidence: ${escapeHtml(confidence)}</p>`,
+      verificationEvidence ? `<p class="evidence">verification: ${escapeHtml(verificationEvidence)}</p>` : '',
+      reviewReason ? `<p class="evidence">review: ${escapeHtml(reviewReason)}</p>` : '',
       '<div class="actions">',
       `<form method="post" action="/candidates/${encodeURIComponent(id)}/verify">`,
       '<button type="submit">Verify</button>',
@@ -151,6 +166,7 @@ function renderReviewPage(candidates: Record<string, unknown>[]): string {
     header { border-bottom: 1px solid #ddd; margin-bottom: 16px; }
     .candidate { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin: 12px 0; }
     .meta { color: #555; font-family: ui-monospace, monospace; }
+    .evidence { color: #333; font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
     .actions { display: flex; gap: 8px; }
     button { margin-right: 8px; }
   </style>
@@ -195,6 +211,20 @@ function readFlag(args: string[], flag: string): string | undefined {
   const index = args.indexOf(flag);
   if (index === -1) return undefined;
   return args[index + 1];
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function formatScore(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : 'unknown';
 }
 
 function escapeHtml(value: string): string {

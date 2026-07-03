@@ -64,6 +64,40 @@ describe('MCP HTTP transport', () => {
     expect(payload).not.toHaveProperty('checks');
   });
 
+  test('logs review_local routes through the shared HTTP request logger', async () => {
+    const logEntries: McpHttpRequestLogEntry[] = [];
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      surfaceProfile: 'review_local',
+      reviewRoutes: {
+        handle: async (request) => new URL(request.url).pathname === '/'
+          ? new Response('ok')
+          : null,
+      },
+      logRequest: async (entry) => {
+        logEntries.push(entry);
+      },
+    });
+
+    const response = await handler(new Request('http://localhost/'));
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('ok');
+    expect(logEntries).toHaveLength(1);
+    expect(logEntries[0]).toMatchObject({
+      tokenName: 'review_local',
+      operation: 'review.list_memory_candidate_entries',
+      status: 'success',
+      surfaceProfile: 'review_local',
+      authPrincipal: {
+        principal_type: 'local_mcp',
+        surface_profile: 'review_local',
+        actor_id: 'mbrain-review-ui',
+      },
+    });
+  });
+
   test('handles initialize, tools/list, and tools/call over authenticated HTTP', async () => {
     const handler = createMcpHttpHandler({
       engine: createStatsEngine(),

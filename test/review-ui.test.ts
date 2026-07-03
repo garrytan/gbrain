@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { startReviewServer } from '../src/commands/review.ts';
@@ -51,6 +51,35 @@ function candidateInput(id: string): MemoryCandidateEntryInput {
 }
 
 describe('local review UI', () => {
+  test('runs on the shared MCP HTTP server with the review_local surface profile', async () => {
+    const source = readFileSync(
+      new URL('../src/commands/review.ts', import.meta.url),
+      'utf-8',
+    );
+
+    expect(source).toContain('startMcpHttpServer');
+    expect(source).toContain("surfaceProfile: 'review_local'");
+    expect(source).not.toContain('Bun.serve({');
+
+    const harness = await createReviewHarness('shared-http');
+    const server = startReviewServer({
+      engine: harness.engine,
+      host: '127.0.0.1',
+      port: 0,
+    });
+    try {
+      const healthResponse = await fetch(`${server.url}/health`);
+      expect(healthResponse.status).toBe(200);
+      expect(await healthResponse.json()).toMatchObject({
+        status: 'ok',
+        transport: 'http',
+      });
+    } finally {
+      server.stop();
+      await harness.cleanup();
+    }
+  });
+
   test('serves pending candidates and reviews them through page form actions', async () => {
     const harness = await createReviewHarness('verify');
     const server = startReviewServer({
@@ -76,6 +105,9 @@ describe('local review UI', () => {
       const page = await fetch(`${server.url}/`).then(response => response.text());
       expect(page).toContain('review-candidate-1');
       expect(page).toContain('The review UI should expose pending candidates with evidence.');
+      expect(page).toContain('test/review-ui.test.ts');
+      expect(page).toContain('generated_by: agent');
+      expect(page).toContain('confidence: 0.7');
       expect(page).toContain('method="post"');
       expect(page).toContain('action="/candidates/review-candidate-1/verify"');
       expect(page).toContain('action="/candidates/review-candidate-1/refute"');
@@ -119,6 +151,37 @@ describe('local review UI', () => {
       const candidate = await harness.engine.getMemoryCandidateEntry('review-candidate-3');
       expect(candidate?.verification_status).toBe('verified');
       expect(candidate?.verification_evidence).toContain('Inspected');
+    } finally {
+      server.stop();
+      await harness.cleanup();
+    }
+  });
+
+  test('applies the shared HTTP body limit to review API routes', async () => {
+    const harness = await createReviewHarness('body-limit');
+    const server = startReviewServer({
+      engine: harness.engine,
+      host: '127.0.0.1',
+      port: 0,
+    });
+    try {
+      await harness.engine.createMemoryCandidateEntry(candidateInput('oversized-review-candidate'));
+
+      const response = await fetch(`${server.url}/api/candidates/oversized-review-candidate/verify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          verification_status: 'verified',
+          verification_method: 'user_confirmation',
+          verification_evidence: 'x'.repeat(1_048_577),
+          verification_source_refs: ['oversized-test'],
+        }),
+      });
+
+      expect(response.status).toBe(413);
+      expect(await response.json()).toMatchObject({
+        error: 'request_too_large',
+      });
     } finally {
       server.stop();
       await harness.cleanup();
