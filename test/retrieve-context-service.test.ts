@@ -1026,36 +1026,44 @@ describe('retrieve context service', () => {
         'Queue assigns runtime requests to worker lanes.',
       ].join('\n'), { path: 'concepts/queue.md' });
 
-      const result = await retrieveContext(engine, {
-        query: 'queue',
-        include_orientation: false,
-        limit: 2,
-      }, {
-        candidateSearch: async () => [
-          {
-            slug: 'systems/noisy-runtime',
-            page_id: 1,
-            title: 'Noisy Runtime',
-            type: 'system',
-            chunk_text: 'runtime operations overview',
-            chunk_source: 'compiled_truth',
-            score: 15,
-            stale: false,
-          },
-          {
-            slug: 'concepts/queue',
-            page_id: 2,
-            title: 'Queue',
-            type: 'concept',
-            chunk_text: 'Queue assigns runtime requests to worker lanes.',
-            chunk_source: 'compiled_truth',
-            score: 0.01,
-            stale: false,
-          },
-        ],
-      });
+      async function retrieveWithScores(noisyScore: number, queueScore: number) {
+        return retrieveContext(engine, {
+          query: 'queue',
+          include_orientation: false,
+          limit: 2,
+        }, {
+          candidateSearch: async () => [
+            {
+              slug: 'systems/noisy-runtime',
+              page_id: 1,
+              title: 'Noisy Runtime',
+              type: 'system',
+              chunk_text: 'runtime operations overview',
+              chunk_source: 'compiled_truth',
+              score: noisyScore,
+              stale: false,
+            },
+            {
+              slug: 'concepts/queue',
+              page_id: 2,
+              title: 'Queue',
+              type: 'concept',
+              chunk_text: 'Queue assigns runtime requests to worker lanes.',
+              chunk_source: 'compiled_truth',
+              score: queueScore,
+              stale: false,
+            },
+          ],
+        });
+      }
 
-      expect(result.required_reads[0]!.slug).toBe('concepts/queue');
+      const sqliteScale = await retrieveWithScores(15, 0.01);
+      const pgScale = await retrieveWithScores(0.15, 0.01);
+
+      expect(sqliteScale.required_reads[0]!.slug).toBe('concepts/queue');
+      expect(pgScale.required_reads.map((selector) => selector.slug)).toEqual(
+        sqliteScale.required_reads.map((selector) => selector.slug),
+      );
     });
   });
 
@@ -2637,6 +2645,73 @@ describe('retrieve context service', () => {
     });
   });
 
+  test('does not let context-map reads evict direct candidates for coding-continuation probes', async () => {
+    await withEngine('orientation-non-synthesis-scope', async (engine) => {
+      for (const slug of ['systems/apollo-runtime', 'systems/apollo-runner', 'systems/apollo-tests', 'systems/apollo-map']) {
+        await importFromContent(engine, slug, [
+          '---',
+          'type: system',
+          `title: ${slug.split('/')[1]}`,
+          '---',
+          '# Compiled Truth',
+          'Apollo retrieval implementation notes.',
+          '[Source: User, direct message, 2026-05-07 09:20 KST]',
+        ].join('\n'), { path: `${slug}.md` });
+      }
+      await buildStructuralContextMapEntry(engine);
+
+      const result = await retrieveContext(engine, {
+        query: 'Continue fixing the failing route test',
+        include_orientation: true,
+        limit: 5,
+      }, {
+        candidateSearch: async () => [
+          {
+            slug: 'systems/apollo-runtime',
+            page_id: 1,
+            title: 'Apollo Runtime',
+            type: 'system',
+            chunk_text: 'Apollo retrieval implementation notes.',
+            chunk_source: 'compiled_truth',
+            score: 1,
+            stale: false,
+          },
+          {
+            slug: 'systems/apollo-runner',
+            page_id: 2,
+            title: 'Apollo Runner',
+            type: 'system',
+            chunk_text: 'Apollo retrieval implementation notes.',
+            chunk_source: 'compiled_truth',
+            score: 1,
+            stale: false,
+          },
+          {
+            slug: 'systems/apollo-tests',
+            page_id: 3,
+            title: 'Apollo Tests',
+            type: 'system',
+            chunk_text: 'Apollo retrieval implementation notes.',
+            chunk_source: 'compiled_truth',
+            score: 1,
+            stale: false,
+          },
+        ],
+      });
+
+      expect(result.scenario).toBe('coding_continuation');
+      expect(result.orientation.recommended_reads.length).toBeGreaterThan(0);
+      expect(result.required_reads.map((selector) => selector.slug).sort()).toEqual([
+        'systems/apollo-runtime',
+        'systems/apollo-runner',
+        'systems/apollo-tests',
+      ].sort());
+      expect(result.read_plan.next_actions).not.toContain(
+        'Context-map recommended reads were considered for required_reads; selected_selector_snapshots still require read_context before factual claims.',
+      );
+    });
+  });
+
   test('auto-applies a broad-synthesis route and supports explicit opt-out', async () => {
     await withEngine('auto-route-broad-synthesis', async (engine) => {
       await importFromContent(engine, 'concepts/canonical-memory', [
@@ -2684,6 +2759,48 @@ describe('retrieve context service', () => {
       });
 
       expect(disabled.route).toBeNull();
+    });
+  });
+
+  test('auto-applies personal profile routes into required_reads for read_context', async () => {
+    await withEngine('auto-route-personal-profile', async (engine) => {
+      await engine.upsertProfileMemoryEntry({
+        id: 'profile-morning-routine',
+        scope_id: 'personal:default',
+        profile_type: 'preference',
+        subject: 'Morning routine',
+        content: 'Private morning routine detail.',
+        source_refs: ['User, direct message, 2026-05-07 10:00 KST'],
+        sensitivity: 'personal',
+        export_status: 'private_only',
+        last_confirmed_at: new Date('2026-05-07T01:00:00.000Z'),
+        superseded_by: null,
+      });
+
+      const result = await retrieveContext(engine, {
+        query: 'What do you know about my Morning routine?',
+        requested_scope: 'personal',
+        known_subjects: [{ ref: 'Morning routine', kind: 'profile' }],
+        include_orientation: false,
+      }, {
+        candidateSearch: async () => [],
+      });
+
+      expect(result.route?.selected_intent).toBe('personal_profile_lookup');
+      expect(result.route?.route?.route_kind).toBe('personal_profile_lookup');
+      expect(result.required_reads).toContainEqual(expect.objectContaining({
+        kind: 'profile_memory',
+        scope_id: 'personal:default',
+        object_id: 'profile-morning-routine',
+      }));
+      expect(result.read_plan.selected_selectors).toContain(
+        retrievalSelectorId({
+          kind: 'profile_memory',
+          scope_id: 'personal:default',
+          object_id: 'profile-morning-routine',
+        }),
+      );
+      expect(result.answerability.must_read_context).toBe(true);
     });
   });
 

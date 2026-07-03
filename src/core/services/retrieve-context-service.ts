@@ -417,12 +417,22 @@ export async function retrieveContext(
   const combinedCandidates = taskCandidate
     ? [taskCandidate, ...candidates]
     : candidates;
+  const route = await maybeSelectAutoRoute(engine, input, {
+    scenario: classification.scenario,
+    query,
+    limit,
+    scopeGate,
+    dependencies,
+  });
+  const orientationReadsCompeted = shouldApplyOrientationReadsToRequiredReads(classification.scenario);
   const baseRequiredReads = selectRequiredReadSelectors({
     taskWorkingSetSelector,
+    routeSelectors: requiredReadSelectorsFromAutoRoute(route),
     candidates,
     orientation,
     scopeGate,
     requiredReadLimit,
+    includeOrientationReads: orientationReadsCompeted,
   });
   const graphAugmentation = await maybeAugmentRequiredReadsWithGraphFrontier(engine, input, dependencies, {
     query,
@@ -456,13 +466,6 @@ export async function retrieveContext(
     backend_gap: backendGap,
     graph_frontier_authority: graphFrontierUsed ? 'selector_planning_only' : undefined,
   });
-  const route = await maybeSelectAutoRoute(engine, input, {
-    scenario: classification.scenario,
-    query,
-    limit,
-    scopeGate,
-    dependencies,
-  });
   return maybePersistRetrieveTrace(engine, {
     request_id: requestId,
     scenario: classification.scenario,
@@ -483,6 +486,7 @@ export async function retrieveContext(
       orientation: graphAugmentation.orientation,
       candidate_signals: candidateSignals,
       required_read_limit: requiredReadLimit,
+      orientation_reads_competed: orientationReadsCompeted,
       backend_gap_reason: backendGapReason,
       backend_gap: backendGap,
     }),
@@ -536,13 +540,7 @@ function buildAutoRouteInput(
   if (context.query.length === 0 && !input.task_id) return null;
   const intent = intentFromScenario(context.scenario);
   if (intent === 'task_resume' && !input.task_id) {
-    return {
-      intent: 'broad_synthesis',
-      query: context.query,
-      limit: context.limit,
-      requested_scope: normalizedRouteScope(input.requested_scope ?? context.scopeGate?.resolved_scope),
-      persist_trace: false,
-    };
+    return null;
   }
   if (intent === 'personal_profile_lookup') {
     const subject = firstKnownSubjectRef(input.known_subjects) ?? context.query;
@@ -595,20 +593,101 @@ function normalizedRouteScope(scope: ScopeGateScope | undefined): RetrievalRoute
 
 function selectRequiredReadSelectors(input: {
   taskWorkingSetSelector: RetrievalSelector | null;
+  routeSelectors: RetrievalSelector[];
   candidates: RetrieveContextCandidate[];
   orientation: RetrieveContextOrientation;
   scopeGate?: ScopeGateDecisionResult;
   requiredReadLimit: number;
+  includeOrientationReads: boolean;
 }): RetrievalSelector[] {
   const pinnedSelectors = input.taskWorkingSetSelector
     ? [input.taskWorkingSetSelector]
     : [];
   const candidateSelectors = input.candidates.map((candidate) => candidate.read_selector);
-  const orientationSelectors = input.orientation.recommended_reads;
+  const orientationSelectors = input.includeOrientationReads ? input.orientation.recommended_reads : [];
   return dedupeSelectorsByEvidence([
     ...pinnedSelectors,
+    ...input.routeSelectors,
     ...interleaveSelectors(candidateSelectors, orientationSelectors),
   ].filter((selector) => selectorAllowedByRetrieveScope(selector, input.scopeGate))).slice(0, input.requiredReadLimit);
+}
+
+function requiredReadSelectorsFromAutoRoute(routeResult: RetrievalRouteSelectorResult | null): RetrievalSelector[] {
+  const route = routeResult?.route;
+  if (!route) return [];
+
+  switch (route.route_kind) {
+  case 'personal_profile_lookup':
+    return [normalizeRetrievalSelector({
+      kind: 'profile_memory',
+      scope_id: route.payload.scope_id,
+      object_id: route.payload.profile_memory_id,
+      freshness: 'current',
+      source_refs: route.payload.source_refs,
+    })];
+  case 'personal_episode_lookup':
+    return [normalizeRetrievalSelector({
+      kind: 'personal_episode',
+      scope_id: route.payload.scope_id,
+      object_id: route.payload.personal_episode_id,
+      freshness: 'current',
+      source_refs: route.payload.source_refs,
+    })];
+  case 'precision_lookup':
+    return route.payload.recommended_reads.map(selectorFromRouteReadLike);
+  case 'mixed_scope_bridge':
+    return [
+      ...requiredReadSelectorsFromPersonalRoute(route.payload.personal_route),
+      ...route.payload.work_route.recommended_reads.map(selectorFromRouteReadLike),
+    ];
+  case 'broad_synthesis':
+  case 'task_resume':
+    return [];
+  }
+}
+
+function requiredReadSelectorsFromPersonalRoute(
+  route: Extract<NonNullable<RetrievalRouteSelectorResult['route']>, { route_kind: 'mixed_scope_bridge' }>['payload']['personal_route'],
+): RetrievalSelector[] {
+  if (route.route_kind === 'personal_profile_lookup') {
+    return [normalizeRetrievalSelector({
+      kind: 'profile_memory',
+      scope_id: route.scope_id,
+      object_id: route.profile_memory_id,
+      freshness: 'current',
+      source_refs: route.source_refs,
+    })];
+  }
+  return [normalizeRetrievalSelector({
+    kind: 'personal_episode',
+    scope_id: route.scope_id,
+    object_id: route.personal_episode_id,
+    freshness: 'current',
+    source_refs: route.source_refs,
+  })];
+}
+
+function selectorFromRouteReadLike(read: {
+  node_kind: 'page' | 'section';
+  page_slug: string;
+  path: string;
+  section_id?: string;
+}): RetrievalSelector {
+  return normalizeRetrievalSelector({
+    kind: read.node_kind === 'section' ? 'section' : 'page',
+    scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+    slug: read.page_slug,
+    path: read.path,
+    section_id: read.section_id,
+    freshness: 'unknown',
+  });
+}
+
+function shouldApplyOrientationReadsToRequiredReads(scenario: MemoryScenario): boolean {
+  return scenario === 'project_qa'
+    || scenario === 'knowledge_qa'
+    || scenario === 'auto_accumulation'
+    || scenario === 'mixed';
 }
 
 function interleaveSelectors(
@@ -2259,6 +2338,7 @@ function buildReadPlan(input: {
   orientation: RetrieveContextOrientation;
   candidate_signals: CandidateSignalResult;
   required_read_limit: number;
+  orientation_reads_competed?: boolean;
   backend_gap_reason?: CandidateSearchBackendGap;
   backend_gap?: RetrieveContextBackendGap;
 }): RetrieveContextReadPlan {
@@ -2268,9 +2348,12 @@ function buildReadPlan(input: {
   const deferredCandidateIds = input.candidates
     .filter((candidate) => !selectedEvidence.has(selectorEvidencePlanKey(candidate.read_selector)))
     .map((candidate) => candidate.candidate_id);
-  const deferredOrientationReads = input.orientation.recommended_reads
-    .filter((selector) => !selectedEvidence.has(selectorEvidencePlanKey(selector)));
-  const hasOrientationReads = input.orientation.recommended_reads.length > 0;
+  const deferredOrientationReads = input.orientation_reads_competed === true
+    ? input.orientation.recommended_reads
+      .filter((selector) => !selectedEvidence.has(selectorEvidencePlanKey(selector)))
+    : [];
+  const hasOrientationReads = input.orientation_reads_competed === true
+    && input.orientation.recommended_reads.length > 0;
   const gapReasons: RetrieveContextReadPlan['gap_reasons'] = [];
 
   if (input.required_reads.length === 0) {
@@ -2588,7 +2671,7 @@ async function persistRetrieveTrace(
       ...buildCandidateSignalVerification(result),
     ],
     write_outcome: 'no_durable_write',
-    selected_intent: intentFromScenario(result.scenario),
+    selected_intent: result.route?.selected_intent ?? intentFromScenario(result.scenario),
     scope_gate_policy: result.scope_gate?.policy ?? null,
     scope_gate_reason: result.scope_gate?.decision_reason ?? null,
     elapsed_ms: Math.max(0, Date.now() - startedAtMs),

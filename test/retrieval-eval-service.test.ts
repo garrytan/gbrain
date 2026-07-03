@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { evaluateLiveRetrievalFixture } from '../src/core/evaluation/retrieval-eval.ts';
@@ -12,6 +12,7 @@ import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import type { RetrievalTrace } from '../src/core/types.ts';
 
 const tempPaths: string[] = [];
+const WAVE3_DG1_ARTIFACT_URL = new URL('./fixtures/retrieval-eval/wave3-dg1-non-regression.json', import.meta.url);
 
 afterEach(() => {
   while (tempPaths.length > 0) {
@@ -20,6 +21,32 @@ afterEach(() => {
 });
 
 describe('live retrieval eval harness', () => {
+  test('records the EV-1 non-regression artifact for the DG-1 default flip', () => {
+    const artifact = JSON.parse(readFileSync(WAVE3_DG1_ARTIFACT_URL, 'utf8'));
+
+    expect(artifact).toMatchObject({
+      artifact_kind: 'ev1_live_retrieval_non_regression',
+      gate: 'EV-1',
+      evaluated_change: 'RQ-7 retrieval_governed_probe_hybrid default-on',
+      fixture_id: 'retrieval-eval-basic',
+      fixture_path: 'test/fixtures/retrieval-eval/basic.jsonl',
+      status: 'passed',
+      thresholds: {
+        top1_match_rate: 1,
+        recall_at_10: 1,
+      },
+      metrics: {
+        case_count: 3,
+        top1_match_rate: 1,
+        recall_at_10: 1,
+        mrr: 1,
+      },
+    });
+    expect(artifact.config['retrieval.governed_probe_hybrid']).toBe(true);
+    expect(artifact.cases.every((entry: { status?: string }) => entry.status === 'passed')).toBe(true);
+    expect(artifact.failures).toEqual([]);
+  });
+
   test('scores recall, precision, MRR, latency, and per-route aggregates over a real index', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-retrieval-eval-'));
     tempPaths.push(dir);
