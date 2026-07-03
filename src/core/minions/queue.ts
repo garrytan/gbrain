@@ -16,6 +16,7 @@ import type {
 import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
 import { validateAttachment } from './attachments.ts';
 import { isProtectedJobName } from './protected-names.ts';
+import { defaultTimeoutMsFor } from './handler-timeouts.ts';
 import {
   withRetry, BULK_RETRY_OPTS, resolveBulkRetryOpts, computeNextDelay,
   isRetryableConnError,
@@ -278,7 +279,10 @@ export class MinionQueue {
         opts?.on_child_fail ?? 'fail_parent',
         depth,
         opts?.max_children ?? null,
-        opts?.timeout_ms ?? null,
+        // #1737: long handlers (subagent, embed-backfill, autopilot-cycle) get a
+        // sane long wall-clock default stamped at submit when the caller didn't
+        // pass one, so they aren't killed mid-progress by the short null-default.
+        opts?.timeout_ms ?? defaultTimeoutMsFor(jobName),
         opts?.remove_on_complete ?? false,
         opts?.remove_on_fail ?? false,
         opts?.idempotency_key ?? null,
@@ -498,12 +502,28 @@ export class MinionQueue {
   }
 
   /** Get job statistics. */
-  async getStats(opts?: { since?: Date }): Promise<{
+  async getStats(opts?: { since?: Date; queue?: string }): Promise<{
     by_status: Record<string, number>;
     by_type: Array<{ name: string; total: number; completed: number; failed: number; dead: number; avg_duration_ms: number | null }>;
     queue_health: { waiting: number; active: number; stalled: number };
+    /**
+     * issue #1801 — QUEUE-SCOPED wedge signature for the `jobs stats` WEDGED
+     * line. by_status/by_type/queue_health above stay GLOBAL (dashboard
+     * overview); this block is scoped to one queue (default 'default') because
+     * a wedge is per-queue — a healthy worker on one queue must not mask a
+     * wedged one (Codex #14/#15). `active_healthy` counts only live-lock active
+     * rows so an expired-lock row (worker died mid-job) does NOT mask the wedge.
+     */
+    wedge: {
+      queue: string;
+      active_healthy: number;
+      waiting: number;
+      last_completed_at: string | null;
+      minutes_since_completion: number | null;
+    };
   }> {
     const since = opts?.since ?? new Date(Date.now() - 86400000);
+    const wedgeQueue = opts?.queue ?? 'default';
 
     // Status counts
     const statusRows = await this.engine.executeRaw<{ status: string; count: string }>(
@@ -539,6 +559,23 @@ export class MinionQueue {
     );
     const stalled = parseInt(stalledRows[0]?.count ?? '0', 10);
 
+    // issue #1801 — queue-scoped wedge signature (one query, one queue).
+    const wedgeRows = await this.engine.executeRaw<{
+      active_healthy: string;
+      waiting: string;
+      last_completed: string | null;
+    }>(
+      `SELECT
+         count(*) FILTER (WHERE status = 'active' AND lock_until > now())::text AS active_healthy,
+         count(*) FILTER (WHERE status = 'waiting')::text AS waiting,
+         max(updated_at) FILTER (WHERE status = 'completed')::text AS last_completed
+       FROM minion_jobs
+       WHERE queue = $1`,
+      [wedgeQueue],
+    );
+    const wr = wedgeRows[0] ?? { active_healthy: '0', waiting: '0', last_completed: null };
+    const wedgeLastCompleted = wr.last_completed ? new Date(wr.last_completed) : null;
+
     return {
       by_status,
       by_type,
@@ -546,6 +583,15 @@ export class MinionQueue {
         waiting: by_status['waiting'] ?? 0,
         active: by_status['active'] ?? 0,
         stalled,
+      },
+      wedge: {
+        queue: wedgeQueue,
+        active_healthy: parseInt(wr.active_healthy ?? '0', 10),
+        waiting: parseInt(wr.waiting ?? '0', 10),
+        last_completed_at: wr.last_completed,
+        minutes_since_completion: wedgeLastCompleted
+          ? Math.round((Date.now() - wedgeLastCompleted.getTime()) / 60_000)
+          : null,
       },
     };
   }
@@ -559,7 +605,10 @@ export class MinionQueue {
   async claim(lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[]): Promise<MinionJob | null> {
     if (registeredNames.length === 0) return null;
 
-    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+    // Direct (session-mode) pool: claim opens the lock that renewLock then
+    // heartbeats. Both must live on a connection the transaction-mode pooler
+    // won't recycle mid-hold, or the lock orphans and the worker wedges.
+    const rows = await this.engine.executeRawDirect<Record<string, unknown>>(
       `UPDATE minion_jobs SET
         status = 'active',
         lock_token = $1,
@@ -598,9 +647,18 @@ export class MinionQueue {
   async handleTimeouts(): Promise<MinionJob[]> {
     return this.engine.transaction(async (tx) => {
       const rows = await tx.executeRaw<Record<string, unknown>>(
+        // #1737: count the timed-out run as a spent attempt (terminal, no retry),
+        // mirroring handleWallClockTimeouts + handleStalled. handleTimeouts is the
+        // FIRST killer to fire for the long-lane handlers (timeout_ms stamped at
+        // submit), so without this the job reads `attempts: 0/N (started: N)`.
+        // Safe against double-count: the worker sweep runs handleStalled ->
+        // handleTimeouts -> handleWallClockTimeouts sequentially and awaited, and
+        // each guards on `status = 'active'`, so the first to set status='dead'
+        // excludes the row from the later sweeps.
         `UPDATE minion_jobs SET
           status = 'dead',
           error_text = 'timeout exceeded',
+          attempts_made = attempts_made + 1,
           lock_token = NULL,
           lock_until = NULL,
           finished_at = now(),
@@ -674,6 +732,7 @@ export class MinionQueue {
         `UPDATE minion_jobs SET
           status = 'dead',
           error_text = 'wall-clock timeout exceeded',
+          attempts_made = attempts_made + 1,
           lock_token = NULL,
           lock_until = NULL,
           finished_at = now(),
@@ -1031,7 +1090,10 @@ export class MinionQueue {
 
   /** Renew lock (token-fenced). Returns false if token mismatch (job was reclaimed). */
   async renewLock(id: number, lockToken: string, lockDurationMs: number): Promise<boolean> {
-    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+    // Direct (session-mode) pool — see claim(). The heartbeat that keeps a job
+    // alive for minutes cannot run on the transaction pooler without periodic
+    // CONNECTION_ENDED drops that look like lock-expiry and orphan the job.
+    const rows = await this.engine.executeRawDirect<Record<string, unknown>>(
       `UPDATE minion_jobs SET lock_until = now() + ($1::double precision * interval '1 millisecond'), updated_at = now()
        WHERE id = $2 AND lock_token = $3 AND status = 'active'
        RETURNING id`,
@@ -1107,6 +1169,7 @@ export class MinionQueue {
       dead_lettered AS (
         UPDATE minion_jobs SET
           status = 'dead', stalled_counter = stalled_counter + 1,
+          attempts_made = attempts_made + 1,
           error_text = 'max stalled count exceeded',
           lock_token = NULL, lock_until = NULL, finished_at = now(), updated_at = now()
         WHERE id IN (SELECT id FROM stalled WHERE stalled_counter + 1 >= max_stalled)

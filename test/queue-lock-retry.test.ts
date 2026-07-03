@@ -58,7 +58,11 @@ describe('MinionQueue lock-path recovery (issue #1678)', () => {
       let calls = 0;
       const engine = {
         kind: 'postgres',
-        executeRaw: async () => { calls++; throw connEndedError(); },
+        // claim() routes through executeRawDirect (direct session pool) as of
+        // the lock-hot-path fix; executeRaw is kept as a throwing guard to
+        // prove claim never falls back to it.
+        executeRawDirect: async () => { calls++; throw connEndedError(); },
+        executeRaw: async () => { throw new Error('claim must not use executeRaw'); },
         reconnect: async () => {},
       } as unknown as ConstructorParameters<typeof MinionQueue>[0];
 

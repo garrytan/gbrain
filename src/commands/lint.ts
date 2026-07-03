@@ -18,6 +18,7 @@
 
 import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, existsSync } from 'fs';
 import { join, relative } from 'path';
+import { isAborted } from '../core/abort-check.ts';
 import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
 import {
   assessContentSanity,
@@ -45,6 +46,7 @@ const FRONTMATTER_RULE_NAMES: Record<ParseValidationCode, string> = {
   SLUG_MISMATCH: 'frontmatter-slug-mismatch',
   NULL_BYTES: 'frontmatter-null-bytes',
   NESTED_QUOTES: 'frontmatter-nested-quotes',
+  NON_STRING_FIELD: 'frontmatter-non-string-field',
   EMPTY_FRONTMATTER: 'frontmatter-empty',
 };
 
@@ -405,6 +407,13 @@ export interface LintOpts {
    *  create + disconnect a competing module-style engine that nulls the
    *  shared db singleton mid-cycle. */
   engine?: BrainEngine;
+  /**
+   * #1972: cooperative-abort signal. lint's per-page work is synchronous, so
+   * without a periodic yield the event loop can't deliver an abort and a
+   * very large lint would block past the worker's 30s force-evict. The loop
+   * yields + checks this every 200 pages.
+   */
+  signal?: AbortSignal;
 }
 
 export interface LintResult {
@@ -443,7 +452,16 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   let totalFixed = 0;
   let pagesWithIssues = 0;
 
-  for (const page of pages) {
+  for (let idx = 0; idx < pages.length; idx++) {
+    const page = pages[idx];
+    // #1972: every 200 pages, yield to the event loop and honor abort. The
+    // yield is what lets the abort signal actually fire (the rest of the loop
+    // is synchronous); the break returns a valid partial LintResult since each
+    // page is independently read + written.
+    if (idx > 0 && idx % 200 === 0) {
+      if (isAborted(opts.signal)) break;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
     const content = readFileSync(page, 'utf-8');
     const issues = lintContent(content, isSingleFile ? page : relative(opts.target, page), lintOpts);
     if (issues.length === 0) continue;

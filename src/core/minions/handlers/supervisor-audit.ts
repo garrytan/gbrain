@@ -148,13 +148,17 @@ export function readRecentSupervisorEvents(
  * Denylist of clean-exit `likely_cause` values. Anything not in this set —
  * including future unrecognized values — counts as a crash. Matches the
  * domain asymmetry: clean exits are explicit (the worker exited because we
- * asked it to); crashes are an open catch-all. If a future maintainer adds a
+ * asked it to); crashes are an open catch-all. `wedge_restart` (issue #1801)
+ * is a deliberate supervisor self-heal of an alive-but-wedged worker — counted
+ * as clean here so doctor / `jobs supervisor status` don't inflate the crash
+ * count on self-heals; the wedge itself surfaces via the
+ * `restarting_wedged_worker` / `wedge_restart_loop` health_warn instead. If a future maintainer adds a
  * new `likely_cause` upstream in `child-worker-supervisor.ts` (e.g.
  * `lock_lost`, `panic`), the doctor surfaces it by default instead of
  * silently underreporting — denylist semantics close the bug class this
  * helper was added to fix.
  */
-const CLEAN_EXIT_CAUSES = new Set(['clean_exit', 'graceful_shutdown']);
+const CLEAN_EXIT_CAUSES = new Set(['clean_exit', 'graceful_shutdown', 'wedge_restart']);
 
 /**
  * Per-cause crash bucket shape returned by `summarizeCrashes()`. Bucket names

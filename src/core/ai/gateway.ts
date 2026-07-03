@@ -53,6 +53,42 @@ import { hasAnthropicKey } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 
+// ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
+//
+// Plain `fetch` (Bun/Node) has NO default request timeout, so a stalled provider
+// socket makes an `await` never settle — which hangs `gbrain capture`/`search`
+// and, on PGLite, pins the single-writer lock. The AI SDK's `maxRetries` only
+// fires on a SETTLED error; a half-open socket never settles. So we bound at the
+// SDK CALL layer: default an `abortSignal` into every generateText / generateObject
+// / embed call. This (1) covers EVERY provider — including `native-anthropic`
+// (the default chat model + the facts:absorb Haiku), which the AI SDK forwards
+// the signal to as `fetch(url, {signal})`; and (2) bounds the WHOLE call incl.
+// internal retries, not one attempt. Direct-`fetch` paths (multimodal) get the
+// signal explicitly. Rerank is already bounded by its recipe `default_timeout_ms`.
+function resolveAiTimeoutMs(envVar: string, fallback: number): number {
+  const raw = process.env[envVar];
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+/** chat / expansion / OCR — generous; only catches true hangs (non-streaming generateText). */
+const AI_CHAT_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_CHAT_TIMEOUT_MS', 300_000);
+/** embed sub-batch (per SDK call, NOT per whole import). */
+const AI_EMBED_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_EMBED_TIMEOUT_MS', 60_000);
+/** multimodal per request. */
+const AI_MULTIMODAL_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_MULTIMODAL_TIMEOUT_MS', 60_000);
+
+/**
+ * Compose a caller signal with a default wall-clock timeout. When the caller
+ * supplies its own (Fix 3's 6s query deadline, the facts queue's shutdown abort,
+ * a budget signal), `AbortSignal.any` makes whichever fires FIRST win — so a
+ * shorter caller deadline always takes precedence over the default backstop.
+ */
+function withDefaultTimeout(caller: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return caller ? AbortSignal.any([caller, timeout]) : timeout;
+}
+
 const MAX_CHARS = 8000;
 // v0.36.0.0 (D3 + D4): ZeroEntropy zembed-1 at 1280d via Matryoshka is the
 // new default for embedding. Real-corpus benchmark across 20 queries:
@@ -762,6 +798,26 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
 // ---- Embedding ----
 
 /**
+ * Carries the asymmetric-embedding `input_type` ('query' | 'document')
+ * across the AI SDK boundary, from embedSubBatch() to the per-recipe fetch
+ * shims below (#1400).
+ *
+ * Why this exists: `dimsProviderOptions()` correctly emits `input_type`
+ * into `providerOptions.openaiCompatible` for asymmetric models (ZE
+ * zembed-1, Voyage v3+), but the AI SDK's openai-compatible adapter
+ * validates providerOptions against a fixed schema (`dimensions`, `user`)
+ * and silently DROPS every other field before building the wire body. By
+ * the time a compat shim sees the request, the threaded 'query' is gone —
+ * so every embedQuery() was encoded document-side and asymmetric retrieval
+ * silently collapsed to surface-token overlap.
+ *
+ * embedSubBatch() populates the store only when providerOptions actually
+ * threads an input_type; shims that need a default (ZE) apply their own.
+ * Same module-level ALS pattern as `__budgetStore` below.
+ */
+const __embedInputTypeStore = new AsyncLocalStorage<'query' | 'document'>();
+
+/**
  * Voyage AI compatibility shim. Voyage's `/v1/embeddings` endpoint is OpenAI-shaped
  * but diverges on two parameters:
  *   - `encoding_format` only accepts `'base64'` (the AI SDK sends `'float'` by default,
@@ -797,6 +853,15 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
           const dims = parsed.dimensions;
           delete parsed.dimensions;
           if (typeof dims === 'number') parsed.output_dimension = dims;
+          mutated = true;
+        }
+        // Recover the SDK-stripped input_type (#1400) — opt-in, mirroring
+        // the dims.ts Voyage branch: inject only when a caller actually
+        // threaded one; when absent, the field stays off the wire
+        // (pre-v0.35.0.0 behavior preserved).
+        const threadedInputType = __embedInputTypeStore.getStore();
+        if (threadedInputType !== undefined && parsed.input_type === undefined) {
+          parsed.input_type = threadedInputType;
           mutated = true;
         }
         if (mutated) {
@@ -969,10 +1034,13 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
           parsed.encoding_format = 'float';
           mutated = true;
         }
-        // Default input_type when caller didn't thread one (document-side
-        // embedding is the correct default for ingest paths).
+        // Recover the SDK-stripped input_type (#1400): the threaded value
+        // arrives via __embedInputTypeStore because the openai-compatible
+        // adapter drops it from providerOptions before building the body.
+        // Document-side default preserved for paths that didn't thread one
+        // (ingest).
         if (parsed.input_type === undefined) {
-          parsed.input_type = 'document';
+          parsed.input_type = __embedInputTypeStore.getStore() ?? 'document';
           mutated = true;
         }
         if (mutated) {
@@ -1060,6 +1128,56 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
   }
 }) as unknown as typeof fetch;
 
+/**
+ * Generic asymmetric-embedding shim for openai-compatible recipes that
+ * ship no compat fetch of their own (llama-server, litellm, ollama, ...).
+ * Those deployments are the canonical local/proxy paths for serving
+ * asymmetric models (e.g. a zembed-1 behind llama.cpp, vLLM, or an
+ * OpenAI-compatible proxy), and they need the same `input_type` signal the
+ * hosted ZE endpoint gets — the serving layer can't apply query-side vs
+ * document-side encoding without it.
+ *
+ * Strictly opt-in at the wire level: when no input_type was threaded (the
+ * model isn't asymmetric — dims.ts threads it by model id, never for
+ * Azure/DashScope/Zhipu-style fixed models — or the caller didn't ask),
+ * the request passes through byte-identical. When one WAS threaded
+ * (recovered from __embedInputTypeStore — see #1400), inject it into the
+ * JSON body; OpenAI-compatible servers that don't understand the field
+ * ignore unknown body keys (llama-server does), and asymmetric-aware
+ * servers/proxies read it. URL + response shape are untouched — these
+ * endpoints are already OpenAI-shaped. Recipes with their own compat
+ * fetch (voyage, zeroentropyai, azure) never reach this shim: the
+ * `compat.fetch ??` precedence in instantiateEmbedding wins.
+ */
+const openAICompatAsymmetricFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const threadedInputType = __embedInputTypeStore.getStore();
+  if (threadedInputType === undefined) return fetch(input as any, init);
+  // Inject only on the string-URL + string-body shape the AI SDK actually
+  // sends. A Request-shaped input may carry its body on the Request object
+  // itself, where a rebuild would silently drop it — pass it through
+  // untouched instead (unreachable via the SDK today; preserves the
+  // byte-identical contract if it ever becomes reachable).
+  if (typeof input !== 'string' && !(input instanceof URL)) {
+    return fetch(input as any, init);
+  }
+  let baseInit: RequestInit = init ?? {};
+  if (baseInit.body && typeof baseInit.body === 'string') {
+    try {
+      const parsed = JSON.parse(baseInit.body);
+      if (parsed && typeof parsed === 'object' && parsed.input_type === undefined) {
+        parsed.input_type = threadedInputType;
+        // Drop Content-Length so fetch recomputes from the new body.
+        const headers = new Headers(baseInit.headers ?? {});
+        headers.delete('content-length');
+        baseInit = { ...baseInit, body: JSON.stringify(parsed), headers };
+      }
+    } catch {
+      // Body wasn't JSON — pass through untouched.
+    }
+  }
+  return fetch(typeof input === 'string' ? input : input.toString(), baseInit);
+}) as unknown as typeof fetch;
+
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'embedding', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
@@ -1113,15 +1231,19 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       // wrapper via resolveOpenAICompatConfig. Azure recipes ship their own
       // fetch (api-version splice); voyage doesn't — use voyageCompatFetch.
       // ZeroEntropy needs zeroEntropyCompatFetch (URL path + body input_type
-      // + response shape rewrite + OOM caps). Same per-recipe-id branch
-      // pattern as voyage so adding a third compat shim is one more case.
+      // + response shape rewrite + OOM caps). Every other openai-compat
+      // recipe (llama-server, litellm, ollama, ...) falls through to
+      // openAICompatAsymmetricFetch so the threaded input_type reaches
+      // asymmetric models there too (#1400) — a strict pass-through when no
+      // input_type was threaded, so symmetric deployments see zero wire
+      // change.
       const fetchWrapper =
         compat.fetch ??
         (recipe.id === 'voyage'
           ? voyageCompatFetch
           : recipe.id === 'zeroentropyai'
           ? zeroEntropyCompatFetch
-          : undefined);
+          : openAICompatAsymmetricFetch);
       const client = createOpenAICompatible({
         name: recipe.id,
         baseURL: compat.baseURL,
@@ -1436,16 +1558,26 @@ async function embedSubBatch(
   opts?: EmbedOpts,
 ): Promise<Float32Array[]> {
   try {
-    const result = await _embedTransport({
+    const callTransport = () => _embedTransport({
       model,
       values: texts,
       providerOptions: providerOpts,
-      // v0.33.4: caller-supplied abortSignal + maxRetries passthrough.
-      // Undefined fields are ignored by the AI SDK so the call shape stays
-      // identical for production callers that don't opt in.
-      ...(opts?.abortSignal !== undefined && { abortSignal: opts.abortSignal }),
+      // v0.42.20.0 — default a per-SUB-BATCH embed timeout (codex #3: bounding
+      // once at embed() top would cap a whole multi-batch import; this is the
+      // per-SDK-call scope). Composes with a caller signal (Fix 3's 6s query
+      // deadline) — shorter wins.
+      abortSignal: withDefaultTimeout(opts?.abortSignal, AI_EMBED_TIMEOUT_MS),
       ...(opts?.maxRetries !== undefined && { maxRetries: opts.maxRetries }),
     });
+    // Carry the threaded input_type across the SDK boundary via
+    // __embedInputTypeStore (the adapter strips it from providerOptions —
+    // see the store's doc comment). Populated only when dimsProviderOptions
+    // actually emitted one, so non-asymmetric paths run store-empty and the
+    // fetch shims leave their wire bodies untouched.
+    const threadedInputType = providerOpts?.openaiCompatible?.input_type;
+    const result = await (threadedInputType === 'query' || threadedInputType === 'document'
+      ? __embedInputTypeStore.run(threadedInputType, callTransport)
+      : callTransport());
 
     if (!Array.isArray(result.embeddings) || result.embeddings.length !== texts.length) {
       throw new AIConfigError(
@@ -1503,12 +1635,16 @@ export async function embedOne(text: string): Promise<Float32Array> {
  */
 export async function embedQuery(
   text: string,
-  opts?: { embeddingModel?: string; dimensions?: number },
+  opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal },
 ): Promise<Float32Array> {
   const [v] = await embed([text], {
     inputType: 'query',
     embeddingModel: opts?.embeddingModel,
     dimensions: opts?.dimensions,
+    // v0.42.20.0 (Fix 3) — forward a caller deadline so the query-time embed
+    // can be bounded BELOW the CLI force-exit; composes with the gateway embed
+    // default via withDefaultTimeout (shorter wins).
+    abortSignal: opts?.abortSignal,
   });
   return v;
 }
@@ -1642,6 +1778,9 @@ export async function embedMultimodal(
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
+        // v0.42.20.0 (codex #4) — per-request multimodal timeout (direct fetch
+        // bypasses the SDK abortSignal).
+        signal: AbortSignal.timeout(AI_MULTIMODAL_TIMEOUT_MS),
       });
     } catch (err) {
       throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${parsed.modelId})`);
@@ -1784,6 +1923,8 @@ async function embedMultimodalOpenAICompat(
           [authResult.headerName]: authResult.token,
         },
         body: JSON.stringify(body),
+        // v0.42.20.0 (codex #4) — per-request multimodal timeout (direct fetch).
+        signal: AbortSignal.timeout(AI_MULTIMODAL_TIMEOUT_MS),
       });
     } catch (err) {
       throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${modelId})`);
@@ -2034,6 +2175,9 @@ export async function expand(query: string): Promise<string[]> {
     const result = await generateObject({
       model,
       schema: ExpansionSchema,
+      // v0.42.20.0 (codex P0) — expansion had NO abortSignal; same stalled-socket
+      // class as chat. Default the chat timeout.
+      abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
       prompt: [
         'Rewrite the search query below into 3-4 different, related queries that would help find relevant documents.',
         'Return ONLY the JSON object. Do NOT include the original query in the result.',
@@ -2084,6 +2228,8 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
   const base64 = imageBytes.toString('base64');
   const result = await generateText({
     model,
+    // v0.42.20.0 (codex) — OCR is a 5th unbounded generateText entry point.
+    abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
     messages: [
       {
         role: 'system',
@@ -2612,7 +2758,9 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       messages: toModelMessages(opts.messages) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
       maxOutputTokens: opts.maxTokens ?? 4096,
-      abortSignal: opts.abortSignal,
+      // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
+      // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
+      abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
       providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
     });
 

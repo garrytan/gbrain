@@ -57,13 +57,16 @@ export type ChildSupervisorEvent =
       kind: 'backoff';
       ms: number;
       crashCount: number;
-      reason: 'clean_exit' | 'crash' | 'budget_exceeded' | 'rss_watchdog';
+      reason: 'clean_exit' | 'crash' | 'budget_exceeded' | 'rss_watchdog' | 'wedge_restart';
     }
   | {
       kind: 'health_warn';
-      reason: 'clean_restart_budget_exceeded' | 'rss_watchdog_loop';
+      reason: 'clean_restart_budget_exceeded' | 'rss_watchdog_loop' | 'crash_budget_degraded';
       count: number;
-      windowMs: number;
+      /** Present for window-scoped warnings (budget/watchdog loops). */
+      windowMs?: number;
+      /** Present for crash_budget_degraded: the soft budget that was crossed. */
+      max?: number;
     };
 
 export interface ChildWorkerSupervisorOpts {
@@ -73,8 +76,24 @@ export interface ChildWorkerSupervisorOpts {
   args: string[];
   /** Child env. Defaults to a clone of process.env. */
   env?: NodeJS.ProcessEnv;
-  /** Give up after this many consecutive code != 0 exits. */
+  /**
+   * Soft crash budget. issue #1994 (#2227 tail): crossing this NO LONGER
+   * permanently gives up. Instead the supervisor enters DEGRADED mode — it
+   * keeps respawning with capped exponential backoff (60s cap) and emits a
+   * loud `crash_budget_degraded` health_warn — so a transient DB-pooler outage
+   * that trips the counter self-heals when the DB returns (the stable-run reset
+   * clears crashCount once a respawn runs > stableRunResetMs) instead of
+   * wedging the queue until a human restart.
+   */
   maxCrashes: number;
+  /**
+   * Hard ceiling: permanently give up (fire onMaxCrashesExceeded) ONLY after
+   * this many consecutive crashes — the runaway backstop for a genuinely
+   * unrecoverable hot crash-loop that the stable-run reset never escapes.
+   * Default: maxCrashes * HARD_STOP_CRASH_MULTIPLIER. Set to 0 to disable
+   * permanent give-up entirely (retry-forever-with-backoff).
+   */
+  hardStopMaxCrashes?: number;
   /** Stable-run reset window: code != 0 after this duration resets crashCount to 1. Default 5 min. */
   stableRunResetMs?: number;
 
@@ -130,6 +149,12 @@ export interface ChildWorkerSupervisorOpts {
   _now?: () => number;
 }
 
+/** issue #1994: how many multiples of the soft crash budget before the hard
+ *  permanent-give-up backstop fires. 10× the default soft budget of 10 = 100
+ *  consecutive crashes (each within the stable-run window) before we conclude
+ *  it's a genuine code bug and stop. A transient outage recovers long before. */
+export const HARD_STOP_CRASH_MULTIPLIER = 10;
+
 const DEFAULTS = {
   stableRunResetMs: 5 * 60 * 1000,
   cleanRestartBudget: 10,
@@ -152,6 +177,12 @@ export class ChildWorkerSupervisor {
   private _child: ChildProcess | null = null;
   private _inBackoff = false;
   private _lastStartTime = 0;
+  /** issue #1801: set by restartCurrentChild() before a deliberate wedge
+   *  SIGTERM so the exit handler skips crash accounting. Cleared on exit. */
+  private _intentionalRestart = false;
+  /** issue #1801: carried from the exit handler to applyBackoff so a wedge
+   *  self-heal respawns immediately (ms:0) instead of paying crash backoff. */
+  private _lastWasIntentionalRestart = false;
 
   constructor(opts: ChildWorkerSupervisorOpts) {
     this.opts = opts;
@@ -178,9 +209,17 @@ export class ChildWorkerSupervisor {
    * shutdown paths. Idempotent — `kill('SIGTERM')` on a dead child is a no-op.
    */
   killChild(signal: NodeJS.Signals): void {
-    if (this._child && !this._child.killed) {
+    // Gate on LIVENESS, not `.killed`. Node's `child.killed` flips true the
+    // moment a signal has been *sent*, not when the process exits — so a guard
+    // of `!this._child.killed` makes a follow-up SIGKILL (after an ignored
+    // SIGTERM) a silent no-op. That bug bit both the wedge escalation AND the
+    // existing shutdown() drain (issue #1801, Codex #1). Checking exitCode /
+    // signalCode === null means "still running," so SIGKILL actually lands on a
+    // process that ignored SIGTERM.
+    const child = this._child;
+    if (child && child.exitCode === null && child.signalCode === null) {
       try {
-        this._child.kill(signal);
+        child.kill(signal);
       } catch {
         /* already dead */
       }
@@ -200,7 +239,17 @@ export class ChildWorkerSupervisor {
    */
   awaitChildExit(timeoutMs: number): Promise<void> {
     if (!this._child) return Promise.resolve();
-    const child = this._child;
+    return this._awaitExit(this._child, timeoutMs);
+  }
+
+  /**
+   * awaitChildExit, bound to a SPECIFIC captured child reference rather than
+   * `this._child`. The wedge-restart path (issue #1801) must wait on the child
+   * it SIGTERMed, not whatever `this._child` points at later — by the time the
+   * grace window elapses, `run()` may have respawned a fresh child, and a
+   * `this._child`-based wait/kill would hit the replacement (Codex #2).
+   */
+  private _awaitExit(child: ChildProcess, timeoutMs: number): Promise<void> {
     // Already exited? `exitCode` becomes non-null once Node has seen the
     // child terminate. `signalCode` is the symmetric flag for kill-signal
     // termination — checked too so a SIGKILLed child also short-circuits.
@@ -225,19 +274,86 @@ export class ChildWorkerSupervisor {
   }
 
   /**
+   * Intentional restart of the CURRENT child — the supervisor's wedge watchdog
+   * (issue #1801) calls this when a worker is alive but making no forward
+   * progress (dead pool, stuck handler). Captures the live child reference,
+   * SIGTERMs it, waits up to `graceMs` on THAT captured ref, then SIGKILLs THAT
+   * ref if it ignored SIGTERM. Operating on the captured reference (never
+   * `this._child`) closes the race where `run()` respawns a fresh child during
+   * the grace window (Codex #2). The exit is flagged intentional so it does NOT
+   * count toward crashCount / max_crashes (Codex #3) — a deliberate self-heal,
+   * not a worker defect; the caller bounds repetition via its wedge-restart
+   * loop budget. `run()` respawns a fresh worker (and a fresh DB pool) on exit.
+   */
+  async restartCurrentChild(graceMs: number): Promise<void> {
+    const child = this._child;
+    if (!child) return;
+    this._intentionalRestart = true;
+    // SIGTERM the captured child (liveness-gated, same fix as killChild).
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        /* already dead */
+      }
+    }
+    await this._awaitExit(child, graceMs);
+    // Escalate to SIGKILL only if the CAPTURED child is still alive — never the
+    // respawned one.
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* already dead */
+      }
+    }
+  }
+
+  /**
    * Run the spawn-and-respawn loop. Resolves when:
    *   1. composer.isStopping() returns true, OR
-   *   2. crashCount reaches maxCrashes (after firing onMaxCrashesExceeded).
+   *   2. crashCount reaches the HARD ceiling (after firing onMaxCrashesExceeded).
+   *
+   * issue #1994 (#2227 tail): crossing the SOFT budget (`maxCrashes`) no longer
+   * stops the supervisor. It enters degraded mode — keep respawning with capped
+   * exponential backoff (60s cap, so it's a paced retry, not a hot loop) and
+   * announce loudly — so a transient DB-pooler outage that trips the counter
+   * recovers on its own (a respawn that runs > stableRunResetMs resets
+   * crashCount to 1) instead of permanently wedging the queue. Permanent
+   * give-up fires only at the much-higher hard ceiling: the runaway backstop
+   * for a genuinely unrecoverable hot crash-loop.
    */
   async run(): Promise<void> {
-    while (!this.opts.isStopping() && this._crashCount < this.opts.maxCrashes) {
+    const hardStop = this.opts.hardStopMaxCrashes ??
+      this.opts.maxCrashes * HARD_STOP_CRASH_MULTIPLIER;
+    let degradedAnnounced = false;
+    while (!this.opts.isStopping()) {
       await this.spawnOnce();
 
       if (this.opts.isStopping()) return;
 
-      if (this._crashCount >= this.opts.maxCrashes) {
-        this.opts.onMaxCrashesExceeded(this._crashCount, this.opts.maxCrashes);
+      // Hard ceiling: permanent give-up (the runaway backstop). hardStop <= 0
+      // disables it entirely (retry-forever-with-backoff for deployments that
+      // would rather never auto-stop a recoverable supervisor).
+      if (hardStop > 0 && this._crashCount >= hardStop) {
+        this.opts.onMaxCrashesExceeded(this._crashCount, hardStop);
         return;
+      }
+
+      // Soft budget crossed → degraded mode. Announce once per degradation
+      // episode; re-arm after a stable-run reset drops us back under budget.
+      if (this._crashCount >= this.opts.maxCrashes) {
+        if (!degradedAnnounced) {
+          degradedAnnounced = true;
+          this.opts.onEvent({
+            kind: 'health_warn',
+            reason: 'crash_budget_degraded',
+            count: this._crashCount,
+            max: this.opts.maxCrashes,
+          });
+        }
+      } else {
+        degradedAnnounced = false;
       }
 
       await this.applyBackoff();
@@ -318,7 +434,16 @@ export class ChildWorkerSupervisor {
         // through the shared `classifyWorkerExit` helper so doctor.ts and
         // jobs.ts (audit-log consumers) read the same rule.
         this._lastExitCode = code;
-        if (code === WORKER_EXIT_RSS_WATCHDOG) {
+        if (this._intentionalRestart) {
+          // issue #1801: deliberate wedge self-heal (restartCurrentChild). Leave
+          // crashCount UNTOUCHED — like the RSS watchdog — so a recurring wedge
+          // never trips max_crashes and kills the daemon. A SIGTERM exit has
+          // code=null, which classifyWorkerExit() (correctly) treats as a crash,
+          // so without this guard the wedge restart would increment crashCount
+          // (Codex #3). The supervisor's wedgeRestartLoopBudget bounds repetition.
+          this._intentionalRestart = false;
+          this._lastWasIntentionalRestart = true;
+        } else if (code === WORKER_EXIT_RSS_WATCHDOG) {
           // issue #1678: RSS-watchdog drain. NOT a code defect — leave
           // crashCount untouched so it never trips max_crashes (which would
           // stop ALL job processing). Tracked in its own window so the
@@ -351,7 +476,13 @@ export class ChildWorkerSupervisor {
 
         // Likely-cause heuristic, kept verbatim from MinionSupervisor.
         let likelyCause: string;
-        if (signal === 'SIGKILL') {
+        if (this._lastWasIntentionalRestart) {
+          // issue #1801: a deliberate wedge restart. Label it as such even
+          // though the kill signal was SIGTERM/SIGKILL, so the audit summary
+          // (supervisor-audit.ts CLEAN_EXIT_CAUSES) counts it as a self-heal,
+          // not a crash.
+          likelyCause = 'wedge_restart';
+        } else if (signal === 'SIGKILL') {
           likelyCause = 'oom_or_external_kill';
         } else if (signal === 'SIGTERM') {
           likelyCause = 'graceful_shutdown';
@@ -381,6 +512,20 @@ export class ChildWorkerSupervisor {
 
   /** Compute and apply backoff based on the most recent exit classifier. */
   private async applyBackoff(): Promise<void> {
+    if (this._lastWasIntentionalRestart) {
+      // issue #1801: a deliberate wedge restart. Respawn immediately (a fresh
+      // pool is the whole point of the self-heal) — no crash backoff, no
+      // budget accounting (the supervisor's wedgeRestartLoopBudget owns that).
+      this._lastWasIntentionalRestart = false;
+      this.opts.onEvent({
+        kind: 'backoff',
+        ms: 0,
+        crashCount: this._crashCount,
+        reason: 'wedge_restart',
+      });
+      return;
+    }
+
     if (this._lastExitCode === 0) {
       // D2: check the clean-restart budget. If exceeded, emit health_warn
       // and apply a fixed cooldown so the next spawn isn't instant. This

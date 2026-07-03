@@ -152,3 +152,50 @@ describe('autopilot-cycle handler contract (v0.20.5)', () => {
     expect(checkCalls).toBeGreaterThanOrEqual(6);
   });
 });
+
+describe('#1972 — complete cooperative-abort coverage', () => {
+  test('aborted signal makes runCycle report partial + reason "aborted" (terminal guard)', async () => {
+    // phases:[] means no between-phase checkAborted fires, so execution reaches
+    // the TERMINAL guard (Codex #9). With a pre-aborted signal it must NOT
+    // report success — status 'partial', reason 'aborted'.
+    const { runCycle } = await import('../src/core/cycle.ts');
+    const abort = new AbortController();
+    abort.abort(new Error('timeout'));
+    const report = await runCycle(null, {
+      brainDir: '/nonexistent-for-test',
+      phases: [],
+      signal: abort.signal,
+    });
+    expect(report.status).toBe('partial');
+    expect(report.reason).toBe('aborted');
+  });
+
+  test('cycle.ts threads opts.signal into every long phase + guards the success stamp', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(new URL('../src/core/cycle.ts', import.meta.url), 'utf8');
+    const body = src.slice(src.indexOf('export async function runCycle'));
+    // Each long phase receives the signal.
+    expect(body).toContain('runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, opts.signal)');
+    expect(body).toMatch(/runPhaseExtractFacts\([^)]*opts\.signal\)/);
+    expect(body).toContain('signal: opts.signal'); // consolidate opts
+    expect(body).toContain('runPhaseLint(brainDir, dryRun, engine, opts.signal)');
+    // Reaper runs at cycle start.
+    expect(body).toContain('reapDeadHolderLocks(engine)');
+    // Terminal guard: the success stamp is gated on !aborted, and the report
+    // carries reason 'aborted'.
+    expect(body).toContain('!aborted');
+    expect(body).toContain("reason: 'aborted'");
+    // Phase-duration force-evict attribution log (T11).
+    expect(body).toContain('FORCE_EVICT_DEADLINE_MS');
+  });
+
+  test('every long phase core checks isAborted in its batch loop', async () => {
+    const fs = await import('fs');
+    const read = (p: string) => fs.readFileSync(new URL(p, import.meta.url), 'utf8');
+    expect(read('../src/commands/extract.ts')).toContain('if (isAborted(signal)) return;');
+    expect(read('../src/core/cycle/extract-facts.ts')).toContain('if (isAborted(opts.signal)) break;');
+    expect(read('../src/core/cycle/phases/consolidate.ts')).toContain('if (isAborted(opts.signal)) break;');
+    expect(read('../src/core/cycle/phantom-redirect.ts')).toContain('if (isAborted(signal)) break;');
+    expect(read('../src/commands/lint.ts')).toContain('if (isAborted(opts.signal)) break;');
+  });
+});

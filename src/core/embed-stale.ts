@@ -20,6 +20,8 @@
 import type { BrainEngine } from './engine.ts';
 import type { ChunkInput } from './types.ts';
 import { embedBatchWithBackoff } from '../commands/embed.ts';
+import { type DbPacer, createNoopPacer, observed } from './db-pacer.ts';
+import { AbortError } from './abort-check.ts';
 
 /** Last visited (page_id, chunk_index) for keyset-resume across runs. */
 export interface StaleCursor {
@@ -59,6 +61,15 @@ export interface EmbedStaleOpts {
    * Omit to keep the legacy `embedding IS NULL`-only behavior.
    */
   embeddingSignature?: string;
+  /**
+   * DB-contention pacer (paced-backfill). When enabled it (a) supplies the
+   * worker count via the caller passing `concurrency = bundle.maxConcurrency`
+   * — E-1: no separate permit on this single-pool path — and (b) the loop
+   * `observe()`s its DB-op latency and `pace()`s between keys. Omit (or pass a
+   * disabled bundle) for a no-op. The pacer is NEVER used to acquire permits
+   * here; concurrency is the worker count.
+   */
+  pacer?: DbPacer;
 }
 
 export interface EmbedStaleResult {
@@ -105,6 +116,9 @@ export async function embedStaleForSource(
   const signal = opts.signal;
   const embedFn = opts.embedFn ?? ((texts, fnOpts) =>
     embedBatchWithBackoff(texts, { abortSignal: fnOpts.abortSignal }));
+  // Defaulted no-op when pacing is off, so the observe()/pace() call sites
+  // below are unconditional and cost ~nothing on the unpaced path.
+  const pacer = opts.pacer ?? createNoopPacer();
 
   let afterPageId = opts.cursor?.afterPageId ?? 0;
   let afterChunkIndex = opts.cursor?.afterChunkIndex ?? -1;
@@ -136,12 +150,14 @@ export async function embedStaleForSource(
       return result;
     }
 
-    const batch = await engine.listStaleChunks({
-      batchSize,
-      afterPageId,
-      afterChunkIndex,
-      sourceId,
-    });
+    const batch = await observed(pacer, () =>
+      engine.listStaleChunks({
+        batchSize,
+        afterPageId,
+        afterChunkIndex,
+        sourceId,
+      }),
+    );
     if (batch.length === 0) {
       result.done = true;
       return result;
@@ -177,7 +193,9 @@ export async function embedStaleForSource(
           stale.map((c) => c.chunk_text),
           { abortSignal: signal },
         );
-        const existing = await engine.getChunks(slug, { sourceId: keySourceId });
+        const existing = await observed(pacer, () =>
+          engine.getChunks(slug, { sourceId: keySourceId }),
+        );
         const staleIdxToEmbedding = new Map<number, Float32Array>();
         for (let j = 0; j < stale.length; j++) {
           staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
@@ -189,13 +207,15 @@ export async function embedStaleForSource(
           embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
           token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
         }));
-        await engine.upsertChunks(slug, merged, { sourceId: keySourceId });
+        await observed(pacer, () => engine.upsertChunks(slug, merged, { sourceId: keySourceId }));
         // v0.41.31: stamp provenance only when EVERY chunk was stale (fully
         // re-embedded this pass) — a partially-stale page keeps preserved
         // chunks of unknown provenance, so don't claim current. After the
         // invalidate pass above, signature-drifted pages ARE fully stale.
         if (signature && stale.length === existing.length) {
-          await engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature });
+          await observed(pacer, () =>
+            engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature }),
+          );
         }
         result.embedded += stale.length;
         result.pagesProcessed += 1;
@@ -215,6 +235,15 @@ export async function embedStaleForSource(
       while (nextIdx < keys.length && !signal?.aborted) {
         const idx = nextIdx++;
         await embedOneKey(keys[idx]);
+        // Cooperative DB-contention pace between keys (no-op when unpaced).
+        // pace() throws AbortError on cancel — treat as graceful worker exit;
+        // the for(;;) loop sees signal.aborted and returns aborted next tick.
+        try {
+          await pacer.pace(signal);
+        } catch (e) {
+          if (e instanceof AbortError) return;
+          throw e;
+        }
       }
     }
 

@@ -11,7 +11,8 @@ import {
 } from '../src/core/oauth-provider.ts';
 import { hashToken, generateToken } from '../src/core/utils.ts';
 import { PGLITE_SCHEMA_SQL } from '../src/core/pglite-schema.ts';
-import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import { InvalidTokenError, InvalidClientMetadataError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import type { AuthInfo as CoreAuthInfo } from '../src/core/operations.ts';
 
 // ---------------------------------------------------------------------------
 // Test setup: in-memory PGLite with OAuth tables
@@ -309,6 +310,33 @@ describe('verifyAccessToken', () => {
     const authInfo = await provider.verifyAccessToken(legacyToken);
     expect(authInfo.clientId).toBe('legacy-agent');
     expect(authInfo.scopes).toEqual(['read', 'write', 'admin']); // grandfathered full access
+  });
+
+  test('legacy access_tokens fallback honors permissions.source_id array grants', async () => {
+    // oauth.test.ts initializes the static PGLite schema blob, not the full
+    // migration stack. Add the v38 permissions column here so the row matches
+    // a modern brain carrying a legacy-token source grant.
+    await sql`
+      ALTER TABLE access_tokens
+        ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{"takes_holders":["world"]}'::jsonb
+    `;
+
+    const legacyToken = generateToken('gbrain_');
+    const hash = hashToken(legacyToken);
+    await sql`
+      INSERT INTO access_tokens (id, name, token_hash, permissions)
+      VALUES (
+        ${crypto.randomUUID()},
+        ${'legacy-federated-agent'},
+        ${hash},
+        ${JSON.stringify({ source_id: ['default', 'src-a', 'src-b'] })}::jsonb
+      )
+    `;
+
+    const authInfo = await provider.verifyAccessToken(legacyToken) as CoreAuthInfo;
+    expect(authInfo.clientId).toBe('legacy-federated-agent');
+    expect(authInfo.sourceId).toBe('default');
+    expect(authInfo.allowedSources).toEqual(['default', 'src-a', 'src-b']);
   });
 });
 
@@ -1461,12 +1489,50 @@ describe('v0.41.3 DCR validator (T5)', () => {
   test('DCR accepts "client_secret_basic" — codex F3 regression', async () => {
     const reg = await provider.clientsStore.registerClient!({
       client_name: 'dcr-basic-test',
-      grant_types: ['client_credentials'],
+      grant_types: ['authorization_code'],
       scope: 'read',
-      redirect_uris: [],
+      redirect_uris: ['https://example.test/cb'],
       token_endpoint_auth_method: 'client_secret_basic',
     } as any);
     expect(reg.client_id).toStartWith('gbrain_cl_');
     expect(reg.client_secret).toStartWith('gbrain_cs_');
+  });
+});
+
+describe('#1353 DCR default-grant hardening', () => {
+  test('DCR rejects explicit client_credentials by default', async () => {
+    await expect(
+      provider.clientsStore.registerClient!({
+        client_name: 'cc-default-test',
+        grant_types: ['client_credentials'],
+        scope: 'read',
+        redirect_uris: [],
+        token_endpoint_auth_method: 'client_secret_post',
+      } as any),
+    ).rejects.toThrow(InvalidClientMetadataError);
+  });
+
+  test('DCR defaults to authorization_code when grant_types unspecified', async () => {
+    const reg = await provider.clientsStore.registerClient!({
+      client_name: 'no-grant-test',
+      scope: 'read',
+      redirect_uris: ['https://example.test/cb'],
+      token_endpoint_auth_method: 'none',
+    } as any);
+    const stored = await provider.clientsStore.getClient(reg.client_id);
+    expect(stored?.grant_types).toEqual(['authorization_code']);
+  });
+
+  test('--enable-dcr-insecure (allowClientCredentialsDcr) permits client_credentials', async () => {
+    const insecure = new GBrainOAuthProvider({ sql, allowClientCredentialsDcr: true });
+    const reg = await insecure.clientsStore.registerClient!({
+      client_name: 'cc-allowed-test',
+      grant_types: ['client_credentials'],
+      scope: 'read',
+      redirect_uris: [],
+      token_endpoint_auth_method: 'client_secret_post',
+    } as any);
+    const stored = await insecure.clientsStore.getClient(reg.client_id);
+    expect(stored?.grant_types).toEqual(['client_credentials']);
   });
 });

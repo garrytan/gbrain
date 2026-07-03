@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { acquireLock, releaseLock, type LockHandle } from '../src/core/pglite-lock';
+import { withEnv } from './helpers/with-env.ts';
 
 const TEST_DIR = join(tmpdir(), 'gbrain-lock-test-' + process.pid);
 
@@ -97,5 +98,98 @@ describe('pglite-lock', () => {
     const lock2 = await acquireLock(TEST_DIR);
     expect(lock2.acquired).toBe(true);
     await releaseLock(lock2);
+  });
+});
+
+describe('pglite-lock #2058 heartbeat + steal-grace', () => {
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+  });
+  afterEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
+  });
+
+  function writeHolder(fields: { pid: number; acquiredAgoMs: number; refreshedAgoMs: number }) {
+    const lockDir = join(TEST_DIR, '.gbrain-lock');
+    mkdirSync(lockDir, { recursive: true });
+    const now = Date.now();
+    writeFileSync(join(lockDir, 'lock'), JSON.stringify({
+      pid: fields.pid,
+      acquired_at: now - fields.acquiredAgoMs,
+      refreshed_at: now - fields.refreshedAgoMs,
+      command: 'test holder',
+    }));
+  }
+
+  test('[REGRESSION] a LIVE holder with a fresh heartbeat is NOT stolen even when the lock is old', async () => {
+    // The WAL-corruption bug: a >5min embed used to get its lock force-removed.
+    // Now an alive holder that heartbeated recently is left alone regardless of
+    // age. acquired 20min ago, but refreshed just now → must wait, not steal.
+    writeHolder({ pid: process.pid, acquiredAgoMs: 20 * 60_000, refreshedAgoMs: 0 });
+
+    await expect(acquireLock(TEST_DIR, { timeoutMs: 1200 })).rejects.toThrow(/Timed out/);
+    // Holder's lock still present (was never stolen).
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+  });
+
+  test('a LIVE PID whose heartbeat went stale past the grace window IS reaped', async () => {
+    // PID is alive (our own) but hasn't refreshed in 20min (> 600s grace):
+    // hung holder, or a reused PID whose real holder is gone. Reap + acquire.
+    writeHolder({ pid: process.pid, acquiredAgoMs: 25 * 60_000, refreshedAgoMs: 20 * 60_000 });
+
+    const lock = await acquireLock(TEST_DIR, { timeoutMs: 2000 });
+    expect(lock.acquired).toBe(true);
+    await releaseLock(lock);
+  });
+
+  test('GBRAIN_PGLITE_LOCK_STEAL_GRACE_SECONDS tunes the grace window', async () => {
+    // withEnv keeps the process-global mutation isolated across shard files.
+    await withEnv({ GBRAIN_PGLITE_LOCK_STEAL_GRACE_SECONDS: '5' }, async () => {
+      // Refreshed 30s ago — fresh under the 600s default, STALE under 5s.
+      writeHolder({ pid: process.pid, acquiredAgoMs: 60_000, refreshedAgoMs: 30_000 });
+      const lock = await acquireLock(TEST_DIR, { timeoutMs: 2000 });
+      expect(lock.acquired).toBe(true);
+      await releaseLock(lock);
+    });
+  });
+
+  test('[REGRESSION] releaseLock does NOT remove a lock that was stolen + re-acquired by another process', async () => {
+    // We acquire, then simulate a steal: another process reaped us past grace
+    // and now owns the lock (different pid + acquired_at). Our releaseLock must
+    // NOT delete their live lock — doing so would let a third process in
+    // alongside the new owner (the #2058 corruption class).
+    const lock: LockHandle = await acquireLock(TEST_DIR);
+    expect(lock.acquired).toBe(true);
+    expect(lock.ownerToken).toBeDefined();
+    if (lock.heartbeat) clearInterval(lock.heartbeat); // stop our heartbeat for a deterministic test
+
+    // Overwrite the lock file as if process B re-acquired it.
+    const lockFile = join(TEST_DIR, '.gbrain-lock', 'lock');
+    const bNow = Date.now() + 1;
+    writeFileSync(lockFile, JSON.stringify({ pid: 999999, acquired_at: bNow, refreshed_at: bNow, command: 'process B' }));
+
+    await releaseLock(lock); // our (stale) handle
+
+    // B's lock survives — we did not clobber it.
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+    const after = JSON.parse(readFileSync(lockFile, 'utf-8'));
+    expect(after.pid).toBe(999999);
+
+    // Cleanup for afterEach.
+    rmSync(join(TEST_DIR, '.gbrain-lock'), { recursive: true, force: true });
+  });
+
+  test('acquire starts a heartbeat and seeds refreshed_at; release clears it', async () => {
+    const lock: LockHandle = await acquireLock(TEST_DIR);
+    expect(lock.acquired).toBe(true);
+    expect(lock.heartbeat).toBeDefined();
+    const data = JSON.parse(readFileSync(join(TEST_DIR, '.gbrain-lock', 'lock'), 'utf-8'));
+    expect(data.refreshed_at).toBeDefined();
+    expect(typeof data.refreshed_at).toBe('number');
+
+    await releaseLock(lock);
+    expect(lock.heartbeat).toBeUndefined();
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(false);
   });
 });

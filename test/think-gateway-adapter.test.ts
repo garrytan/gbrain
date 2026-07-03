@@ -18,7 +18,7 @@
 import { describe, test, expect } from 'bun:test';
 import { __thinkAdapter } from '../src/core/think/index.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
-import { withEnv } from './helpers/with-env.ts';
+import { withEnv, emptyHome } from './helpers/with-env.ts';
 
 describe('think gateway adapter — response shape conversion', () => {
   test('chatResultToMessage maps ChatResult.text to Anthropic.Message content[0].text', () => {
@@ -76,7 +76,7 @@ describe('think gateway adapter — model-id normalization', () => {
   });
 
   test('tryBuildGatewayClient returns null when ANTHROPIC_API_KEY is absent (preserves legacy NO_ANTHROPIC_API_KEY signal)', async () => {
-    await withEnv({ ANTHROPIC_API_KEY: undefined }, async () => {
+    await withEnv({ ANTHROPIC_API_KEY: undefined, GBRAIN_HOME: emptyHome() }, async () => {
       const client = await __thinkAdapter.tryBuildGatewayClient('claude-opus-4-7');
       expect(client).toBeNull();
     });
@@ -86,7 +86,7 @@ describe('think gateway adapter — model-id normalization', () => {
     await withEnv({ ANTHROPIC_API_KEY: 'sk-test-key' }, async () => {
       expect(__thinkAdapter.hasAnthropicKey()).toBe(true);
     });
-    await withEnv({ ANTHROPIC_API_KEY: undefined }, async () => {
+    await withEnv({ ANTHROPIC_API_KEY: undefined, GBRAIN_HOME: emptyHome() }, async () => {
       expect(__thinkAdapter.hasAnthropicKey()).toBe(false);
     });
   });
@@ -115,7 +115,7 @@ describe('think gateway adapter — #1698 slash form + explicit-model fork', () 
   });
 
   test('explicit anthropic model with no key THROWS (unavailable)', async () => {
-    await withEnv({ ANTHROPIC_API_KEY: undefined }, async () => {
+    await withEnv({ ANTHROPIC_API_KEY: undefined, GBRAIN_HOME: emptyHome() }, async () => {
       await expect(
         __thinkAdapter.tryBuildGatewayClient('anthropic:claude-sonnet-4-6', { explicitModel: true }),
       ).rejects.toThrow(/not usable.*unavailable/);
@@ -164,7 +164,7 @@ describe('think gateway adapter — #1698 slash form + explicit-model fork', () 
   // 'no LLM available' stub). A future refactor that turns this into a graceful path fails here.
   test('D1 backstop: explicit non-anthropic model, no key → BUILDS then create() THROWS (never a stub)', async () => {
     await withEnv(
-      { ANTHROPIC_API_KEY: undefined, DEEPSEEK_API_KEY: undefined, OPENAI_API_KEY: undefined },
+      { ANTHROPIC_API_KEY: undefined, DEEPSEEK_API_KEY: undefined, OPENAI_API_KEY: undefined, GBRAIN_HOME: emptyHome() },
       async () => {
         resetGateway();  // unconfigured → gateway.chat() throws AIConfigError at create()
         // deepseek:deepseek-chat passes validateModelId (real recipe + chat touchpoint) — the

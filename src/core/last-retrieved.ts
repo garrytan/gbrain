@@ -35,6 +35,7 @@
 
 import type { BrainEngine } from './engine.ts';
 import { isUndefinedColumnError } from './utils.ts';
+import { registerBackgroundWorkDrainer } from './background-work.ts';
 
 let _trackRetrievalCache: { ts: number; enabled: boolean } | null = null;
 const TRACK_RETRIEVAL_CACHE_TTL_MS = 30_000;
@@ -124,6 +125,14 @@ export function _resetPendingLastRetrievedWritesForTests(): void {
 export function _peekPendingLastRetrievedWritesForTests(): number {
   return pendingLastRetrievedWrites.size;
 }
+
+// v0.42.20.0 — register as a background-work sink (order 1; no abort — bare
+// UPDATEs, nothing to hard-stop). Drained before CLI disconnect.
+registerBackgroundWorkDrainer({
+  name: 'last-retrieved',
+  order: 1,
+  drain: (ms) => awaitPendingLastRetrievedWrites(ms).then((r) => ({ unfinished: r.pending })),
+});
 
 /**
  * Resolve `search.track_retrieval` config with a 30s in-process cache so

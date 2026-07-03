@@ -329,12 +329,15 @@ export class MinionWorker extends EventEmitter {
       }, this.opts.rssCheckInterval);
     }
 
-    // Self-health-check — provides supervisor-grade monitoring for bare workers.
-    // Disabled when running under a supervisor (GBRAIN_SUPERVISED=1) or when
-    // healthCheckInterval is 0. Catches two failure modes that leave the process
-    // alive but non-functional:
-    //   1. DB connection death (Supabase/PgBouncer drops, network blip)
-    //   2. Worker stall (event loop alive but not claiming/completing jobs)
+    // Self-health-check. Catches two failure modes that leave the process alive
+    // but non-functional:
+    //   1. DB connection death (Supabase/PgBouncer drops, network blip) — runs
+    //      ALWAYS (incl. under a supervisor), because it's the only signal for
+    //      "MY pool is dead" and the supervisor watches a different connection
+    //      (issue #1801, fix #2). Disabled only when healthCheckInterval is 0.
+    //   2. Worker stall (event loop alive but not claiming/completing jobs) —
+    //      runs only when NOT supervised (GBRAIN_SUPERVISED=1); under a
+    //      supervisor the progress watchdog owns forward-progress detection.
     //
     // On failure, emits an `'unhealthy'` event with a structured reason. The
     // CLI layer (`src/commands/jobs.ts:work`) subscribes and decides whether to
@@ -347,7 +350,17 @@ export class MinionWorker extends EventEmitter {
     // `consecutiveDbFailures`. The recursive pattern guarantees one tick at a time.
     const isSupervisedChild = process.env.GBRAIN_SUPERVISED === '1';
     let healthTimer: ReturnType<typeof setTimeout> | null = null;
-    if (!isSupervisedChild && this.opts.healthCheckInterval > 0) {
+    // issue #1801 (fix #2): the DB-liveness probe (part 1) runs EVEN under a
+    // supervisor — it's the worker's own "is MY pool dead" signal, and the
+    // supervisor watches a DIFFERENT connection, so it cannot see this worker's
+    // dead pool. A supervised worker whose pool dies now self-exits (db_dead →
+    // process.exit(1) via the jobs.ts listener) and the supervisor respawns it
+    // with a fresh pool in ~3 min — faster than, and orthogonal to, the
+    // supervisor's 15-min progress watchdog (which backstops NON-DB wedges).
+    // Stall detection (part 2) STAYS gated to non-supervised: the supervisor's
+    // progress watchdog now owns forward-progress, so the worker's own stall
+    // detector would double-act.
+    if (this.opts.healthCheckInterval > 0) {
       let consecutiveDbFailures = 0;
       let lastKnownCompleted = this.jobsCompleted;
       let lastCompletionTime = Date.now();
@@ -408,7 +421,12 @@ export class MinionWorker extends EventEmitter {
             return; // Skip stall check when DB is flaky
           }
 
-          // --- 2. Stall detection ---
+          // --- 2. Stall detection (NON-supervised only) ---
+          // Under a supervisor, the supervisor's progress watchdog (issue #1801)
+          // owns forward-progress detection; running the worker's own stall
+          // detector too would double-act (and both emitting 'unhealthy' +
+          // supervisor SIGTERM race). Bare `gbrain jobs work` keeps it.
+          if (!isSupervisedChild) {
           if (this.jobsCompleted > lastKnownCompleted) {
             lastKnownCompleted = this.jobsCompleted;
             lastCompletionTime = Date.now();
@@ -469,6 +487,7 @@ export class MinionWorker extends EventEmitter {
           } else {
             stallWarningSince = null;
           }
+          } // end stall detection (NON-supervised only)
         } finally {
           healthRunning = false;
           if (this.running && !healthExited) {

@@ -81,6 +81,9 @@ Subcommands:
                              auto-scaffold missing artifacts.
   init <name>                Scaffold a fresh skillpack tree (cathedral
                              default; --minimal opts out of test/e2e/evals).
+  init-brain-pack <name>     Scaffold a brain-resident pack inside a brain/
+                             source repo (brain_resident:true + machine-
+                             parseable README; discovered on connect).
   pack [<pack-dir>]          Run doctor then emit a deterministic
                              <name>-<version>.tgz tarball with SHA-256.
   endorse <name>             (Operator-only) Set the tier for a pack in
@@ -140,6 +143,9 @@ export async function runSkillpack(args: string[]): Promise<void> {
       return;
     case 'init':
       await cmdInit(rest);
+      return;
+    case 'init-brain-pack':
+      await cmdInitBrainPack(rest);
       return;
     case 'pack':
       await cmdPack(rest);
@@ -1098,6 +1104,103 @@ async function cmdInit(args: string[]): Promise<void> {
   } catch (err) {
     if (err instanceof InitScaffoldError) {
       console.error(`skillpack init: ${err.message}`);
+      process.exit(2);
+    }
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// init-brain-pack — scaffold a brain-resident pack inside a brain/source repo
+// ---------------------------------------------------------------------------
+
+async function cmdInitBrainPack(args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(
+      'gbrain skillpack init-brain-pack <name> [--target PATH] [--schema-pack NAME] [--author NAME] [--license SPDX] [--homepage URL] [--dry-run] [--json]\n\n' +
+        '  <name>         Pack name (lowercase kebab; becomes manifest.name)\n' +
+        '  --target       Brain/source repo root (default: .)\n' +
+        '  --schema-pack  Schema pack these skills assume (default: gbrain-base)\n' +
+        '  --dry-run      Report intent, no writes\n' +
+        '  --json         JSON envelope for agent consumption\n\n' +
+        'Writes a brain-resident skillpack (skillpack.json brain_resident:true + a\n' +
+        'machine-parseable README) beside your brain content. Connecting harnesses\n' +
+        'discover it via `sources add` and the `list_brain_skillpack` MCP tool.',
+    );
+    process.exit(0);
+  }
+  const json = args.includes('--json');
+  const dryRun = args.includes('--dry-run');
+  let name: string | undefined;
+  let target: string | undefined;
+  let schemaPack: string | undefined;
+  let author: string | undefined;
+  let license: string | undefined;
+  let homepage: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--target') {
+      target = args[i + 1];
+      i++;
+    } else if (a === '--schema-pack') {
+      schemaPack = args[i + 1];
+      i++;
+    } else if (a === '--author') {
+      author = args[i + 1];
+      i++;
+    } else if (a === '--license') {
+      license = args[i + 1];
+      i++;
+    } else if (a === '--homepage') {
+      homepage = args[i + 1];
+      i++;
+    } else if (a && !a.startsWith('--') && !name) {
+      name = a;
+    }
+  }
+  if (!name) {
+    console.error('Error: pass the new brain-pack name.');
+    process.exit(2);
+  }
+
+  const { runInitBrainPack, InitBrainPackError } = await import('../core/skillpack/init-brain-pack.ts');
+  const targetDir = resolveAbs(target ?? '.');
+
+  try {
+    const result = runInitBrainPack({ targetDir, name, schemaPack, author, license, homepage, dryRun });
+    if (json) {
+      console.log(
+        JSON.stringify(
+          {
+            ok: true,
+            dry_run: dryRun,
+            target: result.targetDir,
+            files_written: result.filesWritten,
+            files_skipped_existing: result.filesSkippedExisting,
+            manifest: result.manifest,
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      console.log(
+        `${dryRun ? 'init-brain-pack (dry-run)' : 'init-brain-pack'}: ${result.filesWritten.length} files written, ${result.filesSkippedExisting.length} skipped (already existed) at ${result.targetDir}`,
+      );
+      if (result.filesSkippedExisting.length > 0 && !dryRun) {
+        console.log('\nSkipped existing files (preserved):');
+        for (const p of result.filesSkippedExisting) console.log(`  ${p}`);
+      }
+      if (!dryRun) {
+        console.log(
+          `\nNext:\n  Edit README.md (the 5 sections a harness reads) + skills/<slug>/SKILL.md\n  Commit it to the brain repo. Connecting harnesses will be offered it.`,
+        );
+      }
+    }
+    process.exit(0);
+  } catch (err) {
+    if (err instanceof InitBrainPackError) {
+      console.error(`skillpack init-brain-pack: ${err.message}`);
       process.exit(2);
     }
     throw err;

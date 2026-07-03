@@ -8,8 +8,10 @@ import { MinionQueue } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
 import { WORKER_EXIT_RSS_WATCHDOG } from '../core/minions/worker-exit-codes.ts';
 import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
+import type { PaceKeyOverrides } from '../core/pace-mode.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
+import { parseNiceValue, applyNiceness, getEffectiveNiceness, formatNice } from '../core/minions/niceness.ts';
 
 function parseFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -61,6 +63,22 @@ export function parseMaxRssFlag(args: string[]): number | undefined {
   return parsed;
 }
 
+/** Parse `--nice N` (then `GBRAIN_NICE` env). Returns:
+ *  - undefined if absent (no priority change — inherit)
+ *  - the validated integer in [-20, 19] otherwise
+ *  Errors and exits the process on non-integer / out-of-range input (mirrors
+ *  parseMaxRssFlag's fail-fast). Flag wins over env. (issue #1815) */
+export function parseNiceFlag(args: string[], env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const raw = parseFlag(args, '--nice') ?? env.GBRAIN_NICE;
+  if (raw === undefined || raw === '') return undefined;
+  try {
+    return parseNiceValue(raw);
+  } catch (e) {
+    console.error(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  }
+}
+
 export function resolveWorkerConcurrency(args: string[], env: NodeJS.ProcessEnv = process.env): number {
   const raw = parseFlag(args, '--concurrency') ?? env.GBRAIN_WORKER_CONCURRENCY ?? '1';
   const parsed = parseInt(raw, 10);
@@ -95,7 +113,7 @@ function formatJobDetail(job: MinionJob): string {
   const lines = [
     `Job #${job.id}: ${job.name} (${job.status.toUpperCase()}${job.status === 'dead' ? ` after ${job.attempts_made} attempts` : ''})`,
     `  Queue: ${job.queue} | Priority: ${job.priority}`,
-    `  Attempts: ${job.attempts_made}/${job.max_attempts} (started: ${job.attempts_started})`,
+    `  Attempts: ${job.attempts_made}/${job.max_attempts} (started: ${job.attempts_started}, stalled: ${job.stalled_counter}/${job.max_stalled})`,
     `  Backoff: ${job.backoff_type} ${job.backoff_delay}ms (jitter: ${job.backoff_jitter})`,
   ];
   if (job.started_at) lines.push(`  Started: ${job.started_at.toISOString()}`);
@@ -138,12 +156,19 @@ USAGE
   gbrain jobs stats
   gbrain jobs smoke
   gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
-                   [--health-interval MS]
+                   [--health-interval MS] [--nice N]
   gbrain jobs supervisor [start] [--detach] [--json]
                          [--concurrency N] [--queue Q] [--pid-file PATH]
                          [--max-crashes N] [--health-interval N]
                          [--allow-shell-jobs] [--cli-path PATH]
-                         [--max-rss MB]
+                         [--max-rss MB] [--nice N]
+
+    --nice N   OS scheduling priority, -20 (highest) to 19 (nicest). Lowers CPU
+               priority without cutting concurrency — full throughput when the
+               box is idle, yields to foreground work when it's busy. Propagates
+               to spawned workers and their children. Env: GBRAIN_NICE (flag
+               wins). Effective value shows in 'jobs stats' and 'gbrain doctor'.
+               Negative values need root.
   gbrain jobs supervisor status [--json] [--pid-file PATH]
   gbrain jobs supervisor stop [--json] [--pid-file PATH]
 
@@ -533,7 +558,8 @@ HANDLER TYPES (built in)
       try { await queue.ensureSchema(); }
       catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
 
-      const stats = await queue.getStats();
+      const statsQueue = parseFlag(args, '--queue') ?? 'default';
+      const stats = await queue.getStats({ queue: statsQueue });
 
       console.log('Job Stats (last 24h):');
       if (stats.by_type.length > 0) {
@@ -546,6 +572,54 @@ HANDLER TYPES (built in)
         console.log('  No jobs in the last 24 hours.');
       }
       console.log(`\n  Queue health: ${stats.queue_health.waiting} waiting, ${stats.queue_health.active} active, ${stats.queue_health.stalled} stalled`);
+
+      // Scheduling priority (niceness, issue #1815). Best-effort: measures live
+      // workers from the registry + the supervisor (if running) — silently skips
+      // when nothing is reniced/running, so default stats output stays clean.
+      try {
+        const { readWorkers } = await import('../core/minions/worker-registry.ts');
+        const { readSupervisorPid } = await import('../core/minions/supervisor-pid.ts');
+        const { DEFAULT_PID_FILE } = await import('../core/minions/supervisor.ts');
+        const liveWorkers = readWorkers();
+        const sup = readSupervisorPid(DEFAULT_PID_FILE);
+        const supNice = sup.running && sup.pid !== null ? getEffectiveNiceness(sup.pid) : null;
+        if (liveWorkers.length > 0 || supNice !== null) {
+          console.log(`\n  Scheduling priority (nice):`);
+          if (supNice !== null) console.log(`    supervisor (pid ${sup.pid}): ${formatNice(supNice)}`);
+          for (const w of liveWorkers) {
+            const diverged = w.nice_requested !== null && w.nice_now !== null && w.nice_requested !== w.nice_now
+              ? `  ⚠ requested ${formatNice(w.nice_requested)}, not applied` : '';
+            console.log(`    worker (pid ${w.pid}, queue ${w.queue}): ${w.nice_now !== null ? formatNice(w.nice_now) : '?'}${diverged}`);
+          }
+        }
+      } catch {
+        // Registry/import failure is best-effort; skip silently.
+      }
+
+      // issue #1801 — wedged-queue signature (queue-scoped): a worker is alive
+      // but claiming nothing while work waits. `active_healthy` (live-lock only)
+      // means an expired-lock active row doesn't mask it. Loud line so the
+      // operator/agent catches a silent halt in `jobs stats`, not 15h later.
+      {
+        const w = stats.wedge;
+        const mins = w.minutes_since_completion;
+        // Same threshold the doctor `wedged_queue` check uses, so the two
+        // advisory surfaces agree (issue #1801).
+        const wedgeMins = (() => {
+          const raw = parseInt(process.env.GBRAIN_WEDGED_QUEUE_WARN_MINUTES ?? '', 10);
+          return Number.isFinite(raw) && raw > 0 ? raw : 15;
+        })();
+        const wedged = w.active_healthy === 0 && w.waiting > 0 && (mins === null || mins > wedgeMins);
+        if (wedged) {
+          const since = mins === null ? 'no completions on record' : `${mins}m since last completion`;
+          console.log(
+            `\n  ⚠  WEDGED QUEUE '${w.queue}': ${w.waiting} waiting, 0 active (live-lock), ${since}.\n` +
+            `     A worker may be alive but stuck (dead DB pool / stuck handler). Fix:\n` +
+            `       gbrain jobs supervisor stop && gbrain jobs supervisor start   # rebuild a fresh pool\n` +
+            `       gbrain jobs retry <id>                                        # for dead-lettered jobs`,
+          );
+        }
+      }
 
       // v0.41 Bug 2 / Eng D8 — surface lease pressure to the operator.
       // Reads minion_lease_pressure_log windowed at 1h. Best-effort: pre-v93
@@ -812,6 +886,22 @@ HANDLER TYPES (built in)
         healthCheckInterval = parsed;
       }
 
+      // --nice N (issue #1815): renice this worker process so background work
+      // yields CPU to foreground tasks without sacrificing concurrency. Applied
+      // at the CLI layer (worker.ts stays embeddable). Niceness inherits to the
+      // worker's spawned children (shell jobs / subagents) automatically.
+      const niceVal = parseNiceFlag(args);
+      let niceResult: ReturnType<typeof applyNiceness> | undefined;
+      if (niceVal !== undefined) {
+        niceResult = applyNiceness(niceVal);
+        if (!niceResult.applied) {
+          console.error(
+            `[gbrain jobs] could not set niceness to ${niceVal}: ${niceResult.error ?? 'unknown'}. ` +
+            `Negative nice needs privilege; running at niceness ${niceResult.effective ?? 'unchanged'}.`,
+          );
+        }
+      }
+
       try { await queue.ensureSchema(); }
       catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
 
@@ -849,14 +939,35 @@ HANDLER TYPES (built in)
           watchdogNote = `, watchdog: ${maxRssMb}MB (auto-sized from ${Math.round(d.basisMb / 1024)}GB ${d.source} RAM)`;
         }
       }
-      const healthNote = !isSupervisedChild && healthCheckInterval > 0
-        ? `, health-check: ${Math.round(healthCheckInterval / 1000)}s`
+      // issue #1801 (fix #2): the DB-liveness probe runs under supervision too;
+      // only stall detection is supervised-off. Report accordingly.
+      const healthNote = healthCheckInterval > 0
+        ? (isSupervisedChild
+            ? `, db-probe: ${Math.round(healthCheckInterval / 1000)}s`
+            : `, health-check: ${Math.round(healthCheckInterval / 1000)}s`)
         : '';
-      console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency}${watchdogNote}${healthNote})`);
+      const niceNote = niceResult ? `, nice: ${formatNice(niceResult.effective ?? niceVal!)}` : '';
+      console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency}${watchdogNote}${healthNote}${niceNote})`);
       console.log(`Registered handlers: ${worker.registeredNames.join(', ')}`);
+
+      // Register in the live worker registry (issue #1815) so jobs stats / doctor
+      // can report this worker's effective niceness. Cleanup runs on BOTH the
+      // finally below AND process.on('exit') — the unhealthy handler's
+      // process.exit(1) bypasses the awaited finally (Codex #10).
+      const { registerWorker } = await import('../core/minions/worker-registry.ts');
+      const unregisterWorker = registerWorker({
+        pid: process.pid,
+        queue: queueName,
+        nice_requested: niceVal ?? null,
+        nice_effective: niceResult ? niceResult.effective : null,
+        started_at: Date.now(),
+      });
+      process.on('exit', () => unregisterWorker());
+
       try {
         await worker.start();
       } finally {
+        unregisterWorker();
         // Release the DB connection pool immediately on shutdown so
         // PgBouncer slots are freed rather than waiting for TCP keepalive
         // (~minutes). Disconnect failure is best-effort but logged loudly:
@@ -903,24 +1014,44 @@ HANDLER TYPES (built in)
 
       // ----- status subcommand -----
       if (isStatusCmd) {
-        const { existsSync, readFileSync } = await import('fs');
         const { readSupervisorEvents, summarizeCrashes } = await import('../core/minions/handlers/supervisor-audit.ts');
+        const { readSupervisorPid } = await import('../core/minions/supervisor-pid.ts');
+        const { readWorkers } = await import('../core/minions/worker-registry.ts');
 
-        let supervisorPid: number | null = null;
-        let running = false;
-        if (existsSync(pidFile)) {
-          try {
-            const line = readFileSync(pidFile, 'utf8').trim().split('\n')[0];
-            const parsed = parseInt(line, 10);
-            if (!isNaN(parsed) && parsed > 0) {
-              supervisorPid = parsed;
-              try { process.kill(parsed, 0); running = true; } catch { running = false; }
-            }
-          } catch { /* unreadable PID file */ }
-        }
+        const pidStatus = readSupervisorPid(pidFile);
+        const supervisorPid = pidStatus.pid;
+        const pidfileRunning = pidStatus.running;
 
         const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
         const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
+
+        // issue #2227 fix #1/#3: the pidfile is HOME-derived, so a supervisor
+        // started under a different $HOME (keeper=/root vs ops=/data) reads as
+        // "not running" here even when it is healthy — the false signal that
+        // makes an operator spawn a duplicate. Fall back to the queue-scoped DB
+        // singleton lock (#1849), the HOME-independent authority. PID-reuse-safe:
+        // isLockHolderLive keys on lock freshness, never process.kill.
+        const supQueue = parseFlag(args, '--queue') ?? 'default';
+        let detectedViaDbLock = false;
+        let dbLockHolder: { holder_pid: number; holder_host: string } | null = null;
+        if (!pidfileRunning) {
+          try {
+            const { inspectLock, isLockHolderLive } = await import('../core/db-lock.ts');
+            const { supervisorLockId, SUPERVISOR_LOCK_TTL_MIN } = await import('../core/minions/supervisor.ts');
+            const snap = await inspectLock(engine, supervisorLockId(supQueue));
+            if (snap && isLockHolderLive(snap, SUPERVISOR_LOCK_TTL_MIN)) {
+              detectedViaDbLock = true;
+              dbLockHolder = { holder_pid: snap.holder_pid, holder_host: snap.holder_host };
+            }
+          } catch {
+            // Pre-migration brains / transient DB errors: fall back to pidfile-only.
+          }
+        }
+        const running = pidfileRunning || detectedViaDbLock;
+        // Surface the supervisor's recorded config from the latest `started`
+        // event (concurrency + effective --max-rss) so split-$HOME deployments
+        // see what the live-but-pidfile-invisible supervisor is running.
+        const startedEvt = events.filter(e => e.event === 'started').pop() ?? null;
         // Shared classifier — same code path runs in `gbrain doctor` so the
         // two surfaces cannot drift on what counts as a crash. Supersedes
         // v0.35.4.0's binary `classifyWorkerExit({code})` on this surface;
@@ -928,26 +1059,52 @@ HANDLER TYPES (built in)
         const summary = summarizeCrashes(events);
         const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;
 
+        // Niceness (issue #1815): measure live workers + the supervisor itself.
+        const workers = readWorkers().map(w => ({
+          pid: w.pid,
+          queue: w.queue,
+          nice_requested: w.nice_requested,
+          nice: w.nice_now,
+        }));
+        const supervisorNice = pidfileRunning && supervisorPid !== null
+          ? getEffectiveNiceness(supervisorPid)
+          : null;
+
         const status = {
           running,
-          supervisor_pid: supervisorPid,
+          detected_via: detectedViaDbLock ? 'db_lock' : (pidfileRunning ? 'pidfile' : null),
+          supervisor_pid: supervisorPid ?? dbLockHolder?.holder_pid ?? null,
+          db_lock_holder: dbLockHolder,
           pid_file: pidFile,
+          queue: supQueue,
           last_start: lastStart,
+          concurrency: typeof startedEvt?.concurrency === 'number' ? startedEvt.concurrency : null,
+          max_rss_mb: typeof startedEvt?.max_rss_mb === 'number' ? startedEvt.max_rss_mb : null,
           crashes_24h: summary.total,
           clean_exits_24h: summary.clean_exits,
           crashes_by_cause: summary.by_cause,
           max_crashes_exceeded: !!maxCrashesEvent,
+          nice: supervisorNice,
+          workers,
         };
 
         if (jsonMode) {
           console.log(JSON.stringify(status, null, 2));
         } else {
-          console.log(`Supervisor: ${running ? 'running' : 'not running'}`);
-          if (supervisorPid) console.log(`  PID:           ${supervisorPid}`);
+          const via = detectedViaDbLock ? ' (detected via DB lock; pidfile not found at the configured path)' : '';
+          console.log(`Supervisor: ${running ? 'running' : 'not running'}${via}`);
+          if (status.supervisor_pid) console.log(`  PID:           ${status.supervisor_pid}${detectedViaDbLock ? ` @ ${dbLockHolder?.holder_host}` : ''}`);
           console.log(`  PID file:      ${pidFile}`);
+          if (detectedViaDbLock && status.concurrency !== null) console.log(`  Concurrency:   ${status.concurrency}${status.max_rss_mb !== null ? ` (max-rss ${status.max_rss_mb}MB)` : ''}`);
           if (lastStart) console.log(`  Last start:    ${lastStart}`);
           console.log(`  Crashes (24h):     ${summary.total} (runtime=${summary.by_cause.runtime_error} oom=${summary.by_cause.oom_or_external_kill} unknown=${summary.by_cause.unknown} legacy=${summary.by_cause.legacy})`);
           console.log(`  Clean exits (24h): ${summary.clean_exits}`);
+          if (supervisorNice !== null) console.log(`  Nice (supervisor): ${formatNice(supervisorNice)}`);
+          for (const w of workers) {
+            const req = w.nice_requested !== null && w.nice !== null && w.nice_requested !== w.nice
+              ? ` (requested ${formatNice(w.nice_requested)})` : '';
+            console.log(`  Worker pid ${w.pid} [${w.queue}]: nice ${w.nice !== null ? formatNice(w.nice) : '?'}${req}`);
+          }
           if (maxCrashesEvent) console.log(`  ⚠ Max crashes exceeded at ${maxCrashesEvent.ts}`);
         }
         process.exit(running ? 0 : 1);
@@ -1053,6 +1210,12 @@ HANDLER TYPES (built in)
         await import('../core/minions/rss-default.ts');
       const maxRssMb = parseMaxRssFlag(args) ?? resolveSupMaxRss();
 
+      // --nice N (issue #1815): validated here (fail-fast on bad input even for
+      // --detach), but APPLIED only in the foreground-start path below — applying
+      // before the --detach branch would renice the throwaway parent that forks
+      // and exits, not the long-lived re-exec'd child (Codex #1).
+      const supNice = parseNiceFlag(args);
+
       const cliPath = parseFlag(args, '--cli-path') ?? resolveGbrainCliPath();
 
       // --detach: fork a background supervisor, print PID payload, exit 0.
@@ -1078,8 +1241,21 @@ HANDLER TYPES (built in)
         process.exit(0);
       }
 
-      // Foreground start.
+      // Foreground start. Renice THIS process (the long-lived supervisor) now,
+      // after the --detach fork-and-exit branch (Codex #1). The worker inherits
+      // it via the spawn env; the supervisor also passes `--nice` down so the
+      // worker re-applies it (see buildWorkerArgs).
       const supervisorPid = process.pid;
+      let supNiceResult: ReturnType<typeof applyNiceness> | undefined;
+      if (supNice !== undefined) {
+        supNiceResult = applyNiceness(supNice);
+        if (!supNiceResult.applied) {
+          console.error(
+            `[gbrain jobs] could not set supervisor niceness to ${supNice}: ${supNiceResult.error ?? 'unknown'}. ` +
+            `Negative nice needs privilege; running at niceness ${supNiceResult.effective ?? 'unchanged'}.`,
+          );
+        }
+      }
       const supervisor = new MinionSupervisor(engine, {
         concurrency,
         queue: queueName,
@@ -1090,6 +1266,9 @@ HANDLER TYPES (built in)
         allowShellJobs,
         json: jsonMode,
         maxRssMb,
+        ...(supNice !== undefined ? { nice_requested: supNice } : {}),
+        ...(supNiceResult?.effective != null ? { nice_effective: supNiceResult.effective } : {}),
+        ...(supNiceResult?.error ? { nice_error: supNiceResult.error } : {}),
         onEvent: (emission) => writeSupervisorEvent(emission, supervisorPid),
       });
 
@@ -1130,7 +1309,17 @@ HANDLER TYPES (built in)
  *
  * Per the v0.11.1 plan (Codex architecture #5 — tension 3).
  */
-export async function registerBuiltinHandlers(worker: MinionWorker, engine: BrainEngine): Promise<void> {
+export async function registerBuiltinHandlers(
+  worker: MinionWorker,
+  engine: BrainEngine,
+  opts?: { quiet?: boolean },
+): Promise<void> {
+  // `quiet` suppresses the informational startup stderr lines. The supervisor
+  // (issue #1801) runs this against a throwaway worker purely to read
+  // `registeredNames` for wedge name-scoping — it must not spam the operator's
+  // terminal with "shell handler registered…" lines. The real `jobs work` path
+  // omits opts and prints as before.
+  const quiet = opts?.quiet === true;
   worker.register('sync', async (job) => {
     const { performSync } = await import('./sync.ts');
     const repoPath = typeof job.data.repoPath === 'string' ? job.data.repoPath : undefined;
@@ -1245,6 +1434,18 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
       slugs: Array.isArray(job.data.slugs) ? (job.data.slugs as string[]) : undefined,
       all: !!job.data.all,
       stale: job.data.all ? false : (job.data.stale !== false),
+      sourceId: typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined,
+      // CX1+CX5: pace overrides ride in the job payload as explicit overrides
+      // only; runEmbedCore re-resolves env > config > bundle at execution so
+      // GBRAIN_PACE_* still wins during an incident.
+      ...(job.data.pace && typeof job.data.pace === 'object'
+        ? {
+            pace: job.data.pace as { perCallMode?: string; perCall?: PaceKeyOverrides },
+            // Serialized from the queued payload → config tier so GBRAIN_PACE_*
+            // on the worker still wins at execution (Codex P2 escape hatch).
+            paceFromBackground: true,
+          }
+        : {}),
       onProgress: (done, total, embedded) => {
         // Fire-and-forget: progress updates are best-effort and must not
         // block the worker loop.
@@ -1301,6 +1502,25 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
       workers: typeof job.data.workers === 'number' ? job.data.workers : undefined,
     });
     return result;
+  });
+
+  // v0.42.x (#2390) — Life Chronicle event extraction. NOT protected (bounded
+  // LLM spend per page; no shell). Enqueued by the put_page chronicle backstop
+  // and by `gbrain chronicle backfill`. Idempotent (content-addressed event
+  // slugs + projection upsert), so a retry re-runs to the same state.
+  worker.register('chronicle_extract', async (job) => {
+    const slug = typeof job.data.slug === 'string' ? job.data.slug : undefined;
+    if (!slug) throw new Error('chronicle_extract job requires data.slug');
+    const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
+    const { runChronicleExtract } = await import('../core/chronicle/extract-events.ts');
+    const { chronicleTz } = await import('../core/chronicle/config.ts');
+    const tz = await chronicleTz(engine);
+    return await runChronicleExtract(engine, {
+      slug,
+      sourceId,
+      tz,
+      signal: (job as { signal?: AbortSignal }).signal,
+    });
   });
 
   // v0.41.39 (#1700) — enrich. NOT in PROTECTED_JOB_NAMES: per-call cost is
@@ -1441,6 +1661,13 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     //     archived between fan-out and worker claim, skip cleanly.
     const rawSourceId = job.data.source_id;
     let sourceId: string | undefined;
+    // issue #2227/#2194 (TODOS:634, codex #8): a per-source cycle must run its
+    // FILESYSTEM phases (sync/lint/extract) against the SOURCE's own checkout,
+    // not the global brain's. Pre-fix it inherited `repoPath` (the default
+    // checkout) while writing DB freshness for `source_id` — mixed scope that
+    // made cooldown/freshness attribute to the wrong source. We resolve the
+    // source's `local_path` here and use it as the cycle's brainDir below.
+    let sourceLocalPath: string | null = null;
     if (rawSourceId !== undefined && rawSourceId !== null) {
       if (typeof rawSourceId !== 'string') {
         throw new Error(`autopilot-cycle: invalid source_id (not a string): ${JSON.stringify(rawSourceId)}`);
@@ -1454,9 +1681,10 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
       }
       // Archive recheck (codex r1 P1-5): cheap pre-cycle lookup. Returns
       // immediately if source is gone or archived; runCycle never even
-      // acquires a lock.
-      const rows = await engine.executeRaw<{ archived: boolean | null }>(
-        `SELECT archived FROM sources WHERE id = $1`,
+      // acquires a lock. Also fetches local_path so FS phases bind to the
+      // source's own checkout (the #2227/#2194 mixed-scope fix).
+      const rows = await engine.executeRaw<{ archived: boolean | null; local_path: string | null }>(
+        `SELECT archived, local_path FROM sources WHERE id = $1`,
         [rawSourceId],
       );
       if (rows.length === 0) {
@@ -1474,7 +1702,16 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
         };
       }
       sourceId = rawSourceId;
+      sourceLocalPath = typeof rows[0].local_path === 'string' && rows[0].local_path.length > 0
+        ? rows[0].local_path
+        : null;
     }
+
+    // Effective checkout for FS phases. For a per-source cycle, bind to the
+    // SOURCE's local_path (or null → skip FS phases for a pure-DB source);
+    // NEVER fall through to the global repoPath, which would run sync/lint
+    // against the wrong tree. Legacy (no source_id) keeps the global repoPath.
+    const effectiveBrainDir: string | null = sourceId ? sourceLocalPath : repoPath;
 
     // Allow callers to select phases via job data (e.g. skip embed for
     // fast cycles). Validates against ALL_PHASES to prevent injection.
@@ -1487,8 +1724,23 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     // Pull default: legacy `true` for back-compat; explicit boolean wins.
     const pull = typeof job.data.pull === 'boolean' ? job.data.pull : true;
 
+    // #2194 fix #2 / codex #5 (D4): claim-time cooldown guard. A job already
+    // queued or retrying (max_attempts:2) can reach the worker after the
+    // dispatch gate decided to back this source off. Skip it here as a NO-OP
+    // (status 'skipped', NOT a failure — a failure would re-arm the cooldown).
+    if (sourceId) {
+      const { isSourceInCooldown } = await import('./autopilot-fanout.ts');
+      if (await isSourceInCooldown(engine, sourceId)) {
+        return {
+          partial: false,
+          status: 'skipped',
+          report: { reason: 'source_in_cooldown', source_id: sourceId },
+        };
+      }
+    }
+
     const report = await runCycle(engine, {
-      brainDir: repoPath,
+      brainDir: effectiveBrainDir,
       pull,
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
       ...(sourceId ? { sourceId } : {}),
@@ -1506,16 +1758,61 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     };
   });
 
+  // #2194 fix #3 / #2227 bug #3 — brain-wide maintenance. Runs the `global`
+  // cycle phases (embed, orphans, purge, resolve_symbol_edges, grade_takes,
+  // calibration_profile, synthesize_concepts, skillopt) ONCE per window instead
+  // of N times concurrently across per-source cycles (the 4→10GB RSS blowout).
+  // No source_id → uses the legacy global cycle lock; stamps autopilot.last_global_at
+  // on success so the dispatch gate backs off.
+  worker.register('autopilot-global-maintenance', async (job) => {
+    const { runCycle, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY, ALL_PHASES } = await import('../core/cycle.ts');
+    const repoPath: string | null = typeof job.data.repoPath === 'string'
+      ? job.data.repoPath
+      : (await engine.getConfig('sync.repo_path')) ?? null;
+
+    const validPhases = new Set(ALL_PHASES);
+    const requested = Array.isArray(job.data.phases)
+      ? (job.data.phases as string[]).filter((p) => validPhases.has(p as never))
+      : GLOBAL_PHASES;
+    const phases = (requested.length > 0 ? requested : GLOBAL_PHASES) as typeof GLOBAL_PHASES;
+
+    const report = await runCycle(engine, {
+      brainDir: repoPath,
+      pull: false, // brain-wide DB/maintenance work never git-pulls
+      signal: job.signal,
+      phases,
+      yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
+    });
+
+    // Stamp last_global_at only on a non-failed run so a failed pass stays stale
+    // and re-dispatches next tick (self-healing retry).
+    if (report.status === 'ok' || report.status === 'clean' || report.status === 'partial') {
+      try {
+        await engine.setConfig(LAST_GLOBAL_AT_KEY, new Date().toISOString());
+      } catch (e) {
+        console.warn(`[autopilot-global-maintenance] failed to stamp last_global_at: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
+    return {
+      partial: report.status === 'partial' || report.status === 'failed',
+      status: report.status,
+      report,
+    };
+  });
+
   // Shell handler is always registered. Runtime env guard lives inside the
   // handler so claimed jobs emit a clear rejection log on workers missing
   // GBRAIN_ALLOW_SHELL_JOBS=1.
   {
     const { shellHandler } = await import('../core/minions/handlers/shell.ts');
     worker.register('shell', shellHandler);
-    if (process.env.GBRAIN_ALLOW_SHELL_JOBS === '1') {
-      process.stderr.write('[minion worker] shell handler enabled (GBRAIN_ALLOW_SHELL_JOBS=1)\n');
-    } else {
-      process.stderr.write('[minion worker] shell handler registered in guarded mode (set GBRAIN_ALLOW_SHELL_JOBS=1 to execute shell jobs)\n');
+    if (!quiet) {
+      if (process.env.GBRAIN_ALLOW_SHELL_JOBS === '1') {
+        process.stderr.write('[minion worker] shell handler enabled (GBRAIN_ALLOW_SHELL_JOBS=1)\n');
+      } else {
+        process.stderr.write('[minion worker] shell handler registered in guarded mode (set GBRAIN_ALLOW_SHELL_JOBS=1 to execute shell jobs)\n');
+      }
     }
   }
 

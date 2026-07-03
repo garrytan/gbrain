@@ -155,6 +155,58 @@ Reads span federated sources by default. Writes require a resolved
 source (explicit, inferred, or default). The resolver never picks a
 source silently when ambiguous — it errors with a clear fix.
 
+## Durability: keep a brain repo in sync (auto-harden)
+
+A long-lived agent that writes to a knowledge-wiki git repo needs three
+things to never lose work: pull before it edits, push every write, and not
+go stale while it sits idle. `gbrain sources harden` installs all of that,
+idempotently. The moment you add a brain repo with a token, it runs
+automatically:
+
+```bash
+# Clone + register a GitHub repo, then auto-harden it for durability.
+# Use a fine-grained PAT scoped to just this repo.
+gbrain sources add wiki --url https://github.com/you/brain-wiki.git --pat-file ~/.secrets/wiki-pat
+#   → clones, then installs: local auto-push hook, scripts/brain-commit-push.sh,
+#     always-on durability rules in AGENTS.md/RESOLVER.md, a 30-min pull cron,
+#     and a repo-scoped credential. Verifies push works before declaring done.
+
+# Run the same audit on an existing source any time (idempotent):
+gbrain sources harden wiki --pat-file ~/.secrets/wiki-pat
+
+# Pull on demand (the cron calls the --path form, which never opens the DB):
+gbrain sources pull wiki
+
+# Remove the durability scaffolding (also runs automatically on `sources remove`):
+gbrain sources unharden wiki
+```
+
+What hardening guarantees:
+
+- **Pull-first, conflict-safe.** Every pull is a divergence-safe rebase. A
+  dirty working tree is skipped (your in-progress edits are never touched); a
+  rebase conflict is aborted cleanly and flagged for attention, never left
+  half-applied.
+- **Push is never deferred.** `scripts/brain-commit-push.sh "<msg>" <path>`
+  commits and pushes atomically and refuses to report success without a
+  confirmed push. The post-commit hook is a best-effort background fallback;
+  the helper is the guarantee.
+- **No silent staleness.** A 30-minute background pull keeps an idle session
+  current. It runs DB-free, so it never contends with a live brain for the
+  PGLite single-writer lock.
+
+Flags: `--no-cron` skips the scheduled pull, `--no-verify` skips the push
+probe, `--dry-run` reports what would change, `--json` emits a machine
+report, `--all` hardens every source with a remote (same-account only).
+`--no-harden` on `sources add` opts out of auto-harden.
+
+Security: the push automation is installed locally per machine (never
+committed into the repo), the token is wired per-repo (an existing
+credential helper is reused when present), and it never appears in the repo,
+the remote URL, logs, or the JSON report. For a self-hosted git server
+reachable only over a filesystem path, set `GBRAIN_GIT_ALLOW_FILE_TRANSPORT=1`
+(default is HTTPS-only).
+
 ## Upgrading an existing brain
 
 `gbrain upgrade` runs the v16 + v17 migrations automatically. Your

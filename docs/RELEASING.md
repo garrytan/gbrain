@@ -12,15 +12,17 @@ Before shipping (/ship) or reviewing (/review), always run the full test suite.
 Two equivalent paths:
 
 **Path A — local CI gate (recommended, v0.23.1+):**
-- `bun run ci:local` runs the entire stack inside Docker: gitleaks (host), unit
-  tests with `DATABASE_URL` unset, and all 29 E2E files sequentially against a
-  fresh pgvector container. Stronger than PR CI's 2-file Tier 1 set; closer to
-  what nightly Tier 1 catches. Spins up + tears down postgres automatically via
-  `docker-compose.ci.yml`. Override the host port with
-  `GBRAIN_CI_PG_PORT=5435 bun run ci:local` if 5434 collides.
+- `bun run ci:local` runs the entire stack inside Docker: gitleaks (host),
+  guards + typecheck, then 4-shard parallel unit + E2E against four pgvector
+  containers plus a transaction-mode PgBouncer service (unit phase keeps
+  `DATABASE_URL` unset; `--no-shard` for the legacy sequential flow). Stronger
+  than PR CI's 2-file Tier 1 set; closer to what nightly Tier 1 catches. Spins
+  up + tears down postgres automatically via `docker-compose.ci.yml`. Override
+  the host port with `GBRAIN_CI_PG_PORT=5435 bun run ci:local` if 5434 collides.
 - `bun run ci:local:diff` runs only the E2E files matched by the diff selector
-  (`scripts/select-e2e.ts`), falling back to all 29 on unmapped src/ paths or
-  schema/skills/package.json changes. Fast iteration during a focused branch.
+  (`scripts/select-e2e.ts`), falling back to ALL E2E files on unmapped src/
+  paths or schema/skills/package.json changes. Fast iteration during a focused
+  branch.
 
 **Path B — manual lifecycle (still supported):**
 - `bun test` — unit tests (no database required)

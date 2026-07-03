@@ -228,6 +228,32 @@ describe('extractPageLinks', () => {
     expect(aliceLink!.linkType).toBe('works_at');
   });
 
+  test('#2011: excerpt window slicing a non-BMP char yields well-formed context', async () => {
+    // Reproduce the abort trigger: a markdown ref whose 240-char context window
+    // boundary lands inside an emoji's surrogate pair. Pre-fix, the slice kept a
+    // lone high surrogate in `context`, which Postgres rejected at the ::jsonb
+    // cast and aborted the whole `extract --stale` run.
+    const ROCKET = '🚀'; // U+1F680 = [0xD83D, 0xDE80]
+    const head = '[Alice](people/alice)';
+    const idx = head.indexOf('Alice'); // excerpt centers on ref.name
+    const half = 120; // width 240 / 2
+    // Place the emoji so its HIGH half sits at index (idx+half-1) and its LOW
+    // half at (idx+half) — exactly the excerpt `end` boundary, splitting it.
+    const padLen = idx + half - 1 - head.length;
+    const content = head + 'x'.repeat(padLen) + ROCKET + ' trailing context';
+
+    // Sanity: confirm the fixture actually splits a pair (the raw window is
+    // malformed). If this ever stops being malformed, the regression is moot.
+    const rawWindow = content.slice(Math.max(0, idx - half), idx + half);
+    expect(rawWindow.isWellFormed()).toBe(false);
+
+    const { candidates } = await extractPageLinks('docs/x', content, {}, 'concept', allowAllResolver);
+    const alice = candidates.find(c => c.targetSlug === 'people/alice');
+    expect(alice).toBeDefined();
+    expect(alice!.context.isWellFormed()).toBe(true);
+    expect(JSON.parse(JSON.stringify(alice!.context))).toBe(alice!.context);
+  });
+
   test('dedups multiple mentions of same entity (within-page dedup)', async () => {
     const content = '[Alice](people/alice) said this. Later, [Alice](people/alice) said that.';
     const { candidates } = await extractPageLinks('docs/x', content, {}, 'concept', allowAllResolver);

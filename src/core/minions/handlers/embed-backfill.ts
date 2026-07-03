@@ -36,11 +36,15 @@ import { BudgetTracker, BudgetExhausted } from '../../budget/budget-tracker.ts';
 import { withBudgetTracker } from '../../ai/gateway.ts';
 import { embedStaleForSource } from '../../embed-stale.ts';
 import { currentEmbeddingSignature } from '../../embedding.ts';
+import { type DbPacer, createDbPacer, createNoopPacer } from '../../db-pacer.ts';
+import { resolvePaceMode, loadPaceModeConfig, readPaceEnv } from '../../pace-mode.ts';
 import type { BrainEngine } from '../../engine.ts';
 import type { MinionJobContext } from '../types.ts';
+import { parseUsdLimit, usdLimitToCap, resolveSpendPosture } from '../../spend-posture.ts';
+
+import { embedBackfillLockId, EMBED_BACKFILL_LOCK_TTL_MIN } from '../../embed-backfill-lock.ts';
 
 const DEFAULT_MAX_USD_PER_JOB = 10;
-const EMBED_BACKFILL_LOCK_TTL_MIN = 60;
 
 export interface EmbedBackfillJobData {
   sourceId: string;
@@ -61,17 +65,53 @@ export interface EmbedBackfillResult {
   budgetCapUsd?: number;
 }
 
-/** Compose the lock id for embed-backfill, namespaced like sync's. */
-function embedBackfillLockId(sourceId: string): string {
-  return `gbrain-embed-backfill:${sourceId}`;
+/**
+ * Resolve a DB-contention pacer from env > config > bundle for the prod
+ * backfill path. Fail-open: any error → no-op pacer (pacing never breaks a
+ * backfill). Returns the pacer + the resolved concurrency cap (E-1: the
+ * worker count for embedStaleForSource's single pool, no separate permit).
+ */
+async function resolveBackfillPacer(
+  engine: BrainEngine,
+  jobData: Record<string, unknown>,
+): Promise<{ pacer: DbPacer; concurrency?: number }> {
+  try {
+    const cfg = await loadPaceModeConfig(engine);
+    const { envMode, envOverrides } = readPaceEnv();
+    const jobPace = (jobData.pace && typeof jobData.pace === 'object'
+      ? jobData.pace
+      : {}) as { perCallMode?: string; perCall?: Record<string, number | boolean> };
+    // Codex P2: serialized job pace sits at the CONFIG tier (job choice beats
+    // standing config, but env beats both) so GBRAIN_PACE_* on the worker is a
+    // real incident escape hatch for an already-queued job.
+    const knobs = resolvePaceMode({
+      mode: jobPace.perCallMode ?? cfg.mode,
+      configOverrides: { ...cfg.configOverrides, ...(jobPace.perCall ?? {}) },
+      envMode,
+      envOverrides,
+    });
+    if (!knobs.enabled) return { pacer: createNoopPacer() };
+    return { pacer: createDbPacer({ bundle: knobs }), concurrency: knobs.maxConcurrency };
+  } catch {
+    return { pacer: createNoopPacer() };
+  }
 }
 
-/** Read embed.backfill_max_usd config or default. */
-async function readMaxUsd(engine: BrainEngine): Promise<number> {
+/**
+ * Resolve the per-job budget cap (USD) for the BudgetTracker.
+ *
+ * v0.42.42.0 (#2139): returns `undefined` = "no cap" (which BudgetTracker
+ * treats as cap-absent) when the config is `off`/`unlimited`/`none` OR when
+ * `spend.posture=tokenmax`. NEVER returns Infinity (that would pass through as
+ * a real ceiling and serialize to `null` in audit rows). Spend is still
+ * ledgered by the tracker either way — posture removes the ceiling, not the
+ * accounting. `0`/garbage fall back to the $10 default.
+ */
+async function readMaxUsd(engine: BrainEngine): Promise<number | undefined> {
+  const posture = await resolveSpendPosture(engine);
+  if (posture === 'tokenmax') return undefined;
   const raw = await engine.getConfig('embed.backfill_max_usd');
-  if (raw === null || raw === undefined) return DEFAULT_MAX_USD_PER_JOB;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_USD_PER_JOB;
+  return usdLimitToCap(parseUsdLimit(raw, DEFAULT_MAX_USD_PER_JOB));
 }
 
 /** Validate + extract typed job params. Throws on malformed input. */
@@ -119,11 +159,18 @@ export function makeEmbedBackfillHandler(engine: BrainEngine) {
       label: `embed-backfill:${sourceId}`,
     });
 
+    // paced-backfill: resolve env > config > bundle (env = incident escape
+    // hatch). No-op when off. This is the prod path that originally starved
+    // the supervisor, so pacing it is the headline win.
+    const { pacer, concurrency } = await resolveBackfillPacer(engine, job.data);
+
     try {
       const result = await withBudgetTracker(tracker, async () =>
         embedStaleForSource(engine, sourceId, {
           batchSize,
           signal: job.signal,
+          pacer,
+          ...(concurrency !== undefined && { concurrency }),
           // v0.41.31: re-embed pages whose model signature drifted + stamp
           // provenance as chunks land.
           embeddingSignature: currentEmbeddingSignature(),
@@ -174,6 +221,7 @@ export function makeEmbedBackfillHandler(engine: BrainEngine) {
       }
       throw err;
     } finally {
+      pacer.dispose();
       // ALWAYS release. Aborts, throws, budget-exhaust — all paths unwind here.
       try {
         await lock.release();

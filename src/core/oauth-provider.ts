@@ -21,10 +21,12 @@ import type {
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
-import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import type { AuthInfo as SdkAuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
+import { InvalidTokenError, InvalidClientMetadataError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
 import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError } from './scope.ts';
+import type { AuthInfo as CoreAuthInfo } from './operations.ts';
+import { parseLegacyTokenScope } from './legacy-token-scope.ts';
 import type { SqlQuery, SqlValue } from './sql-query.ts';
 export type { SqlQuery, SqlValue };
 
@@ -181,6 +183,16 @@ interface GBrainOAuthProviderOptions {
    * before mcpAuthRouter ran).
    */
   dcrDisabled?: boolean;
+  /**
+   * Allow the consent-bypassing `client_credentials` grant on the unauthenticated
+   * Dynamic Client Registration path. Default false (#1353): a self-registered
+   * DCR client defaults to `authorization_code` (which goes through /authorize
+   * consent), and an explicit `client_credentials` request is rejected. Operators
+   * who genuinely need machine-to-machine DCR clients opt in via
+   * `--enable-dcr-insecure`. Manual CLI / admin registration is unaffected
+   * (operator-trusted, registers grants directly).
+   */
+  allowClientCredentialsDcr?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +200,7 @@ interface GBrainOAuthProviderOptions {
 // ---------------------------------------------------------------------------
 
 class GBrainClientsStore implements OAuthRegisteredClientsStore {
-  constructor(private sql: SqlQuery) {}
+  constructor(private sql: SqlQuery, private allowClientCredentialsDcr = false) {}
 
   async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
     const rows = await this.sql`
@@ -241,6 +253,24 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     // registration entry points share one allow-list.
     const authMethod = validateTokenEndpointAuthMethod(client.token_endpoint_auth_method);
 
+    // v0.42 (#1353): the DCR path is the unauthenticated network entry point.
+    // `client_credentials` skips /authorize consent entirely, so a self-
+    // registered DCR client must NOT get it by default. Default the grant to
+    // `authorization_code` (the consent-bearing flow) when unspecified, and
+    // reject an explicit `client_credentials` request unless the operator opted
+    // in via `--enable-dcr-insecure`. Manual CLI/admin registration bypasses
+    // this store method, so operators can still mint machine clients directly.
+    const grantTypes = (client.grant_types && client.grant_types.length > 0)
+      ? client.grant_types
+      : ['authorization_code'];
+    if (!this.allowClientCredentialsDcr && grantTypes.includes('client_credentials')) {
+      throw new InvalidClientMetadataError(
+        'client_credentials grant is not permitted via dynamic client registration; ' +
+        'restart the server with --enable-dcr-insecure to allow it, or register the ' +
+        'client via the gbrain CLI / admin API.',
+      );
+    }
+
     const clientId = generateToken('gbrain_cl_');
     // v0.34.1 (#909): RFC 7591 §2 — clients that authenticate at the token
     // endpoint via PKCE alone declare `token_endpoint_auth_method: "none"`.
@@ -271,7 +301,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                     client_id_issued_at, source_id, federated_read)
         VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                 ${pgArray((client.redirect_uris || []).map(String))},
-                ${pgArray(client.grant_types || ['client_credentials'])},
+                ${pgArray(grantTypes)},
                 ${client.scope || ''}, ${authMethod},
                 ${now}, ${'default'}, ${pgArray(['default'])})
       `;
@@ -284,7 +314,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                         client_id_issued_at, source_id)
             VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                     ${pgArray((client.redirect_uris || []).map(String))},
-                    ${pgArray(client.grant_types || ['client_credentials'])},
+                    ${pgArray(grantTypes)},
                     ${client.scope || ''}, ${authMethod},
                     ${now}, ${'default'})
           `;
@@ -296,7 +326,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                           client_id_issued_at)
               VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                       ${pgArray((client.redirect_uris || []).map(String))},
-                      ${pgArray(client.grant_types || ['client_credentials'])},
+                      ${pgArray(grantTypes)},
                       ${client.scope || ''}, ${authMethod},
                       ${now})
             `;
@@ -311,7 +341,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                       client_id_issued_at)
           VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                   ${pgArray((client.redirect_uris || []).map(String))},
-                  ${pgArray(client.grant_types || ['client_credentials'])},
+                  ${pgArray(grantTypes)},
                   ${client.scope || ''}, ${authMethod},
                   ${now})
         `;
@@ -348,7 +378,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
   constructor(options: GBrainOAuthProviderOptions) {
     this.sql = options.sql;
-    this._clientsStore = new GBrainClientsStore(this.sql);
+    this._clientsStore = new GBrainClientsStore(this.sql, options.allowClientCredentialsDcr === true);
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
@@ -389,10 +419,18 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // as a fully-admin access token. Mirrors the filter pattern already used
     // by exchangeClientCredentials (this file) and exchangeRefreshToken's F3
     // subset enforcement (RFC 6749 §6) so all three grant entry points clamp
-    // consistently. Empty/omitted requested scope inherits the empty-stored
-    // shape (existing behavior; not a security boundary).
+    // consistently. When the client requests NO scope, RFC 6749 §3.3 lets the
+    // server fall back to a default — we default to the client's full
+    // registered scope (matching exchangeClientCredentials, which already does
+    // `requestedScope ? ... : allowedScopes`). Previously an omitted request
+    // granted the empty set, which then propagated into the access+refresh
+    // tokens and never self-healed: every op failed `insufficient_scope` even
+    // though the client was registered with `read write`. Clients that omit
+    // `scope` on /authorize (e.g. some MCP connectors) hit this. Still clamped
+    // to the allowed set, so an explicit over-broad request can't escalate.
     const allowedScopes = parseScopeString(client.scope);
-    const grantedScopes = (params.scopes || []).filter(s => hasScope(allowedScopes, s));
+    const requestedScopes = (params.scopes && params.scopes.length) ? params.scopes : allowedScopes;
+    const grantedScopes = requestedScopes.filter(s => hasScope(allowedScopes, s));
 
     await this.sql`
       INSERT INTO oauth_codes (code_hash, client_id, scopes, code_challenge,
@@ -539,7 +577,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   // Token Verification
   // -------------------------------------------------------------------------
 
-  async verifyAccessToken(token: string): Promise<AuthInfo> {
+  async verifyAccessToken(token: string): Promise<SdkAuthInfo> {
     const tokenHash = hashToken(token);
     const now = Math.floor(Date.now() / 1000);
 
@@ -629,14 +667,29 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // operations.ts prefers this array over scalar sourceId when set
         // and non-empty.
         allowedSources,
-      } as AuthInfo;
+      } as CoreAuthInfo as SdkAuthInfo;
     }
 
-    // Fallback: legacy access_tokens table (backward compat)
-    const legacyRows = await this.sql`
-      SELECT name FROM access_tokens
-      WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
-    `;
+    // Fallback: legacy access_tokens table (backward compat). Modern legacy
+    // rows may carry permissions.source_id from the pre-OAuth bearer-token
+    // path; OAuth transport must preserve that same source grant instead of
+    // pinning every legacy token to `default`.
+    let legacyRows: Record<string, unknown>[];
+    try {
+      legacyRows = await this.sql`
+        SELECT name, permissions FROM access_tokens
+        WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
+      `;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'permissions')) {
+        legacyRows = await this.sql`
+          SELECT name FROM access_tokens
+          WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
+        `;
+      } else {
+        throw err;
+      }
+    }
 
     if (legacyRows.length > 0) {
       // Legacy tokens get full admin access (grandfather in).
@@ -646,19 +699,31 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         UPDATE access_tokens SET last_used_at = now() WHERE token_hash = ${tokenHash}
       `;
       const name = legacyRows[0].name as string;
+      const permissionsRaw = legacyRows[0].permissions;
+      let permissions: unknown = permissionsRaw;
+      if (typeof permissionsRaw === 'string') {
+        try {
+          permissions = JSON.parse(permissionsRaw);
+        } catch {
+          permissions = undefined;
+        }
+      }
+      const sourceGrant = permissions && typeof permissions === 'object'
+        ? (permissions as Record<string, unknown>).source_id
+        : undefined;
+      const { sourceId, allowedSources } = parseLegacyTokenScope(sourceGrant);
       return {
         token,
         clientId: name,
         clientName: name,
         scopes: ['read', 'write', 'admin'],
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
-        // v0.34.1 (#861, D13): legacy bearer tokens default to 'default'
-        // source — matches the pre-v0.34 effective behavior where the
-        // serve-http transport fell back to GBRAIN_SOURCE/'default' for
-        // any caller without explicit scope. Operators who want a
-        // narrower scope for legacy tokens migrate to OAuth.
-        sourceId: 'default',
-      } as AuthInfo;
+        // Legacy tokens without an explicit permissions.source_id grant keep
+        // the historical 'default' source floor. Array grants become
+        // allowedSources for federated reads, matching legacy HTTP transport.
+        sourceId,
+        allowedSources,
+      } as CoreAuthInfo as SdkAuthInfo;
     }
 
     throw new InvalidTokenError('Invalid token');
