@@ -133,25 +133,35 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
     expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
   });
 
-  test('a LIVE PID whose heartbeat went stale past the grace window IS reaped', async () => {
-    // PID is alive (our own) but hasn't refreshed in 20min (> 600s grace):
-    // hung holder, or a reused PID whose real holder is gone. Reap + acquire.
+  test('[REGRESSION] a LIVE PID whose heartbeat went stale past the grace window is NOT stolen', async () => {
+    // PID is alive (our own) but hasn't refreshed in 20min (> 600s grace).
+    // A starved JS heartbeat does not prove PGLite has closed its files, so the
+    // waiter must fail closed instead of force-removing the lock.
     writeHolder({ pid: process.pid, acquiredAgoMs: 25 * 60_000, refreshedAgoMs: 20 * 60_000 });
 
-    const lock = await acquireLock(TEST_DIR, { timeoutMs: 2000 });
-    expect(lock.acquired).toBe(true);
-    await releaseLock(lock);
+    await expect(acquireLock(TEST_DIR, { timeoutMs: 1200 })).rejects.toThrow(/Timed out/);
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
   });
 
-  test('GBRAIN_PGLITE_LOCK_STEAL_GRACE_SECONDS tunes the grace window', async () => {
+  test('GBRAIN_PGLITE_LOCK_STEAL_GRACE_SECONDS does not make live stale-heartbeat holders stealable', async () => {
     // withEnv keeps the process-global mutation isolated across shard files.
     await withEnv({ GBRAIN_PGLITE_LOCK_STEAL_GRACE_SECONDS: '5' }, async () => {
-      // Refreshed 30s ago — fresh under the 600s default, STALE under 5s.
+      // Refreshed 30s ago: stale under this 5s diagnostic threshold, but still
+      // unsafe to steal because the owning PID is live.
       writeHolder({ pid: process.pid, acquiredAgoMs: 60_000, refreshedAgoMs: 30_000 });
-      const lock = await acquireLock(TEST_DIR, { timeoutMs: 2000 });
-      expect(lock.acquired).toBe(true);
-      await releaseLock(lock);
+      await expect(acquireLock(TEST_DIR, { timeoutMs: 1200 })).rejects.toThrow(/Timed out/);
+      expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
     });
+  });
+
+  test('an unknown PID probe result is unsafe to steal', async () => {
+    writeHolder({ pid: 999999999, acquiredAgoMs: 25 * 60_000, refreshedAgoMs: 20 * 60_000 });
+
+    await expect(acquireLock(TEST_DIR, {
+      timeoutMs: 1200,
+      isProcessAlive: () => 'unknown',
+    })).rejects.toThrow(/Timed out/);
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
   });
 
   test('[REGRESSION] releaseLock does NOT remove a lock that was stolen + re-acquired by another process', async () => {

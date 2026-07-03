@@ -24,17 +24,16 @@ const LOCK_FILE = 'lock';
 // LIVE holder (embed jobs run for many minutes) is never mistaken for stale.
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
-// #2058: a holder whose heartbeat refreshed within this window is ALIVE and is
-// NEVER stolen, regardless of how old the lock is. Only a holder that STOPPED
-// refreshing past this grace (hung, crashed without cleanup, or a PID since
-// reused by an unrelated process) is reaped. Pairing heartbeat-age with PID
-// liveness is what defeats both the WAL-corruption bug (stealing a live
-// writer) AND the PID-reuse false-positive (a recycled PID reading as "alive").
-// Env-overridable as an incident escape hatch, matching the sync-lock knobs.
+// #2058: a holder whose heartbeat refreshed within this window is clearly ALIVE
+// and working. A stale heartbeat is diagnostic only: a live/starved process can
+// still hold PGLite files open, so it is unsafe to steal from a PID that still
+// exists or cannot be probed conclusively.
 function stealGraceMs(): number {
   const env = parseInt(process.env.GBRAIN_PGLITE_LOCK_STEAL_GRACE_SECONDS ?? '', 10);
   return Number.isFinite(env) && env > 0 ? env * 1000 : 10 * 60 * 1000; // default 600s
 }
+
+type ProcessLiveness = 'alive' | 'dead' | 'unknown';
 
 export interface LockHandle {
   lockDir: string;
@@ -47,11 +46,11 @@ export interface LockHandle {
   heartbeat?: ReturnType<typeof setInterval>;
   lockPath?: string;
   /**
-   * #2058 (codex): our ownership token (`<pid>:<acquired_at>`). If we stall
-   * past the steal grace, another process can reap + re-acquire. When we
-   * resume, the heartbeat and release MUST verify the on-disk lock is STILL
-   * ours before touching it — otherwise a resumed stale holder would refresh
-   * or delete the NEW owner's live lock, re-opening the concurrent-writer hole.
+   * #2058 (codex): our ownership token (`<pid>:<acquired_at>`). If we exit and
+   * another process reaps + re-acquires, the heartbeat and release MUST verify
+   * the on-disk lock is STILL ours before touching it — otherwise a resumed
+   * stale holder would refresh or delete the NEW owner's live lock, re-opening
+   * the concurrent-writer hole.
    */
   ownerToken?: string;
 }
@@ -97,13 +96,16 @@ function getLockDir(dataDir: string | undefined): string {
   return join(dataDir, LOCK_DIR_NAME);
 }
 
-function isProcessAlive(pid: number): boolean {
+function isProcessAlive(pid: number): ProcessLiveness {
   try {
     // Sending signal 0 checks existence without actually sending a signal
     process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
+    return 'alive';
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ESRCH') return 'dead';
+    if (code === 'EPERM') return 'alive';
+    return 'unknown';
   }
 }
 
@@ -112,7 +114,10 @@ function isProcessAlive(pid: number): boolean {
  * Returns { acquired: true } if the lock was obtained, { acquired: false } otherwise.
  * Stale locks (from dead processes) are automatically cleaned up.
  */
-export async function acquireLock(dataDir: string | undefined, opts?: { timeoutMs?: number }): Promise<LockHandle> {
+export async function acquireLock(dataDir: string | undefined, opts?: {
+  timeoutMs?: number;
+  isProcessAlive?: (pid: number) => ProcessLiveness;
+}): Promise<LockHandle> {
   const lockDir = getLockDir(dataDir);
 
   // In-memory PGLite — no lock needed (process-scoped, can't be shared)
@@ -125,6 +130,7 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
   mkdirSync(dataDir as string, { recursive: true });
 
   const timeoutMs = opts?.timeoutMs ?? 30_000; // 30 second default timeout
+  const probeProcess = opts?.isProcessAlive ?? isProcessAlive;
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeoutMs) {
@@ -136,21 +142,21 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
         const lockPid = lockData.pid as number;
         const lockTime = lockData.acquired_at as number;
 
-        // #2058: classify by PID liveness AND heartbeat freshness. A holder
-        // that is alive AND refreshed its heartbeat within the steal grace is
-        // genuinely working (e.g. a multi-minute embed) and is NEVER reaped —
-        // force-removing it here is what corrupted the single-writer WAL.
-        const alive = isProcessAlive(lockPid);
+        // #2058: classify by PID liveness AND heartbeat freshness. A stale
+        // heartbeat on a live PID is NOT proof the embedded DB is closed: the
+        // JS timer can be paused/starved while PGLite still holds WAL files.
+        const holderState = probeProcess(lockPid);
         const lastRefresh = (lockData.refreshed_at as number | undefined) ?? lockTime;
         const sinceRefresh = Date.now() - lastRefresh;
-        if (!alive) {
+        if (holderState === 'dead') {
           // Holder process is gone — reap.
           try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition, try again */ }
         } else if (sinceRefresh > stealGraceMs()) {
-          // PID is alive but the heartbeat stopped past the grace window:
-          // either the holder hung, or this PID was reused by an unrelated
-          // process (the real holder died and stopped refreshing). Reap.
-          try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition */ }
+          // PID is alive or unprobeable but the heartbeat stopped past the
+          // grace window. Fail closed: wait and eventually surface the holder
+          // diagnostic instead of stealing a possibly-live PGLite process.
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
         } else {
           // Live holder refreshing within grace — wait and retry.
           await new Promise(r => setTimeout(r, 1000));
