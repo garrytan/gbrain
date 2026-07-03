@@ -521,11 +521,31 @@ async function maybeSelectAutoRoute(
   if (input.auto_route === false) return null;
   const routeInput = buildAutoRouteInput(input, context);
   if (!routeInput) return null;
+  if (!engineSupportsAutoRoute(engine, routeInput.intent)) return null;
   return selectRetrievalRoute(engine, routeInput, {
     ...(context.dependencies.broadSynthesisCandidateSearch
       ? { broadSynthesis: { candidateSearch: context.dependencies.broadSynthesisCandidateSearch } }
       : {}),
   });
+}
+
+function engineSupportsAutoRoute(engine: BrainEngine, intent: RetrievalRouteIntent): boolean {
+  switch (intent) {
+  case 'broad_synthesis':
+    return typeof engine.listContextMapEntries === 'function';
+  case 'mixed_scope_bridge':
+    return typeof engine.listContextMapEntries === 'function'
+      && typeof engine.listProfileMemoryEntries === 'function'
+      && typeof engine.listPersonalEpisodeEntries === 'function';
+  case 'personal_profile_lookup':
+    return typeof engine.listProfileMemoryEntries === 'function';
+  case 'personal_episode_lookup':
+    return typeof engine.listPersonalEpisodeEntries === 'function';
+  case 'task_resume':
+    return typeof engine.getTaskThread === 'function';
+  case 'precision_lookup':
+    return true;
+  }
 }
 
 function buildAutoRouteInput(
