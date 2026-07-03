@@ -1,5 +1,23 @@
 # TODOS
 
+## office-ingest follow-ups (filed v0.42.54.0)
+
+- [ ] **P3 — Office deltas in the inline cost estimator.** `estimateInlineNewTokens`
+  (`src/commands/sync.ts`) filters changed paths with `isSyncable` but never passes
+  `officeOn`, so office files are excluded from the pre-sync cost preview (the sync
+  itself imports them). Estimating office cost needs a per-format heuristic anyway
+  (binary bytes ≠ prose tokens; parse output size is what matters).
+- [ ] **P3 — Single-flight `ensureSidecarUp`.** Concurrent imports (parallel sync
+  workers) can each spawn a detached uvicorn before the first becomes healthy; the
+  extra processes fail to bind and exit, but a shared in-flight promise per URL
+  would avoid the churn. The failed-start cooldown (v0.42.54.0) covers the
+  sequential case only.
+- [ ] **P3 — officeSlug vs pathToSlug divergence.** Office slugs keep the extension
+  and lowercase the path (`officeSlug`); sync's slug-derivation fallback uses
+  `pathToSlug`. Pages now store `source_path` so delete/rename resolve robustly,
+  but a case-mismatched path that predates `source_path` backfill could still miss.
+  Consider a one-time backfill of `source_path` for existing office pages.
+
 ## reliability fix-wave follow-ups (filed v0.42.52.0)
 
 Deferred from the autopilot/supervisor + sync/status/minion reliability wave

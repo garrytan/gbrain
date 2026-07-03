@@ -2,6 +2,57 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.54.0] - 2026-07-03
+
+**Your brain can now read office documents. `gbrain import` takes PDF, DOCX, PPTX, and XLSX (plus ODT/ODS/ODP/HTML/CSV), makes them searchable, and cites answers back to the exact page, slide, or spreadsheet cell.** Until now ingest was first-class for Markdown, code, and images only, so the contracts, decks, and reports where much of your real knowledge lives were invisible to retrieval and synthesis. A local parsing service (Docling, a resident sidecar that gbrain installs, starts, and supervises for you) converts each document into a structured block stream; gbrain chunks it structure-aware, embeds it through the existing pipeline, and stores a precise locator with every chunk. Files never leave your machine, the sidecar binds to localhost only, and the whole feature is opt-in: with it off (the default), nothing changes. Contributed by @wusijian007.
+
+### How to turn it on
+
+```bash
+gbrain ingest setup-docling                      # one-time: venv + Docling install (downloads ML models)
+gbrain config set ingest.docling.enabled true
+gbrain import ~/docs                             # office files import alongside your markdown
+gbrain query "Q3 revenue conclusion"             # answers cite report.pdf p.12
+```
+
+Scanned PDFs work too: Docling's built-in OCR extracts the text (`ingest.docling.ocr`, default `auto`). To also search figures and charts by meaning, point multimodal embedding at a visual provider (`VOYAGE_API_KEY`, `GBRAIN_EMBEDDING_MULTIMODAL=true`, `GBRAIN_EMBEDDING_MULTIMODAL_MODEL=voyage:voyage-multimodal-3`); your primary text embedder stays as it is. Verified end-to-end: a text query for "revenue" retrieves the revenue chart through the existing cross-modal path (cosine distance 0.75).
+
+### Added
+- **Office-format ingest, opt-in and additive.** A new adapter parses office documents via the Docling sidecar into a versioned intermediate form (DocIR), chunks it structure-aware (tables, figures, and code blocks are never sliced mid-block; headings carry into the next chunk as context), and persists through the existing engine path. Migration v120 adds a per-chunk `source_locator` column (page / slide / sheet / cell range), both engines in lockstep and pinned by a dedicated engine-parity e2e.
+- **Tables become searchable two ways.** Each table gets a summary chunk (written by a chat model when one is configured, template fallback otherwise: an import never fails because a summary did) plus row-block chunks with exact locations, `book.xlsx Q3!B4:D9` style. Multi-sheet workbooks attribute every chunk to its sheet by name. Parser warnings such as low-confidence tables surface into the page frontmatter and the import result instead of being dropped.
+- **Scanned PDFs and visual search.** OCR is built into the parse (no separate pass), and selective multimodal embedding (`ingest.office.multimodal`: `selective` by default, `all`, or `off` for zero cost) embeds figures and visually dense pages so they are retrievable by meaning. Without a visual embedding provider the image arm skips gracefully and text import is unaffected.
+- **Sidecar lifecycle managed for you.** `gbrain ingest setup-docling` (one-time install), `gbrain ingest start` (explicit start), import-time auto-start that reuses the warm model-loaded process, supervised restarts with jittered backoff, and a `docling_service` check in `gbrain doctor`.
+- **Predictable failure behavior, pinned by tests.** Office disabled: a clear error saying how to enable. Sidecar down or uninstallable: a clean per-file error, the rest of the import continues, nothing half-written. A failed start is remembered (per URL, 5 minutes) so a persistently broken sidecar costs the first file a startup wait instead of stalling every file in a bulk import; a recovered or hand-started sidecar wins immediately, and `gbrain ingest start` bypasses the cooldown.
+- **Incremental sync keeps office pages in lockstep with the repo.** Edited office files re-import on `gbrain sync`, deletes and renames resolve through the stored `source_path` like every other importer, and the full-sync reconcile treats office files symmetrically with markdown and code.
+- **A retrieval sanity-eval scaffold** (`evals/office-ingest/`) that imports an office corpus into a throwaway brain and scores keyword retrieval (hit@k, MRR).
+
+### Things to watch
+- The sidecar is Python (3.10+). On Python 3.14 Docling's auto-OCR selects easyocr; the first OCR run downloads models (~140MB). `gbrain ingest setup-docling` warns about the install size.
+- Cost posture is honest: import-time inline embeddings do not pass through the interactive spend gate (`spend.posture` governs the bulk backfill path). The levers for the image arm are `ingest.office.multimodal` and your provider's free tier; table summaries use chat with a free template fallback.
+- Per-file size cap: `ingest.office.max_file_mb` (default 50).
+
+### To take advantage of v0.42.54.0
+
+`gbrain upgrade` applies migration v120 (the per-chunk locator column) automatically. The feature itself is opt-in:
+
+1. **Install the sidecar once:**
+   ```bash
+   gbrain ingest setup-docling
+   ```
+2. **Enable and import:**
+   ```bash
+   gbrain config set ingest.docling.enabled true
+   gbrain import <dir-with-office-files>
+   ```
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor          # docling_service: ok
+   gbrain query "<a sentence from one of your PDFs>"
+   ```
+4. **If any step fails or results look wrong,** please file an issue at
+   https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor`
+   and which step broke.
+
 ## [0.42.53.0] - 2026-06-23
 
 **`gbrain sync` works again on managed Postgres brains: the durable-checkpoint pin write was encoding its value the wrong way, so every multi-source sync aborted at the very first checkpoint. Fixed, plus a repo-wide sweep of the same JSONB footgun and a new CI guard so it can't come back.** A recent release added a structural check on the sync checkpoint table; the pin write that runs before every drain bound its value as a string rather than a real array, so the check rejected it and the run bailed before importing anything. The bug was invisible on the embedded engine (its driver parses the value either way) and only bit managed Postgres.
