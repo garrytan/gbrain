@@ -1,5 +1,41 @@
 # TODOS
 
+## Sync reconcile provenance-guard follow-ups (filed v0.42.57.0)
+
+Deferred from the external-import sweep fix (full-sync reconcile deleting pages
+imported from outside the repo). The shipped guard + mass-delete breaker close
+the data-loss paths; these harden the provenance model itself. All were
+adversarial-review findings, deferred by scope, not oversight.
+
+- [ ] **P1 — Move import provenance onto pages (`import_root` column).** The
+  guard reconstructs provenance from `ingest_log`, which is append-only,
+  best-effort, and written ONCE at end-of-import: a crash before `logIngest`
+  (or a checkpoint-resumed run whose second row omits run-1's slugs) leaves
+  imported pages permanently unprotected, and `updateSlug` renames orphan
+  their provenance rows. A per-page `import_root` written in the same
+  transaction as the page is robust to all of this. Schema migration on both
+  engines + bootstrap probe + reconcile reads the column with ingest_log as
+  the legacy fallback. Where: `src/core/migrate.ts`, `src/core/import-file.ts`,
+  `src/commands/sync.ts:externallyImportedSlugs`. The mass-delete breaker
+  (`GBRAIN_SYNC_RECONCILE_FORCE`) is the interim backstop.
+- [ ] **P2 — Per-source import lock (TOCTOU with concurrent sync).** `gbrain
+  import` takes no per-source lock, so a full sync's reconcile can race a
+  long-running import: pages committed per-file, provenance row not yet
+  written → reconcile sees "stale" pages. Share the `gbrain-sync:<sourceId>`
+  refreshing lock (or the embed-backfill lock pattern) in `runImport`.
+  Where: `src/commands/import.ts`, `src/core/db-lock.ts`.
+- [ ] **P2 — Harden the remote `log_ingest` op against provenance poisoning.**
+  A write-scope remote caller can insert `source_type='directory'` rows with
+  `source_ref=<repoPath>` to flip external slugs to repo-internal, arming a
+  deferred deletion on the next full sync. Thread `ctx.sourceId`, and reject
+  or namespace reserved `source_type` values (`directory`, `git_sync`) when
+  `ctx.remote !== false`. Where: `src/core/operations.ts:log_ingest`.
+- [ ] **P3 — Provenance follows slug renames.** `engine.updateSlug` renames a
+  page but `ingest_log.pages_updated` keeps the old slug: a renamed
+  externally-imported page loses guard protection (swept on the next full
+  sync) and the stale old-slug entry lingers. Update rows on rename, or
+  resolve via the `import_root` column once the P1 item lands.
+
 ## Life Chronicle follow-ups (filed v0.42.56.0, #2390)
 
 Deferred from the Life Chronicle wave (CEO Scope-Expansion + eng review CLEARED,

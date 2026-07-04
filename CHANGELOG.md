@@ -2,6 +2,71 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.57.0] - 2026-07-05
+
+**A full sync no longer deletes pages you imported from folders outside the synced repo.** If you built your brain with `gbrain import ~/notes` (or any folder that is not the repo `gbrain sync` watches) and later configured a `local_path`, the first full sync treated every one of those imported pages as "stale files that disappeared from the repo" and swept them. The sync was checking imported pages against the wrong folder. Pages you created by hand were never at risk, but bulk-imported ones were. This release teaches the sync to remember where each import actually came from, and to refuse any suspiciously large automatic sweep.
+
+Two protections landed:
+
+1. **Import provenance.** Every `gbrain import <dir>` already logs which pages it created. The full-sync cleanup now reads that log and skips pages whose most recent import came from outside the repo. If the same page is later re-imported from inside the repo, it becomes cleanable again. When the log can't be read, the cleanup skips entirely rather than guessing.
+2. **A mass-delete circuit breaker.** Even if provenance is missing (say, an import was killed mid-run), a full sync now refuses to auto-delete 10+ pages when that is more than 20% of the source's file-backed pages. It tells you what it refused and how to run the sweep deliberately: `GBRAIN_SYNC_RECONCILE_FORCE=1 gbrain sync --full`.
+
+What you'd see, before and after, on a brain fed by out-of-repo imports:
+
+| Action | Before | After |
+|---|---|---|
+| `gbrain import ~/notes`, then first `gbrain sync` with a `local_path` | imported pages deleted as "stale" | imported pages kept |
+| Repo file genuinely deleted, `gbrain sync --full` | page removed | page removed (unchanged) |
+| Provenance log unreadable during full sync | sweep ran anyway | sweep skipped, reason on stderr and in `--json` (`reconcileSkipped`) |
+| Sweep would remove most of a source | ran silently | refused; explicit env override required |
+
+Things to watch:
+
+- **Were you affected on an earlier version?** Deletes are soft. `gbrain restore <slug>` brings a swept page back, as long as the purge job hasn't permanently removed it yet. Re-running your original `gbrain import <dir>` also restores the content.
+- Sync results gain an optional `reconcileSkipped` field (`provenance_unreadable` or `mass_delete_breaker`) so cron and autopilot logs can tell "nothing stale" apart from "cleanup skipped".
+- A page moved into the repo with byte-identical content keeps its out-of-repo protection (the import short-circuits as unchanged, so provenance never flips). It lingers instead of being swept; edit or force-reimport it to hand it to the repo.
+
+## To take advantage of v0.42.57.0
+
+`gbrain upgrade` is enough; there is no migration. To verify the guard on a brain that mixes imports and sync:
+
+1. **Check your page count is stable across a full sync:**
+   ```bash
+   gbrain stats
+   gbrain sync --full
+   gbrain stats
+   ```
+2. **If an earlier version swept your imports,** restore them:
+   ```bash
+   gbrain restore <slug>        # per page, while still soft-deleted
+   # or re-run the original import:
+   gbrain import <dir>
+   ```
+3. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor`.
+
+### Itemized changes
+
+#### Fixed
+
+- Full-sync reconcile (`performFullSync` in `src/commands/sync.ts`) no longer deletes pages whose latest `gbrain import <dir>` root is outside the synced repo. New module-private `externallyImportedSlugs` reads `ingest_log` `source_type='directory'` rows oldest to newest (last import per slug wins) and the reconcile excludes those slugs. Unreadable provenance skips the reconcile fail-safe with the cause on stderr.
+- `runImport` and the incremental sync now thread `source_id` into `logIngest`, so provenance rows are scoped per source instead of all landing under `default`. The guard reads `source_id IN (sourceId, 'default')` so rows written by older binaries stay visible; the legacy arm can only over-protect, never delete.
+- `runImport` stores `source_ref` as an absolute path (`resolve(dir)`); the guard classifies any legacy non-absolute ref as external instead of resolving it against the sync process's working directory, which could misclassify an external import as repo-internal.
+- Directory identity is compared via the shared `realpathOrResolve` (`src/core/path-confine.ts`), memoized per reconcile.
+
+#### Added
+
+- Mass-delete circuit breaker in the full-sync reconcile: refuses an automatic sweep of >= `RECONCILE_BREAKER_MIN_DELETES` (10) pages when that exceeds `RECONCILE_BREAKER_MAX_SHARE` (20%) of the source's file-backed pages. `GBRAIN_SYNC_RECONCILE_FORCE=1` overrides deliberately (env-only, matching the other sync incident knobs).
+- `SyncResult.reconcileSkipped?: 'provenance_unreadable' | 'mass_delete_breaker'` reports a fail-safe skip machine-readably.
+
+#### Tests
+
+- Eight new regression tests in `test/sync.test.ts` (`#1970` block): external-import sweep spared on first sync; last-import-wins re-import flip; fail-closed on unreadable ingest_log with recovery; legacy double-encoded / malformed / mixed-type provenance rows plus a deleted import dir; non-default sources including legacy `default`-filed rows; relative legacy `source_ref` treated as external; identical-content move keeps protection; breaker floor and trip + `GBRAIN_SYNC_RECONCILE_FORCE` override.
+
+#### For contributors
+
+- `docs/architecture/KEY_FILES.md` (sync.ts entry) and the CLAUDE.md sync env-knob table document the guard, the breaker, and the ingest_log retention coupling (nothing prunes `ingest_log` today; any future retention policy must keep the newest `directory` row per source and dir). Deferred hardening (per-page `import_root` provenance, per-source import lock, remote `log_ingest` hardening, rename-follows-provenance) is filed in `TODOS.md`.
+
 ## [0.42.56.0] - 2026-07-02
 
 **Life Chronicle: gbrain gains a temporal spine. Meetings and transcripts project into a queryable timeline, entities carry a bi-temporal ontology (sourced, confidence-weighted properties that supersede over time), and a low-friction diary captures interiority — so an agent can reconstruct "what happened the week of X", answer "when did I last interact with Y", and see how an entity's role or stance changed, instead of re-deriving chronology from scratch every session.** Built entirely on existing primitives (pages, the `facts` table, `timeline_entries`) — no new datastore. Auto-emission is off by default; opt in per below.

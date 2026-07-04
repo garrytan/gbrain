@@ -40,7 +40,7 @@ jobs:
         with:
           path: artifacts
       - name: Create release
-        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe  # v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           files: |
             artifacts/gbrain-darwin-arm64/gbrain-darwin-arm64

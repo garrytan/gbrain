@@ -2,7 +2,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } fr
 import { buildSyncManifest, isSyncable, pathToSlug, pruneDir, isCodeFilePath } from '../src/core/sync.ts';
 import { buildAutoEmbedArgs, buildGitInvocation } from '../src/commands/sync.ts';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { join, relative } from 'path';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -869,6 +869,308 @@ describe('#1970: unreachable last_commit bookmark recovery', () => {
     expect(await engine.getPage('people/alice')).not.toBeNull();    // still present → kept
     expect(await engine.getPage('manual/note')).not.toBeNull();     // null source_path → spared
     expect(await engine.getPage('people/log')).not.toBeNull();      // metafile source_path → spared
+  });
+
+  test('F-A guard: full reconcile spares pages imported from OUTSIDE the repo (external-import sweep)', async () => {
+    // Regression for the "first sync after local_path is configured deletes
+    // every out-of-repo import" data loss: `gbrain import <dir>` stores
+    // source_path relative to <dir>, so external pages can never appear in
+    // the repo enumeration and the F-A reconcile swept them all. The
+    // ingest_log provenance guard must spare them.
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { runImport } = await import('../src/commands/import.ts');
+
+    // An external content dir (NOT a git repo, NOT the synced repo).
+    const external = mkdtempSync(join(tmpdir(), 'gbrain-external-import-'));
+    repos.push(external);
+    mkdirSync(join(external, 'notes'), { recursive: true });
+    writeFileSync(join(external, 'notes/one.md'), personMd('One', 'Imported from outside.'));
+    writeFileSync(join(external, 'notes/two.md'), personMd('Two', 'Also from outside.'));
+    await runImport(engine, [external, '--no-embed'], { sourceId: 'default' });
+    expect(await engine.getPage('notes/one')).not.toBeNull();
+    expect(await engine.getPage('notes/two')).not.toBeNull();
+
+    // local_path gets configured later, pointing at a different repo. The
+    // FIRST sync is a full import + reconcile — pre-guard, it deleted every
+    // external page.
+    const repo = mkRepo({
+      'people/alice.md': personMd('Alice', 'Alice is a person.'),
+      'people/bob.md': personMd('Bob', 'Bob is a person.'),
+    });
+    const first = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(first.status).toBe('first_sync');
+    expect(first.deleted).toBe(0);                                  // nothing swept
+    expect(await engine.getPage('notes/one')).not.toBeNull();       // external → spared
+    expect(await engine.getPage('notes/two')).not.toBeNull();       // external → spared
+    expect(await engine.getPage('people/alice')).not.toBeNull();
+
+    // The guard must NOT disable genuine stale reconciliation: a repo-backed
+    // page whose file is deleted still gets purged, externals still spared.
+    execSync('git rm people/bob.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "remove bob"', { cwd: repo, stdio: 'pipe' });
+    const second = await performSync(engine, { repoPath: repo, full: true, ...SYNC_OPTS });
+    expect(second.status).toBe('first_sync');
+    expect(await engine.getPage('people/bob')).toBeNull();          // repo-stale → purged
+    expect(await engine.getPage('notes/one')).not.toBeNull();       // external → still spared
+    expect(await engine.getPage('notes/two')).not.toBeNull();
+  });
+
+  test('F-A guard: a page re-imported from inside the repo becomes reconcilable again (last import wins)', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { runImport } = await import('../src/commands/import.ts');
+
+    // First imported from an external dir...
+    const external = mkdtempSync(join(tmpdir(), 'gbrain-external-import-'));
+    repos.push(external);
+    mkdirSync(join(external, 'notes'), { recursive: true });
+    writeFileSync(join(external, 'notes/carol.md'), personMd('Carol', 'External draft.'));
+    await runImport(engine, [external, '--no-embed'], { sourceId: 'default' });
+    expect(await engine.getPage('notes/carol')).not.toBeNull();
+
+    // ...then the file moves INTO the repo (same relative path, new content)
+    // and a full sync re-imports it from there. Latest provenance is now the
+    // repo, so the repo tree is authoritative again.
+    const repo = mkRepo({ 'notes/carol.md': personMd('Carol', 'Canonical copy in the repo.') });
+    const first = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(first.status).toBe('first_sync');
+    expect(await engine.getPage('notes/carol')).not.toBeNull();
+
+    // Deleting the repo file must reconcile the page away — the external
+    // provenance from the first import no longer protects it.
+    execSync('git rm notes/carol.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "remove carol"', { cwd: repo, stdio: 'pipe' });
+    const second = await performSync(engine, { repoPath: repo, full: true, ...SYNC_OPTS });
+    expect(second.status).toBe('first_sync');
+    expect(await engine.getPage('notes/carol')).toBeNull();
+  });
+
+  test('F-A guard: reconcile is skipped fail-closed when ingest_log provenance is unreadable', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({
+      'people/alice.md': personMd('Alice', 'Alice is a person.'),
+      'people/bob.md': personMd('Bob', 'Bob is a person.'),
+    });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    execSync('git rm people/bob.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "remove bob"', { cwd: repo, stdio: 'pipe' });
+
+    // Simulate an ingest_log outage for the provenance SELECT only (imports
+    // don't route through executeRaw for logging, so the full import itself
+    // still succeeds). The reconcile must skip rather than delete blind.
+    const orig = engine.executeRaw.bind(engine);
+    (engine as { executeRaw: typeof engine.executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      if (typeof sql === 'string' && sql.includes('FROM ingest_log')) {
+        throw new Error('simulated ingest_log outage');
+      }
+      return orig(sql, params);
+    }) as typeof engine.executeRaw;
+    try {
+      const blinded = await performSync(engine, { repoPath: repo, full: true, ...SYNC_OPTS });
+      expect(blinded.status).toBe('first_sync');
+      expect(blinded.deleted).toBe(0);                              // reconcile skipped
+      expect(blinded.reconcileSkipped).toBe('provenance_unreadable');
+      expect(await engine.getPage('people/bob')).not.toBeNull();    // stale but SPARED
+    } finally {
+      (engine as { executeRaw: typeof engine.executeRaw }).executeRaw = orig;
+    }
+
+    // Provenance readable again → the next full sync reconciles normally.
+    const recovered = await performSync(engine, { repoPath: repo, full: true, ...SYNC_OPTS });
+    expect(recovered.status).toBe('first_sync');
+    expect(await engine.getPage('people/bob')).toBeNull();
+    expect(await engine.getPage('people/alice')).not.toBeNull();
+  });
+
+  test('F-A guard: legacy/malformed ingest_log rows + a deleted import dir keep the guard sound', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { runImport } = await import('../src/commands/import.ts');
+
+    // A real external import whose directory is then DELETED from disk —
+    // canonicalDirKey falls back to resolve() and the page must stay spared.
+    const external = mkdtempSync(join(tmpdir(), 'gbrain-external-import-'));
+    mkdirSync(join(external, 'notes'), { recursive: true });
+    writeFileSync(join(external, 'notes/one.md'), personMd('One', 'Imported from outside.'));
+    await runImport(engine, [external, '--no-embed'], { sourceId: 'default' });
+    rmSync(external, { recursive: true, force: true });
+
+    // Crafted provenance rows exercising the tolerant-parse branches:
+    const insertRow = (pagesUpdated: string) => engine.executeRaw(
+      `INSERT INTO ingest_log (source_id, source_type, source_ref, pages_updated, summary)
+       VALUES ($1, 'directory', $2, $3::jsonb, '')`,
+      ['default', '/definitely/not/the/repo', pagesUpdated],
+    );
+    // Legacy double-encoded (#2339-class): jsonb STRING scalar holding an array.
+    await insertRow(JSON.stringify(JSON.stringify(['crafted/legacy'])));
+    // String scalar that isn't JSON → parse fails → protects nothing.
+    await insertRow(JSON.stringify('not-json'));
+    // Non-array jsonb → row skipped.
+    await insertRow(JSON.stringify({ a: 1 }));
+    // Mixed-type array → only the string slug is honored.
+    await insertRow(JSON.stringify(['crafted/mixed', 42, null]));
+
+    // File-backed pages matching the crafted slugs (syncable paths absent
+    // from the repo, so only provenance protection can save them).
+    for (const slug of ['crafted/legacy', 'crafted/garbage', 'crafted/mixed']) {
+      await engine.putPage(slug, {
+        type: 'note', title: slug, compiled_truth: 'crafted', source_path: `${slug}.md`,
+      }, { sourceId: 'default' });
+    }
+
+    const repo = mkRepo({ 'people/alice.md': personMd('Alice', 'Alice is a person.') });
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(result.status).toBe('first_sync');
+
+    expect(await engine.getPage('notes/one')).not.toBeNull();       // deleted-dir fallback → spared
+    expect(await engine.getPage('crafted/legacy')).not.toBeNull();  // double-encoded row → spared
+    expect(await engine.getPage('crafted/mixed')).not.toBeNull();   // string slug in mixed row → spared
+    expect(await engine.getPage('crafted/garbage')).toBeNull();     // no valid provenance → reconciled
+    expect(await engine.getPage('people/alice')).not.toBeNull();
+  });
+
+  test('F-A guard: protects non-default sources, including legacy provenance rows logged under default', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { runImport } = await import('../src/commands/import.ts');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config, created_at) VALUES ('src-a', 'Source A', '{}'::jsonb, now())`,
+    );
+    const srcOpts = { sourceId: 'src-a' } as const;
+
+    // Post-fix import: runImport threads source_id, so the provenance row
+    // lands under 'src-a'.
+    const external = mkdtempSync(join(tmpdir(), 'gbrain-external-import-'));
+    repos.push(external);
+    mkdirSync(join(external, 'notes'), { recursive: true });
+    writeFileSync(join(external, 'notes/one.md'), personMd('One', 'Imported from outside.'));
+    await runImport(engine, [external, '--no-embed'], srcOpts);
+    expect(await engine.getPage('notes/one', srcOpts)).not.toBeNull();
+    // Pin the source_id threading itself — the guard's IN (sourceId,
+    // 'default') legacy arm would mask a revert of the runImport change.
+    const logRows = await engine.executeRaw<{ source_id: string }>(
+      `SELECT source_id FROM ingest_log WHERE source_type = 'directory' ORDER BY id DESC LIMIT 1`,
+    );
+    expect(logRows[0]?.source_id).toBe('src-a');
+
+    // Pre-fix binaries never threaded source_id — every row carried the
+    // column DEFAULT 'default' no matter which source the import fed. The
+    // guard's IN (sourceId, 'default') legacy arm must still see this row.
+    await engine.executeRaw(
+      `INSERT INTO ingest_log (source_id, source_type, source_ref, pages_updated, summary)
+       VALUES ('default', 'directory', $1, $2::jsonb, '')`,
+      ['/an/old/import/root', JSON.stringify(['legacy/page'])],
+    );
+    await engine.putPage('legacy/page', {
+      type: 'note', title: 'Legacy', compiled_truth: 'imported by an old binary', source_path: 'legacy/page.md',
+    }, srcOpts);
+
+    const repo = mkRepo({ 'people/alice.md': personMd('Alice', 'Alice is a person.') });
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS, ...srcOpts });
+    expect(result.status).toBe('first_sync');
+    expect(result.deleted).toBe(0);
+    expect(await engine.getPage('notes/one', srcOpts)).not.toBeNull();    // src-a provenance → spared
+    expect(await engine.getPage('legacy/page', srcOpts)).not.toBeNull();  // legacy 'default' row → spared
+    expect(await engine.getPage('people/alice', srcOpts)).not.toBeNull();
+  });
+
+  test('F-A guard: a legacy RELATIVE source_ref is treated as external, never resolved against sync cwd', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/alice.md': personMd('Alice', 'Alice is a person.') });
+
+    // A legacy row (pre write-time resolve()) whose relative ref happens to
+    // RESOLVE to the repo from THIS process's cwd. Resolving it at read time
+    // would classify the import as repo-internal and sweep its pages — the
+    // guard must treat any non-absolute ref as external instead.
+    const relRef = relative(process.cwd(), repo);
+    expect(relRef.startsWith('/')).toBe(false);
+    await engine.executeRaw(
+      `INSERT INTO ingest_log (source_id, source_type, source_ref, pages_updated, summary)
+       VALUES ('default', 'directory', $1, $2::jsonb, '')`,
+      [relRef, JSON.stringify(['legacy/rel'])],
+    );
+    await engine.putPage('legacy/rel', {
+      type: 'note', title: 'Rel', compiled_truth: 'imported under a different cwd', source_path: 'legacy/rel.md',
+    }, { sourceId: 'default' });
+
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(result.status).toBe('first_sync');
+    expect(await engine.getPage('legacy/rel')).not.toBeNull();      // relative ref → external → spared
+  });
+
+  test('F-A guard: an identical-content move into the repo keeps external protection (page lingers)', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { runImport } = await import('../src/commands/import.ts');
+
+    const external = mkdtempSync(join(tmpdir(), 'gbrain-external-import-'));
+    repos.push(external);
+    mkdirSync(join(external, 'notes'), { recursive: true });
+    const content = personMd('Dave', 'Same bytes everywhere.');
+    writeFileSync(join(external, 'notes/dave.md'), content);
+    await runImport(engine, [external, '--no-embed'], { sourceId: 'default' });
+
+    // Byte-identical copy in the repo: the full-sync re-import short-circuits
+    // as 'unchanged', so pages_updated never lists the slug and provenance
+    // does NOT flip to the repo. Deleting the repo file then leaves the page
+    // protected (it lingers) — pinned as the deliberate fail-safe direction.
+    const repo = mkRepo({ 'notes/dave.md': content });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    execSync('git rm notes/dave.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "remove dave"', { cwd: repo, stdio: 'pipe' });
+    const result = await performSync(engine, { repoPath: repo, full: true, ...SYNC_OPTS });
+    expect(result.status).toBe('first_sync');
+    expect(await engine.getPage('notes/dave')).not.toBeNull();      // lingers, never swept
+  });
+
+  test('F-A guard: sweeps below the breaker MIN_DELETES floor proceed even at a high share', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 6; i++) files[`people/p${i}.md`] = personMd(`P${i}`, `Person ${i}.`);
+    const repo = mkRepo(files);
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    execSync('git rm people/p0.md people/p1.md people/p2.md people/p3.md people/p4.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "shrink"', { cwd: repo, stdio: 'pipe' });
+    const result = await performSync(engine, { repoPath: repo, full: true, ...SYNC_OPTS });
+    expect(result.status).toBe('first_sync');
+    expect(result.reconcileSkipped).toBeUndefined();                // 5 < MIN_DELETES → no trip
+    expect(result.deleted).toBe(5);
+    expect(await engine.getPage('people/p5')).not.toBeNull();
+  });
+
+  test('F-A guard: mass-delete circuit breaker refuses a suspiciously large sweep', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { runImport } = await import('../src/commands/import.ts');
+
+    const external = mkdtempSync(join(tmpdir(), 'gbrain-external-import-'));
+    repos.push(external);
+    mkdirSync(join(external, 'notes'), { recursive: true });
+    for (let i = 0; i < 12; i++) {
+      writeFileSync(join(external, `notes/n${i}.md`), personMd(`N${i}`, `Note ${i}.`));
+    }
+    await runImport(engine, [external, '--no-embed'], { sourceId: 'default' });
+
+    // Simulate provenance loss (crash before logIngest, pruned table, rows
+    // from an older binary): every external page now LOOKS stale. The breaker
+    // must refuse the sweep rather than repeat the mass-delete incident.
+    await engine.executeRaw(`DELETE FROM ingest_log`);
+
+    const repo = mkRepo({ 'people/alice.md': personMd('Alice', 'Alice is a person.') });
+    const blocked = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(blocked.status).toBe('first_sync');
+    expect(blocked.deleted).toBe(0);
+    expect(blocked.reconcileSkipped).toBe('mass_delete_breaker');
+    expect(await engine.getPage('notes/n0')).not.toBeNull();
+    expect(await engine.getPage('notes/n11')).not.toBeNull();
+
+    // A deliberate operator override sweeps them.
+    process.env.GBRAIN_SYNC_RECONCILE_FORCE = '1';
+    try {
+      const forced = await performSync(engine, { repoPath: repo, full: true, ...SYNC_OPTS });
+      expect(forced.deleted).toBe(12);
+      expect(forced.reconcileSkipped).toBeUndefined();
+      expect(await engine.getPage('notes/n0')).toBeNull();
+    } finally {
+      delete process.env.GBRAIN_SYNC_RECONCILE_FORCE;
+    }
   });
 
   test('F-B: an undiffable-but-present bookmark falls back to a full reconcile instead of throwing', async () => {
