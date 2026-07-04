@@ -344,6 +344,7 @@ export function saveSetup(payload: SetupPayload): { config: RawConfig; snapshot:
   if (chatModel) {
     config.chat_model = chatModel;
     config.expansion_model = chatModel;
+    config['models.default'] = chatModel;
   }
   const embeddingModel = payload.modelConfig?.embeddingModel?.trim();
   if (embeddingModel) {

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { AgentsPage } from './Agents';
 import { ChatGptTunnelPanel } from './ChatGptTunnel';
-import { RunOutput, InfoIcon, formatDate, type ConsoleRun, type BrainPageChunk } from '../lib/shared';
+import { RunOutput, InfoIcon, formatDate, pageTypeLabel, pageTypeTitle, type ConsoleRun, type BrainPageChunk } from '../lib/shared';
 
 interface SourceSummary {
   id: string;
@@ -175,7 +175,7 @@ export function KnowledgeWorkbenchPage({ onNavigate }: { onNavigate?: (page: str
             {typeEntries.length === 0 && <div className="pm-empty">暂无类型数据</div>}
             {typeEntries.map(([type, count]) => (
               <div className="pm-bar-row" key={type}>
-                <span>{type}</span>
+                <span title={pageTypeTitle(type)}>{pageTypeLabel(type)}</span>
                 <div><i style={{ width: `${Math.max(4, count / Math.max(overview.stats.page_count, 1) * 100)}%` }} /></div>
                 <b>{count}</b>
               </div>
@@ -821,7 +821,7 @@ export function BrainDataPage() {
           </select>
           <select value={filters.type} onChange={e => setFilters(f => ({ ...f, type: e.target.value, page: 1 }))}>
             <option value="all">全部类型</option>
-            {types.map(t => <option key={t} value={t}>{t}</option>)}
+            {types.map(t => <option key={t} value={t} title={pageTypeTitle(t)}>{pageTypeLabel(t)}</option>)}
           </select>
           <select value={filters.embedded} onChange={e => setFilters(f => ({ ...f, embedded: e.target.value, page: 1 }))}>
             <option value="all">向量化不限</option>
@@ -836,7 +836,7 @@ export function BrainDataPage() {
               <tr key={`${row.source_id}:${row.slug}`} onClick={() => setSelected(row)}>
                 <td><b>{row.title || row.slug}</b><div className="pm-muted mono">{row.slug}</div></td>
                 <td>{row.source_id}</td>
-                <td><span className="pm-pill">{row.type}</span></td>
+                <td><span className="pm-pill" title={pageTypeTitle(row.type)}>{pageTypeLabel(row.type)}</span></td>
                 <td>{row.chunk_count}</td>
                 <td>{row.embedded_chunks}/{row.chunk_count}</td>
                 <td>{formatDate(row.updated_at)}</td>
@@ -854,7 +854,7 @@ export function BrainDataPage() {
             <h2>{selected.title || selected.slug}</h2>
             <div className="page-detail-summary">
               <div><span>Source</span><b>{selected.source_id}</b></div>
-              <div><span>类型</span><b>{selected.type}</b></div>
+              <div><span>类型</span><b title={pageTypeTitle(selected.type)}>{pageTypeLabel(selected.type)}</b></div>
               <div><span>Chunk</span><b>{selected.embedded_chunks}/{selected.chunk_count}</b></div>
               <div><span>更新</span><b>{formatDate(selected.updated_at)}</b></div>
             </div>

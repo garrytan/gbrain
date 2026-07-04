@@ -77,6 +77,7 @@ describe('desktop config manager', () => {
     expect(config.zhipu_api_key).toBe('zhipu-test');
     expect(config.chat_model).toBe('zhipu:glm-4-plus');
     expect(config.expansion_model).toBe('zhipu:glm-4-plus');
+    expect(config['models.default']).toBe('zhipu:glm-4-plus');
     expect(config.embedding_model).toBe('zhipu:embedding-3');
     expect(config.embedding_dimensions).toBe(1024);
     expect(config.admin_bootstrap_token).toMatch(/^[A-Za-z0-9_-]{32,}$/);

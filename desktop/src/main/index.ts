@@ -87,7 +87,14 @@ async function migrateConfiguredInstallation(): Promise<void> {
   if (!needsDesktopMigration(app.getVersion())) return;
   logger?.write('desktop', `Applying migrations for desktop ${app.getVersion()}`);
   await runCliChecked(runtime(), DESKTOP_MIGRATION_ARGS);
+  await syncModelDefaultsToDatabase();
   markDesktopMigration(app.getVersion());
+}
+
+async function syncModelDefaultsToDatabase(): Promise<void> {
+  const chatModel = getSetupInfo().current.chatModel?.trim();
+  if (!chatModel) return;
+  await runCliChecked(runtime(), ['config', 'set', 'models.default', chatModel]);
 }
 
 async function applySetup(payload: SetupPayload) {
@@ -96,6 +103,7 @@ async function applySetup(payload: SetupPayload) {
   const saved = saveSetup(payload);
   try {
     await runCliChecked(runtime(), DESKTOP_MIGRATION_ARGS);
+    await syncModelDefaultsToDatabase();
     const knowledgeDirectory = saved.config.desktop?.knowledge_directory;
     const sourceId = saved.config.desktop?.knowledge_source_id;
     if (knowledgeDirectory && sourceId) {

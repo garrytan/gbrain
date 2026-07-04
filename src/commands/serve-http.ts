@@ -18,6 +18,7 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { randomBytes, createHash } from 'crypto';
 import { readFile } from 'fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
 import { safeHexEqual } from '../core/timing-safe.ts';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -1983,7 +1984,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         `INSERT INTO access_tokens (id, name, token_hash, permissions)
          VALUES ($1, $2, $3, $4::jsonb)`,
         [id, 'chatgpt-secure-tunnel', hash],
-        [{ takes_holders: ['world'], scopes: ['read'] }],
+        [{ takes_holders: ['world'], scopes: ['read', 'write'] }],
       );
       inserted = true;
       const profile = buildChatGptTunnelProfile({
@@ -1999,7 +2000,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         profileFile: paths.profileFile,
         tunnelId,
         localMcpUrl: `http://127.0.0.1:${port}/mcp`,
-        scopes: ['read'],
+        scopes: ['read', 'write'],
       });
     } catch (e) {
       if (inserted) {
@@ -2938,6 +2939,30 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 ╠══════════════════════════════════════════════════════╣
 ${renderAdminTokenFooter({ suppressBootstrapPrint, bootstrapFromEnv, bootstrapToken })}
 `);
+
+    // Auto-sync tunnel profile so it always matches the actual port
+    try {
+      const tunnelPaths = chatGptTunnelPaths();
+      if (existsSync(tunnelPaths.profileFile)) {
+        const existing = readFileSync(tunnelPaths.profileFile, 'utf8');
+        // Import parseTunnelId locally since it's not exported from chatgpt-tunnel
+        const tunnelId = existing.match(/^\s*tunnel_id:\s*["']?(tunnel_[A-Za-z0-9_-]+)["']?\s*$/m)?.[1];
+        if (tunnelId) {
+          writeChatGptTunnelProfile(
+            tunnelPaths.profileFile,
+            buildChatGptTunnelProfile({
+              tunnelId,
+              mcpUrl: `http://127.0.0.1:${port}/mcp`,
+              runtimeKeyFile: tunnelPaths.runtimeKeyFile,
+              authorizationHeaderFile: tunnelPaths.authorizationHeaderFile,
+              httpProxy: detectTunnelHttpProxy(),
+            }),
+          );
+        }
+      }
+    } catch (e) {
+      // non-blocking, swallow error
+    }
   });
 
   await waitForHttpServerClose(httpServer, engine);

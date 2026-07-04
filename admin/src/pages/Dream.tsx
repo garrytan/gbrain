@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
-import { RunOutput, formatDate, type ConsoleRun } from '../lib/shared';
+import { RunOutput, formatDate, pageTypeLabel, pageTypeTitle, type ConsoleRun } from '../lib/shared';
 import { TakeProposalsPage } from './TakeProposals';
 import { CalibrationPage } from './Calibration';
 
@@ -199,6 +199,8 @@ const PHASE_GROUPS = [
     phases: ['orphans', 'schema-suggest', 'purge', 'project_health', 'risk_detect', 'report_gen'],
   },
 ];
+
+type DreamRunMode = 'meeting' | 'cycle' | 'advanced';
 
 function pct(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '-';
@@ -490,6 +492,23 @@ function isNonTerminalJobStatus(status: string): boolean {
   return ['waiting', 'active', 'delayed', 'waiting-children', 'paused'].includes(status);
 }
 
+function isActionableJobErrorStatus(status: string): boolean {
+  return isNonTerminalJobStatus(status) || status === 'failed';
+}
+
+function formatDreamJobError(errorText: string): string {
+  if (/Invalid prompt|ModelMessage\[\]\s*schema|messages do not match/i.test(errorText)) {
+    return '模型消息格式不兼容：历史子任务消息不能被当前模型接口识别。如果队列没有等待或运行中的子任务，这只是历史失败记录，不影响本次运行。';
+  }
+  if (/api key|unauthorized|forbidden|auth/i.test(errorText)) {
+    return '模型鉴权失败：请检查 API Key、模型供应商和模型名称配置。';
+  }
+  if (/timeout|timed out/i.test(errorText)) {
+    return '子任务超时：可以取消仍在等待的子任务，或调大超时时间后重试。';
+  }
+  return `子任务失败：${errorText}`;
+}
+
 function DreamOpsDiagnostics({
   locks,
   jobs,
@@ -509,11 +528,13 @@ function DreamOpsDiagnostics({
   const subagent = jobs?.subagent_status ?? [];
   const queue = jobs?.subagent_queue ?? null;
   const cancellableJobs = (jobs?.recent ?? []).filter(job => isNonTerminalJobStatus(job.status)).slice(0, 5);
-  const latestError = (jobs?.recent ?? []).find(job => job.error_text)?.error_text ?? '';
+  const latestErrorJob = (jobs?.recent ?? []).find(job => job.error_text && isActionableJobErrorStatus(job.status));
   const waiting = countBy(subagent, 'waiting');
   const active = countBy(subagent, 'active');
   const dead = countBy(subagent, 'dead');
   const failed = countBy(subagent, 'failed');
+  const hasLiveQueueProblem = waiting > 0 || active > 0 || failed > 0 || (queue?.stalled_active ?? 0) > 0;
+  const latestError = latestErrorJob && hasLiveQueueProblem ? formatDreamJobError(latestErrorJob.error_text ?? '') : '';
   const stuckReason = !supervisor?.running && waiting > 0
     ? 'Worker 未运行，subagent 只会排队等待。'
     : queue && queue.stalled_active > 0
@@ -579,6 +600,7 @@ function DreamOpsDiagnostics({
             <span>dead {dead}</span>
           </div>
           {latestError && <p className="dream-job-error">{latestError}</p>}
+          {!latestError && dead > 0 && <p className="pm-hint">有 {dead} 个历史失败/死亡子任务记录，当前队列正常时不会影响本次运行。</p>}
         </section>
       </div>
       {cancellableJobs.length > 0 && (
@@ -622,6 +644,7 @@ function DreamRunPanel({
   const [to, setTo] = useState('');
   const [dryRun, setDryRun] = useState(true);
   const [timeoutMinutes, setTimeoutMinutes] = useState('120');
+  const [runMode, setRunMode] = useState<DreamRunMode>(defaultPhase === 'all' ? 'cycle' : 'advanced');
 
   const isAllPhase = phase === 'all';
   const [run, setRun] = useState<ConsoleRun | null>(null);
@@ -637,6 +660,29 @@ function DreamRunPanel({
   const hasDateRangeConflict = !!(date && (from || to));
   const hasFromToConflict = !!(from && to && from > to);
   const hasConflict = hasInputDateConflict || hasDateRangeConflict || hasFromToConflict;
+  const showAdvancedControls = runMode === 'advanced';
+  const showInputControls = runMode === 'meeting' || runMode === 'advanced';
+  const inputEnabled = runMode === 'meeting' || phase === 'all' || phase === 'synthesize';
+
+  const applyRunMode = (mode: DreamRunMode) => {
+    setRunMode(mode);
+    if (mode === 'meeting') {
+      setPhase('synthesize');
+      setSourceId('');
+      setDate('');
+      setFrom('');
+      setTo('');
+      setDryRun(false);
+    } else if (mode === 'cycle') {
+      setPhase('all');
+      setSourceId('');
+      setInput('');
+      setDate('');
+      setFrom('');
+      setTo('');
+      setDryRun(true);
+    }
+  };
 
   useEffect(() => {
     const lastRunId = window.localStorage.getItem(DREAM_LAST_RUN_KEY);
@@ -734,49 +780,75 @@ function DreamRunPanel({
       <div className="pm-hint dream-run-persist-note">
         离开本页不会主动停止后台执行；返回后会继续显示同一个 run 的状态。关闭或刷新浏览器时会提示确认。
       </div>
+      <div className="dream-run-mode">
+        <button type="button" className={runMode === 'cycle' ? 'active' : ''} onClick={() => applyRunMode('cycle')}>
+          Dream
+        </button>
+        <button type="button" className={runMode === 'meeting' ? 'active' : ''} onClick={() => applyRunMode('meeting')}>
+          会议/会话整理
+        </button>
+        <button type="button" className={runMode === 'advanced' ? 'active' : ''} onClick={() => applyRunMode('advanced')}>
+          高级阶段
+        </button>
+        <span>
+          {runMode === 'meeting'
+            ? '整理会议记录、Codex/ChatGPT/Claude 会话或其它对话文件夹，逐份写入会议/会话摘要并沉淀观点。'
+            : runMode === 'cycle'
+              ? '整轮 Dream 预演，先看影响范围和系统状态，不写入知识库。'
+              : '保留 phase、source、日期范围等高级参数。'}
+        </span>
+      </div>
       <div className="dream-run-grid">
-        <label>
-          <span>Phase</span>
-          <select value={phase} onChange={event => {
-            const newPhase = event.target.value;
-            setPhase(newPhase);
-            if (newPhase === 'all') setSourceId('');
-          }}>
-            <option value="all">整轮 cycle</option>
-            {PHASE_GROUPS.map(group => (
-              <optgroup key={group.key} label={group.title}>
-                {group.phases.map(item => <option key={item} value={item} title={PHASE_LABELS[item]}>{item}</option>)}
-              </optgroup>
-            ))}
-          </select>
-          {phase !== 'all' && (
-            <div className="pm-hint" style={{ marginTop: 4 }}>
-              {PHASE_LABELS[phase]}
-            </div>
-          )}
-        </label>
-        <label className={isAllPhase ? 'dream-input-disabled' : ''}>
-          <span>Source ID</span>
-          <select value={sourceId} onChange={event => setSourceId(event.target.value)} disabled={isAllPhase}
-            title={isAllPhase ? '整轮 cycle 不支持按 source 过滤，部分 phase（embed/orphans/purge 等）始终全局执行。如需指定 source 请先选择单个 phase。' : ''}>
-            <option value="">全部 source</option>
-            {activeSources.map(s => (
-              <option key={s.id} value={s.id}>{s.name || s.id}（{s.page_count} 页）</option>
-            ))}
-          </select>
-        </label>
+        {showAdvancedControls && (
+          <label>
+            <span>Phase</span>
+            <select value={phase} onChange={event => {
+              const newPhase = event.target.value;
+              setPhase(newPhase);
+              if (newPhase === 'all') setSourceId('');
+            }}>
+              <option value="all">整轮 cycle</option>
+              {PHASE_GROUPS.map(group => (
+                <optgroup key={group.key} label={group.title}>
+                  {group.phases.map(item => <option key={item} value={item} title={PHASE_LABELS[item]}>{item}</option>)}
+                </optgroup>
+              ))}
+            </select>
+            {phase !== 'all' && (
+              <div className="pm-hint" style={{ marginTop: 4 }}>
+                {PHASE_LABELS[phase]}
+              </div>
+            )}
+          </label>
+        )}
+        {showAdvancedControls && (
+          <label className={isAllPhase ? 'dream-input-disabled' : ''}>
+            <span>Source ID</span>
+            <select value={sourceId} onChange={event => setSourceId(event.target.value)} disabled={isAllPhase}
+              title={isAllPhase ? '整轮 cycle 不支持按 source 过滤，部分 phase（embed/orphans/purge 等）始终全局执行。如需指定 source 请先选择单个 phase。' : ''}>
+              <option value="">全部 source</option>
+              {activeSources.map(s => (
+                <option key={s.id} value={s.id}>{s.name || s.id}（{s.page_count} 页）</option>
+              ))}
+            </select>
+          </label>
+        )}
         <label>
           <span>Max pages</span>
           <input value={maxPages} onChange={event => setMaxPages(event.target.value)} placeholder="可选" inputMode="numeric" />
         </label>
-        {!compact && (
+        {!compact && showInputControls && (
           <>
-            <label className={phase !== 'all' && phase !== 'synthesize' ? 'dream-input-disabled' : ''}>
-              <span>Input file</span>
+            <label className={!inputEnabled ? 'dream-input-disabled' : ''}>
+              <span>{runMode === 'meeting' ? '文件/文件夹路径' : 'Input file'}</span>
               <input value={input} onChange={event => setInput(event.target.value)}
-                placeholder={phase !== 'all' && phase !== 'synthesize' ? '仅 synthesize 支持单文件，已禁用' : '~/transcripts/2026-04-25.txt，可选'}
-                disabled={phase !== 'all' && phase !== 'synthesize'} />
+                placeholder={!inputEnabled ? '仅 synthesize 支持单文件，已禁用' : 'D:\\LenovoSoftstore\\huiyijilu 或 C:\\Users\\zhengyunhui\\.codex\\sessions'}
+                disabled={!inputEnabled} />
             </label>
+          </>
+        )}
+        {!compact && showAdvancedControls && (
+          <>
             <label className={phase !== 'all' && phase !== 'synthesize' ? 'dream-input-disabled' : ''}>
               <span>Date</span>
               <input type="date" value={date} onChange={event => setDate(event.target.value)}
@@ -836,6 +908,52 @@ function RecentRuns({ runs }: { runs: ConsoleRun[] }) {
   );
 }
 
+function DreamRunStatusCard({
+  locks,
+  jobs,
+  supervisor,
+}: {
+  locks?: DreamData['locks'];
+  jobs?: DreamData['jobs'];
+  supervisor?: DreamData['supervisor'];
+}) {
+  const activeLock = locks?.find(lock => lock.active) ?? null;
+  const waiting = countBy(jobs?.subagent_status ?? [], 'waiting');
+  const active = countBy(jobs?.subagent_status ?? [], 'active');
+  const failed = countBy(jobs?.subagent_status ?? [], 'failed');
+  return (
+    <div className="pm-card dream-run-panel compact">
+      <div className="pm-section-head">
+        <div>
+          <h2>运行状态</h2>
+          <p className="pm-muted">这里只展示 Dream 当前状态；执行和调试请进入阶段执行页面。</p>
+        </div>
+        <button className="pm-primary" onClick={() => { window.location.hash = 'dream-execute'; }}>去执行</button>
+      </div>
+      <div className="dream-ops-grid">
+        <section>
+          <h4>Worker</h4>
+          <div className="pm-kv"><span>状态</span><b>{supervisor?.running ? 'running' : 'stopped'}</b></div>
+          <div className="pm-kv"><span>PID</span><b>{supervisor?.supervisor_pid ?? '-'}</b></div>
+        </section>
+        <section>
+          <h4>Cycle lock</h4>
+          <div className="pm-kv"><span>状态</span><b>{activeLock ? 'active' : 'none'}</b></div>
+          <div className="pm-kv"><span>最近刷新</span><b>{formatDate(activeLock?.last_refreshed_at ?? null, '-')}</b></div>
+        </section>
+        <section>
+          <h4>Subagent 队列</h4>
+          <div className="dream-detail-chips">
+            <span>waiting {jobs?.subagent_queue?.waiting ?? waiting}</span>
+            <span>active {jobs?.subagent_queue?.active ?? active}</span>
+            <span>failed {failed}</span>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 export function DreamOverviewPage() {
   const { data, error, loading, reload } = useDreamData();
   if (error) return <DreamShell title="Dream 总览"><ErrorBlock message={error} /></DreamShell>;
@@ -855,7 +973,7 @@ export function DreamOverviewPage() {
       </div>
       <PhaseRail />
       <div className="pm-grid two-col">
-        <DreamRunPanel compact sources={data.overview?.sources} locks={data.locks} jobs={data.jobs} supervisor={data.supervisor} onDone={() => void reload()} />
+        <DreamRunStatusCard locks={data.locks} jobs={data.jobs} supervisor={data.supervisor} />
         <div className="pm-card">
           <h2>Checkpoint / 锁 / 恢复</h2>
           <div className="pm-kv"><span>活跃锁</span><b>{activeLock ? activeLock.id : '无'}</b></div>
@@ -927,7 +1045,7 @@ export function DreamKnowledgePage() {
           <div className="pm-bars">
             {types.map(item => (
               <div className="pm-bar-row" key={item.type}>
-                <span>{item.type}</span>
+                <span title={pageTypeTitle(item.type)}>{pageTypeLabel(item.type)}</span>
                 <div><i style={{ width: `${Math.max(4, item.count / total * 100)}%` }} /></div>
                 <b>{item.count}</b>
               </div>

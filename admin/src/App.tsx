@@ -50,13 +50,13 @@ export function App() {
       title: '总控制室',
       items: [
         { page: 'dashboard', label: '知识库总览' },
-        { page: 'natural', label: '自然语言任务' },
       ],
     },
     {
       title: '知识收集',
       items: [
         { page: 'import', label: '原始数据导入' },
+        { page: 'natural', label: '自然语言任务' },
         { page: 'data', label: '知识库数据浏览' },
       ],
     },
@@ -148,23 +148,37 @@ export function App() {
           </div>
         </div>
         <div className="sidebar-nav">
-          {navGroups.map(group => (
-            <div className={`nav-group ${expandedGroups.has(group.title) ? 'expanded' : ''}`} key={group.title}>
-              <div className="nav-group-title" onClick={() => toggleGroup(group.title)}>
-                <span className="nav-arrow">{expandedGroups.has(group.title) ? '▾' : '▸'}</span>
-                {group.title}
-              </div>
-              {group.items.map(item => (
+          {navGroups.map(group => {
+            if (group.items.length === 1) {
+              const item = group.items[0];
+              return (
                 <a
                   key={item.page}
-                  className={`nav-item ${page === item.page ? 'active' : ''}`}
+                  className={`nav-item nav-item-top ${page === item.page ? 'active' : ''}`}
                   onClick={() => navigate(item.page)}
                 >
                   {item.label}
                 </a>
-              ))}
-            </div>
-          ))}
+              );
+            }
+            return (
+              <div className={`nav-group ${expandedGroups.has(group.title) ? 'expanded' : ''}`} key={group.title}>
+                <div className="nav-group-title" onClick={() => toggleGroup(group.title)}>
+                  <span className="nav-arrow">{expandedGroups.has(group.title) ? '▾' : '▸'}</span>
+                  {group.title}
+                </div>
+                {group.items.map(item => (
+                  <a
+                    key={item.page}
+                    className={`nav-item ${page === item.page ? 'active' : ''}`}
+                    onClick={() => navigate(item.page)}
+                  >
+                    {item.label}
+                  </a>
+                ))}
+              </div>
+            );
+          })}
         </div>
         <div className="sidebar-support">
           <button className="support-link" onClick={() => setHelpOpen(open => !open)}>

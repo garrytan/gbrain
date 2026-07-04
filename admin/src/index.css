@@ -120,6 +120,10 @@ body {
   display: flex;
 }
 
+.nav-item-top {
+  margin: 2px 0 6px;
+}
+
 .nav-item {
   display: flex;
   align-items: center;
@@ -1346,6 +1350,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
 
 .intent-preview,
 .run-output {
+  position: relative;
   margin-top: 14px;
   padding: 14px;
   border: 1px solid var(--border);
@@ -2108,6 +2113,39 @@ pre {
   margin: -2px 0 12px;
 }
 
+.dream-run-mode {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.dream-run-mode button {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 11px;
+  background: #fff;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.dream-run-mode button.active {
+  border-color: var(--accent);
+  background: #eef3ff;
+  color: var(--accent);
+}
+
+.dream-run-mode span {
+  min-width: 220px;
+  flex: 1 1 260px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .dream-run-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2236,6 +2274,25 @@ pre {
   color: var(--text-secondary);
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.run-output-copy {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 6px 10px;
+  background: #fff;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.run-output-copy:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .dream-ops-diagnostics {
