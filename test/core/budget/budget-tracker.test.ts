@@ -138,6 +138,43 @@ describe('BudgetTracker.reserve', () => {
     expect((caught as Error).message).toMatch(/anthropic-pricing\.ts/);
   });
 
+  test('cap-exempt unpriced provider (openrouter:*) under --max-cost falls to warn-once, no throw', () => {
+    // OpenRouter ids are deliberately unpriced in the native tables (the
+    // provider bills at its own marked-up rates, so a table entry would lie).
+    // Pre-fix, ANY --max-cost run routed through OpenRouter TX2 hard-failed
+    // before its first LLM call. The cap stays a hard ceiling for priced
+    // models; deliberately-unpriced providers degrade to warn-once.
+    const t = new BudgetTracker({ maxCostUsd: 5.0, label: 'test', auditPath });
+    expect(() =>
+      t.reserve({
+        modelId: 'openrouter:deepseek/deepseek-chat',
+        estimatedInputTokens: 100,
+        maxOutputTokens: 100,
+        kind: 'chat',
+      }),
+    ).not.toThrow();
+    expect(stderrCapture).toMatch(/BUDGET_TRACKER_NO_PRICING/);
+    const audit = readAudit();
+    expect(audit[0].event).toBe('reserve_unpriced');
+  });
+
+  test('non-exempt unknown provider under --max-cost still TX2 hard-fails (regression guard)', () => {
+    const t = new BudgetTracker({ maxCostUsd: 5.0, label: 'test', auditPath });
+    let caught: unknown = null;
+    try {
+      t.reserve({
+        modelId: 'mystery:campfire-72b',
+        estimatedInputTokens: 100,
+        maxOutputTokens: 100,
+        kind: 'chat',
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(BudgetExhausted);
+    expect((caught as BudgetExhausted).reason).toBe('no_pricing');
+  });
+
   test('v0.41.20.0: slash-prefix anthropic/claude-* under --max-cost does NOT no_pricing throw (THE FIX)', () => {
     // Pre-v0.41.20.0: lookupPricing only split modelId on ':'. CLI users
     // running `gbrain brainstorm --judge-model anthropic/claude-sonnet-4-6

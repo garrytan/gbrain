@@ -156,6 +156,21 @@ const FREE_LOCAL_EMBED_PROVIDERS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Provider id prefixes that are deliberately absent from the native pricing
+ * tables because the provider meters billing itself at its own rates —
+ * OpenRouter today (its markup != native pricing, so a table entry would
+ * lie). Unlike the FREE_LOCAL_* sets these are NOT free, so they never
+ * price at $0. Instead, a `--max-cost` reserve() falls through to the
+ * existing warn-once path: the cap cannot meter what the tables cannot
+ * price, and a TX2 hard-fail makes `--max-cost` unusable for every
+ * OpenRouter-routed command. Matched against the provider half of the
+ * `provider:model` / `provider/model` string.
+ */
+const CAP_EXEMPT_UNPRICED_PROVIDERS: ReadonlySet<string> = new Set([
+  'openrouter',
+]);
+
+/**
  * Look up `modelId` in the chat or embedding pricing maps. Returns a
  * per-1M-token price tuple, or null when unknown.
  *
@@ -254,7 +269,9 @@ export class BudgetTracker {
    * BEFORE any provider call when:
    *   - cumulative + projected > maxCostUsd (reason: 'cost')
    *   - wall-clock > maxRuntimeMs (reason: 'runtime')
-   *   - maxCostUsd set AND pricing missing (reason: 'no_pricing') -- TX2
+   *   - maxCostUsd set AND pricing missing (reason: 'no_pricing') -- TX2,
+   *     unless the provider is deliberately unpriced
+   *     (CAP_EXEMPT_UNPRICED_PROVIDERS) — those fall to the warn-once path.
    *
    * When maxCostUsd is unset, missing pricing warns-once but does not throw
    * (legacy behavior preserved for non-priced providers).
@@ -270,10 +287,13 @@ export class BudgetTracker {
     );
 
     if (projected === null) {
-      if (this.opts.maxCostUsd !== undefined) {
+      const { provider: unpricedProvider } = splitProviderModelId(estimate.modelId);
+      const capExemptUnpriced = !!unpricedProvider && CAP_EXEMPT_UNPRICED_PROVIDERS.has(unpricedProvider);
+      if (this.opts.maxCostUsd !== undefined && !capExemptUnpriced) {
         // TX2: hard-fail when a cap is set but pricing is missing — without
         // pricing we can't enforce the cap, and silently ignoring it would
-        // void the contract.
+        // void the contract. Deliberately-unpriced providers
+        // (CAP_EXEMPT_UNPRICED_PROVIDERS) fall through to warn-once instead.
         const msg = `${this.opts.label}: no pricing entry for model "${estimate.modelId}" (kind=${estimate.kind}). ` +
           `Add it to src/core/${estimate.kind === 'embed' ? 'embedding-pricing.ts' : 'anthropic-pricing.ts'} or drop --max-cost.`;
         this.fireExhausted();
