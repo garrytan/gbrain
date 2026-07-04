@@ -178,3 +178,57 @@ describe('E2E patterns — dry-run', () => {
     }
   }, 30_000);
 });
+
+describe('E2E patterns — cooldown', () => {
+  test('active cooldown → skipped cooldown_active', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.patterns.cooldown_hours', '12');
+      await rig.engine.setConfig('dream.patterns.last_completion_ts', new Date().toISOString());
+      const result = await runPhasePatterns(rig.engine, {
+        brainDir: rig.brainDir,
+        dryRun: false,
+      });
+      expect(result.status).toBe('skipped');
+      expect((result.details as { reason?: string }).reason).toBe('cooldown_active');
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('expired cooldown → passes gate (insufficient_evidence, not cooldown)', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.patterns.cooldown_hours', '12');
+      await rig.engine.setConfig(
+        'dream.patterns.last_completion_ts',
+        new Date(Date.now() - 13 * 3600e3).toISOString(),
+      );
+      // 0 reflections seeded → past the cooldown gate, hits insufficient_evidence.
+      const result = await runPhasePatterns(rig.engine, {
+        brainDir: rig.brainDir,
+        dryRun: false,
+      });
+      expect(result.status).toBe('skipped');
+      expect((result.details as { reason?: string }).reason).toBe('insufficient_evidence');
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('default 0 (unset) → never blocks (insufficient_evidence, not cooldown)', async () => {
+    const rig = await setupRig();
+    try {
+      // last_completion_ts set but cooldown_hours unset → default 0 disables.
+      await rig.engine.setConfig('dream.patterns.last_completion_ts', new Date().toISOString());
+      const result = await runPhasePatterns(rig.engine, {
+        brainDir: rig.brainDir,
+        dryRun: false,
+      });
+      expect(result.status).toBe('skipped');
+      expect((result.details as { reason?: string }).reason).toBe('insufficient_evidence');
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+});

@@ -46,6 +46,16 @@ export async function runPhasePatterns(
       return skipped('disabled', 'dream.patterns.enabled is false');
     }
 
+    // Cooldown: mirror dream.synthesize.cooldown_hours. `patterns` rides every
+    // per-source autopilot cycle (~hourly) and re-analyzes the same reflection
+    // corpus from scratch each time — without a spend cap that is ~19 Sonnet
+    // runs/day for a corpus that changes slowly. Default 0 = disabled (opt-in).
+    const cooldown = await checkCooldown(engine, config.cooldownHours);
+    if (cooldown.active) {
+      return skipped('cooldown_active',
+        `patterns cooled down until ${cooldown.expires_at} (${config.cooldownHours}h cooldown)`);
+    }
+
     // Gather reflections within lookback window.
     const reflections = await gatherReflections(engine, config.lookbackDays);
     if (reflections.length < config.minEvidence) {
@@ -113,6 +123,14 @@ export async function runPhasePatterns(
     // Reverse-write to fs.
     const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs);
 
+    // Completion timestamp ON SUCCESS only (mirrors synthesize). Patterns' cost
+    // is the LLM analysis itself, so a completed run starts the cooldown even
+    // when it wrote 0 new pages. A 'timeout'/failed subagent does NOT stamp, so
+    // a stalled run won't silently start a 12h cooldown.
+    if (outcome === 'completed') {
+      await engine.setConfig('dream.patterns.last_completion_ts', new Date().toISOString());
+    }
+
     return ok(`${writtenRefs.length} pattern page(s) written/updated (${outcome})`, {
       reflections_considered: reflections.length,
       patterns_written: writtenRefs.length,
@@ -134,6 +152,7 @@ interface PatternsConfig {
   enabled: boolean;
   lookbackDays: number;
   minEvidence: number;
+  cooldownHours: number;
   model: string;
 }
 
@@ -142,6 +161,7 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
   const enabled = enabledStr === null ? true : enabledStr === 'true';
   const lookbackStr = await engine.getConfig('dream.patterns.lookback_days');
   const minEvidenceStr = await engine.getConfig('dream.patterns.min_evidence');
+  const cooldownHoursStr = await engine.getConfig('dream.patterns.cooldown_hours');
   // v0.28: unified model resolution
   const { resolveModel } = await import('../model-config.ts');
   const model = await resolveModel(engine, {
@@ -154,8 +174,26 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
     enabled,
     lookbackDays: lookbackStr ? Math.max(1, parseInt(lookbackStr, 10) || 30) : 30,
     minEvidence: minEvidenceStr ? Math.max(1, parseInt(minEvidenceStr, 10) || 3) : 3,
+    cooldownHours: cooldownHoursStr ? Math.max(0, parseInt(cooldownHoursStr, 10) || 0) : 0,
     model,
   };
+}
+
+// Cooldown gate — mirrors dream.synthesize.cooldown_hours (synthesize.ts).
+// Reads dream.patterns.last_completion_ts; active until last + hours elapses.
+// hours <= 0 disables it (the default), so this is a no-op unless opted in.
+async function checkCooldown(
+  engine: BrainEngine,
+  hours: number,
+): Promise<{ active: boolean; expires_at?: string }> {
+  if (hours <= 0) return { active: false };
+  const last = await engine.getConfig('dream.patterns.last_completion_ts');
+  if (!last) return { active: false };
+  const lastMs = Date.parse(last);
+  if (Number.isNaN(lastMs)) return { active: false };
+  const expiresMs = lastMs + hours * 60 * 60 * 1000;
+  if (Date.now() >= expiresMs) return { active: false };
+  return { active: true, expires_at: new Date(expiresMs).toISOString() };
 }
 
 // ── Reflection gathering ─────────────────────────────────────────────
