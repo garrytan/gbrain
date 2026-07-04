@@ -27,6 +27,15 @@ export type Implementation =
 export interface EmbeddingTouchpoint {
   models: string[];
   default_dims: number;
+  /**
+   * Per-model native dims for providers whose listed models emit different
+   * fixed widths (Ollama: nomic-embed-text 768, mxbai-embed-large 1024,
+   * all-minilm 384, bge-m3 1024). Overrides `default_dims` for the listed
+   * model ids; unlisted models fall back to `default_dims`. Resolve via
+   * `defaultDimsForModel()` in dims.ts — never read `default_dims` directly
+   * when a model id is in scope.
+   */
+  model_dims?: Record<string, number>;
   dims_options?: number[]; // for Matryoshka-aware providers
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string; // ISO date

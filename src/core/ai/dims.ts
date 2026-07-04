@@ -9,8 +9,21 @@
  * providerOptions shape to produce vector(N)".
  */
 
-import type { Implementation } from './types.ts';
+import type { EmbeddingTouchpoint, Implementation } from './types.ts';
 import { AIConfigError } from './errors.ts';
+
+/**
+ * Resolve the native dim a specific model emits. Fixed-size providers
+ * (Ollama) host models with different native widths but a recipe declares
+ * only one `default_dims`; `model_dims` overrides it per model id. Unlisted
+ * models keep `default_dims` — the pre-`model_dims` behavior.
+ */
+export function defaultDimsForModel(
+  tp: Pick<EmbeddingTouchpoint, 'default_dims' | 'model_dims'>,
+  modelId: string,
+): number {
+  return tp.model_dims?.[modelId] ?? tp.default_dims;
+}
 
 // Voyage hosted models that accept `output_dimension` (values:
 // 256 / 512 / 1024 / 2048). Per Voyage's API parameter docs as of 2026-05.
