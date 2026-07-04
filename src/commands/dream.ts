@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
+import { loadConfig, type MBrainConfig } from '../core/config.ts';
 import { createSqlMaintenanceRuntimeAdapter } from '../core/services/maintenance-runtime-db-adapter.ts';
 import { maybeCreateLifecycleForgettingServiceForEngine } from '../core/services/lifecycle-forgetting-engine-service.ts';
 import { createProofAgentDreamReplayCanary } from '../core/services/dream-replay-canary-service.ts';
@@ -8,6 +9,7 @@ import {
   type DreamCycleRunResult,
 } from '../core/services/dream-cycle-runner-service.ts';
 import { createAutoPromoteDreamDependency } from './auto-promote.ts';
+import { createGovernedRecompileDreamDependency } from './governed-recompile.ts';
 import { saveMemoryReviewReport } from './memory-report.ts';
 import { runWatchedQuestionProbes } from '../core/services/watched-question-service.ts';
 
@@ -26,7 +28,7 @@ export async function runDream(
     printDreamHelp();
     return;
   }
-  const input = parseDreamArgs(args, 'cli');
+  const input = applyDreamConfigDefaults(parseDreamArgs(args, 'cli'), loadConfig());
   const result = deps.runner
     ? await deps.runner(input)
     : await runDreamCycle(engine, input, {
@@ -34,6 +36,7 @@ export async function runDream(
         lifecycleForgetting: maybeCreateLifecycleForgettingServiceForEngine(engine, () => input.now ?? new Date().toISOString()),
         autoPromote: createAutoPromoteDreamDependency(engine),
         replayCanary: createProofAgentDreamReplayCanary(),
+        governedRecompile: createGovernedRecompileDreamDependency(engine),
         watchedQuestions: {
           run: (watchedInput) => runWatchedQuestionProbes(engine, watchedInput),
         },
@@ -62,6 +65,11 @@ export function parseDreamArgs(
   const phaseTimeoutMs = readNumberFlag(args, '--phase-timeout-ms');
   const maxCandidatesPerCycle = readNumberFlag(args, '--max-candidates-per-cycle');
   const now = readFlag(args, '--now');
+  const governedRecompileEnabled = hasFlag(args, '--governed-recompile')
+    ? true
+    : hasFlag(args, '--no-governed-recompile')
+      ? false
+      : undefined;
   return {
     scope_id: readFlag(args, '--scope-id') ?? readFlag(args, '--scope') ?? 'workspace:default',
     now: now === undefined ? undefined : parseIsoDateTimeFlag(now),
@@ -77,7 +85,20 @@ export function parseDreamArgs(
     ...(timeBudgetMs !== undefined ? { time_budget_ms: timeBudgetMs } : {}),
     ...(phaseTimeoutMs !== undefined ? { phase_timeout_ms: phaseTimeoutMs } : {}),
     ...(maxCandidatesPerCycle !== undefined ? { max_candidates_per_cycle: maxCandidatesPerCycle } : {}),
+    ...(governedRecompileEnabled !== undefined ? { governed_recompile_enabled: governedRecompileEnabled } : {}),
     ...(readFlag(args, '--report-dir') !== undefined ? { report_dir: readFlag(args, '--report-dir') } : {}),
+  };
+}
+
+function applyDreamConfigDefaults(input: DreamCycleRunInput, config: MBrainConfig | null): DreamCycleRunInput {
+  return {
+    ...input,
+    ...(input.phase_timeout_ms === undefined && config?.maintenance_phase_timeout_ms !== undefined
+      ? { phase_timeout_ms: config.maintenance_phase_timeout_ms }
+      : {}),
+    ...(input.governed_recompile_enabled === undefined && config?.maintenance_governed_recompile_enabled === true
+      ? { governed_recompile_enabled: config.maintenance_governed_recompile_enabled }
+      : {}),
   };
 }
 
@@ -139,6 +160,7 @@ USAGE
                [--max-runner-calls N] [--time-budget-ms MS] [--phase-timeout-ms MS]
                [--max-candidates-per-cycle N]
                [--report-dir BRAIN_DIR]
+               [--governed-recompile|--no-governed-recompile]
                [--allow-llm] [--allow-local-runner]
 `);
 }

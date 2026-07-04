@@ -23,6 +23,7 @@ import type {
 import { readContext } from '../core/services/read-context-service.ts';
 import { retrieveContext } from '../core/services/retrieve-context-service.ts';
 import { retrievalSelectorId } from '../core/services/retrieval-selector-service.ts';
+import { createProductionRetrieveContextDependencies } from '../core/services/production-retrieval-dependencies-service.ts';
 import { buildSkillSurfaceManifest } from '../core/services/skill-surface-manifest-service.ts';
 
 type ParsedArgs = {
@@ -107,6 +108,7 @@ async function persistRetrievalEvalRun(
     judge: judgeConfig?.judge,
     judge_model: judgeConfig?.model_id,
     judge_prompt_version: judgeConfig?.prompt_version,
+    retrieve_context_dependencies: createProductionRetrieveContextDependencies(engine, loadConfig()),
   });
   const completedAt = new Date();
   const status: ContextEvalRunStatus = report.status === 'passed' ? 'passed' : 'failed';
@@ -151,6 +153,8 @@ async function persistRetrievalEvalRun(
         selected_intent: entry.selected_intent,
         route_match: entry.route_match,
         candidate_slugs: entry.candidate_slugs,
+        required_read_slugs: entry.required_read_slugs,
+        scored_slugs: entry.scored_slugs,
         top1_slug: entry.top1_slug,
         top1_match: entry.top1_match,
         recall_at_10: entry.recall_at_10,

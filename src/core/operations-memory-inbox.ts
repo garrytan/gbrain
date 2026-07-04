@@ -3194,12 +3194,17 @@ function buildCompileDebtPatchProposal(page: Page, scopeId: string) {
     frontmatter: page.frontmatter,
   });
   const candidateId = `compile-debt-patch:${contentHash(page.slug, baseHash).slice(0, 16)}`;
+  const distillations = compileDebtDistillationLines(
+    page.timeline,
+    page.compiled_truth_changed_at,
+    sourceRefs[0] ?? `compile_debt:${page.slug}:${page.timeline_changed_at.toISOString()}`,
+  );
   const compiledTruth = [
     page.compiled_truth.trim(),
     '',
-    '## Pending Compile-Debt Review',
+    '## Timeline Evidence Distillation',
     '',
-    `${uncompiledTimelineEntries} newer timeline entr${uncompiledTimelineEntries === 1 ? 'y' : 'ies'} require a compiled-truth rewrite before this patch is applied. Review the timeline evidence separately and replace this note with a source-attributed distillation.`,
+    ...distillations,
   ].filter((part) => part.length > 0).join('\n');
 
   return {
@@ -3213,12 +3218,60 @@ function buildCompileDebtPatchProposal(page: Page, scopeId: string) {
     patch_body: {
       compiled_truth: compiledTruth,
     },
-    proposed_content: `Reviewable compile-debt patch for ${page.slug}: ${uncompiledTimelineEntries} newer timeline entr${uncompiledTimelineEntries === 1 ? 'y' : 'ies'}.`,
-    provenance_summary: `Generated from compile-debt detection for ${page.slug}; reviewer must confirm timeline evidence before apply.`,
+    proposed_content: `Reviewable compile-debt patch for ${page.slug}: ${uncompiledTimelineEntries} newer timeline entr${uncompiledTimelineEntries === 1 ? 'y' : 'ies'} distilled into compiled truth.`,
+    provenance_summary: `Generated from compile-debt detection for ${page.slug}; patch body rewrites the compiled zone from newer timeline evidence.`,
     source_refs: sourceRefs.length > 0
       ? sourceRefs
       : [`compile_debt:${page.slug}:${page.timeline_changed_at.toISOString()}`],
   };
+}
+
+function compileDebtDistillationLines(timeline: string, compiledTruthChangedAt: Date, fallbackSourceRef: string): string[] {
+  const allEntries = timelineEntryBodies(timeline);
+  const newerEntries = allEntries.filter((entry) => entry.date.getTime() > compiledTruthChangedAt.getTime());
+  const entries = (newerEntries.length > 0 ? newerEntries : allEntries)
+    .map((entry) => compileDebtDistillationLine(entry.body, fallbackSourceRef));
+  return entries.length > 0
+    ? entries
+    : [`- Timeline evidence changed after the compiled truth snapshot. [Source: ${fallbackSourceRef.replace(/^Source:\s*/i, '')}]`];
+}
+
+function timelineEntryBodies(timeline: string): Array<{ date: Date; body: string }> {
+  const entries: Array<{ date: Date; body: string }> = [];
+  let current: { date: Date; bodyLines: string[] } | null = null;
+  const flush = () => {
+    if (!current) return;
+    const body = current.bodyLines.join(' ').replace(/\s+/g, ' ').trim();
+    if (body.length > 0) entries.push({ date: current.date, body });
+  };
+  for (const line of timeline.split(/\r?\n/)) {
+    const match = /^\s*-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.*)$/.exec(line);
+    if (match) {
+      flush();
+      const parsed = new Date(`${match[1]}T00:00:00.000Z`);
+      current = Number.isNaN(parsed.getTime()) ? null : {
+        date: parsed,
+        bodyLines: [match[2]?.trim() ?? ''],
+      };
+      continue;
+    }
+    if (current && line.trim().length > 0) {
+      current.bodyLines.push(line.trim());
+    }
+  }
+  flush();
+  return entries;
+}
+
+function compileDebtDistillationLine(body: string, fallbackSourceRef: string): string {
+  const normalized = body.replace(/^\s*[-*]\s+/, '').trim();
+  PAGE_SOURCE_ATTRIBUTION_RE.lastIndex = 0;
+  if (PAGE_SOURCE_ATTRIBUTION_RE.test(normalized)) {
+    PAGE_SOURCE_ATTRIBUTION_RE.lastIndex = 0;
+    return `- ${normalized}`;
+  }
+  PAGE_SOURCE_ATTRIBUTION_RE.lastIndex = 0;
+  return `- ${normalized} [Source: ${fallbackSourceRef.replace(/^Source:\s*/i, '')}]`;
 }
 
 function timelineEntryDates(timeline: string): Date[] {

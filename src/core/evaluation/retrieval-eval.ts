@@ -2,7 +2,7 @@ import type { BrainEngine } from '../engine.ts';
 import { estimateTokenCount } from '../token-count.ts';
 import type { MemoryScenarioKnownSubject, MemoryScenarioScopeDecision, RetrievalRouteIntent } from '../types.ts';
 import { readContext } from '../services/read-context-service.ts';
-import { retrieveContext } from '../services/retrieve-context-service.ts';
+import { retrieveContext, type RetrieveContextDependencies } from '../services/retrieve-context-service.ts';
 
 export interface RetrievalEvalThresholds {
   top1_match_rate?: number;
@@ -56,6 +56,7 @@ export interface RetrievalEvalOptions {
   judge?: RetrievalAnswerJudge;
   judge_model?: string | null;
   judge_prompt_version?: string | null;
+  retrieve_context_dependencies?: RetrieveContextDependencies;
 }
 
 export interface RetrievalEvalCaseResult {
@@ -68,6 +69,8 @@ export interface RetrievalEvalCaseResult {
   status: 'passed' | 'failed';
   gold_slugs: string[];
   candidate_slugs: string[];
+  required_read_slugs: string[];
+  scored_slugs: string[];
   top1_slug: string | null;
   top1_match: boolean;
   recall_at_10: number;
@@ -174,28 +177,39 @@ async function evaluateLiveRetrievalCase(
   options: RetrievalEvalOptions,
 ): Promise<RetrievalEvalCaseResult> {
   const started = Date.now();
-  const retrieval = await retrieveContext(engine, {
-    query: testCase.query,
-    limit: testCase.limit ?? 10,
-    token_budget: testCase.token_budget,
-    include_orientation: false,
-    persist_trace: true,
-    requested_scope: testCase.requested_scope,
-    known_subjects: testCase.known_subjects,
-  });
+  const retrieval = await retrieveContext(
+    engine,
+    {
+      query: testCase.query,
+      limit: testCase.limit ?? 10,
+      token_budget: testCase.token_budget,
+      include_orientation: false,
+      persist_trace: true,
+      requested_scope: testCase.requested_scope,
+      known_subjects: testCase.known_subjects,
+    },
+    options.retrieve_context_dependencies,
+  );
   const latencyMs = Math.max(0, Date.now() - started);
   const candidateSlugs = uniqueStrings(retrieval.candidates
     .map((candidate) => candidate.read_selector.slug)
     .filter((slug): slug is string => Boolean(slug)));
+  const selectorSnapshots = retrieval.read_plan.selected_selector_snapshots?.length
+    ? retrieval.read_plan.selected_selector_snapshots
+    : retrieval.required_reads;
+  const requiredReadSlugs = uniqueStrings(selectorSnapshots
+    .map((selector) => selector.slug)
+    .filter((slug): slug is string => Boolean(slug)));
+  const scoredSlugs = uniqueStrings([...requiredReadSlugs, ...candidateSlugs]);
   const goldSlugs = uniqueStrings(testCase.gold_slugs);
-  const top10 = candidateSlugs.slice(0, 10);
-  const top1Slug = candidateSlugs[0] ?? null;
+  const top10 = scoredSlugs.slice(0, 10);
+  const top1Slug = scoredSlugs[0] ?? null;
   const goldSet = new Set(goldSlugs);
   const missingGoldSlugs = goldSlugs.filter((slug) => !top10.includes(slug));
   const precisionK = Math.max(1, Math.floor(testCase.precision_k ?? 10));
-  const topK = candidateSlugs.slice(0, precisionK);
+  const topK = scoredSlugs.slice(0, precisionK);
   const hitsAtK = topK.filter((slug) => goldSet.has(slug)).length;
-  const reciprocalRank = reciprocalRankForGold(candidateSlugs, goldSet);
+  const reciprocalRank = reciprocalRankForGold(scoredSlugs, goldSet);
   const read = options.judge ? await readCanonicalEvidence(engine, testCase, retrieval) : null;
   const evidenceText = read
     ? read.canonical_reads.map((canonicalRead) => canonicalRead.text).join('\n\n')
@@ -204,7 +218,7 @@ async function evaluateLiveRetrievalCase(
   const judge = options.judge && options.judge_model && options.judge_prompt_version
     ? await options.judge({
       case: testCase,
-      candidate_slugs: candidateSlugs,
+      candidate_slugs: scoredSlugs,
       candidate_answer: candidateAnswer,
       evidence_text: evidenceText,
       judge_model: options.judge_model,
@@ -244,6 +258,8 @@ async function evaluateLiveRetrievalCase(
     status: passed ? 'passed' : 'failed',
     gold_slugs: goldSlugs,
     candidate_slugs: candidateSlugs,
+    required_read_slugs: requiredReadSlugs,
+    scored_slugs: scoredSlugs,
     top1_slug: top1Slug,
     top1_match: top1Slug !== null && goldSet.has(top1Slug),
     recall_at_10: goldSlugs.length === 0

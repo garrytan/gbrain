@@ -211,9 +211,11 @@ export function deliverMemoryReportNotification(
     };
   }
   if ((runtime.platform ?? process.platform) === 'darwin') {
+    const message = appleScriptStringLiteral(`Open ${payload.path}`);
+    const title = appleScriptStringLiteral('MBrain memory report');
     const result = run('osascript', [
       '-e',
-      `display notification "Open ${payload.path}" with title "MBrain memory report"`,
+      `display notification ${message} with title ${title}`,
     ], { encoding: 'utf8' });
     return {
       mode: 'auto',
@@ -223,6 +225,10 @@ export function deliverMemoryReportNotification(
     };
   }
   return { mode: 'auto', attempted: false, delivered: false, message: 'no supported notifier found' };
+}
+
+function appleScriptStringLiteral(value: string): string {
+  return JSON.stringify(value);
 }
 
 function valueAfter(args: string[], flag: string): string | undefined {

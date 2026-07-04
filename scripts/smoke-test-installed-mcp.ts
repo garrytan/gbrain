@@ -131,15 +131,16 @@ export async function main(): Promise<void> {
       'put_page',
       'get_page',
       'search',
-      'delete_page',
       'retrieve_context',
       'read_context',
-      'record_retrieval_trace',
       'route_memory_writeback',
     ]) {
       if (!toolNames.has(name)) {
         throw new Error(`tools/list did not include ${name}`);
       }
+    }
+    if (toolNames.has('delete_page')) {
+      throw new Error('tools/list unexpectedly exposed admin delete_page on the default surface');
     }
     console.log(`tools/list: ${tools.tools.length} tools`);
 
@@ -197,12 +198,6 @@ export async function main(): Promise<void> {
       throw new Error(`search did not return ${slug}`);
     }
     console.log(`search: ${searchResults.length} result(s)`);
-
-    parseMcpText(await client.callTool({
-      name: 'delete_page',
-      arguments: { slug },
-    }));
-    console.log('cleanup: deleted smoke page');
 
     await client.close();
     client = null;

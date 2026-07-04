@@ -2612,7 +2612,10 @@ describe('memory review report service', () => {
     });
     expect(deliverMemoryReportNotification(
       { mode: 'auto' },
-      payload,
+      {
+        ...payload,
+        path: '/tmp/brain/reports/memory-review-report/report "quoted".md',
+      },
       { platform: 'darwin', spawnSync: fakeSpawn },
     )).toEqual({
       mode: 'auto',
@@ -2631,6 +2634,10 @@ describe('memory review report service', () => {
       message: 'no supported notifier found',
     });
     expect(calls.map((call) => call.command)).toEqual(['cat >/dev/null', 'osascript']);
+    expect(calls[1]?.args).toContainEqual(expect.arrayContaining([
+      '-e',
+      'display notification "Open /tmp/brain/reports/memory-review-report/report \\"quoted\\".md" with title "MBrain memory report"',
+    ]));
   });
 });
 

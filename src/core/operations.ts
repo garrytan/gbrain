@@ -28,12 +28,11 @@ import { createNoteManifestOperations } from './operations-note-manifest.ts';
 import { createSourceRegistryOperations } from './operations-source-registry.ts';
 import { createTaskOperations } from './operations-tasks.ts';
 import { expandQuery } from './search/expansion.ts';
-import { governedProbeHybridEnabled, hybridProbeSearch } from './search/governed-probe.ts';
 import { hybridSearchWithMeta } from './search/hybrid.ts';
 import { rankSearchResults, sourceRankCandidateLimit } from './search/source-ranking.ts';
 import { getAtlasOrientationBundle } from './services/atlas-orientation-bundle-service.ts';
 import { getAtlasOrientationCard } from './services/atlas-orientation-card-service.ts';
-import { getBroadSynthesisRoute, type BroadSynthesisRouteDependencies } from './services/broad-synthesis-route-service.ts';
+import { getBroadSynthesisRoute } from './services/broad-synthesis-route-service.ts';
 import { extractCodeClaimsFromTrace, parseCodeClaimVerificationEntry, verifyCodeClaims } from './services/code-claim-verification-service.ts';
 import { getStructuralContextAtlasOverview } from './services/context-atlas-overview-service.ts';
 import { getStructuralContextAtlasReport } from './services/context-atlas-report-service.ts';
@@ -68,8 +67,13 @@ import { getPrecisionLookupRoute } from './services/precision-lookup-route-servi
 import { runProofAgentMemory } from './services/proof-agent-service.ts';
 import { readContext } from './services/read-context-service.ts';
 import { planRetrievalRequest } from './services/retrieval-request-planner-service.ts';
-import { selectRetrievalRoute, type RetrievalRouteSelectorDependencies } from './services/retrieval-route-selector-service.ts';
-import { buildProductionGraphFrontierInput, retrieveContext, type RetrieveContextDependencies } from './services/retrieve-context-service.ts';
+import { selectRetrievalRoute } from './services/retrieval-route-selector-service.ts';
+import {
+  createProductionBroadSynthesisRouteDependencies,
+  createProductionRetrievalRouteDependencies,
+  createProductionRetrieveContextDependencies,
+} from './services/production-retrieval-dependencies-service.ts';
+import { retrieveContext } from './services/retrieve-context-service.ts';
 import { planScenarioMemoryRequest } from './services/scenario-memory-request-planner-service.ts';
 import { evaluateScopeGate } from './services/scope-gate-service.ts';
 import { getWorkspaceCorpusCard } from './services/workspace-corpus-card-service.ts';
@@ -4016,6 +4020,7 @@ const delete_page: Operation = {
     slug: { type: 'string', required: true },
   },
   mutating: true,
+  tier: 'admin',
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'delete_page', slug: p.slug };
     await ctx.engine.deletePage(p.slug as string);
@@ -6339,7 +6344,7 @@ const get_broad_synthesis_route: Operation = {
         query: String(p.query),
         limit: typeof p.limit === 'number' ? p.limit : undefined,
       },
-      governedProbeBroadSynthesisDependencies(ctx),
+      createProductionBroadSynthesisRouteDependencies(ctx.engine, ctx.config),
     );
   },
   cliHints: { name: 'broad-synthesis-route', aliases: { n: 'limit' } },
@@ -6452,7 +6457,7 @@ const get_mixed_scope_bridge: Operation = {
         episode_source_kind: typeof p.episode_source_kind === 'string' ? (p.episode_source_kind as any) : undefined,
       },
       {
-        broadSynthesis: governedProbeBroadSynthesisDependencies(ctx),
+        broadSynthesis: createProductionBroadSynthesisRouteDependencies(ctx.engine, ctx.config),
       },
     );
   },
@@ -6535,7 +6540,7 @@ const get_mixed_scope_disclosure: Operation = {
         episode_source_kind: typeof p.episode_source_kind === 'string' ? (p.episode_source_kind as any) : undefined,
       },
       {
-        broadSynthesis: governedProbeBroadSynthesisDependencies(ctx),
+        broadSynthesis: createProductionBroadSynthesisRouteDependencies(ctx.engine, ctx.config),
       },
     );
   },
@@ -6889,7 +6894,7 @@ const select_retrieval_route: Operation = {
         episode_title: typeof p.episode_title === 'string' ? p.episode_title : undefined,
         episode_source_kind: typeof p.episode_source_kind === 'string' ? (p.episode_source_kind as any) : undefined,
       },
-      governedProbeRetrievalRouteDependencies(ctx),
+      createProductionRetrievalRouteDependencies(ctx.engine, ctx.config),
     );
   },
   cliHints: { name: 'retrieval-route' },
@@ -7006,44 +7011,6 @@ const plan_retrieval_request: Operation = {
   cliHints: { name: 'plan-retrieval-request' },
 };
 
-// Inject the full hybrid candidate search (vector + keyword + RRF + expansion) into the
-// governed probe so retrieve_context / read_context auto-reads match the lower-authority
-// `query` op's recall. Returns no override (keyword-only default) when disabled or absent.
-function governedProbeRetrieveDependencies(ctx: OperationContext): RetrieveContextDependencies {
-  const dependencies: RetrieveContextDependencies = {
-    graphFrontierInputBuilder: buildProductionGraphFrontierInput,
-  };
-  if (ctx.config.retrieval_usage_aware_ranking === true) {
-    dependencies.usageAwareRanking = true;
-  }
-  if (!governedProbeHybridEnabled(ctx.config)) return dependencies;
-  const broadSynthesis = governedProbeBroadSynthesisDependencies(ctx);
-  return {
-    ...dependencies,
-    candidateSearch: (query, options) =>
-      hybridProbeSearch(ctx.engine, ctx.config, query, {
-        limit: options.limit,
-      }),
-    broadSynthesisCandidateSearch: broadSynthesis.candidateSearch,
-  };
-}
-
-function governedProbeBroadSynthesisDependencies(ctx: OperationContext): BroadSynthesisRouteDependencies {
-  if (!governedProbeHybridEnabled(ctx.config)) return {};
-  return {
-    candidateSearch: (query, options) =>
-      hybridProbeSearch(ctx.engine, ctx.config, query, {
-        type: options.type,
-        limit: options.limit,
-      }),
-  };
-}
-
-function governedProbeRetrievalRouteDependencies(ctx: OperationContext): RetrievalRouteSelectorDependencies {
-  const broadSynthesis = governedProbeBroadSynthesisDependencies(ctx);
-  return Object.keys(broadSynthesis).length > 0 ? { broadSynthesis } : {};
-}
-
 const retrieve_context: Operation = {
   name: 'retrieve_context',
   description:
@@ -7123,7 +7090,7 @@ const retrieve_context: Operation = {
           graph_frontier: parseRetrieveContextGraphFrontierParam(p.graph_frontier, 'graph_frontier'),
           persist_trace: typeof p.persist_trace === 'boolean' ? p.persist_trace : undefined,
         },
-        governedProbeRetrieveDependencies(ctx),
+        createProductionRetrieveContextDependencies(ctx.engine, ctx.config),
       ),
     ),
   cliHints: {
@@ -7197,7 +7164,7 @@ const read_context: Operation = {
           requested_scope: parseRequestedScopeParam(p.requested_scope),
           probe_context: parseReadContextProbeContextParam(p.probe_context, 'probe_context'),
         },
-        governedProbeRetrieveDependencies(ctx),
+        createProductionRetrieveContextDependencies(ctx.engine, ctx.config),
       ),
     ),
   cliHints: { name: 'read-context', aliases: { n: 'max_selectors' } },

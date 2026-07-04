@@ -123,7 +123,10 @@ describe('live retrieval eval harness', () => {
       expect(report.retrieved_token_count_total).toBeGreaterThan(0);
       expect(report.per_route.broad_synthesis?.case_count).toBe(3);
       expect(report.cases.every((entry) => entry.route_match === true)).toBe(true);
+      expect(report.cases.every((entry) => entry.scored_slugs[0] === entry.required_read_slugs[0])).toBe(true);
       expect(report.cases.find((entry) => entry.id === 'korean-rebellion')?.candidate_slugs)
+        .toContain('concepts/rebellion-architecture');
+      expect(report.cases.find((entry) => entry.id === 'korean-rebellion')?.required_read_slugs)
         .toContain('concepts/rebellion-architecture');
     } finally {
       await engine.disconnect();

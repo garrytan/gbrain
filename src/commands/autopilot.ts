@@ -11,6 +11,7 @@ import { runDreamCycle, type DreamCycleRunInput, type DreamCycleRunResult } from
 import { parseDreamArgs } from './dream.ts';
 import type { AutopilotMode } from '../core/maintenance/autopilot.ts';
 import { createAutoPromoteDreamDependency } from './auto-promote.ts';
+import { createGovernedRecompileDreamDependency } from './governed-recompile.ts';
 import { saveMemoryReviewReport, type MemoryReportNotifyConfig } from './memory-report.ts';
 import { runWatchedQuestionProbes } from '../core/services/watched-question-service.ts';
 
@@ -117,6 +118,7 @@ export async function runAutopilot(args: string[], deps: RunAutopilotDeps = {}):
               lifecycleForgetting: maybeCreateLifecycleForgettingServiceForEngine(engine, () => input.now ?? new Date().toISOString()),
               autoPromote: createAutoPromoteDreamDependency(engine),
               replayCanary: createProofAgentDreamReplayCanary(),
+              governedRecompile: createGovernedRecompileDreamDependency(engine),
               watchedQuestions: {
                 run: (watchedInput) => runWatchedQuestionProbes(engine, watchedInput),
               },
@@ -312,6 +314,7 @@ COMMANDS
   run-once
   dream [--dry-run|--apply] [--apply-auto-promote] [--allow-canonical-page-writes]
         [--scope-id SCOPE] [--now ISO] [--limit N]
+        [--governed-recompile|--no-governed-recompile]
 `);
 }
 
@@ -324,6 +327,7 @@ USAGE
                         [--apply-auto-promote] [--allow-canonical-page-writes]
                         [--max-runner-calls N] [--time-budget-ms MS]
                         [--max-candidates-per-cycle N]
+                        [--governed-recompile|--no-governed-recompile]
                         [--allow-llm] [--allow-local-runner]
 `);
 }

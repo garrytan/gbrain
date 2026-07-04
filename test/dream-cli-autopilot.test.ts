@@ -23,12 +23,18 @@ describe('dream CLI and autopilot integration', () => {
 
     expect(dreamHelp.stdout).toContain('--apply-auto-promote');
     expect(dreamHelp.stdout).toContain('--allow-canonical-page-writes');
+    expect(dreamHelp.stdout).toContain('--governed-recompile');
     expect(autopilotDreamHelp.stdout).toContain('--apply-auto-promote');
     expect(autopilotDreamHelp.stdout).toContain('--allow-canonical-page-writes');
+    expect(autopilotDreamHelp.stdout).toContain('--governed-recompile');
   });
 
   test('dream CLI and autopilot dream command call the same phase runner input contract', async () => {
-    await withTempConfigDir({ autopilot: { allow_llm: false, allow_local_runner: false } }, async () => {
+    await withTempConfigDir({
+      engine: 'sqlite',
+      database_path: 'brain.db',
+      autopilot: { allow_llm: false, allow_local_runner: false },
+    }, async () => {
       const calls: Array<Record<string, unknown>> = [];
       const runner = async (input: Record<string, unknown>) => {
         calls.push(input);
@@ -91,6 +97,17 @@ describe('dream CLI and autopilot integration', () => {
     });
   });
 
+  test('dream parser accepts governed recompile override flags', async () => {
+    const { parseDreamArgs } = await importFreshDreamCommand();
+
+    expect(parseDreamArgs(['--governed-recompile'], 'cli')).toMatchObject({
+      governed_recompile_enabled: true,
+    });
+    expect(parseDreamArgs(['--no-governed-recompile'], 'cli')).toMatchObject({
+      governed_recompile_enabled: false,
+    });
+  });
+
   test('dream parser rejects non-ISO now input', async () => {
     const { parseDreamArgs } = await importFreshDreamCommand();
 
@@ -128,6 +145,35 @@ describe('dream CLI and autopilot integration', () => {
     });
   });
 
+  test('dream CLI loads maintenance governed recompile defaults from config', async () => {
+    await withTempConfigDir({
+      engine: 'sqlite',
+      database_path: 'brain.db',
+      maintenance: {
+        governed_recompile_enabled: true,
+        phase_timeout_ms: 12_345,
+      },
+    }, async () => {
+      const calls: Array<Record<string, unknown>> = [];
+      const runner = async (input: Record<string, unknown>) => {
+        calls.push(input);
+        return { status: 'ok', phases: [] };
+      };
+      const { runDream } = await importFreshDreamCommand();
+
+      await captureConsole(() => runDream(stubEngine(), [
+        '--scope-id', 'workspace:default',
+        '--now', '2026-05-21T10:00:00.000Z',
+        '--dry-run',
+      ], { runner }));
+
+      expect(calls[0]).toMatchObject({
+        governed_recompile_enabled: true,
+        phase_timeout_ms: 12_345,
+      });
+    });
+  });
+
   test('dream CLI runs lifecycle forgetting review on the SQLite local runtime', async () => {
     await withSQLiteEngine(async (engine) => {
       const { runDream } = await importFreshDreamCommand();
@@ -147,6 +193,45 @@ describe('dream CLI and autopilot integration', () => {
           restore_windows: 0,
         },
       });
+    });
+  });
+
+  test('dream CLI governed recompile phase uses the built-in compile-debt patch runner', async () => {
+    await withSQLiteEngine(async (engine) => {
+      await engine.putPage('systems/compile-debt-dream', {
+        type: 'system',
+        title: 'Compile Debt Dream',
+        compiled_truth: 'Original compiled truth. [Source: User, direct message, 2026-07-03 09:00 KST]',
+        timeline: '',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await engine.putPage('systems/compile-debt-dream', {
+        type: 'system',
+        title: 'Compile Debt Dream',
+        compiled_truth: 'Original compiled truth. [Source: User, direct message, 2026-07-03 09:00 KST]',
+        timeline: '- **2026-07-03** | Dream-cycle compile debt. [Source: User, direct message, 2026-07-03 10:00 KST]',
+      });
+      const { runDream } = await importFreshDreamCommand();
+      const { stdout } = await captureConsole(() => runDream(engine, [
+        '--scope-id', 'workspace:default',
+        '--now', '2026-07-04T00:00:00.000Z',
+        '--dry-run',
+        '--governed-recompile',
+      ]));
+      const result = JSON.parse(stdout);
+      const recompile = result.phases.find((phase: any) => phase.family === 'recompile');
+
+      expect(recompile).toMatchObject({
+        status: 'warn',
+        skip_reason: null,
+        counts: {
+          pages_with_compile_debt: 1,
+          proposed_patch_candidates: 1,
+        },
+        canonical_mutations: 0,
+        llm_or_runner_used: true,
+      });
+      expect(recompile.source_ids).toContain('systems/compile-debt-dream');
     });
   });
 
