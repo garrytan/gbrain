@@ -129,6 +129,54 @@ class Foo {
   });
 });
 
+describe('Layer 5 (A1) — Kotlin call extraction', () => {
+  test('captures bare function calls', async () => {
+    const src = `
+class Foo {
+    fun helper(): Int = 1
+    fun caller(): Int { return helper() }
+}
+`.trim();
+    const result = await chunkCodeTextFull(src, 'src/Foo.kt');
+    expect(result.edges.map(e => e.toSymbol)).toContain('helper');
+  });
+
+  test('captures navigation-expression method calls (receiver.method)', async () => {
+    const src = `
+class Greeter {
+    fun format(name: String): String = "Hello, " + name
+}
+fun main() {
+    val greeter = Greeter()
+    println(greeter.format("world"))
+}
+`.trim();
+    const result = await chunkCodeTextFull(src, 'src/Main.kt');
+    const syms = result.edges.map(e => e.toSymbol);
+    // receiver.method(...) — the navigation_expression resolves to the
+    // method's simple_identifier, not the receiver.
+    expect(syms).toContain('format');
+    expect(syms).toContain('println');
+  });
+
+  test('captures calls on chained receivers', async () => {
+    const src = `
+fun caller(input: String): String {
+    return input.trim()
+}
+`.trim();
+    const result = await chunkCodeTextFull(src, 'src/Chain.kt');
+    expect(result.edges.map(e => e.toSymbol)).toContain('trim');
+  });
+
+  test('all edges typed as calls', async () => {
+    const src = 'fun f(): Int { return g() }\nfun g(): Int = 1';
+    const result = await chunkCodeTextFull(src, 'src/Typed.kt');
+    expect(result.edges.length).toBeGreaterThan(0);
+    for (const e of result.edges) expect(e.edgeType).toBe('calls');
+  });
+});
+
 describe('Layer 5 (A1) — findChunkForOffset mapping', () => {
   test('finds innermost chunk for a given offset', () => {
     const source = [
