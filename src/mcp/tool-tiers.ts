@@ -20,6 +20,7 @@ export const CORE_TOOLS = new Set<string>([
   'add_link',
   'list_pages',
   'get_stats',
+  'get_health',
   'tool_search',
 ]);
 
