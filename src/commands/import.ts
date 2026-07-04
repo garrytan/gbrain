@@ -1,6 +1,6 @@
 import { readdirSync, lstatSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { join, relative } from 'path';
+import { join, relative, resolve } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
@@ -418,10 +418,17 @@ export async function runImport(
     }
   }
 
-  // Log the ingest
+  // Log the ingest. Two fields matter to the full-sync reconcile's provenance
+  // guard (externallyImportedSlugs in sync.ts): source_id scopes rows per
+  // source (without it every row lands under the column DEFAULT 'default' and
+  // the guard goes blind for non-default sources), and source_ref must be
+  // ABSOLUTE at write time — storing a raw relative `dir` ('.', '../notes')
+  // would make the guard resolve it against the SYNC process's cwd later,
+  // misclassifying an external import as repo-internal (or vice versa).
   await engine.logIngest({
+    source_id: sourceId,
     source_type: 'directory',
-    source_ref: dir,
+    source_ref: resolve(dir),
     pages_updated: importedSlugs,
     summary: `Imported ${imported} pages, ${skipped} skipped, ${chunksCreated} chunks`,
   });

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, statSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { join, relative } from 'path';
+import { join, relative, isAbsolute } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { DELETE_BATCH_SIZE } from '../core/engine-constants.ts';
 import { importFile } from '../core/import-file.ts';
@@ -221,6 +221,16 @@ export interface SyncResult {
    * everything," the exact misdiagnosis in the #1794 recurrence report.
    */
   bankedFiles?: number;
+  /**
+   * Set when the full-sync stale-page reconcile was SKIPPED fail-safe instead
+   * of run: 'provenance_unreadable' (ingest_log couldn't be read, so external
+   * imports can't be told apart from stale pages) or 'mass_delete_breaker'
+   * (the sweep would delete a suspiciously large share of the source's
+   * file-backed pages; see GBRAIN_SYNC_RECONCILE_FORCE). Absent when the
+   * reconcile ran (or wasn't applicable). Machine-readable so cron/autopilot
+   * consumers can distinguish "nothing stale" from "reconcile disabled".
+   */
+  reconcileSkipped?: 'provenance_unreadable' | 'mass_delete_breaker';
 }
 
 /**
@@ -2813,6 +2823,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // Log ingest
   await engine.logIngest({
+    source_id: opts.sourceId,
     source_type: 'git_sync',
     source_ref: `${repoPath} @ ${headCommit.slice(0, 8)}`,
     pages_updated: pagesAffected,
@@ -2947,6 +2958,113 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     embedded,
     pagesAffected,
   };
+}
+
+/**
+ * Mass-delete circuit breaker thresholds for the full-sync reconcile: refuse
+ * an automatic sweep that would delete at least MIN_DELETES pages AND more
+ * than MAX_SHARE of the source's file-backed pages. The observed incident
+ * shape was 537 of 637 pages (84%); a legitimate straggler sweep is a
+ * handful. `GBRAIN_SYNC_RECONCILE_FORCE=1` overrides (env-only, matching the
+ * other sync incident knobs).
+ */
+export const RECONCILE_BREAKER_MIN_DELETES = 10;
+export const RECONCILE_BREAKER_MAX_SHARE = 0.2;
+
+/**
+ * Import-provenance guard for the full-sync reconcile (F-A). `gbrain import
+ * <dir>` stores `pages.source_path` RELATIVE TO THE IMPORTED DIR, so pages
+ * imported from a directory outside the synced repo can never appear in the
+ * repo's file enumeration — without this guard the first full sync after
+ * `local_path` is configured sweeps every one of them as "stale" (observed:
+ * 537 of 637 pages deleted on a brain fed by out-of-repo `gbrain import`
+ * runs).
+ *
+ * Provenance comes from `ingest_log`: every runImport writes one row with
+ * `source_type='directory'`, `source_ref=<dir>`, `pages_updated=<slugs>`
+ * (sync's own full imports land there too, with `source_ref=repoPath`).
+ * Walking rows oldest→newest gives each slug its MOST RECENT import root
+ * (last write wins, so a page whose file later moves into the repo and is
+ * re-IMPORTED from it becomes reconcilable again — note `pages_updated` only
+ * carries slugs whose content actually imported, so a byte-identical move
+ * short-circuits as 'unchanged' and the page keeps its external protection;
+ * it lingers rather than flipping, which is the safe direction). Returns the
+ * set of slugs
+ * whose latest directory import came from OUTSIDE `repoPath` — the repo tree
+ * is not authoritative for those, so the reconcile must not delete them.
+ *
+ * The query reads `source_id IN (sourceId, 'default')`: rows written before
+ * runImport threaded `source_id` (and any written by older binaries) all
+ * carry the column DEFAULT 'default' regardless of which source the import
+ * actually fed, so the legacy arm is required for the guard to see them. The
+ * cost is over-protection only — a same-slug page in another source can keep
+ * a genuinely stale page alive (it lingers; nothing is deleted that
+ * shouldn't be), and the pollution shrinks as re-imports write correctly
+ * scoped rows. Directory identity is compared via `realpathOrResolve`
+ * (symlink-canonical, memoized per call — source_ref values repeat heavily).
+ * A NON-ABSOLUTE source_ref (legacy rows stored the raw user-typed dir, e.g.
+ * '.') is classified external unconditionally: resolving it against THIS
+ * process's cwd would misclassify (import ran under a different cwd), and
+ * external-by-default only over-protects. Case-insensitive filesystems can
+ * likewise at worst classify the same dir typed with different casing as
+ * external — again the lingering direction, never deletion.
+ *
+ * The guard's correctness depends on ingest_log rows being retained — nothing
+ * prunes ingest_log today, and any future retention policy must keep the
+ * newest `directory` row per (source, dir) or external pages lose protection.
+ *
+ * Returns null when ingest_log can't be read; the caller skips the reconcile
+ * entirely (fail toward keeping pages — a lingering stale page is
+ * recoverable, a mass delete is not). Slugs with no directory-import row at
+ * all (incremental git_sync pages, put_page with a hand-set source_path)
+ * stay unprotected, which preserves the existing F-A/#1433 semantics.
+ */
+async function externallyImportedSlugs(
+  engine: BrainEngine,
+  sourceId: string,
+  repoPath: string,
+): Promise<Set<string> | null> {
+  try {
+    const rows = await engine.executeRaw<{ source_ref: string; pages_updated: unknown }>(
+      `SELECT source_ref, pages_updated FROM ingest_log
+       WHERE source_id IN ($1, 'default') AND source_type = 'directory'
+       ORDER BY created_at ASC, id ASC`,
+      [sourceId],
+    );
+    const { realpathOrResolve } = await import('../core/path-confine.ts');
+    const dirKeys = new Map<string, string>();
+    const dirKey = (p: string): string => {
+      let key = dirKeys.get(p);
+      if (key === undefined) { key = realpathOrResolve(p); dirKeys.set(p, key); }
+      return key;
+    };
+    const repoKey = dirKey(repoPath);
+    // slug → was the LATEST directory import of this slug external?
+    const latestIsExternal = new Map<string, boolean>();
+    for (const row of rows) {
+      const isExternal = !isAbsolute(row.source_ref) || dirKey(row.source_ref) !== repoKey;
+      // pages_updated is jsonb (array of slugs); tolerate a stringified
+      // array from any legacy double-encoded row.
+      let slugs: unknown = row.pages_updated;
+      if (typeof slugs === 'string') {
+        try { slugs = JSON.parse(slugs); } catch { slugs = []; }
+      }
+      if (!Array.isArray(slugs)) continue;
+      for (const slug of slugs) {
+        if (typeof slug === 'string') latestIsExternal.set(slug, isExternal);
+      }
+    }
+    const out = new Set<string>();
+    for (const [slug, isExternal] of latestIsExternal) {
+      if (isExternal) out.add(slug);
+    }
+    return out;
+  } catch (e: unknown) {
+    // Name the cause so a persistent failure (schema drift, permissions) is
+    // diagnosable from cron logs instead of silently disabling the reconcile.
+    serr(`  ingest_log provenance read failed: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
 }
 
 async function performFullSync(
@@ -3090,7 +3208,7 @@ async function performFullSync(
   // !fullGate.advanced early-return).
   //
   // SAFETY — must NOT re-introduce the #1433 stale-page data loss. A page is
-  // deleted ONLY when ALL three hold:
+  // deleted ONLY when ALL four hold:
   //   1. source_path != null      → file-backed pages only; put_page/manual
   //      pages (null source_path) are never swept.
   //   2. isSyncable(source_path)  → excludes metafiles (README/log.md, the
@@ -3099,9 +3217,16 @@ async function performFullSync(
   //   3. source_path ∉ current    → the backing file is genuinely gone from the
   //      working tree (collectSyncableFiles == the same enumeration runImport
   //      used, so paths are in the identical relative form as source_path).
+  //   4. not externally imported  → source_path is relative to the IMPORT dir,
+  //      not necessarily this repo. A page whose latest `gbrain import <dir>`
+  //      root (per ingest_log provenance) is outside repoPath can never match
+  //      the repo enumeration, so the repo tree says nothing about its
+  //      staleness — sweeping it is the "537 of 637 pages deleted on first
+  //      sync after local_path was set" data loss. See externallyImportedSlugs.
   // Skipped on the legacy no-sourceId path (the batch delete primitives require
   // a sourceId; matches every other source-scoped feature).
   let reconciledDeletes = 0;
+  let reconcileSkipped: SyncResult['reconcileSkipped'];
   if (opts.sourceId) {
     const sid = opts.sourceId;
     const reconcileSyncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
@@ -3117,11 +3242,39 @@ async function performFullSync(
       `SELECT slug, source_path FROM pages WHERE source_id = $1 AND source_path IS NOT NULL AND deleted_at IS NULL`,
       [sid],
     );
-    const staleSlugs = rows
+    const external = await externallyImportedSlugs(engine, sid, repoPath);
+    if (external === null) {
+      reconcileSkipped = 'provenance_unreadable';
+      serr(
+        `  Skipping stale-page reconcile: import provenance (ingest_log) is ` +
+        `unreadable, so out-of-repo imports can't be told apart from stale pages.`,
+      );
+    }
+    let staleSlugs = external === null ? [] : rows
       .filter(r => r.source_path != null
         && isSyncable(r.source_path, reconcileSyncOpts)
-        && !current.has(r.source_path))
+        && !current.has(r.source_path)
+        && !external.has(r.slug))
       .map(r => r.slug);
+    // Mass-delete circuit breaker: the reconcile is a best-effort sweep of
+    // stragglers, not a bulk-delete mechanism — committed deletes flow through
+    // the incremental diff path. A sweep this large is the signature of a
+    // classification failure (provenance rows missing after a crash mid-import,
+    // a concurrent import racing this sync, a mis-resolved import root), and
+    // an unwarranted mass delete is unrecoverable while a lingering stale page
+    // is not. Refuse and tell the operator how to override deliberately.
+    if (staleSlugs.length >= RECONCILE_BREAKER_MIN_DELETES
+        && staleSlugs.length > rows.length * RECONCILE_BREAKER_MAX_SHARE
+        && process.env.GBRAIN_SYNC_RECONCILE_FORCE !== '1') {
+      reconcileSkipped = 'mass_delete_breaker';
+      serr(
+        `  Skipping stale-page reconcile: it would delete ${staleSlugs.length} of ` +
+        `${rows.length} file-backed page(s) in source '${sid}' — too large a share to ` +
+        `sweep automatically. If this is intentional (e.g. the repo really did shrink), ` +
+        `re-run with GBRAIN_SYNC_RECONCILE_FORCE=1 gbrain sync --full.`,
+      );
+      staleSlugs = [];
+    }
     if (staleSlugs.length > 0) {
       const deleteScopedOpts = { sourceId: sid };
       for (let i = 0; i < staleSlugs.length; i += DELETE_BATCH_SIZE) {
@@ -3176,6 +3329,7 @@ async function performFullSync(
     chunksCreated: result.chunksCreated,
     embedded,
     pagesAffected: [],
+    ...(reconcileSkipped ? { reconcileSkipped } : {}),
   };
 }
 
