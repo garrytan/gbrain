@@ -2,7 +2,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { startMcpServer } from '../mcp/server.ts';
 import { startMcpHttpServer } from '../mcp/http-server.ts';
 import { loadConfig } from '../core/config.ts';
-import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
+import { DEFAULT_RUNTIME_CONFIG, shouldAutoMigrateOnConnect } from '../core/engine-factory.ts';
+import type { MBrainConfig } from '../core/config.ts';
 
 type McpHttpSurfaceSchemaEngine = BrainEngine & {
   prepareMcpHttpSurfaceSchema?: () => Promise<void>;
@@ -33,7 +34,7 @@ export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args:
       process.exit(1);
     }
     const config = loadConfig() ?? DEFAULT_RUNTIME_CONFIG;
-    const httpEngine = await prepareHttpServeEngine(engine, oauth);
+    const httpEngine = await prepareHttpServeEngine(engine, oauth, config);
     const allowedOrigins = resolveAllowedOrigins(publicBaseUrl);
     const server = startMcpHttpServer({
       engine: httpEngine,
@@ -99,8 +100,11 @@ export function getHttpOAuthServeStartupErrors(options: HttpOAuthServeStartupOpt
 export async function prepareHttpServeEngine(
   engine: BrainEngine | Promise<BrainEngine>,
   oauthEnabled: boolean,
+  config: MBrainConfig = loadConfig() ?? DEFAULT_RUNTIME_CONFIG,
 ): Promise<BrainEngine> {
   const resolved = await engine as McpHttpSurfaceSchemaEngine;
+  if (!shouldAutoMigrateOnConnect(config)) return resolved;
+
   if (oauthEnabled) {
     await resolved.initSchema();
   } else if (typeof resolved.prepareMcpHttpSurfaceSchema === 'function') {

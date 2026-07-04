@@ -14,7 +14,8 @@ describe('wave hardening release metadata', () => {
     expect(existsSync(migrationUrl)).toBe(true);
 
     const migration = readFileSync(migrationUrl, 'utf-8');
-    expect(migration).toContain('mbrain init');
+    expect(migration).toContain('mbrain init --url "$MBRAIN_DATABASE_URL" --non-interactive');
+    expect(migration).toContain('Do not use bare `mbrain init` as a remote migration command');
     expect(migration).toContain('mbrain setup-agent --apply');
     expect(migration).toContain('retrieval.governed_probe_hybrid');
     expect(migration).toContain('schema v64');

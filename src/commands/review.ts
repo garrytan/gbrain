@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'crypto';
+import { isIP } from 'node:net';
 import { loadConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
@@ -265,7 +266,15 @@ function isAllowedReviewHost(requestHost: string, bindHost: string): boolean {
   if (isLoopbackBindHost(normalizedBindHost)) {
     return isLoopbackBindHost(normalizedRequestHost);
   }
+  if (isWildcardBindHost(normalizedBindHost)) {
+    return isLoopbackBindHost(normalizedRequestHost) || isIP(normalizedRequestHost) !== 0;
+  }
   return normalizedRequestHost === normalizedBindHost;
+}
+
+function isWildcardBindHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  return normalized === '0.0.0.0' || normalized === '::';
 }
 
 function reviewRequestHost(request: Request, url: URL): string | null {

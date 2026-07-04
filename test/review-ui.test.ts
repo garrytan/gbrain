@@ -231,7 +231,26 @@ describe('local review UI', () => {
         port: 0,
         allowNonLoopback: true,
       });
-      server.stop();
+      try {
+        const port = new URL(server.url).port;
+        const lanHost = await fetch(`http://127.0.0.1:${port}/api/candidates?status=candidate`, {
+          headers: {
+            authorization: `Bearer ${server.token}`,
+            host: '192.168.0.10',
+          },
+        });
+        expect(lanHost.status).toBe(200);
+
+        const dnsHost = await fetch(`http://127.0.0.1:${port}/api/candidates?status=candidate`, {
+          headers: {
+            authorization: `Bearer ${server.token}`,
+            host: 'evil.example.com',
+          },
+        });
+        expect(dnsHost.status).toBe(403);
+      } finally {
+        server.stop();
+      }
     } finally {
       await harness.cleanup();
     }

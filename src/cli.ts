@@ -17,6 +17,7 @@ import {
 } from './core/operations.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
 import { performSync as performSyncCommand, runSync as runSyncCommand } from './commands/sync.ts';
+import { LATEST_VERSION } from './core/migrate.ts';
 import { VERSION } from './version.ts';
 
 // Build CLI name -> operation lookup
@@ -558,6 +559,8 @@ async function main() {
       process.exit(1);
     }
 
+    await assertCliOperationSchemaReady(engine, op.name);
+
     const ctx = makeContext(engine, params);
     const result = await dispatchOperation(ctx, op, params);
     const output = formatResult(op.name, result, params);
@@ -785,6 +788,19 @@ async function connectEngine(): Promise<BrainEngine> {
     process.exit(1);
   }
   return createMigratedLocalEngine(config);
+}
+
+export async function assertCliOperationSchemaReady(engine: BrainEngine, operationName: string): Promise<void> {
+  if (operationName === 'get_health') return;
+  if (typeof engine.getConfig !== 'function') return;
+  const rawVersion = await engine.getConfig('version').catch(() => null);
+  const schemaVersion = Number.parseInt(rawVersion ?? '0', 10);
+  if (Number.isFinite(schemaVersion) && schemaVersion >= LATEST_VERSION) return;
+  throw new OperationError(
+    'schema_out_of_date',
+    `MBrain schema v${Number.isFinite(schemaVersion) ? schemaVersion : 'unknown'} is older than required schema v${LATEST_VERSION}.`,
+    'Run mbrain init with the configured database URL to apply pending schema migrations, then retry.',
+  );
 }
 
 function printHelp() {

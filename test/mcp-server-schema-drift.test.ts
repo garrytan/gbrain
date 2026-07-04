@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
 import { OperationError } from '../src/core/operations.ts';
+import { assertCliOperationSchemaReady } from '../src/cli.ts';
 import { assertMcpSurfaceSchemaReady, mapUnknownMcpToolError } from '../src/mcp/server.ts';
 
 describe('MCP schema drift error mapping', () => {
@@ -30,7 +31,7 @@ describe('MCP schema drift error mapping', () => {
     expect(mapUnknownMcpToolError(error)).toBe(error);
   });
 
-  test('fails closed on stale non-stdio MCP surfaces while allowing get_health to report drift', async () => {
+  test('fails closed on stale MCP surfaces while allowing get_health to report drift', async () => {
     const staleEngine = {
       getConfig: async () => String(LATEST_VERSION - 1),
     } as unknown as BrainEngine;
@@ -40,6 +41,17 @@ describe('MCP schema drift error mapping', () => {
     await expect(assertMcpSurfaceSchemaReady(staleEngine, 'http_remote', 'get_health'))
       .resolves.toBeUndefined();
     await expect(assertMcpSurfaceSchemaReady(staleEngine, 'stdio', 'retrieve_context'))
+      .rejects.toThrow(OperationError);
+  });
+
+  test('fails closed on stale generic CLI operations while allowing get_health to report drift', async () => {
+    const staleEngine = {
+      getConfig: async () => String(LATEST_VERSION - 1),
+    } as unknown as BrainEngine;
+
+    await expect(assertCliOperationSchemaReady(staleEngine, 'retrieve_context'))
+      .rejects.toThrow(OperationError);
+    await expect(assertCliOperationSchemaReady(staleEngine, 'get_health'))
       .resolves.toBeUndefined();
   });
 });

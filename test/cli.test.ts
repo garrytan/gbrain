@@ -384,7 +384,7 @@ describe('CLI version', () => {
 });
 
 describe('CLI dispatch integration', () => {
-  test('HTTP OAuth serve prepares schema before exposing OAuth-backed routes', async () => {
+  test('HTTP OAuth serve prepares schema for owner-local configs before exposing OAuth-backed routes', async () => {
     const { prepareHttpServeEngine } = await import('../src/commands/serve.ts');
     const calls: string[] = [];
     const engine = {
@@ -393,13 +393,34 @@ describe('CLI dispatch integration', () => {
       },
     };
 
-    const prepared = await prepareHttpServeEngine(Promise.resolve(engine as any), true);
+    const prepared = await prepareHttpServeEngine(Promise.resolve(engine as any), true, {
+      engine: 'postgres',
+      database_url: 'postgres://localhost:5432/mbrain',
+    } as any);
 
     expect(prepared).toBe(engine as any);
     expect(calls).toEqual(['initSchema']);
   });
 
-  test('HTTP serve without OAuth prepares only the MCP HTTP surface schema', async () => {
+  test('HTTP OAuth serve does not auto-migrate shared remote Postgres configs', async () => {
+    const { prepareHttpServeEngine } = await import('../src/commands/serve.ts');
+    const calls: string[] = [];
+    const engine = {
+      initSchema: async () => {
+        calls.push('initSchema');
+      },
+    };
+
+    const prepared = await prepareHttpServeEngine(Promise.resolve(engine as any), true, {
+      engine: 'postgres',
+      database_url: 'postgres://user:pass@db.example.com:5432/mbrain',
+    } as any);
+
+    expect(prepared).toBe(engine as any);
+    expect(calls).toEqual([]);
+  });
+
+  test('HTTP serve without OAuth prepares only the MCP HTTP surface schema for owner-local configs', async () => {
     const { prepareHttpServeEngine } = await import('../src/commands/serve.ts');
     const calls: string[] = [];
     const engine = {
@@ -411,7 +432,10 @@ describe('CLI dispatch integration', () => {
       },
     };
 
-    const prepared = await prepareHttpServeEngine(engine as any, false);
+    const prepared = await prepareHttpServeEngine(engine as any, false, {
+      engine: 'sqlite',
+      database_path: ':memory:',
+    } as any);
 
     expect(prepared).toBe(engine as any);
     expect(calls).toEqual(['prepareMcpHttpSurfaceSchema']);

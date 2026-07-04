@@ -998,7 +998,8 @@ export async function assertMcpSurfaceSchemaReady(
   surfaceName: string,
   operationName: string,
 ): Promise<void> {
-  if (surfaceName === 'stdio' || operationName === 'get_health') return;
+  void surfaceName;
+  if (operationName === 'get_health') return;
   if (typeof engine.getConfig !== 'function') return;
   const rawVersion = await engine.getConfig('version').catch(() => null);
   const schemaVersion = Number.parseInt(rawVersion ?? '0', 10);
