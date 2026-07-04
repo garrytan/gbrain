@@ -9,6 +9,8 @@ import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import type { Operation } from '../src/core/operations.ts';
 import type { PageType, SearchResult, Page, Link } from '../src/core/types.ts';
 
+const SQLITE_PGLITE_PARITY_TIMEOUT_MS = Number(process.env.TEST_TIMEOUT_MS ?? 30_000);
+
 describe('operations contract parity', () => {
   test('every operation has a unique name', () => {
     const names = operations.map(op => op.name);
@@ -168,7 +170,7 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
         throw new AggregateError(cleanupErrors, 'Failed to clean up SQLite/PGLite parity fixtures');
       }
     }
-  });
+  }, SQLITE_PGLITE_PARITY_TIMEOUT_MS);
 
   test('agree on explicit zero page-list limit', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-pglite-zero-limit-'));
@@ -207,7 +209,7 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
         throw new AggregateError(cleanupErrors, 'Failed to clean up zero-limit parity fixtures');
       }
     }
-  });
+  }, SQLITE_PGLITE_PARITY_TIMEOUT_MS);
 
   test('agree on shallow graph traversal when a node is reachable at multiple depths', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-pglite-graph-parity-'));
@@ -250,7 +252,7 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
         throw new AggregateError(cleanupErrors, 'Failed to clean up graph parity fixtures');
       }
     }
-  });
+  }, SQLITE_PGLITE_PARITY_TIMEOUT_MS);
 
   test('SQLite keyword results use stored chunk source when a matching chunk exists', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-search-chunk-source-'));
@@ -282,7 +284,7 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
         throw new AggregateError(cleanupErrors, 'Failed to clean up SQLite search chunk-source fixtures');
       }
     }
-  });
+  }, SQLITE_PGLITE_PARITY_TIMEOUT_MS);
 
   test('PGLite keyword results keep stored chunk identity when compiled truth also matches', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mbrain-pglite-search-chunk-identity-'));
@@ -325,7 +327,7 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
         throw new AggregateError(cleanupErrors, 'Failed to clean up PGLite search chunk-identity fixtures');
       }
     }
-  });
+  }, SQLITE_PGLITE_PARITY_TIMEOUT_MS);
 
   test('SQLite keyword results prefer the stored chunk with the strongest query match', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-search-best-chunk-'));
@@ -375,7 +377,7 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
         throw new AggregateError(cleanupErrors, 'Failed to clean up SQLite search best-chunk fixtures');
       }
     }
-  });
+  }, SQLITE_PGLITE_PARITY_TIMEOUT_MS);
 
   test('same-date timeline entries are ordered by id descending across engines', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-pglite-timeline-order-'));
@@ -432,7 +434,7 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
         throw new AggregateError(cleanupErrors, 'Failed to clean up timeline order fixtures');
       }
     }
-  });
+  }, SQLITE_PGLITE_PARITY_TIMEOUT_MS);
 
   test('derived jobs and derived index state round-trip across engines', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-pglite-derived-jobs-'));
@@ -492,7 +494,7 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
         throw new AggregateError(cleanupErrors, 'Failed to clean up derived-job parity fixtures');
       }
     }
-  });
+  }, SQLITE_PGLITE_PARITY_TIMEOUT_MS);
 
   test('slug rename preserves content and retargets links across engines', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-pglite-slug-rename-'));
@@ -542,7 +544,7 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
         throw new AggregateError(cleanupErrors, 'Failed to clean up slug-rename parity fixtures');
       }
     }
-  });
+  }, SQLITE_PGLITE_PARITY_TIMEOUT_MS);
 });
 
 type ListAndLinkEngine = Pick<

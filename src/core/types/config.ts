@@ -4,4 +4,5 @@ export interface EngineConfig {
   database_path?: string;
   engine?: 'postgres' | 'sqlite' | 'pglite';
   poolSize?: number;
+  schemaLogger?: (message: string) => void;
 }

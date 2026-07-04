@@ -61,7 +61,7 @@ export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
 
 export async function createConnectedEngine(
   config: MBrainConfig,
-  options?: { poolSize?: number },
+  options?: { poolSize?: number; schemaLogger?: (message: string) => void },
 ): Promise<BrainEngine> {
   validateResolvedConfig(config);
   const runtimePoolSize = config.engine === 'postgres'
@@ -84,6 +84,49 @@ export async function createConnectedEngine(
     registerConnectionOwner(engine);
   }
   return engine;
+}
+
+export async function createMigratedLocalEngine(
+  config: MBrainConfig,
+  options?: { poolSize?: number; schemaLogger?: (message: string) => void },
+): Promise<BrainEngine> {
+  const shouldAutoMigrate = shouldAutoMigrateOnConnect(config);
+  const engine = await createConnectedEngine(config, {
+    ...options,
+    schemaLogger: shouldAutoMigrate
+      ? (options?.schemaLogger ?? ((message: string) => console.error(message)))
+      : options?.schemaLogger,
+  });
+  if (!shouldAutoMigrate) return engine;
+
+  try {
+    await engine.initSchema();
+  } catch (error) {
+    await engine.disconnect().catch(() => undefined);
+    throw error;
+  }
+  return engine;
+}
+
+export function shouldAutoMigrateOnConnect(config: MBrainConfig): boolean {
+  if (config.engine === 'sqlite' || config.engine === 'pglite') return true;
+  if (config.engine !== 'postgres') return false;
+  if (process.env.MBRAIN_AUTO_MIGRATE_ON_CONNECT === '1') return true;
+  return isLoopbackPostgresUrl(config.database_url);
+}
+
+function isLoopbackPostgresUrl(rawUrl: string | undefined): boolean {
+  if (!rawUrl) return false;
+  try {
+    const parsed = new URL(rawUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    return hostname === 'localhost'
+      || hostname === '127.0.0.1'
+      || hostname === '::1'
+      || hostname === '[::1]';
+  } catch {
+    return rawUrl.includes('host=/') || rawUrl.includes('host=%2F');
+  }
 }
 
 export function supportsParallelWorkers(config: MBrainConfig): boolean {

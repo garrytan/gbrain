@@ -2,7 +2,7 @@
 
 import { loadConfig } from './core/config.ts';
 import { createLocalAuthPrincipal } from './core/auth-principal.ts';
-import { createConnectedEngine, DEFAULT_RUNTIME_CONFIG } from './core/engine-factory.ts';
+import { createConnectedEngine, createMigratedLocalEngine, DEFAULT_RUNTIME_CONFIG } from './core/engine-factory.ts';
 import type { BrainEngine } from './core/engine.ts';
 import {
   operations,
@@ -17,6 +17,7 @@ import {
 } from './core/operations.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
 import { performSync as performSyncCommand, runSync as runSyncCommand } from './commands/sync.ts';
+import { LATEST_VERSION } from './core/migrate.ts';
 import { VERSION } from './version.ts';
 
 // Build CLI name -> operation lookup
@@ -558,6 +559,8 @@ async function main() {
       process.exit(1);
     }
 
+    await assertCliOperationSchemaReady(engine, op.name);
+
     const ctx = makeContext(engine, params);
     const result = await dispatchOperation(ctx, op, params);
     const output = formatResult(op.name, result, params);
@@ -739,7 +742,7 @@ async function handleDirectCommand(command: string, args: string[]): Promise<boo
     return false;
   }
 
-  const engine = await connectEngine();
+  const engine = await connectEngine({ autoMigrate: command !== 'doctor' });
   try {
     const runCommand = await engineLoader();
     const normalizedArgs = command === 'eval'
@@ -778,13 +781,29 @@ function normalizeCliOnlyArgs(command: string, args: string[]): string[] {
   return normalized;
 }
 
-async function connectEngine(): Promise<BrainEngine> {
+async function connectEngine(options: { autoMigrate?: boolean } = {}): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) {
     console.error('No brain configured. Run: mbrain init --profile homebrew-postgres, mbrain init --url <postgres_connection_string>, or set MBRAIN_DATABASE_URL / DATABASE_URL.');
     process.exit(1);
   }
-  return createConnectedEngine(config);
+  if (options.autoMigrate === false) {
+    return createConnectedEngine(config);
+  }
+  return createMigratedLocalEngine(config);
+}
+
+export async function assertCliOperationSchemaReady(engine: BrainEngine, operationName: string): Promise<void> {
+  if (operationName === 'get_health') return;
+  if (typeof engine.getConfig !== 'function') return;
+  const rawVersion = await engine.getConfig('version').catch(() => null);
+  const schemaVersion = Number.parseInt(rawVersion ?? '0', 10);
+  if (Number.isFinite(schemaVersion) && schemaVersion >= LATEST_VERSION) return;
+  throw new OperationError(
+    'schema_out_of_date',
+    `MBrain schema v${Number.isFinite(schemaVersion) ? schemaVersion : 'unknown'} is older than required schema v${LATEST_VERSION}.`,
+    'Run mbrain init with the configured database URL to apply pending schema migrations, then retry.',
+  );
 }
 
 function printHelp() {

@@ -140,6 +140,7 @@ export type ErrorCode =
   | 'bucket_not_found'
   | 'database_error'
   | 'unsupported_capability'
+  | 'schema_out_of_date'
   | 'permission_denied';
 
 export class OperationError extends Error {

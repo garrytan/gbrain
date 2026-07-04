@@ -23,4 +23,5 @@ export {
 export { PostgresEngine } from './core/postgres-engine.ts';
 export type { BrainEngine } from './core/engine.ts';
 export * from './core/types.ts';
+export { LATEST_VERSION } from './core/migrate.ts';
 export { VERSION } from './version.ts';
