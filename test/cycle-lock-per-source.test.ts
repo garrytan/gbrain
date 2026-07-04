@@ -44,6 +44,29 @@ describe('cycleLockIdFor', () => {
     expect(cycleLockIdFor()).not.toBe(cycleLockIdFor('legacy'));
   });
 
+  describe('UUID source ids (embedder tenant keys)', () => {
+    test('canonical UUID derives a slug-legal lock token by stripping hyphens', () => {
+      // A multi-tenant embedder's sourceId is a user UUID: 36 chars breaks
+      // the slug rule at the lock, so every such cycle died at acquisition.
+      // Hyphen-stripped it is exactly 32 lowercase hex chars — slug-legal.
+      expect(cycleLockIdFor('550e8400-e29b-41d4-a716-446655440000')).toBe(
+        'gbrain-cycle:550e8400e29b41d4a716446655440000',
+      );
+    });
+
+    test('distinct UUIDs produce distinct lock ids, none colliding with legacy', () => {
+      const a = cycleLockIdFor('550e8400-e29b-41d4-a716-446655440000');
+      const b = cycleLockIdFor('123e4567-e89b-42d3-a456-426614174000');
+      expect(a).not.toBe(b);
+      expect(a).not.toBe('gbrain-cycle');
+      expect(b).not.toBe('gbrain-cycle');
+    });
+
+    test('non-canonical (uppercase) UUIDs still throw', () => {
+      expect(() => cycleLockIdFor('550E8400-E29B-41D4-A716-446655440000')).toThrow();
+    });
+  });
+
   describe('internal validation (codex r2 P1-B)', () => {
     test('throws on path-traversal shapes', () => {
       expect(() => cycleLockIdFor('../etc')).toThrow();
