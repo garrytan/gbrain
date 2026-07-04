@@ -27,7 +27,7 @@
  */
 
 import type Anthropic from '@anthropic-ai/sdk';
-import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
+import { writeFileSync, mkdirSync, statSync } from 'node:fs';
 import { chat as gatewayChat, type ChatResult } from '../ai/gateway.ts';
 import { resolveRecipe } from '../ai/model-resolver.ts';
 import { AIConfigError } from '../ai/errors.ts';
@@ -39,6 +39,7 @@ import { MinionQueue } from '../minions/queue.ts';
 import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { discoverTranscripts, type DiscoveredTranscript } from './transcript-discovery.ts';
+import { loadAllowedSlugPrefixes } from './allowed-slug-prefixes.ts';
 import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 import { validateSourceId } from '../utils.ts';
@@ -320,8 +321,10 @@ export async function runPhaseSynthesize(
     // them. Best-effort — a probe that's never run is a normal early state.
     const priorContradictionsBlock = await loadPriorContradictionsBlock(engine);
 
+    const explicitInputIsDirectory = opts.inputFile ? statSync(opts.inputFile).isDirectory() : false;
+
     // Discover.
-    const transcripts = opts.inputFile
+    const rawTranscripts = opts.inputFile
       ? loadAdHocTranscript(opts.inputFile, config.minChars, config.excludePatterns, opts.bypassDreamGuard)
       : discoverTranscripts({
           corpusDir: config.corpusDir!,
@@ -333,9 +336,18 @@ export async function runPhaseSynthesize(
           to: opts.to,
           bypassGuard: opts.bypassDreamGuard,
         });
+    const { transcripts, duplicateInputSkips } = explicitInputIsDirectory
+      ? dedupeExplicitInputTranscripts(rawTranscripts)
+      : { transcripts: rawTranscripts, duplicateInputSkips: [] };
 
     if (transcripts.length === 0) {
-      return ok('no transcripts to process', { transcripts_processed: 0, pages_written: 0 });
+      return ok('no transcripts to process', {
+        transcripts_discovered: rawTranscripts.length,
+        transcripts_unique: transcripts.length,
+        transcripts_processed: 0,
+        pages_written: 0,
+        duplicate_skips: duplicateInputSkips,
+      });
     }
 
     // Significance verdicts (cached in dream_verdicts; Haiku on miss).
@@ -348,6 +360,16 @@ export async function runPhaseSynthesize(
     // as the cheap pre-flight check).
     const judge = makeJudgeClient(config.verdictModel);
     for (const t of transcripts) {
+      if (explicitInputIsDirectory) {
+        verdicts.push({
+          filePath: t.filePath,
+          worth: true,
+          reasons: ['explicit input folder selected'],
+          cached: false,
+        });
+        worthProcessing.push(t);
+        continue;
+      }
       const cached = await engine.getDreamVerdict(t.filePath, t.contentHash);
       if (cached) {
         verdicts.push({ filePath: t.filePath, worth: cached.worth_processing, reasons: cached.reasons, cached: true });
@@ -392,11 +414,13 @@ export async function runPhaseSynthesize(
     // but no Sonnet synthesis. Codex finding #8: --dry-run does NOT mean
     // "zero LLM calls"; it means "skip Sonnet."
     if (opts.dryRun) {
-      return ok(`dry-run: ${worthProcessing.length} of ${transcripts.length} transcripts would synthesize`, {
-        transcripts_discovered: transcripts.length,
+      return ok(`dry-run: ${worthProcessing.length} of ${rawTranscripts.length} transcripts would synthesize`, {
+        transcripts_discovered: rawTranscripts.length,
+        transcripts_unique: transcripts.length,
         transcripts_processed: 0,
         pages_written: 0,
         verdicts,
+        duplicate_skips: duplicateInputSkips,
         dryRun: true,
       });
     }
@@ -406,10 +430,12 @@ export async function runPhaseSynthesize(
       // real successful run — not on "nothing worth processing." Lets a
       // re-run pick up if a new transcript lands later.
       return ok('all transcripts skipped by significance filter', {
-        transcripts_discovered: transcripts.length,
+        transcripts_discovered: rawTranscripts.length,
+        transcripts_unique: transcripts.length,
         transcripts_processed: 0,
         pages_written: 0,
         verdicts,
+        duplicate_skips: duplicateInputSkips,
       });
     }
 
@@ -572,7 +598,8 @@ export async function runPhaseSynthesize(
     const ms = Date.now() - start;
     const submittedTranscripts = worthProcessing.length - skipReports.length;
     return ok(`${submittedTranscripts} transcript(s) synthesized in ${(ms / 1000).toFixed(1)}s`, {
-      transcripts_discovered: transcripts.length,
+      transcripts_discovered: rawTranscripts.length,
+      transcripts_unique: transcripts.length,
       transcripts_processed: submittedTranscripts,
       pages_written: writtenSlugs.length,
       // v0.29: emit the slug list so the recompute_emotional_weight phase can
@@ -587,6 +614,7 @@ export async function runPhaseSynthesize(
       children_submitted: childIds.length,
       // D5 cap hits + D8 legacy-key skips. Empty when nothing skipped.
       skips: skipReports,
+      duplicate_skips: duplicateInputSkips,
       summary_slug: summarySlug,
       verdicts,
     });
@@ -720,27 +748,6 @@ async function checkCooldown(
 }
 
 // ── Allow-list source of truth ───────────────────────────────────────
-
-async function loadAllowedSlugPrefixes(): Promise<string[]> {
-  // Search a few known locations relative to the binary / repo. The first
-  // hit wins; if none found, return [].
-  const candidates = [
-    join(process.cwd(), 'skills', '_brain-filing-rules.json'),
-    join(__dirname, '..', '..', '..', 'skills', '_brain-filing-rules.json'),
-  ];
-  for (const path of candidates) {
-    if (!existsSync(path)) continue;
-    try {
-      const raw = readFileSync(path, 'utf8');
-      const parsed = JSON.parse(raw) as { dream_synthesize_paths?: { globs?: unknown } };
-      const globs = parsed?.dream_synthesize_paths?.globs;
-      if (Array.isArray(globs) && globs.every(g => typeof g === 'string')) {
-        return globs as string[];
-      }
-    } catch { /* try next */ }
-  }
-  return [];
-}
 
 // ── Significance judge (gateway-routed; provider-agnostic) ──────────────
 //
@@ -1037,15 +1044,27 @@ OUTPUT POLICY (ALL of these are required)
 4. Slug discipline: lowercase alphanumeric and hyphens only, slash-separated segments. NO underscores, NO file extensions.
 
 TASKS
-A. Reflections (self-knowledge, pattern recognition, emotional processing):
+A. Meeting records (meeting minutes, decisions, tasks, participants):
+   If the transcript is a meeting record, write one meeting page first.
+   slug: \`wiki/meetings/${dateHint}-<meeting-topic-slug>-${hashSuffix}\`
+   Include concise sections for purpose, participants if known, decisions, action items, open questions, and follow-up risks.
+   This meeting page is required for meeting transcripts even when you also write idea/reflection pages.
+
+B. AI/session conversations (Codex, ChatGPT, Claude, agent logs, long assistant chats):
+   If the transcript is an AI or assistant conversation/session, write one conversation page first.
+   slug: \`wiki/conversations/${dateHint}-<conversation-topic-slug>-${hashSuffix}\`
+   Include concise sections for context, user intent, decisions made, useful outputs, unresolved follow-ups, and reusable lessons.
+   This conversation page is required for AI/session transcripts even when you also write idea/reflection pages.
+
+C. Reflections (self-knowledge, pattern recognition, emotional processing):
    slug: \`wiki/personal/reflections/${dateHint}-<topic-slug>-${hashSuffix}\`
 
-B. Originals (new ideas, frames, theses, mental models):
+D. Originals (new ideas, frames, theses, mental models):
    slug: \`wiki/originals/ideas/${dateHint}-<idea-slug>-${hashSuffix}\`
 
-C. People mentions: search first; if a page exists, do not put_page over it (the orchestrator handles people enrichment via timeline entries — your job is the reflection/original synthesis, NOT modifying existing person pages).
+E. People mentions: search first; if a page exists, do not put_page over it (the orchestrator handles people enrichment via timeline entries; your job is the meeting/conversation/reflection/original synthesis, NOT modifying existing person pages).
 
-D. If nothing in this transcript meets the bar (significance filter already passed but the content is still routine), return without writing anything.
+F. If this is not a meeting or AI/session transcript and nothing in it meets the bar (significance filter already passed but the content is still routine), return without writing anything.
 
 TRANSCRIPT (${transcriptHeader})
 ---
@@ -1281,6 +1300,25 @@ function loadAdHocTranscript(
   const { readSingleTranscript } = require('./transcript-discovery.ts') as typeof import('./transcript-discovery.ts');
   const t = readSingleTranscript(filePath, { minChars, excludePatterns, bypassGuard });
   return t ? [t] : [];
+}
+
+function dedupeExplicitInputTranscripts(transcripts: DiscoveredTranscript[]): {
+  transcripts: DiscoveredTranscript[];
+  duplicateInputSkips: Array<{ filePath: string; duplicateOf: string }>;
+} {
+  const seen = new Map<string, DiscoveredTranscript>();
+  const unique: DiscoveredTranscript[] = [];
+  const duplicateInputSkips: Array<{ filePath: string; duplicateOf: string }> = [];
+  for (const t of transcripts) {
+    const prior = seen.get(t.contentHash);
+    if (prior) {
+      duplicateInputSkips.push({ filePath: t.filePath, duplicateOf: prior.filePath });
+      continue;
+    }
+    seen.set(t.contentHash, t);
+    unique.push(t);
+  }
+  return { transcripts: unique, duplicateInputSkips };
 }
 
 function today(): string {

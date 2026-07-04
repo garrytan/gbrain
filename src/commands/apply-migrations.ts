@@ -14,6 +14,7 @@
 
 import { VERSION } from '../version.ts';
 import { loadConfig } from '../core/config.ts';
+import { brainDirFromConfig, ensureSystemSkillAssets } from '../core/system-skill-assets.ts';
 import { loadCompletedMigrations, appendCompletedMigration, type CompletedMigrationEntry } from '../core/preferences.ts';
 import { migrations, compareVersions, type Migration, type OrchestratorOpts } from './migrations/index.ts';
 
@@ -283,10 +284,14 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
   // setup). No config = no brain = nothing
   // to migrate. Exit silently for --yes / --non-interactive so postinstall
   // stays quiet; mention the init step when invoked interactively.
-  if (!loadConfig()) {
+  const config = loadConfig();
+  if (!config) {
     if (cli.list) console.log('No PMBrain config found. Save setup or run `pmbrain init` to set one up.');
     else if (cli.dryRun) console.log('No PMBrain config found (save setup or run `pmbrain init` first). Nothing to migrate.');
     return;
+  }
+  if (!cli.dryRun && !cli.list) {
+    ensureConfiguredSystemSkillAssets(config);
   }
 
   // Bug 3 — --force-retry: write an explicit reset marker for a wedged
@@ -494,6 +499,21 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
   }
 
   if (failed) process.exit(1);
+}
+
+function ensureConfiguredSystemSkillAssets(config: NonNullable<ReturnType<typeof loadConfig>>): void {
+  const brainDir = brainDirFromConfig(config);
+  if (!brainDir) return;
+  try {
+    const result = ensureSystemSkillAssets(brainDir);
+    const changed = result.created.length + result.updated.length;
+    if (changed > 0) {
+      process.stderr.write(`[apply-migrations] initialized system skill assets in ${result.skillsDir} (${changed} changed)\n`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[apply-migrations] warning: system skill asset initialization skipped: ${msg}\n`);
+  }
 }
 
 /** Exported for unit tests only. Do not use from production code. */

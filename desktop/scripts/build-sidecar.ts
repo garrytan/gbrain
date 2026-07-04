@@ -41,6 +41,15 @@ if (await build.exited !== 0) {
 }
 
 await cp(process.execPath, join(outputDirectory, 'bun.exe'));
+await mkdir(join(outputDirectory, 'skills'), { recursive: true });
+await cp(
+  join(projectRoot, 'skills', '_brain-filing-rules.json'),
+  join(outputDirectory, 'skills', '_brain-filing-rules.json'),
+);
+await cp(
+  join(projectRoot, 'skills', '_brain-filing-rules.md'),
+  join(outputDirectory, 'skills', '_brain-filing-rules.md'),
+);
 for (const runtimePackage of runtimePackages) {
   await copyRuntimePackage(runtimePackage);
 }

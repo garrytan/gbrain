@@ -9,6 +9,7 @@ const __dirname = dirname(__filename);
 import { saveConfig, loadConfig, loadConfigFileOnly, toEngineConfig, gbrainPath, configPath, isThinClient, type GBrainConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core/remote-mcp-probe.ts';
+import { brainDirFromConfig, ensureSystemSkillAssets } from '../core/system-skill-assets.ts';
 
 function envCompat(primary: string, legacy: string): string | undefined {
   return process.env[primary] ?? process.env[legacy];
@@ -552,10 +553,27 @@ async function initMigrateOnly(opts: { jsonOutput: boolean }) {
     try { await engine.disconnect(); } catch { /* best-effort */ }
   }
 
+  ensureConfiguredSystemSkillAssets(config);
+
   if (opts.jsonOutput) {
     console.log(JSON.stringify({ status: 'success', engine: config.engine, mode: 'migrate-only' }));
   } else {
     console.log(`Schema up to date (engine: ${config.engine}).`);
+  }
+}
+
+function ensureConfiguredSystemSkillAssets(config: GBrainConfig): void {
+  const brainDir = brainDirFromConfig(config);
+  if (!brainDir) return;
+  try {
+    const result = ensureSystemSkillAssets(brainDir);
+    const changed = result.created.length + result.updated.length;
+    if (changed > 0) {
+      process.stderr.write(`[init] initialized system skill assets in ${result.skillsDir} (${changed} changed)\n`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[init] warning: system skill asset initialization skipped: ${msg}\n`);
   }
 }
 
@@ -956,6 +974,7 @@ async function initPGLite(opts: {
       ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
     saveConfig(config);
+    ensureConfiguredSystemSkillAssets(config);
     if (opts.schemaPack) {
       process.stderr.write(
         `[init] Using schema pack: ${opts.schemaPack} (override with --schema-pack <name>)\n`,
@@ -1193,6 +1212,7 @@ async function initPostgres(opts: {
       ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
     saveConfig(config);
+    ensureConfiguredSystemSkillAssets(config);
     console.log('Config saved to ~/.gbrain/config.json');
     if (opts.schemaPack) {
       process.stderr.write(

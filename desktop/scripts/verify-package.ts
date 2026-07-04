@@ -10,6 +10,8 @@ const requiredFiles = [
   join(unpackedRoot, 'PMBrain.exe'),
   join(runtimeRoot, 'bun.exe'),
   join(runtimeRoot, 'pmbrain-sidecar.js'),
+  join(runtimeRoot, 'skills', '_brain-filing-rules.json'),
+  join(runtimeRoot, 'skills', '_brain-filing-rules.md'),
   join(runtimeRoot, 'node_modules', '@electric-sql', 'pglite', 'package.json'),
   join(runtimeRoot, 'node_modules', '@electric-sql', 'pglite', 'dist', 'index.js'),
   join(runtimeRoot, 'node_modules', '@electric-sql', 'pglite', 'dist', 'vector', 'index.js'),

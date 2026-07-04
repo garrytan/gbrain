@@ -120,6 +120,8 @@ gbrain files restore <dir>                # 下载回本地
 | 输出类型 | Slug 模式 | 这里放什么 |
 |-------------|--------------|----------------|
 | 反思 | `wiki/personal/reflections/YYYY-MM-DD-<topic>-<hash[:6]>` | 自我知识、情感处理、模式识别。来自用户的逐字引用，带有分析。 |
+| 会议纪要 | `wiki/meetings/YYYY-MM-DD-<meeting-topic>-<hash[:6]>` | 显式会议记录输入的逐场会议整理，包含目的、参会人、决策、行动项、开放问题和风险。 |
+| 会话整理 | `wiki/conversations/YYYY-MM-DD-<conversation-topic>-<hash[:6]>` | 显式 AI/Codex/ChatGPT/Claude 会话输入的逐场会话整理，保留上下文、意图、决策、输出、待办和可复用经验。 |
 | 原始想法 | `wiki/originals/ideas/YYYY-MM-DD-<idea>-<hash[:6]>` | 新框架、论文、心智模型、"概念主义 ideologist" 输出。捕获用户的确切措辞 — 这就是工件。 |
 | 人员丰富 | `wiki/people/<existing-slug>` | 从会话提及附加到现有人员页面时间线条目。新实质性人员的存根页面。 |
 | 模式 | `wiki/personal/patterns/<theme>` | 在 ≥3 个反思中检测到的跨会话主题。最高杠杆输出：如果反思引用 dated 内容，模式可以跨越 25 年。 |

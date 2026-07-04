@@ -34,6 +34,8 @@ import { resolveSourceId } from '../core/source-resolver.ts';
 import { fetchSource } from '../core/sources-load.ts';
 import { existsSync } from 'fs';
 import { resolve } from 'node:path';
+import { loadConfig } from '../core/config.ts';
+import { brainDirFromConfig, ensureSystemSkillAssets } from '../core/system-skill-assets.ts';
 
 interface DreamArgs {
   json: boolean;
@@ -381,6 +383,27 @@ function isResolverUserError(e: unknown): boolean {
       || m.startsWith('Invalid GBRAIN_SOURCE value');
 }
 
+function ensureDreamSystemSkillAssets(brainDir: string): void {
+  const targetDir = brainDirFromConfig(loadConfig()) ?? brainDir;
+  try {
+    const result = ensureSystemSkillAssets(targetDir);
+    const changed = result.created.length + result.updated.length;
+    if (changed > 0) {
+      process.stderr.write(`[dream] initialized system skill assets in ${result.skillsDir} (${changed} changed)\n`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[dream] warning: system skill asset initialization skipped: ${msg}\n`);
+  }
+}
+
+function validateDreamInputPath(inputFile: string | null): void {
+  if (!inputFile) return;
+  if (existsSync(inputFile)) return;
+  console.error(`--input path does not exist: ${inputFile}`);
+  process.exit(2);
+}
+
 export async function runDream(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {
   const opts = parseArgs(args);
 
@@ -437,6 +460,8 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   }
 
   const brainDir = await resolveBrainDir(engine, opts.dir);
+  ensureDreamSystemSkillAssets(brainDir);
+  validateDreamInputPath(opts.inputFile);
   const phases: CyclePhase[] | undefined = opts.phase ? [opts.phase] : undefined;
 
   const report = await runCycle(engine, {

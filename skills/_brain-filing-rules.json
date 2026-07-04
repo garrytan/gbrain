@@ -156,6 +156,8 @@
     "description": "Single source of truth for the v0.23 dream-cycle synthesize/patterns trusted-workspace allow-list. The cycle's synthesize phase reads this list and threads it as `allowed_slug_prefixes` to every subagent it dispatches; put_page enforces it server-side. Editing this list is the ONLY way to add a new directory the synthesis subagent may write to.",
     "globs": [
       "wiki/personal/reflections/*",
+      "wiki/meetings/*",
+      "wiki/conversations/*",
       "wiki/originals/*",
       "wiki/personal/patterns/*",
       "wiki/people/*",
