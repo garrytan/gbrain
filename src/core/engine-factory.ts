@@ -61,7 +61,7 @@ export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
 
 export async function createConnectedEngine(
   config: MBrainConfig,
-  options?: { poolSize?: number },
+  options?: { poolSize?: number; schemaLogger?: (message: string) => void },
 ): Promise<BrainEngine> {
   validateResolvedConfig(config);
   const runtimePoolSize = config.engine === 'postgres'
@@ -88,10 +88,16 @@ export async function createConnectedEngine(
 
 export async function createMigratedLocalEngine(
   config: MBrainConfig,
-  options?: { poolSize?: number },
+  options?: { poolSize?: number; schemaLogger?: (message: string) => void },
 ): Promise<BrainEngine> {
-  const engine = await createConnectedEngine(config, options);
-  if (!shouldAutoMigrateOnConnect(config)) return engine;
+  const shouldAutoMigrate = shouldAutoMigrateOnConnect(config);
+  const engine = await createConnectedEngine(config, {
+    ...options,
+    schemaLogger: shouldAutoMigrate
+      ? (options?.schemaLogger ?? ((message: string) => console.error(message)))
+      : options?.schemaLogger,
+  });
+  if (!shouldAutoMigrate) return engine;
 
   try {
     await engine.initSchema();

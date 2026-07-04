@@ -280,13 +280,14 @@ export function validateResolvedConfig(config: MBrainConfig): void {
 
 export function toEngineConfig(
   config: MBrainConfig,
-  options?: { poolSize?: number },
+  options?: { poolSize?: number; schemaLogger?: (message: string) => void },
 ): EngineConfig {
   return {
     engine: config.engine,
     database_url: config.database_url,
     database_path: config.database_path,
     ...(options?.poolSize ? { poolSize: options.poolSize } : {}),
+    ...(options?.schemaLogger ? { schemaLogger: options.schemaLogger } : {}),
   };
 }
 

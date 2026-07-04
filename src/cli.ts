@@ -2,7 +2,7 @@
 
 import { loadConfig } from './core/config.ts';
 import { createLocalAuthPrincipal } from './core/auth-principal.ts';
-import { createMigratedLocalEngine, DEFAULT_RUNTIME_CONFIG } from './core/engine-factory.ts';
+import { createConnectedEngine, createMigratedLocalEngine, DEFAULT_RUNTIME_CONFIG } from './core/engine-factory.ts';
 import type { BrainEngine } from './core/engine.ts';
 import {
   operations,
@@ -742,7 +742,7 @@ async function handleDirectCommand(command: string, args: string[]): Promise<boo
     return false;
   }
 
-  const engine = await connectEngine();
+  const engine = await connectEngine({ autoMigrate: command !== 'doctor' });
   try {
     const runCommand = await engineLoader();
     const normalizedArgs = command === 'eval'
@@ -781,11 +781,14 @@ function normalizeCliOnlyArgs(command: string, args: string[]): string[] {
   return normalized;
 }
 
-async function connectEngine(): Promise<BrainEngine> {
+async function connectEngine(options: { autoMigrate?: boolean } = {}): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) {
     console.error('No brain configured. Run: mbrain init --profile homebrew-postgres, mbrain init --url <postgres_connection_string>, or set MBRAIN_DATABASE_URL / DATABASE_URL.');
     process.exit(1);
+  }
+  if (options.autoMigrate === false) {
+    return createConnectedEngine(config);
   }
   return createMigratedLocalEngine(config);
 }

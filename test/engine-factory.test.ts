@@ -186,8 +186,9 @@ describe('engine factory', () => {
 
   test('createMigratedLocalEngine runs initSchema for local owner-managed engines only', async () => {
     const calls: string[] = [];
-    const postgresConnectSpy = spyOn(PostgresEngine.prototype, 'connect').mockImplementation(async function (this: PostgresEngine) {
+    const postgresConnectSpy = spyOn(PostgresEngine.prototype, 'connect').mockImplementation(async function (this: PostgresEngine, config) {
       calls.push('postgres.connect');
+      if (config.schemaLogger) calls.push('postgres.schemaLogger');
       const fakeSql = (() => []) as unknown as TestSql;
       setPostgresSql(this, fakeSql);
     });
@@ -234,6 +235,7 @@ describe('engine factory', () => {
         'sqlite.connect',
         'sqlite.initSchema',
         'postgres.connect',
+        'postgres.schemaLogger',
         'postgres.initSchema',
         'postgres.connect',
       ]);
