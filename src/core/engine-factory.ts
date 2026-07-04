@@ -86,6 +86,43 @@ export async function createConnectedEngine(
   return engine;
 }
 
+export async function createMigratedLocalEngine(
+  config: MBrainConfig,
+  options?: { poolSize?: number },
+): Promise<BrainEngine> {
+  const engine = await createConnectedEngine(config, options);
+  if (!shouldAutoMigrateOnConnect(config)) return engine;
+
+  try {
+    await engine.initSchema();
+  } catch (error) {
+    await engine.disconnect().catch(() => undefined);
+    throw error;
+  }
+  return engine;
+}
+
+export function shouldAutoMigrateOnConnect(config: MBrainConfig): boolean {
+  if (config.engine === 'sqlite' || config.engine === 'pglite') return true;
+  if (config.engine !== 'postgres') return false;
+  if (process.env.MBRAIN_AUTO_MIGRATE_ON_CONNECT === '1') return true;
+  return isLoopbackPostgresUrl(config.database_url);
+}
+
+function isLoopbackPostgresUrl(rawUrl: string | undefined): boolean {
+  if (!rawUrl) return false;
+  try {
+    const parsed = new URL(rawUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    return hostname === 'localhost'
+      || hostname === '127.0.0.1'
+      || hostname === '::1'
+      || hostname === '[::1]';
+  } catch {
+    return rawUrl.includes('host=/') || rawUrl.includes('host=%2F');
+  }
+}
+
 export function supportsParallelWorkers(config: MBrainConfig): boolean {
   return getEngineCapabilities(config).parallelWorkers;
 }

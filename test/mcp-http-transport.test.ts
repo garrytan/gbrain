@@ -98,6 +98,32 @@ describe('MCP HTTP transport', () => {
     });
   });
 
+  test('review_local profile reuses the bounded request body when falling through to /mcp', async () => {
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      surfaceProfile: 'review_local',
+      reviewRoutes: {
+        handle: async () => null,
+      },
+      authenticate: async () => ({ ok: true, tokenName: 'review-local-client' }),
+      logRequest: async () => {},
+    });
+
+    const initialize = await readJsonRpcResponse(await postMcp(handler, {
+      jsonrpc: '2.0',
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-03-26',
+        capabilities: {},
+        clientInfo: { name: 'mbrain-review-local-test', version: '1.0.0' },
+      },
+      id: 99,
+    }));
+
+    expect(initialize.result.protocolVersion).toBeDefined();
+  });
+
   test('handles initialize, tools/list, and tools/call over authenticated HTTP', async () => {
     const handler = createMcpHttpHandler({
       engine: createStatsEngine(),

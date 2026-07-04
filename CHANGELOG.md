@@ -4,6 +4,41 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-04
+
+### Added
+
+- **Runtime schema handshakes now fail honestly.** MCP surfaces translate stale
+  Postgres schema errors into `schema_out_of_date` remediation instead of
+  leaking raw SQL column or table names to agents.
+- **Local owner-managed engines migrate on connect.** SQLite, PGLite, and
+  loopback Postgres CLI/stdio surfaces now run pending migrations before
+  serving requests, closing the source-wrapper upgrade gap.
+- **The local review UI now has a session token.** Candidate reads and
+  verify/refute actions require a per-session review secret plus same-origin
+  mutation checks.
+
+### Changed
+
+- **Health checks include schema freshness.** `get_health` reports
+  `schema_version`, `required_schema_version`, and `schema_up_to_date`, and
+  avoids touching new columns when the configured database is behind the build.
+- **SQLite/PGLite parity tests have an explicit PGLite timeout budget.** The
+  assertions stay unchanged, but the macOS PGLite cold-start path no longer
+  fails at Bun's default 5s timeout.
+- **Version metadata now reports `0.15.0`.** `VERSION`, `package.json`,
+  `skills/manifest.json`, and `openclaw.plugin.json` are aligned for the
+  schema-affecting wave.
+
+### Security
+
+- **`mbrain review` no longer exposes candidate content or review mutations
+  without a token.** The server refuses non-loopback binds unless explicitly
+  acknowledged and rejects cross-origin mutating requests.
+- **`review_local` keeps `/mcp` usable while preserving the shared body limit.**
+  The review route fallthrough reuses the bounded request body instead of
+  disturbing the stream before MCP JSON-RPC handling.
+
 ## [0.14.3] - 2026-06-30
 
 ### Added

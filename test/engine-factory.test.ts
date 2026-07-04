@@ -184,6 +184,70 @@ describe('engine factory', () => {
     }
   });
 
+  test('createMigratedLocalEngine runs initSchema for local owner-managed engines only', async () => {
+    const calls: string[] = [];
+    const postgresConnectSpy = spyOn(PostgresEngine.prototype, 'connect').mockImplementation(async function (this: PostgresEngine) {
+      calls.push('postgres.connect');
+      const fakeSql = (() => []) as unknown as TestSql;
+      setPostgresSql(this, fakeSql);
+    });
+    const postgresInitSpy = spyOn(PostgresEngine.prototype, 'initSchema').mockImplementation(async () => {
+      calls.push('postgres.initSchema');
+    });
+    const postgresDisconnectSpy = spyOn(PostgresEngine.prototype, 'disconnect').mockImplementation(async function (this: PostgresEngine) {
+      setPostgresSql(this, null);
+    });
+    const sqliteConnectSpy = spyOn(SQLiteEngine.prototype, 'connect').mockImplementation(async () => {
+      calls.push('sqlite.connect');
+    });
+    const sqliteInitSpy = spyOn(SQLiteEngine.prototype, 'initSchema').mockImplementation(async () => {
+      calls.push('sqlite.initSchema');
+    });
+    const sqliteDisconnectSpy = spyOn(SQLiteEngine.prototype, 'disconnect').mockImplementation(async () => {});
+
+    try {
+      const { createMigratedLocalEngine } = await import('../src/core/engine-factory.ts');
+
+      await createMigratedLocalEngine({
+        engine: 'sqlite',
+        database_path: join(tempHome, 'brain.db'),
+        offline: true,
+        embedding_provider: 'local',
+        query_rewrite_provider: 'heuristic',
+      });
+      await createMigratedLocalEngine({
+        engine: 'postgres',
+        database_url: 'postgresql://user:pass@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      });
+      await createMigratedLocalEngine({
+        engine: 'postgres',
+        database_url: 'postgresql://user:pass@db.example.com:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      });
+
+      expect(calls).toEqual([
+        'sqlite.connect',
+        'sqlite.initSchema',
+        'postgres.connect',
+        'postgres.initSchema',
+        'postgres.connect',
+      ]);
+      await db.disconnect();
+    } finally {
+      postgresConnectSpy.mockRestore();
+      postgresInitSpy.mockRestore();
+      postgresDisconnectSpy.mockRestore();
+      sqliteConnectSpy.mockRestore();
+      sqliteInitSpy.mockRestore();
+      sqliteDisconnectSpy.mockRestore();
+    }
+  });
+
   test('db.disconnect tears down the compatibility owner even after a later direct PostgresEngine.connect', async () => {
     let connectCount = 0;
     const sqlFor = new Map<PostgresEngine, TestSql>();

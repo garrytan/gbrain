@@ -107,6 +107,7 @@ export function createMcpHttpHandler(
 
   async function dispatch(request: Request, clientIp: string | null): Promise<Response> {
     const url = new URL(request.url);
+    let mcpBoundedRequest: BoundedHttpRequest | null = null;
 
     if (oauthState && isMcpOAuthPath(url.pathname)) {
       if (isRateLimitedOAuthPath(url.pathname) && !oauthRateLimiter.allow(clientIp ?? 'global')) {
@@ -144,13 +145,14 @@ export function createMcpHttpHandler(
         await logReviewRouteRequest(options, enginePromise, boundedRequest.request, reviewResponse, startTime);
         return reviewResponse;
       }
+      mcpBoundedRequest = boundedRequest;
     }
 
     if (url.pathname !== '/mcp') {
       return jsonResponse({ error: 'not_found' }, 404);
     }
 
-    const boundedRequest = await boundHttpRequestBody(request);
+    const boundedRequest = mcpBoundedRequest ?? await boundHttpRequestBody(request);
     if (!boundedRequest.ok) {
       return jsonResponse(boundedRequest.body, 413);
     }

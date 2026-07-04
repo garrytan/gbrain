@@ -1,3 +1,4 @@
+import { randomBytes, timingSafeEqual } from 'crypto';
 import { loadConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
@@ -8,16 +9,23 @@ export interface ReviewServerOptions {
   engine: BrainEngine;
   host?: string;
   port?: number;
+  token?: string;
+  allowNonLoopback?: boolean;
 }
 
 export interface ReviewServerHandle {
   url: string;
+  token: string;
   stop(): void;
 }
 
 export function startReviewServer(options: ReviewServerOptions): ReviewServerHandle {
   const host = options.host ?? '127.0.0.1';
   const port = options.port ?? 8791;
+  if (!options.allowNonLoopback && !isLoopbackBindHost(host)) {
+    throw new Error('mbrain review refuses non-loopback --host without --i-know.');
+  }
+  const token = options.token ?? randomBytes(24).toString('base64url');
   const server = startMcpHttpServer({
     engine: options.engine,
     config: loadConfig() ?? DEFAULT_RUNTIME_CONFIG,
@@ -25,11 +33,12 @@ export function startReviewServer(options: ReviewServerOptions): ReviewServerHan
     port,
     surfaceProfile: 'review_local',
     reviewRoutes: {
-      handle: (request) => handleReviewRoute(options.engine, request),
+      handle: (request) => handleReviewRoute(options.engine, request, { token, bindHost: host }),
     },
   });
   return {
     url: `http://${server.hostname}:${server.port}`,
+    token,
     stop: () => server.stop(true),
   };
 }
@@ -37,11 +46,17 @@ export function startReviewServer(options: ReviewServerOptions): ReviewServerHan
 export async function runReview(engine: BrainEngine, args: string[]): Promise<void> {
   const host = readFlag(args, '--host') ?? '127.0.0.1';
   const port = Number(readFlag(args, '--port') ?? '8791');
+  const allowNonLoopback = args.includes('--i-know') || args.includes('--allow-non-loopback');
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new Error('--port must be an integer between 0 and 65535');
   }
-  const handle = startReviewServer({ engine, host, port });
+  const handle = startReviewServer({ engine, host, port, allowNonLoopback });
+  if (!isLoopbackBindHost(host)) {
+    console.warn('Warning: mbrain review is bound to a non-loopback host. Keep the printed token private.');
+  }
   console.log(`mbrain review listening on ${handle.url}`);
+  console.log(`mbrain review token: ${handle.token}`);
+  console.log(`Open: ${handle.url}/?review_token=${encodeURIComponent(handle.token)}`);
   await new Promise<void>((resolve) => {
     const stop = () => {
       handle.stop();
@@ -52,16 +67,20 @@ export async function runReview(engine: BrainEngine, args: string[]): Promise<vo
   });
 }
 
-async function handleReviewRoute(engine: BrainEngine, request: Request): Promise<Response | null> {
+async function handleReviewRoute(engine: BrainEngine, request: Request, guard: ReviewRouteGuard): Promise<Response | null> {
   const url = new URL(request.url);
   try {
     if (request.method === 'GET' && url.pathname === '/') {
+      const auth = await authorizeReviewRequest(request, guard);
+      if (!auth.ok) return forbidden(auth.message);
       const candidates = await listCandidates(engine, {
         status: url.searchParams.get('status') ?? 'candidate',
       });
-      return html(renderReviewPage(candidates));
+      return html(renderReviewPage(candidates, guard.token));
     }
     if (request.method === 'GET' && url.pathname === '/api/candidates') {
+      const auth = await authorizeReviewRequest(request, guard);
+      if (!auth.ok) return forbidden(auth.message);
       const result = await listCandidates(engine, {
         status: url.searchParams.get('status') ?? 'candidate',
       });
@@ -69,6 +88,8 @@ async function handleReviewRoute(engine: BrainEngine, request: Request): Promise
     }
     const formReviewMatch = url.pathname.match(/^\/candidates\/([^/]+)\/(verify|refute)$/);
     if (request.method === 'POST' && formReviewMatch) {
+      const auth = await authorizeReviewRequest(request, guard, { mutating: true, allowFormToken: true });
+      if (!auth.ok) return forbidden(auth.message);
       const id = decodeURIComponent(formReviewMatch[1]!);
       const verificationStatus = formReviewMatch[2] === 'verify' ? 'verified' : 'refuted';
       await reviewCandidate(engine, {
@@ -82,6 +103,8 @@ async function handleReviewRoute(engine: BrainEngine, request: Request): Promise
     }
     const apiReviewMatch = url.pathname.match(/^\/api\/candidates\/([^/]+)\/(verify|refute)$/);
     if (request.method === 'POST' && apiReviewMatch) {
+      const auth = await authorizeReviewRequest(request, guard, { mutating: true });
+      if (!auth.ok) return forbidden(auth.message);
       const id = decodeURIComponent(apiReviewMatch[1]!);
       const body = await request.json() as Record<string, unknown>;
       const candidate = await reviewCandidate(engine, {
@@ -100,6 +123,55 @@ async function handleReviewRoute(engine: BrainEngine, request: Request): Promise
       message: error instanceof Error ? error.message : String(error),
     }, 400);
   }
+}
+
+interface ReviewRouteGuard {
+  token: string;
+  bindHost: string;
+}
+
+async function authorizeReviewRequest(
+  request: Request,
+  guard: ReviewRouteGuard,
+  options: { mutating?: boolean; allowFormToken?: boolean } = {},
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const url = new URL(request.url);
+  const requestHost = reviewRequestHost(request, url);
+  if (!requestHost || !isAllowedReviewHost(requestHost, guard.bindHost)) {
+    return { ok: false, message: 'review_host_not_allowed' };
+  }
+  if (options.mutating && !isAllowedReviewOrigin(request)) {
+    return { ok: false, message: 'review_origin_not_allowed' };
+  }
+  const token = await readReviewToken(request, { allowFormToken: options.allowFormToken === true });
+  if (!token || !constantTimeEqual(token, guard.token)) {
+    return { ok: false, message: 'review_token_required' };
+  }
+  return { ok: true };
+}
+
+async function readReviewToken(
+  request: Request,
+  options: { allowFormToken: boolean },
+): Promise<string | null> {
+  const auth = request.headers.get('authorization');
+  const bearer = auth?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  if (bearer) return bearer;
+  const headerToken = request.headers.get('x-mbrain-review-token')?.trim();
+  if (headerToken) return headerToken;
+  const url = new URL(request.url);
+  const queryToken = url.searchParams.get('review_token')?.trim();
+  if (queryToken) return queryToken;
+  if (!options.allowFormToken) return null;
+  const contentType = request.headers.get('content-type') ?? '';
+  if (!/application\/x-www-form-urlencoded|multipart\/form-data/i.test(contentType)) return null;
+  const form = await request.formData();
+  const formToken = form.get('review_token');
+  return typeof formToken === 'string' ? formToken.trim() : null;
+}
+
+function forbidden(message: string): Response {
+  return json({ error: 'forbidden', message }, 403);
 }
 
 async function reviewCandidate(
@@ -126,7 +198,7 @@ async function listCandidates(
   return Array.isArray(result) ? result : (result.entries ?? []);
 }
 
-function renderReviewPage(candidates: Record<string, unknown>[]): string {
+function renderReviewPage(candidates: Record<string, unknown>[], token: string): string {
   const rows = candidates.map((candidate) => {
     const id = String(candidate.id ?? '');
     const content = String(candidate.proposed_content ?? '');
@@ -147,9 +219,11 @@ function renderReviewPage(candidates: Record<string, unknown>[]): string {
       reviewReason ? `<p class="evidence">review: ${escapeHtml(reviewReason)}</p>` : '',
       '<div class="actions">',
       `<form method="post" action="/candidates/${encodeURIComponent(id)}/verify">`,
+      `<input type="hidden" name="review_token" value="${escapeHtml(token)}">`,
       '<button type="submit">Verify</button>',
       '</form>',
       `<form method="post" action="/candidates/${encodeURIComponent(id)}/refute">`,
+      `<input type="hidden" name="review_token" value="${escapeHtml(token)}">`,
       '<button type="submit">Refute</button>',
       '</form>',
       '</div>',
@@ -176,6 +250,51 @@ function renderReviewPage(candidates: Record<string, unknown>[]): string {
   <main>${rows || '<p>No pending candidates.</p>'}</main>
 </body>
 </html>`;
+}
+
+function isLoopbackBindHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  return normalized === 'localhost'
+    || normalized === '127.0.0.1'
+    || normalized === '::1';
+}
+
+function isAllowedReviewHost(requestHost: string, bindHost: string): boolean {
+  const normalizedRequestHost = requestHost.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  const normalizedBindHost = bindHost.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (isLoopbackBindHost(normalizedBindHost)) {
+    return isLoopbackBindHost(normalizedRequestHost);
+  }
+  return normalizedRequestHost === normalizedBindHost;
+}
+
+function reviewRequestHost(request: Request, url: URL): string | null {
+  const hostHeader = request.headers.get('host')?.trim();
+  if (!hostHeader) return url.hostname;
+  try {
+    return new URL(`${url.protocol}//${hostHeader}`).hostname;
+  } catch {
+    const bracketedIpv6 = hostHeader.match(/^\[([^\]]+)\](?::\d+)?$/)?.[1];
+    if (bracketedIpv6) return bracketedIpv6;
+    const [hostname] = hostHeader.split(':');
+    return hostname?.trim() || null;
+  }
+}
+
+function isAllowedReviewOrigin(request: Request): boolean {
+  const origin = request.headers.get('origin');
+  if (!origin) return true;
+  try {
+    return new URL(origin).origin === new URL(request.url).origin;
+  } catch {
+    return false;
+  }
+}
+
+function constantTimeEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function json(value: unknown, status = 200): Response {

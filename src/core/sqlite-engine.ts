@@ -1861,6 +1861,22 @@ export class SQLiteEngine implements BrainEngine {
   }
 
   async getHealth(): Promise<BrainHealth> {
+    const schemaVersion = await this.readSchemaVersionForHealth();
+    const schemaUpToDate = schemaVersion !== null && schemaVersion >= LATEST_VERSION;
+    if (!schemaUpToDate) {
+      return {
+        page_count: 0,
+        embed_coverage: 0,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+        schema_version: schemaVersion,
+        required_schema_version: LATEST_VERSION,
+        schema_up_to_date: false,
+      };
+    }
+
     // One statement with scalar subqueries, mirroring the Postgres engine,
     // instead of six separately parsed queries.
     const row = this.database.query(`
@@ -1897,7 +1913,20 @@ export class SQLiteEngine implements BrainEngine {
       orphan_pages: orphanPages,
       dead_links: deadLinks,
       missing_embeddings: chunkCount - embeddedCount,
+      schema_version: schemaVersion,
+      required_schema_version: LATEST_VERSION,
+      schema_up_to_date: true,
     };
+  }
+
+  private async readSchemaVersionForHealth(): Promise<number | null> {
+    try {
+      const version = await this.getConfig('version');
+      const parsed = Number.parseInt(version ?? '0', 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
   }
 
   async logIngest(entry: IngestLogInput): Promise<void> {

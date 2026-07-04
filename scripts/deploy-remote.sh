@@ -41,6 +41,23 @@ bun install
 bun run build:edge
 echo ""
 
+# Apply schema migrations before new Edge code starts serving requests.
+REMOTE_DATABASE_URL="${SUPABASE_DB_URL:-${DATABASE_URL:-}}"
+if [ -z "$REMOTE_DATABASE_URL" ]; then
+  echo "Error: SUPABASE_DB_URL or DATABASE_URL must be set in .env.production for schema migration."
+  exit 1
+fi
+echo "Applying remote schema migrations..."
+TMP_MBR_CONFIG_DIR="$(mktemp -d)"
+cleanup_tmp_mbr_config() {
+  rm -rf "$TMP_MBR_CONFIG_DIR"
+}
+trap cleanup_tmp_mbr_config EXIT
+MBRAIN_CONFIG_DIR="$TMP_MBR_CONFIG_DIR" bun run src/cli.ts init --non-interactive --url "$REMOTE_DATABASE_URL"
+cleanup_tmp_mbr_config
+trap - EXIT
+echo ""
+
 # Deploy
 echo "Deploying Edge Function..."
 supabase functions deploy mbrain-mcp --no-verify-jwt

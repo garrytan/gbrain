@@ -20,6 +20,7 @@ import {
   isAllowedMemoryCandidateStatusUpdate,
 } from './memory-inbox-status.ts';
 import { buildFrontmatterSearchText } from './markdown.ts';
+import { LATEST_VERSION } from './migrate.ts';
 import {
   normalizePageLineSpanProjectionOptions,
   normalizePageProjectionWindows,
@@ -970,6 +971,22 @@ export abstract class PgEngineBase {
   }
 
   async getHealth(): Promise<BrainHealth> {
+    const schemaVersion = await this.readSchemaVersionForHealth();
+    const schemaUpToDate = schemaVersion !== null && schemaVersion >= LATEST_VERSION;
+    if (!schemaUpToDate) {
+      return {
+        page_count: 0,
+        embed_coverage: 0,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+        schema_version: schemaVersion,
+        required_schema_version: LATEST_VERSION,
+        schema_up_to_date: false,
+      };
+    }
+
     const { rows: [h] } = await this.queryable.query(`
       SELECT
         (SELECT count(*) FROM pages) as page_count,
@@ -995,7 +1012,20 @@ export abstract class PgEngineBase {
       orphan_pages: Number(r.orphan_pages),
       dead_links: Number(r.dead_links),
       missing_embeddings: Number(r.missing_embeddings),
+      schema_version: schemaVersion,
+      required_schema_version: LATEST_VERSION,
+      schema_up_to_date: true,
     };
+  }
+
+  private async readSchemaVersionForHealth(): Promise<number | null> {
+    try {
+      const version = await this.getConfig('version');
+      const parsed = Number.parseInt(version ?? '0', 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
   }
 
   // Ingest log

@@ -92,7 +92,9 @@ describe('local review UI', () => {
       await harness.engine.createMemoryCandidateEntry(candidateInput('review-candidate-2'));
       await harness.engine.createMemoryCandidateEntry(candidateInput('review-candidate-3'));
 
-      const listResponse = await fetch(`${server.url}/api/candidates?status=candidate`);
+      const listResponse = await fetch(`${server.url}/api/candidates?status=candidate`, {
+        headers: { authorization: `Bearer ${server.token}` },
+      });
       expect(listResponse.status).toBe(200);
       const listJson = await listResponse.json() as any;
       expect(listJson.candidates).toHaveLength(3);
@@ -102,7 +104,7 @@ describe('local review UI', () => {
         proposed_content: 'The review UI should expose pending candidates with evidence.',
       });
 
-      const page = await fetch(`${server.url}/`).then(response => response.text());
+      const page = await fetch(`${server.url}/?review_token=${server.token}`).then(response => response.text());
       expect(page).toContain('review-candidate-1');
       expect(page).toContain('The review UI should expose pending candidates with evidence.');
       expect(page).toContain('test/review-ui.test.ts');
@@ -111,9 +113,12 @@ describe('local review UI', () => {
       expect(page).toContain('method="post"');
       expect(page).toContain('action="/candidates/review-candidate-1/verify"');
       expect(page).toContain('action="/candidates/review-candidate-1/refute"');
+      expect(page).toContain('name="review_token"');
 
       const verifyFormResponse = await fetch(`${server.url}/candidates/review-candidate-1/verify`, {
         method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ review_token: server.token }),
         redirect: 'manual',
       });
       expect(verifyFormResponse.status).toBe(303);
@@ -121,6 +126,8 @@ describe('local review UI', () => {
 
       const refuteFormResponse = await fetch(`${server.url}/candidates/review-candidate-2/refute`, {
         method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ review_token: server.token }),
         redirect: 'manual',
       });
       expect(refuteFormResponse.status).toBe(303);
@@ -136,7 +143,10 @@ describe('local review UI', () => {
 
       const verifyResponse = await fetch(`${server.url}/api/candidates/review-candidate-3/verify`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${server.token}`,
+        },
         body: JSON.stringify({
           verification_status: 'verified',
           verification_method: 'file_inspection',
@@ -157,6 +167,76 @@ describe('local review UI', () => {
     }
   });
 
+  test('gates candidate reads and mutations with the review token and origin checks', async () => {
+    const harness = await createReviewHarness('auth');
+    const server = startReviewServer({
+      engine: harness.engine,
+      host: '127.0.0.1',
+      port: 0,
+    });
+    try {
+      await harness.engine.createMemoryCandidateEntry(candidateInput('review-auth-candidate'));
+
+      const unauthenticatedList = await fetch(`${server.url}/api/candidates?status=candidate`);
+      expect(unauthenticatedList.status).toBe(403);
+
+      const wrongHostList = await fetch(`${server.url}/api/candidates?status=candidate`, {
+        headers: {
+          authorization: `Bearer ${server.token}`,
+          host: 'evil.example.com',
+        },
+      });
+      expect(wrongHostList.status).toBe(403);
+
+      const crossSitePost = await fetch(`${server.url}/candidates/review-auth-candidate/verify`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          origin: 'https://evil.example.com',
+        },
+        body: new URLSearchParams({ review_token: server.token }),
+        redirect: 'manual',
+      });
+      expect(crossSitePost.status).toBe(403);
+
+      const missingTokenPost = await fetch(`${server.url}/candidates/review-auth-candidate/verify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        redirect: 'manual',
+      });
+      expect(missingTokenPost.status).toBe(403);
+
+      const authorizedList = await fetch(`${server.url}/api/candidates?status=candidate`, {
+        headers: { authorization: `Bearer ${server.token}` },
+      });
+      expect(authorizedList.status).toBe(200);
+    } finally {
+      server.stop();
+      await harness.cleanup();
+    }
+  });
+
+  test('refuses non-loopback bind unless explicitly allowed', async () => {
+    const harness = await createReviewHarness('non-loopback');
+    try {
+      expect(() => startReviewServer({
+        engine: harness.engine,
+        host: '0.0.0.0',
+        port: 0,
+      })).toThrow(/non-loopback/i);
+
+      const server = startReviewServer({
+        engine: harness.engine,
+        host: '0.0.0.0',
+        port: 0,
+        allowNonLoopback: true,
+      });
+      server.stop();
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   test('applies the shared HTTP body limit to review API routes', async () => {
     const harness = await createReviewHarness('body-limit');
     const server = startReviewServer({
@@ -169,7 +249,10 @@ describe('local review UI', () => {
 
       const response = await fetch(`${server.url}/api/candidates/oversized-review-candidate/verify`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${server.token}`,
+        },
         body: JSON.stringify({
           verification_status: 'verified',
           verification_method: 'user_confirmation',

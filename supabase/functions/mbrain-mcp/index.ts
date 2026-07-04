@@ -19,6 +19,7 @@ import {
   operationToMcpTool,
   OperationError,
   PostgresEngine,
+  LATEST_VERSION,
   VERSION,
   MCP_INSTRUCTIONS,
   assertToolCallableInSurfaceProfile,
@@ -448,6 +449,7 @@ function extractMcpResponseObjectErrorDetails(payload: unknown): { errorCode?: s
 
 // Create MCP Server with tool handlers
 function createMcpServer(eng: PostgresEngine, tokenScopes: string[] = [], authPrincipal?: OperationAuthPrincipal): Server {
+  let schemaReadinessPromise: Promise<void> | null = null;
   const server = new Server(
     { name: 'mbrain', version: VERSION },
     {
@@ -493,18 +495,53 @@ function createMcpServer(eng: PostgresEngine, tokenScopes: string[] = [], authPr
         tokenCapabilities: surfaceTokenCapabilitiesFromScopes(tokenScopes),
       });
       assertRemotePutPagePrecondition(name, params);
+      if (name !== 'get_health') {
+        schemaReadinessPromise ??= assertRemoteSchemaReady(eng);
+        await schemaReadinessPromise;
+      }
       const result = await dispatchOperation(ctx, op, prepareRemoteToolParams(name, params));
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (e: unknown) {
-      if (e instanceof OperationError) {
-        return { content: [{ type: 'text', text: JSON.stringify(e.toJSON(), null, 2) }], isError: true };
+      const mapped = mapUnknownMcpToolError(e);
+      if (mapped instanceof OperationError) {
+        return { content: [{ type: 'text', text: JSON.stringify(mapped.toJSON(), null, 2) }], isError: true };
       }
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = mapped instanceof Error ? mapped.message : String(mapped);
       return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
     }
   });
 
   return server;
+}
+
+async function assertRemoteSchemaReady(eng: PostgresEngine): Promise<void> {
+  const rawVersion = await eng.getConfig('version').catch(() => null);
+  const schemaVersion = Number.parseInt(rawVersion ?? '0', 10);
+  if (Number.isFinite(schemaVersion) && schemaVersion >= LATEST_VERSION) return;
+  throw new OperationError(
+    'schema_out_of_date',
+    `MBrain schema v${Number.isFinite(schemaVersion) ? schemaVersion : 'unknown'} is older than required schema v${LATEST_VERSION}.`,
+    'Run mbrain init or the remote migration step to apply pending schema migrations, then redeploy/restart the MCP surface.',
+  );
+}
+
+function mapUnknownMcpToolError(error: unknown): unknown {
+  if (error instanceof OperationError) return error;
+  if (!isSchemaDriftError(error)) return error;
+  return new OperationError(
+    'schema_out_of_date',
+    `MBrain schema is out of date for this build (required schema v${LATEST_VERSION}).`,
+    'Run mbrain init or the remote migration step to apply pending schema migrations, then redeploy/restart the MCP surface.',
+  );
+}
+
+function isSchemaDriftError(error: unknown): boolean {
+  const code = typeof (error as { code?: unknown })?.code === 'string'
+    ? (error as { code: string }).code
+    : '';
+  if (code === '42703' || code === '42P01') return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b(no such column|no such table|column .* does not exist|relation .* does not exist)\b/i.test(message);
 }
 
 // Hono app — routes: /mcp (MCP transport), /health (monitoring)

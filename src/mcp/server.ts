@@ -14,6 +14,7 @@ import { assertPutPageRouteFirstPrecondition, dispatchOperation, operations as d
 import type { Operation, OperationContext } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
+import { LATEST_VERSION } from '../core/migrate.ts';
 import {
   byteLength as utf8ByteLength,
   scalarLength,
@@ -880,6 +881,7 @@ export function createMcpServer(
     error: (msg: string) => process.stderr.write(`[error] ${msg}\n`),
   };
   const resolvedMaxResultTextBytes = options.maxResultTextBytes ?? mcpResultTextBudgetForFinalFrame();
+  let schemaReadinessPromise: Promise<void> | null = null;
 
   // Generate tool definitions from operations
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -936,6 +938,12 @@ export function createMcpServer(
       assertMcpPutPagePrecondition(name, params);
       const result = await toolExecutionLimiter.run(op, async () => {
         const resolvedEngine = await enginePromise;
+        if (name === 'get_health') {
+          await assertMcpSurfaceSchemaReady(resolvedEngine, surfaceProfile.name, name);
+        } else {
+          schemaReadinessPromise ??= assertMcpSurfaceSchemaReady(resolvedEngine, surfaceProfile.name, name);
+          await schemaReadinessPromise;
+        }
         const ctx: OperationContext = {
           engine: resolvedEngine,
           config: resolvedConfig,
@@ -955,23 +963,60 @@ export function createMcpServer(
         }],
       };
     } catch (e: unknown) {
-      if (e instanceof OperationError) {
+      const mapped = mapUnknownMcpToolError(e);
+      if (mapped instanceof OperationError) {
         return {
           content: [{
             type: 'text',
-            text: formatMcpToolResult(name, e.toJSON(), {
+            text: formatMcpToolResult(name, mapped.toJSON(), {
               maxResultTextBytes: resolvedMaxResultTextBytes,
             }),
           }],
           isError: true,
         };
       }
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = mapped instanceof Error ? mapped.message : String(mapped);
       return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
     }
   });
 
   return { server, toolExecutionLimiter, enginePromise };
+}
+
+export function mapUnknownMcpToolError(error: unknown): unknown {
+  if (error instanceof OperationError) return error;
+  if (!isSchemaDriftError(error)) return error;
+  return new OperationError(
+    'schema_out_of_date',
+    `MBrain schema is out of date for this build (required schema v${LATEST_VERSION}).`,
+    'Run mbrain init to apply pending schema migrations, then restart the MCP surface.',
+  );
+}
+
+export async function assertMcpSurfaceSchemaReady(
+  engine: BrainEngine,
+  surfaceName: string,
+  operationName: string,
+): Promise<void> {
+  if (surfaceName === 'stdio' || operationName === 'get_health') return;
+  if (typeof engine.getConfig !== 'function') return;
+  const rawVersion = await engine.getConfig('version').catch(() => null);
+  const schemaVersion = Number.parseInt(rawVersion ?? '0', 10);
+  if (Number.isFinite(schemaVersion) && schemaVersion >= LATEST_VERSION) return;
+  throw new OperationError(
+    'schema_out_of_date',
+    `MBrain schema v${Number.isFinite(schemaVersion) ? schemaVersion : 'unknown'} is older than required schema v${LATEST_VERSION}.`,
+    'Run mbrain init to apply pending schema migrations, then restart the MCP surface.',
+  );
+}
+
+function isSchemaDriftError(error: unknown): boolean {
+  const code = typeof (error as { code?: unknown })?.code === 'string'
+    ? (error as { code: string }).code
+    : '';
+  if (code === '42703' || code === '42P01') return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b(no such column|no such table|column .* does not exist|relation .* does not exist)\b/i.test(message);
 }
 
 // Backward compat: used by `mbrain call` command

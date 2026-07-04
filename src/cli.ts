@@ -2,7 +2,7 @@
 
 import { loadConfig } from './core/config.ts';
 import { createLocalAuthPrincipal } from './core/auth-principal.ts';
-import { createConnectedEngine, DEFAULT_RUNTIME_CONFIG } from './core/engine-factory.ts';
+import { createMigratedLocalEngine, DEFAULT_RUNTIME_CONFIG } from './core/engine-factory.ts';
 import type { BrainEngine } from './core/engine.ts';
 import {
   operations,
@@ -784,7 +784,7 @@ async function connectEngine(): Promise<BrainEngine> {
     console.error('No brain configured. Run: mbrain init --profile homebrew-postgres, mbrain init --url <postgres_connection_string>, or set MBRAIN_DATABASE_URL / DATABASE_URL.');
     process.exit(1);
   }
-  return createConnectedEngine(config);
+  return createMigratedLocalEngine(config);
 }
 
 function printHelp() {
