@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { operations } from '../src/core/operations.ts';
+import { effectiveToolTier } from '../src/mcp/tool-tiers.ts';
 import goldenManifest from './fixtures/operation-golden-manifest.json';
+import operationDocsAnnotations from './fixtures/operation-docs-annotations.json';
 
 const repoRoot = new URL('..', import.meta.url).pathname;
 
@@ -52,5 +55,22 @@ describe('operation docs contract', () => {
     });
 
     expect(violations).toEqual([]);
+  });
+
+  test('every non-admin operation is documented or explicitly annotated', () => {
+    const docsContent = CURRENT_OPERATION_DOCS
+      .map((path) => readRepoFile(path))
+      .join('\n');
+    const annotations = operationDocsAnnotations as {
+      undocumented: Record<string, string>;
+    };
+    const missing = operations
+      .filter((operation) => effectiveToolTier(operation) !== 'admin')
+      .filter((operation) => !docsContent.includes(operation.name))
+      .filter((operation) => !annotations.undocumented[operation.name]?.trim())
+      .map((operation) => operation.name)
+      .sort();
+
+    expect(missing).toEqual([]);
   });
 });

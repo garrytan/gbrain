@@ -25,6 +25,11 @@ interface BacklinkGap {
   sourceTitle: string;
 }
 
+interface SupersededByTargetGap {
+  sourcePage: string;
+  targetSlug: string;
+}
+
 const ENTITY_ROOTS = new Set(['people', 'companies', 'projects', 'systems', 'concepts']);
 
 type EntityRef = { name: string; slug: string; dir: string };
@@ -192,29 +197,10 @@ export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
   const gaps: BacklinkGap[] = [];
 
   // Collect all markdown files
-  const allPages: { path: string; relPath: string; content: string }[] = [];
-  function walk(dir: string) {
-    for (const entry of readdirSync(dir)) {
-      if (entry.startsWith('.')) continue;
-      const full = join(dir, entry);
-      if (lstatSync(full).isDirectory()) {
-        walk(full);
-      } else if (entry.endsWith('.md') && !entry.startsWith('_')) {
-        const relPath = relative(brainDir, full);
-        try {
-          allPages.push({ path: full, relPath, content: readFileSync(full, 'utf-8') });
-        } catch { /* skip unreadable */ }
-      }
-    }
-  }
-  walk(brainDir);
+  const allPages = collectMarkdownPages(brainDir);
 
   // Build a lookup of existing pages by directory/slug
-  const pagesBySlug = new Map<string, { path: string; content: string }>();
-  for (const page of allPages) {
-    const slug = page.relPath.replace('.md', '');
-    pagesBySlug.set(slug, { path: page.path, content: page.content });
-  }
+  const pagesBySlug = pagesBySlugMap(allPages);
 
   // For each page, check entity references
   for (const page of allPages) {
@@ -238,6 +224,59 @@ export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
   }
 
   return gaps;
+}
+
+export function findSupersededByTargetGaps(brainDir: string): SupersededByTargetGap[] {
+  const allPages = collectMarkdownPages(brainDir);
+  const pagesBySlug = pagesBySlugMap(allPages);
+  const gaps: SupersededByTargetGap[] = [];
+
+  for (const page of allPages) {
+    const parsed = parseMarkdown(page.content, page.relPath);
+    const supersededBy = typeof parsed.frontmatter.superseded_by === 'string'
+      ? normalizeBrainPath(parsed.frontmatter.superseded_by)
+      : null;
+    if (!supersededBy) continue;
+    if (!pagesBySlug.has(supersededBy)) {
+      gaps.push({
+        sourcePage: page.relPath,
+        targetSlug: supersededBy,
+      });
+    }
+  }
+
+  return gaps;
+}
+
+function collectMarkdownPages(brainDir: string): { path: string; relPath: string; content: string }[] {
+  const allPages: { path: string; relPath: string; content: string }[] = [];
+  function walk(dir: string) {
+    for (const entry of readdirSync(dir)) {
+      if (entry.startsWith('.')) continue;
+      const full = join(dir, entry);
+      if (lstatSync(full).isDirectory()) {
+        walk(full);
+      } else if (entry.endsWith('.md') && !entry.startsWith('_')) {
+        const relPath = relative(brainDir, full);
+        try {
+          allPages.push({ path: full, relPath, content: readFileSync(full, 'utf-8') });
+        } catch { /* skip unreadable */ }
+      }
+    }
+  }
+  walk(brainDir);
+  return allPages;
+}
+
+function pagesBySlugMap(
+  pages: Array<{ path: string; relPath: string; content: string }>,
+): Map<string, { path: string; content: string }> {
+  const pagesBySlug = new Map<string, { path: string; content: string }>();
+  for (const page of pages) {
+    const slug = normalizeBrainPath(page.relPath);
+    if (slug) pagesBySlug.set(slug, { path: page.path, content: page.content });
+  }
+  return pagesBySlug;
 }
 
 /** Fix back-link gaps by appending timeline entries to target pages */
@@ -335,23 +374,30 @@ export async function runBacklinks(args: string[]) {
   }
 
   const gaps = findBacklinkGaps(brainDir);
+  const supersededByGaps = findSupersededByTargetGaps(brainDir);
 
-  if (gaps.length === 0) {
+  if (gaps.length === 0 && supersededByGaps.length === 0) {
     console.log('No missing back-links found.');
     return;
   }
 
   if (subcommand === 'check') {
-    console.log(`Found ${gaps.length} missing back-link(s):\n`);
+    console.log(`Found ${gaps.length} missing back-link(s) and ${supersededByGaps.length} dangling superseded_by target(s):\n`);
     for (const gap of gaps) {
       console.log(`  ${gap.targetPage} <- ${gap.sourcePage}`);
       console.log(`    "${gap.entityName}" mentioned in "${gap.sourceTitle}"`);
+    }
+    for (const gap of supersededByGaps) {
+      console.log(`  ${gap.sourcePage} superseded_by -> ${gap.targetSlug} (missing)`);
     }
     console.log(`\nRun 'mbrain check-backlinks fix --dir ${brainDir}' to create them.`);
   } else {
     const label = dryRun ? '(dry run) ' : '';
     const fixed = fixBacklinkGaps(brainDir, gaps, dryRun);
     console.log(`${label}Fixed ${fixed} missing back-link(s) across ${new Set(gaps.map(g => g.targetPage)).size} page(s).`);
+    if (supersededByGaps.length > 0) {
+      console.log(`${supersededByGaps.length} dangling superseded_by target(s) require manual slug fixes.`);
+    }
     if (dryRun) {
       console.log('\nRe-run without --dry-run to apply.');
     }

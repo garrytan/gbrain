@@ -1001,7 +1001,7 @@ Original symbol map.
       type: 'system',
       title: 'Compile Debt',
       compiled_truth: 'Current compiled truth.',
-      timeline: '- **2024-06-01** | First timeline entry.',
+      timeline: '- **2024-06-01** | Already compiled timeline entry.',
     });
     await Bun.sleep(5);
 
@@ -1009,7 +1009,7 @@ Original symbol map.
       type: 'system',
       title: 'Compile Debt',
       compiled_truth: 'Current compiled truth.',
-      timeline: '- **2024-06-01** | First timeline entry.\n- **2024-06-02** | New timeline evidence.',
+      timeline: '- **2024-06-01** | Already compiled timeline entry.\n- **2027-06-02** | New timeline evidence.',
     });
 
     expect(timelineOnly.compiled_truth_changed_at.getTime()).toBe(first.compiled_truth_changed_at.getTime());
@@ -1022,7 +1022,7 @@ Original symbol map.
     }, { limit: 5 }) as Array<{ slug: string; uncompiled_timeline_entries: number }>;
     expect(debt).toContainEqual(expect.objectContaining({
       slug: 'systems/compile-debt.md',
-      uncompiled_timeline_entries: 2,
+      uncompiled_timeline_entries: 1,
     }));
 
     await Bun.sleep(5);

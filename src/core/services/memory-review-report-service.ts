@@ -718,7 +718,7 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
     const candidateDebt = report.sections.maintenance_health.candidate_debt;
     const projectionFreshness = report.sections.maintenance_health.projection_freshness;
     lines.push('', 'Maintenance Health');
-    lines.push(`- Candidate debt: visible ${candidateDebt.visible_candidate_count} | missing provenance ${candidateDebt.missing_provenance_count} | promoted without handoff ${candidateDebt.stale_promoted_without_handoff_count} | unresolved exposed ${candidateDebt.unresolved_exposed_count} | hard-blocked by proposal ${candidateDebt.hard_blocked_by_proposal_count}`);
+    lines.push(`- Candidate debt: visible ${candidateDebt.visible_candidate_count}${formatCandidateDebtWindow(candidateDebt)} | missing provenance ${candidateDebt.missing_provenance_count} | promoted without handoff ${candidateDebt.stale_promoted_without_handoff_count} | unresolved exposed ${candidateDebt.unresolved_exposed_count} | hard-blocked by proposal ${candidateDebt.hard_blocked_by_proposal_count}`);
     lines.push(`- Projection freshness: pending ${projectionFreshness.pending_reconcile_count} | failed ${projectionFreshness.failed_count} | conflict ${projectionFreshness.conflict_count} | stale ${projectionFreshness.stale_count}`);
   }
 
@@ -1418,6 +1418,10 @@ function summarizeProjectionFreshness(targets: ReportProjectionTarget[]): Projec
 function emptyCandidateDebtMetrics(): CandidateDebtMetrics {
   return {
     visible_candidate_count: 0,
+    total_candidate_count: 0,
+    debt_scan_candidate_count: 0,
+    displayed_candidate_count: 0,
+    display_limit: 0,
     missing_provenance_count: 0,
     stale_promoted_without_handoff_count: 0,
     unresolved_exposed_count: 0,
@@ -1431,10 +1435,29 @@ function hasMaintenanceHealthSignals(health: MaintenanceHealthSummary): boolean 
     || health.candidate_debt.stale_promoted_without_handoff_count > 0
     || health.candidate_debt.unresolved_exposed_count > 0
     || health.candidate_debt.hard_blocked_by_proposal_count > 0
+    || candidateDebtWindowIsTruncated(health.candidate_debt)
     || health.projection_freshness.pending_reconcile_count > 0
     || health.projection_freshness.failed_count > 0
     || health.projection_freshness.conflict_count > 0
     || health.projection_freshness.stale_count > 0;
+}
+
+function candidateDebtWindowIsTruncated(candidateDebt: CandidateDebtMetrics): boolean {
+  const total = candidateDebt.total_candidate_count;
+  const displayed = candidateDebt.displayed_candidate_count;
+  return typeof total === 'number'
+    && typeof displayed === 'number'
+    && total > displayed;
+}
+
+function formatCandidateDebtWindow(candidateDebt: CandidateDebtMetrics): string {
+  const total = candidateDebt.total_candidate_count;
+  const displayed = candidateDebt.displayed_candidate_count;
+  if (typeof total !== 'number' || typeof displayed !== 'number') return '';
+  const scan = candidateDebt.debt_scan_candidate_count ?? displayed;
+  const limit = candidateDebt.display_limit;
+  const limitSuffix = typeof limit === 'number' && limit > 0 ? `; limit ${limit}` : '';
+  return ` (debt scan ${scan} of ${total}; showing ${displayed} of ${total}${limitSuffix})`;
 }
 
 function redactReportValues<T>(value: T): T {

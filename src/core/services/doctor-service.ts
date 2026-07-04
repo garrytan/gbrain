@@ -11,7 +11,12 @@ import {
 import type { BrainHealth, BrainStats } from '../types.ts';
 import type { AgentTrustExplainReport } from '../types/agent-trust-explain.ts';
 import type { InstalledAgentReadinessReport } from './installed-agent-readiness-service.ts';
-import { readSyncWatchFailure, type SyncWatchFailure } from '../health-beacon.ts';
+import {
+  readAutopilotNightFailure,
+  readSyncWatchFailure,
+  type AutopilotNightFailure,
+  type SyncWatchFailure,
+} from '../health-beacon.ts';
 import { loadSubbrainRegistry } from '../subbrains.ts';
 import { MEMORY_INBOX_REVIEW_PRESSURE_THRESHOLD } from './memory-review-report-service.ts';
 import {
@@ -96,6 +101,7 @@ export interface DoctorInputs {
     days_since: number | null;
   };
   syncWatchFailure?: SyncWatchFailure | null;
+  autopilotNightFailure?: AutopilotNightFailure | null;
   memoryInboxBacklog?: {
     staged_for_review: number;
     capped: boolean;
@@ -168,6 +174,7 @@ export async function collectDoctorInputs(
     }
 
     inputs.syncWatchFailure = readSyncWatchFailure();
+    inputs.autopilotNightFailure = readAutopilotNightFailure();
     inputs.serveProcesses = collectServeProcesses();
 
     try {
@@ -725,6 +732,14 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
       name: 'sync_watch',
       status: 'warn',
       message: `Live sync watcher stopped at ${input.syncWatchFailure.stopped_at} after ${input.syncWatchFailure.consecutive_failures} consecutive failures: ${input.syncWatchFailure.reason}. Restart with: mbrain sync --watch (or dismiss with: mbrain sync --clear-failure)`,
+    });
+  }
+
+  if (input.autopilotNightFailure && input.autopilotNightFailure.consecutive_failures >= 2) {
+    checks.push({
+      name: 'autopilot_dead_nights',
+      status: 'warn',
+      message: `Autopilot nightly report failed ${input.autopilotNightFailure.consecutive_failures} consecutive night(s); last failure at ${input.autopilotNightFailure.stopped_at}: ${input.autopilotNightFailure.reason}. Run: mbrain autopilot dream --apply --write-candidates`,
     });
   }
 

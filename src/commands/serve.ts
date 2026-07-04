@@ -18,7 +18,7 @@ export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args:
   const oauthApprovalToken = process.env.MBRAIN_OAUTH_APPROVAL_TOKEN ?? process.env.MBRAIN_HTTP_OAUTH_PIN;
   const oauthSigningSecret = process.env.MBRAIN_OAUTH_SIGNING_SECRET;
   const oauthAllowedScopes = parseCsvFlag(args, '--oauth-allowed-scopes') ?? parseCsv(process.env.MBRAIN_OAUTH_ALLOWED_SCOPES);
-  const toolTier = parseStringFlag(args, '--tier') ?? process.env.MBRAIN_MCP_TOOL_TIER;
+  const toolTier = parseStringFlag(args, '--tier') ?? process.env.MBRAIN_MCP_TOOL_TIER ?? 'core';
 
   if (http) {
     const oauthStartupErrors = getHttpOAuthServeStartupErrors({

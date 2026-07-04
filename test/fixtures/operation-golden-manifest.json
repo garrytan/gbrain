@@ -4821,51 +4821,50 @@
         ]
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [
           "canonical_write"
         ],
         "capability_classification": "explicit",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -7712,7 +7711,7 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "core",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
         "visible_profiles": [

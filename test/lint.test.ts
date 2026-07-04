@@ -112,6 +112,47 @@ describe('lintContent', () => {
     expect(issues).toHaveLength(0);
   });
 
+  test('detects dangling superseded_by targets when a slug set is available', () => {
+    const content = [
+      '---',
+      'title: Old Memory',
+      'type: concept',
+      'created: 2026-04-11',
+      'superseded_by: concepts/new-memory',
+      '---',
+      '',
+      '# Old Memory',
+      '',
+      'Content.',
+    ].join('\n');
+    const issues = lintContent(content, 'concepts/old-memory.md', 'concepts/old-memory.md', new Set([
+      'concepts/old-memory',
+    ]));
+
+    expect(issues.some(i => i.rule === 'broken-superseded-by')).toBe(true);
+  });
+
+  test('accepts existing superseded_by targets when a slug set is available', () => {
+    const content = [
+      '---',
+      'title: Old Memory',
+      'type: concept',
+      'created: 2026-04-11',
+      'superseded_by: concepts/new-memory.md',
+      '---',
+      '',
+      '# Old Memory',
+      '',
+      'Content.',
+    ].join('\n');
+    const issues = lintContent(content, 'concepts/old-memory.md', 'concepts/old-memory.md', new Set([
+      'concepts/old-memory',
+      'concepts/new-memory',
+    ]));
+
+    expect(issues.some(i => i.rule === 'broken-superseded-by')).toBe(false);
+  });
+
   test('detects vague durable page slugs', () => {
     const content = '---\ntitle: Readme\ntype: concept\ncreated: 2026-04-25\n---\n\n# Readme\n\nContent.';
     const issues = lintContent(content, 'readme.md');

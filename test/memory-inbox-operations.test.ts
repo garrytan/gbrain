@@ -317,9 +317,11 @@ test('propose_compile_debt_patches previews and flag-gates governed patch candid
   const databasePath = join(dir, 'brain.db');
   const engine = new SQLiteEngine();
   const proposePatches = operations.find((operation) => operation.name === 'propose_compile_debt_patches');
+  const reviewPatch = operations.find((operation) => operation.name === 'review_memory_patch_candidate');
+  const applyPatch = operations.find((operation) => operation.name === 'apply_memory_patch_candidate');
 
-  if (!proposePatches) {
-    throw new Error('propose_compile_debt_patches operation is missing');
+  if (!proposePatches || !reviewPatch || !applyPatch) {
+    throw new Error('compile-debt patch operations are missing');
   }
 
   try {
@@ -364,10 +366,14 @@ test('propose_compile_debt_patches previews and flag-gates governed patch candid
     };
     const preview = await proposePatches.handler(baseCtx, { limit: 5 }) as any;
     expect(preview.applied).toBe(false);
+    const patchBodyJson = JSON.stringify(preview.proposals[0].patch_body);
+    expect(patchBodyJson.includes('- **2026-07-03** | New timeline fact.')).toBe(false);
+    expect(patchBodyJson).toContain('- New timeline fact. [Source: User, direct message, 2026-07-03 10:00 KST]');
+    expect(patchBodyJson).not.toContain('Pending Compile-Debt Review');
     expect(preview.proposals[0]).toMatchObject({
       slug: 'systems/compile-debt',
       patch_body: {
-        compiled_truth: expect.stringContaining('Pending Compile-Debt Review'),
+        compiled_truth: expect.stringContaining('Timeline Evidence Distillation'),
       },
     });
 
@@ -399,6 +405,29 @@ test('propose_compile_debt_patches previews and flag-gates governed patch candid
     });
     expect(candidates).toHaveLength(1);
     expect(candidates[0]?.proposed_content).toContain('compile-debt patch');
+
+    await reviewPatch.handler(baseCtx, {
+      candidate_id: candidates[0]?.id,
+      session_id: 'session:compile-debt',
+      realm_id: 'realm:compile-debt',
+      actor: 'agent:compile-debt',
+      decision: 'approve',
+      review_reason: 'Generated distillation preserves source attribution.',
+      source_refs: ['User, direct message, 2026-07-03 10:00 KST'],
+    });
+    await applyPatch.handler(baseCtx, {
+      candidate_id: candidates[0]?.id,
+      session_id: 'session:compile-debt',
+      realm_id: 'realm:compile-debt',
+      actor: 'agent:compile-debt',
+      review_reason: 'Apply governed compile-debt distillation.',
+      source_refs: ['User, direct message, 2026-07-03 10:00 KST'],
+    });
+
+    const updatedPage = await engine.getPage('systems/compile-debt');
+    expect(updatedPage?.compiled_truth).toContain('Timeline Evidence Distillation');
+    expect(updatedPage?.compiled_truth).toContain('- New timeline fact. [Source: User, direct message, 2026-07-03 10:00 KST]');
+    expect(updatedPage?.compiled_truth).not.toContain('- **2026-07-03** | New timeline fact.');
   } finally {
     await engine.disconnect();
     rmSync(dir, { recursive: true, force: true });

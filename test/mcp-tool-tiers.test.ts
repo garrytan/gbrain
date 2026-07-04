@@ -38,6 +38,7 @@ describe('tiered tool catalog (C1 part 2)', () => {
       'list_source_items',
       'capture_agent_session_memory',
       'plan_agent_session_activation',
+      'delete_page',
     ]) {
       const op = byName.get(name);
       if (op) expect(effectiveToolTier(op)).toBe('admin');
@@ -47,6 +48,13 @@ describe('tiered tool catalog (C1 part 2)', () => {
   test('an explicit op.tier overrides the name classifier', () => {
     expect(effectiveToolTier({ name: 'apply_memory_redaction_plan', tier: 'core' } as never)).toBe('core');
     expect(effectiveToolTier({ name: 'retrieve_context', tier: 'admin' } as never)).toBe('admin');
+  });
+
+  test('tier classification does not depend on admin name fragments', () => {
+    const source = readFileSync(new URL('../src/mcp/tool-tiers.ts', import.meta.url), 'utf-8');
+
+    expect(source).not.toContain('ADMIN_NAME_FRAGMENTS');
+    expect(effectiveToolTier({ name: 'experimental_memory_redaction_probe' } as never)).toBe('extended');
   });
 
   test('resolveAllowedTiers honors default, all, and explicit selections', () => {

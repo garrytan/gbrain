@@ -193,6 +193,19 @@ describe('config loading', () => {
     expect(loadConfig()?.maintenance_governed_recompile_enabled).toBe(true);
   });
 
+  test('loads Dream phase timeout from the documented nested maintenance config', async () => {
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: '~/.mbrain/brain.db',
+      maintenance: {
+        phase_timeout_ms: 12_345,
+      },
+    });
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    expect(loadConfig()?.maintenance_phase_timeout_ms).toBe(12_345);
+  });
+
   test('loads source rank rules from nested retrieval config', async () => {
     writeUserConfig({
       engine: 'sqlite',

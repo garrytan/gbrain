@@ -539,6 +539,36 @@ describe('doctor command', () => {
       .toMatchObject({ status: 'fail' });
   });
 
+  test('buildDoctorReport warns after two consecutive autopilot dead nights', () => {
+    const report = buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 0,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: null,
+      profile: null,
+      rawPostgresChecksSupported: false,
+      latestVersion: 44,
+      schemaVersion: '44',
+      autopilotNightFailure: {
+        stopped_at: '2026-07-04T03:00:00.000Z',
+        reason: 'report save failed',
+        consecutive_failures: 2,
+      },
+    });
+
+    expect(report.checks.find((candidate) => candidate.name === 'autopilot_dead_nights')).toMatchObject({
+      status: 'warn',
+      message: expect.stringContaining('2 consecutive night'),
+    });
+  });
+
   test('buildDoctorReport warns when enabled autopilot has only a stale completed cycle', () => {
     const now = '2030-01-03T00:00:00.000Z';
     const staleTimestamp = '2030-01-01T00:00:00.000Z';

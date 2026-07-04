@@ -2,7 +2,11 @@ import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { collectMemoryReportInput, runMemoryReport } from '../src/commands/memory-report.ts';
+import {
+  collectMemoryReportInput,
+  deliverMemoryReportNotification,
+  runMemoryReport,
+} from '../src/commands/memory-report.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { operationsByName } from '../src/core/operations.ts';
@@ -1233,6 +1237,48 @@ describe('memory review report service', () => {
     });
   });
 
+  test('candidate debt scans beyond the display limit and renders showing N of M markers', async () => {
+    const fresh = reportCandidate('candidate:fresh', {
+      created_at: '2026-05-22T11:00:00.000Z',
+      updated_at: '2026-05-22T11:00:00.000Z',
+      source_refs: ['Source: fresh'],
+    });
+    const oldMissingProvenance = reportCandidate('candidate:old-missing-provenance', {
+      created_at: '2026-04-01T00:00:00.000Z',
+      updated_at: '2026-04-01T00:00:00.000Z',
+      source_refs: [],
+    });
+    const candidates = [fresh, oldMissingProvenance];
+    const engine = {
+      listMemoryMutationEvents: async () => [],
+      countMemoryCandidateEntries: async () => candidates.length,
+      listMemoryCandidateEntries: async (filters?: { limit?: number; offset?: number }) => {
+        const offset = filters?.offset ?? 0;
+        const limit = filters?.limit ?? candidates.length;
+        return candidates.slice(offset, offset + limit);
+      },
+      listCanonicalHandoffEntries: async () => [],
+      listCanonicalTargetProposalEntries: async () => [],
+    } as unknown as BrainEngine;
+
+    const input = await collectMemoryReportInput(engine, 'workspace:default', 1, now);
+
+    expect(input.review_items?.map((item) => item.id)).toEqual(['candidate:fresh']);
+    expect(input.candidate_debt).toMatchObject({
+      visible_candidate_count: 2,
+      missing_provenance_count: 1,
+      total_candidate_count: 2,
+      debt_scan_candidate_count: 2,
+      displayed_candidate_count: 1,
+      display_limit: 1,
+    });
+    expect(input.candidate_age_escalations?.map((candidate) => candidate.id)).toContain('candidate:old-missing-provenance');
+
+    const formatted = formatMemoryReviewReport(buildMemoryReviewReport(input));
+    expect(formatted).toContain('showing 1 of 2');
+    expect(formatted).toContain('debt scan 2 of 2');
+  });
+
   test('hard-blocked proposal debt is reportable without making report health warn', () => {
     const report = buildMemoryReviewReport({
       scope_id: 'workspace:default',
@@ -2303,6 +2349,25 @@ describe('memory review report service', () => {
         elapsed_ms: 125,
         retrieved_token_count: 42,
       });
+      const evalRun = await engine.putContextEvalRun({
+        fixture_id: 'retrieval-eval-basic',
+        fixture_mode: 'live_retrieve',
+        status: 'passed',
+        retrieval_trace_ids: [trace.id],
+        metrics: { total: 1, passed: 1, failed: 0, recall_at_10: 0.8 },
+        started_at: trace.created_at,
+        completed_at: trace.created_at,
+      });
+      await engine.putContextEvalAssertion({
+        run_id: evalRun.id,
+        case_id: 'trajectory-groundedness',
+        assertion_kind: 'live_retrieval_quality',
+        passed: true,
+        score: 0.8,
+        expected: { gold_slugs: ['concepts/hybrid-search'] },
+        actual: { recall_at_10: 0.8 },
+        retrieval_trace_id: trace.id,
+      });
       const reportNow = new Date(trace.created_at.getTime() + 1_000).toISOString();
       const logs: string[] = [];
       const originalLog = console.log;
@@ -2322,6 +2387,7 @@ describe('memory review report service', () => {
       expect(output).toContain('Retrieval Trajectory Score');
       expect(output).toContain('trace-trajectory');
       expect(output).toContain('redundancy: 1.000');
+      expect(output).toContain('groundedness: 0.800');
       expect(output).toContain('retrieved_tokens: 42');
       expect(output).not.toContain('Memory Review Report');
     } finally {
@@ -2515,7 +2581,103 @@ describe('memory review report service', () => {
       await engine.disconnect();
     }
   });
+
+  test('memory report notification resolver covers off, command, and auto platform modes', () => {
+    const payload = {
+      path: '/tmp/brain/reports/memory-review-report/report.md',
+      counts: { review_items: 1 },
+      summary_lines: ['1 review items'],
+    };
+    const calls: Array<{ command: string; args: unknown[] }> = [];
+    const fakeSpawn = ((command: string, ...args: unknown[]) => {
+      calls.push({ command, args });
+      return { status: 0, signal: null, stderr: '', stdout: '', pid: 1, output: [] };
+    }) as unknown as typeof import('child_process').spawnSync;
+
+    expect(deliverMemoryReportNotification({ mode: 'off' }, payload)).toEqual({
+      mode: 'off',
+      attempted: false,
+      delivered: false,
+      message: null,
+    });
+    expect(deliverMemoryReportNotification(
+      { mode: 'command', command: 'cat >/dev/null' },
+      payload,
+      { spawnSync: fakeSpawn },
+    )).toEqual({
+      mode: 'command',
+      attempted: true,
+      delivered: true,
+      message: null,
+    });
+    expect(deliverMemoryReportNotification(
+      { mode: 'auto' },
+      {
+        ...payload,
+        path: '/tmp/brain/reports/memory-review-report/report "quoted".md',
+      },
+      { platform: 'darwin', spawnSync: fakeSpawn },
+    )).toEqual({
+      mode: 'auto',
+      attempted: true,
+      delivered: true,
+      message: null,
+    });
+    expect(deliverMemoryReportNotification(
+      { mode: 'auto' },
+      payload,
+      { platform: 'linux', spawnSync: fakeSpawn },
+    )).toEqual({
+      mode: 'auto',
+      attempted: false,
+      delivered: false,
+      message: 'no supported notifier found',
+    });
+    expect(calls.map((call) => call.command)).toEqual(['cat >/dev/null', 'osascript']);
+    expect(calls[1]?.args).toContainEqual(expect.arrayContaining([
+      '-e',
+      'display notification "Open /tmp/brain/reports/memory-review-report/report \\"quoted\\".md" with title "MBrain memory report"',
+    ]));
+  });
 });
+
+function reportCandidate(
+  id: string,
+  overrides: Partial<Omit<MemoryCandidateEntry, 'created_at' | 'updated_at'>> & {
+    created_at?: Date | string;
+    updated_at?: Date | string;
+  } = {},
+): MemoryCandidateEntry {
+  const { created_at, updated_at, ...rest } = overrides;
+  const createdAt = new Date(created_at ?? now);
+  const updatedAt = new Date(updated_at ?? createdAt);
+  return {
+    id,
+    scope_id: 'workspace:default',
+    candidate_type: 'fact',
+    proposed_content: `Report candidate ${id}.`,
+    source_refs: ['Source: report candidate'],
+    generated_by: 'agent',
+    extraction_kind: 'extracted',
+    confidence_score: 0.6,
+    importance_score: 0.4,
+    recurrence_score: 0.1,
+    sensitivity: 'work',
+    status: 'candidate',
+    target_object_type: 'curated_note',
+    target_object_id: 'people/ada',
+    reviewed_at: null,
+    review_reason: null,
+    verification_status: 'unverified',
+    verification_method: null,
+    verification_evidence: null,
+    verification_source_refs: [],
+    verified_at: null,
+    created_at: createdAt,
+    updated_at: updatedAt,
+    ...rest,
+  };
+}
 
 function canonicalTargetProposal(
   id: string,

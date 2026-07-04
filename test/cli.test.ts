@@ -247,6 +247,10 @@ describe('CLI source shape', () => {
     expect(cliSource).toContain('await runServe(enginePromise, normalizeCliOnlyArgs(command, args));');
   });
 
+  test('bare serve defaults to the documented core tool tier', () => {
+    expect(serveSource).toContain("process.env.MBRAIN_MCP_TOOL_TIER ?? 'core'");
+  });
+
   test('serve exposes OAuth scope allowlist through the top-level CLI spec', () => {
     expect(cliSource).toContain('oauth_allowed_scopes');
     expect(cliSource).toContain('--oauth-allowed-scopes');

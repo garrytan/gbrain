@@ -22,6 +22,7 @@ describe('dream cycle phase runner', () => {
       'projection_reconcile',
       'embedding_refresh',
       'context_refresh',
+      'recompile',
       'daily_report',
       'auto_promote',
     ]);
@@ -55,6 +56,12 @@ describe('dream cycle phase runner', () => {
       skip_reason: 'runner_unavailable',
       owner_phase: 'Phase 08',
       next_recommended_action: 'Configure lifecycle forgetting service before enabling forgetting review.',
+    });
+    expect(result.phases.find((phase) => phase.family === 'recompile')).toMatchObject({
+      status: 'skipped',
+      skip_reason: 'flag_disabled',
+      owner_phase: 'Phase 07',
+      next_recommended_action: 'Enable maintenance.governed_recompile_enabled before running governed recompile.',
     });
   });
 
@@ -299,7 +306,7 @@ describe('dream cycle phase runner', () => {
     const result = await runDreamCycle(stubEngine(), {
       scope_id: 'workspace:default',
       now: '2026-05-21T10:00:00.000Z',
-      dry_run: true,
+      dry_run: false,
     }, {
       phaseHandlers: {
         source_status: async () => ({
@@ -835,6 +842,47 @@ describe('dream cycle phase runner', () => {
     });
   });
 
+  test('recompile phase is runner-gated and reports fake-runner patch candidates without direct canonical mutation', async () => {
+    const unavailable = await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-05-21T10:00:00.000Z',
+      dry_run: true,
+      governed_recompile_enabled: true,
+    });
+
+    expect(unavailable.phases.find((phase) => phase.family === 'recompile')).toMatchObject({
+      status: 'skipped',
+      skip_reason: 'runner_unavailable',
+      canonical_mutations: 0,
+      llm_or_runner_used: false,
+    });
+
+    const result = await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-05-21T10:00:00.000Z',
+      dry_run: true,
+      governed_recompile_enabled: true,
+    }, {
+      governedRecompile: {
+        run: async () => ({
+          counts: { proposed_patch_candidates: 1 },
+          candidate_ids: ['compile-debt-patch:abc123'],
+          source_ids: ['systems/compile-debt'],
+          summary_lines: ['Created a governed recompile patch candidate.'],
+        }),
+      },
+    });
+
+    expect(result.phases.find((phase) => phase.family === 'recompile')).toMatchObject({
+      status: 'warn',
+      counts: { proposed_patch_candidates: 1 },
+      source_ids: ['systems/compile-debt'],
+      canonical_mutations: 0,
+      llm_or_runner_used: true,
+      next_recommended_action: 'Review governed recompile patch candidates before applying.',
+    });
+  });
+
   test('phase timeout marks the phase failed and lets the run return', async () => {
     let observedAbort = false;
     const result = await runDreamCycle(stubEngine(), {
@@ -862,12 +910,46 @@ describe('dream cycle phase runner', () => {
     expect(result.phases.find((phase) => phase.family === 'daily_report')).toBeDefined();
   });
 
+  test('phase timeout observes a later loser rejection instead of leaking it globally', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown) => {
+      unhandled.push(error);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const result = await runDreamCycle(stubEngine(), {
+        scope_id: 'workspace:default',
+        now: '2026-05-21T10:00:00.000Z',
+        dry_run: true,
+        phase_timeout_ms: 5,
+      }, {
+        phaseHandlers: {
+          source_status: async (context) => new Promise((_, reject) => {
+            context.input.signal?.addEventListener('abort', () => {
+              setTimeout(() => reject(new Error('late source_status abort rejection')), 1);
+            }, { once: true });
+          }),
+        },
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(result.phases.find((phase) => phase.family === 'source_status')).toMatchObject({
+        status: 'failed',
+        timed_out: true,
+      });
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   test('daily report phase can persist the memory review report through injected deps', async () => {
     const saves: any[] = [];
     const result = await runDreamCycle(stubEngine(), {
       scope_id: 'workspace:default',
       now: '2026-05-21T10:00:00.000Z',
-      dry_run: true,
+      dry_run: false,
     }, {
       memoryReport: {
         save: async (input) => {
@@ -916,7 +998,20 @@ describe('dream cycle phase runner', () => {
       watchedQuestions: {
         run: async (input) => {
           calls.push(`watched:${input.scope_id}:${input.limit}`);
-          return { probed: 2, changed: 1, initialized: 1, skipped: 0, runs: [] };
+          return {
+            probed: 2,
+            changed: 1,
+            initialized: 1,
+            skipped: 1,
+            failures: [
+              {
+                question_id: 'watch:failure',
+                question: 'What changed about retrieval?',
+                reason: 'embedding provider unavailable',
+              },
+            ],
+            runs: [],
+          };
         },
       },
       memoryReport: {
@@ -942,11 +1037,16 @@ describe('dream cycle phase runner', () => {
         watched_questions_probed: 2,
         watched_questions_changed: 1,
         watched_questions_initialized: 1,
+        watched_questions_skipped: 1,
+        watched_questions_failed: 1,
       },
+      errors: [
+        'Watched question watch:failure failed: embedding provider unavailable',
+      ],
     });
   });
 
-  test('daily report dry-run skips watched question probes before saving the report', async () => {
+  test('daily report dry-run skips watched question probes and report saves', async () => {
     const calls: string[] = [];
     const result = await runDreamCycle(stubEngine(), {
       scope_id: 'workspace:default',
@@ -971,10 +1071,10 @@ describe('dream cycle phase runner', () => {
       },
     });
 
-    expect(calls).toEqual(['report:workspace:default:7']);
+    expect(calls).toEqual([]);
     expect(result.phases.find((phase) => phase.family === 'daily_report')).toMatchObject({
       counts: {
-        saved_reports: 1,
+        saved_reports: 0,
       },
     });
     expect(result.phases.find((phase) => phase.family === 'daily_report')?.counts).not.toHaveProperty('watched_questions_probed');

@@ -18,7 +18,7 @@ import type {
 } from './types.ts';
 
 type PGLiteDB = PGlite;
-const PGLITE_EMBEDDED_SCHEMA_VERSION = 12;
+const PGLITE_EMBEDDED_SCHEMA_VERSION = 1;
 
 export class PGLiteEngine extends PgEngineBase implements BrainEngine {
   private _db: PGLiteDB | null = null;

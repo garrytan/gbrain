@@ -141,7 +141,7 @@ function jaccard(left: Set<string>, right: Set<string>): number {
 }
 
 function isReEscalationStep(step: string): boolean {
-  return /\b(re[-_ ]?escalat|retry|fallback|second_pass)\b/i.test(step);
+  return /(^|[^a-z0-9])(re[-_ ]?escalat|retry|fallback|second[-_ ]pass)([^a-z0-9]|$)/i.test(step);
 }
 
 function normalizeGroundedness(value: number | null | undefined): number | null {

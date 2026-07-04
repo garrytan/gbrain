@@ -26,6 +26,7 @@ import {
   type ReportWatchedQuestionChange,
 } from '../core/services/memory-review-report-service.ts';
 import { createHash } from 'crypto';
+import { spawnSync } from 'child_process';
 import { saveBrainReport } from './report.ts';
 import {
   scoreRetrievalTrajectory,
@@ -38,6 +39,7 @@ import type {
   DecisionProjectionTaskAttempt,
   CanonicalTargetProposalEntry,
   MemoryCandidateEntry,
+  MemoryCandidateFilters,
   MemoryMutationEvent,
   Page,
   RetrievalTrace,
@@ -51,6 +53,25 @@ import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from '../core/services/note-manifest-s
 
 const DEFAULT_SCOPE_ID = 'workspace:default';
 const DEFAULT_LIMIT = 100;
+const CANDIDATE_DEBT_SCAN_PAGE_SIZE = 500;
+const PAGE_HEALTH_SCAN_CAP = 1_000;
+
+export interface MemoryReportNotifyConfig {
+  mode: 'off' | 'auto' | 'command';
+  command?: string;
+}
+
+export interface MemoryReportNotificationResult {
+  mode: MemoryReportNotifyConfig['mode'];
+  attempted: boolean;
+  delivered: boolean;
+  message: string | null;
+}
+
+export interface MemoryReportNotificationRuntime {
+  platform?: string;
+  spawnSync?: typeof spawnSync;
+}
 const CANDIDATE_DEBT_PROPOSAL_PAGE_SIZE = 500;
 const CANDIDATE_DEBT_PROPOSAL_STATUSES: CanonicalTargetProposalStatus[] = [
   'proposed',
@@ -128,7 +149,8 @@ export async function saveMemoryReviewReport(engine: BrainEngine, input: {
   now: string;
   limit?: number;
   report_dir: string;
-}): Promise<{ path: string; counts: Record<string, number>; summary_lines: string[] }> {
+  notify?: MemoryReportNotifyConfig;
+}): Promise<{ path: string; counts: Record<string, number>; summary_lines: string[]; notification?: MemoryReportNotificationResult }> {
   const report = buildMemoryReviewReport(await collectMemoryReportInput(
     engine,
     input.scope_id,
@@ -143,16 +165,70 @@ export async function saveMemoryReviewReport(engine: BrainEngine, input: {
     content: formatted,
     now: new Date(input.now),
   });
+  const counts = {
+    review_items: report.summary.review_items,
+    open_conflicts: report.summary.conflicts,
+    incomplete_handoffs: report.summary.candidate_promoted_without_handoff,
+    failed_jobs: report.summary.failed_jobs,
+  };
+  const summaryLines = report.health.reasons;
+  const notification = deliverMemoryReportNotification(input.notify, {
+    path,
+    counts,
+    summary_lines: summaryLines,
+  });
   return {
     path,
-    counts: {
-      review_items: report.summary.review_items,
-      open_conflicts: report.summary.conflicts,
-      incomplete_handoffs: report.summary.candidate_promoted_without_handoff,
-      failed_jobs: report.summary.failed_jobs,
-    },
-    summary_lines: report.health.reasons,
+    counts,
+    summary_lines: summaryLines,
+    ...(notification ? { notification } : {}),
   };
+}
+
+export function deliverMemoryReportNotification(
+  config: MemoryReportNotifyConfig | undefined,
+  payload: { path: string; counts: Record<string, number>; summary_lines: string[] },
+  runtime: MemoryReportNotificationRuntime = {},
+): MemoryReportNotificationResult | undefined {
+  if (!config || config.mode === 'off') {
+    return config ? { mode: 'off', attempted: false, delivered: false, message: null } : undefined;
+  }
+  const run = runtime.spawnSync ?? spawnSync;
+  if (config.mode === 'command') {
+    if (!config.command?.trim()) {
+      return { mode: 'command', attempted: false, delivered: false, message: 'missing command' };
+    }
+    const result = run(config.command, {
+      shell: true,
+      input: JSON.stringify(payload),
+      encoding: 'utf8',
+    });
+    return {
+      mode: 'command',
+      attempted: true,
+      delivered: result.status === 0,
+      message: result.status === 0 ? null : (result.stderr || result.error?.message || `exit ${result.status}`),
+    };
+  }
+  if ((runtime.platform ?? process.platform) === 'darwin') {
+    const message = appleScriptStringLiteral(`Open ${payload.path}`);
+    const title = appleScriptStringLiteral('MBrain memory report');
+    const result = run('osascript', [
+      '-e',
+      `display notification ${message} with title ${title}`,
+    ], { encoding: 'utf8' });
+    return {
+      mode: 'auto',
+      attempted: true,
+      delivered: result.status === 0,
+      message: result.status === 0 ? null : (result.stderr || result.error?.message || `exit ${result.status}`),
+    };
+  }
+  return { mode: 'auto', attempted: false, delivered: false, message: 'no supported notifier found' };
+}
+
+function appleScriptStringLiteral(value: string): string {
+  return JSON.stringify(value);
 }
 
 function valueAfter(args: string[], flag: string): string | undefined {
@@ -184,7 +260,7 @@ export async function collectMemoryReportInput(
   try {
   const [
     mutationEvents,
-    candidates,
+    displayCandidates,
     lifecycleStates,
     purgeCandidates,
     projectionTargets,
@@ -231,11 +307,12 @@ export async function collectMemoryReportInput(
     collectPageHealthQueue(engine, generatedAt, limit),
     collectWatchedQuestionChanges(engine, scopeId, generatedAt, limit),
   ]);
+  const candidateScan = await collectCandidateDebtScan(engine, scopeId, displayCandidates, limit);
   const [
     canonicalHandoffCandidateState,
     candidateDebtCanonicalTargetProposals,
   ] = await Promise.all([
-    collectCanonicalHandoffCandidateState(engine, scopeId, candidates),
+    collectCanonicalHandoffCandidateState(engine, scopeId, candidateScan.candidates),
     collectCandidateDebtCanonicalTargetProposals(engine, scopeId),
   ]);
   const negativeMemoryProjections = [
@@ -245,16 +322,22 @@ export async function collectMemoryReportInput(
       now: generatedAt,
     })),
     ...buildNegativeMemoryProjections({
-      memory_candidates: candidates.map(memoryCandidateToDecisionProjectionCandidate),
+      memory_candidates: displayCandidates.map(memoryCandidateToDecisionProjectionCandidate),
       now: generatedAt,
     }),
   ];
+  const candidateDebt = computeCandidateDebtMetrics({
+    candidates: candidateScan.candidates,
+    canonical_handoff_candidate_ids: canonicalHandoffCandidateState.handoff_candidate_ids,
+    completed_canonical_handoff_candidate_ids: canonicalHandoffCandidateState.completed_handoff_candidate_ids,
+    canonical_target_proposals: candidateDebtCanonicalTargetProposals,
+  });
 
   return {
     scope_id: scopeId,
     generated_at: generatedAt,
     canonical_memories: mutationEvents.flatMap(memoryMutationToCanonicalMemory),
-    review_items: candidates.flatMap(memoryCandidateToReviewItem),
+    review_items: displayCandidates.flatMap(memoryCandidateToReviewItem),
     canonical_target_proposals: canonicalTargetProposals,
     write_sessions: writeSessions,
     lifecycle_states: lifecycleStates,
@@ -276,18 +359,19 @@ export async function collectMemoryReportInput(
     runner_jobs: runnerJobs,
     jobs,
     connector_health: connectorHealth,
-    candidate_debt: computeCandidateDebtMetrics({
-      candidates,
-      canonical_handoff_candidate_ids: canonicalHandoffCandidateState.handoff_candidate_ids,
-      completed_canonical_handoff_candidate_ids: canonicalHandoffCandidateState.completed_handoff_candidate_ids,
-      canonical_target_proposals: candidateDebtCanonicalTargetProposals,
-    }),
+    candidate_debt: {
+      ...candidateDebt,
+      total_candidate_count: candidateScan.total_count,
+      debt_scan_candidate_count: candidateScan.candidates.length,
+      displayed_candidate_count: displayCandidates.length,
+      display_limit: limit,
+    },
     negative_memory_projections: negativeMemoryProjections,
     context_eval_runs: contextEvalRuns,
     retrieval_trajectory_score: retrievalTrajectoryScore,
     skill_surface: collectSkillSurfaceSummary(),
-    candidate_age_escalations: collectCandidateAgeEscalations(candidates, generatedAt),
-    promoted_candidate_refutations: collectPromotedCandidateRefutations(candidates),
+    candidate_age_escalations: collectCandidateAgeEscalations(candidateScan.candidates, generatedAt),
+    promoted_candidate_refutations: collectPromotedCandidateRefutations(candidateScan.candidates),
     recurring_retrieval_gaps: recurringRetrievalGaps,
     page_health_queue: pageHealthQueue,
     watched_question_changes: watchedQuestionChanges,
@@ -296,6 +380,37 @@ export async function collectMemoryReportInput(
   } finally {
     activeReportDataIntegrityErrors = previousDataIntegrityErrors;
   }
+}
+
+async function collectCandidateDebtScan(
+  engine: BrainEngine,
+  scopeId: string,
+  firstPage: MemoryCandidateEntry[],
+  displayLimit: number,
+): Promise<{ candidates: MemoryCandidateEntry[]; total_count: number }> {
+  const filters: MemoryCandidateFilters = { scope_id: scopeId };
+  if (typeof engine.countMemoryCandidateEntries !== 'function') {
+    return { candidates: firstPage, total_count: firstPage.length };
+  }
+
+  const totalCount = await engine.countMemoryCandidateEntries(filters);
+  if (totalCount <= firstPage.length) {
+    return { candidates: firstPage, total_count: totalCount };
+  }
+
+  const byId = new Map(firstPage.map((candidate) => [candidate.id, candidate]));
+  const pageSize = Math.max(CANDIDATE_DEBT_SCAN_PAGE_SIZE, displayLimit);
+  for (let offset = firstPage.length; offset < totalCount; offset += pageSize) {
+    const batch = await engine.listMemoryCandidateEntries({
+      ...filters,
+      limit: pageSize,
+      offset,
+    });
+    if (batch.length === 0) break;
+    for (const candidate of batch) byId.set(candidate.id, candidate);
+  }
+
+  return { candidates: [...byId.values()], total_count: totalCount };
 }
 
 function collectCandidateAgeEscalations(
@@ -420,7 +535,14 @@ async function collectPageHealthQueue(
 ): Promise<ReportPageHealthItem[]> {
   if (typeof engine.listPages !== 'function' || typeof engine.getChunks !== 'function') return [];
   try {
-    const pages = await engine.listPages({ limit: Math.max(limit, 100), offset: 0 });
+    const scanLimit = Math.min(PAGE_HEALTH_SCAN_CAP, Math.max(limit, 100));
+    const pages = await engine.listPages({ limit: scanLimit, offset: 0 });
+    if (pages.length === scanLimit) {
+      activeReportDataIntegrityErrors?.push({
+        query: 'page_health_queue_scan_cap',
+        message: `Page-health scan inspected ${scanLimit} pages; results are capped before expensive chunk checks.`,
+      });
+    }
     const titleCounts = new Map<string, number>();
     for (const page of pages) {
       const key = normalizeReportKey(page.title);
@@ -673,14 +795,40 @@ async function collectRetrievalTrajectoryScore(
       offset: 0,
     });
     if (traces.length === 0) return null;
+    const groundednessByTraceId = await retrievalGroundednessByTraceId(engine, since, until, limit);
     const scores = await Promise.all(traces.map(async (trace) =>
       scoreRetrievalTrajectory(trace, {
         evidence_texts: await retrievalTraceEvidenceTexts(engine, trace),
+        groundedness: groundednessByTraceId.get(trace.id) ?? null,
       })));
     return summarizeRetrievalTrajectoryScores(scores);
   } catch {
     return null;
   }
+}
+
+async function retrievalGroundednessByTraceId(
+  engine: BrainEngine,
+  since: Date,
+  until: Date,
+  limit: number,
+): Promise<Map<string, number>> {
+  if (typeof (engine as Partial<BrainEngine>).listContextEvalAssertions !== 'function') {
+    return new Map();
+  }
+  const assertions = await engine.listContextEvalAssertions({
+    limit: Math.max(100, limit * 20),
+  });
+  const out = new Map<string, number>();
+  for (const assertion of assertions) {
+    if (assertion.assertion_kind !== 'live_retrieval_quality') continue;
+    if (!assertion.retrieval_trace_id) continue;
+    if (out.has(assertion.retrieval_trace_id)) continue;
+    if (assertion.created_at < since || assertion.created_at > until) continue;
+    if (typeof assertion.score !== 'number' || !Number.isFinite(assertion.score)) continue;
+    out.set(assertion.retrieval_trace_id, assertion.score);
+  }
+  return out;
 }
 
 async function retrievalTraceEvidenceTexts(

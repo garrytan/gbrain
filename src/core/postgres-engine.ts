@@ -1,7 +1,7 @@
 import postgres from 'postgres';
 import type { BrainEngine } from './engine.ts';
 import { PgEngineBase, type PgQueryable } from './pg-engine-base.ts';
-import { runMigrations } from './migrate.ts';
+import { freshSchemaMigrationSql, LATEST_VERSION, runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import type {
   EngineConfig,
@@ -124,7 +124,15 @@ export class PostgresEngine extends PgEngineBase implements BrainEngine {
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
+      const configTable = await conn<{ exists: string | null }[]>`
+        SELECT to_regclass('public.config')::text AS exists
+      `;
+      const hasExistingConfig = configTable[0]?.exists != null;
       await conn.unsafe(SCHEMA_SQL);
+      if (!hasExistingConfig) {
+        await conn.unsafe(freshSchemaMigrationSql(1));
+        await this.setConfig('version', String(LATEST_VERSION));
+      }
 
       // Run any pending migrations automatically
       const { applied } = await runMigrations(this, { log: this.schemaLogger });

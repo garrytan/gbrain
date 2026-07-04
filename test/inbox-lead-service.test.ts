@@ -129,6 +129,27 @@ describe('inbox lead service', () => {
     });
   });
 
+  test('treats omitted completed handoff data as incomplete rather than complete', () => {
+    const metrics = computeCandidateDebtMetrics({
+      candidates: [
+        candidate({
+          id: 'candidate:promoted-unknown-completion',
+          status: 'promoted',
+          created_at: new Date('2026-06-02T00:00:00.000Z'),
+          reviewed_at: new Date('2026-06-04T00:00:00.000Z'),
+        }),
+      ],
+      canonical_handoff_candidate_ids: ['candidate:promoted-unknown-completion'],
+      now: '2026-06-06T00:00:00.000Z',
+    });
+
+    expect(metrics).toMatchObject({
+      visible_candidate_count: 1,
+      stale_promoted_without_handoff_count: 1,
+      unresolved_exposed_count: 0,
+    });
+  });
+
   test('does not count unstable-subject blocked proposals as unresolved exposed debt', () => {
     const metrics = computeCandidateDebtMetrics({
       candidates: [

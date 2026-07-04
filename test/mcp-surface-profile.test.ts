@@ -78,18 +78,22 @@ describe('MCP surface profiles', () => {
     expect(findMcpSurfaceProfileClassificationFailures(operations)).toEqual([]);
 
     const profile = resolveMcpSurfaceProfile('http_remote');
-    const deletePage = operation('delete_page');
-    expect(isToolVisibleInSurfaceProfile(deletePage, profile)).toBe(true);
+    const addTimelineEntry = operation('add_timeline_entry');
+    expect(isToolVisibleInSurfaceProfile(addTimelineEntry, profile)).toBe(true);
     expect(() =>
-      assertToolCallableInSurfaceProfile(deletePage, profile, {
+      assertToolCallableInSurfaceProfile(addTimelineEntry, profile, {
         tokenCapabilities: surfaceTokenCapabilitiesFromScopes(['mcp']),
       }),
     ).toThrow(/token_missing_canonical_write/);
     expect(() =>
-      assertToolCallableInSurfaceProfile(deletePage, profile, {
+      assertToolCallableInSurfaceProfile(addTimelineEntry, profile, {
         tokenCapabilities: surfaceTokenCapabilitiesFromScopes(['mcp', 'canonical_write']),
       }),
     ).not.toThrow();
+
+    const deletePage = operation('delete_page');
+    expect(isToolVisibleInSurfaceProfile(deletePage, profile)).toBe(false);
+    expect(getMcpSurfaceDecision(deletePage, profile).denial_reasons).toContain('tier_not_callable');
   });
 
   test('new mutating operations must be explicitly classified', () => {

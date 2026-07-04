@@ -346,6 +346,50 @@ test('dream-cycle maintenance ignores prior dream-cycle candidates as input', as
   }
 });
 
+test('dream-cycle maintenance reports stranded unverified auto-promote staged candidates', async () => {
+  const harness = await createHarness('stranded-auto-promote');
+
+  try {
+    await harness.engine.createMemoryCandidateEntry({
+      id: 'stranded-auto-promote-candidate',
+      scope_id: 'workspace:default',
+      candidate_type: 'fact',
+      proposed_content: 'A stranded auto-promote candidate should not disappear.',
+      source_refs: ['Source: stranded auto-promote fixture'],
+      generated_by: 'manual',
+      extraction_kind: 'manual',
+      confidence_score: 0.85,
+      importance_score: 0.7,
+      recurrence_score: 0,
+      sensitivity: 'work',
+      status: 'staged_for_review',
+      target_object_type: 'curated_note',
+      target_object_id: 'concepts/dream-cycle',
+      reviewed_at: '2026-04-22T12:00:00.000Z',
+      review_reason: 'auto_promote (mbrain:auto_promote)',
+    });
+
+    const result = await runDreamCycleMaintenance(harness.engine, {
+      scope_id: 'workspace:default',
+      now: '2026-04-23T12:00:00.000Z',
+      limit: 5,
+      write_candidates: false,
+    });
+
+    expect(result.stranded_auto_promote_candidate_ids).toEqual(['stranded-auto-promote-candidate']);
+    expect(result.maintenance_phases).toContainEqual(expect.objectContaining({
+      phase_id: 'stranded_auto_promote_candidates',
+      output_kind: 'report',
+      status: 'reported',
+      summary_lines: expect.arrayContaining([
+        expect.stringContaining('stranded-auto-promote-candidate'),
+      ]),
+    }));
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test('dream-cycle maintenance uses one capped raw candidate read window', async () => {
   const calls: any[] = [];
   const result = await runDreamCycleMaintenance({

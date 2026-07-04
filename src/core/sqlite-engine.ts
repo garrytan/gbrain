@@ -2976,6 +2976,78 @@ export class SQLiteEngine implements BrainEngine {
     return rows.map(rowToMemoryCandidateEntry);
   }
 
+  async countMemoryCandidateEntries(filters?: MemoryCandidateFilters): Promise<number> {
+    const { whereClause, params } = this.memoryCandidateFilterWhereClause(filters);
+    const row = this.database.query(`
+      SELECT COUNT(*) AS count
+      FROM memory_candidate_entries
+      ${whereClause}
+    `).get(...sqliteBindings(params)) as { count: number | bigint | string } | null;
+    return Number(row?.count ?? 0);
+  }
+
+  private memoryCandidateFilterWhereClause(filters?: MemoryCandidateFilters): {
+    whereClause: string;
+    params: Array<string | number>;
+  } {
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (filters?.scope_id) {
+      clauses.push('scope_id = ?');
+      params.push(filters.scope_id);
+    }
+    if (filters?.status) {
+      clauses.push('status = ?');
+      params.push(filters.status);
+    }
+    if (filters?.candidate_type) {
+      clauses.push('candidate_type = ?');
+      params.push(filters.candidate_type);
+    }
+    if (filters?.target_object_type) {
+      clauses.push('target_object_type = ?');
+      params.push(filters.target_object_type);
+    }
+    if (filters?.target_object_id !== undefined) {
+      clauses.push('target_object_id = ?');
+      params.push(filters.target_object_id);
+    }
+    if (filters?.patch_operation_state !== undefined) {
+      clauses.push('patch_operation_state = ?');
+      params.push(filters.patch_operation_state);
+    }
+    if (filters?.patch_target_kind !== undefined) {
+      clauses.push('patch_target_kind = ?');
+      params.push(filters.patch_target_kind);
+    }
+    if (filters?.patch_target_id !== undefined) {
+      clauses.push('patch_target_id = ?');
+      params.push(filters.patch_target_id);
+    }
+    if (filters?.created_since !== undefined) {
+      clauses.push('created_at >= ?');
+      params.push(filters.created_since.toISOString());
+    }
+    if (filters?.created_until !== undefined) {
+      clauses.push('created_at < ?');
+      params.push(filters.created_until.toISOString());
+    }
+    if (filters?.reviewed_since !== undefined) {
+      clauses.push('reviewed_at >= ?');
+      params.push(filters.reviewed_since.toISOString());
+    }
+    if (filters?.reviewed_until !== undefined) {
+      clauses.push('reviewed_at < ?');
+      params.push(filters.reviewed_until.toISOString());
+    }
+
+    return {
+      whereClause: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '',
+      params,
+    };
+  }
+
   async createMemoryCandidateStatusEvent(
     input: MemoryCandidateStatusEventInput,
   ): Promise<MemoryCandidateStatusEvent> {

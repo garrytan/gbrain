@@ -42,7 +42,7 @@ export function buildInboxLeads(input: InboxLeadInput): InboxLeadResult {
 
 export function computeCandidateDebtMetrics(input: CandidateDebtInput): CandidateDebtMetrics {
   const handoffIds = new Set(input.canonical_handoff_candidate_ids ?? []);
-  const completedHandoffIds = new Set(input.completed_canonical_handoff_candidate_ids ?? input.canonical_handoff_candidate_ids ?? []);
+  const completedHandoffIds = new Set(input.completed_canonical_handoff_candidate_ids ?? []);
   const proposalsByCandidateId = activeProposalByCandidateId(input.canonical_target_proposals ?? []);
   const visibleCandidates = input.candidates.filter((candidate) => candidate.sensitivity !== 'secret');
   const reviewLatencies = visibleCandidates

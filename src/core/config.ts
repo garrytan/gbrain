@@ -33,6 +33,7 @@ export interface MBrainConfig {
   autopilot?: Record<string, unknown>;
   maintenance?: {
     governed_recompile_enabled?: boolean;
+    phase_timeout_ms?: number;
   };
   auto_promote?: Record<string, unknown>;
   retrieval_governed_probe_hybrid?: boolean;
@@ -40,6 +41,7 @@ export interface MBrainConfig {
   retrieval_usage_aware_ranking?: boolean;
   retrieval_eval_answer_grounding?: boolean;
   maintenance_governed_recompile_enabled?: boolean;
+  maintenance_phase_timeout_ms?: number;
   retrieval_source_rank_rules?: RetrievalSourceRankRuleConfig[];
 }
 
@@ -58,6 +60,7 @@ export interface MBrainConfigInput {
   autopilot?: Record<string, unknown>;
   maintenance?: {
     governed_recompile_enabled?: boolean;
+    phase_timeout_ms?: number;
   };
   auto_promote?: Record<string, unknown>;
   retrieval?: {
@@ -74,6 +77,7 @@ export interface MBrainConfigInput {
   retrieval_usage_aware_ranking?: boolean;
   retrieval_eval_answer_grounding?: boolean;
   maintenance_governed_recompile_enabled?: boolean;
+  maintenance_phase_timeout_ms?: number;
   retrieval_source_rank_rules?: RetrievalSourceRankRuleConfig[];
 }
 
@@ -175,6 +179,10 @@ export function resolveConfig(input: MBrainConfigInput): MBrainConfig {
     maintenance_governed_recompile_enabled: input.maintenance_governed_recompile_enabled
       ?? input.maintenance?.governed_recompile_enabled
       ?? false,
+    maintenance_phase_timeout_ms: normalizeOptionalPositiveNumber(
+      input.maintenance_phase_timeout_ms ?? input.maintenance?.phase_timeout_ms,
+      'maintenance.phase_timeout_ms',
+    ),
     retrieval_source_rank_rules: normalizeRetrievalSourceRankRules(
       input.retrieval_source_rank_rules ?? input.retrieval?.source_rank_rules,
     ),
@@ -215,6 +223,18 @@ function normalizeRetrievalSourceRankRules(
       factor: rule.factor,
     };
   });
+}
+
+function normalizeOptionalPositiveNumber(value: number | undefined, field: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new MBrainError(
+      `Invalid ${field}`,
+      `${field} must be a positive number`,
+      `Use "${field}": 600000 or omit it to use the default.`,
+    );
+  }
+  return value;
 }
 
 export function validateResolvedConfig(config: MBrainConfig): void {

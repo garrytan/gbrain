@@ -99,13 +99,39 @@ describe('eval CLI runner', () => {
     tempPaths.push(dir);
     const basePath = join(dir, 'base.json');
     const headPath = join(dir, 'head.json');
-    writeFileSync(basePath, JSON.stringify({ metrics: { total: 2, passed: 1, failed: 1, recall_at_10: 0.5, precision_at_k: 0.25, mrr: 0.5, judge_score: 0.4 } }));
-    writeFileSync(headPath, JSON.stringify({ metrics: { total: 2, passed: 2, failed: 0, recall_at_10: 1, precision_at_k: 0.5, mrr: 1, judge_score: 0.9 } }));
+    writeFileSync(basePath, JSON.stringify({
+      metrics: {
+        total: 2,
+        passed: 1,
+        failed: 1,
+        recall_at_10: 0.5,
+        precision_at_k: 0.25,
+        mrr: 0.5,
+        judge_score: 0.4,
+        per_route: {
+          broad_synthesis: { case_count: 2, recall_at_10: 0.5, precision_at_k: 0.25, mrr: 0.5 },
+        },
+      },
+    }));
+    writeFileSync(headPath, JSON.stringify({
+      metrics: {
+        total: 2,
+        passed: 2,
+        failed: 0,
+        recall_at_10: 1,
+        precision_at_k: 0.5,
+        mrr: 1,
+        judge_score: 0.9,
+        per_route: {
+          broad_synthesis: { case_count: 2, recall_at_10: 1, precision_at_k: 0.5, mrr: 1 },
+        },
+      },
+    }));
     const logs: string[] = [];
     const originalLog = console.log;
     console.log = (line?: unknown) => { logs.push(String(line)); };
     try {
-      await runEval(fakeEvalEngine(), ['context', '--compare', basePath, headPath, '--json']);
+      await runEval(fakeEvalEngine(), ['retrieval', '--compare', basePath, headPath, '--json']);
     } finally {
       console.log = originalLog;
     }
@@ -116,6 +142,11 @@ describe('eval CLI runner', () => {
       precision_at_k: 0.25,
       mrr: 0.5,
       judge_score: 0.5,
+    });
+    expect(output.per_route.broad_synthesis.delta).toMatchObject({
+      recall_at_10: 0.5,
+      precision_at_k: 0.25,
+      mrr: 0.5,
     });
   });
 
@@ -249,7 +280,8 @@ describe('eval CLI runner', () => {
       writeFileSync(fixturePath, [
         JSON.stringify({
           id: 'hybrid-search-live',
-          route: 'precision_lookup',
+          route: 'broad_synthesis',
+          expected_selected_intent: 'broad_synthesis',
           query: 'hybrid search retrieval',
           gold_slugs: ['concepts/hybrid-search'],
           gold_answer: 'Hybrid search combines keyword and vector retrieval.',
@@ -275,10 +307,19 @@ describe('eval CLI runner', () => {
         recall_at_10: 1,
         top1_match_rate: 1,
       });
-      expect(output.retrieval_quality.per_route.precision_lookup.case_count).toBe(1);
+      expect(output.retrieval_quality.per_route.broad_synthesis.case_count).toBe(1);
+      expect(output.retrieval_quality.cases[0].selected_intent).toBe('broad_synthesis');
+      expect(output.retrieval_quality.cases[0].route_match).toBe(true);
       expect(output.assertions[0]).toMatchObject({
         assertion_kind: 'live_retrieval_quality',
         passed: true,
+        expected: {
+          expected_selected_intent: 'broad_synthesis',
+        },
+        actual: {
+          selected_intent: 'broad_synthesis',
+          route_match: true,
+        },
       });
     } finally {
       await engine.disconnect();

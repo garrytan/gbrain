@@ -324,6 +324,19 @@ describe('PGLiteEngine: Search', () => {
     const results = await engine.searchKeyword('레벨리온', { limit: 5 });
 
     expect(results.map((entry) => entry.slug)).toContain('concepts/rebellion-cjk');
+
+    await engine.putPage('concepts/rebellion-architecture-cjk', {
+      type: 'concept',
+      title: '레벨리온 아키텍처',
+      compiled_truth: '레벨리온은 검색 아키텍처 품질도 검증한다.',
+    });
+    await engine.upsertChunks('concepts/rebellion-architecture-cjk', [
+      { chunk_index: 0, chunk_text: '레벨리온은 검색 아키텍처 품질도 검증한다.', chunk_source: 'compiled_truth' },
+    ]);
+
+    const multiTerm = await engine.searchKeyword('레벨리온 아키텍처', { limit: 10 });
+    expect(multiTerm.map((entry) => entry.slug)).toContain('concepts/rebellion-architecture-cjk');
+    expect(multiTerm.map((entry) => entry.slug)).not.toContain('concepts/rebellion-cjk');
   });
 
   test('searchVector returns empty when no embeddings', async () => {
