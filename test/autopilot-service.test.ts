@@ -124,6 +124,9 @@ describe('autopilot service', () => {
   test('run-once executes dream lifecycle work when a dream runner is configured', async () => {
     const dreamInputs: Array<Record<string, unknown>> = [];
     const harness = await createHarness({
+      autopilotConfig: {
+        phase_timeout_ms: 12_345,
+      },
       dreamRunner: async (input) => {
         dreamInputs.push(input as Record<string, unknown>);
         return { status: 'ok', phases: [{ family: 'forgetting_review', counts: { lifecycle_transitions: 1 } }] };
@@ -148,6 +151,7 @@ describe('autopilot service', () => {
       write_candidates: true,
       allow_llm: false,
       allow_local_runner: false,
+      phase_timeout_ms: 12_345,
       trigger: 'autopilot',
     }]);
     expect(harness.completedJobs).toEqual([

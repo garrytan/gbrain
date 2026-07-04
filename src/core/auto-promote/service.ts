@@ -60,10 +60,8 @@ export async function runAutoPromote(input: RunAutoPromoteInput): Promise<RunAut
     .filter((candidate) => excludeIds.has(candidate.id))
     .map((candidate) => ({ id: candidate.id, reason: 'dream_self_consumption_guard' }));
   const candidates = allCandidates.filter((candidate) => !excludeIds.has(candidate.id));
-  const contradictionExcluded = await excludedByOpenContradiction(input, candidates);
-  const contradictionExcludedIds = new Set(contradictionExcluded.map((entry) => entry.id));
   const buckets = selectAutoPromoteCandidates(
-    candidates.filter((candidate) => !contradictionExcludedIds.has(candidate.id)),
+    candidates,
     input.config,
   );
 
@@ -117,14 +115,12 @@ export async function runAutoPromote(input: RunAutoPromoteInput): Promise<RunAut
   const reportableGateSkips = gate.skipped.filter((entry) => isReportableGateSkip(entry.reason));
   const excluded = [
     ...selfConsumptionExcluded,
-    ...contradictionExcluded.map((entry) => ({ id: entry.id, reason: 'open_contradiction' })),
     ...buckets.excluded.map((e) => ({ id: e.candidate.id, reason: e.reason })),
     ...timeBudgetExcluded,
     ...reportableGateSkips,
   ];
   const excludedAudit = [
     ...selfConsumptionExcluded.map((entry) => excludedAuditEntry(input, candidateById.get(entry.id), entry.id, entry.reason)),
-    ...contradictionExcluded.map((entry) => excludedAuditEntry(input, candidateById.get(entry.id), entry.id, 'open_contradiction')),
     ...buckets.excluded.map((entry) => excludedAuditEntry(input, entry.candidate, entry.candidate.id, entry.reason)),
     ...timeBudgetExcluded.map((entry) => excludedAuditEntry(input, candidateById.get(entry.id), entry.id, entry.reason)),
   ];
@@ -271,22 +267,6 @@ function createTimeBudget(timeBudgetMs: number | undefined): { exceeded: () => b
 
 function isAutoPromoteOpenStatus(candidate: { status: string }): boolean {
   return candidate.status === 'captured' || candidate.status === 'candidate';
-}
-
-async function excludedByOpenContradiction(
-  input: RunAutoPromoteInput,
-  candidates: Array<{ id: string }>,
-): Promise<Array<{ id: string }>> {
-  if (input.config.eligibility.allow_contradictions || candidates.length === 0) return [];
-  const ids = candidates.map((candidate) => candidate.id);
-  const contradictions = await input.engine.listMemoryCandidateContradictionEntriesForCandidateIds(ids);
-  const conflicted = new Set<string>();
-  for (const contradiction of contradictions) {
-    if (contradiction.outcome !== 'unresolved') continue;
-    if (ids.includes(contradiction.candidate_id)) conflicted.add(contradiction.candidate_id);
-    if (ids.includes(contradiction.challenged_candidate_id)) conflicted.add(contradiction.challenged_candidate_id);
-  }
-  return [...conflicted].map((id) => ({ id }));
 }
 
 async function judge(

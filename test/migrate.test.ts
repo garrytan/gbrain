@@ -170,14 +170,10 @@ describe('migrate', () => {
     expect(sql).toContain('ADD COLUMN IF NOT EXISTS scope_id');
   });
 
-  test('PGLite embedded schema only claims the v48 squash when required pre-baseline tables are embedded', async () => {
+  test('PGLite fresh installs compact pending schema SQL before marking latest', async () => {
     const { freshSchemaMigrationSql } = await import('../src/core/migrate.ts');
     const pgliteEngineSource = readFileSync(
       new URL('../src/core/pglite-engine.ts', import.meta.url),
-      'utf-8',
-    );
-    const pgliteSchema = readFileSync(
-      new URL('../src/core/pglite-schema.ts', import.meta.url),
       'utf-8',
     );
     const requiredPreBaselineTables = [
@@ -187,17 +183,13 @@ describe('migrate', () => {
       'memory_mutation_events',
       'forgetting_events',
     ];
+    const compactFreshSql = freshSchemaMigrationSql(1);
 
-    if (pgliteEngineSource.includes('PGLITE_EMBEDDED_SCHEMA_VERSION = MIGRATION_SQUASH_BASELINE_VERSION')) {
-      for (const table of requiredPreBaselineTables) {
-        expect(pgliteSchema).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
-      }
-    } else {
-      expect(pgliteEngineSource).toContain('PGLITE_EMBEDDED_SCHEMA_VERSION = 12');
-      const postEmbeddedMigrationSql = freshSchemaMigrationSql(12);
-      for (const table of requiredPreBaselineTables) {
-        expect(postEmbeddedMigrationSql).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
-      }
+    expect(pgliteEngineSource).toContain('PGLITE_EMBEDDED_SCHEMA_VERSION = 1');
+    expect(pgliteEngineSource).toContain('freshSchemaMigrationSql(PGLITE_EMBEDDED_SCHEMA_VERSION)');
+    expect(freshSchemaMigrationSql(LATEST_VERSION)).toBe('');
+    for (const table of requiredPreBaselineTables) {
+      expect(compactFreshSql).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
     }
   });
 

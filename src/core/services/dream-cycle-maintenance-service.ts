@@ -31,6 +31,7 @@ type DreamCycleMaintenancePhaseId =
   | 'candidate_recap'
   | 'stale_candidate_review'
   | 'duplicate_merge_review'
+  | 'stranded_auto_promote_candidates'
   | 'derived_artifact_freshness'
   | 'apply_control_plane';
 type DreamCycleMaintenancePhaseStatus = 'reported' | 'suggested' | 'created' | 'blocked' | 'skipped';
@@ -135,6 +136,7 @@ export interface DreamCycleMaintenanceResult {
   canonical_target_proposals_existing: number;
   canonical_target_proposals_blocked: number;
   canonical_target_proposals_hard_blocked: number;
+  stranded_auto_promote_candidate_ids: string[];
   summary_lines: string[];
 }
 
@@ -196,6 +198,7 @@ export async function runDreamCycleMaintenance(
       canonical_target_proposals_existing: 0,
       canonical_target_proposals_blocked: 0,
       canonical_target_proposals_hard_blocked: 0,
+      stranded_auto_promote_candidate_ids: [],
       summary_lines: [
         `Dream-cycle maintenance inspected 0 candidates in ${scopeId}.`,
         'Emitted 0 bounded suggestions.',
@@ -206,6 +209,10 @@ export async function runDreamCycleMaintenance(
   }
   const candidates = (await listMaintenanceCandidateWindow(engine, scopeId))
     .filter((candidate) => candidate.generated_by !== 'dream_cycle');
+  const strandedAutoPromoteCandidateIds = candidates
+    .filter(isStrandedAutoPromoteStagedCandidate)
+    .map((candidate) => candidate.id)
+    .sort();
   const proposalCounts = writeCandidates
     ? await generateCanonicalTargetProposals(engine, candidates, scopeId)
     : emptyCanonicalTargetProposalCounts();
@@ -245,17 +252,24 @@ export async function runDreamCycleMaintenance(
     authority: 'report_or_candidate_only',
     canonical_write_allowed: false,
     suggestions,
-    maintenance_phases: buildMaintenancePhases(suggestions, derivedReport, applyControlPlane),
+    maintenance_phases: buildMaintenancePhases(
+      suggestions,
+      derivedReport,
+      applyControlPlane,
+      strandedAutoPromoteCandidateIds,
+    ),
     derived_freshness_report: derivedReport,
     apply_control_plane: applyControlPlane,
     canonical_target_proposals_created: proposalCounts.created,
     canonical_target_proposals_existing: proposalCounts.existing,
     canonical_target_proposals_blocked: proposalCounts.blocked,
     canonical_target_proposals_hard_blocked: proposalCounts.hard_blocked,
+    stranded_auto_promote_candidate_ids: strandedAutoPromoteCandidateIds,
     summary_lines: [
       `Dream-cycle maintenance inspected ${candidates.length} candidates in ${scopeId}.`,
       `Emitted ${suggestions.length} bounded suggestions.`,
       `Canonical target proposals: created ${proposalCounts.created}, existing ${proposalCounts.existing}, blocked ${proposalCounts.blocked}, hard-blocked ${proposalCounts.hard_blocked}.`,
+      `Stranded auto-promote staged candidates: ${strandedAutoPromoteCandidateIds.length}.`,
       `Write candidates: ${writeCandidates ? 'yes' : 'no'}.`,
       'Canonical writes: no; apply-capable work must use the memory operations control plane.',
     ],
@@ -639,6 +653,7 @@ function buildMaintenancePhases(
   suggestions: DreamCycleMaintenanceSuggestion[],
   derivedReport: DreamCycleDerivedFreshnessReport,
   applyControlPlane: DreamCycleApplyControlPlane,
+  strandedAutoPromoteCandidateIds: string[] = [],
 ): DreamCycleMaintenancePhase[] {
   const hasSuggestion = (type: DreamCycleSuggestionType) =>
     suggestions.some((suggestion) => suggestion.suggestion_type === type);
@@ -668,6 +683,17 @@ function buildMaintenancePhases(
       summary_lines: ['Create or preview duplicate-merge suggestions without merging canonical truth.'],
     },
     {
+      phase_id: 'stranded_auto_promote_candidates',
+      output_kind: 'report',
+      status: strandedAutoPromoteCandidateIds.length > 0 ? 'reported' : 'skipped',
+      summary_lines: strandedAutoPromoteCandidateIds.length > 0
+        ? [
+            `Stranded unverified auto-promote staged candidates: ${strandedAutoPromoteCandidateIds.join(', ')}.`,
+            'Review or repair these candidates before relying on auto-promote backlog counts.',
+          ]
+        : ['No stranded unverified auto-promote staged candidates detected.'],
+    },
+    {
       phase_id: 'derived_artifact_freshness',
       output_kind: 'report',
       status: derivedReport.enabled ? 'reported' : 'skipped',
@@ -680,6 +706,13 @@ function buildMaintenancePhases(
       summary_lines: applyControlPlane.summary_lines,
     },
   ];
+}
+
+function isStrandedAutoPromoteStagedCandidate(candidate: MemoryCandidateEntry): boolean {
+  return candidate.status === 'staged_for_review'
+    && candidate.verification_status !== 'verified'
+    && typeof candidate.review_reason === 'string'
+    && candidate.review_reason.includes('auto_promote');
 }
 
 function normalizeScopeId(value: string): string {

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'fs';
-import { dirname } from 'path';
+import { dirname, isAbsolute, resolve } from 'path';
 import { configPath, loadConfig, saveConfig, type MBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { createConnectedEngine } from '../core/engine-factory.ts';
@@ -11,7 +11,7 @@ import { runDreamCycle, type DreamCycleRunInput, type DreamCycleRunResult } from
 import { parseDreamArgs } from './dream.ts';
 import type { AutopilotMode } from '../core/maintenance/autopilot.ts';
 import { createAutoPromoteDreamDependency } from './auto-promote.ts';
-import { saveMemoryReviewReport } from './memory-report.ts';
+import { saveMemoryReviewReport, type MemoryReportNotifyConfig } from './memory-report.ts';
 import { runWatchedQuestionProbes } from '../core/services/watched-question-service.ts';
 
 export interface RunAutopilotDeps {
@@ -94,6 +94,8 @@ export async function runAutopilot(args: string[], deps: RunAutopilotDeps = {}):
     currentArgs: string[],
     injectedEngine: BrainEngine | undefined,
   ): Promise<AutopilotService> {
+    const defaultReportDir = resolveConfiguredBrainDir();
+    const reportNotify = readReportNotifyConfig();
     const needsRuntime = currentCommand === 'status'
       || currentCommand === 'run-once'
       || currentCommand === 'dream'
@@ -122,7 +124,8 @@ export async function runAutopilot(args: string[], deps: RunAutopilotDeps = {}):
                 memoryReport: {
                   save: (reportInput) => saveMemoryReviewReport(engine, {
                     ...reportInput,
-                    report_dir: input.report_dir ?? '.',
+                    report_dir: input.report_dir ?? defaultReportDir,
+                    ...(reportNotify ? { notify: reportNotify } : {}),
                   }),
                 },
               } : {}),
@@ -144,7 +147,16 @@ export async function runAutopilot(args: string[], deps: RunAutopilotDeps = {}):
 
 function readAutopilotConfig(): Record<string, unknown> {
   const raw = readRawConfigFile();
-  return raw?.autopilot ?? {};
+  const autopilot = raw?.autopilot ?? {};
+  return {
+    ...autopilot,
+    ...(autopilot.phase_timeout_ms === undefined && raw?.maintenance?.phase_timeout_ms !== undefined
+      ? { phase_timeout_ms: raw.maintenance.phase_timeout_ms }
+      : {}),
+    ...(autopilot.governed_recompile_enabled === undefined && raw?.maintenance?.governed_recompile_enabled !== undefined
+      ? { governed_recompile_enabled: raw.maintenance.governed_recompile_enabled }
+      : {}),
+  };
 }
 
 function writeAutopilotConfig(value: Record<string, unknown>): void {
@@ -159,6 +171,33 @@ function readRawConfigFile(): (MBrainConfig & { autopilot?: Record<string, unkno
   const path = configPath();
   if (!existsSync(path)) return null;
   return JSON.parse(readFileSync(path, 'utf-8')) as MBrainConfig & { autopilot?: Record<string, unknown> };
+}
+
+function readReportNotifyConfig(): MemoryReportNotifyConfig | undefined {
+  const raw = readRawConfigFile() as (MBrainConfig & { report?: { notify?: Record<string, unknown> } }) | null;
+  const notify = raw?.report?.notify;
+  if (!notify) return undefined;
+  const mode = notify?.mode;
+  if (mode !== 'off' && mode !== 'auto' && mode !== 'command') return undefined;
+  const command = notify.command;
+  return {
+    mode,
+    ...(typeof command === 'string' ? { command } : {}),
+  };
+}
+
+function resolveConfiguredBrainDir(): string {
+  const configFile = configPath();
+  const configDir = dirname(configFile);
+  const raw = readRawConfigFile();
+  const databasePath = typeof raw?.database_path === 'string' && raw.database_path.trim().length > 0
+    ? raw.database_path.trim()
+    : null;
+  if (!databasePath) return resolve(configDir);
+  const absoluteDatabasePath = isAbsolute(databasePath)
+    ? databasePath
+    : resolve(configDir, databasePath);
+  return dirname(absoluteDatabasePath);
 }
 
 function applyConfigPathArg(args: string[]): () => void {

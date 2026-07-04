@@ -10,6 +10,8 @@ export interface AutopilotConfig {
   allow_local_runner: boolean;
   source_consent_defaults: 'deny_raw_until_granted' | 'allow_registered_sources';
   cycle_timeout_ms: number;
+  phase_timeout_ms?: number;
+  governed_recompile_enabled?: boolean;
 }
 
 export interface AutopilotWarning {

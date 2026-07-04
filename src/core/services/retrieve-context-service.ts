@@ -2,9 +2,7 @@ import type { BrainEngine } from '../engine.ts';
 import { buildCandidateSignals, emptyCandidateSignalResult } from './candidate-signal-service.ts';
 import type { BuildCandidateSignalsInput, CandidateSignalResult } from './candidate-signal-service.ts';
 import type {
-  GraphFrontierEdge,
   GraphFrontierInput,
-  GraphFrontierNode,
   GraphFrontierPathTrace,
   GraphFrontierResult,
   Link,
@@ -36,11 +34,18 @@ import { planAssertionGraphFrontier } from './assertion-frontier-retrieval-servi
 import { classifyMemoryScenario } from './memory-scenario-classifier-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
 import {
+  DEFAULT_GRAPH_FRONTIER_POLICY_VERSION,
+  type RetrieveContextGraphFrontierBuildInput,
+  type RetrieveContextGraphFrontierBuildResult,
+  type RetrieveContextGraphFrontierInputBuilder,
+  type RetrieveContextGraphFrontierPlanner,
+} from './retrieve-context-graph-frontier-service.ts';
+import {
   candidateLimitForTokenBudget,
   requiredReadLimitForTokenBudget,
   shouldIncludeOrientationForTokenBudget,
 } from './retrieve-context-budget-service.ts';
-import { rankSearchResults, sourceRankCandidateLimit, sourceRankFactor } from '../search/source-ranking.ts';
+import { rankSearchResults, sourceRankCandidateLimit, sourceRankFactor, type SourceRankRuleInput } from '../search/source-ranking.ts';
 import {
   corpusLaneFromSourceRefs,
   mergeSourceRefs,
@@ -56,9 +61,18 @@ import { evaluateScopeGate } from './scope-gate-service.ts';
 import { buildSelectorFirstPushContextEnvelope } from './selector-first-push-context-service.ts';
 import { selectRetrievalRoute } from './retrieval-route-selector-service.ts';
 
+export {
+  DEFAULT_GRAPH_FRONTIER_POLICY_VERSION,
+  buildProductionGraphFrontierInput,
+  type RetrieveContextGraphFrontierBuildInput,
+  type RetrieveContextGraphFrontierBuildResult,
+  type RetrieveContextGraphFrontierInputBuilder,
+  type RetrieveContextGraphFrontierPlanner,
+} from './retrieve-context-graph-frontier-service.ts';
+
 export type RetrieveContextCandidateSearch = (
   query: string,
-  options: { limit: number },
+  options: { limit: number; updated_after?: Date | string; updated_before?: Date | string },
 ) => Promise<SearchResult[]>;
 
 type CandidateSearchBackendGap =
@@ -95,33 +109,6 @@ export type RetrieveContextCandidateSignalBuilder = (
   input: BuildCandidateSignalsInput,
 ) => Promise<CandidateSignalResult>;
 
-export interface RetrieveContextGraphFrontierBuildInput {
-  engine: BrainEngine;
-  input: RetrieveContextInput;
-  query: string;
-  limit: number;
-  candidates: RetrieveContextCandidate[];
-  required_reads: RetrievalSelector[];
-  orientation: RetrieveContextOrientation;
-  scope_gate?: ScopeGateDecisionResult;
-}
-
-export interface RetrieveContextGraphFrontierBuildResult {
-  scope_id?: string;
-  policy_version?: string;
-  seed_node_ids?: string[];
-  nodes?: GraphFrontierNode[];
-  edges?: GraphFrontierEdge[];
-}
-
-export type RetrieveContextGraphFrontierInputBuilder = (
-  input: RetrieveContextGraphFrontierBuildInput,
-) => Promise<RetrieveContextGraphFrontierBuildResult> | RetrieveContextGraphFrontierBuildResult;
-
-export type RetrieveContextGraphFrontierPlanner = (
-  input: GraphFrontierInput,
-) => Promise<GraphFrontierResult> | GraphFrontierResult;
-
 export interface RetrieveContextDependencies {
   candidateSearch?: RetrieveContextCandidateSearch;
   broadSynthesisCandidateSearch?: BroadSynthesisCandidateSearch;
@@ -130,112 +117,7 @@ export interface RetrieveContextDependencies {
   graphFrontierPlanner?: RetrieveContextGraphFrontierPlanner;
   usageAwareRanking?: boolean;
   usageWindowDays?: number;
-}
-
-export async function buildProductionGraphFrontierInput(
-  input: RetrieveContextGraphFrontierBuildInput,
-): Promise<RetrieveContextGraphFrontierBuildResult> {
-  const scopeId = input.required_reads.find((selector) => selector.scope_id)?.scope_id
-    ?? (input.scope_gate?.resolved_scope === 'personal' ? 'personal:default' : DEFAULT_NOTE_MANIFEST_SCOPE_ID);
-  const policyVersion = DEFAULT_GRAPH_FRONTIER_POLICY_VERSION;
-  const seedSlugs = uniqueSlugs(input.candidates
-    .map((candidate) => candidate.read_selector.slug ?? candidate.canonical_target.slug)
-    .filter((slug): slug is string => Boolean(slug)))
-    .slice(0, LINKED_CANDIDATE_SEED_LIMIT);
-  if (seedSlugs.length === 0) {
-    return { scope_id: scopeId, policy_version: policyVersion, seed_node_ids: [], nodes: [], edges: [] };
-  }
-
-  const allSlugs = new Set(seedSlugs);
-  const edges: GraphFrontierEdge[] = [];
-  let frontier = seedSlugs;
-  for (let depth = 0; depth < 2 && frontier.length > 0; depth += 1) {
-    const manifests = await loadManifestEntriesBySlug(input.engine, frontier);
-    const explicitLinks = await explicitLinkedSlugsBySeed(input.engine, frontier);
-    const next = new Set<string>();
-    for (const slug of frontier) {
-      const manifest = manifests.get(slugLookupKey(slug));
-      const explicit = explicitLinks.get(slug);
-      const linked = uniqueSlugs([
-        ...(manifest?.outgoing_wikilinks ?? []),
-        ...(explicit?.outgoing ?? []),
-        ...(explicit?.incoming ?? []),
-      ]).slice(0, 8);
-      for (const target of linked) {
-        edges.push(graphFrontierEdge('supports', slug, target, scopeId, policyVersion, `link:${slug}->${target}`));
-        if (!allSlugs.has(target)) next.add(target);
-        allSlugs.add(target);
-      }
-      const supersededBy = typeof manifest?.frontmatter.superseded_by === 'string'
-        ? manifest.frontmatter.superseded_by.trim()
-        : '';
-      if (supersededBy) {
-        edges.push(graphFrontierEdge('supersedes', slug, supersededBy, scopeId, policyVersion, `supersedes:${slug}->${supersededBy}`));
-        if (!allSlugs.has(supersededBy)) next.add(supersededBy);
-        allSlugs.add(supersededBy);
-      }
-    }
-    frontier = [...next].slice(0, LINKED_CANDIDATE_SEED_LIMIT * 8);
-  }
-
-  const manifests = await loadManifestEntriesBySlug(input.engine, [...allSlugs]);
-  const nodes: GraphFrontierNode[] = [...manifests.values()].map((manifest) => ({
-    id: graphFrontierNodeId(manifest.slug),
-    scope_id: scopeId,
-    policy_version: policyVersion,
-    selector: normalizeRetrievalSelector({
-      kind: 'compiled_truth',
-      scope_id: scopeId,
-      slug: manifest.slug,
-      path: manifest.path,
-      freshness: 'unknown',
-    }),
-  }));
-  const existingNodeIds = new Set(nodes.map((node) => node.id));
-
-  return {
-    scope_id: scopeId,
-    policy_version: policyVersion,
-    seed_node_ids: seedSlugs.map(graphFrontierNodeId).filter((id) => existingNodeIds.has(id)),
-    nodes,
-    edges: dedupeGraphFrontierEdges(edges).filter((edge) =>
-      existingNodeIds.has(edge.from_node_id) && existingNodeIds.has(edge.to_node_id)
-    ),
-  };
-}
-
-function graphFrontierNodeId(slug: string): string {
-  return `page:${slug}`;
-}
-
-function graphFrontierEdge(
-  edgeType: GraphFrontierEdge['edge_type'],
-  fromSlug: string,
-  toSlug: string,
-  scopeId: string,
-  policyVersion: string,
-  idPrefix: string,
-): GraphFrontierEdge {
-  return {
-    id: `${idPrefix}`,
-    edge_type: edgeType,
-    from_node_id: graphFrontierNodeId(fromSlug),
-    to_node_id: graphFrontierNodeId(toSlug),
-    scope_id: scopeId,
-    policy_version: policyVersion,
-  };
-}
-
-function dedupeGraphFrontierEdges(edges: GraphFrontierEdge[]): GraphFrontierEdge[] {
-  const seen = new Set<string>();
-  const result: GraphFrontierEdge[] = [];
-  for (const edge of edges) {
-    const key = `${edge.edge_type}:${edge.from_node_id}:${edge.to_node_id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(edge);
-  }
-  return result.sort((left, right) => left.id.localeCompare(right.id));
+  sourceRankRules?: readonly SourceRankRuleInput[];
 }
 
 const DEFAULT_CANDIDATE_LIMIT = 5;
@@ -257,7 +139,6 @@ const ALIAS_RESOLUTION_MANIFEST_LIMIT = 500;
 const DEFAULT_USAGE_RANKING_WINDOW_DAYS = 90;
 const SEARCH_HIT_CONTEXT_CHARS = 40;
 const SEARCH_CHUNK_WARNING = 'Search/query chunks are candidate pointers; call read_context before answering factual questions.';
-const DEFAULT_GRAPH_FRONTIER_POLICY_VERSION = 'policy:v1';
 const QUERY_TOKEN_STOPWORDS = new Set([
   'a',
   'an',
@@ -374,18 +255,25 @@ export async function retrieveContext(
   const query = input.query?.trim() ?? '';
   const searchLimit = query.length > 0 ? sourceRankCandidateLimit(limit) : 0;
   const candidateSearch = dependencies.candidateSearch ?? ((candidateQuery, options) =>
-    engine.searchKeyword(candidateQuery, { limit: options.limit }));
+    engine.searchKeyword(candidateQuery, {
+      limit: options.limit,
+      updated_after: options.updated_after,
+      updated_before: options.updated_before,
+    }));
   // Orientation only depends on the query, not on the candidate search
   // results, so both run concurrently.
   const [candidatePool, orientation] = await Promise.all([
     query.length > 0
-      ? searchCandidatePool(engine, candidateSearch, query, searchLimit, input.known_subjects)
+      ? searchCandidatePool(engine, candidateSearch, query, searchLimit, input.known_subjects, {
+          updated_after: input.updated_after,
+          updated_before: input.updated_before,
+        })
       : Promise.resolve(emptyCandidateSearchPool()),
     !includeOrientation || query.length === 0
       ? Promise.resolve(emptyOrientation())
       : buildOrientation(engine, query, limit, dependencies.broadSynthesisCandidateSearch),
   ]);
-  const searchResults = rankSearchResults(candidatePool.results);
+  const searchResults = rankSearchResults(candidatePool.results, undefined, dependencies.sourceRankRules);
   const candidates = await groupCandidatesByCanonicalPage(
     engine,
     searchResults,
@@ -952,10 +840,15 @@ async function searchCandidatePool(
   query: string,
   limit: number,
   knownSubjects?: RetrieveContextInput['known_subjects'],
+  temporal?: Pick<RetrieveContextInput, 'updated_after' | 'updated_before'>,
 ): Promise<CandidateSearchPoolResult> {
   const queries = await candidateSearchQueries(engine, query, knownSubjects);
   const settled = await Promise.allSettled(
-    queries.map((candidateQuery) => candidateSearch(candidateQuery, { limit })),
+    queries.map((candidateQuery) => candidateSearch(candidateQuery, {
+      limit,
+      ...(temporal?.updated_after !== undefined ? { updated_after: temporal.updated_after } : {}),
+      ...(temporal?.updated_before !== undefined ? { updated_before: temporal.updated_before } : {}),
+    })),
   );
   const failures = settled.flatMap((result, index): CandidateSearchFailure[] => (
     result.status === 'rejected'
@@ -1040,6 +933,7 @@ async function candidateSearchQueries(
 ): Promise<string[]> {
   const variants: string[] = [];
   const addVariant = (variant: string) => {
+    if (variants.length >= MAX_CANDIDATE_QUERY_VARIANTS) return;
     const normalized = variant.trim();
     if (!normalized) return;
     if (variants.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) return;
@@ -1137,7 +1031,7 @@ function fuseCandidateSearchResults(resultLists: SearchResult[][]): SearchResult
         continue;
       }
 
-      existing.score += rrfScore;
+      existing.score = Math.max(existing.score, rrfScore);
       if (result.score > existing.bestOriginalScore) {
         existing.result = result;
         existing.bestOriginalScore = result.score;
@@ -1224,7 +1118,12 @@ async function groupCandidatesByCanonicalPage(
     applyTaskAffinitySignalsToCandidates(resolvedCandidates, taskAffinity),
     usageStats,
   );
-  const rankedBaseCandidates = rankResolvedCandidates(usageDecoratedCandidates, query, usageStats);
+  const rankedBaseCandidates = rankResolvedCandidates(
+    usageDecoratedCandidates,
+    query,
+    usageStats,
+    dependencies.sourceRankRules,
+  );
   const linkedCandidates = await linkedCandidatesForResolvedCandidates(
     engine,
     rankedBaseCandidates,
@@ -1240,6 +1139,7 @@ async function groupCandidatesByCanonicalPage(
     ),
     query,
     usageStats,
+    dependencies.sourceRankRules,
   );
   const candidates: RetrieveContextCandidate[] = [];
   const seenCanonicalEvidence = new Set<string>();
@@ -1267,13 +1167,14 @@ function rankResolvedCandidates(
   candidates: RetrieveContextCandidate[],
   query: string,
   usageStats?: RetrievalUsageStats,
+  sourceRankRules?: readonly SourceRankRuleInput[],
 ): RetrieveContextCandidate[] {
   const queryTokens = tokenizeForSectionRank(query);
   return candidates
     .map((candidate, index) => ({
       candidate,
       index,
-      score: scoreResolvedCandidate(candidate, queryTokens, usageStats),
+      score: scoreResolvedCandidate(candidate, queryTokens, usageStats, sourceRankRules),
     }))
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
@@ -1286,6 +1187,7 @@ function scoreResolvedCandidate(
   candidate: RetrieveContextCandidate,
   queryTokens: string[],
   usageStats?: RetrievalUsageStats,
+  sourceRankRules?: readonly SourceRankRuleInput[],
 ): number {
   const title = normalizeText(candidate.canonical_target.title ?? '');
   const path = normalizeText(candidate.canonical_target.path ?? '');
@@ -1295,7 +1197,7 @@ function scoreResolvedCandidate(
     .map((chunk) => `${chunk.title} ${chunk.slug}`)
     .join(' '));
   let score = Math.max(0, ...candidate.matched_chunks.map(normalizedMatchedChunkScore)) * 100;
-  score *= sourceRankFactor(candidate.canonical_target.slug ?? candidate.read_selector.slug ?? '');
+  score *= sourceRankFactor(candidate.canonical_target.slug ?? candidate.read_selector.slug ?? '', sourceRankRules);
 
   for (let index = 0; index < queryTokens.length; index += 1) {
     const token = queryTokens[index]!;

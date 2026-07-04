@@ -50,8 +50,17 @@ export async function runEval(engine: BrainEngine, args: string[]) {
 }
 
 async function runRetrievalEval(engine: BrainEngine, parsed: ParsedArgs) {
-  const fixturePath = requiredStringFlag(parsed, 'fixture');
   const json = parsed.flags.json === true;
+  const compareFiles = parsed.positionals.slice(1);
+
+  if (parsed.flags.compare === true && compareFiles.length === 2) {
+    const base = readJsonFile(compareFiles[0]!);
+    const head = readJsonFile(compareFiles[1]!);
+    print(compareReports(base, head), json);
+    return;
+  }
+
+  const fixturePath = requiredStringFlag(parsed, 'fixture');
   const fixture = readRetrievalFixtureFile(fixturePath);
   const judgeConfig = parsed.flags.judge === true
     ? createRetrievalJudge(parsed)
@@ -133,9 +142,14 @@ async function persistRetrievalEvalRun(
       score: entry.recall_at_10,
       expected: {
         route: entry.route,
+        expected_selected_intent: entry.expected_selected_intent,
+        requested_scope: fixture.cases.find((testCase) => testCase.id === entry.id)?.requested_scope,
+        known_subjects: fixture.cases.find((testCase) => testCase.id === entry.id)?.known_subjects,
         gold_slugs: entry.gold_slugs,
       },
       actual: {
+        selected_intent: entry.selected_intent,
+        route_match: entry.route_match,
         candidate_slugs: entry.candidate_slugs,
         top1_slug: entry.top1_slug,
         top1_match: entry.top1_match,
@@ -153,6 +167,7 @@ async function persistRetrievalEvalRun(
       metadata: {
         route: entry.route,
         query: entry.query,
+        provenance: fixture.cases.find((testCase) => testCase.id === entry.id)?.provenance ?? null,
       },
     }));
   }
@@ -244,15 +259,13 @@ async function runCorrectionRecord(engine: BrainEngine, parsed: ParsedArgs) {
 function compareReports(base: Record<string, unknown>, head: Record<string, unknown>) {
   const baseMetrics = reportMetrics(base);
   const headMetrics = reportMetrics(head);
-  const keys = new Set([...Object.keys(baseMetrics), ...Object.keys(headMetrics)]);
-  const delta: Record<string, number> = {};
-  for (const key of keys) {
-    delta[key] = (headMetrics[key] ?? 0) - (baseMetrics[key] ?? 0);
-  }
+  const delta = compareMetricMaps(baseMetrics, headMetrics);
+  const perRoute = comparePerRouteMetrics(base, head);
   return {
     base: baseMetrics,
     head: headMetrics,
     delta,
+    ...(Object.keys(perRoute).length > 0 ? { per_route: perRoute } : {}),
   };
 }
 
@@ -434,6 +447,69 @@ function reportMetrics(report: Record<string, unknown>): Record<string, number> 
   return out;
 }
 
+function compareMetricMaps(
+  baseMetrics: Record<string, number>,
+  headMetrics: Record<string, number>,
+): Record<string, number> {
+  const keys = new Set([...Object.keys(baseMetrics), ...Object.keys(headMetrics)]);
+  const delta: Record<string, number> = {};
+  for (const key of keys) {
+    delta[key] = (headMetrics[key] ?? 0) - (baseMetrics[key] ?? 0);
+  }
+  return delta;
+}
+
+function comparePerRouteMetrics(
+  base: Record<string, unknown>,
+  head: Record<string, unknown>,
+): Record<string, { base: Record<string, number>; head: Record<string, number>; delta: Record<string, number> }> {
+  const baseRoutes = perRouteMetrics(base);
+  const headRoutes = perRouteMetrics(head);
+  const routes = new Set([...Object.keys(baseRoutes), ...Object.keys(headRoutes)]);
+  const out: Record<string, { base: Record<string, number>; head: Record<string, number>; delta: Record<string, number> }> = {};
+  for (const route of routes) {
+    const baseMetrics = baseRoutes[route] ?? {};
+    const headMetrics = headRoutes[route] ?? {};
+    out[route] = {
+      base: baseMetrics,
+      head: headMetrics,
+      delta: compareMetricMaps(baseMetrics, headMetrics),
+    };
+  }
+  return out;
+}
+
+function perRouteMetrics(report: Record<string, unknown>): Record<string, Record<string, number>> {
+  const metrics = objectValue(report.metrics)
+    ?? objectValue(objectValue(report.run)?.metrics)
+    ?? objectValue(report.summary)
+    ?? {};
+  const perRoute = objectValue(metrics.per_route)
+    ?? objectValue(objectValue(report.retrieval_quality)?.per_route)
+    ?? {};
+  const out: Record<string, Record<string, number>> = {};
+  for (const [route, rawSummary] of Object.entries(perRoute)) {
+    const summary = objectValue(rawSummary);
+    if (!summary) continue;
+    const routeMetrics: Record<string, number> = {};
+    for (const key of [
+      'case_count',
+      'top1_match_rate',
+      'recall_at_10',
+      'precision_at_k',
+      'mrr',
+      'latency_ms_avg',
+      'retrieved_token_count_total',
+    ]) {
+      if (typeof summary[key] === 'number' && Number.isFinite(summary[key])) {
+        routeMetrics[key] = summary[key];
+      }
+    }
+    out[route] = routeMetrics;
+  }
+  return out;
+}
+
 function parseArgs(args: string[]): ParsedArgs {
   const positionals: string[] = [];
   const flags: Record<string, string | boolean> = {};
@@ -504,6 +580,10 @@ function normalizeRetrievalCase(entry: Record<string, unknown>): RetrievalEvalCa
     id,
     query,
     route,
+    expected_selected_intent: stringValue(entry.expected_selected_intent) as RetrievalRouteIntent | undefined,
+    requested_scope: scopeValue(entry.requested_scope),
+    known_subjects: knownSubjectsValue(entry.known_subjects),
+    provenance: stringValue(entry.provenance) ?? objectValue(entry.provenance) ?? null,
     gold_slugs: goldSlugs,
     gold_answer: stringValue(entry.gold_answer) ?? null,
     precision_k: numberValue(entry.precision_k) || undefined,
@@ -535,6 +615,7 @@ function print(payload: unknown, json: boolean) {
 function usage() {
   console.error('Usage: mbrain eval context --fixture <file> [--json]');
   console.error('       mbrain eval retrieval --fixture <file.jsonl|file.json> [--judge --judge-model <model> --judge-prompt-version <version>] [--json]');
+  console.error('       mbrain eval retrieval --compare <base.json> <head.json> [--json]');
   console.error('       --judge requires retrieval_eval.answer_grounding=true in config');
   console.error('       mbrain eval context --compare <base.json> <head.json> [--json]');
   console.error('       mbrain eval correction record --trace-id <id> --case-id <id> --reason <text> [--json]');
@@ -680,6 +761,25 @@ function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function scopeValue(value: unknown): RetrievalEvalCaseInput['requested_scope'] {
+  return value === 'work' || value === 'personal' || value === 'mixed' ? value : undefined;
+}
+
+function knownSubjectsValue(value: unknown): RetrievalEvalCaseInput['known_subjects'] {
+  const raw = arrayValue(value);
+  if (!raw) return undefined;
+  return raw
+    .map((entry) => {
+      if (typeof entry === 'string' && entry.length > 0) return entry;
+      const record = objectValue(entry);
+      const ref = record ? stringValue(record.ref) : undefined;
+      if (!record || !ref) return null;
+      const kind = stringValue(record.kind);
+      return kind ? { ref, kind } : { ref };
+    })
+    .filter((entry): entry is NonNullable<RetrievalEvalCaseInput['known_subjects']>[number] => entry !== null);
 }
 
 function selectorArray(value: unknown): RetrievalSelector[] | undefined {

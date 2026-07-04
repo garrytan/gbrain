@@ -124,7 +124,8 @@ function fallbackCandidateType(session: MemoryWriteSession): MemoryCandidateType
 
 function fallbackExtractionKind(session: MemoryWriteSession): MemoryCandidateExtractionKind {
   const value = normalizedSignal(session).extraction_kind;
-  return isMemoryCandidateExtractionKind(value) ? value : 'manual';
+  if (isMemoryCandidateExtractionKind(value)) return value;
+  return extractionKindForEvidenceKind(normalizedSignal(session).evidence_kind);
 }
 
 function fallbackSensitivity(session: MemoryWriteSession): MemoryCandidateSensitivity {
@@ -179,6 +180,24 @@ function isMemoryCandidateType(value: unknown): value is MemoryCandidateType {
 
 function isMemoryCandidateExtractionKind(value: unknown): value is MemoryCandidateExtractionKind {
   return typeof value === 'string' && ['extracted', 'inferred', 'ambiguous', 'manual'].includes(value);
+}
+
+function extractionKindForEvidenceKind(value: unknown): MemoryCandidateExtractionKind {
+  switch (value) {
+    case 'direct_user_statement':
+      return 'manual';
+    case 'source_extracted':
+      return 'extracted';
+    case 'ambiguous':
+      return 'ambiguous';
+    case 'agent_inferred':
+    case 'contradicts_existing':
+    case 'code_sensitive':
+    case 'task_mechanics':
+      return 'inferred';
+    default:
+      return 'inferred';
+  }
 }
 
 function isMemoryCandidateSensitivity(value: unknown): value is MemoryCandidateSensitivity {

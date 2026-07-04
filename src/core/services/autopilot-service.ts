@@ -9,6 +9,7 @@ import {
   type AutopilotWarning,
 } from '../maintenance/autopilot.ts';
 import { createMaintenanceRuntimeService, type MaintenanceJob, type MaintenanceRuntimeService } from './maintenance-runtime-service.ts';
+import { clearAutopilotNightFailure, recordAutopilotNightFailure } from '../health-beacon.ts';
 
 export interface AutopilotInstallProfileInput {
   profile: AutopilotMode;
@@ -155,6 +156,8 @@ export function createAutopilotService(options: AutopilotServiceOptions = {}): A
       write_candidates: true,
       allow_llm: config.allow_llm,
       allow_local_runner: config.allow_local_runner,
+      ...(config.phase_timeout_ms !== undefined ? { phase_timeout_ms: config.phase_timeout_ms } : {}),
+      ...(config.governed_recompile_enabled !== undefined ? { governed_recompile_enabled: config.governed_recompile_enabled } : {}),
       trigger: 'autopilot',
     };
     const jobId = typeof result.job.id === 'string' ? result.job.id : null;
@@ -170,15 +173,21 @@ export function createAutopilotService(options: AutopilotServiceOptions = {}): A
         try {
           const dreamResult = await dreamRunner(dreamInput);
           if (isFailedDreamResult(dreamResult)) {
+            const message = dreamFailureMessage(dreamResult);
+            recordAutopilotNightFailure({
+              stopped_at: runAt,
+              reason: message,
+            });
             const failedJob = await runtime.failJob({
               job_id: jobId,
               lock_token: lockToken,
               failure_class: 'internal',
-              message: dreamFailureMessage(dreamResult),
+              message,
               retryable: false,
             });
             return { status: 'failed', job: failedJob, dream_result: dreamResult };
           }
+          clearAutopilotNightFailure();
           const completedJob = await runtime.completeJob({
             job_id: jobId,
             lock_token: lockToken,
@@ -186,6 +195,10 @@ export function createAutopilotService(options: AutopilotServiceOptions = {}): A
           });
           return { status: 'completed', job: completedJob, dream_result: dreamResult };
         } catch (error) {
+          recordAutopilotNightFailure({
+            stopped_at: runAt,
+            reason: error instanceof Error ? error.message : String(error),
+          });
           await runtime.failJob({
             job_id: jobId,
             lock_token: lockToken,
@@ -434,6 +447,12 @@ function normalizeAutopilotConfig(input: Partial<AutopilotConfig> | null | undef
       ? 'allow_registered_sources'
       : defaults.source_consent_defaults,
     cycle_timeout_ms: Math.max(1, input?.cycle_timeout_ms ?? defaults.cycle_timeout_ms),
+    ...(input?.phase_timeout_ms !== undefined
+      ? { phase_timeout_ms: Math.max(1, input.phase_timeout_ms) }
+      : {}),
+    ...(input?.governed_recompile_enabled !== undefined
+      ? { governed_recompile_enabled: input.governed_recompile_enabled === true }
+      : {}),
   };
 }
 

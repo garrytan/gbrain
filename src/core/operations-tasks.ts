@@ -7,9 +7,13 @@ import {
 import { buildTaskResumeCard } from './services/task-memory-service.ts';
 import { runWatchedQuestionProbes } from './services/watched-question-service.ts';
 import type {
+  AttemptOutcome,
   RetrievalRouteIntent,
   RetrievalTraceWriteOutcome,
   ScopeGatePolicy,
+  TaskScope,
+  TaskStatus,
+  TaskThreadPatch,
 } from './types.ts';
 
 type OperationErrorCtor = new (
@@ -37,7 +41,10 @@ const RETRIEVAL_ROUTE_INTENTS = [
   'personal_episode_lookup',
 ] as const satisfies readonly RetrievalRouteIntent[];
 
-const REQUESTED_SCOPES = ['work', 'personal', 'mixed'] as const;
+const TASK_SCOPES = ['work', 'personal', 'mixed'] as const satisfies readonly TaskScope[];
+const TASK_STATUSES = ['active', 'paused', 'blocked', 'completed', 'abandoned'] as const satisfies readonly TaskStatus[];
+const ATTEMPT_OUTCOMES = ['failed', 'partial', 'succeeded', 'abandoned'] as const satisfies readonly AttemptOutcome[];
+const REQUESTED_SCOPES = TASK_SCOPES;
 const REQUESTED_SCOPE_ENUM_ERROR_HINT = 'requested_scope is the access scope; put retrieval details in query.';
 const SCOPE_GATE_POLICIES = ['allow', 'defer', 'deny'] as const satisfies readonly ScopeGatePolicy[];
 
@@ -163,8 +170,8 @@ export function createTaskOperations({
     },
     handler: async (ctx, p) => {
       return ctx.engine.listTaskThreads({
-        scope: p.scope as any,
-        status: p.status as any,
+        scope: parseEnumParam(p.scope, 'scope', TASK_SCOPES),
+        status: parseEnumParam(p.status, 'status', TASK_STATUSES),
         limit: (p.limit as number) ?? 20,
       });
     },
@@ -187,20 +194,21 @@ export function createTaskOperations({
     mutating: true,
     handler: async (ctx, p) => {
       const id = randomUUID();
+      const scope = parseEnumParam(p.scope, 'scope', TASK_SCOPES) ?? 'work';
       if (ctx.dryRun) {
         return {
           dry_run: true,
           action: 'start_task',
           id,
           title: p.title,
-          scope: p.scope ?? 'work',
+          scope,
         };
       }
 
       return ctx.engine.transaction(async (tx) => {
         await tx.createTaskThread({
           id,
-          scope: String(p.scope ?? 'work') as any,
+          scope,
           title: String(p.title),
           goal: String(p.goal ?? ''),
           status: 'active',
@@ -243,14 +251,11 @@ export function createTaskOperations({
     mutating: true,
     handler: async (ctx, p) => {
       const taskId = String(p.task_id);
-      const patch = Object.fromEntries(
-        Object.entries({
-          title: p.title,
-          goal: p.goal,
-          status: p.status,
-          current_summary: p.current_summary,
-        }).filter(([, value]) => value !== undefined),
-      );
+      const patch: TaskThreadPatch = {};
+      if (typeof p.title === 'string') patch.title = p.title;
+      if (typeof p.goal === 'string') patch.goal = p.goal;
+      if (p.status !== undefined) patch.status = parseEnumParam(p.status, 'status', TASK_STATUSES);
+      if (typeof p.current_summary === 'string') patch.current_summary = p.current_summary;
 
       if (Object.keys(patch).length === 0) {
         throw new OperationError('invalid_params', 'update_task requires at least one patch field.');
@@ -261,7 +266,7 @@ export function createTaskOperations({
       }
 
       await requireTaskThread(ctx.engine, taskId);
-      const updated = await ctx.engine.updateTaskThread(taskId, patch as any);
+      const updated = await ctx.engine.updateTaskThread(taskId, patch);
       return {
         ...updated,
         working_set_stale: true,
@@ -621,6 +626,10 @@ export function createTaskOperations({
     },
     mutating: true,
     handler: async (ctx, p) => {
+      const outcome = parseEnumParam(p.outcome, 'outcome', ATTEMPT_OUTCOMES);
+      if (!outcome) {
+        throw new OperationError('invalid_params', 'outcome is required.');
+      }
       if (ctx.dryRun) {
         return {
           dry_run: true,
@@ -635,7 +644,7 @@ export function createTaskOperations({
         id: randomUUID(),
         task_id: String(p.task_id),
         summary: String(p.summary),
-        outcome: String(p.outcome) as any,
+        outcome,
         applicability_context: {},
         evidence: [],
       });

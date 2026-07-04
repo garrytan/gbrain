@@ -219,6 +219,7 @@ describe('dream CLI and autopilot integration', () => {
       const originalConfigDir = process.env.MBRAIN_CONFIG_DIR;
       const originalConfigPath = process.env.MBRAIN_CONFIG_PATH;
       const originalCwd = process.cwd();
+      const launchdCwd = mkdtempSync(join(tmpdir(), 'mbrain-launchd-cwd-'));
       process.env.MBRAIN_CONFIG_DIR = paths.configDir;
       delete process.env.MBRAIN_CONFIG_PATH;
       try {
@@ -235,7 +236,7 @@ describe('dream CLI and autopilot integration', () => {
         }, null, 2));
 
         const { runAutopilot } = await importFreshAutopilotCommand();
-        process.chdir(paths.rootDir);
+        process.chdir(launchdCwd);
         const { stdout } = await captureConsole(() => runAutopilot([
           'run-once',
         ], { engine }));
@@ -254,13 +255,16 @@ describe('dream CLI and autopilot integration', () => {
           counts: { saved_reports: 1 },
         });
         const reportPath = dailyReportPhase.source_ids[0];
-        expect(existsSync(reportPath) || existsSync(join(paths.rootDir, reportPath))).toBe(true);
+        expect(reportPath.startsWith(paths.rootDir)).toBe(true);
+        expect(existsSync(reportPath)).toBe(true);
+        expect(existsSync(join(launchdCwd, 'reports'))).toBe(false);
       } finally {
         process.chdir(originalCwd);
         if (originalConfigDir === undefined) delete process.env.MBRAIN_CONFIG_DIR;
         else process.env.MBRAIN_CONFIG_DIR = originalConfigDir;
         if (originalConfigPath === undefined) delete process.env.MBRAIN_CONFIG_PATH;
         else process.env.MBRAIN_CONFIG_PATH = originalConfigPath;
+        rmSync(launchdCwd, { recursive: true, force: true });
       }
     });
   });

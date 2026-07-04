@@ -361,6 +361,107 @@ describe('retrieve context service', () => {
     });
   });
 
+  test('known_subject variants cannot exceed the global candidate query cap', async () => {
+    await withEngine('known-subject-cap', async (engine) => {
+      const seenQueries: string[] = [];
+      await retrieveContext(engine, {
+        query: 'alpha beta gamma delta epsilon zeta eta theta',
+        include_orientation: false,
+        known_subjects: [
+          'subject/one',
+          'subject/two',
+          'subject/three',
+          'subject/four',
+        ],
+      }, {
+        candidateSearch: async (query) => {
+          seenQueries.push(query);
+          return [];
+        },
+      });
+
+      expect(seenQueries.length).toBeLessThanOrEqual(8);
+      expect(seenQueries).not.toContain('subject/four');
+    });
+  });
+
+  test('candidate search receives retrieve_context temporal filters', async () => {
+    await withEngine('temporal-forwarding', async (engine) => {
+      const seenOptions: Array<Record<string, unknown>> = [];
+      await retrieveContext(engine, {
+        query: 'temporal retrieval',
+        include_orientation: false,
+        updated_after: '2026-01-01T00:00:00.000Z',
+        updated_before: '2026-02-01T00:00:00.000Z',
+      }, {
+        candidateSearch: async (_query, options) => {
+          seenOptions.push(options);
+          return [];
+        },
+      });
+
+      expect(seenOptions[0]).toMatchObject({
+        updated_after: '2026-01-01T00:00:00.000Z',
+        updated_before: '2026-02-01T00:00:00.000Z',
+      });
+    });
+  });
+
+  test('source rank rules and cross-variant RRF max keep weak duplicates from amplifying', async () => {
+    await withEngine('source-rules-rrf-max', async (engine) => {
+      await engine.putPage('preferred/winner', {
+        type: 'system',
+        title: 'Preferred Winner',
+        compiled_truth: 'Preferred winner matches alpha beta gamma.',
+        timeline: '',
+      });
+      await engine.putPage('scratch/duplicate', {
+        type: 'system',
+        title: 'Scratch Duplicate',
+        compiled_truth: 'Scratch duplicate matches alpha beta gamma.',
+        timeline: '',
+      });
+      const winner: SearchResult = {
+        slug: 'preferred/winner',
+        page_id: 1,
+        title: 'Preferred Winner',
+        type: 'system',
+        chunk_text: 'Preferred winner matches alpha beta gamma.',
+        chunk_source: 'compiled_truth',
+        score: 10,
+        stale: false,
+      };
+      const duplicate: SearchResult = {
+        slug: 'scratch/duplicate',
+        page_id: 2,
+        title: 'Scratch Duplicate',
+        type: 'system',
+        chunk_text: 'Scratch duplicate matches alpha beta gamma.',
+        chunk_source: 'compiled_truth',
+        score: 1,
+        stale: false,
+      };
+
+      const result = await retrieveContext(engine, {
+        query: 'alpha beta gamma',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        sourceRankRules: [
+          { prefix: 'preferred/', factor: 2 },
+          { prefix: 'scratch/', factor: 0.5 },
+        ],
+        candidateSearch: async (query) => {
+          if (query === 'alpha beta gamma') return [duplicate, winner];
+          if (query === 'alpha') return [duplicate];
+          return [];
+        },
+      });
+
+      expect(result.candidates[0]?.canonical_target.slug).toBe('preferred/winner');
+    });
+  });
+
   test('manifest aliases add deterministic candidate search variants', async () => {
     await withEngine('alias-query-variants', async (engine) => {
       await importFromContent(engine, 'companies/rebellion-ai', [

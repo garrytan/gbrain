@@ -2043,6 +2043,80 @@ export abstract class PgEngineBase {
     return (rows as Record<string, unknown>[]).map(rowToMemoryCandidateEntry);
   }
 
+  async countMemoryCandidateEntries(filters?: MemoryCandidateFilters): Promise<number> {
+    const { whereClause, params } = this.memoryCandidateFilterWhereClause(filters);
+    const { rows } = await this.queryable.query(
+      `SELECT COUNT(*) AS count
+       FROM memory_candidate_entries
+       ${whereClause}`,
+      params,
+    );
+    const row = rows[0] as { count?: number | bigint | string } | undefined;
+    return Number(row?.count ?? 0);
+  }
+
+  private memoryCandidateFilterWhereClause(filters?: MemoryCandidateFilters): {
+    whereClause: string;
+    params: unknown[];
+  } {
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+
+    if (filters?.scope_id) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (filters?.status) {
+      params.push(filters.status);
+      clauses.push(`status = $${params.length}`);
+    }
+    if (filters?.candidate_type) {
+      params.push(filters.candidate_type);
+      clauses.push(`candidate_type = $${params.length}`);
+    }
+    if (filters?.target_object_type) {
+      params.push(filters.target_object_type);
+      clauses.push(`target_object_type = $${params.length}`);
+    }
+    if (filters?.target_object_id !== undefined) {
+      params.push(filters.target_object_id);
+      clauses.push(`target_object_id = $${params.length}`);
+    }
+    if (filters?.patch_operation_state !== undefined) {
+      params.push(filters.patch_operation_state);
+      clauses.push(`patch_operation_state = $${params.length}`);
+    }
+    if (filters?.patch_target_kind !== undefined) {
+      params.push(filters.patch_target_kind);
+      clauses.push(`patch_target_kind = $${params.length}`);
+    }
+    if (filters?.patch_target_id !== undefined) {
+      params.push(filters.patch_target_id);
+      clauses.push(`patch_target_id = $${params.length}`);
+    }
+    if (filters?.created_since !== undefined) {
+      params.push(filters.created_since.toISOString());
+      clauses.push(`created_at >= $${params.length}`);
+    }
+    if (filters?.created_until !== undefined) {
+      params.push(filters.created_until.toISOString());
+      clauses.push(`created_at < $${params.length}`);
+    }
+    if (filters?.reviewed_since !== undefined) {
+      params.push(filters.reviewed_since.toISOString());
+      clauses.push(`reviewed_at >= $${params.length}`);
+    }
+    if (filters?.reviewed_until !== undefined) {
+      params.push(filters.reviewed_until.toISOString());
+      clauses.push(`reviewed_at < $${params.length}`);
+    }
+
+    return {
+      whereClause: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '',
+      params,
+    };
+  }
+
   async createMemoryCandidateStatusEvent(
     input: MemoryCandidateStatusEventInput,
   ): Promise<MemoryCandidateStatusEvent> {
@@ -5191,7 +5265,7 @@ export abstract class PgEngineBase {
               WHERE cc.page_id = p.id
                 AND cc.embedding IS NOT NULL
             )${filterSql}
-          ORDER BY page_score DESC, p.updated_at DESC
+          ORDER BY p.page_embedding <=> $1::vector ASC, p.updated_at DESC
           LIMIT ${pageCandidateLimitParam}
         ),
         shortlisted_chunks AS (
@@ -5212,7 +5286,7 @@ export abstract class PgEngineBase {
             LEFT JOIN page_shortlist ps ON ps.page_id = p.id
             WHERE cc.embedding IS NOT NULL
               AND ps.page_id IS NULL${filterSql}
-            ORDER BY score DESC, p.updated_at DESC
+            ORDER BY cc.embedding <=> $1::vector ASC, p.updated_at DESC
             LIMIT ${chunkLimitParam}
           ) ranked_omitted
         ),
@@ -5257,7 +5331,7 @@ function cjkTsPrefixQuery(query: string): string | null {
     .map((match) => match[0])
     .filter((token) => token.length > 0);
   if (tokens.length === 0) return null;
-  return Array.from(new Set(tokens)).map((token) => `${token}:*`).join(' | ');
+  return Array.from(new Set(tokens)).map((token) => `${token}:*`).join(' & ');
 }
 
 function pgSearchTemporalFilter(opts: SearchOpts | undefined, params: unknown[], alias: string): string {

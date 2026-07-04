@@ -364,6 +364,9 @@ test('propose_compile_debt_patches previews and flag-gates governed patch candid
     };
     const preview = await proposePatches.handler(baseCtx, { limit: 5 }) as any;
     expect(preview.applied).toBe(false);
+    const patchBodyJson = JSON.stringify(preview.proposals[0].patch_body);
+    expect(patchBodyJson.includes('- **2026-07-03** | New timeline fact.')).toBe(false);
+    expect(patchBodyJson.includes('Source: User, direct message, 2026-07-03 10:00 KST')).toBe(false);
     expect(preview.proposals[0]).toMatchObject({
       slug: 'systems/compile-debt',
       patch_body: {

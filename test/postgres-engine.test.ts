@@ -289,6 +289,15 @@ describe('PostgresEngine search wiring', () => {
       'p.page_embedding <=> $1::vector',
     );
     expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
+      'ORDER BY p.page_embedding <=> $1::vector ASC',
+    );
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
+      'ORDER BY cc.embedding <=> $1::vector ASC',
+    );
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).not.toContain(
+      'ORDER BY page_score DESC',
+    );
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
       'shortlisted_chunks AS',
     );
     expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(

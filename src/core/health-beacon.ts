@@ -17,8 +17,18 @@ export interface SyncWatchFailure {
   consecutive_failures: number;
 }
 
+export interface AutopilotNightFailure {
+  stopped_at: string;
+  reason: string;
+  consecutive_failures: number;
+}
+
 export function syncWatchFailurePath(): string {
   return join(configDir(), 'sync-watch-failure.json');
+}
+
+export function autopilotNightFailurePath(): string {
+  return join(configDir(), 'autopilot-night-failure.json');
 }
 
 export function readSyncWatchFailure(): SyncWatchFailure | null {
@@ -44,6 +54,45 @@ export function recordSyncWatchFailure(failure: SyncWatchFailure): void {
     writeFileSync(path, JSON.stringify(failure, null, 2));
   } catch {
     // The marker is best-effort; never let it mask the original failure.
+  }
+}
+
+export function readAutopilotNightFailure(): AutopilotNightFailure | null {
+  try {
+    const path = autopilotNightFailurePath();
+    if (!existsSync(path)) return null;
+    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as Partial<AutopilotNightFailure>;
+    if (typeof parsed.stopped_at !== 'string' || typeof parsed.reason !== 'string') return null;
+    return {
+      stopped_at: parsed.stopped_at,
+      reason: parsed.reason,
+      consecutive_failures: typeof parsed.consecutive_failures === 'number' ? parsed.consecutive_failures : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function recordAutopilotNightFailure(input: { stopped_at: string; reason: string }): void {
+  try {
+    const previous = readAutopilotNightFailure();
+    const path = autopilotNightFailurePath();
+    mkdirSync(configDir(), { recursive: true });
+    writeFileSync(path, JSON.stringify({
+      stopped_at: input.stopped_at,
+      reason: input.reason,
+      consecutive_failures: (previous?.consecutive_failures ?? 0) + 1,
+    }, null, 2));
+  } catch {
+    // Best-effort; never mask the original autopilot failure.
+  }
+}
+
+export function clearAutopilotNightFailure(): void {
+  try {
+    rmSync(autopilotNightFailurePath(), { force: true });
+  } catch {
+    // Best-effort cleanup.
   }
 }
 

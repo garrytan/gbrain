@@ -49,6 +49,13 @@ describe('tiered tool catalog (C1 part 2)', () => {
     expect(effectiveToolTier({ name: 'retrieve_context', tier: 'admin' } as never)).toBe('admin');
   });
 
+  test('tier classification does not depend on admin name fragments', () => {
+    const source = readFileSync(new URL('../src/mcp/tool-tiers.ts', import.meta.url), 'utf-8');
+
+    expect(source).not.toContain('ADMIN_NAME_FRAGMENTS');
+    expect(effectiveToolTier({ name: 'experimental_memory_redaction_probe' } as never)).toBe('extended');
+  });
+
   test('resolveAllowedTiers honors default, all, and explicit selections', () => {
     expect([...resolveAllowedTiers()].sort()).toEqual(['core', 'extended']);
     expect([...resolveAllowedTiers('core+extended')].sort()).toEqual(['core', 'extended']);

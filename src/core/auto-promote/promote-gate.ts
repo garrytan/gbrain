@@ -117,12 +117,9 @@ export async function runPromoteGate(input: PromoteGateInput): Promise<PromoteGa
     }
 
     try {
-      const preflight = await preflightPromoteMemoryCandidate(input.engine, {
-        id: candidate.id,
-        allow_active_status: true,
-      });
-      if (preflight.decision !== 'allow') {
-        const reason = preflight.reasons[0] ?? `preflight_${preflight.decision}`;
+      const promoted = await promoteCandidateAtomically(input.engine, candidate, input.now, input.actor, v);
+      if (!promoted.ok) {
+        const reason = promoted.reason;
         result.skipped.push({ id: candidate.id, reason });
         result.audit.push(buildAuditEntry(input, v, candidate, {
           gate_skip_reason: reason,
@@ -130,12 +127,6 @@ export async function runPromoteGate(input: PromoteGateInput): Promise<PromoteGa
         }));
         continue;
       }
-      await advanceToStaged(input.engine, candidate, input.now, input.actor);
-      await promoteMemoryCandidateEntry(input.engine, {
-        id: candidate.id,
-        reviewed_at: input.now,
-        review_reason: `auto_promote verdict (confidence ${v.confidence}): ${v.reasoning}`.slice(0, 500),
-      });
       result.promoted.push(candidate.id);
       const canonicalized = await canonicalizePromotedCandidate(input, candidate);
       if (canonicalized.handoff) result.canonical_handoffs.push(candidate.id);
@@ -156,6 +147,35 @@ export async function runPromoteGate(input: PromoteGateInput): Promise<PromoteGa
     }
   }
   return result;
+}
+
+async function promoteCandidateAtomically(
+  engine: BrainEngine,
+  candidate: MemoryCandidateEntry,
+  now: string,
+  actor: string,
+  verdict: PromotionVerdict,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  return engine.transaction(async (txBase) => {
+    const tx = txBase as BrainEngine;
+    const preflight = await preflightPromoteMemoryCandidate(tx, {
+      id: candidate.id,
+      allow_active_status: true,
+    });
+    if (preflight.decision !== 'allow') {
+      return {
+        ok: false,
+        reason: preflight.reasons[0] ?? `preflight_${preflight.decision}`,
+      };
+    }
+    await advanceToStaged(tx, candidate, now, actor);
+    await promoteMemoryCandidateEntry(tx, {
+      id: candidate.id,
+      reviewed_at: now,
+      review_reason: `auto_promote verdict (confidence ${verdict.confidence}): ${verdict.reasoning}`.slice(0, 500),
+    });
+    return { ok: true };
+  });
 }
 
 async function advanceToStaged(engine: BrainEngine, candidate: MemoryCandidateEntry, now: string, actor: string): Promise<void> {

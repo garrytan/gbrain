@@ -1,6 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import { estimateTokenCount } from '../token-count.ts';
-import type { RetrievalRouteIntent } from '../types.ts';
+import type { MemoryScenarioKnownSubject, MemoryScenarioScopeDecision, RetrievalRouteIntent } from '../types.ts';
 import { readContext } from '../services/read-context-service.ts';
 import { retrieveContext } from '../services/retrieve-context-service.ts';
 
@@ -13,6 +13,10 @@ export interface RetrievalEvalCaseInput {
   id: string;
   query: string;
   route: RetrievalRouteIntent;
+  expected_selected_intent?: RetrievalRouteIntent | null;
+  requested_scope?: Exclude<MemoryScenarioScopeDecision, 'defer'>;
+  known_subjects?: Array<string | MemoryScenarioKnownSubject>;
+  provenance?: Record<string, unknown> | string | null;
   gold_slugs: string[];
   gold_answer?: string | null;
   precision_k?: number;
@@ -57,6 +61,9 @@ export interface RetrievalEvalOptions {
 export interface RetrievalEvalCaseResult {
   id: string;
   route: RetrievalRouteIntent;
+  selected_intent: RetrievalRouteIntent | null;
+  expected_selected_intent: RetrievalRouteIntent | null;
+  route_match: boolean | null;
   query: string;
   status: 'passed' | 'failed';
   gold_slugs: string[];
@@ -104,7 +111,7 @@ export interface RetrievalEvalReport {
     query: string;
     top1_slug: string | null;
     missing_gold_slugs: string[];
-    reason_codes: Array<'top1_miss' | 'recall_at_10_miss' | 'judge_failed'>;
+    reason_codes: Array<'top1_miss' | 'recall_at_10_miss' | 'judge_failed' | 'route_mismatch'>;
   }>;
   judge: {
     enabled: boolean;
@@ -137,7 +144,7 @@ export async function evaluateLiveRetrievalFixture(
   const recallAt10 = average(cases.map((testCase) => testCase.recall_at_10));
   const aggregatePassed = top1MatchRate >= thresholds.top1_match_rate
     && recallAt10 >= thresholds.recall_at_10
-    && cases.every((testCase) => testCase.judge?.passed !== false);
+    && cases.every((testCase) => testCase.judge?.passed !== false && testCase.route_match !== false);
 
   return {
     fixture_id: fixture.fixture_id,
@@ -173,6 +180,8 @@ async function evaluateLiveRetrievalCase(
     token_budget: testCase.token_budget,
     include_orientation: false,
     persist_trace: true,
+    requested_scope: testCase.requested_scope,
+    known_subjects: testCase.known_subjects,
   });
   const latencyMs = Math.max(0, Date.now() - started);
   const candidateSlugs = uniqueStrings(retrieval.candidates
@@ -216,14 +225,23 @@ async function evaluateLiveRetrievalCase(
     : retrieval.trace?.retrieved_token_count && retrieval.trace.retrieved_token_count > 0
     ? retrieval.trace.retrieved_token_count
     : estimatedCandidateTokens;
+  const selectedIntent = retrieval.trace?.selected_intent ?? retrieval.route?.selected_intent ?? null;
+  const expectedSelectedIntent = testCase.expected_selected_intent ?? null;
+  const routeMatch = expectedSelectedIntent === null ? null : selectedIntent === expectedSelectedIntent;
+  const passed = top1Slug !== null
+    && goldSet.has(top1Slug)
+    && missingGoldSlugs.length === 0
+    && judge?.passed !== false
+    && routeMatch !== false;
 
   return {
     id: testCase.id,
     route: testCase.route,
+    selected_intent: selectedIntent,
+    expected_selected_intent: expectedSelectedIntent,
+    route_match: routeMatch,
     query: testCase.query,
-    status: top1Slug !== null && goldSet.has(top1Slug) && missingGoldSlugs.length === 0 && judge?.passed !== false
-      ? 'passed'
-      : 'failed',
+    status: passed ? 'passed' : 'failed',
     gold_slugs: goldSlugs,
     candidate_slugs: candidateSlugs,
     top1_slug: top1Slug,
@@ -298,9 +316,10 @@ function summarizeByRoute(
 ): Partial<Record<RetrievalRouteIntent, RetrievalEvalRouteSummary>> {
   const groups = new Map<RetrievalRouteIntent, RetrievalEvalCaseResult[]>();
   for (const testCase of cases) {
-    const group = groups.get(testCase.route) ?? [];
+    const route = testCase.selected_intent ?? testCase.route;
+    const group = groups.get(route) ?? [];
     group.push(testCase);
-    groups.set(testCase.route, group);
+    groups.set(route, group);
   }
   const summary: Partial<Record<RetrievalRouteIntent, RetrievalEvalRouteSummary>> = {};
   for (const [route, group] of groups) {
@@ -322,6 +341,7 @@ function caseFailure(testCase: RetrievalEvalCaseResult): RetrievalEvalReport['fa
     ...(!testCase.top1_match ? ['top1_miss' as const] : []),
     ...(testCase.missing_gold_slugs.length > 0 ? ['recall_at_10_miss' as const] : []),
     ...(testCase.judge?.passed === false ? ['judge_failed' as const] : []),
+    ...(testCase.route_match === false ? ['route_mismatch' as const] : []),
   ];
   if (reasonCodes.length === 0) return [];
   return [{

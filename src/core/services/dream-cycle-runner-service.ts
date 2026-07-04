@@ -22,11 +22,12 @@ export type DreamCyclePhaseFamily =
   | 'projection_reconcile'
   | 'embedding_refresh'
   | 'context_refresh'
+  | 'recompile'
   | 'daily_report'
   | 'auto_promote';
 
 export type DreamCyclePhaseStatus = 'ok' | 'warn' | 'failed' | 'skipped';
-export type DreamCycleSkipReason = 'phase_not_available' | 'runner_unavailable';
+export type DreamCycleSkipReason = 'phase_not_available' | 'runner_unavailable' | 'flag_disabled';
 const DEFAULT_PHASE_TIMEOUT_MS = 10 * 60 * 1000;
 
 export interface DreamCyclePhaseRegistryEntry {
@@ -72,6 +73,7 @@ export interface DreamCycleRunInput {
   report_dir?: string;
   allow_llm?: boolean;
   allow_local_runner?: boolean;
+  governed_recompile_enabled?: boolean;
   trigger?: 'cli' | 'autopilot' | 'job' | 'manual';
 }
 
@@ -184,6 +186,22 @@ export interface DreamCycleRunDeps {
       changed: number;
       initialized: number;
       skipped: number;
+      failures?: Array<{ question_id: string; question: string; reason: string }>;
+    }>;
+  };
+  governedRecompile?: {
+    run(input: {
+      scope_id: string;
+      now: string;
+      dry_run: boolean;
+      write_candidates: boolean;
+      limit?: number;
+      signal?: AbortSignal;
+    }): Promise<{
+      counts: Record<string, number>;
+      source_ids?: string[];
+      candidate_ids?: string[];
+      summary_lines?: string[];
     }>;
   };
 }
@@ -207,6 +225,7 @@ export interface DreamCyclePhaseContext {
     max_candidates_per_cycle?: number;
     allow_llm: boolean;
     allow_local_runner: boolean;
+    governed_recompile_enabled: boolean;
     signal?: AbortSignal;
   };
   registry: DreamCyclePhaseRegistryEntry;
@@ -231,8 +250,9 @@ export const DREAM_CYCLE_PHASE_FAMILIES: readonly DreamCyclePhaseRegistryEntry[]
   { order: 11, family: 'projection_reconcile', owner_phase: 'Phase 10', runner_backed: false, implemented: true },
   { order: 12, family: 'embedding_refresh', owner_phase: 'Phase 05', runner_backed: false, implemented: true },
   { order: 13, family: 'context_refresh', owner_phase: 'Phase 05', runner_backed: false, implemented: true },
-  { order: 14, family: 'daily_report', owner_phase: 'Phase 12', runner_backed: false, implemented: true },
-  { order: 15, family: 'auto_promote', owner_phase: 'Phase 07', runner_backed: true, implemented: true },
+  { order: 14, family: 'recompile', owner_phase: 'Phase 07', runner_backed: true, implemented: true },
+  { order: 15, family: 'daily_report', owner_phase: 'Phase 12', runner_backed: false, implemented: true },
+  { order: 16, family: 'auto_promote', owner_phase: 'Phase 07', runner_backed: true, implemented: true },
 ] as const;
 
 export async function runDreamCycle(
@@ -357,6 +377,9 @@ async function withPhaseTimeout(
       new Promise<Partial<Omit<DreamCyclePhaseResult, 'family' | 'owner_phase' | 'duration_ms'>>>((resolve) => {
         timer = setTimeout(() => {
           abortController.abort();
+          work.catch(() => {
+            // The timeout result is the phase outcome; late abort rejections are observed here.
+          });
           resolve({
             status: 'failed',
             timed_out: true,
@@ -382,6 +405,9 @@ function defaultPhaseHandler(
   if (registry.family === 'consolidation') return runConsolidationPhase;
   if (registry.family === 'forgetting_review') {
     return (context) => runForgettingReviewPhase(context, deps);
+  }
+  if (registry.family === 'recompile') {
+    return (context) => runRecompilePhase(context, deps);
   }
   if (registry.family === 'auto_promote') {
     return (context) => runAutoPromotePhase(context, deps);
@@ -506,6 +532,8 @@ async function readImplementedPhaseCounts(
       return {
         stale_or_failed_derived_artifacts: await count('derived_index_state', "WHERE status IN ('pending', 'failed')"),
       };
+    case 'recompile':
+      return {};
     case 'daily_report': {
       const nowIso = context.input.now;
       return {
@@ -556,10 +584,13 @@ function hasActionablePhaseWork(
       return (counts.missing_embeddings ?? 0) > 0;
     case 'context_refresh':
       return (counts.stale_or_failed_derived_artifacts ?? 0) > 0;
+    case 'recompile':
+      return Object.values(counts).some((count) => count > 0);
     case 'daily_report':
       return (counts.failed_jobs ?? 0) > 0
         || (counts.failed_runner_jobs ?? 0) > 0
         || (counts.stuck_active_jobs ?? 0) > 0
+        || (counts.watched_questions_failed ?? 0) > 0
         || (counts.review_items ?? 0) > 0
         || (counts.open_conflicts ?? 0) > 0
         || (counts.incomplete_handoffs ?? 0) > 0;
@@ -594,6 +625,8 @@ function nextActionForImplementedPhase(family: DreamCyclePhaseFamily): string {
       return 'Run `mbrain embed --stale` to refresh missing embeddings.';
     case 'context_refresh':
       return 'Refresh pending or failed derived context artifacts.';
+    case 'recompile':
+      return 'Review governed recompile patch candidates before applying.';
     case 'daily_report':
       return 'Open daily memory report; repair failed jobs and dead-letter stuck active jobs.';
     case 'consolidation':
@@ -710,10 +743,64 @@ function normalizeDuplicateSlug(slug: string): string {
   return slug.replace(/\.md$/i, '').replace(/^\/+|\/+$/g, '').toLocaleLowerCase();
 }
 
+async function runRecompilePhase(
+  context: DreamCyclePhaseContext,
+  deps: DreamCycleRunDeps,
+): Promise<Partial<DreamCyclePhaseResult>> {
+  if (!context.input.governed_recompile_enabled) {
+    return {
+      status: 'skipped',
+      skip_reason: 'flag_disabled',
+      next_recommended_action: 'Enable maintenance.governed_recompile_enabled before running governed recompile.',
+      canonical_mutations: 0,
+      llm_or_runner_used: false,
+    };
+  }
+  if (!deps.governedRecompile) {
+    return {
+      status: 'skipped',
+      skip_reason: 'runner_unavailable',
+      next_recommended_action: 'Configure a governed recompile runner before enabling this phase.',
+      canonical_mutations: 0,
+      llm_or_runner_used: false,
+    };
+  }
+
+  const result = await deps.governedRecompile.run({
+    scope_id: context.input.scope_id,
+    now: context.input.now,
+    dry_run: context.input.dry_run,
+    write_candidates: context.input.write_candidates,
+    limit: context.input.limit,
+    signal: context.input.signal,
+  });
+  const hasWork = Object.values(result.counts).some((count) => count > 0);
+  return {
+    status: hasWork ? 'warn' : 'ok',
+    counts: result.counts,
+    source_ids: result.source_ids ?? [],
+    assertion_ids: result.candidate_ids ?? [],
+    next_recommended_action: hasWork
+      ? 'Review governed recompile patch candidates before applying.'
+      : 'No governed recompile patch candidates proposed.',
+    canonical_mutations: 0,
+    llm_or_runner_used: true,
+  };
+}
+
 async function runDailyReportPhase(
   context: DreamCyclePhaseContext,
   deps: DreamCycleRunDeps,
 ): Promise<Partial<DreamCyclePhaseResult>> {
+  if (context.input.dry_run) {
+    return {
+      status: 'ok',
+      counts: { saved_reports: 0 },
+      next_recommended_action: 'Run dream cycle in apply mode to write the daily memory report.',
+      canonical_mutations: 0,
+      llm_or_runner_used: false,
+    };
+  }
   const shouldProbeWatchedQuestions = context.input.dry_run === false && context.input.write_candidates === true;
   const watched = shouldProbeWatchedQuestions
     ? await deps.watchedQuestions?.run({
@@ -737,6 +824,7 @@ async function runDailyReportPhase(
       watched_questions_changed: watched.changed,
       watched_questions_initialized: watched.initialized,
       watched_questions_skipped: watched.skipped,
+      watched_questions_failed: watched.failures?.length ?? 0,
     } : {}),
     ...(saved.counts ?? {}),
   };
@@ -748,7 +836,9 @@ async function runDailyReportPhase(
     next_recommended_action: `Open daily memory report: ${saved.path}`,
     canonical_mutations: 0,
     llm_or_runner_used: false,
-    errors: [],
+    errors: watched?.failures?.map((failure) =>
+      `Watched question ${failure.question_id} failed: ${failure.reason}`
+    ) ?? [],
   };
 }
 
@@ -1002,6 +1092,7 @@ function normalizeRunInput(input: DreamCycleRunInput): DreamCyclePhaseContext['i
     max_candidates_per_cycle: input.max_candidates_per_cycle,
     allow_llm: input.allow_llm === true,
     allow_local_runner: input.allow_local_runner === true,
+    governed_recompile_enabled: input.governed_recompile_enabled === true,
     trigger: input.trigger ?? 'manual',
   };
 }

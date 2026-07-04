@@ -310,7 +310,7 @@ describe('runAutoPromote', () => {
       });
     });
   });
-  it('excludes candidates with unresolved contradictions before judging by default', async () => {
+  it('lets the promote gate, not a dead prefilter, handle unresolved contradictions', async () => {
     await withEngine(async (engine) => {
       await seedTargetPage(engine);
       const candidate = await seedEligibleCandidate(engine, 'conflicted');
@@ -336,8 +336,8 @@ describe('runAutoPromote', () => {
         runner: { kind: 'claude_code' } as any,
       });
 
-      expect(calls).toBe(0);
-      expect(res.excluded.find((entry) => entry.id === candidate.id)?.reason).toBe('open_contradiction');
+      expect(calls).toBe(1);
+      expect(res.excluded.find((entry) => entry.id === candidate.id)?.reason).toBeDefined();
       expect((await engine.getMemoryCandidateEntry(candidate.id))?.status).toBe('captured');
       expect((await engine.getPage('concepts/acme'))?.compiled_truth).not.toContain('Acme raised a seed round.');
     });

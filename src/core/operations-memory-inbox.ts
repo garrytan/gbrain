@@ -3178,12 +3178,13 @@ async function listAllRankableMemoryCandidates(
 }
 
 function buildCompileDebtPatchProposal(page: Page, scopeId: string) {
-  const timelineDates = timelineEntryDates(page.timeline);
+  const timelineDates = timelineEntryDates(page.timeline)
+    .filter((date) => date.getTime() > page.compiled_truth_changed_at.getTime());
   const uncompiledTimelineEntries = timelineDates.length || 1;
-  const oldest = timelineDates
+  const newest = timelineDates
     .map((date) => date.getTime())
-    .sort((left, right) => left - right)[0] ?? page.timeline_changed_at.getTime();
-  const ageDays = Math.max(0, (Date.now() - oldest) / 86_400_000);
+    .sort((left, right) => right - left)[0] ?? page.timeline_changed_at.getTime();
+  const ageDays = Math.max(0, (Date.now() - newest) / 86_400_000);
   const sourceRefs = extractSourceRefsFromText(page.timeline);
   const baseHash = page.content_hash ?? importContentHash({
     title: page.title,
@@ -3198,9 +3199,7 @@ function buildCompileDebtPatchProposal(page: Page, scopeId: string) {
     '',
     '## Pending Compile-Debt Review',
     '',
-    'The following timeline evidence is newer than the current compiled truth and should be reviewed before applying.',
-    '',
-    page.timeline.trim(),
+    `${uncompiledTimelineEntries} newer timeline entr${uncompiledTimelineEntries === 1 ? 'y' : 'ies'} require a compiled-truth rewrite before this patch is applied. Review the timeline evidence separately and replace this note with a source-attributed distillation.`,
   ].filter((part) => part.length > 0).join('\n');
 
   return {

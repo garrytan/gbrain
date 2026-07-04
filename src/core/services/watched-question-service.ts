@@ -7,6 +7,7 @@ import type {
   WatchedQuestion,
   WatchedQuestionReadSnapshot,
   WatchedQuestionRun,
+  WatchedQuestionRunInput,
 } from '../types.ts';
 
 export interface WatchedQuestionProbeInput {
@@ -20,7 +21,14 @@ export interface WatchedQuestionProbeSummary {
   changed: number;
   initialized: number;
   skipped: number;
+  failures: WatchedQuestionProbeFailure[];
   runs: WatchedQuestionRun[];
+}
+
+export interface WatchedQuestionProbeFailure {
+  question_id: string;
+  question: string;
+  reason: string;
 }
 
 export async function runWatchedQuestionProbes(
@@ -28,7 +36,7 @@ export async function runWatchedQuestionProbes(
   input: WatchedQuestionProbeInput,
 ): Promise<WatchedQuestionProbeSummary> {
   if (typeof engine.listWatchedQuestions !== 'function') {
-    return { probed: 0, changed: 0, initialized: 0, skipped: 0, runs: [] };
+    return { probed: 0, changed: 0, initialized: 0, skipped: 0, failures: [], runs: [] };
   }
   const now = input.now ?? new Date().toISOString();
   const questions = await engine.listWatchedQuestions({
@@ -40,6 +48,7 @@ export async function runWatchedQuestionProbes(
   let changed = 0;
   let initialized = 0;
   let skipped = 0;
+  const failures: WatchedQuestionProbeFailure[] = [];
 
   for (const question of questions) {
     try {
@@ -54,10 +63,8 @@ export async function runWatchedQuestionProbes(
       const currentFingerprint = fingerprintWatchedQuestionReads(currentReads);
       const hadBaseline = question.latest_fingerprint !== null;
       const didChange = hadBaseline && question.latest_fingerprint !== currentFingerprint;
-      if (didChange) changed++;
-      if (!hadBaseline) initialized++;
 
-      const run = await engine.recordWatchedQuestionRun({
+      const runInput: WatchedQuestionRunInput = {
         id: randomUUID(),
         question_id: question.id,
         scope_id: question.scope_id,
@@ -68,16 +75,20 @@ export async function runWatchedQuestionProbes(
         previous_required_reads: question.latest_required_reads,
         current_required_reads: currentReads,
         created_at: now,
-      });
-      await engine.updateWatchedQuestionSnapshot(question.id, {
-        latest_fingerprint: currentFingerprint,
-        latest_required_reads: currentReads,
-        latest_probe_at: now,
-        updated_at: now,
-      });
+      };
+      const run = typeof engine.transaction === 'function'
+        ? await engine.transaction(async (tx) => persistWatchedQuestionProbe(tx, question, runInput, currentFingerprint, currentReads, now))
+        : await persistWatchedQuestionProbe(engine, question, runInput, currentFingerprint, currentReads, now);
+      if (didChange) changed++;
+      if (!hadBaseline) initialized++;
       runs.push(run);
-    } catch {
+    } catch (error) {
       skipped++;
+      failures.push({
+        question_id: question.id,
+        question: question.question,
+        reason: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -86,8 +97,27 @@ export async function runWatchedQuestionProbes(
     changed,
     initialized,
     skipped,
+    failures,
     runs,
   };
+}
+
+async function persistWatchedQuestionProbe(
+  engine: BrainEngine,
+  question: WatchedQuestion,
+  runInput: WatchedQuestionRunInput,
+  currentFingerprint: string,
+  currentReads: WatchedQuestionReadSnapshot[],
+  now: string,
+): Promise<WatchedQuestionRun> {
+  const run = await engine.recordWatchedQuestionRun(runInput);
+  await engine.updateWatchedQuestionSnapshot(question.id, {
+    latest_fingerprint: currentFingerprint,
+    latest_required_reads: currentReads,
+    latest_probe_at: now,
+    updated_at: now,
+  });
+  return run;
 }
 
 export function fingerprintWatchedQuestionReads(reads: WatchedQuestionReadSnapshot[]): string {

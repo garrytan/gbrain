@@ -267,6 +267,47 @@ describe('memory writeback router operation', () => {
     });
   });
 
+  test('expired source-extracted write sessions preserve evidence authority when extraction kind is absent', async () => {
+    await withEngine(async (engine) => {
+      const result = (await operationsByName.route_memory_writeback.handler(ctx(engine), {
+        content: 'A source extract says fallback candidates should keep extracted evidence authority.',
+        evidence_kind: 'source_extracted',
+        source_refs: sourceRefs,
+        allow_canonical_write: true,
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/mbrain',
+        target_snapshot_hash: currentHash,
+        sensitivity: 'work',
+        apply: true,
+      })) as any;
+
+      const session = await (engine as any).getMemoryWriteSession(result.write_session_id);
+      const governanceMetadata = {
+        ...session.governance_metadata,
+        normalized_signal: {
+          ...session.governance_metadata.normalized_signal,
+          extraction_kind: null,
+        },
+      };
+      (engine as any).db
+        .query('UPDATE memory_write_sessions SET governance_metadata = ? WHERE id = ?')
+        .run(JSON.stringify(governanceMetadata), result.write_session_id);
+
+      const sweep = await sweepExpiredWriteSessionFallbacks(engine, {
+        scope_id: 'workspace:default',
+        now: new Date(session.expires_at.getTime() + 1),
+      });
+
+      const candidate = await engine.getMemoryCandidateEntry(sweep.swept[0]!.candidate_id);
+      expect(candidate).toMatchObject({
+        status: 'captured',
+        extraction_kind: 'extracted',
+        generated_by: 'agent',
+        proposed_content: 'A source extract says fallback candidates should keep extracted evidence authority.',
+      });
+    });
+  });
+
   test('canonical dry-run apply previews without persisting a write session', async () => {
     await withEngine(async (engine) => {
       const result = (await operationsByName.route_memory_writeback.handler(ctx(engine, true), {

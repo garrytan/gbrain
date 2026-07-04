@@ -98,6 +98,50 @@ describe('watched questions service', () => {
     });
   });
 
+  test('reports per-question probe failures instead of silently swallowing them', async () => {
+    const question: WatchedQuestion = {
+      id: 'watch:failure',
+      scope_id: 'workspace:default',
+      question: 'What changed about retrieval?',
+      requested_scope: 'work',
+      enabled: true,
+      latest_fingerprint: null,
+      latest_required_reads: [],
+      latest_probe_at: null,
+      created_at: new Date('2026-07-03T00:00:00.000Z'),
+      updated_at: new Date('2026-07-03T00:00:00.000Z'),
+    };
+    const engine = {
+      listWatchedQuestions: async () => [question],
+      recordWatchedQuestionRun: async () => {
+        throw new Error('embedding provider unavailable');
+      },
+      updateWatchedQuestionSnapshot: async () => question,
+      searchKeyword: async () => [],
+      listMemoryCandidateEntries: async () => [],
+      listCanonicalHandoffEntries: async () => [],
+    };
+
+    const summary = await runWatchedQuestionProbes(engine as any, {
+      scope_id: 'workspace:default',
+      now: '2026-07-03T01:00:00.000Z',
+    });
+
+    expect(summary).toMatchObject({
+      probed: 0,
+      changed: 0,
+      initialized: 0,
+      skipped: 1,
+      failures: [
+        {
+          question_id: 'watch:failure',
+          question: 'What changed about retrieval?',
+          reason: 'embedding provider unavailable',
+        },
+      ],
+    });
+  });
+
   test('upserting an edited watched question resets the old baseline snapshot', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-watched-question-reset-'));
     const engine = new SQLiteEngine();

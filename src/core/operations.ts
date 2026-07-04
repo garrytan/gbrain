@@ -307,9 +307,9 @@ export interface Operation {
   handler: (ctx: OperationContext, params: Record<string, unknown>) => Promise<unknown>;
   mutating?: boolean;
   capabilityRequired?: OperationCapability;
-  // Tool-catalog tier (see src/mcp/tool-tiers.ts). Explicit override of the name-based
-  // classification; usually omitted. 'admin' ops are hidden from the default MCP catalog and
-  // blocked by named MCP dispatch unless that tier is explicitly enabled.
+  // Tool-catalog tier (see src/mcp/tool-tiers.ts). Explicit override of the catalog
+  // classification. 'admin' ops are hidden from the default MCP catalog and blocked by
+  // named MCP dispatch unless that tier is explicitly enabled.
   tier?: 'core' | 'extended' | 'admin';
   cliHints?: {
     name?: string;
@@ -4381,15 +4381,19 @@ const get_versions: Operation = {
 
 async function compileDebtForPage(engine: BrainEngine, page: Page) {
   const hasCompileDebt = page.timeline_changed_at.getTime() > page.compiled_truth_changed_at.getTime();
-  const timelineEntries = hasCompileDebt ? timelineEntryDates(page.timeline) : [];
+  const timelineEntries = hasCompileDebt
+    ? timelineEntryDates(page.timeline).filter((date) => date.getTime() > page.compiled_truth_changed_at.getTime())
+    : [];
   const structuredTimelineCount = hasCompileDebt && timelineEntries.length === 0
     ? await getStructuredTimelineCount(engine, page.slug)
     : 0;
   const uncompiledTimelineEntries = timelineEntries.length || structuredTimelineCount || (hasCompileDebt ? 1 : 0);
-  const oldestUncompiled = timelineEntries
+  const sortedUncompiled = timelineEntries
     .map((date) => date.getTime())
-    .sort((left, right) => left - right)[0];
-  const ageSource = oldestUncompiled ?? (hasCompileDebt ? page.timeline_changed_at.getTime() : undefined);
+    .sort((left, right) => left - right);
+  const oldestUncompiled = sortedUncompiled[0];
+  const newestUncompiled = sortedUncompiled[sortedUncompiled.length - 1];
+  const ageSource = newestUncompiled ?? (hasCompileDebt ? page.timeline_changed_at.getTime() : undefined);
   const ageDays = ageSource === undefined
     ? 0
     : Math.max(0, (Date.now() - ageSource) / (24 * 60 * 60 * 1000));
@@ -4400,6 +4404,7 @@ async function compileDebtForPage(engine: BrainEngine, page: Page) {
     timeline_changed_at: page.timeline_changed_at.toISOString(),
     uncompiled_timeline_entries: uncompiledTimelineEntries,
     oldest_uncompiled_timeline_at: oldestUncompiled === undefined ? null : new Date(oldestUncompiled).toISOString(),
+    newest_uncompiled_timeline_at: newestUncompiled === undefined ? null : new Date(newestUncompiled).toISOString(),
     debt_score: Math.round((uncompiledTimelineEntries * (1 + ageDays)) * 100) / 100,
   };
 }

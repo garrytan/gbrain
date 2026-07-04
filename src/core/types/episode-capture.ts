@@ -126,6 +126,10 @@ export interface CandidateDebtInput {
 
 export interface CandidateDebtMetrics {
   visible_candidate_count: number;
+  total_candidate_count?: number;
+  debt_scan_candidate_count?: number;
+  displayed_candidate_count?: number;
+  display_limit?: number;
   missing_provenance_count: number;
   stale_promoted_without_handoff_count: number;
   unresolved_exposed_count: number;

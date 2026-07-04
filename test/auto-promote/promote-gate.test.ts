@@ -161,6 +161,33 @@ describe('runPromoteGate', () => {
       expect(events.filter((event) => event.event_kind === 'advanced')).toHaveLength(0);
     });
   });
+
+  it('rolls back staging when promotion fails after advancing', async () => {
+    await withEngine(async (engine) => {
+      const cfg = { ...defaultAutoPromoteConfig(), dry_run: false };
+      const candidate = await seedEligibleCandidate(engine, 'rollback-candidate', {
+        status: 'candidate',
+      });
+      const failingEngine = failPromotionWrites(engine);
+
+      const res = await runPromoteGate({
+        engine: failingEngine,
+        verdicts: [{ candidate_id: candidate.id, decision: 'promote' as const, confidence: 0.95, reasoning: 'ok', source_refs: [] }],
+        candidates: [candidate],
+        config: cfg,
+        now: '2026-06-01T00:00:00Z',
+        actor: 'mbrain:auto_promote',
+        canonical_write_candidate_ids: new Set([candidate.id]),
+      });
+
+      expect(res.promoted).toEqual([]);
+      expect(res.skipped.find((entry) => entry.id === candidate.id)?.reason).toContain('injected promotion failure');
+      expect((await engine.getMemoryCandidateEntry(candidate.id))?.status).toBe('candidate');
+      const events = await engine.listMemoryCandidateStatusEvents({ candidate_id: candidate.id });
+      expect(events.filter((event) => event.event_kind === 'advanced')).toHaveLength(0);
+    });
+  });
+
   it('preserves existing canonical page tags when applying an auto-promote patch', async () => {
     await withEngine(async (engine) => {
       const target = await seedTargetPage(engine);
@@ -436,3 +463,21 @@ describe('runPromoteGate', () => {
     });
   });
 });
+
+function failPromotionWrites(engine: BrainEngine): BrainEngine {
+  const wrap = (target: BrainEngine): BrainEngine => new Proxy(target, {
+    get(inner, prop, receiver) {
+      if (prop === 'transaction') {
+        return async (fn: (tx: BrainEngine) => Promise<unknown>) => inner.transaction(async (tx) => fn(wrap(tx)));
+      }
+      if (prop === 'promoteMemoryCandidateEntry') {
+        return async () => {
+          throw new Error('injected promotion failure after staging');
+        };
+      }
+      const value = Reflect.get(inner, prop, receiver);
+      return typeof value === 'function' ? value.bind(inner) : value;
+    },
+  }) as BrainEngine;
+  return wrap(engine);
+}

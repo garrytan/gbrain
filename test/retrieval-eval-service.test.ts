@@ -13,6 +13,7 @@ import type { RetrievalTrace } from '../src/core/types.ts';
 
 const tempPaths: string[] = [];
 const WAVE3_DG1_ARTIFACT_URL = new URL('./fixtures/retrieval-eval/wave3-dg1-non-regression.json', import.meta.url);
+const P2_GOLD_FIXTURE_URL = new URL('./fixtures/retrieval-eval/p2-gold.jsonl', import.meta.url);
 
 afterEach(() => {
   while (tempPaths.length > 0) {
@@ -47,6 +48,29 @@ describe('live retrieval eval harness', () => {
     expect(artifact.failures).toEqual([]);
   });
 
+  test('records a non-ceremonial P2 gold fixture with route and provenance metadata', () => {
+    const lines = readFileSync(P2_GOLD_FIXTURE_URL, 'utf8')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+    expect(lines.length).toBeGreaterThanOrEqual(30);
+    expect(lines.some((entry) =>
+      Array.isArray(entry.gold_slugs) && entry.gold_slugs.length > 1,
+    )).toBe(true);
+    expect(lines.some((entry) => String(entry.query).includes('레벨리온'))).toBe(true);
+    expect(new Set(lines.map((entry) => entry.expected_selected_intent))).toEqual(new Set([
+      'task_resume',
+      'broad_synthesis',
+      'precision_lookup',
+      'mixed_scope_bridge',
+      'personal_profile_lookup',
+      'personal_episode_lookup',
+    ]));
+    expect(lines.every((entry) => entry.provenance && typeof entry.provenance === 'object')).toBe(true);
+  });
+
   test('scores recall, precision, MRR, latency, and per-route aggregates over a real index', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-retrieval-eval-'));
     tempPaths.push(dir);
@@ -62,7 +86,8 @@ describe('live retrieval eval harness', () => {
         cases: [
           {
             id: 'precision-hybrid-search',
-            route: 'precision_lookup',
+            route: 'broad_synthesis',
+            expected_selected_intent: 'broad_synthesis',
             query: 'hybrid search retrieval method',
             gold_slugs: ['concepts/hybrid-search'],
             gold_answer: 'Hybrid search combines keyword and vector retrieval.',
@@ -70,7 +95,8 @@ describe('live retrieval eval harness', () => {
           },
           {
             id: 'korean-rebellion',
-            route: 'precision_lookup',
+            route: 'broad_synthesis',
+            expected_selected_intent: 'broad_synthesis',
             query: '레벨리온 아키텍처',
             gold_slugs: ['concepts/rebellion-architecture'],
             gold_answer: '레벨리온 아키텍처는 한국어 검색 fixture이다.',
@@ -79,6 +105,7 @@ describe('live retrieval eval harness', () => {
           {
             id: 'broad-compiled-truth',
             route: 'broad_synthesis',
+            expected_selected_intent: 'broad_synthesis',
             query: 'compiled truth timeline evidence',
             gold_slugs: ['concepts/compiled-truth'],
             gold_answer: 'Compiled truth distills timeline evidence.',
@@ -94,8 +121,8 @@ describe('live retrieval eval harness', () => {
       expect(report.mrr).toBe(1);
       expect(report.latency_ms_avg).toEqual(expect.any(Number));
       expect(report.retrieved_token_count_total).toBeGreaterThan(0);
-      expect(report.per_route.precision_lookup?.case_count).toBe(2);
-      expect(report.per_route.broad_synthesis?.recall_at_10).toBe(1);
+      expect(report.per_route.broad_synthesis?.case_count).toBe(3);
+      expect(report.cases.every((entry) => entry.route_match === true)).toBe(true);
       expect(report.cases.find((entry) => entry.id === 'korean-rebellion')?.candidate_slugs)
         .toContain('concepts/rebellion-architecture');
     } finally {
@@ -116,7 +143,8 @@ describe('live retrieval eval harness', () => {
         fixture_id: 'retrieval-eval-default-thresholds',
         cases: [{
           id: 'missing-gold',
-          route: 'precision_lookup',
+          route: 'broad_synthesis',
+          expected_selected_intent: 'broad_synthesis',
           query: 'hybrid search retrieval method',
           gold_slugs: ['concepts/does-not-exist'],
         }],
@@ -126,6 +154,36 @@ describe('live retrieval eval harness', () => {
       expect(report.thresholds).toEqual({ top1_match_rate: 1, recall_at_10: 1 });
       expect(report.cases[0]?.status).toBe('failed');
       expect(report.failures[0]?.reason_codes).toContain('recall_at_10_miss');
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('fails when the expected selected intent does not match the trace route', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-retrieval-eval-judge-'));
+    tempPaths.push(dir);
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+    await engine.initSchema();
+    try {
+      await seedEvalPages(engine);
+
+      const report = await evaluateLiveRetrievalFixture(engine, {
+        fixture_id: 'retrieval-eval-route-mismatch',
+        thresholds: { top1_match_rate: 1, recall_at_10: 1 },
+        cases: [{
+          id: 'route-mismatch',
+          route: 'precision_lookup',
+          expected_selected_intent: 'precision_lookup',
+          query: 'hybrid search retrieval method',
+          gold_slugs: ['concepts/hybrid-search'],
+        }],
+      });
+
+      expect(report.status).toBe('failed');
+      expect(report.cases[0]?.selected_intent).toBe('broad_synthesis');
+      expect(report.cases[0]?.route_match).toBe(false);
+      expect(report.failures[0]?.reason_codes).toContain('route_mismatch');
     } finally {
       await engine.disconnect();
     }
@@ -145,7 +203,8 @@ describe('live retrieval eval harness', () => {
         thresholds: { top1_match_rate: 1, recall_at_10: 1 },
         cases: [{
           id: 'judge-hybrid-search',
-          route: 'precision_lookup',
+          route: 'broad_synthesis',
+          expected_selected_intent: 'broad_synthesis',
           query: 'hybrid search retrieval method',
           gold_slugs: ['concepts/hybrid-search'],
           gold_answer: 'Hybrid search combines keyword and vector retrieval.',
@@ -191,7 +250,7 @@ describe('retrieval trajectory score', () => {
     });
     const second = trace({
       id: 'trace-b',
-      route: ['retrieve_context', 'retry_vector', 'read_context'],
+      route: ['retrieve_context', 'retry_vector', 'fallback_search', 'read_context'],
       source_refs: ['compiled_truth:workspace:default:concepts/hybrid-search'],
       elapsed_ms: 60,
       retrieved_token_count: 20,
@@ -214,6 +273,7 @@ describe('retrieval trajectory score', () => {
     expect(summary.trace_count).toBe(2);
     expect(summary.average_cost).toBeGreaterThan(score.cost);
     expect(summary.groundedness_status).toBe('unavailable_without_gold');
+    expect(scoreRetrievalTrajectory(second).re_escalations).toBe(2);
   });
 });
 

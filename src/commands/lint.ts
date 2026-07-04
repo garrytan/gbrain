@@ -41,7 +41,12 @@ const LLM_PREAMBLES = [
 
 // ── Rules ──────────────────────────────────────────────────────────
 
-export function lintContent(content: string, filePath: string, slugPath: string = filePath): LintIssue[] {
+export function lintContent(
+  content: string,
+  filePath: string,
+  slugPath: string = filePath,
+  knownSlugs?: ReadonlySet<string>,
+): LintIssue[] {
   const issues: LintIssue[] = [];
   const lines = content.split('\n');
 
@@ -115,6 +120,17 @@ export function lintContent(content: string, filePath: string, slugPath: string 
           fixable: false,
         });
       }
+      const supersededBy = frontmatterStringValue(fm, 'superseded_by');
+      const normalizedSupersededBy = supersededBy ? normalizeSlugReference(supersededBy) : null;
+      if (normalizedSupersededBy && knownSlugs && !knownSlugs.has(normalizedSupersededBy)) {
+        issues.push({
+          file: filePath,
+          line: frontmatterLineNumber(fm, 'superseded_by'),
+          rule: 'broken-superseded-by',
+          message: `superseded_by target not found: ${supersededBy}`,
+          fixable: false,
+        });
+      }
     }
   } else {
     // No frontmatter at all
@@ -157,6 +173,29 @@ export function lintContent(content: string, filePath: string, slugPath: string 
   }
 
   return issues;
+}
+
+function frontmatterStringValue(frontmatter: string, key: string): string | null {
+  const match = frontmatter.match(new RegExp(`^${key}:\\s*['"]?([^'"\\n#]+)['"]?\\s*(?:#.*)?$`, 'm'));
+  return match?.[1]?.trim() || null;
+}
+
+function frontmatterLineNumber(frontmatter: string, key: string): number {
+  const lines = frontmatter.split('\n');
+  const index = lines.findIndex((line) => line.trimStart().startsWith(`${key}:`));
+  return index === -1 ? 1 : index + 2;
+}
+
+function normalizeSlugReference(value: string): string | null {
+  const normalized = value
+    .trim()
+    .replace(/^\/+/, '')
+    .replace(/\.mdx?$/i, '')
+    .replaceAll('\\', '/')
+    .replace(/\/+/g, '/')
+    .toLowerCase();
+  if (!normalized || normalized === '.' || normalized.split('/').includes('..')) return null;
+  return normalized;
 }
 
 function shouldCheckSlugQuality(filePath: string): boolean {
@@ -218,6 +257,10 @@ export async function runLint(args: string[]) {
   // Single file or directory
   const isSingleFile = statSync(target).isFile();
   const pages = isSingleFile ? [target] : collectPages(target);
+  const knownSlugs = new Set(pages.map((page) => {
+    const relPath = isSingleFile ? page : relative(target, page);
+    return normalizeSlugReference(relPath);
+  }).filter((slug): slug is string => Boolean(slug)));
 
   let totalIssues = 0;
   let totalFixed = 0;
@@ -226,7 +269,7 @@ export async function runLint(args: string[]) {
   for (const page of pages) {
     const content = readFileSync(page, 'utf-8');
     const relPath = isSingleFile ? page : relative(target, page);
-    const issues = lintContent(content, relPath, page);
+    const issues = lintContent(content, relPath, page, knownSlugs);
 
     if (issues.length === 0) continue;
     pagesWithIssues++;

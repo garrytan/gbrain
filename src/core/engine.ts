@@ -249,6 +249,7 @@ export interface MemoryGovernanceStore {
   getAutoPromoteVerdict(key: AutoPromoteVerdictKey): Promise<AutoPromoteVerdictRow | null>;
   putAutoPromoteVerdict(row: AutoPromoteVerdictRow): Promise<void>;
   listMemoryCandidateEntries(filters?: MemoryCandidateFilters): Promise<MemoryCandidateEntry[]>;
+  countMemoryCandidateEntries?(filters?: MemoryCandidateFilters): Promise<number>;
   createMemoryCandidateStatusEvent(input: MemoryCandidateStatusEventInput): Promise<MemoryCandidateStatusEvent>;
   listMemoryCandidateStatusEvents(filters?: MemoryCandidateStatusEventFilters): Promise<MemoryCandidateStatusEvent[]>;
   listMemoryCandidateStatusEventsByInteractionIds(interactionIds: string[]): Promise<MemoryCandidateStatusEvent[]>;

@@ -765,6 +765,8 @@ export interface RetrieveContextInput extends MemoryScenarioClassifierInput {
   auto_route?: boolean;
   graph_frontier?: RetrieveContextGraphFrontierOptions;
   persist_trace?: boolean;
+  updated_after?: Date | string;
+  updated_before?: Date | string;
 }
 
 export interface RetrieveContextResult {
