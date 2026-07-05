@@ -31,8 +31,12 @@ export interface OrchestratorDeps {
   loadCandidateSkills: () => Promise<CandidateSkill[]>;
   /** Retrieve historical info for this input (real impl: query/volunteer_context). */
   retrieveHistory?: (ctx: OrchestratorContext) => Promise<OrchestratorContext['history']>;
-  /** Override the selector (real impl: LLM ranker). Defaults to the v0 placeholder. */
-  select?: (ctx: OrchestratorContext, custom: CandidateSkill[]) => SkillRecommendation[];
+  /** Override the selector (real impl: LLM ranker). Defaults to the v0 placeholder.
+   *  May be sync (the v0 placeholder) or async (the LLM ranker). */
+  select?: (
+    ctx: OrchestratorContext,
+    custom: CandidateSkill[],
+  ) => SkillRecommendation[] | Promise<SkillRecommendation[]>;
 }
 
 function summarise(text: string, max = 140): string {
@@ -70,7 +74,7 @@ export async function runOrchestrator(
 
   // 3. select + rank (custom only)
   const select = deps.select ?? selectSkills;
-  const recommendations = select(ctx, custom);
+  const recommendations = await select(ctx, custom);
 
   // 4. fail-closed: every recommended skill must be a custom clinical skill.
   const recSet = new Map(custom.map((s) => [s.name, s] as const));
