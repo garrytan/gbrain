@@ -1820,7 +1820,7 @@ const takes_calibration: Operation = {
 const think: Operation = {
   name: 'think',
   description: 'Multi-hop synthesis across pages + takes + graph. Pulls relevant evidence and produces a cited answer with conflict + gap analysis.',
-  scope: 'write',
+  scope: 'read',
   params: {
     question: { type: 'string', required: true, description: 'The question to think about' },
     anchor: { type: 'string', description: 'Pull the entity subgraph around this slug' },
@@ -1831,6 +1831,8 @@ const think: Operation = {
     since: { type: 'string', description: 'Start of temporal window (YYYY-MM-DD or YYYY-MM)' },
     until: { type: 'string', description: 'End of temporal window' },
   },
+  // Local CLI can persist with save/take; remote/MCP callers are forced
+  // read-only below before runThink/persistSynthesis sees those flags.
   mutating: true,
   handler: async (ctx, p) => {
     const remote = ctx.remote ?? true;

@@ -64,7 +64,7 @@ Key files:
   thin-client routing branches. These commands bypass the operation-layer
   dispatch in cli.ts (call `engine.foo()` directly), so each gets its own
   `if (isThinClient(cfg)) { callRemoteTool(...) }` branch that maps CLI flags
-  to op params. `think` is a special case: the server's `think` op
-  intentionally disables `--save`/`--take` for remote callers
-  (operations.ts:1103-1135 trust-boundary gate); thin-client `think` warns
-  loudly when those flags are set.
+  to op params. `think` is a special case: the server's `think` op is
+  read-scoped for OAuth/MCP and intentionally disables `--save`/`--take` for
+  remote callers in its trust-boundary gate; thin-client `think` warns loudly
+  when those flags are set.

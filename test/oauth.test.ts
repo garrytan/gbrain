@@ -645,13 +645,19 @@ describe('operation scope annotations', () => {
     }
   });
 
-  test('mutating operations are write/admin/sources_admin/users_admin/agent scoped', () => {
+  test('mutating operations are write/admin/sources_admin/users_admin/agent scoped unless remote-gated', () => {
     const { operations } = require('../src/core/operations.ts');
+    const remoteReadOnlyMutatingOps = new Set(['think']);
     for (const op of operations) {
       if (op.mutating) {
+        if (remoteReadOnlyMutatingOps.has(op.name)) {
+          expect(op.scope, `${op.name} remote-gated mutating op should be read-scoped`).toBe('read');
+          continue;
+        }
         // v0.28: sources_admin permits sources_add / sources_remove (mutating
         // sources, not pages); read scope is the only thing too narrow for
-        // any mutating op. v0.38: 'agent' is a mutating-axis scope for
+        // a mutating op unless its remote path forces persistence off before
+        // the handler writes. v0.38: 'agent' is a mutating-axis scope for
         // submit_agent (creates jobs, spends money, but contained by bindings).
         expect(
           ['write', 'admin', 'sources_admin', 'users_admin', 'agent'],

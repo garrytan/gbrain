@@ -17,6 +17,7 @@ import { withoutAnthropicKey } from './helpers/no-anthropic-key.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../src/core/takes-fence.ts';
+import { operationsByName } from '../src/core/operations.ts';
 
 let engine: PGLiteEngine;
 let alicePageId: number;
@@ -205,6 +206,11 @@ describe('per-token takes-holder allow-list — get_versions body channel', () =
 });
 
 describe('think op — read-only on remote callers (Lane D landed)', () => {
+  test('think is read-scoped for MCP while local persistence remains possible', () => {
+    expect(operationsByName.think.scope).toBe('read');
+    expect(operationsByName.think.mutating).toBe(true);
+  });
+
   test('remote save/take is forced read-only via remote_persisted_blocked flag', async () => {
     // Hermetic no-key: neutralize BOTH env var AND ~/.gbrain config key, else a
     // configured machine fires a real LLM call and the warning flips to
