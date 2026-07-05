@@ -78,12 +78,12 @@ collect → rank → report:
 - Respect `pain_triggered` routing (native subagent first, minions on pain signals) per
   `skills/conventions/subagent-routing.md`.
 
-### 4. Feedback loop — 🟡 hook present (`priorSkillOutputs`); driver TODO
-- Two options for "outputs inform next routing":
-  - **(a)** fan-out manifest + aggregator (existing plumbing), or
-  - **(b)** re-invoke `orchestrate_input` with prior skill outputs appended to `state`.
-- **(b) is cleanest** for the loop in the diagram — the orchestrator re-ranks with new evidence
-  each pass; stop when no new skills are suggested.
+### 4. Feedback loop — ✅ driver done (`loop.ts`)
+- `orchestrateLoop(ctx, deps, { executor })` re-ranks with executed skills' outputs each round;
+  converges when a round surfaces no new skill (`maxRounds` backstop). Executor is injected — no
+  executor → single suggest-only pass. Tested in `test/orchestrator-loop.test.ts`.
+- The real executor (wiring `SkillExecutor` → `gbrain agent run`) is the one remaining piece,
+  gated behind the auto-run-boundary decision (step 3).
 
 ## Guardrails (Phase 3)
 - `routing-eval` fixtures covering representative patient cases (input → expected skills).
@@ -94,13 +94,15 @@ collect → rank → report:
   autonomous diagnosis engine. Decide the auto-run boundary early; it shapes the whole design.
 
 ## Remaining
-- **Execution** (step 3) — run each recommended skill (`gbrain agent run`); kept out of the op
-  by design (decision support). Needs the team's auto-run-boundary call first.
-- **Feedback-loop driver** (step 4) — re-invoke with `priorSkillOutputs` until recommendations
-  stabilise. The hook exists; the loop does not.
-- **`routing-eval` fixtures** — input → expected skills, as the acceptance/demo gate.
+- **Real skill executor** (step 3) — wire `SkillExecutor` → `gbrain agent run` (`runAgentRun`,
+  job/DB-backed). The loop + op stay suggest-only until the team's auto-run-boundary decision.
+- **LLM-selector replay in CI** — run `test/fixtures/orchestrator-routing-cases.ts` through the
+  LLM selector once a model endpoint is wired (currently replayed through the deterministic v0).
 - **Relational retrieval** — history uses `hybridSearchCached` (no expansion); the relational
   arm (`relationalRetrieval`) could enrich "who/what connects" history later.
+
+Done in this branch: gate + LLM selector + history retrieval + `orchestrate_input` op (steps 1–2),
+feedback-loop driver (step 4, `loop.ts`), and the routing-eval acceptance fixtures + test.
 
 ## Cross-link with Task 1
 The skills this orchestrator ranks and runs are exactly the Nurse/Psychiatrist skills built and

@@ -89,3 +89,14 @@ export interface OrchestratorReport {
   /** Free-form notes (e.g. "no custom skill matched — needs authoring"). */
   notes: string[];
 }
+
+/**
+ * Runs ONE recommended skill and returns its output, for the feedback loop
+ * (loop.ts). Injected so the loop stays testable and so wiring real execution
+ * (`gbrain agent run`) — and the auto-run boundary that gates it — is a separate,
+ * deliberate decision, not something the read-scope orchestrator does implicitly.
+ */
+export type SkillExecutor = (
+  rec: SkillRecommendation,
+  ctx: OrchestratorContext,
+) => Promise<SkillOutput>;

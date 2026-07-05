@@ -34,6 +34,7 @@ patient routing.
 | `select-llm.ts` | **LLM selector** — ranks eligible skills via an injected `chat`; re-validates output against the eligible set. |
 | `deps-live.ts` | Production wiring: skill catalog + hybrid retrieval + LLM `chat`. |
 | `run.ts` | One routing pass. Injected deps for history retrieval + skill loading. |
+| `loop.ts` | Feedback-loop driver — re-ranks with executed skills' outputs until it converges (injected executor; suggest-only with none). |
 
 The `orchestrate_input` op lives in `src/core/operations.ts` (read-scope; `gbrain orchestrate`).
 
@@ -47,12 +48,20 @@ The `orchestrate_input` op lives in `src/core/operations.ts` (read-scope; `gbrai
 
 ## Feedback loop
 
-Call `orchestrate_input` / `runOrchestrator` again with the previous pass's outputs in
-`ctx.priorSkillOutputs`; the selector re-ranks with the new evidence. Stop when recommendations
-stabilise or go empty.
+`loop.ts` `orchestrateLoop(ctx, deps, { executor })` drives it: each round runs the orchestrator,
+executes the newly-recommended skills via the injected `executor`, appends their outputs to
+`priorSkillOutputs`, and re-ranks. It converges when a round surfaces no new skill (`maxRounds` is
+a backstop). With **no executor** it does a single suggest-only pass — the safe default, since
+auto-running clinical skills is a policy call, not an implementation default.
+
+## Acceptance fixtures
+
+`test/fixtures/orchestrator-routing-cases.ts` holds the shared `input → expected skills` cases;
+`test/orchestrator-routing.test.ts` replays them through the deterministic v0 selector (and the
+same cases can later run through the LLM selector).
 
 ## Remaining / follow-ups
 
-- Skill **execution** (`gbrain agent run` per recommendation) is deliberately out of scope — the
-  op is decision support. A separate execute step + a feedback-loop driver can consume this output.
-- `routing-eval` fixtures (input → expected skills) as the acceptance/demo gate.
+- **Real executor**: wire `SkillExecutor` to `gbrain agent run` (`runAgentRun`, job/DB-backed).
+  Gated behind the team's **auto-run boundary** decision — the loop + op stay suggest-only until then.
+- Replay the routing fixtures through the **LLM selector** in CI once a model endpoint is available.
