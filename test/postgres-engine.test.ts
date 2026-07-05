@@ -128,6 +128,58 @@ describe('postgres-engine / search date filtering', () => {
   });
 });
 
+// v0.32.7 CJK branch (Postgres parity) guardrails. Live-DB coverage of the
+// fallback lives in test/e2e/engine-parity.test.ts (Korean parity case);
+// this block stays DB-free and locks in the source-level invariants that
+// make the port faithful to pglite-engine.ts `_searchKeywordCJK`.
+describe('postgres-engine / CJK keyword fallback (v0.32.7 parity)', () => {
+  test('searchKeyword routes CJK queries to _searchKeywordCJK', () => {
+    const fn = stripComments(extractMethod(SRC, 'searchKeyword'));
+    expect(fn).toMatch(/if\s*\(\s*hasCJK\s*\(\s*query\s*\)\s*\)/);
+    expect(fn).toMatch(/this\._searchKeywordCJK\s*\(/);
+  });
+
+  test('searchKeywordChunks routes CJK queries to _searchKeywordCJK (chunk-grain, no dedup)', () => {
+    const fn = stripComments(extractMethod(SRC, 'searchKeywordChunks'));
+    expect(fn).toMatch(/if\s*\(\s*hasCJK\s*\(\s*query\s*\)\s*\)/);
+    expect(fn).toMatch(/this\._searchKeywordCJK\s*\(/);
+    expect(fn).toMatch(/dedup:\s*false/);
+  });
+
+  test('_searchKeywordCJK matches via ILIKE with explicit ESCAPE, never tsquery', () => {
+    const fn = extractCJKHelper(SRC);
+    // ILIKE '%' || $1 || '%' ESCAPE '\' — the escaped-pattern binding.
+    expect(fn).toMatch(/ILIKE\s+'%'\s*\|\|\s*\$1\s*\|\|\s*'%'\s+ESCAPE/);
+    // The fallback must not route back through the english tokenizer it
+    // exists to bypass.
+    expect(stripComments(fn)).not.toMatch(/websearch_to_tsquery/);
+  });
+
+  test('_searchKeywordCJK keeps the two-binding discipline (qLike escaped, qRaw for ranking)', () => {
+    const fn = stripComments(extractCJKHelper(SRC));
+    // $1 comes from escapeLikePattern; $2 is the raw string used by the
+    // REPLACE/POSITION occurrence-count scoring. Escaped chars cannot be
+    // reused as ranking substrings (codex outside-voice C8).
+    expect(fn).toMatch(/escapeLikePattern\s*\(\s*qRaw\s*\)/);
+    expect(fn).toMatch(/REPLACE\(cc\.chunk_text,\s*\$2/);
+    expect(fn).toMatch(/POSITION\(\$2\s+IN\s+cc\.chunk_text\)/);
+  });
+
+  test('_searchKeywordCJK honors the pool-safety + RLS-scope contract (withScopedReadTransaction alwaysTransaction + SET LOCAL)', () => {
+    const fn = extractCJKHelper(SRC);
+    expect(fn).toMatch(/withScopedReadTransaction\s*\(/);
+    expect(fn).toMatch(/alwaysTransaction:\s*true/);
+    expect(fn).toMatch(/SET\s+LOCAL\s+statement_timeout/);
+    expect(stripComments(fn)).not.toMatch(/SET\s+statement_timeout\s*=\s*['"]?0/);
+  });
+
+  test('_searchKeywordCJK seals source-isolation on the fallback path (#861 parity)', () => {
+    const fn = stripComments(extractCJKHelper(SRC));
+    expect(fn).toMatch(/p\.source_id = ANY\(\$\$\{params\.length\}::text\[\]\)/);
+    expect(fn).toMatch(/opts\?\.sourceId/);
+  });
+});
+
 function stripComments(s: string): string {
   return s
     .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -136,6 +188,18 @@ function stripComments(s: string): string {
 
 function countOccurrences(s: string, needle: string): number {
   return s.split(needle).length - 1;
+}
+
+// _searchKeywordCJK's signature contains an object-type literal (the ctx
+// param), so extractMethod's first-brace matcher would stop at the type.
+// Slice from the declaration to the method's 2-space-indent closing brace
+// instead (nested blocks all sit deeper).
+function extractCJKHelper(source: string): string {
+  const start = source.indexOf('private async _searchKeywordCJK(');
+  if (start < 0) throw new Error('_searchKeywordCJK not found in postgres-engine.ts');
+  const end = source.indexOf('\n  }', start);
+  if (end < 0) throw new Error('no closing brace for _searchKeywordCJK');
+  return source.slice(start, end + 4);
 }
 
 // extractMethod grabs the body of a class method by brace-matching from

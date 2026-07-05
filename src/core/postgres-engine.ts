@@ -63,6 +63,7 @@ import { ConnectionManager } from './connection-manager.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, takeHitRowToHit, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
+import { hasCJK, escapeLikePattern } from './cjk.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
@@ -1690,6 +1691,30 @@ export class PostgresEngine implements BrainEngine {
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
 
+    // v0.26.5: visibility filter hides soft-deleted pages and pages from
+    // archived sources. Joined `sources s` lets the predicate compile to a
+    // column lookup. NOT bypassed by detail=high — soft-delete is a contract,
+    // not a temporal preference. (Hoisted above the CJK branch so the
+    // fallback can reuse it, mirroring the PGLite hoist.)
+    const visibilityClause = buildVisibilityClause('p', 's');
+
+    // v0.32.7 CJK branch (Postgres parity): `websearch_to_tsquery('english')`
+    // can't tokenize CJK — a Chinese/Japanese/Korean query compiles to an
+    // empty tsquery and the FTS path silently returns nothing. Switch to
+    // ILIKE on chunk_text with occurrence-count ranking as the ts_rank
+    // substitute when the query contains CJK characters, mirroring the
+    // PGLite engine's `_searchKeywordCJK`. ASCII path stays exactly the
+    // same below.
+    if (hasCJK(query)) {
+      return this._searchKeywordCJK(query, {
+        limit, offset, innerLimit, sourceFactorCase,
+        hardExcludeClause, visibilityClause,
+        detailFilter: detailLow ? `AND cc.chunk_source = 'compiled_truth'` : '',
+        opts,
+        dedup: true,
+      });
+    }
+
     const params: unknown[] = [query];
     let typeClause = '';
     if (type) {
@@ -1752,11 +1777,8 @@ export class PostgresEngine implements BrainEngine {
     params.push(offset);
     const offsetParam = `$${params.length}`;
 
-    // v0.26.5: visibility filter hides soft-deleted pages and pages from
-    // archived sources. Joined `sources s` lets the predicate compile to a
-    // column lookup. NOT bypassed by detail=high — soft-delete is a contract,
-    // not a temporal preference.
-    const visibilityClause = buildVisibilityClause('p', 's');
+    // visibilityClause already declared above (v0.32.7 parity: hoisted so
+    // the CJK branch can reuse it).
     // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
@@ -1815,6 +1837,207 @@ export class PostgresEngine implements BrainEngine {
   }
 
   /**
+   * v0.32.7 CJK keyword fallback (Postgres parity port of the PGLite
+   * engine's `_searchKeywordCJK`). `websearch_to_tsquery('english')` can't
+   * tokenize CJK so the FTS path returns empty for Chinese / Japanese /
+   * Korean queries. This routes to an ILIKE substring scan with
+   * occurrence-count ranking as a ts_rank substitute.
+   *
+   * Same discipline as the PGLite implementation (codex outside-voice C8):
+   *   - Two distinct parameter bindings: $1 qLike (LIKE-escaped, for ILIKE)
+   *     and $2 qRaw (un-escaped, for ranking arithmetic via
+   *     position/replace). Escaped chars cannot be reused as ranking
+   *     substrings.
+   *   - Explicit `ESCAPE '\'` on the ILIKE clause.
+   *   - Symmetric: no asymmetric whitespace strip (caller's query and
+   *     chunk_text are compared as-stored).
+   *   - Empty-query guard returns no results without binding SQL.
+   *
+   * Adapted to this engine's conventions rather than copied verbatim:
+   * postgres.js `sql.begin()` + `SET LOCAL statement_timeout` (pool-safe,
+   * R6-F006), filter params first with limit/offset appended last,
+   * `false AS stale`, and this engine's full filter set (type / types /
+   * exclude_slugs / language / symbolKind / afterDate / beforeDate /
+   * source scope — the superset the ASCII FTS paths support here).
+   */
+  private async _searchKeywordCJK(
+    query: string,
+    ctx: {
+      limit: number;
+      offset: number;
+      innerLimit: number;
+      sourceFactorCase: string;
+      hardExcludeClause: string;
+      visibilityClause: string;
+      detailFilter: string;
+      opts: SearchOpts | undefined;
+      dedup: boolean;
+    },
+  ): Promise<SearchResult[]> {
+    const { limit, offset, innerLimit, sourceFactorCase, hardExcludeClause, visibilityClause, detailFilter, opts, dedup } = ctx;
+    const qRaw = query;
+    if (qRaw.length === 0) return [];
+    const qLike = escapeLikePattern(qRaw);
+
+    // $1 = qLike (escaped for ILIKE)
+    // $2 = qRaw  (raw for position()/replace() ranking arithmetic)
+    // Filter params next; inner-limit/limit/offset appended last (this
+    // engine's named-param convention).
+    const params: unknown[] = [qLike, qRaw];
+    let typeClause = '';
+    if (opts?.type) {
+      params.push(opts.type);
+      typeClause = `AND p.type = $${params.length}`;
+    }
+    // v0.33: multi-type filter for whoknows. AND-applied alongside the
+    // single-value `type` filter (callers can use either or both).
+    let typesClause = '';
+    if (opts?.types && opts.types.length > 0) {
+      params.push(opts.types);
+      typesClause = `AND p.type = ANY($${params.length}::text[])`;
+    }
+    let excludeSlugsClause = '';
+    if (opts?.exclude_slugs?.length) {
+      params.push(opts.exclude_slugs);
+      excludeSlugsClause = `AND p.slug != ALL($${params.length}::text[])`;
+    }
+    let languageClause = '';
+    if (opts?.language) {
+      params.push(opts.language);
+      languageClause = `AND cc.language = $${params.length}`;
+    }
+    let symbolKindClause = '';
+    if (opts?.symbolKind) {
+      params.push(opts.symbolKind);
+      symbolKindClause = `AND cc.symbol_type = $${params.length}`;
+    }
+    // v0.27.0: date filtering support
+    let afterDateClause = '';
+    if (opts?.afterDate) {
+      params.push(opts.afterDate);
+      afterDateClause = `AND COALESCE(p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+    }
+    let beforeDateClause = '';
+    if (opts?.beforeDate) {
+      params.push(opts.beforeDate);
+      beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+    }
+    // v0.34.1 (#861 — P0 leak seal): source-isolation on the CJK fallback
+    // path too. Array form wins over scalar.
+    let sourceClause = '';
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      sourceClause = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      sourceClause = `AND p.source_id = $${params.length}`;
+    }
+
+    // Occurrence-count ranking: count occurrences of $qRaw in chunk_text via
+    // (length(chunk) - length(replace(chunk, q, ''))) / length(q). Acts as
+    // a ts_rank substitute. position()-tiebreaker so earlier-in-chunk hits
+    // outrank later ones at the same occurrence count. Same expression as
+    // the PGLite implementation.
+    const scoreExpr = `
+      ((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $2, ''))) / NULLIF(LENGTH($2), 0)::real
+        + 1.0 / NULLIF(POSITION($2 IN cc.chunk_text), 0)::real)
+      * ${sourceFactorCase}
+    `;
+
+    let rawQuery: string;
+    if (dedup) {
+      params.push(innerLimit);
+      const innerLimitParam = `$${params.length}`;
+      params.push(limit);
+      const limitParam = `$${params.length}`;
+      params.push(offset);
+      const offsetParam = `$${params.length}`;
+      rawQuery = `
+        WITH ranked_chunks AS (
+          SELECT
+            p.slug, p.id as page_id, p.title, p.type, p.source_id,
+            p.effective_date, p.effective_date_source,
+            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+            ${scoreExpr} AS score
+          FROM content_chunks cc
+          JOIN pages p ON p.id = cc.page_id
+          JOIN sources s ON s.id = p.source_id
+          WHERE cc.chunk_text ILIKE '%' || $1 || '%' ESCAPE '\\'
+            ${typeClause}
+            ${typesClause}
+            ${excludeSlugsClause}
+            ${detailFilter}
+            ${languageClause}
+            ${symbolKindClause}
+            ${afterDateClause}
+            ${beforeDateClause}
+            ${sourceClause}
+            ${hardExcludeClause}
+            ${visibilityClause}
+            -- v0.27.1: hide image rows from text-keyword search so OCR text
+            -- doesn't drown text-page hits (same as the FTS path).
+            AND cc.modality = 'text'
+          ORDER BY score DESC
+          LIMIT ${innerLimitParam}
+        ),
+        ${buildBestPerPagePoolCte('ranked_chunks')}
+        SELECT slug, page_id, title, type, source_id,
+          effective_date, effective_date_source,
+          chunk_id, chunk_index, chunk_text, chunk_source, score,
+          false AS stale
+        FROM best_per_page
+        ORDER BY score DESC
+        LIMIT ${limitParam}
+        OFFSET ${offsetParam}
+      `;
+    } else {
+      params.push(limit);
+      const limitParam = `$${params.length}`;
+      params.push(offset);
+      const offsetParam = `$${params.length}`;
+      rawQuery = `
+        SELECT
+          p.slug, p.id as page_id, p.title, p.type, p.source_id,
+          p.effective_date, p.effective_date_source,
+          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+          ${scoreExpr} AS score,
+          false AS stale
+        FROM content_chunks cc
+        JOIN pages p ON p.id = cc.page_id
+        JOIN sources s ON s.id = p.source_id
+        WHERE cc.chunk_text ILIKE '%' || $1 || '%' ESCAPE '\\'
+          ${typeClause}
+          ${typesClause}
+          ${excludeSlugsClause}
+          ${detailFilter}
+          ${languageClause}
+          ${symbolKindClause}
+          ${afterDateClause}
+          ${beforeDateClause}
+          ${sourceClause}
+          ${hardExcludeClause}
+          ${visibilityClause}
+        ORDER BY score DESC
+        LIMIT ${limitParam}
+        OFFSET ${offsetParam}
+      `;
+    }
+
+    // Search-only timeout + RLS scope binding, same contract as the FTS
+    // paths post-#2940: withScopedReadTransaction owns the sql.begin()
+    // wrap (alwaysTransaction — SET LOCAL statement_timeout must be
+    // transaction-scoped so the GUC can never leak onto a pooled
+    // connection), and with GBRAIN_RLS_SCOPE_BINDING on, the fallback
+    // shares the same set_config('app.scopes') transaction as the FTS
+    // arm — the CJK path can never widen a caller's source scope.
+    const rows = await this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
+      await tx`SET LOCAL statement_timeout = '8s'`;
+      return await tx.unsafe(rawQuery, params as Parameters<typeof tx.unsafe>[1]);
+    }, { alwaysTransaction: true });
+    return rows.map(rowToSearchResult);
+  }
+
+  /**
    * v0.20.0 Cathedral II Layer 3 (1b) chunk-grain keyword search.
    * Ranks chunks via content_chunks.search_vector WITHOUT the
    * dedup-to-page pass searchKeyword applies. Used by A2 two-pass
@@ -1844,6 +2067,26 @@ export class PostgresEngine implements BrainEngine {
     const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+
+    // v0.26.5: visibility filter for searchKeywordChunks (anchor primitive).
+    // (Hoisted above the CJK branch so the fallback can reuse it.)
+    const visibilityClause = buildVisibilityClause('p', 's');
+
+    // v0.32.7 CJK branch (Postgres parity): same as searchKeyword but
+    // without page-dedup — english tsquery can't tokenize CJK, so route to
+    // the ILIKE + occurrence-count fallback (mirrors the PGLite engine's
+    // chunk-grain CJK call site).
+    if (hasCJK(query)) {
+      return this._searchKeywordCJK(query, {
+        limit, offset,
+        innerLimit: 0,             // unused on chunk-grain (no inner CTE)
+        sourceFactorCase,
+        hardExcludeClause, visibilityClause,
+        detailFilter: detailLow ? `AND cc.chunk_source = 'compiled_truth'` : '',
+        opts,
+        dedup: false,
+      });
+    }
 
     const params: unknown[] = [query];
     let typeClause = '';
@@ -1900,8 +2143,8 @@ export class PostgresEngine implements BrainEngine {
     params.push(offset);
     const offsetParam = `$${params.length}`;
 
-    // v0.26.5: visibility filter for searchKeywordChunks (anchor primitive).
-    const visibilityClause = buildVisibilityClause('p', 's');
+    // visibilityClause already declared above (v0.32.7 parity: hoisted so
+    // the CJK branch can reuse it).
     // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
