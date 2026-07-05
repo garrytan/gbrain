@@ -263,6 +263,21 @@
       "name": "skill-optimizer",
       "path": "skill-optimizer/SKILL.md",
       "description": "Self-evolving skill optimization via gbrain skillopt — SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
+    },
+    {
+      "name": "nurse-triage",
+      "path": "nurse-triage/SKILL.md",
+      "description": "Nursing intake & triage decision-support: structures presenting symptoms + vitals against the patient's brain history and recommends an escalation level. Decision support only."
+    },
+    {
+      "name": "psych-risk-screen",
+      "path": "psych-risk-screen/SKILL.md",
+      "description": "Psychiatric risk-screening decision-support: structures a mental-status picture and a self-harm/suicidality risk level from the concern + brain history. Decision support only."
+    },
+    {
+      "name": "patient-history-review",
+      "path": "patient-history-review/SKILL.md",
+      "description": "Role-agnostic patient history retrieval: pulls and summarizes a patient's record (history, medications, allergies) as a sourced brief for either care lane. Read-only."
     }
   ],
   "dependencies": {

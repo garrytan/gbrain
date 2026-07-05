@@ -1,0 +1,6 @@
+// Routing eval fixtures for skills/patient-history-review (Task 0 foundations).
+// Each line: {intent, expected_skill, ambiguous_with?}.
+// Rule: intent must PARAPHRASE the trigger (contain it in context), never copy it verbatim.
+{"intent": "Pull the full patient history and current medication list before the consult", "expected_skill": "patient-history-review"}
+{"intent": "What allergies and past medical history do we have on file for this patient", "expected_skill": "patient-history-review"}
+{"intent": "Summarize the patient's medical record ahead of the ward round", "expected_skill": "patient-history-review"}

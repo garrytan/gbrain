@@ -1,0 +1,7 @@
+// Routing eval fixtures for skills/psych-risk-screen (Task 0 foundations).
+// Each line: {intent, expected_skill, ambiguous_with?}.
+// Rule: intent must PARAPHRASE the trigger (contain it in context), never copy it verbatim.
+{"intent": "Patient feels hopeless and has mentioned self-harm this week, what risk screening applies", "expected_skill": "psych-risk-screen"}
+{"intent": "How do I run a mental status assessment for someone with severe depression", "expected_skill": "psych-risk-screen"}
+{"intent": "Help me assess psychiatric risk for a patient whose anxiety is escalating", "expected_skill": "psych-risk-screen"}
+{"intent": "The patient made a passing suicidal comment during intake, how urgently should this be escalated", "expected_skill": "psych-risk-screen"}

@@ -37,6 +37,16 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | Meeting transcript received | `skills/meeting-ingestion/SKILL.md` |
 | Generic "ingest this" (auto-routes to above) | `skills/ingest/SKILL.md` |
 
+## Patient care (hackathon — Task 0 foundations)
+
+Decision-support skills for the patient orchestrator. The T2 selector ranks these by `role`. All are read-only; a licensed clinician confirms every recommendation.
+
+| Trigger | Skill |
+|---------|-------|
+| "chest pain", "shortness of breath", "triage", "vital signs", "fever", "wound care" | `skills/nurse-triage/SKILL.md` (role: nurse) |
+| "suicidal", "self-harm", "mental status", "psychiatric risk", "depression", "anxiety" | `skills/psych-risk-screen/SKILL.md` (role: psychiatrist) |
+| "patient history", "medication list", "allergies", "past medical history", "medical record" | `skills/patient-history-review/SKILL.md` (role: shared) |
+
 ## Thinking skills (from GStack)
 
 | Trigger | Skill |

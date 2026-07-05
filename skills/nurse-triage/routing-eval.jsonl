@@ -1,0 +1,7 @@
+// Routing eval fixtures for skills/nurse-triage (Task 0 foundations).
+// Each line: {intent, expected_skill, ambiguous_with?}.
+// Rule: intent must PARAPHRASE the trigger (contain it in context), never copy it verbatim.
+{"intent": "Patient reports chest pain radiating to the left arm since this morning, what should the nurse assess first", "expected_skill": "nurse-triage"}
+{"intent": "An elderly patient has shortness of breath with low oxygen readings, how should we triage them", "expected_skill": "nurse-triage"}
+{"intent": "Post-op wound care steps for a patient running a mild fever overnight", "expected_skill": "nurse-triage"}
+{"intent": "The patient's vital signs look abnormal at handover, walk me through the triage order", "expected_skill": "nurse-triage"}
