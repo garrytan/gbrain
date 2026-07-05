@@ -47,7 +47,7 @@ import {
 } from './repo-root.ts';
 import { loadOrDeriveManifest, type ManifestEntry } from './skill-manifest.ts';
 import { loadSkillTriggerIndex, FRONTMATTER_SECTION } from './skill-trigger-index.ts';
-import { parseSkillFrontmatter } from './skill-frontmatter.ts';
+import { parseSkillFrontmatter, type SkillRole } from './skill-frontmatter.ts';
 import { hasScope } from './scope.ts';
 import { operations, OperationError, type Operation, type OperationContext } from './operations.ts';
 import {
@@ -86,6 +86,8 @@ export interface SkillCatalogEntry {
   description: string;
   section: string;
   triggers: string[];
+  /** Care-team role the T2 orchestrator ranks against; absent when untagged. */
+  role?: SkillRole;
   tools: string[];
   /** declared tools ∩ (exposed by this server AND permitted to this caller). */
   usable_tools: string[];
@@ -116,6 +118,7 @@ export interface GetSkillResult {
     name?: string;
     description?: string;
     triggers?: string[];
+    role?: SkillRole;
     tools?: string[];
     writes_pages?: boolean;
     mutating?: boolean;
@@ -477,6 +480,7 @@ export function buildSkillCatalog(
       description: oneLineDescription(raw, body),
       section,
       triggers,
+      role: parsed?.role,
       tools,
       usable_tools,
       unavailable_tools,
@@ -536,6 +540,7 @@ export function getSkillDetail(
       name: parsed?.name,
       description: oneLineDescription(raw, body) || undefined,
       triggers: parsed?.triggers,
+      role: parsed?.role,
       tools: parsed?.tools,
       writes_pages: parsed?.writes_pages,
       mutating: parsed?.mutating,
