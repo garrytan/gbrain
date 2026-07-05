@@ -2648,7 +2648,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     }
   }
   const estimatedInputTokens = estimateChatInputTokens(opts);
-  const maxOutputTokens = opts.maxTokens ?? 4096;
+  const maxOutputTokens = opts.maxTokens ?? 32000;
 
   // TX5: reserve BEFORE the provider call. Throws BudgetExhausted on cost,
   // runtime, or no_pricing (when cap is set). Pre-resolution model id is
@@ -2757,7 +2757,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       system: opts.system,
       messages: toModelMessages(opts.messages) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
-      maxOutputTokens: opts.maxTokens ?? 4096,
+      maxOutputTokens: opts.maxTokens ?? 32000,
       // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
       // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
       abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
@@ -2942,7 +2942,7 @@ export interface ToolLoopResult {
  */
 export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
   const maxTurns = opts.maxTurns ?? 20;
-  const maxTokens = opts.maxTokens ?? 4096;
+  const maxTokens = opts.maxTokens ?? 32000;
   const handlers = opts.toolHandlers;
   const totalUsage: ChatResult['usage'] = {
     input_tokens: 0,
