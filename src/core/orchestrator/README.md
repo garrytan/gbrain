@@ -35,8 +35,12 @@ patient routing.
 | `deps-live.ts` | Production wiring: skill catalog + hybrid retrieval + LLM `chat`. |
 | `run.ts` | One routing pass. Injected deps for history retrieval + skill loading. |
 | `loop.ts` | Feedback-loop driver — re-ranks with executed skills' outputs until it converges (injected executor; suggest-only with none). |
+| `execute.ts` | Real `SkillExecutor` — runs a skill as a subagent job (`jobs submit subagent` path per LOCAL-MODELS-SETUP.md); `makeQueueJobRunner` wires the minion queue. |
 
-The `orchestrate_input` op lives in `src/core/operations.ts` (read-scope; `gbrain orchestrate`).
+Two ops in `src/core/operations.ts`: **`orchestrate_input`** (read-scope, suggest-only;
+`gbrain orchestrate`) and **`orchestrate_run`** (write-scope, **local-only**; `gbrain
+orchestrate-run`) which additionally executes the recommended skills via subagent jobs and runs
+the feedback loop. Execution requires a running `gbrain jobs work` worker + a chat model.
 
 ## Data flow (`orchestrate_input`)
 
@@ -62,6 +66,9 @@ same cases can later run through the LLM selector).
 
 ## Remaining / follow-ups
 
-- **Real executor**: wire `SkillExecutor` to `gbrain agent run` (`runAgentRun`, job/DB-backed).
-  Gated behind the team's **auto-run boundary** decision — the loop + op stay suggest-only until then.
-- Replay the routing fixtures through the **LLM selector** in CI once a model endpoint is available.
+- **Live-stack validation**: `makeQueueJobRunner` + `orchestrate_run` are unit-tested via an
+  injected runner, but the real subagent-job path needs a live DB + `gbrain jobs work` worker + a
+  chat model (the LM Studio / Qwen setup in `hackathon_planning/LOCAL-MODELS-SETUP.md`). Run
+  `gbrain orchestrate-run "<input>"` end-to-end there to confirm.
+- Replay the routing fixtures through the **LLM selector** in CI once a model endpoint is wired.
+- Optional: relational-retrieval enrichment for history.

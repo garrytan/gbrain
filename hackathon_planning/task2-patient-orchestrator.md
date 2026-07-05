@@ -73,10 +73,13 @@ collect → rank → report:
 - Harden later: embedding similarity between input and skill descriptions; deterministic
   pre-filter before the LLM tie-break.
 
-### 3. Execution — ⬜ deliberately deferred (decision support, not autonomous)
-- `gbrain agent run` per selected skill.
-- Respect `pain_triggered` routing (native subagent first, minions on pain signals) per
-  `skills/conventions/subagent-routing.md`.
+### 3. Execution — ✅ built (local-only, opt-in) via `orchestrate_run`
+- `execute.ts` runs each recommended skill as a **subagent job** (`jobs submit subagent` path
+  per `LOCAL-MODELS-SETUP.md`; `agent run` avoided). `makeQueueJobRunner` wires the minion queue;
+  a fake runner keeps the logic unit-tested (`test/orchestrator-execute.test.ts`).
+- `orchestrate_run` op (write-scope, **local-only**) = orchestrate + execute + feedback loop.
+  `orchestrate_input` (read, suggest-only) stays the default — execution is explicit opt-in.
+- Remaining: end-to-end validation on the live worker + model stack.
 
 ### 4. Feedback loop — ✅ driver done (`loop.ts`)
 - `orchestrateLoop(ctx, deps, { executor })` re-ranks with executed skills' outputs each round;
@@ -94,15 +97,17 @@ collect → rank → report:
   autonomous diagnosis engine. Decide the auto-run boundary early; it shapes the whole design.
 
 ## Remaining
-- **Real skill executor** (step 3) — wire `SkillExecutor` → `gbrain agent run` (`runAgentRun`,
-  job/DB-backed). The loop + op stay suggest-only until the team's auto-run-boundary decision.
+- **Live-stack validation** — run `gbrain orchestrate-run "<input>"` end-to-end against a live DB
+  + `gbrain jobs work` worker + chat model (the LM Studio / Qwen setup in `LOCAL-MODELS-SETUP.md`).
+  The executor is unit-tested via an injected runner; only the real queue path is unverified.
 - **LLM-selector replay in CI** — run `test/fixtures/orchestrator-routing-cases.ts` through the
   LLM selector once a model endpoint is wired (currently replayed through the deterministic v0).
-- **Relational retrieval** — history uses `hybridSearchCached` (no expansion); the relational
-  arm (`relationalRetrieval`) could enrich "who/what connects" history later.
+- **Relational retrieval** (optional) — history uses `hybridSearchCached` (no expansion); the
+  relational arm could enrich "who/what connects" history later.
 
-Done in this branch: gate + LLM selector + history retrieval + `orchestrate_input` op (steps 1–2),
-feedback-loop driver (step 4, `loop.ts`), and the routing-eval acceptance fixtures + test.
+Done in this branch (off master + merged qwen): all Task 2 steps — gate + LLM selector + history
+retrieval + `orchestrate_input` (steps 1–2), execution via `orchestrate_run` (step 3), and the
+feedback-loop driver (step 4). Plus routing-eval fixtures and 22 unit tests (container-green).
 
 ## Cross-link with Task 1
 The skills this orchestrator ranks and runs are exactly the Nurse/Psychiatrist skills built and

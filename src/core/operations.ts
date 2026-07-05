@@ -2311,6 +2311,61 @@ const orchestrate_input: Operation = {
   cliHints: { name: 'orchestrate', positional: ['input'] },
 };
 
+const ORCHESTRATE_RUN_DESCRIPTION =
+  'LOCAL execution path for the patient orchestrator: rank clinical skills AND run them as ' +
+  'subagent jobs, feeding outputs back across rounds (the feedback loop). Local-only + ' +
+  'write-scope; requires a running `gbrain jobs work` worker and a chat model. ' +
+  '`orchestrate_input` (read, suggest-only) is the default; this is the explicit opt-in that ' +
+  'actually executes skills. Decision support — review the outputs; not autonomous diagnosis.';
+
+const orchestrate_run: Operation = {
+  name: 'orchestrate_run',
+  description: ORCHESTRATE_RUN_DESCRIPTION,
+  params: {
+    input: {
+      type: 'string',
+      required: true,
+      description: 'The new patient input / observed state (free text).',
+    },
+    patient_id: { type: 'string', description: 'Optional patient id; scopes history retrieval.' },
+    history_limit: { type: 'number', description: 'Max historical records to retrieve (default 20).' },
+    max_rounds: { type: 'number', description: 'Feedback-loop round cap (default 3).' },
+    model: {
+      type: 'string',
+      description: 'Chat model for the subagent runs (e.g. openrouter:qwen/...). Default: config chat_model.',
+    },
+    no_llm: {
+      type: 'boolean',
+      description: 'Use the deterministic selector instead of the LLM ranker.',
+    },
+  },
+  handler: async (ctx, p) => {
+    const input = typeof p.input === 'string' ? p.input.trim() : '';
+    if (!input) {
+      throw new OperationError('invalid_params', 'orchestrate_run requires a non-empty "input".');
+    }
+    const { orchestrateLoop } = await import('./orchestrator/loop.ts');
+    const { makeLiveDeps } = await import('./orchestrator/deps-live.ts');
+    const { makeSubagentExecutor, makeQueueJobRunner } = await import('./orchestrator/execute.ts');
+    const patientId = typeof p.patient_id === 'string' ? p.patient_id : undefined;
+    const model = typeof p.model === 'string' ? p.model : undefined;
+    const deps = makeLiveDeps(ctx, {
+      patientId,
+      historyLimit: typeof p.history_limit === 'number' ? p.history_limit : undefined,
+      useLlm: p.no_llm !== true,
+    });
+    const executor = makeSubagentExecutor({ runner: makeQueueJobRunner(ctx.engine), model });
+    return orchestrateLoop(
+      { input: { text: input, patientId }, history: [], now: new Date(), remote: ctx.remote },
+      deps,
+      { executor, maxRounds: typeof p.max_rounds === 'number' ? p.max_rounds : undefined },
+    );
+  },
+  scope: 'write',
+  localOnly: true,
+  cliHints: { name: 'orchestrate-run', positional: ['input'] },
+};
+
 const list_skills: Operation = {
   name: 'list_skills',
   description: LIST_SKILLS_DESCRIPTION,
@@ -5537,6 +5592,8 @@ export const operations: Operation[] = [
   list_skills, get_skill, list_brain_skillpack, advisor,
   // Task 2: patient orchestrator — rank clinical skills for a new patient input (read-scope)
   orchestrate_input,
+  // Task 2: local-only execution path — rank + run skills as subagent jobs (write-scope)
+  orchestrate_run,
   // Task 1: distiller — decide create/update/split for a data-derived topic (read, localOnly)
   distill,
   // Task 1: batch distiller over many records + resolver categorization (localOnly)
