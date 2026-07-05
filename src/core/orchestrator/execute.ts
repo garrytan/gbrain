@@ -16,6 +16,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import type { SkillRole } from '../skill-frontmatter.ts';
 import type {
   OrchestratorContext,
   SkillExecutor,
@@ -47,6 +48,13 @@ export interface SubagentExecutorOpts {
   maxTurns?: number;
   /** Override how a skill invocation is phrased to the subagent. */
   buildPrompt?: (rec: SkillRecommendation, ctx: OrchestratorContext) => string;
+  /**
+   * Load the role-priming brief for a care role, prepended to the prompt so each
+   * agent runs its skill IN its professional scope. Injected + cached per role;
+   * the real wiring is `(role) => loadRoleBrief(rolesDir, role)`. Returns '' ⇒
+   * no brief (base prompt only). Omit in tests that don't exercise priming.
+   */
+  loadBrief?: (role: SkillRole) => string;
 }
 
 const DEFAULT_MAX_TURNS = 8;
@@ -74,9 +82,26 @@ function defaultPrompt(rec: SkillRecommendation, ctx: OrchestratorContext): stri
  */
 export function makeSubagentExecutor(opts: SubagentExecutorOpts): SkillExecutor {
   const build = opts.buildPrompt ?? defaultPrompt;
+  // Cache briefs per role — the loader hits the filesystem; a loop can run the
+  // same role many times.
+  const briefCache = new Map<SkillRole, string>();
+  const briefFor = (role: SkillRole): string => {
+    if (!opts.loadBrief) return '';
+    let b = briefCache.get(role);
+    if (b === undefined) {
+      b = opts.loadBrief(role);
+      briefCache.set(role, b);
+    }
+    return b;
+  };
   return async (rec, ctx): Promise<SkillOutput> => {
+    const base = build(rec, ctx);
+    const brief = briefFor(rec.role);
+    const prompt = brief
+      ? `You are acting in this role. Stay within its scope.\n\n${brief}\n\n---\n\n${base}`
+      : base;
     const res = await opts.runner({
-      prompt: build(rec, ctx),
+      prompt,
       model: opts.model,
       maxTurns: opts.maxTurns ?? DEFAULT_MAX_TURNS,
     });

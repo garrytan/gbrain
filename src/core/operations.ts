@@ -2356,6 +2356,7 @@ const orchestrate_run: Operation = {
     const { orchestrateLoop } = await import('./orchestrator/loop.ts');
     const { makeLiveDeps } = await import('./orchestrator/deps-live.ts');
     const { makeSubagentExecutor, makeQueueJobRunner } = await import('./orchestrator/execute.ts');
+    const { loadRoleBrief, defaultRolesDir } = await import('./orchestrator/role-brief.ts');
     const patientId = typeof p.patient_id === 'string' ? p.patient_id : undefined;
     const model = typeof p.model === 'string' ? p.model : undefined;
     const deps = makeLiveDeps(ctx, {
@@ -2364,7 +2365,15 @@ const orchestrate_run: Operation = {
       useLlm: p.no_llm !== true,
       relational: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
     });
-    const executor = makeSubagentExecutor({ runner: makeQueueJobRunner(ctx.engine), model });
+    // Prime each agent with its role brief before it runs a skill.
+    const sc = await import('./skill-catalog.ts');
+    const { dir: skillsDir } = sc.resolveSkillsDir(ctx, await sc.readMcpSkillsDir(ctx));
+    const rolesDir = defaultRolesDir(skillsDir);
+    const executor = makeSubagentExecutor({
+      runner: makeQueueJobRunner(ctx.engine),
+      model,
+      loadBrief: (role) => loadRoleBrief(rolesDir, role),
+    });
     return orchestrateLoop(
       { input: { text: input, patientId }, history: [], now: new Date(), remote: ctx.remote },
       deps,
