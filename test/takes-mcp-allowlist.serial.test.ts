@@ -218,9 +218,10 @@ describe('think op — read-only on remote callers (Lane D landed)', () => {
       saved_slug: string | null;
       warnings: string[];
     };
-    // Codex P1 #7: remote save/take is silently disabled.
+    // Codex P1 #7: remote save/take is blocked explicitly at the trust boundary.
     expect(env.remote_persisted_blocked).toBe(true);
     expect(env.saved_slug).toBeNull();
+    expect(env.warnings).toContain('REMOTE_PERSISTED_BLOCKED');
     // Without API key, gather succeeds but synthesis is skipped.
     expect(env.warnings).toContain('NO_ANTHROPIC_API_KEY');
   });

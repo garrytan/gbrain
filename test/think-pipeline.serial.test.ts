@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
-import { runThink, persistSynthesis, type ThinkLLMClient } from '../src/core/think/index.ts';
+import { runThink, persistSynthesis, persistThinkTake, type ThinkLLMClient } from '../src/core/think/index.ts';
 import { sanitizeTakeForPrompt, renderTakesBlock } from '../src/core/think/sanitize.ts';
 import { resolveCitations, parseInlineCitations, normalizeStructuredCitations } from '../src/core/think/cite-render.ts';
 import { runGather } from '../src/core/think/gather.ts';
@@ -347,6 +347,68 @@ describe('runThink + persistSynthesis — #1698 never persist empty', () => {
     };
     const saved = await persistSynthesis(engine, legacy);
     expect(saved.slug).toContain('synthesis/legacy-backcompat');
+  });
+
+  test('persistThinkTake appends the synthesis answer as the next anchor take (#2556)', async () => {
+    const target = await engine.putPage('notes/think-take-target-example', {
+      title: 'Think take target',
+      type: 'note',
+      compiled_truth: 'A safe placeholder page for think take persistence.',
+    });
+    const result: any = {
+      question: 'what should this page remember?',
+      answer: 'This page should remember the synthesized placeholder insight.',
+      citations: [],
+      gaps: [],
+      pagesGathered: 0,
+      takesGathered: 0,
+      graphHits: 0,
+      modelUsed: 'stub',
+      rounds: 1,
+      warnings: [],
+      synthesisOk: true,
+      diagnostics: { pagesFromHybrid: 0, takesFromKeyword: 0, takesFromVector: 0, graphHits: 0 },
+    };
+
+    const persisted = await persistThinkTake(engine, result, { anchor: target.slug });
+
+    expect(persisted).toEqual({ rowNum: 1, inserted: 1, warnings: [] });
+    const takes = await engine.listTakes({ page_id: target.id });
+    expect(takes).toHaveLength(1);
+    expect(takes[0]).toMatchObject({
+      row_num: 1,
+      claim: 'This page should remember the synthesized placeholder insight.',
+      kind: 'take',
+      holder: 'brain',
+      source: 'gbrain think',
+    });
+  });
+
+  test('persistThinkTake refuses empty/no-LLM synthesis instead of writing a blank take (#2556)', async () => {
+    const target = await engine.putPage('notes/think-take-empty-example', {
+      title: 'Think take empty target',
+      type: 'note',
+      compiled_truth: 'A safe placeholder page for empty think take persistence.',
+    });
+    const result: any = {
+      question: 'empty synthesis',
+      answer: '(no LLM available)',
+      citations: [],
+      gaps: [],
+      pagesGathered: 0,
+      takesGathered: 0,
+      graphHits: 0,
+      modelUsed: 'stub',
+      rounds: 0,
+      warnings: [],
+      synthesisOk: false,
+      diagnostics: { pagesFromHybrid: 0, takesFromKeyword: 0, takesFromVector: 0, graphHits: 0 },
+    };
+
+    const persisted = await persistThinkTake(engine, result, { anchor: target.slug });
+
+    expect(persisted).toEqual({ rowNum: null, inserted: 0, warnings: ['TAKE_EMPTY_NOT_PERSISTED'] });
+    expect(await engine.listTakes({ page_id: target.id })).toHaveLength(0);
   });
 });
 
