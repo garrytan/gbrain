@@ -97,17 +97,19 @@ collect → rank → report:
   autonomous diagnosis engine. Decide the auto-run boundary early; it shapes the whole design.
 
 ## Remaining
-- **Live-stack validation** — run `gbrain orchestrate-run "<input>"` end-to-end against a live DB
-  + `gbrain jobs work` worker + chat model (the LM Studio / Qwen setup in `LOCAL-MODELS-SETUP.md`).
-  The executor is unit-tested via an injected runner; only the real queue path is unverified.
-- **LLM-selector replay in CI** — run `test/fixtures/orchestrator-routing-cases.ts` through the
-  LLM selector once a model endpoint is wired (currently replayed through the deterministic v0).
-- **Relational retrieval** (optional) — history uses `hybridSearchCached` (no expansion); the
-  relational arm could enrich "who/what connects" history later.
+- **Live-stack validation** (the only unverified path) — on the LM Studio / Qwen stack
+  (`LOCAL-MODELS-SETUP.md`), start a worker (`bun src/cli.ts jobs work`) and run
+  **`bash hackathon_planning/orchestrate-smoke.sh`**. It exercises the real LLM selector
+  (`orchestrate`) and real execution (`orchestrate-run`). The code is unit-tested via injected
+  fakes; only the real DB/worker/model round-trip can't be exercised in CI here.
 
-Done in this branch (off master + merged qwen): all Task 2 steps — gate + LLM selector + history
-retrieval + `orchestrate_input` (steps 1–2), execution via `orchestrate_run` (step 3), and the
-feedback-loop driver (step 4). Plus routing-eval fixtures and 22 unit tests (container-green).
+All Task 2 features are built:
+- Steps 1–2: gate + LLM selector + history retrieval + `orchestrate_input` (read, suggest-only).
+- Step 3: execution via `orchestrate_run` (write, local-only) — subagent jobs.
+- Step 4: feedback-loop driver (`loop.ts`).
+- LLM-selector replay: `orchestrate-smoke.sh` (real selector, not v0).
+- Relational retrieval: `relational` per-call flag on both ops.
+- 22 unit tests + routing-eval fixtures (container-green).
 
 ## Cross-link with Task 1
 The skills this orchestrator ranks and runs are exactly the Nurse/Psychiatrist skills built and

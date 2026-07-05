@@ -2288,6 +2288,10 @@ const orchestrate_input: Operation = {
       type: 'boolean',
       description: 'Use the deterministic fallback selector instead of the LLM ranker.',
     },
+    relational: {
+      type: 'boolean',
+      description: 'Force the relational recall arm on/off for history retrieval (default: smart).',
+    },
   },
   handler: async (ctx, p) => {
     const input = typeof p.input === 'string' ? p.input.trim() : '';
@@ -2301,6 +2305,7 @@ const orchestrate_input: Operation = {
       patientId,
       historyLimit: typeof p.history_limit === 'number' ? p.history_limit : undefined,
       useLlm: p.no_llm !== true,
+      relational: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
     });
     return runOrchestrator(
       { input: { text: input, patientId }, history: [], now: new Date(), remote: ctx.remote },
@@ -2338,6 +2343,10 @@ const orchestrate_run: Operation = {
       type: 'boolean',
       description: 'Use the deterministic selector instead of the LLM ranker.',
     },
+    relational: {
+      type: 'boolean',
+      description: 'Force the relational recall arm on/off for history retrieval (default: smart).',
+    },
   },
   handler: async (ctx, p) => {
     const input = typeof p.input === 'string' ? p.input.trim() : '';
@@ -2353,6 +2362,7 @@ const orchestrate_run: Operation = {
       patientId,
       historyLimit: typeof p.history_limit === 'number' ? p.history_limit : undefined,
       useLlm: p.no_llm !== true,
+      relational: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
     });
     const executor = makeSubagentExecutor({ runner: makeQueueJobRunner(ctx.engine), model });
     return orchestrateLoop(

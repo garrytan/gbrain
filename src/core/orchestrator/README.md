@@ -66,9 +66,11 @@ same cases can later run through the LLM selector).
 
 ## Remaining / follow-ups
 
-- **Live-stack validation**: `makeQueueJobRunner` + `orchestrate_run` are unit-tested via an
-  injected runner, but the real subagent-job path needs a live DB + `gbrain jobs work` worker + a
-  chat model (the LM Studio / Qwen setup in `hackathon_planning/LOCAL-MODELS-SETUP.md`). Run
-  `gbrain orchestrate-run "<input>"` end-to-end there to confirm.
-- Replay the routing fixtures through the **LLM selector** in CI once a model endpoint is wired.
-- Optional: relational-retrieval enrichment for history.
+- **Live-stack validation** (only unverified path): `makeQueueJobRunner` + `orchestrate_run` are
+  unit-tested via an injected runner, but the real subagent-job path needs a live DB + `gbrain
+  jobs work` worker + a chat model (the LM Studio / Qwen setup in
+  `hackathon_planning/LOCAL-MODELS-SETUP.md`). Run **`bash hackathon_planning/orchestrate-smoke.sh`**
+  there — it exercises the real LLM selector (`orchestrate`) *and* execution (`orchestrate-run`).
+
+Both the LLM-selector replay and relational-retrieval enrichment are now built:
+the smoke script covers the selector replay, and `relational` is a per-call flag on both ops.

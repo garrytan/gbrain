@@ -24,6 +24,12 @@ export interface LiveDepsOpts {
   historyLimit?: number;
   /** false → fall back to run.ts's deterministic v0 selector (no model call). */
   useLlm?: boolean;
+  /**
+   * Force the relational recall arm on/off for history retrieval. Undefined =
+   * search-mode smart default. On surfaces graph-connected history ("who/what
+   * connects") the lexical/vector arms would miss.
+   */
+  relational?: boolean;
 }
 
 export function makeLiveDeps(ctx: OperationContext, opts: LiveDepsOpts = {}): OrchestratorDeps {
@@ -54,6 +60,7 @@ export function makeLiveDeps(ctx: OperationContext, opts: LiveDepsOpts = {}): Or
         detail: 'medium',
         expansion: false, // keep retrieval DB-only — no expansion LLM call
         ...(opts.patientId ? { sourceId: opts.patientId } : {}),
+        ...(typeof opts.relational === 'boolean' ? { relationalRetrieval: opts.relational } : {}),
       });
       return results.map((r) => ({ id: String(r.page_id), snippet: r.chunk_text, score: r.score }));
     },
