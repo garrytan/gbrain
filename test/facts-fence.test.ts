@@ -381,6 +381,23 @@ describe('round-trip: render then parse returns equivalent rows', () => {
     });
   });
 
+  test('literal pipes in text cells survive render+parse', () => {
+    const original: ParsedFact = minimalFact(1, {
+      claim: 'Founded Acme|Co after A|B testing',
+      source: 'linkedin | crm',
+      context: 'context | with pipes',
+    });
+    const rendered = renderFactsTable([original]);
+    const reparsed = parseFactsFence(rendered);
+    expect(reparsed.warnings).toEqual([]);
+    expect(reparsed.facts).toHaveLength(1);
+    expect(reparsed.facts[0]).toMatchObject({
+      claim: original.claim,
+      source: original.source,
+      context: original.context,
+    });
+  });
+
   test('strikethrough-superseded row round-trips with supersededBy preserved', () => {
     const original: ParsedFact = minimalFact(1, {
       claim: 'Old',
@@ -472,6 +489,32 @@ describe('upsertFactRow', () => {
     expect(out).toContain('~~Old~~');
     expect(out).toContain('superseded by #2');
     expect(out).toContain('Replacement');
+  });
+
+  test('round-trip-preservation: row with literal pipes survives an unrelated append', () => {
+    const body = wrapFenceBody(
+      `| 1 | Existing Acme\\|Co fact | fact | 1.0 | world | high | 2026-01-01 |  | src\\|pipe | context\\|pipe |`,
+    );
+    const { body: out, rowNum } = upsertFactRow(body, {
+      claim: 'Unrelated new fact',
+      kind: 'fact',
+      confidence: 1.0,
+      visibility: 'world',
+      notability: 'medium',
+      validFrom: '2026-02-01',
+      source: 'new source',
+    });
+    const parsed = parseFactsFence(out);
+    expect(rowNum).toBe(2);
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.facts).toHaveLength(2);
+    expect(parsed.facts[0]).toMatchObject({
+      rowNum: 1,
+      claim: 'Existing Acme|Co fact',
+      source: 'src|pipe',
+      context: 'context|pipe',
+    });
+    expect(parsed.facts[1].rowNum).toBe(2);
   });
 });
 

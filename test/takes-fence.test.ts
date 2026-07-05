@@ -128,6 +128,26 @@ describe('renderTakesFence', () => {
       expect(after.source).toBe(before.source);
     }
   });
+
+  test('literal pipes in text cells survive render+parse', () => {
+    const rendered = renderTakesFence([{
+      rowNum: 1,
+      claim: 'A|B testing changed conversion',
+      kind: 'take',
+      holder: 'brain',
+      weight: 0.8,
+      sinceDate: '2026-01-01',
+      source: 'crm | linkedin',
+      active: true,
+    }]);
+    const reparsed = parseTakesFence(rendered);
+    expect(reparsed.warnings).toEqual([]);
+    expect(reparsed.takes).toHaveLength(1);
+    expect(reparsed.takes[0]).toMatchObject({
+      claim: 'A|B testing changed conversion',
+      source: 'crm | linkedin',
+    });
+  });
 });
 
 describe('upsertTakeRow', () => {
@@ -183,6 +203,34 @@ ${TAKES_FENCE_END}
       active: true,
     });
     expect(rowNum).toBe(5); // max(2,4)+1, NOT 1 (gap-fill would break refs)
+  });
+
+  test('row with literal pipes survives an unrelated append', () => {
+    const body = `## Takes
+
+${TAKES_FENCE_BEGIN}
+| # | claim | kind | who | weight | since | source |
+|---|-------|------|-----|--------|-------|--------|
+| 1 | A\\|B testing changed conversion | take | brain | 0.8 | 2026-01 | crm\\|linkedin |
+${TAKES_FENCE_END}
+`;
+    const { body: out, rowNum } = upsertTakeRow(body, {
+      claim: 'Unrelated append',
+      kind: 'take',
+      holder: 'brain',
+      weight: 0.7,
+      active: true,
+    });
+    const parsed = parseTakesFence(out);
+    expect(rowNum).toBe(2);
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.takes).toHaveLength(2);
+    expect(parsed.takes[0]).toMatchObject({
+      rowNum: 1,
+      claim: 'A|B testing changed conversion',
+      source: 'crm|linkedin',
+    });
+    expect(parsed.takes[1].rowNum).toBe(2);
   });
 });
 

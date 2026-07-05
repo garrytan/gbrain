@@ -25,19 +25,31 @@
  *
  * Returns `null` when the line is not a table row (doesn't start with `|`
  * or has no second pipe). On a match, returns the cells with surrounding
- * whitespace trimmed, with the outer pipes already stripped.
- *
- * NOTE: does NOT unescape `\|` back to `|`. Round-trip-on-pipes is a
- * separate concern callers handle if their domain text legitimately
- * contains pipes (currently neither takes nor facts do at the LLM-extract
- * layer; if a hand-edit introduces one, escape-on-write at render time
- * protects the table shape).
+ * whitespace trimmed, with the outer pipes already stripped. Escaped pipes
+ * (`\|`) are treated as cell text and unescaped in the returned cells.
  */
 export function parseRowCells(line: string): string[] | null {
   const trimmed = line.trim();
   if (!trimmed.startsWith('|') || !trimmed.includes('|', 1)) return null;
-  const inner = trimmed.replace(/^\|/, '').replace(/\|$/, '');
-  return inner.split('|').map(c => c.trim());
+  const withoutLeading = trimmed.slice(1);
+  const inner = withoutLeading.endsWith('|') && withoutLeading[withoutLeading.length - 2] !== '\\'
+    ? withoutLeading.slice(0, -1)
+    : withoutLeading;
+
+  const cells: string[] = [];
+  let current = '';
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === '|' && inner[i - 1] !== '\\') {
+      cells.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  cells.push(current);
+
+  return cells.map(c => unescapeFenceCell(c.trim()));
 }
 
 /**
@@ -77,11 +89,13 @@ export function parseStringCell(raw: string): string | undefined {
 
 /**
  * Escape a value for safe placement inside a pipe-separated cell. Replaces
- * any literal `|` with `\|` so the table layout stays intact. Inverse is
- * not needed at parse time today (see parseRowCells note); a future
- * `unescapeFenceCell` helper can land alongside any domain that needs to
- * read pipes back out of cell text.
+ * any literal `|` with `\|` so the table layout stays intact.
  */
 export function escapeFenceCell(s: string): string {
   return s.replace(/\|/g, '\\|');
+}
+
+/** Undo escapeFenceCell's pipe escaping after row splitting. */
+export function unescapeFenceCell(s: string): string {
+  return s.replace(/\\\|/g, '|');
 }
