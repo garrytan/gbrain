@@ -14,6 +14,9 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  await engine.executeRaw(
+    `INSERT INTO sources (id, name, config) VALUES ('ws-openbrain', 'ws-openbrain', '{}'::jsonb) ON CONFLICT (id) DO NOTHING`,
+  );
   const alice = await engine.putPage('people/alice-example', {
     title: 'Alice', type: 'person', compiled_truth: 'Alice founded Acme.',
   });
@@ -139,6 +142,59 @@ describe('runGather', () => {
     const r = await runGather(engine, { question: 'founder', takesHoldersAllowList: ['world'] });
     expect(r.takes.every(h => h.holder === 'world')).toBe(true);
   });
+
+  test('threads source scope through pages and takes gather streams', async () => {
+    const slug = 'notes/openbrain-founder-trial';
+    const scopedPage = await engine.putPage(slug, {
+      title: 'OpenBrain founder trial',
+      type: 'note',
+      compiled_truth: 'The OpenBrain founder trial conversation covered MCP onboarding, citations, gaps, and trial feedback.',
+    }, { sourceId: 'ws-openbrain' });
+    await engine.upsertChunks(slug, [{
+      chunk_index: 0,
+      chunk_text: 'The OpenBrain founder trial conversation covered MCP onboarding, citations, gaps, and trial feedback.',
+      chunk_source: 'compiled_truth',
+    }], { sourceId: 'ws-openbrain' });
+    await engine.addTakesBatch([
+      {
+        page_id: scopedPage.id,
+        row_num: 1,
+        claim: 'OpenBrain founder trial conversation covered citations and gaps.',
+        kind: 'fact',
+        holder: 'world',
+        weight: 1.0,
+      },
+    ]);
+
+    const question = 'openbrain founder trial conversation citations gaps';
+    const scoped = await runGather(engine, {
+      question,
+      sourceId: 'ws-openbrain',
+      gatherLimit: 10,
+      takesLimit: 10,
+    });
+    expect(scoped.pages.some(p => p.slug === slug)).toBe(true);
+    expect(scoped.takes.some(h => h.page_slug === slug)).toBe(true);
+
+    const wrongScope = await runGather(engine, {
+      question,
+      sourceId: 'default',
+      gatherLimit: 10,
+      takesLimit: 10,
+    });
+    expect(wrongScope.pages.some(p => p.slug === slug)).toBe(false);
+    expect(wrongScope.takes.some(h => h.page_slug === slug)).toBe(false);
+
+    const federated = await runGather(engine, {
+      question,
+      sourceId: 'default',
+      sourceIds: ['ws-openbrain'],
+      gatherLimit: 10,
+      takesLimit: 10,
+    });
+    expect(federated.pages.some(p => p.slug === slug)).toBe(true);
+    expect(federated.takes.some(h => h.page_slug === slug)).toBe(true);
+  });
 });
 
 describe('runThink (with stub client)', () => {
@@ -254,6 +310,45 @@ describe('runThink (with stub client)', () => {
       [page!.id],
     );
     expect(Number(ev[0]?.count)).toBe(1);
+  });
+
+  test('passes source scope into gather before synthesis', async () => {
+    const slug = 'notes/openbrain-founder-trial-think';
+    const scopedPage = await engine.putPage(slug, {
+      title: 'OpenBrain founder trial think',
+      type: 'note',
+      compiled_truth: 'The OpenBrain founder trial think fixture covered MCP onboarding, citations, gaps, and trial feedback.',
+    }, { sourceId: 'ws-openbrain' });
+    await engine.upsertChunks(slug, [{
+      chunk_index: 0,
+      chunk_text: 'The OpenBrain founder trial think fixture covered MCP onboarding, citations, gaps, and trial feedback.',
+      chunk_source: 'compiled_truth',
+    }], { sourceId: 'ws-openbrain' });
+    await engine.addTakesBatch([
+      {
+        page_id: scopedPage.id,
+        row_num: 1,
+        claim: 'OpenBrain founder trial think fixture covered citations and gaps.',
+        kind: 'fact',
+        holder: 'world',
+        weight: 1.0,
+      },
+    ]);
+
+    const result = await runThink(engine, {
+      question: 'openbrain founder trial think fixture citations gaps',
+      sourceId: 'ws-openbrain',
+      withTrajectory: false,
+      stubResponse: {
+        answer: `The trial conversation covered citations and gaps [${slug}#1].`,
+        citations: [{ page_slug: slug, row_num: 1, citation_index: 1 }],
+        gaps: [],
+      },
+    });
+
+    expect(result.pagesGathered).toBeGreaterThan(0);
+    expect(result.takesGathered).toBeGreaterThan(0);
+    expect(result.citations[0]?.page_slug).toBe(slug);
   });
 });
 

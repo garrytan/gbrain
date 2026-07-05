@@ -17,7 +17,7 @@
 
 import type { BrainEngine, TakeHit, Take } from '../engine.ts';
 import { hybridSearch } from '../search/hybrid.ts';
-import type { SearchResult } from '../types.ts';
+import type { SearchOpts, SearchResult } from '../types.ts';
 import { sanitizeQueryForPrompt } from '../search/expansion.ts';
 
 export interface ThinkGatherOpts {
@@ -34,6 +34,16 @@ export interface ThinkGatherOpts {
   questionEmbedding?: Float32Array;
   /** When set, MCP-bound calls forward this allow-list to takes_search. Local CLI leaves unset. */
   takesHoldersAllowList?: string[];
+  /**
+   * MCP/source-scoped callers thread the active scalar source through gather.
+   * Local CLI callers leave this unset and preserve the existing unscoped search.
+   */
+  sourceId?: string;
+  /**
+   * Federated-read scope. When non-empty it wins over sourceId, matching
+   * SearchOpts/sourceScopeOpts semantics.
+   */
+  sourceIds?: string[];
 }
 
 export interface ThinkGatherResult {
@@ -54,6 +64,18 @@ export interface ThinkGatherResult {
 }
 
 const RRF_K = 60;
+
+type SourceScope = Pick<SearchOpts, 'sourceId' | 'sourceIds'>;
+
+function gatherSourceScope(opts: ThinkGatherOpts): SourceScope {
+  if (opts.sourceIds && opts.sourceIds.length > 0) {
+    return { sourceIds: opts.sourceIds };
+  }
+  if (opts.sourceId !== undefined) {
+    return { sourceId: opts.sourceId };
+  }
+  return {};
+}
 
 /** Reciprocal-rank fusion: 1/(k+rank). Stable, parameter-light, matches search/hybrid.ts k. */
 function rrfScore(rank: number): number {
@@ -101,6 +123,7 @@ export async function runGather(
   const gatherLimit = opts.gatherLimit ?? 40;
   const takesLimit = opts.takesLimit ?? 30;
   const graphDepth = opts.graphDepth ?? 2;
+  const sourceScope = gatherSourceScope(opts);
 
   // Sanitize the question for any path that includes it in an LLM prompt.
   // (Direct DB search is fine — those are parameterized queries.)
@@ -110,6 +133,7 @@ export async function runGather(
   const pagesPromise = hybridSearch(engine, opts.question, {
     limit: gatherLimit,
     expansion: false,  // think provides its own anchor + graph context; no need for re-expansion
+    ...sourceScope,
   }).catch((e) => {
     process.stderr.write(`[think.gather] hybrid stream failed: ${(e as Error).message}\n`);
     return [] as SearchResult[];
@@ -119,6 +143,7 @@ export async function runGather(
   const takesKwPromise = engine.searchTakes(opts.question, {
     limit: takesLimit,
     takesHoldersAllowList: opts.takesHoldersAllowList,
+    ...sourceScope,
   }).catch((e) => {
     process.stderr.write(`[think.gather] takes-keyword stream failed: ${(e as Error).message}\n`);
     return [] as TakeHit[];
@@ -129,6 +154,7 @@ export async function runGather(
     ? engine.searchTakesVector(opts.questionEmbedding, {
         limit: takesLimit,
         takesHoldersAllowList: opts.takesHoldersAllowList,
+        ...sourceScope,
       }).catch((e) => {
         process.stderr.write(`[think.gather] takes-vector stream failed: ${(e as Error).message}\n`);
         return [] as TakeHit[];
@@ -137,7 +163,7 @@ export async function runGather(
 
   // Stream 4: graph walk (anchor only).
   const graphPromise: Promise<string[]> = opts.anchor
-    ? engine.traversePaths(opts.anchor, { depth: graphDepth, direction: 'both' })
+    ? engine.traversePaths(opts.anchor, { depth: graphDepth, direction: 'both', ...sourceScope })
         .then(paths => {
           const slugs = new Set<string>([opts.anchor!]);
           for (const p of paths) {

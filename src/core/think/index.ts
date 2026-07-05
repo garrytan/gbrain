@@ -270,6 +270,8 @@ export async function runThink(
     anchor: opts.anchor,
     questionEmbedding,
     takesHoldersAllowList: opts.takesHoldersAllowList,
+    sourceId: opts.sourceId,
+    sourceIds: opts.allowedSources,
   });
 
   // Render evidence blocks for the prompt
