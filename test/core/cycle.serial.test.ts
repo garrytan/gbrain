@@ -19,8 +19,8 @@ let lintCalls: Array<{ target: string; fix: boolean; dryRun: boolean | undefined
 let backlinksCalls: Array<{ action: string; dir: string; dryRun: boolean | undefined }> = [];
 let syncCalls: Array<{ dryRun: boolean | undefined; noPull: boolean | undefined; noExtract: boolean | undefined; sourceId: string | undefined }> = [];
 let extractCalls: Array<{ mode: string; dir: string; slugs: string[] | undefined }> = [];
-let embedCalls: Array<{ stale: boolean | undefined; dryRun: boolean | undefined }> = [];
-let orphansCalls: number = 0;
+let embedCalls: Array<{ stale: boolean | undefined; dryRun: boolean | undefined; signal: AbortSignal | undefined; sourceId: string | undefined }> = [];
+let orphansCalls: Array<{ sourceId: string | undefined }> = [];
 
 // Mock lint
 mock.module('../../src/commands/lint.ts', () => ({
@@ -83,7 +83,7 @@ mock.module('../../src/commands/extract.ts', () => ({
 // Mock embed
 mock.module('../../src/commands/embed.ts', () => ({
   runEmbedCore: async (_engine: any, opts: any) => {
-    embedCalls.push({ stale: opts.stale, dryRun: opts.dryRun });
+    embedCalls.push({ stale: opts.stale, dryRun: opts.dryRun, signal: opts.signal, sourceId: opts.sourceId });
     return {
       embedded: opts.dryRun ? 0 : 8,
       skipped: 2,
@@ -98,8 +98,8 @@ mock.module('../../src/commands/embed.ts', () => ({
 
 // Mock orphans
 mock.module('../../src/commands/orphans.ts', () => ({
-  findOrphans: async () => {
-    orphansCalls++;
+  findOrphans: async (_engine: any, opts: any = {}) => {
+    orphansCalls.push({ sourceId: opts.sourceId });
     return {
       orphans: [],
       total_orphans: 1,
@@ -147,7 +147,7 @@ beforeEach(() => {
   syncCalls = [];
   extractCalls = [];
   embedCalls = [];
-  orphansCalls = 0;
+  orphansCalls = [];
 });
 
 // ─── dryRun propagation (regression guards) ────────────────────────
@@ -212,8 +212,44 @@ describe('runCycle — phase selection', () => {
 
   test('--phase orphans only runs orphans', async () => {
     await runCycle(sharedEngine,{ brainDir: '/tmp/brain', phases: ['orphans'] });
-    expect(orphansCalls).toBe(1);
+    expect(orphansCalls.length).toBe(1);
     expect(syncCalls.length).toBe(0);
+  });
+});
+
+describe('runCycle — sourceId reaches source-capable global phases', () => {
+  beforeEach(async () => {
+    await truncateCycleLocks(sharedEngine);
+  });
+
+  test('explicit sourceId is forwarded into embed stale sweep', async () => {
+    const signal = new AbortController().signal;
+    await runCycle(sharedEngine, {
+      brainDir: null,
+      phases: ['embed'],
+      dryRun: true,
+      sourceId: 'contracts',
+      signal,
+    });
+
+    expect(embedCalls.length).toBe(1);
+    expect(embedCalls[0]).toMatchObject({
+      stale: true,
+      dryRun: true,
+      sourceId: 'contracts',
+    });
+    expect(embedCalls[0].signal).toBe(signal);
+  });
+
+  test('explicit sourceId is forwarded into orphan discovery', async () => {
+    await runCycle(sharedEngine, {
+      brainDir: null,
+      phases: ['orphans'],
+      dryRun: true,
+      sourceId: 'contracts',
+    });
+
+    expect(orphansCalls).toEqual([{ sourceId: 'contracts' }]);
   });
 });
 

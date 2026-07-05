@@ -1921,10 +1921,17 @@ export async function registerBuiltinHandlers(
     const repoPath: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
       : ((await engine.getConfig('sync.repo_path')) ?? null);
+    const sourceId =
+      typeof job.data.sourceId === 'string'
+        ? job.data.sourceId
+        : typeof job.data.source_id === 'string'
+          ? job.data.source_id
+          : undefined;
     const report = await runCycle(engine, {
       brainDir: repoPath,
       phases: [phase as any],
       signal: job.signal,
+      ...(sourceId ? { sourceId } : {}),
     });
     return { phase, status: report.status, report };
   };

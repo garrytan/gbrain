@@ -468,13 +468,12 @@ export interface CycleOpts {
    * When unset, the legacy global lock is used (back-compat for autopilot
    * + every existing caller).
    *
-   * **Note for follow-up waves:** this only scopes the LOCK. Several
-   * cycle phases (`embed`, `orphans`, `purge`, `resolve_symbol_edges`,
-   * `grade_takes`, `calibration_profile`) still operate brain-wide
-   * regardless of sourceId — see the `PHASE_SCOPE` taxonomy. Per-source
-   * cycle locks let two cycles RUN, but the global-scoped phases
-   * inside each will still touch the same rows. Genuine per-source
-   * fan-out requires the deferred TODOs in the plan.
+   * **Note for follow-up waves:** this scopes the lock and the phases that
+   * explicitly accept a source filter. Several cycle phases (`purge`,
+   * `resolve_symbol_edges`, `grade_takes`, `calibration_profile`) still
+   * operate brain-wide regardless of sourceId — see the `PHASE_SCOPE`
+   * taxonomy. Per-source cycle locks let two cycles RUN, but unscoped global
+   * phases inside each will still touch the same rows until decomposed.
    *
    * Validated via `assertValidSourceId` in `cycleLockIdFor` (defense-in-depth).
    */
@@ -1169,14 +1168,14 @@ async function runPhaseResolveSymbolEdges(
   }
 }
 
-async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean, signal?: AbortSignal): Promise<PhaseResult> {
+async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean, signal?: AbortSignal, sourceId?: string): Promise<PhaseResult> {
   try {
     const { runEmbedCore } = await import('../commands/embed.ts');
     // #1737: thread the cycle's abort signal so the embed phase (the long,
     // 10-15 min one) bails within a batch instead of running to completion
     // after the job was killed — which left gbrain_cycle_locks held and
     // wedged every subsequent autopilot cycle.
-    const result = await runEmbedCore(engine, { stale: true, dryRun, signal });
+    const result = await runEmbedCore(engine, { stale: true, dryRun, signal, sourceId });
     const embeddedCount = dryRun ? result.would_embed : result.embedded;
     return {
       phase: 'embed',
@@ -1353,10 +1352,10 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
  *  to avoid a static import (purge phase is only loaded in the autopilot path). */
 const SOFT_DELETE_TTL_HOURS_FOR_PURGE = 72;
 
-async function runPhaseOrphans(engine: BrainEngine): Promise<PhaseResult> {
+async function runPhaseOrphans(engine: BrainEngine, sourceId?: string): Promise<PhaseResult> {
   try {
     const { findOrphans } = await import('../commands/orphans.ts');
-    const result = await findOrphans(engine);
+    const result = await findOrphans(engine, sourceId ? { sourceId } : {});
     const count = result.total_orphans;
     // Orphans are a code-smell signal, not a fatal condition. The
     // original `count > 20` cutoff was tuned for small dev brains; on
@@ -2175,7 +2174,7 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.embed');
-        const { result, duration_ms } = await timePhase(() => runPhaseEmbed(engine, dryRun, opts.signal));
+        const { result, duration_ms } = await timePhase(() => runPhaseEmbed(engine, dryRun, opts.signal, cycleSourceId));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -2196,7 +2195,7 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.orphans');
-        const { result, duration_ms } = await timePhase(() => runPhaseOrphans(engine));
+        const { result, duration_ms } = await timePhase(() => runPhaseOrphans(engine, cycleSourceId));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
