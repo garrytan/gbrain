@@ -1,0 +1,11 @@
+// Distiller decision-eval fixtures (Task 1 guardrail).
+// Each case: a candidate clinical topic → the decision the v0 distiller should
+// make against the REAL merged seed skills (nurse-triage, psych-risk-screen,
+// patient-history-review). Regression guard: if the decider or a seed skill
+// changes decision behavior for a representative topic, this fails.
+// expect.decision: one of none|exact_match|update|split. expect.matched: skill or null.
+{"role":"nurse","title":"Chest pain triage escalation","summary":"Assess chest pain, shortness of breath and vital signs; recommend triage escalation.","triggers":["chest pain","triage"],"expect":{"decision":"update","matched":"nurse-triage"}}
+{"role":"nurse","title":"Falls risk assessment","summary":"Falls history, gait stability, environmental hazards, mobility aids.","triggers":["falls","gait"],"expect":{"decision":"none","matched":null}}
+{"role":"psychiatrist","title":"Suicide risk screen","summary":"Screen for self-harm and suicidality; mental status and psychiatric risk factors.","triggers":["suicidal","self-harm"],"expect":{"decision":"update","matched":"psych-risk-screen"}}
+{"role":"general-medicine","title":"Medication reconciliation","summary":"Reconcile the medication list, known allergies, and past medical history on admission.","triggers":["medication list","allergies"],"expect":{"decision":"update","matched":"patient-history-review"}}
+{"role":"nurse","title":"Nutrition and hydration plan","summary":"Daily fluid intake goals, meal supplementation, dietician referral.","triggers":["nutrition","hydration"],"expect":{"decision":"none","matched":null}}

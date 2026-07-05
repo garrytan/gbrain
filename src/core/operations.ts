@@ -26,6 +26,8 @@ import { isSearchMode } from './search/mode.ts';
 import { stampEvidence } from './search/evidence.ts';
 import type { SearchResult } from './types.ts';
 import type { CandidateTopic } from './distiller/types.ts';
+import type { BrainRecord } from './distiller/extract.ts';
+import type { AlmageExport } from './distiller/adapters/almage.ts';
 import { CJK_SLUG_CHARS } from './cjk.ts';
 import * as db from './db.ts';
 import { VERSION } from '../version.ts';
@@ -2488,6 +2490,99 @@ const distill: Operation = {
   // derived topics to author skills — a local authoring workflow, never remote.
   localOnly: true,
   cliHints: { name: 'distill', positional: ['title'] },
+};
+
+const distill_batch: Operation = {
+  name: 'distill_batch',
+  description:
+    'Task 1 batch distiller (v0, keyless). Given many brain records — either an Almage export ' +
+    '(`{transmissions:[…]}`) or a BrainRecord[] — extract candidate topics and run the v0 ' +
+    'decider on each, returning per-topic reports + a summary. Pipe JSON on stdin ' +
+    '(`cat export.json | gbrain distill-batch`) or pass --records-file. localOnly (patient data).',
+  params: {
+    records_json: { type: 'string', description: 'JSON text: an Almage export or a BrainRecord[]. Or pipe via stdin.' },
+    records_file: { type: 'string', description: 'Path to a JSON file (Almage export or BrainRecord[]).' },
+  },
+  handler: async (ctx, p) => {
+    let raw = typeof p.records_json === 'string' ? p.records_json : '';
+    if (!raw && typeof p.records_file === 'string' && p.records_file.length > 0) {
+      const { readFileSync } = await import('fs');
+      raw = readFileSync(p.records_file, 'utf-8');
+    }
+    if (!raw.trim()) {
+      throw new OperationError(
+        'invalid_params',
+        'No records provided.',
+        'Pipe JSON on stdin, or pass --records-file <path> / --records-json <json>.',
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new OperationError('invalid_params', 'records must be valid JSON.');
+    }
+
+    const { almageExportToRecords } = await import('./distiller/adapters/almage.ts');
+    let records: BrainRecord[];
+    if (Array.isArray(parsed)) {
+      records = parsed as BrainRecord[];
+    } else if (parsed && typeof parsed === 'object' && 'transmissions' in (parsed as object)) {
+      records = almageExportToRecords(parsed as AlmageExport);
+    } else {
+      throw new OperationError(
+        'invalid_params',
+        'Unrecognized records shape.',
+        'Provide a BrainRecord[] or an Almage export object with a `transmissions` array.',
+      );
+    }
+
+    const sc = await import('./skill-catalog.ts');
+    const { dir } = sc.resolveSkillsDir(ctx, await sc.readMcpSkillsDir(ctx));
+    const { loadExistingSkills } = await import('./distiller/load-skills.ts');
+    const { runDistillerBatch } = await import('./distiller/batch.ts');
+    return runDistillerBatch(records, { loadExistingSkills: async () => loadExistingSkills(dir) });
+  },
+  scope: 'read',
+  localOnly: true,
+  cliHints: { name: 'distill-batch', stdin: 'records_json' },
+};
+
+const sync_resolver: Operation = {
+  name: 'sync_resolver',
+  description:
+    'Task 1 step 7: move skillify-appended rows out of the RESOLVER `## Uncategorized` section ' +
+    'into their functional-area section (patient-care role rows → the "Patient care" section). ' +
+    'Dry-run by default (returns the rows that WOULD move); pass --apply to write RESOLVER.md. ' +
+    'Deterministic, keyless, localOnly.',
+  params: {
+    apply: { type: 'boolean', description: 'Write the reorganized RESOLVER.md (default: dry-run).' },
+  },
+  handler: async (ctx, p) => {
+    const sc = await import('./skill-catalog.ts');
+    const { dir } = sc.resolveSkillsDir(ctx, await sc.readMcpSkillsDir(ctx));
+    const { findResolverFile } = await import('./resolver-filenames.ts');
+    const resolverFile = findResolverFile(dir);
+    if (!resolverFile) {
+      throw new OperationError('storage_error', `No RESOLVER.md/AGENTS.md found in ${dir}.`);
+    }
+    const { readFileSync, writeFileSync } = await import('fs');
+    const before = readFileSync(resolverFile, 'utf-8');
+    const { categorizeUncategorizedRows, patientCareRules } = await import('./distiller/resolver-sync.ts');
+    const result = categorizeUncategorizedRows(before, patientCareRules());
+
+    const apply = p.apply === true;
+    if (apply && result.moved.length > 0) writeFileSync(resolverFile, result.content, 'utf-8');
+    return {
+      resolver_file: resolverFile,
+      applied: apply && result.moved.length > 0,
+      moved: result.moved,
+      unresolved_targets: result.unresolvedTargets,
+    };
+  },
+  scope: 'write',
+  localOnly: true,
+  cliHints: { name: 'sync-resolver' },
 };
 
 /**
@@ -5444,6 +5539,8 @@ export const operations: Operation[] = [
   orchestrate_input,
   // Task 1: distiller — decide create/update/split for a data-derived topic (read, localOnly)
   distill,
+  // Task 1: batch distiller over many records + resolver categorization (localOnly)
+  distill_batch, sync_resolver,
   // v0.41.19.0: thin-client `gbrain status` payload (admin-scope, sync + cycle only)
   get_status_snapshot,
   // Sync

@@ -28,7 +28,7 @@ decision pass with injected seams. What's still missing: the upstream **topic ex
 brain content → candidate topics), the create/update/split **executors**, and wiring the seams
 (`list_skills`, `query`, the LLM classifier) to real implementations.
 
-## Built so far — branch `nick/task1-distiller` (in PR)
+## Built so far — landed on master (+ batch/adapter/guardrails in PR)
 
 The decision layer, mirroring the orchestrator's collect → decide → report shape. Pure, with
 injected seams, so it runs with **no DB and no LLM**:
@@ -47,29 +47,40 @@ injected seams, so it runs with **no DB and no LLM**:
   lane + stable key into `CandidateTopic`s. APPI: non-clinical records dropped + counted.
 - **`distill` op** (`operations.ts`, `localOnly`, `read`) → `gbrain distill "<title>" --summary …
   --role …` runs the v0 decider against the real skill catalog. Keyless, end-to-end.
-- Container-verified (`oven/bun:1`): distiller + op-guard tests + `bun run typecheck` green.
+- **`distiller/adapters/almage.ts`** — Almage export (`transmissions`) → `BrainRecord[]`, with
+  role inference (`staffRole` → lane; defaults to generalist) and category/tag mapping.
+- **`distiller/batch.ts` + `distill_batch` op** — extract topics from many records then decide
+  each, with an aggregate summary. `cat export.json | gbrain distill-batch` or `--records-file`.
+- **`distiller/resolver-sync.ts` + `sync_resolver` op** — Step 7: move `## Uncategorized` rows
+  into their functional-area section (patient-care roles → "Patient care"). Dry-run by default,
+  `--apply` writes. Deterministic, keyless.
+- **Guardrail:** `test/fixtures/distiller/decision-eval.jsonl` + `test/distiller-eval.test.ts` —
+  representative clinical topics → expected decisions, run against the real seed skills.
+- Container-verified (`oven/bun:1`): all distiller + op-guard tests + `bun run typecheck` green;
+  `bun run verify` 31/31.
 
 ## What's left after the distiller
 
 Grouped by next slice; the LLM-key dependency is called out because it gates most execution.
 
-- **A. Topic extractor (net-new, upstream).** Nothing yet *produces* `CandidateTopic`s — read
-  the brain data (role-scoped) and cluster into candidate topics. Deterministic parts are
-  buildable keyless.
-- **B. Wire the seams:** `loadExistingSkills` → real `list_skills` (keyless); `retrieveBrainData`
-  → role-scoped `query`/`search`; `classify` → **LLM classifier** (needs key; also the only real
-  source of `split`).
+- **A. Topic extractor.** ✅ `extract.ts` (deterministic) + `adapters/almage.ts` (real data
+  adapter) + `distill_batch` (many records → topics → decisions). Remaining: adapters for other
+  sources / a live `query`-backed feed.
+- **B. Wire the seams:** ✅ `loadExistingSkills` → real `list_skills`. Remaining: `retrieveBrainData`
+  → role-scoped `query`/`search`, and `classify` → **LLM classifier** (needs key; also the only
+  real source of `split`).
 - **C. Executors:** create (`skillify scaffold` + agent-authoring), update (`skillopt`/rewrite),
   split (scaffold two + deprecate + categorize rows). Authoring/rewrite **need the LLM key**.
-- **D. CLI surface:** ✅ `gbrain distill` op landed (`operations.ts`, `localOnly read`, runs the
-  v0 decider against the real catalog). Remaining: a batch mode that takes extracted topics /
-  a records file rather than a single topic.
-- **E. Guardrails:** `routing-eval` fixtures for representative nurse/psych topics; conformance +
-  typecheck gates before any generated skill lands.
+  The categorize step is ready (`sync_resolver`).
+- **D. CLI surface:** ✅ `gbrain distill` (single topic) + `gbrain distill-batch` (records/export)
+  + `gbrain sync-resolver` (Step 7) landed.
+- **E. Guardrails:** ✅ distiller decision-eval fixtures + test against the real seed skills.
+  Remaining: conformance gate wired to the create/update executors when they land.
 
-**Keyless slice — ✅ done:** deterministic extractor (A) + real `loadExistingSkills` (B) + the
-`gbrain distill` op (D). A runnable command that reads real skills and emits real v0 decisions.
-**Next (needs LLM key):** the `classify` LLM seam + the create/update/split executors (C).
+**Keyless slices — ✅ done:** extractor + Almage adapter (A) · `loadExistingSkills` (B) · `distill`
++ `distill-batch` + `sync-resolver` ops (D) · decision-eval guardrail (E).
+**Next (needs LLM key):** `retrieveBrainData`, the `classify` LLM seam, and the create/update/split
+executors (C).
 
 ## Reuse, don't build (Phase 0)
 
@@ -111,9 +122,10 @@ MVP each decider as an **LLM call** (via `gbrain agent run`); harden to determin
   the new resolver rows (MVP: agent performs the functional-area edit per the
   `functional-area-resolver` playbook at `skills/functional-area-resolver/SKILL.md`).
 
-### 7. Orchestrator sync — ❌ not started
-- `skillify scaffold` appends rows automatically; add a small step to move them out of
-  `## Uncategorized` into the right functional area. MVP: agent-driven.
+### 7. Orchestrator sync — ✅ done (`sync_resolver` op + `resolver-sync.ts`)
+- `skillify scaffold` appends rows under `## Uncategorized`; `gbrain sync-resolver` moves them
+  into their functional-area section (patient-care roles → "Patient care"). Deterministic (no
+  agent needed), dry-run by default, `--apply` writes.
 
 ## Guardrails (Phase 3)
 - `routing-eval` fixtures covering representative nurse/psychiatrist topics.
