@@ -704,21 +704,24 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
     };
   }
 
-  // Openai-compat recipes with empty models list require a user-provided model.
-  const isUserProvided = (tp as any).user_provided_models === true;
-  if (
-    Array.isArray(tp.models) &&
-    tp.models.length === 0 &&
-    (recipe.id === 'litellm' || isUserProvided)
-  ) {
-    return {
-      ok: false,
-      reason: 'user_provided_model_unset',
-      model: modelStr,
-      provider: parsed.providerId,
-      recipeId: recipe.id,
-    };
-  }
+  // NOTE: there used to be a `user_provided_model_unset` guard here for
+  // openai-compat recipes with an empty models list (litellm, llama-server,
+  // ...). It fired on recipe-STATIC properties (`models: []` +
+  // `user_provided_models: true`) without ever inspecting the user's model
+  // string — so a fully explicit `litellm:zembed-1` was misdiagnosed as
+  // "model unset", isAvailable('embedding') returned false, and hybrid
+  // search silently dropped its vector arm on every litellm /
+  // user-provided-model deployment (writes were unaffected: embed-backfill
+  // does not run this preflight, which made the failure look like
+  // "vectors exist but never match").
+  //
+  // A genuinely missing model part can never reach this point:
+  // parseModelId() throws on bare `litellm` and on `litellm:` (empty model),
+  // and that surfaces above as `unknown_provider` with a paste-ready
+  // format hint. The guard could therefore only ever misfire; removed.
+  // The `user_provided_model_unset` variant stays in EmbeddingDiagnosis
+  // for consumer compatibility (init-embed-check / embed-preflight switch
+  // arms), but diagnoseEmbedding no longer emits it.
 
   const required = recipe.auth_env?.required ?? [];
   const missing = required.filter(k => !_config!.env[k]);
