@@ -112,9 +112,10 @@ If a fixture passes, the slice is done. Build toward the fixtures, not toward "f
 A's foundations have landed (#2 contract, #3 seed skills + fixtures) — B and C build
 against real code; no mock needed.
 
-Status: **C** — Task 2 orchestrator template + healthcare custom-skill gate in PR
-(`worktree-nick+orchestrator-work`); LLM selector, `list_skills` wiring, and op registration
-remain. **B** — Task 1 not yet started.
+Status: **C** — Task 2 core DONE: `orchestrate_input` op wired end-to-end (skill catalog +
+hybrid history + LLM selector + custom-skill gate), branch `nick/task2-finish`. Remaining:
+skill execution (deferred — decision support), feedback-loop driver, `routing-eval` fixtures.
+**B** — Task 1 not yet started.
 
 ## Demo target (what "done" looks like at the end)
 

@@ -1,10 +1,13 @@
-# orchestrator/ — patient orchestrator (Task 2, rough template)
+# orchestrator/ — patient orchestrator (Task 2)
 
 Takes a new patient input + state, weighs it against retrieved history, and returns a **ranked
 list of skills to run**. Mirrors the advisor's `collect → rank → report` shape.
 
-> Status: **rough template.** The gate + pipeline are real; retrieval and the LLM selector are
-> injected seams / placeholders. No DB dependency yet.
+> Status: **wired end-to-end.** Exposed as the `orchestrate_input` op (`gbrain orchestrate
+> "<input>"` + MCP). Real skill loading (skill catalog), history retrieval (hybrid search), and
+> the LLM selector are all connected; a deterministic fallback selector and injected seams keep
+> the core unit-testable with no DB/LLM. The orchestrator **suggests** skills — executing them is
+> intentionally left to the caller (decision support, not autonomous diagnosis).
 
 ## The load-bearing rule
 
@@ -27,18 +30,29 @@ patient routing.
 |---|---|
 | `types.ts` | Core types (`PatientInput`, `CandidateSkill`, `OrchestratorReport`, …). |
 | `custom-skills.ts` | **The policy.** Role allowlist, partition, fail-closed assert. |
-| `select.ts` | Skill selector. v0 = deterministic trigger overlap; TODO = LLM ranker. |
+| `select.ts` | Deterministic v0 selector (trigger overlap). Fallback + used in tests. |
+| `select-llm.ts` | **LLM selector** — ranks eligible skills via an injected `chat`; re-validates output against the eligible set. |
+| `deps-live.ts` | Production wiring: skill catalog + hybrid retrieval + LLM `chat`. |
 | `run.ts` | One routing pass. Injected deps for history retrieval + skill loading. |
 
-## Where the real pieces plug in (TODOs)
+The `orchestrate_input` op lives in `src/core/operations.ts` (read-scope; `gbrain orchestrate`).
 
-1. `run.ts` `deps.loadCandidateSkills` → wire to the `list_skills` op.
-2. `run.ts` `deps.retrieveHistory` → wire to `query` / `volunteer_context`.
-3. `select.ts` `selectSkills` → replace with the LLM ranker (keep the signature).
-4. Register a `read`-scope `orchestrate_input` op in `src/core/operations.ts` (Dev A arbitrates
-   that shared file — see `hackathon_planning/00-setup-and-split.md`).
+## Data flow (`orchestrate_input`)
+
+1. `deps.loadCandidateSkills` → `buildSkillCatalog` (`skill-catalog.ts`) → `CandidateSkill[]` (with `role`).
+2. `deps.retrieveHistory` → `hybridSearchCached` (`search/hybrid.ts`), scoped to `patient_id`.
+3. Gate to custom clinical skills (`custom-skills.ts`).
+4. `select-llm.ts` ranks them via `chat` (`ai/gateway.ts`); `no_llm: true` uses the v0 fallback.
+5. Fail-closed `assertAllCustom`, return the ranked `OrchestratorReport`.
 
 ## Feedback loop
 
-Call `runOrchestrator` again with the previous pass's outputs in `ctx.priorSkillOutputs`; the
-selector re-ranks with the new evidence. Stop when recommendations stabilise or go empty.
+Call `orchestrate_input` / `runOrchestrator` again with the previous pass's outputs in
+`ctx.priorSkillOutputs`; the selector re-ranks with the new evidence. Stop when recommendations
+stabilise or go empty.
+
+## Remaining / follow-ups
+
+- Skill **execution** (`gbrain agent run` per recommendation) is deliberately out of scope — the
+  op is decision support. A separate execute step + a feedback-loop driver can consume this output.
+- `routing-eval` fixtures (input → expected skills) as the acceptance/demo gate.

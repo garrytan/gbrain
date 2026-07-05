@@ -17,8 +17,8 @@ results.
 | Patient input (new state) | ✅ | `query` op / `volunteer_context` are entry points. |
 | Historical information | ✅ strong | Hybrid + relational retrieval (`hybridSearch`, `relationalRetrieval` in `src/core/search/`). |
 | Weigh new state vs. history | ✅ substrate | Same retrieval layer. |
-| **Suggest which skills to run** | 🔨 in progress (PR) | Rough template landed in `src/core/orchestrator/` (gate → select → rank → report). v0 deterministic selector; the LLM ranker is a marked TODO. This was *the* core hinge — now scaffolded. |
-| Run skills | ✅ plumbing | `gbrain agent run` + minion job queue (fan-out/gather, steering). |
+| **Suggest which skills to run** | ✅ done | `orchestrate_input` op (`src/core/orchestrator/`): gate → LLM select → rank → report. Real skill catalog + hybrid history retrieval + LLM selector wired; deterministic `no_llm` fallback. The core hinge — built. |
+| Run skills | ✅ plumbing | `gbrain agent run` + minion job queue (fan-out/gather, steering). Not invoked by the op — execution is deliberately left to the caller (decision support). |
 | Feedback loop | 🟡 plumbing + hook | Fan-out manifest + aggregator exist; the orchestrator adds a `priorSkillOutputs` re-ranking hook (`run.ts`). Driver loop still TODO. |
 
 **Core gap:** no component takes `(new input + history + state)` and returns `ranked skills to
@@ -26,18 +26,23 @@ run`. Good news — this hinge shares a shape the repo already ships: the adviso
 **collectors → rank → ranked list** (`src/core/advisor/run.ts`). Clone that shape; feed it an
 input.
 
-## Built so far — branch `worktree-nick+orchestrator-work` (in PR)
+## Built — `src/core/orchestrator/` + `orchestrate_input` op
 
-Rough template at `src/core/orchestrator/`, mirroring the advisor's collect → rank → report:
+Wired end-to-end (`gbrain orchestrate "<input>"` + MCP), mirroring the advisor's
+collect → rank → report:
 - **`custom-skills.ts` — the healthcare custom-skill policy.** Patient data routes ONLY to
   role-tagged clinical skills (reuses `SKILL_ROLES`), never generic GBrain skills. Enforced
   three ways: allowlist gate (`partitionSkills`), an `excluded_generic` audit trail (APPI), and
   a fail-closed `assertAllCustom` backstop.
-- **`run.ts`** — one routing pass; history retrieval + skill loading are injected seams, so it
-  runs with no DB dependency yet.
-- **`select.ts`** — v0 deterministic trigger-overlap ranker; the LLM selector is a marked TODO.
-- **`types.ts`** — reuses the frozen `SkillRole` contract, so the selector and the parser can't drift.
-- Container-verified (`oven/bun:1`): orchestrator tests + `bun run typecheck` green.
+- **`deps-live.ts`** — production wiring: `loadCandidateSkills` → skill catalog (real `role`),
+  `retrieveHistory` → `hybridSearchCached` (scoped to `patient_id`), `select` → the LLM ranker.
+- **`select-llm.ts`** — LLM selector via an injected `chat` (tool-calling + fence-tolerant
+  fallback); re-validates every row against the eligible set by exact name + clinical role.
+- **`select.ts`** — deterministic v0 fallback (`no_llm: true`), also used in tests.
+- **`run.ts` / `types.ts`** — routing pass with injected seams; reuses the frozen `SkillRole` contract.
+- **`operations.ts`** — registers `orchestrate_input` (read-scope; params `input`, `patient_id`,
+  `history_limit`, `no_llm`).
+- Container-verified (`oven/bun:1`): 9/9 orchestrator tests + `bun run typecheck` green.
 
 ## Reuse, don't build (Phase 0)
 
@@ -49,17 +54,16 @@ Rough template at `src/core/orchestrator/`, mirroring the advisor's collect → 
 
 ## Build plan
 
-### 1. `orchestrate_input` op (net-new) — 🔨 pipeline built; op not yet registered
-- Model directly on `src/core/advisor/run.ts` (collectors → rank), but accept an input. ✅ done
-  (`src/core/orchestrator/run.ts`).
-- Pipeline: `input + state` → retrieve history (`query` / `volunteer_context`) →
-  **skill selector** → ranked skills. ✅ shape done; retrieval is still an injected stub.
-- Wire `deps.loadCandidateSkills` to the real `list_skills` (`SkillCatalogEntry`,
-  `src/core/skill-catalog.ts` — now carries `role`). ⬜
-- Register in `src/core/operations.ts` as a `read`-scope op so CLI + MCP are generated from it. ⬜
-  (shared file — Dev A arbitrates.)
+### 1. `orchestrate_input` op (net-new) — ✅ done
+- Modelled on `src/core/advisor/run.ts` (collect → rank), accepting an input. ✅ (`run.ts`).
+- Pipeline: `input + state` → retrieve history (`hybridSearchCached`) → skill selector → ranked
+  skills. ✅ (`deps-live.ts`).
+- `deps.loadCandidateSkills` wired to the real skill catalog (`buildSkillCatalog`,
+  `SkillCatalogEntry.role`). ✅
+- Registered in `src/core/operations.ts` as a `read`-scope op; CLI (`gbrain orchestrate`) + MCP
+  generated from it. ✅
 
-### 2. Skill selector — the missing hinge — 🔨 v0 placeholder done; LLM ranker TODO
+### 2. Skill selector — the missing hinge — ✅ done (LLM + v0 fallback)
 - MVP: LLM ranks `list_skills` (descriptions + triggers) given `(input + history)`.
 - `list_skills` now carries `role` (`nurse | psychiatrist | general-medicine`, landed #2) —
   filter/weight candidates by the target care lane before ranking. Import `SKILL_ROLES`
@@ -69,7 +73,7 @@ Rough template at `src/core/orchestrator/`, mirroring the advisor's collect → 
 - Harden later: embedding similarity between input and skill descriptions; deterministic
   pre-filter before the LLM tie-break.
 
-### 3. Execution — ⬜ not started
+### 3. Execution — ⬜ deliberately deferred (decision support, not autonomous)
 - `gbrain agent run` per selected skill.
 - Respect `pain_triggered` routing (native subagent first, minions on pain signals) per
   `skills/conventions/subagent-routing.md`.
@@ -89,10 +93,14 @@ Rough template at `src/core/orchestrator/`, mirroring the advisor's collect → 
   gate auto-execution — the orchestrator suggests and supports decisions; it must not act as an
   autonomous diagnosis engine. Decide the auto-run boundary early; it shapes the whole design.
 
-## Suggested first slice
-Steps 1 + 2 (the `orchestrate_input` op + LLM skill selector). Highest-value missing piece,
-demo-able on its own, and cloning the advisor's shape means filling a known-shaped hole rather
-than inventing architecture.
+## Remaining
+- **Execution** (step 3) — run each recommended skill (`gbrain agent run`); kept out of the op
+  by design (decision support). Needs the team's auto-run-boundary call first.
+- **Feedback-loop driver** (step 4) — re-invoke with `priorSkillOutputs` until recommendations
+  stabilise. The hook exists; the loop does not.
+- **`routing-eval` fixtures** — input → expected skills, as the acceptance/demo gate.
+- **Relational retrieval** — history uses `hybridSearchCached` (no expansion); the relational
+  arm (`relationalRetrieval`) could enrich "who/what connects" history later.
 
 ## Cross-link with Task 1
 The skills this orchestrator ranks and runs are exactly the Nurse/Psychiatrist skills built and

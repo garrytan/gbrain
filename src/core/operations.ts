@@ -2256,6 +2256,58 @@ const get_brain_identity: Operation = {
 // these over HTTP. The host-filesystem read is gated by mcp.publish_skills +
 // path confinement — see the trust-boundary memo in skill-catalog.ts.
 
+const ORCHESTRATE_INPUT_DESCRIPTION =
+  'Patient orchestrator (Task 2): given a new patient input (plus optional patient id and ' +
+  'state), retrieve relevant history and return a RANKED list of clinical skills to run. ' +
+  'Routes ONLY to custom clinical skills (role: nurse | psychiatrist | general-medicine) and ' +
+  'never to generic GBrain skills; generic matches are reported in excluded_generic for the ' +
+  'audit trail. Suggests skills — it does not execute them (decision support, not autonomous ' +
+  'diagnosis).';
+
+const orchestrate_input: Operation = {
+  name: 'orchestrate_input',
+  description: ORCHESTRATE_INPUT_DESCRIPTION,
+  params: {
+    input: {
+      type: 'string',
+      required: true,
+      description: 'The new patient input / observed state (free text).',
+    },
+    patient_id: {
+      type: 'string',
+      description: 'Optional patient id; scopes history retrieval to that source.',
+    },
+    history_limit: {
+      type: 'number',
+      description: 'Max historical records to retrieve (default 20).',
+    },
+    no_llm: {
+      type: 'boolean',
+      description: 'Use the deterministic fallback selector instead of the LLM ranker.',
+    },
+  },
+  handler: async (ctx, p) => {
+    const input = typeof p.input === 'string' ? p.input.trim() : '';
+    if (!input) {
+      throw new OperationError('invalid_params', 'orchestrate_input requires a non-empty "input".');
+    }
+    const { runOrchestrator } = await import('./orchestrator/run.ts');
+    const { makeLiveDeps } = await import('./orchestrator/deps-live.ts');
+    const patientId = typeof p.patient_id === 'string' ? p.patient_id : undefined;
+    const deps = makeLiveDeps(ctx, {
+      patientId,
+      historyLimit: typeof p.history_limit === 'number' ? p.history_limit : undefined,
+      useLlm: p.no_llm !== true,
+    });
+    return runOrchestrator(
+      { input: { text: input, patientId }, history: [], now: new Date(), remote: ctx.remote },
+      deps,
+    );
+  },
+  scope: 'read',
+  cliHints: { name: 'orchestrate', positional: ['input'] },
+};
+
 const list_skills: Operation = {
   name: 'list_skills',
   description: LIST_SKILLS_DESCRIPTION,
@@ -5334,6 +5386,8 @@ export const operations: Operation[] = [
   get_brain_identity,
   // PR1: skill catalog over MCP — discover + fetch host-repo skills (read-scope)
   list_skills, get_skill, list_brain_skillpack, advisor,
+  // Task 2: patient orchestrator — rank clinical skills for a new patient input (read-scope)
+  orchestrate_input,
   // v0.41.19.0: thin-client `gbrain status` payload (admin-scope, sync + cycle only)
   get_status_snapshot,
   // Sync
