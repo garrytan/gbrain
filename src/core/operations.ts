@@ -2385,6 +2385,68 @@ const orchestrate_run: Operation = {
   cliHints: { name: 'orchestrate-run', positional: ['input'] },
 };
 
+const ORCHESTRATE_BACKTEST_DESCRIPTION =
+  'Temporal walk-forward backtest of the patient orchestrator against a patient\'s own history. ' +
+  'Steps through the patient\'s chronological timeline (Life Chronicle): at each point it hands ' +
+  'the system the data TO DATE, lets the orchestrator rank (and optionally run) skills to ESTIMATE ' +
+  'the next clinical step, then scores that estimate against what actually happened next. NOT ' +
+  'word-for-word — it grades on KEY MEDICAL TERMS (drugs, procedures, red-flags, dispositions); ' +
+  'a missed critical term fails the step. Local-only; suggest-only unless `execute` is set.';
+
+const orchestrate_backtest: Operation = {
+  name: 'orchestrate_backtest',
+  description: ORCHESTRATE_BACKTEST_DESCRIPTION,
+  params: {
+    patient_id: {
+      type: 'string',
+      required: true,
+      description: 'Patient/source id whose chronicle timeline is replayed.',
+    },
+    horizon: { type: 'number', description: 'Future step-events that count as "the next step" (default 1).' },
+    min_history: { type: 'number', description: 'Minimum history length before predicting (default 1).' },
+    max_cuts: { type: 'number', description: 'Cap the number of cut points evaluated (default: all).' },
+    since: { type: 'string', description: 'Earliest date to include (ISO YYYY-MM-DD). Default: all history.' },
+    execute: {
+      type: 'boolean',
+      description: 'Run the recommended skills as subagent jobs at each cut (needs a worker + chat model). Default: suggest-only.',
+    },
+    no_llm: { type: 'boolean', description: 'Use the deterministic selector instead of the LLM ranker.' },
+    model: { type: 'string', description: 'Chat model for the LLM selector / subagent runs.' },
+    recall_threshold: { type: 'number', description: 'Fraction of all actual terms that must match to pass (default 0.5).' },
+    critical_threshold: { type: 'number', description: 'Fraction of CRITICAL actual terms that must match (default 1.0).' },
+  },
+  handler: async (ctx, p) => {
+    const patientId = typeof p.patient_id === 'string' ? p.patient_id.trim() : '';
+    if (!patientId) {
+      throw new OperationError('invalid_params', 'orchestrate_backtest requires a "patient_id".');
+    }
+    const { backtestPatient } = await import('./orchestrator/backtest.ts');
+    const { makeOrchestratorPredictor, loadPatientTimeline } = await import('./orchestrator/backtest-live.ts');
+
+    const timeline = await loadPatientTimeline(ctx, patientId, {
+      ...(typeof p.since === 'string' ? { since: p.since } : {}),
+    });
+    const predict = makeOrchestratorPredictor(ctx, {
+      useLlm: p.no_llm !== true,
+      execute: p.execute === true,
+      model: typeof p.model === 'string' ? p.model : undefined,
+    });
+    const scoreOpts = {
+      ...(typeof p.recall_threshold === 'number' ? { recallThreshold: p.recall_threshold } : {}),
+      ...(typeof p.critical_threshold === 'number' ? { criticalThreshold: p.critical_threshold } : {}),
+    };
+    return backtestPatient(timeline, { predict }, {
+      horizon: typeof p.horizon === 'number' ? p.horizon : undefined,
+      minHistory: typeof p.min_history === 'number' ? p.min_history : undefined,
+      maxCuts: typeof p.max_cuts === 'number' ? p.max_cuts : undefined,
+      scoreOpts,
+    });
+  },
+  scope: 'write',
+  localOnly: true,
+  cliHints: { name: 'orchestrate-backtest', positional: ['patient_id'] },
+};
+
 const list_skills: Operation = {
   name: 'list_skills',
   description: LIST_SKILLS_DESCRIPTION,
@@ -5671,6 +5733,8 @@ export const operations: Operation[] = [
   orchestrate_input,
   // Task 2: local-only execution path — rank + run skills as subagent jobs (write-scope)
   orchestrate_run,
+  // Task 2: temporal walk-forward backtest — replay a patient's history, score next-step estimates (local-only)
+  orchestrate_backtest,
   // Task 1: distiller — decide create/update/split for a data-derived topic (read, localOnly)
   distill,
   // Task 1: batch distiller over many records + resolver categorization (localOnly)

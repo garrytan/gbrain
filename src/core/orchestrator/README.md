@@ -36,11 +36,33 @@ patient routing.
 | `run.ts` | One routing pass. Injected deps for history retrieval + skill loading. |
 | `loop.ts` | Feedback-loop driver — re-ranks with executed skills' outputs until it converges (injected executor; suggest-only with none). |
 | `execute.ts` | Real `SkillExecutor` — runs a skill as a subagent job (`jobs submit subagent` path per LOCAL-MODELS-SETUP.md); `makeQueueJobRunner` wires the minion queue. |
+| `medical-terms.ts` | **Key-medical-term extractor + scorer** for the backtest. Injectable lexicon; recall/precision/f1 + *critical* term recall + matched/missed/extra. Grades on terms, not word-for-word. |
+| `backtest.ts` | **Composable temporal walk-forward backtest.** `sliceTimeline` cuts history at T; `backtestPatient`/`backtestSuite` predict the next step from data-to-date and score it (injected predictor + scorer). No DB/LLM dep. |
+| `backtest-live.ts` | Live wiring for the backtest: `makeOrchestratorPredictor` (feeds ONLY the sliced history — no lookahead leak) + `loadPatientTimeline` (chronicle `getSince`). |
 
-Two ops in `src/core/operations.ts`: **`orchestrate_input`** (read-scope, suggest-only;
+Three ops in `src/core/operations.ts`: **`orchestrate_input`** (read-scope, suggest-only;
 `gbrain orchestrate`) and **`orchestrate_run`** (write-scope, **local-only**; `gbrain
 orchestrate-run`) which additionally executes the recommended skills via subagent jobs and runs
-the feedback loop. Execution requires a running `gbrain jobs work` worker + a chat model.
+the feedback loop; and **`orchestrate_backtest`** (write-scope, **local-only**; `gbrain
+orchestrate-backtest <patient_id>`) — the temporal backtest below. Execution requires a running
+`gbrain jobs work` worker + a chat model.
+
+## Temporal backtest (`orchestrate_backtest`)
+
+Answers "how accurately does the system estimate the next step, given only the data to date?".
+It **steps through a patient's own timeline**: at each cut point T it feeds the orchestrator
+everything ≤ T, has it rank (and optionally run) skills to estimate the next clinical step, then
+scores that estimate against what actually happened next. Scoring is **not word-for-word** — it
+grades on **key medical terms** (`medical-terms.ts`): a paraphrase that keeps the right drug
+passes; a prediction that drops a *critical* term (drug / procedure / red-flag / disposition)
+fails that step. Aggregates report mean recall/precision/f1, **mean critical-term recall**, a
+pass-rate, and the set of critical terms systematically missed.
+
+Composable: predictor, scorer, and term extractor are all injected. The unit tier
+(`test/orchestrator-backtest.test.ts`) runs it with fake predictors + fixture timelines
+(`test/fixtures/orchestrator-timeline-cases.ts`) — no DB/LLM. The live tier runs
+`orchestrate_backtest` against a real chronicle-populated patient source (suggest-only by
+default; `--execute` runs skills as subagent jobs, same auto-run boundary as `orchestrate_run`).
 
 ## Data flow (`orchestrate_input`)
 

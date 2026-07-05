@@ -20,13 +20,13 @@ docker run --rm -v "$PWD:/app" -w /app oven/bun:1 bash -c "\
   bun install --frozen-lockfile && \
   bun test test/orchestrator.test.ts test/orchestrator-select-llm.test.ts \
            test/orchestrator-routing.test.ts test/orchestrator-loop.test.ts \
-           test/orchestrator-execute.test.ts && \
+           test/orchestrator-execute.test.ts test/orchestrator-backtest.test.ts && \
   bun run typecheck"
 ```
 
 (Or inside the dev container / `./RUN-DOCKER-CONTAINER.sh`, just run the `bun test …` line.)
 
-**PASS =** `22 pass, 0 fail` and typecheck `0 errors`.
+**PASS =** `39 pass, 0 fail` and typecheck `0 errors`.
 
 What each file proves:
 
@@ -37,6 +37,7 @@ What each file proves:
 | `orchestrator-routing.test.ts` | Routing-eval fixtures (`test/fixtures/orchestrator-routing-cases.ts`): each clinical input picks the right top skill; generic input routes nothing. |
 | `orchestrator-loop.test.ts` | Feedback loop converges (executes only fresh skills each round); suggest-only with no executor. |
 | `orchestrator-execute.test.ts` | Subagent executor maps job result → skill output; failures are recorded, not thrown. |
+| `orchestrator-backtest.test.ts` | **Temporal backtest**: key-term extraction + scoring (grades on medical terms, not word-for-word; a missed *critical* term fails), timeline slicing (history≤T vs next-step ground truth), the walk-forward driver end-to-end (oracle passes, lazy predictor fails and surfaces the terms it missed), and the chronicle timeline loader mapping. |
 
 ---
 
@@ -79,6 +80,27 @@ bun src/cli.ts orchestrate-run "reports chest pain and shortness of breath" \
 ```
 In the `orchestrate` output, confirm `recommendations[0].skill` is a clinical skill and
 `excluded_generic` lists any generic matches (they must never appear in `recommendations`).
+
+### Temporal backtest on real history (`orchestrate-backtest`)
+
+Measures how accurately the system estimates the *next* step given only the data to date. Needs a
+patient whose **Life Chronicle timeline is populated** (`timeline_entries` for that source — run
+the chronicle extraction first if empty).
+
+```bash
+# Suggest-only (read-cheap): rank skills at each cut, score the estimate vs what happened next.
+bun src/cli.ts orchestrate-backtest patient-example-id --json
+
+# Higher fidelity: actually run the skills as subagent jobs at each cut (needs `jobs work` + model).
+bun src/cli.ts orchestrate-backtest patient-example-id --execute \
+  --model openrouter:qwen/qwen3.6-27b --max_cuts 5 --json
+```
+
+Read `aggregate` in the JSON: `meanCriticalRecall` is the headline "key medical terms were
+accurate" number (1.0 = every critical drug/procedure/red-flag/disposition in each real next step
+was named), `passRate` is the fraction of cut points that cleared the bar, and `criticalMissed`
+lists terms the system systematically missed. Per-cut `predicted` vs `actual` show each estimate.
+Thresholds are tunable (`--recall_threshold`, `--critical_threshold`).
 
 ---
 
