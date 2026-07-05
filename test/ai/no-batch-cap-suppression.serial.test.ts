@@ -52,14 +52,31 @@ describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warni
     }
   });
 
-  test('configureGateway STILL warns for google (real provider, no cap declared)', () => {
+  test('configureGateway does NOT warn for google when active embedding model uses another provider', () => {
     warnSpy.mockClear();
     resetGateway();
-    configureGateway({ env: {} });
+    configureGateway({
+      embedding_model: 'openai:qwen/qwen3-embedding-8b',
+      env: {},
+    });
     const messages = warnSpy.mock.calls.map(c => String(c[0] ?? ''));
     expect(
       messages.some(m => m.includes('"google"') && m.includes('without max_batch_tokens')),
-      'google should warn (it has fixed-cap models)',
+      'inactive google recipe should not warn when active embedding provider is openai',
+    ).toBe(false);
+  });
+
+  test('configureGateway STILL warns for google when google is the active embedding provider', () => {
+    warnSpy.mockClear();
+    resetGateway();
+    configureGateway({
+      embedding_model: 'google:gemini-embedding-001',
+      env: {},
+    });
+    const messages = warnSpy.mock.calls.map(c => String(c[0] ?? ''));
+    expect(
+      messages.some(m => m.includes('"google"') && m.includes('without max_batch_tokens')),
+      'active google embedding provider should warn until the recipe declares a cap',
     ).toBe(true);
   });
 

@@ -321,7 +321,7 @@ export function configureGateway(config: AIGatewayConfig): void {
   ]) {
     if (m) registerExtendedModel(m);
   }
-  warnRecipesMissingBatchTokens();
+  warnRecipesMissingBatchTokens(_config.embedding_model ?? DEFAULT_EMBEDDING_MODEL);
 }
 
 /**
@@ -398,36 +398,41 @@ function prefixWithProviderFrom(original: string, bare: string): string {
 const _warnedRecipes = new Set<string>();
 
 /**
- * Walk every registered recipe with an `embedding` touchpoint. Each one
- * missing `max_batch_tokens` gets exactly one stderr line per process for
- * its first appearance. Recipes WITH the field stay quiet. The
+ * Check the currently configured embedding recipe. If that active provider has
+ * an `embedding` touchpoint but omits `max_batch_tokens`, emit exactly one
+ * stderr line per process. Recipes WITH the field stay quiet. The
  * recursive-halving safety net only fires when `max_batch_tokens` is set,
- * so a recipe that forgets it has no protection if the provider has a
- * batch cap. Loud-fail over silent-skip per CLAUDE.md; a future
- * Cohere/Mistral/Jina recipe that inherits the embedding-touchpoint
- * pattern but forgets the cap re-creates the v0.27 Voyage backfill loop.
- * The warning calls that out before production traffic hits it.
+ * so a configured recipe that forgets it has no protection if the provider
+ * has a batch cap. Scope this to the active embedding provider so unrelated
+ * installed recipes (for example Google on an OpenAI/OpenRouter brain) do not
+ * warn during every CLI command.
  */
-function warnRecipesMissingBatchTokens(): void {
-  for (const recipe of listRecipes()) {
-    const embedding = recipe.touchpoints?.embedding;
-    if (!embedding || embedding.max_batch_tokens !== undefined) continue;
-    // OpenAI is the canonical "no cap declared, fast path is intentional"
-    // recipe; suppress the warning for it. Every other recipe missing the
-    // field is suspicious.
-    if (recipe.id === 'openai') continue;
-    // v0.32 (#779): explicit opt-out for dynamic-cap recipes (Ollama,
-    // LiteLLM proxy, llama-server) — they ship without a static cap because
-    // the cap depends on a user-launched server. Warning is noise for them.
-    if (embedding.no_batch_cap === true) continue;
-    if (_warnedRecipes.has(recipe.id)) continue;
-    _warnedRecipes.add(recipe.id);
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[ai.gateway] recipe "${recipe.id}" declares an embedding touchpoint ` +
-      `without max_batch_tokens; recursion is the only safety net for batch caps.`
-    );
-  }
+export function __missingBatchTokensWarningForTests(recipe: Recipe): string | null {
+  const embedding = recipe?.touchpoints?.embedding;
+  if (!embedding || embedding.max_batch_tokens !== undefined) return null;
+  // OpenAI is the canonical "no cap declared, fast path is intentional"
+  // recipe; suppress the warning for it. Every other active recipe missing
+  // the field is suspicious.
+  if (recipe.id === 'openai') return null;
+  // v0.32 (#779): explicit opt-out for dynamic-cap recipes (Ollama,
+  // LiteLLM proxy, llama-server) — they ship without a static cap because
+  // the cap depends on a user-launched server. Warning is noise for them.
+  if (embedding.no_batch_cap === true) return null;
+  return (
+    `[ai.gateway] recipe "${recipe.id}" declares an embedding touchpoint ` +
+    `without max_batch_tokens; recursion is the only safety net for batch caps.`
+  );
+}
+
+function warnRecipesMissingBatchTokens(activeEmbeddingModel: string): void {
+  const { providerId } = parseModelId(activeEmbeddingModel);
+  const recipe = listRecipes().find(r => r.id === providerId);
+  if (!recipe) return;
+  const warning = __missingBatchTokensWarningForTests(recipe);
+  if (!warning || _warnedRecipes.has(recipe.id)) return;
+  _warnedRecipes.add(recipe.id);
+  // eslint-disable-next-line no-console
+  console.warn(warning);
 }
 
 /** Reset (for tests). */

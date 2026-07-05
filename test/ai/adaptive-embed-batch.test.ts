@@ -25,7 +25,7 @@
  *
  *   7. Startup warning (D9-B) — gateway construction warns once per recipe
  *      with an embedding touchpoint missing max_batch_tokens (excluding the
- *      OpenAI canonical fast-path recipe).
+ *      OpenAI canonical fast-path and explicit dynamic-cap recipes).
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
@@ -37,8 +37,10 @@ import {
   isTokenLimitError,
   __setEmbedTransportForTests,
   __getShrinkStateForTests,
+  __missingBatchTokensWarningForTests,
 } from '../../src/core/ai/gateway.ts';
 import { AIConfigError, AITransientError } from '../../src/core/ai/errors.ts';
+import type { Recipe } from '../../src/core/ai/types.ts';
 
 // --------- Test helpers ---------
 
@@ -360,31 +362,35 @@ describe('shrink-on-miss adaptive cache', () => {
 describe('startup warning for recipes missing max_batch_tokens', () => {
   beforeEach(() => resetGateway());
 
-  test('first configureGateway call warns about each missing-cap recipe; subsequent calls suppressed', () => {
+  test('warning helper preserves the operator-facing contract for a future missing-cap recipe', () => {
+    const recipe = {
+      id: 'future-provider',
+      touchpoints: {
+        embedding: {
+          models: ['embed-v1'],
+        },
+      },
+    } as Recipe;
+
+    const warning = __missingBatchTokensWarningForTests(recipe);
+    expect(warning).toContain('[ai.gateway]');
+    expect(warning).toContain('"future-provider"');
+    expect(warning).toContain('declares an embedding touchpoint');
+  });
+
+  test('OpenAI canonical fast path stays quiet across reconfiguration', () => {
     const warnings: string[] = [];
     const original = console.warn;
     console.warn = (msg: string) => warnings.push(String(msg));
     try {
       configureOpenAI();
       const firstCallCount = warnings.length;
-      // Reconfigure: the warning should NOT re-fire for the same recipes
-      // within one process (we already told the operator).
       configureOpenAI();
       expect(warnings.length).toBe(firstCallCount);
     } finally {
       console.warn = original;
     }
 
-    // The warning text should match the documented contract.
-    const contractMatch = warnings.filter(w =>
-      w.includes('[ai.gateway]') && w.includes('declares an embedding touchpoint'),
-    );
-    expect(contractMatch.length).toBeGreaterThan(0);
-
-    // Voyage declares max_batch_tokens → suppressed. OpenAI is the
-    // canonical fast-path recipe → also suppressed by id. Both must be
-    // absent from the warnings.
-    expect(warnings.find(w => w.includes('"voyage"'))).toBeUndefined();
     expect(warnings.find(w => w.includes('"openai"'))).toBeUndefined();
   });
 });
