@@ -14,7 +14,7 @@ orchestrator (RESOLVER) in sync.
 
 | Flowchart node | Status | What backs it today |
 |---|---|---|
-| Nurse / Psychiatrist split | 🟡 partial | Skills live at `skills/<slug>/SKILL.md` (YAML frontmatter). No "role" grouping exists — add a `role:` tag or naming convention. |
+| Nurse / Psychiatrist split | ✅ done (Dev A, #2) | `role: nurse \| psychiatrist \| general-medicine` frontmatter tag shipped in `src/core/skill-frontmatter.ts` (`SKILL_ROLES`), surfaced via `list_skills`. Tag new skills with it. |
 | **Q1: suitable skill exists?** | 🟡 weak | Only a literal trigger-string collision warning — `src/core/check-resolvable.ts:437` (MECE). No semantic "is there a skill for this topic" check. |
 | No → create + update orchestrator | 🟡 partial | `gbrain skillify scaffold` writes stub files **and auto-appends a resolver row** (`src/core/skillify/generator.ts:150`), but only under `## Uncategorized`, and content is authored manually. |
 | Q2: update with new info? | ❌ missing | No automated decider (prose guidance only). |
@@ -40,10 +40,10 @@ That distillation step, plus the Q2/Q3 deciders and the split executor, is the n
 
 MVP each decider as an **LLM call** (via `gbrain agent run`); harden to deterministic later.
 
-### 1. Role axis
-- Add `role: nurse | psychiatrist` to skill frontmatter (`src/core/skill-frontmatter.ts`).
-- Add a query/tag to pull the brain slice per role (source or tag filter).
-- Small, unblocks everything downstream.
+### 1. Role axis ✅ (landed by Dev A, #2)
+- `role: nurse | psychiatrist | general-medicine` frontmatter tag shipped in
+  `src/core/skill-frontmatter.ts` (import the allowed set from `SKILL_ROLES`); surfaced via `list_skills`.
+- Remaining for T1: a query/tag to pull the brain slice per role (source or tag filter).
 
 ### 2. The decider (collapses Q1 + Q2 + Q3)
 - New step: given a candidate topic, LLM-classify against `list_skills` descriptions/triggers
