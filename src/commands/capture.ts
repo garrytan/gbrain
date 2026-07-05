@@ -49,6 +49,7 @@ interface RunOpts {
   source?: string;
   quiet?: boolean;
   json?: boolean;
+  noEmbed?: boolean;
 }
 
 function parseArgs(args: string[]): RunOpts | { help: true; positional: string | undefined } {
@@ -60,6 +61,7 @@ function parseArgs(args: string[]): RunOpts | { help: true; positional: string |
     if (a === '--quiet' || a === '-q') { opts.quiet = true; continue; }
     if (a === '--json') { opts.json = true; continue; }
     if (a === '--stdin') { opts.stdin = true; continue; }
+    if (a === '--no-embed') { opts.noEmbed = true; continue; }
     if (a === '--file') {
       const v = args[++i];
       if (v) opts.filePath = v;
@@ -110,6 +112,7 @@ Options:
                        registration scopes the source).
   --quiet, -q          Print just the slug on stdout (for shell pipelines)
   --json               JSON output for agents
+  --no-embed           Capture now; leave embedding for a later gbrain embed --stale pass
   --help, -h           Show this help
 
 Notes:
@@ -456,7 +459,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
       raw = await callRemoteTool(
         cfg!,
         'put_page',
-        { slug, content: fullContent },
+        { slug, content: fullContent, no_embed: parsed.noEmbed === true },
         { timeoutMs: 30_000 },
       );
     } catch (e) {
@@ -543,6 +546,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
       source_kind: 'capture-cli',
       source_uri: sourceUri,
       ingested_via: 'capture-cli',
+      no_embed: parsed.noEmbed === true,
     })) as {
       slug: string;
       status?: string;

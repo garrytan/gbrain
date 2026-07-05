@@ -62,6 +62,32 @@ describe('Lane A.7 — chunk-row INSERT default tracks ai/defaults.ts constant',
     // (a literal pre-fix; production write site that was never tested).
     expect(rows[0]?.model).not.toBe('text-embedding-3-large');
   });
+
+  test('upsertChunks with a new embedding stores current gateway model', async () => {
+    configureGateway({
+      embedding_model: 'local-sentence-transformers:BAAI/bge-m3',
+      embedding_dimensions: 1536,
+      env: {},
+    });
+    try {
+      await engine.putPage('test/a7-current', { type: 'note', title: 'A.7 current', compiled_truth: 'hello' });
+      await engine.upsertChunks('test/a7-current', [
+        {
+          chunk_index: 0,
+          chunk_text: 'hello',
+          chunk_source: 'compiled_truth',
+          embedding: new Float32Array(1536),
+        },
+      ]);
+
+      const rows = await engine.executeRaw<{ model: string }>(
+        `SELECT model FROM content_chunks WHERE chunk_index = 0 AND page_id = (SELECT id FROM pages WHERE slug = 'test/a7-current') LIMIT 1`,
+      );
+      expect(rows[0]?.model).toBe('local-sentence-transformers:BAAI/bge-m3');
+    } finally {
+      resetGateway();
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────

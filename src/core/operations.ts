@@ -708,6 +708,7 @@ const put_page: Operation = {
     source_kind: { type: 'string', required: false, description: 'Ingestion channel taxonomy (capture-cli | put_page | webhook | …). Remote callers: SERVER-STAMPED, client value ignored.' },
     source_uri: { type: 'string', required: false, description: 'Original URI/path/message-id the event carried. Remote callers: SERVER-STAMPED null.' },
     ingested_via: { type: 'string', required: false, description: 'Richer label paired with source_kind. Remote callers: SERVER-STAMPED.' },
+    no_embed: { type: 'boolean', required: false, description: 'Skip inline embedding; leave chunks stale for a later embed pass.' },
   },
   mutating: true,
   scope: 'write',
@@ -780,7 +781,7 @@ const put_page: Operation = {
     // Checks all auth env vars for the resolved provider, not just OPENAI_API_KEY,
     // so Gemini / Ollama / Voyage brains don't silently drop embeddings (Codex C2).
     const { isAvailable } = await import('./ai/gateway.ts');
-    const noEmbed = !isAvailable('embedding');
+    const noEmbed = (p.no_embed as boolean) === true || !isAvailable('embedding');
     // v0.31.8 (D7 / codex OV-1): thread ctx.sourceId so put_page on a
     // multi-source brain lands in the intended source instead of the
     // default-source clobber path. importFromContent already accepts

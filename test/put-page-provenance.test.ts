@@ -33,6 +33,11 @@ const putPageOp = operations.find((o) => o.name === 'put_page')!;
 
 let engine: PGLiteEngine;
 
+const stubEmbeddingTransport = async ({ values }: any) => ({
+  embeddings: values.map(() => new Array(1536).fill(0)),
+  usage: { tokens: 0 },
+}) as any;
+
 beforeAll(async () => {
   // Hermeticity guard (cross-file gateway-state leak class — see CLAUDE.md
   // "Test-isolation lint and helpers"). put_page embeds via the gateway.
@@ -52,10 +57,7 @@ beforeAll(async () => {
     embedding_dimensions: 1536,
     env: { ...process.env, OPENAI_API_KEY: process.env.OPENAI_API_KEY || 'sk-test-stub' },
   });
-  __setEmbedTransportForTests(async ({ values }: any) => ({
-    embeddings: values.map(() => new Array(1536).fill(0)),
-    usage: { tokens: 0 },
-  }) as any);
+  __setEmbedTransportForTests(stubEmbeddingTransport);
 
   engine = new PGLiteEngine();
   await engine.connect({});
@@ -113,6 +115,30 @@ async function readProvenance(slug: string): Promise<{
 }
 
 describe('put_page provenance — trusted local caller (ctx.remote === false)', () => {
+  test('no_embed param skips inline embedding even when a provider is configured', async () => {
+    let embedCalls = 0;
+    try {
+      __setEmbedTransportForTests(async () => {
+        embedCalls++;
+        throw new Error('embed should not be called when no_embed=true');
+      });
+
+      const ctx = makeCtx({ remote: false });
+      await putPageOp.handler(ctx, {
+        slug: 'wiki/p3a-no-embed',
+        content: '---\ntype: note\ntitle: No Embed\n---\n\nbody',
+        no_embed: true,
+      });
+
+      const chunks = await engine.getChunks('wiki/p3a-no-embed');
+      expect(chunks.length).toBeGreaterThan(0);
+      expect(chunks.every((chunk) => !chunk.embedding)).toBe(true);
+      expect(embedCalls).toBe(0);
+    } finally {
+      __setEmbedTransportForTests(stubEmbeddingTransport);
+    }
+  });
+
   test('client params honored: source_kind / source_uri / ingested_via populate DB', async () => {
     const ctx = makeCtx({ remote: false });
     await putPageOp.handler(ctx, {

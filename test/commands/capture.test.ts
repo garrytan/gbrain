@@ -16,12 +16,25 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import matter from 'gray-matter';
 import { runCapture, __testing } from '../../src/commands/capture.ts';
+import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 let tmpRoot: string;
 let brainDir: string;
 
+const stubEmbeddingTransport = async ({ values }: any) => ({
+  embeddings: values.map(() => new Array(1536).fill(0)),
+  usage: { tokens: 0 },
+}) as any;
+
 beforeAll(async () => {
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { ...process.env, OPENAI_API_KEY: process.env.OPENAI_API_KEY || 'sk-test-stub' },
+  });
+  __setEmbedTransportForTests(stubEmbeddingTransport);
+
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -29,6 +42,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  __setEmbedTransportForTests(null);
+  resetGateway();
 });
 
 beforeEach(async () => {
@@ -89,6 +104,14 @@ describe('capture — parseArgs', () => {
   test('--stdin flag', () => {
     const r = __testing.parseArgs(['--stdin']);
     if (!('help' in r)) expect(r.stdin).toBe(true);
+  });
+
+  test('--no-embed flag', () => {
+    const r = __testing.parseArgs(['--no-embed', 'queued capture']);
+    if (!('help' in r)) {
+      expect(r.noEmbed).toBe(true);
+      expect(r.content).toBe('queued capture');
+    }
   });
 
   test('--quiet, --json, --help', () => {

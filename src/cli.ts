@@ -2260,7 +2260,8 @@ ADMIN
   autopilot [--repo] [--interval N]  Self-maintaining brain daemon
   config [show|get|set] <key> [val]  Brain config
   storage status [--repo <path>]     Storage tier status and health
-        [--json]                     (git-tracked vs supabase-only)
+  storage vacuum [--json]            VACUUM (ANALYZE) + CHECKPOINT
+  storage backup [--json]            PGLite data-dir backup with retention caps
   serve                              MCP server (stdio)
   serve --http [--port N]            HTTP MCP server with OAuth 2.1
     --token-ttl N                    Access token TTL in seconds (default: 3600)

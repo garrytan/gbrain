@@ -87,12 +87,21 @@ export interface EmbedBatchOptions {
  * adaptive batch splitting and per-recipe token-budget logic; this paginator
  * is purely about progress-callback granularity.
  */
-const BATCH_SIZE = 100;
+const DEFAULT_BATCH_SIZE = 100;
+
+function resolveBatchSize(): number {
+  const raw = process.env.GBRAIN_EMBED_BATCH_SIZE;
+  if (!raw) return DEFAULT_BATCH_SIZE;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, DEFAULT_BATCH_SIZE) : DEFAULT_BATCH_SIZE;
+}
+
 export async function embedBatch(
   texts: string[],
   options: EmbedBatchOptions = {},
 ): Promise<Float32Array[]> {
   if (!texts || texts.length === 0) return [];
+  const batchSize = resolveBatchSize();
   // Build the gateway-call passthrough once; undefined fields stay undefined
   // so non-opt-in callers see unchanged pre-v0.33.4 behavior.
   const gwOpts = {
@@ -100,12 +109,12 @@ export async function embedBatch(
     ...(options.maxRetries !== undefined && { maxRetries: options.maxRetries }),
   };
   // Fast path: small batch, no progress callback — single gateway call.
-  if (texts.length <= BATCH_SIZE && !options.onBatchComplete) {
+  if (texts.length <= batchSize && !options.onBatchComplete) {
     return gatewayEmbed(texts, gwOpts);
   }
   const results: Float32Array[] = [];
-  for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-    const slice = texts.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < texts.length; i += batchSize) {
+    const slice = texts.slice(i, i + batchSize);
     const out = await gatewayEmbed(slice, gwOpts);
     results.push(...out);
     options.onBatchComplete?.(results.length, texts.length);

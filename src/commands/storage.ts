@@ -1,5 +1,8 @@
-import { join } from 'path';
+import { existsSync, mkdirSync, readdirSync, rmSync, renameSync, statfsSync, statSync, unlinkSync, writeFileSync } from 'fs';
+import { spawnSync } from 'child_process';
+import { basename, join } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
+import { gbrainPath } from '../core/config.ts';
 import { loadStorageConfig, validateStorageConfig, getStorageTier } from '../core/storage-config.ts';
 import type { StorageConfig, StorageTier } from '../core/storage-config.ts';
 import { walkBrainRepo, type DiskFileEntry } from '../core/disk-walk.ts';
@@ -31,6 +34,21 @@ export interface StorageStatusResult {
   warnings: string[];
 }
 
+export interface StorageBackupResult {
+  ok: boolean;
+  started_at: string;
+  finished_at: string;
+  output_path: string | null;
+  output_bytes: number;
+  raw_bytes: number;
+  compression: 'zstd' | 'none';
+  verified_file_count: number;
+  pruned: Array<{ path: string; bytes: number }>;
+  retained_count: number;
+  retained_bytes: number;
+  warnings: string[];
+}
+
 // ── Dispatcher ────────────────────────────────────────────
 
 export async function runStorage(engine: BrainEngine, args: string[]): Promise<void> {
@@ -39,9 +57,302 @@ export async function runStorage(engine: BrainEngine, args: string[]): Promise<v
     await runStorageStatus(engine, args.slice(1));
     return;
   }
+  if (subcommand === 'vacuum') {
+    await runStorageVacuum(engine, args.slice(1));
+    return;
+  }
+  if (subcommand === 'backup') {
+    await runStorageBackup(engine, args.slice(1));
+    return;
+  }
   console.error(`Unknown storage subcommand: ${subcommand}`);
-  console.error('Available subcommands: status');
+  console.error('Available subcommands: status, vacuum, backup');
   process.exit(1);
+}
+
+async function runStorageBackup(engine: BrainEngine, args: string[]): Promise<void> {
+  const opts = parseBackupArgs(args);
+  const result = await createPgliteBackup(engine, opts);
+
+  if (opts.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (!result.ok) {
+    console.log(`Storage backup skipped: ${result.warnings.join('; ')}`);
+    return;
+  }
+
+  console.log(
+    `Storage backup complete: ${result.output_path} ` +
+      `(${formatBytes(result.output_bytes)}, ${result.verified_file_count} files verified)`,
+  );
+  if (result.pruned.length > 0) {
+    console.log(`Pruned ${result.pruned.length} old backup(s).`);
+  }
+  for (const warning of result.warnings) console.warn(`Warning: ${warning}`);
+}
+
+async function runStorageVacuum(engine: BrainEngine, args: string[]): Promise<void> {
+  const vacuumSql = 'VACUUM (ANALYZE)';
+  const checkpointSql = 'CHECKPOINT';
+  const startedAt = new Date().toISOString();
+
+  await engine.executeRaw(vacuumSql);
+  await engine.executeRaw(checkpointSql);
+
+  const result = {
+    ok: true,
+    started_at: startedAt,
+    finished_at: new Date().toISOString(),
+    vacuum: vacuumSql,
+    checkpoint: checkpointSql,
+  };
+
+  if (args.includes('--json')) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  console.log(`Storage vacuum complete: ${vacuumSql}; ${checkpointSql}`);
+}
+
+interface BackupOptions {
+  dir: string;
+  maxCount: number;
+  maxBytes: number;
+  minFreeBytes: number;
+  compress: boolean;
+  zstdBin: string;
+  json: boolean;
+}
+
+function parseBackupArgs(args: string[]): BackupOptions {
+  const valueAfter = (flag: string): string | undefined => {
+    const idx = args.indexOf(flag);
+    return idx === -1 ? undefined : args[idx + 1];
+  };
+
+  return {
+    dir: valueAfter('--dir') || process.env.GBRAIN_DREAM_BACKUP_DIR || gbrainPath('backups', 'dream-cycle'),
+    maxCount: parsePositiveInt(valueAfter('--max-count') || process.env.GBRAIN_DREAM_BACKUP_MAX_COUNT, 7),
+    maxBytes: parseBytes(valueAfter('--max-bytes') || process.env.GBRAIN_DREAM_BACKUP_MAX_BYTES, 5 * 1024 ** 3),
+    minFreeBytes: parseBytes(valueAfter('--min-free') || process.env.GBRAIN_DREAM_BACKUP_MIN_FREE_BYTES, 20 * 1024 ** 3),
+    compress: !args.includes('--no-compress'),
+    zstdBin: valueAfter('--zstd-bin') || process.env.GBRAIN_ZSTD_BIN || '/opt/homebrew/bin/zstd',
+    json: args.includes('--json'),
+  };
+}
+
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(raw ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseBytes(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const match = raw.trim().match(/^(\d+(?:\.\d+)?)\s*([kmgt]?i?b?)?$/i);
+  if (!match) return fallback;
+  const value = Number.parseFloat(match[1]);
+  if (!Number.isFinite(value) || value < 0) return fallback;
+  const unit = (match[2] || 'b').toLowerCase();
+  const multiplier =
+    unit.startsWith('t') ? 1024 ** 4 :
+    unit.startsWith('g') ? 1024 ** 3 :
+    unit.startsWith('m') ? 1024 ** 2 :
+    unit.startsWith('k') ? 1024 :
+    1;
+  return Math.floor(value * multiplier);
+}
+
+interface BackupFile {
+  path: string;
+  bytes: number;
+  mtimeMs: number;
+}
+
+async function createPgliteBackup(engine: BrainEngine, opts: BackupOptions): Promise<StorageBackupResult> {
+  const startedAt = new Date().toISOString();
+  const warnings: string[] = [];
+  mkdirSync(opts.dir, { recursive: true });
+
+  const existing = listBackupFiles(opts.dir);
+  const pruneable = existing.length > 2;
+  const freeBytes = freeBytesForPath(opts.dir);
+  if (!pruneable && freeBytes !== null && freeBytes < opts.minFreeBytes) {
+    return {
+      ok: false,
+      started_at: startedAt,
+      finished_at: new Date().toISOString(),
+      output_path: null,
+      output_bytes: 0,
+      raw_bytes: 0,
+      compression: opts.compress ? 'zstd' : 'none',
+      verified_file_count: 0,
+      pruned: [],
+      retained_count: existing.length,
+      retained_bytes: sumBytes(existing),
+      warnings: [`free space ${formatBytes(freeBytes)} is below ${formatBytes(opts.minFreeBytes)} and no backups are pruneable`],
+    };
+  }
+
+  if (engine.kind !== 'pglite') {
+    throw new Error('gbrain storage backup currently supports PGLite only.');
+  }
+
+  const db = (engine as unknown as { db?: { dumpDataDir?: (compression?: 'none' | 'gzip' | 'auto') => Promise<Blob | File> } }).db;
+  if (!db?.dumpDataDir) {
+    throw new Error('Connected PGLite engine does not expose dumpDataDir().');
+  }
+
+  await engine.executeRaw('CHECKPOINT');
+
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const rawName = `brain-pglite-${stamp}.tar`;
+  const finalName = opts.compress ? `${rawName}.zst` : rawName;
+  const rawTmpPath = join(opts.dir, `.${rawName}.tmp-${process.pid}`);
+  const finalTmpPath = join(opts.dir, `.${finalName}.tmp-${process.pid}`);
+  const finalPath = join(opts.dir, finalName);
+
+  let rawBytes = 0;
+  try {
+    const dump = await db.dumpDataDir('none');
+    const dumpBytes = Buffer.from(await dump.arrayBuffer());
+    rawBytes = dumpBytes.byteLength;
+    writeFileSync(rawTmpPath, dumpBytes);
+
+    if (opts.compress) {
+      runZstdCompress(opts.zstdBin, rawTmpPath, finalTmpPath);
+      unlinkIfExists(rawTmpPath);
+    } else {
+      renameSync(rawTmpPath, finalTmpPath);
+    }
+
+    const verifiedFileCount = verifyBackupArchive(finalTmpPath, opts);
+    renameSync(finalTmpPath, finalPath);
+
+    const outputBytes = statSync(finalPath).size;
+    const latestExisting = existing.toSorted((a, b) => b.mtimeMs - a.mtimeMs)[0];
+    if (latestExisting && outputBytes > latestExisting.bytes * 3) {
+      warnings.push(
+        `new backup ${formatBytes(outputBytes)} is more than 3x previous ${formatBytes(latestExisting.bytes)}`,
+      );
+    }
+
+    const pruned = pruneBackups(opts.dir, opts.maxCount, opts.maxBytes);
+    const retained = listBackupFiles(opts.dir);
+    const retainedBytes = sumBytes(retained);
+    if ((retained.length > opts.maxCount || retainedBytes > opts.maxBytes) && retained.length <= 2) {
+      warnings.push('retention caps exceeded but fewer than two verified backups remain, so prune stopped');
+    }
+
+    return {
+      ok: true,
+      started_at: startedAt,
+      finished_at: new Date().toISOString(),
+      output_path: finalPath,
+      output_bytes: outputBytes,
+      raw_bytes: rawBytes,
+      compression: opts.compress ? 'zstd' : 'none',
+      verified_file_count: verifiedFileCount,
+      pruned,
+      retained_count: retained.length,
+      retained_bytes: retainedBytes,
+      warnings,
+    };
+  } catch (err) {
+    unlinkIfExists(rawTmpPath);
+    unlinkIfExists(finalTmpPath);
+    throw err;
+  }
+}
+
+function listBackupFiles(dir: string): BackupFile[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter(name => /^brain-pglite-\d{8}T\d{6}Z\.tar(?:\.zst)?$/.test(name))
+    .map(name => {
+      const path = join(dir, name);
+      const st = statSync(path);
+      return { path, bytes: st.size, mtimeMs: st.mtimeMs };
+    })
+    .sort((a, b) => a.mtimeMs - b.mtimeMs || basename(a.path).localeCompare(basename(b.path)));
+}
+
+function sumBytes(files: BackupFile[]): number {
+  return files.reduce((sum, file) => sum + file.bytes, 0);
+}
+
+function freeBytesForPath(path: string): number | null {
+  try {
+    const stat = statfsSync(path);
+    return stat.bavail * stat.bsize;
+  } catch {
+    return null;
+  }
+}
+
+function resolveZstdBin(zstdBin: string): string {
+  if (existsSync(zstdBin)) return zstdBin;
+  if (!zstdBin.includes('/')) return zstdBin;
+  return 'zstd';
+}
+
+function runZstdCompress(zstdBin: string, inputPath: string, outputPath: string): void {
+  const bin = resolveZstdBin(zstdBin);
+  const result = spawnSync(bin, ['-q', '-f', '-o', outputPath, inputPath], { encoding: 'utf8' });
+  if (result.status !== 0) {
+    throw new Error(`zstd compression failed: ${(result.stderr || result.error?.message || '').trim()}`);
+  }
+}
+
+function runZstdDecompress(zstdBin: string, inputPath: string, outputPath: string): void {
+  const bin = resolveZstdBin(zstdBin);
+  const result = spawnSync(bin, ['-q', '-d', '-f', '-o', outputPath, inputPath], { encoding: 'utf8' });
+  if (result.status !== 0) {
+    throw new Error(`zstd verification decompress failed: ${(result.stderr || result.error?.message || '').trim()}`);
+  }
+}
+
+function verifyBackupArchive(path: string, opts: BackupOptions): number {
+  let tarPath = path;
+  const verifyTmp = `${path}.verify-${process.pid}.tar`;
+  try {
+    if (path.endsWith('.zst')) {
+      runZstdDecompress(opts.zstdBin, path, verifyTmp);
+      tarPath = verifyTmp;
+    }
+    const result = spawnSync('tar', ['-tf', tarPath], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    if (result.status !== 0) {
+      throw new Error(`tar verification failed: ${(result.stderr || result.error?.message || '').trim()}`);
+    }
+    const fileCount = result.stdout.split('\n').filter(Boolean).length;
+    if (fileCount < 1) throw new Error('tar verification failed: archive contained zero files');
+    return fileCount;
+  } finally {
+    unlinkIfExists(verifyTmp);
+  }
+}
+
+function pruneBackups(dir: string, maxCount: number, maxBytes: number): Array<{ path: string; bytes: number }> {
+  const pruned: Array<{ path: string; bytes: number }> = [];
+  let files = listBackupFiles(dir);
+  while ((files.length > maxCount || sumBytes(files) > maxBytes) && files.length > 2) {
+    const victim = files[0];
+    rmSync(victim.path, { force: true });
+    pruned.push({ path: victim.path, bytes: victim.bytes });
+    files = listBackupFiles(dir);
+  }
+  return pruned;
+}
+
+function unlinkIfExists(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // best-effort cleanup
+  }
 }
 
 async function runStorageStatus(engine: BrainEngine, args: string[]): Promise<void> {

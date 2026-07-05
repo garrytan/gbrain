@@ -23,6 +23,7 @@ import { zhipu } from './zhipu.ts';
 import { azureOpenAI } from './azure-openai.ts';
 import { zeroentropyai } from './zeroentropyai.ts';
 import { llamaServerReranker } from './llama-server-reranker.ts';
+import { localSentenceTransformers } from './local-sentence-transformers.ts';
 
 const ALL: Recipe[] = [
   openai,
@@ -37,6 +38,7 @@ const ALL: Recipe[] = [
   together,
   llamaServer,
   llamaServerReranker,
+  localSentenceTransformers,
   minimax,
   dashscope,
   zhipu,
