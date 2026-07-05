@@ -147,6 +147,12 @@ export interface ThinkResult {
     takesFromKeyword: number;
     takesFromVector: number;
     graphHits: number;
+    /** Page slugs in the same rank order used to render <pages>. */
+    pageSlugsByRank: string[];
+    /** Unique page slugs present in resolved structured or fallback citations. */
+    citedPageSlugs: string[];
+    /** False when a synthesis ran but the rank-1 page is absent from resolved citations. */
+    topPageCited: boolean;
   };
 }
 
@@ -271,6 +277,7 @@ export async function runThink(
     questionEmbedding,
     takesHoldersAllowList: opts.takesHoldersAllowList,
   });
+  const pageSlugsByRank = gather.pages.map(p => p.slug);
 
   // Render evidence blocks for the prompt
   const pagesBlock = renderPagesBlock(gather.pages);
@@ -458,6 +465,9 @@ export async function runThink(
           takesFromKeyword: gather.diagnostics.takesFromKeyword,
           takesFromVector: gather.diagnostics.takesFromVector,
           graphHits: gather.diagnostics.graphHits,
+          pageSlugsByRank,
+          citedPageSlugs: [],
+          topPageCited: false,
         },
       };
     }
@@ -489,6 +499,18 @@ export async function runThink(
   if (resolved.warnings.length > 0) {
     for (const w of resolved.warnings) warnings.push(w);
   }
+  const citedPageSlugSet = new Set(
+    resolved.citations
+      .map(c => c.page_slug)
+      .filter(slug => typeof slug === 'string' && slug.length > 0)
+      .map(slug => slug.toLowerCase()),
+  );
+  const citedPageSlugs = [...citedPageSlugSet].sort();
+  const topPageSlug = pageSlugsByRank[0] ?? null;
+  const topPageCited = topPageSlug === null || citedPageSlugSet.has(topPageSlug.toLowerCase());
+  if (synthesisOk && response.answer.trim().length > 0 && topPageSlug !== null && !topPageCited) {
+    warnings.push(`TOP_PAGE_NOT_CITED: ${topPageSlug}`);
+  }
 
   // Round-loop scaffolding (rounds > 1 currently re-runs without gap-driven retrieval).
   // The loop is in place so the v0.29 gap-fill heuristic doesn't change the call site.
@@ -516,6 +538,9 @@ export async function runThink(
       takesFromKeyword: gather.diagnostics.takesFromKeyword,
       takesFromVector: gather.diagnostics.takesFromVector,
       graphHits: gather.diagnostics.graphHits,
+      pageSlugsByRank,
+      citedPageSlugs,
+      topPageCited,
     },
   };
 }
