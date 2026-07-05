@@ -24,7 +24,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
 import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
-import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
+import type { MinionJob, MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 
@@ -32,6 +32,11 @@ export interface PatternsPhaseOpts {
   brainDir: string;
   dryRun: boolean;
   yieldDuringPhase?: () => Promise<void>;
+  __testing?: {
+    waitForCompletion?: typeof waitForCompletion;
+    collectChildPutPageSlugs?: typeof collectChildPutPageSlugs;
+    reverseWriteRefs?: typeof reverseWriteRefs;
+  };
 }
 
 export async function runPhasePatterns(
@@ -39,6 +44,15 @@ export async function runPhasePatterns(
   opts: PatternsPhaseOpts,
 ): Promise<PhaseResult> {
   const start = Date.now();
+  let submittedSubagent = false;
+  let cooldownStamped = false;
+  const stampExecutedRunCooldown = async () => {
+    if (!submittedSubagent || cooldownStamped) return;
+    // Failed/timeout/dead/cancelled runs still spent the LLM budget, so they
+    // must re-arm the cooldown to cap runaway spend.
+    await engine.setConfig('dream.patterns.last_completion_ts', new Date().toISOString());
+    cooldownStamped = true;
+  };
   try {
     const config = await loadPatternsConfig(engine);
 
@@ -98,10 +112,12 @@ export async function runPhasePatterns(
     const job = await queue.add('subagent', data as unknown as Record<string, unknown>, submitOpts, {
       allowProtectedSubmit: true,
     });
+    submittedSubagent = true;
 
     let outcome: string;
     try {
-      const final = await waitForCompletion(queue, job.id, {
+      const wait = opts.__testing?.waitForCompletion ?? waitForCompletion;
+      const final: MinionJob = await wait(queue, job.id, {
         timeoutMs: 35 * 60 * 1000,
         pollMs: 5 * 1000,
       });
@@ -118,18 +134,14 @@ export async function runPhasePatterns(
     // Collect refs the subagent wrote (codex finding #2 — query tool exec rows).
     // v0.32.8: refs carry source_id so reverseWriteRefs targets the right
     // (source, slug) row instead of the first DB match.
-    const writtenRefs = await collectChildPutPageSlugs(engine, [job.id]);
+    const collectRefs = opts.__testing?.collectChildPutPageSlugs ?? collectChildPutPageSlugs;
+    const writtenRefs = await collectRefs(engine, [job.id]);
 
     // Reverse-write to fs.
-    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs);
+    const writeRefs = opts.__testing?.reverseWriteRefs ?? reverseWriteRefs;
+    const reverseWriteCount = await writeRefs(engine, opts.brainDir, writtenRefs);
 
-    // Completion timestamp ON SUCCESS only (mirrors synthesize). Patterns' cost
-    // is the LLM analysis itself, so a completed run starts the cooldown even
-    // when it wrote 0 new pages. A 'timeout'/failed subagent does NOT stamp, so
-    // a stalled run won't silently start a 12h cooldown.
-    if (outcome === 'completed') {
-      await engine.setConfig('dream.patterns.last_completion_ts', new Date().toISOString());
-    }
+    await stampExecutedRunCooldown();
 
     return ok(`${writtenRefs.length} pattern page(s) written/updated (${outcome})`, {
       reflections_considered: reflections.length,
@@ -139,6 +151,7 @@ export async function runPhasePatterns(
       job_id: job.id,
     });
   } catch (e) {
+    try { await stampExecutedRunCooldown(); } catch { /* best-effort after executed LLM run */ }
     return failed(makeError('InternalError', 'PATTERNS_PHASE_FAIL',
       e instanceof Error ? (e.message || 'patterns phase threw') : String(e)));
   } finally {

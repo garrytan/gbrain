@@ -99,7 +99,13 @@ describe('patterns cooldown (mirrors synthesize)', () => {
     expect(patternsSrc).toContain('checkCooldown');
   });
 
-  test('stamps completion only on outcome === completed', () => {
-    expect(patternsSrc).toContain("outcome === 'completed'");
+  test('stamps cooldown for every submitted subagent outcome', () => {
+    expect(patternsSrc).toContain('submittedSubagent');
+    expect(patternsSrc).toContain('stampExecutedRunCooldown');
+    expect(patternsSrc).not.toContain("outcome === 'completed'");
+  });
+
+  test('documents failed-run cooldown rationale', () => {
+    expect(patternsSrc).toContain('Failed/timeout/dead/cancelled runs still spent the LLM budget');
   });
 });

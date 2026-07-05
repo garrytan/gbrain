@@ -23,6 +23,8 @@
 import { describe, test, expect } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { runPhasePatterns } from '../../src/core/cycle/patterns.ts';
+import { TimeoutError } from '../../src/core/minions/wait-for-completion.ts';
+import type { MinionJob, MinionJobStatus } from '../../src/core/minions/types.ts';
 
 interface TestRig {
   engine: PGLiteEngine;
@@ -52,6 +54,62 @@ async function withoutAnthropicKey<T>(body: () => Promise<T>): Promise<T> {
     if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = saved;
   }
+}
+
+async function withAnthropicKey<T>(body: () => Promise<T>): Promise<T> {
+  const saved = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+  try {
+    return await body();
+  } finally {
+    if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = saved;
+  }
+}
+
+function jobWithStatus(status: MinionJobStatus): MinionJob {
+  const now = new Date();
+  return {
+    id: 1,
+    name: 'subagent',
+    queue: 'default',
+    status,
+    priority: 0,
+    data: {},
+    max_attempts: 3,
+    attempts_made: 0,
+    attempts_started: 1,
+    backoff_type: 'fixed',
+    backoff_delay: 0,
+    backoff_jitter: 0,
+    stalled_counter: 0,
+    max_stalled: 3,
+    lock_token: null,
+    lock_until: null,
+    delay_until: null,
+    parent_job_id: null,
+    on_child_fail: 'fail_parent',
+    tokens_input: 0,
+    tokens_output: 0,
+    tokens_cache_read: 0,
+    depth: 0,
+    max_children: null,
+    timeout_ms: null,
+    timeout_at: null,
+    remove_on_complete: false,
+    remove_on_fail: false,
+    idempotency_key: null,
+    quiet_hours: null,
+    stagger_key: null,
+    result: null,
+    progress: null,
+    error_text: null,
+    stacktrace: [],
+    created_at: now,
+    started_at: now,
+    finished_at: now,
+    updated_at: now,
+  };
 }
 
 /**
@@ -87,6 +145,7 @@ describe('E2E patterns — disabled', () => {
       });
       expect(result.status).toBe('skipped');
       expect((result.details as { reason?: string }).reason).toBe('disabled');
+      expect(await rig.engine.getConfig('dream.patterns.last_completion_ts')).toBeNull();
     } finally {
       await rig.cleanup();
     }
@@ -103,6 +162,7 @@ describe('E2E patterns — disabled', () => {
       });
       expect(result.status).toBe('skipped');
       expect((result.details as { reason?: string }).reason).toBe('insufficient_evidence');
+      expect(await rig.engine.getConfig('dream.patterns.last_completion_ts')).toBeNull();
     } finally {
       await rig.cleanup();
     }
@@ -119,6 +179,7 @@ describe('E2E patterns — insufficient_evidence', () => {
       });
       expect(result.status).toBe('skipped');
       expect((result.details as { reason?: string }).reason).toBe('insufficient_evidence');
+      expect(await rig.engine.getConfig('dream.patterns.last_completion_ts')).toBeNull();
     } finally {
       await rig.cleanup();
     }
@@ -135,6 +196,7 @@ describe('E2E patterns — insufficient_evidence', () => {
       });
       expect(result.status).toBe('skipped');
       expect((result.details as { reason?: string }).reason).toBe('insufficient_evidence');
+      expect(await rig.engine.getConfig('dream.patterns.last_completion_ts')).toBeNull();
     } finally {
       await rig.cleanup();
     }
@@ -183,14 +245,16 @@ describe('E2E patterns — cooldown', () => {
   test('active cooldown → skipped cooldown_active', async () => {
     const rig = await setupRig();
     try {
+      const originalTs = new Date().toISOString();
       await rig.engine.setConfig('dream.patterns.cooldown_hours', '12');
-      await rig.engine.setConfig('dream.patterns.last_completion_ts', new Date().toISOString());
+      await rig.engine.setConfig('dream.patterns.last_completion_ts', originalTs);
       const result = await runPhasePatterns(rig.engine, {
         brainDir: rig.brainDir,
         dryRun: false,
       });
       expect(result.status).toBe('skipped');
       expect((result.details as { reason?: string }).reason).toBe('cooldown_active');
+      expect(await rig.engine.getConfig('dream.patterns.last_completion_ts')).toBe(originalTs);
     } finally {
       await rig.cleanup();
     }
@@ -231,4 +295,100 @@ describe('E2E patterns — cooldown', () => {
       await rig.cleanup();
     }
   }, 30_000);
+});
+
+describe('E2E patterns — executed outcomes re-arm cooldown', () => {
+  for (const outcome of ['failed', 'dead', 'cancelled'] as const) {
+    test(`${outcome} subagent outcome stamps last_completion_ts and next run skips cooldown_active`, async () => {
+      const rig = await setupRig();
+      try {
+        await seedReflections(rig.engine, 5);
+        await rig.engine.setConfig('dream.patterns.cooldown_hours', '12');
+        await withAnthropicKey(async () => {
+          const result = await runPhasePatterns(rig.engine, {
+            brainDir: rig.brainDir,
+            dryRun: false,
+            __testing: {
+              waitForCompletion: async () => jobWithStatus(outcome),
+            },
+          });
+          expect(result.status).toBe('ok');
+          expect((result.details as { child_outcome?: string }).child_outcome).toBe(outcome);
+        });
+
+        const stamped = await rig.engine.getConfig('dream.patterns.last_completion_ts');
+        expect(stamped).toBeString();
+
+        const second = await runPhasePatterns(rig.engine, {
+          brainDir: rig.brainDir,
+          dryRun: false,
+        });
+        expect(second.status).toBe('skipped');
+        expect((second.details as { reason?: string }).reason).toBe('cooldown_active');
+      } finally {
+        await rig.cleanup();
+      }
+    }, 30_000);
+  }
+
+  test('timeout outcome stamps last_completion_ts and next run skips cooldown_active', async () => {
+    const rig = await setupRig();
+    try {
+      await seedReflections(rig.engine, 5);
+      await rig.engine.setConfig('dream.patterns.cooldown_hours', '12');
+      await withAnthropicKey(async () => {
+        const result = await runPhasePatterns(rig.engine, {
+          brainDir: rig.brainDir,
+          dryRun: false,
+          __testing: {
+            waitForCompletion: async (_queue, jobId) => {
+              throw new TimeoutError(jobId, 35 * 60 * 1000);
+            },
+          },
+        });
+        expect(result.status).toBe('ok');
+        expect((result.details as { child_outcome?: string }).child_outcome).toBe('timeout');
+      });
+
+      const stamped = await rig.engine.getConfig('dream.patterns.last_completion_ts');
+      expect(stamped).toBeString();
+
+      const second = await runPhasePatterns(rig.engine, {
+        brainDir: rig.brainDir,
+        dryRun: false,
+      });
+      expect(second.status).toBe('skipped');
+      expect((second.details as { reason?: string }).reason).toBe('cooldown_active');
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('collectChildPutPageSlugs throw after subagent completion still stamps before failed result', async () => {
+    const rig = await setupRig();
+    try {
+      await seedReflections(rig.engine, 5);
+      await rig.engine.setConfig('dream.patterns.cooldown_hours', '12');
+
+      await withAnthropicKey(async () => {
+        const result = await runPhasePatterns(rig.engine, {
+          brainDir: rig.brainDir,
+          dryRun: false,
+          __testing: {
+            waitForCompletion: async () => jobWithStatus('completed'),
+            collectChildPutPageSlugs: async () => {
+              throw new Error('collectChildPutPageSlugs boom');
+            },
+          },
+        });
+        expect(result.status).toBe('fail');
+        expect(result.error?.message).toContain('collectChildPutPageSlugs boom');
+      });
+
+      const stamped = await rig.engine.getConfig('dream.patterns.last_completion_ts');
+      expect(stamped).toBeString();
+    } finally {
+      await rig.cleanup();
+    }
+  }, 120_000);
 });
