@@ -627,18 +627,26 @@ const get_page: Operation = {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
     include_deleted: { type: 'boolean', description: 'v0.26.5: surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows.' },
+    source_id: {
+      type: 'string',
+      description:
+        "2026-07-06: per-call source override, mirroring `query`'s field. Defaults to OperationContext.sourceId (CLI --source / GBRAIN_SOURCE / .gbrain-source dotfile). Pass '__all__' to look across every source for trusted local callers; for remote callers '__all__' spans only your granted sources. Fixes the gap where a scoped `query` call would hand back a page from a non-default source that a follow-up `get_page` on the same connection could never resolve, since get_page previously had no way to be told which source to look in.",
+    },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
-    // #1393: route BOTH the exact-match read and the fuzzy resolveSlugs through
-    // the canonical precedence ladder (federated array > scalar > nothing). The
-    // exact path previously used scalar `ctx.sourceId` only, so a remote client
-    // with a federated `allowedSources` grant (and no single ctx.sourceId) got
-    // an UNSCOPED exact lookup — a cross-source read of any page by slug. getPage
-    // now honors sourceIds[] (both engines), so the same scope closes both paths.
-    const sourceOpts = sourceScopeOpts(ctx);
+    // 2026-07-06: route the per-call `source_id` param through the same
+    // shared resolver `query` / `code_callers` / `search_by_image` already
+    // use (resolveRequestedScope) — trust+grant-checked, '__all__' handled,
+    // and fail-closed for remote callers requesting an out-of-grant source.
+    // Falls through to the #1393 ambient precedence ladder (federated array
+    // > scalar ctx.sourceId > nothing) when source_id is omitted, so this is
+    // additive: existing callers that never pass source_id see identical
+    // behavior to before.
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const sourceOpts = resolveRequestedScope(ctx, sourceIdParam);
     const fuzzyScope = sourceOpts;
 
     let page = await ctx.engine.getPage(slug, { includeDeleted, ...sourceOpts });
@@ -2600,7 +2608,13 @@ const resolve_slugs: Operation = {
     partial: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.resolveSlugs(p.partial as string);
+    // 2026-07-06: this passed NO scope at all (not even ambient ctx.sourceId),
+    // unlike get_page's internal fuzzy resolveSlugs call which does scope.
+    // A federated-read OAuth client bound to one or more sources could see
+    // slug matches from sources outside its grant. sourceScopeOpts(ctx) is
+    // the standard ambient precedence ladder (federated array > scalar >
+    // nothing) — matches every other unparented read op.
+    return ctx.engine.resolveSlugs(p.partial as string, sourceScopeOpts(ctx));
   },
   scope: 'read',
 };

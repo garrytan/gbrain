@@ -264,4 +264,114 @@ describe('v0.34.1 source-isolation regression (#861)', () => {
       expect(r.source_id).toBe('default');
     }
   });
+
+  describe('2026-07-06 get_page/resolve_slugs source-scoping fix', () => {
+    test('get_page with explicit source_id resolves a page in a non-default source', async () => {
+      // The reported bug: query() scoped to a non-default source hands back
+      // a real page, but get_page on that exact slug had no way to be told
+      // which source to look in and always missed. get_page now accepts a
+      // per-call source_id, same shape as query's.
+      const { operations } = await import('../../src/core/operations.ts');
+      const getPageOp = operations.find(o => o.name === 'get_page');
+      const ctx = {
+        engine,
+        config: { engine: 'pglite' as const },
+        logger: { info: () => {}, warn: () => {}, error: () => {} },
+        dryRun: false,
+        remote: false, // trusted local caller
+        sourceId: 'default', // ambient scope points at the OTHER source
+      };
+      const result = await getPageOp!.handler(ctx as any, { slug: 'people/bob', source_id: 'src-b' });
+      expect((result as any).slug).toBe('people/bob');
+      expect((result as any).source_id).toBe('src-b');
+    });
+
+    test('get_page with source_id="__all__" spans sources for a trusted local caller', async () => {
+      const { operations } = await import('../../src/core/operations.ts');
+      const getPageOp = operations.find(o => o.name === 'get_page');
+      const ctx = {
+        engine,
+        config: { engine: 'pglite' as const },
+        logger: { info: () => {}, warn: () => {}, error: () => {} },
+        dryRun: false,
+        remote: false,
+        sourceId: 'default',
+      };
+      const result = await getPageOp!.handler(ctx as any, { slug: 'people/bob', source_id: '__all__' });
+      expect((result as any).slug).toBe('people/bob');
+    });
+
+    test('get_page rejects an out-of-grant source_id for a federated remote caller', async () => {
+      // resolveRequestedScope's fail-closed contract: a remote caller with a
+      // federated grant that does NOT include the requested source_id gets
+      // permission_denied, not a silent scope-widen.
+      const { operations } = await import('../../src/core/operations.ts');
+      const getPageOp = operations.find(o => o.name === 'get_page');
+      const ctx = {
+        engine,
+        config: { engine: 'pglite' as const },
+        logger: { info: () => {}, warn: () => {}, error: () => {} },
+        dryRun: false,
+        remote: true,
+        auth: {
+          token: 'test', clientId: 'test', scopes: ['read'],
+          allowedSources: ['default'], // does NOT include src-b
+        },
+      };
+      await expect(
+        getPageOp!.handler(ctx as any, { slug: 'people/bob', source_id: 'src-b' }),
+      ).rejects.toThrow(/outside your granted sources/);
+    });
+
+    test('get_page with source_id omitted behaves exactly as before (ambient fallback)', async () => {
+      // Regression guard: the override path must not become the ONLY path.
+      // Omitting source_id still falls through to the #1393 ambient ladder.
+      const { operations } = await import('../../src/core/operations.ts');
+      const getPageOp = operations.find(o => o.name === 'get_page');
+      const ctx = {
+        engine,
+        config: { engine: 'pglite' as const },
+        logger: { info: () => {}, warn: () => {}, error: () => {} },
+        dryRun: false,
+        remote: false,
+        sourceId: 'default',
+      };
+      const result = await getPageOp!.handler(ctx as any, { slug: 'people/alice' });
+      expect((result as any).source_id).toBe('default');
+    });
+
+    test('resolve_slugs no longer leaks cross-source matches to a scoped caller', async () => {
+      // Pre-fix: resolve_slugs passed NO scope at all (not even ambient
+      // ctx.sourceId) to engine.resolveSlugs. A caller scoped to 'default'
+      // could see slug matches from src-b.
+      const { operations } = await import('../../src/core/operations.ts');
+      const resolveSlugsOp = operations.find(o => o.name === 'resolve_slugs');
+      const ctx = {
+        engine,
+        config: { engine: 'pglite' as const },
+        logger: { info: () => {}, warn: () => {}, error: () => {} },
+        dryRun: false,
+        remote: true,
+        sourceId: 'default',
+      };
+      // 'bob' only exists in src-b — a default-scoped caller must see nothing.
+      const result = await resolveSlugsOp!.handler(ctx as any, { partial: 'bob' });
+      expect(result as string[]).toEqual([]);
+    });
+
+    test('resolve_slugs still resolves matches within the caller\'s own scope', async () => {
+      const { operations } = await import('../../src/core/operations.ts');
+      const resolveSlugsOp = operations.find(o => o.name === 'resolve_slugs');
+      const ctx = {
+        engine,
+        config: { engine: 'pglite' as const },
+        logger: { info: () => {}, warn: () => {}, error: () => {} },
+        dryRun: false,
+        remote: true,
+        sourceId: 'src-b',
+      };
+      const result = await resolveSlugsOp!.handler(ctx as any, { partial: 'bob' });
+      expect(result as string[]).toContain('people/bob');
+    });
+  });
 });

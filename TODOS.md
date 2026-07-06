@@ -344,6 +344,27 @@ OUT of that PR. Codex outside-voice findings #5/#6. See plan + GSTACK REVIEW REP
   ownership/symlink protections. Orthogonal to the deletion bug; surfaced by Codex
   finding #6 during the #1881 review.
 
+## Structural guard for source-scoping completeness (v0.43+)
+
+Filed during `/plan-eng-review` of the `get_page`/`schema sync` fix plan
+(2026-07-06, `~/.claude/plans/gbrain-get-page-and-schema-sync-fixes.md`).
+
+- [ ] **P3 — Add a completeness test for source-scoping wiring on read ops.**
+  15 read-side ops have now been found missing proper `source_id`/
+  `sourceScopeOpts(ctx)` wiring across three separate passes: the v0.34.1
+  adversarial review (`takes_*`, 4 ops), the pre-existing "14 read-side ops
+  PR #861 didn't touch" TODO below (`get_page`, `get_tags`, `get_links`,
+  `get_backlinks`, `get_timeline`, `list_files`, `get_file`, + the 4 `takes_*`
+  already counted), and this fix's own `get_page`/`resolve_slugs` root cause.
+  Each was caught by a manual audit, not CI. Add
+  `test/schema-pack-source-scope-completeness.test.ts`: enumerate every
+  `scope: 'read'` operation in `src/core/operations.ts`, assert each one is
+  either on an explicit, documented allowlist (with a stated reason) or has
+  `source_id`/`sourceScopeOpts(ctx)` wired through its handler. New ops that
+  skip source-scoping fail CI instead of waiting for the next manual audit.
+  **Depends on:** this fix's PR + the "14 read-side ops" TODO below landing
+  first, so the allowlist starts from an accurate baseline.
+
 ## #1737 minion fair-scheduling follow-up (v0.43+)
 
 Filed during the #1737 wave (`/plan-eng-review` decision F7, codex outside-voice
