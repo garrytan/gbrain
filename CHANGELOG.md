@@ -66,6 +66,14 @@ All notable changes to MBrain will be documented in this file.
   operations stay callable (CLI unchanged; \`MBRAIN_MCP_TOOL_TIER=all\`
   restores MCP visibility).
 
+- **Refuted memories now confess what they touched.** The new
+  `trace_memory_contamination` operation (and a daily-report section) traces a
+  refuted Memory Inbox candidate to the canonical pages it reached, the
+  retrieval traces that consumed those pages afterwards, and one hop of
+  downstream writes — with concrete re-verification actions per page. Trust
+  maintenance stops at "this was wrong" no longer; it answers "and here is
+  everything it contaminated."
+
 ### Fixed
 
 - **The daily report's canonical-write debt is now truthful.** Applying an
