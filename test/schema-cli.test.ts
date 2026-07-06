@@ -63,6 +63,12 @@ describe('gbrain schema CLI (Phase C)', () => {
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('Bundled packs:');
     expect(r.stdout).toContain('gbrain-base');
+    expect(r.stdout).toContain('gbrain-recommended');
+    expect(r.stdout).toContain('gbrain-creator');
+    expect(r.stdout).toContain('gbrain-investor');
+    expect(r.stdout).toContain('gbrain-engineer');
+    expect(r.stdout).toContain('gbrain-everything');
+    expect(r.stdout).toContain('gbrain-base-v2');
   });
 
   test('schema show gbrain-base prints manifest details', () => {
@@ -89,6 +95,14 @@ describe('gbrain schema CLI (Phase C)', () => {
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('✓');
     expect(r.stdout).toContain('valid manifest');
+  });
+
+  test('schema show gbrain-base-v2 prints manifest details', () => {
+    const r = gbrain(['schema', 'show', 'gbrain-base-v2']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('gbrain-base-v2 v1.0.0');
+    expect(r.stdout).toContain('Page types');
+    expect(r.stdout).toContain('project :: concept');
   });
 
   test('schema active reports default resolution', () => {

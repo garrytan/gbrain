@@ -67,6 +67,19 @@ export interface LoadActivePackInput {
  */
 export type PackLocator = (name: string) => string | null;
 
+export const BUNDLED_SCHEMA_PACK_NAMES = [
+  'gbrain-base',
+  'gbrain-recommended',
+  'gbrain-creator',
+  'gbrain-investor',
+  'gbrain-engineer',
+  'gbrain-everything',
+  // v0.42 type-unification: 15-type canonical successor to gbrain-base.
+  // Ships as install default (Lane E T17) + via gbrain onboard pack
+  // upgrade flow (the unify-types Minion handler).
+  'gbrain-base-v2',
+] as const;
+
 let _packLocator: PackLocator = defaultPackLocator;
 
 /**
@@ -92,37 +105,23 @@ export function _resetPackLocatorForTests(): void {
  * throwing UnknownPackError with a paste-ready install hint.
  */
 function defaultPackLocator(name: string): string | null {
-  // v0.39 T8 — bundled packs registry. gbrain-base + gbrain-recommended
-  // ship in src/core/schema-pack/base/. Add a new entry here to bundle
-  // additional canonical packs.
-  //
-  // v0.41 T4 — lens packs join the bundle: creator (atoms + concepts +
-  // extract_atoms/synthesize_concepts phases), investor (theses + bet
-  // resolution + 3 calibration domains), engineer (gstack-learnings bridge
-  // + 3 calibration domains), everything (meta-pack stacking all three
-  // via extends + borrow_from). Each ships as a real YAML at base/<name>.yaml.
-  const BUNDLED: ReadonlyArray<string> = [
-    'gbrain-base',
-    'gbrain-recommended',
-    'gbrain-creator',
-    'gbrain-investor',
-    'gbrain-engineer',
-    'gbrain-everything',
-    // v0.42 type-unification: 15-type canonical successor to gbrain-base.
-    // Ships as install default (Lane E T17) + via gbrain onboard pack
-    // upgrade flow (the unify-types Minion handler).
-    'gbrain-base-v2',
-  ];
-  if (BUNDLED.includes(name)) {
-    // Resolve bundled YAML relative to this source file. Works in both
-    // direct-bun execution and bun --compile binaries.
+  if ((BUNDLED_SCHEMA_PACK_NAMES as readonly string[]).includes(name)) {
+    // Resolve bundled YAML relative to this source file. For bun --compile
+    // binaries, callers can point GBRAIN_REPO_PATH at the source checkout
+    // that carries the bundled schema-pack assets.
     const here = dirname(fileURLToPath(import.meta.url));
-    const bundledPath = join(here, 'base', `${name}.yaml`);
-    if (existsSync(bundledPath)) return bundledPath;
-    // Repo-root fallback for tests running from a worktree where the
-    // module path doesn't resolve to the source tree.
-    const repoRootFallback = join(here, '..', '..', '..', 'src', 'core', 'schema-pack', 'base', `${name}.yaml`);
-    if (existsSync(repoRootFallback)) return repoRootFallback;
+    const repoRoots = [
+      process.env.GBRAIN_REPO_PATH,
+      process.cwd(),
+    ].filter((v): v is string => Boolean(v));
+    const candidates = [
+      join(here, 'base', `${name}.yaml`),
+      join(here, '..', '..', '..', 'src', 'core', 'schema-pack', 'base', `${name}.yaml`),
+      ...repoRoots.map((root) => join(root, 'src', 'core', 'schema-pack', 'base', `${name}.yaml`)),
+    ];
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) return candidate;
+    }
     return null;
   }
   // User-installed pack at ~/.gbrain/schema-packs/<name>/pack.{yaml,json}
@@ -133,6 +132,10 @@ function defaultPackLocator(name: string): string | null {
     if (existsSync(candidate)) return candidate;
   }
   return null;
+}
+
+export function locateSchemaPackFile(name: string): string | null {
+  return _packLocator(name);
 }
 
 /**

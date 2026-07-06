@@ -44,6 +44,8 @@ import {
   updateTypeOnPack,
   __setPackLocatorForTests,
   _resetPackLocatorForTests,
+  BUNDLED_SCHEMA_PACK_NAMES,
+  locateSchemaPackFile,
 } from '../core/schema-pack/index.ts';
 import type { SchemaPackManifest, PackPrimitive } from '../core/schema-pack/manifest-v1.ts';
 import { PACK_PRIMITIVES } from '../core/schema-pack/manifest-v1.ts';
@@ -179,7 +181,6 @@ async function runActive(_args: string[]): Promise<void> {
 }
 
 function runList(_args: string[]): void {
-  const bundled = ['gbrain-base', 'gbrain-recommended'];
   const installedDir = gbrainPath('schema-packs');
   const installed: string[] = [];
   if (existsSync(installedDir)) {
@@ -194,7 +195,7 @@ function runList(_args: string[]): void {
     }
   }
   console.log('Bundled packs:');
-  for (const name of bundled) console.log(`  ${name}`);
+  for (const name of BUNDLED_SCHEMA_PACK_NAMES) console.log(`  ${name}`);
   if (installed.length > 0) {
     console.log('\nInstalled packs (~/.gbrain/schema-packs/):');
     for (const name of installed) console.log(`  ${name}`);
@@ -366,24 +367,7 @@ function runUse(args: string[]): void {
 }
 
 function packPathByName(name: string): string | null {
-  if (name === 'gbrain-base') {
-    // Resolve bundled YAML — try a few locations.
-    const here = dirname(new URL(import.meta.url).pathname);
-    const candidates = [
-      join(here, '..', 'core', 'schema-pack', 'base', 'gbrain-base.yaml'),
-      join(here, '..', '..', 'src', 'core', 'schema-pack', 'base', 'gbrain-base.yaml'),
-    ];
-    for (const c of candidates) {
-      if (existsSync(c)) return c;
-    }
-    return null;
-  }
-  const baseDir = gbrainPath('schema-packs', name);
-  for (const c of ['pack.yaml', 'pack.yml', 'pack.json']) {
-    const candidate = join(baseDir, c);
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
+  return locateSchemaPackFile(name);
 }
 
 // Test seam — let unit tests inject the locator if needed.
