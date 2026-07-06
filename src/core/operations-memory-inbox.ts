@@ -474,6 +474,18 @@ function targetObjectTypeForPatchTarget(
   }
 }
 
+function isCanonicalHandoffEligibleCandidate(candidate: MemoryCandidateEntry): boolean {
+  switch (candidate.target_object_type) {
+    case 'curated_note':
+    case 'procedure':
+    case 'profile_memory':
+    case 'personal_episode':
+      return typeof candidate.target_object_id === 'string' && candidate.target_object_id.trim().length > 0;
+    default:
+      return false;
+  }
+}
+
 async function assertActiveReadWriteMemorySession(
   deps: { OperationError: OperationErrorCtor },
   engine: BrainEngine,
@@ -2177,6 +2189,25 @@ export function createMemoryInboxOperations(
           reviewed_at: reviewedAt,
           review_reason: reviewReason ?? 'Applied approved patch candidate.',
         });
+        let canonicalHandoff: CanonicalHandoffEntry | null = null;
+        let canonicalHandoffError: string | null = null;
+        if (isCanonicalHandoffEligibleCandidate(promoted)) {
+          try {
+            const recorded = await recordCanonicalHandoff(tx, {
+              candidate_id: promoted.id,
+              reviewed_at: reviewedAt,
+              review_reason: reviewReason ?? 'Applied approved patch candidate.',
+            });
+            canonicalHandoff = await completeCanonicalHandoff(tx, {
+              id: recorded.handoff.id,
+              completed_at: reviewedAt,
+              completion_kind: 'patch_applied',
+              completion_ref: event.id,
+            });
+          } catch (handoffError) {
+            canonicalHandoffError = handoffError instanceof Error ? handoffError.message : String(handoffError);
+          }
+        }
         return {
           kind: 'applied' as const,
           candidate: promoted,
@@ -2184,6 +2215,8 @@ export function createMemoryInboxOperations(
           previous_target_snapshot_hash: currentTargetSnapshotHash,
           current_target_snapshot_hash: finalPage.content_hash,
           ledger_event_id: event.id,
+          canonical_handoff: canonicalHandoff,
+          canonical_handoff_error: canonicalHandoffError,
         };
       });
 
@@ -2204,6 +2237,8 @@ export function createMemoryInboxOperations(
         previous_target_snapshot_hash: outcome.previous_target_snapshot_hash,
         current_target_snapshot_hash: outcome.current_target_snapshot_hash,
         ledger_event_id: outcome.ledger_event_id,
+        canonical_handoff: outcome.canonical_handoff ?? null,
+        ...(outcome.canonical_handoff_error ? { canonical_handoff_error: outcome.canonical_handoff_error } : {}),
       };
     },
     cliHints: { name: 'apply-memory-patch-candidate' },
