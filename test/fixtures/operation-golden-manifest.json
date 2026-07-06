@@ -2782,7 +2782,7 @@
     },
     {
       "name": "build_context_atlas",
-      "description": "Build or rebuild the persisted workspace atlas registry entry. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
+      "description": "Deprecated legacy context-atlas operation; use context maps and graph frontier planning.",
       "mutating": true,
       "capability_required": [],
       "capability_visibility": {
@@ -2809,51 +2809,50 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [
           "canonical_write"
         ],
         "capability_classification": "explicit",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -6726,7 +6725,7 @@
     },
     {
       "name": "get_atlas_orientation_bundle",
-      "description": "Render a compact atlas bundle from atlas report and atlas orientation card. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
+      "description": "Deprecated legacy context-atlas operation; use context maps and graph frontier planning.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -6785,49 +6784,48 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -6838,7 +6836,7 @@
     },
     {
       "name": "get_atlas_orientation_card",
-      "description": "Render a compact orientation card from atlas selection and the workspace corpus card. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
+      "description": "Deprecated legacy context-atlas operation; use context maps and graph frontier planning.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -6897,49 +6895,48 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -7226,7 +7223,7 @@
     },
     {
       "name": "get_context_atlas_entry",
-      "description": "Get one persisted atlas registry entry by id. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
+      "description": "Deprecated legacy context-atlas operation; use context maps and graph frontier planning.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -7255,49 +7252,48 @@
         ]
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -7308,7 +7304,7 @@
     },
     {
       "name": "get_context_atlas_overview",
-      "description": "Render a compact overview artifact for a persisted atlas entry. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
+      "description": "Deprecated legacy context-atlas operation; use context maps and graph frontier planning.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -7367,49 +7363,48 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -7420,7 +7415,7 @@
     },
     {
       "name": "get_context_atlas_report",
-      "description": "Render a compact human-readable report for a persisted atlas entry. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
+      "description": "Deprecated legacy context-atlas operation; use context maps and graph frontier planning.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -7479,49 +7474,48 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -11421,7 +11415,7 @@
     },
     {
       "name": "list_context_atlas_entries",
-      "description": "List persisted atlas registry entries. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
+      "description": "Deprecated legacy context-atlas operation; use context maps and graph frontier planning.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -11464,49 +11458,48 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -22969,7 +22962,7 @@
     },
     {
       "name": "select_context_atlas_entry",
-      "description": "Select the best persisted atlas registry entry for a scope. Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.",
+      "description": "Deprecated legacy context-atlas operation; use context maps and graph frontier planning.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -23020,49 +23013,48 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },

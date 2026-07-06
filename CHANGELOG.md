@@ -22,6 +22,14 @@ All notable changes to MBrain will be documented in this file.
   a cross-engine parity decision (154 methods currently backlogged, counted
   honestly instead of assumed covered).
 
+### Changed
+
+- **The deprecated context-atlas family stops taxing every session.** All 8
+  legacy atlas operations are demoted to the admin tier (hidden from the
+  default agent catalog; context maps and graph frontier planning are the
+  supported orientation surfaces) and their descriptions collapse to one
+  deprecation line, freeing about 2KB of tools/list frame headroom.
+
 ### Fixed
 
 - **The daily report's canonical-write debt is now truthful.** Applying an
