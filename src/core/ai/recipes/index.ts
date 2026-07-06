@@ -21,6 +21,7 @@ import { minimax } from './minimax.ts';
 import { dashscope } from './dashscope.ts';
 import { zhipu } from './zhipu.ts';
 import { azureOpenAI } from './azure-openai.ts';
+import { bedrock } from './bedrock.ts';
 import { zeroentropyai } from './zeroentropyai.ts';
 import { llamaServerReranker } from './llama-server-reranker.ts';
 
@@ -41,6 +42,7 @@ const ALL: Recipe[] = [
   dashscope,
   zhipu,
   azureOpenAI,
+  bedrock,
   zeroentropyai,
 ];
 
