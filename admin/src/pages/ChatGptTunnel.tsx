@@ -129,7 +129,7 @@ export function ChatGptTunnelPanel() {
           <div className="tunnel-scope-lock">
             <span>权限锁</span>
             <b>READ ONLY</b>
-            <p>只发布 search、query、get_page 等读取工具；写入与管理工具不会出现在 ChatGPT 工具列表中。</p>
+            <p>只开放 search、query、list_pages、get_page、get_chunks、recall、get_brain_identity；写入、删除与管理工具不会出现在 ChatGPT 工具列表中。</p>
           </div>
           <button className="pm-primary tunnel-wide-button" disabled={busy !== null || !tunnelId} onClick={configure}>
             {busy === 'setup' ? '正在生成配置…' : status?.profileExists ? '重新生成并轮换凭证' : '生成安全配置'}

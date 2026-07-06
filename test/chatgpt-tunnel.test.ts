@@ -6,7 +6,9 @@ import {
 } from '../src/core/chatgpt-tunnel.ts';
 import { legacyAccessTokenScopes } from '../src/core/oauth-provider.ts';
 import {
+  CHATGPT_TUNNEL_READ_ONLY_TOOLS,
   buildMcpProtectedResourceMetadata,
+  filterMcpOperationsForAuth,
   filterMcpOperationsByScopes,
   isLoopbackAddress,
 } from '../src/commands/serve-http.ts';
@@ -27,6 +29,28 @@ describe('ChatGPT Secure MCP Tunnel', () => {
     ];
     expect(filterMcpOperationsByScopes(operations, ['read']).map(op => op.name)).toEqual(['search']);
     expect(filterMcpOperationsByScopes(operations, ['write']).map(op => op.name)).toEqual(['search', 'put_page']);
+  });
+
+  test('ChatGPT tunnel only exposes the curated read-only browsing surface', () => {
+    const operations = [
+      { name: 'get_brain_identity', scope: 'read' },
+      { name: 'search', scope: 'read' },
+      { name: 'query', scope: 'read' },
+      { name: 'list_pages', scope: 'read' },
+      { name: 'get_page', scope: 'read' },
+      { name: 'get_chunks', scope: 'read' },
+      { name: 'recall', scope: 'read' },
+      { name: 'get_recent_salience', scope: 'read' },
+      { name: 'put_page', scope: 'write' },
+      { name: 'delete_page', scope: 'write' },
+      { name: 'schema_apply', scope: 'admin' },
+    ];
+    const visible = filterMcpOperationsForAuth(operations, {
+      clientId: 'chatgpt-secure-tunnel',
+      clientName: 'chatgpt-secure-tunnel',
+      scopes: ['read'],
+    }).map(op => op.name);
+    expect(visible).toEqual([...CHATGPT_TUNNEL_READ_ONLY_TOOLS]);
   });
 
   test('tunnel administration is restricted to loopback sessions', () => {

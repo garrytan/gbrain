@@ -67,6 +67,7 @@ import {
 } from './admin-console.ts';
 import {
   buildChatGptTunnelProfile,
+  CHATGPT_TUNNEL_TOKEN_NAME,
   chatGptTunnelPaths,
   defaultTunnelClientBinary,
   detectTunnelHttpProxy,
@@ -407,6 +408,31 @@ export function filterMcpOperationsByScopes<T extends { scope?: string }>(
   scopes: readonly string[],
 ): T[] {
   return list.filter(op => hasScope(scopes, op.scope || 'read'));
+}
+
+export const CHATGPT_TUNNEL_READ_ONLY_TOOLS = Object.freeze([
+  'get_brain_identity',
+  'search',
+  'query',
+  'list_pages',
+  'get_page',
+  'get_chunks',
+  'recall',
+] as const);
+
+const CHATGPT_TUNNEL_READ_ONLY_TOOL_SET = new Set<string>(CHATGPT_TUNNEL_READ_ONLY_TOOLS);
+
+export function isChatGptTunnelClient(authInfo: Pick<AuthInfo, 'clientId' | 'clientName'>): boolean {
+  return authInfo.clientId === CHATGPT_TUNNEL_TOKEN_NAME || authInfo.clientName === CHATGPT_TUNNEL_TOKEN_NAME;
+}
+
+export function filterMcpOperationsForAuth<T extends { name: string; scope?: string }>(
+  list: readonly T[],
+  authInfo: Pick<AuthInfo, 'clientId' | 'clientName' | 'scopes'>,
+): T[] {
+  const scoped = filterMcpOperationsByScopes(list, authInfo.scopes);
+  if (!isChatGptTunnelClient(authInfo)) return scoped;
+  return scoped.filter(op => CHATGPT_TUNNEL_READ_ONLY_TOOL_SET.has(op.name));
 }
 
 export function isLoopbackAddress(address: string | undefined): boolean {
@@ -1978,13 +2004,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     try {
       if (runtimeApiKey) writePrivateFile(paths.runtimeKeyFile, runtimeApiKey);
       writePrivateFile(paths.authorizationHeaderFile, `Bearer ${token}`);
-      await sql`UPDATE access_tokens SET revoked_at = now() WHERE name = ${'chatgpt-secure-tunnel'} AND revoked_at IS NULL`;
+      await sql`UPDATE access_tokens SET revoked_at = now() WHERE name = ${CHATGPT_TUNNEL_TOKEN_NAME} AND revoked_at IS NULL`;
       await executeRawJsonb(
         engine,
         `INSERT INTO access_tokens (id, name, token_hash, permissions)
          VALUES ($1, $2, $3, $4::jsonb)`,
-        [id, 'chatgpt-secure-tunnel', hash],
-        [{ takes_holders: ['world'], scopes: ['read', 'write'] }],
+        [id, CHATGPT_TUNNEL_TOKEN_NAME, hash],
+        [{ takes_holders: ['world'], scopes: ['read'] }],
       );
       inserted = true;
       const profile = buildChatGptTunnelProfile({
@@ -2000,7 +2026,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         profileFile: paths.profileFile,
         tunnelId,
         localMcpUrl: `http://127.0.0.1:${port}/mcp`,
-        scopes: ['read', 'write'],
+        scopes: ['read'],
+        allowedTools: [...CHATGPT_TUNNEL_READ_ONLY_TOOLS],
       });
     } catch (e) {
       if (inserted) {
@@ -2270,7 +2297,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         timestamp: new Date().toISOString(),
       });
       return {
-        tools: filterMcpOperationsByScopes(mcpOperations, authInfo.scopes)
+        tools: filterMcpOperationsForAuth(mcpOperations, authInfo)
           .map(op => ({
           name: op.name,
           description: op.description,
@@ -2292,6 +2319,29 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // v0.28.10: persist unknown-op attempts. Operators investigating
         // misbehaving agents need to see the full attempt log, not just
         // valid-op success/error.
+        const latency = Date.now() - startTime;
+        try {
+          await executeRawJsonb(
+            engine,
+            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
+             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+            [authInfo.clientId, agentName, name, latency, 'error', `unknown_operation: ${name}`],
+            [null],
+          );
+        } catch { /* best effort */ }
+        broadcastEvent({
+          agent: agentName,
+          operation: name,
+          scopes: authInfo.scopes.join(','),
+          latency_ms: latency,
+          status: 'error',
+          error: { code: 'unknown_operation', message: `Unknown: ${name}` },
+          timestamp: new Date().toISOString(),
+        });
+        return { content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_operation', message: `Unknown: ${name}` }) }], isError: true };
+      }
+
+      if (isChatGptTunnelClient(authInfo) && !CHATGPT_TUNNEL_READ_ONLY_TOOL_SET.has(name)) {
         const latency = Date.now() - startTime;
         try {
           await executeRawJsonb(

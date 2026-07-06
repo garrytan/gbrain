@@ -30,7 +30,7 @@ export interface IntegrationResult {
 
 const CLIENT_META: Record<IntegrationClient, { name: string; path: () => string | null; automatic: boolean }> = {
   codebuddy: { name: 'CodeBuddy', path: () => join(homedir(), '.codebuddy', 'mcp.json'), automatic: true },
-  workbuddy: { name: 'Workbuddy', path: () => join(homedir(), '.workbuddy', '.mcp.json'), automatic: true },
+  workbuddy: { name: 'Workbuddy', path: () => join(homedir(), '.workbuddy', 'mcp.json'), automatic: true },
   cursor: { name: 'Cursor', path: () => join(homedir(), '.cursor', 'mcp.json'), automatic: true },
   claude: { name: 'Claude', path: () => null, automatic: false },
   codex: { name: 'Codex', path: () => join(homedir(), '.codex', 'config.toml'), automatic: true },
@@ -128,6 +128,10 @@ export function listIntegrations(): IntegrationInfo[] {
     const path = meta.path();
     return { id, name: meta.name, path, automatic: meta.automatic, configured: isConfigured(id, path) };
   });
+}
+
+export function integrationConfigPath(client: IntegrationClient): string | null {
+  return CLIENT_META[client].path();
 }
 
 async function createApiKey(sidecar: SidecarManager, name: string): Promise<string> {

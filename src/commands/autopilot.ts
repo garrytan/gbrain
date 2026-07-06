@@ -502,6 +502,15 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         for (const field of Object.values(HOSTED_EMBED_KEY_CONFIG)) {
           embedKeyCfg[field] = await engine.getConfig(field);
         }
+        let chatModel: string | undefined;
+        let hasChatApiKey = false;
+        try {
+          const gw = await import('../core/ai/gateway.ts');
+          chatModel = gw.getChatModel();
+          hasChatApiKey = gw.isAvailable('chat', chatModel);
+        } catch {
+          chatModel = (await engine.getConfig('chat_model')) ?? undefined;
+        }
         const ctx = {
           repoPath,
           embeddingModel,
@@ -509,7 +518,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             const cfgField = HOSTED_EMBED_KEY_CONFIG[envVar];
             return !!(process.env[envVar] || (cfgField ? embedKeyCfg[cfgField] : undefined));
           }),
-          hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || await engine.getConfig('anthropic_api_key')),
+          chatModel,
+          hasChatApiKey,
         };
         // v0.41.18.0 (A5 + A19 + A22, T15): consult onboard recommendations
         // ALONGSIDE doctor's brain-score recommendations. Onboard's 4 new

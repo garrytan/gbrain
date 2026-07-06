@@ -48,7 +48,7 @@ Admin Console 会自动：
 
 ## 权限边界
 
-- ChatGPT 只会发现 `search`、`query`、`get_page` 等读取工具。
+- ChatGPT 默认只会发现 `get_brain_identity`、`search`、`query`、`list_pages`、`get_page`、`get_chunks`、`recall` 这些只读工具。
 - `write`、`admin` 工具不会出现在 `tools/list` 中。
 - 即使直接构造写操作，PMBrain 仍会返回 `insufficient_scope`。
 - 历史 API Key 未显式配置 scopes 时继续保持原有权限，现有 CodeBuddy、Cursor、Claude Code 接入不受影响。

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { writeCodexIntegration, writeJsonIntegration } from '../src/main/integration-manager.js';
+import { integrationConfigPath, writeCodexIntegration, writeJsonIntegration } from '../src/main/integration-manager.js';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -16,6 +16,12 @@ function tempFile(name: string): string {
 }
 
 describe('desktop integration config merging', () => {
+  test('uses Workbuddy mcp.json path', () => {
+    const path = integrationConfigPath('workbuddy');
+    expect(path).toEndWith(join('.workbuddy', 'mcp.json'));
+    expect(path).not.toEndWith(join('.workbuddy', '.mcp.json'));
+  });
+
   test('preserves unrelated JSON MCP servers', () => {
     const path = tempFile('mcp.json');
     writeFileSync(path, JSON.stringify({ mcpServers: { existing: { command: 'keep-me' } }, theme: 'dark' }));

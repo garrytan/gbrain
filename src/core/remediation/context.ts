@@ -62,11 +62,22 @@ export async function loadRecommendationContext(
     const fromCfg = cfgField ? (fileCfg as Record<string, unknown> | null)?.[cfgField] : undefined;
     return !!(process.env[envVar] || fromCfg);
   });
+  let chatModel: string | undefined;
+  let hasChatApiKey = false;
+  try {
+    const gw = await import('../ai/gateway.ts');
+    chatModel = gw.getChatModel();
+    hasChatApiKey = gw.isAvailable('chat', chatModel);
+  } catch {
+    chatModel = (fileCfg as { chat_model?: string } | null)?.chat_model;
+  }
+
   return {
     repoPath: repoPath ?? undefined,
     embeddingModel,
     embeddingDimensions,
     embeddingProviderConfigured: embeddingConfigured,
-    hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || fileCfg?.anthropic_api_key),
+    chatModel,
+    hasChatApiKey,
   };
 }

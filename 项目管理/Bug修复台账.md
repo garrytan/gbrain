@@ -1,5 +1,14 @@
 # Bug 修复台账
 
+## 2026-07-06 Workbuddy MCP 写入路径修复
+
+- 时间：2026-07-06 10:10:56
+- 版本号：1.0.72；桌面端版本号：1.0.41
+- 标题：修复桌面端 Workbuddy MCP 配置写入到错误文件的问题
+- 描述：桌面端 MCP 接入将 Workbuddy 配置写入 `C:\Users\zhengyunhui\.workbuddy\.mcp.json`，但 Workbuddy 实际读取 `C:\Users\zhengyunhui\.workbuddy\mcp.json`，导致界面显示已写入而客户端配置仍为空。
+- 是否完成：是
+- 最终结果：已将桌面端 Workbuddy 自动写入路径改为 `C:\Users\zhengyunhui\.workbuddy\mcp.json`，补充路径回归测试；本机空 `mcp.json` 已备份并恢复为包含 `connector-proxy` 与 `pmbrain` 的有效配置；桌面端测试、类型检查、打包和打包后 sidecar 健康检查均通过。
+
 ## 2026-07-02 Dream 默认模型同步修复完成补记
 
 - 时间：2026-07-02 09:50:00
