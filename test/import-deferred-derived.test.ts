@@ -9,6 +9,7 @@ import {
 import { operations } from '../src/core/operations.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { buildStructuralContextMapEntry } from '../src/core/services/context-map-service.ts';
+import { NOTE_SECTION_EXTRACTOR_VERSION } from '../src/core/services/note-section-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from '../src/core/services/note-manifest-service.ts';
 
 async function withEngine(run: (engine: SQLiteEngine) => Promise<void>): Promise<void> {
@@ -210,7 +211,7 @@ test('deferred unchanged import with stale derived metadata enqueues durable ref
       'note_sections',
     )).toMatchObject({
       status: 'ready',
-      extractor_version: 'phase2-sections-v1',
+      extractor_version: NOTE_SECTION_EXTRACTOR_VERSION,
       derived_schema_version: 'page-derived-v1',
     });
 

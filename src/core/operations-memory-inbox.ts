@@ -2530,49 +2530,40 @@ export function createMemoryInboxOperations(
 
   const remember: Operation = {
     name: 'remember',
-    description: 'One-call governed memory write: routes the signal, reconciles it against existing memory, creates the Memory Inbox candidate, verifies, promotes, and materializes a page-backed fact with a completed canonical handoff — stopping honestly at the first gate that defers and returning a truthful receipt either way.',
+    description: 'One-call governed memory write with a truthful receipt: route, reconcile, verify, promote, write the page, complete the canonical handoff.',
     params: {
       content: { type: 'string', required: true, description: 'Durable fact or claim to remember' },
-      source_ref: { type: 'string', description: 'Single provenance string' },
       source_refs: {
-        type: 'array',
+        type: ['array', 'string'],
         items: { type: 'string' },
-        description: 'Provenance strings for the claim (at least one of source_ref/source_refs is required)',
+        description: 'Provenance strings',
       },
       evidence_kind: {
         type: 'string',
         required: true,
-        description: 'Evidence quality and writeback safety category',
+        description: 'Evidence quality category',
         enum: [...MEMORY_WRITEBACK_EVIDENCE_KINDS],
       },
-      target_slug: { type: 'string', description: 'Canonical page slug to write into (existing or new)' },
+      target_slug: { type: 'string', description: 'Canonical page slug target' },
       target_object_type: {
         type: 'string',
-        description: 'Canonical target type (default: curated_note when target_slug is provided)',
+        description: 'Target type (default: curated_note)',
         enum: [...REMEMBER_TARGET_OBJECT_TYPES],
       },
       verification_status: {
         type: 'string',
-        description: 'Verification outcome; without it the write stops at needs_review instead of promoting.',
+        description: 'Verification outcome; omitted stops at needs_review.',
         enum: [...MEMORY_CANDIDATE_VERIFICATION_STATUS_VALUES],
       },
       verification_method: {
         type: 'string',
-        description: 'How the claim was checked against ground truth.',
+        description: 'How the claim was checked.',
         enum: [...MEMORY_CANDIDATE_VERIFICATION_METHODS],
       },
-      verification_evidence: { type: 'string', description: 'What was checked and what the check showed.' },
-      verification_source_refs: {
-        type: 'array',
-        items: { type: 'string' },
-        description: 'Optional provenance strings for the verification itself.',
-      },
-      verified_at: { type: 'string', description: 'Optional ISO timestamp for verification metadata' },
-      scope_id: { type: 'string', description: `Memory scope id (default: ${deps.defaultScopeId})` },
-      sensitivity: { type: 'string', description: 'Optional sensitivity override (work, personal, secret)' },
-      candidate_type: { type: 'string', description: 'Optional memory candidate type override (default: fact)' },
-      actor: { type: 'string', description: 'Actor recorded on the governed write (default: mbrain:remember)' },
-      interaction_id: { type: 'string', description: 'Optional retrieval trace id for lifecycle event attribution' },
+      verification_evidence: { type: 'string', description: 'What was checked and shown.' },
+      scope_id: { type: 'string', description: 'Memory scope id' },
+      sensitivity: { type: 'string', description: 'Sensitivity (work, personal, secret)' },
+      actor: { type: 'string', description: 'Actor label (default: mbrain:remember)' },
     },
     mutating: true,
     handler: async (ctx, p) => {
@@ -2594,9 +2585,7 @@ export function createMemoryInboxOperations(
         ?? (targetSlug ? 'curated_note' : undefined);
       const scopeId = normalizeOptionalNonEmptyString(deps, 'scope_id', p.scope_id);
       const sensitivity = normalizeOptionalNonEmptyString(deps, 'sensitivity', p.sensitivity);
-      const candidateType = normalizeOptionalNonEmptyString(deps, 'candidate_type', p.candidate_type);
       const actor = normalizeOptionalNonEmptyString(deps, 'actor', p.actor) ?? 'mbrain:remember';
-      const interactionId = normalizeOptionalNonEmptyString(deps, 'interaction_id', p.interaction_id);
 
       if (ctx.dryRun) {
         return {
@@ -2611,12 +2600,10 @@ export function createMemoryInboxOperations(
         content,
         source_refs: sourceRefs,
         evidence_kind: evidenceKind,
-        ...(candidateType ? { candidate_type: candidateType as never } : {}),
         ...(targetObjectType ? { target_object_type: targetObjectType } : {}),
         ...(targetSlug ? { target_object_id: targetSlug } : {}),
         ...(scopeId ? { scope_id: scopeId } : {}),
         ...(sensitivity ? { sensitivity: sensitivity as never } : {}),
-        ...(interactionId ? { interaction_id: interactionId } : {}),
       });
       const routeSummary = {
         decision: routed.decision,
@@ -2637,7 +2624,7 @@ export function createMemoryInboxOperations(
 
       if (routed.decision !== 'create_candidate' || !routed.candidate_input) {
         const fallback = await create_memory_candidate_entry.handler(ctx, {
-          candidate_type: candidateType ?? 'fact',
+          candidate_type: 'fact',
           proposed_content: content,
           source_refs: sourceRefs,
           ...(targetObjectType ? { target_object_type: targetObjectType } : {}),
@@ -2645,7 +2632,6 @@ export function createMemoryInboxOperations(
           ...(scopeId ? { scope_id: scopeId } : {}),
           status: 'captured',
           review_reason: `remember route ${routed.decision}: ${routed.missing_requirements.join(',') || routed.reasons.join(',') || 'deferred'}`,
-          ...(interactionId ? { interaction_id: interactionId } : {}),
         }) as MemoryCandidateEntry;
         return {
           status: 'needs_review',
@@ -2719,7 +2705,6 @@ export function createMemoryInboxOperations(
         ...(candidateInput.target_object_type ? { target_object_type: candidateInput.target_object_type } : {}),
         ...(candidateInput.target_object_id ? { target_object_id: candidateInput.target_object_id } : {}),
         ...(candidateInput.review_reason ? { review_reason: candidateInput.review_reason } : {}),
-        ...(interactionId ? { interaction_id: interactionId } : {}),
       }) as MemoryCandidateEntry;
 
       const finalized = await finalize_memory_candidate.handler(ctx, {
@@ -2727,12 +2712,9 @@ export function createMemoryInboxOperations(
         ...(typeof p.verification_status === 'string' ? { verification_status: p.verification_status } : {}),
         ...(typeof p.verification_method === 'string' ? { verification_method: p.verification_method } : {}),
         ...(typeof p.verification_evidence === 'string' ? { verification_evidence: p.verification_evidence } : {}),
-        ...(p.verification_source_refs != null ? { verification_source_refs: p.verification_source_refs } : {}),
-        ...(typeof p.verified_at === 'string' ? { verified_at: p.verified_at } : {}),
         review_reason: 'remember one-call governed write',
         retry_on_stale: true,
         apply_patch: false,
-        ...(interactionId ? { interaction_id: interactionId } : {}),
       }) as { status: string; candidate: MemoryCandidateEntry; ledger: FinalizeMemoryCandidateStep[] };
 
       const candidate = finalized.candidate;
@@ -2778,7 +2760,6 @@ export function createMemoryInboxOperations(
       const recorded = await recordCanonicalHandoff(ctx.engine, {
         candidate_id: candidate.id,
         review_reason: 'remember one-call governed write',
-        ...(interactionId ? { interaction_id: interactionId } : {}),
       });
       const realmId = candidate.sensitivity === 'personal' ? 'personal' : 'work';
       const sessionId = `remember:${candidate.id}`;

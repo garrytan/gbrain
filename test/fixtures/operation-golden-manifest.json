@@ -19954,7 +19954,7 @@
     },
     {
       "name": "remember",
-      "description": "One-call governed memory write: routes the signal, reconciles it against existing memory, creates the Memory Inbox candidate, verifies, promotes, and materializes a page-backed fact with a completed canonical handoff — stopping honestly at the first gate that defers and returning a truthful receipt either way.",
+      "description": "One-call governed memory write with a truthful receipt: route, reconcile, verify, promote, write the page, complete the canonical handoff.",
       "mutating": true,
       "capability_required": [],
       "capability_visibility": {
@@ -19967,15 +19967,7 @@
           ],
           "required": false,
           "nullable": false,
-          "description": "Actor recorded on the governed write (default: mbrain:remember)"
-        },
-        "candidate_type": {
-          "type": [
-            "string"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Optional memory candidate type override (default: fact)"
+          "description": "Actor label (default: mbrain:remember)"
         },
         "content": {
           "type": [
@@ -19991,7 +19983,7 @@
           ],
           "required": true,
           "nullable": false,
-          "description": "Evidence quality and writeback safety category",
+          "description": "Evidence quality category",
           "enum": [
             "direct_user_statement",
             "source_extracted",
@@ -20002,21 +19994,13 @@
             "task_mechanics"
           ]
         },
-        "interaction_id": {
-          "type": [
-            "string"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Optional retrieval trace id for lifecycle event attribution"
-        },
         "scope_id": {
           "type": [
             "string"
           ],
           "required": false,
           "nullable": false,
-          "description": "Memory scope id (default: workspace:default)"
+          "description": "Memory scope id"
         },
         "sensitivity": {
           "type": [
@@ -20024,23 +20008,16 @@
           ],
           "required": false,
           "nullable": false,
-          "description": "Optional sensitivity override (work, personal, secret)"
+          "description": "Sensitivity (work, personal, secret)"
         },
-        "source_ref": {
+        "source_refs": {
           "type": [
+            "array",
             "string"
           ],
           "required": false,
           "nullable": false,
-          "description": "Single provenance string"
-        },
-        "source_refs": {
-          "type": [
-            "array"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Provenance strings for the claim (at least one of source_ref/source_refs is required)",
+          "description": "Provenance strings",
           "items": {
             "type": [
               "string"
@@ -20055,7 +20032,7 @@
           ],
           "required": false,
           "nullable": false,
-          "description": "Canonical target type (default: curated_note when target_slug is provided)",
+          "description": "Target type (default: curated_note)",
           "enum": [
             "curated_note",
             "procedure",
@@ -20069,7 +20046,7 @@
           ],
           "required": false,
           "nullable": false,
-          "description": "Canonical page slug to write into (existing or new)"
+          "description": "Canonical page slug target"
         },
         "verification_evidence": {
           "type": [
@@ -20077,7 +20054,7 @@
           ],
           "required": false,
           "nullable": false,
-          "description": "What was checked and what the check showed."
+          "description": "What was checked and shown."
         },
         "verification_method": {
           "type": [
@@ -20085,7 +20062,7 @@
           ],
           "required": false,
           "nullable": false,
-          "description": "How the claim was checked against ground truth.",
+          "description": "How the claim was checked.",
           "enum": [
             "command_execution",
             "db_query",
@@ -20095,40 +20072,17 @@
             "external_lookup"
           ]
         },
-        "verification_source_refs": {
-          "type": [
-            "array"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Optional provenance strings for the verification itself.",
-          "items": {
-            "type": [
-              "string"
-            ],
-            "required": false,
-            "nullable": false
-          }
-        },
         "verification_status": {
           "type": [
             "string"
           ],
           "required": false,
           "nullable": false,
-          "description": "Verification outcome; without it the write stops at needs_review instead of promoting.",
+          "description": "Verification outcome; omitted stops at needs_review.",
           "enum": [
             "verified",
             "refuted"
           ]
-        },
-        "verified_at": {
-          "type": [
-            "string"
-          ],
-          "required": false,
-          "nullable": false,
-          "description": "Optional ISO timestamp for verification metadata"
         }
       },
       "cli_exposure": {
@@ -20193,8 +20147,8 @@
           }
         }
       },
-      "compact_schema_hash": "684c711eba632083ba5fabb116c8149ce4f9b6295d0bda9406314ad733456c24",
-      "full_schema_hash": "5c346e90d7f1d5091375d535b1ff4437769b25e7a4967524b596e0be4956623a",
+      "compact_schema_hash": "199d677f8f5d9c85f4ef994d8b71b244b7ba25c8e4230946e74786467f5b1c1b",
+      "full_schema_hash": "b7859c55a666501987939d1c91414b4c5ca9313d0fd9afde9bff89bb858b4308",
       "memory_verb_families": [],
       "mutation_aliases": []
     },
