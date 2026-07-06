@@ -87,6 +87,7 @@
     "record_retrieval_trace": "Task memory operation is discoverable through generated help; dedicated guide pending.",
     "refresh_task_working_set": "Task memory operation is discoverable through generated help; dedicated guide pending.",
     "reject_memory_candidate_entry": "Governance workflow operation is discoverable through generated help; detailed operator guide pending.",
+    "remember": "One-call governed write; discoverable through generated help while the dedicated operator guide is pending.",
     "remove_link": "Generated operation contract is discoverable through CLI/MCP help; dedicated guide pending.",
     "remove_tag": "Generated operation contract is discoverable through CLI/MCP help; dedicated guide pending.",
     "resolve_memory_candidate_contradiction": "Governance workflow operation is discoverable through generated help; detailed operator guide pending.",

@@ -2,13 +2,13 @@
   "schema_version": 2,
   "generated_from": "live_operation_registry",
   "summary": {
-    "operation_count": 189,
-    "mcp_operation_count": 189,
-    "cli_shared_count": 177,
+    "operation_count": 190,
+    "mcp_operation_count": 190,
+    "cli_shared_count": 178,
     "cli_direct_count": 26,
     "cli_only_count": 6,
     "not_cli_count": 2,
-    "mutating_count": 82,
+    "mutating_count": 83,
     "read_only_count": 107
   },
   "cli_commands": [
@@ -736,6 +736,11 @@
       "command": "reject-memory-candidate",
       "mode": "cli_shared",
       "operation_name": "reject_memory_candidate_entry"
+    },
+    {
+      "command": "remember",
+      "mode": "cli_shared",
+      "operation_name": "remember"
     },
     {
       "command": "report",
@@ -19945,6 +19950,252 @@
       "memory_verb_families": [
         "redaction_forget"
       ],
+      "mutation_aliases": []
+    },
+    {
+      "name": "remember",
+      "description": "One-call governed memory write: routes the signal, reconciles it against existing memory, creates the Memory Inbox candidate, verifies, promotes, and materializes a page-backed fact with a completed canonical handoff — stopping honestly at the first gate that defers and returning a truthful receipt either way.",
+      "mutating": true,
+      "capability_required": [],
+      "capability_visibility": {
+        "requirements": []
+      },
+      "params": {
+        "actor": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Actor recorded on the governed write (default: mbrain:remember)"
+        },
+        "candidate_type": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional memory candidate type override (default: fact)"
+        },
+        "content": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Durable fact or claim to remember"
+        },
+        "evidence_kind": {
+          "type": [
+            "string"
+          ],
+          "required": true,
+          "nullable": false,
+          "description": "Evidence quality and writeback safety category",
+          "enum": [
+            "direct_user_statement",
+            "source_extracted",
+            "agent_inferred",
+            "ambiguous",
+            "contradicts_existing",
+            "code_sensitive",
+            "task_mechanics"
+          ]
+        },
+        "interaction_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional retrieval trace id for lifecycle event attribution"
+        },
+        "scope_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Memory scope id (default: workspace:default)"
+        },
+        "sensitivity": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional sensitivity override (work, personal, secret)"
+        },
+        "source_ref": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Single provenance string"
+        },
+        "source_refs": {
+          "type": [
+            "array"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Provenance strings for the claim (at least one of source_ref/source_refs is required)",
+          "items": {
+            "type": [
+              "string"
+            ],
+            "required": false,
+            "nullable": false
+          }
+        },
+        "target_object_type": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Canonical target type (default: curated_note when target_slug is provided)",
+          "enum": [
+            "curated_note",
+            "procedure",
+            "profile_memory",
+            "personal_episode"
+          ]
+        },
+        "target_slug": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Canonical page slug to write into (existing or new)"
+        },
+        "verification_evidence": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "What was checked and what the check showed."
+        },
+        "verification_method": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "How the claim was checked against ground truth.",
+          "enum": [
+            "command_execution",
+            "db_query",
+            "file_inspection",
+            "source_recheck",
+            "user_confirmation",
+            "external_lookup"
+          ]
+        },
+        "verification_source_refs": {
+          "type": [
+            "array"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional provenance strings for the verification itself.",
+          "items": {
+            "type": [
+              "string"
+            ],
+            "required": false,
+            "nullable": false
+          }
+        },
+        "verification_status": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Verification outcome; without it the write stops at needs_review instead of promoting.",
+          "enum": [
+            "verified",
+            "refuted"
+          ]
+        },
+        "verified_at": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional ISO timestamp for verification metadata"
+        }
+      },
+      "cli_exposure": {
+        "mode": "cli_shared",
+        "command": "remember"
+      },
+      "mcp": {
+        "read_only": false,
+        "destructive": false,
+        "open_world": false,
+        "required_params": [
+          "content",
+          "evidence_kind"
+        ]
+      },
+      "surface_profile": {
+        "effective_tier": "core",
+        "required_capabilities": [
+          "canonical_write"
+        ],
+        "capability_classification": "explicit",
+        "visible_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "callable_profiles": [
+          "stdio",
+          "http_local",
+          "http_remote",
+          "edge_remote"
+        ],
+        "forbidden_profiles": [],
+        "decisions": {
+          "stdio": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "http_local": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed"
+            ]
+          },
+          "http_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          },
+          "edge_remote": {
+            "visible": true,
+            "callable": true,
+            "denial_reasons": []
+          }
+        }
+      },
+      "compact_schema_hash": "684c711eba632083ba5fabb116c8149ce4f9b6295d0bda9406314ad733456c24",
+      "full_schema_hash": "5c346e90d7f1d5091375d535b1ff4437769b25e7a4967524b596e0be4956623a",
+      "memory_verb_families": [],
       "mutation_aliases": []
     },
     {

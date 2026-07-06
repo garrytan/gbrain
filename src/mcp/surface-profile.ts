@@ -110,6 +110,7 @@ const CANONICAL_WRITE_MUTATING_OPERATIONS = [
   'record_memory_mutation_event',
   'record_personal_episode',
   'record_retrieval_trace',
+  'remember',
   'refresh_task_working_set',
   'register_connector_source',
   'register_source',

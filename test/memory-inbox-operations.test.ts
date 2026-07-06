@@ -38,6 +38,7 @@ test('memory inbox operations can be built from a dedicated domain module', () =
     'review_memory_patch_candidate',
     'apply_memory_patch_candidate',
     'finalize_memory_candidate',
+    'remember',
     'rank_memory_candidate_entries',
     'capture_map_derived_candidates',
     'list_memory_candidate_review_backlog',
