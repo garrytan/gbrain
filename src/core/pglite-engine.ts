@@ -4990,7 +4990,7 @@ export class PGLiteEngine implements BrainEngine {
     // dashboard, v0.10.3 metrics give entity-page-level granularity.
     const { rows: [h] } = await this.db.query(`
       WITH entity_pages AS (
-        SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+        SELECT id, slug FROM pages WHERE type IN ('entity', 'person', 'company')
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
@@ -5024,7 +5024,7 @@ export class PGLiteEngine implements BrainEngine {
       SELECT p.slug,
              (SELECT count(*) FROM links l WHERE l.from_page_id = p.id OR l.to_page_id = p.id)::int as link_count
       FROM pages p
-      WHERE p.type IN ('person', 'company')
+      WHERE p.type IN ('entity', 'person', 'company')
       ORDER BY link_count DESC
       LIMIT 5
     `);
