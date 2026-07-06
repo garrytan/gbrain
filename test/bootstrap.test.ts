@@ -196,4 +196,40 @@ describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
       await engine.disconnect();
     }
   }, 30000);
+
+  test('pre-v121 timeline_entries shape: bootstrap adds event_page_id so schema replay survives', async () => {
+    // Production incident (2026-07): a v119 brain upgraded to a v0.42.56
+    // binary wedged in `init --migrate-only` — the schema blob's
+    // `CREATE INDEX idx_timeline_event_page ON timeline_entries(event_page_id)`
+    // ran BEFORE migration v121 could add the column, and initSchema failed
+    // with `column "event_page_id" does not exist` on every attempt.
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const db = (engine as any).db;
+
+      // Rewind to the pre-v121 shape.
+      await db.exec(`
+        DROP INDEX IF EXISTS idx_timeline_event_page;
+        DROP INDEX IF EXISTS idx_timeline_event_dedup;
+        ALTER TABLE timeline_entries DROP CONSTRAINT IF EXISTS timeline_entries_event_page_id_fkey;
+        ALTER TABLE timeline_entries DROP COLUMN IF EXISTS event_page_id;
+      `);
+
+      await (engine as any).applyForwardReferenceBootstrap();
+
+      const { rows: col } = await db.query(`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'timeline_entries' AND column_name = 'event_page_id'
+      `);
+      expect(col).toHaveLength(1);
+
+      // The wedge scenario end-to-end: full initSchema (blob replay including
+      // the two indexes + migrations) must now succeed on the rewound brain.
+      await engine.initSchema();
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
 });
