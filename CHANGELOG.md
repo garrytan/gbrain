@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.57.0] - 2026-07-06
+
+### Fixed
+- **`get_page` and `resolve_slugs` now honor a per-call source override.** Previously, a scoped `query` call could hand back a page from a non-default source that a follow-up `get_page` on the same connection could never resolve — the op had no way to be told which source to look in. `get_page` now accepts an optional `source_id` parameter (mirroring `query`'s), including `"__all__"` for trusted local callers to search across every source. `resolve_slugs` is now source-scoped too, so a scoped caller no longer sees cross-source slug matches leak into its results.
+- **`gbrain schema sync` no longer misreports a prefix as "dead" when its pages are already typed.** The dry-run probe used to conflate "no pages exist under this prefix" with "pages exist here but none are untyped" — both reported as `dead_prefix`, hiding a real backfill target (e.g. pages retyped by a prior migration) behind what looked like a typo'd or nonexistent prefix. The sync result now distinguishes `dead_prefix` (genuinely no matching pages) from a new `all_already_typed` flag (pages exist, nothing left to backfill), and surfaces a probe SQL error as `probe_error` instead of silently reporting a false zero count.
+
 ## [0.42.56.0] - 2026-07-02
 
 **Life Chronicle: gbrain gains a temporal spine. Meetings and transcripts project into a queryable timeline, entities carry a bi-temporal ontology (sourced, confidence-weighted properties that supersede over time), and a low-friction diary captures interiority — so an agent can reconstruct "what happened the week of X", answer "when did I last interact with Y", and see how an entity's role or stance changed, instead of re-deriving chronology from scratch every session.** Built entirely on existing primitives (pages, the `facts` table, `timeline_entries`) — no new datastore. Auto-emission is off by default; opt in per below.
