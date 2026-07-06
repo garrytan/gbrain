@@ -2960,6 +2960,54 @@ function _resolveSyncFreshnessHours(varName: string, fallback: number): number {
  * branch (disabled / enabled-no-events / enabled-all-pass / enabled-with-failures)
  * without spinning up the audit JSONL or a real config file.
  */
+/**
+ * Pure function form of the conversation_parser_probe_health check.
+ * Mirrors computeNightlyQualityProbeHealthCheck: skip-with-hint when the
+ * probe is off and silent, surface the last 7 days of audit events when
+ * it has run, WARN on any non-pass outcome.
+ *
+ * `effectiveEnabled` folds the D10 mode-gate in: explicitly enabled OR
+ * search.mode=tokenmax (where the probe is default-on).
+ */
+export function computeConversationParserProbeHealthCheck(
+  effectiveEnabled: boolean,
+  events: ReadonlyArray<{ outcome: string; ts: string; reason?: string }>,
+): Check {
+  const name = 'conversation_parser_probe_health';
+  if (!effectiveEnabled && events.length === 0) {
+    return {
+      name,
+      status: 'ok',
+      message:
+        'disabled (opt-in; default-on only for search.mode=tokenmax). Enable with: ' +
+        '`gbrain config set autopilot.conversation_parser_probe.enabled true`',
+    };
+  }
+  if (events.length === 0) {
+    return {
+      name,
+      status: 'ok',
+      message: 'enabled but no probe events in the last 7 days (next run by autopilot; fixtures require a source-checkout install).',
+    };
+  }
+  const bad = events.filter(e => e.outcome !== 'pass');
+  const latest = events[events.length - 1]!;
+  if (bad.length > 0) {
+    return {
+      name,
+      status: 'warn',
+      message:
+        `${bad.length}/${events.length} probe run(s) in the last 7 days did not pass; ` +
+        `latest: ${latest.outcome}${latest.reason ? ` (${latest.reason})` : ''}`,
+    };
+  }
+  return {
+    name,
+    status: 'ok',
+    message: `${events.length} probe run(s) in the last 7 days, all pass (latest ${latest.ts}).`,
+  };
+}
+
 export function computeNightlyQualityProbeHealthCheck(
   probeEnabled: boolean,
   events: ReadonlyArray<{ outcome: string; ts: string; detail?: string }>,
@@ -5030,19 +5078,29 @@ export async function buildChecks(
 
   // 3d.5 v0.41.13.0 — conversation_parser_probe_health. Mode-gated
   // per D10: ON when search.mode=tokenmax, opt-in for other modes.
-  // Surface the last 7 days of nightly-probe events; warn on FAIL /
-  // BUDGET_EXCEEDED / adversarial_false_positive.
-  //
-  // v0.41.13.0 ships the probe as opt-in (autopilot wiring deferred
-  // to T7 in the cathedral plan); this check skips with an enable
-  // hint until the probe has at least one audit event written.
-  checks.push({
-    name: 'conversation_parser_probe_health',
-    status: 'ok',
-    message:
-      'Skipped (nightly probe is opt-in; enable with ' +
-      '`gbrain config set autopilot.conversation_parser_probe.enabled true`)',
-  });
+  // Surfaces the last 7 days of nightly-probe audit events; warn on any
+  // non-pass outcome (fail / budget_exceeded / adversarial_false_positive).
+  // (Until the autopilot wire-up this was a hardcoded "Skipped" stub.)
+  try {
+    const { readRecentParserProbeEvents } = await import('../core/audit-parser-probe.ts');
+    let parserProbeEnabled = false;
+    try {
+      let dbVal: string | null = null;
+      let dbMode: string | null = null;
+      try {
+        dbVal = engine ? await engine.getConfig('autopilot.conversation_parser_probe.enabled') : null;
+        dbMode = engine ? await engine.getConfig('search.mode') : null;
+      } catch { /* DB unavailable → file plane only */ }
+      const { loadConfig } = await import('../core/config.ts');
+      const fileVal = (loadConfig() as any)?.autopilot?.conversation_parser_probe?.enabled;
+      const flagOn = dbVal != null ? dbVal === 'true' : fileVal === true;
+      parserProbeEnabled = flagOn || dbMode === 'tokenmax';
+    } catch { /* config unavailable → treat as disabled */ }
+    const parserEvents = readRecentParserProbeEvents(7);
+    checks.push(computeConversationParserProbeHealthCheck(parserProbeEnabled, parserEvents));
+  } catch {
+    // Best-effort; audit-log read failure shouldn't stop doctor.
+  }
 
   // 3e. home_dir_in_worktree (v0.35.8.0). Walks up from `gbrainPath()`
   // looking for a `.git` directory OR file. If found, warns: `~/.gbrain/`
