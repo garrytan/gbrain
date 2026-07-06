@@ -63,6 +63,42 @@ export interface NightlyProbeDeps {
 }
 
 /**
+ * Dual-plane flag resolution (same precedent as `mcp.publish_skills` in
+ * serve-http.ts): the DB config row — what `gbrain config set` writes —
+ * wins when present; the file plane (~/.gbrain/config.json) is the
+ * fallback. Doctor's paste-ready enable hint says `gbrain config set
+ * autopilot.nightly_quality_probe.enabled true`, so the gate MUST read
+ * the DB plane — a file-only read turns that hint into a silent no-op.
+ */
+export function resolveProbeEnabled(
+  dbVal: string | null | undefined,
+  fileVal: unknown,
+): boolean {
+  if (dbVal != null) return dbVal === 'true';
+  return fileVal === true;
+}
+
+/**
+ * Same dual-plane rule for the per-run cost cap. Malformed or negative
+ * values on either plane fall through to the next plane / the default.
+ */
+export function resolveProbeMaxUsd(
+  dbVal: string | null | undefined,
+  fileVal: unknown,
+  fallback: number = DEFAULT_MAX_USD,
+): number {
+  if (dbVal != null) {
+    const n = Number(dbVal);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  if (fileVal != null) {
+    const n = Number(fileVal);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return fallback;
+}
+
+/**
  * Pure function: decide whether the probe should run given the audit
  * history. Returns reason when skipping.
  */

@@ -1073,12 +1073,20 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // loop. Probe runs even when cycleOk=false (probe may surface signal
     // explaining why the cycle is failing).
     try {
-      const probeEnabled = cfg?.autopilot?.nightly_quality_probe?.enabled === true;
+      const { resolveProbeEnabled, resolveProbeMaxUsd, runNightlyQualityProbe } = await import('../core/cycle/nightly-quality-probe.ts');
+      // Dual-plane read: `gbrain config set` (what the doctor enable hint
+      // prints) writes the DB plane; ~/.gbrain/config.json is the fallback.
+      let dbEnabled: string | null = null;
+      let dbMaxUsd: string | null = null;
+      try {
+        dbEnabled = await engine.getConfig('autopilot.nightly_quality_probe.enabled');
+        dbMaxUsd = await engine.getConfig('autopilot.nightly_quality_probe.max_usd');
+      } catch { /* DB unavailable → file plane only */ }
+      const probeEnabled = resolveProbeEnabled(dbEnabled, cfg?.autopilot?.nightly_quality_probe?.enabled);
       if (probeEnabled) {
-        const { runNightlyQualityProbe } = await import('../core/cycle/nightly-quality-probe.ts');
         const { runLongMemEvalForProbe, runCrossModalBatchForProbe } = await import('../core/cycle/nightly-probe-adapters.ts');
         const { isAvailable } = await import('../core/ai/gateway.ts');
-        const maxUsd = Number(cfg?.autopilot?.nightly_quality_probe?.max_usd ?? 5);
+        const maxUsd = resolveProbeMaxUsd(dbMaxUsd, cfg?.autopilot?.nightly_quality_probe?.max_usd);
         await runNightlyQualityProbe({
           isEnabled: () => true, // already gated above; phase re-checks for defense-in-depth
           hasEmbeddingProvider: () => isAvailable('embedding'),

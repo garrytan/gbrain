@@ -4843,10 +4843,17 @@ export async function buildChecks(
   try {
     const { readRecentQualityProbeEvents } = await import('../core/audit-quality-probe.ts');
     const { loadConfig } = await import('../core/config.ts');
+    const { resolveProbeEnabled } = await import('../core/cycle/nightly-quality-probe.ts');
     let probeEnabled = false;
     try {
+      // Dual-plane read, matching the autopilot gate: the DB row (what the
+      // enable hint's `gbrain config set` writes) wins; file plane fallback.
+      let dbVal: string | null = null;
+      try {
+        dbVal = engine ? await engine.getConfig('autopilot.nightly_quality_probe.enabled') : null;
+      } catch { /* DB unavailable → file plane only */ }
       const cfg = loadConfig();
-      probeEnabled = Boolean((cfg as any)?.autopilot?.nightly_quality_probe?.enabled);
+      probeEnabled = resolveProbeEnabled(dbVal, (cfg as any)?.autopilot?.nightly_quality_probe?.enabled);
     } catch { /* config unavailable → treat as disabled */ }
     const events = readRecentQualityProbeEvents(7);
     const check = computeNightlyQualityProbeHealthCheck(probeEnabled, events);
