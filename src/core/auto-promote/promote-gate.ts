@@ -219,6 +219,7 @@ async function canonicalizePromotedCandidate(
   const targetSlug = handoff.handoff.target_object_id;
   const expectedContentHash = input.target_snapshot_hashes?.get(candidate.id);
   let createdPatchCandidateId: string | undefined;
+  let patchSessionId: string | null = null;
   try {
     const currentPage = await input.engine.getPage(targetSlug);
     const baseTargetSnapshotHash = expectedContentHash === undefined ? currentPage?.content_hash ?? null : expectedContentHash;
@@ -232,6 +233,7 @@ async function canonicalizePromotedCandidate(
     ];
     const patchCandidateId = `auto-promote-patch:${candidate.id}`;
     const patchContext = await ensureAutoPromotePatchContext(input, candidate, handoff.handoff.id);
+    patchSessionId = patchContext.sessionId;
     const ctx = operationContext(input);
     const createPatchResult = await operationsByName.create_memory_patch_candidate.handler(ctx, {
       id: patchCandidateId,
@@ -288,6 +290,14 @@ async function canonicalizePromotedCandidate(
       skipped_reason: error instanceof Error ? error.message : String(error),
       ...(createdPatchCandidateId ? { patch_candidate_id: createdPatchCandidateId } : {}),
     };
+  } finally {
+    if (patchSessionId) {
+      try {
+        await input.engine.closeMemorySession(patchSessionId);
+      } catch {
+        // Session cleanup must never change the canonicalization outcome.
+      }
+    }
   }
 }
 
