@@ -26,6 +26,8 @@ describe('required parity matrix', () => {
       'tags-links-timeline',
       'derived-jobs',
       'memory-governance-lifecycle',
+      'personal-memory',
+      'note-structure',
       'slug-rename',
     ]);
     for (const entry of REQUIRED_PARITY_MATRIX) {

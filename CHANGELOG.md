@@ -15,6 +15,10 @@ All notable changes to MBrain will be documented in this file.
   first gate that defers, with a receipt that says exactly what's missing and
   what to do next. What used to take 7–9 tool calls and two session concepts
   is now one call, with every gate and audit event intact.
+- **Personal memory and note structure join the cross-engine parity contract.**
+  New behavioral seeds drive profile-memory and personal-episode CRUD plus
+  note-manifest/section replacement through SQLite and PGLite with identical
+  snapshots, moving 16 more methods off the parity backlog (42/168 covered).
 - **The governance store joins the cross-engine parity contract.** A new
   behavioral parity seed drives the full Memory Inbox lifecycle (create,
   status events, staging, verification, promotion, canonical handoff record
