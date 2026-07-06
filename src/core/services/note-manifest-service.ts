@@ -6,7 +6,7 @@ import { importContentHash, validateSlug } from '../utils.ts';
 import { extractFrontmatterSourceRefs, mergeSourceRefs } from './corpus-lane-service.ts';
 
 export const DEFAULT_NOTE_MANIFEST_SCOPE_ID = 'workspace:default';
-export const NOTE_MANIFEST_EXTRACTOR_VERSION = 'phase2-structural-v1';
+export const NOTE_MANIFEST_EXTRACTOR_VERSION = 'phase2-structural-v2';
 
 export interface BuildNoteManifestEntryInput {
   scope_id?: string;
@@ -39,7 +39,7 @@ export function buildNoteManifestEntry(input: BuildNoteManifestEntryInput): Note
     frontmatter,
     aliases: extractAliases(frontmatter),
     tags,
-    outgoing_wikilinks: extractOutgoingWikilinks(body),
+    outgoing_wikilinks: extractOutgoingPageReferences(body, slug),
     outgoing_urls: extractOutgoingUrls(body),
     source_refs: mergeSourceRefs(
       extractSourceRefs(body),
@@ -207,11 +207,14 @@ function frontmatterStringList(value: unknown): string[] {
   return [];
 }
 
-function extractOutgoingWikilinks(body: string): string[] {
-  const targets: string[] = [];
-  const pattern = /\[\[([^\]]+)\]\]/g;
+const WIKILINK_PATTERN = /\[\[([^\]]+)\]\]/g;
+const MARKDOWN_PAGE_LINK_PATTERN = /\]\(([^()\s]+\.mdx?)(?:[#?][^()]*)?\)/gi;
+const URL_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/i;
 
-  for (const match of body.matchAll(pattern)) {
+export function extractOutgoingPageReferences(body: string, selfSlug?: string): string[] {
+  const targets: string[] = [];
+
+  for (const match of body.matchAll(WIKILINK_PATTERN)) {
     const raw = match[1]?.trim() ?? '';
     if (!raw) continue;
     const target = raw.split('|')[0]?.split('#')[0]?.trim() ?? '';
@@ -219,7 +222,46 @@ function extractOutgoingWikilinks(body: string): string[] {
     targets.push(slugifyPath(target));
   }
 
+  for (const match of body.matchAll(MARKDOWN_PAGE_LINK_PATTERN)) {
+    const raw = match[1]?.trim() ?? '';
+    if (!raw || URL_SCHEME_PATTERN.test(raw)) continue;
+    for (const resolved of resolveMarkdownPageTargets(raw, selfSlug)) {
+      targets.push(slugifyPath(resolved));
+    }
+  }
+
   return uniqueStrings(targets);
+}
+
+// Markdown links are ambiguous between brain-root-relative and page-dir-relative
+// paths, so both resolutions are emitted; unresolvable candidates simply never
+// match a page slug (same semantics as `mbrain check-backlinks`).
+function resolveMarkdownPageTargets(rawPath: string, selfSlug?: string): string[] {
+  const withoutExtension = rawPath.replace(/\.mdx?$/i, '');
+  const candidates = new Set<string>();
+  const isExplicitRelative = withoutExtension.startsWith('./') || withoutExtension.startsWith('../');
+  if (!isExplicitRelative) {
+    const rootRelative = normalizePathSegments(withoutExtension.replace(/^\//, ''));
+    if (rootRelative) candidates.add(rootRelative);
+  }
+  const selfDir = (selfSlug ?? '').split('/').slice(0, -1).join('/');
+  const dirRelative = normalizePathSegments(selfDir ? `${selfDir}/${withoutExtension}` : withoutExtension);
+  if (dirRelative) candidates.add(dirRelative);
+  return [...candidates];
+}
+
+function normalizePathSegments(path: string): string | null {
+  const segments: string[] = [];
+  for (const segment of path.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      if (segments.length === 0) return null;
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  return segments.length > 0 ? segments.join('/') : null;
 }
 
 function extractOutgoingUrls(body: string): string[] {

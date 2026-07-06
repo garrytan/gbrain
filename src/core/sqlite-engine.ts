@@ -1887,6 +1887,9 @@ export class SQLiteEngine implements BrainEngine {
         (SELECT count(*) FROM pages p WHERE p.timeline_changed_at > p.compiled_truth_changed_at) AS stale_pages,
         (SELECT count(*) FROM pages p WHERE NOT EXISTS (
           SELECT 1 FROM links l WHERE l.to_page_id = p.id
+        ) AND NOT EXISTS (
+          SELECT 1 FROM note_manifest_entries m, json_each(m.outgoing_wikilinks) je
+          WHERE m.page_id <> p.id AND je.value = p.slug
         )) AS orphan_pages,
         (SELECT count(*) FROM links l
           LEFT JOIN pages p ON p.id = l.to_page_id

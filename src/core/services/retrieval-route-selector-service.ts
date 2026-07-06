@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type {
   BroadSynthesisRoute,
+  BroadSynthesisRouteResult,
   MixedScopeBridgeRoute,
   PersonalEpisodeLookupRoute,
   PersonalProfileLookupRoute,
@@ -22,6 +23,12 @@ import { buildTaskResumeCard, type TaskResumeCard } from './task-memory-service.
 
 export interface RetrievalRouteSelectorDependencies {
   broadSynthesis?: BroadSynthesisRouteDependencies;
+  /** A broad-synthesis route already computed for the same {query, limit} in this request, so the selector can skip recomputing it. */
+  precomputedBroadSynthesisRoute?: {
+    query: string;
+    limit?: number;
+    result: BroadSynthesisRouteResult;
+  };
 }
 
 export async function selectRetrievalRoute(
@@ -135,13 +142,22 @@ async function selectBroadSynthesisRoute(
   input: RetrievalRouteSelectorInput,
   dependencies: RetrievalRouteSelectorDependencies,
 ): Promise<RetrievalRouteSelectorResult> {
-  const result = await getBroadSynthesisRoute(engine, {
-    map_id: input.map_id,
-    scope_id: input.scope_id,
-    kind: input.kind,
-    query: input.query ?? '',
-    limit: input.limit,
-  }, dependencies.broadSynthesis);
+  const precomputed = dependencies.precomputedBroadSynthesisRoute;
+  const canReusePrecomputed = precomputed !== undefined
+    && input.map_id == null
+    && input.scope_id == null
+    && input.kind == null
+    && precomputed.query === (input.query ?? '')
+    && precomputed.limit === input.limit;
+  const result = canReusePrecomputed
+    ? precomputed.result
+    : await getBroadSynthesisRoute(engine, {
+      map_id: input.map_id,
+      scope_id: input.scope_id,
+      kind: input.kind,
+      query: input.query ?? '',
+      limit: input.limit,
+    }, dependencies.broadSynthesis);
   return {
     selected_intent: 'broad_synthesis',
     selection_reason: result.selection_reason,

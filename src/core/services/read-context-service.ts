@@ -27,6 +27,7 @@ import {
   laneOnlySourceRefs,
   mergeSourceRefs,
 } from './corpus-lane-service.ts';
+import { emptyCandidateSignalResult } from './candidate-signal-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
 import {
   charBudgetForTokens,
@@ -1373,7 +1374,13 @@ async function resolveReadSelectors(
     limit: maxSelectors,
     include_orientation: true,
     persist_trace: false,
-  }, dependencies);
+  }, {
+    ...dependencies,
+    // This internal probe only resolves selectors; its candidate_signals are
+    // discarded, so skip the Memory Inbox scans they would trigger.
+    candidateSignalBuilder: async () =>
+      emptyCandidateSignalResult('normal', ['selector_resolution_probe_skips_candidate_signals']),
+  });
 
   warnings.push('Auto reads selected from retrieve_context required_reads.');
   warnings.push(...probe.warnings);

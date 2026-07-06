@@ -172,6 +172,38 @@ for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
   }, createHarness === createPgliteHarness ? PGLITE_REOPEN_TEST_TIMEOUT_MS : undefined);
 }
 
+for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
+  test(`${createHarness.name} health orphan count honors manifest markdown references`, async () => {
+    const harness = await createHarness();
+    try {
+      const target = `concepts/orphan-target-${harness.label}`;
+      const source = `concepts/orphan-source-${harness.label}`;
+      await importFromContent(harness.engine, target, [
+        '---',
+        'type: concept',
+        `title: Orphan Target ${harness.label}`,
+        '---',
+        '# Compiled Truth',
+        'Referenced by the source page.',
+      ].join('\n'), { path: `${target}.md` });
+      await importFromContent(harness.engine, source, [
+        '---',
+        'type: concept',
+        `title: Orphan Source ${harness.label}`,
+        '---',
+        '# Compiled Truth',
+        `See [Orphan Target](${target}.md).`,
+      ].join('\n'), { path: `${source}.md` });
+
+      const health = await harness.engine.getHealth();
+      expect(health.page_count).toBe(2);
+      expect(health.orphan_pages).toBe(1);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+}
+
 test('note manifest engines honor limit and offset filters', async () => {
   const harness = await createSqliteHarness();
 

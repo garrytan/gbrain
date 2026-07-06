@@ -5,6 +5,7 @@ import type {
   GraphFrontierInput,
   GraphFrontierPathTrace,
   GraphFrontierResult,
+  BroadSynthesisRouteResult,
   Link,
   MemoryScenario,
   NoteManifestEntry,
@@ -200,15 +201,9 @@ export async function retrieveContext(
     const candidates = normalizedSelectors.map((selector, index) => candidateFromSelector(selector, index + 1));
     const requiredReads = normalizedSelectors;
     const orientation = emptyOrientation();
-    const candidateSignals = await buildRetrieveContextCandidateSignals(
-      candidateSignalBuilder,
-      engine,
-      input,
-      classification.scenario,
-      requiredReads,
-      candidates,
-      limit,
-    );
+    // The caller already knows exactly what to read; scanning the Memory Inbox
+    // for candidate signals here is pure cost with no effect on required_reads.
+    const candidateSignals = emptyCandidateSignalResult('normal', ['exact_selector_fast_path']);
     const createSafety = buildCreateSafety(candidates, requiredReads, { selector_existence_verified: false });
     const decoratedCandidates = withCandidateResultMetadata(candidates, createSafety);
 
@@ -261,8 +256,10 @@ export async function retrieveContext(
       updated_before: options.updated_before,
     }));
   // Orientation only depends on the query, not on the candidate search
-  // results, so both run concurrently.
-  const [candidatePool, orientation] = await Promise.all([
+  // results, so both run concurrently. The broad-synthesis route computed
+  // here is reused by the auto-route selector below instead of recomputing
+  // the same {query, limit} route (and its hybrid probe) a second time.
+  const [candidatePool, broadSynthesisRouteResult] = await Promise.all([
     query.length > 0
       ? searchCandidatePool(engine, candidateSearch, query, searchLimit, input.known_subjects, {
           updated_after: input.updated_after,
@@ -270,9 +267,16 @@ export async function retrieveContext(
         })
       : Promise.resolve(emptyCandidateSearchPool()),
     !includeOrientation || query.length === 0
-      ? Promise.resolve(emptyOrientation())
-      : buildOrientation(engine, query, limit, dependencies.broadSynthesisCandidateSearch),
+      ? Promise.resolve(null)
+      : getBroadSynthesisRoute(
+        engine,
+        { query, limit },
+        dependencies.broadSynthesisCandidateSearch
+          ? { candidateSearch: dependencies.broadSynthesisCandidateSearch }
+          : {},
+      ),
   ]);
+  const orientation = orientationFromBroadSynthesisRoute(broadSynthesisRouteResult);
   const searchResults = rankSearchResults(candidatePool.results, undefined, dependencies.sourceRankRules);
   const candidates = await groupCandidatesByCanonicalPage(
     engine,
@@ -293,6 +297,7 @@ export async function retrieveContext(
     limit,
     scopeGate,
     dependencies,
+    precomputedBroadSynthesisRoute: broadSynthesisRouteResult,
   });
   const orientationReadsCompeted = shouldApplyOrientationReadsToRequiredReads(classification.scenario);
   const baseRequiredReads = selectRequiredReadSelectors({
@@ -386,6 +391,7 @@ async function maybeSelectAutoRoute(
     limit: number;
     scopeGate?: ScopeGateDecisionResult;
     dependencies: RetrieveContextDependencies;
+    precomputedBroadSynthesisRoute?: BroadSynthesisRouteResult | null;
   },
 ): Promise<RetrievalRouteSelectorResult | null> {
   if (input.auto_route === false) return null;
@@ -395,6 +401,15 @@ async function maybeSelectAutoRoute(
   return selectRetrievalRoute(engine, routeInput, {
     ...(context.dependencies.broadSynthesisCandidateSearch
       ? { broadSynthesis: { candidateSearch: context.dependencies.broadSynthesisCandidateSearch } }
+      : {}),
+    ...(context.precomputedBroadSynthesisRoute
+      ? {
+        precomputedBroadSynthesisRoute: {
+          query: context.query,
+          limit: context.limit,
+          result: context.precomputedBroadSynthesisRoute,
+        },
+      }
       : {}),
   });
 }
@@ -2036,18 +2051,10 @@ function isPersonalScopeId(value: string | undefined): boolean {
   return normalizedValue === 'personal' || normalizedValue.startsWith('personal:');
 }
 
-async function buildOrientation(
-  engine: BrainEngine,
-  query: string,
-  limit: number,
-  candidateSearch?: BroadSynthesisCandidateSearch,
-): Promise<RetrieveContextOrientation> {
-  const routeResult = await getBroadSynthesisRoute(
-    engine,
-    { query, limit },
-    candidateSearch ? { candidateSearch } : {},
-  );
-  if (!routeResult.route) return emptyOrientation();
+function orientationFromBroadSynthesisRoute(
+  routeResult: BroadSynthesisRouteResult | null,
+): RetrieveContextOrientation {
+  if (!routeResult?.route) return emptyOrientation();
 
   return {
     derived_consulted: [`context_map:${routeResult.route.map_id}`],

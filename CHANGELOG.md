@@ -24,6 +24,21 @@ All notable changes to MBrain will be documented in this file.
   decision captures a fallback candidate (`apply_mode:
   deferred_candidate_created`) rather than executing a deferred action, and the
   contract now documents that.
+- **The health report finally understands how your brain actually links.**
+  Markdown references like `[title](path/to/page.md)` now count as page
+  references: note manifests and section indexes capture them alongside
+  `[[wikilinks]]`, and `get_health`'s `orphan_pages` stops reporting every page
+  as orphaned on brains that follow the standard markdown-link convention.
+  Existing installs pick this up as derived manifests rebuild (extractor v2).
+- **One question, one probe.** `retrieve_context` now computes the
+  broad-synthesis route once and shares it between orientation and auto-route
+  selection, instead of running the same context-map query and hybrid probe
+  twice per call.
+- **Cheaper evidence reads.** `read_context`'s automatic selector resolution no
+  longer scans the Memory Inbox for candidate signals it was going to discard,
+  and exact-selector `retrieve_context` calls skip the same scans entirely
+  (their `candidate_signals` are now empty with an explicit
+  `exact_selector_fast_path` reason code).
 
 ## [0.15.0] - 2026-07-04
 
