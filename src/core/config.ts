@@ -921,6 +921,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // operator had to discover these by reading source. Registered so `config
   // set` accepts them directly. See docs/operations/spend-controls.md.
   'spend.posture',
+  // Life Chronicle (v0.42.56.0, #2390). The release notes' enable command is
+  // `gbrain config set auto_chronicle true`, but the key was never registered
+  // — so the documented command failed with "Unknown config key" and the
+  // operator had to discover --force by reading source. Same class as the
+  // spend-controls registration above.
+  'auto_chronicle',
   'sync.cost_gate_min_usd',
   'sync.federated_v2',
   'embed.backfill_cooldown_min',
@@ -943,6 +949,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'content_sanity.',    // v0.41 content-sanity tunables
   'mcp.',               // mcp.publish_skills, mcp.skills_dir (PR1 skill catalog)
   'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
+  'chronicle.',         // chronicle.tz + future Life Chronicle knobs (#2390)
   'self_upgrade.',      // v0.42 self-upgrade (mode, quiet_hours, state)
 ];
 
