@@ -39,6 +39,14 @@ All notable changes to MBrain will be documented in this file.
   supported orientation surfaces) and their descriptions collapse to one
   deprecation line, freeing about 2KB of tools/list frame headroom.
 
+- **Local vector search can now use a real ANN-grade backend.** When the
+  sqlite-vec loadable extension is available, SQLite vector search pushes
+  cosine scoring and top-k into SQL instead of scanning every embedded row in
+  JavaScript; when it is not (macOS system SQLite, compiled binaries), the
+  existing scoring path keeps working and `get_health` reports which
+  `vector_backend` is active. Set `MBRAIN_CUSTOM_SQLITE` to an
+  extension-capable libsqlite3 to enable it on macOS.
+
 ### Fixed
 
 - **The daily report's canonical-write debt is now truthful.** Applying an
