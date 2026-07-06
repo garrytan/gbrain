@@ -35,6 +35,7 @@ const ADMIN_TOOL_NAMES = new Set<string>([
   'build_session_grant_policy_input',
   'capture_agent_session_memory',
   'close_memory_session',
+  'complete_canonical_handoff',
   'complete_canonical_target_proposal_binding',
   'create_canonical_target_proposal',
   'create_memory_patch_candidate',

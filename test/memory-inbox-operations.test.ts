@@ -42,6 +42,7 @@ test('memory inbox operations can be built from a dedicated domain module', () =
     'capture_map_derived_candidates',
     'list_memory_candidate_review_backlog',
     'record_canonical_handoff',
+    'complete_canonical_handoff',
     'list_canonical_handoff_entries',
     'assess_historical_validity',
     'advance_memory_candidate_status',

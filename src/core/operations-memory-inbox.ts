@@ -20,7 +20,7 @@ import {
   reviewDuplicateMemory,
   type DuplicateMemorySubjectKind,
 } from './services/duplicate-memory-review-service.ts';
-import { recordCanonicalHandoff } from './services/canonical-handoff-service.ts';
+import { completeCanonicalHandoff, recordCanonicalHandoff } from './services/canonical-handoff-service.ts';
 import { assessHistoricalValidity } from './services/historical-validity-service.ts';
 import { resolveMemoryCandidateContradiction } from './services/memory-inbox-contradiction-service.ts';
 import { promoteMemoryCandidateEntry } from './services/memory-inbox-promotion-service.ts';
@@ -33,6 +33,8 @@ import {
 } from './services/target-snapshot-hash-service.ts';
 import { contentHash, importContentHash } from './utils.ts';
 import type {
+  CanonicalHandoffCompletionKind,
+  CanonicalHandoffEntry,
   MemoryCandidateEntry,
   MemoryMutationTargetKind,
   MemoryPatchOperationState,
@@ -2643,6 +2645,59 @@ export function createMemoryInboxOperations(
     cliHints: { name: 'record-canonical-handoff' },
   };
 
+  const complete_canonical_handoff: Operation = {
+    name: 'complete_canonical_handoff',
+    description: 'Complete one recorded canonical handoff after the canonical target was actually written (patch apply, page write, or manual repair).',
+    params: {
+      id: { type: 'string', required: true, description: 'Canonical handoff id' },
+      completion_kind: {
+        type: 'string',
+        required: true,
+        description: 'How the canonical target was materialized',
+        enum: ['patch_applied', 'page_written', 'manual'],
+      },
+      completion_ref: { type: 'string', description: 'Optional completion reference (patch candidate id, page slug, or ledger event id)' },
+      completed_at: { type: 'string', description: 'Optional ISO completion timestamp (default: now)' },
+    },
+    mutating: true,
+    handler: async (ctx, p) => {
+      if (typeof p.id !== 'string' || p.id.trim().length === 0) {
+        throw invalidParams(deps, 'id must be a non-empty string');
+      }
+      if (typeof p.completion_kind !== 'string' || p.completion_kind.trim().length === 0) {
+        throw invalidParams(deps, 'completion_kind must be a non-empty string');
+      }
+      const completionRef = normalizeOptionalNonEmptyString(deps, 'completion_ref', p.completion_ref);
+      if (ctx.dryRun) {
+        return {
+          dry_run: true,
+          action: 'complete_canonical_handoff',
+          id: p.id,
+          completion_kind: p.completion_kind,
+          completion_ref: completionRef ?? null,
+        };
+      }
+
+      try {
+        return await completeCanonicalHandoff(ctx.engine, {
+          id: p.id,
+          completed_at: normalizeOptionalIsoTimestamp(deps, 'completed_at', p.completed_at),
+          completion_kind: p.completion_kind as CanonicalHandoffCompletionKind,
+          completion_ref: completionRef ?? null,
+        });
+      } catch (error) {
+        if (error instanceof MemoryInboxServiceError) {
+          if (error.code === 'memory_candidate_not_found') {
+            throw new deps.OperationError('memory_candidate_not_found', error.message);
+          }
+          throw new deps.OperationError('invalid_params', error.message);
+        }
+        throw error;
+      }
+    },
+    cliHints: { name: 'complete-canonical-handoff' },
+  };
+
   const list_canonical_handoff_entries: Operation = {
     name: 'list_canonical_handoff_entries',
     description: 'List explicit canonical handoff records for auditability and downstream canonicalization.',
@@ -3146,6 +3201,7 @@ export function createMemoryInboxOperations(
     capture_map_derived_candidates,
     list_memory_candidate_review_backlog,
     record_canonical_handoff,
+    complete_canonical_handoff,
     list_canonical_handoff_entries,
     assess_historical_validity,
     advance_memory_candidate_status,
