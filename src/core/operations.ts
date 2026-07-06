@@ -3451,6 +3451,14 @@ const find_experts: Operation = {
     const { loadActivePackBestEffort, expertTypesFromPack } = await import('./schema-pack/index.ts');
     const pack = await loadActivePackBestEffort(ctx);
     const types = pack ? expertTypesFromPack(pack.manifest) : [];
+    // NOTE: `explain` is a presentation flag. The result data ALWAYS carries
+    // the per-result `factors` (expertise/recency/salience) regardless — over
+    // MCP/--json the breakdown is always present. On the CLI the readable
+    // breakdown is rendered by formatResult('find_experts') in src/cli.ts,
+    // gated on the GLOBAL `--explain` flag (getCliOptions().explain), NOT on
+    // this op param: `--explain` is stripped from argv before op dispatch, so
+    // `p.explain` is never set from the CLI. The param is kept as the MCP-
+    // surface affordance; findExperts itself does not branch on it.
     return findExperts(ctx.engine, {
       topic,
       limit: typeof p.limit === 'number' ? p.limit : undefined,

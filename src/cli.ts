@@ -870,6 +870,21 @@ export function formatResult(opName: string, result: unknown): string {
         `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${r.chunk_text?.slice(0, 100) || ''}${r.stale ? ' (stale)' : ''}`,
       ).join('\n') + '\n';
     }
+    case 'find_experts': {
+      // `gbrain whoknows --explain` switches to the readable per-result
+      // factor breakdown (expertise / recency / salience), mirroring the
+      // search/query `--explain` formatter above. `--explain` is a GLOBAL
+      // flag stripped from argv before op dispatch, so it never reaches
+      // parseOpArgs / the op's `explain` param — read it from the CliOptions
+      // singleton instead. Without --explain, keep the raw-JSON default
+      // (this op had no formatResult case before, so JSON was the de-facto
+      // CLI output) so scripted consumers of `gbrain whoknows` are unchanged.
+      if (getCliOptions().explain) {
+        const { formatWhoknowsResults } = require('./commands/whoknows.ts');
+        return formatWhoknowsResults(result as any[], { explain: true });
+      }
+      return JSON.stringify(result, null, 2) + '\n';
+    }
     case 'get_tags': {
       const tags = result as string[];
       return tags.length > 0 ? tags.join(', ') + '\n' : 'No tags.\n';

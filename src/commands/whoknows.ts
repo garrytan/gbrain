@@ -256,6 +256,50 @@ export async function findExperts(
   return rankCandidates(inputs, limit);
 }
 
+/**
+ * Render whoknows / find_experts results as the human-readable table.
+ *
+ * Single source of truth for the CLI human format, shared by:
+ *   - runWhoknows (the legacy direct-dispatch path), and
+ *   - formatResult('find_experts') in src/cli.ts (the live op-dispatch path
+ *     that actually backs `gbrain whoknows`).
+ *
+ * `opts.explain` appends the per-result factor breakdown line — the same
+ * presentation-layer gate `search`/`query` `--explain` use. The result data
+ * ALWAYS carries `factors` (see rankCandidates); `explain` only decides
+ * whether they're printed here.
+ */
+export function formatWhoknowsResults(
+  results: WhoknowsResult[],
+  opts: { explain?: boolean; topic?: string } = {},
+): string {
+  if (results.length === 0) {
+    return opts.topic
+      ? `(no person or company pages match "${opts.topic}")\n`
+      : '(no person or company pages match)\n';
+  }
+  const lines: string[] = [];
+  // Human format: rank | score | type | slug — title
+  const header = `${pad('#', 3)} ${pad('score', 7)} ${pad('type', 8)} slug — title`;
+  lines.push(header);
+  lines.push('-'.repeat(Math.min(80, header.length)));
+  results.forEach((r, i) => {
+    lines.push(
+      `${pad(String(i + 1), 3)} ${pad(r.score.toFixed(3), 7)} ${pad(r.type, 8)} ${r.slug} — ${r.title}`,
+    );
+    if (opts.explain) {
+      const f = r.factors;
+      const age = f.days_since_effective == null ? 'cold' : `${f.days_since_effective.toFixed(0)}d`;
+      lines.push(
+        `      expertise=${f.expertise.toFixed(3)} (raw=${f.raw_match.toFixed(3)}) ` +
+          `recency=${f.recency_factor.toFixed(3)} (${age}) ` +
+          `salience=${f.salience.toFixed(3)} → factor=${f.salience_factor.toFixed(3)}`,
+      );
+    }
+  });
+  return lines.join('\n') + '\n';
+}
+
 // ---------------- CLI dispatch ----------------
 
 interface CliOpts {
@@ -352,30 +396,9 @@ export async function runWhoknows(
     return;
   }
 
-  if (results.length === 0) {
-    console.log(`(no person or company pages match "${parsed.topic}")`);
-    return;
-  }
-
-  // Human format: rank | score | type | slug — title
-  const header = `${pad('#', 3)} ${pad('score', 7)} ${pad('type', 8)} slug — title`;
-  console.log(header);
-  console.log('-'.repeat(Math.min(80, header.length)));
-  results.forEach((r, i) => {
-    const score = r.score.toFixed(3);
-    console.log(
-      `${pad(String(i + 1), 3)} ${pad(score, 7)} ${pad(r.type, 8)} ${r.slug} — ${r.title}`,
-    );
-    if (parsed.explain) {
-      const f = r.factors;
-      const days = f.days_since_effective == null ? 'cold' : f.days_since_effective.toFixed(0);
-      console.log(
-        `      expertise=${f.expertise.toFixed(3)} (raw=${f.raw_match.toFixed(3)}) ` +
-          `recency=${f.recency_factor.toFixed(3)} (${days}d) ` +
-          `salience=${f.salience.toFixed(3)} → factor=${f.salience_factor.toFixed(3)}`,
-      );
-    }
-  });
+  process.stdout.write(
+    formatWhoknowsResults(results, { explain: parsed.explain, topic: parsed.topic }),
+  );
 }
 
 function pad(s: string, n: number): string {
