@@ -72,6 +72,35 @@ describe('note manifest service', () => {
     expect(entry.content_hash).toHaveLength(64);
   });
 
+  test('buildNoteManifestEntry captures relative markdown page links as outgoing references', () => {
+    const entry = buildNoteManifestEntry({
+      page_id: 43,
+      slug: 'projects/mbrain/docs/retrieval',
+      path: 'projects/mbrain/docs/retrieval.md',
+      tags: [],
+      page: {
+        type: 'project',
+        title: 'Retrieval Doc',
+        compiled_truth: [
+          '# Overview',
+          'See [MBrain Backlog](mbrain/improvement-backlog.md) and [sibling](./sibling-note.md).',
+          'Also [parent concept](../../../concepts/hybrid-search.md#ranking).',
+          'External [remote](https://example.com/page.md) links are not page references.',
+        ].join('\n'),
+        timeline: '',
+        frontmatter: {},
+      },
+    });
+
+    expect(entry.outgoing_wikilinks).toEqual(expect.arrayContaining([
+      'mbrain/improvement-backlog',
+      'projects/mbrain/docs/mbrain/improvement-backlog',
+      'projects/mbrain/docs/sibling-note',
+      'concepts/hybrid-search',
+    ]));
+    expect(entry.outgoing_wikilinks.some((target) => target.includes('example'))).toBe(false);
+  });
+
   test('buildNoteManifestEntry computes a stable fallback hash from canonical note inputs', () => {
     const base = {
       page_id: 7,

@@ -80,7 +80,8 @@ describe('retrieve context service', () => {
         write_permission_granted: false,
       });
       expect(result.create_safety?.reasons).toContain('selector_existence_not_verified');
-      expect(result.candidate_signals.map((signal) => signal.candidate_id)).toContain('candidate-exact-selector');
+      expect(result.candidate_signals).toEqual([]);
+      expect(result.candidate_signal_policy.reason_codes).toContain('exact_selector_fast_path');
     });
   });
 
@@ -2860,6 +2861,77 @@ describe('retrieve context service', () => {
       });
 
       expect(disabled.route).toBeNull();
+    });
+  });
+
+  test('broad-synthesis orientation and auto-route share one route computation', async () => {
+    await withEngine('broad-synthesis-shared-route', async (engine) => {
+      await importFromContent(engine, 'concepts/canonical-memory', [
+        '---',
+        'type: concept',
+        'title: Canonical Memory',
+        '---',
+        '# Compiled Truth',
+        'Canonical Memory is the curated source of truth for broad synthesis.',
+        '[Source: User, direct message, 2026-05-07 09:20 KST]',
+      ].join('\n'), { path: 'concepts/canonical-memory.md' });
+      await importFromContent(engine, 'systems/derived-memory-map', [
+        '---',
+        'type: system',
+        'title: Canonical Memory System',
+        '---',
+        '# Overview',
+        'The derived map discusses Canonical Memory for broad orientation.',
+        '[Source: User, direct message, 2026-05-07 09:21 KST]',
+      ].join('\n'), { path: 'systems/derived-memory-map.md' });
+      await buildStructuralContextMapEntry(engine);
+
+      let directRouteCalls = 0;
+      await getBroadSynthesisRoute(engine, { query: 'Canonical Memory', limit: 5 }, {
+        candidateSearch: async () => {
+          directRouteCalls += 1;
+          return [];
+        },
+      });
+      expect(directRouteCalls).toBeGreaterThan(0);
+
+      let broadSearchCalls = 0;
+      const result = await retrieveContext(engine, {
+        query: 'Canonical Memory',
+        include_orientation: true,
+      }, {
+        candidateSearch: async () => [],
+        broadSynthesisCandidateSearch: async () => {
+          broadSearchCalls += 1;
+          return [];
+        },
+      });
+
+      expect(result.route?.selected_intent).toBe('broad_synthesis');
+      expect(result.route?.route?.route_kind).toBe('broad_synthesis');
+      expect(result.orientation.derived_consulted.some((ref) => ref.startsWith('context_map:'))).toBe(true);
+      expect(broadSearchCalls).toBe(directRouteCalls);
+    });
+  });
+
+  test('exact-selector fast path skips memory inbox candidate-signal scans', async () => {
+    await withEngine('fast-path-skips-candidate-signals', async (engine) => {
+      let candidateScanCalls = 0;
+      const originalList = engine.listMemoryCandidateEntries.bind(engine);
+      (engine as unknown as Record<string, unknown>).listMemoryCandidateEntries = async (
+        filters: Parameters<typeof originalList>[0],
+      ) => {
+        candidateScanCalls += 1;
+        return originalList(filters);
+      };
+
+      const result = await retrieveContext(engine, {
+        selectors: [{ kind: 'compiled_truth', slug: 'systems/mbrain' }],
+      });
+
+      expect(candidateScanCalls).toBe(0);
+      expect(result.candidate_signals).toEqual([]);
+      expect(result.candidate_signal_policy.reason_codes).toContain('exact_selector_fast_path');
     });
   });
 

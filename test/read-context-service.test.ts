@@ -744,6 +744,37 @@ describe('read context service', () => {
     });
   });
 
+  test('auto reads resolve selectors without scanning memory inbox candidate signals', async () => {
+    await withEngine('auto-read-skips-candidate-signals', async (engine) => {
+      await importFromContent(engine, 'concepts/auto-signal-context', [
+        '---',
+        'type: concept',
+        'title: Auto Signal Context',
+        '---',
+        '# Compiled Truth',
+        'Auto signal context evidence resolves without inbox candidate scans.',
+        '[Source: User, direct message, 2026-07-06 11:00 KST]',
+      ].join('\n'), { path: 'concepts/auto-signal-context.md' });
+
+      let candidateScanCalls = 0;
+      const originalList = engine.listMemoryCandidateEntries.bind(engine);
+      (engine as unknown as Record<string, unknown>).listMemoryCandidateEntries = async (
+        filters: Parameters<typeof originalList>[0],
+      ) => {
+        candidateScanCalls += 1;
+        return originalList(filters);
+      };
+
+      const result = await readContext(engine, {
+        query: 'Auto signal context evidence',
+        reads: 'auto',
+      });
+
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(candidateScanCalls).toBe(0);
+    });
+  });
+
   test('continues inside a long clipped line without skipping unread evidence', async () => {
     await withEngine('line-continuation', async (engine) => {
       const longLine = [

@@ -1,12 +1,11 @@
 import type { BrainEngine } from '../engine.ts';
 import { DERIVED_SCHEMA_VERSION } from '../derived-jobs.ts';
 import type { NoteManifestEntry, NoteSectionEntry, NoteSectionEntryInput, Page, PageInput } from '../types.ts';
-import { slugifyPath } from '../sync.ts';
 import { importContentHash } from '../utils.ts';
 import { extractFrontmatterSourceRefs, mergeSourceRefs } from './corpus-lane-service.ts';
-import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
+import { DEFAULT_NOTE_MANIFEST_SCOPE_ID, extractOutgoingPageReferences } from './note-manifest-service.ts';
 
-export const NOTE_SECTION_EXTRACTOR_VERSION = 'phase2-sections-v1';
+export const NOTE_SECTION_EXTRACTOR_VERSION = 'phase2-sections-v2';
 
 export interface BuildNoteSectionEntriesInput {
   scope_id?: string;
@@ -54,7 +53,7 @@ export function buildNoteSectionEntries(input: BuildNoteSectionEntriesInput): No
       line_start: heading.line_start,
       line_end: lineEnd,
       section_text: sectionText,
-      outgoing_wikilinks: extractOutgoingWikilinks(sectionText),
+      outgoing_wikilinks: extractOutgoingPageReferences(sectionText, input.page_slug),
       outgoing_urls: extractOutgoingUrls(sectionText),
       source_refs: mergeSourceRefs(extractSourceRefs(sectionText), pageSourceRefs),
       content_hash: importContentHash({
@@ -123,21 +122,6 @@ export async function rebuildNoteSectionEntries(
 function joinCanonicalBody(compiledTruth: string, timeline: string): string {
   if (!timeline.trim()) return compiledTruth;
   return `${compiledTruth}\n\n---\n\n${timeline}`;
-}
-
-function extractOutgoingWikilinks(body: string): string[] {
-  const targets: string[] = [];
-  const pattern = /\[\[([^\]]+)\]\]/g;
-
-  for (const match of body.matchAll(pattern)) {
-    const raw = match[1]?.trim() ?? '';
-    if (!raw) continue;
-    const target = raw.split('|')[0]?.split('#')[0]?.trim() ?? '';
-    if (!target) continue;
-    targets.push(slugifyPath(target));
-  }
-
-  return uniqueStrings(targets);
 }
 
 function extractOutgoingUrls(body: string): string[] {
