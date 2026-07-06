@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runEval } from '../src/commands/eval.ts';
@@ -148,6 +148,39 @@ describe('eval CLI runner', () => {
       precision_at_k: 0.25,
       mrr: 0.5,
     });
+  });
+
+  test('EV-1c: committed per-config baselines parse and diff through the retrieval compare path', async () => {
+    const baselineDir = new URL('./fixtures/retrieval-eval/baselines/', import.meta.url).pathname;
+    const onPath = join(baselineDir, 'sqlite-governed-probe-on.json');
+    const offPath = join(baselineDir, 'sqlite-governed-probe-off.json');
+
+    for (const [path, expectedProbe] of [[onPath, true], [offPath, false]] as const) {
+      const baseline = JSON.parse(readFileSync(path, 'utf8'));
+      expect(baseline.artifact_kind).toBe('ev1c_live_retrieval_baseline');
+      expect(baseline.generated_by).toBe('scripts/regen-retrieval-baselines.ts');
+      expect(baseline.config['retrieval.governed_probe_hybrid']).toBe(expectedProbe);
+      expect(baseline.metrics.total).toBe(30);
+      expect(baseline.metrics.per_route).toBeDefined();
+      expect(baseline.metrics.per_route.broad_synthesis.case_count).toBeGreaterThanOrEqual(1);
+      expect(baseline.metrics.recall_at_10).toBeGreaterThanOrEqual(0.9);
+    }
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (line?: unknown) => { logs.push(String(line)); };
+    try {
+      await runEval(fakeEvalEngine(), ['retrieval', '--compare', onPath, offPath, '--json']);
+    } finally {
+      console.log = originalLog;
+    }
+
+    const output = JSON.parse(logs.join('\n'));
+    // With embeddings pinned to none, the hybrid probe degrades to
+    // keyword-only, so both configs must produce identical quality metrics.
+    expect(output.delta.recall_at_10).toBe(0);
+    expect(output.delta.mrr).toBe(0);
+    expect(output.per_route.broad_synthesis.delta.recall_at_10).toBe(0);
   });
 
   test('requires retrieval eval answer grounding config before running a judge', async () => {

@@ -47,6 +47,16 @@ All notable changes to MBrain will be documented in this file.
   `vector_backend` is active. Set `MBRAIN_CUSTOM_SQLITE` to an
   extension-capable libsqlite3 to enable it on macOS.
 
+- **The retrieval instrument is finally real.** The 30-case P2 gold set now
+  runs LIVE in CI against a purpose-seeded corpus (pages, profile memory, a
+  personal episode, and a task thread), asserting recall@10 ≥ 0.9, MRR ≥ 0.85,
+  and route-match ≥ 0.9 per run — and a companion test injects a deliberately
+  broken ranking and requires the metrics to collapse, proving the eval can
+  actually catch a regression. The old "non-regression" artifact that only
+  compared a JSON file to itself is gone, and per-config baselines
+  (governed-probe on/off) ship with a regeneration script for
+  `eval retrieval --compare`.
+
 ### Fixed
 
 - **The daily report's canonical-write debt is now truthful.** Applying an
