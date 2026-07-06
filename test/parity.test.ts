@@ -436,6 +436,68 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
     }
   }, SQLITE_PGLITE_PARITY_TIMEOUT_MS);
 
+  test('memory governance lifecycle rows round-trip across engines', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-pglite-governance-'));
+    const sqlite = new SQLiteEngine();
+    const pglite = new PGLiteEngine();
+
+    try {
+      await sqlite.connect({ engine: 'sqlite', database_path: join(root, 'brain.db') });
+      await sqlite.initSchema();
+      await pglite.connect({ engine: 'pglite', database_path: join(root, 'brain.pglite') });
+      await pglite.initSchema();
+
+      await seedGovernanceParityFixture(sqlite);
+      await seedGovernanceParityFixture(pglite);
+
+      const sqliteSnapshot = await collectGovernanceParitySnapshot(sqlite);
+      const pgliteSnapshot = await collectGovernanceParitySnapshot(pglite);
+
+      expect(sqliteSnapshot).toEqual({
+        candidate: {
+          status: 'promoted',
+          verification_status: 'verified',
+          verification_method: 'source_recheck',
+          target_object_type: 'curated_note',
+          target_object_id: 'concepts/governance-parity',
+          source_refs: ['User, direct message, 2026-07-06 18:00 KST'],
+          review_reason: 'parity promoted',
+        },
+        promotedCandidateIds: ['parity-governance-candidate'],
+        statusEvents: [
+          { event_kind: 'advanced', from_status: 'candidate', to_status: 'staged_for_review' },
+          { event_kind: 'created', from_status: null, to_status: 'candidate' },
+        ],
+        handoff: {
+          target_object_type: 'curated_note',
+          target_object_id: 'concepts/governance-parity',
+          completion_kind: 'manual',
+          completed_at: '2026-07-06T10:00:00.000Z',
+          completion_ref: 'parity-manual-write',
+        },
+        handoffCount: 1,
+      });
+      expect(pgliteSnapshot).toEqual(sqliteSnapshot);
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      for (const engine of [sqlite, pglite]) {
+        try {
+          await engine.disconnect();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      try {
+        rmSync(root, { recursive: true, force: true });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, 'Failed to clean up governance parity fixtures');
+      }
+    }
+  }, SQLITE_PGLITE_PARITY_TIMEOUT_MS);
+
   test('derived jobs and derived index state round-trip across engines', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-pglite-derived-jobs-'));
     const sqlite = new SQLiteEngine();
@@ -992,3 +1054,119 @@ describe('SQLiteEngine behavioral correctness', () => {
     expect(partial.some(s => s.includes('alice'))).toBe(true);
   });
 });
+
+async function seedGovernanceParityFixture(engine: SQLiteEngine | PGLiteEngine): Promise<void> {
+  await engine.createMemoryCandidateEntry({
+    id: 'parity-governance-candidate',
+    scope_id: 'workspace:default',
+    candidate_type: 'fact',
+    proposed_content: 'Governance parity fixture claim.',
+    source_refs: ['User, direct message, 2026-07-06 18:00 KST'],
+    generated_by: 'manual',
+    extraction_kind: 'manual',
+    confidence_score: 0.9,
+    importance_score: 0.8,
+    recurrence_score: 0.1,
+    sensitivity: 'work',
+    status: 'candidate',
+    target_object_type: 'curated_note',
+    target_object_id: 'concepts/governance-parity',
+    reviewed_at: null,
+    review_reason: null,
+  });
+  await engine.createMemoryCandidateStatusEvent({
+    id: 'parity-governance-ev-created',
+    candidate_id: 'parity-governance-candidate',
+    scope_id: 'workspace:default',
+    from_status: null,
+    to_status: 'candidate',
+    event_kind: 'created',
+    created_at: '2026-07-06T09:00:00.000Z',
+  });
+  await engine.updateMemoryCandidateEntryStatus('parity-governance-candidate', {
+    status: 'staged_for_review',
+    reviewed_at: '2026-07-06T09:30:00.000Z',
+    review_reason: 'parity staged',
+  });
+  await engine.createMemoryCandidateStatusEvent({
+    id: 'parity-governance-ev-advanced',
+    candidate_id: 'parity-governance-candidate',
+    scope_id: 'workspace:default',
+    from_status: 'candidate',
+    to_status: 'staged_for_review',
+    event_kind: 'advanced',
+    created_at: '2026-07-06T09:30:00.000Z',
+  });
+  await engine.updateMemoryCandidateEntryVerification('parity-governance-candidate', {
+    verification_status: 'verified',
+    verification_method: 'source_recheck',
+    verification_evidence: 'Checked the parity fixture claim.',
+    verification_source_refs: ['parity verification ref'],
+    verified_at: '2026-07-06T09:45:00.000Z',
+  });
+  await engine.promoteMemoryCandidateEntry('parity-governance-candidate', {
+    reviewed_at: '2026-07-06T09:55:00.000Z',
+    review_reason: 'parity promoted',
+  });
+  await engine.createCanonicalHandoffEntry({
+    id: 'parity-governance-handoff',
+    scope_id: 'workspace:default',
+    candidate_id: 'parity-governance-candidate',
+    target_object_type: 'curated_note',
+    target_object_id: 'concepts/governance-parity',
+    source_refs: ['User, direct message, 2026-07-06 18:00 KST'],
+    reviewed_at: '2026-07-06T09:50:00.000Z',
+    review_reason: 'parity handoff',
+  });
+  await engine.completeCanonicalHandoffEntry({
+    id: 'parity-governance-handoff',
+    completed_at: new Date('2026-07-06T10:00:00.000Z'),
+    completion_kind: 'manual',
+    completion_ref: 'parity-manual-write',
+  });
+}
+
+async function collectGovernanceParitySnapshot(engine: SQLiteEngine | PGLiteEngine) {
+  const candidate = await engine.getMemoryCandidateEntry('parity-governance-candidate');
+  const promotedList = await engine.listMemoryCandidateEntries({
+    scope_id: 'workspace:default',
+    status: 'promoted',
+    limit: 10,
+  });
+  const events = await engine.listMemoryCandidateStatusEvents({
+    candidate_id: 'parity-governance-candidate',
+  });
+  const handoff = await engine.getCanonicalHandoffEntry('parity-governance-handoff');
+  const handoffs = await engine.listCanonicalHandoffEntries({
+    scope_id: 'workspace:default',
+    candidate_id: 'parity-governance-candidate',
+    limit: 10,
+  });
+  return {
+    candidate: candidate === null ? null : {
+      status: candidate.status,
+      verification_status: candidate.verification_status,
+      verification_method: candidate.verification_method,
+      target_object_type: candidate.target_object_type,
+      target_object_id: candidate.target_object_id,
+      source_refs: candidate.source_refs,
+      review_reason: candidate.review_reason,
+    },
+    promotedCandidateIds: promotedList.map((entry) => entry.id).sort(),
+    statusEvents: events
+      .map((event) => ({
+        event_kind: event.event_kind,
+        from_status: event.from_status,
+        to_status: event.to_status,
+      }))
+      .sort((left, right) => left.event_kind.localeCompare(right.event_kind)),
+    handoff: handoff === null ? null : {
+      target_object_type: handoff.target_object_type,
+      target_object_id: handoff.target_object_id,
+      completion_kind: handoff.completion_kind,
+      completed_at: handoff.completed_at === null ? null : handoff.completed_at.toISOString(),
+      completion_ref: handoff.completion_ref,
+    },
+    handoffCount: handoffs.length,
+  };
+}
