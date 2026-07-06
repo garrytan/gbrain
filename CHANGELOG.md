@@ -15,6 +15,11 @@ All notable changes to MBrain will be documented in this file.
   first gate that defers, with a receipt that says exactly what's missing and
   what to do next. What used to take 7–9 tool calls and two session concepts
   is now one call, with every gate and audit event intact.
+- **The governance store joins the cross-engine parity contract.** A new
+  behavioral parity seed drives the full Memory Inbox lifecycle (create,
+  status events, staging, verification, promotion, canonical handoff record
+  and completion) through SQLite and PGLite and requires identical results,
+  moving 12 governance methods off the parity backlog (26/168 covered).
 - **The three-engine promise is now a visible contract.** A new parity coverage
   ratchet enumerates every engine method shared by SQLite and Postgres and
   fails CI if one is neither parity-tested nor consciously listed in a

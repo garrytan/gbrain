@@ -1,7 +1,7 @@
 export type RequiredParityEngine = 'sqlite' | 'pglite';
 
 export interface RequiredParityMatrixEntry {
-  id: 'page-crud' | 'tags-links-timeline' | 'derived-jobs' | 'slug-rename';
+  id: 'page-crud' | 'tags-links-timeline' | 'derived-jobs' | 'slug-rename' | 'memory-governance-lifecycle';
   engines: readonly RequiredParityEngine[];
   required_operations: readonly string[];
   assertions: readonly string[];
@@ -41,6 +41,29 @@ export const REQUIRED_PARITY_MATRIX: readonly RequiredParityMatrixEntry[] = [
     ],
   },
   {
+    id: 'memory-governance-lifecycle',
+    engines: SQLITE_PGLITE,
+    required_operations: [
+      'createMemoryCandidateEntry',
+      'getMemoryCandidateEntry',
+      'listMemoryCandidateEntries',
+      'createMemoryCandidateStatusEvent',
+      'listMemoryCandidateStatusEvents',
+      'updateMemoryCandidateEntryStatus',
+      'updateMemoryCandidateEntryVerification',
+      'promoteMemoryCandidateEntry',
+      'createCanonicalHandoffEntry',
+      'completeCanonicalHandoffEntry',
+      'getCanonicalHandoffEntry',
+      'listCanonicalHandoffEntries',
+    ],
+    assertions: [
+      'candidate lifecycle fields round-trip identically across engines',
+      'status events preserve kind and transition order across engines',
+      'canonical handoff completion fields match across engines',
+    ],
+  },
+  {
     id: 'slug-rename',
     engines: SQLITE_PGLITE,
     required_operations: ['renamePageSlug', 'getPage', 'getLinksForSlugs', 'getBacklinksForSlugs'],
@@ -68,16 +91,12 @@ export const PARITY_COVERAGE_BACKLOG: readonly string[] = [
   'claimNextDerivedJob',
   'claimNextDerivedJobInTransaction',
   'closeMemorySession',
-  'completeCanonicalHandoffEntry',
   'consumeMemoryWriteSession',
   'countMemoryCandidateEntries',
-  'createCanonicalHandoffEntry',
   'createCanonicalTargetProposalEntry',
   'createCanonicalTargetProposalStatusEvent',
   'createContextEvalCorrection',
   'createMemoryCandidateContradictionEntry',
-  'createMemoryCandidateEntry',
-  'createMemoryCandidateStatusEvent',
   'createMemoryMutationEvent',
   'createMemoryRedactionPlan',
   'createMemoryRedactionPlanItem',
@@ -97,7 +116,6 @@ export const PARITY_COVERAGE_BACKLOG: readonly string[] = [
   'enqueueDerivedJobInTransaction',
   'getAutoPromoteVerdict',
   'getBacklinks',
-  'getCanonicalHandoffEntry',
   'getCanonicalTargetProposalEntry',
   'getChunks',
   'getChunksWithEmbeddings',
@@ -110,7 +128,6 @@ export const PARITY_COVERAGE_BACKLOG: readonly string[] = [
   'getIngestLog',
   'getLinks',
   'getMemoryCandidateContradictionEntry',
-  'getMemoryCandidateEntry',
   'getMemoryCandidateSupersessionEntry',
   'getMemoryRealm',
   'getMemoryRedactionPlan',
@@ -131,7 +148,6 @@ export const PARITY_COVERAGE_BACKLOG: readonly string[] = [
   'getTaskWorkingSet',
   'getVersions',
   'getWatchedQuestion',
-  'listCanonicalHandoffEntries',
   'listCanonicalHandoffEntriesByInteractionIds',
   'listCanonicalTargetProposalEntries',
   'listCanonicalTargetProposalStatusEvents',
@@ -142,8 +158,6 @@ export const PARITY_COVERAGE_BACKLOG: readonly string[] = [
   'listDerivedIndexStates',
   'listMemoryCandidateContradictionEntriesByInteractionIds',
   'listMemoryCandidateContradictionEntriesForCandidateIds',
-  'listMemoryCandidateEntries',
-  'listMemoryCandidateStatusEvents',
   'listMemoryCandidateStatusEventsByInteractionIds',
   'listMemoryCandidateSupersessionEntriesByInteractionIds',
   'listMemoryMutationEvents',
@@ -170,7 +184,6 @@ export const PARITY_COVERAGE_BACKLOG: readonly string[] = [
   'markDerivedJobFailed',
   'markDerivedJobFailedInTransaction',
   'memoryCandidateFilterWhereClause',
-  'promoteMemoryCandidateEntry',
   'putAutoPromoteVerdict',
   'putContextEvalAssertion',
   'putContextEvalRun',
@@ -197,8 +210,6 @@ export const PARITY_COVERAGE_BACKLOG: readonly string[] = [
   'traverseGraph',
   'updateCanonicalTargetProposalDraft',
   'updateCanonicalTargetProposalStatus',
-  'updateMemoryCandidateEntryStatus',
-  'updateMemoryCandidateEntryVerification',
   'updateMemoryCandidatePatchOperationState',
   'updateMemoryRedactionPlanItemStatus',
   'updateMemoryRedactionPlanStatus',
