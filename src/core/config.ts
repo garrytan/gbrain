@@ -97,6 +97,16 @@ export interface GBrainConfig {
       max_usd?: number;
     };
     /**
+     * v0.41.16.0 — nightly conversation-parser probe. Per D10: default ON
+     * for `search.mode=tokenmax` brains, opt-in for conservative/balanced.
+     * ~$0.05/night with the committed fixtures × Haiku polish. Gated
+     * INSIDE the autopilot tick body, like nightly_quality_probe.
+     */
+    conversation_parser_probe?: {
+      /** Enable for non-tokenmax modes. Defaults to false. */
+      enabled?: boolean;
+    };
+    /**
      * v0.42.x (#1685 GAP D) — extract_atoms backlog auto-drain. Default ON so a
      * pack-gated silent backlog never piles up unseen; daily-spend-capped so the
      * Haiku spend stays bounded. Read via the DB plane (`engine.getConfig`) at
