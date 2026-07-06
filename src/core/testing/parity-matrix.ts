@@ -1,7 +1,7 @@
 export type RequiredParityEngine = 'sqlite' | 'pglite';
 
 export interface RequiredParityMatrixEntry {
-  id: 'page-crud' | 'tags-links-timeline' | 'derived-jobs' | 'slug-rename' | 'memory-governance-lifecycle';
+  id: 'page-crud' | 'tags-links-timeline' | 'derived-jobs' | 'slug-rename' | 'memory-governance-lifecycle' | 'personal-memory' | 'note-structure';
   engines: readonly RequiredParityEngine[];
   required_operations: readonly string[];
   assertions: readonly string[];
@@ -64,6 +64,42 @@ export const REQUIRED_PARITY_MATRIX: readonly RequiredParityMatrixEntry[] = [
     ],
   },
   {
+    id: 'personal-memory',
+    engines: SQLITE_PGLITE,
+    required_operations: [
+      'upsertProfileMemoryEntry',
+      'getProfileMemoryEntry',
+      'listProfileMemoryEntries',
+      'deleteProfileMemoryEntry',
+      'createPersonalEpisodeEntry',
+      'getPersonalEpisodeEntry',
+      'listPersonalEpisodeEntries',
+      'deletePersonalEpisodeEntry',
+    ],
+    assertions: [
+      'profile memory upsert/list/delete round-trips identically across engines',
+      'personal episode create/list/delete round-trips identically across engines',
+    ],
+  },
+  {
+    id: 'note-structure',
+    engines: SQLITE_PGLITE,
+    required_operations: [
+      'upsertNoteManifestEntry',
+      'getNoteManifestEntry',
+      'listNoteManifestEntries',
+      'deleteNoteManifestEntry',
+      'replaceNoteSectionEntries',
+      'getNoteSectionEntry',
+      'listNoteSectionEntries',
+      'deleteNoteSectionEntries',
+    ],
+    assertions: [
+      'note manifest structural fields round-trip identically across engines',
+      'note section replacement and lookup match across engines',
+    ],
+  },
+  {
     id: 'slug-rename',
     engines: SQLITE_PGLITE,
     required_operations: ['renamePageSlug', 'getPage', 'getLinksForSlugs', 'getBacklinksForSlugs'],
@@ -102,17 +138,12 @@ export const PARITY_COVERAGE_BACKLOG: readonly string[] = [
   'createMemoryRedactionPlanItem',
   'createMemorySession',
   'createMemoryWriteSession',
-  'createPersonalEpisodeEntry',
   'createTaskThread',
   'createVersion',
   'deleteChunks',
   'deleteContextAtlasEntry',
   'deleteContextMapEntry',
   'deleteMemoryCandidateEntry',
-  'deleteNoteManifestEntry',
-  'deleteNoteSectionEntries',
-  'deletePersonalEpisodeEntry',
-  'deleteProfileMemoryEntry',
   'enqueueDerivedJobInTransaction',
   'getAutoPromoteVerdict',
   'getBacklinks',
@@ -133,14 +164,10 @@ export const PARITY_COVERAGE_BACKLOG: readonly string[] = [
   'getMemoryRedactionPlan',
   'getMemorySession',
   'getMemoryWriteSession',
-  'getNoteManifestEntry',
-  'getNoteSectionEntry',
   'getPageEmbeddings',
   'getPageForUpdate',
   'getPageLineSpanProjection',
   'getPageProjection',
-  'getPersonalEpisodeEntry',
-  'getProfileMemoryEntry',
   'getRawData',
   'getRetrievalTrace',
   'getStats',
@@ -167,10 +194,6 @@ export const PARITY_COVERAGE_BACKLOG: readonly string[] = [
   'listMemorySessionAttachments',
   'listMemorySessions',
   'listMemoryWriteSessions',
-  'listNoteManifestEntries',
-  'listNoteSectionEntries',
-  'listPersonalEpisodeEntries',
-  'listProfileMemoryEntries',
   'listRetrievalTraces',
   'listRetrievalTracesByWindow',
   'listTaskAttempts',
@@ -198,7 +221,6 @@ export const PARITY_COVERAGE_BACKLOG: readonly string[] = [
   'releaseDerivedJobLeaseInTransaction',
   'removeLink',
   'removeTag',
-  'replaceNoteSectionEntries',
   'resolveSlugs',
   'revertToVersion',
   'rewriteLinks',
@@ -222,10 +244,8 @@ export const PARITY_COVERAGE_BACKLOG: readonly string[] = [
   'upsertContextMapEntry',
   'upsertFailedDerivedIndexStateFromJob',
   'upsertMemoryRealm',
-  'upsertNoteManifestEntry',
   'upsertPendingDerivedIndexState',
   'upsertPendingDerivedIndexStateFromJob',
-  'upsertProfileMemoryEntry',
   'upsertTaskWorkingSet',
   'upsertWatchedQuestion',
 ];
