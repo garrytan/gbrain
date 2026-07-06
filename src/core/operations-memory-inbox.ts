@@ -21,6 +21,11 @@ import {
   type DuplicateMemorySubjectKind,
 } from './services/duplicate-memory-review-service.ts';
 import { completeCanonicalHandoff, recordCanonicalHandoff } from './services/canonical-handoff-service.ts';
+import {
+  CONTAMINATION_TRACE_MAX_LIMIT,
+  ContaminationTraceServiceError,
+  traceMemoryContamination,
+} from './services/contamination-trace-service.ts';
 import { buildCanonicalCandidatePagePatch } from './services/canonical-page-patch-service.ts';
 import { MEMORY_WRITEBACK_EVIDENCE_KINDS, routeMemoryWriteback } from './services/memory-writeback-router-service.ts';
 import { assessHistoricalValidity } from './services/historical-validity-service.ts';
@@ -3567,6 +3572,48 @@ export function createMemoryInboxOperations(
     cliHints: { name: 'run-dream-cycle-maintenance', aliases: { n: 'limit' } },
   };
 
+  const trace_memory_contamination: Operation = {
+    name: 'trace_memory_contamination',
+    description: 'Trace downstream use of a refuted memory: the canonical pages it reached, retrieval traces that consumed those pages after the write, and one-hop downstream page writes citing them. Read-only analysis over existing ledgers.',
+    params: {
+      candidate_id: { type: 'string', description: 'Memory candidate id to trace (usually a refuted candidate); mutually exclusive with slug' },
+      slug: { type: 'string', description: 'Canonical page slug to trace instead of a candidate' },
+      scope_id: { type: 'string', description: `Scope id for slug-mode patch-candidate scans (default: ${deps.defaultScopeId}; candidate mode uses the candidate scope)` },
+      since: { type: 'string', description: 'Optional ISO datetime lower bound for consuming retrieval traces (default: first canonical write, else 30 days before until)' },
+      until: { type: 'string', description: 'Optional ISO datetime upper bound for consuming retrieval traces (default: now)' },
+      limit: { type: 'number', description: `Max traces/pages per section (default 20, cap ${CONTAMINATION_TRACE_MAX_LIMIT})` },
+    },
+    handler: async (ctx, p) => {
+      const candidateIdParam = normalizeOptionalNonEmptyString(deps, 'candidate_id', p.candidate_id);
+      const slugParam = normalizeOptionalNonEmptyString(deps, 'slug', p.slug);
+      const scopeIdParam = normalizeOptionalNonEmptyString(deps, 'scope_id', p.scope_id);
+      const since = normalizeOptionalIsoTimestamp(deps, 'since', p.since);
+      const until = normalizeOptionalIsoTimestamp(deps, 'until', p.until);
+      if (p.limit != null && (typeof p.limit !== 'number' || !Number.isFinite(p.limit) || p.limit <= 0)) {
+        throw invalidParams(deps, 'limit must be a positive number');
+      }
+      try {
+        return await traceMemoryContamination(ctx.engine, {
+          candidate_id: candidateIdParam ?? undefined,
+          slug: slugParam ?? undefined,
+          scope_id: scopeIdParam ?? deps.defaultScopeId,
+          since: since ?? undefined,
+          until: until ?? undefined,
+          limit: typeof p.limit === 'number' ? p.limit : undefined,
+        });
+      } catch (error) {
+        if (error instanceof ContaminationTraceServiceError) {
+          if (error.code === 'memory_candidate_not_found') {
+            throw new deps.OperationError('memory_candidate_not_found', error.message);
+          }
+          throw new deps.OperationError('invalid_params', error.message);
+        }
+        throw error;
+      }
+    },
+    cliHints: { name: 'trace-memory-contamination', aliases: { n: 'limit' } },
+  };
+
   return [
     get_memory_candidate_entry,
     read_candidate_context,
@@ -3596,6 +3643,7 @@ export function createMemoryInboxOperations(
     supersede_memory_candidate_entry,
     resolve_memory_candidate_contradiction,
     run_dream_cycle_maintenance,
+    trace_memory_contamination,
   ];
 }
 
