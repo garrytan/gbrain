@@ -2,15 +2,26 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.42.57.0] - 2026-06-30
+## [0.42.58.0] - 2026-07-06
 
 **`gbrain whoknows "<topic>" --explain` now shows the per-result ranking factor breakdown it always promised.** The flag was silently a no-op on the command line. `--explain` is a global flag that gets stripped from the arguments before the command runs, so `whoknows` never learned you asked for the explanation and printed its plain result instead. The ranking data was never lost — the `find_experts` tool already returned every result's factors in its JSON, so agent and `--json` callers were unaffected — but the readable breakdown the flag advertises was unreachable from the CLI.
 
 ### Fixed
 - **`gbrain whoknows --explain` prints the expertise / recency / salience breakdown under each result.** The CLI now renders the breakdown the same way `gbrain search --explain` and `gbrain query --explain` do: by reading the global `--explain` flag at formatting time. Without `--explain`, output is unchanged. The `find_experts` MCP tool and its parameters are untouched — this is a presentation-only fix, so the tool surface agents see does not change.
 
-### To take advantage of v0.42.57.0
+### To take advantage of v0.42.58.0
 `gbrain upgrade`, then run `gbrain whoknows "<topic>" --explain` — each result now carries a factor-breakdown line. No migration, no configuration.
+
+## [0.42.57.0] - 2026-07-02
+
+**PGLite incident fix: a busy `gbrain dream` (or `embed`) could have its data-directory lock stolen and get its brain corrupted beyond in-place repair. The lock will no longer be taken from a process that is alive, and an already-corrupted store now tells you exactly how to recover.**
+
+### Fixed
+- **A live PGLite holder is never stolen.** The data-directory lock used to be reaped if the holder's heartbeat went stale past a grace window. But the heartbeat runs on the JS event loop, which is blocked during long synchronous WASM imports/checkpoints, so a genuinely working `gbrain dream`/`embed` could look stale while fully alive. Reaping it let a second process open the same store and corrupt the catalog + pgvector extension (surfacing later as `relation "content_chunks" does not exist` / `type "vector" does not exist`, only recoverable by wipe-and-restore). The lock is now reaped only when the holder process is actually dead; a wedged-but-alive or PID-reused holder makes the acquire time out with a clear message naming the PID, instead of risking corruption.
+- **A corrupted PGLite store now explains how to recover.** When the store's catalog or pgvector extension can no longer load, the error names the cause and points at `gbrain reinit-pglite --embedding-model <id> --embedding-dimensions <N>` (or restoring a backup), instead of the unrelated "macOS WASM bug" hint. It also notes that deleting the lock dir or `postmaster.pid` does not fix it.
+
+### To take advantage of v0.42.57.0
+`gbrain upgrade`. No migration. New corruption is prevented going forward. A brain already corrupted by a prior concurrent open cannot be repaired in place; the upgraded error message walks you through `gbrain reinit-pglite` or restoring a backup.
 
 ## [0.42.56.0] - 2026-07-02
 

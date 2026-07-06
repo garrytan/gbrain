@@ -51,6 +51,22 @@ describe('classifyPgliteInitError', () => {
   test('case-insensitive matching on bunfs marker', () => {
     expect(classifyPgliteInitError('SYSCALL ENOENT on /$$BUNFS/root')).toBe('bunfs');
   });
+
+  // #2348 — corrupted PGLite data dir (concurrent open trashed catalog/extension).
+  test('corrupt verdict for the 58P01 internal_load_library signature', () => {
+    const msg = 'error: relation "content_chunks" does not exist\n  code: 58P01\n  file: "dfmgr.c"\n  routine: "internal_load_library"';
+    expect(classifyPgliteInitError(msg)).toBe('corrupt');
+  });
+
+  test('corrupt verdict when the vector type can no longer load', () => {
+    expect(classifyPgliteInitError('type "vector" does not exist')).toBe('corrupt');
+  });
+
+  test('corrupt verdict beats the wasm-runtime match (58P01 wins over "wasm runtime")', () => {
+    // A message mentioning both must classify as corrupt, not macos-26-3 —
+    // recovery guidance, not the wrong macOS-WASM hint.
+    expect(classifyPgliteInitError('wasm runtime: 58P01 internal_load_library')).toBe('corrupt');
+  });
 });
 
 describe('buildPgliteInitErrorMessage — hint routing', () => {
@@ -80,8 +96,16 @@ describe('buildPgliteInitErrorMessage — hint routing', () => {
     expect(msg).toContain(original);
   });
 
+  test('corrupt verdict surfaces the reinit-pglite recovery, NOT the macOS hint', () => {
+    const msg = buildPgliteInitErrorMessage('corrupt', original);
+    expect(msg).toContain('gbrain reinit-pglite');
+    expect(msg).toContain('corrupted');
+    expect(msg).toContain(original);
+    expect(msg).not.toContain('issues/223');
+  });
+
   test('all verdicts produce the canonical header line', () => {
-    for (const v of ['bunfs', 'macos-26-3', 'unknown'] as const) {
+    for (const v of ['bunfs', 'macos-26-3', 'corrupt', 'unknown'] as const) {
       const msg = buildPgliteInitErrorMessage(v, original);
       expect(msg.startsWith('PGLite failed to initialize its WASM runtime.')).toBe(true);
     }
