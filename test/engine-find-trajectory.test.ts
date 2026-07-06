@@ -15,6 +15,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import {
   detectRegressions,
   computeDriftScore,
@@ -26,6 +27,20 @@ import type { TrajectoryPoint } from '../src/core/engine.ts';
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
+  // Pin the embedding dim to 1536 BEFORE initSchema. This file hardcodes
+  // Float32Array(1536) vectors, but initSchema sizes vector columns from
+  // process-global gateway state (getEmbeddingDimensions(), default 1280 =
+  // zeroentropyai). Whether this file passes therefore depended on which
+  // test files happened to run before it in the shard: a predecessor that
+  // leaves the gateway configured without dims (or a bare CI env) yields
+  // vector(1280) and every insert here dies with "expected 1280 dimensions,
+  // not 1536". Same fix + rationale as cosine-rescore-column.test.ts, which
+  // documents this exact class.
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { OPENAI_API_KEY: 'sk-test-find-trajectory' },
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -33,6 +48,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  resetGateway();
 });
 
 beforeEach(async () => {
