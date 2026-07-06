@@ -985,7 +985,13 @@ async function runSyncCmd(args: string[]): Promise<void> {
     console.log(`Pack: ${result.pack_identity ?? '(no pack loaded)'}`);
     console.log(`Mode: ${apply ? 'APPLY' : 'DRY-RUN'}`);
     for (const p of result.per_prefix) {
-      const marker = p.dead_prefix ? ' (dead prefix — no matching pages)' : '';
+      // 2026-07-06: dead_prefix / all_already_typed / probe_error are now
+      // distinct states — don't conflate "prefix doesn't exist" with
+      // "prefix exists but nothing to backfill" or "the probe itself failed."
+      let marker = '';
+      if (p.probe_error) marker = ` (probe FAILED: ${p.probe_error})`;
+      else if (p.dead_prefix) marker = ' (dead prefix — no matching pages)';
+      else if (p.all_already_typed) marker = ' (pages already typed, nothing to backfill)';
       console.log(`  ${p.type.padEnd(20)} ${p.prefix.padEnd(30)} would_apply=${p.would_apply} applied=${p.applied}${marker}`);
       if (p.sample_slugs.length > 0 && !apply) {
         console.log(`    sample: ${p.sample_slugs.slice(0, 3).join(', ')}${p.sample_slugs.length > 3 ? '...' : ''}`);

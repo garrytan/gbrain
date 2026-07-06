@@ -42,8 +42,30 @@ export interface PerPrefixResult {
   would_apply: number;
   /** Sample of slugs (capped at 10) for the agent's drilldown. */
   sample_slugs: string[];
-  /** Whether the prefix matched zero pages (dead-prefix hint). */
+  /**
+   * 2026-07-06: redefined to mean "zero pages exist under this prefix at
+   * all" (matches `stats.ts`'s `detectDeadPrefixes` semantics). Previously
+   * this was `would_apply === 0`, which conflated "prefix doesn't exist"
+   * with "prefix exists but every matching page is already typed" —
+   * a real backfill target (e.g. pages a catch-all migration retyped,
+   * carrying `frontmatter.legacy_type`) was misreported as a dead/typo'd
+   * prefix. See `~/.claude/agent-memory/vent/vents.md`, "gbrain schema
+   * sync calls a prefix 'dead'...".
+   */
   dead_prefix: boolean;
+  /**
+   * 2026-07-06 (new): prefix has real, matching pages, but none are
+   * untyped — nothing for this sync to backfill. Distinct from
+   * `dead_prefix` so the two states are never conflated in output.
+   */
+  all_already_typed: boolean;
+  /**
+   * 2026-07-06 (new): set when `probePrefix`'s SQL threw. Previously the
+   * catch block silently returned `{count: 0}`, making a genuine query
+   * error indistinguishable from a real zero-pages result — the same
+   * "false dead-prefix signal" failure class this whole fix addresses.
+   */
+  probe_error?: string;
   /** Rows actually updated. Equal to would_apply on a clean apply,
    *  0 on dry-run, possibly less if concurrent writer claimed some. */
   applied: number;
@@ -60,34 +82,50 @@ export interface SyncResult {
 }
 
 /**
- * Count + sample untyped pages matching a prefix. Used by both dry-run
- * (sample is the drilldown signal) and apply (count for would_apply).
+ * Count + sample untyped pages matching a prefix, PLUS a separate total
+ * count of every live page matching the prefix regardless of type (the
+ * `detectDeadPrefixes`-shaped query from `stats.ts` — no type filter).
+ * The two counts let the caller distinguish "prefix genuinely doesn't
+ * exist" (totalMatching === 0) from "prefix exists, nothing left to
+ * backfill" (totalMatching > 0, count === 0) — conflating them was the
+ * 2026-07-04 false "dead prefix" bug.
  */
 async function probePrefix(
   engine: BrainEngine,
   prefix: string,
   sourceId: string | undefined,
-): Promise<{ count: number; sample: string[] }> {
+): Promise<{ count: number; sample: string[]; totalMatching: number; error?: string }> {
   let where = `WHERE deleted_at IS NULL AND (type IS NULL OR type = '') AND source_path LIKE $1`;
+  let totalWhere = `WHERE deleted_at IS NULL AND source_path LIKE $1`;
   const params: unknown[] = [`${prefix}%`];
   if (sourceId) {
     where += ` AND source_id = $2`;
+    totalWhere += ` AND source_id = $2`;
     params.push(sourceId);
   }
   try {
+    const totalRows = await engine.executeRaw<{ cnt: string }>(
+      `SELECT COUNT(*)::text AS cnt FROM pages ${totalWhere}`,
+      params,
+    );
+    const totalMatching = parseInt(totalRows[0]?.cnt ?? '0', 10) || 0;
+
     const cntRows = await engine.executeRaw<{ cnt: string }>(
       `SELECT COUNT(*)::text AS cnt FROM pages ${where}`,
       params,
     );
     const count = parseInt(cntRows[0]?.cnt ?? '0', 10) || 0;
-    if (count === 0) return { count: 0, sample: [] };
+    if (count === 0) return { count: 0, sample: [], totalMatching };
     const sampleRows = await engine.executeRaw<{ slug: string }>(
       `SELECT slug FROM pages ${where} ORDER BY slug LIMIT 10`,
       params,
     );
-    return { count, sample: sampleRows.map((r) => r.slug) };
-  } catch {
-    return { count: 0, sample: [] };
+    return { count, sample: sampleRows.map((r) => r.slug), totalMatching };
+  } catch (e) {
+    // 2026-07-06: surface the error instead of silently reporting
+    // count:0/totalMatching:0 — a genuine SQL error (bad prefix pattern,
+    // transient connection blip) must not read the same as "dead prefix."
+    return { count: 0, sample: [], totalMatching: 0, error: (e as Error).message };
   }
 }
 
@@ -181,7 +219,11 @@ export async function runSyncCore(
   for (const t of pack.manifest.page_types) {
     for (const prefix of t.path_prefixes) {
       const probe = await probePrefix(ctx.engine, prefix, sourceId);
-      const dead_prefix = probe.count === 0;
+      // dead_prefix now means "zero pages exist under this prefix at all"
+      // (matches stats.ts's detectDeadPrefixes). all_already_typed covers
+      // the previously-conflated "pages exist, none untyped" case.
+      const dead_prefix = probe.error === undefined && probe.totalMatching === 0;
+      const all_already_typed = probe.error === undefined && probe.totalMatching > 0 && probe.count === 0;
       let applied = 0;
       if (apply && probe.count > 0) {
         applied = await applyTypeAssignment(
@@ -199,6 +241,8 @@ export async function runSyncCore(
         would_apply: probe.count,
         sample_slugs: probe.sample,
         dead_prefix,
+        all_already_typed,
+        ...(probe.error !== undefined ? { probe_error: probe.error } : {}),
         applied,
       });
       total_would_apply += probe.count;

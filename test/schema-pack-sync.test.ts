@@ -137,6 +137,55 @@ describe('runSyncCore — dry-run', () => {
       const companyEntry = result.per_prefix.find((p) => p.type === 'company')!;
       expect(companyEntry.dead_prefix).toBe(true);
       expect(companyEntry.would_apply).toBe(0);
+      // 2026-07-06 regression: a genuinely dead prefix must NOT also read as
+      // all_already_typed — the two states are mutually exclusive.
+      expect(companyEntry.all_already_typed).toBe(false);
+    });
+  });
+
+  it('2026-07-06: all_already_typed fires when every matching page is already typed (not dead_prefix)', async () => {
+    // Reproduces the vented bug: a prior catch-all migration retyped every
+    // page under a prefix (e.g. meeting -> note, preserving legacy_type in
+    // frontmatter). probePrefix's untyped-only query then sees zero
+    // matches and previously reported "dead prefix — no matching pages,"
+    // which is false — the prefix has real pages, just none untyped.
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: 'tiny' }, async () => {
+      seedTinyPack([{ name: 'meeting', prefix: 'meetings/' }]);
+      await seedPage('m1', 'meetings/m1.md', { type: 'note' });
+      await seedPage('m2', 'meetings/m2.md', { type: 'note' });
+      const result = await runSyncCore(ctxOf(), { apply: false });
+      const meetingEntry = result.per_prefix.find((p) => p.type === 'meeting')!;
+      expect(meetingEntry.would_apply).toBe(0);
+      expect(meetingEntry.dead_prefix).toBe(false);
+      expect(meetingEntry.all_already_typed).toBe(true);
+      expect(meetingEntry.probe_error).toBeUndefined();
+    });
+  });
+
+  it('2026-07-06: probePrefix SQL failure surfaces as probe_error, not a false dead_prefix', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: 'tiny' }, async () => {
+      seedTinyPack([{ name: 'person', prefix: 'people/' }]);
+      await seedPage('alice', 'people/alice.md');
+      const realExecuteRaw = engine.executeRaw.bind(engine);
+      let threw = false;
+      (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw = ((sql: string, params?: unknown[]) => {
+        if (typeof sql === 'string' && sql.includes('FROM pages') && !threw) {
+          threw = true;
+          throw new Error('simulated connection blip');
+        }
+        return realExecuteRaw(sql, params);
+      }) as typeof engine.executeRaw;
+      try {
+        const result = await runSyncCore(ctxOf(), { apply: false });
+        const personEntry = result.per_prefix.find((p) => p.type === 'person')!;
+        expect(personEntry.probe_error).toBe('simulated connection blip');
+        // A probe error must NOT be reported as a genuine dead prefix or
+        // as all_already_typed — both would be silently misleading.
+        expect(personEntry.dead_prefix).toBe(false);
+        expect(personEntry.all_already_typed).toBe(false);
+      } finally {
+        (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw = realExecuteRaw;
+      }
     });
   });
 });
@@ -191,9 +240,14 @@ describe('runSyncCore — apply', () => {
       seedTinyPack([{ name: 'person', prefix: 'people/' }]);
       await seedPage('alice', 'people/alice.md', { type: 'old-type' });
       await seedPage('bob', 'people/bob.md');  // untyped
-      await runSyncCore(ctxOf(), { apply: true });
+      const result = await runSyncCore(ctxOf(), { apply: true });
       expect(await getType('alice')).toBe('old-type');  // preserved
       expect(await getType('bob')).toBe('person');
+      // 2026-07-06 regression: a mixed typed/untyped prefix is neither
+      // dead nor "all already typed" — there was real work to do (bob).
+      const personEntry = result.per_prefix.find((p) => p.type === 'person')!;
+      expect(personEntry.dead_prefix).toBe(false);
+      expect(personEntry.all_already_typed).toBe(false);
     });
   });
 
