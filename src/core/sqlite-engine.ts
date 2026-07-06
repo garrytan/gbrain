@@ -36,7 +36,7 @@ import {
 } from './page-projection.ts';
 import { buildPageCentroid } from './services/page-embedding.ts';
 import { appendPendingDerivedSearchResults } from './search/derived-freshness.ts';
-import { selectLocalVectorChunkIds, selectLocalVectorPageIds } from './search/vector-prefilter.ts';
+import { localVectorPageCandidateLimit, selectLocalVectorChunkIds, selectLocalVectorPageIds } from './search/vector-prefilter.ts';
 import { searchLocalVectors } from './search/vector-local.ts';
 import { maybeUseCustomSqlite, tryLoadSqliteVec, type SqliteVectorBackend } from './sqlite-vec-loader.ts';
 import { slugifyPath } from './sync.ts';
@@ -9729,62 +9729,96 @@ export class SQLiteEngine implements BrainEngine {
     return page;
   }
 
-  // sqlite-vec pushes cosine scoring and top-k into SQL, replacing the
-  // O(corpus) JS scoring loops; result shape matches searchLocalVectors.
+  // sqlite-vec pushes cosine scoring and top-k into SQL while preserving the
+  // JS pipeline's semantics exactly: a centroid-selected page shortlist, plus
+  // a top-k rescue lane for chunks whose pages fall outside the shortlist.
   private searchVectorWithSqliteVec(
     embedding: Float32Array,
     limit: number,
     opts?: SearchOpts,
   ): SearchResult[] {
-    const params: unknown[] = [];
-    let sql = `
-      SELECT
-        p.id AS page_id,
-        p.slug,
-        p.title,
-        p.type,
-        p.updated_at,
-        NULLIF(json_extract(p.frontmatter, '$.superseded_by'), '') AS superseded_by,
-        cc.chunk_text,
-        cc.chunk_source,
-        cc.chunk_index,
-        cc.chunk_content_hash,
-        CASE WHEN p.timeline_changed_at > p.compiled_truth_changed_at THEN 1 ELSE 0 END AS stale,
-        vec_distance_cosine(cc.embedding, ?) AS distance
-      FROM content_chunks cc
-      JOIN pages p ON p.id = cc.page_id
-      WHERE cc.embedding IS NOT NULL AND length(cc.embedding) = ?
+    const queryBlob = new Uint8Array(embedding.buffer.slice(embedding.byteOffset, embedding.byteOffset + embedding.byteLength));
+    const pageFilter = (params: unknown[], alias = 'p'): string => {
+      let sql = '';
+      if (opts?.type) {
+        sql += ` AND ${alias}.type = ?`;
+        params.push(opts.type);
+      }
+      if (opts?.exclude_slugs?.length) {
+        sql += ` AND ${alias}.slug NOT IN (${opts.exclude_slugs.map(() => '?').join(', ')})`;
+        params.push(...opts.exclude_slugs.map(slug => validateSlug(slug)));
+      }
+      sql += sqliteSearchTemporalFilter(opts, params, alias);
+      return sql;
+    };
+
+    const shortlistParams: unknown[] = [queryBlob, embedding.byteLength];
+    let shortlistSql = `
+      SELECT DISTINCT p.id AS page_id,
+        vec_distance_cosine(p.page_embedding, ?) AS distance
+      FROM pages p
+      JOIN content_chunks cc ON cc.page_id = p.id
+      WHERE cc.embedding IS NOT NULL
+        AND p.page_embedding IS NOT NULL
+        AND length(p.page_embedding) = ?
     `;
-    params.push(new Uint8Array(embedding.buffer, embedding.byteOffset, embedding.byteLength));
-    params.push(embedding.byteLength);
+    shortlistSql += pageFilter(shortlistParams);
+    shortlistSql += ` ORDER BY distance ASC LIMIT ?`;
+    shortlistParams.push(localVectorPageCandidateLimit(limit));
+    const shortlistRows = this.database.query(shortlistSql).all(...sqliteBindings(shortlistParams)) as Record<string, unknown>[];
+    const shortlistIds = shortlistRows.map((row) => Number(row.page_id));
 
-    if (opts?.type) {
-      sql += ` AND p.type = ?`;
-      params.push(opts.type);
-    }
-    if (opts?.exclude_slugs?.length) {
-      sql += ` AND p.slug NOT IN (${opts.exclude_slugs.map(() => '?').join(', ')})`;
-      params.push(...opts.exclude_slugs.map(slug => validateSlug(slug)));
-    }
-    sql += sqliteSearchTemporalFilter(opts, params, 'p');
-    sql += ` ORDER BY distance ASC LIMIT ?`;
-    params.push(limit);
+    const chunkQuery = (pageScope: 'in' | 'out' | 'all'): Record<string, unknown>[] => {
+      const params: unknown[] = [queryBlob, embedding.byteLength];
+      let sql = `
+        SELECT
+          p.id AS page_id,
+          p.slug,
+          p.title,
+          p.type,
+          p.updated_at,
+          NULLIF(json_extract(p.frontmatter, '$.superseded_by'), '') AS superseded_by,
+          cc.chunk_text,
+          cc.chunk_source,
+          cc.chunk_index,
+          cc.chunk_content_hash,
+          CASE WHEN p.timeline_changed_at > p.compiled_truth_changed_at THEN 1 ELSE 0 END AS stale,
+          vec_distance_cosine(cc.embedding, ?) AS distance
+        FROM content_chunks cc
+        JOIN pages p ON p.id = cc.page_id
+        WHERE cc.embedding IS NOT NULL AND length(cc.embedding) = ?
+      `;
+      if (pageScope !== 'all' && shortlistIds.length > 0) {
+        sql += ` AND p.id ${pageScope === 'in' ? 'IN' : 'NOT IN'} (${shortlistIds.map(() => '?').join(', ')})`;
+        params.push(...shortlistIds);
+      }
+      sql += pageFilter(params);
+      sql += ` ORDER BY distance ASC LIMIT ?`;
+      params.push(limit);
+      return this.database.query(sql).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    };
 
-    const rows = this.database.query(sql).all(...sqliteBindings(params)) as Record<string, unknown>[];
-    return rows.map((row) => ({
-      slug: String(row.slug),
-      page_id: Number(row.page_id),
-      title: String(row.title),
-      type: row.type as PageType,
-      chunk_text: String(row.chunk_text),
-      chunk_source: row.chunk_source as Chunk['chunk_source'],
-      chunk_index: nullableNumber(row.chunk_index),
-      chunk_content_hash: nullableString(row.chunk_content_hash),
-      stale: Boolean(row.stale),
-      updated_at: row.updated_at == null ? undefined : new Date(String(row.updated_at)),
-      superseded_by: nullableString(row.superseded_by),
-      score: 1 - Number(row.distance),
-    }));
+    const rows = shortlistIds.length === 0
+      ? chunkQuery('all')
+      : [...chunkQuery('in'), ...chunkQuery('out')];
+
+    return rows
+      .map((row) => ({
+        slug: String(row.slug),
+        page_id: Number(row.page_id),
+        title: String(row.title),
+        type: row.type as PageType,
+        chunk_text: String(row.chunk_text),
+        chunk_source: row.chunk_source as Chunk['chunk_source'],
+        chunk_index: nullableNumber(row.chunk_index),
+        chunk_content_hash: nullableString(row.chunk_content_hash),
+        stale: Boolean(row.stale),
+        updated_at: row.updated_at == null ? undefined : new Date(String(row.updated_at)),
+        superseded_by: nullableString(row.superseded_by),
+        score: 1 - Number(row.distance),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
   }
 
   private getLocalVectorPrefilterPageIds(

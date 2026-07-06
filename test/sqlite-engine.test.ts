@@ -503,6 +503,9 @@ describe('SQLiteEngine', () => {
   });
 
   test('searchVector keeps the page shortlist broader than the final result limit', async () => {
+    // These tests document the JS scoring pipeline; pin the fallback backend
+    // so they stay meaningful when the sqlite-vec extension is loadable.
+    (engine as unknown as { vectorBackend: string }).vectorBackend = 'js-fallback';
     await putPage('concepts/top-centroid', {
       type: 'concept',
       title: 'Top Centroid',
@@ -565,6 +568,9 @@ describe('SQLiteEngine', () => {
   });
 
   test('searchVector falls back to chunk scoring when pages with embeddings are missing centroids', async () => {
+    // These tests document the JS scoring pipeline; pin the fallback backend
+    // so they stay meaningful when the sqlite-vec extension is loadable.
+    (engine as unknown as { vectorBackend: string }).vectorBackend = 'js-fallback';
     await putPage('concepts/missing-centroid', {
       type: 'concept',
       title: 'Missing Centroid',
@@ -611,6 +617,9 @@ describe('SQLiteEngine', () => {
   });
 
   test('searchVector narrows chunk scoring to a centroid-selected page set when centroids are available', async () => {
+    // These tests document the JS scoring pipeline; pin the fallback backend
+    // so they stay meaningful when the sqlite-vec extension is loadable.
+    (engine as unknown as { vectorBackend: string }).vectorBackend = 'js-fallback';
     await putPage('concepts/prefilter-alpha', {
       type: 'concept',
       title: 'Prefilter Alpha',
@@ -684,6 +693,9 @@ describe('SQLiteEngine', () => {
   });
 
   test('searchVector rescues omitted diluted-centroid pages via lightweight embedding scan', async () => {
+    // These tests document the JS scoring pipeline; pin the fallback backend
+    // so they stay meaningful when the sqlite-vec extension is loadable.
+    (engine as unknown as { vectorBackend: string }).vectorBackend = 'js-fallback';
     const query = new Float32Array([1, 0]);
 
     await putPage('concepts/diluted-exact', {
