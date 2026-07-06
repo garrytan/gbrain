@@ -3619,8 +3619,10 @@
       },
       "surface_profile": {
         "effective_tier": "admin",
-        "required_capabilities": [],
-        "capability_classification": "unclassified_mutating",
+        "required_capabilities": [
+          "canonical_write"
+        ],
+        "capability_classification": "explicit",
         "visible_profiles": [],
         "callable_profiles": [],
         "forbidden_profiles": [],
