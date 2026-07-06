@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -10,10 +10,25 @@ import {
 import { importFromContent } from '../src/core/import-file.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import type { RetrievalTrace } from '../src/core/types.ts';
+import { loadP2GoldFixture, seedP2GoldCorpus } from './fixtures/retrieval-eval/p2-gold-corpus.ts';
+
+setDefaultTimeout(Number(process.env.TEST_TIMEOUT_MS ?? 120_000));
 
 const tempPaths: string[] = [];
-const WAVE3_DG1_ARTIFACT_URL = new URL('./fixtures/retrieval-eval/wave3-dg1-non-regression.json', import.meta.url);
 const P2_GOLD_FIXTURE_URL = new URL('./fixtures/retrieval-eval/p2-gold.jsonl', import.meta.url);
+
+// retrieve_context derives its selected intent from the memory scenario
+// classifier, which can only land on these four intents today. The fixture
+// keeps one precision_lookup and one personal_episode_lookup expectation as
+// canaries: they fail route_match until the router learns to select those
+// intents, at which point they flip green and the floors below can be raised.
+const REACHABLE_INTENTS = [
+  'broad_synthesis',
+  'task_resume',
+  'personal_profile_lookup',
+  'mixed_scope_bridge',
+] as const;
+const ROUTE_MISMATCH_CANARY_IDS = ['p2-015-personal-episode', 'p2-030-review-local-mcp'];
 
 afterEach(() => {
   while (tempPaths.length > 0) {
@@ -22,30 +37,95 @@ afterEach(() => {
 });
 
 describe('live retrieval eval harness', () => {
-  test('records the EV-1 non-regression artifact for the DG-1 default flip', () => {
-    const artifact = JSON.parse(readFileSync(WAVE3_DG1_ARTIFACT_URL, 'utf8'));
+  test('EV-1b: the full P2 gold fixture runs live against the seeded corpus and holds its floors', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-p2-gold-live-'));
+    tempPaths.push(dir);
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+    await engine.initSchema();
+    try {
+      await seedP2GoldCorpus(engine);
 
-    expect(artifact).toMatchObject({
-      artifact_kind: 'ev1_live_retrieval_non_regression',
-      gate: 'EV-1',
-      evaluated_change: 'RQ-7 retrieval_governed_probe_hybrid default-on',
-      fixture_id: 'retrieval-eval-basic',
-      fixture_path: 'test/fixtures/retrieval-eval/basic.jsonl',
-      status: 'passed',
-      thresholds: {
-        top1_match_rate: 1,
-        recall_at_10: 1,
-      },
-      metrics: {
-        case_count: 3,
-        top1_match_rate: 1,
-        recall_at_10: 1,
-        mrr: 1,
-      },
-    });
-    expect(artifact.config['retrieval.governed_probe_hybrid']).toBe(true);
-    expect(artifact.cases.every((entry: { status?: string }) => entry.status === 'passed')).toBe(true);
-    expect(artifact.failures).toEqual([]);
+      const report = await evaluateLiveRetrievalFixture(engine, loadP2GoldFixture());
+
+      expect(report.case_count).toBe(30);
+      // Floors are set from what the seeded corpus actually achieves
+      // (top1 1.0, recall 1.0, mrr 1.0, route match 28/30) with headroom so
+      // only a real ranking or routing regression trips them.
+      expect(report.recall_at_10).toBeGreaterThanOrEqual(0.9);
+      expect(report.top1_match_rate).toBeGreaterThanOrEqual(0.9);
+      expect(report.mrr).toBeGreaterThanOrEqual(0.85);
+      const routeMatchRate = report.cases.filter((entry) => entry.route_match === true).length
+        / report.case_count;
+      expect(routeMatchRate).toBeGreaterThanOrEqual(0.9);
+
+      for (const intent of REACHABLE_INTENTS) {
+        expect(report.per_route[intent]?.case_count).toBeGreaterThanOrEqual(1);
+        expect(report.per_route[intent]?.recall_at_10).toBeGreaterThanOrEqual(0.9);
+      }
+      const perRouteTotal = Object.values(report.per_route)
+        .reduce((total, summary) => total + summary.case_count, 0);
+      expect(perRouteTotal).toBe(30);
+
+      // The only acceptable failures are the two structural route-mismatch
+      // canaries; any recall/top1 miss shows up here and turns this red.
+      expect(report.failures.map((failure) => failure.id).sort()).toEqual(ROUTE_MISMATCH_CANARY_IDS);
+      expect(report.failures.every((failure) => (
+        failure.reason_codes.length === 1 && failure.reason_codes[0] === 'route_mismatch'
+      ))).toBe(true);
+
+      // The Korean case must be answered from the live index, not skipped.
+      const korean = report.cases.find((entry) => entry.id === 'p2-003-korean-rebellion-architecture');
+      expect(korean?.recall_at_10).toBe(1);
+      expect(korean?.top1_match).toBe(true);
+
+      // task_resume runs against a real task thread, not just a label.
+      const taskResume = report.cases.find((entry) => entry.id === 'p2-017-task-resume');
+      expect(taskResume?.selected_intent).toBe('task_resume');
+      expect(taskResume?.route_match).toBe(true);
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('EV-1b regression sensitivity: a broken candidate search collapses recall below the floor', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-p2-gold-broken-'));
+    tempPaths.push(dir);
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+    await engine.initSchema();
+    try {
+      await seedP2GoldCorpus(engine);
+      // A decoy page that no fixture case lists as gold: the broken search
+      // below always "finds" this page, simulating a catastrophic ranking
+      // regression while keeping the candidate pipeline exercised.
+      await importFromContent(engine, 'brain/concepts/decoy-noise', [
+        '---',
+        'type: concept',
+        'title: Decoy Noise Beacon',
+        '---',
+        'Decoy noise beacon content that answers no fixture query.',
+        '[Source: User, direct message, 2026-07-04 12:00 KST]',
+      ].join('\n'), { path: 'brain/concepts/decoy-noise.md' });
+
+      const report = await evaluateLiveRetrievalFixture(engine, loadP2GoldFixture('p2-gold-broken-ranking'), {
+        retrieve_context_dependencies: {
+          candidateSearch: (_query, options) =>
+            engine.searchKeyword('decoy noise beacon', { limit: options.limit }),
+        },
+      });
+
+      expect(report.case_count).toBe(30);
+      expect(report.status).toBe('failed');
+      // Healthy floor is 0.9; the broken ranking must fall far below it so the
+      // live gate is provably sensitive to ranking regressions.
+      expect(report.recall_at_10).toBeLessThan(0.2);
+      expect(report.mrr).toBeLessThan(0.2);
+      expect(report.top1_match_rate).toBeLessThan(0.2);
+      expect(report.failures.length).toBeGreaterThanOrEqual(28);
+    } finally {
+      await engine.disconnect();
+    }
   });
 
   test('records a non-ceremonial P2 gold fixture with route and provenance metadata', () => {

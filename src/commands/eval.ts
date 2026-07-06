@@ -586,6 +586,7 @@ function normalizeRetrievalCase(entry: Record<string, unknown>): RetrievalEvalCa
     route,
     expected_selected_intent: stringValue(entry.expected_selected_intent) as RetrievalRouteIntent | undefined,
     requested_scope: scopeValue(entry.requested_scope),
+    task_id: stringValue(entry.task_id) ?? undefined,
     known_subjects: knownSubjectsValue(entry.known_subjects),
     provenance: stringValue(entry.provenance) ?? objectValue(entry.provenance) ?? null,
     gold_slugs: goldSlugs,

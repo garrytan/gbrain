@@ -15,6 +15,7 @@ export interface RetrievalEvalCaseInput {
   route: RetrievalRouteIntent;
   expected_selected_intent?: RetrievalRouteIntent | null;
   requested_scope?: Exclude<MemoryScenarioScopeDecision, 'defer'>;
+  task_id?: string | null;
   known_subjects?: Array<string | MemoryScenarioKnownSubject>;
   provenance?: Record<string, unknown> | string | null;
   gold_slugs: string[];
@@ -186,6 +187,7 @@ async function evaluateLiveRetrievalCase(
       include_orientation: false,
       persist_trace: true,
       requested_scope: testCase.requested_scope,
+      task_id: testCase.task_id ?? undefined,
       known_subjects: testCase.known_subjects,
     },
     options.retrieve_context_dependencies,
