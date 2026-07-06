@@ -20,6 +20,16 @@ describe('tiered tool catalog (C1 part 2)', () => {
     }
   });
 
+  test('the deprecated context-atlas family is demoted to admin with one-line descriptions', () => {
+    const atlasOps = operations.filter((op) => op.name.includes('atlas'));
+    expect(atlasOps).toHaveLength(8);
+    for (const op of atlasOps) {
+      expect(effectiveToolTier(op)).toBe('admin');
+      expect(op.description.length).toBeLessThanOrEqual(120);
+      expect(op.description).toContain('Deprecated');
+    }
+  });
+
   test('daily-driver ops are core; control-plane ops are admin', () => {
     const byName = new Map(operations.map(op => [op.name, op]));
     for (const name of CORE_TOOLS) {

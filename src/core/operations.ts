@@ -5922,15 +5922,16 @@ const list_context_map_entries: Operation = {
 };
 
 const CONTEXT_ATLAS_DEPRECATION_NOTICE =
-  'Deprecated: use context maps and graph frontier planning for new retrieval orientation; context atlas entries remain legacy derived artifacts.';
+  'Deprecated legacy context-atlas operation; use context maps and graph frontier planning.';
 
-function contextAtlasDescription(description: string): string {
-  return `${description} ${CONTEXT_ATLAS_DEPRECATION_NOTICE}`;
+function contextAtlasDescription(_description: string): string {
+  return CONTEXT_ATLAS_DEPRECATION_NOTICE;
 }
 
 const build_context_atlas: Operation = {
   name: 'build_context_atlas',
   description: contextAtlasDescription('Build or rebuild the persisted workspace atlas registry entry.'),
+  tier: 'admin',
   params: {
     scope_id: {
       type: 'string',
@@ -5955,6 +5956,7 @@ const build_context_atlas: Operation = {
 const get_context_atlas_entry: Operation = {
   name: 'get_context_atlas_entry',
   description: contextAtlasDescription('Get one persisted atlas registry entry by id.'),
+  tier: 'admin',
   params: {
     id: { type: 'string', required: true, description: 'Atlas entry id' },
   },
@@ -5971,6 +5973,7 @@ const get_context_atlas_entry: Operation = {
 const list_context_atlas_entries: Operation = {
   name: 'list_context_atlas_entries',
   description: contextAtlasDescription('List persisted atlas registry entries.'),
+  tier: 'admin',
   params: {
     scope_id: {
       type: 'string',
@@ -5992,6 +5995,7 @@ const list_context_atlas_entries: Operation = {
 const select_context_atlas_entry: Operation = {
   name: 'select_context_atlas_entry',
   description: contextAtlasDescription('Select the best persisted atlas registry entry for a scope.'),
+  tier: 'admin',
   params: {
     scope_id: {
       type: 'string',
@@ -6021,6 +6025,7 @@ const select_context_atlas_entry: Operation = {
 const get_context_atlas_overview: Operation = {
   name: 'get_context_atlas_overview',
   description: contextAtlasDescription('Render a compact overview artifact for a persisted atlas entry.'),
+  tier: 'admin',
   params: {
     atlas_id: {
       type: 'string',
@@ -6058,6 +6063,7 @@ const get_context_atlas_overview: Operation = {
 const get_context_atlas_report: Operation = {
   name: 'get_context_atlas_report',
   description: contextAtlasDescription('Render a compact human-readable report for a persisted atlas entry.'),
+  tier: 'admin',
   params: {
     atlas_id: {
       type: 'string',
@@ -6095,6 +6101,7 @@ const get_context_atlas_report: Operation = {
 const get_atlas_orientation_card: Operation = {
   name: 'get_atlas_orientation_card',
   description: contextAtlasDescription('Render a compact orientation card from atlas selection and the workspace corpus card.'),
+  tier: 'admin',
   params: {
     atlas_id: {
       type: 'string',
@@ -6132,6 +6139,7 @@ const get_atlas_orientation_card: Operation = {
 const get_atlas_orientation_bundle: Operation = {
   name: 'get_atlas_orientation_bundle',
   description: contextAtlasDescription('Render a compact atlas bundle from atlas report and atlas orientation card.'),
+  tier: 'admin',
   params: {
     atlas_id: {
       type: 'string',
