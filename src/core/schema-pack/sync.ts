@@ -49,8 +49,7 @@ export interface PerPrefixResult {
    * with "prefix exists but every matching page is already typed" —
    * a real backfill target (e.g. pages a catch-all migration retyped,
    * carrying `frontmatter.legacy_type`) was misreported as a dead/typo'd
-   * prefix. See `~/.claude/agent-memory/vent/vents.md`, "gbrain schema
-   * sync calls a prefix 'dead'...".
+   * prefix.
    */
   dead_prefix: boolean;
   /**
