@@ -22073,7 +22073,7 @@
           ],
           "required": false,
           "nullable": false,
-          "description": "Apply the routed action. Defaults to true for create_candidate routes and false for canonical/defer routes."
+          "description": "Apply the routed action. Defaults to true for create_candidate routes and false for canonical/defer routes. On a defer decision no deferred action exists to execute: apply=true instead captures a fallback candidate so the signal is not lost (writeback_governance_metadata.apply_mode = deferred_candidate_created)."
         },
         "candidate_type": {
           "type": [
@@ -22318,7 +22318,7 @@
         }
       },
       "compact_schema_hash": "a9636c16c09156444b6760a8ea798df7e8dbb7dfaae3b9c6d3076cbf33fe8d3d",
-      "full_schema_hash": "b33b14c15d6f98a8a3dd8295b4ea5b7f7640d8ddfe62c39a8b90573cad63dacf",
+      "full_schema_hash": "bb35dbc8029c1d8ffe4ca3395f9c6ee00d2564472285d210ac99f3bf8f605798",
       "memory_verb_families": [
         "route_writeback"
       ],
