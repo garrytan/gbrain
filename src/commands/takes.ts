@@ -591,7 +591,8 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   const sub = rest[0];
   if (sub !== '--from-pages') {
     process.stderr.write(
-      'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--source-id <id>] [--max-pages N] [--holder <name>]\n',
+      'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--source-id <id>] [--max-pages N (clamped to 1000)] [--include-covered] [--holder <name>]\n' +
+      'Runs progress: pages that already hold takes are skipped, so repeat runs sweep a large corpus in slices. --include-covered rescans everything (refresh).\n',
     );
     process.exit(1);
   }
@@ -604,6 +605,7 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   const maxPages = maxPagesRaw ? Math.max(1, Math.min(1000, parseInt(maxPagesRaw, 10) || 50)) : 50;
   const holderIdx = rest.indexOf('--holder');
   const holder = holderIdx >= 0 ? rest[holderIdx + 1] : 'system';
+  const includeCovered = rest.includes('--include-covered');
 
   // A12 consent gate.
   const bootstrapEnabledCfg = await engine.getConfig('takes.bootstrap_enabled');
@@ -628,6 +630,7 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
     dryRun,
     sourceIdFilter,
     maxPages,
+    includeCovered,
     holder,
   });
   if (result.llm_unavailable) {
