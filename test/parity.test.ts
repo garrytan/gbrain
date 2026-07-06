@@ -8,6 +8,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import type { Operation } from '../src/core/operations.ts';
 import type { PageType, SearchResult, Page, Link } from '../src/core/types.ts';
+import { buildNoteManifestEntry } from '../src/core/services/note-manifest-service.ts';
+import { buildNoteSectionEntries } from '../src/core/services/note-section-service.ts';
 
 const SQLITE_PGLITE_PARITY_TIMEOUT_MS = Number(process.env.TEST_TIMEOUT_MS ?? 30_000);
 
@@ -494,6 +496,110 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
       }
       if (cleanupErrors.length > 0) {
         throw new AggregateError(cleanupErrors, 'Failed to clean up governance parity fixtures');
+      }
+    }
+  }, SQLITE_PGLITE_PARITY_TIMEOUT_MS);
+
+  test('personal memory rows round-trip across engines', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-pglite-personal-'));
+    const sqlite = new SQLiteEngine();
+    const pglite = new PGLiteEngine();
+
+    try {
+      await sqlite.connect({ engine: 'sqlite', database_path: join(root, 'brain.db') });
+      await sqlite.initSchema();
+      await pglite.connect({ engine: 'pglite', database_path: join(root, 'brain.pglite') });
+      await pglite.initSchema();
+
+      await seedPersonalMemoryParityFixture(sqlite);
+      await seedPersonalMemoryParityFixture(pglite);
+
+      const sqliteSnapshot = await collectPersonalMemoryParitySnapshot(sqlite);
+      const pgliteSnapshot = await collectPersonalMemoryParitySnapshot(pglite);
+
+      expect(sqliteSnapshot).toEqual({
+        profile: {
+          profile_type: 'preference',
+          subject: 'Parity subject',
+          content: 'Parity profile content.',
+          source_refs: ['User, direct message, 2026-07-06 19:00 KST'],
+          sensitivity: 'personal',
+          export_status: 'private_only',
+          last_confirmed_at: '2026-07-06T10:00:00.000Z',
+          superseded_by: null,
+        },
+        profileIdsAfterDelete: ['parity-profile-keep'],
+        episode: {
+          title: 'Parity episode',
+          summary: 'Parity episode summary.',
+          source_kind: 'chat',
+          start_time: '2026-07-06T08:00:00.000Z',
+          end_time: '2026-07-06T09:00:00.000Z',
+          source_refs: ['User, direct message, 2026-07-06 19:05 KST'],
+          candidate_ids: [],
+        },
+        episodeIdsAfterDelete: ['parity-episode-keep'],
+      });
+      expect(pgliteSnapshot).toEqual(sqliteSnapshot);
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      for (const engine of [sqlite, pglite]) {
+        try {
+          await engine.disconnect();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      try {
+        rmSync(root, { recursive: true, force: true });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, 'Failed to clean up personal memory parity fixtures');
+      }
+    }
+  }, SQLITE_PGLITE_PARITY_TIMEOUT_MS);
+
+  test('note manifest and section rows round-trip across engines', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mbrain-sqlite-pglite-note-structure-'));
+    const sqlite = new SQLiteEngine();
+    const pglite = new PGLiteEngine();
+
+    try {
+      await sqlite.connect({ engine: 'sqlite', database_path: join(root, 'brain.db') });
+      await sqlite.initSchema();
+      await pglite.connect({ engine: 'pglite', database_path: join(root, 'brain.pglite') });
+      await pglite.initSchema();
+
+      await seedNoteStructureParityFixture(sqlite);
+      await seedNoteStructureParityFixture(pglite);
+
+      const sqliteSnapshot = await collectNoteStructureParitySnapshot(sqlite);
+      const pgliteSnapshot = await collectNoteStructureParitySnapshot(pglite);
+
+      expect(pgliteSnapshot).toEqual(sqliteSnapshot);
+      expect(sqliteSnapshot.manifest?.slug).toBe('concepts/note-structure-parity');
+      expect(sqliteSnapshot.manifest?.outgoing_wikilinks).toEqual(['systems/mbrain']);
+      expect(sqliteSnapshot.sectionHeadings.length).toBeGreaterThan(0);
+      expect(sqliteSnapshot.manifestAfterDelete).toBeNull();
+      expect(sqliteSnapshot.sectionsAfterDelete).toEqual([]);
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      for (const engine of [sqlite, pglite]) {
+        try {
+          await engine.disconnect();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      try {
+        rmSync(root, { recursive: true, force: true });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, 'Failed to clean up note structure parity fixtures');
       }
     }
   }, SQLITE_PGLITE_PARITY_TIMEOUT_MS);
@@ -1168,5 +1274,160 @@ async function collectGovernanceParitySnapshot(engine: SQLiteEngine | PGLiteEngi
       completion_ref: handoff.completion_ref,
     },
     handoffCount: handoffs.length,
+  };
+}
+
+async function seedPersonalMemoryParityFixture(engine: SQLiteEngine | PGLiteEngine): Promise<void> {
+  for (const suffix of ['keep', 'drop']) {
+    await engine.upsertProfileMemoryEntry({
+      id: `parity-profile-${suffix}`,
+      scope_id: 'personal:default',
+      profile_type: 'preference',
+      subject: suffix === 'keep' ? 'Parity subject' : 'Disposable subject',
+      content: suffix === 'keep' ? 'Parity profile content.' : 'Disposable profile content.',
+      source_refs: ['User, direct message, 2026-07-06 19:00 KST'],
+      sensitivity: 'personal',
+      export_status: 'private_only',
+      last_confirmed_at: '2026-07-06T10:00:00.000Z',
+      superseded_by: null,
+    });
+    await engine.createPersonalEpisodeEntry({
+      id: `parity-episode-${suffix}`,
+      scope_id: 'personal:default',
+      title: suffix === 'keep' ? 'Parity episode' : 'Disposable episode',
+      start_time: '2026-07-06T08:00:00.000Z',
+      end_time: '2026-07-06T09:00:00.000Z',
+      source_kind: 'chat',
+      summary: suffix === 'keep' ? 'Parity episode summary.' : 'Disposable episode summary.',
+      source_refs: ['User, direct message, 2026-07-06 19:05 KST'],
+      candidate_ids: [],
+    });
+  }
+  await engine.deleteProfileMemoryEntry('parity-profile-drop');
+  await engine.deletePersonalEpisodeEntry('parity-episode-drop');
+}
+
+async function collectPersonalMemoryParitySnapshot(engine: SQLiteEngine | PGLiteEngine) {
+  const profile = await engine.getProfileMemoryEntry('parity-profile-keep');
+  const profiles = await engine.listProfileMemoryEntries({ scope_id: 'personal:default' });
+  const episode = await engine.getPersonalEpisodeEntry('parity-episode-keep');
+  const episodes = await engine.listPersonalEpisodeEntries({ scope_id: 'personal:default' });
+  return {
+    profile: profile === null ? null : {
+      profile_type: profile.profile_type,
+      subject: profile.subject,
+      content: profile.content,
+      source_refs: profile.source_refs,
+      sensitivity: profile.sensitivity,
+      export_status: profile.export_status,
+      last_confirmed_at: profile.last_confirmed_at === null ? null : new Date(profile.last_confirmed_at).toISOString(),
+      superseded_by: profile.superseded_by,
+    },
+    profileIdsAfterDelete: profiles.map((entry) => entry.id).sort(),
+    episode: episode === null ? null : {
+      title: episode.title,
+      summary: episode.summary,
+      source_kind: episode.source_kind,
+      start_time: new Date(episode.start_time).toISOString(),
+      end_time: episode.end_time === null ? null : new Date(episode.end_time).toISOString(),
+      source_refs: episode.source_refs,
+      candidate_ids: episode.candidate_ids,
+    },
+    episodeIdsAfterDelete: episodes.map((entry) => entry.id).sort(),
+  };
+}
+
+const NOTE_STRUCTURE_PARITY_PAGE = {
+  type: 'concept' as PageType,
+  title: 'Note Structure Parity',
+  compiled_truth: [
+    '# Overview',
+    'Reference [[systems/mbrain]] for structural parity.',
+    '[Source: User, direct message, 2026-07-06 19:10 KST]',
+    '',
+    '## Details',
+    'Deterministic section content.',
+  ].join('\n'),
+  timeline: '',
+  frontmatter: {},
+};
+
+async function seedNoteStructureParityFixture(engine: SQLiteEngine | PGLiteEngine): Promise<void> {
+  const page = await engine.putPage('concepts/note-structure-parity', NOTE_STRUCTURE_PARITY_PAGE);
+  const manifestInput = buildNoteManifestEntry({
+    page_id: page.id,
+    slug: 'concepts/note-structure-parity',
+    path: 'concepts/note-structure-parity.md',
+    tags: ['parity'],
+    page: NOTE_STRUCTURE_PARITY_PAGE,
+  });
+  const manifestEntry = await engine.upsertNoteManifestEntry(manifestInput);
+  const sectionInputs = buildNoteSectionEntries({
+    page_id: page.id,
+    page_slug: 'concepts/note-structure-parity',
+    page_path: 'concepts/note-structure-parity.md',
+    page: NOTE_STRUCTURE_PARITY_PAGE,
+    manifest: manifestEntry,
+  });
+  await engine.replaceNoteSectionEntries('workspace:default', 'concepts/note-structure-parity', sectionInputs);
+
+  const disposable = await engine.putPage('concepts/note-structure-parity-drop', NOTE_STRUCTURE_PARITY_PAGE);
+  const disposableManifest = buildNoteManifestEntry({
+    page_id: disposable.id,
+    slug: 'concepts/note-structure-parity-drop',
+    path: 'concepts/note-structure-parity-drop.md',
+    tags: [],
+    page: NOTE_STRUCTURE_PARITY_PAGE,
+  });
+  const disposableManifestEntry = await engine.upsertNoteManifestEntry(disposableManifest);
+  await engine.replaceNoteSectionEntries('workspace:default', 'concepts/note-structure-parity-drop', buildNoteSectionEntries({
+    page_id: disposable.id,
+    page_slug: 'concepts/note-structure-parity-drop',
+    page_path: 'concepts/note-structure-parity-drop.md',
+    page: NOTE_STRUCTURE_PARITY_PAGE,
+    manifest: disposableManifestEntry,
+  }));
+  await engine.deleteNoteManifestEntry('workspace:default', 'concepts/note-structure-parity-drop');
+  await engine.deleteNoteSectionEntries('workspace:default', 'concepts/note-structure-parity-drop');
+}
+
+async function collectNoteStructureParitySnapshot(engine: SQLiteEngine | PGLiteEngine) {
+  const manifest = await engine.getNoteManifestEntry('workspace:default', 'concepts/note-structure-parity');
+  const manifests = await engine.listNoteManifestEntries({ scope_id: 'workspace:default' });
+  const sections = await engine.listNoteSectionEntries({
+    scope_id: 'workspace:default',
+    page_slug: 'concepts/note-structure-parity',
+    limit: 10,
+  });
+  const firstSection = sections[0]
+    ? await engine.getNoteSectionEntry('workspace:default', sections[0].section_id)
+    : null;
+  const manifestAfterDelete = await engine.getNoteManifestEntry('workspace:default', 'concepts/note-structure-parity-drop');
+  const sectionsAfterDelete = await engine.listNoteSectionEntries({
+    scope_id: 'workspace:default',
+    page_slug: 'concepts/note-structure-parity-drop',
+    limit: 10,
+  });
+  return {
+    manifest: manifest === null ? null : {
+      slug: manifest.slug,
+      path: manifest.path,
+      title: manifest.title,
+      tags: manifest.tags,
+      outgoing_wikilinks: manifest.outgoing_wikilinks,
+      heading_index: manifest.heading_index,
+      content_hash: manifest.content_hash,
+      extractor_version: manifest.extractor_version,
+    },
+    manifestSlugs: manifests.map((entry) => entry.slug).sort(),
+    sectionHeadings: sections.map((section) => ({
+      section_id: section.section_id,
+      heading_path: section.heading_path,
+      depth: section.depth,
+      outgoing_wikilinks: section.outgoing_wikilinks,
+    })),
+    firstSectionText: firstSection === null ? null : firstSection.section_text,
+    manifestAfterDelete,
+    sectionsAfterDelete: sectionsAfterDelete.map((section) => section.section_id),
   };
 }
