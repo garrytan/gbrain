@@ -4,6 +4,27 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The daily report's canonical-write debt is now truthful.** Applying an
+  approved page patch records and completes its canonical handoff, so
+  "promoted without handoff" debt now points only at memory that genuinely
+  never reached a page — instead of crying wolf on every successful governed
+  write forever.
+- **You can now close a handoff you opened.** The new
+  `complete_canonical_handoff` operation lets an agent (or you) mark a recorded
+  handoff as completed after any manual page write or repair; previously only
+  the internal auto-promote gate could ever complete one.
+- **Auto-promote stops leaking sessions.** Each nightly canonicalization closes
+  its per-candidate memory session instead of leaving it open forever.
+- **`read_context` with just a query now returns evidence.** A query-only call
+  defaults to automatic reads instead of silently returning zero canonical
+  reads unless you knew to pass `reads: 'auto'`.
+- **`route_memory_writeback` says what apply means on defer.** Applying a defer
+  decision captures a fallback candidate (`apply_mode:
+  deferred_candidate_created`) rather than executing a deferred action, and the
+  contract now documents that.
+
 ## [0.15.0] - 2026-07-04
 
 ### Added

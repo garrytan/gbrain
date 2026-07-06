@@ -325,7 +325,7 @@ export function createMemoryWritebackRouterOperations(deps: { defaultScopeId: st
       },
       apply: {
         type: 'boolean',
-        description: 'Apply the routed action. Defaults to true for create_candidate routes and false for canonical/defer routes.',
+        description: 'Apply the routed action. Defaults to true for create_candidate routes and false for canonical/defer routes. On a defer decision no deferred action exists to execute: apply=true instead captures a fallback candidate so the signal is not lost (writeback_governance_metadata.apply_mode = deferred_candidate_created).',
       },
       dry_run: {
         type: 'boolean',

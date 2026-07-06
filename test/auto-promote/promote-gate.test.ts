@@ -136,6 +136,30 @@ describe('runPromoteGate', () => {
       expect(events.some((event) => event.source_refs.includes(`canonical_handoff:${handoffs[0]!.id}`))).toBe(true);
     });
   });
+  it('closes the auto-promote memory session after canonicalization', async () => {
+    await withEngine(async (engine) => {
+      const target = await seedTargetPage(engine);
+      const cfg = { ...defaultAutoPromoteConfig(), dry_run: false };
+      const candidate = await seedEligibleCandidate(engine);
+      const res = await runPromoteGate({
+        engine,
+        verdicts: [{ candidate_id: candidate.id, decision: 'promote' as const, confidence: 0.95, reasoning: 'ok', source_refs: [] }],
+        candidates: [candidate],
+        config: cfg,
+        now: '2026-06-01T00:00:00Z',
+        actor: 'mbrain:auto_promote',
+        target_snapshot_hashes: new Map([[candidate.id, target.content_hash ?? null]]),
+        allow_canonical_page_writes: true,
+        canonical_write_candidate_ids: new Set([candidate.id]),
+      });
+      expect(res.canonical_writes).toContain('concepts/acme');
+      const handoffs = await engine.listCanonicalHandoffEntries({ candidate_id: candidate.id });
+      expect(handoffs).toHaveLength(1);
+      const session = await engine.getMemorySession(`auto_promote:${candidate.id}:${handoffs[0]!.id}`);
+      expect(session).not.toBeNull();
+      expect(session?.status).toBe('closed');
+    });
+  });
   it('preflights unverified candidates before staging them for promotion', async () => {
     await withEngine(async (engine) => {
       const cfg = { ...defaultAutoPromoteConfig(), dry_run: false };

@@ -7110,7 +7110,7 @@ const read_context: Operation = {
   params: {
     query: {
       type: 'string',
-      description: 'Optional natural-language request for automatic reads',
+      description: 'Optional natural-language request for automatic reads. A query without selectors defaults to reads=auto instead of returning empty evidence.',
     },
     selectors: {
       type: ['array', 'string'],
@@ -7119,7 +7119,7 @@ const read_context: Operation = {
     },
     reads: {
       type: 'string',
-      description: 'Read selection mode',
+      description: 'Read selection mode (default: auto when only a query is provided)',
       enum: [...CONTEXT_READ_MODES],
     },
     token_budget: {

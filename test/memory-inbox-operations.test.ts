@@ -42,6 +42,7 @@ test('memory inbox operations can be built from a dedicated domain module', () =
     'capture_map_derived_candidates',
     'list_memory_candidate_review_backlog',
     'record_canonical_handoff',
+    'complete_canonical_handoff',
     'list_canonical_handoff_entries',
     'assess_historical_validity',
     'advance_memory_candidate_status',
@@ -551,6 +552,101 @@ test('review and apply memory patch candidate update a page only after approval 
       candidate_id: 'patch-candidate-apply',
     });
     expect(statusEvents.map((event) => event.event_kind).sort()).toEqual(['created', 'promoted']);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('apply_memory_patch_candidate records and completes a canonical handoff for page-backed patches', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-patch-apply-handoff-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+  const createPatch = operations.find((operation) => operation.name === 'create_memory_patch_candidate');
+  const reviewPatch = operations.find((operation) => operation.name === 'review_memory_patch_candidate');
+  const applyPatch = operations.find((operation) => operation.name === 'apply_memory_patch_candidate');
+
+  if (!createPatch || !reviewPatch || !applyPatch) {
+    throw new Error('memory patch review/apply operations are missing');
+  }
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+    await engine.upsertMemoryRealm({
+      id: 'realm:patch-apply-handoff',
+      name: 'Patch apply handoff realm',
+      scope: 'work',
+      default_access: 'read_write',
+    });
+    await engine.createMemorySession({
+      id: 'session:patch-apply-handoff',
+      actor_ref: 'agent:patch-applier',
+    });
+    await engine.attachMemoryRealmToSession({
+      session_id: 'session:patch-apply-handoff',
+      realm_id: 'realm:patch-apply-handoff',
+      access: 'read_write',
+    });
+    const page = await engine.putPage('concepts/patch-apply-handoff-target', {
+      type: 'concept',
+      title: 'Patch Apply Handoff Target',
+      compiled_truth: 'Original page body. [Source: User, direct message, 2026-07-06 12:00 PM KST]',
+      timeline: '',
+    });
+    const ctx = {
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    };
+
+    await createPatch.handler(ctx, {
+      id: 'patch-candidate-apply-handoff',
+      session_id: 'session:patch-apply-handoff',
+      realm_id: 'realm:patch-apply-handoff',
+      actor: 'agent:patch-applier',
+      target_kind: 'page',
+      target_id: 'concepts/patch-apply-handoff-target',
+      base_target_snapshot_hash: page.content_hash,
+      patch_body: {
+        compiled_truth: 'Applied page body. [Source: User, direct message, 2026-07-06 12:01 PM KST]',
+      },
+      patch_format: 'merge_patch',
+      source_refs: ['User, direct message, 2026-07-06 12:01 PM KST'],
+    });
+    await reviewPatch.handler(ctx, {
+      candidate_id: 'patch-candidate-apply-handoff',
+      session_id: 'session:patch-apply-handoff',
+      realm_id: 'realm:patch-apply-handoff',
+      actor: 'agent:patch-applier',
+      decision: 'approve',
+      review_reason: 'Patch matches the cited source.',
+      source_refs: ['User, direct message, 2026-07-06 12:01 PM KST'],
+    });
+    const applied = await applyPatch.handler(ctx, {
+      candidate_id: 'patch-candidate-apply-handoff',
+      session_id: 'session:patch-apply-handoff',
+      realm_id: 'realm:patch-apply-handoff',
+      actor: 'agent:patch-applier',
+      review_reason: 'Applied approved patch.',
+      source_refs: ['User, direct message, 2026-07-06 12:01 PM KST'],
+    }) as any;
+
+    expect(applied.status).toBe('applied');
+
+    const handoffs = await engine.listCanonicalHandoffEntries({
+      scope_id: 'workspace:default',
+      candidate_id: 'patch-candidate-apply-handoff',
+    });
+    expect(handoffs).toHaveLength(1);
+    expect(handoffs[0]?.target_object_type).toBe('curated_note');
+    expect(handoffs[0]?.target_object_id).toBe('concepts/patch-apply-handoff-target');
+    expect(handoffs[0]?.completed_at).not.toBeNull();
+    expect(handoffs[0]?.completion_kind).toBe('patch_applied');
+    expect(handoffs[0]?.completion_ref).toBe(applied.ledger_event_id);
+    expect(applied.canonical_handoff?.id).toBe(handoffs[0]?.id);
+    expect(applied.canonical_handoff?.completed_at).not.toBeNull();
   } finally {
     await engine.disconnect();
     rmSync(dir, { recursive: true, force: true });

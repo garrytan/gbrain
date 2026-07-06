@@ -1355,11 +1355,15 @@ async function resolveReadSelectors(
   scope_gate?: ScopeGateDecisionResult;
   blocked?: ReadContextResult;
 }> {
-  if ((input.selectors ?? []).length > 0 || input.reads !== 'auto') {
+  const hasExplicitSelectors = (input.selectors ?? []).length > 0;
+  const query = input.query?.trim();
+  // A query-only request means "read evidence for this question"; treating it
+  // as anything other than auto reads silently returns no evidence.
+  const wantsAutoReads = input.reads === 'auto' || (input.reads == null && !hasExplicitSelectors && !!query);
+  if (hasExplicitSelectors || !wantsAutoReads) {
     return { selectors: input.selectors ?? [] };
   }
 
-  const query = input.query?.trim();
   if (!query) return { selectors: [] };
 
   const probe = await retrieveContext(engine, {

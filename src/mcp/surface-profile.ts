@@ -76,6 +76,7 @@ const CANONICAL_WRITE_MUTATING_OPERATIONS = [
   'capture_agent_session_memory',
   'capture_map_derived_candidates',
   'close_memory_session',
+  'complete_canonical_handoff',
   'complete_canonical_target_proposal_binding',
   'create_canonical_target_proposal',
   'create_memory_candidate_entry',
