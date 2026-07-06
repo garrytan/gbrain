@@ -40,6 +40,25 @@ export const litellmProxy: Recipe = {
       // mismatched-dim responses pre-storage).
       supports_multimodal: true,
     },
+    chat: {
+      // LiteLLM's raison d'être is chat: it proxies arbitrary chat backends
+      // (Bedrock, Vertex, Azure, DeepSeek, Qwen, GLM, …) behind one
+      // OpenAI-compatible /chat/completions endpoint. The served model set is
+      // the proxy's own config, so declare empty + user-provided (mirrors the
+      // embedding touchpoint). The openai-compat tier does NOT enforce the list
+      // at runtime — any model id the proxy serves is accepted. Without this
+      // touchpoint, `chat_model` / `models.default = litellm:<model>` silently
+      // degrade to "no LLM available" (validateModelId throws no-chat-touchpoint).
+      models: [],
+      user_provided_models: true,
+      supports_tools: true,
+      // Informational only — the real subagent-loop gate is isAnthropicProvider()
+      // upstream (tool-replay needs Anthropic-style tool_use_ids). litellm can
+      // still drive the gateway loop when agent.use_gateway_loop=true.
+      supports_subagent_loop: false,
+      supports_prompt_cache: false,
+      price_last_verified: '2026-06-07',
+    },
   },
-  setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',
+  setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL (+ LITELLM_API_KEY if the proxy is authenticated) and use litellm:<model> for --embedding-model, chat_model, or models.default.',
 };

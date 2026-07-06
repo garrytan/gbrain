@@ -34,6 +34,15 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // plane field now exists (GBrainConfig type) and gets mapped here, so
   // setting it via `~/.gbrain/config.json` propagates into the gateway.
   if (c.zeroentropy_api_key) envFromConfig.ZEROENTROPY_API_KEY = c.zeroentropy_api_key;
+  // Same fold for the openai-compat proxy recipes (litellm / openrouter /
+  // together): their auth resolves to `${RECIPE_ID}_API_KEY` via applyResolveAuth,
+  // so a `gbrain config set litellm_api_key …` (or a config.json field) must be
+  // mapped into the gateway env or the proxy call goes out unauthenticated and
+  // chat_model=litellm:<m> degrades to "no LLM available". Mirrors the ZE fix.
+  const cAny = c as Record<string, unknown>;
+  if (typeof cAny.litellm_api_key === 'string') envFromConfig.LITELLM_API_KEY = cAny.litellm_api_key;
+  if (typeof cAny.openrouter_api_key === 'string') envFromConfig.OPENROUTER_API_KEY = cAny.openrouter_api_key;
+  if (typeof cAny.together_api_key === 'string') envFromConfig.TOGETHER_API_KEY = cAny.together_api_key;
 
   // v0.32 codex finding #4+#5 fix: thread local-server _BASE_URL env vars
   // into base_urls so the gateway hits the user's configured port. Without
