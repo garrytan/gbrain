@@ -15,6 +15,12 @@ All notable changes to MBrain will be documented in this file.
   first gate that defers, with a receipt that says exactly what's missing and
   what to do next. What used to take 7–9 tool calls and two session concepts
   is now one call, with every gate and audit event intact.
+- **The three-engine promise is now a visible contract.** A new parity coverage
+  ratchet enumerates every engine method shared by SQLite and Postgres and
+  fails CI if one is neither parity-tested nor consciously listed in a
+  shrink-only backlog — so a new engine method can never silently ship without
+  a cross-engine parity decision (154 methods currently backlogged, counted
+  honestly instead of assumed covered).
 
 ### Fixed
 
