@@ -57,6 +57,15 @@ All notable changes to MBrain will be documented in this file.
   (governed-probe on/off) ship with a regeneration script for
   `eval retrieval --compare`.
 
+- **The default agent surface drops to 103 tools.** Fourteen duplicative
+  retrieval-navigation operations (route resolvers, scenario/planning
+  diagnostics, workspace cards) move to the admin tier with one-line
+  descriptions naming their supported replacement — \`retrieve_context\`,
+  \`read_context\`, and \`select_retrieval_route\` carry the daily-driver load,
+  and the tools/list frame a default agent receives shrinks by ~15KB. All
+  operations stay callable (CLI unchanged; \`MBRAIN_MCP_TOOL_TIER=all\`
+  restores MCP visibility).
+
 ### Fixed
 
 - **The daily report's canonical-write debt is now truthful.** Applying an

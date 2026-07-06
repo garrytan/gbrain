@@ -6316,9 +6316,14 @@ const find_context_map_path: Operation = {
   cliHints: { name: 'map-path', positional: ['from_node_id', 'to_node_id'] },
 };
 
+// O4/N-1 retrieval-navigation consolidation: the standalone route resolvers, scenario
+// planners, and workspace cards below duplicate routing that select_retrieval_route and
+// retrieve_context already provide, so they are demoted to the admin tier with one-line
+// descriptions naming the supported replacement. They stay fully callable (CLI, tier=all).
 const get_broad_synthesis_route: Operation = {
   name: 'get_broad_synthesis_route',
-  description: 'Compose report, structural query, and optional explain into one bounded broad-synthesis route.',
+  description: 'Admin diagnostic; use select_retrieval_route intent=broad_synthesis.',
+  tier: 'admin',
   params: {
     map_id: {
       type: 'string',
@@ -6360,7 +6365,8 @@ const get_broad_synthesis_route: Operation = {
 
 const get_precision_lookup_route: Operation = {
   name: 'get_precision_lookup_route',
-  description: 'Resolve an exact canonical page or section route for precision lookup intent.',
+  description: 'Admin diagnostic; use select_retrieval_route intent=precision_lookup.',
+  tier: 'admin',
   params: {
     scope_id: {
       type: 'string',
@@ -6391,7 +6397,8 @@ const get_precision_lookup_route: Operation = {
 
 const get_mixed_scope_bridge: Operation = {
   name: 'get_mixed_scope_bridge',
-  description: 'Resolve the published explicit mixed-scope bridge across one work route and one personal route.',
+  description: 'Admin diagnostic; use select_retrieval_route intent=mixed_scope_bridge.',
+  tier: 'admin',
   params: {
     requested_scope: requestedScopeParam('Access scope override; must be mixed for this route. Use query for topical retrieval details.'),
     personal_route_kind: {
@@ -6474,7 +6481,8 @@ const get_mixed_scope_bridge: Operation = {
 
 const get_mixed_scope_disclosure: Operation = {
   name: 'get_mixed_scope_disclosure',
-  description: 'Project a resolved mixed-scope bridge into a visibility-safe disclosure artifact.',
+  description: 'Admin diagnostic; use select_retrieval_route intent=mixed_scope_bridge.',
+  tier: 'admin',
   params: {
     requested_scope: requestedScopeParam('Access scope override; must be mixed for this route. Use query for topical retrieval details.'),
     personal_route_kind: {
@@ -6557,7 +6565,8 @@ const get_mixed_scope_disclosure: Operation = {
 
 const get_personal_profile_lookup_route: Operation = {
   name: 'get_personal_profile_lookup_route',
-  description: 'Resolve an exact personal profile-memory route for personal/profile lookup intent.',
+  description: 'Admin diagnostic; use select_retrieval_route intent=personal_profile_lookup.',
+  tier: 'admin',
   params: {
     scope_id: {
       type: 'string',
@@ -6593,7 +6602,8 @@ const get_personal_profile_lookup_route: Operation = {
 
 const get_personal_episode_lookup_route: Operation = {
   name: 'get_personal_episode_lookup_route',
-  description: 'Resolve an exact personal episode route for personal/episode lookup intent.',
+  description: 'Admin diagnostic; use select_retrieval_route intent=personal_episode_lookup.',
+  tier: 'admin',
   params: {
     scope_id: {
       type: 'string',
@@ -6910,7 +6920,8 @@ const select_retrieval_route: Operation = {
 
 const plan_retrieval_request: Operation = {
   name: 'plan_retrieval_request',
-  description: 'Plan one or more retrieval route selections for a high-level request without executing them.',
+  description: 'Admin diagnostic; use retrieve_context or select_retrieval_route.',
+  tier: 'admin',
   params: {
     intent: {
       type: 'string',
@@ -7180,7 +7191,8 @@ const read_context: Operation = {
 
 const classify_memory_scenario: Operation = {
   name: 'classify_memory_scenario',
-  description: 'Classify a memory request into a scenario before retrieval.',
+  description: 'Admin diagnostic; retrieve_context classifies and routes automatically.',
+  tier: 'admin',
   params: {
     query: { type: 'string', description: 'Raw user request or system task' },
     task_id: { type: 'string', description: 'Optional active task id' },
@@ -7218,7 +7230,8 @@ const classify_memory_scenario: Operation = {
 
 const select_activation_policy: Operation = {
   name: 'select_activation_policy',
-  description: 'Select how retrieved memory artifacts may affect a response.',
+  description: 'Admin diagnostic; retrieve_context applies activation policy automatically.',
+  tier: 'admin',
   params: {
     scenario: {
       type: 'string',
@@ -7266,7 +7279,8 @@ const proof_agent_memory: Operation = {
 
 const plan_scenario_memory_request: Operation = {
   name: 'plan_scenario_memory_request',
-  description: 'Plan scenario-aware memory reads, activation, next tool, and writeback hints without mutating memory.',
+  description: 'Admin diagnostic; use retrieve_context for scenario-aware planning.',
+  tier: 'admin',
   params: {
     query: { type: 'string', description: 'Raw user request or system task' },
     task_id: { type: 'string', description: 'Optional active task id' },
@@ -7394,7 +7408,8 @@ const reverify_code_claims: Operation = {
 
 const get_workspace_system_card: Operation = {
   name: 'get_workspace_system_card',
-  description: 'Render a compact workspace system card from the current context-map report.',
+  description: 'Admin diagnostic; use retrieve_context with include_orientation.',
+  tier: 'admin',
   params: {
     map_id: {
       type: 'string',
@@ -7421,7 +7436,8 @@ const get_workspace_system_card: Operation = {
 
 const get_workspace_project_card: Operation = {
   name: 'get_workspace_project_card',
-  description: 'Render a compact workspace project card from the current context-map report.',
+  description: 'Admin diagnostic; use retrieve_context with include_orientation.',
+  tier: 'admin',
   params: {
     map_id: {
       type: 'string',
@@ -7448,7 +7464,8 @@ const get_workspace_project_card: Operation = {
 
 const get_workspace_orientation_bundle: Operation = {
   name: 'get_workspace_orientation_bundle',
-  description: 'Render a compact workspace orientation bundle from the current context-map report and cards.',
+  description: 'Admin diagnostic; use retrieve_context with include_orientation.',
+  tier: 'admin',
   params: {
     map_id: {
       type: 'string',
@@ -7475,7 +7492,8 @@ const get_workspace_orientation_bundle: Operation = {
 
 const get_workspace_corpus_card: Operation = {
   name: 'get_workspace_corpus_card',
-  description: 'Render a compact workspace corpus card from the current orientation bundle.',
+  description: 'Admin diagnostic; use retrieve_context with include_orientation.',
+  tier: 'admin',
   params: {
     map_id: {
       type: 'string',
