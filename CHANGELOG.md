@@ -4,6 +4,18 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`remember` — store a durable fact in one call.** The new core operation
+  runs the entire governed write ladder for you: it routes the signal,
+  reconciles it against existing memory (an identical open candidate becomes a
+  polite "already captured" instead of a double-write), creates the Memory
+  Inbox candidate, verifies, promotes, writes the page with its source
+  citation, and completes the canonical handoff — or stops honestly at the
+  first gate that defers, with a receipt that says exactly what's missing and
+  what to do next. What used to take 7–9 tool calls and two session concepts
+  is now one call, with every gate and audit event intact.
+
 ### Fixed
 
 - **The daily report's canonical-write debt is now truthful.** Applying an

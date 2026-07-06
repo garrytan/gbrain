@@ -1,9 +1,10 @@
 import type { BrainEngine } from '../engine.ts';
-import type { MemoryCandidateEntry, Page, PageType } from '../types.ts';
+import type { MemoryCandidateEntry } from '../types.ts';
 import type { PromotionDecision, PromotionVerdict } from './verdict.ts';
 import type { AutoPromoteConfig } from './config.ts';
 import { advanceMemoryCandidateStatus, preflightPromoteMemoryCandidate } from '../services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../services/memory-inbox-promotion-service.ts';
+import { buildCanonicalCandidatePagePatch } from '../services/canonical-page-patch-service.ts';
 import { completeCanonicalHandoff, recordCanonicalHandoff } from '../services/canonical-handoff-service.ts';
 import { operationsByName, type OperationContext } from '../operations.ts';
 import type { MBrainConfig } from '../config.ts';
@@ -244,7 +245,10 @@ async function canonicalizePromotedCandidate(
       target_kind: 'page',
       target_id: targetSlug,
       base_target_snapshot_hash: baseTargetSnapshotHash,
-      patch_body: buildCanonicalCandidatePagePatch(currentPage, targetSlug, candidate, handoff.handoff.id, input.now),
+      patch_body: buildCanonicalCandidatePagePatch(currentPage, targetSlug, candidate, {
+        now: input.now,
+        timelineNote: `Auto-promoted Memory Inbox candidate ${candidate.id} via canonical handoff ${handoff.handoff.id}.`,
+      }),
       patch_format: 'merge_patch',
       risk_class: 'low',
       proposed_content: `Auto-promote canonical patch for ${targetSlug} from Memory Inbox candidate ${candidate.id}.`,
@@ -388,66 +392,6 @@ function isCanonicalWriteEligible(input: PromoteGateInput, candidate: MemoryCand
     && candidate.source_refs.some((ref) => ref.trim().length > 0);
 }
 
-function buildCanonicalCandidatePagePatch(
-  page: Page | null,
-  slug: string,
-  candidate: MemoryCandidateEntry,
-  handoffId: string,
-  now: string,
-): Record<string, unknown> {
-  const citation = sourceCitation(candidate.source_refs);
-  const compiledLine = `${candidate.proposed_content.trim()} ${citation}`.trim();
-  const compiledTruth = appendUniqueLine(page?.compiled_truth ?? '', compiledLine);
-  const timelineLine = `- **${now.slice(0, 10)}** | Auto-promoted Memory Inbox candidate ${candidate.id} via canonical handoff ${handoffId}. ${citation}`;
-  const timeline = appendUniqueLine(page?.timeline ?? '', timelineLine);
-  return {
-    type: page?.type ?? inferPageType(slug),
-    title: page?.title ?? inferTitle(slug),
-    frontmatter: page?.frontmatter ?? {},
-    compiled_truth: compiledTruth,
-    timeline,
-  };
-}
-
-function appendUniqueLine(existing: string, line: string): string {
-  const trimmedExisting = existing.trim();
-  const trimmedLine = line.trim();
-  if (!trimmedLine) return trimmedExisting;
-  if (!trimmedExisting) return trimmedLine;
-  if (trimmedExisting.includes(trimmedLine)) return trimmedExisting;
-  return `${trimmedExisting}\n\n${trimmedLine}`;
-}
-
-function sourceCitation(sourceRefs: string[]): string {
-  const refs = sourceRefs.map((ref) => normalizeSourceRef(ref)).filter(Boolean);
-  const ref = refs[0] ?? 'mbrain:auto_promote';
-  return `[Source: ${ref}]`;
-}
-
-function normalizeSourceRef(ref: string): string {
-  return ref.trim().replace(/^\[?Source:\s*/i, '').replace(/\]$/u, '').trim();
-}
-
-function inferPageType(slug: string): PageType {
-  const normalized = `/${slug.toLowerCase()}/`;
-  if (normalized.includes('/people/')) return 'person';
-  if (normalized.includes('/companies/')) return 'company';
-  if (normalized.includes('/deals/')) return 'deal';
-  if (normalized.includes('/yc/')) return 'yc';
-  if (normalized.includes('/civic/')) return 'civic';
-  if (normalized.includes('/projects/')) return 'project';
-  if (normalized.includes('/systems/')) return 'system';
-  if (normalized.includes('/sources/')) return 'source';
-  if (normalized.includes('/media/')) return 'media';
-  return 'concept';
-}
-
-function inferTitle(slug: string): string {
-  const last = slug.split('/').filter(Boolean).at(-1) ?? slug;
-  return last
-    .replace(/[-_]+/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
 
 function operationContext(input: PromoteGateInput): OperationContext {
   return {

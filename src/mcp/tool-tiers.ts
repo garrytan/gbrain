@@ -12,6 +12,7 @@ export const CORE_TOOLS = new Set<string>([
   'query',
   'get_page',
   'put_page',
+  'remember',
   'get_skillpack',
   'sync_brain',
   'route_memory_writeback',

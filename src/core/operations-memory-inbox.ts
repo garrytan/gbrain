@@ -21,6 +21,8 @@ import {
   type DuplicateMemorySubjectKind,
 } from './services/duplicate-memory-review-service.ts';
 import { completeCanonicalHandoff, recordCanonicalHandoff } from './services/canonical-handoff-service.ts';
+import { buildCanonicalCandidatePagePatch } from './services/canonical-page-patch-service.ts';
+import { MEMORY_WRITEBACK_EVIDENCE_KINDS, routeMemoryWriteback } from './services/memory-writeback-router-service.ts';
 import { assessHistoricalValidity } from './services/historical-validity-service.ts';
 import { resolveMemoryCandidateContradiction } from './services/memory-inbox-contradiction-service.ts';
 import { promoteMemoryCandidateEntry } from './services/memory-inbox-promotion-service.ts';
@@ -38,6 +40,7 @@ import type {
   MemoryCandidateEntry,
   MemoryMutationTargetKind,
   MemoryPatchOperationState,
+  MemoryWritebackEvidenceKind,
   Page,
   PageType,
 } from './types.ts';
@@ -2523,6 +2526,370 @@ export function createMemoryInboxOperations(
     cliHints: { name: 'finalize-memory-candidate' },
   };
 
+  const REMEMBER_TARGET_OBJECT_TYPES = ['curated_note', 'procedure', 'profile_memory', 'personal_episode'] as const;
+
+  const remember: Operation = {
+    name: 'remember',
+    description: 'One-call governed memory write: routes the signal, reconciles it against existing memory, creates the Memory Inbox candidate, verifies, promotes, and materializes a page-backed fact with a completed canonical handoff — stopping honestly at the first gate that defers and returning a truthful receipt either way.',
+    params: {
+      content: { type: 'string', required: true, description: 'Durable fact or claim to remember' },
+      source_ref: { type: 'string', description: 'Single provenance string' },
+      source_refs: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Provenance strings for the claim (at least one of source_ref/source_refs is required)',
+      },
+      evidence_kind: {
+        type: 'string',
+        required: true,
+        description: 'Evidence quality and writeback safety category',
+        enum: [...MEMORY_WRITEBACK_EVIDENCE_KINDS],
+      },
+      target_slug: { type: 'string', description: 'Canonical page slug to write into (existing or new)' },
+      target_object_type: {
+        type: 'string',
+        description: 'Canonical target type (default: curated_note when target_slug is provided)',
+        enum: [...REMEMBER_TARGET_OBJECT_TYPES],
+      },
+      verification_status: {
+        type: 'string',
+        description: 'Verification outcome; without it the write stops at needs_review instead of promoting.',
+        enum: [...MEMORY_CANDIDATE_VERIFICATION_STATUS_VALUES],
+      },
+      verification_method: {
+        type: 'string',
+        description: 'How the claim was checked against ground truth.',
+        enum: [...MEMORY_CANDIDATE_VERIFICATION_METHODS],
+      },
+      verification_evidence: { type: 'string', description: 'What was checked and what the check showed.' },
+      verification_source_refs: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Optional provenance strings for the verification itself.',
+      },
+      verified_at: { type: 'string', description: 'Optional ISO timestamp for verification metadata' },
+      scope_id: { type: 'string', description: `Memory scope id (default: ${deps.defaultScopeId})` },
+      sensitivity: { type: 'string', description: 'Optional sensitivity override (work, personal, secret)' },
+      candidate_type: { type: 'string', description: 'Optional memory candidate type override (default: fact)' },
+      actor: { type: 'string', description: 'Actor recorded on the governed write (default: mbrain:remember)' },
+      interaction_id: { type: 'string', description: 'Optional retrieval trace id for lifecycle event attribution' },
+    },
+    mutating: true,
+    handler: async (ctx, p) => {
+      const content = typeof p.content === 'string' ? p.content.trim() : '';
+      if (!content) {
+        throw invalidParams(deps, 'content must be a non-empty string');
+      }
+      const sourceRefs = normalizeSourceRefs(deps, p);
+      if (sourceRefs.length === 0) {
+        throw invalidParams(deps, 'remember requires source_ref or source_refs provenance');
+      }
+      if (typeof p.evidence_kind !== 'string'
+        || !(MEMORY_WRITEBACK_EVIDENCE_KINDS as readonly string[]).includes(p.evidence_kind)) {
+        throw invalidParams(deps, `evidence_kind must be one of: ${MEMORY_WRITEBACK_EVIDENCE_KINDS.join(', ')}`);
+      }
+      const evidenceKind = p.evidence_kind as MemoryWritebackEvidenceKind;
+      const targetSlug = normalizeOptionalNonEmptyString(deps, 'target_slug', p.target_slug);
+      const targetObjectType = optionalEnumValue(deps, 'target_object_type', p.target_object_type, REMEMBER_TARGET_OBJECT_TYPES)
+        ?? (targetSlug ? 'curated_note' : undefined);
+      const scopeId = normalizeOptionalNonEmptyString(deps, 'scope_id', p.scope_id);
+      const sensitivity = normalizeOptionalNonEmptyString(deps, 'sensitivity', p.sensitivity);
+      const candidateType = normalizeOptionalNonEmptyString(deps, 'candidate_type', p.candidate_type);
+      const actor = normalizeOptionalNonEmptyString(deps, 'actor', p.actor) ?? 'mbrain:remember';
+      const interactionId = normalizeOptionalNonEmptyString(deps, 'interaction_id', p.interaction_id);
+
+      if (ctx.dryRun) {
+        return {
+          dry_run: true,
+          action: 'remember',
+          evidence_kind: evidenceKind,
+          target_slug: targetSlug ?? null,
+        };
+      }
+
+      const routed = routeMemoryWriteback({
+        content,
+        source_refs: sourceRefs,
+        evidence_kind: evidenceKind,
+        ...(candidateType ? { candidate_type: candidateType as never } : {}),
+        ...(targetObjectType ? { target_object_type: targetObjectType } : {}),
+        ...(targetSlug ? { target_object_id: targetSlug } : {}),
+        ...(scopeId ? { scope_id: scopeId } : {}),
+        ...(sensitivity ? { sensitivity: sensitivity as never } : {}),
+        ...(interactionId ? { interaction_id: interactionId } : {}),
+      });
+      const routeSummary = {
+        decision: routed.decision,
+        reasons: routed.reasons,
+        missing_requirements: routed.missing_requirements,
+      };
+
+      if (routed.decision === 'no_write') {
+        return {
+          status: 'no_write',
+          candidate_id: null,
+          page_slug: null,
+          canonical_handoff_id: null,
+          stop_reason: routed.reasons.join(',') || 'no_write',
+          route: routeSummary,
+        };
+      }
+
+      if (routed.decision !== 'create_candidate' || !routed.candidate_input) {
+        const fallback = await create_memory_candidate_entry.handler(ctx, {
+          candidate_type: candidateType ?? 'fact',
+          proposed_content: content,
+          source_refs: sourceRefs,
+          ...(targetObjectType ? { target_object_type: targetObjectType } : {}),
+          ...(targetSlug ? { target_object_id: targetSlug } : {}),
+          ...(scopeId ? { scope_id: scopeId } : {}),
+          status: 'captured',
+          review_reason: `remember route ${routed.decision}: ${routed.missing_requirements.join(',') || routed.reasons.join(',') || 'deferred'}`,
+          ...(interactionId ? { interaction_id: interactionId } : {}),
+        }) as MemoryCandidateEntry;
+        return {
+          status: 'needs_review',
+          candidate_id: fallback.id,
+          page_slug: null,
+          canonical_handoff_id: null,
+          stop_reason: `route_${routed.decision}`,
+          route: routeSummary,
+          next_actions: routed.missing_requirements.length > 0
+            ? [`Provide the missing requirements (${routed.missing_requirements.join(', ')}) and finalize candidate ${fallback.id}.`]
+            : [`Review captured candidate ${fallback.id}.`],
+        };
+      }
+
+      const candidateInput = routed.candidate_input;
+      const candidateId = candidateInput.id ?? crypto.randomUUID();
+      const duplicateReview = await reviewDuplicateMemory(ctx.engine, {
+        scope_id: candidateInput.scope_id,
+        subject_kind: 'memory_candidate',
+        subject_id: candidateId,
+        content: candidateInput.proposed_content,
+        source_refs: candidateInput.source_refs,
+        candidate_type: candidateInput.candidate_type,
+        target_object_type: candidateInput.target_object_type ?? undefined,
+        target_object_id: candidateInput.target_object_id ?? undefined,
+        include_pages: true,
+        include_candidates: true,
+        limit: 5,
+      });
+      let duplicateStopReason: string | null =
+        duplicateReview.decision === 'likely_duplicate' ? 'likely_duplicate' : null;
+      if (!duplicateStopReason) {
+        // Reconcile: an open candidate with byte-identical (normalized) content
+        // is a NOOP re-remember, not a new memory.
+        const normalizedContent = content.replace(/\s+/g, ' ').trim().toLowerCase();
+        for (const match of duplicateReview.matches) {
+          if (match.kind !== 'memory_candidate') continue;
+          const existing = await ctx.engine.getMemoryCandidateEntry(match.id);
+          if (existing && existing.proposed_content.replace(/\s+/g, ' ').trim().toLowerCase() === normalizedContent) {
+            duplicateStopReason = 'duplicate_content';
+            break;
+          }
+        }
+      }
+      if (duplicateStopReason) {
+        return {
+          status: 'needs_review',
+          candidate_id: null,
+          page_slug: null,
+          canonical_handoff_id: null,
+          stop_reason: duplicateStopReason,
+          route: routeSummary,
+          duplicate_review: duplicateReview,
+          next_actions: ['Review the matched existing memory; update or supersede it instead of double-writing.'],
+        };
+      }
+
+      const created = await create_memory_candidate_entry.handler(ctx, {
+        id: candidateId,
+        scope_id: candidateInput.scope_id,
+        candidate_type: candidateInput.candidate_type,
+        proposed_content: candidateInput.proposed_content,
+        source_refs: candidateInput.source_refs,
+        generated_by: candidateInput.generated_by,
+        extraction_kind: candidateInput.extraction_kind,
+        confidence_score: candidateInput.confidence_score,
+        importance_score: candidateInput.importance_score,
+        recurrence_score: candidateInput.recurrence_score,
+        sensitivity: candidateInput.sensitivity,
+        status: candidateInput.status,
+        ...(candidateInput.target_object_type ? { target_object_type: candidateInput.target_object_type } : {}),
+        ...(candidateInput.target_object_id ? { target_object_id: candidateInput.target_object_id } : {}),
+        ...(candidateInput.review_reason ? { review_reason: candidateInput.review_reason } : {}),
+        ...(interactionId ? { interaction_id: interactionId } : {}),
+      }) as MemoryCandidateEntry;
+
+      const finalized = await finalize_memory_candidate.handler(ctx, {
+        id: created.id,
+        ...(typeof p.verification_status === 'string' ? { verification_status: p.verification_status } : {}),
+        ...(typeof p.verification_method === 'string' ? { verification_method: p.verification_method } : {}),
+        ...(typeof p.verification_evidence === 'string' ? { verification_evidence: p.verification_evidence } : {}),
+        ...(p.verification_source_refs != null ? { verification_source_refs: p.verification_source_refs } : {}),
+        ...(typeof p.verified_at === 'string' ? { verified_at: p.verified_at } : {}),
+        review_reason: 'remember one-call governed write',
+        retry_on_stale: true,
+        apply_patch: false,
+        ...(interactionId ? { interaction_id: interactionId } : {}),
+      }) as { status: string; candidate: MemoryCandidateEntry; ledger: FinalizeMemoryCandidateStep[] };
+
+      const candidate = finalized.candidate;
+      if (finalized.status !== 'promoted') {
+        const stopStep = [...finalized.ledger].reverse()
+          .find((step) => step.status === 'deferred' || step.status === 'blocked');
+        const stopReason = stopStep?.reason ?? finalized.status;
+        const nextActions = stopReason.includes('candidate_missing_target_object')
+          ? [`Candidate ${candidate.id} needs a canonical target; re-run remember with target_slug, or bind one via create_canonical_target_proposal and finalize.`]
+          : stopReason === 'verification_required'
+            ? [`Verify candidate ${candidate.id} (verification_status/method/evidence) and re-run remember or finalize_memory_candidate.`]
+            : undefined;
+        return {
+          status: stopReason === 'candidate_refuted' ? 'rejected' : 'needs_review',
+          candidate_id: candidate.id,
+          page_slug: null,
+          canonical_handoff_id: null,
+          stop_reason: stopReason,
+          route: routeSummary,
+          duplicate_review: duplicateReview,
+          ledger: finalized.ledger,
+          ...(nextActions ? { next_actions: nextActions } : {}),
+        };
+      }
+
+      if (!isCanonicalHandoffEligibleCandidate(candidate)) {
+        return {
+          status: 'needs_review',
+          candidate_id: candidate.id,
+          page_slug: null,
+          canonical_handoff_id: null,
+          stop_reason: 'no_canonical_target',
+          route: routeSummary,
+          duplicate_review: duplicateReview,
+          ledger: finalized.ledger,
+          next_actions: [
+            `Candidate ${candidate.id} is promoted but has no canonical page target; bind one (target_slug or create_canonical_target_proposal) and materialize it.`,
+          ],
+        };
+      }
+
+      const writeSlug = candidate.target_object_id as string;
+      const recorded = await recordCanonicalHandoff(ctx.engine, {
+        candidate_id: candidate.id,
+        review_reason: 'remember one-call governed write',
+        ...(interactionId ? { interaction_id: interactionId } : {}),
+      });
+      const realmId = candidate.sensitivity === 'personal' ? 'personal' : 'work';
+      const sessionId = `remember:${candidate.id}`;
+      if (!await ctx.engine.getMemoryRealm(realmId)) {
+        await ctx.engine.upsertMemoryRealm({
+          id: realmId,
+          name: realmId === 'personal' ? 'Personal governed writes' : 'Work governed writes',
+          scope: realmId === 'personal' ? 'personal' : 'work',
+          default_access: 'read_write',
+        });
+      }
+      if (!await ctx.engine.getMemorySession(sessionId)) {
+        await ctx.engine.createMemorySession({ id: sessionId, actor_ref: actor });
+      }
+      await ctx.engine.attachMemoryRealmToSession({
+        session_id: sessionId,
+        realm_id: realmId,
+        access: 'read_write',
+        instructions: `remember governed write for Memory Inbox candidate ${candidate.id}.`,
+      });
+      try {
+        const currentPage = await ctx.engine.getPage(writeSlug);
+        const patchSourceRefs = [
+          `canonical_handoff:${recorded.handoff.id}`,
+          `memory_candidate:${candidate.id}`,
+          ...candidate.source_refs,
+        ];
+        const nowIso = new Date().toISOString();
+        const patchId = `remember-patch:${candidate.id}`;
+        await create_memory_patch_candidate.handler(ctx, {
+          id: patchId,
+          session_id: sessionId,
+          realm_id: realmId,
+          actor,
+          scope_id: candidate.scope_id,
+          target_kind: 'page',
+          target_id: writeSlug,
+          base_target_snapshot_hash: currentPage?.content_hash ?? null,
+          patch_body: buildCanonicalCandidatePagePatch(currentPage, writeSlug, candidate, {
+            now: nowIso,
+            timelineNote: `Remembered via one-call governed write (candidate ${candidate.id}).`,
+          }),
+          patch_format: 'merge_patch',
+          risk_class: 'low',
+          proposed_content: `Remember canonical patch for ${writeSlug} from Memory Inbox candidate ${candidate.id}.`,
+          source_refs: patchSourceRefs,
+          generated_by: 'agent',
+          extraction_kind: candidate.extraction_kind,
+          confidence_score: candidate.confidence_score,
+          importance_score: candidate.importance_score,
+          recurrence_score: candidate.recurrence_score,
+          sensitivity: candidate.sensitivity,
+          provenance_summary: `remember governed write for candidate ${candidate.id} via canonical handoff ${recorded.handoff.id}.`,
+        });
+        await review_memory_patch_candidate.handler(ctx, {
+          candidate_id: patchId,
+          session_id: sessionId,
+          realm_id: realmId,
+          actor,
+          decision: 'approve',
+          review_reason: 'remember approved canonical patch',
+          source_refs: patchSourceRefs,
+        });
+        await apply_memory_patch_candidate.handler(ctx, {
+          candidate_id: patchId,
+          session_id: sessionId,
+          realm_id: realmId,
+          actor,
+          review_reason: 'remember applied canonical patch',
+          source_refs: patchSourceRefs,
+        });
+        const completedHandoff = await completeCanonicalHandoff(ctx.engine, {
+          id: recorded.handoff.id,
+          completion_kind: 'patch_applied',
+          completion_ref: patchId,
+        });
+        return {
+          status: 'stored',
+          candidate_id: candidate.id,
+          page_slug: writeSlug,
+          canonical_handoff_id: completedHandoff.id,
+          patch_candidate_id: patchId,
+          route: routeSummary,
+          duplicate_review: duplicateReview,
+          ledger: finalized.ledger,
+        };
+      } catch (error) {
+        return {
+          status: 'needs_review',
+          candidate_id: candidate.id,
+          page_slug: null,
+          canonical_handoff_id: recorded.handoff.id,
+          stop_reason: error instanceof Error ? error.message : String(error),
+          route: routeSummary,
+          duplicate_review: duplicateReview,
+          ledger: finalized.ledger,
+          next_actions: [
+            `Candidate ${candidate.id} is promoted with open canonical handoff ${recorded.handoff.id}; materialize the page (patch ops or put_page), then call complete_canonical_handoff.`,
+          ],
+        };
+      } finally {
+        try {
+          await ctx.engine.closeMemorySession(sessionId);
+        } catch {
+          // Session cleanup must never change the write outcome.
+        }
+      }
+    },
+    cliHints: { name: 'remember' },
+  };
+
   const rank_memory_candidate_entries: Operation = {
     name: 'rank_memory_candidate_entries',
     description: 'Rank memory-inbox candidates deterministically for review ordering without mutating inbox state.',
@@ -3232,6 +3599,7 @@ export function createMemoryInboxOperations(
     review_memory_patch_candidate,
     apply_memory_patch_candidate,
     finalize_memory_candidate,
+    remember,
     rank_memory_candidate_entries,
     capture_map_derived_candidates,
     list_memory_candidate_review_backlog,
