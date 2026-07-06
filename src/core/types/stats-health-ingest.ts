@@ -16,6 +16,7 @@ export interface BrainHealth {
   orphan_pages: number;
   dead_links: number;
   missing_embeddings: number;
+  vector_backend?: 'sqlite-vec' | 'js-fallback';
   schema_version?: number | null;
   required_schema_version?: number;
   schema_up_to_date?: boolean;
