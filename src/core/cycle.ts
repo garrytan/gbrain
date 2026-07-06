@@ -956,6 +956,7 @@ async function runPhaseExtract(
   dryRun: boolean,
   changedSlugs?: string[],
   signal?: AbortSignal,
+  sourceId?: string,
 ): Promise<PhaseResult> {
   try {
     const { runExtractCore } = await import('../commands/extract.ts');
@@ -977,6 +978,7 @@ async function runPhaseExtract(
       mode: 'all',
       dir: brainDir,
       slugs: changedSlugs,  // undefined = full walk (first run / manual)
+      sourceId,
       signal,
     });
     const linksCreated = result?.links_created ?? 0;
@@ -1706,7 +1708,14 @@ export async function runCycle(
         // If sync didn't run (phases exclude it) or failed, syncPagesAffected
         // is undefined → extract falls back to full walk (safe default).
         progress.start('cycle.extract');
-        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, opts.signal));
+        const { result, duration_ms } = await timePhase(() => runPhaseExtract(
+          engine,
+          brainDir,
+          dryRun,
+          syncPagesAffected,
+          opts.signal,
+          cycleSourceId,
+        ));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();

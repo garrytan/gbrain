@@ -516,6 +516,11 @@ export interface ExtractOpts {
    */
   slugs?: string[];
   /**
+   * Source owning `dir` when the incremental cycle path supplies `slugs`.
+   * Required for source-correct edge writes and extraction watermark stamps.
+   */
+  sourceId?: string;
+  /**
    * v0.41.15.0 (D9): in-process parallel file workers for the fs-walk
    * loops. Default 1. PGLite engines clamp to 1 (single-writer; though
    * extract is mostly CPU-bound, the DB batch flush still hits the
@@ -574,7 +579,17 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
       // Nothing changed — skip entirely.
       return result;
     }
-    const r = await extractForSlugs(engine, opts.dir, opts.slugs, opts.mode, dryRun, jsonMode, workers, opts.signal);
+    const r = await extractForSlugs(
+      engine,
+      opts.dir,
+      opts.slugs,
+      opts.mode,
+      dryRun,
+      jsonMode,
+      workers,
+      opts.signal,
+      opts.sourceId,
+    );
     result.links_created = r.links_created;
     result.timeline_entries_created = r.timeline_created;
     result.pages_processed = r.pages;
@@ -953,6 +968,7 @@ async function extractForSlugs(
   // shared counter increments atomic.
   workers: number = 1,
   signal?: AbortSignal,
+  sourceId: string = 'default',
 ): Promise<{ links_created: number; timeline_created: number; pages: number }> {
   // Build the full slug set for link resolution (fast: just readdir, no file reads)
   const allFiles = walkMarkdownFiles(brainDir);
@@ -967,6 +983,7 @@ async function extractForSlugs(
   let linksCreated = 0;
   let timelineCreated = 0;
   let pagesProcessed = 0;
+  const processedRefs: Array<{ slug: string; source_id: string }> = [];
 
   // Issue #972: read the basename flag once per extract run.
   const globalBasename = await isGlobalBasenameEnabled(engine);
@@ -1033,7 +1050,12 @@ async function extractForSlugs(
               if (!jsonMode) console.log(`  ${link.from_slug} → ${link.to_slug} (${link.link_type})`);
               linksCreated++;
             } else {
-              linkBatch.push(link);
+              linkBatch.push({
+                ...link,
+                from_source_id: sourceId,
+                to_source_id: sourceId,
+                origin_source_id: sourceId,
+              });
               if (linkBatch.length >= BATCH_SIZE) await flushLinks();
             }
           }
@@ -1046,13 +1068,21 @@ async function extractForSlugs(
               if (!jsonMode) console.log(`  ${entry.slug}: ${entry.date} — ${entry.summary}`);
               timelineCreated++;
             } else {
-              timelineBatch.push({ slug: entry.slug, date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail });
+              timelineBatch.push({
+                slug: entry.slug,
+                date: entry.date,
+                source: entry.source,
+                summary: entry.summary,
+                detail: entry.detail,
+                source_id: sourceId,
+              });
               if (timelineBatch.length >= BATCH_SIZE) await flushTimeline();
             }
           }
         }
 
         pagesProcessed++;
+        if (!dryRun) processedRefs.push({ slug, source_id: sourceId });
       } catch { /* skip unreadable */ }
       progress.tick(1);
     },
@@ -1060,6 +1090,13 @@ async function extractForSlugs(
 
   await flushLinks();
   await flushTimeline();
+  // #1696 follow-up: the Dream cycle disables sync's inline extraction and
+  // routes changed slugs through this incremental path. Stamp only after BOTH
+  // link and timeline batches flush; otherwise successfully processed pages
+  // remain permanently visible to `extract --stale` / doctor.
+  if (!dryRun && mode === 'all') {
+    await stampExtracted(engine, processedRefs);
+  }
   progress.finish();
 
   if (!jsonMode) {
