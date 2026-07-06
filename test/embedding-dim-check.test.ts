@@ -257,6 +257,43 @@ describe('resolveSchemaEmbeddingDim', () => {
     if (got.ok) expect(got.dim).toBe(768);
   });
 
+  test('Ollama bge-m3 explicit 1024 accepted (model_dims override)', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'ollama:bge-m3',
+      embedding_dimensions: 1024,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) {
+      expect(got.dim).toBe(1024);
+      expect(got.recipeDefault).toBe(1024);
+    }
+  });
+
+  test('Ollama bge-m3 without explicit dims resolves to its native 1024', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:bge-m3' });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(1024);
+  });
+
+  test('Ollama mxbai-embed-large resolves per-model 1024, not recipe default 768', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:mxbai-embed-large' });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(1024);
+  });
+
+  test('Ollama model absent from model_dims keeps default 768 and still rejects custom dims', () => {
+    const fallback = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:some-future-model' });
+    expect(fallback.ok).toBe(true);
+    if (fallback.ok) expect(fallback.dim).toBe(768);
+
+    const custom = resolveSchemaEmbeddingDim({
+      embedding_model: 'ollama:some-future-model',
+      embedding_dimensions: 999,
+    });
+    expect(custom.ok).toBe(false);
+    if (!custom.ok) expect(custom.error).toMatch(/does not support custom dimensions/);
+  });
+
   test('unknown provider rejected with provider list hint', () => {
     const got = resolveSchemaEmbeddingDim({ embedding_model: 'notarealprovider:foo' });
     expect(got.ok).toBe(false);

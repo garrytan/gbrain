@@ -48,7 +48,7 @@ import type {
 import { resolveRecipe, assertTouchpoint, parseModelId } from './model-resolver.ts';
 import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
 import type { BrainEngine } from '../engine.ts';
-import { dimsProviderOptions } from './dims.ts';
+import { dimsProviderOptions, defaultDimsForModel } from './dims.ts';
 import { hasAnthropicKey } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
@@ -1881,7 +1881,9 @@ async function embedMultimodalOpenAICompat(
   // we skip the dim check rather than fabricate an expected value — the
   // engine's vector(N) column will reject mismatched rows at INSERT time
   // with a clearer error than anything we could throw here.
-  const recipeDims = recipe.touchpoints.embedding?.default_dims ?? 0;
+  const recipeDims = recipe.touchpoints.embedding
+    ? defaultDimsForModel(recipe.touchpoints.embedding, modelId)
+    : 0;
   const expectedDims = recipeDims > 0
     ? recipeDims
     : (cfg.embedding_dimensions ?? 0);

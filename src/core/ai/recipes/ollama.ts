@@ -13,8 +13,19 @@ export const ollama: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm'],
+      models: ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm', 'bge-m3'],
       default_dims: 768, // nomic-embed-text native dim
+      // Ollama models are fixed-dim but not all 768: without this map,
+      // `--embedding-model ollama:mxbai-embed-large` (or bge-m3) either
+      // provisions a wrong-width vector(768) column or hard-fails the
+      // init-time dim validation (catch-22: 1024 rejected as "custom",
+      // omitting the flag rejected as "required").
+      model_dims: {
+        'nomic-embed-text': 768,
+        'mxbai-embed-large': 1024,
+        'all-minilm': 384,
+        'bge-m3': 1024,
+      },
       cost_per_1m_tokens_usd: 0,
       price_last_verified: '2026-04-20',
       // Ollama's batch capacity depends on the locally loaded model + the
