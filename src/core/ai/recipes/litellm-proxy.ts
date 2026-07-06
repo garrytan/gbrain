@@ -40,6 +40,15 @@ export const litellmProxy: Recipe = {
       // mismatched-dim responses pre-storage).
       supports_multimodal: true,
     },
+    chat: {
+      // Models depend on the proxy's config; users provide their own model
+      // id via --chat-model litellm:<model>.
+      models: [],
+      user_provided_models: true,
+      supports_tools: true,          // pass-through when backend supports it
+      supports_subagent_loop: true,  // pass-through when backend supports it
+      supports_prompt_cache: false,
+    },
   },
   setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',
 };

@@ -204,6 +204,12 @@ export interface RerankerTouchpoint {
 
 export interface ChatTouchpoint {
   models: string[];
+  /**
+   * v0.32: when true, the recipe ships without a fixed model list and users
+   * MUST provide their own model id at runtime. Used by openai-compat
+   * proxy-style recipes (litellm, llama-server).
+   */
+  user_provided_models?: true;
   /** Provider returns native function/tool calling. */
   supports_tools: boolean;
   /**

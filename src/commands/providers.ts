@@ -73,7 +73,7 @@ export function formatRecipeTable(recipes: Recipe[], env: NodeJS.ProcessEnv = pr
   for (const r of recipes) {
     const hasEmbed = !!r.touchpoints.embedding && (r.touchpoints.embedding.models.length > 0);
     const hasExpand = !!r.touchpoints.expansion;
-    const hasChat = !!r.touchpoints.chat && r.touchpoints.chat.models.length > 0;
+    const hasChat = !!r.touchpoints.chat && (r.touchpoints.chat.models.length > 0 || r.touchpoints.chat.user_provided_models === true);
     const ready = envReady(r, env);
     const status = ready ? '✓ ready' : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
     rows.push(
