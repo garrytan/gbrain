@@ -532,7 +532,7 @@ describe('SQLite/PGLite behavioral parity seeds', () => {
         episode: {
           title: 'Parity episode',
           summary: 'Parity episode summary.',
-          source_kind: 'assistant_conversation',
+          source_kind: 'chat',
           start_time: '2026-07-06T08:00:00.000Z',
           end_time: '2026-07-06T09:00:00.000Z',
           source_refs: ['User, direct message, 2026-07-06 19:05 KST'],
@@ -1297,7 +1297,7 @@ async function seedPersonalMemoryParityFixture(engine: SQLiteEngine | PGLiteEngi
       title: suffix === 'keep' ? 'Parity episode' : 'Disposable episode',
       start_time: '2026-07-06T08:00:00.000Z',
       end_time: '2026-07-06T09:00:00.000Z',
-      source_kind: 'assistant_conversation',
+      source_kind: 'chat',
       summary: suffix === 'keep' ? 'Parity episode summary.' : 'Disposable episode summary.',
       source_refs: ['User, direct message, 2026-07-06 19:05 KST'],
       candidate_ids: [],
@@ -1361,13 +1361,13 @@ async function seedNoteStructureParityFixture(engine: SQLiteEngine | PGLiteEngin
     tags: ['parity'],
     page: NOTE_STRUCTURE_PARITY_PAGE,
   });
-  await engine.upsertNoteManifestEntry(manifestInput);
+  const manifestEntry = await engine.upsertNoteManifestEntry(manifestInput);
   const sectionInputs = buildNoteSectionEntries({
     page_id: page.id,
     page_slug: 'concepts/note-structure-parity',
     page_path: 'concepts/note-structure-parity.md',
     page: NOTE_STRUCTURE_PARITY_PAGE,
-    manifest: manifestInput,
+    manifest: manifestEntry,
   });
   await engine.replaceNoteSectionEntries('workspace:default', 'concepts/note-structure-parity', sectionInputs);
 
@@ -1379,13 +1379,13 @@ async function seedNoteStructureParityFixture(engine: SQLiteEngine | PGLiteEngin
     tags: [],
     page: NOTE_STRUCTURE_PARITY_PAGE,
   });
-  await engine.upsertNoteManifestEntry(disposableManifest);
+  const disposableManifestEntry = await engine.upsertNoteManifestEntry(disposableManifest);
   await engine.replaceNoteSectionEntries('workspace:default', 'concepts/note-structure-parity-drop', buildNoteSectionEntries({
     page_id: disposable.id,
     page_slug: 'concepts/note-structure-parity-drop',
     page_path: 'concepts/note-structure-parity-drop.md',
     page: NOTE_STRUCTURE_PARITY_PAGE,
-    manifest: disposableManifest,
+    manifest: disposableManifestEntry,
   }));
   await engine.deleteNoteManifestEntry('workspace:default', 'concepts/note-structure-parity-drop');
   await engine.deleteNoteSectionEntries('workspace:default', 'concepts/note-structure-parity-drop');
