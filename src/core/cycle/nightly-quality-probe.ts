@@ -137,21 +137,17 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
     return { outcome: 'disabled', exit_code: 0, detail: 'feature flag off' };
   }
 
-  // 24h rate limit — skip + audit "rate_limited".
+  // 24h rate limit — skip WITHOUT an audit row. The autopilot loop invokes
+  // the probe every cycle (~5-10 min), so all but one invocation per day
+  // lands here; logging each skip floods the audit file (~hundreds of
+  // rows/day) and — because doctor treats any non-pass outcome as bad
+  // signal — flips nightly_quality_probe_health to a permanent WARN the
+  // moment the probe is enabled. A skip is a non-event: the real runs are
+  // the signal, and their rows are what gates the next 24h window.
   const now = deps.now();
   const recent = readRecentQualityProbeEvents(2, now); // 2-day window is enough for 24h check
   const decision = shouldRunNightly(now, recent);
   if (!decision.run) {
-    logQualityProbeEvent({
-      outcome: 'rate_limited',
-      exit_code: 0,
-      pass_count: 0,
-      fail_count: 0,
-      inconclusive_count: 0,
-      error_count: 0,
-      est_cost_usd: 0,
-      detail: 'already ran within 24h window',
-    });
     return { outcome: 'rate_limited', exit_code: 0, detail: 'already ran within 24h' };
   }
 

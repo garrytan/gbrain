@@ -132,17 +132,20 @@ describe('runNightlyQualityProbe (DI stub harness)', () => {
     });
   });
 
-  test('enabled + recent run within 24h → outcome: rate_limited', async () => {
+  test('enabled + recent run within 24h → outcome: rate_limited, NO audit row', async () => {
     // Pre-seed a recent audit event by running the probe once first.
     await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
       // First run succeeds.
       await runNightlyQualityProbe(makeDeps());
-      // Second run, same hour → rate_limited.
+      // Second run, same hour → rate_limited. A skip is a non-event: the
+      // autopilot loop invokes the probe every cycle (~5-10 min), so
+      // logging each skip would flood the audit file and flip doctor's
+      // any-non-pass-is-bad filter to a permanent WARN.
       const r2 = await runNightlyQualityProbe(makeDeps());
       expect(r2.outcome).toBe('rate_limited');
       const events = await readEvents();
-      expect(events.length).toBe(2);
-      expect(events[1].outcome).toBe('rate_limited');
+      expect(events.length).toBe(1);
+      expect(events[0].outcome).toBe('pass');
     });
   });
 
