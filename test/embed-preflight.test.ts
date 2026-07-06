@@ -6,7 +6,7 @@
  * process.env.
  */
 import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
-import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, diagnoseEmbedding, resetGateway } from '../src/core/ai/gateway.ts';
 import {
   validateEmbeddingCreds,
   formatEmbeddingCredsError,
@@ -106,6 +106,22 @@ describe('validateEmbeddingCreds', () => {
     if (!e.diagnosis.ok) {
       expect(e.diagnosis.reason).toBe('unknown_provider');
     }
+  });
+
+  test('passes for llama-server when the configured model string includes a user model id', () => {
+    configureGateway(baseConfig({
+      embedding_model: 'llama-server:text-embedding-qwen3-embedding-0.6b',
+      embedding_dimensions: 1024,
+      env: {},
+    }));
+
+    expect(diagnoseEmbedding()).toEqual({
+      ok: true,
+      model: 'llama-server:text-embedding-qwen3-embedding-0.6b',
+      provider: 'llama-server',
+      recipeId: 'llama-server',
+    });
+    expect(() => validateEmbeddingCreds()).not.toThrow();
   });
 
   test('throws no_gateway_config when gateway was not configured', () => {
