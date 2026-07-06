@@ -721,6 +721,29 @@ describe('read context service', () => {
     });
   });
 
+  test('query-only reads default to auto instead of silently returning no evidence', async () => {
+    await withEngine('query-only-read', async (engine) => {
+      await importFromContent(engine, 'concepts/query-only-context', [
+        '---',
+        'type: concept',
+        'title: Query Only Context',
+        '---',
+        '# Compiled Truth',
+        'Query-only read requests resolve canonical evidence without an explicit reads flag.',
+        '[Source: User, direct message, 2026-07-06 10:05 KST]',
+      ].join('\n'), { path: 'concepts/query-only-context.md' });
+
+      const result = await readContext(engine, {
+        query: 'Query-only read requests resolve canonical evidence',
+        include_source_refs: true,
+      });
+
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(result.canonical_reads[0]!.text).toContain('Query-only read requests resolve canonical evidence');
+      expect(result.warnings).toContain('Auto reads selected from retrieve_context required_reads.');
+    });
+  });
+
   test('continues inside a long clipped line without skipping unread evidence', async () => {
     await withEngine('line-continuation', async (engine) => {
       const longLine = [

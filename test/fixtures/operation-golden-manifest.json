@@ -17332,7 +17332,7 @@
           ],
           "required": false,
           "nullable": false,
-          "description": "Optional natural-language request for automatic reads"
+          "description": "Optional natural-language request for automatic reads. A query without selectors defaults to reads=auto instead of returning empty evidence."
         },
         "reads": {
           "type": [
@@ -17340,7 +17340,7 @@
           ],
           "required": false,
           "nullable": false,
-          "description": "Read selection mode",
+          "description": "Read selection mode (default: auto when only a query is provided)",
           "enum": [
             "explicit",
             "auto"
@@ -17452,7 +17452,7 @@
         }
       },
       "compact_schema_hash": "a22610e2dd40f3d9413a3f6d8e39a930912f39dd49a48d46271418d9977b89f2",
-      "full_schema_hash": "2c828a31aeadf8e15e277e012d27ffc8f6498289d51d9516d5911bf118ec4e8d",
+      "full_schema_hash": "e2487a78abb2ff57f6865d05bbd2e8e60f2fc6b96a23393db2cc8152c316b0f7",
       "memory_verb_families": [
         "read_evidence"
       ],
