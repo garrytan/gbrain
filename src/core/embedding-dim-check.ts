@@ -383,8 +383,11 @@ function validateDimAgainstTouchpoint(
     };
   }
 
-  if (requestedDims !== undefined && requestedDims !== defaultDims) {
+  if (requestedDims !== undefined && requestedDims !== defaultDims && defaultDims !== 0) {
     // User asked for a non-default dim. Walk the precedence chain.
+    // Skip validation when defaultDims === 0 (sentinel for user-provided-model
+    // recipes like llama-server/litellm where the user MUST supply dimensions
+    // and any positive integer is valid).
     const customDimOk = isCustomDimValidForProvider(recipe, modelId, requestedDims, dimsOptions);
     if (!customDimOk.valid) {
       return { ok: false, error: customDimOk.error };

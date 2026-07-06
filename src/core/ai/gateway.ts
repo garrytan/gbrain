@@ -705,11 +705,16 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
   }
 
   // Openai-compat recipes with empty models list require a user-provided model.
+  // Only reject when the user hasn't actually provided a model name — i.e. the
+  // config says `llama-server:` with no model id after the colon. When a model
+  // id IS present (e.g. `llama-server:bge-m3-mlx-fp16`), the user has fulfilled
+  // the requirement and we should let the embed pipeline proceed.
   const isUserProvided = (tp as any).user_provided_models === true;
   if (
     Array.isArray(tp.models) &&
     tp.models.length === 0 &&
-    (recipe.id === 'litellm' || isUserProvided)
+    (recipe.id === 'litellm' || isUserProvided) &&
+    !parsed.modelId
   ) {
     return {
       ok: false,
