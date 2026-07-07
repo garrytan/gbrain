@@ -286,6 +286,38 @@ export class PostgresEngine implements BrainEngine {
         process.stderr.write(`  ${applied} migration(s) applied\n`);
       }
 
+      // 检测已有 schema 的 embedding 列维度是否与 gateway 配置一致。
+      // CREATE TABLE IF NOT EXISTS 不会修改已有表的列类型，如果表已存在且
+      // 列维度与当前配置不匹配（如之前用默认 1280 建表但实际用智谱 1024），
+      // 则自动 ALTER 修正并清空旧向量数据。
+      const dimRows = await conn<{ formatted: string | null }>`
+        SELECT format_type(a.atttypid, a.atttypmod) AS formatted
+          FROM pg_attribute a
+          JOIN pg_class c ON c.oid = a.attrelid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public'
+           AND c.relname = 'content_chunks'
+           AND a.attname = 'embedding'
+           AND NOT a.attisdropped
+      `;
+      const formatted = dimRows[0]?.formatted;
+      if (formatted) {
+        const m = formatted.match(/vector\((\d+)\)/i);
+        const actualDim = m ? parseInt(m[1], 10) : null;
+        if (actualDim !== null && actualDim !== dims) {
+          process.stderr.write(
+            `  ⚠️  检测到 embedding 列维度不匹配：DB 为 vector(${actualDim})，配置为 ${dims}。正在自动修正...\n`
+          );
+          await conn`DROP INDEX IF EXISTS idx_chunks_embedding`;
+          await conn`ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(${dims})`;
+          await conn`UPDATE content_chunks SET embedding = NULL, embedded_at = NULL`;
+          await conn`CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops)`;
+          process.stderr.write(
+            `  ✅ embedding 列已修正为 vector(${dims})，旧向量数据已清空（需重新向量化）。\n`
+          );
+        }
+      }
+
       // Post-migration schema verification: catches columns that migrations
       // defined but PgBouncer transaction-mode silently failed to create.
       // Self-heals missing columns via ALTER TABLE ADD COLUMN IF NOT EXISTS.

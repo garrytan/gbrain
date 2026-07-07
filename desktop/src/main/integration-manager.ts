@@ -13,6 +13,8 @@ export interface IntegrationInfo {
   path: string | null;
   configured: boolean;
   automatic: boolean;
+  configuredPort?: number;
+  portMismatch?: boolean;
 }
 
 export interface IntegrationResult {
@@ -122,11 +124,43 @@ function isConfigured(client: IntegrationClient, path: string | null): boolean {
   }
 }
 
-export function listIntegrations(): IntegrationInfo[] {
+function extractPortFromUrl(urlStr: string): number | undefined {
+  try {
+    const url = new URL(urlStr);
+    const port = url.port ? Number.parseInt(url.port, 10) : (url.protocol === 'https:' ? 443 : 80);
+    return port;
+  } catch {
+    return undefined;
+  }
+}
+
+function readConfiguredPort(client: IntegrationClient, path: string): number | undefined {
+  if (!path || !existsSync(path)) return undefined;
+  try {
+    if (client === 'codex') {
+      const content = readFileSync(path, 'utf8');
+      const blockPattern = new RegExp(`${escapeRegExp(CODEX_START)}[\\s\\S]*?${escapeRegExp(CODEX_END)}`);
+      const block = content.match(blockPattern)?.[0] ?? content;
+      const urlMatch = block.match(/url\s*=\s*(['"])(.+?)\1/);
+      return urlMatch ? extractPortFromUrl(urlMatch[2]) : undefined;
+    }
+    const content = readFileSync(path, 'utf8');
+    const parsed = JSON.parse(content) as { mcpServers?: { pmbrain?: { url?: string } } };
+    const url = parsed.mcpServers?.pmbrain?.url;
+    return url ? extractPortFromUrl(url) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function listIntegrations(currentPort?: number): IntegrationInfo[] {
   return (Object.keys(CLIENT_META) as IntegrationClient[]).map((id) => {
     const meta = CLIENT_META[id];
     const path = meta.path();
-    return { id, name: meta.name, path, automatic: meta.automatic, configured: isConfigured(id, path) };
+    const configured = isConfigured(id, path);
+    const configuredPort = configured && path ? readConfiguredPort(id, path) : undefined;
+    const portMismatch = configured && currentPort !== undefined && configuredPort !== undefined && configuredPort !== currentPort;
+    return { id, name: meta.name, path, automatic: meta.automatic, configured, configuredPort, portMismatch };
   });
 }
 

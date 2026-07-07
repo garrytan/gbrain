@@ -126,7 +126,7 @@ async function applySetup(payload: SetupPayload) {
   await startSidecar(false);
   return {
     setup: getSetupInfo(),
-    integrations: listIntegrations(),
+    integrations: listIntegrations(sidecar?.port),
     port: sidecar?.port,
     mcpUrl: sidecar?.mcpUrl,
     backup: saved.backup,
@@ -267,7 +267,7 @@ if (!app.requestSingleInstanceLock()) {
     installMenu();
     ipcMain.handle('desktop:get-state', () => currentState);
     ipcMain.handle('desktop:get-update-state', () => updateManager?.currentState ?? null);
-    ipcMain.handle('desktop:get-setup', () => ({ setup: getSetupInfo(), integrations: listIntegrations(), port: sidecar?.port, mcpUrl: sidecar?.mcpUrl }));
+    ipcMain.handle('desktop:get-setup', () => ({ setup: getSetupInfo(), integrations: listIntegrations(sidecar?.port), port: sidecar?.port, mcpUrl: sidecar?.mcpUrl }));
     ipcMain.handle('desktop:choose-directory', async (_event, initialPath?: string) => {
       const result = await dialog.showOpenDialog(mainWindow!, {
         defaultPath: initialPath,

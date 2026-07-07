@@ -136,13 +136,24 @@ function renderIntegrations(integrations: IntegrationInfo[]): void {
     article.className = 'integration-card';
     const badge = document.createElement('span');
     badge.className = item.configured ? 'configured badge' : 'badge';
-    badge.textContent = item.configured ? '已配置' : '未配置';
+    if (!item.configured) {
+      badge.textContent = '未配置';
+    } else if (item.portMismatch) {
+      badge.textContent = '已配置，端口号不一致';
+    } else {
+      badge.textContent = '已配置';
+    }
     const title = document.createElement('h3'); title.textContent = item.name;
     const path = document.createElement('p'); path.textContent = item.path ?? '通过 Claude CLI / GUI 接入';
     const note = document.createElement('small');
     note.textContent = item.automatic ? '自动备份并合并现有配置' : '生成可复制的接入命令';
     const button = document.createElement('button');
-    button.className = 'solid'; button.textContent = item.automatic ? '创建并写入' : '生成接入命令';
+    button.className = 'solid';
+    if (item.automatic) {
+      button.textContent = item.configured ? '更新' : '创建并写入';
+    } else {
+      button.textContent = '生成接入命令';
+    }
     button.addEventListener('click', () => void configure(item.id, button));
     article.append(badge, title, path, note, button);
     return article;
@@ -337,7 +348,12 @@ async function configure(client: IntegrationClient, button: HTMLButtonElement): 
   } catch (error) {
     setNotice('error', error instanceof Error ? error.message : String(error));
   } finally {
-    button.disabled = false; button.textContent = client === 'claude' ? '生成接入命令' : '创建并写入';
+    button.disabled = false;
+    if (client === 'claude') {
+      button.textContent = '生成接入命令';
+    } else {
+      button.textContent = '更新';
+    }
   }
 }
 

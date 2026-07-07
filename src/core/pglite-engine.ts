@@ -328,6 +328,29 @@ export class PGLiteEngine implements BrainEngine {
     if (applied > 0) {
       process.stderr.write(`  ${applied} migration(s) applied\n`);
     }
+
+    // PGLite 不支持 ALTER COLUMN TYPE vector(N)，检测到维度不匹配时只能警告。
+    const dimRows = await this.db.query<{ formatted: string | null }>(`
+      SELECT format_type(a.atttypid, a.atttypmod) AS formatted
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public'
+         AND c.relname = 'content_chunks'
+         AND a.attname = 'embedding'
+         AND NOT a.attisdropped
+    `);
+    const dimFormatted = dimRows.rows[0]?.formatted;
+    if (dimFormatted) {
+      const dimMatch = dimFormatted.match(/vector\((\d+)\)/i);
+      const actualDim = dimMatch ? parseInt(dimMatch[1], 10) : null;
+      if (actualDim !== null && actualDim !== dims) {
+        process.stderr.write(
+          `  ⚠️  检测到 embedding 列维度不匹配：DB 为 vector(${actualDim})，配置为 ${dims}。\n` +
+          `  PGLite 不支持 ALTER COLUMN TYPE，请运行：gbrain reinit-pglite --embedding-dimensions ${dims}\n`
+        );
+      }
+    }
   }
 
   /**

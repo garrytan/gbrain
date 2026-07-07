@@ -352,6 +352,15 @@ export function applyOpenAICompatConfig(
 
 /** Configure the gateway. Called by cli.ts#connectEngine. Clears cached models. */
 export function configureGateway(config: AIGatewayConfig): void {
+  // 当用户显式配置了 embedding_model 但未指定 embedding_dimensions 时，
+  // 不要静默回退到默认 1280 维 — 直接报错，防止维度不匹配导致数据导入失败。
+  // 只有当 embedding_model 也未设置（embedding 被禁用或未配置）时才走默认值。
+  if (config.embedding_model && config.embedding_dimensions === undefined) {
+    throw new AIConfigError(
+      `embedding_model "${config.embedding_model}" 已配置，但 embedding_dimensions 未指定。`,
+      `请在 config.json 中设置 embedding_dimensions，或在桌面端配置界面填写正确的向量化维度。`,
+    );
+  }
   _config = {
     embedding_model: config.embedding_model ?? DEFAULT_EMBEDDING_MODEL,
     embedding_dimensions: config.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS,
