@@ -108,6 +108,35 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+function formatLockTimestamp(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? new Date(value).toISOString()
+    : 'unknown time';
+}
+
+function pgliteLockTimeoutError(lockDir: string): Error {
+  const lockPath = join(lockDir, LOCK_FILE);
+  try {
+    const lockData = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    const pid = String(lockData.pid ?? 'unknown');
+    const command = String(lockData.command ?? 'unknown');
+    const serveHint = command.includes('gbrain serve')
+      ? ' The holder looks like `gbrain serve`, so this is probably serve↔sync contention from an MCP/HTTP server; stop that server/client and rerun the command.'
+      : '';
+
+    return new Error(
+      `GBrain: Timed out waiting for PGLite data-dir lock. Process ${pid} has held it since ${formatLockTimestamp(lockData.acquired_at)} (command: ${command}). ` +
+      `Lock directory: ${lockDir}. If that process is dead, remove the lock directory and try again. ` +
+      `This is a PGLite data-dir lock, not the \`gbrain-sync:*\` advisory lock; \`gbrain sync --break-lock\` will not clear a live PGLite holder.` +
+      serveHint,
+    );
+  } catch {
+    return new Error(
+      `GBrain: Timed out waiting for PGLite lock. Remove ${lockDir} and try again.`
+    );
+  }
+}
+
 /**
  * Attempt to acquire an exclusive lock on the PGLite data directory.
  * Returns { acquired: true } if the lock was obtained, { acquired: false } otherwise.
@@ -177,28 +206,14 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
       // mkdir failed — someone else grabbed it between our check and mkdir
       // This is fine, we'll retry
       if (Date.now() - startTime >= timeoutMs) {
-        // Timeout — report which process holds the lock
-        const lockPath = join(lockDir, LOCK_FILE);
-        try {
-          const lockData = JSON.parse(readFileSync(lockPath, 'utf-8'));
-          throw new Error(
-            `GBrain: Timed out waiting for PGLite lock. Process ${lockData.pid} has held it since ${new Date(lockData.acquired_at).toISOString()} (command: ${lockData.command}). ` +
-            `If that process is dead, remove ${lockDir} and try again.`
-          );
-        } catch (readErr) {
-          if (readErr instanceof Error && readErr.message.startsWith('GBrain')) throw readErr;
-          throw new Error(
-            `GBrain: Timed out waiting for PGLite lock. Remove ${lockDir} and try again.`
-          );
-        }
+        throw pgliteLockTimeoutError(lockDir);
       }
       // Brief wait before retry
       await new Promise(r => setTimeout(r, 500));
     }
   }
 
-  // Should not reach here, but just in case
-  throw new Error(`GBrain: Timed out waiting for PGLite lock.`);
+  throw pgliteLockTimeoutError(lockDir);
 }
 
 /**

@@ -109,7 +109,7 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
   });
 
-  function writeHolder(fields: { pid: number; acquiredAgoMs: number; refreshedAgoMs: number }) {
+  function writeHolder(fields: { pid: number; acquiredAgoMs: number; refreshedAgoMs: number; command?: string }) {
     const lockDir = join(TEST_DIR, '.gbrain-lock');
     mkdirSync(lockDir, { recursive: true });
     const now = Date.now();
@@ -117,7 +117,7 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
       pid: fields.pid,
       acquired_at: now - fields.acquiredAgoMs,
       refreshed_at: now - fields.refreshedAgoMs,
-      command: 'test holder',
+      command: fields.command ?? 'test holder',
     }));
   }
 
@@ -143,6 +143,26 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
 
     await expect(acquireLock(TEST_DIR, { timeoutMs: 1200 })).rejects.toThrow(/Timed out/);
     // The live holder's lock is still present — never force-removed.
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+  });
+
+  test('explains live gbrain serve contention is not a sync advisory lock', async () => {
+    writeHolder({
+      pid: process.pid,
+      acquiredAgoMs: 60_000,
+      refreshedAgoMs: 0,
+      command: 'bun /Users/master/.bun/bin/gbrain serve',
+    });
+
+    let message = '';
+    try {
+      await acquireLock(TEST_DIR, { timeoutMs: 100 });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain('serve↔sync contention');
+    expect(message).toContain('not the `gbrain-sync:*` advisory lock');
+    expect(message).toContain('`gbrain sync --break-lock` will not clear a live PGLite holder');
     expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
   });
 
