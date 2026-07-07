@@ -13,6 +13,7 @@ import {
   type ReportLifecycleState,
   type ReportMaintenanceJob,
   type ReportPageHealthItem,
+  type ReportMemoryStrength,
   type ReportPolicyDenial,
   type ReportProjectionTarget,
   type ReportQuarantinedSource,
@@ -51,6 +52,11 @@ import { traceMemoryContamination } from '../core/services/contamination-trace-s
 import { computeCandidateDebtMetrics } from '../core/services/inbox-lead-service.ts';
 import { buildNegativeMemoryProjections } from '../core/services/negative-memory-projection-service.ts';
 import { buildSkillSurfaceManifest } from '../core/services/skill-surface-manifest-service.ts';
+import {
+  computeMemoryStrengthReport,
+  slugFromRetrievalTraceSourceRef,
+  type MemoryStrengthEntry,
+} from '../core/services/memory-strength-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from '../core/services/note-manifest-service.ts';
 
 const DEFAULT_SCOPE_ID = 'workspace:default';
@@ -281,6 +287,7 @@ export async function collectMemoryReportInput(
     writeSessions,
     contextEvalRuns,
     retrievalTrajectoryScore,
+    memoryStrength,
     recurringRetrievalGaps,
     pageHealthQueue,
     watchedQuestionChanges,
@@ -305,6 +312,7 @@ export async function collectMemoryReportInput(
     collectMemoryWriteSessions(engine, scopeId, limit),
     collectContextEvalRuns(engine, limit),
     collectRetrievalTrajectoryScore(engine, generatedAt, limit),
+    collectMemoryStrength(engine, generatedAt, limit),
     collectRecurringRetrievalGaps(engine, generatedAt, limit),
     collectPageHealthQueue(engine, generatedAt, limit),
     collectWatchedQuestionChanges(engine, scopeId, generatedAt, limit),
@@ -371,6 +379,7 @@ export async function collectMemoryReportInput(
     negative_memory_projections: negativeMemoryProjections,
     context_eval_runs: contextEvalRuns,
     retrieval_trajectory_score: retrievalTrajectoryScore,
+    memory_strength: memoryStrength,
     skill_surface: collectSkillSurfaceSummary(),
     candidate_age_escalations: collectCandidateAgeEscalations(candidateScan.candidates, generatedAt),
     promoted_candidate_refutations: collectPromotedCandidateRefutations(candidateScan.candidates),
@@ -735,22 +744,6 @@ function normalizeReportKey(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-function slugFromRetrievalTraceSourceRef(sourceRef: string): string | undefined {
-  const ref = sourceRef.split('@chars:')[0]!;
-  const parts = ref.split(':');
-  const kind = parts[0];
-  if (
-    (kind === 'page' || kind === 'compiled_truth' || kind === 'frontmatter' || kind === 'timeline_range')
-    && parts.length >= 4
-  ) {
-    return parts.slice(3).join(':');
-  }
-  if (kind === 'line_span' && parts.length >= 6) {
-    return parts.slice(3, -2).join(':');
-  }
-  return undefined;
-}
-
 async function collectWatchedQuestionChanges(
   engine: BrainEngine,
   scopeId: string,
@@ -856,6 +849,59 @@ async function collectRetrievalTrajectoryScore(
   } catch {
     return null;
   }
+}
+
+async function collectMemoryStrength(
+  engine: BrainEngine,
+  generatedAt: string,
+  limit: number,
+): Promise<ReportMemoryStrength | null> {
+  if (
+    typeof (engine as Partial<BrainEngine>).listRetrievalTracesByWindow !== 'function'
+    || typeof (engine as Partial<BrainEngine>).listPages !== 'function'
+  ) {
+    return null;
+  }
+  const until = new Date(generatedAt);
+  if (!Number.isFinite(until.getTime())) return null;
+  try {
+    const report = await computeMemoryStrengthReport(engine, {
+      now: until,
+      limit: Math.min(10, Math.max(1, limit)),
+    });
+    // Without any retrieval traces every page is trivially "never used" — no signal.
+    if (report.scanned_trace_count === 0) return null;
+    return {
+      window_days: report.window.window_days,
+      formula: report.formula,
+      totals: {
+        pages_with_activity: report.totals.pages_with_activity,
+        fading: report.totals.fading,
+        never_used: report.totals.never_used,
+      },
+      top_strength: report.top_strength.map(toReportMemoryStrengthEntry),
+      fading: report.fading.map(toReportMemoryStrengthEntry),
+      never_used: report.never_used.map((page) => ({ slug: page.slug, title: page.title })),
+    };
+  } catch (error) {
+    activeReportDataIntegrityErrors?.push({
+      query: 'memory_strength',
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+function toReportMemoryStrengthEntry(entry: MemoryStrengthEntry): ReportMemoryStrength['top_strength'][number] {
+  return {
+    slug: entry.slug,
+    strength_score: entry.strength_score,
+    confirmed_read_count: entry.confirmed_read_count,
+    probe_selected_count: entry.probe_selected_count,
+    answer_ready_count: entry.answer_ready_count,
+    conflict_count: entry.conflict_count,
+    last_read_at: entry.last_read_at,
+  };
 }
 
 async function retrievalGroundednessByTraceId(

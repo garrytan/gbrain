@@ -74,6 +74,15 @@ All notable changes to MBrain will be documented in this file.
   maintenance stops at "this was wrong" no longer; it answers "and here is
   everything it contaminated."
 
+- **The brain now knows which memories carry weight — and which are dead.**
+  A new outcome-aware memory-strength report (operation
+  `get_memory_strength_report` plus a daily-report section) scores every page
+  from real usage: confirmed reads and answer-ready outcomes strengthen it,
+  conflicts weaken it, silence decays it — surfacing your most load-bearing
+  pages, fading ones, and pages no session has ever touched. Report-only by
+  design: ranking stays untouched behind the eval gate, and the dream cycle
+  turns fading/never-used findings into reviewable suggestions.
+
 ### Fixed
 
 - **The daily report's canonical-write debt is now truthful.** Applying an

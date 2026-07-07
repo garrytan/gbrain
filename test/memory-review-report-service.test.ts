@@ -62,6 +62,64 @@ describe('memory review report service', () => {
     expect(formatted).toContain('review canonical_handoff_entries');
   });
 
+  test('renders the memory strength section with top, fading, and never-used entries', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+      memory_strength: {
+        window_days: 30,
+        formula: 'strength = (2*confirmed_reads + 3*answer_ready + 1*probe_selections - 4*conflicts) * exp(-days_since_last_read/half_life)',
+        totals: { pages_with_activity: 2, fading: 1, never_used: 1 },
+        top_strength: [
+          {
+            slug: 'systems/alpha',
+            strength_score: 9.627,
+            confirmed_read_count: 2,
+            probe_selected_count: 1,
+            answer_ready_count: 2,
+            conflict_count: 0,
+            last_read_at: '2026-05-20T00:00:00.000Z',
+          },
+        ],
+        fading: [
+          {
+            slug: 'people/gamma',
+            strength_score: -0.353,
+            confirmed_read_count: 1,
+            probe_selected_count: 0,
+            answer_ready_count: 0,
+            conflict_count: 1,
+            last_read_at: '2026-04-26T00:00:00.000Z',
+          },
+        ],
+        never_used: [{ slug: 'ideas/delta', title: 'Delta Idea' }],
+      },
+    });
+
+    expect(report.sections.memory_strength?.totals).toEqual({
+      pages_with_activity: 2,
+      fading: 1,
+      never_used: 1,
+    });
+
+    const formatted = formatMemoryReviewReport(report);
+    expect(formatted).toContain('Memory Strength (outcome-aware, report-only)');
+    expect(formatted).toContain('Active pages: 2 | fading: 1 | never used: 1 (window 30d)');
+    expect(formatted).toContain('top 9.627 systems/alpha | reads:2 probes:1 answer_ready:2 conflicts:0 last_read:2026-05-20T00:00:00.000Z');
+    expect(formatted).toContain('fading people/gamma | last_read:2026-04-26T00:00:00.000Z | strength -0.353');
+    expect(formatted).toContain('never used ideas/delta (Delta Idea)');
+  });
+
+  test('omits the memory strength section when no strength input is collected', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+    });
+
+    expect(report.sections.memory_strength).toBeNull();
+    expect(formatMemoryReviewReport(report)).not.toContain('Memory Strength');
+  });
+
   test('renders refuted contamination summaries as downstream re-verification work', () => {
     const report = buildMemoryReviewReport({
       scope_id: 'workspace:default',
@@ -1492,6 +1550,59 @@ describe('memory review report service', () => {
         params: expect.objectContaining({ id: 'candidate:queued' }),
       }),
     ]));
+  });
+
+  test('collectMemoryReportInput derives the memory strength section from real retrieval traces', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-strength-report-'));
+    tempPaths.push(dir);
+    const engine = new SQLiteEngine();
+    await engine.connect({ database_path: join(dir, 'brain.sqlite') });
+    await engine.initSchema();
+
+    try {
+      await engine.putPage('systems/alpha', {
+        type: 'system',
+        title: 'Alpha System',
+        compiled_truth: 'Alpha compiled truth.',
+      });
+      await engine.putPage('ideas/delta', {
+        type: 'concept',
+        title: 'Delta Idea',
+        compiled_truth: 'Delta compiled truth.',
+      });
+      await engine.putRetrievalTrace({
+        id: 'trace-report-strength',
+        task_id: null,
+        scope: 'work',
+        route: ['read_context'],
+        source_refs: ['page:workspace:default:systems/alpha'],
+        verification: ['answer_ready:ready'],
+        outcome: 'read_context returned canonical evidence',
+      });
+
+      const generatedAt = new Date(Date.now() + 60_000).toISOString();
+      const input = await collectMemoryReportInput(engine, 'workspace:default', 10, generatedAt);
+
+      expect(input.memory_strength).toMatchObject({
+        window_days: 30,
+        totals: { pages_with_activity: 1, fading: 0, never_used: 1 },
+      });
+      expect(input.memory_strength?.top_strength[0]).toMatchObject({
+        slug: 'systems/alpha',
+        confirmed_read_count: 1,
+        answer_ready_count: 1,
+        conflict_count: 0,
+      });
+      expect(input.memory_strength?.never_used).toEqual([
+        { slug: 'ideas/delta', title: 'Delta Idea' },
+      ]);
+
+      const formatted = formatMemoryReviewReport(buildMemoryReviewReport(input));
+      expect(formatted).toContain('Memory Strength (outcome-aware, report-only)');
+      expect(formatted).toContain('never used ideas/delta (Delta Idea)');
+    } finally {
+      await engine.disconnect();
+    }
   });
 
   test('collects Phase 12 report evidence from the configured runtime, not only synthetic input', async () => {
