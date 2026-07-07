@@ -519,19 +519,15 @@ function buildAutoRouteInput(
 const PRECISION_SLUG_TOKEN_PATTERN = /^(?:[A-Za-z0-9][A-Za-z0-9_-]+\/)+[A-Za-z0-9][A-Za-z0-9_-]+$/;
 
 function precisionLookupSlugSignal(
-  query: string,
+  _query: string,
   subjects: RetrieveContextInput['known_subjects'],
 ): string | undefined {
+  // Only an explicit slug-like known-subject ref upgrades to precision lookup;
+  // slug-shaped tokens inside free-text queries keep their scenario routing so
+  // existing broad flows (and their selector shapes) stay untouched.
   for (const subject of subjects ?? []) {
     const ref = (typeof subject === 'string' ? subject : subject.ref).trim();
     if (PRECISION_SLUG_TOKEN_PATTERN.test(ref)) return ref;
-  }
-  for (const rawToken of query.split(/\s+/)) {
-    if (!rawToken.includes('/')) continue;
-    const token = rawToken
-      .replace(/^["'`([{<]+/, '')
-      .replace(/["'`)\]}>.,:;!?]+$/, '');
-    if (PRECISION_SLUG_TOKEN_PATTERN.test(token)) return token;
   }
   return undefined;
 }

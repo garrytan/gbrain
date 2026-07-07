@@ -181,8 +181,10 @@ describe('S25 — memory consolidation retention', () => {
         known_subjects: ['systems/mbrain-retention'],
       });
       expect(normal.answerability.must_read_context).toBe(true);
+      // A slug-like known-subject now upgrades to a precision page read
+      // (reachable-intent routing); the same canonical page is targeted.
       expect(normal.required_reads).toContainEqual(expect.objectContaining({
-        kind: 'compiled_truth',
+        kind: 'page',
         scope_id: 'workspace:default',
         slug: 'systems/mbrain-retention',
       }));
