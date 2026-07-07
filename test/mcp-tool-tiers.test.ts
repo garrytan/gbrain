@@ -30,6 +30,47 @@ describe('tiered tool catalog (C1 part 2)', () => {
     }
   });
 
+  test('the duplicative retrieval-navigation family is demoted to admin with short replacement-naming descriptions', () => {
+    const navigationFamily = [
+      'get_broad_synthesis_route',
+      'get_precision_lookup_route',
+      'get_mixed_scope_bridge',
+      'get_mixed_scope_disclosure',
+      'get_personal_profile_lookup_route',
+      'get_personal_episode_lookup_route',
+      'get_workspace_system_card',
+      'get_workspace_project_card',
+      'get_workspace_orientation_bundle',
+      'get_workspace_corpus_card',
+      'plan_retrieval_request',
+      'classify_memory_scenario',
+      'select_activation_policy',
+      'plan_scenario_memory_request',
+    ];
+    const byName = new Map(operations.map(op => [op.name, op]));
+    for (const name of navigationFamily) {
+      const op = byName.get(name);
+      expect(op).toBeDefined();
+      if (!op) continue;
+      expect(effectiveToolTier(op)).toBe('admin');
+      expect(op.description.length).toBeLessThanOrEqual(120);
+      expect(op.description).toMatch(/retrieve_context|select_retrieval_route/);
+    }
+
+    // The supported retrieval surface stays where it is.
+    for (const name of ['retrieve_context', 'read_context', 'select_retrieval_route']) {
+      const op = byName.get(name);
+      expect(op).toBeDefined();
+      if (op) expect(effectiveToolTier(op)).not.toBe('admin');
+    }
+
+    // Demoting the 14-op navigation family shrank the default (core+extended)
+    // catalog from 117 tools to 103. Pin the new count so accidental re-promotion
+    // or silent default-surface growth fails loudly.
+    const defaultCatalog = createMcpToolCatalogProvider(operations, { allowedTiers: resolveAllowedTiers() });
+    expect(defaultCatalog.getTools()).toHaveLength(103);
+  });
+
   test('daily-driver ops are core; control-plane ops are admin', () => {
     const byName = new Map(operations.map(op => [op.name, op]));
     for (const name of CORE_TOOLS) {

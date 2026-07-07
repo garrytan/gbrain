@@ -54,6 +54,7 @@ test('memory inbox operations can be built from a dedicated domain module', () =
     'supersede_memory_candidate_entry',
     'resolve_memory_candidate_contradiction',
     'run_dream_cycle_maintenance',
+    'trace_memory_contamination',
   ]);
 });
 

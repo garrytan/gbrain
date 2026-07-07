@@ -90,6 +90,7 @@ const ADMIN_TOOL_NAMES = new Set<string>([
   'review_memory_patch_candidate',
   'run_dream_cycle_maintenance',
   'revoke_source_consent',
+  'trace_memory_contamination',
   'upsert_memory_realm',
 ]);
 

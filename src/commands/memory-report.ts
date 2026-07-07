@@ -18,6 +18,7 @@ import {
   type ReportProjectionTarget,
   type ReportQuarantinedSource,
   type ReportRecurringRetrievalGap,
+  type ReportRefutedContamination,
   type ReportReviewItem,
   type ReportRetrievalTrajectoryScore,
   type ReportRunnerJob,
@@ -47,6 +48,7 @@ import type {
   MemoryWriteSession,
 } from '../core/types.ts';
 import { createLifecycleForgettingStoreForEngine } from '../core/maintenance/lifecycle-forgetting.ts';
+import { traceMemoryContamination } from '../core/services/contamination-trace-service.ts';
 import { computeCandidateDebtMetrics } from '../core/services/inbox-lead-service.ts';
 import { buildNegativeMemoryProjections } from '../core/services/negative-memory-projection-service.ts';
 import { buildSkillSurfaceManifest } from '../core/services/skill-surface-manifest-service.ts';
@@ -381,6 +383,7 @@ export async function collectMemoryReportInput(
     skill_surface: collectSkillSurfaceSummary(),
     candidate_age_escalations: collectCandidateAgeEscalations(candidateScan.candidates, generatedAt),
     promoted_candidate_refutations: collectPromotedCandidateRefutations(candidateScan.candidates),
+    refuted_contamination: await collectRefutedContamination(engine, candidateScan.candidates, generatedAt),
     recurring_retrieval_gaps: recurringRetrievalGaps,
     page_health_queue: pageHealthQueue,
     watched_question_changes: watchedQuestionChanges,
@@ -472,6 +475,54 @@ function buildPromotedRefutationNextAction(candidate: MemoryCandidateEntry): str
     return `why ${target}; review canonical_handoff_entries for ${candidate.id}; update or supersede the canonical page line`;
   }
   return `review canonical_handoff_entries for ${candidate.id}; update or supersede the canonical target`;
+}
+
+const REFUTED_CONTAMINATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const REFUTED_CONTAMINATION_CAP = 10;
+
+async function collectRefutedContamination(
+  engine: BrainEngine,
+  candidates: MemoryCandidateEntry[],
+  generatedAt: string,
+): Promise<ReportRefutedContamination[]> {
+  const untilMs = new Date(generatedAt).getTime();
+  if (!Number.isFinite(untilMs)) return [];
+  const sinceMs = untilMs - REFUTED_CONTAMINATION_WINDOW_MS;
+  const refutedInWindow = candidates
+    .filter((candidate) =>
+      candidate.verification_status === 'refuted'
+      && candidate.verified_at !== null
+      && candidate.verified_at.getTime() >= sinceMs
+      && candidate.verified_at.getTime() <= untilMs)
+    .sort((a, b) =>
+      (b.verified_at?.getTime() ?? 0) - (a.verified_at?.getTime() ?? 0)
+      || a.id.localeCompare(b.id))
+    .slice(0, REFUTED_CONTAMINATION_CAP);
+
+  const entries: ReportRefutedContamination[] = [];
+  for (const candidate of refutedInWindow) {
+    try {
+      const trace = await traceMemoryContamination(engine, {
+        candidate_id: candidate.id,
+        until: generatedAt,
+      });
+      entries.push({
+        candidate_id: candidate.id,
+        refuted_at: candidate.verified_at?.toISOString() ?? null,
+        contaminated_pages: trace.contaminated_pages.map((page) => page.slug),
+        consuming_trace_count: trace.summary.consuming_trace_count,
+        downstream_pages: trace.downstream_pages.map((page) => page.slug),
+        next_action: trace.summary.next_actions[0]
+          ?? 'No downstream use recorded; supersede or reject the refuted candidate.',
+      });
+    } catch (error) {
+      activeReportDataIntegrityErrors?.push({
+        query: 'refuted_contamination',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return entries;
 }
 
 async function collectRecurringRetrievalGaps(
