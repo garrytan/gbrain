@@ -302,6 +302,34 @@ export interface ReportRetrievalTrajectoryScore {
   latest_trace_id: string | null;
 }
 
+export interface ReportMemoryStrengthEntry {
+  slug: string;
+  strength_score: number;
+  confirmed_read_count: number;
+  probe_selected_count: number;
+  answer_ready_count: number;
+  conflict_count: number;
+  last_read_at: string | null;
+}
+
+export interface ReportMemoryStrengthNeverUsed {
+  slug: string;
+  title: string;
+}
+
+export interface ReportMemoryStrength {
+  window_days: number;
+  formula: string;
+  totals: {
+    pages_with_activity: number;
+    fading: number;
+    never_used: number;
+  };
+  top_strength: ReportMemoryStrengthEntry[];
+  fading: ReportMemoryStrengthEntry[];
+  never_used: ReportMemoryStrengthNeverUsed[];
+}
+
 export interface ReportSkillSurfaceSummary {
   resource_count: number;
   manifest_hash: string;
@@ -350,6 +378,7 @@ export interface MemoryReviewReportInput {
   watched_question_changes?: ReportWatchedQuestionChange[];
   data_integrity_errors?: ReportDataIntegrityError[];
   retrieval_trajectory_score?: ReportRetrievalTrajectoryScore | null;
+  memory_strength?: ReportMemoryStrength | null;
 }
 
 export interface SourceIngestSummary {
@@ -457,6 +486,7 @@ export interface MemoryReviewReport {
     connector_health: ReportConnectorHealth[];
     context_eval_runs: ReportContextEvalRun[];
     retrieval_trajectory_score: ReportRetrievalTrajectoryScore | null;
+    memory_strength: ReportMemoryStrength | null;
     skill_surface?: ReportSkillSurfaceSummary;
     safety_states: ReportSafetyState[];
     maintenance_health: MaintenanceHealthSummary;
@@ -496,6 +526,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
   );
   const contextEvalRuns = redactReportValues(input.context_eval_runs ?? []);
   const retrievalTrajectoryScore = input.retrieval_trajectory_score ?? null;
+  const memoryStrength = input.memory_strength ? redactReportValues(input.memory_strength) : null;
   const candidateAgeEscalations = redactReportValues(input.candidate_age_escalations ?? []);
   const promotedCandidateRefutations = redactReportValues(input.promoted_candidate_refutations ?? []);
   const recurringRetrievalGaps = redactReportValues(input.recurring_retrieval_gaps ?? []);
@@ -585,6 +616,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
       connector_health: connectorHealth,
       context_eval_runs: contextEvalRuns,
       retrieval_trajectory_score: retrievalTrajectoryScore,
+      memory_strength: memoryStrength,
       ...(input.skill_surface ? { skill_surface: input.skill_surface } : {}),
       safety_states: safetyStates,
       maintenance_health: {
@@ -712,6 +744,21 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
     const skillSurface = report.sections.skill_surface;
     lines.push('', 'Skill Surface');
     lines.push(`- Docs resources: ${skillSurface.resource_count}; agent rules ${skillSurface.agent_rules_version ?? 'unknown'}; manifest ${skillSurface.manifest_hash}`);
+  }
+
+  if (hasMemoryStrengthSignals(report.sections.memory_strength)) {
+    const strength = report.sections.memory_strength!;
+    lines.push('', 'Memory Strength (outcome-aware, report-only)');
+    lines.push(`- Active pages: ${strength.totals.pages_with_activity} | fading: ${strength.totals.fading} | never used: ${strength.totals.never_used} (window ${strength.window_days}d)`);
+    for (const entry of strength.top_strength) {
+      lines.push(`- top ${entry.strength_score} ${entry.slug} | reads:${entry.confirmed_read_count} probes:${entry.probe_selected_count} answer_ready:${entry.answer_ready_count} conflicts:${entry.conflict_count} last_read:${entry.last_read_at ?? 'never'}`);
+    }
+    for (const entry of strength.fading) {
+      lines.push(`- fading ${entry.slug} | last_read:${entry.last_read_at ?? 'never'} | strength ${entry.strength_score}`);
+    }
+    for (const page of strength.never_used) {
+      lines.push(`- never used ${page.slug} (${redactSecrets(page.title)})`);
+    }
   }
 
   if (hasMaintenanceHealthSignals(report.sections.maintenance_health)) {
@@ -870,6 +917,13 @@ function notInstrumentedSafetyState(
 
 function hasSafetyStateSignals(states: ReportSafetyState[]): boolean {
   return states.some((state) => state.status === 'warn' && state.count > 0);
+}
+
+function hasMemoryStrengthSignals(strength: ReportMemoryStrength | null): boolean {
+  return strength !== null
+    && (strength.totals.pages_with_activity > 0
+      || strength.totals.fading > 0
+      || strength.totals.never_used > 0);
 }
 
 function sampleIds(ids: string[]): string[] {

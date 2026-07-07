@@ -1,5 +1,6 @@
 import type { Operation } from './operations.ts';
 import { auditBrainLoop } from './services/brain-loop-audit-service.ts';
+import { computeMemoryStrengthReport } from './services/memory-strength-service.ts';
 import type { ScopeGateScope } from './types.ts';
 
 type OperationErrorCtor = new (
@@ -170,5 +171,63 @@ export function createBrainLoopAuditOperations(
     cliHints: { name: 'audit-brain-loop', aliases: { n: 'limit' } },
   };
 
-  return [audit_brain_loop];
+  const get_memory_strength_report: Operation = {
+    name: 'get_memory_strength_report',
+    description: 'Report outcome-aware memory strength from retrieval traces: top load-bearing, fading, and never-used pages.',
+    params: {
+      window_days: { type: 'number', description: 'Trace window in days. Default 30, max 365.' },
+      limit: { type: 'number', description: 'Entries per list. Default 20, max 100.' },
+      now: { type: 'string', description: 'Optional ISO timestamp for deterministic reports.' },
+    },
+    mutating: false,
+    handler: async (ctx, p) => {
+      const input = {
+        window_days: optionalPositiveNumber(deps, 'window_days', p.window_days),
+        limit: optionalLimit(deps, p.limit),
+        now: optionalIsoTimestamp(deps, 'now', p.now),
+      };
+
+      if (ctx.dryRun) {
+        return {
+          dry_run: true,
+          action: 'get_memory_strength_report',
+          ...input,
+        };
+      }
+
+      return computeMemoryStrengthReport(ctx.engine, input);
+    },
+    cliHints: { name: 'memory-strength-report', aliases: { n: 'limit' } },
+  };
+
+  return [audit_brain_loop, get_memory_strength_report];
+}
+
+function optionalPositiveNumber(
+  deps: { OperationError: OperationErrorCtor },
+  field: string,
+  value: unknown,
+): number | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw invalidParams(deps, `${field} must be a positive number`);
+  }
+  return value;
+}
+
+function optionalIsoTimestamp(
+  deps: { OperationError: OperationErrorCtor },
+  field: string,
+  value: unknown,
+): string | undefined {
+  const normalized = optionalString(deps, field, value);
+  if (normalized === undefined) {
+    return undefined;
+  }
+  if (Number.isNaN(new Date(normalized).getTime())) {
+    throw invalidParams(deps, `${field} must be a valid ISO timestamp`);
+  }
+  return normalized;
 }

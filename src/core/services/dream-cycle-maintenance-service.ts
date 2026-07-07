@@ -23,14 +23,16 @@ import {
   createCanonicalTargetProposal,
 } from './canonical-target-proposal-draft-service.ts';
 import { isHardBlockedCanonicalTargetProposal } from './candidate-resolution-state-service.ts';
+import { computeMemoryStrengthReport } from './memory-strength-service.ts';
 import { resolveTargetSnapshotHash } from './target-snapshot-hash-service.ts';
 
-type DreamCycleSuggestionType = 'recap' | 'stale_claim_challenge' | 'duplicate_merge';
+type DreamCycleSuggestionType = 'recap' | 'stale_claim_challenge' | 'duplicate_merge' | 'memory_strength_review';
 type DreamCycleSuggestionStatus = 'created' | 'dry_run';
 type DreamCycleMaintenancePhaseId =
   | 'candidate_recap'
   | 'stale_candidate_review'
   | 'duplicate_merge_review'
+  | 'memory_strength_review'
   | 'stranded_auto_promote_candidates'
   | 'derived_artifact_freshness'
   | 'apply_control_plane';
@@ -222,6 +224,12 @@ export async function runDreamCycleMaintenance(
     now,
     scope_id: scopeId,
   });
+  if (drafts.length < limit) {
+    const strengthDraft = await buildMemoryStrengthReviewDraft(engine, now);
+    if (strengthDraft) {
+      drafts.push(strengthDraft);
+    }
+  }
   const suggestions: DreamCycleMaintenanceSuggestion[] = [];
 
   if (writeCandidates && drafts.length > 0) {
@@ -521,6 +529,61 @@ function buildDuplicateMergeSuggestion(
   };
 }
 
+const MEMORY_STRENGTH_REVIEW_PAGE_LIMIT = 5;
+
+/**
+ * Outcome-aware memory-strength consumption (N-5, ungated maintenance lane).
+ * Emits a bounded review suggestion listing fading and never-used pages from
+ * the deterministic strength report. Suggestion-only: no archival action, no
+ * canonical writes, and no ranking consumption (that stays EV-1b gated).
+ */
+async function buildMemoryStrengthReviewDraft(
+  engine: BrainEngine,
+  now: Date,
+): Promise<DraftSuggestion | null> {
+  if (
+    typeof (engine as Partial<BrainEngine>).listRetrievalTracesByWindow !== 'function'
+    || typeof (engine as Partial<BrainEngine>).listPages !== 'function'
+  ) {
+    return null;
+  }
+
+  const report = await computeMemoryStrengthReport(engine, {
+    now,
+    limit: MEMORY_STRENGTH_REVIEW_PAGE_LIMIT,
+  });
+  // Without traces every page is trivially "never used" — no reviewable signal.
+  if (report.scanned_trace_count === 0) {
+    return null;
+  }
+  if (report.fading.length === 0 && report.never_used.length === 0) {
+    return null;
+  }
+
+  const fadingSlugs = report.fading.map((entry) => entry.slug);
+  const neverUsedSlugs = report.never_used.map((entry) => entry.slug);
+
+  return {
+    suggestion_type: 'memory_strength_review',
+    source_candidate_ids: [],
+    target_object_type: null,
+    target_object_id: null,
+    candidate_type: 'open_question',
+    proposed_content: `Dream-cycle memory-strength review: ${report.totals.fading} fading and ${report.totals.never_used} never-used page(s) in the last ${report.window.window_days} days. Fading: ${fadingSlugs.join(', ') || 'none'}. Never used: ${neverUsedSlugs.join(', ') || 'none'}. Review whether these pages should be refreshed, linked from current work, or archived.`,
+    source_refs: [...fadingSlugs, ...neverUsedSlugs].map((slug) => `page:${slug}`),
+    extraction_kind: 'inferred',
+    confidence_score: 0.7,
+    importance_score: 0.4,
+    recurrence_score: 0,
+    sensitivity: 'work',
+    summary_lines: [
+      `Fading pages (no confirmed reads in the recent half-window): ${report.totals.fading}.`,
+      `Never-used pages (no retrieval traces at all): ${report.totals.never_used}.`,
+      'Suggestion only: no archival or canonical mutation is performed.',
+    ],
+  };
+}
+
 function toCandidateInput(
   scopeId: string,
   draft: DraftSuggestion,
@@ -681,6 +744,12 @@ function buildMaintenancePhases(
       output_kind: 'candidate',
       status: candidateStatus('duplicate_merge'),
       summary_lines: ['Create or preview duplicate-merge suggestions without merging canonical truth.'],
+    },
+    {
+      phase_id: 'memory_strength_review',
+      output_kind: 'candidate',
+      status: candidateStatus('memory_strength_review'),
+      summary_lines: ['Surface fading and never-used pages from the outcome-aware memory strength report as a review suggestion.'],
     },
     {
       phase_id: 'stranded_auto_promote_candidates',

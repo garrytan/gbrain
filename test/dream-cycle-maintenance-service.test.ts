@@ -473,6 +473,141 @@ test('dream-cycle maintenance is scope-local and ignores other-scope duplicate g
   }
 });
 
+test('dream-cycle maintenance emits a suggestion-only memory-strength review from retrieval traces', async () => {
+  const harness = await createHarness('memory-strength');
+
+  try {
+    await harness.engine.putPage('systems/alpha', {
+      type: 'system',
+      title: 'Alpha System',
+      compiled_truth: 'Alpha compiled truth.',
+    });
+    await harness.engine.putPage('ideas/never-used', {
+      type: 'concept',
+      title: 'Never Used Idea',
+      compiled_truth: 'Never-used compiled truth.',
+    });
+    await harness.engine.putRetrievalTrace({
+      id: 'trace-dream-strength',
+      task_id: null,
+      scope: 'work',
+      route: ['read_context'],
+      source_refs: ['page:workspace:default:systems/alpha'],
+      verification: ['answer_ready:ready'],
+      outcome: 'read_context returned canonical evidence',
+    });
+
+    const result = await runDreamCycleMaintenance(harness.engine, {
+      scope_id: 'workspace:default',
+      now: new Date(Date.now() + 60_000),
+      limit: 5,
+      write_candidates: false,
+    });
+
+    const strengthSuggestions = result.suggestions
+      .filter((suggestion) => suggestion.suggestion_type === 'memory_strength_review');
+    expect(strengthSuggestions).toHaveLength(1);
+    expect(strengthSuggestions[0]).toMatchObject({
+      candidate_id: null,
+      status: 'dry_run',
+      target_object_type: null,
+      target_object_id: null,
+      source_refs: ['page:ideas/never-used'],
+      policy_checks: expect.objectContaining({
+        canonical_write_allowed: false,
+        source_refs_present: true,
+      }),
+    });
+    expect(strengthSuggestions[0]?.summary_lines).toContain(
+      'Never-used pages (no retrieval traces at all): 1.',
+    );
+    expect(result.maintenance_phases).toContainEqual(expect.objectContaining({
+      phase_id: 'memory_strength_review',
+      output_kind: 'candidate',
+      status: 'suggested',
+    }));
+
+    // suggestion-only: no candidates were written in dry-run mode
+    const entries = await harness.engine.listMemoryCandidateEntries({
+      scope_id: 'workspace:default',
+      limit: 100,
+      offset: 0,
+    });
+    expect(entries.filter((entry) => entry.generated_by === 'dream_cycle')).toEqual([]);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test('dream-cycle maintenance creates a governed candidate for the memory-strength review when writes are enabled', async () => {
+  const harness = await createHarness('memory-strength-writes');
+
+  try {
+    await harness.engine.putPage('ideas/never-used', {
+      type: 'concept',
+      title: 'Never Used Idea',
+      compiled_truth: 'Never-used compiled truth.',
+    });
+    await harness.engine.putRetrievalTrace({
+      id: 'trace-dream-strength-write',
+      task_id: null,
+      scope: 'work',
+      route: ['retrieve_context', 'page'],
+      source_refs: ['page:workspace:default:systems/other'],
+      verification: ['scenario:precision_lookup'],
+      outcome: 'retrieve_context selected canonical read candidates',
+    });
+
+    const result = await runDreamCycleMaintenance(harness.engine, {
+      scope_id: 'workspace:default',
+      now: new Date(Date.now() + 60_000),
+      limit: 5,
+      write_candidates: true,
+    });
+
+    const strengthSuggestion = result.suggestions
+      .find((suggestion) => suggestion.suggestion_type === 'memory_strength_review');
+    expect(strengthSuggestion?.status).toBe('created');
+    expect(strengthSuggestion?.candidate_id).not.toBeNull();
+
+    const stored = await harness.engine.getMemoryCandidateEntry(strengthSuggestion?.candidate_id ?? '');
+    expect(stored?.generated_by).toBe('dream_cycle');
+    expect(stored?.candidate_type).toBe('open_question');
+    expect(stored?.status).toBe('candidate');
+    expect(stored?.source_refs).toEqual(['page:ideas/never-used']);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test('dream-cycle maintenance skips the memory-strength review when no traces exist', async () => {
+  const harness = await createHarness('memory-strength-no-traces');
+
+  try {
+    await harness.engine.putPage('ideas/never-used', {
+      type: 'concept',
+      title: 'Never Used Idea',
+      compiled_truth: 'Never-used compiled truth.',
+    });
+
+    const result = await runDreamCycleMaintenance(harness.engine, {
+      scope_id: 'workspace:default',
+      now: new Date(),
+      limit: 5,
+      write_candidates: false,
+    });
+
+    expect(result.suggestions
+      .filter((suggestion) => suggestion.suggestion_type === 'memory_strength_review')).toEqual([]);
+    expect(result.maintenance_phases).toContainEqual(expect.objectContaining({
+      phase_id: 'memory_strength_review',
+      status: 'skipped',
+    }));
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test('dream-cycle maintenance rejects invalid now values before stale checks', async () => {
   const harness = await createHarness('invalid-now');
 

@@ -48,6 +48,7 @@ describe('tiered tool catalog (C1 part 2)', () => {
       'list_source_items',
       'capture_agent_session_memory',
       'plan_agent_session_activation',
+      'get_memory_strength_report',
       'delete_page',
     ]) {
       const op = byName.get(name);
