@@ -17,7 +17,7 @@ import type { BrainEngine } from './engine.ts';
 import { PGVECTOR_HNSW_VECTOR_MAX_DIMS } from './vector-index.ts';
 import { gbrainPath } from './config.ts';
 import { resolveRecipe } from './ai/model-resolver.ts';
-import type { Recipe } from './ai/types.ts';
+import type { Recipe, EmbeddingTouchpoint } from './ai/types.ts';
 import { AIConfigError } from './ai/errors.ts';
 import {
   supportsVoyageOutputDimension,
@@ -272,6 +272,17 @@ export interface ResolveSchemaEmbeddingDimOpts {
  *     `dims_options` list (Matryoshka providers). Otherwise reject — the
  *     user picked a model that doesn't support custom dims.
  */
+/**
+ * The embedding width a specific model actually emits: its per-model override
+ * from `model_dims` (e.g. Ollama `bge-m3` -> 1024) when present, else the
+ * recipe's provider-wide `default_dims`. Single source of truth for "what
+ * width will this model's schema column be" — schema/gateway dim sites resolve
+ * through it instead of reading `default_dims` directly (#2170).
+ */
+export function effectiveDefaultDims(tp: EmbeddingTouchpoint, modelId: string): number {
+  return tp.model_dims?.[modelId] ?? tp.default_dims;
+}
+
 export function resolveSchemaEmbeddingDim(opts: ResolveSchemaEmbeddingDimOpts): ResolveSchemaDimResult {
   try {
     const { recipe, parsed } = resolveRecipe(opts.embedding_model);
@@ -284,7 +295,7 @@ export function resolveSchemaEmbeddingDim(opts: ResolveSchemaEmbeddingDimOpts): 
           `Pick a recipe with an embedding touchpoint (gbrain providers list).`,
       };
     }
-    return validateDimAgainstTouchpoint(parsed.modelId, recipe, tp.default_dims, tp.dims_options, opts.embedding_dimensions);
+    return validateDimAgainstTouchpoint(parsed.modelId, recipe, tp, opts.embedding_dimensions);
   } catch (err) {
     return { ok: false, error: err instanceof AIConfigError ? err.message : String(err) };
   }
@@ -335,7 +346,7 @@ export function resolveSchemaMultimodalDim(opts: ResolveSchemaMultimodalDimOpts)
           `Pick a multimodal-capable model from this provider.`,
       };
     }
-    return validateDimAgainstTouchpoint(parsed.modelId, recipe, tp.default_dims, tp.dims_options, opts.embedding_multimodal_dimensions);
+    return validateDimAgainstTouchpoint(parsed.modelId, recipe, tp, opts.embedding_multimodal_dimensions);
   } catch (err) {
     return { ok: false, error: err instanceof AIConfigError ? err.message : String(err) };
   }
@@ -362,10 +373,11 @@ export function resolveSchemaMultimodalDim(opts: ResolveSchemaMultimodalDimOpts)
 function validateDimAgainstTouchpoint(
   modelId: string,
   recipe: Recipe,
-  defaultDims: number,
-  dimsOptions: number[] | undefined,
+  tp: EmbeddingTouchpoint,
   requestedDims: number | undefined,
 ): ResolveSchemaDimResult {
+  const defaultDims = effectiveDefaultDims(tp, modelId);
+  const dimsOptions = tp.dims_options;
   const dim = requestedDims ?? defaultDims;
 
   if (!Number.isInteger(dim) || dim <= 0) {
@@ -420,6 +432,16 @@ function isCustomDimValidForProvider(
         `Provider "${recipe.id}" model "${modelId}" rejects custom dimensions ${requestedDims} ` +
         `(allowed: ${dimsOptions.join(', ')}).`,
     };
+  }
+
+  // Tier 1.5: local "bring your own backend" recipes (llama-server, litellm,
+  // and any future user-provided-model local server) accept whatever width the
+  // user explicitly declares — the model set is open-ended, so gbrain cannot
+  // know each model's native dim. The user's --embedding-dimensions IS the
+  // source of truth here (positive-int + pgvector-cap already enforced upstream);
+  // a genuine mismatch surfaces at the engine's vector(N) column on insert. (#2170)
+  if (recipe.touchpoints.embedding?.user_provided_models === true) {
+    return { valid: true, error: '' };
   }
 
   // Tier 2: provider-specific Matryoshka allow-lists.

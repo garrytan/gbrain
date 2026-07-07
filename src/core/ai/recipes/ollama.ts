@@ -13,8 +13,20 @@ export const ollama: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm'],
-      default_dims: 768, // nomic-embed-text native dim
+      models: ['nomic-embed-text', 'bge-m3', 'mxbai-embed-large', 'all-minilm'],
+      default_dims: 768, // nomic-embed-text native dim (fallback for models absent from model_dims)
+      // #2170: Ollama models emit DIFFERENT fixed native widths, but one
+      // provider-wide default_dims silently built a 768d schema for 1024d models
+      // (bge-m3, mxbai-embed-large) → `gbrain embed` then failed with a dim
+      // mismatch. Declare each model's real native width so the schema is sized
+      // correctly with no flag, and an explicit --embedding-dimensions matching
+      // the native width is accepted.
+      model_dims: {
+        'nomic-embed-text': 768,
+        'bge-m3': 1024,
+        'mxbai-embed-large': 1024,
+        'all-minilm': 384,
+      },
       cost_per_1m_tokens_usd: 0,
       price_last_verified: '2026-04-20',
       // Ollama's batch capacity depends on the locally loaded model + the
