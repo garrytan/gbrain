@@ -1,37 +1,48 @@
 /**
- * Anthropic chat pricing — a bare-keyed VIEW of the canonical pricing table
- * (`src/core/model-pricing.ts`).
+ * v0.28: Anthropic model pricing constants for the dream-cycle budget meter.
  *
- * Kept as a distinct export because many callers look up by bare Claude id
- * (`claude-opus-4-7`) and because `estimateMaxCostUsd` carries the
- * null-on-miss contract the dream-cycle budget gate depends on. The dollar
- * numbers live in model-pricing.ts — DO NOT hand-edit prices here; this map is
- * derived from the `anthropic:` canonical entries (prefix stripped), so it
- * cannot drift from the other pricing views. (Pre-unification this map and
- * takes-quality-eval/pricing.ts duplicated the numbers and drifted: Opus 4.7
- * read $15/$75 in one and $5/$25 in the other.)
+ * Prices in USD per 1M tokens (input | output). Numbers reflect Anthropic's
+ * published pricing as of 2026-05-01. Update when Anthropic publishes new
+ * pricing — the JSON in `~/.gbrain/audit/dream-budget-*.jsonl` carries the
+ * snapshot per call so historical estimates stay reproducible.
  *
- * Codex P1 #10 fold: non-Anthropic models (gemini, gpt, anything not in this
- * map) bypass the budget gate with a `BUDGET_METER_NO_PRICING` warn once per
- * process. The cycle still runs unbounded for those models.
+ * Codex P1 #10 fold: non-Anthropic models (gemini, gpt, anything not in
+ * this map) bypass the budget gate with a `BUDGET_METER_NO_PRICING` warn
+ * once per process. The cycle still runs unbounded for those models.
+ * Future: per-provider pricing modules.
  */
 
-import { CANONICAL_PRICING, type ModelPricing } from './model-pricing.ts';
-import { splitProviderModelId } from './model-id.ts';
+export interface ModelPricing {
+  /** USD per 1M input tokens. */
+  input: number;
+  /** USD per 1M output tokens. */
+  output: number;
+}
 
-export type { ModelPricing };
-
-/**
- * Bare-keyed Anthropic view, derived from the canonical table. Both the
- * dateless ids (`claude-haiku-4-5`, used by aliases / TIER_DEFAULTS / most
- * callers) and the dated snapshots (`claude-haiku-4-5-20251001`) are present
- * because canonical carries both.
- */
-export const ANTHROPIC_PRICING: Record<string, ModelPricing> = Object.fromEntries(
-  Object.entries(CANONICAL_PRICING)
-    .filter(([key]) => key.startsWith('anthropic:'))
-    .map(([key, pricing]) => [key.slice('anthropic:'.length), pricing]),
-);
+/** Map of Anthropic model id → pricing. Aliases (opus/sonnet/haiku) resolve via DEFAULT_ALIASES. */
+export const ANTHROPIC_PRICING: Record<string, ModelPricing> = {
+  // Claude 4.7 generation (current)
+  // Opus 4.7 dropped from $15/$75 (Opus 4) to $5/$25 per
+  // https://platform.claude.com/docs/en/about-claude/models/overview (verified 2026-05-10).
+  'claude-opus-4-7':            { input:  5.00, output: 25.00 },
+  'claude-sonnet-4-6':          { input:  3.00, output: 15.00 },
+  'claude-haiku-4-5-20251001':  { input:  1.00, output:  5.00 },
+  // Older but still frequently aliased
+  'claude-opus-4-6':            { input:  5.00, output: 25.00 },
+  'claude-3-5-sonnet-20241022': { input:  3.00, output: 15.00 },
+  'claude-3-5-haiku-20241022':  { input:  0.80, output:  4.00 },
+  // Local patch (2026-07-02, Forge): deepseek via openrouter — the brain's
+  // models.tier.{utility,reasoning,deep} defaults. Without these entries,
+  // BudgetTracker's TX2 hard-fail ("no pricing entry") blocks EVERY
+  // cost-capped feature (brainstorm, lsd, doctor --remediate --max-usd,
+  // conversation_facts_backfill budget) on the deepseek tiers. Keys are the
+  // provider-stripped tail form lookupPricing falls back to. Prices per
+  // openrouter (verified 2026-07-02).
+  'deepseek/deepseek-v4-flash': { input:  0.089, output:  0.18 },
+  'deepseek/deepseek-chat-v3.1': { input: 0.21,  output:  0.79 },
+  'deepseek/deepseek-chat':     { input:  0.21,  output:  0.79 },
+  'deepseek/deepseek-v4-pro':   { input:  0.435, output:  0.87 },
+};
 
 /**
  * Estimate the upper-bound USD cost of a single submit.
@@ -41,22 +52,20 @@ export const ANTHROPIC_PRICING: Record<string, ModelPricing> = Object.fromEntrie
  *
  * Returns null when the model isn't in the pricing map. Callers warn-once
  * and treat as zero-cost (the cycle runs unbounded for that submit).
- *
- * Accepts bare (`claude-opus-4-7`), colon-prefixed (`anthropic:claude-opus-4-7`),
- * and slash-prefixed (`anthropic/claude-opus-4-7`) ids. Routes through
- * `splitProviderModelId` so the slash-form (which arrives via CLI `--judge-model`
- * and OpenRouter recipe lists) hits the pricing table. Pre-v0.41.21.0 the inline
- * `:`-only split missed slash form → BudgetTracker no_pricing hard-fail with
- * `--max-cost N` (closes #1540).
  */
 export function estimateMaxCostUsd(
   modelId: string,
   estimatedInputTokens: number,
   maxOutputTokens: number,
 ): number | null {
-  let p: ModelPricing | undefined = ANTHROPIC_PRICING[modelId];
-  if (!p) {
-    const { model: tail } = splitProviderModelId(modelId);
+  // Accept both bare (`claude-opus-4-7`) and provider-prefixed
+  // (`anthropic:claude-opus-4-7`) ids. Required since cebu-v4's
+  // model-config rewrite (commit c4f03a9d) prefixes every default — without
+  // tail fallback, every internal call would hit BUDGET_METER_NO_PRICING and
+  // silently disable the budget gate.
+  let p = ANTHROPIC_PRICING[modelId];
+  if (!p && modelId.includes(':')) {
+    const tail = modelId.split(':', 2)[1];
     if (tail) p = ANTHROPIC_PRICING[tail];
   }
   if (!p) return null;

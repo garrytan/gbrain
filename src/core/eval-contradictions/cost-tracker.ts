@@ -52,12 +52,19 @@ function pricingFor(modelId: string): { input: number; output: number } {
   // consolidation that would tighten this to warn-once.
   const direct = ANTHROPIC_PRICING[modelId];
   if (direct) return direct;
-  const { model: tail } = splitProviderModelId(modelId);
+  // forge-patch: pricingFor fallback — v0.42.56.0 merge left the table without a
+  // bare 'claude-haiku-4-5' key, so the legacy fallback returned undefined and
+  // crashed every probe with a non-table judge id (e.g. deepseek:deepseek-chat).
+  // Fix 1: colon-form ids also try the provider/tail slash key the table carries.
+  // Fix 2: fallback ?? to the versioned haiku key that actually exists.
+  const { provider, model: tail } = splitProviderModelId(modelId);
   if (tail) {
-    const tailHit = ANTHROPIC_PRICING[tail];
+    const tailHit =
+      ANTHROPIC_PRICING[tail] ??
+      (provider ? ANTHROPIC_PRICING[`${provider}/${tail}`] : undefined);
     if (tailHit) return tailHit;
   }
-  return ANTHROPIC_PRICING['claude-haiku-4-5'];
+  return ANTHROPIC_PRICING['claude-haiku-4-5'] ?? ANTHROPIC_PRICING['claude-haiku-4-5-20251001'];
 }
 
 /**
