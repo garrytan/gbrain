@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { planAgentSessionActivation } from '../src/core/services/agent-session-activation-planner-service.ts';
+import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 async function withEngine<T>(run: (engine: SQLiteEngine) => Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-agent-session-activation-'));
@@ -208,6 +208,44 @@ describe('agent session activation planner', () => {
           authority: 'operational_memory',
         }),
       ]));
+    });
+  });
+
+  test('always includes budgeted core memory blocks labeled not_answer_evidence', async () => {
+    await withEngine(async (engine) => {
+      await seedProfileAndCandidate(engine);
+      const now = new Date('2026-06-05T00:00:00.000Z');
+
+      const plan = await planAgentSessionActivation(engine, {
+        query: 'continue implementation planning work',
+        requested_scope: 'personal',
+        scenario: 'personal_recall',
+        limit: 5,
+        now,
+      });
+
+      const blocks = plan.core_memory_blocks;
+      expect(blocks.authority).toBe('not_answer_evidence');
+      expect(blocks.generated_at).toBe(now.toISOString());
+      expect(blocks.total_token_estimate).toBeLessThanOrEqual(blocks.budget_tokens);
+      expect(blocks.budget_tokens).toBeLessThanOrEqual(2000);
+      expect(blocks.blocks.map((block) => block.name)).toEqual([
+        'owner-profile',
+        'active-projects',
+        'attention',
+      ]);
+      const profileBlock = blocks.blocks.find((block) => block.name === 'owner-profile')!;
+      expect(profileBlock.lines).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source: { kind: 'profile_memory', id: 'profile-memory:planning' },
+        }),
+      ]));
+      for (const block of blocks.blocks) {
+        expect(block.authority).toBe('not_answer_evidence');
+        for (const line of block.lines) {
+          expect(Boolean(line.source.id ?? line.source.slug)).toBe(true);
+        }
+      }
     });
   });
 });

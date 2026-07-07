@@ -8,6 +8,7 @@ import type {
   ScopeGateScope,
 } from '../types.ts';
 import { buildCandidateSignals } from './candidate-signal-service.ts';
+import { buildCoreMemoryBlocks, type CoreMemoryBlocksResult } from './core-memory-blocks-service.ts';
 import { selectActivationPolicy } from './memory-activation-policy-service.ts';
 
 export type AgentSessionActivationRequestedScope = Exclude<ScopeGateScope, 'unknown'>;
@@ -18,6 +19,7 @@ export interface AgentSessionActivationPlanInput {
   scenario?: MemoryScenario;
   task_id?: string;
   limit?: number;
+  now?: Date;
 }
 
 export interface AgentSessionActivationPlan {
@@ -25,6 +27,8 @@ export interface AgentSessionActivationPlan {
   artifacts: MemoryActivationArtifact[];
   policy: MemoryActivationPolicyResult;
   warnings: string[];
+  /** N-3 always-injectable working set: budgeted derived pointers, never answer evidence. */
+  core_memory_blocks: CoreMemoryBlocksResult;
 }
 
 export async function planAgentSessionActivation(
@@ -36,12 +40,16 @@ export async function planAgentSessionActivation(
     input.requested_scope === 'personal' ? 'personal_recall' : 'coding_continuation'
   );
   const scanLimit = Math.max(limit, Math.min(limit * 4, 50));
-  const artifacts = (await Promise.all([
-    taskArtifacts(engine, input.task_id),
-    profileArtifacts(engine, input.query, input.requested_scope, scanLimit),
-    episodeArtifacts(engine, input.query, input.requested_scope, scanLimit),
-    candidateArtifacts(engine, input, scenario, limit),
-  ])).flat().slice(0, limit);
+  const [artifactGroups, coreMemoryBlocks] = await Promise.all([
+    Promise.all([
+      taskArtifacts(engine, input.task_id),
+      profileArtifacts(engine, input.query, input.requested_scope, scanLimit),
+      episodeArtifacts(engine, input.query, input.requested_scope, scanLimit),
+      candidateArtifacts(engine, input, scenario, limit),
+    ]),
+    buildCoreMemoryBlocks(engine, { now: input.now }),
+  ]);
+  const artifacts = artifactGroups.flat().slice(0, limit);
   const policy = selectActivationPolicy({ scenario, artifacts });
 
   return {
@@ -49,6 +57,7 @@ export async function planAgentSessionActivation(
     artifacts,
     policy,
     warnings: policy.stale_warnings,
+    core_memory_blocks: coreMemoryBlocks,
   };
 }
 

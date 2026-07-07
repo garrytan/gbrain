@@ -90,6 +90,16 @@ All notable changes to MBrain will be documented in this file.
   route-match rose 28/30 to 30/30 with every quality metric unchanged, and the
   per-route breakdown now covers all six intents.
 
+- **Sessions now start already knowing you.** New deterministic core memory
+  blocks — owner profile, active projects, and a recent-attention window —
+  are compiled from profile memory, open task threads, confirmed reads, and
+  watched-question deltas, hard-capped at 2,000 tokens by construction, and
+  included in \`plan_agent_session_activation\` so a fresh agent session opens
+  with your standing context instead of a cold start. Every line carries
+  source provenance and is labeled as a pointer (not answer evidence), the
+  dream cycle keeps a snapshot warm, and an admin-tier
+  \`get_core_memory_blocks\` op lets you inspect exactly what gets injected.
+
 ### Fixed
 
 - **The daily report's canonical-write debt is now truthful.** Applying an

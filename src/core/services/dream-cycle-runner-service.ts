@@ -1,12 +1,13 @@
-import type { BrainEngine } from '../engine.ts';
 import { hostname } from 'os';
+import type { BrainEngine } from '../engine.ts';
+import { buildCoreMemoryBlocks, persistCoreMemoryBlocksSnapshot } from './core-memory-blocks-service.ts';
+import { runDreamCycleMaintenance } from './dream-cycle-maintenance-service.ts';
+import { sweepExpiredWriteSessionFallbacks } from './expired-write-session-fallback-service.ts';
+import type { LifecycleForgettingService } from './lifecycle-forgetting-service.ts';
 import type {
   AcquireMaintenanceCycleLockResult,
   MaintenanceRuntimeService,
 } from './maintenance-runtime-service.ts';
-import { runDreamCycleMaintenance } from './dream-cycle-maintenance-service.ts';
-import type { LifecycleForgettingService } from './lifecycle-forgetting-service.ts';
-import { sweepExpiredWriteSessionFallbacks } from './expired-write-session-fallback-service.ts';
 
 export type DreamCyclePhaseFamily =
   | 'source_status'
@@ -661,18 +662,21 @@ async function runConsolidationPhase(
     context.cycle.dream_generated_candidate_ids.add(fallback.candidate_id);
   }
   const duplicatePageSuggestions = await findDuplicatePageSuggestions(context.engine, context.input.limit);
+  const coreMemoryBlocks = await refreshCoreMemoryBlocksSnapshot(context);
   const hasActionableWork = report.suggestions.length > 0
     || writeSessionFallbacks.swept.length > 0
     || duplicatePageSuggestions.length > 0;
   return {
-    status: hasActionableWork ? 'warn' : 'ok',
+    status: hasActionableWork || coreMemoryBlocks.errors.length > 0 ? 'warn' : 'ok',
     counts: {
       suggestions: report.suggestions.length,
       stale_derived_artifacts: report.derived_freshness_report.stale_count,
       expired_write_session_fallbacks: writeSessionFallbacks.swept.length,
       expired_write_session_fallback_skips: writeSessionFallbacks.skipped.length,
       duplicate_page_suggestions: duplicatePageSuggestions.length,
+      ...coreMemoryBlocks.counts,
     },
+    errors: coreMemoryBlocks.errors,
     source_ids: duplicatePageSuggestions.map((suggestion) => `duplicate_page:${suggestion.primary_slug}:${suggestion.duplicate_slug}`),
     projection_ids: report.derived_freshness_report.artifacts.map((artifact) => artifact.id),
     policy_denials: report.apply_control_plane.allowed_without_control_plane ? [] : [{
@@ -685,6 +689,37 @@ async function runConsolidationPhase(
     canonical_mutations: 0,
     llm_or_runner_used: false,
   };
+}
+
+/**
+ * N-3: deterministically recompile the budgeted core memory blocks and, outside dry-run,
+ * persist the snapshot through the engine config store so SessionStart activation can
+ * serve a dream-cycle-refreshed working set. Never fails the consolidation phase.
+ */
+async function refreshCoreMemoryBlocksSnapshot(
+  context: DreamCyclePhaseContext,
+): Promise<{ counts: Record<string, number>; errors: string[] }> {
+  try {
+    const blocks = await buildCoreMemoryBlocks(context.engine, {
+      now: context.input.now ? new Date(context.input.now) : undefined,
+    });
+    const persisted = context.input.dry_run
+      ? false
+      : await persistCoreMemoryBlocksSnapshot(context.engine, blocks);
+    return {
+      counts: {
+        core_memory_block_lines: blocks.blocks.reduce((total, block) => total + block.lines.length, 0),
+        core_memory_block_tokens: blocks.total_token_estimate,
+        core_memory_blocks_persisted: persisted ? 1 : 0,
+      },
+      errors: [],
+    };
+  } catch (error) {
+    return {
+      counts: { core_memory_blocks_persisted: 0 },
+      errors: [`core memory block refresh failed: ${error instanceof Error ? error.message : String(error)}`],
+    };
+  }
 }
 
 async function findDuplicatePageSuggestions(

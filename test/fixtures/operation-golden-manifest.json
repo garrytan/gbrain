@@ -2,14 +2,14 @@
   "schema_version": 2,
   "generated_from": "live_operation_registry",
   "summary": {
-    "operation_count": 192,
-    "mcp_operation_count": 192,
-    "cli_shared_count": 180,
+    "operation_count": 193,
+    "mcp_operation_count": 193,
+    "cli_shared_count": 181,
     "cli_direct_count": 26,
     "cli_only_count": 6,
     "not_cli_count": 2,
     "mutating_count": 83,
-    "read_only_count": 109
+    "read_only_count": 110
   },
   "cli_commands": [
     {
@@ -221,6 +221,11 @@
       "command": "connectors",
       "mode": "cli_direct_engine",
       "reason": "direct_engine_command"
+    },
+    {
+      "command": "core-memory-blocks",
+      "mode": "cli_shared",
+      "operation_name": "get_core_memory_blocks"
     },
     {
       "command": "create-canonical-target-proposal",
@@ -7813,6 +7818,93 @@
       },
       "compact_schema_hash": "1677bf5f4f374857c33dc50ded35425e5fd34995e8780baaeb9be9c7e92f79cd",
       "full_schema_hash": "45f225f3af0dbe983a75a6ee8b32f74da66dbcfb40cfef0a443b3aa809d32c25",
+      "memory_verb_families": [],
+      "mutation_aliases": []
+    },
+    {
+      "name": "get_core_memory_blocks",
+      "description": "Compile the deterministic, hard token-budgeted core memory blocks (owner-profile, active-projects, attention) injected at session start. Derived pointers labeled not_answer_evidence; use read_context for citable evidence.",
+      "mutating": false,
+      "capability_required": [],
+      "capability_visibility": {
+        "requirements": []
+      },
+      "params": {
+        "budget_tokens": {
+          "type": [
+            "number"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Token budget for all blocks combined (hard cap 2000)"
+        },
+        "now": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional ISO timestamp pinning the attention window for deterministic output"
+        }
+      },
+      "cli_exposure": {
+        "mode": "cli_shared",
+        "command": "core-memory-blocks"
+      },
+      "mcp": {
+        "read_only": true,
+        "destructive": false,
+        "open_world": false,
+        "required_params": []
+      },
+      "surface_profile": {
+        "effective_tier": "admin",
+        "required_capabilities": [],
+        "capability_classification": "implicit_read_only",
+        "visible_profiles": [],
+        "callable_profiles": [],
+        "forbidden_profiles": [],
+        "decisions": {
+          "stdio": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "http_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
+          "http_remote": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "edge_remote": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
+          }
+        }
+      },
+      "compact_schema_hash": "ff11c8b77ab0c5a4004f6272d88c28e7b1c1e77dde75d192c5822197fb4fad52",
+      "full_schema_hash": "74d8c69a3e995324c74ced7af61e60ff8fbcc33b44a41f7e8740da74194dc19a",
       "memory_verb_families": [],
       "mutation_aliases": []
     },

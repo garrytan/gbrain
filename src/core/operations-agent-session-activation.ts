@@ -1,5 +1,9 @@
 import type { Operation } from './operations.ts';
 import { planAgentSessionActivation } from './services/agent-session-activation-planner-service.ts';
+import {
+  buildCoreMemoryBlocks,
+  CORE_MEMORY_BLOCKS_HARD_BUDGET_TOKENS,
+} from './services/core-memory-blocks-service.ts';
 
 type OperationErrorCtor = new (
   code: 'invalid_params',
@@ -44,6 +48,28 @@ export function createAgentSessionActivationOperations(
       positional: ['query'],
       aliases: { n: 'limit', scope: 'requested_scope' },
     },
+  }, {
+    name: 'get_core_memory_blocks',
+    description: 'Compile the deterministic, hard token-budgeted core memory blocks (owner-profile, active-projects, attention) injected at session start. Derived pointers labeled not_answer_evidence; use read_context for citable evidence.',
+    params: {
+      budget_tokens: {
+        type: 'number',
+        description: `Token budget for all blocks combined (hard cap ${CORE_MEMORY_BLOCKS_HARD_BUDGET_TOKENS})`,
+      },
+      now: { type: 'string', description: 'Optional ISO timestamp pinning the attention window for deterministic output' },
+    },
+    mutating: false,
+    // Blocks reach agents through plan_agent_session_activation; the
+    // standalone op is an inspection surface and stays off the default catalog.
+    tier: 'admin',
+    handler: async (ctx, params) => buildCoreMemoryBlocks(ctx.engine, {
+      budget_tokens: optionalNumber(deps, params.budget_tokens, 'budget_tokens'),
+      now: optionalIsoDate(deps, params.now, 'now'),
+    }),
+    cliHints: {
+      name: 'core-memory-blocks',
+      aliases: { budget: 'budget_tokens' },
+    },
   }];
 }
 
@@ -81,6 +107,20 @@ function optionalNumber(
     throw new deps.OperationError('invalid_params', `${label} must be a number`);
   }
   return value;
+}
+
+function optionalIsoDate(
+  deps: { OperationError: OperationErrorCtor },
+  value: unknown,
+  label: string,
+): Date | undefined {
+  const raw = optionalString(deps, value, label);
+  if (raw === undefined) return undefined;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new deps.OperationError('invalid_params', `${label} must be a valid ISO timestamp`);
+  }
+  return parsed;
 }
 
 function optionalEnum<T extends string>(
