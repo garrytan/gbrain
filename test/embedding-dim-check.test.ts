@@ -20,6 +20,7 @@ import {
   PGVECTOR_COLUMN_MAX_DIMS,
 } from '../src/core/embedding-dim-check.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { RECIPES } from '../src/core/ai/recipes/index.ts';
 
 // Canonical pattern: single engine per file, init once, disconnect once.
 // The two tests below diverge in whether they want a migrated brain or a
@@ -308,6 +309,95 @@ describe('resolveSchemaEmbeddingDim', () => {
     if (got.ok) {
       expect(got.dim).toBe(1536);
       expect(got.model).toBe('openai:text-embedding-3-large');
+    }
+  });
+});
+
+describe('resolveSchemaEmbeddingDim — Ollama per-model native dims (#2170)', () => {
+  test('bge-m3 resolves at its native 1024 (not the provider default 768)', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:bge-m3' });
+    expect(got).toEqual({
+      ok: true,
+      dim: 1024,
+      model: 'ollama:bge-m3',
+      provider: 'ollama',
+      recipeDefault: 1024,
+    });
+  });
+
+  test('mxbai-embed-large resolves at its native 1024', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:mxbai-embed-large' });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(1024);
+  });
+
+  test('nomic-embed-text resolves at 768 (the provider default)', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:nomic-embed-text' });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(768);
+  });
+
+  test('all-minilm resolves at 384', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:all-minilm' });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(384);
+  });
+
+  test('explicit --embedding-dimensions matching the native width (bge-m3 @ 1024) is accepted', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:bge-m3', embedding_dimensions: 1024 });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(1024);
+  });
+
+  test('explicit dim contradicting the native width (bge-m3 @ 768) is rejected', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:bge-m3', embedding_dimensions: 768 });
+    expect(got.ok).toBe(false);
+    if (!got.ok) expect(got.error).toMatch(/does not support custom dimensions 768|only emits/);
+  });
+
+  test('regression (#2170): ollama:bge-m3 no longer silently builds a 768 schema', () => {
+    // Before the per-model fix this resolved to 768, then `gbrain embed` failed
+    // with "model bge-m3 returned 1024 but schema expects 768".
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:bge-m3' });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(1024);
+  });
+});
+
+describe('resolveSchemaEmbeddingDim — user-provided-model local providers (#2170 step 2)', () => {
+  test('llama-server accepts an explicit --embedding-dimensions (1024)', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'llama-server:my-embed', embedding_dimensions: 1024 });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(1024);
+  });
+
+  test('litellm accepts an explicit --embedding-dimensions (1536)', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'litellm:some-proxy-model', embedding_dimensions: 1536 });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(1536);
+  });
+
+  test('llama-server accepts a non-standard width (e.g. 896) — user knows their backend', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'llama-server:qwen-embed', embedding_dimensions: 896 });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(896);
+  });
+
+  test('llama-server WITHOUT an explicit dimension is rejected (default_dims: 0)', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'llama-server:my-embed' });
+    expect(got.ok).toBe(false);
+    if (!got.ok) expect(got.error).toMatch(/positive integer/);
+  });
+});
+
+describe('recipe contract — model_dims keys are a subset of models (#2170)', () => {
+  test('every recipe that declares model_dims only maps models it lists', () => {
+    for (const recipe of RECIPES.values()) {
+      const tp = recipe.touchpoints.embedding;
+      if (!tp?.model_dims) continue;
+      for (const modelId of Object.keys(tp.model_dims)) {
+        expect(tp.models).toContain(modelId);
+      }
     }
   });
 });
