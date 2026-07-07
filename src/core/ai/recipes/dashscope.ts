@@ -24,12 +24,17 @@ export const dashscope: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: ['text-embedding-v3', 'text-embedding-v2'],
+      models: ['text-embedding-v3', 'text-embedding-v2', 'text-embedding-v4'],
       default_dims: 1024,
       dims_options: [64, 128, 256, 512, 768, 1024],
-      // Alibaba doesn't publish a hard batch-token cap for the OpenAI-compat
-      // path. Conservative declaration so the gateway pre-splits before
-      // hitting whatever undocumented server-side limit exists.
+      // DashScope's OpenAI-compat /embeddings endpoint hard-caps at 10
+      // ITEMS per request regardless of token size (documented as 批次大小=10
+      // in the model-studio reference; empirically confirmed — the endpoint
+      // 400s with "batch size is invalid, it should not be larger than 10").
+      // max_batch_items does the real enforcement; max_batch_tokens reverts
+      // to its original job (guarding against pathologically long aggregate
+      // content) now that it no longer has to double as an item-count proxy.
+      max_batch_items: 10,
       max_batch_tokens: 8192,
       // text-embedding-v3 mixes English + CJK heavily; the tokenizer is
       // closer to Voyage density than OpenAI tiktoken for CJK-dominant

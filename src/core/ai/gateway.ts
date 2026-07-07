@@ -1396,13 +1396,20 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
 
   const embedding = recipe.touchpoints?.embedding;
   const maxBatchTokens = embedding?.max_batch_tokens;
+  const maxBatchItems = embedding?.max_batch_items;
   const charsPerToken = embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
 
   // Pre-split is gated on max_batch_tokens. Recipes without it (e.g. OpenAI)
   // ride the fast path: one embedMany call, no recursion safety net.
-  const batches = maxBatchTokens
+  let batches = maxBatchTokens
     ? splitByTokenBudget(truncated, Math.floor(maxBatchTokens * effectiveSafetyFactor(recipe)), charsPerToken)
     : [truncated];
+  // Providers with a hard ITEM-COUNT ceiling (DashScope: ≤10/request) need a
+  // second subdivision pass — token budget alone can still pack too many
+  // short texts into one request. No-op when max_batch_items is unset.
+  if (maxBatchItems) {
+    batches = splitByItemLimit(batches, maxBatchItems);
+  }
 
   const allEmbeddings: Float32Array[] = [];
   let _embedThrew = false;
@@ -1480,6 +1487,25 @@ export function splitByTokenBudget(
 }
 
 /**
+ * Further subdivide token-budget batches so no sub-batch exceeds `maxItems`
+ * texts, regardless of how far under the token budget it is. Some providers
+ * (DashScope: ≤10 items/request) enforce a hard ITEM-COUNT ceiling
+ * independent of token budget. Pure; order-preserving.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function splitByItemLimit(batches: string[][], maxItems: number): string[][] {
+  if (!maxItems || maxItems <= 0) return batches;
+  const out: string[][] = [];
+  for (const batch of batches) {
+    for (let i = 0; i < batch.length; i += maxItems) {
+      out.push(batch.slice(i, i + maxItems));
+    }
+  }
+  return out;
+}
+
+/**
  * Returns true if the error looks like a provider batch-token-limit error.
  *
  * @internal exported for tests; not part of the public gateway API.
@@ -1493,6 +1519,25 @@ export function isTokenLimitError(err: unknown): boolean {
     // OpenAI embeddings: "Invalid 'input': maximum request size is 300000 tokens per request."
     /maximum request size.*tokens/i.test(msg) ||
     /max.*tokens.*per.*request/i.test(msg)
+  );
+}
+
+/**
+ * Returns true if the error looks like a provider batch ITEM-COUNT-limit
+ * error (distinct from isTokenLimitError's token-budget errors). DashScope's
+ * OpenAI-compatible /embeddings endpoint reports this as "batch size is
+ * invalid, it should not be larger than 10" — contains neither "token" nor
+ * any of isTokenLimitError's five patterns.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function isBatchSizeError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    /batch size.*(?:invalid|larger than|exceed)/i.test(msg) ||
+    /too many (?:items|inputs|documents) in (?:batch|request)/i.test(msg) ||
+    /(?:maximum|max)\s+(?:batch size|items per (?:batch|request|call))/i.test(msg) ||
+    /batch.*(?:exceeds|over).*(?:limit|maximum)/i.test(msg)
   );
 }
 
@@ -1600,9 +1645,15 @@ async function embedSubBatch(
   } catch (err) {
     // On token-limit error, tighten the recipe's effective safety factor
     // (so the next embed() pre-splits smaller) and recursively halve THIS
-    // batch to make forward progress without dropping work.
-    if (isTokenLimitError(err) && texts.length > MIN_SUB_BATCH) {
-      shrinkOnMiss(recipe);
+    // batch to make forward progress without dropping work. Item-count-limit
+    // errors (isBatchSizeError) reuse the same halving recovery — halving
+    // reduces both token totals and item counts — but must NOT tighten the
+    // token safety factor: the miss has no token-budget cause, and shrinking
+    // would pollute the adaptive state's semantics.
+    const tokenMiss = isTokenLimitError(err);
+    const itemMiss = !tokenMiss && isBatchSizeError(err);
+    if ((tokenMiss || itemMiss) && texts.length > MIN_SUB_BATCH) {
+      if (tokenMiss) shrinkOnMiss(recipe);
       const mid = Math.ceil(texts.length / 2);
       const left = await embedSubBatch(texts.slice(0, mid), model, providerOpts, expectedDims, recipe, modelId, opts);
       const right = await embedSubBatch(texts.slice(mid), model, providerOpts, expectedDims, recipe, modelId, opts);

@@ -40,6 +40,17 @@ export interface EmbeddingTouchpoint {
    */
   max_batch_tokens?: number;
   /**
+   * Maximum number of ITEMS (texts) per batch, independent of token budget.
+   * Some providers (DashScope: ≤10/request) enforce a hard item-count
+   * ceiling regardless of how short each item is — a token-budget-only
+   * pre-split can still pack more than this many short chunks into one
+   * batch. When set, the gateway further subdivides each token-budget
+   * batch so no sub-batch exceeds this count. Composes with
+   * max_batch_tokens; either constraint alone still works if the other
+   * is unset.
+   */
+  max_batch_items?: number;
+  /**
    * Expected character density for this provider's tokenizer (chars per
    * token). OpenAI tiktoken averages ~4 on English text; Voyage averages
    * ~1 on mixed content (code/JSON/CJK). Defaults to 4 if omitted.
