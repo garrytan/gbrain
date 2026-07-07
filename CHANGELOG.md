@@ -2,6 +2,18 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.58.1] - 2026-07-06
+
+**Upgrading an old PGLite brain to v0.42.x no longer crashes with `column "event_page_id" does not exist`. The forward-reference bootstrap was missing the v121 timeline column, so any brain created before v0.42 wedged on the first migrate.**
+
+A brain built on an older schema (anything before migration v121) has a `timeline_entries` table without the `event_page_id` column. On upgrade, PGLite replays the current schema blob, which builds two indexes on that column. `CREATE TABLE IF NOT EXISTS` is a no-op against the already-present table, so the column never appears and the `CREATE INDEX` aborts the whole migration. The pre-migration bootstrap exists to add exactly these forward-referenced columns first, but the v121 column was never registered with it. Result: `gbrain init --migrate-only`, `gbrain apply-migrations`, and the post-upgrade chain all died on the same error, leaving the brain stuck on its old schema.
+
+### Fixed
+- **Pre-v121 PGLite brains migrate cleanly to v0.42.x.** The forward-reference bootstrap now adds `timeline_entries.event_page_id` before the schema replay creates `idx_timeline_event_page` / `idx_timeline_event_dedup`, matching the pattern every other forward-referenced column already follows. On one real brain this took the jump from schema v24 to v122 from a hard crash to 97 migrations applied in a single pass. The v121 migration still owns the foreign key and both indexes and stays idempotent, so nothing is added twice. The bootstrap-coverage test gains the matching entry, so any future forward-referenced column that skips the bootstrap now fails CI instead of a user's upgrade.
+
+### To take advantage of v0.42.58.1
+`gbrain upgrade`. If a prior upgrade left you stuck on `column "event_page_id" does not exist`, run `gbrain apply-migrations --yes` (or `gbrain init --migrate-only`) once on the fixed binary and the blocked migrations apply. No data is touched; the fix only adds a column the schema already expected.
+
 ## [0.42.57.0] - 2026-07-02
 
 **PGLite incident fix: a busy `gbrain dream` (or `embed`) could have its data-directory lock stolen and get its brain corrupted beyond in-place repair. The lock will no longer be taken from a process that is alive, and an already-corrupted store now tells you exactly how to recover.**
