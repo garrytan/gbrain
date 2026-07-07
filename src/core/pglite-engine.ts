@@ -429,6 +429,8 @@ export class PGLiteEngine implements BrainEngine {
    *     (indexed by `idx_mcp_log_agent_time`) — v0.26.3
    *   - `subagent_messages.provider_id` column (indexed by
    *     `idx_subagent_messages_provider`) — v0.27
+   *   - `timeline_entries.event_page_id` column (indexed by
+   *     `idx_timeline_event_page` and `idx_timeline_event_dedup`) — v0.42 (v121)
    *
    * **Maintenance contract:** when a future migration adds a column-with-index
    * or new-table-with-FK referenced by PGLITE_SCHEMA_SQL, extend this method
@@ -518,7 +520,11 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema='public' AND table_name='pages' AND column_name='embedding_signature') AS pages_embedding_signature_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='pages' AND column_name='links_extracted_at') AS pages_links_extracted_at_exists
+                WHERE table_schema='public' AND table_name='pages' AND column_name='links_extracted_at') AS pages_links_extracted_at_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='timeline_entries') AS timeline_entries_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='timeline_entries' AND column_name='event_page_id') AS timeline_event_page_id_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -561,6 +567,8 @@ export class PGLiteEngine implements BrainEngine {
       pages_generation_exists: boolean;
       pages_embedding_signature_exists: boolean;
       pages_links_extracted_at_exists: boolean;
+      timeline_entries_exists: boolean;
+      timeline_event_page_id_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
@@ -637,6 +645,13 @@ export class PGLiteEngine implements BrainEngine {
     // it; pre-v112 brains crash without the column, so bootstrap adds it before
     // the CREATE INDEX runs. v112 runs later via runMigrations and is idempotent.
     const needsPagesLinksExtractedAt = probe.pages_exists && !probe.pages_links_extracted_at_exists;
+    // v0.42 (v121): timeline_entries.event_page_id. idx_timeline_event_page and
+    // idx_timeline_event_dedup in PGLITE_SCHEMA_SQL reference it; pre-v121 brains
+    // crash on the CREATE INDEX because CREATE TABLE IF NOT EXISTS timeline_entries
+    // is a no-op against the existing (column-less) table. Bootstrap adds the
+    // column before SCHEMA_SQL replay runs the indexes. v121 runs later via
+    // runMigrations and is idempotent.
+    const needsTimelineEventPageId = probe.timeline_entries_exists && !probe.timeline_event_page_id_exists;
 
     // Fresh installs (no tables yet) and modern brains both no-op.
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
@@ -648,7 +663,8 @@ export class PGLiteEngine implements BrainEngine {
         && !needsPagesProvenance
         && !needsContextualRetrievalColumns && !needsPagesGeneration
         && !needsPagesEmbeddingSignature
-        && !needsPagesLinksExtractedAt) return;
+        && !needsPagesLinksExtractedAt
+        && !needsTimelineEventPageId) return;
 
     process.stderr.write('  Pre-v0.21 brain detected, applying forward-reference bootstrap\n');
 
@@ -893,6 +909,18 @@ export class PGLiteEngine implements BrainEngine {
       // v112 runs later via runMigrations and is idempotent.
       await this.db.exec(`
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS links_extracted_at TIMESTAMPTZ;
+      `);
+    }
+
+    if (needsTimelineEventPageId) {
+      // v121 (timeline_entries_event_page_id): adds event_page_id + FK to
+      // pages(id) + idx_timeline_event_page + idx_timeline_event_dedup.
+      // PGLITE_SCHEMA_SQL CREATE INDEX ... ON timeline_entries(event_page_id)
+      // crashes on pre-v121 brains without the column. Bootstrap adds the
+      // column before the blob's CREATE INDEX runs; v121 runs later via
+      // runMigrations and is idempotent (adds the FK + indexes).
+      await this.db.exec(`
+        ALTER TABLE timeline_entries ADD COLUMN IF NOT EXISTS event_page_id INTEGER;
       `);
     }
   }
