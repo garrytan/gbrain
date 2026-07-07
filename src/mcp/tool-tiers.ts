@@ -51,6 +51,7 @@ const ADMIN_TOOL_NAMES = new Set<string>([
   'get_memory_realm',
   'get_memory_redaction_plan',
   'get_memory_session',
+  'get_memory_strength_report',
   'get_source',
   'get_raw_data',
   'ingest_connector_item',
