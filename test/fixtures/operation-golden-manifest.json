@@ -2,14 +2,14 @@
   "schema_version": 2,
   "generated_from": "live_operation_registry",
   "summary": {
-    "operation_count": 191,
-    "mcp_operation_count": 191,
-    "cli_shared_count": 179,
+    "operation_count": 192,
+    "mcp_operation_count": 192,
+    "cli_shared_count": 180,
     "cli_direct_count": 26,
     "cli_only_count": 6,
     "not_cli_count": 2,
     "mutating_count": 83,
-    "read_only_count": 108
+    "read_only_count": 109
   },
   "cli_commands": [
     {
