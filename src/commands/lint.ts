@@ -378,15 +378,39 @@ async function resolveLintContentSanity(
   };
 }
 
+// forge-patch: lint exclude for software-repo docs
+// Knowledge-repo lint should not scan vendored deps, nested software trees,
+// or repo metafiles (CHANGELOG etc.) — those produce thousands of false
+// positives. 'gbrain' is only excluded as a DIRECTORY that is a direct child
+// of the scanned root (the nested software tree), never a knowledge page
+// like gbrain.md. HANDOFF-* files are knowledge pages and stay in scope.
+const DEFAULT_LINT_EXCLUDE_DIRS = new Set([
+  'node_modules', 'test', 'tests', 'e2e-throwaway',
+]);
+const DEFAULT_LINT_EXCLUDE_FILES = new Set([
+  'CHANGELOG.md', 'README.md', 'AGENTS.md', 'CLAUDE.md', 'TODOS.md',
+  'CONTRIBUTING.md', 'DESIGN.md', 'SECURITY.md',
+  'GBRAIN_MULTI_AGENT_PLAN.md', 'INSTALL_FOR_AGENTS.md',
+]);
+const ROOT_ONLY_EXCLUDE_DIRS = new Set(['gbrain']);
+
 /** Collect markdown files from a directory */
-function collectPages(dir: string): string[] {
+function collectPages(dir: string, extraExcludes: string[] = []): string[] {
+  const extra = new Set(extraExcludes);
   const pages: string[] = [];
   function walk(d: string) {
     for (const entry of readdirSync(d)) {
       if (entry.startsWith('.') || entry.startsWith('_')) continue;
       const full = join(d, entry);
-      if (lstatSync(full).isDirectory()) walk(full);
-      else if (entry.endsWith('.md')) pages.push(full);
+      if (lstatSync(full).isDirectory()) {
+        if (DEFAULT_LINT_EXCLUDE_DIRS.has(entry) || extra.has(entry)) continue;
+        // Root-only dir excludes: match only direct children of the scanned root.
+        if (d === dir && ROOT_ONLY_EXCLUDE_DIRS.has(entry)) continue;
+        walk(full);
+      } else if (entry.endsWith('.md')) {
+        if (DEFAULT_LINT_EXCLUDE_FILES.has(entry) || extra.has(entry)) continue;
+        pages.push(full);
+      }
     }
   }
   walk(dir);
@@ -414,6 +438,8 @@ export interface LintOpts {
    * yields + checks this every 200 pages.
    */
   signal?: AbortSignal;
+  // forge-patch: lint exclude — extra dir/file basenames to skip (appended to defaults)
+  exclude?: string[];
 }
 
 export interface LintResult {
@@ -440,7 +466,7 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   }
 
   const isSingleFile = statSync(opts.target).isFile();
-  const pages = isSingleFile ? [opts.target] : collectPages(opts.target);
+  const pages = isSingleFile ? [opts.target] : collectPages(opts.target, opts.exclude ?? []);
 
   // Resolve content-sanity config once for this lint run (D1: lift DB
   // config when reachable). Caller can pre-pass via opts.contentSanity
@@ -491,14 +517,27 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
 }
 
 export async function runLint(args: string[]) {
-  const target = args.find(a => !a.startsWith('--'));
+  // forge-patch: lint exclude — parse --exclude=a,b or --exclude a,b (appended to defaults)
+  const extraExcludes: string[] = [];
+  const skipIdx = new Set<number>();
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith('--exclude=')) {
+      extraExcludes.push(...a.slice('--exclude='.length).split(',').map(s => s.trim()).filter(Boolean));
+    } else if (a === '--exclude' && i + 1 < args.length) {
+      extraExcludes.push(...args[i + 1].split(',').map(s => s.trim()).filter(Boolean));
+      skipIdx.add(i + 1);
+    }
+  }
+  const target = args.find((a, i) => !a.startsWith('--') && !skipIdx.has(i));
   const doFix = args.includes('--fix');
   const dryRun = args.includes('--dry-run');
 
   if (!target) {
-    console.error('Usage: gbrain lint <dir|file.md> [--fix] [--dry-run]');
+    console.error('Usage: gbrain lint <dir|file.md> [--fix] [--dry-run] [--exclude a,b]');
     console.error('  --fix      Auto-fix fixable issues (LLM preambles, code fences)');
     console.error('  --dry-run  Preview fixes without writing');
+    console.error('  --exclude  Comma-separated dir/file basenames to skip (appended to defaults)');
     process.exit(1);
   }
 
@@ -510,7 +549,7 @@ export async function runLint(args: string[]) {
   // Single file or directory — print human detail as we go, then rely on
   // Core for the aggregate numbers at the end.
   const isSingleFile = statSync(target).isFile();
-  const pages = isSingleFile ? [target] : collectPages(target);
+  const pages = isSingleFile ? [target] : collectPages(target, extraExcludes);
 
   // Progress on stderr. Stdout keeps the per-issue human output it always had.
   const { createProgress } = await import('../core/progress.ts');
@@ -557,7 +596,7 @@ export async function runLint(args: string[]) {
   // produces canonical numbers for the summary line).
   // Pass contentSanity through so runLintCore skips its own resolve
   // (we already resolved once for the human-detail loop above).
-  const result = await runLintCore({ target, fix: doFix, dryRun, contentSanity });
+  const result = await runLintCore({ target, fix: doFix, dryRun, contentSanity, exclude: extraExcludes });
   console.log(`\n${result.pages_scanned} pages scanned. ${result.total_issues} issue(s) in ${result.pages_with_issues} page(s).`);
   if (doFix) {
     console.log(`${dryRun ? '(dry run) ' : ''}${result.total_fixed} auto-fixed.`);
