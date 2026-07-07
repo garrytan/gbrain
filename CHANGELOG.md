@@ -83,6 +83,13 @@ All notable changes to MBrain will be documented in this file.
   design: ranking stays untouched behind the eval gate, and the dream cycle
   turns fading/never-used findings into reviewable suggestions.
 
+- **Every retrieval route is now reachable — and measured.** Precision lookups
+  (slug-like subjects) and personal episode recall (episodic phrasing plus a
+  known episode) are now auto-selected by \`retrieve_context\` instead of
+  requiring the explicit route operation, gated by the live gold-set eval:
+  route-match rose 28/30 to 30/30 with every quality metric unchanged, and the
+  per-route breakdown now covers all six intents.
+
 ### Fixed
 
 - **The daily report's canonical-write debt is now truthful.** Applying an
