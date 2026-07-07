@@ -3,7 +3,10 @@ import type { Transport, TransportSendOptions } from '@modelcontextprotocol/sdk/
 import { JSONRPCMessageSchema, type JSONRPCMessage, type RequestId } from '@modelcontextprotocol/sdk/types.js';
 
 export const DEFAULT_MCP_MAX_STDIO_FRAME_BYTES = 24_000;
-export const DEFAULT_MCP_TOOL_LIST_FRAME_BYTES = 180_000;
+// Sized so the full all-tiers tools/list catalog keeps >=16KB of growth
+// headroom (enforced by test/mcp-stdio-frame-budget.test.ts); raised from
+// 180k when the governed-write and analysis op families grew the catalog.
+export const DEFAULT_MCP_TOOL_LIST_FRAME_BYTES = 196_608;
 export const DEFAULT_MCP_MAX_STDIO_REQUEST_BYTES = 256_000;
 const MIN_MCP_STDIO_FRAME_BYTES = 256;
 const MIN_MCP_STDIO_REQUEST_BYTES = 128;
