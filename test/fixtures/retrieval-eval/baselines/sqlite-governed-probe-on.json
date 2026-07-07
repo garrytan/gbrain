@@ -11,24 +11,24 @@
   "fixture_path": "test/fixtures/retrieval-eval/p2-gold.jsonl",
   "metrics": {
     "total": 30,
-    "passed": 28,
-    "failed": 2,
-    "pass_rate": 0.9333333333333333,
+    "passed": 30,
+    "failed": 0,
+    "pass_rate": 1,
     "top1_match_rate": 1,
     "recall_at_10": 1,
     "precision_at_k": 0.2000000000000001,
     "mrr": 1,
-    "route_match_rate": 0.9333333333333333,
+    "route_match_rate": 1,
     "latency_ms_avg": 0,
     "per_route": {
       "broad_synthesis": {
-        "case_count": 23,
+        "case_count": 22,
         "top1_match_rate": 1,
         "recall_at_10": 1,
         "precision_at_k": 0.20000000000000007,
         "mrr": 1,
         "latency_ms_avg": 0,
-        "retrieved_token_count_total": 5348
+        "retrieved_token_count_total": 5094
       },
       "task_resume": {
         "case_count": 4,
@@ -40,13 +40,22 @@
         "retrieved_token_count_total": 1027
       },
       "personal_profile_lookup": {
-        "case_count": 2,
+        "case_count": 1,
         "top1_match_rate": 1,
         "recall_at_10": 1,
         "precision_at_k": 0.2,
         "mrr": 1,
         "latency_ms_avg": 0,
-        "retrieved_token_count_total": 888
+        "retrieved_token_count_total": 447
+      },
+      "personal_episode_lookup": {
+        "case_count": 1,
+        "top1_match_rate": 1,
+        "recall_at_10": 1,
+        "precision_at_k": 0.2,
+        "mrr": 1,
+        "latency_ms_avg": 0,
+        "retrieved_token_count_total": 441
       },
       "mixed_scope_bridge": {
         "case_count": 1,
@@ -56,6 +65,15 @@
         "mrr": 1,
         "latency_ms_avg": 0,
         "retrieved_token_count_total": 474
+      },
+      "precision_lookup": {
+        "case_count": 1,
+        "top1_match_rate": 1,
+        "recall_at_10": 1,
+        "precision_at_k": 0.2,
+        "mrr": 1,
+        "latency_ms_avg": 0,
+        "retrieved_token_count_total": 254
       }
     }
   },
@@ -260,9 +278,9 @@
       "id": "p2-015-personal-episode",
       "route": "personal_episode_lookup",
       "expected_selected_intent": "personal_episode_lookup",
-      "selected_intent": "personal_profile_lookup",
-      "route_match": false,
-      "status": "failed",
+      "selected_intent": "personal_episode_lookup",
+      "route_match": true,
+      "status": "passed",
       "top1_slug": "brain/episodes/mbrain-pr-follow-through",
       "top1_match": true,
       "recall_at_10": 1,
@@ -470,9 +488,9 @@
       "id": "p2-030-review-local-mcp",
       "route": "precision_lookup",
       "expected_selected_intent": "precision_lookup",
-      "selected_intent": "broad_synthesis",
-      "route_match": false,
-      "status": "failed",
+      "selected_intent": "precision_lookup",
+      "route_match": true,
+      "status": "passed",
       "top1_slug": "brain/concepts/local-review-security",
       "top1_match": true,
       "recall_at_10": 1,
@@ -481,26 +499,5 @@
       "missing_gold_slugs": []
     }
   ],
-  "failures": [
-    {
-      "id": "p2-015-personal-episode",
-      "route": "personal_episode_lookup",
-      "query": "when did the user ask to merge mbrain PRs after review",
-      "top1_slug": "brain/episodes/mbrain-pr-follow-through",
-      "missing_gold_slugs": [],
-      "reason_codes": [
-        "route_mismatch"
-      ]
-    },
-    {
-      "id": "p2-030-review-local-mcp",
-      "route": "precision_lookup",
-      "query": "review_local mcp double body read bounded request",
-      "top1_slug": "brain/concepts/local-review-security",
-      "missing_gold_slugs": [],
-      "reason_codes": [
-        "route_mismatch"
-      ]
-    }
-  ]
+  "failures": []
 }

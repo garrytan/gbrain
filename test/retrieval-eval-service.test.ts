@@ -18,17 +18,18 @@ const tempPaths: string[] = [];
 const P2_GOLD_FIXTURE_URL = new URL('./fixtures/retrieval-eval/p2-gold.jsonl', import.meta.url);
 
 // retrieve_context derives its selected intent from the memory scenario
-// classifier, which can only land on these four intents today. The fixture
-// keeps one precision_lookup and one personal_episode_lookup expectation as
-// canaries: they fail route_match until the router learns to select those
-// intents, at which point they flip green and the floors below can be raised.
+// classifier plus deterministic auto-route upgrades: a slug-like ref selects
+// precision_lookup, and episodic personal recall with a personal_episode
+// known-subject ref selects personal_episode_lookup. All six intents are now
+// reachable, so the fixture's former route-mismatch canaries must pass.
 const REACHABLE_INTENTS = [
   'broad_synthesis',
   'task_resume',
   'personal_profile_lookup',
+  'personal_episode_lookup',
+  'precision_lookup',
   'mixed_scope_bridge',
 ] as const;
-const ROUTE_MISMATCH_CANARY_IDS = ['p2-015-personal-episode', 'p2-030-review-local-mcp'];
 
 afterEach(() => {
   while (tempPaths.length > 0) {
@@ -50,14 +51,14 @@ describe('live retrieval eval harness', () => {
 
       expect(report.case_count).toBe(30);
       // Floors are set from what the seeded corpus actually achieves
-      // (top1 1.0, recall 1.0, mrr 1.0, route match 28/30) with headroom so
+      // (top1 1.0, recall 1.0, mrr 1.0, route match 30/30) with headroom so
       // only a real ranking or routing regression trips them.
       expect(report.recall_at_10).toBeGreaterThanOrEqual(0.9);
       expect(report.top1_match_rate).toBeGreaterThanOrEqual(0.9);
       expect(report.mrr).toBeGreaterThanOrEqual(0.85);
       const routeMatchRate = report.cases.filter((entry) => entry.route_match === true).length
         / report.case_count;
-      expect(routeMatchRate).toBeGreaterThanOrEqual(0.9);
+      expect(routeMatchRate).toBeGreaterThanOrEqual(0.966);
 
       for (const intent of REACHABLE_INTENTS) {
         expect(report.per_route[intent]?.case_count).toBeGreaterThanOrEqual(1);
@@ -67,12 +68,11 @@ describe('live retrieval eval harness', () => {
         .reduce((total, summary) => total + summary.case_count, 0);
       expect(perRouteTotal).toBe(30);
 
-      // The only acceptable failures are the two structural route-mismatch
-      // canaries; any recall/top1 miss shows up here and turns this red.
-      expect(report.failures.map((failure) => failure.id).sort()).toEqual(ROUTE_MISMATCH_CANARY_IDS);
-      expect(report.failures.every((failure) => (
-        failure.reason_codes.length === 1 && failure.reason_codes[0] === 'route_mismatch'
-      ))).toBe(true);
+      // Every case must now match its expected intent; any recall/top1 miss
+      // or route regression shows up here and turns this red.
+      expect(report.failures).toEqual([]);
+      expect(report.status).toBe('passed');
+      expect(report.cases.every((entry) => entry.route_match === true)).toBe(true);
 
       // The Korean case must be answered from the live index, not skipped.
       const korean = report.cases.find((entry) => entry.id === 'p2-003-korean-rebellion-architecture');
@@ -83,6 +83,17 @@ describe('live retrieval eval harness', () => {
       const taskResume = report.cases.find((entry) => entry.id === 'p2-017-task-resume');
       expect(taskResume?.selected_intent).toBe('task_resume');
       expect(taskResume?.route_match).toBe(true);
+
+      // The former canaries now select their intents deterministically: the
+      // slug-like known subject drives precision_lookup and the episodic
+      // personal-recall query with an episode subject drives
+      // personal_episode_lookup.
+      const precision = report.cases.find((entry) => entry.id === 'p2-030-review-local-mcp');
+      expect(precision?.selected_intent).toBe('precision_lookup');
+      expect(precision?.route_match).toBe(true);
+      const episode = report.cases.find((entry) => entry.id === 'p2-015-personal-episode');
+      expect(episode?.selected_intent).toBe('personal_episode_lookup');
+      expect(episode?.route_match).toBe(true);
     } finally {
       await engine.disconnect();
     }
