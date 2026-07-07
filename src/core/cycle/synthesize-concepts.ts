@@ -44,13 +44,15 @@ export interface SynthesizeConceptsOpts {
   /** Test seam: alternative chat function. */
   _chat?: typeof gatewayChat;
   /** Test seam: skip DB query; cluster these atoms directly. */
-  _atoms?: Array<{ slug: string; concept_refs: string[]; body: string; title: string }>;
+  _atoms?: Array<{ slug: string; concept_refs: string[]; body: string; title: string; source_id?: string }>;
 }
 
 interface AtomGroup {
   conceptSlug: string;
   atomTitles: string[];
   atomBodies: string[];
+  /** source_id of each contributing atom — used to attribute the concept page. */
+  atomSources: string[];
   tier: 'T1' | 'T2' | 'T3' | 'T4';
 }
 
@@ -75,9 +77,10 @@ export async function runPhaseSynthesizeConcepts(
         slug: string;
         title: string;
         compiled_truth: string;
+        source_id: string;
         frontmatter: { concepts?: string[]; imported_from?: string };
       }>(
-        `SELECT slug, title, compiled_truth, frontmatter
+        `SELECT slug, title, compiled_truth, source_id, frontmatter
            FROM pages
           WHERE type = 'atom'
             AND deleted_at IS NULL
@@ -90,6 +93,7 @@ export async function runPhaseSynthesizeConcepts(
           title: r.title,
           body: r.compiled_truth,
           concept_refs: r.frontmatter!.concepts!,
+          source_id: r.source_id,
         }));
     } catch {
       // No atoms table or query failed — phase no-ops cleanly.
@@ -107,12 +111,13 @@ export async function runPhaseSynthesizeConcepts(
   }
 
   // 2. Group atoms by concept slug
-  const groups = new Map<string, { titles: string[]; bodies: string[] }>();
+  const groups = new Map<string, { titles: string[]; bodies: string[]; sources: string[] }>();
   for (const atom of atoms) {
     for (const conceptSlug of atom.concept_refs) {
-      const existing = groups.get(conceptSlug) ?? { titles: [], bodies: [] };
+      const existing = groups.get(conceptSlug) ?? { titles: [], bodies: [], sources: [] };
       existing.titles.push(atom.title);
       existing.bodies.push(atom.body);
+      existing.sources.push(atom.source_id ?? 'default');
       groups.set(conceptSlug, existing);
     }
   }
@@ -128,6 +133,7 @@ export async function runPhaseSynthesizeConcepts(
       conceptSlug,
       atomTitles: data.titles,
       atomBodies: data.bodies,
+      atomSources: data.sources,
       tier,
     });
   }
@@ -216,6 +222,14 @@ export async function runPhaseSynthesizeConcepts(
 
     if (!opts.dryRun) {
       const title = group.conceptSlug.split('/').pop() ?? group.conceptSlug;
+      // LOCAL FIX (Vijith 2026-07-07, strand-bug): attribute the concept page
+      // to the dominant source of its constituent atoms instead of letting it
+      // default to 'default' (invisible to source-scoped queries — the pulse
+      // "concepts/prefunding thin default stub" casualty). The phase stays
+      // brain-global (aggregates atoms across sources); only the WRITE is now
+      // source-attributed so the concept is reachable from its home source and
+      // via '__all__'. DO NOT PUSH.
+      const conceptSourceId = dominantSource(group.atomSources);
       await engine.putPage(`concepts/${title}`, {
         title: title.replace(/-/g, ' '),
         type: 'concept',
@@ -229,7 +243,7 @@ export async function runPhaseSynthesizeConcepts(
           synthesized_by: 'synthesize_concepts-v0.41',
         },
         timeline: '',
-      });
+      }, { sourceId: conceptSourceId });
     }
     conceptsWritten++;
     // v0.41.19.0 (T4): one tick per concept group with running count.
@@ -294,6 +308,27 @@ export async function runPhaseSynthesizeConcepts(
       dry_run: opts.dryRun ?? false,
     },
   };
+}
+
+/**
+ * Most-frequent source_id among a concept's contributing atoms. Insertion-order
+ * (i.e. SQL row-order) tiebreak keeps it deterministic. Falls back to 'default'
+ * only when the group has no atom sources at all. LOCAL FIX 2026-07-07: this is
+ * what stops synthesized concepts from stranding in the un-scoped 'default' source.
+ */
+function dominantSource(sources: string[]): string {
+  if (sources.length === 0) return 'default';
+  const counts = new Map<string, number>();
+  for (const s of sources) counts.set(s, (counts.get(s) ?? 0) + 1);
+  let best = 'default';
+  let bestN = -1;
+  for (const [s, n] of counts) {
+    if (n > bestN) {
+      best = s;
+      bestN = n;
+    }
+  }
+  return best;
 }
 
 /**
