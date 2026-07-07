@@ -32,6 +32,32 @@ function setBusy(button: HTMLButtonElement, busy: boolean, text?: string): void 
   if (span && text) span.textContent = text;
 }
 
+// 已知向量化模型的默认维度映射（provider:model → 维度）
+const MODEL_DEFAULT_DIMENSIONS: Readonly<Record<string, number>> = {
+  'zhipu:embedding-3': 1024,
+  'zhipu:embedding-2': 1024,
+  'zeroentropyai:zembed-1': 1280,
+  'mimo:text-embedding-3-small': 1536,
+  'openai:text-embedding-3-small': 1536,
+  'openai:text-embedding-3-large': 3072,
+  'deepseek:deepseek-embedding': 1536,
+  'google:text-embedding-004': 768,
+  'voyage:voyage-3': 1024,
+  'voyage:voyage-3-lite': 512,
+};
+
+/** 当用户切换向量化模型厂商或模型名时，自动将维度输入框更新为模型默认值。 */
+function updateEmbeddingDimensionsDefault(): void {
+  const provider = ($<HTMLSelectElement>('#embedding-provider')).value;
+  const modelName = ($<HTMLInputElement>('#embedding-model-name')).value.trim();
+  if (!provider || !modelName) return;
+  const modelId = composeModelId(provider, modelName);
+  const defaultDim = modelId ? MODEL_DEFAULT_DIMENSIONS[modelId] : undefined;
+  if (defaultDim) {
+    ($<HTMLInputElement>('#embedding-dimensions')).value = String(defaultDim);
+  }
+}
+
 function saveButtonText(): string {
   return state?.setup.needsSetup === false ? '保存修改并重启' : '保存配置并启动';
 }
@@ -358,6 +384,8 @@ async function configure(client: IntegrationClient, button: HTMLButtonElement): 
 }
 
 document.querySelectorAll<HTMLInputElement>('input[name="engine"]').forEach((input) => input.addEventListener('change', renderEngine));
+($<HTMLSelectElement>('#embedding-provider')).addEventListener('change', updateEmbeddingDimensionsDefault);
+($<HTMLInputElement>('#embedding-model-name')).addEventListener('input', updateEmbeddingDimensionsDefault);
 document.querySelectorAll<HTMLButtonElement>('.rail-item').forEach((button) => button.addEventListener('click', () => switchPanel(button.dataset.target as Panel)));
 document.querySelectorAll<HTMLButtonElement>('.choose').forEach((button) => button.addEventListener('click', async () => {
   const input = $<HTMLInputElement>(`#${button.dataset.input}`);

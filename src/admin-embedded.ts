@@ -1,6 +1,6 @@
 // AUTO-GENERATED — do not edit by hand.
 // Run `bun run scripts/build-admin-embedded.ts` to regenerate.
-// Source: admin/dist/ at 2026-07-06.
+// Source: admin/dist/ at 2026-07-07.
 //
 // Bun resolves the file: imports to a path that works at runtime even
 // inside a compiled binary (`bun build --compile`). The manifest maps

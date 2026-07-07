@@ -103,6 +103,21 @@ describe('desktop config manager', () => {
     expect(existsSync(path)).toBe(false);
   });
 
+  test('requires an explicit embedding dimension when an embedding model is configured', () => {
+    const root = isolatedHome();
+
+    expect(() => saveSetup({
+      engine: 'pglite',
+      databasePath: join(root, 'selected-db-parent'),
+      knowledgeDirectory: join(root, 'knowledge'),
+      keys: {},
+      modelConfig: {
+        chatModel: 'zhipu:glm-4-plus',
+        embeddingModel: 'zhipu:embedding-3',
+      },
+    })).toThrow('请填写有效的向量化维度');
+  });
+
   test('switching from discovered legacy config to PGLite honors the selected local path', () => {
     const root = mkdtempSync(join(tmpdir(), 'pmbrain-desktop-legacy-switch-'));
     roots.push(root);

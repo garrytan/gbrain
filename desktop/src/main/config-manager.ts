@@ -356,13 +356,11 @@ export function saveSetup(payload: SetupPayload): { config: RawConfig; snapshot:
     config.embedding_dimensions = embeddingDimensions;
   }
 
-  // 兜底：确保 embedding_dimensions 一定有值。
-  // 优先级：UI 传入 > selectModelDefaults 推断 > 默认 1024。
-  // 防止 configureGateway 因维度缺失而报错或静默回退到 1280。
+  // Respect the user's final input; do not invent a backend default here.
   if (typeof config.embedding_dimensions !== 'number'
       || !Number.isInteger(config.embedding_dimensions)
       || config.embedding_dimensions <= 0) {
-    config.embedding_dimensions = 1024;
+    throw new Error('请填写有效的向量化维度。');
   }
 
   config.admin_bootstrap_token = typeof existing.admin_bootstrap_token === 'string'
