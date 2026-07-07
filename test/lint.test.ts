@@ -97,6 +97,30 @@ describe('fixContent', () => {
     expect(fixed).toContain('# Title');
   });
 
+  test('does NOT strip a trailing fence from a non-wrapped page (interior code block)', () => {
+    // Regression: fixContent() used to run the wrapping-fence strip
+    // unconditionally. A page with no ```markdown wrapper but with a legit
+    // interior code block lost its closing ``` whenever ANY fixable issue
+    // caused a rewrite. With the guard, a nothing-to-fix page is returned
+    // byte-for-byte unchanged.
+    const input =
+      '---\ntitle: Vec\ntype: concept\ncreated: 2026-07-03\n---\n\n# Vec\n\n```ts\nconst x = 1;\n```\n';
+    const fixed = fixContent(input);
+    expect(fixed).toBe(input);
+    expect(fixed.endsWith('```\n')).toBe(true);
+  });
+
+  test('does NOT strip a trailing fence even when an unrelated fix applies', () => {
+    // Same regression, but with an LLM preamble present so fixContent()
+    // genuinely rewrites the body. The interior code block's closing ```
+    // must survive the preamble removal.
+    const input =
+      'Of course. Here is the brain page.\n\n# T\n\n```ts\nconst x = 1;\n```\n';
+    const fixed = fixContent(input);
+    expect(fixed).not.toContain('Of course');
+    expect(fixed.endsWith('```\n')).toBe(true);
+  });
+
   test('cleans up excessive blank lines after fix', () => {
     const input = 'Of course. Here is the brain page.\n\n\n\n# Title\n\nContent.';
     const fixed = fixContent(input);

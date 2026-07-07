@@ -291,9 +291,19 @@ export function fixContent(content: string): string {
     fixed = fixed.replace(pattern, '');
   }
 
-  // Fix wrapping code fences
-  fixed = fixed.replace(/^```(?:markdown|md)\s*\n/, '');
-  fixed = fixed.replace(/\n```\s*$/, '');
+  // Fix wrapping code fences — guard the strip so it ONLY runs when the page
+  // is genuinely ```markdown/```md-wrapped (opening fence AND matching closing
+  // fence). Previously these replaces ran unconditionally on every fixContent()
+  // call, so any unrelated fixable issue (e.g. frontmatter-nested-quotes) would
+  // trigger a rewrite and silently strip a legit trailing ``` that closed an
+  // interior code block — corrupting code-heavy pages such as technical docs.
+  // The guard mirrors lintContent()'s code-fence-wrap predicate exactly.
+  const isMarkdownWrapped =
+    content.match(/^```(?:markdown|md)\s*\n/m) && content.match(/\n```\s*$/m);
+  if (isMarkdownWrapped) {
+    fixed = fixed.replace(/^```(?:markdown|md)\s*\n/, '');
+    fixed = fixed.replace(/\n```\s*$/, '');
+  }
 
   // Clean up excessive blank lines left by fixes
   fixed = fixed.replace(/\n{3,}/g, '\n\n');
