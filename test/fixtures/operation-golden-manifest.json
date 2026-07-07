@@ -2,14 +2,14 @@
   "schema_version": 2,
   "generated_from": "live_operation_registry",
   "summary": {
-    "operation_count": 190,
-    "mcp_operation_count": 190,
-    "cli_shared_count": 178,
+    "operation_count": 191,
+    "mcp_operation_count": 191,
+    "cli_shared_count": 179,
     "cli_direct_count": 26,
     "cli_only_count": 6,
     "not_cli_count": 2,
     "mutating_count": 83,
-    "read_only_count": 107
+    "read_only_count": 108
   },
   "cli_commands": [
     {
@@ -1010,6 +1010,11 @@
       "command": "timeline-add",
       "mode": "cli_shared",
       "operation_name": "add_timeline_entry"
+    },
+    {
+      "command": "trace-memory-contamination",
+      "mode": "cli_shared",
+      "operation_name": "trace_memory_contamination"
     },
     {
       "command": "unlink",
@@ -3315,7 +3320,7 @@
     },
     {
       "name": "classify_memory_scenario",
-      "description": "Classify a memory request into a scenario before retrieval.",
+      "description": "Admin diagnostic; retrieve_context classifies and routes automatically.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -3408,49 +3413,48 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -7028,7 +7032,7 @@
     },
     {
       "name": "get_broad_synthesis_route",
-      "description": "Compose report, structural query, and optional explain into one bounded broad-synthesis route.",
+      "description": "Admin diagnostic; use select_retrieval_route intent=broad_synthesis.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -7089,49 +7093,48 @@
         ]
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -8551,7 +8554,7 @@
     },
     {
       "name": "get_mixed_scope_bridge",
-      "description": "Resolve the published explicit mixed-scope bridge across one work route and one personal route.",
+      "description": "Admin diagnostic; use select_retrieval_route intent=mixed_scope_bridge.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -8688,49 +8691,48 @@
         ]
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -8741,7 +8743,7 @@
     },
     {
       "name": "get_mixed_scope_disclosure",
-      "description": "Project a resolved mixed-scope bridge into a visibility-safe disclosure artifact.",
+      "description": "Admin diagnostic; use select_retrieval_route intent=mixed_scope_bridge.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -8878,49 +8880,48 @@
         ]
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -9423,7 +9424,7 @@
     },
     {
       "name": "get_personal_episode_lookup_route",
-      "description": "Resolve an exact personal episode route for personal/episode lookup intent.",
+      "description": "Admin diagnostic; use select_retrieval_route intent=personal_episode_lookup.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -9499,49 +9500,48 @@
         ]
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -9552,7 +9552,7 @@
     },
     {
       "name": "get_personal_profile_lookup_route",
-      "description": "Resolve an exact personal profile-memory route for personal/profile lookup intent.",
+      "description": "Admin diagnostic; use select_retrieval_route intent=personal_profile_lookup.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -9628,49 +9628,48 @@
         ]
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -9681,7 +9680,7 @@
     },
     {
       "name": "get_precision_lookup_route",
-      "description": "Resolve an exact canonical page or section route for precision lookup intent.",
+      "description": "Admin diagnostic; use select_retrieval_route intent=precision_lookup.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -9740,49 +9739,48 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -10539,7 +10537,7 @@
     },
     {
       "name": "get_workspace_corpus_card",
-      "description": "Render a compact workspace corpus card from the current orientation bundle.",
+      "description": "Admin diagnostic; use retrieve_context with include_orientation.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -10582,49 +10580,48 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -10635,7 +10632,7 @@
     },
     {
       "name": "get_workspace_orientation_bundle",
-      "description": "Render a compact workspace orientation bundle from the current context-map report and cards.",
+      "description": "Admin diagnostic; use retrieve_context with include_orientation.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -10678,49 +10675,48 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -10731,7 +10727,7 @@
     },
     {
       "name": "get_workspace_project_card",
-      "description": "Render a compact workspace project card from the current context-map report.",
+      "description": "Admin diagnostic; use retrieve_context with include_orientation.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -10774,49 +10770,48 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -10827,7 +10822,7 @@
     },
     {
       "name": "get_workspace_system_card",
-      "description": "Render a compact workspace system card from the current context-map report.",
+      "description": "Admin diagnostic; use retrieve_context with include_orientation.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -10870,49 +10865,48 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -14635,7 +14629,7 @@
     },
     {
       "name": "plan_retrieval_request",
-      "description": "Plan one or more retrieval route selections for a high-level request without executing them.",
+      "description": "Admin diagnostic; use retrieve_context or select_retrieval_route.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -14841,49 +14835,48 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -14896,7 +14889,7 @@
     },
     {
       "name": "plan_scenario_memory_request",
-      "description": "Plan scenario-aware memory reads, activation, next tool, and writeback hints without mutating memory.",
+      "description": "Admin diagnostic; use retrieve_context for scenario-aware planning.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -15005,49 +14998,48 @@
         "required_params": []
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -22854,7 +22846,7 @@
     },
     {
       "name": "select_activation_policy",
-      "description": "Select how retrieved memory artifacts may affect a response.",
+      "description": "Admin diagnostic; retrieve_context applies activation policy automatically.",
       "mutating": false,
       "capability_required": [],
       "capability_visibility": {
@@ -22907,49 +22899,48 @@
         ]
       },
       "surface_profile": {
-        "effective_tier": "extended",
+        "effective_tier": "admin",
         "required_capabilities": [],
         "capability_classification": "implicit_read_only",
-        "visible_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
-        "callable_profiles": [
-          "stdio",
-          "http_local",
-          "http_remote",
-          "edge_remote"
-        ],
+        "visible_profiles": [],
+        "callable_profiles": [],
         "forbidden_profiles": [],
         "decisions": {
           "stdio": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "http_local": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "review_local": {
             "visible": false,
             "callable": false,
             "denial_reasons": [
-              "surface_operation_not_allowed"
+              "surface_operation_not_allowed",
+              "tier_not_callable"
             ]
           },
           "http_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           },
           "edge_remote": {
-            "visible": true,
-            "callable": true,
-            "denial_reasons": []
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
           }
         }
       },
@@ -23797,6 +23788,125 @@
       },
       "compact_schema_hash": "9c47b45834fe338722f1b507e88726ed447d4a3a440fca87e3f5d292aee298c1",
       "full_schema_hash": "bfa631419c22b2a66b6c8155ebf8b728dc3fed0bebb3d3204ada44fadb70fd95",
+      "memory_verb_families": [],
+      "mutation_aliases": []
+    },
+    {
+      "name": "trace_memory_contamination",
+      "description": "Trace downstream use of a refuted memory: the canonical pages it reached, retrieval traces that consumed those pages after the write, and one-hop downstream page writes citing them. Read-only analysis over existing ledgers.",
+      "mutating": false,
+      "capability_required": [],
+      "capability_visibility": {
+        "requirements": []
+      },
+      "params": {
+        "candidate_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Memory candidate id to trace (usually a refuted candidate); mutually exclusive with slug"
+        },
+        "limit": {
+          "type": [
+            "number"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Max traces/pages per section (default 20, cap 100)"
+        },
+        "scope_id": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Scope id for slug-mode patch-candidate scans (default: workspace:default; candidate mode uses the candidate scope)"
+        },
+        "since": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional ISO datetime lower bound for consuming retrieval traces (default: first canonical write, else 30 days before until)"
+        },
+        "slug": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Canonical page slug to trace instead of a candidate"
+        },
+        "until": {
+          "type": [
+            "string"
+          ],
+          "required": false,
+          "nullable": false,
+          "description": "Optional ISO datetime upper bound for consuming retrieval traces (default: now)"
+        }
+      },
+      "cli_exposure": {
+        "mode": "cli_shared",
+        "command": "trace-memory-contamination"
+      },
+      "mcp": {
+        "read_only": true,
+        "destructive": false,
+        "open_world": false,
+        "required_params": []
+      },
+      "surface_profile": {
+        "effective_tier": "admin",
+        "required_capabilities": [],
+        "capability_classification": "implicit_read_only",
+        "visible_profiles": [],
+        "callable_profiles": [],
+        "forbidden_profiles": [],
+        "decisions": {
+          "stdio": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "http_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "review_local": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "surface_operation_not_allowed",
+              "tier_not_callable"
+            ]
+          },
+          "http_remote": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
+          },
+          "edge_remote": {
+            "visible": false,
+            "callable": false,
+            "denial_reasons": [
+              "tier_not_callable"
+            ]
+          }
+        }
+      },
+      "compact_schema_hash": "a87e4d950e5eaced4c40e93f31ec40d3560bb95f025f3341ada8204abc1d8fff",
+      "full_schema_hash": "0627dffe583a404f9d4ad68d4e8d7dc2f144667ff7f22eca82668be935e3a6c2",
       "memory_verb_families": [],
       "mutation_aliases": []
     },

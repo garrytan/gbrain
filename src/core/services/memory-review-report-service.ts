@@ -111,6 +111,15 @@ export interface ReportPromotedCandidateRefutation {
   next_action: string;
 }
 
+export interface ReportRefutedContamination {
+  candidate_id: string;
+  refuted_at: string | null;
+  contaminated_pages: string[];
+  consuming_trace_count: number;
+  downstream_pages: string[];
+  next_action: string;
+}
+
 export interface ReportDataIntegrityError {
   query: string;
   message: string;
@@ -345,6 +354,7 @@ export interface MemoryReviewReportInput {
   skill_surface?: ReportSkillSurfaceSummary;
   candidate_age_escalations?: ReportCandidateAgeEscalation[];
   promoted_candidate_refutations?: ReportPromotedCandidateRefutation[];
+  refuted_contamination?: ReportRefutedContamination[];
   recurring_retrieval_gaps?: ReportRecurringRetrievalGap[];
   page_health_queue?: ReportPageHealthItem[];
   watched_question_changes?: ReportWatchedQuestionChange[];
@@ -413,6 +423,7 @@ export interface MemoryReviewReportSummary {
   page_health_attention: number;
   watched_question_changes: number;
   promoted_candidate_refutations: number;
+  refuted_contamination: number;
   data_integrity_errors: number;
 }
 
@@ -463,6 +474,7 @@ export interface MemoryReviewReport {
     coverage_gaps: ReportCoverageGap[];
     candidate_age_escalations: ReportCandidateAgeEscalation[];
     promoted_candidate_refutations: ReportPromotedCandidateRefutation[];
+    refuted_contamination: ReportRefutedContamination[];
     recurring_retrieval_gaps: ReportRecurringRetrievalGap[];
     page_health_queue: ReportPageHealthItem[];
     watched_question_changes: ReportWatchedQuestionChange[];
@@ -498,6 +510,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
   const retrievalTrajectoryScore = input.retrieval_trajectory_score ?? null;
   const candidateAgeEscalations = redactReportValues(input.candidate_age_escalations ?? []);
   const promotedCandidateRefutations = redactReportValues(input.promoted_candidate_refutations ?? []);
+  const refutedContamination = redactReportValues(input.refuted_contamination ?? []);
   const recurringRetrievalGaps = redactReportValues(input.recurring_retrieval_gaps ?? []);
   const pageHealthQueue = redactReportValues(input.page_health_queue ?? []);
   const watchedQuestionChanges = redactReportValues(input.watched_question_changes ?? []);
@@ -557,6 +570,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
     page_health_attention: pageHealthQueue.length,
     watched_question_changes: watchedQuestionChanges.length,
     promoted_candidate_refutations: promotedCandidateRefutations.length,
+    refuted_contamination: refutedContamination.length,
     data_integrity_errors: dataIntegrityErrors.length,
   };
 
@@ -594,6 +608,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
       coverage_gaps: coverageGaps,
       candidate_age_escalations: candidateAgeEscalations,
       promoted_candidate_refutations: promotedCandidateRefutations,
+      refuted_contamination: refutedContamination,
       recurring_retrieval_gaps: recurringRetrievalGaps,
       page_health_queue: pageHealthQueue,
       watched_question_changes: watchedQuestionChanges,
@@ -733,6 +748,15 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
     lines.push('', 'Promoted Candidate Refutations');
     for (const candidate of report.sections.promoted_candidate_refutations) {
       lines.push(`- ${candidate.id} -> ${candidate.target_object_id ?? 'unbound'} (${candidate.target_object_type ?? 'unknown'}): ${redactSecrets(candidate.verification_evidence)} | next:${redactSecrets(candidate.next_action)}`);
+    }
+  }
+
+  if (report.sections.refuted_contamination.length > 0) {
+    lines.push('', 'Refuted Memory Contamination');
+    for (const entry of report.sections.refuted_contamination) {
+      const pages = entry.contaminated_pages.length > 0 ? entry.contaminated_pages.join(', ') : 'none';
+      const downstream = entry.downstream_pages.length > 0 ? ` | downstream:${entry.downstream_pages.join(', ')}` : '';
+      lines.push(`- ${entry.candidate_id} refuted:${entry.refuted_at ?? 'unknown'} | pages:${pages} | consuming_traces:${entry.consuming_trace_count}${downstream} | next:${redactSecrets(entry.next_action)}`);
     }
   }
 
@@ -1397,6 +1421,7 @@ function isEmptyReport(report: MemoryReviewReport): boolean {
     && report.sections.canonical_target_proposals.length === 0
     && report.sections.candidate_age_escalations.length === 0
     && report.sections.promoted_candidate_refutations.length === 0
+    && report.sections.refuted_contamination.length === 0
     && report.sections.recurring_retrieval_gaps.length === 0
     && report.sections.page_health_queue.length === 0
     && report.sections.watched_question_changes.length === 0

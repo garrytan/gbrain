@@ -62,6 +62,34 @@ describe('memory review report service', () => {
     expect(formatted).toContain('review canonical_handoff_entries');
   });
 
+  test('renders refuted contamination summaries as downstream re-verification work', () => {
+    const report = buildMemoryReviewReport({
+      scope_id: 'workspace:default',
+      generated_at: now,
+      refuted_contamination: [
+        {
+          candidate_id: 'candidate:refuted-contaminating',
+          refuted_at: '2026-05-21T09:00:00.000Z',
+          contaminated_pages: ['systems/ingest-worker'],
+          consuming_trace_count: 3,
+          downstream_pages: ['concepts/retry-policy'],
+          next_action: 'Re-verify page systems/ingest-worker: run reverify_code_claims against its consuming trace ids, then update or supersede the contaminated timeline lines.',
+        },
+      ],
+    });
+
+    expect(report.summary.refuted_contamination).toBe(1);
+    expect(report.sections.refuted_contamination).toHaveLength(1);
+
+    const formatted = formatMemoryReviewReport(report);
+    expect(formatted).toContain('Refuted Memory Contamination');
+    expect(formatted).toContain('candidate:refuted-contaminating refuted:2026-05-21T09:00:00.000Z');
+    expect(formatted).toContain('pages:systems/ingest-worker');
+    expect(formatted).toContain('consuming_traces:3');
+    expect(formatted).toContain('downstream:concepts/retry-policy');
+    expect(formatted).toContain('reverify_code_claims');
+  });
+
   test('summarizes automatic memory changes, exceptions, operational health, and report actions', () => {
     const report = buildMemoryReviewReport({
       scope_id: 'workspace:default',
