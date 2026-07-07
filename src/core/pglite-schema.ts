@@ -758,6 +758,7 @@ CREATE TABLE IF NOT EXISTS take_proposals (
   page_slug                   TEXT         NOT NULL,
   content_hash                TEXT         NOT NULL,
   prompt_version              TEXT         NOT NULL,
+  claim_hash                  TEXT         NOT NULL,
   wave_version                TEXT         NOT NULL DEFAULT 'v0.36.1.0',
   proposed_at                 TIMESTAMPTZ  NOT NULL DEFAULT now(),
   proposal_run_id             TEXT         NOT NULL,
@@ -776,13 +777,31 @@ CREATE TABLE IF NOT EXISTS take_proposals (
   predicted_brier             REAL,
   predicted_brier_bucket_n    INTEGER
 );
-CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_idempotency_idx
-  ON take_proposals (source_id, page_slug, content_hash, prompt_version);
+CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_claim_identity_idx
+  ON take_proposals (source_id, page_slug, prompt_version, claim_hash);
 CREATE INDEX IF NOT EXISTS take_proposals_pending_idx
   ON take_proposals (source_id, status, proposed_at DESC)
   WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS take_proposals_run_id_idx
   ON take_proposals (proposal_run_id);
+
+CREATE TABLE IF NOT EXISTS take_proposal_scans (
+  source_id       TEXT        NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  page_slug       TEXT        NOT NULL,
+  content_hash    TEXT        NOT NULL,
+  prompt_version  TEXT        NOT NULL,
+  scanned_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  proposal_run_id TEXT,
+  extracted_count INTEGER     NOT NULL DEFAULT 0,
+  inserted_count  INTEGER     NOT NULL DEFAULT 0,
+  model_id        TEXT,
+  PRIMARY KEY (source_id, page_slug, content_hash, prompt_version)
+);
+CREATE INDEX IF NOT EXISTS take_proposal_scans_recent_idx
+  ON take_proposal_scans (source_id, scanned_at DESC);
+CREATE INDEX IF NOT EXISTS take_proposal_scans_run_id_idx
+  ON take_proposal_scans (proposal_run_id)
+  WHERE proposal_run_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS take_grade_cache (
   take_id            BIGINT       NOT NULL,

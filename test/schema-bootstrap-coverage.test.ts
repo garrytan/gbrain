@@ -168,6 +168,10 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // SCHEMA_SQL replay creates the index. Powers `gbrain extract --stale` + the
   // `links_extraction_lag` doctor check.
   { kind: 'column', table: 'pages', column: 'links_extracted_at' },
+  // v0.42.x (v123) — forward-referenced by take_proposals_claim_identity_idx.
+  // Pre-v123 brains have take_proposals without this column; bootstrap adds it
+  // before SCHEMA_SQL replay creates the new unique index.
+  { kind: 'column', table: 'take_proposals', column: 'claim_hash' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -253,6 +257,9 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       ALTER TABLE pages DROP COLUMN IF EXISTS generation;
       ALTER TABLE pages DROP COLUMN IF EXISTS contextual_retrieval_mode;
       ALTER TABLE pages DROP COLUMN IF EXISTS corpus_generation;
+
+      DROP INDEX IF EXISTS take_proposals_claim_identity_idx;
+      ALTER TABLE take_proposals DROP COLUMN IF EXISTS claim_hash;
     `);
 
     // Note: we don't strip sources.archived* here because they're inline in the
@@ -325,6 +332,9 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       ALTER TABLE pages DROP COLUMN IF EXISTS import_filename;
       ALTER TABLE pages DROP COLUMN IF EXISTS salience_touched_at;
       ALTER TABLE pages DROP COLUMN IF EXISTS emotional_weight;
+
+      DROP INDEX IF EXISTS take_proposals_claim_identity_idx;
+      ALTER TABLE take_proposals DROP COLUMN IF EXISTS claim_hash;
     `);
 
     // Bootstrap, then schema replay. Either step crashing fails the test.
