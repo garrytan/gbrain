@@ -447,7 +447,38 @@ function buildAutoRouteInput(
   if (intent === 'task_resume' && !input.task_id) {
     return null;
   }
+  if (intent === 'broad_synthesis') {
+    // Deterministic precision upgrade: a slug-like ref (contains '/') in the
+    // query or known_subjects supplies the exact `slug` the precision route
+    // needs, so the route can execute non-empty instead of broad synthesis.
+    const precisionSlug = precisionLookupSlugSignal(context.query, input.known_subjects);
+    if (precisionSlug) {
+      return {
+        intent: 'precision_lookup',
+        query: context.query,
+        slug: precisionSlug,
+        limit: context.limit,
+        requested_scope: normalizedRouteScope(input.requested_scope ?? context.scopeGate?.resolved_scope),
+        persist_trace: false,
+      };
+    }
+  }
   if (intent === 'personal_profile_lookup') {
+    // Deterministic episode upgrade: personal_recall with episodic markers in
+    // the query AND a personal_episode known-subject ref (the exact episode
+    // title the lookup route needs) selects the episode route instead of the
+    // profile route. Without both signals, behavior is unchanged.
+    const episodeTitle = personalEpisodeTitleSignal(context.query, input.known_subjects);
+    if (episodeTitle) {
+      return {
+        intent: 'personal_episode_lookup',
+        query: context.query,
+        episode_title: episodeTitle,
+        limit: context.limit,
+        requested_scope: normalizedRouteScope(input.requested_scope ?? 'personal'),
+        persist_trace: false,
+      };
+    }
     const subject = firstKnownSubjectRef(input.known_subjects) ?? context.query;
     if (!subject.trim()) return null;
     return {
@@ -477,6 +508,54 @@ function buildAutoRouteInput(
     requested_scope: normalizedRouteScope(input.requested_scope ?? context.scopeGate?.resolved_scope),
     persist_trace: false,
   };
+}
+
+/**
+ * Slug-like token shape for the deterministic precision-lookup signal: two or
+ * more '/'-separated segments of word characters or dashes, each at least two
+ * characters. Dots are intentionally excluded so file-path refs (e.g.
+ * src/core/foo.ts) keep their existing coding-scenario routing.
+ */
+const PRECISION_SLUG_TOKEN_PATTERN = /^(?:[A-Za-z0-9][A-Za-z0-9_-]+\/)+[A-Za-z0-9][A-Za-z0-9_-]+$/;
+
+function precisionLookupSlugSignal(
+  query: string,
+  subjects: RetrieveContextInput['known_subjects'],
+): string | undefined {
+  for (const subject of subjects ?? []) {
+    const ref = (typeof subject === 'string' ? subject : subject.ref).trim();
+    if (PRECISION_SLUG_TOKEN_PATTERN.test(ref)) return ref;
+  }
+  for (const rawToken of query.split(/\s+/)) {
+    if (!rawToken.includes('/')) continue;
+    const token = rawToken
+      .replace(/^["'`([{<]+/, '')
+      .replace(/["'`)\]}>.,:;!?]+$/, '');
+    if (PRECISION_SLUG_TOKEN_PATTERN.test(token)) return token;
+  }
+  return undefined;
+}
+
+/** Episodic recall markers that separate episode lookups from profile lookups. */
+const EPISODIC_RECALL_QUERY_PATTERNS = [
+  /\bwhen\s+(?:did|was|were|do|does|had|will)\b/i,
+  /\b(?:yesterday|last\s+(?:night|week|month|year))\b/i,
+  /\bmeetings?\b/i,
+  /\b\d{4}-\d{2}-\d{2}\b/,
+  /(언제|어제|그저께|지난\s*주|지난주|지난\s*달|날짜|일정|미팅|회의)/,
+] as const;
+
+function personalEpisodeTitleSignal(
+  query: string,
+  subjects: RetrieveContextInput['known_subjects'],
+): string | undefined {
+  if (!EPISODIC_RECALL_QUERY_PATTERNS.some((pattern) => pattern.test(query))) return undefined;
+  for (const subject of subjects ?? []) {
+    if (typeof subject === 'string' || subject.kind !== 'personal_episode') continue;
+    const ref = subject.ref.trim();
+    if (ref.length > 0) return ref;
+  }
+  return undefined;
 }
 
 function firstKnownSubjectRef(subjects: RetrieveContextInput['known_subjects']): string | undefined {
