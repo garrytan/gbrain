@@ -49,6 +49,7 @@ CHECKS=(
   "check:cli-exec"
   "check:system-of-record"
   "check:eval-glossary"
+  "check:schema-embedded"
   "check:no-pii-agent-voice"
   "check:synthetic-corpus-privacy"
   "check:skill-brain-first"

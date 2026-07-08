@@ -2,6 +2,22 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.59.0] - 2026-07-08
+
+**The embedded schema blob can no longer drift from `schema.sql` without CI catching it.** `src/core/schema-embedded.ts` is generated from `src/schema.sql` by `bun run build:schema` and embedded in the compiled binary, but nothing pinned the committed blob to a fresh regeneration — so a `schema.sql` edit that skipped `bun run build:schema` could ship a stale schema to every PGLite install silently. This adds the same freshness guard the `llms-full.txt` docs bundle already has: regenerate, byte-compare, fail the build with a "run `bun run build:schema`" message.
+
+### Added
+- **Schema-blob freshness guard.** A unit test (`test/build-schema-fresh.test.ts`) and a `bun run verify` check (`scripts/check-schema-embedded-fresh.sh`) each regenerate the embedded schema into a temp file via the real `scripts/build-schema.sh` and assert the committed `src/core/schema-embedded.ts` is byte-identical. CI fails with "run `bun run build:schema`" on any drift — on both the fast `verify` pre-push gate and the unit suite.
+
+### Changed
+- **`scripts/build-schema.sh` honors `SCHEMA_FILE` / `OUT_FILE` env overrides and cd's to the repo root**, so the guards drive THE generator into a temp file with no duplication of the sed-escaping logic; the default `bun run build:schema` output is byte-for-byte unchanged.
+
+### Fixed
+- **`engine-find-trajectory` embedding-column determinism.** Its `beforeAll` now pins the legacy 1536-d gateway default before `initSchema()`, so a co-resident shard file that leaves the global gateway at a non-1536 dimension can't make it build a mismatched embedding column ("expected 1280 dimensions, not 1536"). Order-independent; surfaced because adding a new test file re-balances the CI shard bin-packing.
+
+### To take advantage of v0.42.59.0
+- Nothing to configure. After editing `src/schema.sql`, run `bun run build:schema` and commit the regenerated `src/core/schema-embedded.ts`; both `bun run verify` and the unit suite now fail until the committed blob matches.
+
 ## [0.42.57.0] - 2026-07-02
 
 **PGLite incident fix: a busy `gbrain dream` (or `embed`) could have its data-directory lock stolen and get its brain corrupted beyond in-place repair. The lock will no longer be taken from a process that is alive, and an already-corrupted store now tells you exactly how to recover.**
